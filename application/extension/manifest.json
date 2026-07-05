@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "Aurora-Connect",
+  "version": "1.0.137",
+  "description": "Pont entre AuroraIA (locale) et tes onglets navigateur. Permet a Aurora de lire/cliquer/remplir n importe quelle page.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "Aurora-Connect"
+  },
+  "options_page": "options.html",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "storage",
+    "contextMenus",
+    "notifications",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost:3001/*",
+    "http://127.0.0.1:3001/*",
+    "https://*.trycloudflare.com/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "popup-credentials.html",
+        "popup-credentials.js",
+        "vault.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "aurora-connect@auroraia.local",
+      "strict_min_version": "115.0"
+    }
+  }
+}

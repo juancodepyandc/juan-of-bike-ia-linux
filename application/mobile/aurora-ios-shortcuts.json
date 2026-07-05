@@ -1,0 +1,108 @@
+{
+  "_format": "Aurora-mobile-bridge / iOS Shortcuts (importable JSON)",
+  "_help": "Apple Shortcuts ne supporte pas l import JSON pur — il faut creer le raccourci manuellement OU utiliser le format .shortcut binaire signe. Ce fichier sert de SPECIFICATION : recopie chaque raccourci pas-a-pas dans l app Raccourcis. Variables: AURORA_BRIDGE_URL (string), AURORA_EXT_ID (UUID).",
+
+  "shortcuts": [
+    {
+      "name": "Aurora — Send Selection",
+      "description": "Partage un texte selectionne directement vers Aurora. Ajoute via Share Sheet.",
+      "input": "text",
+      "actions": [
+        { "type": "AskForInput",        "prompt": "Note (optionnel)", "default": "" },
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/inbound" },
+        { "type": "GetContentsOfURL",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "kind": "selection",
+            "extId": "{{AURORA_EXT_ID}}",
+            "text": "{{ShortcutInput}}",
+            "note": "{{LastInput}}",
+            "source": "ios-shortcuts"
+          }
+        },
+        { "type": "ShowNotification",   "title": "Aurora", "body": "Selection envoyee." }
+      ]
+    },
+    {
+      "name": "Aurora — Voice Command",
+      "description": "Dicte un message, transcrit en local par iOS, envoie a Aurora, lit la reponse.",
+      "actions": [
+        { "type": "Dictate",            "language": "fr-FR" },
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/inbound" },
+        { "type": "GetContentsOfURL",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "kind": "voice",
+            "extId": "{{AURORA_EXT_ID}}",
+            "text": "{{DictatedText}}"
+          }
+        },
+        { "type": "Wait",               "seconds": 3, "comment": "Aurora has time to enqueue a reply" },
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/poll?wait=15000" },
+        { "type": "GetContentsOfURL",   "method": "GET" },
+        { "type": "GetDictionaryValue", "key": "command.payload.text" },
+        { "type": "Speak",              "language": "fr-FR" }
+      ]
+    },
+    {
+      "name": "Aurora — Poll Commands",
+      "description": "Boucle de poll. A declencher en Personal Automation (App Opened: Raccourcis) ou via Siri.",
+      "actions": [
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/poll?wait=25000&extId={{AURORA_EXT_ID}}" },
+        { "type": "GetContentsOfURL",   "method": "GET" },
+        { "type": "GetDictionaryValue", "key": "command" },
+        { "type": "If",                 "condition": "has_value" },
+        { "type": "GetDictionaryValue", "key": "kind",         "comment": "Branch on command kind" },
+        { "type": "Switch",
+          "cases": [
+            { "case": "send_sms", "actions": [
+              { "type": "SendMessage",  "to": "{{command.payload.to}}", "body": "{{command.payload.body}}" }
+            ]},
+            { "case": "open_url", "actions": [
+              { "type": "OpenURL",      "url": "{{command.payload.url}}" }
+            ]},
+            { "case": "speak", "actions": [
+              { "type": "Speak",        "text": "{{command.payload.text}}", "language": "fr-FR" }
+            ]},
+            { "case": "play_track", "actions": [
+              { "type": "PlayMusic",    "query": "{{command.payload.query}}" }
+            ]},
+            { "case": "notify", "actions": [
+              { "type": "ShowNotification", "title": "{{command.payload.title}}", "body": "{{command.payload.body}}" }
+            ]}
+          ]
+        },
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/result" },
+        { "type": "GetContentsOfURL",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": { "extId": "{{AURORA_EXT_ID}}", "commandId": "{{command.id}}", "result": { "ok": true } }
+        },
+        { "type": "EndIf" },
+        { "type": "RunShortcut",        "name": "Aurora — Poll Commands", "comment": "Loop forever" }
+      ]
+    },
+    {
+      "name": "Aurora — Get Last Response",
+      "description": "Recupere le dernier evt entrant et l affiche.",
+      "actions": [
+        { "type": "URL",                "value": "{{AURORA_BRIDGE_URL}}/api/cowork/mobile/events" },
+        { "type": "GetContentsOfURL",   "method": "GET" },
+        { "type": "GetDictionaryValue", "key": "events" },
+        { "type": "GetItemFromList",    "index": "last" },
+        { "type": "ShowResult" }
+      ]
+    }
+  ],
+
+  "import_instructions": [
+    "Sur iPhone, copie ce JSON.",
+    "Ouvre l app Raccourcis.",
+    "Cree manuellement chaque raccourci en suivant la liste 'actions'.",
+    "Definit les 2 variables AURORA_BRIDGE_URL et AURORA_EXT_ID dans 'Variables' au debut de chaque raccourci.",
+    "Pour le partage Safari → Aurora : ouvre 'Aurora — Send Selection' → Settings (icone) → 'Show in Share Sheet'.",
+    "Pour Siri vocal : 'Aurora — Voice Command' → Add to Siri → enregistre une phrase declenchante."
+  ]
+}

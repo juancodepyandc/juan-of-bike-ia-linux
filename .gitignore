@@ -1,0 +1,188 @@
+# ---------------------------------------------------------------------------
+# juan of bike IA — AuroraIA-v2  .gitignore
+# ---------------------------------------------------------------------------
+
+# Claude Code session-only artifacts
+.claude/scheduled_tasks.lock
+.claude/scheduled_tasks.json
+.claude/bridge.out.log
+.claude/agent-tracker/dashboard.html
+.claude/agent-tracker/state.json
+.claude/agent-tracker/state.json.tmp
+.claude/3d-previews/
+.claude/test-outputs/
+.claude/skills/
+.tmp/
+
+# Node / JS
+node_modules/
+application/node_modules/
+application/dist/
+application/dist-ssr/
+application/.vite/
+application/src-tauri/target/
+application/src-tauri/gen/
+application/.eslintcache
+
+# Python virtualenvs + cache
+application/.venv/
+application/python-services/.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.pytest_cache/
+
+# Local/IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local config + secrets (never commit)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+application/.aurora_ext_keys.json
+
+# Local data the user has on their PC but shouldn't publish
+application/public/avatars/*
+!application/public/avatars/.gitkeep
+application/public/generated/
+application/public/_pbr_test/
+application/python-services/aurora_hunyuan/application/output/
+application/python-services/goldorak_3_4_highres.png
+application/saves/
+application/output/
+application/temp/
+application/uploads/
+application/logs/
+# Voice library — user-recorded voices, may contain copyrighted samples
+application/voices/
+application/*.log
+application/*.log.*
+application/*.err
+application/*.out
+*.log
+*.out.log
+*.err.log
+*.stdout
+*.stderr
+application/comfyui_stdout*.log
+application/comfyui_stderr*.log
+application/*.stderr
+application/*.stdout
+application/bridge_test.log
+tunnel_url.txt
+3D.txt
+10s
+
+# DreamGaussian vendored install (models + weights)
+application/models/dreamgaussian/
+application/models/
+
+# Large binary model outputs
+*.glb
+*.fbx
+*.usdz
+*.mp4
+*.webm
+*.mov
+*.ogg
+*.wav
+*.mp3
+*.m4a
+
+# HUGE — do NOT commit the ComfyUI install + model weights
+modele/
+*.safetensors
+*.ckpt
+*.pth
+*.bin
+*.onnx
+*.gguf
+
+# SadTalker vendored install (2.5 GB of weights + checkpoints, lives outside git)
+application/python-services/SadTalker/
+
+# Hunyuan3D vendored install (has heavyweight weights too)
+application/python-services/Hunyuan3D/
+application/python-services/hunyuan3d*/
+application/python-services/weights/
+application/python-services/checkpoints/
+
+# Crawl4AI / Playwright binaries if vendored
+application/python-services/.crawl4ai/
+application/python-services/.playwright/
+
+# Ignore any downloaded browser/python redistributables
+*.msi
+*.dmg
+*.exe
+*.pkg
+*.iso
+MIGRATION_USB_LINUX_IA/BOOT_USB/tools/
+
+# Tauri build artifacts
+application/src-tauri/target/
+application/src-tauri/WixTools/
+application/src-tauri/Rust.*
+
+# Build/tmp
+dist/
+build/
+.cache/
+.parcel-cache/
+
+# Tests coverage
+coverage/
+*.lcov
+_tests/screenshots/
+_tests/tunnel_url.txt
+
+# Scratch / design drops
+_design/ds2/mobile-final/*.html
+*.bak
+*.orig
+
+# OS junk
+desktop.ini
+ehthumbs.db
+
+# Working directories for generated assets
+application/public/comfyui/output/
+application/public/comfyui/temp/
+
+# v82k3 : éviter contamination via `git add -A`
+# Claude Code worktrees (embedded git repos pour les sub-agents)
+.claude/worktrees/
+# MuseTalk vendored install (poids HF, plusieurs GB)
+application/python-services/MuseTalk/
+# Sphinx CMU acoustic-model bundle (~500 MB, vendoré)
+application/bin/res/sphinx/
+# Aurora-Connect packaged Chrome extension (build artifact, regénéré)
+extension_chrome.crx
+*.crx
+# Bridge runtime state (caches local, regénéré au boot)
+application/bridge_state/
+application/.aurora_ext_seen.json
+application/.aurora-linux-ready
+# _design unzip working dirs (zips déjà commités sous _design/)
+_design_unzip/
+# Mobile playground experiment (live-reload artifacts)
+application/mobile/
+application/_blender/
+application/_cuda_home/
+application/dist-cowork-check/
+application/.claude/
+application/.cowork/
+application/src-tauri/2
+output/
+Vite
+_dev/app_screenshot.png

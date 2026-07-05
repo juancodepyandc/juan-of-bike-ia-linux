@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>Aurora V3 — Ricochet</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Cormorant+Garamond:ital,wght@0,300;0,500;1,300&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Space+Grotesk:wght@300;400;500;700&family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&family=Caveat:wght@400;700&family=Permanent+Marker&display=swap" rel="stylesheet"/>
+<style>
+  html, body, #root { height: 100%; margin: 0; background: #0e0e0e; }
+  * { box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="lib/design-canvas.jsx"></script>
+<script type="text/babel" src="v3/screens-1.jsx"></script>
+<script type="text/babel" src="v3/screens-2.jsx"></script>
+<script type="text/babel" src="v3/screens-3.jsx"></script>
+<script type="text/babel" src="v3/screens-4.jsx"></script>
+<script type="text/babel" src="v3/screens-5.jsx"></script>
+
+<script type="text/babel">
+function App() {
+  return (
+    <DesignCanvas
+      title="Aurora V3 — Ricochet"
+      subtitle="11 esthétiques radicales · une par module · zéro shell partagé · le ricochet est le concept"
+    >
+      <DCSection id="manifeste" title="Le manifeste" subtitle="Chaque module porte sa propre charte. La cohérence vient du saut, pas de la grille.">
+        <DCArtboard id="cowork" label="I · Cowork — radar de mission" width={1440} height={900}>
+          <CoworkV3/>
+        </DCArtboard>
+        <DCArtboard id="chat" label="II · Conversation — papier dactylographique" width={1440} height={900}>
+          <ChatV3/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="voix-image" title="Voix & Image" subtitle="Studio analogique 1972 · table à dessin Memphis 1985">
+        <DCArtboard id="voice" label="III · Voice — vinyle de studio" width={1440} height={900}>
+          <VoiceV3/>
+        </DCArtboard>
+        <DCArtboard id="image" label="IV · Image — drafting table 1985" width={1440} height={900}>
+          <ImageV3/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="cinema-volume" title="Cinéma & Volume" subtitle="Salle de projection cinémathèque · blueprint d'ingénieur cyan">
+        <DCArtboard id="video" label="V · Vidéo — cinémathèque" width={1440} height={900}>
+          <VideoV3/>
+        </DCArtboard>
+        <DCArtboard id="three" label="VI · 3D — blueprint cyan" width={1440} height={900}>
+          <ThreeV3/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="papier" title="Papier & Tableau noir" subtitle="Carnet à grain · craie blanche sur ardoise">
+        <DCArtboard id="draw" label="VII · L'Atelier — sketchbook beige" width={1440} height={900}>
+          <DrawV3/>
+        </DCArtboard>
+        <DCArtboard id="academy" label="VIII · Académie — craie & tableau" width={1440} height={900}>
+          <AcademyV3/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="terminaux" title="Terminaux" subtitle="CRT phosphore ambre Y2K · war room rouge tactique">
+        <DCArtboard id="code" label="IX · Code — CRT ambre" width={1440} height={900}>
+          <CodeV3/>
+        </DCArtboard>
+        <DCArtboard id="cyber" label="X · Cyber — war room" width={1440} height={900}>
+          <CyberV3/>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="poche" title="En poche" subtitle="L'application mobile : un échantillon de chaque univers, empilé.">
+        <DCArtboard id="mobile" label="XI · Mobile — anthology" width={380} height={800}>
+          <MobileV3/>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

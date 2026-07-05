@@ -1,0 +1,237 @@
+:root {
+    --primary-color: #00d2ff;
+    --primary-glow: rgba(0, 210, 255, 0.4);
+    --secondary-color: #3a7bd5;
+    --bg-dark: rgba(15, 20, 25, 0.75);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --text-main: #ffffff;
+    --text-muted: #a0aab5;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    background-color: #050505;
+    overflow: hidden;
+    color: var(--text-main);
+}
+
+#canvas-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 1;
+}
+
+/* UI Overlay */
+.ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    padding: 2rem;
+}
+
+.glass-panel {
+    background: var(--bg-dark);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    pointer-events: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass-panel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+header {
+    align-self: flex-start;
+    margin-bottom: 2rem;
+}
+
+header h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--text-main) 0%, #888 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+header h1 span {
+    color: var(--primary-color);
+    background: none;
+    -webkit-text-fill-color: var(--primary-color);
+}
+
+header .subtitle {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-top: 0.2rem;
+}
+
+/* Controls Panel */
+.controls-panel {
+    position: absolute;
+    bottom: 2rem;
+    left: 2rem;
+    width: 320px;
+}
+
+.controls-panel h2, .model-loader h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.mode-toggles {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* Buttons */
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    color: var(--text-main);
+    padding: 0.8rem 1.2rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+}
+
+.btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.btn.active {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #000;
+    box-shadow: 0 0 15px var(--primary-glow);
+}
+
+.btn.primary {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border: none;
+    width: 100%;
+    margin-bottom: 1rem;
+    color: #000;
+}
+
+.btn.primary:hover {
+    box-shadow: 0 0 20px var(--primary-glow);
+    transform: scale(1.02);
+}
+
+.btn.outline {
+    width: 100%;
+}
+
+.instructions {
+    background: rgba(0, 0, 0, 0.3);
+    padding: 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.instructions p {
+    margin-bottom: 0.5rem;
+    color: var(--text-main);
+}
+
+.instructions ul {
+    list-style: none;
+}
+
+.instructions li {
+    margin-bottom: 0.3rem;
+}
+
+.instructions li strong {
+    color: var(--primary-color);
+}
+
+/* Model Loader */
+.model-loader {
+    position: absolute;
+    top: 2rem;
+    right: 2rem;
+    width: 320px;
+}
+
+input[type="file"] {
+    display: none;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Loading Spinner */
+#loading-spinner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    color: var(--primary-color);
+}
+
+.spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0, 210, 255, 0.3);
+    border-top: 3px solid var(--primary-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Crosshair for FPS */
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 24px;
+    font-weight: 300;
+    z-index: 5;
+    pointer-events: none;
+    text-shadow: 0 0 4px rgba(0,0,0,0.5);
+}

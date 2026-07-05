@@ -1,0 +1,12 @@
+{
+  "_comment": "Project-level MCP servers (committed). Claude Code spawns these on stdio. The aurora-3d-audit server provides engineer-grade inspection of generated 3D files (texture/material/UV/anatomy/motion/squash/components heuristics).",
+  "mcpServers": {
+    "aurora-3d-audit": {
+      "command": "python",
+      "args": ["application/python-services/aurora_3d_mcp.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

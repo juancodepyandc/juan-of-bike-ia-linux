@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "style": "original-premium-cartoon-sticker",
+  "source": "local",
+  "agents": {
+    "manager": "avatars/manager.svg",
+    "lyra": "avatars/lyra.svg",
+    "iris": "avatars/iris.svg",
+    "cinema": "avatars/cinema.svg",
+    "glyph": "avatars/glyph.svg",
+    "sumi": "avatars/sumi.svg",
+    "atlas": "avatars/atlas.svg",
+    "sage": "avatars/sage.svg",
+    "echo": "avatars/echo.svg",
+    "phantom": "avatars/phantom.svg"
+  },
+  "props": ["hammer", "smoke", "blueprint", "billboard", "microphone", "keyboard", "camera", "paintbrush"]
+}

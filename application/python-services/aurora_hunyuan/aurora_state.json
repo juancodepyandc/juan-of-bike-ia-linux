@@ -1,0 +1,392 @@
+{
+  "completed": [
+    "goldorak_marche",
+    "natsu_v2",
+    "goldorak_v5",
+    "goldorak_v6",
+    "goldorak_v7"
+  ],
+  "failed": [
+    "natsu_test_v2",
+    "goldorak_safe_v3",
+    "natsu_auto",
+    "natsu_v3"
+  ],
+  "attempts": {
+    "goldorak_marche": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak, giant robot, walking motion, white background, isolated",
+        "score": 0.667,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 886.7
+      }
+    ],
+    "natsu_test_v2": [
+      {
+        "attempt": 1,
+        "prompt": "Natsu from Fairy Tail anime character running, isolated on plain neutral backdrop",
+        "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu from Fairy Tail anime character running, isolated on plain neutral backdrop",
+        "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+      },
+      {
+        "attempt": 3,
+        "prompt": "Natsu from Fairy Tail anime character running, isolated on plain neutral backdrop",
+        "error": "CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.\nCUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.\nFor debugging consider passing CUDA_LAUNCH_BLOCKING=1\nCompile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.\n"
+      }
+    ],
+    "goldorak_test_v2": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop",
+        "score": 0.437,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 700.9
+      },
+      {
+        "attempt": 2,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop, single connected subject, no floating debris, single coherent subject, fully connected",
+        "score": 0.464,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 287.4
+      }
+    ],
+    "goldorak_safe": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop",
+        "score": 0.437,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 576.5
+      },
+      {
+        "attempt": 2,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop, single connected subject, no floating debris, single coherent subject, fully connected",
+        "error": "CUDA out of memory. Tried to allocate 1024.00 MiB. GPU 0 has a total capacity of 15.92 GiB of which 0 bytes is free. Of the allocated memory 29.24 GiB is allocated by PyTorch, and 585.39 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)"
+      }
+    ],
+    "goldorak_safe_v3": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop",
+        "error": "name 'os' is not defined"
+      },
+      {
+        "attempt": 2,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop",
+        "error": "name 'os' is not defined"
+      },
+      {
+        "attempt": 3,
+        "prompt": "Goldorak walking, character, isolated on plain neutral backdrop",
+        "error": "name 'os' is not defined"
+      }
+    ],
+    "goldorak_auto_v3": [
+      {
+        "attempt": 1,
+        "score": 0.0,
+        "passed": false,
+        "critique": "Parsing error. Raw: "
+      }
+    ],
+    "natsu_auto": [
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, isolated on plain neutral backdrop",
+        "error": "'Hunyuan3DPaintPipeline' object has no attribute 'to'"
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, isolated on plain neutral backdrop",
+        "error": "'Hunyuan3DPaintPipeline' object has no attribute 'to'"
+      },
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, isolated on plain neutral backdrop",
+        "score": 0.436,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5433.2
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, isolated on plain neutral backdrop, single connected subject, no floating debris, single coherent subject, fully connected",
+        "score": 0.436,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5589.2
+      },
+      {
+        "attempt": 3,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, isolated on plain neutral backdrop, single connected subject, no floating debris, single coherent subject, fully connected, single connected subject, no floating debris, single coherent subject, fully connected",
+        "score": 0.436,
+        "flags": [
+          "missing_hero_render",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5657.6
+      }
+    ],
+    "natsu_v2": [
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, photorealistic, exact visual match, isolated on plain neutral backdrop",
+        "score": 0.639,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5911.8
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, photorealistic, exact visual match, isolated on plain neutral backdrop, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.664,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 5911.7
+      },
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, photorealistic, exact visual match, isolated on plain neutral backdrop",
+        "score": 0.664,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 256.3
+      },
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, photorealistic, exact visual match, isolated on plain neutral backdrop",
+        "score": 0.639,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5836.9
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, photorealistic, exact visual match, isolated on plain neutral backdrop, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.664,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 5875.9
+      },
+      {
+        "attempt": 1,
+        "score": 0.2,
+        "passed": false,
+        "critique": "Image 2 fails critical facial accuracy checks. The reference (Image 1) shows Natsu Dragneel with white eyes featuring black pupils and a visible toothy grin, while Image 2 depicts purple eyes and a closed mouth—deviating from the character's canonical design. Additionally, the scarf pattern differs (white/gray stripes vs. pink/gray stripes), and the overall facial features lack alignment with the reference. Rule 1 is violated due to distorted facial elements (incorrect eye color, missing grin details) which constitute a major visual deviation."
+      },
+      {
+        "attempt": 2,
+        "score": 0.2,
+        "passed": false,
+        "critique": "Critical facial errors: Image 2's headshot shows purple eyes (reference has white/blue eyes), which is a fundamental mismatch of character design. This constitutes a missing/incorrect feature per Rule 1. Additionally, the full-body pose in Image 2 alters key elements like clothing length and scarf placement, but the primary rejection trigger is the facial color error. No black artifacts or blurriness are present, but the face's core features (eye color) are wrong, triggering instant rejection under Rule 1."
+      },
+      {
+        "attempt": 3,
+        "score": 0.3,
+        "passed": false,
+        "critique": "Image 2 contains significant visual inaccuracies compared to Image 1 (reference). The left character in Image 2 has purple eyes instead of Natsu Dragneel's correct blue/white eye color, which is a critical facial error per Rule 1. Additionally, the mouth shape and overall facial expression do not match the reference. While hair style and some clothing elements are partially similar, the distorted facial features (incorrect eye color) violate the strict QA criteria for visual accuracy. The right character in Image 2 also exhibits mismatched facial details, further compromising visual fidelity. Rule 1 mandates rejection for face distortion/missing features, which is violated here."
+      },
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, , exact visual match, isolated on plain neutral backdrop, character traits: anime style, pink spiky hair, dark blue sleeveless top with gold trim, white pants, gold sash, checkered scarf, black sandals, muscular build",
+        "score": 0.566,
+        "flags": [
+          "low_contrast",
+          "subject_too_small_or_missing",
+          "artifacts_floaters",
+          "mesh_disconnected",
+          "vlm_evaluated"
+        ],
+        "passed": false,
+        "elapsed_s": 5862.5
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, pink spiky hair, dark blue sleeveless top with gold trim, white pants, gold sash, checkered scarf, black sandals, muscular build, strong contrast, deep shadows, bright highlights, close-up, fills frame, centered, isolated on plain background, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.644,
+        "flags": [
+          "underexposed",
+          "subject_too_small_or_missing",
+          "artifacts_floaters",
+          "mesh_disconnected",
+          "vlm_evaluated"
+        ],
+        "passed": false,
+        "elapsed_s": 5843.0
+      },
+      {
+        "attempt": 3,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, pink spiky hair, dark blue sleeveless top with gold trim, white pants, gold sash, checkered scarf, black sandals, muscular build, strong contrast, deep shadows, bright highlights, close-up, fills frame, centered, isolated on plain background, single connected subject, no loose debris, single coherent subject, fully connected, well-lit, bright key light, no harsh shadows, close-up, fills frame, centered, isolated on plain background, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.669,
+        "flags": [
+          "underexposed",
+          "subject_too_small_or_missing",
+          "artifacts_floaters",
+          "mesh_disconnected",
+          "vlm_evaluated"
+        ],
+        "passed": true,
+        "elapsed_s": 5876.8
+      }
+    ],
+    "natsu_v3": [
+      {
+        "attempt": 1,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, spiky pink hair, bright blue eyes, orange jacket over black shirt, dragon scale armor on shoulders and arms, muscular build, determined expression",
+        "score": 0.59,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 6177.8
+      },
+      {
+        "attempt": 2,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, spiky pink hair, bright blue eyes, orange jacket over black shirt, dragon scale armor on shoulders and arms, muscular build, determined expression, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.63,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 6507.6
+      },
+      {
+        "attempt": 3,
+        "prompt": "Natsu Dragneel running, Fairy Tail character, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, spiky pink hair, bright blue eyes, orange jacket over black shirt, dragon scale armor on shoulders and arms, muscular build, determined expression, single connected subject, no loose debris, single coherent subject, fully connected, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.623,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 5839.4
+      }
+    ],
+    "goldorak_v5": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak Grendizer mecha robot standing, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, red and gold armor, silver helmet with visor, winged shoulder pads, circular chest emblem, antenna, metallic accents, no hair",
+        "score": 0.579,
+        "flags": [
+          "low_contrast",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 6015.5
+      },
+      {
+        "attempt": 2,
+        "prompt": "Goldorak Grendizer mecha robot standing, highly detailed, exact visual match, isolated on plain neutral backdrop, character traits: anime style, red and gold armor, silver helmet with visor, winged shoulder pads, circular chest emblem, antenna, metallic accents, no hair, strong contrast, deep shadows, bright highlights, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.684,
+        "flags": [
+          "underexposed",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 6057.6
+      }
+    ],
+    "goldorak_v6": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak Grendizer mecha robot standing, highly detailed, exact visual match, isolated on plain neutral backdrop",
+        "score": 0.662,
+        "flags": [
+          "vlm_evaluated"
+        ],
+        "passed": true,
+        "elapsed_s": 5834.7
+      }
+    ],
+    "goldorak_v7": [
+      {
+        "attempt": 1,
+        "prompt": "Goldorak Grendizer mecha robot standing, character traits: anime style, red and gold armor, silver helmet with visor, winged shoulder guards, yellow accents on boots, antenna, angular chest plate, no hair",
+        "score": 0.601,
+        "flags": [
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 915.0
+      },
+      {
+        "attempt": 1,
+        "prompt": "Goldorak Grendizer mecha robot standing, character traits: anime style, red torso with gold accents, blue chest plate, helmet with visor and antenna, shoulder armor, yellow eyes, mechanical limbs, no hair",
+        "score": 0.597,
+        "flags": [
+          "low_contrast",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": false,
+        "elapsed_s": 822.0
+      },
+      {
+        "attempt": 2,
+        "prompt": "Goldorak Grendizer mecha robot standing, character traits: anime style, red torso with gold accents, blue chest plate, helmet with visor and antenna, shoulder armor, yellow eyes, mechanical limbs, no hair, strong contrast, deep shadows, bright highlights, single connected subject, no loose debris, single coherent subject, fully connected",
+        "score": 0.679,
+        "flags": [
+          "underexposed",
+          "artifacts_floaters",
+          "mesh_disconnected"
+        ],
+        "passed": true,
+        "elapsed_s": 627.4
+      }
+    ]
+  }
+}

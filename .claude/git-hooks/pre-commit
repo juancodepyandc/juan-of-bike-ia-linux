@@ -1,0 +1,128 @@
+#!/usr/bin/env python
+"""Aurora pre-commit hook — gates commits that touch the agent system on
+the lint + unit test pass. Skips when no agent/hook files are staged so
+unrelated commits aren't slowed down.
+
+Enable once per clone:
+    git config core.hooksPath .claude/git-hooks
+
+Disable:
+    git config --unset core.hooksPath
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GUARDED_PREFIXES = (
+    ".claude/agents/",
+    ".claude/agent-tracker/",
+    ".claude/hooks/",
+    ".claude/git-hooks/",
+    "application/scripts/route_test.py",
+    "application/scripts/test_route_test.py",
+    "application/src/services/threeDIntent.ts",
+    "application/src/services/meshRescue.ts",
+    "application/src/__tests__/meshRescue.test.ts",
+)
+# Files whose change should also run the TS test suite.
+TS_TEST_TRIGGERS = (
+    "application/src/services/meshRescue.ts",
+    "application/src/__tests__/meshRescue.test.ts",
+)
+
+
+def staged_files() -> list[str]:
+    """Return paths of files staged for commit (added/modified, not deleted)."""
+    proc = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        capture_output=True, timeout=10, check=False,
+    )
+    out = (proc.stdout or b"").decode("utf-8", errors="replace")
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def affects_agent_system(files: list[str]) -> bool:
+    return any(f.startswith(prefix) for f in files for prefix in GUARDED_PREFIXES)
+
+
+def run_check(name: str, cmd: list[str]) -> bool:
+    sys.stdout.write(f"  {name} ... ")
+    sys.stdout.flush()
+    proc = subprocess.run(
+        cmd, cwd=str(REPO_ROOT),
+        capture_output=True, timeout=30, check=False,
+    )
+    if proc.returncode == 0:
+        sys.stdout.write("ok\n")
+        return True
+    sys.stdout.write("FAIL\n")
+    out = (proc.stdout or b"").decode("utf-8", errors="replace")
+    err = (proc.stderr or b"").decode("utf-8", errors="replace")
+    if out.strip():
+        sys.stdout.write(f"\n--- {name} stdout ---\n{out}\n")
+    if err.strip():
+        sys.stdout.write(f"\n--- {name} stderr ---\n{err}\n")
+    return False
+
+
+def main() -> int:
+    files = staged_files()
+    if not affects_agent_system(files):
+        return 0
+
+    sys.stdout.write("[aurora pre-commit] agent system files staged — running checks:\n")
+
+    checks = [
+        ("validate_agents", [sys.executable, ".claude/hooks/validate_agents.py"]),
+        ("test_hooks",      [sys.executable, ".claude/hooks/test_hooks.py"]),
+    ]
+    # Only run route_test_test if its module or threeDIntent is touched.
+    route_files = (
+        "application/scripts/route_test.py",
+        "application/scripts/test_route_test.py",
+        "application/src/services/threeDIntent.ts",
+    )
+    if any(f in route_files for f in files):
+        checks.append(
+            ("test_route_test", [sys.executable, "application/scripts/test_route_test.py"]),
+        )
+
+    # Run the TS test suite when meshRescue.ts or its test file is touched.
+    # Uses Node's built-in --test runner (Node 22+) with --experimental-strip-types,
+    # matching the project's existing convention (see application/package.json).
+    if any(f in TS_TEST_TRIGGERS for f in files):
+        checks.append(
+            ("test_meshRescue_ts", [
+                "node", "--experimental-strip-types", "--test",
+                "application/src/__tests__/meshRescue.test.ts",
+            ]),
+        )
+
+    all_green = True
+    for name, cmd in checks:
+        if not run_check(name, cmd):
+            all_green = False
+
+    if not all_green:
+        sys.stdout.write(
+            "\n[aurora pre-commit] BLOCKING commit — fix the failures above, "
+            "or `git commit --no-verify` to skip (not recommended).\n"
+        )
+        return 1
+    sys.stdout.write("[aurora pre-commit] all checks green\n")
+    return 0
+
+
+if __name__ == "__main__":
+    # Reconfigure stdout to UTF-8 (Windows console default cp1252 chokes on
+    # Unicode glyphs). errors='replace' as a final safety net.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+    sys.exit(main())

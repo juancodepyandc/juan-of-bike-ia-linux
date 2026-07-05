@@ -1,0 +1,1072 @@
+{
+  "asset": {
+    "type": "application/si-dpo-3d.document+json",
+    "version": "1.0",
+    "generator": "Voyager",
+    "copyright": "(c) Smithsonian Institution. All rights reserved."
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "units": "cm",
+      "name": "Scene",
+      "nodes": [
+        0,
+        1,
+        6
+      ],
+      "meta": 1,
+      "setup": 0
+    }
+  ],
+  "nodes": [
+    {
+      "translation": [
+        12.2000366,
+        1.5464582,
+        30.836998
+      ],
+      "rotation": [
+        -0.022493,
+        0.1868798,
+        0.00428,
+        0.9821159
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "name": "Camera",
+      "camera": 0
+    },
+    {
+      "name": "Lights",
+      "children": [
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "translation": [
+        0,
+        0,
+        2
+      ],
+      "rotation": [
+        0.4829741,
+        -0.1070728,
+        0.1880998,
+        0.8484633
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "name": "Key",
+      "light": 0
+    },
+    {
+      "rotation": [
+        0.3546969,
+        0.163893,
+        -0.3861077,
+        0.8356136
+      ],
+      "name": "Fill #1",
+      "light": 1
+    },
+    {
+      "translation": [
+        0,
+        0,
+        1
+      ],
+      "rotation": [
+        0.9374013,
+        -0.3018693,
+        0.0532277,
+        0.1652891
+      ],
+      "name": "Fill #2",
+      "light": 2
+    },
+    {
+      "translation": [
+        1,
+        0,
+        -1
+      ],
+      "rotation": [
+        0.373256,
+        0.6426073,
+        -0.5786063,
+        0.3360813
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "name": "Rim",
+      "light": 3
+    },
+    {
+      "name": "Part",
+      "model": 0,
+      "meta": 0
+    }
+  ],
+  "cameras": [
+    {
+      "type": "perspective",
+      "perspective": {
+        "yfov": 52,
+        "znear": 0.1,
+        "zfar": 100000
+      }
+    }
+  ],
+  "lights": [
+    {
+      "color": [
+        1,
+        0.95,
+        0.9
+      ],
+      "intensity": 1,
+      "type": "directional",
+      "shadowEnabled": true
+    },
+    {
+      "color": [
+        0.9,
+        0.95,
+        1
+      ],
+      "intensity": 0.7,
+      "type": "directional",
+      "shadowEnabled": true
+    },
+    {
+      "color": [
+        0.8,
+        0.85,
+        1
+      ],
+      "intensity": 0.5,
+      "type": "directional"
+    },
+    {
+      "color": [
+        0.85,
+        0.9078313,
+        1
+      ],
+      "intensity": 0.6,
+      "type": "directional"
+    }
+  ],
+  "models": [
+    {
+      "units": "mm",
+      "translation": [
+        0.64456,
+        -0.3227793,
+        -25.6672887
+      ],
+      "rotation": [
+        0.6269429,
+        0.0027234,
+        0.0209157,
+        0.7787796
+      ],
+      "boundingBox": {
+        "min": [
+          -101.4320374,
+          -48.1387939,
+          -118.377533
+        ],
+        "max": [
+          101.2958374,
+          98.447998,
+          128.6868896
+        ]
+      },
+      "derivatives": [
+        {
+          "usage": "Web3D",
+          "quality": "Thumb",
+          "assets": [
+            {
+              "uri": "p0-Part-100k-512.glb",
+              "type": "Model",
+              "byteSize": 598504,
+              "numFaces": 99944
+            }
+          ]
+        },
+        {
+          "usage": "Web3D",
+          "quality": "Low",
+          "assets": [
+            {
+              "uri": "p0-Part-100k-1024.glb",
+              "type": "Model",
+              "byteSize": 851100,
+              "numFaces": 99944
+            }
+          ]
+        },
+        {
+          "usage": "Web3D",
+          "quality": "Medium",
+          "assets": [
+            {
+              "uri": "p0-Part-100k-2048.glb",
+              "type": "Model",
+              "byteSize": 1660984,
+              "numFaces": 99944
+            }
+          ]
+        },
+        {
+          "usage": "Web3D",
+          "quality": "High",
+          "assets": [
+            {
+              "uri": "p0-Part-100k-4096.glb",
+              "type": "Model",
+              "byteSize": 4238844,
+              "numFaces": 99944
+            }
+          ]
+        },
+        {
+          "usage": "Web3D",
+          "quality": "AR",
+          "assets": [
+            {
+              "uri": "p0-Part-100k-2048.glb",
+              "type": "Model",
+              "byteSize": 1660984,
+              "numFaces": 99944,
+              "imageSize": 2048
+            }
+          ]
+        },
+        {
+          "usage": "Image2D",
+          "quality": "Thumb",
+          "assets": [
+            {
+              "uri": "scene-image-thumb.jpg",
+              "type": "Image",
+              "mimeType": "image/jpeg",
+              "byteSize": 11850,
+              "imageSize": 320
+            }
+          ]
+        },
+        {
+          "usage": "Image2D",
+          "quality": "Low",
+          "assets": [
+            {
+              "uri": "scene-image-low.jpg",
+              "type": "Image",
+              "mimeType": "image/jpeg",
+              "byteSize": 35784,
+              "imageSize": 640
+            }
+          ]
+        },
+        {
+          "usage": "Image2D",
+          "quality": "Medium",
+          "assets": [
+            {
+              "uri": "scene-image-medium.jpg",
+              "type": "Image",
+              "mimeType": "image/jpeg",
+              "byteSize": 117444,
+              "imageSize": 1280
+            }
+          ]
+        },
+        {
+          "usage": "Image2D",
+          "quality": "High",
+          "assets": [
+            {
+              "uri": "scene-image-high.jpg",
+              "type": "Image",
+              "mimeType": "image/jpeg",
+              "byteSize": 412770,
+              "imageSize": 2560
+            }
+          ]
+        },
+        {
+          "usage": "App3D",
+          "quality": "AR",
+          "assets": [
+            {
+              "uri": "npg_71_24_mesh-100k-web_std_draco.glb",
+              "type": "Model",
+              "byteSize": 1997616,
+              "numFaces": 100000,
+              "imageSize": 2048
+            }
+          ]
+        },
+        {
+          "usage": "iOSApp3D",
+          "quality": "AR",
+          "assets": [
+            {
+              "uri": "npg_71_24_mesh-100k-web.usdz",
+              "type": "Model",
+              "byteSize": 11685128,
+              "numFaces": 100000,
+              "imageSize": 2048
+            }
+          ]
+        }
+      ],
+      "annotations": [
+        {
+          "id": "nHiCDzDmz8wu",
+          "title": "The Man behind the Mask",
+          "lead": "Lincoln’s life mask offers a window into his thoughts as he begins his presidency. Given what you know about Lincoln, what could he be thinking about as this mask was being created?",
+          "marker": "1",
+          "articleId": "blHTINSA1xvZ",
+          "style": "Circle",
+          "position": [
+            46.1908858,
+            80.6948155,
+            16.6842826
+          ],
+          "direction": [
+            0.5695276,
+            0.5505788,
+            0.6103289
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "1ihNqUFUtC3k",
+          "title": "Process",
+          "lead": "“There is the animal himself.” This was Lincoln’s comment upon seeing the bust, which was made using the life mask. The process of creating a mask could be an uncomfortable one. It took more than an hour before this mold was ready to be removed from Lincoln’s face, taking a few hairs with it.",
+          "marker": "2",
+          "articleId": "KQ9nPcWFxeJU",
+          "style": "Circle",
+          "position": [
+            46.0643207,
+            -42.4701632,
+            21.5957317
+          ],
+          "direction": [
+            0.6237648,
+            -0.516747,
+            0.5864214
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "vNcpN1u1KL09",
+          "title": "Age",
+          "lead": "Do you think this is a representation of Lincoln at the beginning or end of the Civil War? Why do you think that?",
+          "marker": "3",
+          "style": "Circle",
+          "position": [
+            51.6002237,
+            -30.6084495,
+            26.2779741
+          ],
+          "direction": [
+            0.5570706,
+            -0.5364046,
+            0.6339893
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "EYKtirJybSGN",
+          "title": "Purpose",
+          "lead": "Abraham Lincoln was the first president to use the new art of photography for political purposes. Photographs, paintings, and sculptures of him were created both before and during his presidency. Look closely at the mask. What qualities does the mask have that a photograph or a painting does not?",
+          "marker": "4",
+          "articleId": "KypHQlL3cYo3",
+          "style": "Circle",
+          "position": [
+            -79.1729977,
+            28.349576,
+            -40.3499608
+          ],
+          "direction": [
+            -0.966084,
+            -0.2104233,
+            0.1496785
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "XP2jOz6rDAqu",
+          "title": "The Artist",
+          "lead": "This mask was the first life portrait of Lincoln in any medium except photography. The artist, Leonard Wells Volk, continued to use this mask as the model for various sculptures of Lincoln for thirty-two years after the initial sitting in 1860.",
+          "marker": "5",
+          "articleId": "q6H6PYg4nbmL",
+          "style": "Circle",
+          "position": [
+            -61.4895673,
+            -14.4359326,
+            21.718315
+          ],
+          "direction": [
+            -0.8329221,
+            0.0188675,
+            0.5530685
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "i0xA6urnnyYU",
+          "title": "The Civil War",
+          "lead": "As Lincoln looks out, frozen in time with every line and wrinkle on his face recorded, we cannot help but wonder if he knew of the enormity of the tumultuous task he would soon face. When you look at Lincoln’s life mask, what clues do you see that speak to his intensity of purpose and strong belief in keeping the union united?",
+          "marker": "6",
+          "articleId": "dch924QLwCen",
+          "style": "Circle",
+          "position": [
+            -61.6890112,
+            22.9942154,
+            14.0996267
+          ],
+          "direction": [
+            -0.9758141,
+            0.1387638,
+            0.1689128
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        },
+        {
+          "id": "PUE2LwrsS8TG",
+          "title": "Lincoln's Profile",
+          "lead": "Examine the mask by comparing the left and right profiles. What similarities and differences do you see?",
+          "marker": "7",
+          "style": "Circle",
+          "position": [
+            -1.4683868,
+            57.8776121,
+            47.1874209
+          ],
+          "direction": [
+            -0.0016159,
+            0.2100886,
+            0.977681
+          ],
+          "scale": 10,
+          "color": [
+            0,
+            0.61,
+            0.87
+          ]
+        }
+      ]
+    }
+  ],
+  "metas": [
+    {
+      "images": [
+        {
+          "uri": "scene-image-thumb.jpg",
+          "quality": "Thumb",
+          "byteSize": 11850,
+          "width": 320,
+          "height": 320
+        },
+        {
+          "uri": "scene-image-low.jpg",
+          "quality": "Low",
+          "byteSize": 35784,
+          "width": 640,
+          "height": 640
+        },
+        {
+          "uri": "scene-image-medium.jpg",
+          "quality": "Medium",
+          "byteSize": 117444,
+          "width": 1280,
+          "height": 1280
+        },
+        {
+          "uri": "scene-image-high.jpg",
+          "quality": "High",
+          "byteSize": 412770,
+          "width": 2560,
+          "height": 2560
+        }
+      ],
+      "articles": [
+        {
+          "id": "blHTINSA1xvZ",
+          "uri": "articles/article-00.html",
+          "title": "A Window into Lincoln's Thoughts"
+        },
+        {
+          "id": "KQ9nPcWFxeJU",
+          "uri": "articles/article-01.html",
+          "title": "Process"
+        },
+        {
+          "id": "KypHQlL3cYo3",
+          "uri": "articles/article-02.html",
+          "title": "Photography, Sculpture, Painting"
+        },
+        {
+          "id": "q6H6PYg4nbmL",
+          "uri": "articles/article-03.html",
+          "title": "Artist"
+        },
+        {
+          "id": "dch924QLwCen",
+          "uri": "articles/article-04.html",
+          "title": "The Task at Hand"
+        }
+      ]
+    },
+    {
+      "collection": {
+        "edanRecordId": "edanmdm:npg_NPG.71.24",
+        "edanEntry": "{\"id\":\"edanmdm-npg_NPG.71.24\",\"title\":\"Abraham Lincoln\",\"unitCode\":\"NPG\",\"linkedId\":\"0\",\"type\":\"edanmdm\",\"url\":\"edanmdm:npg_NPG.71.24\",\"content\":{\"descriptiveNonRepeating\":{\"record_ID\":\"npg_NPG.71.24\",\"online_media\":{\"mediaCount\":\"1\",\"media\":[{\"thumbnail\":\"http://ids.si.edu/ids/deliveryService?id=NPG-NPG_71_24Lincolnv1_d1\",\"idsId\":\"NPG-NPG_71_24Lincolnv1_d1\",\"usage\":{\"access\":\"Usage conditions apply\",\"text\":\"\"},\"type\":\"Images\",\"content\":\"http://ids.si.edu/ids/deliveryService?id=NPG-NPG_71_24Lincolnv1_d1\"}]},\"unit_code\":\"NPG\",\"title_sort\":\"ABRAHAM LINCOLN\",\"record_link\":\"http://npg.si.edu/object/npg_NPG.71.24\",\"title\":{\"label\":\"Title\",\"content\":\"Abraham Lincoln\"},\"metadata_usage\":{\"access\":\"Usage conditions apply\",\"text\":\"\"},\"data_source\":\"National Portrait Gallery\"},\"indexedStructured\":{\"date\":[\"1860s\"],\"exhibition\":[{\"exhibitionTitle\":\"America's Presidents (Reinstallation September 2017)\",\"building\":\"NPG\",\"room\":\"South Gallery 240\"}],\"object_type\":[\"Sculpture (visual work)\"],\"geoLocation\":[{\"L1\":{\"type\":\"Continent\",\"content\":\" North America\"},\"L2\":{\"type\":\"Country\",\"content\":\"United States of America\"}},{\"L1\":{\"type\":\"Continent\",\"content\":\" North America\"},\"L2\":{\"type\":\"Country\",\"content\":\"United States of America\"}},{\"L1\":{\"type\":\"Continent\",\"content\":\" North America\"},\"L2\":{\"type\":\"Country\",\"content\":\"United States of America\"},\"L3\":{\"type\":\"State\",\"content\":\"Illinois\"}},{\"L1\":{\"type\":\"Continent\",\"content\":\" North America\"},\"L2\":{\"type\":\"Country\",\"content\":\"United States of America\"}}],\"name\":[\"Lincoln, Abraham\",\"Volk, Leonard Wells\"],\"onPhysicalExhibit\":[\"Yes\"],\"topic\":[\"Business and Finance\",\"Legislators\",\"Soldiers\",\"Merchants\",\"Businessperson\",\"Life mask\",\"Masks\",\"Reformers\",\"Crafts and Trades\",\"Public officers\",\"Presidents\",\"Military\",\"Activism\",\"Congressmen\",\"Government\",\"Society and social change\",\"Portraits\",\"Lawyers\",\"Ecology\",\"Boat builder\",\"Law and Law Enforcement\",\"Surveyors\",\"Men\",\"Senators\",\"Politics\",\"Postmasters\"],\"place\":[\"United States\",\"Illinois\"],\"online_media_type\":[\"Images\"]},\"freetext\":{\"setName\":[{\"label\":\"See more items in\",\"content\":\"National Portrait Gallery Collection\"},{\"label\":\"Exhibition\",\"content\":\"America's Presidents (Reinstallation September 2017)\"},{\"label\":\"On View\",\"content\":\"NPG, South Gallery 240\"}],\"date\":[{\"label\":\"Date\",\"content\":\"1917 cast after 1860 original\"}],\"identifier\":[{\"label\":\"Object number\",\"content\":\"NPG.71.24\"}],\"notes\":[{\"label\":\"Exhibition Label\",\"content\":\"Born Hardin County, Kentucky\"},{\"label\":\"Exhibition Label\",\"content\":\"Leonard Wells Volk made this life mask of Abraham Lincoln in 1860, before Lincoln began his run for the\"},{\"label\":\"Exhibition Label\",\"content\":\"presidency. Volk had wanted to create a bust of him to add to his collection of American statesmen, but Lincoln did not have time to pose. Poet and editor Richard Watson Gilder, who owned a bronze version of the work, wrote after Lincoln’s assassination, “This bronze doth keep the very form and mold / Of our great martyr’s face. Yes, this is he: / That brow all wisdom and benignity . . . .”\"},{\"label\":\"Exhibition Label\",\"content\":\"Nacido en el condado de Hardin, Kentucky\"},{\"label\":\"Exhibition Label\",\"content\":\"Leonard Wells Volk tomó este molde de la cara de Lincoln en 1860, antes de que este se postulara para\"},{\"label\":\"Exhibition Label\",\"content\":\"la presidencia. Volk quería crear un busto de él para añadirlo a su colección de estadistas estadounidenses, pero Lincoln no tenía tiempo para posar. El poeta y editor Richard Watson Gilder, quien poseía una version de la obra en bronce, escribió después del asesinato de\"},{\"label\":\"Exhibition Label\",\"content\":\"Lincoln: “Este bronce en verdad conserva las formas del rostro de nuestro gran mártir. Sí, es él: esa frente que es toda sabiduría y bondad . . .”.\"},{\"label\":\"Provenance\",\"content\":\"National Museum of American History (now National Museum of American History); transferred to NPG 1971\"}],\"creditLine\":[{\"label\":\"Credit Line\",\"content\":\"National Portrait Gallery, Smithsonian Institution; transfer from the National Museum of American History\"}],\"name\":[{\"label\":\"Cast after\",\"content\":\"Leonard Wells Volk, 1828 - 1895\"},{\"label\":\"Sitter\",\"content\":\"Abraham Lincoln, 12 Feb 1809 - 15 Apr 1865\"}],\"topic\":[{\"label\":\"Topic\",\"content\":\"Mask\\\\Life mask\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Male\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Law and Law Enforcement\\\\Lawyer\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Military\\\\Soldier\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Politics and Government\\\\President of US\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Society and Social Change\\\\Reformer\\\\Environmentalist\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Business and Finance\\\\Businessperson\\\\Merchant\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Politics and Government\\\\US Congressman\\\\Illinois\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Politics and Government\\\\Government Official\\\\Surveyor\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Politics and Government\\\\State Senator\\\\Illinois\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Politics and Government\\\\Government Official\\\\Postmaster\"},{\"label\":\"Topic\",\"content\":\"Abraham Lincoln: Crafts and Trades\\\\Boat builder\"},{\"label\":\"Topic\",\"content\":\"Portrait\"}],\"physicalDescription\":[{\"label\":\"Medium\",\"content\":\"Plaster\"},{\"label\":\"Dimensions\",\"content\":\"14.6 x 21.6 x 23.5cm (5 3/4 x 8 1/2 x 9 1/4\\\")\"}],\"dataSource\":[{\"label\":\"Data Source\",\"content\":\"National Portrait Gallery\"}],\"objectType\":[{\"label\":\"Type\",\"content\":\"Sculpture\"}]}},\"hash\":\"119da5e4d273ac173af43863153d69768bbb6beb\",\"docSignature\":\"f2cbfa2adaaf0398fe0a1c9cfe2575215e77cb9c_e883af38875293b2597a91f23f0c36c4\",\"timestamp\":\"1578993695\",\"lastTimeUpdated\":\"1578993483\",\"status\":0,\"version\":\"\",\"publicSearch\":true,\"linkedContent\":{}}",
+        "title": "Abraham Lincoln"
+      },
+      "articles": [
+        {
+          "id": "5gJanXl7w1Cy",
+          "uri": "articles/article-05.html",
+          "title": "Introduction &nbsp; &nbsp;"
+        },
+        {
+          "id": "5gJanXl7w1Cy",
+          "uri": "articles/article-05.html",
+          "title": "Introduction"
+        },
+        {
+          "id": "KQ9nPcWFxeJU",
+          "uri": "articles/article-01.html",
+          "title": "Process &nbsp;"
+        },
+        {
+          "id": "blHTINSA1xvZ",
+          "uri": "articles/article-00.html",
+          "title": "A Window into Lincoln's Thoughts &nbsp;"
+        },
+        {
+          "id": "dch924QLwCen",
+          "uri": "articles/article-04.html",
+          "title": "The Task at Hand"
+        },
+        {
+          "id": "KypHQlL3cYo3",
+          "uri": "articles/article-02.html",
+          "title": "Photography, Sculpture, Painting &nbsp;"
+        },
+        {
+          "id": "q6H6PYg4nbmL",
+          "uri": "articles/article-03.html",
+          "title": "Artist"
+        },
+        {
+          "id": "JrFYoQPthYke",
+          "uri": "articles/article-06.html",
+          "title": "Provenance"
+        },
+        {
+          "id": "kRp4rsx2oco2",
+          "uri": "articles/article-07.html",
+          "title": "Lincoln’s Presidency"
+        },
+        {
+          "id": "f4XoU44E8ywj",
+          "uri": "articles/article-08.html",
+          "title": "Learn More"
+        }
+      ]
+    }
+  ],
+  "setups": [
+    {
+      "interface": {
+        "visible": true,
+        "logo": true,
+        "menu": true,
+        "tools": true
+      },
+      "reader": {
+        "enabled": false,
+        "position": "Overlay"
+      },
+      "viewer": {
+        "shader": "Default",
+        "exposure": 1,
+        "gamma": 2
+      },
+      "navigation": {
+        "enabled": true,
+        "autoZoom": true,
+        "autoRotation": false,
+        "lightsFollowCamera": false,
+        "type": "Orbit",
+        "orbit": {
+          "orbit": [
+            -2.6239856,
+            21.5472123,
+            0
+          ],
+          "offset": [
+            0.0220044,
+            0.0266118,
+            33.1986698
+          ],
+          "minOrbit": [
+            -90,
+            null,
+            null
+          ],
+          "maxOrbit": [
+            90,
+            null,
+            null
+          ],
+          "minOffset": [
+            null,
+            null,
+            0.1
+          ],
+          "maxOffset": [
+            null,
+            null,
+            10000
+          ]
+        }
+      },
+      "background": {
+        "style": "RadialGradient",
+        "color0": [
+          0.2,
+          0.25,
+          0.3
+        ],
+        "color1": [
+          0.01,
+          0.03,
+          0.05
+        ]
+      },
+      "floor": {
+        "visible": false,
+        "position": [
+          0,
+          -25,
+          0
+        ],
+        "size": 50,
+        "color": [
+          0.6,
+          0.75,
+          0.8
+        ],
+        "opacity": 0.5,
+        "receiveShadow": false
+      },
+      "grid": {
+        "visible": false,
+        "color": [
+          0.5,
+          0.7,
+          0.8
+        ]
+      },
+      "tape": {
+        "enabled": false,
+        "startPosition": [
+          -3.8489023,
+          1.6882287,
+          3.0562444
+        ],
+        "startDirection": [
+          0.024788,
+          -0.4669187,
+          0.8839528
+        ],
+        "endPosition": [
+          4.1503505,
+          1.610437,
+          3.2465278
+        ],
+        "endDirection": [
+          -0.4169889,
+          -0.1832504,
+          0.8902469
+        ]
+      },
+      "slicer": {
+        "enabled": false,
+        "axis": "X",
+        "position": 0.5,
+        "inverted": false
+      },
+      "tours": [
+        {
+          "title": "Looking at Leonard Volk's Life Mask of Abraham Lincoln",
+          "steps": [
+            {
+              "id": "tVTnkE",
+              "title": "A Look at the Mask"
+            },
+            {
+              "id": "reKS0d",
+              "title": "Introduction"
+            },
+            {
+              "id": "q5WNxp",
+              "title": "Process"
+            },
+            {
+              "id": "ImAgT4",
+              "title": "A Window into Lincoln's Thoughts"
+            },
+            {
+              "id": "UtqKiP",
+              "title": "The Task at Hand"
+            },
+            {
+              "id": "anWjm0",
+              "title": "Photography, Sculpture, Painting"
+            },
+            {
+              "id": "7mFHVw",
+              "title": "The Artist, Leonard Volk"
+            },
+            {
+              "id": "Q3B9eG",
+              "title": "Provenance"
+            },
+            {
+              "id": "qvHN5S",
+              "title": "Lincoln's Presidency"
+            },
+            {
+              "id": "pZDDth",
+              "title": "Learn More"
+            }
+          ],
+          "lead": "This life mask was taken in Spring 1860 by sculptor Leonard Volk. The 3-D object you see is a 1917 copy from the casting given to the Smithsonian in 1888. "
+        }
+      ],
+      "snapshots": {
+        "features": [
+          "reader",
+          "viewer",
+          "navigation"
+        ],
+        "targets": [
+          "scenes/0/setup/reader/enabled",
+          "scenes/0/setup/reader/articleId",
+          "scenes/0/setup/navigation/orbit",
+          "scenes/0/setup/navigation/offset",
+          "scenes/0/setup/viewer/annotationsVisible",
+          "scenes/0/setup/viewer/activeAnnotation",
+          "scenes/0/setup/viewer/activeTags",
+          "scenes/0/setup/viewer/shader",
+          "scenes/0/setup/viewer/exposure"
+        ],
+        "states": [
+          {
+            "id": "tVTnkE",
+            "values": [
+              false,
+              "5gJanXl7w1Cy",
+              [
+                -4.6725215,
+                39.64415,
+                0
+              ],
+              [
+                0,
+                0,
+                34.3145479
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 5,
+            "threshold": 0
+          },
+          {
+            "id": "reKS0d",
+            "values": [
+              true,
+              "5gJanXl7w1Cy",
+              [
+                -5.4225215,
+                13.1489456,
+                0
+              ],
+              [
+                0,
+                0,
+                43.3213262
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "q5WNxp",
+            "values": [
+              true,
+              "KQ9nPcWFxeJU",
+              [
+                -0.1678734,
+                -78.3400567,
+                0
+              ],
+              [
+                0,
+                0,
+                35.9820004
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "ImAgT4",
+            "values": [
+              true,
+              "blHTINSA1xvZ",
+              [
+                -20.238537,
+                1.0493817,
+                0
+              ],
+              [
+                0,
+                0,
+                35.9820004
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "UtqKiP",
+            "values": [
+              true,
+              "dch924QLwCen",
+              [
+                -0.5066813,
+                1.5493817,
+                0
+              ],
+              [
+                0,
+                0,
+                35.9820004
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "anWjm0",
+            "values": [
+              true,
+              "KypHQlL3cYo3",
+              [
+                -0.5019061,
+                -12.4486341,
+                0
+              ],
+              [
+                0,
+                0,
+                33.7013173
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "7mFHVw",
+            "values": [
+              true,
+              "q6H6PYg4nbmL",
+              [
+                -0.5053269,
+                21.3028672,
+                0
+              ],
+              [
+                0,
+                0,
+                51.0411552
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "Q3B9eG",
+            "values": [
+              true,
+              "JrFYoQPthYke",
+              [
+                -21.2595801,
+                22.0528672,
+                0
+              ],
+              [
+                0,
+                0,
+                35.0849883
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "qvHN5S",
+            "values": [
+              true,
+              "kRp4rsx2oco2",
+              [
+                18.2404199,
+                43.1610723,
+                0
+              ],
+              [
+                0,
+                0,
+                35.0849883
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          },
+          {
+            "id": "pZDDth",
+            "values": [
+              true,
+              "f4XoU44E8ywj",
+              [
+                -6.2444077,
+                19.9110723,
+                0
+              ],
+              [
+                0,
+                0,
+                41.63635
+              ],
+              false,
+              "PUE2LwrsS8TG",
+              "",
+              0,
+              1
+            ],
+            "curve": "EaseOutSine",
+            "duration": 3,
+            "threshold": 0
+          }
+        ]
+      }
+    }
+  ]
+}

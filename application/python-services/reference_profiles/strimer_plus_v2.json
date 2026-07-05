@@ -1,0 +1,78 @@
+{
+  "schema": "aurora.reference-profile.v1",
+  "product": "Lian Li Strimer Plus V2",
+  "captured_at": "2026-06-18",
+  "sources": [
+    {
+      "label": "Official product page",
+      "url": "https://lian-li.com/product/strimer-plus-v2/",
+      "facts": [
+        "24-pin, dual 8-pin, triple 8-pin and 12+4-pin variants",
+        "24-pin model: 12 light guides, 120 LEDs",
+        "8-pin model: 8 light guides, 108 LEDs",
+        "3x8-pin model: 12 light guides, 162 LEDs",
+        "Plus V2 light strip width is 2.1 mm",
+        "construction includes UV-resistant coating, side light strip, silicone/TPE cable, single-layer cable and stable clips",
+        "24-pin dimensions are 267 mm x 56.6 mm x 8 mm"
+      ]
+    },
+    {
+      "label": "Official exploded/side images",
+      "urls": [
+        "https://lian-li.com/wp-content/uploads/2022/04/sp_V2_m-000.jpg",
+        "https://lian-li.com/wp-content/uploads/2022/04/sp_V2_970-010.jpg",
+        "https://lian-li.com/wp-content/uploads/2022/04/sp_V2_970-012.jpg"
+      ],
+      "visual_cues": [
+        "flat ribbon assembly, not a round cable bundle",
+        "parallel RGB light guides above pale single-row power cables",
+        "black connector blocks and black branded clamp",
+        "visible stable clips and translucent alignment combs",
+        "thin side profile around 8 mm"
+      ]
+    },
+    {
+      "label": "Official controller page",
+      "url": "https://lian-li.com/product/strimer-l-connect-3-controller/",
+      "facts": [
+        "L-Connect 3 controls Strimer Plus V2 lighting effects",
+        "24-pin and triple 8-pin expose 6 channels; dual 8-pin exposes 4 channels",
+        "controller supports one 24-pin motherboard cable plus one GPU cable"
+      ]
+    }
+  ],
+  "generation_contract": {
+    "default_variant": "24pin",
+    "required_geometry": [
+      "12 continuous light guides for the 24-pin variant",
+      "120 addressable LED cells represented as runtime-emissive material segments",
+      "24 lower single-row silicone/TPE power cables",
+      "bonded silicone/TPE core joining lower cables, diffusers and LED cells with no visible air gap in side or underside view",
+      "two black connector blocks",
+      "2x12 socket grid on the 24-pin connector face",
+      "2x12 input contact pins on the opposite connector face",
+      "stable black clips and translucent alignment clips",
+      "side light strips on both outer edges",
+      "visible Lian Li identity mark"
+    ],
+    "required_materials": [
+      "translucent silicone/TPE diffuser material",
+      "embedded micro-ridge texture image",
+      "matte black connector plastic",
+      "pale grey/white lower cable row"
+    ],
+    "animation_contract": {
+      "preferred_system": "aurora_led_emission runtime material extras",
+      "patterns": ["rainbow", "chase", "breathing", "pulse", "static_color"],
+      "minimum_channels": 4,
+      "preferred_24pin_channels": 6,
+      "rejected_fakes": [
+        "whole-object rotation",
+        "a few floating RGB dots",
+        "single emissive plane with no per-guide structure",
+        "floating stacked layers visible from the side or underside",
+        "free pigtail cables attached to the connector instead of a connector face"
+      ]
+    }
+  }
+}

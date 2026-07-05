@@ -1,0 +1,287 @@
+{
+  "total": {
+    "modules": 11,
+    "files_audited": 38,
+    "applied": 0,
+    "rolled_back": 0
+  },
+  "files": [
+    {
+      "module": "conversation",
+      "file": "application\\src\\services\\conversationOrchestrator.ts",
+      "candidates": 1,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 18263: improved (1538 -> 2073 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\conversation\\conversationOrchestrator.md"
+      ]
+    },
+    {
+      "module": "image",
+      "file": "application\\src\\services\\codeImageGen.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "drawing",
+      "file": "application\\src\\services\\characterForge.ts",
+      "candidates": 3,
+      "applied_dry_run": 3,
+      "notes": [
+        "  - 4925: improved (855 -> 2103 chars)",
+        "  - 5803: improved (1053 -> 1952 chars)",
+        "  - 6876: improved (1030 -> 1277 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\drawing\\characterForge.md"
+      ]
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\threeDClarification.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\threeDIntent.ts",
+      "candidates": 1,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 114755: improved (2061 -> 2436 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\threeD\\threeDIntent.md"
+      ]
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\threeDMotionIntent.ts",
+      "candidates": 1,
+      "applied": 0,
+      "notes": [
+        "  - 4417: no <NEW_PROMPT> tag in response (first 300c): <NEW_PROMPT>\n// Module: threeD\n\n// System prompt — DOES NOT enumerate brands. Asks the model to act as a\n// physics-aware industrial designer that knows what real objects do.\n// ────────────────────────────────────────────────────────────────────────────\n\nconst SYSTEM_PROMPT = `You are a 3D animatio"
+      ]
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\threeDReferenceSupport.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\threeDViewPlanner.ts",
+      "candidates": 1,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 6494: improved (702 -> 1097 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\threeD\\threeDViewPlanner.md"
+      ]
+    },
+    {
+      "module": "threeD",
+      "file": "application\\src\\services\\pbrProfile.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "learning",
+      "file": "application\\src\\services\\learning\\tutorialEngine.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "learning",
+      "file": "application\\src\\services\\learningResearch.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "learning",
+      "file": "application\\src\\services\\learningSemanticEval.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "learning",
+      "file": "application\\src\\services\\bacResources.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "learning",
+      "file": "application\\src\\services\\academicContentVerification.ts",
+      "candidates": 1,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 1239: improved (1508 -> 1863 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\learning\\academicContentVerification.md"
+      ]
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\builtinLabs.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\cryptoService.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\ctfStore.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\hashService.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\passwordAnalyzer.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cyber",
+      "file": "application\\src\\services\\cyber\\pythonClient.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\chemistryReactions.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\defaults.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\fluidSolver.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\particleSystem.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\phenomena.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "simulator",
+      "file": "application\\src\\services\\simulator\\physicsEngine.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkAudit.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkBrowserDetect.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkBrowserDetectPure.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkConnectorPill.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkConnectorPin.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "cowork",
+      "file": "application\\src\\services\\coworkConnectors.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeOrchestrator.ts",
+      "candidates": 5,
+      "applied_dry_run": 5,
+      "notes": [
+        "  - 25009: improved (1577 -> 1709 chars)",
+        "  - 55195: improved (1031 -> 1444 chars)",
+        "  - 61856: improved (2123 -> 2006 chars)",
+        "  - 64311: improved (2702 -> 3310 chars)",
+        "  - 132151: improved (730 -> 1103 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\code\\codeOrchestrator.md"
+      ]
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeReasoningEngine.ts",
+      "candidates": 1,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 1645: improved (390 -> 1448 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\code\\codeReasoningEngine.md"
+      ]
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeIntent.ts",
+      "candidates": 4,
+      "applied_dry_run": 2,
+      "notes": [
+        "  - 2212: improved (379 -> 907 chars)",
+        "  - 45099: improved version suspiciously shorter (3179 vs 30400), skipping",
+        "  - 86014: improved version suspiciously shorter (3043 vs 19117), skipping",
+        "  - 151739: improved (749 -> 1851 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\code\\codeIntent.md"
+      ]
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeFidelityGate.ts",
+      "candidates": 0,
+      "applied": 0
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeMissionControl.ts",
+      "candidates": 2,
+      "applied_dry_run": 1,
+      "notes": [
+        "  - 8816: improved version suspiciously shorter (3137 vs 6715), skipping",
+        "  - 24193: improved (1985 -> 3538 chars)",
+        "  - proposals written to _dev\\uplift_proposals\\code\\codeMissionControl.md"
+      ]
+    },
+    {
+      "module": "code",
+      "file": "application\\src\\services\\codeAutoCorrection.ts",
+      "candidates": 0,
+      "applied": 0
+    }
+  ]
+}

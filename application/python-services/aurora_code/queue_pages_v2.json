@@ -1,0 +1,14 @@
+[
+  {"name": "v2-portfolio-multipage",     "prompt": "multi-page portfolio site for an architect: home with hero, projects gallery with filterable grid, about with timeline, contact with form, footer with socials. Clean serif typography, off-white background, smooth scroll, animated reveals."},
+  {"name": "v2-threejs-museum",          "prompt": "interactive 3d museum hall in three.js with 4 sculptures on pedestals, ambient music toggle, click sculpture for info panel, orbital camera, day/night toggle"},
+  {"name": "v2-canvas-flowfield",        "prompt": "perlin flow field canvas animation with 5000 particles, color palette controls, save snapshot to png"},
+  {"name": "v2-sim-cellular-automata",   "prompt": "conways game of life with adjustable speed, click cells to toggle, preset patterns dropdown (glider, pulsar), generation counter"},
+  {"name": "v2-audio-drum-machine",      "prompt": "step sequencer drum machine 16-step grid, 6 tracks (kick snare hat clap perc bass), tempo slider, web audio synth sounds, play stop"},
+  {"name": "v2-dataviz-crypto",          "prompt": "crypto market dashboard: 6 coin cards with price + 24h change, sparklines, large detail chart for selected coin, volume bars, hardcoded demo data"},
+  {"name": "v2-edu-fractal-zoom",        "prompt": "interactive mandelbrot fractal explorer canvas with zoom-in on click, palette swap button, iteration count slider, current coords display"},
+  {"name": "v2-game-snake-deluxe",       "prompt": "snake game with smooth movement, particles on eat, level-ups that change speed and grid color, score, hi-score from localStorage, restart"},
+  {"name": "v2-react-kanban",            "prompt": "react+vite kanban board: 3 columns (todo doing done), drag cards across, edit on click, add new card per column, dark mode toggle, persistence in localStorage"},
+  {"name": "v2-cli-image-tool",          "prompt": "python cli tool that walks a folder of images, prints dimensions and ratio, with --filter ratio>=16:9, --dry-run, --json output, --recurse, help text rich"},
+  {"name": "v2-express-todo-api",        "prompt": "node express rest api for todos: GET /api/health, GET /api/todos, POST /api/todos, PATCH /api/todos/:id, DELETE /api/todos/:id, in-memory store seeded with 3 items"},
+  {"name": "v2-electron-clock",          "prompt": "electron desktop clock app: digital + analog face, light/dark theme toggle, always on top toggle, system tray hint in readme"}
+]

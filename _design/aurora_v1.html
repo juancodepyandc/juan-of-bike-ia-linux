@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"/>
+<title>Aurora — Refonte complète</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="lib/tokens.css"/>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  body { background: var(--bg); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="lib/aurora-sphere.jsx"></script>
+<script type="text/babel" src="lib/ui-kit.jsx"></script>
+<script type="text/babel" src="lib/ambient-fx.jsx"></script>
+<script type="text/babel" src="lib/app-shell.jsx"></script>
+<script type="text/babel" src="lib/design-canvas.jsx"></script>
+<script type="text/babel" src="screens/cowork.jsx"></script>
+<script type="text/babel" src="screens/chat.jsx"></script>
+<script type="text/babel" src="screens/modules.jsx"></script>
+<script type="text/babel" src="screens/mobile.jsx"></script>
+
+<script type="text/babel">
+function Framed({ activeId, label, breadcrumbs, children }) {
+  return (
+    <div style={{ width: 1440, height: 900, background: 'var(--bg)' }}>
+      <AppShell activeId={activeId} moduleLabel={label} breadcrumbs={breadcrumbs}>
+        {children}
+      </AppShell>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <DesignCanvas
+      title="Aurora — Editorial Computing"
+      subtitle="Refonte complète · 10 modules · desktop + mobile · sphère 3D temps réel"
+    >
+      <DCSection id="signature" title="Signature scenes" subtitle="Modules les plus importants — sphère 3D + layout éditorial">
+        <DCArtboard id="cowork" label="Cowork — orchestrateur" width={1440} height={900}>
+          <Framed activeId="cowork" breadcrumbs={['Mission 0341', 'Live']}>
+            <CoworkScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="chat" label="Conversation — avatar réactif" width={1440} height={900}>
+          <Framed activeId="chat" breadcrumbs={['Diffusion en sumi-e']}>
+            <ChatScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="voice" label="Voice — copilote vocal" width={1440} height={900}>
+          <Framed activeId="voice" breadcrumbs={['Live · cam on']}>
+            <VoiceScreen/>
+          </Framed>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="creative" title="Modules créatifs" subtitle="Image · Vidéo · 3D · Dessin — chacun sa scène signature">
+        <DCArtboard id="image" label="Image — FLUX wheel" width={1440} height={900}>
+          <Framed activeId="image" breadcrumbs={['Variant batch · 04']}>
+            <ImageScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="video" label="Vidéo — projecteur Wan2.2" width={1440} height={900}>
+          <Framed activeId="video" breadcrumbs={['L\u2019aurore sur la baie']}>
+            <VideoScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="tdd" label="3D — Hunyuan + DreamGaussian" width={1440} height={900}>
+          <Framed activeId="tdd" breadcrumbs={['Pipeline · 5 / 8']}>
+            <ThreeDScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="draw" label="Dessin — sumi-e (paper theme)" width={1440} height={900}>
+          <Framed activeId="draw" breadcrumbs={['Toile 0341']}>
+            <DrawScreen/>
+          </Framed>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="knowledge" title="Modules savoir & code" subtitle="Academy · Code · Cyber">
+        <DCArtboard id="academy" label="Academy — BAC + Leitner" width={1440} height={900}>
+          <Framed activeId="academy" breadcrumbs={['STI2D · PC']}>
+            <AcademyScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="code" label="Code — diff multi-modèle" width={1440} height={900}>
+          <Framed activeId="code" breadcrumbs={['api/diffusion.ts']}>
+            <CodeScreen/>
+          </Framed>
+        </DCArtboard>
+        <DCArtboard id="cyber" label="Cyber — dojo de katas" width={1440} height={900}>
+          <Framed activeId="cyber" breadcrumbs={['Kata 0341 · live']}>
+            <CyberScreen/>
+          </Framed>
+        </DCArtboard>
+      </DCSection>
+
+      <DCSection id="mobile" title="Mobile Grimoire" subtitle="Shell distinct, format portrait, sphère en masthead">
+        <DCArtboard id="grimoire" label="Mobile Grimoire — accueil" width={460} height={920}>
+          <div style={{ width: 460, height: 920, padding: 35, background: 'oklch(0.04 0.01 250)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <MobileGrimoire/>
+          </div>
+        </DCArtboard>
+      </DCSection>
+    </DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+# Auto-detect text files vs binary based on content.
+* text=auto
+
+# .bat / .cmd MUST be CRLF on Windows or cmd.exe parses them line-by-line as
+# individual commands ("Ce", "Kille", "Usage" each become unrecognized). Tour 10
+# of the v78 /loop hit this — see bridge_doctor.py + memory/feedback_bridge_respawn.md
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Shell scripts run on bash/sh — keep LF.
+*.sh    text eol=lf
+
+# Python scripts work either way; keep LF for consistency with most tooling.
+*.py    text eol=lf
+
+# Common text formats — keep LF (universal).
+*.md    text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+
+# Binary — never auto-convert line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.glb   binary
+*.gltf  binary
+*.wav   binary
+*.mp3   binary
+*.mp4   binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.exe   binary
+*.dll   binary
+*.so    binary
+*.safetensors binary

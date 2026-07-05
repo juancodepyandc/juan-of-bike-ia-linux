@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AuroraIA - Visualiseur 3D</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <!-- Three.js and dependencies -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay -->
+    <div class="ui-overlay">
+        <header class="glass-panel">
+            <h1>AURORA<span>IA</span></h1>
+            <p class="subtitle">Visualiseur 3D Interactif</p>
+        </header>
+
+        <div class="controls-panel glass-panel">
+            <h2>Commandes Caméra</h2>
+            <div class="mode-toggles">
+                <button id="btn-orbit" class="btn active">
+                    <span class="icon">🌍</span> Orbite
+                </button>
+                <button id="btn-fps" class="btn">
+                    <span class="icon">🚶</span> ZQSD (FPS)
+                </button>
+            </div>
+            
+            <div id="instructions-fps" class="instructions hidden">
+                <p><strong>Cliquez sur l'écran</strong> pour verrouiller la souris.</p>
+                <ul>
+                    <li><strong>Z, Q, S, D</strong> : Se déplacer</li>
+                    <li><strong>Espace</strong> : Sauter</li>
+                    <li><strong>Maj</strong> : Courir</li>
+                    <li><strong>Échap</strong> : Libérer la souris</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="model-loader glass-panel">
+            <h2>Modèle</h2>
+            <button id="btn-load-natsu" class="btn primary">
+                Charger Natsu (GLB)
+            </button>
+            <div class="custom-file-upload">
+                <input type="file" id="file-input" accept=".glb,.gltf" />
+                <label for="file-input" class="btn outline">Ouvrir un autre GLB...</label>
+            </div>
+            <div id="loading-spinner" class="hidden">
+                <div class="spinner"></div>
+                <span>Chargement...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Crosshair for FPS mode -->
+    <div id="crosshair" class="hidden">+</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
+    <script type="module" src="viewer.js"></script>
+</body>
+</html>

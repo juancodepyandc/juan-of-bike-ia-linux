@@ -1,0 +1,51 @@
+# AuroraIA-v2 — Python services dependencies
+# Install: pip install -r requirements.txt
+
+# Core ML
+torch>=2.3.0
+torchaudio>=2.3.0
+
+# STT
+faster-whisper>=1.1.0
+
+# TTS
+kokoro>=0.9.4
+soundfile>=0.12.1
+scipy>=1.11.0
+
+# Video generation
+diffusers>=0.30.0
+transformers>=4.45.0
+accelerate>=0.30.0
+sentencepiece>=0.1.99
+imageio[ffmpeg]>=2.34.0
+safetensors>=0.4.3
+Pillow>=10.3.0
+numpy>=1.26.0
+
+# HuggingFace model hub
+huggingface_hub>=0.23.0
+
+# Web search / scraping
+crawl4ai>=0.3.0
+playwright>=1.44.0
+
+# System
+psutil>=5.9.0
+
+# 3D generation
+trimesh>=4.3.0
+
+# Bridge server
+flask>=3.0.0
+flask-cors>=4.0.0
+requests>=2.31.0
+werkzeug>=3.0.0
+
+# Cyber lab
+dnspython>=2.6
+python-whois>=0.9
+cryptography>=42
+argon2-cffi>=23
+bcrypt>=4.1
+exifread>=3.0

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Aurora video avatar">
+  <defs>
+    <linearGradient id="skin" x1="72" x2="186" y1="62" y2="176" gradientUnits="userSpaceOnUse"><stop stop-color="#FFDCC1"/><stop offset="1" stop-color="#E7A579"/></linearGradient>
+    <linearGradient id="body" x1="72" x2="186" y1="148" y2="236" gradientUnits="userSpaceOnUse"><stop stop-color="#FF875B"/><stop offset="1" stop-color="#BE3E26"/></linearGradient>
+  </defs>
+  <ellipse cx="128" cy="230" rx="62" ry="14" fill="#2a1008" opacity=".18"/>
+  <path d="M63 210c7-42 32-65 65-65s58 23 65 65c-21 19-109 19-130 0z" fill="url(#body)" stroke="#2b1711" stroke-width="7"/>
+  <path d="M80 109c0-40 22-69 53-69s52 29 52 69c0 41-22 69-52 69s-53-28-53-69z" fill="url(#skin)" stroke="#2b1711" stroke-width="7"/>
+  <path d="M78 91c15-33 39-50 70-47 26 2 44 19 45 45-39-8-74-8-115 2z" fill="#241817" stroke="#2b1711" stroke-width="6"/>
+  <circle cx="111" cy="117" r="5" fill="#2b1711"/><circle cx="152" cy="117" r="5" fill="#2b1711"/>
+  <path d="M119 142c10 7 22 7 32 0" fill="none" stroke="#2b1711" stroke-width="6" stroke-linecap="round"/>
+  <path d="M164 164h53v41h-53z" fill="#1d1d1d" stroke="#2b1711" stroke-width="6" rx="5"/>
+  <circle cx="180" cy="184" r="11" fill="#ff6a3d"/><circle cx="205" cy="184" r="9" fill="#f2b84b"/>
+  <path d="M151 158l57-14 6 22-57 14z" fill="#fff8ee" stroke="#2b1711" stroke-width="5"/>
+  <path d="M166 155l10 17M185 150l10 17M204 145l8 14" stroke="#2b1711" stroke-width="5"/>
+</svg>

@@ -1,0 +1,38 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Mode liberté totale : fenetre principale autorisée à exec shell, lire/écrire tout fichier, ouvrir URLs, gérer process, sans restriction de chemin. Aucun garde-fou applicatif — env local privé de Juan.",
+  "windows": [
+    "main"
+  ],
+  "local": true,
+  "remote": {
+    "urls": [
+      "http://localhost:1420",
+      "http://127.0.0.1:1420"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:app:default",
+    "core:webview:default",
+    "core:window:default",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-exists",
+    "fs:allow-read-dir",
+    "http:default",
+    "shell:default",
+    "shell:allow-open",
+    "process:default",
+    "process:allow-exit",
+    "process:allow-restart",
+    "dialog:default"
+  ]
+}

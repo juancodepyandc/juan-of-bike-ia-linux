@@ -1,0 +1,144 @@
+{
+  "completed": [
+    "v2-portfolio-multipage",
+    "v2-threejs-museum",
+    "v2-canvas-flowfield",
+    "v2-sim-cellular-automata",
+    "v2-audio-drum-machine",
+    "v2-dataviz-crypto",
+    "v2-edu-fractal-zoom",
+    "v2-game-snake-deluxe",
+    "v2-cli-image-tool",
+    "v2-electron-clock",
+    "v2-express-todo-api",
+    "v2-react-kanban"
+  ],
+  "failed": [],
+  "attempts": {
+    "v2-portfolio-multipage": [
+      {
+        "attempt": 1,
+        "error": "no_files_extracted",
+        "elapsed_s": 451.6
+      },
+      {
+        "attempt": 2,
+        "score": 0.869,
+        "files": 3,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 331.9
+      }
+    ],
+    "v2-threejs-museum": [
+      {
+        "attempt": 1,
+        "score": 0.842,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 212.3
+      }
+    ],
+    "v2-canvas-flowfield": [
+      {
+        "attempt": 1,
+        "score": 0.862,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 138.5
+      }
+    ],
+    "v2-sim-cellular-automata": [
+      {
+        "attempt": 1,
+        "score": 0.886,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 187.0
+      }
+    ],
+    "v2-audio-drum-machine": [
+      {
+        "attempt": 1,
+        "score": 0.956,
+        "files": 3,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 149.1
+      }
+    ],
+    "v2-dataviz-crypto": [
+      {
+        "attempt": 1,
+        "score": 0.786,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 332.3
+      }
+    ],
+    "v2-edu-fractal-zoom": [
+      {
+        "attempt": 1,
+        "score": 0.921,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 152.5
+      }
+    ],
+    "v2-game-snake-deluxe": [
+      {
+        "attempt": 1,
+        "score": 0.877,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 186.1
+      }
+    ],
+    "v2-cli-image-tool": [
+      {
+        "attempt": 1,
+        "score": 0.725,
+        "files": 1,
+        "syntax_passed": true,
+        "preview_ok": false,
+        "elapsed_s": 60.2
+      }
+    ],
+    "v2-electron-clock": [
+      {
+        "attempt": 1,
+        "score": 0.725,
+        "files": 6,
+        "syntax_passed": true,
+        "preview_ok": false,
+        "elapsed_s": 77.1
+      }
+    ],
+    "v2-express-todo-api": [
+      {
+        "attempt": 1,
+        "score": 0.895,
+        "files": 2,
+        "syntax_passed": true,
+        "preview_ok": false,
+        "elapsed_s": 43.1
+      }
+    ],
+    "v2-react-kanban": [
+      {
+        "attempt": 1,
+        "score": 0.786,
+        "files": 8,
+        "syntax_passed": true,
+        "preview_ok": true,
+        "elapsed_s": 149.5
+      }
+    ]
+  }
+}

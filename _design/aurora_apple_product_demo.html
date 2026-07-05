@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="fr" data-archetype="apple_product">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AuroraSound · Echo Pro — Demo apple_product (AuroraIA)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+:root{
+  --bg:#06060a;--bg-soft:#0c0c12;--bg-card:#101019;
+  --fg:#f5f5f7;--fg-soft:rgba(245,245,247,.72);--fg-mute:rgba(245,245,247,.45);
+  --border:rgba(245,245,247,.07);--border-strong:rgba(245,245,247,.14);
+  --accent:#7c3aed;--accent-2:#22d3ee;--accent-3:#ec4899;--accent-4:#f59e0b;
+  --radius:18px;--radius-lg:28px;
+  --easing:cubic-bezier(.22,1,.36,1);--spring:cubic-bezier(.34,1.56,.64,1);
+}
+*{box-sizing:border-box}html,body{margin:0;padding:0}html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:'Inter',system-ui,sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+
+.mesh{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.mesh::before,.mesh::after,.mesh span{content:"";position:absolute;border-radius:50%;filter:blur(160px);opacity:.45;animation:meshFloat 22s var(--easing) infinite alternate}
+.mesh::before{width:620px;height:620px;background:radial-gradient(circle,#7c3aed,transparent 60%);top:-160px;left:-100px}
+.mesh::after{width:560px;height:560px;background:radial-gradient(circle,#22d3ee,transparent 60%);bottom:-200px;right:-120px;animation-delay:-11s}
+.mesh span{display:block;width:480px;height:480px;background:radial-gradient(circle,#ec4899,transparent 60%);top:40%;left:55%;animation-delay:-6s;opacity:.32}
+@keyframes meshFloat{0%{transform:translate3d(0,0,0) scale(1)}100%{transform:translate3d(80px,60px,0) scale(1.2)}}
+.noise{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.05;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence baseFrequency='1.5' numOctaves='2' seed='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")}
+
+main{position:relative;z-index:2}
+.wrap{max-width:1280px;margin:0 auto;padding-inline:clamp(1rem,4vw,3rem)}
+.eyebrow{display:inline-block;text-transform:uppercase;letter-spacing:.18em;font-size:.78rem;color:var(--accent-2);font-weight:600;padding:.45rem .9rem;border:1px solid var(--border-strong);border-radius:999px;background:rgba(34,211,238,.06);backdrop-filter:blur(10px)}
+
+.nav{position:fixed;top:0;left:0;right:0;z-index:10;transition:.4s var(--easing);padding-block:18px}
+.nav.scrolled{background:rgba(6,6,10,.7);backdrop-filter:blur(18px) saturate(160%);padding-block:10px;border-bottom:1px solid var(--border)}
+.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk';font-weight:700;font-size:1.05rem}
+.logo svg{width:26px;height:26px}
+.nav-links{display:none;gap:28px;font-size:.92rem;color:var(--fg-soft)}
+.nav-links a{color:inherit;text-decoration:none;transition:color .2s}
+.nav-links a:hover{color:var(--fg)}
+@media(min-width:880px){.nav-links{display:flex}}
+.cta{display:inline-flex;align-items:center;gap:8px;padding:.7rem 1.2rem;border-radius:999px;font-weight:600;text-decoration:none;color:#08080b;background:#f5f5f7;transition:all .25s var(--easing);font-size:.9rem}
+.cta:hover{transform:translateY(-1px);box-shadow:0 14px 40px rgba(245,245,247,.18)}
+.cta--ghost{background:transparent;color:var(--fg);border:1px solid var(--border-strong)}
+
+.hero{min-height:100vh;display:grid;place-items:center;padding-block:160px 100px}
+.hero-inner{display:grid;gap:42px;align-items:center;text-align:center}
+@media(min-width:1024px){.hero-inner{grid-template-columns:1fr 1.05fr;gap:64px;text-align:left}}
+.hero h1{font-family:'Space Grotesk',sans-serif;font-size:clamp(3rem,8.4vw,7rem);font-weight:700;letter-spacing:-.04em;line-height:1.02;margin:18px 0 22px;background:linear-gradient(180deg,#f5f5f7 0%,rgba(245,245,247,.62) 110%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.hero p.sub{font-size:clamp(1.05rem,1.4vw,1.25rem);color:var(--fg-soft);max-width:520px;margin:0 0 32px}
+.hero-actions{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+@media(min-width:1024px){.hero-actions{justify-content:flex-start}}
+.hero-visual{position:relative;aspect-ratio:1;max-width:560px;margin:0 auto;width:100%;display:grid;place-items:center}
+.hero-visual svg.airpod-hero{width:80%;height:80%;filter:drop-shadow(0 60px 80px rgba(124,58,237,.35)) drop-shadow(0 24px 60px rgba(34,211,238,.25));animation:floaty 7s var(--easing) infinite alternate}
+@keyframes floaty{0%{transform:translateY(-12px) rotate(-2deg)}100%{transform:translateY(12px) rotate(2deg)}}
+
+.reveal{opacity:0;transform:translateY(34px);transition:opacity .8s var(--easing),transform .8s var(--easing)}
+.reveal.in{opacity:1;transform:translateY(0)}
+.reveal--stagger>*{opacity:0;transform:translateY(20px);transition:opacity .6s var(--easing),transform .6s var(--easing)}
+.reveal--stagger.in>*{opacity:1;transform:translateY(0)}
+.reveal--stagger.in>*:nth-child(1){transition-delay:.05s}
+.reveal--stagger.in>*:nth-child(2){transition-delay:.12s}
+.reveal--stagger.in>*:nth-child(3){transition-delay:.19s}
+.reveal--stagger.in>*:nth-child(4){transition-delay:.26s}
+.reveal--stagger.in>*:nth-child(5){transition-delay:.33s}
+.reveal--stagger.in>*:nth-child(6){transition-delay:.40s}
+@media(prefers-reduced-motion:reduce){.reveal,.reveal--stagger>*{opacity:1;transform:none;transition:none}.mesh::before,.mesh::after,.mesh span{animation:none}}
+
+section{padding-block:clamp(64px,10vw,140px)}
+.section-head{max-width:760px;margin:0 auto 56px;text-align:center}
+.section-head h2{font-family:'Space Grotesk';font-weight:700;letter-spacing:-.03em;line-height:1.05;font-size:clamp(2.1rem,4.5vw,3.5rem);margin:14px 0 16px}
+.section-head p{color:var(--fg-soft);font-size:1.05rem}
+
+/* ============================================================ */
+/*   ANATOMY — STICKY scroll-driven, l'AirPod reste visible      */
+/*   et s'eclate proportionnellement a la position dans la       */
+/*   section. Section: 220vh — scroll long pour effet cinema.    */
+/* ============================================================ */
+.anatomy{position:relative;padding-block:0}
+.anatomy-track{position:relative;min-height:240vh}
+.anatomy-sticky{position:sticky;top:0;height:100vh;display:grid;grid-template-rows:auto 1fr auto;align-items:center;padding-block:90px 30px;--p:0}
+.anatomy-head{text-align:center;max-width:680px;margin:0 auto;padding-inline:clamp(1rem,4vw,3rem)}
+.anatomy-head h2{font-family:'Space Grotesk';font-weight:700;letter-spacing:-.03em;font-size:clamp(1.8rem,3.6vw,2.8rem);margin:8px 0 10px}
+.anatomy-head p{color:var(--fg-soft);font-size:.95rem;margin:0}
+.exploded-stage{position:relative;width:min(80vh,90vw);max-width:680px;aspect-ratio:1;margin:0 auto;display:grid;place-items:center}
+.exploded-stage svg{width:100%;height:100%}
+.part{transition:transform .15s linear;transform-origin:center center}
+.exploded-stage svg .part{transform-box:fill-box}
+
+/* Each piece has a fixed assembled position via its native cx/cy.
+   We translate it by ( target_dx * p, target_dy * p ).
+   p=0 → assembled, p=1 → fully exploded. */
+.part.p-mesh    {transform:translate(calc(var(--p) * -180px), calc(var(--p) * -90px))}
+.part.p-housing {transform:translate(calc(var(--p) * 0px),    calc(var(--p) * -160px)) rotate(calc(var(--p) * -8deg))}
+.part.p-driver  {transform:translate(calc(var(--p) * -120px), calc(var(--p) * 0px))}
+.part.p-imic    {transform:translate(calc(var(--p) * -240px), calc(var(--p) * 60px))}
+.part.p-stem    {transform:translate(calc(var(--p) * 100px),  calc(var(--p) * 50px))}
+.part.p-fsensor {transform:translate(calc(var(--p) * 220px),  calc(var(--p) * -20px))}
+.part.p-omic    {transform:translate(calc(var(--p) * 240px),  calc(var(--p) * 160px))}
+.part.p-tip     {transform:translate(calc(var(--p) * -50px),  calc(var(--p) * 220px))}
+
+.hotspot{position:absolute;width:34px;height:34px;border-radius:50%;border:2px solid var(--accent-2);background:rgba(34,211,238,.25);cursor:pointer;display:grid;place-items:center;transition:.3s var(--easing);z-index:3;box-shadow:0 0 30px rgba(34,211,238,.4);opacity:calc(var(--p) * 1)}
+.hotspot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 0 0 rgba(34,211,238,.6);animation:ping 2.4s var(--easing) infinite}
+@keyframes ping{0%{box-shadow:0 0 0 0 rgba(34,211,238,.55)}80%,100%{box-shadow:0 0 0 22px rgba(34,211,238,0)}}
+.hotspot:hover,.hotspot.active{transform:scale(1.3);background:rgba(34,211,238,.45);border-color:#fff}
+.hotspot-label{position:absolute;background:rgba(13,13,18,.96);backdrop-filter:blur(14px);border:1px solid var(--border-strong);border-radius:14px;padding:14px 16px;min-width:240px;font-size:.84rem;line-height:1.5;color:var(--fg-soft);box-shadow:0 28px 60px rgba(0,0,0,.55);opacity:0;transform:translateY(8px);pointer-events:none;transition:.25s var(--easing);z-index:5;max-width:280px}
+.hotspot-label strong{display:block;color:var(--fg);margin-bottom:4px;font-weight:600}
+.hotspot:hover + .hotspot-label,.hotspot.active + .hotspot-label{opacity:1;transform:translateY(0)}
+
+.anatomy-progress{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:24px;font-size:.78rem;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.15em;font-weight:600}
+.anatomy-progress .bar{position:relative;width:240px;height:3px;border-radius:999px;background:rgba(245,245,247,.08);overflow:hidden}
+.anatomy-progress .bar::after{content:"";position:absolute;left:0;top:0;bottom:0;width:calc(var(--p,0) * 100%);background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .15s linear;border-radius:999px}
+.anatomy-progress .bar{background:rgba(245,245,247,.08)}
+.anatomy-stage-wrap{position:relative}
+.anatomy-stage-wrap .anatomy-progress{margin-inline:auto;max-width:520px}
+
+/* On le rend reactif via une variable CSS pilotee par JS */
+.anatomy-sticky[data-p]{--p:attr(data-p)}
+
+/* ============================================================ */
+/*   FLIP CARDS                                                   */
+/* ============================================================ */
+.flip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.flip{position:relative;aspect-ratio:.92;perspective:1200px;cursor:pointer}
+.flip-inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .9s var(--spring)}
+.flip:hover .flip-inner,.flip:focus-within .flip-inner,.flip.flipped .flip-inner{transform:rotateY(180deg)}
+.flip-face{position:absolute;inset:0;border-radius:var(--radius);overflow:hidden;backface-visibility:hidden;-webkit-backface-visibility:hidden;border:1px solid var(--border)}
+.flip-front{display:flex;flex-direction:column;justify-content:flex-end;padding:18px;background:linear-gradient(180deg,rgba(0,0,0,0) 30%,rgba(0,0,0,.65) 100%)}
+.flip-front img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-1;transition:.6s var(--easing)}
+.flip:hover .flip-front img{transform:scale(1.06)}
+.flip-front .label{font-family:'Space Grotesk';font-size:.95rem;font-weight:600}
+.flip-front .meta{font-size:.72rem;color:var(--fg-mute);text-transform:uppercase;letter-spacing:.12em;margin-top:4px}
+.flip-back{transform:rotateY(180deg);background:linear-gradient(150deg,#101019 0%,#1c1c2e 100%);padding:22px 20px;display:flex;flex-direction:column;gap:10px;justify-content:space-between}
+.flip-back h4{font-family:'Space Grotesk';font-size:1.05rem;font-weight:700;margin:0}
+.flip-back .desc{font-size:.85rem;color:var(--fg-soft);line-height:1.55}
+.flip-back .specs-mini{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--border);padding-top:12px;font-size:.78rem}
+.flip-back .specs-mini .row{display:flex;justify-content:space-between;color:var(--fg-mute)}
+.flip-back .specs-mini .row strong{color:var(--fg);font-weight:600}
+.flip-hint{position:absolute;top:10px;right:10px;background:rgba(124,58,237,.92);backdrop-filter:blur(8px);border-radius:999px;padding:6px 12px;font-size:.66rem;text-transform:uppercase;letter-spacing:.12em;color:#fff;font-weight:700;z-index:2;display:flex;align-items:center;gap:5px;animation:hintPulse 2.4s ease-in-out infinite}
+@keyframes hintPulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(124,58,237,.7)}50%{transform:scale(1.08);box-shadow:0 0 0 14px rgba(124,58,237,0)}}
+.eye{display:inline-block;width:14px;height:14px;border-radius:50%;border:1.5px solid currentColor;position:relative}
+.eye::after{content:"";position:absolute;inset:3px;border-radius:50%;background:currentColor;transition:.3s}
+.flip:hover .eye::after,.flip.flipped .eye::after{transform:translateX(3px)}
+
+/* Gallery */
+.gallery{display:grid;grid-template-columns:repeat(12,1fr);grid-auto-rows:140px;gap:12px}
+.tile{position:relative;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);cursor:pointer;transition:.4s var(--easing)}
+.tile img{width:100%;height:100%;object-fit:cover;transition:.6s var(--easing);display:block}
+.tile:hover{transform:translateY(-4px) scale(1.01);box-shadow:0 30px 60px rgba(0,0,0,.4)}
+.tile:hover img{transform:scale(1.08)}
+.tile .caption{position:absolute;bottom:14px;left:16px;right:16px;color:var(--fg);font-family:'Space Grotesk';font-weight:600;text-shadow:0 2px 12px rgba(0,0,0,.6);opacity:0;transform:translateY(8px);transition:.3s var(--easing)}
+.tile:hover .caption{opacity:1;transform:translateY(0)}
+.tile.t1{grid-column:span 6;grid-row:span 3}.tile.t2{grid-column:span 6;grid-row:span 2}.tile.t3{grid-column:span 4;grid-row:span 2}.tile.t4{grid-column:span 4;grid-row:span 2}.tile.t5{grid-column:span 4;grid-row:span 2}.tile.t6{grid-column:span 12;grid-row:span 2}
+@media(max-width:780px){.gallery{grid-template-columns:repeat(2,1fr);grid-auto-rows:160px;gap:10px}.tile.t1,.tile.t2,.tile.t3,.tile.t4,.tile.t5,.tile.t6{grid-column:span 2;grid-row:span 1}}
+
+/* Specs / KPIs */
+.specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.spec{padding:32px 28px;background:var(--bg-soft);transition:.3s var(--easing)}
+.spec:hover{background:rgba(124,58,237,.07)}
+.spec h3{font-size:.84rem;text-transform:uppercase;letter-spacing:.14em;color:var(--accent-2);margin:0 0 8px;font-weight:600}
+.spec .num{font-family:'Space Grotesk';font-size:clamp(2rem,4vw,2.6rem);font-weight:700;letter-spacing:-.03em;line-height:1.05;margin:0}
+.spec .unit{font-size:.95rem;color:var(--fg-mute);margin-left:4px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:24px}
+.kpi{padding:36px 30px;border:1px solid var(--border);border-radius:var(--radius);background:linear-gradient(180deg,rgba(245,245,247,.025),rgba(245,245,247,0));transition:.3s var(--easing)}
+.kpi:hover{border-color:rgba(124,58,237,.3);transform:translateY(-4px)}
+.kpi-value{font-family:'Space Grotesk';font-size:clamp(2.6rem,5vw,3.8rem);font-weight:700;letter-spacing:-.03em;background:linear-gradient(180deg,var(--accent),var(--accent-3));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;line-height:1.05}
+.kpi-label{margin-top:6px;color:var(--fg-soft);font-size:.95rem}
+
+/* Compare / Testimonials / Marquee / CTA / Footer */
+.compare{position:relative;max-width:880px;margin:0 auto;border-radius:var(--radius);overflow:hidden;border:1px solid var(--border);aspect-ratio:16/9;cursor:ew-resize;user-select:none}
+.compare-side{position:absolute;inset:0;background-size:cover}
+.compare-side img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.compare-overlay{position:absolute;left:18px;top:18px;background:rgba(13,13,18,.7);backdrop-filter:blur(10px);border:1px solid var(--border);border-radius:999px;padding:6px 14px;font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:var(--fg);font-weight:600}
+.side-b{clip-path:inset(0 50% 0 0)}
+.compare-handle{position:absolute;top:0;bottom:0;left:50%;width:2px;background:rgba(245,245,247,.85);pointer-events:none;z-index:3}
+.compare-handle::after{content:"⇆";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;color:#08080b;width:46px;height:46px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:1.05rem;box-shadow:0 8px 22px rgba(0,0,0,.5)}
+.testimonials{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.tcard{padding:30px 26px;background:linear-gradient(180deg,rgba(245,245,247,.03),rgba(245,245,247,0));border:1px solid var(--border);border-radius:var(--radius);transition:.3s var(--easing)}
+.tcard:hover{border-color:rgba(34,211,238,.3);transform:translateY(-4px)}
+.tcard .stars{color:var(--accent-4);font-size:1rem;letter-spacing:2px;margin-bottom:14px}
+.tcard p{font-size:1.02rem;color:var(--fg);line-height:1.55;margin:0 0 18px;font-style:italic}
+.tcard .who{display:flex;align-items:center;gap:12px}
+.tcard .who img{width:40px;height:40px;border-radius:50%;object-fit:cover;border:2px solid var(--border)}
+.tcard .who div{display:flex;flex-direction:column}
+.tcard .who strong{font-size:.92rem}
+.tcard .who span{font-size:.78rem;color:var(--fg-mute)}
+.marquee{display:flex;gap:48px;overflow:hidden;mask-image:linear-gradient(90deg,transparent 0,#000 100px,#000 calc(100% - 100px),transparent 100%);padding-block:20px}
+.marquee-track{display:flex;gap:48px;animation:scroll 26s linear infinite}
+@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.brand{font-family:'Space Grotesk';font-weight:600;color:var(--fg-mute);letter-spacing:.04em;white-space:nowrap;font-size:1.15rem}
+.cta-final{text-align:center;padding-block:90px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:radial-gradient(ellipse at center top,rgba(124,58,237,.18),transparent 60%)}
+footer{padding-block:60px 40px;color:var(--fg-mute);font-size:.88rem}
+.footer-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:36px;margin-bottom:36px}
+.footer-grid h4{color:var(--fg);font-size:.92rem;margin:0 0 14px;font-weight:600}
+.footer-grid a{color:var(--fg-mute);text-decoration:none;display:block;padding:6px 0;transition:.2s}
+.footer-grid a:hover{color:var(--fg)}
+.footer-bottom{padding-top:24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;flex-wrap:wrap;gap:14px}
+.scroll-bar{position:fixed;top:0;left:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent-2));z-index:100;width:0;transition:width .12s linear}
+</style>
+</head>
+<body>
+<div class="mesh"><span></span></div>
+<div class="noise"></div>
+<div class="scroll-bar" id="scrollBar"></div>
+
+<nav class="nav" id="nav">
+  <div class="wrap nav-inner">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="url(#g1)" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="url(#g1)"/><defs><linearGradient id="g1" x1="0" x2="24" y1="0" y2="24"><stop offset="0" stop-color="#7c3aed"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs></svg>
+      AuroraSound
+    </div>
+    <div class="nav-links">
+      <a href="#anatomy">Conception</a>
+      <a href="#materials">Materiaux</a>
+      <a href="#gallery">Galerie</a>
+      <a href="#specs">Specs</a>
+      <a href="#testimonials">Avis</a>
+    </div>
+    <a class="cta" href="#cta-final">Pre-commander</a>
+  </div>
+</nav>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="white-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ffffff"/><stop offset="40%" stop-color="#e5e5e7"/><stop offset="100%" stop-color="#a1a1a6"/></linearGradient>
+    <linearGradient id="white-grad-dark" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#dadbe0"/><stop offset="100%" stop-color="#86868b"/></linearGradient>
+    <radialGradient id="driver-grad" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#7c3aed"/><stop offset="60%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#22d3ee"/></radialGradient>
+    <radialGradient id="tip-grad" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#1c1c24"/><stop offset="100%" stop-color="#0a0a10"/></radialGradient>
+    <linearGradient id="stem-grad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#cccdd1"/><stop offset="40%" stop-color="#fafafa"/><stop offset="60%" stop-color="#fafafa"/><stop offset="100%" stop-color="#9c9da3"/></linearGradient>
+  </defs>
+</svg>
+
+<main>
+  <section class="hero wrap">
+    <div class="hero-inner">
+      <div class="reveal">
+        <span class="eyebrow">AuroraSound · Echo Pro</span>
+        <h1>L ecouteur invisible.<br>Le son enorme.</h1>
+        <p class="sub">Huit pieces de precision. Quarante grammes au total. Concu pour disparaitre dans l oreille, et imposer le son dans la tete.</p>
+        <div class="hero-actions">
+          <a class="cta" href="#cta-final">Decouvrir le son</a>
+          <a class="cta cta--ghost" href="#anatomy">Voir l anatomie</a>
+        </div>
+      </div>
+      <div class="hero-visual reveal">
+        <svg class="airpod-hero" viewBox="0 0 400 600" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="170" cy="160" rx="105" ry="85" transform="rotate(-12 170 160)" fill="url(#white-grad)"/>
+          <g transform="translate(140 130) rotate(-12)" opacity=".55">
+            <circle cx="0" cy="0" r="1.8" fill="#86868b"/><circle cx="7" cy="0" r="1.8" fill="#86868b"/><circle cx="14" cy="0" r="1.8" fill="#86868b"/>
+            <circle cx="3.5" cy="6" r="1.8" fill="#86868b"/><circle cx="10.5" cy="6" r="1.8" fill="#86868b"/>
+            <circle cx="0" cy="12" r="1.8" fill="#86868b"/><circle cx="7" cy="12" r="1.8" fill="#86868b"/><circle cx="14" cy="12" r="1.8" fill="#86868b"/>
+          </g>
+          <circle cx="100" cy="220" r="11" fill="#0d1117" stroke="#86868b" stroke-width="1"/>
+          <rect x="155" y="240" width="36" height="220" rx="18" fill="url(#stem-grad)"/>
+          <rect x="194" y="320" width="14" height="34" rx="3" fill="url(#white-grad-dark)"/>
+          <ellipse cx="173" cy="475" rx="22" ry="14" fill="url(#white-grad)"/>
+          <ellipse cx="173" cy="475" rx="14" ry="8" fill="#0d1117"/>
+          <path d="M 100 250 Q 75 250 60 280 Q 65 320 90 330 Q 115 320 120 285 Q 115 255 100 250 Z" fill="url(#tip-grad)"/>
+          <path d="M 95 110 Q 130 95 175 100" stroke="rgba(255,255,255,.6)" stroke-width="3" stroke-linecap="round" fill="none"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ANATOMY: STICKY scroll-driven exploded view — l'AirPod reste TOUJOURS dans le champ -->
+  <section id="anatomy" class="anatomy">
+    <div class="anatomy-track">
+      <div class="anatomy-sticky" id="anatomySticky">
+        <div class="anatomy-head reveal">
+          <span class="eyebrow">Anatomie</span>
+          <h2>Huit pieces. Une promesse.</h2>
+          <p>Scroll dans cette section. L ecouteur reste fige a l ecran — chaque piece se separe en direct, proportionnellement a la position. En haut: assemble. Au milieu: a moitie. En bas: completement eclate.</p>
+        </div>
+
+        <div class="anatomy-stage-wrap">
+          <div class="exploded-stage" id="stage">
+            <svg viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+              <!-- 1. Speaker mesh -->
+              <g class="part p-mesh">
+                <ellipse cx="400" cy="290" rx="46" ry="34" transform="rotate(-12 400 290)" fill="url(#white-grad-dark)" opacity=".95"/>
+                <g transform="translate(380 276) rotate(-12)">
+                  <circle cx="0" cy="0" r="2" fill="#0d1117"/><circle cx="8" cy="0" r="2" fill="#0d1117"/><circle cx="16" cy="0" r="2" fill="#0d1117"/><circle cx="24" cy="0" r="2" fill="#0d1117"/><circle cx="32" cy="0" r="2" fill="#0d1117"/>
+                  <circle cx="4" cy="8" r="2" fill="#0d1117"/><circle cx="12" cy="8" r="2" fill="#0d1117"/><circle cx="20" cy="8" r="2" fill="#0d1117"/><circle cx="28" cy="8" r="2" fill="#0d1117"/>
+                  <circle cx="0" cy="16" r="2" fill="#0d1117"/><circle cx="8" cy="16" r="2" fill="#0d1117"/><circle cx="16" cy="16" r="2" fill="#0d1117"/><circle cx="24" cy="16" r="2" fill="#0d1117"/><circle cx="32" cy="16" r="2" fill="#0d1117"/>
+                </g>
+              </g>
+
+              <!-- 2. Housing -->
+              <g class="part p-housing">
+                <ellipse cx="400" cy="290" rx="115" ry="92" transform="rotate(-10 400 290)" fill="url(#white-grad)" stroke="rgba(0,0,0,.06)" stroke-width="1"/>
+                <path d="M 320 230 Q 380 195 460 215" stroke="rgba(255,255,255,.55)" stroke-width="3" stroke-linecap="round" fill="none"/>
+                <circle cx="490" cy="265" r="3.5" fill="#0d1117" opacity=".75"/>
+              </g>
+
+              <!-- 3. Driver dynamic — initially CENTERED on housing center -->
+              <g class="part p-driver">
+                <ellipse cx="400" cy="300" rx="62" ry="48" fill="url(#white-grad-dark)" opacity=".9"/>
+                <ellipse cx="400" cy="300" rx="54" ry="40" fill="url(#driver-grad)"/>
+                <ellipse cx="400" cy="298" rx="45" ry="32" fill="none" stroke="rgba(255,255,255,.45)" stroke-width="1"/>
+                <ellipse cx="400" cy="296" rx="32" ry="22" fill="none" stroke="rgba(255,255,255,.35)" stroke-width="1"/>
+                <circle cx="400" cy="296" r="10" fill="#0d1117"/>
+                <circle cx="400" cy="294" r="4" fill="rgba(255,255,255,.6)"/>
+              </g>
+
+              <!-- 4. Inward mic -->
+              <g class="part p-imic">
+                <circle cx="400" cy="380" r="22" fill="url(#white-grad-dark)"/>
+                <circle cx="400" cy="380" r="14" fill="#0d1117"/>
+                <circle cx="400" cy="378" r="6" fill="rgba(255,255,255,.18)"/>
+              </g>
+
+              <!-- 5. Stem — at base of housing -->
+              <g class="part p-stem">
+                <rect x="376" y="380" width="48" height="280" rx="24" fill="url(#stem-grad)"/>
+                <rect x="382" y="395" width="6" height="240" rx="3" fill="rgba(255,255,255,.5)"/>
+                <rect x="380" y="396" width="40" height="3" rx="1.5" fill="rgba(0,0,0,.18)"/>
+              </g>
+
+              <!-- 6. Force sensor -->
+              <g class="part p-fsensor">
+                <rect x="376" y="430" width="48" height="40" rx="6" fill="url(#white-grad)" stroke="rgba(0,0,0,.1)" stroke-width="1"/>
+                <rect x="384" y="438" width="32" height="24" rx="3" fill="none" stroke="#86868b" stroke-width="1" opacity=".5"/>
+                <circle cx="400" cy="450" r="3" fill="#86868b" opacity=".6"/>
+              </g>
+
+              <!-- 7. Outward mic -->
+              <g class="part p-omic">
+                <ellipse cx="400" cy="640" rx="32" ry="22" fill="url(#white-grad)"/>
+                <ellipse cx="400" cy="640" rx="22" ry="14" fill="#0d1117"/>
+                <g opacity=".65">
+                  <circle cx="390" cy="640" r="1.5" fill="#86868b"/><circle cx="396" cy="635" r="1.5" fill="#86868b"/><circle cx="404" cy="635" r="1.5" fill="#86868b"/><circle cx="410" cy="640" r="1.5" fill="#86868b"/><circle cx="396" cy="645" r="1.5" fill="#86868b"/><circle cx="404" cy="645" r="1.5" fill="#86868b"/>
+                </g>
+              </g>
+
+              <!-- 8. Tip silicone — at the housing top -->
+              <g class="part p-tip">
+                <path d="M 400 300 Q 375 300 360 330 Q 365 380 395 395 Q 425 380 430 335 Q 425 305 400 300 Z" fill="url(#tip-grad)"/>
+                <ellipse cx="395" cy="345" rx="22" ry="9" fill="#000" opacity=".55"/>
+                <ellipse cx="395" cy="342" rx="14" ry="6" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1"/>
+              </g>
+            </svg>
+
+            <!-- Hotspots emerge progressively — opacity tied to --p -->
+            <div class="hotspot" style="top:30%;left:48%" tabindex="0" aria-label="Speaker mesh"></div>
+            <div class="hotspot-label"><strong>Maille acoustique</strong>Titane micro-perfore 0.12 mm. Translucide a l acoustique, opaque a la poussiere.</div>
+            <div class="hotspot" style="top:36%;left:50%" tabindex="0" aria-label="Housing"></div>
+            <div class="hotspot-label"><strong>Coque polycarbonate</strong>Resine ICR translucide, monobloc, traitement oleophobe.</div>
+            <div class="hotspot" style="top:38%;left:50%" tabindex="0" aria-label="Driver"></div>
+            <div class="hotspot-label"><strong>Driver dynamique 11 mm</strong>Membrane composite graphene. Reponse 5 Hz - 40 kHz.</div>
+            <div class="hotspot" style="top:48%;left:33%" tabindex="0" aria-label="Inward mic"></div>
+            <div class="hotspot-label"><strong>Mic interne ANC</strong>Capsule MEMS dediee a la reduction de bruit active.</div>
+            <div class="hotspot" style="top:62%;left:62%" tabindex="0" aria-label="Stem"></div>
+            <div class="hotspot-label"><strong>Stem · antenne LDS</strong>Structure laser-direct, double bande. BLE 5.4.</div>
+            <div class="hotspot" style="top:55%;left:73%" tabindex="0" aria-label="Force sensor"></div>
+            <div class="hotspot-label"><strong>Force sensor</strong>Pression simple, double, longue, et pinch slide pour le volume.</div>
+            <div class="hotspot" style="top:80%;left:78%" tabindex="0" aria-label="Outward mic"></div>
+            <div class="hotspot-label"><strong>Beamforming mic array</strong>Trois capsules MEMS et chambre antibruit calibree.</div>
+            <div class="hotspot" style="top:82%;left:42%" tabindex="0" aria-label="Embout silicone"></div>
+            <div class="hotspot-label"><strong>Embout silicone medical</strong>Cinq tailles XS-XL, shore A 25.</div>
+          </div>
+
+          <div class="anatomy-progress">
+            <span>Demontage</span>
+            <span class="bar" id="explodedBar"></span>
+            <span><span id="explodedPct">0</span>%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MATERIALS — flip cards "œil qui retourne" (hint violet pulsant) -->
+  <section id="materials">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Finitions</span>
+        <h2>Six matieres. Six personnalites.</h2>
+        <p>Survole une carte pour la retourner. Le verso devoile les specs precises. Indicateur "Retourne" en violet pulsant en haut a droite.</p>
+      </div>
+      <div class="flip-grid reveal reveal--stagger">
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matAluminium/600/640" alt=""><span class="label">Argent vif</span><span class="meta">Aluminium brut</span></div><div class="flip-face flip-back"><h4>Aluminium 7075</h4><p class="desc">Alliage aerospatial, brossage circulaire 0.4 mm. Reflexion neutre, signature plus nette dans les aigus.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>4.1 g</strong></div><div class="row"><span>Finition</span><strong>Brosse circulaire</strong></div><div class="row"><span>Acoustique</span><strong>+ 0.8 dB / 8 kHz</strong></div></div></div></div></div>
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matCeramic/600/640" alt=""><span class="label">Porcelaine</span><span class="meta">Ceramique cuite</span></div><div class="flip-face flip-back"><h4>Ceramique zircone</h4><p class="desc">Cuisson 1450 degC, surface laquee main. Translucidite acoustique, voix mieux centree.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>5.2 g</strong></div><div class="row"><span>Finition</span><strong>Laquee main</strong></div><div class="row"><span>Acoustique</span><strong>Voix centree +</strong></div></div></div></div></div>
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matCarbon/600/640" alt=""><span class="label">Graphite</span><span class="meta">Carbone tisse 3K</span></div><div class="flip-face flip-back"><h4>Carbone 3K UD</h4><p class="desc">Tissage unidirectionnel, laquage UV brillant. La piece la plus legere, basses plus fermes.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>3.4 g</strong></div><div class="row"><span>Finition</span><strong>Laque UV</strong></div><div class="row"><span>Acoustique</span><strong>Bas plus tendus</strong></div></div></div></div></div>
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matOnyx/600/640" alt=""><span class="label">Nuit profonde</span><span class="meta">Onyx poli</span></div><div class="flip-face flip-back"><h4>Onyx CNC</h4><p class="desc">Bloc d onyx noir taille puis poli optique. Tres dense, grave dans les graves.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>6.8 g</strong></div><div class="row"><span>Finition</span><strong>Poli optique</strong></div><div class="row"><span>Acoustique</span><strong>Sub bass +</strong></div></div></div></div></div>
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matGold/600/640" alt=""><span class="label">Soleil</span><span class="meta">Or 24K brosse</span></div><div class="flip-face flip-back"><h4>Plaque or 24K</h4><p class="desc">Plaquage 5 microns sur ame inox. Mediums chauds.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>5.9 g</strong></div><div class="row"><span>Finition</span><strong>Brossage main</strong></div><div class="row"><span>Acoustique</span><strong>Mediums chauds</strong></div></div></div></div></div>
+        <div class="flip" tabindex="0"><span class="flip-hint"><span class="eye"></span>Retourne</span><div class="flip-inner"><div class="flip-face flip-front"><img src="https://picsum.photos/seed/matSilicone/600/640" alt=""><span class="label">Aurore</span><span class="meta">Silicone medical</span></div><div class="flip-face flip-back"><h4>Silicone medical Aurore</h4><p class="desc">Edition signature. Silicone shore 25, gradient laser violet vers cyan.</p><div class="specs-mini"><div class="row"><span>Poids</span><strong>3.8 g</strong></div><div class="row"><span>Finition</span><strong>Couleur gradient</strong></div><div class="row"><span>Acoustique</span><strong>Equilibre +</strong></div></div></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GALLERY -->
+  <section id="gallery">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">In motion</span><h2>Pour les vrais moments.</h2></div>
+      <div class="gallery reveal reveal--stagger">
+        <div class="tile t1"><img src="https://picsum.photos/seed/scene-running3/1200/800" alt=""><span class="caption">Course matinale</span></div>
+        <div class="tile t2"><img src="https://picsum.photos/seed/scene-studio3/1200/700" alt=""><span class="caption">Session studio</span></div>
+        <div class="tile t3"><img src="https://picsum.photos/seed/scene-airport3/900/700" alt=""><span class="caption">Vol long-courrier</span></div>
+        <div class="tile t4"><img src="https://picsum.photos/seed/scene-cafe3/900/700" alt=""><span class="caption">Working session</span></div>
+        <div class="tile t5"><img src="https://picsum.photos/seed/scene-bike3/900/700" alt=""><span class="caption">Roulage urbain</span></div>
+        <div class="tile t6"><img src="https://picsum.photos/seed/scene-night3/1500/700" alt=""><span class="caption">Set techno</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="specs">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Mesures</span><h2>Les chiffres importants.</h2></div>
+      <div class="specs reveal reveal--stagger">
+        <div class="spec"><h3>Driver</h3><p class="num">11<span class="unit">mm</span></p><p>Composite graphene</p></div>
+        <div class="spec"><h3>Reponse</h3><p class="num">5–40<span class="unit">kHz</span></p><p>Hi-Res certifie</p></div>
+        <div class="spec"><h3>Autonomie</h3><p class="num">36<span class="unit">h</span></p><p>Avec etui charge</p></div>
+        <div class="spec"><h3>Charge</h3><p class="num">10<span class="unit">min</span></p><p>= 3 h d ecoute</p></div>
+        <div class="spec"><h3>Connect</h3><p class="num">5.4<span class="unit">BT</span></p><p>Multipoint stable</p></div>
+        <div class="spec"><h3>Etancheite</h3><p class="num">IP54</p><p>Sport &amp; pluie</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="kpis">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Performance</span><h2>Pas de marketing. Que des dB.</h2></div>
+      <div class="kpis reveal" id="kpisRow">
+        <div class="kpi"><div class="kpi-value" data-target="42" data-suffix="dB">0</div><div class="kpi-label">Reduction active de bruit pic</div></div>
+        <div class="kpi"><div class="kpi-value" data-target="0.07" data-suffix="%" data-decimals="2">0</div><div class="kpi-label">Distortion harmonique a 1 kHz</div></div>
+        <div class="kpi"><div class="kpi-value" data-target="98" data-suffix="dB">0</div><div class="kpi-label">Restitution voix humaine</div></div>
+        <div class="kpi"><div class="kpi-value" data-target="36" data-suffix="h">0</div><div class="kpi-label">Autonomie totale (etui inclus)</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Comparaison</span><h2>Avant. Apres.</h2><p>Glisse pour comparer le mode standard et le mode immersif spatial.</p></div>
+      <div class="compare reveal" id="compare">
+        <div class="compare-side side-a"><img src="https://picsum.photos/seed/spatial-aurora3/1600/900" alt=""><span class="compare-overlay" style="background:rgba(124,58,237,.85);color:#fff">Aurora · Spatial</span></div>
+        <div class="compare-side side-b" id="cb"><img src="https://picsum.photos/seed/standard-stereo3/1600/900" alt=""><span class="compare-overlay" style="background:rgba(13,13,18,.85);color:#fff;left:auto;right:18px">Stereo · Standard</span></div>
+        <div class="compare-handle" id="ch"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="testimonials">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Avis</span><h2>Ce qu en pensent ceux qui les portent.</h2></div>
+      <div class="testimonials reveal reveal--stagger">
+        <div class="tcard"><div class="stars">★★★★★</div><p>"J ai oublie que je les portais. Et mon producteur m a dit que c est ce qui se rapproche le plus du studio."</p><div class="who"><img src="https://picsum.photos/seed/portrait1c/100/100" alt=""><div><strong>Lola Beaumont</strong><span>Productrice, Studio 22</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><p>"Quarante grammes. Six heures de vol Paris-NYC. Zero fatigue auriculaire."</p><div class="who"><img src="https://picsum.photos/seed/portrait2c/100/100" alt=""><div><strong>Yacine M.</strong><span>Pilote AF, 12 ans</span></div></div></div>
+        <div class="tcard"><div class="stars">★★★★★</div><p>"L exploded view sur le site m a vendu le produit avant meme de l ecouter."</p><div class="who"><img src="https://picsum.photos/seed/portrait3c/100/100" alt=""><div><strong>Camille D.</strong><span>UX Lead, Datadog</span></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="press">
+    <div class="wrap">
+      <div class="section-head reveal"><span class="eyebrow">Presse</span><h2>Ils en parlent.</h2></div>
+      <div class="marquee reveal">
+        <div class="marquee-track">
+          <span class="brand">Wired</span><span class="brand">·</span><span class="brand">The Verge</span><span class="brand">·</span><span class="brand">Les Numeriques</span><span class="brand">·</span><span class="brand">Frandroid</span><span class="brand">·</span><span class="brand">What Hi-Fi?</span><span class="brand">·</span><span class="brand">Engadget</span><span class="brand">·</span>
+          <span class="brand">Wired</span><span class="brand">·</span><span class="brand">The Verge</span><span class="brand">·</span><span class="brand">Les Numeriques</span><span class="brand">·</span><span class="brand">Frandroid</span><span class="brand">·</span><span class="brand">What Hi-Fi?</span><span class="brand">·</span><span class="brand">Engadget</span><span class="brand">·</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="cta-final" class="cta-final">
+    <div class="wrap reveal">
+      <span class="eyebrow">Lancement Q3</span>
+      <h2 style="font-family:'Space Grotesk';font-size:clamp(2.4rem,5.5vw,4.4rem);font-weight:700;letter-spacing:-.03em;margin:18px auto 22px;max-width:780px">Reservez votre paire avant la rupture.</h2>
+      <p style="color:var(--fg-soft);max-width:520px;margin:0 auto 28px">Production limitee aux 5000 premieres precommandes.</p>
+      <a class="cta" href="#" style="padding:1rem 1.6rem;font-size:1rem">Pre-commander · 349 EUR</a>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="footer-grid">
+        <div><h4>AuroraSound</h4><a href="#">A propos</a><a href="#">Equipe</a><a href="#">Carrieres</a></div>
+        <div><h4>Produits</h4><a href="#">Echo Pro</a><a href="#">Echo Lite</a><a href="#">Etui charge</a></div>
+        <div><h4>Support</h4><a href="#">FAQ</a><a href="#">Contact</a><a href="#">Garantie</a></div>
+        <div><h4>Newsletter</h4><p style="color:var(--fg-mute);font-size:.84rem;margin:0 0 12px">Une fois par mois.</p><input type="email" placeholder="vous@mail.com" style="width:100%;padding:.7rem .9rem;border-radius:10px;border:1px solid var(--border);background:rgba(245,245,247,.04);color:var(--fg)"></div>
+      </div>
+      <div class="footer-bottom"><span>© 2026 AuroraSound · Demo apple_product (AuroraIA)</span><span>Made with Aurora — module CODE.</span></div>
+    </div>
+  </footer>
+</main>
+
+<script>
+const bar=document.getElementById('scrollBar');function updateBar(){const max=document.documentElement.scrollHeight-innerHeight;bar.style.width=Math.min(100,(scrollY/max)*100)+'%'}addEventListener('scroll',updateBar,{passive:true});updateBar();
+const io=new IntersectionObserver((entries)=>{for(const e of entries)if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}},{threshold:.15});document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+const nav=document.getElementById('nav');addEventListener('scroll',()=>{nav.classList.toggle('scrolled',scrollY>40)},{passive:true});
+
+// STICKY scroll-driven exploded view: --p tied to scroll progress through the section.
+const sticky=document.getElementById('anatomySticky');
+const track=document.querySelector('.anatomy-track');
+const pctText=document.getElementById('explodedPct');
+const hotspots=document.querySelectorAll('.hotspot');
+function updateExploded(){
+  if(!sticky||!track)return;
+  const r=track.getBoundingClientRect();
+  // p=0 when section top hits viewport top, p=1 when section bottom hits viewport bottom
+  const total=track.offsetHeight-innerHeight;
+  if(total<=0){sticky.style.setProperty('--p','0');return}
+  const scrolled=Math.max(0,-r.top);
+  const p=Math.max(0,Math.min(1,scrolled/total));
+  sticky.style.setProperty('--p',p.toFixed(3));
+  if(pctText)pctText.textContent=Math.round(p*100);
+  hotspots.forEach((el,i)=>{
+    const pos=i/(hotspots.length-1);
+    el.classList.toggle('active',p>pos*0.85&&p<(pos+0.45)*0.95);
+  });
+}
+addEventListener('scroll',updateExploded,{passive:true});
+addEventListener('resize',updateExploded);
+updateExploded();
+
+// Counters
+const kpiSection=document.getElementById('kpisRow');const counterObs=new IntersectionObserver((entries)=>{for(const e of entries){if(!e.isIntersecting)continue;counterObs.disconnect();e.target.querySelectorAll('.kpi-value').forEach(el=>{const target=parseFloat(el.dataset.target||'0');const suffix=el.dataset.suffix||'';const decimals=parseInt(el.dataset.decimals||'0',10);const start=performance.now();const dur=1600;const tick=(t)=>{const p=Math.min((t-start)/dur,1);const eased=1-Math.pow(1-p,3);const v=(target*eased).toFixed(decimals);el.textContent=v+suffix;if(p<1)requestAnimationFrame(tick)};requestAnimationFrame(tick)})}},{threshold:.4});if(kpiSection)counterObs.observe(kpiSection);
+
+// Image comparison drag
+const cmp=document.getElementById('compare');const cb=document.getElementById('cb');const ch=document.getElementById('ch');if(cmp&&cb&&ch){let drag=false;const setSplit=(r)=>{r=Math.max(.05,Math.min(.95,r));cb.style.clipPath=`inset(0 ${(1-r)*100}% 0 0)`;ch.style.left=(r*100)+'%'};cmp.addEventListener('pointerdown',(e)=>{drag=true;cmp.setPointerCapture(e.pointerId)});cmp.addEventListener('pointermove',(e)=>{if(!drag)return;setSplit(e.offsetX/cmp.clientWidth)});cmp.addEventListener('pointerup',(e)=>{drag=false;cmp.releasePointerCapture(e.pointerId)});setSplit(.5)}
+
+// Touch flip
+document.querySelectorAll('.flip').forEach(card=>{card.addEventListener('click',()=>{card.classList.toggle('flipped')});card.addEventListener('keydown',(e)=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();card.classList.toggle('flipped')}})});
+</script>
+</body>
+</html>

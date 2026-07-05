@@ -1,0 +1,336 @@
+{
+  "lipton": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#FEE23B",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "thé",
+        "sachet",
+        "limonade"
+      ],
+      "designVibe": "marron foncé et blanc, classique et fiable",
+      "typoVibe": "serif simple et lisible",
+      "imageQueries": [
+        "Lipton tea sachet",
+        "Lipton limonade bottle",
+        "Lipton logo classic"
+      ],
+      "productShape": "bottle"
+    },
+    "ts": 1777410208.8290977
+  },
+  "disney": {
+    "wikiAvailable": true,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#FF0000",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "Mickey Mouse",
+        "Snow White",
+        "Disneyland"
+      ],
+      "designVibe": "rouge éclatant + blanc, iconique et familier",
+      "typoVibe": "serif scriptural elegant + sans bold",
+      "imageQueries": [
+        "Mickey Mouse Disney",
+        "Snow White Disney",
+        "Disney Character Artwork",
+        "Disney Logo"
+      ],
+      "productShape": "logo"
+    },
+    "ts": 1777415136.8026261
+  },
+  "heineken": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#A18555",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "bière",
+        "can",
+        "logo"
+      ],
+      "designVibe": "bleu profond et argenté, élégance et modernité",
+      "typoVibe": "police classique et moderne avec une touche de sophistication",
+      "imageQueries": [
+        "Heineken can logo",
+        "Heineken bottle design",
+        "Heineken brand identity"
+      ],
+      "productShape": "can"
+    },
+    "ts": 1777415164.4107382
+  },
+  "audi": {
+    "wikiAvailable": true,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#007AAB",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "RS Q3",
+        "R8",
+        "S5"
+      ],
+      "designVibe": "noir et bleu dynamique, sportif et élégant",
+      "typoVibe": "polices modernes et minimalistes avec une touche de sophistication",
+      "imageQueries": [
+        "Audi RS Q3",
+        "Audi R8",
+        "Audi S5"
+      ],
+      "productShape": "car"
+    },
+    "ts": 1777415190.9656515
+  },
+  "carlsberg": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#A0ABBB",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "Carlsberg",
+        "bière",
+        "pinte"
+      ],
+      "designVibe": "brune élégante et raffinée, avec des accents modernes",
+      "typoVibe": "serif classique avec une touche moderne",
+      "imageQueries": [
+        "Carlsberg logo",
+        "Carlsberg beer bottle",
+        "Carlsberg pinte glass"
+      ],
+      "productShape": "bottle"
+    },
+    "ts": 1777415766.106951
+  },
+  "volvo": {
+    "wikiAvailable": true,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#EE4C2C",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "sécurité",
+        "véhicules",
+        "roulement"
+      ],
+      "designVibe": "rouge dynamique + blanc minimaliste",
+      "typoVibe": "serif robuste et moderne + sans bold",
+      "imageQueries": [
+        "Volvo truck logo",
+        "Volvo car interior design",
+        "Volvo SUV exterior",
+        "Volvo safety features"
+      ],
+      "productShape": "logo"
+    },
+    "ts": 1777415797.4084735
+  },
+  "mercedes-benz": {
+    "wikiAvailable": true,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#00ADEF",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "SUV",
+        "CLS",
+        "AMG"
+      ],
+      "designVibe": "bleu éclatant + élégance allemande",
+      "typoVibe": "serif classique + sans-serif moderne",
+      "imageQueries": [
+        "Mercedes-Benz logo",
+        "Mercedes-Benz SUV",
+        "Mercedes-Benz CLS car"
+      ],
+      "productShape": "car"
+    },
+    "ts": 1777417846.4118493
+  },
+  "bmw": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#0166B1",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "M3",
+        "Z4",
+        "i8"
+      ],
+      "designVibe": "bleu dynamique et élégant, alliant modernité et performance",
+      "typoVibe": "polices modernes et minimalistes avec une touche de sophistication",
+      "imageQueries": [
+        "BMW M3 GTR race car",
+        "BMW Z4 roadster",
+        "BMW i8 hybrid sports car"
+      ],
+      "productShape": "car"
+    },
+    "ts": 1777417877.3824012
+  },
+  "procter & gamble": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#0373C4",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "Pampers",
+        "Tide",
+        "Charmin"
+      ],
+      "designVibe": "rouge intense + blanc, professionnel et fiable",
+      "typoVibe": "serif moderne + sans-serif clair",
+      "imageQueries": [
+        "Procter & Gamble Tide bottle",
+        "Procter & Gamble Pampers packaging",
+        "Procter & Gamble Charmin toilet paper"
+      ],
+      "productShape": "bottle"
+    },
+    "ts": 1777420011.822333
+  },
+  "häagen-dazs": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#6C172F",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "sorbet",
+        "vanille",
+        "crème glacée"
+      ],
+      "designVibe": "jaune doré et blanc, élégant et raffiné",
+      "typoVibe": "calligraphique et élégant",
+      "imageQueries": [
+        "Häagen-Dazs packaging",
+        "Häagen-Dazs store interior",
+        "Häagen-Dazs sorbet tub"
+      ],
+      "productShape": "bottle"
+    },
+    "ts": 1777420045.112654
+  },
+  "lego": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#E3000B",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "brique",
+        "set",
+        "construction"
+      ],
+      "designVibe": "couleurs vives + formes géométriques simples",
+      "typoVibe": "polices modernes et ludiques",
+      "imageQueries": [
+        "Lego brick set",
+        "Lego construction toy",
+        "Lego minifigure"
+      ],
+      "productShape": "bottle"
+    },
+    "ts": 1777424404.9395657
+  },
+  "pfizer": {
+    "wikiAvailable": true,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#3A84FF",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "Paxlovid",
+        "Prevnar",
+        "Enbrel"
+      ],
+      "designVibe": "bleu vibrant + blanc, modern et professionnel",
+      "typoVibe": "polices modernes et lisible + symboles médicaux",
+      "imageQueries": [
+        "Pfizer Paxlovid packaging",
+        "Pfizer Prevnar vaccine",
+        "Pfizer Enbrel medication"
+      ],
+      "productShape": "tablet"
+    },
+    "ts": 1777425839.6344986
+  },
+  "byd": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#7B94B4",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "voiture électrique",
+        "batterie",
+        "BYD Auto"
+      ],
+      "designVibe": "bleu profond + futuriste, éthique et durable",
+      "typoVibe": "police moderne et élégante avec une touche de futurisme",
+      "imageQueries": [
+        "BYD Auto electric car",
+        "BYD Auto logo",
+        "BYD Auto battery technology",
+        "BYD Auto vehicle range"
+      ],
+      "productShape": "car"
+    },
+    "ts": 1777425874.487335
+  },
+  "bonjour": {
+    "wikiAvailable": true,
+    "colorSource": "wikipedia_logo_dominant",
+    "profile": {
+      "primaryColor": "#81714B",
+      "secondaryColor": "#000000",
+      "productKeywords": [
+        "salut",
+        "hello",
+        "greeting"
+      ],
+      "designVibe": "simple and friendly greeting",
+      "typoVibe": "clean sans-serif with a warm touch",
+      "imageQueries": [
+        "Bonjour greeting emoji",
+        "French salutation etiquette",
+        "Polite hello gesture",
+        "Casual hi in different languages"
+      ],
+      "productShape": "logo"
+    },
+    "ts": 1779205977.4120288
+  },
+  "corrige": {
+    "wikiAvailable": false,
+    "colorSource": "ollama_guess",
+    "profile": {
+      "primaryColor": "#004D40",
+      "secondaryColor": "#FFFFFF",
+      "productKeywords": [
+        "stylo",
+        "carnet",
+        "plume"
+      ],
+      "designVibe": "vintage et classique avec des touches modernes",
+      "typoVibe": "serif élégant et moderne",
+      "imageQueries": [
+        "Corrige pen logo",
+        "Corrige classic notebook",
+        "Corrige vintage fountain pen"
+      ],
+      "productShape": "can"
+    },
+    "ts": 1781580575.2967463
+  }
+}

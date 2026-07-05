@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Aurora voice avatar">
+  <defs>
+    <linearGradient id="skin" x1="72" x2="186" y1="62" y2="176" gradientUnits="userSpaceOnUse"><stop stop-color="#FFE6CA"/><stop offset="1" stop-color="#EAB58D"/></linearGradient>
+    <linearGradient id="body" x1="70" x2="188" y1="148" y2="236" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD76E"/><stop offset="1" stop-color="#D89025"/></linearGradient>
+  </defs>
+  <ellipse cx="128" cy="230" rx="62" ry="14" fill="#2b1a05" opacity=".18"/>
+  <path d="M63 210c8-42 32-65 65-65s58 23 65 65c-21 19-109 19-130 0z" fill="url(#body)" stroke="#2B2112" stroke-width="7"/>
+  <path d="M80 109c0-40 22-69 53-69s52 29 52 69c0 41-22 69-52 69s-53-28-53-69z" fill="url(#skin)" stroke="#2B2112" stroke-width="7"/>
+  <path d="M78 96c8-33 31-58 61-56 28 2 47 24 48 55-30-7-63-7-109 1z" fill="#C98122" stroke="#2B2112" stroke-width="6"/>
+  <circle cx="111" cy="116" r="5" fill="#2B2112"/><circle cx="152" cy="116" r="5" fill="#2B2112"/>
+  <path d="M119 143c10 7 22 7 32 0" fill="none" stroke="#2B2112" stroke-width="6" stroke-linecap="round"/>
+  <rect x="46" y="165" width="44" height="66" rx="20" fill="#2B2112"/>
+  <rect x="56" y="151" width="24" height="54" rx="12" fill="#fff4d6" stroke="#2B2112" stroke-width="6"/>
+  <path d="M112 180c15-18 31-18 46 0M112 203c22-25 46-25 68 0" fill="none" stroke="#f2b84b" stroke-width="8" stroke-linecap="round"/>
+</svg>

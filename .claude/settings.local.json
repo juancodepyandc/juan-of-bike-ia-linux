@@ -1,0 +1,11 @@
+{
+  "_comment": "User-local overrides only (permissions, machine-specific tunnel domains). Shared hooks live in .claude/settings.json (committed).",
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "WebFetch(domain:fin-isaac-reduce-fingers.trycloudflare.com)"
+    ]
+  }
+}

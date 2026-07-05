@@ -1,0 +1,177 @@
+<TaskerData sr="" dvi="1" tv="6.5">
+<!--
+  Aurora-mobile-bridge / Tasker XML import
+  ========================================
+  Importe via : Tasker -> 3-points -> Data -> Restore -> ce fichier.
+  Configure les 2 variables globales :
+    %AURORA_BRIDGE_URL  = ton tunnel cloudflared (https://*.trycloudflare.com)
+    %AURORA_EXT_ID      = un UUID unique par appareil
+
+  Permissions Tasker requises :
+  - Send SMS, Make Phone Calls, Microphone, Internet
+-->
+
+<Task sr="task1">
+  <cdate>1777309463540</cdate>
+  <edate>1777309463540</edate>
+  <id>1</id>
+  <nme>Aurora_Inbound</nme>
+  <pri>5</pri>
+  <Action sr="act0" ve="7">
+    <code>432</code>
+    <label>POST /api/cowork/mobile/inbound</label>
+    <Str sr="arg0" ve="3">%AURORA_BRIDGE_URL/api/cowork/mobile/inbound</Str>
+    <Str sr="arg1" ve="3">Content-Type:application/json</Str>
+    <Str sr="arg2" ve="3">{"extId":"%AURORA_EXT_ID","kind":"%par1","text":"%par2"}</Str>
+    <Int sr="arg3"><val>30</val></Int>
+    <Int sr="arg4"><val>0</val></Int>
+    <Int sr="arg5"><val>1</val></Int>
+    <Str sr="arg6" ve="3">aurora_response</Str>
+  </Action>
+</Task>
+
+<Task sr="task2">
+  <cdate>1777309463541</cdate>
+  <edate>1777309463541</edate>
+  <id>2</id>
+  <nme>Aurora_Poll</nme>
+  <pri>10</pri>
+  <Action sr="act0" ve="7">
+    <code>431</code>
+    <label>GET /api/cowork/mobile/poll</label>
+    <Str sr="arg0" ve="3">%AURORA_BRIDGE_URL/api/cowork/mobile/poll?wait=25000&amp;extId=%AURORA_EXT_ID</Str>
+    <Str sr="arg1" ve="3"></Str>
+    <Int sr="arg3"><val>30</val></Int>
+    <Str sr="arg6" ve="3">aurora_cmd</Str>
+  </Action>
+  <Action sr="act1" ve="7">
+    <code>129</code>
+    <label>Parse JSON command</label>
+    <Str sr="arg0" ve="3">aurora_cmd</Str>
+  </Action>
+  <Action sr="act2" ve="7">
+    <code>37</code>
+    <label>If command exists</label>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>!17</op><rhs></rhs></Condition>
+    </ConditionList>
+  </Action>
+
+  <Action sr="act3" ve="7">
+    <code>37</code>
+    <label>switch (kind)</label>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>0</op><rhs>send_sms</rhs></Condition>
+    </ConditionList>
+  </Action>
+  <Action sr="act4" ve="7">
+    <code>41</code>
+    <label>Send SMS</label>
+    <Str sr="arg0" ve="3">%aurora_cmd.command.payload.to</Str>
+    <Str sr="arg1" ve="3">%aurora_cmd.command.payload.body</Str>
+  </Action>
+  <Action sr="act5" ve="7"><code>43</code><label>End If</label></Action>
+
+  <Action sr="act6" ve="7">
+    <code>37</code>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>0</op><rhs>make_call</rhs></Condition>
+    </ConditionList>
+  </Action>
+  <Action sr="act7" ve="7">
+    <code>510</code>
+    <label>Call</label>
+    <Str sr="arg0" ve="3">%aurora_cmd.command.payload.to</Str>
+  </Action>
+  <Action sr="act8" ve="7"><code>43</code></Action>
+
+  <Action sr="act9" ve="7">
+    <code>37</code>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>0</op><rhs>open_url</rhs></Condition>
+    </ConditionList>
+  </Action>
+  <Action sr="act10" ve="7">
+    <code>104</code>
+    <label>Browse URL</label>
+    <Str sr="arg0" ve="3">%aurora_cmd.command.payload.url</Str>
+  </Action>
+  <Action sr="act11" ve="7"><code>43</code></Action>
+
+  <Action sr="act12" ve="7">
+    <code>37</code>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>0</op><rhs>speak</rhs></Condition>
+    </ConditionList>
+  </Action>
+  <Action sr="act13" ve="7">
+    <code>308</code>
+    <label>Say</label>
+    <Str sr="arg0" ve="3">%aurora_cmd.command.payload.text</Str>
+    <Str sr="arg1" ve="3">fra</Str>
+  </Action>
+  <Action sr="act14" ve="7"><code>43</code></Action>
+
+  <Action sr="act15" ve="7">
+    <code>37</code>
+    <ConditionList sr="if">
+      <Condition sr="c0" ve="3"><lhs>%aurora_cmd.command.kind</lhs><op>0</op><rhs>notify</rhs></Condition>
+    </ConditionList>
+  </Action>
+  <Action sr="act16" ve="7">
+    <code>523</code>
+    <label>Notify</label>
+    <Str sr="arg0" ve="3">%aurora_cmd.command.payload.title</Str>
+    <Str sr="arg1" ve="3">%aurora_cmd.command.payload.body</Str>
+  </Action>
+  <Action sr="act17" ve="7"><code>43</code></Action>
+
+  <Action sr="act18" ve="7">
+    <code>432</code>
+    <label>POST result</label>
+    <Str sr="arg0" ve="3">%AURORA_BRIDGE_URL/api/cowork/mobile/result</Str>
+    <Str sr="arg1" ve="3">Content-Type:application/json</Str>
+    <Str sr="arg2" ve="3">{"extId":"%AURORA_EXT_ID","commandId":"%aurora_cmd.command.id","result":{"ok":true}}</Str>
+    <Int sr="arg3"><val>15</val></Int>
+  </Action>
+  <Action sr="act19" ve="7"><code>43</code></Action>
+
+  <Action sr="act20" ve="7">
+    <code>130</code>
+    <label>Loop : restart self</label>
+    <Str sr="arg0" ve="3">Aurora_Poll</Str>
+  </Action>
+</Task>
+
+<Task sr="task3">
+  <cdate>1777309463542</cdate>
+  <edate>1777309463542</edate>
+  <id>3</id>
+  <nme>Aurora_Voice</nme>
+  <pri>10</pri>
+  <Action sr="act0" ve="7">
+    <code>657</code>
+    <label>Speech recognition (Google)</label>
+    <Str sr="arg0" ve="3">aurora_text</Str>
+    <Str sr="arg1" ve="3">fra</Str>
+  </Action>
+  <Action sr="act1" ve="7">
+    <code>432</code>
+    <Str sr="arg0" ve="3">%AURORA_BRIDGE_URL/api/cowork/mobile/inbound</Str>
+    <Str sr="arg1" ve="3">Content-Type:application/json</Str>
+    <Str sr="arg2" ve="3">{"extId":"%AURORA_EXT_ID","kind":"voice","text":"%aurora_text"}</Str>
+  </Action>
+</Task>
+
+<Profile sr="prof1">
+  <cdate>1777309463543</cdate>
+  <edate>1777309463543</edate>
+  <id>1</id>
+  <nme>Aurora_Poll_OnUnlock</nme>
+  <Event sr="con0" ve="2">
+    <code>305</code>
+    <label>Display Unlocked</label>
+  </Event>
+  <Task>Aurora_Poll</Task>
+</Profile>
+</TaskerData>

@@ -1,0 +1,15 @@
+{
+  "name": "juan of bike IA",
+  "short_name": "Juan of Bike",
+  "description": "Copilote IA local — grimoire mobile",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a0f05",
+  "theme_color": "#c9a24b",
+  "icons": [
+    { "src": "/juan-bike-icon.svg", "sizes": "any",     "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/fairy/natsu.png",    "sizes": "512x512", "type": "image/png",     "purpose": "any maskable" }
+  ]
+}

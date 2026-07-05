@@ -1,0 +1,14 @@
+[
+  {"name": "cyberpunk-portfolio",         "prompt": "personal portfolio for a cyberpunk-styled web designer, neon accents, scroll-reveal sections"},
+  {"name": "threejs-solar-system",        "prompt": "interactive 3d solar system with three.js, orbiting planets, mouse to rotate, click a planet for info"},
+  {"name": "canvas-particle-galaxy",      "prompt": "2d canvas particle galaxy simulator with gravity, mouse spawn, color trails"},
+  {"name": "physics-pendulum-sim",        "prompt": "double pendulum chaos simulator with sliders for masses and gravity, real-time graph"},
+  {"name": "audio-piano",                 "prompt": "playable virtual piano webapp, real audio via web audio api, keyboard + mouse, mini recorder"},
+  {"name": "data-viz-weather",            "prompt": "weather dashboard for one city: temperature chart, humidity gauge, forecast cards, hardcoded demo data"},
+  {"name": "edu-binary-tutorial",         "prompt": "interactive tutorial explaining binary numbers with widgets to flip bits and see decimal update"},
+  {"name": "game-asteroids",              "prompt": "classic asteroids arcade game on canvas: thrust, rotate, shoot, wraparound, score, restart"},
+  {"name": "cli-renamer",                 "prompt": "python cli that renames files matching a glob with a template (e.g. {name}_{idx}.{ext}), dry-run mode"},
+  {"name": "tesla-cybertruck-product",    "prompt": "product page for the Tesla Cybertruck, full marketing flow, scroll storytelling, dark theme, large hero"},
+  {"name": "react-todo-dark",             "prompt": "todo list react+vite with dark mode, drag to reorder, local storage, animations"},
+  {"name": "3d-game-platformer",          "prompt": "tiny 3d platformer with three.js: player cube, jump, collect coins, simple level, hud"}
+]

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/juan-bike-icon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#c9a24b" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/fairy/natsu.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- v81r: Aurora skin font loading.
+         - Manga: Bangers + Inter + Kalam (already used by manga views).
+         - aurora_v1 Editorial: Instrument Serif (italic display), Geist (sans),
+           Cormorant Garamond (display fallback). JetBrains Mono shared.
+         - aurora_v3 Ricochet: Permanent Marker, Patrick Hand, Caveat,
+           IBM Plex Mono, Space Mono — for typewriter / sketchbook / atelier /
+           codex / Mr. Robot terminal aesthetics per module.
+         All loaded together via &family= chain so a single stylesheet roundtrip
+         covers every skin. display=swap keeps fallback fonts visible during
+         font load so the UI never flashes invisible text. -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bangers&family=Caveat:wght@400;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400;1,600&family=Geist:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&family=Kalam:wght@400;700&family=Patrick+Hand&family=Permanent+Marker&family=Space+Mono:wght@400;700&display=swap" />
+    <title>juan of bike IA</title>
+    <!-- v82h: pre-React boot. Force data-ui-skin a une skin Aurora AVANT
+         que React ne charge, pour qu'aucun frame ne s'affiche en manga.
+         Migre aussi silencieusement les vieilles valeurs localStorage. -->
+    <script>
+      (function bootSkin() {
+        var KEY = 'aurora-ui-skin';
+        var ALLOWED = ['aurora_v1', 'aurora_v3'];
+        var DEFAULT = 'aurora_v1';
+        var stored = null;
+        try { stored = localStorage.getItem(KEY); } catch (_) {}
+        var skin = (stored && ALLOWED.indexOf(stored) !== -1) ? stored : DEFAULT;
+        try { if (stored !== skin) localStorage.setItem(KEY, skin); } catch (_) {}
+        document.documentElement.setAttribute('data-ui-skin', skin);
+        console.log('[aurora] boot skin =', skin, '(localStorage was', JSON.stringify(stored) + ')');
+      })();
+    </script>
+    <!-- v82l5 : auto-purge SW + caches au niveau HTML (avant tout module).
+         Détecte un changement de BUILD_ID (bumpé à chaque déploiement
+         majeur). Si différent, unregister tous SW + delete tous caches +
+         reload. Ce script vit dans le HTML inline donc s'exécute MÊME
+         si main.tsx est en cache navigateur. -->
+    <script>
+      (function autoPurgeStale() {
+        var BUILD_ID = 'v82s-studio16';
+        var KEY = 'aurora_build_id_html';
+        try {
+          var last = localStorage.getItem(KEY);
+          if (last !== BUILD_ID) {
+            console.warn('[aurora] new build', BUILD_ID, '(was', JSON.stringify(last) + ') — purging caches + SW...');
+            // Promise.all all cleanups + reload after.
+            var jobs = [];
+            if ('caches' in window) {
+              jobs.push(caches.keys().then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }));
+            }
+            if ('serviceWorker' in navigator) {
+              jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(regs.map(function (r) { return r.unregister(); }));
+              }));
+            }
+            // Set BEFORE reload to avoid loop.
+            localStorage.setItem(KEY, BUILD_ID);
+            Promise.all(jobs).finally(function () { window.location.reload(); });
+          }
+        } catch (_) { /* private mode / quota */ }
+      })();
+    </script>
+  </head>
+  <body class="overflow-hidden" style="background:oklch(0.10 0.012 250); color:oklch(0.96 0.005 250);">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
