@@ -143,6 +143,9 @@ export default defineConfig(async () => ({
       ignored: [
         '**/src-tauri/**',
         '**/node_modules/**',
+        '**/.venv/**',
+        '**/__pycache__/**',
+        '**/logs/**',
         '**/.git/**',
         '**/.claude/**',
         '**/output/**',

@@ -37,15 +37,18 @@ COLORS = [
     (255, 0, 255), (255, 0, 170), (255, 0, 85),
 ]
 
-# Normalized A-pose keypoints (x right, y down) — full body, arms ~45° down/out,
-# narrow enough to pass the audit width checks, arms clearly off the torso.
-# `None` = keypoint absent (not drawn) for that view.
+# Normalized wide A/T-pose keypoints (x right, y down) — full body, arms spread
+# well out and up so the wrists/hands stay far from the hips with a clear gap on
+# each side, and legs parted with a gap between the thighs. This is the rig-ready
+# bind pose: limbs must NOT touch the body, otherwise the image-to-3D mesh fuses
+# the hand into the hip (unriggable — the fused piece flies out when the arm
+# lifts). `None` = keypoint absent (not drawn) for that view.
 _APOSE_FRONT = {
     0: (0.500, 0.135), 1: (0.500, 0.210),
-    2: (0.436, 0.228), 3: (0.392, 0.330), 4: (0.352, 0.425),
-    5: (0.564, 0.228), 6: (0.608, 0.330), 7: (0.648, 0.425),
-    8: (0.466, 0.500), 9: (0.458, 0.650), 10: (0.454, 0.800),
-    11: (0.534, 0.500), 12: (0.542, 0.650), 13: (0.546, 0.800),
+    2: (0.424, 0.232), 3: (0.336, 0.300), 4: (0.246, 0.362),
+    5: (0.576, 0.232), 6: (0.664, 0.300), 7: (0.754, 0.362),
+    8: (0.460, 0.500), 9: (0.440, 0.660), 10: (0.424, 0.808),
+    11: (0.540, 0.500), 12: (0.560, 0.660), 13: (0.576, 0.808),
     14: (0.484, 0.126), 15: (0.516, 0.126), 16: (0.462, 0.138), 17: (0.538, 0.138),
 }
 

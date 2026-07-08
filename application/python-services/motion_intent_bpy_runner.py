@@ -1323,21 +1323,15 @@ def main():
         except Exception as exc:
             result = {"error": str(exc), "category": cat}
 
-    # iter25.smooth: Ensure all meshes use smooth shading (fixes "triangle effect")
+    # iter25.smooth: smooth shading sur tous les meshes (fixes "triangle effect").
+    # Via l'API DATA (pas bpy.ops) -> robuste en --background : l'operateur select_all/shade_smooth
+    # echoue "context is incorrect" quand un rig importe laisse le contexte hors mode OBJECT.
     for obj in bpy.data.objects:
-        if obj.type == 'MESH':
-            # Select only the current object
-            bpy.ops.object.select_all(action='DESELECT')
-            obj.select_set(True)
-            bpy.context.view_layer.objects.active = obj
-            
-            # Apply smooth shading
-            bpy.ops.object.shade_smooth()
-            
-            # Use Auto Smooth to preserve hard edges if any (optional, but good practice)
-            # In Blender >= 4.1, use modifier, but shade_smooth is enough for Hunyuan meshes
-            
-    bpy.ops.object.select_all(action='SELECT')
+        me = getattr(obj, "data", None)
+        if obj.type == 'MESH' and me and len(me.polygons):
+            me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
+            me.update()
+    # (pas de select_all : export_scene.gltf ci-dessous exporte toute la scene, pas use_selection)
 
     # iter11.A: Draco mesh compression. Hunyuan3D meshes ballooned 16 MB → 94 MB
     # on Blender re-export (float32 positions/normals/UVs, no quantization). Draco

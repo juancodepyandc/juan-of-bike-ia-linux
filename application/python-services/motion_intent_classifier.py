@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 
 OLLAMA_URL = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "gemma3:12b"
+DEFAULT_MODEL = "gemma3:27b"   # installe, non-thinking -> JSON propre (gemma3:12b n'existe pas ici)
 FALLBACK_MODEL = "qwen3:14b"
 
 # Keep this verbatim with the TS service. If you change one, update the other.
@@ -143,6 +143,8 @@ def _ollama_chat(model: str, prompt: str, custom_text: str | None,
             {"role": "user", "content": user_msg},
         ],
         "stream": False,
+        "format": "json",   # force un JSON valide (robuste meme pour un modele "thinking")
+        "think": False,     # coupe le raisonnement verbeux quand le modele le supporte
         "options": {"temperature": 0.1, "num_ctx": 4096},
     }
     req = urllib.request.Request(

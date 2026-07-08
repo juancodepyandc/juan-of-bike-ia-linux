@@ -216,7 +216,7 @@ def generate_image_comfy(prompt: str, output_path: str, research_brief: str = ""
 
     workflow = {
         "6": {
-            "class_type": "EmptyLatentImage",
+            "class_type": "EmptyFlux2LatentImage",
             "inputs": {"width": 1024, "height": 1024, "batch_size": 1}
         },
         "8": {
@@ -229,40 +229,51 @@ def generate_image_comfy(prompt: str, output_path: str, research_brief: str = ""
         },
         "10": {
             "class_type": "VAELoader",
-            "inputs": {"vae_name": "ae.safetensors"}
+            "inputs": {"vae_name": "flux2-vae.safetensors"}
         },
         "11": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": "t5xxl_fp8_e4m3fn.safetensors", "type": "flux"}
+            "inputs": {"clip_name": "mistral_3_small_flux2_fp8.safetensors", "type": "flux2"}
         },
         "12": {
             "class_type": "CLIPTextEncode",
             "inputs": {"text": positive_text, "clip": ["11", 0]}
         },
-        # Node 12b: prompt negatif distinct (FLUX accepte les negatifs via le sampler)
+        # Node 12b: prompt negatif distinct (FLUX.2 gere le negative via CFGGuider)
         "12b": {
             "class_type": "CLIPTextEncode",
             "inputs": {"text": negative_text, "clip": ["11", 0]}
         },
+        # FLUX.2 sampling: Flux2Scheduler + KSamplerSelect + CFGGuider + RandomNoise + SamplerCustomAdvanced
+        "40": {
+            "class_type": "Flux2Scheduler",
+            "inputs": {"steps": 28, "width": 1024, "height": 1024}
+        },
+        "41": {
+            "class_type": "KSamplerSelect",
+            "inputs": {"sampler_name": "euler"}
+        },
+        "42": {
+            "class_type": "CFGGuider",
+            "inputs": {"model": ["14", 0], "positive": ["12", 0], "negative": ["12b", 0], "cfg": 5.0}
+        },
+        "43": {
+            "class_type": "RandomNoise",
+            "inputs": {"noise_seed": random.randint(0, 2**32)}
+        },
         "13": {
-            "class_type": "KSampler",
+            "class_type": "SamplerCustomAdvanced",
             "inputs": {
-                "model": ["14", 0],
-                "positive": ["12", 0],
-                # FLUX dev accepte un negative bien que son impact soit plus faible qu avec SDXL
-                "negative": ["12b", 0],
-                "latent_image": ["6", 0],
-                "seed": random.randint(0, 2**32),
-                "steps": 28,       # +8 steps pour suivre le negative prompt
-                "cfg": 1.0,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1.0
+                "noise": ["43", 0],
+                "guider": ["42", 0],
+                "sampler": ["41", 0],
+                "sigmas": ["40", 0],
+                "latent_image": ["6", 0]
             }
         },
         "14": {
             "class_type": "UNETLoader",
-            "inputs": {"unet_name": "flux1-dev-fp8.safetensors", "weight_dtype": "fp8_e4m3fn"}
+            "inputs": {"unet_name": "flux2_dev_fp8mixed.safetensors", "weight_dtype": "default"}
         }
     }
 

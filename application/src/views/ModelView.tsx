@@ -2272,6 +2272,12 @@ export default function ModelView() {
   const [customMotionStatus, setCustomMotionStatus] = useState<'idle' | 'classifying' | 'baking' | 'done' | 'error'>('idle')
   const [customMotionResult, setCustomMotionResult] = useState<{ category: string; rationale: string; rebake?: boolean } | null>(null)
   const [playAnimations, setPlayAnimations] = useState(true)
+  // Bouton MOUVEMENT : ON = on bake une vraie animation (le classifieur choisit laquelle),
+  // OFF = mesh statique (la pose de génération, ex. "Caine en train de tomber" reste figée).
+  // Lu via un ref dans generate() (useCallback) pour éviter une closure obsolète.
+  const [motionEnabled, setMotionEnabled] = useState(true)
+  const motionEnabledRef = useRef(true)
+  const toggleMotion = useCallback(() => setMotionEnabled((v) => { motionEnabledRef.current = !v; return !v }), [])
   const [animationSpeed, setAnimationSpeed] = useState(1)
   const [animationClips, setAnimationClips] = useState<AnimationClip[]>([])
   const [activeClipIndex, setActiveClipIndex] = useState(-1)
@@ -4069,7 +4075,9 @@ export default function ModelView() {
           // any extra click. ZERO hardcoded brand→animation map: gemma3:12b
           // reasons about what the object IS and picks one of 6 primitives.
           let autoMotionSummary = ''
-          try {
+          if (!motionEnabledRef.current) {
+            autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
+          } else try {
             const { getBridgeUrl } = await import('../utils/runtime')
             const bridge = getBridgeUrl()
             const autoMotionOutGlb = activeMeshPath.replace(/\.glb$/i, '_anim.glb')
@@ -4319,6 +4327,14 @@ export default function ModelView() {
           {referenceSupport && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Reference pilotee</p><p className="mt-2 text-sm text-aurora-text">{referenceSupport.referenceMode === 'exact_reference' ? 'Sujet de reference connu: le pipeline cherche a coller au sujet reel avant de styliser la vue 3D.' : referenceSupport.referenceMode === 'known_subject' ? 'Sujet connu: le pipeline enrichit la reference 3D avec recherche et filtrage visuel.' : 'Sujet libre: la reference 3D reste surtout pilotee par le brief.'}</p>{referenceSupport.sourceNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{referenceSupport.sourceNotes[0]}</p>}{referenceSupport.dimensionNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">Dimensions / rapports trouves: {referenceSupport.dimensionNotes.slice(0, 2).join(' | ')}</p>}</div>}
           {viewPlan && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Plan De Vues</p><p className="mt-2 text-sm text-aurora-text">{viewPlan.shouldUseMultiview ? 'Le module assemble plusieurs vues coherentes avant reconstruction.' : 'Le module reste en reference principale unique tant qu une multivue fiable n est pas garantie.'}</p>{viewPlan.sourceNotes[0] && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{viewPlan.sourceNotes[0]}</p>}{viewPlan.assignments.some((a) => a.sourceKind === 'synthetic') && <p className="mt-2 text-xs leading-relaxed text-aurora-accent-light">Generation autonome: {viewPlan.assignments.filter((a) => a.sourceKind === 'synthetic').map((a) => a.view).join(', ')} seront generees par FLUX + verifiees.</p>}{viewPlan.assignments.some((a) => a.verification) && <div className="mt-2 space-y-1">{viewPlan.assignments.filter((a) => a.verification).map((a) => <p key={a.view} className={`text-xs leading-relaxed ${a.verification?.passed ? 'text-aurora-text-muted' : 'text-aurora-red/80'}`}>{a.view}: {a.verification?.passed ? 'OK' : 'partiel'}{a.verification?.functionalDetailsFound.length ? ` (${a.verification.functionalDetailsFound.slice(0, 2).join(', ')})` : ''}{a.verification?.functionalDetailsMissing.length ? ` — manque: ${a.verification.functionalDetailsMissing.slice(0, 2).join(', ')}` : ''}</p>)}</div>}{viewPlan.verificationNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">Verification: {viewPlan.verificationNotes.slice(0, 2).join(' | ')}</p>}{viewPlan.lightingNotes.length > 0 && <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">Lumiere / LED: {viewPlan.lightingNotes.slice(0, 2).join(' | ')}</p>}{viewPlan.functionalVerificationSummary && viewPlan.functionalVerificationSummary.length > 0 && <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">{viewPlan.functionalVerificationSummary[0]}</p>}</div>}
           {recentMessages.length > 0 && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Continuite</p><p className="mt-2 text-sm text-aurora-text">La session 3D garde les derniers echanges et peut reprendre la derniere reference pour modifier le mesh au lieu de repartir de zero.</p></div>}
+          <button
+            onClick={toggleMotion}
+            disabled={isGenerating}
+            className={`flex w-full items-center justify-center gap-2 rounded-[1.4rem] px-4 py-2.5 text-xs font-medium transition-all disabled:opacity-40 ${motionEnabled ? 'gradient-accent text-white' : 'border border-aurora-border/50 bg-aurora-surface/70 text-aurora-text-dim hover:text-aurora-text'}`}
+            title="ON: genere une vraie animation (le classifieur LLM choisit le mouvement d'apres le prompt). OFF: mesh statique (garde la pose generee, ex. une pose figee)."
+          >
+            {motionEnabled ? <span>🎬 Animation: ON — le mouvement sera genere</span> : <span>🧍 Animation: OFF — mesh statique</span>}
+          </button>
           <button onClick={() => void generate()} disabled={!canGenerate} className={`flex w-full items-center justify-center gap-2 rounded-[1.4rem] px-4 py-3 text-sm font-medium transition-all ${canGenerate ? 'gradient-accent text-white glow-accent' : 'bg-aurora-surface-2 text-aurora-text-dim opacity-60 cursor-not-allowed'}`}>{isGenerating ? <><Loader2 size={18} className="animate-spin" /><span>{progress || 'Generation...'}</span></> : <><Layers3 size={18} /><span>{recentMessages.length > 0 ? 'Continuer le mesh' : 'Generer le mesh'}</span></>}</button>
           <button
             onClick={() => void generatePhysicsChain()}

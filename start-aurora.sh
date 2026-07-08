@@ -63,8 +63,24 @@ echo "[4/5] Vite"
 echo "[5/5] Cloudflared"
 if [ "${AURORA_START_TUNNEL:-0}" = "1" ]; then
   if command -v cloudflared >/dev/null 2>&1; then
-    (cloudflared tunnel --url http://127.0.0.1:1420 >"$LOG_DIR/cloudflared.log" 2>&1 &)
-    echo "  Tunnel log: $LOG_DIR/cloudflared.log"
+    pkill -f "cloudflared tunnel" 2>/dev/null || true
+    : > "$LOG_DIR/cloudflared.log"
+    setsid cloudflared tunnel --url http://127.0.0.1:1420 >"$LOG_DIR/cloudflared.log" 2>&1 </dev/null &
+    echo "  Tunnel demarre, recuperation de l'adresse publique..."
+    TUN_URL=""
+    for _i in $(seq 1 30); do
+      TUN_URL="$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" 2>/dev/null | head -1)"
+      [ -n "$TUN_URL" ] && break
+      sleep 2
+    done
+    if [ -n "$TUN_URL" ]; then
+      echo "$TUN_URL" > "$ROOT_DIR/tunnel_url.txt"
+      echo "  Lien public: $TUN_URL"
+      # publie le lien sur GitHub (aurora-live) pour qu'il soit toujours a jour en ligne
+      bash "$ROOT_DIR/scripts/publish-live-link.sh" || echo "  (publication du lien ignoree)"
+    else
+      echo "  Adresse du tunnel non recuperee (voir $LOG_DIR/cloudflared.log)."
+    fi
   else
     echo "  cloudflared introuvable; lance scripts/linux/bootstrap-ubuntu2404.sh sur Linux."
   fi

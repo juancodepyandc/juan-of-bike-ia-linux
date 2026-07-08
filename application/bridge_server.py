@@ -12504,9 +12504,9 @@ def three_d_motion_intent():
     """LLM-driven motion-intent classifier (no hardcoded brand→animation map).
 
     POST body:
-        {"prompt": "...", "custom_motion_text": "...?", "model": "gemma3:12b?"}
+        {"prompt": "...", "custom_motion_text": "...?", "model": "gemma3:27b?"}
 
-    Returns: aurora.motion-intent.v1 JSON deduced from the prompt by gemma3:12b
+    Returns: aurora.motion-intent.v1 JSON deduced from the prompt by gemma3:27b
     (qwen3:14b fallback, regex fallback if Ollama is offline).
 
     The classifier decides which of 6 animation primitives to bake:
@@ -12517,7 +12517,7 @@ def three_d_motion_intent():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     custom_motion_text = (data.get("custom_motion_text") or "").strip() or None
-    model_pref = (data.get("model") or "gemma3:12b").strip()
+    model_pref = (data.get("model") or "gemma3:27b").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "missing 'prompt' in body"}), 400
     if len(prompt) > 4000:
@@ -12639,7 +12639,7 @@ def three_d_auto_motion_bake():
     generation in ModelView. Given the original prompt and the freshly
     generated GLB path, this endpoint:
 
-      1. Classifies the prompt via motion_intent_classifier.py (gemma3:12b LLM,
+      1. Classifies the prompt via motion_intent_classifier.py (gemma3:27b LLM,
          qwen3:14b fallback, regex fallback).
       2. Decides whether to bake based on category + confidence:
            - category == 'rigid_static'        → NO bake, return GLB unchanged

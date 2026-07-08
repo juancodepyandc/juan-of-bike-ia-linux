@@ -38,34 +38,27 @@ DEFAULT_OUTPUT_DIR = REPO_ROOT / "application" / "output" / "3d"
 COMFY_BASE = "http://127.0.0.1:8188"
 
 # Model names — matched against /object_info/UNETLoader etc.
-DEFAULT_UNET = "flux1-dev-fp8.safetensors"
-DEFAULT_VAE = "ae.safetensors"
-DEFAULT_CLIP_L = "clip_l.safetensors"
-DEFAULT_CLIP_T5 = "t5xxl_fp8_e4m3fn.safetensors"
+DEFAULT_UNET = "flux2_dev_fp8mixed.safetensors"
+DEFAULT_VAE = "flux2-vae.safetensors"
+DEFAULT_CLIP = "mistral_3_small_flux2_fp8.safetensors"
 
 
 def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                    steps: int = 25, seed: int | None = None,
                    filename_prefix: str = "aurora_flux") -> dict:
-    """Minimal FLUX workflow using FluxGuidance + KSampler. Mirrors the
-    ComfyUI default flux dev template, simplified to the bare minimum."""
+    """FLUX.2-dev workflow (Mistral-3 text encoder, Flux2Scheduler +
+    SamplerCustomAdvanced). Validated end-to-end on RTX 5070 Ti 16GB (fp8).
+    Node graph mirrors ComfyUI's official image_flux2_text_to_image template."""
     if seed is None:
         seed = randint(1, 2**32 - 1)
     return {
         "11": {
-            "class_type": "DualCLIPLoader",
-            "inputs": {
-                "clip_name1": DEFAULT_CLIP_T5,
-                "clip_name2": DEFAULT_CLIP_L,
-                "type": "flux",
-            },
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": DEFAULT_CLIP, "type": "flux2"},
         },
         "12": {
             "class_type": "UNETLoader",
-            "inputs": {
-                "unet_name": DEFAULT_UNET,
-                "weight_dtype": "fp8_e4m3fn",
-            },
+            "inputs": {"unet_name": DEFAULT_UNET, "weight_dtype": "default"},
         },
         "10": {
             "class_type": "VAELoader",
@@ -79,27 +72,39 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "class_type": "CLIPTextEncode",
             "inputs": {"clip": ["11", 0], "text": ""},
         },
-        "26": {
-            "class_type": "FluxGuidance",
-            "inputs": {"conditioning": ["6", 0], "guidance": 3.5},
-        },
         "27": {
-            "class_type": "EmptySD3LatentImage",
+            "class_type": "EmptyFlux2LatentImage",
             "inputs": {"width": width, "height": height, "batch_size": 1},
         },
-        "31": {
-            "class_type": "KSampler",
+        "40": {
+            "class_type": "Flux2Scheduler",
+            "inputs": {"steps": steps, "width": width, "height": height},
+        },
+        "41": {
+            "class_type": "KSamplerSelect",
+            "inputs": {"sampler_name": "euler"},
+        },
+        "26": {
+            "class_type": "CFGGuider",
             "inputs": {
                 "model": ["12", 0],
-                "positive": ["26", 0],
+                "positive": ["6", 0],
                 "negative": ["33", 0],
+                "cfg": 5.0,
+            },
+        },
+        "42": {
+            "class_type": "RandomNoise",
+            "inputs": {"noise_seed": seed},
+        },
+        "31": {
+            "class_type": "SamplerCustomAdvanced",
+            "inputs": {
+                "noise": ["42", 0],
+                "guider": ["26", 0],
+                "sampler": ["41", 0],
+                "sigmas": ["40", 0],
                 "latent_image": ["27", 0],
-                "seed": seed,
-                "steps": steps,
-                "cfg": 1.0,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1.0,
             },
         },
         "8": {
@@ -177,7 +182,9 @@ TURNAROUND_CONTRACT = (
     "exactly one figure/object in the image, no duplicate copies, no lineup, no triptych, "
     "no contact sheet, no model sheet, no turnaround sheet inside the image, "
     "same exact requested identity, costume, materials, accessories, colors, proportions and hair silhouette, "
-    "neutral A-pose for this single image, both arms slightly away from the torso, "
+    "neutral rig-ready A/T-pose for this single image, both arms held clearly away from the torso "
+    "with a visible background gap under each arm, hands and wrists kept well clear of the hips and "
+    "thighs and never touching the body, legs slightly apart with a visible gap between the thighs, "
     "both hands and fingers visible outside clothing, hands never in pockets, "
     "feet and shoes fully visible with clear margin around the whole body, "
     "no pose redesign, no outfit redesign, no gender swap, "
