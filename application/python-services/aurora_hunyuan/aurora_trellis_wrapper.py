@@ -39,8 +39,16 @@ from pathlib import Path
 
 log = logging.getLogger("trellis_wrapper")
 
-# Make Trellis importable when the repo is sibling to this file's parent.
-TRELLIS_ROOT = Path(r"C:\Users\Juan\Desktop\ia\TRELLIS")
+# Make Trellis importable. Cherche (dans l'ordre) : variable d'env, l'install Linux, puis un
+# chemin Windows historique. (Avant: chemin Windows code en dur -> casse sur Linux.)
+_TRELLIS_CANDIDATES = [
+    os.environ.get("AURORA_TRELLIS_ROOT"),
+    "/home/juan/.local/share/auroraia/external/TRELLIS.2",
+    "/home/juan/.local/share/auroraia/external/TRELLIS",
+    os.path.expanduser("~/.local/share/auroraia/external/TRELLIS.2"),
+    r"C:\Users\Juan\Desktop\ia\TRELLIS",
+]
+TRELLIS_ROOT = next((Path(p) for p in _TRELLIS_CANDIDATES if p and Path(p).exists()), Path("/nonexistent"))
 if TRELLIS_ROOT.exists() and str(TRELLIS_ROOT) not in sys.path:
     sys.path.insert(0, str(TRELLIS_ROOT))
 
