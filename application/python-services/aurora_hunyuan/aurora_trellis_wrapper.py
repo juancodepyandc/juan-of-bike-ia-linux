@@ -98,6 +98,38 @@ QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1024_cascade")
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
 
+def _upscale_glb_texture(glb_path: str, factor: int = 2, tile: int = 768) -> bool:
+    """Upscale l'albedo du GLB x`factor` (8192 -> 16384 = 16K) via RealESRGAN en tuiles
+    (faible VRAM), en place. Best-effort : renvoie False sans casser si indispo."""
+    try:
+        import numpy as np
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        import trimesh
+        _ps = str(Path(__file__).resolve().parent.parent)  # python-services
+        if _ps not in sys.path:
+            sys.path.insert(0, _ps)
+        import paint_pbr_v21 as _pbr  # reutilise le fix torchvision + RealESRGAN de la texture
+        _pbr._apply_torchvision_fix()
+        from realesrgan import RealESRGANer
+        from basicsr.archs.rrdbnet_arch import RRDBNet
+        ckpt = str(Path(_ps) / "_hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth")
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+        up = RealESRGANer(scale=4, model_path=ckpt, model=model, tile=tile, tile_pad=16,
+                          pre_pad=0, half=True, gpu_id=0)
+        m = trimesh.load(glb_path, force="mesh", process=False)
+        mat = getattr(m.visual, "material", None)
+        img = getattr(mat, "baseColorTexture", None) if mat is not None else None
+        if img is None:
+            return False
+        out, _ = up.enhance(np.array(img.convert("RGB")), outscale=factor)
+        mat.baseColorTexture = Image.fromarray(out)
+        m.export(glb_path)
+        return True
+    except Exception:
+        return False
+
+
 def generate_glb(image_path: Path | str, out_glb: Path | str,
                   *, texture_size: int | None = None, decimation_target: int = 2_000_000,
                   pipeline_type: str | None = None, seed: int = 1) -> dict:
@@ -152,13 +184,19 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         out_glb = str(out_glb)
         glb.export(out_glb)
         peak = float(torch.cuda.max_memory_allocated() / 1e9)
+        # Option 16K : upscale RealESRGAN x2 de l'albedo (8192 -> 16384). Desactive par defaut
+        # (GLB ~300-500 Mo, lourd pour le viewer). Activer via AURORA_TRELLIS2_16K=1.
+        up16 = False
+        if os.environ.get("AURORA_TRELLIS2_16K", "0") == "1" and int(texture_size) <= 8192:
+            up16 = _upscale_glb_texture(out_glb, factor=2)
         try:
             faces = int(len(mesh.faces))
             verts = int(len(mesh.vertices))
         except Exception:
             faces = verts = 0
         return {"ok": True, "out_glb": out_glb, "faces": faces, "verts": verts,
-                "peak_vram_gb": round(peak, 2), "quality": ptype}
+                "peak_vram_gb": round(peak, 2), "quality": ptype,
+                "texture_size": (16384 if up16 else int(texture_size))}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}"}
 

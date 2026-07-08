@@ -1101,7 +1101,25 @@ def run_pipeline(prompt: str, run_id: str, *,
         })
 
         # ── Procedural dispatch ──
-        if (routing.get("pipeline") == "procedural"
+        # Aurora: si TRELLIS.2 est dispo, on IGNORE le routage procedural. Le procedural
+        # produit une PLANCHE PLATE texturee (ex: une "carte mere" = photo plaquee sur un plan),
+        # alors que TRELLIS donne du vrai 3D coherent sur perso/creature/objet technique. Le
+        # procedural ne reste utile que si TRELLIS est indispo.
+        _trellis_avail = False
+        try:
+            _tp_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+            if _tp_dir not in sys.path:
+                sys.path.insert(0, _tp_dir)
+            import aurora_trellis_wrapper as _tp  # noqa: WPS433
+            _trellis_avail = _tp.is_available()
+        except Exception:  # noqa: BLE001
+            _trellis_avail = False
+        if _trellis_avail and routing.get("pipeline") == "procedural":
+            audit.append({"stage": "route_override", "ok": True,
+                          "note": "TRELLIS.2 dispo -> AI 3D au lieu du procedural (vrai 3D vs planche plate)",
+                          "was": routing.get("procedural_template")})
+        if (not _trellis_avail
+                and routing.get("pipeline") == "procedural"
                 and routing.get("procedural_template")):
             template = routing["procedural_template"]
             sys.stderr.write(f"[procedural-dispatch] {template} for "
