@@ -34,16 +34,27 @@ def _default_models_root() -> str:
     """Return the default AURORA_MODELS path based on platform.
 
     Local Windows:  <project_root>/modele  (sibling of application/)
-    Cloud / Linux:  /workspace/models (RunPod volume)
+    RunPod pod:     /workspace/models  (only when that volume really exists+writable)
+    Local Linux:    ~/.cache  → HF_HOME=~/.cache/huggingface, TORCH_HOME=~/.cache/torch,
+                    i.e. the standard XDG cache where downloaded weights already live.
+
+    NOTE: hardcoding "/workspace/models" on every Linux box was a RunPod-ism that
+    (a) crashes with PermissionError on a normal desktop (can't mkdir /workspace)
+    and (b) would point HuggingFace at an empty dir and re-download ~30 GB even
+    though the weights are already cached under ~/.cache/huggingface.
     """
+    # python-services/ is inside application/ which is a sibling of modele/
+    here = Path(__file__).resolve().parent              # …/application/python-services
+    project_modele = here.parent.parent / "modele"      # …/AuroraIA/modele
     if os.name == "nt":
-        # python-services/ is inside application/ which is a sibling of modele/
-        here = Path(__file__).resolve().parent          # …/application/python-services
-        candidate = here.parent.parent / "modele"       # …/AuroraIA-v2/modele
-        if candidate.is_dir():
-            return str(candidate)
-    # Cloud / Linux fallback
-    return "/workspace/models"
+        return str(project_modele)
+    # RunPod / cloud volume — only when the mount actually exists and is writable.
+    workspace = Path("/workspace")
+    if workspace.is_dir() and os.access(workspace, os.W_OK):
+        return "/workspace/models"
+    # Local Linux desktop: use the standard user cache so HF / torch resolve to
+    # their conventional locations (where the models are already downloaded).
+    return str(Path.home() / ".cache")
 
 
 def configure_ml_cache_environment() -> dict[str, str]:

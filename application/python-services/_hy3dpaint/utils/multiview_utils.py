@@ -42,7 +42,8 @@ class multiviewDiffusionNet:
         model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
         pipeline = DiffusionPipeline.from_pretrained(
             model_path,
-            custom_pipeline=custom_pipeline, 
+            custom_pipeline=custom_pipeline,
+            trust_remote_code=True,
             torch_dtype=torch.float16
         )
 

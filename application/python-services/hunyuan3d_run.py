@@ -1454,6 +1454,23 @@ def run_worker(args) -> int:
             ),
         )
 
+        # Libere la VRAM du pipeline shape AVANT de peindre. Le paint PBR (diffusion 8 vues
+        # + RealESRGAN) reclame ~14 Go sur 16 ; comme l'offload CPU est ignore par la pile
+        # hy3dgen, garder le DiT shape resident faisait OOM la texture a TOUTES les
+        # resolutions (jusqu'a 256) -> mesh gris sans couleur. Le mesh est deja extrait.
+        try:
+            shape_pipeline = None  # noqa: F841  (libere la reference GPU)
+        except Exception:
+            pass
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+        emit("vram_free", "VRAM du shape liberee avant la texture.")
+
         if args.disable_texture:
             emit("texture_skip", "Texture desactivee par la strategie de recuperation; export de la shape brute.")
             mesh_to_export = mesh

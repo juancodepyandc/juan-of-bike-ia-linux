@@ -3124,6 +3124,8 @@ def _resolve_script_path(script_path: str) -> str:
 
 def _build_python_env() -> dict:
     run_env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    # Allocation CUDA fragmentee -> aide l'echelle OOM du paint PBR sur 16 Go.
+    run_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     try:
         vision_model, _, _ = _pick_vision_model_or_default("qwen3-vl:8b")
         if vision_model:
@@ -3142,6 +3144,28 @@ def _build_python_env() -> dict:
         if candidate.is_dir():
             run_env.setdefault("AURORA_MODELS", str(candidate))
             break
+
+    # HuggingFace weights: sur Linux les poids reels (Hunyuan3D-2.x, FLUX, Wan...) vivent
+    # dans le cache HF standard ~/.cache/huggingface. Or AURORA_MODELS=modele fait pointer
+    # HF_HOME sur <modele>/huggingface qui est VIDE -> la generation 3D re-telechargeait ~30 Go
+    # (ou echouait). On epingle HF_HOME sur le hub qui contient reellement des modeles.
+    if "HF_HOME" not in run_env:
+        def _hub_has_models(hub: pathlib.Path) -> bool:
+            try:
+                return hub.is_dir() and next(hub.glob("models--*"), None) is not None
+            except Exception:
+                return False
+        _am = run_env.get("AURORA_MODELS")
+        _candidates = []
+        if _am:
+            _candidates.append(pathlib.Path(_am) / "huggingface")
+        _candidates.append(pathlib.Path.home() / ".cache" / "huggingface")
+        for _hf in _candidates:
+            if _hub_has_models(_hf / "hub"):
+                run_env["HF_HOME"] = str(_hf)
+                run_env["HF_HUB_CACHE"] = str(_hf / "hub")
+                run_env["HUGGINGFACE_HUB_CACHE"] = str(_hf / "hub")
+                break
     return run_env
 
 

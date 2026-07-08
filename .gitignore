@@ -186,3 +186,9 @@ application/src-tauri/2
 output/
 Vite
 _dev/app_screenshot.png
+
+# Extensions texture compilees (machine-specifiques, voir SETUP_TEXTURE_LINUX.md)
+application/python-services/_hy3dpaint/**/*.so
+application/python-services/_hy3dpaint/**/*.egg-info/
+application/python-services/_hy3dpaint/**/build/
+application/python-services/_hy3dpaint/ckpt/*.pth
