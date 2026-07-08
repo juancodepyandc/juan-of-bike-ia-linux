@@ -1343,6 +1343,21 @@ def run_pipeline(prompt: str, run_id: str, *,
     # comportement. Les sujets procedural Blender ignorent ce flag en aval.
     if multi_view is None:
         multi_view = True
+    # TRELLIS.2 reconstruit une 3D COHERENTE depuis UNE seule image : la synthese 4-vues
+    # (lente ~5 min ET source du double-visage via fusion incoherente) est inutile et non
+    # consommee par TRELLIS. Si TRELLIS est dispo -> single-view (front only) : synthese ~4x
+    # plus rapide + resultat propre. (Fallback Hunyuan garde le multivue.)
+    try:
+        _tr_probe_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+        if _tr_probe_dir not in sys.path:
+            sys.path.insert(0, _tr_probe_dir)
+        import aurora_trellis_wrapper as _trellis_probe  # noqa: WPS433
+        if _trellis_probe.is_available():
+            multi_view = False
+            audit.append({"stage": "trellis2_singleview", "ok": True,
+                          "note": "TRELLIS.2 dispo -> single-view, synthese 4-vues sautee"})
+    except Exception:  # noqa: BLE001
+        pass
     audit.append({"stage": "multi_view_decision", "multi_view": multi_view,
                   "kind": kind, "auto_recommended": True,
                   "default_policy": "always_multiview_v83"})
@@ -1357,8 +1372,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     input_reference_result = None
     requested_images = [str(img).strip() for img in (images or []) if str(img).strip()]
     if requested_images:
-        import subprocess
-        import re
+        import re  # subprocess est deja importe au niveau module (l'import local ici rendait
+        # `subprocess` local a toute la fonction -> UnboundLocalError dans la branche TRELLIS)
 
         def extract_json(text):
             # Find the last valid json object in the stdout
@@ -1559,12 +1574,30 @@ def run_pipeline(prompt: str, run_id: str, *,
             if _trellis.is_available():
                 print("PROGRESS:shape:TRELLIS.2 — geometrie coherente + PBR depuis 1 image...", flush=True)
                 _free_gpu_before_hunyuan(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
-                _tr = _trellis.generate_glb(front_ref, mesh_path)
+                # SOUS-PROCESS dedie: env propre (CUDA_HOME/nvcc pour le JIT nvdiffrast) et
+                # surtout la VRAM du modele 4B (~11 Go) est 100% liberee a la sortie. En
+                # in-process le modele restait cache -> OOM du repli Hunyuan -> rescue CPU tres lent.
+                _wrapper = str(Path(_tr_dir) / "aurora_trellis_wrapper.py")
+                _tr_env = {**os.environ}
+                _tr_env.setdefault("CUDA_HOME", "/usr/local/cuda-12.8")
+                _tr_env["PATH"] = "/usr/local/cuda-12.8/bin" + os.pathsep + _tr_env.get("PATH", "")
+                _tr_env.setdefault("ATTN_BACKEND", "xformers")
+                _tr = {}
+                try:
+                    _p = subprocess.run([sys.executable, _wrapper, str(front_ref), str(mesh_path)],
+                                        env=_tr_env, capture_output=True, text=True, timeout=2400)
+                    for _line in reversed((_p.stdout or "").splitlines()):
+                        if _line.startswith("AURORA_TRELLIS_RESULT:"):
+                            _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
+                    if not _tr:
+                        _tr = {"ok": False, "error": (_p.stderr or _p.stdout or "no output")[-400:]}
+                except Exception as _se:  # noqa: BLE001
+                    _tr = {"ok": False, "error": f"subprocess: {_se!r}"}
                 if _tr.get("ok") and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
                     _trellis_ok = True
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
-                                  "peak_vram_gb": _tr.get("peak_vram_gb")})
+                                  "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
                 else:
                     audit.append({"stage": "trellis2", "ok": False,
                                   "error": _tr.get("error"), "note": "fallback Hunyuan3D"})

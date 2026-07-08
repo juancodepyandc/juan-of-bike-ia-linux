@@ -89,11 +89,20 @@ def _load_pipe():
     return pipe
 
 
+# Qualite par defaut : 1024_cascade = le defaut TRELLIS.2, excellent detail ET fiable sur 16 Go
+# (peak ~4-6 Go). 1536_cascade est plus fin mais monte a ~15 Go et OOM a l'extraction CuMesh
+# dans le contexte du pipeline -> on l'essaie seulement si demande, avec repli automatique.
+# Options: 512, 1024, 1024_cascade, 1536_cascade.
+QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1024_cascade")
+# Echelle de repli sur OOM (garde la meilleure resolution qui tient reellement en VRAM).
+_QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
+
+
 def generate_glb(image_path: Path | str, out_glb: Path | str,
-                  *, texture_size: int = 4096, decimation_target: int = 1_000_000,
-                  seed: int = 1) -> dict:
+                  *, texture_size: int = 8192, decimation_target: int = 2_000_000,
+                  pipeline_type: str | None = None, seed: int = 1) -> dict:
     """Run TRELLIS.2 image -> 3D (geometrie coherente + PBR) et exporte un GLB.
-    Returns {ok, out_glb, faces, verts, peak_vram_gb, error?}. Never raises."""
+    Returns {ok, out_glb, faces, verts, peak_vram_gb, quality, error?}. Never raises."""
     if not _AVAILABLE:
         return {"ok": False, "error": f"trellis2 not available: {_IMPORT_ERROR}"}
     try:
@@ -101,10 +110,32 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         from PIL import Image
         import o_voxel
 
+        ptype = pipeline_type or QUALITY
         pipe = _load_pipe()
         image = Image.open(str(image_path)).convert("RGB")
-        torch.cuda.reset_peak_memory_stats()
-        mesh = pipe.run(image, seed=seed)[0]
+        # Repli automatique sur OOM : essaie ptype puis les paliers plus bas (CuMesh/CUDA OOM).
+        if ptype in _QUALITY_LADDER:
+            _ladder = _QUALITY_LADDER[_QUALITY_LADDER.index(ptype):]
+        else:
+            _ladder = [ptype]
+        mesh = None
+        used_q = ptype
+        for _q in _ladder:
+            try:
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.empty_cache()
+                mesh = pipe.run(image, seed=seed, pipeline_type=_q)[0]
+                used_q = _q
+                break
+            except Exception as _oom:  # noqa: BLE001
+                _msg = str(_oom).lower()
+                if "out of memory" in _msg or "outofmemory" in type(_oom).__name__.lower():
+                    torch.cuda.empty_cache()
+                    continue
+                raise
+        if mesh is None:
+            return {"ok": False, "error": f"OOM a tous les paliers ({_ladder})"}
+        ptype = used_q
         mesh.simplify(16_777_216)  # limite nvdiffrast
 
         glb = o_voxel.postprocess.to_glb(
@@ -123,7 +154,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         except Exception:
             faces = verts = 0
         return {"ok": True, "out_glb": out_glb, "faces": faces, "verts": verts,
-                "peak_vram_gb": round(peak, 2)}
+                "peak_vram_gb": round(peak, 2), "quality": ptype}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}"}
 
@@ -137,7 +168,8 @@ def main(argv: list[str]) -> int:
     image = argv[1]
     out = argv[2] if len(argv) > 2 else "trellis2_out.glb"
     r = generate_glb(image, out)
-    print(json.dumps(r, indent=2))
+    # marqueur une-ligne pour parsing par le pipeline (subprocess)
+    print("AURORA_TRELLIS_RESULT:" + json.dumps(r), flush=True)
     return 0 if r.get("ok") else 1
 
 
