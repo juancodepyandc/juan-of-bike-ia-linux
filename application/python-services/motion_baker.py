@@ -613,12 +613,37 @@ def _compile_preset_ref(p: Dict[str, Any], fps: int, frame_count: int) -> List[D
         )
 
     if preset_id == "character.idle":
-        return _compile_breathe({
-            "target": "torso",
-            "axis": "z",
-            "amplitude": 0.025 * height_mul,
-            "frequency_hz": 0.35 * speed_mul,
-        }, fps, frame_count)
+        # Aurora: idle ARTICULEE. L'ancien preset n'animait que le torse (respiration) ->
+        # tete/cou/bras figes -> percu comme statique. On ajoute un balayage lent de la tete,
+        # un petit hochement de cou et un leger ballant de bras. Dans _compile_oscillate,
+        # amplitude >= 1.0 = DEGRES (rotation par os); < 1.0 = translation. Cibles deja
+        # mappees (TARGET_TO_BONES: head/neck/arms) -> bake par os, pas transform globale.
+        return (
+            _compile_breathe({
+                "target": "torso",
+                "axis": "z",
+                "amplitude": 0.025 * height_mul,
+                "frequency_hz": 0.35 * speed_mul,
+            }, fps, frame_count)
+            + _compile_oscillate({
+                "target": "head",
+                "axis": "y",
+                "amplitude": 5.0,
+                "frequency_hz": 0.16 * speed_mul,
+            }, fps, frame_count)
+            + _compile_oscillate({
+                "target": "neck",
+                "axis": "x",
+                "amplitude": 2.5,
+                "frequency_hz": 0.22 * speed_mul,
+            }, fps, frame_count)
+            + _compile_oscillate({
+                "target": "arms",
+                "axis": "x",
+                "amplitude": 2.0,
+                "frequency_hz": 0.2 * speed_mul,
+            }, fps, frame_count)
+        )
 
     return _compile_custom_pose({
         "description": preset_id or str(p.get("source_target") or "preset_ref"),

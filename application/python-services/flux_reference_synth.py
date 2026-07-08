@@ -602,7 +602,7 @@ def audit_multiview_consistency(
             metric["bbox_bottom"] = round(bbox_y + bbox_h, 4)
             if bbox_y + bbox_h > 0.992:
                 failures.append(f"{view}: subject touches bottom frame; likely cropped feet/lower body")
-            if bbox_w > 0.72 or width_height_ratio > 0.72:
+            if bbox_w > 0.82 or width_height_ratio > 0.82:  # Aurora: 0.72->0.82, moins declencheur (garde le multivue = evite les "planches" single-view)
                 failures.append(f"{view}: subject silhouette is too wide for a single full-body view; likely lineup/model sheet")
             if int(metric.get("significant_component_count") or 0) > 1:
                 failures.append(f"{view}: multiple separated subjects detected; likely reference/model sheet")
@@ -811,7 +811,10 @@ def synth(prompt: str, run_id: str, *,
         prompt, width=width, height=height, steps=steps,
         seed=seed, filename_prefix=f"aurora_{run_id}",
     )
-    seed_used = workflow["31"]["inputs"]["seed"]
+    # FLUX.2: le seed vit dans le noeud RandomNoise "42" (noise_seed), pas dans le
+    # SamplerCustomAdvanced "31". L'ancienne lecture ["31"]["seed"] cassait tout synth
+    # (KeyError) depuis la migration FLUX.2 -> bloquait TOUTE generation 3D depuis l'app.
+    seed_used = workflow.get("42", {}).get("inputs", {}).get("noise_seed") or 0
 
     try:
         prompt_id = post_prompt(workflow, comfy_base)

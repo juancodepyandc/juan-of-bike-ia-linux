@@ -20,7 +20,10 @@ def remesh_mesh(mesh_path, remesh_path):
     mesh = mesh_simplify_trimesh(mesh_path, remesh_path)
 
 
-def mesh_simplify_trimesh(inputpath, outputpath, target_count=40000):
+def mesh_simplify_trimesh(inputpath, outputpath, target_count=150000):
+    # Aurora: 40000 -> 150000. Le remesh a 40k ecrasait les details fins (ailerons
+    # Goldorak en "planches", corps "mou"). 150k preserve la silhouette; sur 16 Go
+    # c'est sur car la VRAM est liberee avant le paint (voir _free_gpu_before_hunyuan).
     # 先去除离散面
     ms = pymeshlab.MeshSet()
     if inputpath.endswith(".glb"):

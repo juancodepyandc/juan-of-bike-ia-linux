@@ -206,6 +206,52 @@ def _kind_to_intent_purpose(kind: str | None) -> str:
     return "visual_preview"
 
 
+def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
+    """Libere la VRAM des AUTRES process GPU avant le shape+paint Hunyuan.
+
+    Cause racine du "mesh gris depuis l'app": FLUX reste charge dans ComfyUI (~10-12 Go)
+    apres la synthese des references, et un modele Ollama (qwen3-vl) reste warm. Le paint
+    PBR (~14 Go) fait alors OOM a toutes les resolutions -> shape_only -> mesh gris.
+    On evince Ollama (keep_alive=0) puis ComfyUI (/free) — meme logique que le chemin video.
+    Best-effort: aucun echec ne bloque la generation.
+    """
+    freed = []
+    base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+    # 1) Ollama: decharge tous les modeles residents
+    try:
+        with urllib.request.urlopen(f"{base}/api/ps", timeout=4) as _r:
+            _ps = json.loads(_r.read().decode())
+        for _m in (_ps.get("models") or []):
+            _name = _m.get("name")
+            if not _name:
+                continue
+            try:
+                _req = urllib.request.Request(
+                    f"{base}/api/generate",
+                    data=json.dumps({"model": _name, "prompt": "",
+                                     "keep_alive": 0, "stream": False}).encode(),
+                    headers={"Content-Type": "application/json"})
+                urllib.request.urlopen(_req, timeout=15).read()
+                freed.append(_name)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # 2) ComfyUI: decharge FLUX/Kontext de la VRAM
+    try:
+        _req2 = urllib.request.Request(
+            "http://127.0.0.1:8188/free",
+            data=json.dumps({"unload_models": True, "free_memory": True}).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(_req2, timeout=6).read()
+        freed.append("comfyui/flux")
+    except Exception:
+        pass
+    if audit is not None:
+        audit.append({"stage": "vram_evict_before_paint", "ok": True, "freed": freed})
+    print(f"PROGRESS:vram:VRAM liberee avant paint (evince: {', '.join(freed) or 'rien'})", flush=True)
+
+
 def run_hunyuan3d(image_path: Path, run_id: str, output_dir: Path,
                   *, mv_front: Path | None = None,
                   mv_back: Path | None = None,
@@ -1360,7 +1406,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             try:
                 for v_name, src_path in [("back", back_source), ("left", front_src), ("right", front_src)]:
                     if v_name not in tagged_images:
-                        gen_cmd = [sys.executable, str(Path(__file__).parent / "flux_image_to_multiview.py"), "--prompt", prompt, "--run-id", run_id, "--view", v_name, "--source-image", src_path, "--output-dir", str(output_dir), "--denoise", "0.75"]
+                        gen_cmd = [sys.executable, str(Path(__file__).parent / "flux_image_to_multiview.py"), "--prompt", prompt, "--run-id", run_id, "--view", v_name, "--source-image", src_path, "--output-dir", str(output_dir), "--denoise", "0.5"]  # Aurora: 0.75->0.5, vues plus coherentes avec l'original
                         gen_res = subprocess.run(gen_cmd, capture_output=True, text=True)
                         gen_data = extract_json(gen_res.stdout)
                         if gen_data.get("ok"):
@@ -1470,19 +1516,27 @@ def run_pipeline(prompt: str, run_id: str, *,
         })
         if not turnaround.get("ok"):
             failures = turnaround.get("failures") or ["turnaround reference audit failed"]
+            # Aurora: fallback NON DESTRUCTIF. Avant, on effacait back+left+right et on
+            # repassait en single-view -> Hunyuan hallucinait l'arriere A PLAT (ailerons
+            # Goldorak en "planches"). Desormais on GARDE front+back (la vraie profondeur
+            # avant/arriere), on ne jette que les vues LATERALES (souvent incoherentes).
+            # On ne repasse full single-view que si le back est absent.
+            back_ok = back_ref.is_file()
             audit.append({
                 "stage": "turnaround_reference_audit_fallback",
-                "warning": "audit failed, falling back to single view for Hunyuan3D",
-                "failures": failures
+                "warning": ("audit partiel: on garde front+back, on jette left/right"
+                            if back_ok else "audit echoue: back absent -> single view"),
+                "failures": failures,
+                "kept_back": back_ok,
             })
-            multi_view = False
-            # Clear the bad reference files so they are not used by mistake later
-            for view_path in [back_ref, left_ref, right_ref]:
+            for view_path in [left_ref, right_ref]:
                 if view_path.is_file():
                     try:
                         view_path.unlink()
                     except Exception:
                         pass
+            if not back_ok:
+                multi_view = False
 
     # Stage 2 — Hunyuan3D
     mesh_path = output_dir / f"{run_id}_mesh.glb"
@@ -1502,6 +1556,12 @@ def run_pipeline(prompt: str, run_id: str, *,
             kwargs["mv_back"]  = back_ref
             kwargs["mv_left"]  = left_ref if left_ref.is_file() else None
             kwargs["mv_right"] = right_ref if right_ref.is_file() else None
+        # --- Garde VRAM (fix "mesh gris") : FLUX reste resident dans ComfyUI (~10-12 Go)
+        # apres la synthese des references, et un qwen3-vl warm (keep_alive) mange la VRAM.
+        # Le paint PBR Hunyuan (~14 Go) fait alors OOM a TOUTES les resolutions -> shape_only
+        # -> mesh gris. On evince ComfyUI + Ollama AVANT de generer/peindre (meme logique que
+        # video_generate._evict_ollama_models). Sans nouvelle dependance.
+        _free_gpu_before_hunyuan(audit)
         h = run_hunyuan3d(**kwargs)
         if not h.get("ok"):
             _record_pipeline_dispatch(run_id, prompt, started_at_iso,

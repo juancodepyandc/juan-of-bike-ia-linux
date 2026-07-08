@@ -162,7 +162,9 @@ class Hunyuan3DPaintPipeline:
             enhance_images["mr"][i] = self.models["super_model"](enhance_images["mr"][i])
 
         ###########  Bake  ##########
-        for i in range(len(enhance_images)):
+        # Aurora fix: enhance_images est un dict (2 cles) -> len()==2 ne redimensionnait
+        # que 2 vues. On itere sur le nombre reel de vues (indispensable si natif > 512).
+        for i in range(len(enhance_images["albedo"])):
             enhance_images["albedo"][i] = enhance_images["albedo"][i].resize(
                 (self.config.render_size, self.config.render_size)
             )
