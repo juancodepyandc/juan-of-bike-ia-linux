@@ -174,13 +174,32 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         ptype = used_q
         mesh.simplify(16_777_216)  # limite nvdiffrast
 
-        glb = o_voxel.postprocess.to_glb(
-            vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
-            coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
-            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-            decimation_target=decimation_target, texture_size=texture_size,
-            remesh=True, remesh_band=1, remesh_project=0, verbose=False,
-        )
+        # Export to_glb (remesh + bake texture) : peut OOM (CuMesh) sur un mesh complexe
+        # (ex. carte mere reelle detaillee). On descend texture/decimation plutot que de
+        # laisser tomber vers le Hunyuan mou. Garde TRELLIS meme en cas de VRAM serree.
+        _glb_ladder = [(int(texture_size), int(decimation_target)),
+                       (4096, 1_000_000), (2048, 500_000)]
+        _glb_ladder = [(t, d) for (t, d) in _glb_ladder if t <= int(texture_size)]
+        glb = None
+        for _ts, _dt in _glb_ladder:
+            try:
+                torch.cuda.empty_cache()
+                glb = o_voxel.postprocess.to_glb(
+                    vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
+                    coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
+                    aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                    decimation_target=_dt, texture_size=_ts,
+                    remesh=True, remesh_band=1, remesh_project=0, verbose=False,
+                )
+                texture_size = _ts
+                break
+            except Exception as _ge:  # noqa: BLE001
+                if "out of memory" in str(_ge).lower():
+                    torch.cuda.empty_cache()
+                    continue
+                raise
+        if glb is None:
+            return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         out_glb = str(out_glb)
         glb.export(out_glb)
         peak = float(torch.cuda.max_memory_allocated() / 1e9)
