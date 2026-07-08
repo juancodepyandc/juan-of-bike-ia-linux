@@ -99,7 +99,7 @@ _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
 
 def generate_glb(image_path: Path | str, out_glb: Path | str,
-                  *, texture_size: int = 8192, decimation_target: int = 2_000_000,
+                  *, texture_size: int | None = None, decimation_target: int = 2_000_000,
                   pipeline_type: str | None = None, seed: int = 1) -> dict:
     """Run TRELLIS.2 image -> 3D (geometrie coherente + PBR) et exporte un GLB.
     Returns {ok, out_glb, faces, verts, peak_vram_gb, quality, error?}. Never raises."""
@@ -111,6 +111,10 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         import o_voxel
 
         ptype = pipeline_type or QUALITY
+        # Texture 8192 NATIF (le bake to_glb 16384 OOM sur 16 Go: manque ~4 Go). Le vrai 16K
+        # est obtenu ensuite par upscale RealESRGAN x2 en tuiles (faible VRAM). Configurable.
+        if texture_size is None:
+            texture_size = int(os.environ.get("AURORA_TRELLIS2_TEXTURE", "8192"))
         pipe = _load_pipe()
         image = Image.open(str(image_path)).convert("RGB")
         # Repli automatique sur OOM : essaie ptype puis les paliers plus bas (CuMesh/CUDA OOM).
