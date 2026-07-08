@@ -1545,34 +1545,62 @@ def run_pipeline(prompt: str, run_id: str, *,
                       "mesh_path": str(mesh_path),
                       "reason": "mesh exists; pass --force to regenerate"})
     else:
-        # v90: map the Stage-0 kind to the worker's intent_purpose so the right
-        # shape-quality branch fires (character → octree 512/steps 70, etc.).
-        kwargs = {"image_path": front_ref, "run_id": run_id,
-                  "output_dir": output_dir,
-                  "intent_purpose": _kind_to_intent_purpose(kind),
-                  "motion_readiness": "rig_candidate" if _kind_to_intent_purpose(kind) == "character" else "static_only"}
-        if multi_view and back_ref.is_file():
-            kwargs["mv_front"] = front_ref
-            kwargs["mv_back"]  = back_ref
-            kwargs["mv_left"]  = left_ref if left_ref.is_file() else None
-            kwargs["mv_right"] = right_ref if right_ref.is_file() else None
-        # --- Garde VRAM (fix "mesh gris") : FLUX reste resident dans ComfyUI (~10-12 Go)
-        # apres la synthese des references, et un qwen3-vl warm (keep_alive) mange la VRAM.
-        # Le paint PBR Hunyuan (~14 Go) fait alors OOM a TOUTES les resolutions -> shape_only
-        # -> mesh gris. On evince ComfyUI + Ollama AVANT de generer/peindre (meme logique que
-        # video_generate._evict_ollama_models). Sans nouvelle dependance.
-        _free_gpu_before_hunyuan(audit)
-        h = run_hunyuan3d(**kwargs)
-        if not h.get("ok"):
-            _record_pipeline_dispatch(run_id, prompt, started_at_iso,
-                                      status="blocked",
-                                      verdict=f"hunyuan3d failed: {h.get('error')}")
-            return {"ok": False, "error": f"hunyuan3d failed: {h.get('error')}",
-                    "audit_trail": audit + [{"stage": "hunyuan3d", **h}]}
-        audit.append({"stage": "hunyuan3d", "ok": True,
-                      "mesh_path": h["mesh_path"],
-                      "size_bytes": h["size_bytes"],
-                      "elapsed_s": h["elapsed_s"]})
+        # === VOIE PRINCIPALE : TRELLIS.2 (single-image -> geometrie COHERENTE + PBR) ===
+        # Attaque la RACINE du "double-visage / cornes doublees / poitrine fragmentee" :
+        # une seule image reconstruite en 3D en interne, ZERO fusion de vues FLUX qui se
+        # contredisent. Valide sur RTX 5070 Ti 16 Go (peak ~3.6 Go, ~4 min). Fallback
+        # automatique sur Hunyuan3D si indispo (kernels absents) ou echec.
+        _trellis_ok = False
+        try:
+            _tr_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+            if _tr_dir not in sys.path:
+                sys.path.insert(0, _tr_dir)
+            import aurora_trellis_wrapper as _trellis  # noqa: WPS433
+            if _trellis.is_available():
+                print("PROGRESS:shape:TRELLIS.2 — geometrie coherente + PBR depuis 1 image...", flush=True)
+                _free_gpu_before_hunyuan(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
+                _tr = _trellis.generate_glb(front_ref, mesh_path)
+                if _tr.get("ok") and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
+                    _trellis_ok = True
+                    audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
+                                  "faces": _tr.get("faces"), "verts": _tr.get("verts"),
+                                  "peak_vram_gb": _tr.get("peak_vram_gb")})
+                else:
+                    audit.append({"stage": "trellis2", "ok": False,
+                                  "error": _tr.get("error"), "note": "fallback Hunyuan3D"})
+            else:
+                audit.append({"stage": "trellis2", "skipped": True,
+                              "reason": _trellis.import_error() or "indisponible",
+                              "note": "fallback Hunyuan3D"})
+        except Exception as _e:  # noqa: BLE001
+            audit.append({"stage": "trellis2", "ok": False, "error": repr(_e),
+                          "note": "fallback Hunyuan3D"})
+
+        if not _trellis_ok:
+            # v90: map the Stage-0 kind to the worker's intent_purpose so the right
+            # shape-quality branch fires (character → octree 512/steps 70, etc.).
+            kwargs = {"image_path": front_ref, "run_id": run_id,
+                      "output_dir": output_dir,
+                      "intent_purpose": _kind_to_intent_purpose(kind),
+                      "motion_readiness": "rig_candidate" if _kind_to_intent_purpose(kind) == "character" else "static_only"}
+            if multi_view and back_ref.is_file():
+                kwargs["mv_front"] = front_ref
+                kwargs["mv_back"]  = back_ref
+                # front+back SEULEMENT (les vues laterales FLUX independantes doublent la tete).
+                kwargs["mv_left"]  = None
+                kwargs["mv_right"] = None
+            _free_gpu_before_hunyuan(audit)
+            h = run_hunyuan3d(**kwargs)
+            if not h.get("ok"):
+                _record_pipeline_dispatch(run_id, prompt, started_at_iso,
+                                          status="blocked",
+                                          verdict=f"hunyuan3d failed: {h.get('error')}")
+                return {"ok": False, "error": f"hunyuan3d failed: {h.get('error')}",
+                        "audit_trail": audit + [{"stage": "hunyuan3d", **h}]}
+            audit.append({"stage": "hunyuan3d", "ok": True,
+                          "mesh_path": h["mesh_path"],
+                          "size_bytes": h["size_bytes"],
+                          "elapsed_s": h["elapsed_s"]})
 
     # Stage 3 — auto_rescue
     rescue_dir = output_dir / f"rescue_{run_id}"
