@@ -1,37 +1,51 @@
 #!/usr/bin/env bash
-# Met à jour le lien public (tunnel Cloudflare) dans le repo aurora-live et le pousse sur GitHub,
-# pour que l'adresse en cours soit toujours visible en ligne. Appelé par start-aurora après le tunnel.
+# Publie l'ETAT du studio dans le repo aurora-live (README, section <!--STATUS-->) et pousse sur GitHub :
+#  - OUVERT  : affiche l'adresse publique en cours (tunnel Cloudflare)
+#  - FERME   : affiche une page maintenance + contacts
+# Mode : "open" | "closed" | "auto" (auto = teste si l'app repond sur 127.0.0.1:1420). Defaut auto.
 set -uo pipefail
 
 AURORA_DIR="/home/juan/AuroraIA"
 LIVE_REPO="/home/juan/aurora-live"
 URL_FILE="$AURORA_DIR/tunnel_url.txt"
+MODE="${1:-auto}"
 
-[ -f "$URL_FILE" ] || { echo "[publish] pas de tunnel_url.txt — rien à publier"; exit 0; }
-URL="$(tr -d '[:space:]' < "$URL_FILE")"
-[ -n "$URL" ] || { echo "[publish] URL vide"; exit 0; }
-[ -d "$LIVE_REPO/.git" ] || { echo "[publish] $LIVE_REPO n'est pas un repo git"; exit 0; }
+[ -d "$LIVE_REPO/.git" ] || { echo "[publish] $LIVE_REPO absent"; exit 0; }
+
+if [ "$MODE" = "auto" ]; then
+  if curl -s -m 5 -o /dev/null "http://127.0.0.1:1420/" 2>/dev/null; then MODE="open"; else MODE="closed"; fi
+fi
 
 STAMP="$(date '+%Y-%m-%d %H:%M')"
-BLOCK="**👉 [$URL]($URL)**
+if [ "$MODE" = "open" ] && [ -f "$URL_FILE" ] && [ -s "$URL_FILE" ]; then
+  URL="$(tr -d '[:space:]' < "$URL_FILE")"
+  BLOCK="🟢 **Ouvert !** Accès en direct : **[$URL]($URL)**
 
-_En ligne — mis à jour le $STAMP._"
+_Mis à jour le $STAMP. Le lien n'est valable que quand mon PC est allumé._"
+  MSG="Studio ouvert — $STAMP"
+else
+  BLOCK="🔴 **Fermé pour le moment** — en maintenance / réparation, ou simplement éteint.
 
-# remplace le contenu entre les marqueurs <!--LIVE--> et <!--/LIVE-->
+Pour toute question ou plus d'infos, contactez-moi : Snap \`jrabuteau.py\` · Instagram \`world_of_juan23\` · Mail \`rabuteaujuandavid@gmail.com\`.
+
+_Mis à jour le $STAMP._"
+  MSG="Studio ferme — $STAMP"
+fi
+
 python3 - "$LIVE_REPO/README.md" "$BLOCK" <<'PY'
 import sys, re
 path, block = sys.argv[1], sys.argv[2]
 s = open(path, encoding="utf-8").read()
-s = re.sub(r"<!--LIVE-->.*?<!--/LIVE-->",
-          "<!--LIVE-->\n%s\n<!--/LIVE-->" % block, s, flags=re.S)
+s = re.sub(r"<!--STATUS-->.*?<!--/STATUS-->",
+          "<!--STATUS-->\n%s\n<!--/STATUS-->" % block, s, flags=re.S)
 open(path, "w", encoding="utf-8").write(s)
 PY
 
 cd "$LIVE_REPO" || exit 0
 git add -A
 if git diff --cached --quiet; then
-  echo "[publish] lien inchangé"
+  echo "[publish] etat inchange ($MODE)"
 else
-  git commit -q -m "Mise à jour du lien en direct ($STAMP)"
-  git push -q origin main 2>/dev/null && echo "[publish] lien publié : $URL" || echo "[publish] push échoué (vérifie la connexion GitHub)"
+  git -c user.name="Juan Rabuteau" -c user.email="rabuteaujuandavid@gmail.com" commit -q -m "$MSG"
+  git push -q origin main 2>/dev/null && echo "[publish] etat publie: $MODE" || echo "[publish] push echoue"
 fi

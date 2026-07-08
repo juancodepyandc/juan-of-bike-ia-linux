@@ -88,6 +88,13 @@ else
   echo "  Tunnel non lance. Utilise AURORA_START_TUNNEL=1 ./start-aurora.sh si besoin."
 fi
 
+# Surveillance de l'etat -> publie "ouvert/ferme" sur le repo aurora-live automatiquement
+if [ -x "$ROOT_DIR/scripts/aurora-status-watcher.sh" ]; then
+  pkill -f "aurora-status-watcher.sh" 2>/dev/null || true
+  setsid bash "$ROOT_DIR/scripts/aurora-status-watcher.sh" >"$LOG_DIR/status-watcher.log" 2>&1 </dev/null &
+  echo "  Surveillance etat: active (repo aurora-live tenu a jour ouvert/ferme)"
+fi
+
 echo "Aurora demarre:"
 echo "  UI      http://127.0.0.1:1420"
 echo "  Bridge  http://127.0.0.1:3001"
