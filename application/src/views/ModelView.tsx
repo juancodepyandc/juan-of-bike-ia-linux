@@ -1470,6 +1470,15 @@ function InteractiveModel({
   useEffect(() => {
     if (!model) return
     let meshIndex = 0
+    let authoredPbr = false
+    model.traverse((child) => {
+      const m = (child as Mesh).material as MeshPhysicalMaterial | MeshPhysicalMaterial[] | undefined
+      const list = Array.isArray(m) ? m : m ? [m] : []
+      list.forEach((mm) => {
+        const phys = mm as MeshPhysicalMaterial
+        if ((phys.transmission ?? 0) > 0 || (phys.clearcoat ?? 0) > 0 || (phys.sheen ?? 0) > 0 || (phys.emissiveIntensity ?? 1) > 1.5) authoredPbr = true
+      })
+    })
     model.traverse((child) => {
       const mesh = child as Mesh
       if (!mesh.isMesh) return
@@ -1518,7 +1527,7 @@ function InteractiveModel({
         // material that still has the post-paint flat default to a real PBR
         // material with chrome/glass/skin/fabric/etc characteristics. The
         // baseColorMap is preserved — we only override the surface response.
-        if (materialMode === 'diagnostic' || !pbrProfile || !mat) {
+        if (materialMode === 'diagnostic' || !pbrProfile || !mat || authoredPbr) {
           if (mat && 'envMapIntensity' in mat) {
             ;(mat as MeshStandardMaterial).envMapIntensity = 1.35
           }
