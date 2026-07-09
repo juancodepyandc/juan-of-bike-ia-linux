@@ -1085,7 +1085,7 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 dj = json.loads(dl) if dl else {}
                 if not dj.get("ok") or not dj.get("base64"):
                     continue
-                img = _Image.open(_io.BytesIO(_b64.decode(dj["base64"]))).convert("RGB")
+                img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"]))).convert("RGB")
                 if min(img.size) < 320:  # trop petit -> pas assez de detail
                     continue
                 img.save(str(out_path))
