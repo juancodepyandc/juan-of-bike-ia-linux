@@ -46,6 +46,20 @@ if _cuda_bin and _cuda_bin not in os.environ.get("PATH", ""):
 
 MODEL_ID = os.environ.get("AURORA_TRELLIS2_MODEL", "microsoft/TRELLIS.2-4B")
 
+# Spill GPU->RAM (memoire managee cudaMallocManaged) : permet a l'extraction du mesh 1536
+# de DEBORDER sur la RAM (30 Go) quand elle depasse les 16 Go de VRAM -> tient le VRAI 1536
+# (petits reliefs: fentes, resistances, cheveux au mm). Lent (page-faults PCIe) mais complet.
+# DOIT s'executer AVANT toute allocation CUDA du process. Opt-in via AURORA_TRELLIS2_MANAGED=1.
+if os.environ.get("AURORA_TRELLIS2_MANAGED") == "1":
+    try:
+        import torch as _torch_boot
+        _SO = os.environ.get("AURORA_MANAGED_SO", str(TRELLIS_ROOT / "managed_alloc.so"))
+        _alloc = _torch_boot.cuda.memory.CUDAPluggableAllocator(_SO, "my_malloc", "my_free")
+        _torch_boot.cuda.memory.change_current_allocator(_alloc)  # avant toute alloc CUDA
+        log.warning("[trellis2] allocateur MANAGE actif (spill GPU->RAM, lent) : %s", _SO)
+    except Exception as _e:  # noqa: BLE001
+        log.error("[trellis2] echec allocateur manage: %r", _e)
+
 
 def _try_import():
     """Return (ok, error_str). True = TRELLIS.2 + tous les kernels importent."""
@@ -85,6 +99,36 @@ def _load_pipe():
     log.info("[trellis2] loading Trellis2ImageTo3DPipeline from %s", MODEL_ID)
     pipe = Trellis2ImageTo3DPipeline.from_pretrained(MODEL_ID)
     pipe.cuda()
+    # Etape A (gratuit) : liberer les latents (shape_slat/tex_slat) AVANT fill_holes/CuMesh
+    # (le pic OOM du 1536) -> rend ~1-3 Go juste avant l'extraction. Sur des monkeypatch de
+    # decode_latent car le wrapper ne peut pas s'inserer dans run(). Sur (return_latent=False).
+    try:
+        import types as _types, torch as _t
+        from trellis2.representations import MeshWithVoxel as _MWV
+
+        def _decode_latent_lowmem(self, shape_slat, tex_slat, resolution):
+            meshes, subs = self.decode_shape_slat(shape_slat, resolution)
+            tex_voxels = self.decode_tex_slat(tex_slat, subs)
+            del subs
+            for _lat in (shape_slat, tex_slat):
+                try:
+                    _lat.feats = _t.empty(0, device=_lat.feats.device, dtype=_lat.feats.dtype)
+                except Exception:  # noqa: BLE001
+                    pass
+            _t.cuda.empty_cache()
+            out = []
+            for m, v in zip(meshes, tex_voxels):
+                m.fill_holes()
+                out.append(_MWV(m.vertices, m.faces, origin=[-0.5, -0.5, -0.5],
+                                voxel_size=1 / resolution, coords=v.coords[:, 1:], attrs=v.feats,
+                                voxel_shape=_t.Size([*v.shape, *v.spatial_shape]),
+                                layout=self.pbr_attr_layout))
+            return out
+
+        pipe.decode_latent = _types.MethodType(_decode_latent_lowmem, pipe)
+        log.info("[trellis2] decode_latent low-mem patch actif")
+    except Exception as _e:  # noqa: BLE001
+        log.warning("[trellis2] patch decode_latent ignore: %r", _e)
     _PIPE_CACHE = pipe
     return pipe
 
@@ -159,7 +203,10 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         used_q = ptype
         for _q in _ladder:
             try:
-                torch.cuda.reset_peak_memory_stats()
+                try:  # non supporte par l'allocateur pluggable (managed)
+                    torch.cuda.reset_peak_memory_stats()
+                except Exception:  # noqa: BLE001
+                    pass
                 torch.cuda.empty_cache()
                 mesh = pipe.run(
                     image, seed=seed, pipeline_type=_q,
@@ -208,7 +255,10 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         out_glb = str(out_glb)
         glb.export(out_glb)
-        peak = float(torch.cuda.max_memory_allocated() / 1e9)
+        try:
+            peak = float(torch.cuda.max_memory_allocated() / 1e9)
+        except Exception:  # noqa: BLE001  (allocateur pluggable managed)
+            peak = 0.0
         # Option 16K : upscale RealESRGAN x2 de l'albedo (8192 -> 16384). Desactive par defaut
         # (GLB ~300-500 Mo, lourd pour le viewer). Activer via AURORA_TRELLIS2_16K=1.
         up16 = False

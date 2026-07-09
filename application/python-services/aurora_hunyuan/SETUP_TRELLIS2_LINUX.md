@@ -43,3 +43,15 @@ Patché dans le repo TRELLIS.2 (hors git de l'app), à REFAIRE si le repo est r�
 Le wrapper `aurora_trellis_wrapper.py` met déjà : `ATTN_BACKEND=xformers`,
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, `CUDA_HOME` (nvdiffrast JIT-compile au 1er usage),
 et ajoute le repo au `sys.path`. Test : `python aurora_hunyuan/aurora_trellis_wrapper.py <img> out.glb`.
+
+## 6. Mode PRÉCISION MAX — 1536_cascade via allocateur managé (spill GPU→RAM)
+Le 1536_cascade (géométrie fine: fentes, résistances, cheveux au mm) OOM à l'extraction sur 16 Go.
+Solution: allocateur CUDA managé (`cudaMallocManaged`) qui fait déborder l'extraction sur la RAM (30 Go).
+Prouvé: tensor 18 Go sur GPU 16 Go, 0 OOM. Lent (page-faults PCIe) mais complet.
+```bash
+DST=/home/juan/.local/share/auroraia/external/TRELLIS.2
+CUDART=/home/juan/.local/opt/miniforge3/envs/trellis2/lib/python3.10/site-packages/nvidia/cuda_runtime/lib/libcudart.so.12
+gcc -shared -fPIC -O2 -o "$DST/managed_alloc.so" "$DST/managed_alloc.c" "$CUDART"
+```
+Activer: `AURORA_TRELLIS2_MANAGED=1 AURORA_TRELLIS2_QUALITY=1536_cascade`. Le wrapper installe l'allocateur
+au chargement (avant toute alloc CUDA) + patch decode_latent (libère les latents avant CuMesh, ~1-3 Go).
