@@ -64,7 +64,10 @@ KIND_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"\b(humano[iï]de|humanoid|elf|elfe|guerrier|warrior|knight|chevalier|"
         r"princess|princesse|wizard|mage|sorcier|sorci[èe]re|witch|paladin|"
         r"samurai|samoura[iï]|ninja|cyborg|androide|android|robot humanoid|"
-        r"viking|gladiateur|gladiator)\b",
+        r"viking|gladiateur|gladiator|homme|femme|man|woman|monsieur|madame|"
+        r"gar[cç]on|fille|enfant|child|boy|girl|personne|person|humain|human|"
+        r"adulte|adult|vieillard|soldat|soldier|policier|pompier|docteur|"
+        r"m[ée]decin|infirmi[èe]re|chef|cuisinier|danseur|danseuse|athl[èe]te)\b",
         re.IGNORECASE,
     )),
     ("character", re.compile(

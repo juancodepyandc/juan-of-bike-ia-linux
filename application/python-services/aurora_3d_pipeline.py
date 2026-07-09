@@ -161,7 +161,9 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
     _kind_l = (subject_kind or "").lower()
     _creature_re = re.compile(
         r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
-        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster)\b", re.I)
+        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
+        r"homme|femme|man|woman|personne|person|humain|human|garcon|fille|enfant|child|"
+        r"boy|girl|adulte|soldat|soldier)\b", re.I)
     if _kind_l in {"character", "creature", "humanoid", "quadruped"} or _creature_re.search(out):
         _pose_cues = ("full body entirely visible, complete figure inside the frame with "
                       "generous empty margin on all sides, head and feet fully visible, "
