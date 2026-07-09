@@ -143,6 +143,32 @@ STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "30"))
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
 
+def _auto_expose_glb_texture(glb_path: str, target_p50: float = 0.30, floor_p50: float = 0.16) -> bool:
+    try:
+        import numpy as np
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        import trimesh
+        m = trimesh.load(glb_path, force="mesh", process=False)
+        mat = getattr(m.visual, "material", None)
+        img = getattr(mat, "baseColorTexture", None) if mat is not None else None
+        if img is None:
+            return False
+        arr = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
+        lum = 0.2126 * arr[..., 0] + 0.7152 * arr[..., 1] + 0.0722 * arr[..., 2]
+        p50 = float(np.percentile(lum, 50))
+        if p50 >= floor_p50:
+            return False
+        gamma = np.log(max(target_p50, 1e-3)) / np.log(max(p50, 1e-3))
+        gamma = float(np.clip(gamma, 0.45, 1.0))
+        arr = np.power(arr, gamma)
+        mat.baseColorTexture = Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
+        m.export(glb_path)
+        return True
+    except Exception:
+        return False
+
+
 def _upscale_glb_texture(glb_path: str, factor: int = 2, tile: int = 768) -> bool:
     """Upscale l'albedo du GLB x`factor` (8192 -> 16384 = 16K) via RealESRGAN en tuiles
     (faible VRAM), en place. Best-effort : renvoie False sans casser si indispo."""
@@ -256,6 +282,9 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         out_glb = str(out_glb)
         glb.export(out_glb)
+        exposed = False
+        if os.environ.get("AURORA_TEXTURE_AUTOEXPOSE", "1") == "1":
+            exposed = _auto_expose_glb_texture(out_glb)
         try:
             peak = float(torch.cuda.max_memory_allocated() / 1e9)
         except Exception:  # noqa: BLE001  (allocateur pluggable managed)
@@ -272,7 +301,8 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             faces = verts = 0
         return {"ok": True, "out_glb": out_glb, "faces": faces, "verts": verts,
                 "peak_vram_gb": round(peak, 2), "quality": ptype,
-                "texture_size": (16384 if up16 else int(texture_size))}
+                "texture_size": (16384 if up16 else int(texture_size)),
+                "auto_exposed": exposed}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}"}
 

@@ -158,6 +158,17 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         if joined.split(",")[0].strip().lower() not in out.lower():
             out = out.rstrip(",.") + ", " + joined
 
+    _kind_l = (subject_kind or "").lower()
+    _creature_re = re.compile(
+        r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
+        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster)\b", re.I)
+    if _kind_l in {"character", "creature", "humanoid", "quadruped"} or _creature_re.search(out):
+        _pose_cues = ("full body entirely visible, all limbs visible and separated, "
+                      "tail fully visible, standing neutral pose, three-quarter view, "
+                      "no limb hidden behind the body, no cropping, feet on the ground")
+        if "full body entirely visible" not in out:
+            out = out.rstrip(",.") + ", " + _pose_cues
+
     # Layer 2 — faithful-scene contract (compound prompts only; no-op otherwise).
     if compose_faithful_prompt is not None:
         try:
@@ -1067,11 +1078,17 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
     if not script.is_file():
         return False
     try:
-        query = f"{prompt} product photo high resolution"
-        p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "8"],
-                           capture_output=True, text=True, timeout=70)
-        line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
-        cands = (json.loads(line).get("candidates") if line else None) or []
+        queries = [f"{prompt} product photo high resolution"]
+        if _re_mod.search(r"\b(led|rgb|argb|lumineux|neon|strimer|lightstrip)\b", prompt, _re_mod.I):
+            queries.insert(0, f"{prompt} product photo unlit powered off white leds")
+        cands = []
+        for query in queries:
+            p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "8"],
+                               capture_output=True, text=True, timeout=70)
+            line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+            cands = (json.loads(line).get("candidates") if line else None) or []
+            if cands:
+                break
         import io as _io, base64 as _b64
         from PIL import Image as _Image
         for c in cands[:8]:
