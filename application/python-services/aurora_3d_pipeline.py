@@ -455,6 +455,36 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
         }
 
 
+def _run_vlm_critic(mesh_path: str | Path, prompt: str, run_id: str,
+                    output_dir: Path) -> dict:
+    try:
+        from scene_intelligence import render_views  # noqa: WPS433
+        from vlm_judge import ask_vlm  # noqa: WPS433
+        views_dir = output_dir / f"vlm_critic_{run_id}"
+        views_dir.mkdir(parents=True, exist_ok=True)
+        images = render_views(str(mesh_path), str(views_dir))
+        question = (
+            f'Voici 4 vues d\'un modele 3D genere pour le prompt: "{prompt}". '
+            "Ce modele 3D correspond-il au prompt? Tous les membres et parties attendus "
+            "sont-ils presents et entiers, rien de coupe ni manquant? Les yeux et le "
+            "visage sont-ils presents et nets si c'est un personnage ou un animal? "
+            "suggestion_reference = complement de description a ajouter au prompt de "
+            "l'image de reference pour corriger les manques (vide si tout est ok)."
+        )
+        schema = '{"ok": true, "missing": [], "defauts": [], "suggestion_reference": ""}'
+        verdict = ask_vlm(images, question, schema)
+        return {
+            "ran": True,
+            "ok": bool(verdict.get("ok", False)),
+            "missing": [str(m) for m in (verdict.get("missing") or [])],
+            "defauts": [str(d) for d in (verdict.get("defauts") or [])],
+            "suggestion_reference": str(verdict.get("suggestion_reference") or ""),
+            "views": [str(i) for i in images],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ran": False, "ok": True, "error": repr(exc)}
+
+
 def _acceptance_failure_summary(report: dict) -> list:
     failures = report.get("hard_failures") or []
     if failures:
@@ -1134,7 +1164,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                  force: bool = False,
                  images: list[str] | None = None,
                  purpose: str = "visual_preview",
-                 subject_kind_hint: str | None = None) -> dict:
+                 subject_kind_hint: str | None = None,
+                 _vlm_retry: bool = False) -> dict:
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():
@@ -1750,7 +1781,9 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
-                    if _use_researched and os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1":
+                    if (os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1"
+                            and front_ref.is_file()
+                            and (_use_researched or not multi_view)):
                         try:
                             print("PROGRESS:texture_fidelity:projection de la photo de reference sur la face avant...", flush=True)
                             _fid_out = output_dir / f"{run_id}_mesh_fidelity.glb"
@@ -1900,6 +1933,25 @@ def run_pipeline(prompt: str, run_id: str, *,
             rigged_mesh = motion_res["rigged_mesh"]
 
     final_delivery_mesh = rigged_mesh or final_mesh_path
+    if os.environ.get("AURORA_VLM_CRITIC") == "1":
+        critic = _run_vlm_critic(final_delivery_mesh, prompt, run_id, output_dir)
+        audit.append({"stage": "vlm_critic", **critic})
+        suggestion = critic.get("suggestion_reference") or ", ".join(critic.get("missing") or [])
+        if critic.get("ran") and not critic.get("ok") and not _vlm_retry and suggestion:
+            retry_prompt = prompt.rstrip(",. ") + ", " + suggestion
+            audit.append({"stage": "vlm_critic_retry", "ok": True,
+                          "retry_prompt": retry_prompt[:500]})
+            retry = run_pipeline(
+                retry_prompt, run_id,
+                output_dir=output_dir, multi_view=multi_view,
+                motion_prompt=motion_prompt, force=True,
+                images=images, purpose=purpose,
+                subject_kind_hint=subject_kind_hint, _vlm_retry=True,
+            )
+            retry["audit_trail"] = audit + (retry.get("audit_trail") or [])
+            retry["vlm_retry"] = True
+            retry["original_prompt"] = prompt
+            return retry
     final_acceptance = run_final_acceptance(final_delivery_mesh, prompt, kind, motion_prompt)
     audit.append({
         "stage": "final_acceptance_gate",

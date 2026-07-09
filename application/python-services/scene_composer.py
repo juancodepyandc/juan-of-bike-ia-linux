@@ -86,7 +86,7 @@ def _glb_has_skin(path):
         return False
 
 
-def run_blender(actor, target, relation, output, animate, fps):
+def run_blender(actor, target, relation, output, animate, fps, overrides=None):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scene_compose_bpy.py")
     cmd = [BLENDER_BIN, "--background", "--factory-startup",
            "--python-exit-code", "1", "--python", script, "--",
@@ -94,6 +94,9 @@ def run_blender(actor, target, relation, output, animate, fps):
            "--relation", relation, "--output", output]
     if animate:
         cmd += ["--animate", "--fps", str(fps)]
+    for flag, value in (overrides or {}).items():
+        if value is not None:
+            cmd += ["--" + flag, str(value)]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1740)
     payload = None
     for line in reversed((proc.stdout or "").splitlines()):
@@ -118,14 +121,32 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--animate", action="store_true")
     parser.add_argument("--fps", type=int, default=24)
+    parser.add_argument("--seat-height-frac", type=float, default=None, dest="seat_height_frac")
+    parser.add_argument("--seat-depth-frac", type=float, default=None, dest="seat_depth_frac")
+    parser.add_argument("--scale-mul", type=float, default=None, dest="scale_mul")
+    parser.add_argument("--strategy", default=None,
+                        choices=["legs_bent", "edge", "stand", "lie", "none"])
+    parser.add_argument("--dz-frac", type=float, default=None, dest="dz_frac")
+    parser.add_argument("--dfwd-frac", type=float, default=None, dest="dfwd_frac")
     args = parser.parse_args()
     parsed = parse_instruction(args.instruction)
+    relation = parsed["relation"]
+    strategy_relations = {"legs_bent": "sit_on", "edge": "sit_on", "stand": "stand_on", "lie": "lie_on"}
+    if args.strategy in strategy_relations:
+        relation = strategy_relations[args.strategy]
+    overrides = {"seat-height-frac": args.seat_height_frac,
+                 "seat-depth-frac": args.seat_depth_frac,
+                 "scale-mul": args.scale_mul,
+                 "strategy": args.strategy,
+                 "dz-frac": args.dz_frac,
+                 "dfwd-frac": args.dfwd_frac}
     animate = bool(args.animate or parsed["animate"])
     out_dir = os.path.dirname(os.path.abspath(args.output))
     os.makedirs(out_dir, exist_ok=True)
     actor_path = args.actor
     rigged = False
-    if parsed["relation"] in ("sit_on", "lie_on") and not _glb_has_skin(actor_path):
+    if (relation in ("sit_on", "lie_on") and args.strategy in (None, "legs_bent")
+            and not _glb_has_skin(actor_path)):
         rig_out = os.path.join(out_dir, "actor_rigged.glb")
         rig_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rigify_autorig.py")
         try:
@@ -137,7 +158,8 @@ def main():
         except Exception:
             pass
     try:
-        scene = run_blender(actor_path, args.target, parsed["relation"], args.output, animate, args.fps)
+        scene = run_blender(actor_path, args.target, relation, args.output, animate, args.fps,
+                            overrides=overrides)
     except subprocess.TimeoutExpired:
         scene = {"ok": False, "error": "blender timeout (1740s)"}
     except FileNotFoundError as exc:
@@ -145,7 +167,9 @@ def main():
     final = {
         "ok": bool(scene.get("ok")) and os.path.isfile(args.output),
         "output": args.output,
-        "relation": parsed["relation"],
+        "relation": relation,
+        "strategy": args.strategy,
+        "overrides": {k: v for k, v in overrides.items() if v is not None},
         "animated": bool(scene.get("animated")),
         "contact_gap": scene.get("contact_gap"),
         "overlap_fixed": scene.get("overlap_fixed"),
@@ -158,6 +182,10 @@ def main():
         "skin_built": scene.get("skin_built"),
         "fit": scene.get("fit"),
         "sit_fallback": scene.get("sit_fallback"),
+        "seat_override": scene.get("seat_override"),
+        "seat_depth_override": scene.get("seat_depth_override"),
+        "scale_mul": scene.get("scale_mul"),
+        "offset_applied": scene.get("offset_applied"),
     }
     if scene.get("error"):
         final["error"] = scene["error"]

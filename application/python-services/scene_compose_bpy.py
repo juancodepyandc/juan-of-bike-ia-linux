@@ -27,6 +27,16 @@ def parse_args():
     return args
 
 
+def _opt_float(args, key):
+    v = args.get(key)
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def import_glb(path):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
@@ -276,8 +286,20 @@ def run(args, result):
     target_h = tmax.z - tmin.z
     actor_h = amax.z - amin.z
     relation = args.get("relation", "next_to")
+    strategy = args.get("strategy")
+    strategy_relations = {"legs_bent": "sit_on", "edge": "sit_on", "stand": "stand_on", "lie": "lie_on"}
+    if strategy in strategy_relations:
+        relation = strategy_relations[strategy]
+    if strategy:
+        result["strategy"] = strategy
+    seat_h_frac = _opt_float(args, "seat-height-frac")
+    seat_d_frac = _opt_float(args, "seat-depth-frac")
+    scale_mul = _opt_float(args, "scale-mul")
     actor_root = make_root("AuroraActorRoot", actor_objs)
-    if relation == "sit_on" and target_h > 1e-6 and actor_h > 1e-6:
+    if scale_mul is not None and scale_mul > 0:
+        actor_root.scale = (scale_mul, scale_mul, scale_mul)
+        result["scale_mul"] = scale_mul
+    elif relation == "sit_on" and target_h > 1e-6 and actor_h > 1e-6:
         ratio = actor_h / target_h
         if ratio > 2.2 or ratio < 0.5:
             s = 1.65 / actor_h
@@ -291,7 +313,18 @@ def run(args, result):
     seat = None
     group = []
     if relation in ("sit_on", "stand_on", "lie_on"):
-        seat, group = detect_surface(target_bvh, tmin, tmax)
+        try:
+            seat, group = detect_surface(target_bvh, tmin, tmax)
+        except Exception:
+            seat, group = None, []
+        if seat_h_frac is not None:
+            z = tmin.z + max(0.0, min(1.0, seat_h_frac)) * target_h
+            if seat is None:
+                seat = Vector(((tmin.x + tmax.x) * 0.5, (tmin.y + tmax.y) * 0.5, z))
+                group = []
+            else:
+                seat = Vector((seat.x, seat.y, z))
+            result["seat_override"] = seat_h_frac
         if seat is None:
             raise RuntimeError("aucune surface horizontale detectee sur le target")
         result["seat_height"] = round(seat.z, 4)
@@ -302,6 +335,14 @@ def run(args, result):
             forward = Vector((-back.x, -back.y, 0.0)).normalized()
     elif relation in ("next_to", "hold"):
         forward = Vector((-1.0, 0.0, 0.0))
+    if seat_d_frac is not None and relation in ("sit_on", "stand_on", "lie_on"):
+        corners = [Vector((x, y, 0.0)) for x in (tmin.x, tmax.x) for y in (tmin.y, tmax.y)]
+        base2 = Vector((seat.x, seat.y, 0.0))
+        projs = [(c - base2).dot(forward) for c in corners]
+        pmax_p, pmin_p = max(projs), min(projs)
+        off = pmax_p - max(0.0, min(1.0, seat_d_frac)) * (pmax_p - pmin_p)
+        seat = seat + forward * off
+        result["seat_depth_override"] = seat_d_frac
     theta = math.atan2(forward.x, -forward.y)
     if relation == "lie_on":
         actor_root.rotation_euler = (-math.pi * 0.5, 0.0, theta)
@@ -320,7 +361,7 @@ def run(args, result):
     if arm is not None:
         thighs, shins = leg_bones(arm)
     posed = False
-    if relation == "sit_on" and arm is not None and thighs:
+    if relation == "sit_on" and arm is not None and thighs and strategy in (None, "legs_bent"):
         try:
             force_fk(arm)
             set_sit_pose(arm, thighs, shins, forward)
@@ -348,7 +389,10 @@ def run(args, result):
         front = 0.0
         for p in group:
             front = max(front, (p - seat).dot(forward))
-        if posed:
+        if seat_d_frac is not None:
+            g2 = Vector(seat)
+            push = Vector((0.0, 0.0, 1.0))
+        elif posed:
             tl = 0.0
             for pb in thighs:
                 tl = max(tl, ((arm.matrix_world @ pb.tail) - (arm.matrix_world @ pb.head)).length)
@@ -427,7 +471,7 @@ def run(args, result):
         result["overlap_zone"] = {"n": len(pairs),
                                   "x": [min(xs), max(xs)], "y": [min(ys), max(ys)],
                                   "z": [min(zz), max(zz)]}
-    if relation == "sit_on" and posed and len(pairs) > tol:
+    if relation == "sit_on" and posed and len(pairs) > tol and strategy != "legs_bent":
         clear_pose(thighs + shins)
         posed = False
         result["posed"] = False
@@ -488,6 +532,18 @@ def run(args, result):
                     break
             actor_root.location = base + shift + settle
             bpy.context.view_layer.update()
+    dz_frac = _opt_float(args, "dz-frac")
+    dfwd_frac = _opt_float(args, "dfwd-frac")
+    extra = Vector((0.0, 0.0, 0.0))
+    if dz_frac:
+        extra = extra + Vector((0.0, 0.0, max(-1.0, min(1.0, dz_frac)) * target_h))
+    if dfwd_frac:
+        span = max(tmax.x - tmin.x, tmax.y - tmin.y, 1e-6)
+        extra = extra + forward * (max(-1.0, min(1.0, dfwd_frac)) * span)
+    if extra.length > 1e-9:
+        actor_root.location = actor_root.location + extra
+        bpy.context.view_layer.update()
+        result["offset_applied"] = [round(extra.x, 4), round(extra.y, 4), round(extra.z, 4)]
     amin, amax = world_bounds(actor_objs)
     if relation == "sit_on":
         pelvis = amin.z + 0.45 * (amax.z - amin.z)
