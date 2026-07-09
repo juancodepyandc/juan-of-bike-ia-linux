@@ -203,7 +203,8 @@ def _upscale_glb_texture(glb_path: str, factor: int = 2, tile: int = 768) -> boo
 
 def generate_glb(image_path: Path | str, out_glb: Path | str,
                   *, texture_size: int | None = None, decimation_target: int = 2_000_000,
-                  pipeline_type: str | None = None, seed: int = 1) -> dict:
+                  pipeline_type: str | None = None, seed: int = 1,
+                  extra_views: list | None = None) -> dict:
     """Run TRELLIS.2 image -> 3D (geometrie coherente + PBR) et exporte un GLB.
     Returns {ok, out_glb, faces, verts, peak_vram_gb, quality, error?}. Never raises."""
     if not _AVAILABLE:
@@ -220,6 +221,16 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             texture_size = int(os.environ.get("AURORA_TRELLIS2_TEXTURE", "8192"))
         pipe = _load_pipe()
         image = Image.open(str(image_path)).convert("RGB")
+        run_input = image
+        if extra_views:
+            vs = []
+            for _v in extra_views:
+                try:
+                    vs.append(Image.open(str(_v)).convert("RGB"))
+                except Exception:
+                    pass
+            if vs:
+                run_input = [image] + vs
         # Repli automatique sur OOM : essaie ptype puis les paliers plus bas (CuMesh/CUDA OOM).
         if ptype in _QUALITY_LADDER:
             _ladder = _QUALITY_LADDER[_QUALITY_LADDER.index(ptype):]
@@ -235,7 +246,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     pass
                 torch.cuda.empty_cache()
                 mesh = pipe.run(
-                    image, seed=seed, pipeline_type=_q,
+                    run_input, seed=seed, pipeline_type=_q,
                     max_num_tokens=int(os.environ.get("AURORA_TRELLIS2_MAXTOK", "49152")),
                     sparse_structure_sampler_params={"steps": STEPS},
                     shape_slat_sampler_params={"steps": STEPS},
@@ -315,7 +326,8 @@ def main(argv: list[str]) -> int:
         return 0
     image = argv[1]
     out = argv[2] if len(argv) > 2 else "trellis2_out.glb"
-    r = generate_glb(image, out)
+    extras = [a for a in argv[3:] if os.path.isfile(a)]
+    r = generate_glb(image, out, extra_views=extras or None)
     # marqueur une-ligne pour parsing par le pipeline (subprocess)
     print("AURORA_TRELLIS_RESULT:" + json.dumps(r), flush=True)
     return 0 if r.get("ok") else 1

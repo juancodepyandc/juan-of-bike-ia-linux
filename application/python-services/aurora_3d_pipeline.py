@@ -1091,10 +1091,15 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 break
         import io as _io, base64 as _b64
         from PIL import Image as _Image
+        saved = 0
+        seen_urls = set()
+        base = str(out_path)
+        stem = base[:-4] if base.lower().endswith(".png") else base
         for c in cands[:8]:
             url = c.get("imageUrl")
-            if not url:
+            if not url or url in seen_urls:
                 continue
+            seen_urls.add(url)
             try:
                 d = subprocess.run([sys.executable, str(script), "--download-url", url],
                                    capture_output=True, text=True, timeout=45)
@@ -1103,13 +1108,17 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 if not dj.get("ok") or not dj.get("base64"):
                     continue
                 img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"]))).convert("RGB")
-                if min(img.size) < 320:  # trop petit -> pas assez de detail
+                if min(img.size) < 320:
                     continue
-                img.save(str(out_path))
-                log(f"PROGRESS:reference:vraie photo trouvee ({img.size[0]}x{img.size[1]}) : {url[:70]}")
-                return True
+                dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
+                img.save(dest)
+                saved += 1
+                log(f"PROGRESS:reference:vraie photo {saved} ({img.size[0]}x{img.size[1]}) : {url[:70]}")
+                if saved >= 3:
+                    return True
             except Exception:  # noqa: BLE001
                 continue
+        return saved > 0
     except Exception:  # noqa: BLE001
         return False
     return False
@@ -1710,7 +1719,15 @@ def run_pipeline(prompt: str, run_id: str, *,
                 _tr_env.setdefault("ATTN_BACKEND", "xformers")
                 _tr = {}
                 try:
-                    _p = subprocess.run([sys.executable, _wrapper, str(front_ref), str(mesh_path)],
+                    _tr_cmd = [sys.executable, _wrapper, str(front_ref), str(mesh_path)]
+                    if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
+                        _stem = str(front_ref)
+                        _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
+                        for _vi in (2, 3):
+                            _vp = f"{_stem}_v{_vi}.png"
+                            if os.path.isfile(_vp):
+                                _tr_cmd.append(_vp)
+                    _p = subprocess.run(_tr_cmd,
                                         env=_tr_env, capture_output=True, text=True, timeout=2400)
                     for _line in reversed((_p.stdout or "").splitlines()):
                         if _line.startswith("AURORA_TRELLIS_RESULT:"):

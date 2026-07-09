@@ -164,7 +164,25 @@ def leg_bones(arm):
             thighs.append(pb)
         elif any(k in low for k in ("shin", "calf", "lowerleg", "lower_leg", "loleg")):
             shins.append(pb)
+    fk_t = [pb for pb in thighs if "_fk" in pb.name.lower()]
+    fk_s = [pb for pb in shins if "_fk" in pb.name.lower()]
+    if fk_t:
+        thighs = fk_t
+    if fk_s:
+        shins = fk_s
     return thighs, shins
+
+
+def force_fk(arm):
+    n = 0
+    for pb in arm.pose.bones:
+        try:
+            if "IK_FK" in pb.keys():
+                pb["IK_FK"] = 1.0
+                n += 1
+        except Exception:
+            pass
+    return n
 
 
 def set_sit_pose(thighs, shins, factor):
@@ -174,6 +192,7 @@ def set_sit_pose(thighs, shins, factor):
     for pb in shins:
         pb.rotation_mode = "XYZ"
         pb.rotation_euler = (math.pi * 0.5 * factor, 0.0, 0.0)
+    bpy.context.view_layer.update()
 
 
 def run(args, result):
@@ -223,6 +242,7 @@ def run(args, result):
     posed = False
     if relation == "sit_on" and arm is not None and thighs:
         try:
+            force_fk(arm)
             set_sit_pose(thighs, shins, 1.0)
             posed = True
         except Exception:
