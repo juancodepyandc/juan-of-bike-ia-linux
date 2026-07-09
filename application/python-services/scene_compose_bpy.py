@@ -83,6 +83,10 @@ def shifted_bvh(verts, tris, shift):
     return BVHTree.FromPolygons([v + shift for v in verts], tris, all_triangles=True)
 
 
+def verts_sum(verts, tri):
+    return Vector(verts[tri[0]]) + Vector(verts[tri[1]]) + Vector(verts[tri[2]])
+
+
 def group_center(group):
     cx = sum(p.x for p in group) / len(group)
     cy = sum(p.y for p in group) / len(group)
@@ -148,6 +152,57 @@ def make_root(name, objs):
     return root
 
 
+def ensure_skinning(arm, objs):
+    need = [o for o in mesh_objects(objs) if len(o.vertex_groups) == 0]
+    if arm is None or not need:
+        return False
+    dups = []
+    for o in need:
+        d = o.copy()
+        d.data = o.data.copy()
+        bpy.context.scene.collection.objects.link(d)
+        if len(d.data.polygons) > 40000:
+            m = d.modifiers.new("dec", "DECIMATE")
+            m.ratio = 40000.0 / len(d.data.polygons)
+            with bpy.context.temp_override(object=d, active_object=d, selected_editable_objects=[d]):
+                bpy.ops.object.modifier_apply(modifier=m.name)
+        dups.append(d)
+    proxy = dups[0]
+    if len(dups) > 1:
+        with bpy.context.temp_override(active_object=proxy, selected_editable_objects=dups, selected_objects=dups):
+            bpy.ops.object.join()
+    ok = False
+    try:
+        with bpy.context.temp_override(active_object=arm, object=arm,
+                                       selected_editable_objects=[proxy, arm],
+                                       selected_objects=[proxy, arm]):
+            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+        ok = len(proxy.vertex_groups) > 3
+    except Exception:
+        ok = False
+    if ok:
+        for o in need:
+            for vg in proxy.vertex_groups:
+                if vg.name not in o.vertex_groups:
+                    o.vertex_groups.new(name=vg.name)
+            dt = o.modifiers.new("dt", "DATA_TRANSFER")
+            dt.object = proxy
+            dt.use_vert_data = True
+            dt.data_types_verts = {"VGROUP_WEIGHTS"}
+            dt.vert_mapping = "NEAREST"
+            dt.layers_vgroup_select_src = "ALL"
+            dt.layers_vgroup_select_dst = "NAME"
+            with bpy.context.temp_override(object=o, active_object=o, selected_editable_objects=[o]):
+                bpy.ops.object.modifier_apply(modifier=dt.name)
+            am = o.modifiers.new("aurora_arm", "ARMATURE")
+            am.object = arm
+    try:
+        bpy.data.objects.remove(proxy, do_unlink=True)
+    except Exception:
+        pass
+    return ok
+
+
 def find_armature(objs):
     for o in objs:
         if o.type == "ARMATURE":
@@ -164,13 +219,13 @@ def leg_bones(arm):
             thighs.append(pb)
         elif any(k in low for k in ("shin", "calf", "lowerleg", "lower_leg", "loleg")):
             shins.append(pb)
-    fk_t = [pb for pb in thighs if "_fk" in pb.name.lower()]
-    fk_s = [pb for pb in shins if "_fk" in pb.name.lower()]
-    if fk_t:
-        thighs = fk_t
-    if fk_s:
-        shins = fk_s
-    return thighs, shins
+    def pick(bones):
+        defs = [b for b in bones if b.name.lower().startswith("def-")]
+        if defs:
+            return defs
+        clean = [b for b in bones if not any(k in b.name.lower() for k in ("org-", "mch-", "tweak", "_ik", "ik_", "_fk"))]
+        return clean or bones
+    return pick(thighs), pick(shins)
 
 
 def force_fk(arm):
@@ -185,13 +240,30 @@ def force_fk(arm):
     return n
 
 
-def set_sit_pose(thighs, shins, factor):
+def aim_bone(pb, target_dir):
+    cur = pb.tail - pb.head
+    if cur.length < 1e-9 or target_dir.length < 1e-9:
+        return
+    q = cur.normalized().rotation_difference(target_dir.normalized())
+    M = Matrix.Translation(pb.head) @ q.to_matrix().to_4x4() @ Matrix.Translation(-pb.head)
+    pb.matrix = M @ pb.matrix
+
+
+def set_sit_pose(arm, thighs, shins, forward):
+    inv = arm.matrix_world.to_3x3().inverted()
+    fa = (inv @ forward).normalized()
+    da = (inv @ Vector((0.0, 0.0, -1.0))).normalized()
     for pb in thighs:
-        pb.rotation_mode = "XYZ"
-        pb.rotation_euler = (-math.pi * 0.5 * factor, 0.0, 0.0)
+        aim_bone(pb, fa)
+    bpy.context.view_layer.update()
     for pb in shins:
-        pb.rotation_mode = "XYZ"
-        pb.rotation_euler = (math.pi * 0.5 * factor, 0.0, 0.0)
+        aim_bone(pb, da)
+    bpy.context.view_layer.update()
+
+
+def clear_pose(bones):
+    for pb in bones:
+        pb.matrix_basis.identity()
     bpy.context.view_layer.update()
 
 
@@ -236,6 +308,14 @@ def run(args, result):
     else:
         actor_root.rotation_euler = (0.0, 0.0, theta)
     arm = find_armature(actor_objs)
+    skinned = False
+    if arm is not None:
+        try:
+            skinned = ensure_skinning(arm, actor_objs)
+            bpy.context.view_layer.update()
+        except Exception:
+            skinned = False
+    result["skin_built"] = bool(skinned)
     thighs, shins = ([], [])
     if arm is not None:
         thighs, shins = leg_bones(arm)
@@ -243,7 +323,7 @@ def run(args, result):
     if relation == "sit_on" and arm is not None and thighs:
         try:
             force_fk(arm)
-            set_sit_pose(thighs, shins, 1.0)
+            set_sit_pose(arm, thighs, shins, forward)
             posed = True
         except Exception:
             posed = False
@@ -263,12 +343,22 @@ def run(args, result):
         column = Vector((acenter.x, acenter.y, 0.0))
     if relation == "sit_on":
         pelvis = amin.z + 0.45 * actor_h
+        if posed and thighs:
+            pelvis = max((arm.matrix_world @ pb.head).z for pb in thighs)
         front = 0.0
         for p in group:
             front = max(front, (p - seat).dot(forward))
         if posed:
-            g2 = seat + forward * (front * 0.35)
-            push = forward.copy()
+            tl = 0.0
+            for pb in thighs:
+                tl = max(tl, ((arm.matrix_world @ pb.tail) - (arm.matrix_world @ pb.head)).length)
+            pd = front - tl
+            if pd < -0.4 * front:
+                pd = -0.4 * front
+            if pd > 0.6 * front:
+                pd = 0.6 * front
+            g2 = seat + forward * pd
+            push = Vector((0.0, 0.0, 1.0))
         else:
             projs = sorted((v - seat).dot(forward) for v in band) if band else []
             if len(projs) >= 10:
@@ -294,22 +384,104 @@ def run(args, result):
     averts, atris = proxy_capture(actor_objs, 40000)
     shift = Vector((0.0, 0.0, 0.0))
     fixed = 0
+    tol = max(60, int(0.004 * len(atris)))
+    best_shift = Vector(shift)
+    best_pairs = None
+    pairs0 = target_bvh.overlap(shifted_bvh(averts, atris, shift))
+    if pairs0:
+        cs = []
+        for _pa, pb2 in pairs0[:300]:
+            tri = atris[pb2] if pb2 < len(atris) else atris[0]
+            cs.append(verts_sum(averts, tri) / 3.0 + shift)
+        result["overlap_zone0"] = {"n": len(pairs0),
+                                   "x": [round(min(c.x for c in cs), 2), round(max(c.x for c in cs), 2)],
+                                   "y": [round(min(c.y for c in cs), 2), round(max(c.y for c in cs), 2)],
+                                   "z": [round(min(c.z for c in cs), 2), round(max(c.z for c in cs), 2)]}
     for i in range(40):
-        abvh = shifted_bvh(averts, atris, shift)
-        if not target_bvh.overlap(abvh):
+        p = len(target_bvh.overlap(shifted_bvh(averts, atris, shift)))
+        if best_pairs is None or p < best_pairs:
+            best_pairs = p
+            best_shift = Vector(shift)
+        if p <= tol:
             break
         shift = shift + push * step
         fixed += 1
+    if best_pairs is not None and best_pairs > tol:
+        shift = best_shift
+        result["fit"] = "partial"
+    else:
+        result["fit"] = "ok"
     actor_root.location = base + shift
     bpy.context.view_layer.update()
     result["overlap_fixed"] = fixed
+    pairs = target_bvh.overlap(shifted_bvh(averts, atris, shift))
+    if pairs:
+        cs = []
+        for _pa, pb2 in pairs[:300]:
+            tri = atris[pb2] if pb2 < len(atris) else atris[0]
+            c = (verts_sum(averts, tri)) / 3.0 + shift
+            cs.append(c)
+        xs = [round(c.x, 2) for c in cs]
+        ys = [round(c.y, 2) for c in cs]
+        zz = [round(c.z, 2) for c in cs]
+        result["overlap_zone"] = {"n": len(pairs),
+                                  "x": [min(xs), max(xs)], "y": [min(ys), max(ys)],
+                                  "z": [min(zz), max(zz)]}
+    if relation == "sit_on" and posed and len(pairs) > tol:
+        clear_pose(thighs + shins)
+        posed = False
+        result["posed"] = False
+        result["sit_fallback"] = "edge"
+        amin, amax = world_bounds(actor_objs)
+        acenter = (amin + amax) * 0.5
+        actor_h = amax.z - amin.z
+        pelvis = amin.z + 0.45 * actor_h
+        cv2, _c2 = proxy_capture(actor_objs, 40000)
+        lo = amin.z + 0.35 * actor_h
+        hi = amin.z + 0.55 * actor_h
+        band = [v for v in cv2 if lo <= v.z <= hi]
+        if band:
+            column = Vector((sum(v.x for v in band) / len(band), sum(v.y for v in band) / len(band), 0.0))
+        else:
+            column = Vector((acenter.x, acenter.y, 0.0))
+        projs = sorted((v - seat).dot(forward) for v in band) if band else []
+        if len(projs) >= 10:
+            bd = projs[int(0.9 * (len(projs) - 1))] - projs[int(0.1 * (len(projs) - 1))]
+        else:
+            bd = 0.3 * actor_h
+        g2 = seat + forward * (front + 0.30 * bd)
+        base = Vector((g2.x - column.x, g2.y - column.y, seat.z + 0.005 * actor_h - pelvis))
+        actor_root.location = base
+        bpy.context.view_layer.update()
+        averts, atris = proxy_capture(actor_objs, 40000)
+        shift = Vector((0.0, 0.0, 0.0))
+        push = Vector((0.0, 0.0, 1.0))
+        best_shift = Vector(shift)
+        best_pairs = None
+        for i in range(40):
+            p = len(target_bvh.overlap(shifted_bvh(averts, atris, shift)))
+            if best_pairs is None or p < best_pairs:
+                best_pairs = p
+                best_shift = Vector(shift)
+            if p <= tol:
+                break
+            shift = shift + push * step
+            fixed += 1
+        if best_pairs is not None and best_pairs > tol:
+            shift = best_shift
+            result["fit"] = "partial"
+        else:
+            result["fit"] = "ok"
+        actor_root.location = base + shift
+        bpy.context.view_layer.update()
+        result["overlap_fixed"] = fixed
     if relation in ("sit_on", "stand_on", "lie_on"):
         down = Vector((0.0, 0.0, -1.0))
         settle = Vector((0.0, 0.0, 0.0))
-        if not target_bvh.overlap(shifted_bvh(averts, atris, shift)):
+        if len(target_bvh.overlap(shifted_bvh(averts, atris, shift))) <= tol:
             for _i in range(60):
                 trial = settle + down * step
-                if target_bvh.overlap(shifted_bvh(averts, atris, shift + trial)):
+                if len(target_bvh.overlap(shifted_bvh(averts, atris, shift + trial))) > tol:
                     break
                 settle = trial
                 if abs(settle.z) > actor_h:
@@ -319,6 +491,8 @@ def run(args, result):
     amin, amax = world_bounds(actor_objs)
     if relation == "sit_on":
         pelvis = amin.z + 0.45 * (amax.z - amin.z)
+        if posed and thighs:
+            pelvis = max((arm.matrix_world @ pb.head).z for pb in thighs)
         result["contact_gap"] = round(abs(pelvis - seat.z), 4)
     elif relation in ("stand_on", "lie_on"):
         result["contact_gap"] = round(abs(amin.z - seat.z), 4)
@@ -355,15 +529,25 @@ def run(args, result):
         actor_root.location = final
         actor_root.keyframe_insert("location", frame=end)
         if posed:
-            set_sit_pose(thighs, shins, 0.0)
+            clear_pose(thighs + shins)
             for pb in thighs + shins:
-                pb.keyframe_insert("rotation_euler", frame=1)
-                pb.keyframe_insert("rotation_euler", frame=mid)
-            set_sit_pose(thighs, shins, 1.0)
+                pb.keyframe_insert("rotation_quaternion", frame=1)
+                pb.keyframe_insert("rotation_quaternion", frame=mid)
+            set_sit_pose(arm, thighs, shins, forward)
             for pb in thighs + shins:
-                pb.keyframe_insert("rotation_euler", frame=end)
+                pb.keyframe_insert("rotation_quaternion", frame=end)
         scene.frame_set(end)
         result["animated"] = True
+    if posed and not args["animate"]:
+        dg = bpy.context.evaluated_depsgraph_get()
+        for o in mesh_objects(actor_objs):
+            try:
+                ev = o.evaluated_get(dg)
+                me = bpy.data.meshes.new_from_object(ev)
+                o.modifiers.clear()
+                o.data = me
+            except Exception:
+                pass
     out = args["output"]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_animations=True, export_yup=True)

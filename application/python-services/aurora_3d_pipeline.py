@@ -1741,6 +1741,32 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
+                    if _use_researched and os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1":
+                        try:
+                            print("PROGRESS:texture_fidelity:projection de la photo de reference sur la face avant...", flush=True)
+                            _fid_out = output_dir / f"{run_id}_mesh_fidelity.glb"
+                            _fid_script = str(REPO_ROOT / "application" / "python-services" / "texture_fidelity.py")
+                            _fid_cmd = [sys.executable, _fid_script,
+                                        "--mesh", str(mesh_path),
+                                        "--photo", str(front_ref),
+                                        "--output", str(_fid_out)]
+                            _fp = subprocess.run(_fid_cmd, capture_output=True, text=True, timeout=3600)
+                            _fid = {}
+                            for _fl in reversed((_fp.stdout or "").splitlines()):
+                                if _fl.startswith("AURORA_FIDELITY_RESULT:"):
+                                    _fid = json.loads(_fl[len("AURORA_FIDELITY_RESULT:"):]); break
+                            if _fid.get("ok") and _fid_out.is_file() and _fid_out.stat().st_size > 1000:
+                                mesh_path = _fid_out
+                                audit.append({"stage": "texture_fidelity", "ok": True,
+                                              "mesh_path": str(_fid_out),
+                                              "axis": _fid.get("axis"),
+                                              "coverage": _fid.get("coverage"),
+                                              "refined": _fid.get("refined")})
+                            else:
+                                audit.append({"stage": "texture_fidelity", "ok": False,
+                                              "error": _fid.get("error") or (_fp.stderr or _fp.stdout or "no output")[-300:]})
+                        except Exception as _fe:
+                            audit.append({"stage": "texture_fidelity", "ok": False, "error": repr(_fe)})
                 else:
                     audit.append({"stage": "trellis2", "ok": False,
                                   "error": _tr.get("error"), "note": "fallback Hunyuan3D"})

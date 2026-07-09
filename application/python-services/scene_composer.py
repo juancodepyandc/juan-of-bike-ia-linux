@@ -153,6 +153,11 @@ def main():
         "has_armature": scene.get("has_armature"),
         "posed": scene.get("posed"),
         "auto_rigged": rigged,
+        "overlap_zone0": scene.get("overlap_zone0"),
+        "overlap_zone": scene.get("overlap_zone"),
+        "skin_built": scene.get("skin_built"),
+        "fit": scene.get("fit"),
+        "sit_fallback": scene.get("sit_fallback"),
     }
     if scene.get("error"):
         final["error"] = scene["error"]
