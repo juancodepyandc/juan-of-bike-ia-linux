@@ -106,16 +106,34 @@ CHANNEL_RANGES = {
 
 COLOR_CHANNELS = {"attenuation_color", "sheen_color", "emissive_color"}
 
+CANONICAL_SCHEMA = "aurora.material-intel.v1"
+
+CANONICAL_LABELS = {
+    "glass": "glass", "water": "water", "fabric": "fabric",
+    "car_paint": "paint_gloss", "brushed_metal": "brushed_metal",
+    "metal": "metal", "led": "led", "skin": "skin", "stone": "stone",
+    "default": "plastic",
+}
+
+CANONICAL_CHANNEL_MAP = {
+    "transmission": "transmission", "ior": "ior", "roughness": "roughness",
+    "metallic": "metallic", "sheen": "sheen", "sheen_color": "sheenColor",
+    "clearcoat": "clearcoat", "clearcoat_roughness": "clearcoatRoughness",
+    "anisotropy": "anisotropyStrength", "anisotropy_rotation": "anisotropy",
+    "specular": "specular", "emissive_strength": "emissiveStrength",
+    "emissive_color": "emissiveFactor", "attenuation_color": "attenuationColor",
+}
+
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 ZONE_PATTERNS = [
     ("water", r"\b(eau|water|aquatique|fontaine|fountain|oc[eé]an|ocean|mer|sea|lac|lake|rivi[eè]re|river|cascade|waterfall|piscine|pool|liquide|liquid|vague|waves?|aquarium)\b"),
     ("glass", r"\b(verre|vitre|vitrail|vitr[eé]e?s?|glass|crystal|cristal|windows?|fen[eê]tres?|bouteilles?|bottles?|miroirs?|mirrors?|lentilles?|lens)\b"),
-    ("led", r"\b(leds?|rgb|argb|strimer|n[eé]ons?|neon|emissive|glow(?:ing)?|lumineu(?:x|se)s?|backlight|r[eé]tro[- ]?[eé]clairage)\b"),
+    ("led", r"\b(leds?|rgb|argb|strimer|rog|strix|aura\s+sync|n[eé]ons?|neon|emissive|glow(?:ing)?|lumineu(?:x|se)s?|backlight|r[eé]tro[- ]?[eé]clairage)\b"),
     ("fabric", r"\b(tissus?|fabric|cloth(?:es|ing)?|textiles?|capes?|velours|velvet|soie|silk|laine|wool|coton|cotton|rideaux?|curtains?|drapeaux?|flags?|toile|canvas|v[eê]tements?|robes?|dress|tuniques?|tunic|manteaux?|coat|banni[eè]res?|banners?|cuir|leather)\b"),
     ("brushed_metal", r"\b(brushed|bross[eé]e?s?)\b"),
     ("car_paint", r"\b(voitures?|cars?|automobiles?|carrosserie|bodywork|vernis|varnish(?:ed)?|laques?|laqu[eé]e?s?|lacquer(?:ed)?|clearcoat|supercar|roadster)\b"),
-    ("metal", r"\b(m[eé]tal(?:lique)?s?|metal(?:lic)?|acier|steel|fer|iron|chrom[eé]?e?|chrome|aluminium|alu|inox|stainless|cuivre|copper|bronze|laiton|brass|gold|dor[eé]e?s?|argent[eé]?e?s?|silver|armures?|armou?r|chevaliers?|knights?|[eé]p[eé]es?|swords?|blades?|lames?)\b"),
+    ("metal", r"\b(m[eé]tal(?:lique)?s?|metal(?:lic)?|acier|steel|fer|iron|chrom[eé]?e?|chrome|aluminium|alu|inox|stainless|cuivre|copper|bronze|laiton|brass|gold|dor[eé]e?s?|argent[eé]?e?s?|silver|armures?|armou?r|chevaliers?|knights?|[eé]p[eé]es?|swords?|blades?|lames?|motherboards?|cartes?\s+m[eè]res?|heatsinks?|dissipateurs?|pcb|vrm)\b"),
     ("skin", r"\b(peau|skin|visages?|face|portrait|chair|flesh)\b"),
     ("stone", r"\b(pierres?|stones?|roches?|rocks?|granite?|marbre|marble|b[eé]ton|concrete|briques?|bricks?|pav[eé]s?|statues?)\b"),
 ]
@@ -332,6 +350,48 @@ def classify(prompt: str, kind: str | None = None,
     return _regex_fallback(prompt, kind)
 
 
+def to_canonical(manifest: dict) -> dict:
+    src = manifest if isinstance(manifest, dict) else {}
+    conf = _clamp01(src.get("confidence", 0.5))
+    zones = []
+    seen = set()
+    raw_zones = src.get("zones")
+    for rz in raw_zones if isinstance(raw_zones, list) else []:
+        if not isinstance(rz, dict):
+            continue
+        cls = _resolve_class(rz.get("material_class"))
+        label = CANONICAL_LABELS.get(cls or "")
+        if label is None:
+            continue
+        raw_id = rz.get("zone")
+        zone_id = raw_id.strip().lower()[:64] if isinstance(raw_id, str) and raw_id.strip() else label
+        base_id = zone_id
+        n = 2
+        while zone_id in seen:
+            zone_id = "%s_%d" % (base_id, n)
+            n += 1
+        seen.add(zone_id)
+        channels = {}
+        raw_ch = rz.get("channels")
+        for key, val in (raw_ch if isinstance(raw_ch, dict) else {}).items():
+            ck = CANONICAL_CHANNEL_MAP.get(key)
+            if ck is not None:
+                channels[ck] = val
+        zones.append({
+            "zone_id": zone_id,
+            "label": label,
+            "target": {"material_index": 0},
+            "channels": channels,
+            "confidence": conf,
+            "source": "classifier",
+        })
+    out = {"schema": CANONICAL_SCHEMA, "zones": zones}
+    for key in ("prompt", "kind", "rationale", "model"):
+        if src.get(key) is not None:
+            out[key] = src[key]
+    return out
+
+
 def _zone_by_class(manifest: dict, cls: str) -> dict | None:
     for z in manifest.get("zones", []):
         if z.get("material_class") == cls:
@@ -384,6 +444,12 @@ def self_test() -> dict:
             "expect_classes": ["skin"],
             "expect_channels": [("skin", "specular", 0.028)],
         },
+        {
+            "prompt": "ASUS ROG STRIX motherboard",
+            "kind": "motherboard",
+            "expect_classes": ["metal", "led"],
+            "expect_channels": [("metal", "metallic", 1.0), ("led", "emissive_strength", 6.0)],
+        },
     ]
     results = []
     all_ok = True
@@ -400,6 +466,28 @@ def self_test() -> dict:
             ok = False
         all_ok = all_ok and ok
         results.append({"prompt": case["prompt"], "ok": ok, "classes": classes})
+    fountain = classify("une fontaine en pierre avec eau", None)
+    canonical = to_canonical(fountain)
+    canon_ok = canonical.get("schema") == CANONICAL_SCHEMA
+    for z in canonical.get("zones", []):
+        canon_ok = canon_ok and z.get("source") == "classifier"
+        canon_ok = canon_ok and z.get("target", {}).get("material_index") == 0
+        canon_ok = canon_ok and "attenuation_distance" not in z.get("channels", {})
+    water = next((z for z in canonical.get("zones", []) if z.get("label") == "water"), None)
+    canon_ok = canon_ok and water is not None
+    canon_ok = canon_ok and water["channels"].get("attenuationColor") == "#3fbfae"
+    canon_ok = canon_ok and abs(water["channels"].get("ior", -1.0) - 1.33) < 1e-6
+    try:
+        import material_manifest
+        v_ok, v_errs = material_manifest.validate(canonical)
+    except Exception as exc:
+        v_ok, v_errs = False, [repr(exc)]
+    canon_ok = canon_ok and v_ok
+    all_ok = all_ok and canon_ok
+    results.append({"prompt": "to_canonical(fontaine) -> material_manifest.validate",
+                    "ok": canon_ok,
+                    "classes": [z.get("label") for z in canonical.get("zones", [])],
+                    "validate_errors": v_errs})
     return {"self_test": True, "passed": all_ok, "cases": results}
 
 
@@ -408,6 +496,7 @@ def main() -> int:
     ap.add_argument("--prompt", default=None)
     ap.add_argument("--kind", default=None)
     ap.add_argument("--model", default=DEFAULT_MODEL)
+    ap.add_argument("--canonical", action="store_true")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -417,6 +506,8 @@ def main() -> int:
     if not args.prompt:
         ap.error("--prompt is required unless --self-test is given")
     out = classify(args.prompt, args.kind, args.model)
+    if args.canonical:
+        out = to_canonical(out)
     print("AURORA_MATINTEL_RESULT:" + json.dumps(out, ensure_ascii=False, separators=(",", ":")))
     return 0
 

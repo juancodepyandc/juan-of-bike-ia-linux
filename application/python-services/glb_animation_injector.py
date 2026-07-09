@@ -484,6 +484,106 @@ def _build_walk_humanoid_channels(duration: float, fps: int = 30) -> list[dict]:
     ]
 
 
+def _find_morph_target_node(gltf: dict, target_node_index: int | None) -> tuple[int | None, int]:
+    nodes = gltf.get("nodes") or []
+    meshes = gltf.get("meshes") or []
+
+    def _target_count(node) -> int:
+        mesh_idx = node.get("mesh")
+        if mesh_idx is None or mesh_idx >= len(meshes):
+            return 0
+        prims = meshes[mesh_idx].get("primitives") or []
+        if not prims:
+            return 0
+        return len(prims[0].get("targets") or [])
+
+    if target_node_index is not None and target_node_index < len(nodes):
+        return target_node_index, _target_count(nodes[target_node_index])
+    for i, node in enumerate(nodes):
+        n = _target_count(node)
+        if n > 0:
+            return i, n
+    return None, 0
+
+
+def _inject_weights(gltf: dict, bin_blob: bytes, version: int,
+                    output_path: Path, duration: float,
+                    target_node_index: int | None, fps: int = 30) -> dict:
+    node_idx, n_targets = _find_morph_target_node(gltf, target_node_index)
+    if node_idx is None or n_targets <= 0:
+        return {"ok": False,
+                "error": "no node with morph targets found (weights path needs mesh.primitives[0].targets)"}
+
+    n = max(2, int(duration * fps))
+    times = [i * (duration / (n - 1)) for i in range(n)]
+    times_bytes = b"".join(struct.pack("<f", t) for t in times)
+    flat: list[float] = []
+    for t in times:
+        cycle = (t / duration) % 1.0
+        for k in range(n_targets):
+            d = abs((cycle * n_targets) - k) % n_targets
+            d = min(d, n_targets - d)
+            flat.append(max(0.0, 1.0 - d))
+    values_bytes = b"".join(struct.pack("<f", x) for x in flat)
+
+    pad_before = (4 - (len(bin_blob) % 4)) % 4
+    new_bin = bin_blob + (b"\x00" * pad_before)
+    bvs = gltf.setdefault("bufferViews", [])
+    accs = gltf.setdefault("accessors", [])
+
+    t_offset = len(new_bin)
+    new_bin += times_bytes
+    new_bin += b"\x00" * ((4 - (len(new_bin) % 4)) % 4)
+    bv_t = len(bvs)
+    bvs.append({"buffer": 0, "byteOffset": t_offset, "byteLength": len(times_bytes)})
+    acc_t = len(accs)
+    accs.append({
+        "bufferView": bv_t, "componentType": COMPONENT_FLOAT,
+        "count": n, "type": "SCALAR",
+        "min": [0.0], "max": [duration],
+    })
+
+    v_offset = len(new_bin)
+    new_bin += values_bytes
+    new_bin += b"\x00" * ((4 - (len(new_bin) % 4)) % 4)
+    bv_v = len(bvs)
+    bvs.append({"buffer": 0, "byteOffset": v_offset, "byteLength": len(values_bytes)})
+    acc_v = len(accs)
+    accs.append({
+        "bufferView": bv_v, "componentType": COMPONENT_FLOAT,
+        "count": n * n_targets, "type": "SCALAR",
+    })
+
+    if not gltf.get("buffers"):
+        gltf["buffers"] = [{"byteLength": 0}]
+    gltf["buffers"][0]["byteLength"] = len(new_bin)
+
+    anim_idx = len(gltf.setdefault("animations", []))
+    gltf["animations"].append({
+        "name": "aurora_inject_weights",
+        "samplers": [{"input": acc_t, "output": acc_v, "interpolation": "LINEAR"}],
+        "channels": [{
+            "sampler": 0,
+            "target": {"node": node_idx, "path": "weights"},
+        }],
+    })
+
+    size = _emit_glb(gltf, new_bin, version, output_path)
+    return {
+        "ok": True,
+        "schema": "aurora.glb_inject.v1",
+        "output": str(output_path),
+        "motion_kind": "weights",
+        "duration_s": duration,
+        "n_frames": n,
+        "n_morph_targets": n_targets,
+        "target_node_index": node_idx,
+        "animation_path": "weights",
+        "size_bytes": size,
+        "animations_now": anim_idx + 1,
+    }
+
+
 def inject(input_path: Path, output_path: Path, *,
            motion_kind: str = "rotate_y", duration: float = 4.0,
            target_node_index: int | None = None) -> dict:
@@ -522,6 +622,10 @@ def inject(input_path: Path, output_path: Path, *,
     # single rigid block rotating.
     if motion_kind == "gear_train_split_rotate":
         return _inject_per_part_rotate(gltf, bin_blob, version, output_path, duration)
+
+    if motion_kind == "weights":
+        return _inject_weights(gltf, bin_blob, version, output_path, duration,
+                               target_node_index)
 
     # Generate keyframe data
     times_bytes, values_bytes, comp_count, anim_path, n_frames = (
@@ -645,7 +749,7 @@ def main() -> int:
     ap.add_argument("--output", required=True)
     ap.add_argument("--motion-kind", default="rotate_y",
                     choices=["rotate_y", "bob", "breathe", "walk_humanoid",
-                             "gear_train_split_rotate"])
+                             "gear_train_split_rotate", "weights"])
     ap.add_argument("--duration", type=float, default=4.0)
     ap.add_argument("--target-node", type=int, default=None)
     ap.add_argument("--pretty", action="store_true")

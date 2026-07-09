@@ -28,12 +28,12 @@ FALLBACK_MODEL = "qwen3:14b"
 
 # Keep this verbatim with the TS service. If you change one, update the other.
 SYSTEM_PROMPT = """You are a 3D animation intent classifier for a real-time Blender pipeline.
-Given a description of an object or subject, you decide which ONE of six
+Given a description of an object or subject, you decide which ONE of eight
 motion primitives the system should bake. You DO NOT have a brand list — you
 reason from first principles about what the object actually is and what it
 does in real life.
 
-Six categories (pick exactly one):
+Eight categories (pick exactly one):
 
 1. led_emission — the subject is an LED-bearing surface or cable whose
    "motion" is purely a colour pattern on its emissive material. No rig.
@@ -59,15 +59,24 @@ Six categories (pick exactly one):
    stationary: passive heatsink, RAM stick without RGB, screw, bolt,
    bracket, plain enclosure, rock, statue.
 
+7. fluid_flow — the subject is (or prominently features) liquid water in
+   motion: fountain, waterfall, poured liquid, flowing stream, rippling
+   pool, pond or basin, dripping tap. The system builds a clean procedural
+   water surface with morph-target ripples — it never deforms the raw mesh.
+
+8. gas_volume — the subject is (or prominently emits) a gaseous volume:
+   smoke, steam, vapour, fog, mist, incense trail, chimney plume. The
+   system builds crossed billboard cards with billowing morph targets.
+
 Output ONLY a JSON object, no markdown, no commentary. Schema:
 
 {
   "schema": "aurora.motion-intent.v1",
-  "category": "<one of the 6 above>",
+  "category": "<one of the 8 above>",
   "confidence": <0.0-1.0 — how sure you are>,
   "rationale": "<one sentence explaining your reasoning>",
   "color_anim":     { "pattern": "chase|rainbow|breathing|pulse|static_color",
-                      "speed_hz": <number>, "colors": ["#hex",...],
+                      "speed_hz": <number>, "colors": ["#hex",…],
                       "emission_strength": <number>, "led_count": <int?> },
   "mechanical_anim": { "axis": "X|Y|Z",
                        "motion_type": "rotation|translation|oscillation",
@@ -79,30 +88,51 @@ Output ONLY a JSON object, no markdown, no commentary. Schema:
                       "text": "<string?>" },
   "creature_anim":  { "base_loop": "idle_breathing|walk_cycle|run_cycle|hover",
                       "bpm": <number?>, "stride_length_m": <number?>,
-                      "locomotion": "humanoid|quadruped|serpent|auto" }
+                      "locomotion": "humanoid|quadruped|serpent|auto" },
+  "fluid_anim":     { "flow_type": "fountain|pour|waterfall|ripple|still",
+                      "wave_amplitude": <0.0-1.0>, "loop_s": <number>,
+                      "droplets": <bool> },
+  "gas_anim":       { "kind": "smoke|steam|fog", "rise_speed": <number>,
+                      "billow_amplitude": <number> }
 }
 
 Include ONLY the *_anim block matching the category you chose. Omit the
-other three. For rigid_static, include none of the four blocks.
+other five. For rigid_static, include none of the six blocks.
 
 Reasoning checklist before answering:
-- Is the subject alive or articulated as a creature? -> creature_organic.
-- Does it spin in normal operation around a single axis? -> fan_pwm.
-- Does it display dynamic text/icons on an embedded screen? -> oled_screen.
-- Does it have integrated programmable LEDs whose colour changes? -> led_emission.
-- Does it have a single-DoF moving part (hinge/button/slider)? -> mechanical_simple.
+- Is the subject alive or articulated as a creature? → creature_organic.
+- Does it spin in normal operation around a single axis? → fan_pwm.
+- Does it display dynamic text/icons on an embedded screen? → oled_screen.
+- Does it have integrated programmable LEDs whose colour changes? → led_emission.
+- Does it have a single-DoF moving part (hinge/button/slider)? → mechanical_simple.
+- Is it liquid water in motion (fountain, waterfall, pour, ripple)? → fluid_flow.
+- Is it smoke, steam, vapour, fog or mist? → gas_volume.
 - Otherwise (and especially if it's plain inert hardware): rigid_static.
 
 When you choose oled_screen, ALSO choose a content_type:
   - text_scroll    if the screen scrolls a marquee/string
   - icon_rotation  if it cycles through icons (CPU, RAM, FAN, GPU)
-  - system_stats   if it shows live numbers (temp/percent/RPM) -- typical for LiveDash
+  - system_stats   if it shows live numbers (temp/percent/RPM) — typical for LiveDash
   - mixed          if it alternates several modes
 When you choose creature_organic, ALSO choose locomotion:
   - humanoid  for biped humans / humanoid robots
   - quadruped for animals on 4 legs (dog, dragon, lion, wolf)
   - serpent   for snakes, eels, worms
   - auto      when truly unsure (the system will infer from the mesh bbox)
+When you choose fluid_flow, ALSO choose a flow_type:
+  - fountain   for a vertical jet or spray (fountain, geyser, sprinkler)
+  - pour       for liquid poured from a container (bottle, teapot, tap)
+  - waterfall  for a falling sheet of water (waterfall, cascade, dam)
+  - ripple     for a mostly-flat surface with waves (pool, pond, lake, basin)
+  - still      for calm liquid with barely visible motion
+  wave_amplitude is 0.0-1.0 (0.1 calm … 0.8 agitated), loop_s is the loop
+  duration in seconds (2-6 typical), droplets=true only for fountain/waterfall.
+When you choose gas_volume, ALSO choose a kind:
+  - smoke  for combustion smoke (fire, chimney, incense, exhaust)
+  - steam  for hot water vapour (kettle, coffee, cooking pot, sauna)
+  - fog    for ambient mist/fog/haze hugging the ground
+  rise_speed is in metres per second (0.1 slow fog … 1.0 fast steam),
+  billow_amplitude is 0.0-1.0 (how much the volume swells as it rises).
 
 Named-character locomotion rule:
 - A named anime/manga/game/comic character or proper-name protagonist doing
@@ -127,7 +157,11 @@ the raw user text into a top-level "custom_motion_text" field."""
 CATEGORIES = {
     "led_emission", "fan_pwm", "oled_screen",
     "creature_organic", "mechanical_simple", "rigid_static",
+    "fluid_flow", "gas_volume",
 }
+
+FLOW_TYPES = ("fountain", "pour", "waterfall", "ripple", "still")
+GAS_KINDS = ("smoke", "steam", "fog")
 
 
 def _ollama_chat(model: str, prompt: str, custom_text: str | None,
@@ -244,6 +278,24 @@ def _normalize(raw: dict | None, model: str, custom_text: str | None) -> dict | 
         # iter5.A parity: pass through locomotion hint when LLM emits it
         if isinstance(cr.get("locomotion"), str) and cr["locomotion"] in ("humanoid", "quadruped", "serpent", "auto"):
             intent["creature_anim"]["locomotion"] = cr["locomotion"]
+    elif cat == "fluid_flow":
+        fl = raw.get("fluid_anim") or {}
+        flow_type = fl.get("flow_type") if fl.get("flow_type") in FLOW_TYPES else "ripple"
+        loop_s = float(fl["loop_s"]) if isinstance(fl.get("loop_s"), (int, float)) and float(fl["loop_s"]) > 0 else 3.0
+        intent["fluid_anim"] = {
+            "flow_type": flow_type,
+            "wave_amplitude": _clamp01(fl.get("wave_amplitude", 0.35)),
+            "loop_s": max(0.5, min(12.0, loop_s)),
+            "droplets": bool(fl["droplets"]) if isinstance(fl.get("droplets"), bool) else flow_type in ("fountain", "waterfall"),
+        }
+    elif cat == "gas_volume":
+        g = raw.get("gas_anim") or {}
+        rise = float(g["rise_speed"]) if isinstance(g.get("rise_speed"), (int, float)) and float(g["rise_speed"]) > 0 else 0.3
+        intent["gas_anim"] = {
+            "kind": g.get("kind") if g.get("kind") in GAS_KINDS else "smoke",
+            "rise_speed": max(0.02, min(3.0, rise)),
+            "billow_amplitude": _clamp01(g.get("billow_amplitude", 0.5)),
+        }
     return intent
 
 
@@ -268,6 +320,10 @@ def _regex_fallback(prompt: str, custom_text: str | None) -> dict:
         cat = "creature_organic"
     elif re.search(r"\b(hinge|charni[eè]re|button|bouton|slider|lever|levier|switch|interrupteur)\b", p):
         cat = "mechanical_simple"
+    elif re.search(r"\b(fum[eé]e|smoke|vapeur|steam|brume|brouillard|fog|mist)\b", p):
+        cat = "gas_volume"
+    elif re.search(r"\b(eau|water|fontaine|fountain|cascade|waterfall|coule|couler|vers[eé]e?|liquide|liquid|ripple|ondulations?)\b", p):
+        cat = "fluid_flow"
     intent = {
         "schema": "aurora.motion-intent.v1",
         "category": cat,
@@ -297,6 +353,33 @@ def _regex_fallback(prompt: str, custom_text: str | None) -> dict:
             "bpm": 14.0 if base_loop == "idle_breathing" else 96.0,
             "stride_length_m": None,
             "locomotion": "humanoid",
+        }
+    elif cat == "fluid_flow":
+        if re.search(r"\b(fontaine|fountain|geyser|jet)\b", p):
+            flow_type = "fountain"
+        elif re.search(r"\b(cascade|waterfall|chute)\b", p):
+            flow_type = "waterfall"
+        elif re.search(r"\b(vers[eé]e?|pouring|poured)\b", p):
+            flow_type = "pour"
+        else:
+            flow_type = "ripple"
+        intent["fluid_anim"] = {
+            "flow_type": flow_type,
+            "wave_amplitude": 0.35,
+            "loop_s": 3.0,
+            "droplets": flow_type in ("fountain", "waterfall"),
+        }
+    elif cat == "gas_volume":
+        if re.search(r"\b(vapeur|steam)\b", p):
+            gas_kind = "steam"
+        elif re.search(r"\b(brume|brouillard|fog|mist)\b", p):
+            gas_kind = "fog"
+        else:
+            gas_kind = "smoke"
+        intent["gas_anim"] = {
+            "kind": gas_kind,
+            "rise_speed": 0.15 if gas_kind == "fog" else 0.3,
+            "billow_amplitude": 0.5,
         }
     if custom_text:
         intent["custom_motion_text"] = custom_text.strip()[:280]

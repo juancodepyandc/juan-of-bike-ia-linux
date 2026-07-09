@@ -8,9 +8,10 @@ runs it as the main module). It expects argv past `--` to include:
 
     --intent <path>  --input <glb> --output <glb> [--fps N]
 
-Six categories handled:
+Eight categories handled:
   led_emission / fan_pwm / oled_screen /
-  creature_organic / mechanical_simple / rigid_static
+  creature_organic / mechanical_simple / rigid_static /
+  fluid_flow / gas_volume
 
 Each branch operates on a fresh empty scene + the imported GLB, then exports
 back to GLB with NLA actions baked in.
@@ -18,8 +19,11 @@ back to GLB with NLA actions baked in.
 
 import bpy
 import json  # noqa: F401  (used in OLED atlas metadata + main driver)
+import os
 import sys
 import math
+
+import mathutils
 
 
 def _get_action_fcurves(action, slot=None):
@@ -1274,6 +1278,122 @@ def bake_creature_organic(intent, scene, fps):
     }
 
 
+def _world_bbox(obj):
+    corners = [obj.matrix_world @ mathutils.Vector(c) for c in obj.bound_box]
+    xs = [c.x for c in corners]
+    ys = [c.y for c in corners]
+    zs = [c.z for c in corners]
+    return min(xs), min(ys), min(zs), max(xs), max(ys), max(zs)
+
+
+def _fluid_zone_for(target, flow_type):
+    x0, y0, z0, x1, y1, z1 = _world_bbox(target)
+    dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+    cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    d = max(min(dx, dy), 1e-3)
+    h = max(dz, 1e-3)
+    if flow_type in ("fountain", "pour"):
+        jet_h = max(h * 0.6, 0.05)
+        return {"center": [cx, cy, z1 + jet_h * 0.5],
+                "size": [d * 0.25, d * 0.25, jet_h]}
+    if flow_type == "waterfall":
+        return {"center": [cx, y1, (z0 + z1) * 0.5],
+                "size": [max(dx * 0.6, 0.02), max(dy * 0.08, 0.01), h]}
+    return {"center": [cx, cy, z1],
+            "size": [max(dx, 0.05), max(dy, 0.05), max(h * 0.1, 0.02)]}
+
+
+def _gas_zone_for(target):
+    x0, y0, z0, x1, y1, z1 = _world_bbox(target)
+    dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+    cx, cy = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    d = max(min(dx, dy), 1e-3)
+    plume_h = max(dz * 0.8, 0.1)
+    return {"center": [cx, cy, z1 + plume_h * 0.5],
+            "size": [d * 0.5, d * 0.5, plume_h]}
+
+
+def _import_sibling(module_name):
+    sibling_dir = os.path.dirname(os.path.abspath(__file__))
+    if sibling_dir not in sys.path:
+        sys.path.append(sibling_dir)
+    import importlib
+    return importlib.import_module(module_name)
+
+
+def bake_fluid_flow(intent, scene, fps):
+    try:
+        fluid_mesh_builder = _import_sibling("fluid_mesh_builder")
+    except Exception as exc:
+        return {"error": "fluid_mesh_builder import failed: %s" % exc}
+    fl = intent.get("fluid_anim") or {}
+    flow_type = fl.get("flow_type") or "ripple"
+    wave_amplitude = float(fl.get("wave_amplitude") or 0.35)
+    loop_s = float(fl.get("loop_s") or 3.0)
+    droplets = bool(fl.get("droplets") or False)
+    target = _largest_mesh(scene)
+    zone = intent.get("fluid_zone") if isinstance(intent.get("fluid_zone"), dict) else None
+    if zone is None:
+        if target is None:
+            zone = {"center": [0.0, 0.0, 0.5], "size": [1.0, 1.0, 1.0]}
+        else:
+            try:
+                zone = _fluid_zone_for(target, flow_type)
+            except Exception as exc:
+                return {"error": "fluid zone failed: %s" % exc}
+    try:
+        info = fluid_mesh_builder.create_water_surface(
+            zone, flow_type, wave_amplitude=wave_amplitude,
+            loop_s=loop_s, fps=fps, droplets=droplets,
+        )
+    except Exception as exc:
+        return {"error": "fluid build failed: %s" % exc}
+    total_frames = int(info.get("frame_count") or 1)
+    scene.frame_start = 1
+    scene.frame_end = max(total_frames, 1)
+    info["flow_type"] = flow_type
+    info["target"] = target.name if target is not None else None
+    info["zone"] = zone
+    info["path"] = "fluid_mesh_builder"
+    return info
+
+
+def bake_gas_volume(intent, scene, fps):
+    try:
+        smoke_card_builder = _import_sibling("smoke_card_builder")
+    except Exception as exc:
+        return {"error": "smoke_card_builder import failed: %s" % exc}
+    g = intent.get("gas_anim") or {}
+    kind = g.get("kind") or "smoke"
+    rise_speed = float(g.get("rise_speed") or 0.3)
+    billow_amplitude = float(g.get("billow_amplitude") or 0.5)
+    loop_s = float(g.get("loop_s") or 4.0)
+    target = _largest_mesh(scene)
+    zone = intent.get("gas_zone") if isinstance(intent.get("gas_zone"), dict) else None
+    if zone is None:
+        if target is None:
+            zone = {"center": [0.0, 0.0, 0.75], "size": [1.0, 1.0, 1.5]}
+        else:
+            try:
+                zone = _gas_zone_for(target)
+            except Exception as exc:
+                return {"error": "gas zone failed: %s" % exc}
+    try:
+        info = smoke_card_builder.create_smoke_cards(
+            zone, kind=kind, rise_speed=rise_speed,
+            billow_amplitude=billow_amplitude, loop_s=loop_s, fps=fps,
+        )
+    except Exception as exc:
+        return {"error": "gas build failed: %s" % exc}
+    total_frames = int(info.get("frame_count") or 1)
+    scene.frame_start = 1
+    scene.frame_end = max(total_frames, 1)
+    info["target"] = target.name if target is not None else None
+    info["zone"] = zone
+    info["path"] = "smoke_card_builder"
+    return info
+
+
 def bake_rigid_static(intent, scene, fps):
     scene.frame_start = 1
     scene.frame_end = 1
@@ -1294,6 +1414,8 @@ HANDLERS = {
     "creature_organic":  bake_creature_organic,
     "mechanical_simple": bake_mechanical_simple,
     "rigid_static":      bake_rigid_static,
+    "fluid_flow":        bake_fluid_flow,
+    "gas_volume":        bake_gas_volume,
 }
 
 
@@ -1348,6 +1470,8 @@ def main():
         export_force_sampling=True,
         export_nla_strips=False,
         export_extras=True,
+        export_morph=True,
+        export_morph_animation=True,
         export_draco_mesh_compression_enable=True,
         export_draco_mesh_compression_level=6,
         export_draco_position_quantization=14,
@@ -1365,7 +1489,7 @@ def main():
         # Older Blender (< 2.95 or no libdraco): retry without Draco kwargs.
         try:
             for k in list(export_kwargs):
-                if k.startswith("export_draco_") or k == "export_optimize_animation_size":
+                if k.startswith("export_draco_") or k in ("export_optimize_animation_size", "export_morph_animation"):
                     del export_kwargs[k]
             bpy.ops.export_scene.gltf(**export_kwargs)
             result["exported"] = output_path

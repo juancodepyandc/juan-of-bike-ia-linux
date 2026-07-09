@@ -291,6 +291,50 @@ def _self_test(glb_path, keep):
             result.pop("workdir", None)
 
 
+def _self_test_manifest(manifest_path, glb_path, keep):
+    workdir = tempfile.mkdtemp(prefix="aurora_glbmat_manifest_")
+    result = {"ok": False, "checks": {}, "workdir": workdir, "manifest": str(manifest_path)}
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        checks = result["checks"]
+        valid, errors = material_manifest.validate(manifest)
+        checks["manifest_valid"] = valid
+        if not valid:
+            result["errors"] = errors
+            return result
+        if not glb_path or not Path(glb_path).is_file():
+            glb_path = _make_fallback_glb(workdir)
+            result["fallback_glb"] = True
+        result["glb"] = str(glb_path)
+        out = os.path.join(workdir, "manifest_selftest_out.glb")
+        apply_res = apply_manifest(glb_path, manifest, out, alpha_fallback=True, ao_path=None)
+        result["apply"] = apply_res
+        checks["apply_ok"] = bool(apply_res.get("ok"))
+        if not checks["apply_ok"]:
+            return result
+        g2 = pygltflib.GLTF2().load(out)
+        extras = g2.extras or {}
+        checks["extras_manifest_embedded"] = (
+            isinstance(extras.get("aurora_material_intel"), dict)
+            and extras["aurora_material_intel"].get("schema") == material_manifest.SCHEMA_ID
+        )
+        checks["all_zones_applied"] = apply_res.get("zones_applied") == len(manifest.get("zones", []))
+        result["extensions_used"] = list(g2.extensionsUsed or [])
+        result["output_size_bytes"] = Path(out).stat().st_size
+        result["ok"] = all(checks.values())
+        if keep:
+            result["output"] = out
+        return result
+    except Exception as exc:
+        result["error"] = repr(exc)
+        return result
+    finally:
+        if not keep:
+            shutil.rmtree(workdir, ignore_errors=True)
+            result.pop("workdir", None)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--glb")
@@ -299,9 +343,12 @@ def main():
     ap.add_argument("--alpha-fallback", action="store_true")
     ap.add_argument("--ao")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--self-test-manifest", dest="self_test_manifest")
     ap.add_argument("--keep", action="store_true")
     a = ap.parse_args()
-    if a.self_test:
+    if a.self_test_manifest:
+        result = _self_test_manifest(a.self_test_manifest, a.glb, a.keep)
+    elif a.self_test:
         result = _self_test(a.glb or DEFAULT_TEST_GLB, a.keep)
     elif a.glb and a.manifest and a.output:
         try:

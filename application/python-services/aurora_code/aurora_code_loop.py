@@ -47,7 +47,7 @@ OUTPUT_ROOT = AURORA / "application" / "output" / "code-loop"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 OLLAMA_URL = "http://localhost:11434"
-CODE_MODEL = os.environ.get("AURORA_CODE_MODEL", "qwen3-coder:30b-a3b-q4_K_M")
+CODE_MODEL = os.environ.get("AURORA_CODE_MODEL", "qwen3-coder-next:q4_K_M")
 VISION_MODEL = os.environ.get("AURORA_VISION_MODEL", "qwen3-vl:30b")
 
 STATE_FILE = REPO / "code_loop_state.json"
@@ -95,10 +95,10 @@ halo = Halo()
 
 def ollama_chat(model: str, system: str, user: str, scene: str = "",
                   on_token: callable | None = None,
-                  num_ctx: int = 32768,
-                  num_predict: int = 12000,
+                  num_ctx: int = 65536,
+                  num_predict: int = 32000,
                   temperature: float = 0.4,
-                  hard_char_cap: int = 60000) -> str:
+                  hard_char_cap: int = 150000) -> str:
     """Stream chat completion from Ollama. num_predict caps output tokens so
     runaway generations stop. hard_char_cap is a python-side safety belt that
     aborts the stream if the model ignores num_predict.
@@ -402,7 +402,7 @@ def save_state(state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def process_scene(prompt: str, name: str | None, min_score: float, max_retries: int,
-                    state: dict, target: Target | None = None) -> bool:
+                    state: dict, target: Target | None = None, use_tunnel: bool = False) -> bool:
     scene_id = name or slugify(prompt)
     history = state["attempts"].setdefault(scene_id, [])
     current_prompt = prompt
@@ -525,6 +525,16 @@ def process_scene(prompt: str, name: str | None, min_score: float, max_retries: 
                         vision = score_preview_vision(preview_path, prompt)
                         meta["vision"] = vision
                 finally:
+                    if use_tunnel:
+                        halo.tick("launching localtunnel", scene=scene_id)
+                        print("\n\n>>> 🚀 LAUNCHING TUNNEL FOR MANUAL UI TESTING 🚀 <<<")
+                        print(f">>> Server is running locally on http://127.0.0.1:{port} <<<")
+                        print(">>> Press CTRL+C to close the tunnel and server when done testing <<<\n")
+                        try:
+                            # Use npx to run localtunnel and expose the port
+                            subprocess.run(["npx", "-y", "localtunnel", "--port", str(port)], cwd=str(serve_dir))
+                        except KeyboardInterrupt:
+                            print("\nTunnel closed by user.")
                     server.terminate()
                     try:
                         server.wait(timeout=3)
@@ -548,6 +558,15 @@ def process_scene(prompt: str, name: str | None, min_score: float, max_retries: 
                         vision = score_preview_vision(preview_path, prompt)
                         meta["vision"] = vision
                 finally:
+                    if use_tunnel:
+                        halo.tick("launching localtunnel", scene=scene_id)
+                        print("\n\n>>> 🚀 LAUNCHING TUNNEL FOR MANUAL UI TESTING 🚀 <<<")
+                        print(f">>> Server is running locally on http://127.0.0.1:{port}/index.html <<<")
+                        print(">>> Press CTRL+C to close the tunnel and server when done testing <<<\n")
+                        try:
+                            subprocess.run(["npx", "-y", "localtunnel", "--port", str(port)], cwd=str(project_dir))
+                        except KeyboardInterrupt:
+                            print("\nTunnel closed by user.")
                     server.terminate()
                     try:
                         server.wait(timeout=3)
@@ -688,7 +707,7 @@ def process_scene(prompt: str, name: str | None, min_score: float, max_retries: 
 
 
 def run_queue(queue: list[dict], min_score: float, max_retries: int,
-                target: Target | None = None) -> int:
+                target: Target | None = None, use_tunnel: bool = False) -> int:
     state = load_state()
     n_ok = 0
     for idx, entry in enumerate(queue, 1):
@@ -704,7 +723,7 @@ def run_queue(queue: list[dict], min_score: float, max_retries: int,
             tgts = load_targets()
             entry_target = tgts.get(entry["target"])
         ok = process_scene(entry["prompt"], entry.get("name"), min_score, max_retries,
-                            state, target=entry_target)
+                            state, target=entry_target, use_tunnel=use_tunnel)
         if ok:
             state["completed"].append(scene_id)
             n_ok += 1
@@ -725,6 +744,8 @@ def main() -> int:
     ap.add_argument("--max-retries", type=int, default=2)
     ap.add_argument("--target", type=str, default=None,
                      help="remote target name from ~/.aurora_code_targets.json (deploy + validate over SSH)")
+    ap.add_argument("--tunnel", action="store_true",
+                     help="Keep the server alive and expose it via localtunnel for manual UI testing")
     args = ap.parse_args()
 
     target = None
@@ -743,7 +764,7 @@ def main() -> int:
     else:
         log.error("provide --prompt or --queue")
         return 2
-    return run_queue(queue, args.min_score, args.max_retries, target=target)
+    return run_queue(queue, args.min_score, args.max_retries, target=target, use_tunnel=args.tunnel)
 
 
 if __name__ == "__main__":

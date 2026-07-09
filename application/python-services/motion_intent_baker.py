@@ -7,13 +7,15 @@ This is a THIN orchestrator. The bpy-side work lives in
 motion_intent_bpy_runner.py (so the runner can keep its own docstrings
 without breaking host-side parsing).
 
-Six categories handled (see the runner for details):
+Eight categories handled (see the runner for details):
   - led_emission     -> emission FCurve animation
   - fan_pwm          -> rotation_euler keyframes
   - oled_screen      -> base color FCurves on screen-tagged material
   - creature_organic -> Rigify limb gait/breathing; locomotion refuses fake bob fallback
   - mechanical_simple-> single-DoF keyframes
   - rigid_static     -> NO animation (explicit clear)
+  - fluid_flow       -> procedural water surface + morph-target ripple loop
+  - gas_volume       -> crossed smoke cards + billow morphs + TRS rise loop
 
 CLI:
     python motion_intent_baker.py --intent intent.json --input mesh.glb \
@@ -64,7 +66,8 @@ def _validate_intent(intent: Dict[str, Any]) -> None:
                          % intent.get("schema"))
     cat = intent.get("category")
     valid = {"led_emission", "fan_pwm", "oled_screen",
-             "creature_organic", "mechanical_simple", "rigid_static"}
+             "creature_organic", "mechanical_simple", "rigid_static",
+             "fluid_flow", "gas_volume"}
     if cat not in valid:
         raise ValueError("unknown category: %r" % cat)
 

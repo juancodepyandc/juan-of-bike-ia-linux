@@ -312,33 +312,33 @@ def validate(project_type: str, pack_dir: Path,
 # ---------------------------------------------------------------------------
 
 MIN_FILES: dict[str, int] = {
-    "static_web": 2,
-    "static_web_3d": 1,        # often 1 big HTML with three.js
-    "static_web_game": 1,      # often 1 big canvas HTML
-    "static_web_sim": 1,
-    "static_web_2d": 1,
-    "static_web_dataviz": 2,
-    "static_web_edu": 2,
-    "react_vite": 5,           # index.html, main.tsx, App.tsx, vite.config, package.json
-    "python_cli": 1,
-    "node_express": 3,         # index.js, package.json, maybe routes
-    "native_electron": 4,      # main.js, preload.js, renderer.js, package.json, index.html
-    "native_python_gui": 1,
+    "static_web": 4,
+    "static_web_3d": 2,        # HTML + potentially script or shader
+    "static_web_game": 2,
+    "static_web_sim": 2,
+    "static_web_2d": 2,
+    "static_web_dataviz": 3,
+    "static_web_edu": 3,
+    "react_vite": 8,           # index.html, main.tsx, App.tsx, multiple components, vite.config, package.json
+    "python_cli": 2,
+    "node_express": 4,         # index.js, package.json, routes, controllers
+    "native_electron": 6,      # main.js, preload.js, renderer.js, package.json, index.html, styles
+    "native_python_gui": 2,
 }
 
 MIN_TOTAL_BYTES: dict[str, int] = {
-    "static_web": 3500,
-    "static_web_3d": 4500,
-    "static_web_game": 5000,
-    "static_web_sim": 4500,
-    "static_web_2d": 3500,
-    "static_web_dataviz": 4000,
-    "static_web_edu": 4500,
-    "react_vite": 4500,
-    "python_cli": 1200,
-    "node_express": 2500,
-    "native_electron": 3000,
-    "native_python_gui": 1500,
+    "static_web": 12000,
+    "static_web_3d": 14000,
+    "static_web_game": 15000,
+    "static_web_sim": 14000,
+    "static_web_2d": 12000,
+    "static_web_dataviz": 10000,
+    "static_web_edu": 12000,
+    "react_vite": 20000,
+    "python_cli": 4000,
+    "node_express": 8000,
+    "native_electron": 10000,
+    "native_python_gui": 5000,
 }
 
 

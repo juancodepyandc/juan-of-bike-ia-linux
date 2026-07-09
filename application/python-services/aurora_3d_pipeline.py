@@ -274,6 +274,15 @@ def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
     print(f"PROGRESS:vram:VRAM liberee avant paint (evince: {', '.join(freed) or 'rien'})", flush=True)
 
 
+def _ollama_reachable(timeout_s: float = 3.0) -> bool:
+    base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+    try:
+        with urllib.request.urlopen(f"{base}/api/tags", timeout=timeout_s):
+            return True
+    except Exception:
+        return False
+
+
 def run_hunyuan3d(image_path: Path, run_id: str, output_dir: Path,
                   *, mv_front: Path | None = None,
                   mv_back: Path | None = None,
@@ -1929,6 +1938,136 @@ def run_pipeline(prompt: str, run_id: str, *,
     except Exception as exc:  # noqa: BLE001
         audit.append({"stage": "bake_normal", "ok": False, "error": repr(exc)})
 
+    if os.environ.get("AURORA_AO", "1") == "1":
+        try:
+            import bake_ao_map as _ao
+            _ao_png = str(output_dir / f"{run_id}_ao.png")
+            _ao_res = int(os.environ.get("AURORA_AO_RES", "4096"))
+            _ao_bake = _ao.bake_ao(str(final_mesh_path), _ao_png, res=_ao_res)
+            if _ao_bake.get("ok"):
+                _ao_out = str(output_dir / f"{run_id}_mesh_ao.glb")
+                _ao_att = _ao.attach_ao(str(final_mesh_path), _ao_png, _ao_out)
+                audit.append({"stage": "ao_bake", "ok": bool(_ao_att.get("ok")),
+                              "res": _ao_res, "ao_png": _ao_png,
+                              "ao_mean": _ao_bake.get("ao_mean"),
+                              "ao_std": _ao_bake.get("ao_std"),
+                              "modes": _ao_att.get("modes"),
+                              "error": _ao_att.get("error")})
+                if _ao_att.get("ok"):
+                    final_mesh_path = _ao_out
+            else:
+                audit.append({"stage": "ao_bake", "ok": False, "res": _ao_res,
+                              "error": _ao_bake.get("error")})
+        except Exception as exc:
+            audit.append({"stage": "ao_bake", "ok": False, "error": repr(exc)})
+    else:
+        audit.append({"stage": "ao_bake", "skipped": True, "reason": "AURORA_AO=0"})
+
+    material_manifest_data = None
+    material_intel_enabled = os.environ.get("AURORA_MATERIAL_INTEL", "1") == "1"
+    if material_intel_enabled:
+        try:
+            import material_intel_classifier as _matintel
+            import material_manifest as _matman
+            _canon = _matintel.to_canonical(_matintel.classify(prompt, kind))
+            _mat_valid, _mat_errors = _matman.validate(_canon)
+            if _mat_valid:
+                _canon = _matman.normalize(_canon)
+                _vision_info = None
+                if os.environ.get("AURORA_VLM_MATERIALS") == "1" and _ollama_reachable():
+                    try:
+                        import material_vision_pass as _mvp
+                        _mvp_in = output_dir / f"{run_id}_materials_pre_vision.json"
+                        _mvp_in.write_text(json.dumps(_canon, ensure_ascii=True, indent=2),
+                                           encoding="utf-8")
+                        _mvp_out = output_dir / f"{run_id}_materials_vision.json"
+                        _vision_info = _mvp.run_pass(
+                            str(final_mesh_path), str(_mvp_in), str(_mvp_out),
+                            str(output_dir / f"{run_id}_matvision"))
+                        _enriched = json.loads(_mvp_out.read_text(encoding="utf-8"))
+                        _kept = [z for z in _enriched.get("zones", [])
+                                 if _matman.validate({"schema": _matman.SCHEMA_ID,
+                                                      "zones": [z]})[0]]
+                        if _kept:
+                            _canon = _matman.normalize({**_canon, "zones": _kept})
+                            _canon["vision"] = _enriched.get("vision")
+                    except Exception as _vexc:
+                        _vision_info = {"ok": False, "error": repr(_vexc)}
+                _materials_json = output_dir / f"{run_id}_materials.json"
+                _materials_json.write_text(json.dumps(_canon, ensure_ascii=True, indent=2),
+                                           encoding="utf-8")
+                material_manifest_data = _canon
+                audit.append({"stage": "material_intel", "ok": True,
+                              "manifest": str(_materials_json),
+                              "model": _canon.get("model"),
+                              "zones": [z.get("zone_id") for z in _canon.get("zones", [])],
+                              "vision": _vision_info})
+            else:
+                audit.append({"stage": "material_intel", "ok": False,
+                              "errors": _mat_errors[:6]})
+        except Exception as exc:
+            audit.append({"stage": "material_intel", "ok": False, "error": repr(exc)})
+    else:
+        audit.append({"stage": "material_intel", "skipped": True,
+                      "reason": "AURORA_MATERIAL_INTEL=0"})
+
+    if material_intel_enabled and material_manifest_data is not None:
+        _synth_entry = {"stage": "channel_synth", "ok": False}
+        _mat_zones = material_manifest_data.get("zones", [])
+        try:
+            import roughness_synth as _rs
+            _base_rough = 0.6
+            for _z in sorted(_mat_zones, key=lambda z: -float(z.get("confidence", 0.0))):
+                if "roughness" in (_z.get("channels") or {}):
+                    _base_rough = float(_z["channels"]["roughness"])
+                    break
+            _rough_png = str(output_dir / f"{run_id}_roughness.png")
+            _rough_glb = str(output_dir / f"{run_id}_mesh_rough.glb")
+            _rs_res = _rs._run(argparse.Namespace(
+                glb=str(final_mesh_path), output=_rough_png, base=_base_rough,
+                jitter=0.08, cavity=0.25, dark=0.07, size=2048, seed=7,
+                apply=_rough_glb))
+            _synth_entry["roughness"] = {"ok": True, "base": _base_rough,
+                                         "stats": _rs_res.get("stats")}
+            if Path(_rough_glb).is_file():
+                final_mesh_path = _rough_glb
+        except Exception as exc:
+            _synth_entry["roughness"] = {"ok": False, "error": repr(exc)}
+        _emissive_zone = next(
+            (z for z in _mat_zones
+             if z.get("label") in ("led", "screen")
+             or "emissiveFactor" in (z.get("channels") or {})
+             or "emissiveStrength" in (z.get("channels") or {})), None)
+        if _emissive_zone is not None:
+            try:
+                import emissive_synth as _es
+                _em_png = str(output_dir / f"{run_id}_emissive.png")
+                _em_glb = str(output_dir / f"{run_id}_mesh_emissive.glb")
+                _em_strength = float((_emissive_zone.get("channels") or {})
+                                     .get("emissiveStrength", 5.0))
+                _es_res = _es._run(argparse.Namespace(
+                    glb=str(final_mesh_path), output=_em_png, hues="",
+                    strength=_em_strength, sat_min=0.55, val_min=0.65, size=2048,
+                    apply=_em_glb))
+                _synth_entry["emissive"] = {"ok": True,
+                                            "zone": _emissive_zone.get("zone_id"),
+                                            "strength": _em_strength,
+                                            "coverage_pct": _es_res.get("coverage_pct")}
+                if Path(_em_glb).is_file():
+                    final_mesh_path = _em_glb
+            except Exception as exc:
+                _synth_entry["emissive"] = {"ok": False, "error": repr(exc)}
+        else:
+            _synth_entry["emissive"] = {"skipped": True,
+                                        "reason": "no led/screen/emissive zone in manifest"}
+        _synth_entry["ok"] = (bool(_synth_entry.get("roughness", {}).get("ok"))
+                              or bool(_synth_entry.get("emissive", {}).get("ok")))
+        audit.append(_synth_entry)
+    else:
+        audit.append({"stage": "channel_synth", "skipped": True,
+                      "reason": ("AURORA_MATERIAL_INTEL=0" if not material_intel_enabled
+                                 else "no material manifest")})
+
     # Stage 4 (optional) — motion bake via rigify
     rigged_mesh = None
     if motion_prompt:
@@ -1942,6 +2081,27 @@ def run_pipeline(prompt: str, run_id: str, *,
             rigged_mesh = motion_res["rigged_mesh"]
 
     final_delivery_mesh = rigged_mesh or final_mesh_path
+    if material_intel_enabled and material_manifest_data is not None:
+        try:
+            import glb_material_writer as _gmw
+            _mw_out = str(output_dir / f"{run_id}_final_materials.glb")
+            _mw_res = _gmw.apply_manifest(str(final_delivery_mesh),
+                                          material_manifest_data, _mw_out,
+                                          alpha_fallback=True)
+            audit.append({"stage": "material_write", "ok": bool(_mw_res.get("ok")),
+                          "output": _mw_res.get("output"),
+                          "zones_applied": _mw_res.get("zones_applied"),
+                          "materials_touched": _mw_res.get("materials_touched"),
+                          "extensions_used": _mw_res.get("extensions_used"),
+                          "errors": _mw_res.get("errors")})
+            if _mw_res.get("ok"):
+                final_delivery_mesh = _mw_out
+        except Exception as exc:
+            audit.append({"stage": "material_write", "ok": False, "error": repr(exc)})
+    else:
+        audit.append({"stage": "material_write", "skipped": True,
+                      "reason": ("AURORA_MATERIAL_INTEL=0" if not material_intel_enabled
+                                 else "no material manifest")})
     if os.environ.get("AURORA_VLM_CRITIC") == "1":
         critic = _run_vlm_critic(final_delivery_mesh, prompt, run_id, output_dir)
         audit.append({"stage": "vlm_critic", **critic})

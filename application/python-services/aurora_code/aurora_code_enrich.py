@@ -78,10 +78,14 @@ STACK_HINTS: dict[str, str] = {
 }
 
 QUALITY_BAR = (
-    "Code must be production-clean: no TODOs, no lorem-ipsum placeholders, no broken or fake "
-    "links, no missing CSS, no console.errors. Comments only when the WHY is non-obvious. "
-    "Accessible (semantic tags, aria when needed). Responsive (works 360px to 1920px). "
-    "All assets either inline (data URI / SVG) or via well-known CDN."
+    "Code must be production-clean, ultra-premium, and visually stunning. ABSOLUTELY NO SIMPLISTIC MVPs. "
+    "You MUST implement high-end graphics: glassmorphism, deep shadows, complex micro-interactions, "
+    "smooth parallax or scroll-reveals, responsive fluid layouts, and state-of-the-art animations. "
+    "This is for personal use, so you are highly encouraged to precisely replicate the complexity and "
+    "visual excellence of famous top-tier applications without holding back for plagiarism concerns. "
+    "No TODOs, no lorem-ipsum, no broken links. Comments only when the WHY is non-obvious. "
+    "Accessible, responsive (works 360px to 1920px). All assets inline or via well-known CDN. "
+    "The UI must be breathtaking and structurally flawless."
 )
 
 NEGATIVE_HINTS = (
@@ -134,8 +138,9 @@ def enrich(prompt: str, project_type: str | None = None) -> EnrichedPrompt:
         "obvious sensible choice and ship; you do not ask questions.\n\n"
         "Specifics that separate you from junior models:\n"
         " - For HTML/CSS: semantic tags (header/nav/main/section/footer), CSS variables, "
-        "fluid typography (clamp), motion that has purpose (no spinny logos), reduced-motion "
-        "honored, focus-visible styled, color contrast >= WCAG AA.\n"
+        "fluid typography (clamp), advanced motion (glassmorphism, backdrop-filter, smooth transforms), "
+        "reduced-motion honored, focus-visible styled, color contrast >= WCAG AA. ABSOLUTELY NO plain "
+        "or boring designs. You must add micro-interactions on hover and active states.\n"
         " - For JS/TS: const/let only, async/await over .then, AbortController for cleanup, "
         "Map/Set when appropriate, no jQuery, no moment.js.\n"
         " - For React: function components + hooks, no class components, no defaultProps, "

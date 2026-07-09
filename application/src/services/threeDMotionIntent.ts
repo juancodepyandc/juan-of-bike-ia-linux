@@ -5,7 +5,7 @@
 // and DEDUCE which kind of motion intrinsically belongs to it.
 //
 // The key idea: the LLM is the expert, not us. We never write
-// "if Strimer → RGB" anywhere. We just describe the 6 animation primitives
+// "if Strimer → RGB" anywhere. We just describe the 8 animation primitives
 // the system can bake and let the model pick. If text-confidence < 0.85,
 // the caller is expected to fall back to a VLM pass on an isometric render
 // of the freshly generated mesh (Qwen3-VL).
@@ -25,6 +25,8 @@ export type MotionCategory =
   | 'creature_organic'    // skeletal anatomy + idle/walk/breathe (humanoid, animal, monster)
   | 'mechanical_simple'   // keyframed positions/rotations (button press, hinge, slider)
   | 'rigid_static'        // ZERO motion (raw RAM stick, passive heatsink, rock)
+  | 'fluid_flow'
+  | 'gas_volume'
 
 export type LedPattern = 'chase' | 'rainbow' | 'breathing' | 'pulse' | 'static_color'
 
@@ -77,18 +79,37 @@ export type CreatureAnimation = {
   locomotion?: 'humanoid' | 'quadruped' | 'serpent' | 'auto'
 }
 
+export type FluidFlowType = 'fountain' | 'pour' | 'waterfall' | 'ripple' | 'still'
+
+export type FluidAnimation = {
+  flow_type: FluidFlowType
+  wave_amplitude: number
+  loop_s: number
+  droplets: boolean
+}
+
+export type GasKind = 'smoke' | 'steam' | 'fog'
+
+export type GasAnimation = {
+  kind: GasKind
+  rise_speed: number
+  billow_amplitude: number
+}
+
 export type MotionIntent = {
   schema: 'aurora.motion-intent.v1'
   category: MotionCategory
   confidence: number            // 0..1 — caller decides VLM fallback at <0.85
   rationale: string             // free-text "why" — for UI debug panel
-  // exactly one of the next four is present, depending on category
+  // exactly one of the next six is present, depending on category
   color_anim?: ColorAnimation
   mechanical_anim?: MechanicalAnimation
   screen_anim?: ScreenAnimation
   creature_anim?: CreatureAnimation
+  fluid_anim?: FluidAnimation
+  gas_anim?: GasAnimation
   // user-typed free-text "fais clignoter en bleu toutes les 200ms"
-  // is normalised by the same classifier into one of the 4 anim blocks above.
+  // is normalised by the same classifier into one of the anim blocks above.
   custom_motion_text?: string
   // model id that produced the verdict (for logs / metrics)
   model: string
@@ -100,12 +121,12 @@ export type MotionIntent = {
 // ────────────────────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a 3D animation intent classifier for a real-time Blender pipeline.
-Given a description of an object or subject, you decide which ONE of six
+Given a description of an object or subject, you decide which ONE of eight
 motion primitives the system should bake. You DO NOT have a brand list — you
 reason from first principles about what the object actually is and what it
 does in real life.
 
-Six categories (pick exactly one):
+Eight categories (pick exactly one):
 
 1. led_emission — the subject is an LED-bearing surface or cable whose
    "motion" is purely a colour pattern on its emissive material. No rig.
@@ -131,11 +152,20 @@ Six categories (pick exactly one):
    stationary: passive heatsink, RAM stick without RGB, screw, bolt,
    bracket, plain enclosure, rock, statue.
 
+7. fluid_flow — the subject is (or prominently features) liquid water in
+   motion: fountain, waterfall, poured liquid, flowing stream, rippling
+   pool, pond or basin, dripping tap. The system builds a clean procedural
+   water surface with morph-target ripples — it never deforms the raw mesh.
+
+8. gas_volume — the subject is (or prominently emits) a gaseous volume:
+   smoke, steam, vapour, fog, mist, incense trail, chimney plume. The
+   system builds crossed billboard cards with billowing morph targets.
+
 Output ONLY a JSON object, no markdown, no commentary. Schema:
 
 {
   "schema": "aurora.motion-intent.v1",
-  "category": "<one of the 6 above>",
+  "category": "<one of the 8 above>",
   "confidence": <0.0-1.0 — how sure you are>,
   "rationale": "<one sentence explaining your reasoning>",
   "color_anim":     { "pattern": "chase|rainbow|breathing|pulse|static_color",
@@ -151,11 +181,16 @@ Output ONLY a JSON object, no markdown, no commentary. Schema:
                       "text": "<string?>" },
   "creature_anim":  { "base_loop": "idle_breathing|walk_cycle|run_cycle|hover",
                       "bpm": <number?>, "stride_length_m": <number?>,
-                      "locomotion": "humanoid|quadruped|serpent|auto" }
+                      "locomotion": "humanoid|quadruped|serpent|auto" },
+  "fluid_anim":     { "flow_type": "fountain|pour|waterfall|ripple|still",
+                      "wave_amplitude": <0.0-1.0>, "loop_s": <number>,
+                      "droplets": <bool> },
+  "gas_anim":       { "kind": "smoke|steam|fog", "rise_speed": <number>,
+                      "billow_amplitude": <number> }
 }
 
 Include ONLY the *_anim block matching the category you chose. Omit the
-other three. For rigid_static, include none of the four blocks.
+other five. For rigid_static, include none of the six blocks.
 
 Reasoning checklist before answering:
 - Is the subject alive or articulated as a creature? → creature_organic.
@@ -163,6 +198,8 @@ Reasoning checklist before answering:
 - Does it display dynamic text/icons on an embedded screen? → oled_screen.
 - Does it have integrated programmable LEDs whose colour changes? → led_emission.
 - Does it have a single-DoF moving part (hinge/button/slider)? → mechanical_simple.
+- Is it liquid water in motion (fountain, waterfall, pour, ripple)? → fluid_flow.
+- Is it smoke, steam, vapour, fog or mist? → gas_volume.
 - Otherwise (and especially if it's plain inert hardware): rigid_static.
 
 When you choose oled_screen, ALSO choose a content_type:
@@ -175,6 +212,20 @@ When you choose creature_organic, ALSO choose locomotion:
   - quadruped for animals on 4 legs (dog, dragon, lion, wolf)
   - serpent   for snakes, eels, worms
   - auto      when truly unsure (the system will infer from the mesh bbox)
+When you choose fluid_flow, ALSO choose a flow_type:
+  - fountain   for a vertical jet or spray (fountain, geyser, sprinkler)
+  - pour       for liquid poured from a container (bottle, teapot, tap)
+  - waterfall  for a falling sheet of water (waterfall, cascade, dam)
+  - ripple     for a mostly-flat surface with waves (pool, pond, lake, basin)
+  - still      for calm liquid with barely visible motion
+  wave_amplitude is 0.0-1.0 (0.1 calm … 0.8 agitated), loop_s is the loop
+  duration in seconds (2-6 typical), droplets=true only for fountain/waterfall.
+When you choose gas_volume, ALSO choose a kind:
+  - smoke  for combustion smoke (fire, chimney, incense, exhaust)
+  - steam  for hot water vapour (kettle, coffee, cooking pot, sauna)
+  - fog    for ambient mist/fog/haze hugging the ground
+  rise_speed is in metres per second (0.1 slow fog … 1.0 fast steam),
+  billow_amplitude is 0.0-1.0 (how much the volume swells as it rises).
 
 Named-character locomotion rule:
 - A named anime/manga/game/comic character or proper-name protagonist doing
@@ -234,7 +285,11 @@ function safeJsonExtract(text: string): unknown | null {
 function isCategory(value: unknown): value is MotionCategory {
   return value === 'led_emission' || value === 'fan_pwm' || value === 'oled_screen'
     || value === 'creature_organic' || value === 'mechanical_simple' || value === 'rigid_static'
+    || value === 'fluid_flow' || value === 'gas_volume'
 }
+
+const FLOW_TYPES: FluidFlowType[] = ['fountain', 'pour', 'waterfall', 'ripple', 'still']
+const GAS_KINDS: GasKind[] = ['smoke', 'steam', 'fog']
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0
@@ -316,6 +371,30 @@ function normalizeIntent(raw: unknown, model: string): MotionIntent | null {
       }
       break
     }
+    case 'fluid_flow': {
+      const fl = r.fluid_anim as Record<string, unknown> | undefined
+      const flowType: FluidFlowType = FLOW_TYPES.includes(fl?.flow_type as FluidFlowType)
+        ? fl!.flow_type as FluidFlowType : 'ripple'
+      const loopS = typeof fl?.loop_s === 'number' && fl.loop_s > 0 ? fl.loop_s : 3.0
+      intent.fluid_anim = {
+        flow_type: flowType,
+        wave_amplitude: clamp01(typeof fl?.wave_amplitude === 'number' ? fl.wave_amplitude : 0.35),
+        loop_s: Math.max(0.5, Math.min(12.0, loopS)),
+        droplets: typeof fl?.droplets === 'boolean'
+          ? fl.droplets : (flowType === 'fountain' || flowType === 'waterfall'),
+      }
+      break
+    }
+    case 'gas_volume': {
+      const g = r.gas_anim as Record<string, unknown> | undefined
+      const rise = typeof g?.rise_speed === 'number' && g.rise_speed > 0 ? g.rise_speed : 0.3
+      intent.gas_anim = {
+        kind: GAS_KINDS.includes(g?.kind as GasKind) ? g!.kind as GasKind : 'smoke',
+        rise_speed: Math.max(0.02, Math.min(3.0, rise)),
+        billow_amplitude: clamp01(typeof g?.billow_amplitude === 'number' ? g.billow_amplitude : 0.5),
+      }
+      break
+    }
     case 'rigid_static':
       // Intentionally no anim block.
       break
@@ -341,6 +420,8 @@ export function deterministicMotionIntentFallback(prompt: string): MotionIntent 
   else if (/\b(oled|livedash|screen|[eé]cran|display|dashboard)\b/.test(p)) category = 'oled_screen'
   else if (/\b(human|humanoid|character|personnage|monster|monstre|creature|animal|dragon|wolf|loup|anime|manga|fairy\s*tail)\b/.test(p) || (explicitLocomotion && !hardSurfaceMotion)) category = 'creature_organic'
   else if (/\b(hinge|charni[eè]re|button|bouton|slider|lever|levier|switch|interrupteur)\b/.test(p)) category = 'mechanical_simple'
+  else if (/\b(fum[eé]e|smoke|vapeur|steam|brume|brouillard|fog|mist)\b/.test(p)) category = 'gas_volume'
+  else if (/\b(eau|water|fontaine|fountain|cascade|waterfall|coule|couler|vers[eé]e?|liquide|liquid|ripple|ondulations?)\b/.test(p)) category = 'fluid_flow'
 
   const intent: MotionIntent = {
     schema: 'aurora.motion-intent.v1',
@@ -360,6 +441,28 @@ export function deterministicMotionIntentFallback(prompt: string): MotionIntent 
       ? 'run_cycle'
       : explicitLocomotion ? 'walk_cycle' : 'idle_breathing'
     intent.creature_anim = { base_loop, bpm: base_loop === 'idle_breathing' ? 14 : 96, locomotion: 'humanoid' }
+  } else if (category === 'fluid_flow') {
+    let flowType: FluidFlowType
+    if (/\b(fontaine|fountain|geyser|jet)\b/.test(p)) flowType = 'fountain'
+    else if (/\b(cascade|waterfall|chute)\b/.test(p)) flowType = 'waterfall'
+    else if (/\b(vers[eé]e?|pouring|poured)\b/.test(p)) flowType = 'pour'
+    else flowType = 'ripple'
+    intent.fluid_anim = {
+      flow_type: flowType,
+      wave_amplitude: 0.35,
+      loop_s: 3.0,
+      droplets: flowType === 'fountain' || flowType === 'waterfall',
+    }
+  } else if (category === 'gas_volume') {
+    let gasKind: GasKind
+    if (/\b(vapeur|steam)\b/.test(p)) gasKind = 'steam'
+    else if (/\b(brume|brouillard|fog|mist)\b/.test(p)) gasKind = 'fog'
+    else gasKind = 'smoke'
+    intent.gas_anim = {
+      kind: gasKind,
+      rise_speed: gasKind === 'fog' ? 0.15 : 0.3,
+      billow_amplitude: 0.5,
+    }
   }
   return intent
 }
