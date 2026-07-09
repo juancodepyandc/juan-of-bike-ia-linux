@@ -70,7 +70,7 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
         },
         "33": {
             "class_type": "CLIPTextEncode",
-            "inputs": {"clip": ["11", 0], "text": ""},
+            "inputs": {"clip": ["11", 0], "text": "cropped, cut off, out of frame, partial view, close-up, truncated body, missing limbs, blurry, low detail"},
         },
         "27": {
             "class_type": "EmptyFlux2LatentImage",

@@ -163,9 +163,12 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
         r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster)\b", re.I)
     if _kind_l in {"character", "creature", "humanoid", "quadruped"} or _creature_re.search(out):
-        _pose_cues = ("full body entirely visible, all limbs visible and separated, "
-                      "tail fully visible, standing neutral pose, three-quarter view, "
-                      "no limb hidden behind the body, no cropping, feet on the ground")
+        _pose_cues = ("full body entirely visible, complete figure inside the frame with "
+                      "generous empty margin on all sides, head and feet fully visible, "
+                      "all limbs visible and separated, tail fully visible, standing "
+                      "neutral pose, three-quarter view, no limb hidden behind the body, "
+                      "no cropping, feet on the ground, sharp detailed face, clear "
+                      "detailed eyes, highly detailed fur and hair strands")
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
 
@@ -1633,7 +1636,13 @@ def run_pipeline(prompt: str, run_id: str, *,
                 motion_prompt=motion_prompt,
             )
         else:
-            res = synth(flux_prompt, run_id, output_dir=output_dir)
+            _k_syn = (subject_kind_hint or kind or "").lower()
+            if _k_syn in ("character", "humanoid", "creature", "quadruped"):
+                res = synth(flux_prompt, run_id, output_dir=output_dir,
+                            width=1024, height=1408, steps=44)
+            else:
+                res = synth(flux_prompt, run_id, output_dir=output_dir,
+                            width=1216, height=1216, steps=44)
         reference_synth_result = res
         if not res.get("ok"):
             _record_pipeline_dispatch(run_id, prompt, started_at_iso,

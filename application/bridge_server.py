@@ -11345,6 +11345,8 @@ def three_d_run_pipeline():
             _run_env["AURORA_TRELLIS2_MANAGED"] = "1"
             _run_env["AURORA_TRELLIS2_QUALITY"] = "1536_cascade"
             _run_env["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+            _run_env["AURORA_TRELLIS2_STEPS"] = "40"
+            _run_env["AURORA_NORMAL_RES"] = "8192"
         proc = subprocess.run(cmd, capture_output=True, timeout=14400, check=False, env=_run_env)
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "pipeline timed out (4h cap)"}), 504
