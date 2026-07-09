@@ -185,7 +185,7 @@ def _write_projection_uvs(objs, axis, mn, mx):
         me.uv_layers[0].active_render = True
 
 
-def _build_bake_material(photo_path, axis, size):
+def _build_bake_material(photo_path, axis, size, center=None, depth=1.0):
     photo = bpy.data.images.load(photo_path)
     photo.colorspace_settings.name = "sRGB"
     img_c = bpy.data.images.new("fid_bake_color", size, size, alpha=True)
@@ -223,6 +223,24 @@ def _build_bake_material(photo_path, axis, size):
     nt.links.new(dot.outputs["Value"], mx0.inputs[0])
     nt.links.new(mx0.outputs["Value"], mul.inputs[0])
     nt.links.new(tex.outputs["Alpha"], mul.inputs[1])
+    if center is not None:
+        sub = nt.nodes.new("ShaderNodeVectorMath")
+        sub.operation = "SUBTRACT"
+        sub.inputs[1].default_value = tuple(center)
+        pdot = nt.nodes.new("ShaderNodeVectorMath")
+        pdot.operation = "DOT_PRODUCT"
+        pdot.inputs[1].default_value = tuple(axis)
+        gate = nt.nodes.new("ShaderNodeMath")
+        gate.operation = "GREATER_THAN"
+        gate.inputs[1].default_value = -0.05 * float(depth)
+        mul2 = nt.nodes.new("ShaderNodeMath")
+        mul2.operation = "MULTIPLY"
+        nt.links.new(geo.outputs["Position"], sub.inputs[0])
+        nt.links.new(sub.outputs["Vector"], pdot.inputs[0])
+        nt.links.new(pdot.outputs["Value"], gate.inputs[0])
+        nt.links.new(mul.outputs["Value"], mul2.inputs[0])
+        nt.links.new(gate.outputs["Value"], mul2.inputs[1])
+        mul = mul2
     nt.links.new(emit.outputs["Emission"], out.inputs["Surface"])
     return mat, nt, emit, tex, mul, nc, nm, img_c, img_m
 
@@ -291,7 +309,9 @@ def main():
 
     scene.render.use_persistent_data = False
     _write_projection_uvs(objs, axis, mn, mx)
-    mat, nt, emit, tex, mul, nc, nm, img_c, img_m = _build_bake_material(photo, axis, size)
+    _c = (mn + mx) / 2
+    _d = abs((mx - mn).x * axis[0]) + abs((mx - mn).y * axis[1]) + abs((mx - mn).z * axis[2])
+    mat, nt, emit, tex, mul, nc, nm, img_c, img_m = _build_bake_material(photo, axis, size, center=_c, depth=max(_d, 1e-6))
     for o in objs:
         o.data.materials.clear()
         o.data.materials.append(mat)
