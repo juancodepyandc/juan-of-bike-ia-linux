@@ -89,11 +89,12 @@ def _load_pipe():
     return pipe
 
 
-# Qualite par defaut : 1024_cascade = le defaut TRELLIS.2, excellent detail ET fiable sur 16 Go
-# (peak ~4-6 Go). 1536_cascade est plus fin mais monte a ~15 Go et OOM a l'extraction CuMesh
-# dans le contexte du pipeline -> on l'essaie seulement si demande, avec repli automatique.
-# Options: 512, 1024, 1024_cascade, 1536_cascade.
-QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1024_cascade")
+# Qualite MAX par defaut : 1536_cascade = geometrie la plus fine (rayons/cables/cheveux fins
+# mieux resolus, moins d'emmelement). Repli auto vers 1024_cascade/512 si OOM (l'utilisateur
+# veut la precision max meme si plus lent). Options: 512, 1024, 1024_cascade, 1536_cascade.
+QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1536_cascade")
+# Pas de diffusion (raffinement). Plus haut = plus precis, plus lent. Defaut TRELLIS ~12-25.
+STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "30"))
 # Echelle de repli sur OOM (garde la meilleure resolution qui tient reellement en VRAM).
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
@@ -160,7 +161,12 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             try:
                 torch.cuda.reset_peak_memory_stats()
                 torch.cuda.empty_cache()
-                mesh = pipe.run(image, seed=seed, pipeline_type=_q)[0]
+                mesh = pipe.run(
+                    image, seed=seed, pipeline_type=_q,
+                    sparse_structure_sampler_params={"steps": STEPS},
+                    shape_slat_sampler_params={"steps": STEPS},
+                    tex_slat_sampler_params={"steps": STEPS},
+                )[0]
                 used_q = _q
                 break
             except Exception as _oom:  # noqa: BLE001

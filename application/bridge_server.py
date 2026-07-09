@@ -11315,8 +11315,12 @@ def three_d_run_pipeline():
     if not os.path.isfile(script_path):
         return jsonify({"ok": False, "error": "aurora_3d_pipeline.py not found"}), 500
 
+    # Aurora: chaque generation dans SON dossier (output/3d/generations/<run_id>/) au lieu
+    # d'ecrire tout a plat dans output/3d/ (143 fichiers en vrac -> on s'y perd).
+    _gen_dir = os.path.join(workspace, "output", "3d", "generations", run_id)
+    os.makedirs(_gen_dir, exist_ok=True)
     cmd = [sys.executable, script_path, "--prompt", prompt, "--run-id", run_id,
-           "--output-dir", os.path.join(workspace, "output", "3d"),
+           "--output-dir", _gen_dir,
            "--purpose", purpose]
     if subject_kind:
         cmd += ["--subject-kind", subject_kind]
