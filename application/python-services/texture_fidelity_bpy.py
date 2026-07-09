@@ -185,6 +185,53 @@ def _write_projection_uvs(objs, axis, mn, mx):
         me.uv_layers[0].active_render = True
 
 
+def _write_visibility(objs, axis, mn, mx):
+    from mathutils.bvhtree import BVHTree
+    verts_all = []
+    tris_all = []
+    base = 0
+    for o in objs:
+        me = o.data
+        n = len(me.vertices)
+        co = np.empty(n * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(n, 3).astype(np.float64)
+        M = np.array(o.matrix_world, dtype=np.float64)
+        w = co @ M[:3, :3].T + M[:3, 3]
+        verts_all.append(w)
+        me.calc_loop_triangles()
+        nt_ = len(me.loop_triangles)
+        tv = np.empty(nt_ * 3, dtype=np.int32)
+        me.loop_triangles.foreach_get("vertices", tv)
+        tv = tv.reshape(-1, 3)
+        for a, b, c in tv:
+            tris_all.append((int(a) + base, int(b) + base, int(c) + base))
+        base += n
+    allv = np.concatenate(verts_all, axis=0)
+    bvh = BVHTree.FromPolygons([Vector((float(p[0]), float(p[1]), float(p[2]))) for p in allv],
+                               tris_all, all_triangles=True)
+    ax = Vector(axis).normalized()
+    diag = (mx - mn).length
+    eps = 0.004 * diag
+    off = ax * (diag * 2.0)
+    for o, w in zip(objs, verts_all):
+        me = o.data
+        attr = me.color_attributes.get("FidVis")
+        if attr is None:
+            attr = me.color_attributes.new(name="FidVis", type="FLOAT_COLOR", domain="POINT")
+        n = len(me.vertices)
+        vals = np.zeros(n * 4, dtype=np.float32)
+        vals[3::4] = 1.0
+        for i in range(n):
+            p = Vector((float(w[i][0]), float(w[i][1]), float(w[i][2])))
+            loc, _nor, _idx, _dist = bvh.ray_cast(p + off, -ax, diag * 4.0)
+            if loc is not None and (loc - p).length <= eps:
+                vals[i * 4] = 1.0
+                vals[i * 4 + 1] = 1.0
+                vals[i * 4 + 2] = 1.0
+        attr.data.foreach_set("color", vals)
+
+
 def _build_bake_material(photo_path, axis, size, center=None, depth=1.0):
     photo = bpy.data.images.load(photo_path)
     photo.colorspace_settings.name = "sRGB"
@@ -241,6 +288,13 @@ def _build_bake_material(photo_path, axis, size, center=None, depth=1.0):
         nt.links.new(mul.outputs["Value"], mul2.inputs[0])
         nt.links.new(gate.outputs["Value"], mul2.inputs[1])
         mul = mul2
+    vat = nt.nodes.new("ShaderNodeAttribute")
+    vat.attribute_name = "FidVis"
+    mulv = nt.nodes.new("ShaderNodeMath")
+    mulv.operation = "MULTIPLY"
+    nt.links.new(mul.outputs["Value"], mulv.inputs[0])
+    nt.links.new(vat.outputs["Fac"], mulv.inputs[1])
+    mul = mulv
     nt.links.new(emit.outputs["Emission"], out.inputs["Surface"])
     return mat, nt, emit, tex, mul, nc, nm, img_c, img_m
 
@@ -309,6 +363,7 @@ def main():
 
     scene.render.use_persistent_data = False
     _write_projection_uvs(objs, axis, mn, mx)
+    _write_visibility(objs, axis, mn, mx)
     _c = (mn + mx) / 2
     _d = abs((mx - mn).x * axis[0]) + abs((mx - mn).y * axis[1]) + abs((mx - mn).z * axis[2])
     mat, nt, emit, tex, mul, nc, nm, img_c, img_m = _build_bake_material(photo, axis, size, center=_c, depth=max(_d, 1e-6))

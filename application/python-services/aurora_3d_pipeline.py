@@ -164,13 +164,19 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
         r"homme|femme|man|woman|personne|person|humain|human|garcon|fille|enfant|child|"
         r"boy|girl|adulte|soldat|soldier)\b", re.I)
+    _animal_re = re.compile(
+        r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|creature|"
+        r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
     if _kind_l in {"character", "creature", "humanoid", "quadruped"} or _creature_re.search(out):
-        _pose_cues = ("full body entirely visible, complete figure inside the frame with "
+        _base_cues = ("full body entirely visible, complete figure inside the frame with "
                       "generous empty margin on all sides, head and feet fully visible, "
-                      "all limbs visible and separated, tail fully visible, standing "
-                      "neutral pose, three-quarter view, no limb hidden behind the body, "
-                      "no cropping, feet on the ground, sharp detailed face, clear "
-                      "detailed eyes, highly detailed fur and hair strands")
+                      "all limbs visible and separated, standing neutral pose, "
+                      "three-quarter view, no limb hidden behind the body, no cropping, "
+                      "feet on the ground, sharp detailed face, clear detailed eyes")
+        if _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
+            _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
+        else:
+            _pose_cues = _base_cues + ", detailed realistic skin, detailed hands"
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
 
@@ -1877,7 +1883,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     try:
         import mesh_taubin as _taubin  # noqa: WPS433
         _sm_out = str(output_dir / f"{run_id}_mesh_smooth.glb")
-        _sm = _taubin.taubin_smooth(final_mesh_path, _sm_out, iterations=8)
+        _sm = _taubin.taubin_smooth(final_mesh_path, _sm_out,
+                                    iterations=int(os.environ.get("AURORA_TAUBIN_ITERS", "8")))
         audit.append({"stage": "taubin_smooth", **{k: v for k, v in _sm.items() if k != "output"}})
         if _sm.get("ok"):
             final_mesh_path = _sm_out
