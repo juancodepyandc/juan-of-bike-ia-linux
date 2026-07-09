@@ -11364,6 +11364,72 @@ def three_d_run_pipeline():
     return jsonify({"ok": False, "error": "pipeline produced no JSON", "stdout": stdout_text[-800:]}), 500
 
 
+@app.route("/api/3d/compose-scene", methods=["POST"])
+def three_d_compose_scene():
+    data = request.get_json(silent=True) or {}
+    actor_glb = (data.get("actor_glb") or "").strip()
+    target_glb = (data.get("target_glb") or "").strip()
+    instruction = (data.get("instruction") or "").strip()
+    animate = bool(data.get("animate") or False)
+    output_name = re.sub(r"[^A-Za-z0-9._-]", "_", (data.get("output_name") or "").strip())
+    if not actor_glb or not target_glb or not instruction:
+        return jsonify({"ok": False, "error": "missing 'actor_glb', 'target_glb' or 'instruction'"}), 400
+
+    workspace = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.normpath(os.path.dirname(workspace))
+
+    def resolve(p: str) -> str | None:
+        cand = os.path.normpath(p if os.path.isabs(p) else os.path.join(workspace, p))
+        if not cand.startswith(repo_root) or not os.path.isfile(cand):
+            return None
+        return cand
+
+    actor_path = resolve(actor_glb)
+    target_path = resolve(target_glb)
+    if actor_path is None:
+        return jsonify({"ok": False, "error": f"actor_glb not found / outside workspace: {actor_glb}"}), 404
+    if target_path is None:
+        return jsonify({"ok": False, "error": f"target_glb not found / outside workspace: {target_glb}"}), 404
+
+    script_path = os.path.join(workspace, "python-services", "scene_composer.py")
+    if not os.path.isfile(script_path):
+        return jsonify({"ok": False, "error": "scene_composer.py not found"}), 500
+
+    scene_id = output_name or time.strftime("%Y%m%d_%H%M%S")
+    scene_dir = os.path.join(workspace, "output", "3d", "scenes", scene_id)
+    os.makedirs(scene_dir, exist_ok=True)
+    out_path = os.path.join(scene_dir, "scene.glb")
+
+    cmd = [sys.executable, script_path,
+           "--actor", actor_path, "--target", target_path,
+           "--instruction", instruction, "--output", out_path]
+    if animate:
+        cmd.append("--animate")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=1800, check=False)
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "compose-scene timed out"}), 504
+    stdout_text = (proc.stdout or b"").decode("utf-8", errors="replace")
+    result = None
+    for line in reversed(stdout_text.splitlines()):
+        line = line.strip()
+        if line.startswith("AURORA_SCENE_RESULT:"):
+            try:
+                result = json.loads(line[len("AURORA_SCENE_RESULT:"):])
+            except ValueError:
+                result = None
+            break
+    if not isinstance(result, dict):
+        return jsonify({
+            "ok": False, "returncode": proc.returncode,
+            "stderr": (proc.stderr or b"").decode("utf-8", errors="replace")[-400:],
+            "stdout": stdout_text[-800:],
+        }), 500
+    status = 200 if result.get("ok") else 500
+    return jsonify({"ok": bool(result.get("ok")), "scene": result,
+                    "output": out_path, "returncode": proc.returncode}), status
+
+
 # ---------------------------------------------------------------------------
 # v83 — Internal Aurora module dispatcher for the Cowork "aurora_*" connectors.
 #
