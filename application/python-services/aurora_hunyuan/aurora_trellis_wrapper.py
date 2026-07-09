@@ -210,6 +210,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 torch.cuda.empty_cache()
                 mesh = pipe.run(
                     image, seed=seed, pipeline_type=_q,
+                    max_num_tokens=int(os.environ.get("AURORA_TRELLIS2_MAXTOK", "49152")),
                     sparse_structure_sampler_params={"steps": STEPS},
                     shape_slat_sampler_params={"steps": STEPS},
                     tex_slat_sampler_params={"steps": STEPS},

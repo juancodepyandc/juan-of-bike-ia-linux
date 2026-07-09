@@ -11337,7 +11337,14 @@ def three_d_run_pipeline():
         cmd.append("--force")
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=14400, check=False)
+        _run_env = {**os.environ}
+        if bool(data.get("max_precision")):
+            # Mode PRECISION MAX : vrai TRELLIS.2 1536_cascade via allocateur manage
+            # (spill GPU->RAM) -> geometrie fine (fentes, resistances, composants au mm).
+            # Lent (~25-30 min/objet, deborde sur la RAM) mais precision maximale.
+            _run_env["AURORA_TRELLIS2_MANAGED"] = "1"
+            _run_env["AURORA_TRELLIS2_QUALITY"] = "1536_cascade"
+        proc = subprocess.run(cmd, capture_output=True, timeout=14400, check=False, env=_run_env)
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "pipeline timed out (4h cap)"}), 504
     stdout_text = (proc.stdout or b"").decode("utf-8", errors="replace")
