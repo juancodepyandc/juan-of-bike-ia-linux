@@ -1027,6 +1027,77 @@ def _stage_reference_image(src: str, dest: Path) -> dict:
     }
 
 
+import re as _re_mod
+# Marques/produits reels + mots-cles "reproduire l'existant" -> declenche la recherche web
+# d'une VRAIE photo (fidelite) au lieu d'une invention FLUX (creativite). C'est la
+# distinction fidelite/creation demandee : un sujet REEL specifique se cherche, un sujet
+# generique/creatif se genere.
+_REAL_BRAND_RE = _re_mod.compile(
+    r"\b(asus|rog|msi|gigabyte|aorus|lian.?li|strimer|corsair|nvidia|geforce|rtx|gtx|radeon|"
+    r"intel|core\s?i[3579]|amd|ryzen|threadripper|razer|logitech|samsung|sony|playstation|ps[45]|"
+    r"xbox|nintendo|switch|apple|iphone|ipad|macbook|dell|hp|lenovo|thermaltake|nzxt|"
+    r"cooler\s?master|be\s?quiet|noctua|seasonic|evga|zotac|palit|z790|z890|x870|b650|"
+    r"4090|4080|5090|5080|3080|3090)\b", _re_mod.I)
+_REAL_KW_RE = _re_mod.compile(
+    r"\b(qui existe|existe reellement|reel|r[ée]el|r[ée]elle|exact|exacte|vrai\s|vraie|"
+    r"real\b|specifique|sp[ée]cifique|precis au pixel|pixel[- ]?pr[eè]s|reproduire fid|reference exacte)\b",
+    _re_mod.I)
+
+
+def _should_research_reference(prompt: str) -> bool:
+    """True si le sujet est un objet/produit REEL specifique -> chercher une vraie photo."""
+    p = prompt or ""
+    if _REAL_BRAND_RE.search(p) or _REAL_KW_RE.search(p):
+        return True
+    try:  # identite nommee reelle (via le detecteur fidelite existant)
+        if compose_faithful_prompt is not None:
+            a = compose_faithful_prompt(p)["analysis"]
+            ident = a.get("identity") or {}
+            if ident and ident.get("basis") in {"named_identity", "real_product", "brand"}:
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool:
+    """Cherche sur le web une VRAIE photo du sujet et la telecharge -> out_path.
+    Utilise reference_visual_search.py (DuckDuckGo/Bing). Best-effort: False si rien d'exploitable."""
+    script = REPO_ROOT / "application" / "python-services" / "reference_visual_search.py"
+    if not script.is_file():
+        return False
+    try:
+        query = f"{prompt} product photo high resolution"
+        p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "8"],
+                           capture_output=True, text=True, timeout=70)
+        line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+        cands = (json.loads(line).get("candidates") if line else None) or []
+        import io as _io, base64 as _b64
+        from PIL import Image as _Image
+        for c in cands[:8]:
+            url = c.get("imageUrl")
+            if not url:
+                continue
+            try:
+                d = subprocess.run([sys.executable, str(script), "--download-url", url],
+                                   capture_output=True, text=True, timeout=45)
+                dl = next((l for l in reversed((d.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+                dj = json.loads(dl) if dl else {}
+                if not dj.get("ok") or not dj.get("base64"):
+                    continue
+                img = _Image.open(_io.BytesIO(_b64.decode(dj["base64"]))).convert("RGB")
+                if min(img.size) < 320:  # trop petit -> pas assez de detail
+                    continue
+                img.save(str(out_path))
+                log(f"PROGRESS:reference:vraie photo trouvee ({img.size[0]}x{img.size[1]}) : {url[:70]}")
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def run_pipeline(prompt: str, run_id: str, *,
                  output_dir: Path = DEFAULT_OUTPUT_DIR,
                  multi_view: bool | None = None,
@@ -1387,6 +1458,22 @@ def run_pipeline(prompt: str, run_id: str, *,
     right_ref = output_dir / f"{run_id}_right_reference.png"
     reference_synth_result = None
 
+    # === AUTO-ALIMENTATION (fidelite vs creation) ===
+    # Sujet REEL specifique (marque/modele/produit) -> l'IA cherche elle-meme une VRAIE
+    # photo sur le web et TRELLIS la reproduit fidelement. Sujet generique/creatif -> FLUX invente.
+    _use_researched = False
+    _req_imgs_now = [str(img).strip() for img in (images or []) if str(img).strip()]
+    if not _req_imgs_now and not (not force and front_ref.is_file()) and _should_research_reference(prompt):
+        print("PROGRESS:reference:sujet reel detecte -> recherche autonome d'une vraie photo...", flush=True)
+        if _research_real_reference(prompt, front_ref, log=lambda m: print(m, flush=True)):
+            _use_researched = True
+            multi_view = False  # une vraie photo -> single-view (TRELLIS reproduit fidelement)
+            audit.append({"stage": "reference_research", "ok": True,
+                          "note": "vraie photo web utilisee comme reference (fidelite)"})
+        else:
+            audit.append({"stage": "reference_research", "ok": False,
+                          "note": "aucune photo web exploitable -> FLUX (creation)"})
+
     input_reference_result = None
     requested_images = [str(img).strip() for img in (images or []) if str(img).strip()]
     if requested_images:
@@ -1475,7 +1562,11 @@ def run_pipeline(prompt: str, run_id: str, *,
             "views": {v: {"path": d.get("path"), "source": d.get("source")} for v, d in staged_views.items()},
         })
 
-    if input_reference_result is not None:
+    if _use_researched:
+        audit.append({"stage": "flux_synth", "skipped": True,
+                      "reason": "reference reelle recuperee sur le web (fidelite) -> pas de FLUX"})
+        reference_synth_result = {"ok": True, "researched": True}
+    elif input_reference_result is not None:
         reference_synth_result = input_reference_result
     elif not force and front_ref.is_file():
         audit.append({"stage": "flux_synth", "skipped": True,
