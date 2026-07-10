@@ -377,6 +377,58 @@ print("SANITIZE_OK: %s (%d tris)" % (dst, len(me.polygons)))
 '''
 
 
+def mesh_health(src):
+    import numpy as np
+    import trimesh
+    scn = trimesh.load(str(src), process=False)
+    geoms = list(scn.geometry.values()) if hasattr(scn, "geometry") else [scn]
+    m = max(geoms, key=lambda g: len(g.faces))
+    uv = getattr(m.visual, "uv", None)
+    if uv is None or not len(uv):
+        return {"sain": False, "raison": "pas d'UV d'origine"}
+    v = np.asarray(m.vertices, dtype=np.float64)
+    f = np.asarray(m.faces, dtype=np.int64)
+    uv = np.asarray(uv, dtype=np.float64)
+    diag = float(np.linalg.norm(v.max(axis=0) - v.min(axis=0))) or 1.0
+    res = 4096
+    try:
+        img = m.visual.material.baseColorTexture
+        if img is not None:
+            res = max(img.size)
+    except Exception:
+        pass
+    grid = 512
+    corners = f.reshape(-1)
+    fuv = uv[corners]
+    xi = np.clip((fuv[:, 0] % 1.0) * (grid - 1), 0, grid - 1).astype(np.int64)
+    yi = np.clip((fuv[:, 1] % 1.0) * (grid - 1), 0, grid - 1).astype(np.int64)
+    cell = yi * grid + xi
+    depth = v[corners] @ np.array([0.57, 0.57, 0.57])
+    order = np.argsort(cell)
+    cs = cell[order]
+    ds = depth[order]
+    uniq, start = np.unique(cs, return_index=True)
+    spans = np.split(ds, start[1:])
+    conflict = sum(1 for s in spans if len(s) > 2 and (s.max() - s.min()) > diag * 0.05)
+    ratio = conflict / max(len(uniq), 1)
+    a = uv[f[:, 0]]
+    b = uv[f[:, 1]]
+    c = uv[f[:, 2]]
+    areas = np.abs((b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1])
+                   - (c[:, 0] - a[:, 0]) * (b[:, 1] - a[:, 1])) * 0.5
+    med_px = float(np.median(areas)) * res * res
+    sain = ratio <= 0.10 and med_px >= 4.0
+    if sain:
+        raison = None
+    elif ratio > 0.10:
+        raison = "conflit profondeur %.1f%% (doubles surfaces)" % (100 * ratio)
+    else:
+        raison = "ilots UV fragmentes (mediane %.2f px)" % med_px
+    return {"sain": sain, "conflit": round(ratio, 4),
+            "aire_px_mediane": round(med_px, 2), "res_atlas": res,
+            "tris": int(len(f)), "raison": raison}
+
+
 def _soft_clean(src, target_tris):
     import trimesh
     import pymeshlab

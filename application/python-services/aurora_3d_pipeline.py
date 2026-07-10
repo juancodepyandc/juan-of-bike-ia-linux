@@ -1947,25 +1947,10 @@ def run_pipeline(prompt: str, run_id: str, *,
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
                     raw_dense_path = Path(str(mesh_path))
-                    try:
-                        from mesh_sanitize import sanitize_mesh as _sanit
-                        _san_out = output_dir / f"{run_id}_mesh_assaini.glb"
-                        _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=300000)
-                        audit.append({"stage": "mesh_sanitize",
-                                      **{k: _sr.get(k) for k in ("ok", "info", "error")}})
-                        if _sr.get("ok") and _san_out.is_file() and _san_out.stat().st_size > 1000:
-                            try:
-                                import stage_quality_gate as _sqg
-                                _rg = _sqg.gate(mesh_path, _san_out, "mesh_sanitize")
-                            except Exception as _ge:  # noqa: BLE001
-                                _rg = {"skipped": True, "reason": repr(_ge)}
-                            if not _rg.get("degraded"):
-                                mesh_path = _san_out
-                            else:
-                                audit.append({"stage": "mesh_sanitize_revert", "reverted": True,
-                                              "reasons": _rg.get("reasons")})
-                    except Exception as _rex:  # noqa: BLE001
-                        audit.append({"stage": "mesh_sanitize", "ok": False, "error": repr(_rex)})
+                    audit.append({"stage": "mesh_sanitize", "skipped": True,
+                                  "reason": "geometrie TRELLIS.2 single-image native conservee "
+                                            "(qualite maximale prouvee; assainissement reserve "
+                                            "aux meshes issus de fusion multi-vues)"})
                     _k_fid = (subject_kind_hint or kind or "").lower()
                     _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
                     if _fid_character and not _use_researched:
@@ -2048,6 +2033,26 @@ def run_pipeline(prompt: str, run_id: str, *,
                           "mesh_path": h["mesh_path"],
                           "size_bytes": h["size_bytes"],
                           "elapsed_s": h["elapsed_s"]})
+            raw_dense_path = Path(str(mesh_path))
+            try:
+                from mesh_sanitize import sanitize_mesh as _sanit
+                _san_out = output_dir / f"{run_id}_mesh_assaini.glb"
+                _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=300000)
+                audit.append({"stage": "mesh_sanitize",
+                              **{k: _sr.get(k) for k in ("ok", "info", "error", "mode")}})
+                if _sr.get("ok") and _san_out.is_file() and _san_out.stat().st_size > 1000:
+                    try:
+                        import stage_quality_gate as _sqg
+                        _rg = _sqg.gate(mesh_path, _san_out, "mesh_sanitize")
+                    except Exception as _ge:  # noqa: BLE001
+                        _rg = {"skipped": True, "reason": repr(_ge)}
+                    if not _rg.get("degraded"):
+                        mesh_path = _san_out
+                    else:
+                        audit.append({"stage": "mesh_sanitize_revert", "reverted": True,
+                                      "reasons": _rg.get("reasons")})
+            except Exception as _rex:  # noqa: BLE001
+                audit.append({"stage": "mesh_sanitize", "ok": False, "error": repr(_rex)})
 
     # Stage 3 — auto_rescue
     rescue_dir = output_dir / f"rescue_{run_id}"
