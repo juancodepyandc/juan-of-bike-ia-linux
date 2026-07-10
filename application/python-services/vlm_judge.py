@@ -25,11 +25,29 @@ def _load_mock(question):
     return entry
 
 
-def _encode_images(images):
+def _encode_images(images, max_images=4, max_side=768):
+    images = list(images)
+    if len(images) > max_images:
+        step = (len(images) - 1) / float(max_images - 1)
+        images = [images[round(i * step)] for i in range(max_images)]
     encoded = []
     for p in images:
-        with open(p, "rb") as fh:
-            encoded.append(base64.b64encode(fh.read()).decode("ascii"))
+        raw = None
+        try:
+            from PIL import Image
+            import io
+            im = Image.open(p)
+            if max(im.size) > max_side:
+                im.thumbnail((max_side, max_side))
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, format="PNG")
+                raw = buf.getvalue()
+        except Exception:
+            raw = None
+        if raw is None:
+            with open(p, "rb") as fh:
+                raw = fh.read()
+        encoded.append(base64.b64encode(raw).decode("ascii"))
     return encoded
 
 
