@@ -43,7 +43,7 @@ if clean_ply and os.path.isfile(clean_ply):
     clean.data.polygons.foreach_set("use_smooth", _smf)
     clean.data.update()
     size = max(clean.dimensions)
-    print("SANITIZE_INFO: mesh Poisson charge (%d tris)" % len(clean.data.polygons))
+    print("SANITIZE_INFO: mesh nettoye charge (%d tris)" % len(clean.data.polygons))
 else:
     clean = src_obj.copy()
     clean.data = src_obj.data.copy()
@@ -165,7 +165,7 @@ spans = np.split(ds, start[1:])
 diag = float(np.linalg.norm(co.max(axis=0) - co.min(axis=0)))
 conflict = sum(1 for s in spans if len(s) > 2 and (s.max() - s.min()) > diag * 0.05)
 ratio = conflict / max(len(uniq), 1)
-print("SANITIZE_INFO: smart UV sur manifold, conflit residuel = %.1f%%" % (100 * ratio))
+print("SANITIZE_INFO: xatlas sur manifold, conflit residuel = %.1f%%" % (100 * ratio))
 if ratio > 0.10:
     print("SANITIZE_FAIL: UV encore en conflit apres remesh")
     sys.exit(5)
@@ -377,6 +377,33 @@ print("SANITIZE_OK: %s (%d tris)" % (dst, len(me.polygons)))
 '''
 
 
+def _soft_clean(src, target_tris):
+    import trimesh
+    import pymeshlab
+    scn = trimesh.load(str(src), process=False)
+    geoms = list(scn.geometry.values()) if hasattr(scn, "geometry") else [scn]
+    fused = trimesh.util.concatenate(geoms) if len(geoms) > 1 else geoms[0]
+    tmp = tempfile.mktemp(suffix=".ply")
+    fused.export(tmp)
+    ms = pymeshlab.MeshSet()
+    ms.load_new_mesh(tmp)
+    os.unlink(tmp)
+    ms.meshing_merge_close_vertices(threshold=pymeshlab.PercentageValue(0.2))
+    ms.meshing_remove_duplicate_faces()
+    try:
+        ms.meshing_remove_connected_component_by_diameter(
+            mincomponentdiag=pymeshlab.PercentageValue(1.0))
+    except Exception:
+        pass
+    if ms.current_mesh().face_number() > int(target_tris):
+        ms.meshing_decimation_quadric_edge_collapse(
+            targetfacenum=int(target_tris), preservenormal=True, planarquadric=True,
+            preserveboundary=True, boundaryweight=2.0, qualitythr=0.3)
+    out = tempfile.mktemp(suffix=".ply")
+    ms.save_current_mesh(out)
+    return out
+
+
 def _poisson_clean(src, target_tris):
     import numpy as np
     import trimesh
@@ -405,31 +432,39 @@ def _poisson_clean(src, target_tris):
 def sanitize_mesh(src, dst, res=8192, target_tris=900000, timeout_s=7200):
     import shutil
     blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
-    try:
-        ply = _poisson_clean(src, target_tris)
-    except Exception as exc:
-        ply = ""
-    with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
-        fp.write(BLENDER_SCRIPT)
-        script = fp.name
-    try:
-        env = {**os.environ, "AURORA_VENV_PY": sys.executable}
-        p = subprocess.run([blender, "--background", "--python", script, "--",
-                            str(src), str(dst), str(res), str(target_tris), ply],
-                           capture_output=True, text=True, timeout=timeout_s, env=env)
-    finally:
+    env = {**os.environ, "AURORA_VENV_PY": sys.executable}
+    result = None
+    for mode, cleaner in (("doux", _soft_clean), ("poisson", _poisson_clean)):
         try:
-            os.unlink(script)
-        except OSError:
-            pass
-    out = p.stdout or ""
-    for _l in out.splitlines():
-        if "UVPROBE" in _l:
-            print(_l, flush=True)
-    infos = [l for l in out.splitlines() if l.startswith("SANITIZE_INFO")]
-    ok = "SANITIZE_OK" in out and Path(dst).is_file() and Path(dst).stat().st_size > 1000
-    err = next((l for l in out.splitlines() if l.startswith("SANITIZE_FAIL")), "") or (p.stderr or "")[-250:]
-    return {"ok": ok, "info": " | ".join(infos), "error": None if ok else err, "output": str(dst)}
+            ply = cleaner(src, target_tris)
+        except Exception:
+            ply = ""
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
+            fp.write(BLENDER_SCRIPT)
+            script = fp.name
+        try:
+            p = subprocess.run([blender, "--background", "--python", script, "--",
+                                str(src), str(dst), str(res), str(target_tris), ply],
+                               capture_output=True, text=True, timeout=timeout_s, env=env)
+        finally:
+            try:
+                os.unlink(script)
+            except OSError:
+                pass
+        out = p.stdout or ""
+        for _l in out.splitlines():
+            if "UVPROBE" in _l:
+                print(_l, flush=True)
+        infos = [l for l in out.splitlines() if l.startswith("SANITIZE_INFO")]
+        ok = "SANITIZE_OK" in out and Path(dst).is_file() and Path(dst).stat().st_size > 1000
+        err = next((l for l in out.splitlines() if l.startswith("SANITIZE_FAIL")), "") or (p.stderr or "")[-250:]
+        result = {"ok": ok, "info": ("mode %s | " % mode) + " | ".join(infos),
+                  "error": None if ok else err, "output": str(dst), "mode": mode}
+        if ok:
+            break
+        if mode == "doux":
+            print("SANITIZE_RETRY: mode doux echoue (%s), tentative poisson" % err[:120], flush=True)
+    return result
 
 
 def main():
