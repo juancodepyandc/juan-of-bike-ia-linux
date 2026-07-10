@@ -184,8 +184,24 @@ def apply_manifest(glb_path, manifest, output_path, alpha_fallback=False, ao_pat
     original_bv_count = len(g.bufferViews)
     mask_cache = {}
     touched = []
+    labels = {z.get("label") for z in manifest["zones"]}
+    multi = len(manifest["zones"]) > 1 and len(labels) > 1
+    surface_keys = ("sheen", "sheenColor", "clearcoat", "clearcoatRoughness",
+                    "transmission", "ior", "thickness", "attenuationColor",
+                    "anisotropy", "anisotropyStrength", "specular",
+                    "roughness", "metallic")
     for zone in manifest["zones"]:
-        touched.append(_apply_zone(g, zone, alpha_fallback, mask_cache))
+        z = zone
+        if multi and not zone.get("target", {}).get("mask_png"):
+            ch = {k: v for k, v in dict(zone.get("channels", {})).items()
+                  if k not in surface_keys or zone.get("label") in ("glass", "water")}
+            if not ch:
+                continue
+            z = dict(zone)
+            z["channels"] = ch
+        touched.append(_apply_zone(g, z, alpha_fallback, mask_cache))
+    if not touched and n_materials:
+        touched = [0]
     ao_packed = False
     if ao_path:
         ao_bytes = Path(ao_path).read_bytes()

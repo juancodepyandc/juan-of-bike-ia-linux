@@ -156,6 +156,65 @@ except Exception as e:
     print("RIGIFY_ERROR: parenting failed: %s" % e)
     sys.exit(7)
 
+
+def _skin_ok(m):
+    if len(m.vertex_groups) < 4:
+        return False
+    counted = 0
+    for v in m.data.vertices[:2000]:
+        if len(v.groups):
+            counted += 1
+    return counted > 200
+
+
+if not _skin_ok(mesh):
+    print("RIGIFY_INFO: bone-heat vide (mesh dense) -> proxy decime + transfert de poids")
+    dup = mesh.copy()
+    dup.data = mesh.data.copy()
+    bpy.context.scene.collection.objects.link(dup)
+    for vg in list(dup.vertex_groups):
+        dup.vertex_groups.remove(vg)
+    if len(dup.data.polygons) > 40000:
+        dec = dup.modifiers.new("dec", "DECIMATE")
+        dec.ratio = 40000.0 / len(dup.data.polygons)
+        with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
+            bpy.ops.object.modifier_apply(modifier=dec.name)
+    ok_proxy = False
+    try:
+        with bpy.context.temp_override(active_object=rig, object=rig,
+                                       selected_editable_objects=[dup, rig],
+                                       selected_objects=[dup, rig]):
+            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+        ok_proxy = len(dup.vertex_groups) > 3
+    except Exception as e:
+        print("RIGIFY_INFO: bone-heat proxy echec: %s" % e)
+    if ok_proxy:
+        for vg in list(mesh.vertex_groups):
+            mesh.vertex_groups.remove(vg)
+        for vg in dup.vertex_groups:
+            mesh.vertex_groups.new(name=vg.name)
+        dt = mesh.modifiers.new("dt", "DATA_TRANSFER")
+        dt.object = dup
+        dt.use_vert_data = True
+        dt.data_types_verts = {"VGROUP_WEIGHTS"}
+        dt.vert_mapping = "NEAREST"
+        dt.layers_vgroup_select_src = "ALL"
+        dt.layers_vgroup_select_dst = "NAME"
+        with bpy.context.temp_override(object=mesh, active_object=mesh, selected_editable_objects=[mesh]):
+            bpy.ops.object.modifier_apply(modifier=dt.name)
+        has_arm = any(m2.type == "ARMATURE" for m2 in mesh.modifiers)
+        if not has_arm:
+            am = mesh.modifiers.new("aurora_arm", "ARMATURE")
+            am.object = rig
+        print("RIGIFY_INFO: transfert de poids applique (%d groupes)" % len(mesh.vertex_groups))
+    try:
+        bpy.data.objects.remove(dup, do_unlink=True)
+    except Exception:
+        pass
+    if not _skin_ok(mesh):
+        print("RIGIFY_ERROR: skinning toujours vide apres proxy")
+        sys.exit(8)
+
 # v77zn: optional motion baking — bake an aurora.motion.v1 descriptor into
 # an NLA action on the freshly generated rig before exporting.
 motion_path = argv[2] if len(argv) > 2 else ""
