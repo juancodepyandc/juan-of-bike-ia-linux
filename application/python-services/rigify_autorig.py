@@ -299,35 +299,56 @@ if not _skin_ok(mesh):
     except Exception as e:
         print("RIGIFY_INFO: bone-heat proxy echec: %s" % e)
     if ok_proxy:
-        from mathutils.kdtree import KDTree
+        import bmesh
+        from mathutils.bvhtree import BVHTree
         for vg in list(mesh.vertex_groups):
             mesh.vertex_groups.remove(vg)
-        name_by_idx = {}
+        gidx_map = {}
         for vg in dup.vertex_groups:
-            mesh.vertex_groups.new(name=vg.name)
-            name_by_idx[vg.index] = vg.name
-        kd = KDTree(len(dup.data.vertices))
-        for i, v in enumerate(dup.data.vertices):
-            kd.insert(v.co, i)
-        kd.balance()
-        proxy_groups = []
-        for v in dup.data.vertices:
-            proxy_groups.append([(g.group, g.weight) for g in v.groups if g.weight > 0.01])
-        buckets = {}
-        for vi, v in enumerate(mesh.data.vertices):
-            _co, pi, _d = kd.find(v.co)
-            for gidx, wt in proxy_groups[pi]:
-                name = name_by_idx.get(gidx)
-                if name is None:
-                    continue
-                buckets.setdefault((name, round(wt, 2)), []).append(vi)
-        for (name, wt), vids in buckets.items():
-            mesh.vertex_groups[name].add(vids, wt, "REPLACE")
+            gidx_map[vg.index] = mesh.vertex_groups.new(name=vg.name).index
+        proxy_w = [{g.group: g.weight for g in v.groups if g.weight > 0.005}
+                   for v in dup.data.vertices]
+        dg = bpy.context.evaluated_depsgraph_get()
+        bvh = BVHTree.FromObject(dup, dg)
+        polys = dup.data.polygons
+        pverts = dup.data.vertices
+        xf = dup.matrix_world.inverted() @ mesh.matrix_world
+        bm = bmesh.new()
+        bm.from_mesh(mesh.data)
+        dl = bm.verts.layers.deform.verify()
+        assigned = 0
+        for v in bm.verts:
+            loc, _n, fi, _d = bvh.find_nearest(xf @ v.co)
+            if fi is None:
+                continue
+            acc = {}
+            tot = 0.0
+            for pv in polys[fi].vertices:
+                d = (pverts[pv].co - loc).length + 1e-8
+                w = 1.0 / d
+                tot += w
+                for gi, gw in proxy_w[pv].items():
+                    acc[gi] = acc.get(gi, 0.0) + w * gw
+            if tot <= 0.0:
+                continue
+            inv = 1.0 / tot
+            dv = v[dl]
+            wrote = False
+            for gi, gw in acc.items():
+                val = gw * inv
+                if val > 0.01 and gi in gidx_map:
+                    dv[gidx_map[gi]] = val
+                    wrote = True
+            if wrote:
+                assigned += 1
+        bm.to_mesh(mesh.data)
+        bm.free()
         has_arm = any(m2.type == "ARMATURE" for m2 in mesh.modifiers)
         if not has_arm:
             am = mesh.modifiers.new("aurora_arm", "ARMATURE")
             am.object = rig
-        print("RIGIFY_INFO: transfert KDTree applique (%d groupes)" % len(mesh.vertex_groups))
+        print("RIGIFY_INFO: transfert barycentrique BVH applique (%d/%d verts, %d groupes)"
+              % (assigned, len(mesh.data.vertices), len(mesh.vertex_groups)))
     try:
         bpy.data.objects.remove(dup, do_unlink=True)
     except Exception:

@@ -120,11 +120,26 @@ def main():
     bpy.context.view_layer.objects.active = target
 
     try:
+        sc.world.light_settings.distance = max(max(target.dimensions) * 0.02, 0.001)
+    except Exception:
+        pass
+
+    try:
         bpy.ops.object.bake(type="AO", use_selected_to_active=False, margin=8)
     except Exception as exc:
         traceback.print_exc()
         print("AOBAKE_FAIL: bake exception: %r" % (exc,), flush=True)
         sys.exit(6)
+
+    try:
+        import numpy as np
+        px = np.empty(len(img.pixels), dtype=np.float32)
+        img.pixels.foreach_get(px)
+        rgb = px.reshape(-1, 4)
+        rgb[:, :3] = 0.55 + 0.45 * rgb[:, :3]
+        img.pixels.foreach_set(px)
+    except Exception:
+        pass
 
     img.filepath_raw = out_png
     img.file_format = "PNG"
