@@ -1184,6 +1184,25 @@ def _clean_product_photo(img):
         return img
 
 
+def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str]:
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+        from vlm_judge import ask_vlm
+        verdict = ask_vlm([png_path],
+                          "Photo candidate comme reference produit pour: '%s'. "
+                          "Est-elle utilisable pour une reconstruction 3D fidele ? "
+                          "Criteres stricts: le sujet est bien celui demande, fond neutre ou blanc, "
+                          "AUCUN filigrane/watermark/texte superpose, pas d'eclairage colore artistique, "
+                          "produit entier non coupe." % prompt,
+                          schema_hint='{"ok": true|false, "raison": "..."}',
+                          timeout=90)
+        if isinstance(verdict, dict) and "ok" in verdict:
+            return bool(verdict["ok"]), str(verdict.get("raison", ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return True, "vlm indisponible: accepte par defaut"
+
+
 def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool:
     """Cherche sur le web une VRAIE photo du sujet et la telecharge -> out_path.
     Utilise reference_visual_search.py (DuckDuckGo/Bing). Best-effort: False si rien d'exploitable."""
@@ -1231,7 +1250,15 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
                 img = _clean_product_photo(img)
                 img.save(dest)
-                log(f"PROGRESS:reference:photo nettoyee (fond/ombre supprimes)")
+                ok_photo, why = _reference_photo_ok(dest, prompt)
+                if not ok_photo:
+                    log(f"PROGRESS:reference:photo rejetee par l'IA ({why[:60]})")
+                    try:
+                        os.remove(dest)
+                    except OSError:
+                        pass
+                    continue
+                log(f"PROGRESS:reference:photo validee par l'IA et nettoyee")
                 saved += 1
                 log(f"PROGRESS:reference:vraie photo {saved} ({img.size[0]}x{img.size[1]}) : {url[:70]}")
                 if saved >= 3:
