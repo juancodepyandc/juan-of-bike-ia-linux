@@ -8,9 +8,9 @@ import tempfile
 
 import mathutils
 
-TEX_SIZE = 256
+TEX_SIZE = 512
 CARD_SEGMENTS = 10
-CARD_COUNT = 3
+CARD_COUNT = 8
 BILLOW_KEY_COUNT = 10
 GAS_KINDS = ("smoke", "steam", "fog")
 
@@ -19,8 +19,8 @@ GAS_TINT = {
     "steam": (0.92, 0.94, 0.96),
     "fog": (0.78, 0.80, 0.82),
 }
-GAS_ALPHA_GAIN = {"smoke": 1.0, "steam": 0.85, "fog": 0.6}
-GAS_EMISSION = {"smoke": 0.25, "steam": 0.5, "fog": 0.35}
+GAS_ALPHA_GAIN = {"smoke": 1.6, "steam": 1.25, "fog": 0.9}
+GAS_EMISSION = {"smoke": 0.9, "steam": 1.3, "fog": 0.7}
 
 
 def _parse_zone(bbox_zone):
@@ -67,7 +67,7 @@ def make_gas_texture(kind="smoke", name="AuroraGasTex", seed=7):
     cx = (xs / (TEX_SIZE - 1)) * 2.0 - 1.0
     cy = (ys / (TEX_SIZE - 1)) * 2.0 - 1.0
     radial = np.clip(1.0 - np.sqrt(cx * cx + cy * cy), 0.0, 1.0)
-    alpha = np.clip((noise - 0.32) * 2.2, 0.0, 1.0) * (radial ** 1.2)
+    alpha = np.clip((noise - 0.26) * 2.6, 0.0, 1.0) * (radial ** 1.1)
     alpha = np.clip(alpha * GAS_ALPHA_GAIN.get(kind, 1.0), 0.0, 1.0)
     tint = GAS_TINT.get(kind, GAS_TINT["smoke"])
     shade = 0.75 + 0.25 * noise
@@ -99,6 +99,14 @@ def make_gas_material(kind="smoke", name="AuroraGasMat", seed=7):
         if node.type == "BSDF_PRINCIPLED":
             bsdf = node
             break
+    try:
+        mat.surface_render_method = "BLENDED"
+    except Exception:
+        pass
+    try:
+        mat.use_backface_culling = False
+    except Exception:
+        pass
     img = make_gas_texture(kind, name + "Tex", seed=seed)
     tex = nt.nodes.new(type="ShaderNodeTexImage")
     tex.image = img
