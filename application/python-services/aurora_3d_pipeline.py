@@ -1944,6 +1944,24 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
+                    try:
+                        from reuv_rebake import reuv_rebake as _reuv
+                        _reuv_out = output_dir / f"{run_id}_mesh_reuv.glb"
+                        _rr = _reuv(mesh_path, _reuv_out, res=8192)
+                        audit.append({"stage": "reuv_rebake", **{k: _rr.get(k) for k in ("ok", "skipped", "info", "reason", "error")}})
+                        if _rr.get("ok") and not _rr.get("skipped") and _reuv_out.is_file() and _reuv_out.stat().st_size > 1000:
+                            try:
+                                import stage_quality_gate as _sqg
+                                _rg = _sqg.gate(mesh_path, _reuv_out, "reuv_rebake")
+                            except Exception as _ge:  # noqa: BLE001
+                                _rg = {"skipped": True, "reason": repr(_ge)}
+                            if not _rg.get("degraded"):
+                                mesh_path = _reuv_out
+                            else:
+                                audit.append({"stage": "reuv_rebake_revert", "reverted": True,
+                                              "reasons": _rg.get("reasons")})
+                    except Exception as _rex:  # noqa: BLE001
+                        audit.append({"stage": "reuv_rebake", "ok": False, "error": repr(_rex)})
                     _k_fid = (subject_kind_hint or kind or "").lower()
                     _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
                     if _fid_character and not _use_researched:

@@ -127,12 +127,13 @@ def main():
     if not low.data.uv_layers:
         print("BAKE_FAIL: low-poly has no UV map", flush=True); sys.exit(6)
 
-    # bake
+    size_ref = max(max(low.dimensions), 1e-4)
     try:
         bpy.ops.object.bake(
             type="NORMAL",
             use_selected_to_active=True,
-            cage_extrusion=0.03,
+            cage_extrusion=size_ref * 0.006,
+            max_ray_distance=size_ref * 0.02,
             margin=8,
             normal_space="TANGENT",
         )
