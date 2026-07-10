@@ -47,9 +47,9 @@ from typing import Any, Dict, List, Optional
 
 TARGET_TO_BONES: Dict[str, List[str]] = {
     # Locomotion
-    "legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R"],
-    "left_leg": ["thigh_fk.L", "shin_fk.L"],
-    "right_leg": ["thigh_fk.R", "shin_fk.R"],
+    "legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R", "foot_fk.L", "foot_fk.R"],
+    "left_leg": ["thigh_fk.L", "shin_fk.L", "foot_fk.L"],
+    "right_leg": ["thigh_fk.R", "shin_fk.R", "foot_fk.R"],
     "right_knee": ["thigh_fk.R", "shin_fk.R"],
     "hips_knees": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R", "torso"],
 
@@ -158,7 +158,12 @@ def _is_arm_bone(bone: str) -> bool:
 
 def _is_shin_bone(bone: str) -> bool:
     b = bone.lower()
-    return ("shin" in b) or ("forearm" in b) or b.startswith("foot") or b.startswith("toe")
+    return ("shin" in b) or ("forearm" in b)
+
+
+def _is_foot_bone(bone: str) -> bool:
+    b = bone.lower()
+    return b.startswith("foot") or b.startswith("toe") or "ankle" in b
 
 
 def _gait_phase_for_bone(bone: str, target: Optional[str]) -> float:
@@ -207,11 +212,24 @@ def _compile_gait(p: Dict[str, Any], fps: int, frame_count: int) -> List[Dict[st
     out: List[Dict[str, Any]] = []
     for bone in bones:
         phase = _gait_phase_for_bone(bone, target)
-        amp = amplitude_rad * (0.6 if _is_shin_bone(bone) else 1.0)
+        is_shin = _is_shin_bone(bone)
+        is_foot = _is_foot_bone(bone)
+        if is_foot:
+            amp = amplitude_rad * 0.38
+        elif is_shin:
+            amp = amplitude_rad * 0.9
+        else:
+            amp = amplitude_rad
         samples: List[tuple] = []
         for f in range(1, frame_count + 1):
             t = (f - 1) / fps
-            value = amp * math.sin(2 * math.pi * freq_hz * t + 2 * math.pi * phase)
+            s = math.sin(2 * math.pi * freq_hz * t + 2 * math.pi * phase)
+            if is_shin and not (target in _QUADRUPED_TARGETS):
+                value = -amp * (0.10 + 0.90 * max(0.0, s))
+            elif is_foot and not (target in _QUADRUPED_TARGETS):
+                value = amp * (0.30 * s + 0.25 * max(0.0, -s))
+            else:
+                value = amp * s
             samples.append((f, value))
         out.append({
             "bone": bone,

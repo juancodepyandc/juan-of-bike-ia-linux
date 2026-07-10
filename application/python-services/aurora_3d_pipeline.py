@@ -423,6 +423,18 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 intent = {}
         category = (intent or {}).get("category", "rigid_static")
         confidence = float((intent or {}).get("confidence") or 0.0)
+        if category == "fluid_flow":
+            try:
+                sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+                from sculpted_water_animator import animate_sculpted_water
+                sw = animate_sculpted_water(rescued_mesh, rigged_path)
+                if sw.get("ok"):
+                    return {"ok": True, "rigged_mesh": str(rigged_path),
+                            "motion_intent": "fluid_flow_sculpte",
+                            "water_info": sw.get("info"),
+                            "size_bytes": rigged_path.stat().st_size}
+            except Exception:  # noqa: BLE001
+                pass
         if category not in ("rigid_static", "", None):
             intent_path = output_dir / f"{run_id}_intent.json"
             intent_path.write_text(json.dumps(intent), encoding="utf-8")
