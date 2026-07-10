@@ -162,6 +162,16 @@ def make_root(name, objs):
     return root
 
 
+def _proxy_has_weights(m):
+    if len(m.vertex_groups) < 4:
+        return False
+    vs = m.data.vertices
+    step = max(1, len(vs) // 2000)
+    idx = range(0, len(vs), step)
+    counted = sum(1 for i in idx if len(vs[i].groups))
+    return counted > len(idx) * 0.25
+
+
 def ensure_skinning(arm, objs):
     need = [o for o in mesh_objects(objs) if len(o.vertex_groups) == 0]
     if arm is None or not need:
@@ -171,6 +181,8 @@ def ensure_skinning(arm, objs):
         d = o.copy()
         d.data = o.data.copy()
         bpy.context.scene.collection.objects.link(d)
+        for m2 in list(d.modifiers):
+            d.modifiers.remove(m2)
         if len(d.data.polygons) > 40000:
             m = d.modifiers.new("dec", "DECIMATE")
             m.ratio = 40000.0 / len(d.data.polygons)
@@ -181,29 +193,63 @@ def ensure_skinning(arm, objs):
     if len(dups) > 1:
         with bpy.context.temp_override(active_object=proxy, selected_editable_objects=dups, selected_objects=dups):
             bpy.ops.object.join()
+    rm = proxy.modifiers.new("rm", "REMESH")
+    rm.mode = "VOXEL"
+    rm.voxel_size = max(max(proxy.dimensions) / 60.0, 0.004)
+    with bpy.context.temp_override(object=proxy, active_object=proxy, selected_editable_objects=[proxy]):
+        bpy.ops.object.modifier_apply(modifier=rm.name)
+    try:
+        _before = set(o.name for o in bpy.context.scene.objects)
+        bpy.ops.object.select_all(action="DESELECT")
+        proxy.select_set(True)
+        bpy.context.view_layer.objects.active = proxy
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.separate(type="LOOSE")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        parts = [o for o in bpy.context.scene.objects
+                 if o.type == "MESH" and (o == proxy or o.name not in _before)]
+        if len(parts) > 1:
+            parts.sort(key=lambda o: len(o.data.polygons), reverse=True)
+            proxy = parts[0]
+            for o in parts[1:]:
+                bpy.data.objects.remove(o, do_unlink=True)
+    except Exception:
+        pass
     ok = False
     try:
         with bpy.context.temp_override(active_object=arm, object=arm,
                                        selected_editable_objects=[proxy, arm],
                                        selected_objects=[proxy, arm]):
             bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-        ok = len(proxy.vertex_groups) > 3
+        ok = _proxy_has_weights(proxy)
     except Exception:
         ok = False
     if ok:
+        from mathutils.kdtree import KDTree
+        kd = KDTree(len(proxy.data.vertices))
+        for i, v in enumerate(proxy.data.vertices):
+            kd.insert(v.co, i)
+        kd.balance()
+        name_by_idx = {vg.index: vg.name for vg in proxy.vertex_groups}
+        proxy_groups = []
+        for v in proxy.data.vertices:
+            proxy_groups.append([(g.group, g.weight) for g in v.groups if g.weight > 0.01])
         for o in need:
             for vg in proxy.vertex_groups:
                 if vg.name not in o.vertex_groups:
                     o.vertex_groups.new(name=vg.name)
-            dt = o.modifiers.new("dt", "DATA_TRANSFER")
-            dt.object = proxy
-            dt.use_vert_data = True
-            dt.data_types_verts = {"VGROUP_WEIGHTS"}
-            dt.vert_mapping = "NEAREST"
-            dt.layers_vgroup_select_src = "ALL"
-            dt.layers_vgroup_select_dst = "NAME"
-            with bpy.context.temp_override(object=o, active_object=o, selected_editable_objects=[o]):
-                bpy.ops.object.modifier_apply(modifier=dt.name)
+            xf = proxy.matrix_world.inverted() @ o.matrix_world
+            buckets = {}
+            for vi, v in enumerate(o.data.vertices):
+                _co, pi, _d = kd.find(xf @ v.co)
+                for gidx, wt in proxy_groups[pi]:
+                    name = name_by_idx.get(gidx)
+                    if name is None:
+                        continue
+                    buckets.setdefault((name, round(wt, 2)), []).append(vi)
+            for (name, wt), vids in buckets.items():
+                o.vertex_groups[name].add(vids, wt, "REPLACE")
             am = o.modifiers.new("aurora_arm", "ARMATURE")
             am.object = arm
     try:
