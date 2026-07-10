@@ -1178,6 +1178,10 @@ def _clean_product_photo(img):
         if not (0.02 < cov < 0.92):
             return img
         rgb = _np.asarray(img.convert("RGB")).astype(_np.float32)
+        nonwhite = rgb.min(axis=2) < 235
+        kept = float((mask & nonwhite).sum()) / max(float(nonwhite.sum()), 1.0)
+        if kept < 0.75:
+            return img
         out = _np.where(mask[..., None], rgb, 255.0).astype("uint8")
         return _Image.fromarray(out)
     except Exception:  # noqa: BLE001
@@ -1227,6 +1231,11 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         seen_urls = set()
         base = str(out_path)
         stem = base[:-4] if base.lower().endswith(".png") else base
+        for _old_v in range(2, 9):
+            try:
+                os.remove(f"{stem}_v{_old_v}.png")
+            except OSError:
+                pass
         for c in cands[:8]:
             url = c.get("imageUrl")
             if not url or url in seen_urls:
