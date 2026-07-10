@@ -192,9 +192,20 @@ def apply_manifest(glb_path, manifest, output_path, alpha_fallback=False, ao_pat
                     "roughness", "metallic")
     for zone in manifest["zones"]:
         z = zone
-        if multi and not zone.get("target", {}).get("mask_png"):
-            ch = {k: v for k, v in dict(zone.get("channels", {})).items()
-                  if k not in surface_keys or zone.get("label") in ("glass", "water")}
+        if not zone.get("target", {}).get("mask_png"):
+            ch = dict(zone.get("channels", {}))
+            if multi:
+                ch = {k: v for k, v in ch.items()
+                      if k not in surface_keys or zone.get("label") in ("glass", "water")}
+            ef = ch.get("emissiveFactor")
+            if isinstance(ef, str) and ef.startswith("#") and len(ef) >= 7:
+                try:
+                    ef = [int(ef[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
+                except ValueError:
+                    ef = None
+            if isinstance(ef, (list, tuple)) and len(ef) >= 3 and min(ef[:3]) > 0.7:
+                ch.pop("emissiveFactor", None)
+                ch.pop("emissiveStrength", None)
             if not ch:
                 continue
             z = dict(zone)
