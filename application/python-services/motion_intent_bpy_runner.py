@@ -1328,8 +1328,6 @@ def bake_fluid_flow(intent, scene, fps):
         return {"error": "fluid_mesh_builder import failed: %s" % exc}
     fl = intent.get("fluid_anim") or {}
     flow_type = fl.get("flow_type") or "ripple"
-    if flow_type in ("fountain", "pour"):
-        flow_type = "ripple"
     wave_amplitude = float(fl.get("wave_amplitude") or 0.35)
     loop_s = float(fl.get("loop_s") or 3.0)
     droplets = bool(fl.get("droplets") or False)
@@ -1343,14 +1341,25 @@ def bake_fluid_flow(intent, scene, fps):
                 zone = _fluid_zone_for(target, flow_type)
             except Exception as exc:
                 return {"error": "fluid zone failed: %s" % exc}
+    builds = []
     try:
+        if flow_type in ("fountain", "pour") and target is not None:
+            basin = fluid_mesh_builder.create_water_surface(
+                _fluid_zone_for(target, "ripple"), "ripple",
+                wave_amplitude=wave_amplitude, loop_s=loop_s, fps=fps,
+                name="AuroraBassin",
+            )
+            builds.append(basin)
         info = fluid_mesh_builder.create_water_surface(
             zone, flow_type, wave_amplitude=wave_amplitude,
-            loop_s=loop_s, fps=fps, droplets=droplets,
+            loop_s=loop_s, fps=fps,
+            droplets=droplets or flow_type in ("fountain", "pour"),
         )
+        builds.append(info)
     except Exception as exc:
         return {"error": "fluid build failed: %s" % exc}
-    total_frames = int(info.get("frame_count") or 1)
+    info["water_builds"] = len(builds)
+    total_frames = max(int(b.get("frame_count") or 1) for b in builds)
     scene.frame_start = 1
     scene.frame_end = max(total_frames, 1)
     info["flow_type"] = flow_type
