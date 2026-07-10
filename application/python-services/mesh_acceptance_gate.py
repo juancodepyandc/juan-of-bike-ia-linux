@@ -216,7 +216,7 @@ def _animation_markers(gltf: dict[str, Any]) -> dict[str, Any]:
     root_only = bool(total_channels) and len(unique_targets) == 1 and next(iter(unique_targets), None) == 0
     real_channel_motion = bool(total_channels >= 2 and len(unique_targets) >= 2) or (
         bool(total_channels) and not root_only and ("rotation" in target_paths or "translation" in target_paths)
-    )
+    ) or bool(total_channels and "weights" in target_paths)
     target_names = [
         nodes[i].get("name", f"node_{i}")
         for i in sorted(unique_targets)
