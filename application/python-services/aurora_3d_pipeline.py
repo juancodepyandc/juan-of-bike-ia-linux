@@ -401,6 +401,8 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
     if not parser.is_file() or not rigify.is_file():
         return {"ok": False, "error": "motion_parser.py or rigify_autorig.py missing"}
 
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     motion_json_path = output_dir / f"{run_id}_motion.json"
     rigged_path = output_dir / f"{run_id}_RIGGED.glb"
 
@@ -1948,7 +1950,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     try:
                         from mesh_sanitize import sanitize_mesh as _sanit
                         _san_out = output_dir / f"{run_id}_mesh_assaini.glb"
-                        _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=600000)
+                        _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=300000)
                         audit.append({"stage": "mesh_sanitize",
                                       **{k: _sr.get(k) for k in ("ok", "info", "error")}})
                         if _sr.get("ok") and _san_out.is_file() and _san_out.stat().st_size > 1000:
