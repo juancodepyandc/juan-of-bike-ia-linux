@@ -1883,6 +1883,20 @@ def run_pipeline(prompt: str, run_id: str, *,
                 except Exception:  # noqa: BLE001
                     pass
                 try:
+                    with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=10) as _pr:
+                        _loaded = json.loads(_pr.read().decode("utf-8")).get("models", [])
+                    for _lm in _loaded:
+                        _ur = urllib.request.Request(
+                            "http://127.0.0.1:11434/api/generate",
+                            data=json.dumps({"model": _lm.get("name"), "keep_alive": 0}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}, method="POST")
+                        with urllib.request.urlopen(_ur, timeout=30) as _uresp:
+                            _uresp.read()
+                    if _loaded:
+                        print("PROGRESS:memoire:%d modele(s) Ollama decharges avant TRELLIS" % len(_loaded), flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
                     _tr_cmd = [sys.executable, _wrapper, str(front_ref), str(mesh_path)]
                     if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
                         _stem = str(front_ref)
