@@ -150,8 +150,10 @@ def main():
         rig_out = os.path.join(out_dir, "actor_rigged.glb")
         rig_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rigify_autorig.py")
         try:
-            rp = subprocess.run([sys.executable, rig_script, "--input", actor_path, "--output", rig_out],
-                                capture_output=True, text=True, timeout=1500)
+            rig_cmd = [sys.executable, rig_script, "--input", actor_path, "--output", rig_out]
+            if relation == "sit_on":
+                rig_cmd += ["--pose", "sit"]
+            rp = subprocess.run(rig_cmd, capture_output=True, text=True, timeout=1500)
             if rp.returncode == 0 and os.path.isfile(rig_out) and os.path.getsize(rig_out) > 1000000:
                 actor_path = rig_out
                 rigged = True

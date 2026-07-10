@@ -276,10 +276,11 @@ def leg_bones(arm):
         elif any(k in low for k in ("shin", "calf", "lowerleg", "lower_leg", "loleg")):
             shins.append(pb)
     def pick(bones):
-        defs = [b for b in bones if b.name.lower().startswith("def-")]
+        defs = [b for b in bones if b.name.lower().startswith("def-") and not b.name.endswith(".001")]
         if defs:
             return defs
-        clean = [b for b in bones if not any(k in b.name.lower() for k in ("org-", "mch-", "tweak", "_ik", "ik_", "_fk"))]
+        clean = [b for b in bones if not any(k in b.name.lower() for k in ("org-", "mch-", "tweak", "_ik", "ik_", "_fk"))
+                 and not b.name.endswith(".001")]
         return clean or bones
     return pick(thighs), pick(shins)
 
@@ -407,13 +408,23 @@ def run(args, result):
     if arm is not None:
         thighs, shins = leg_bones(arm)
     posed = False
+    preposed = False
+    if arm is not None:
+        for pb in thighs:
+            d = (arm.matrix_world @ pb.tail) - (arm.matrix_world @ pb.head)
+            if d.length > 1e-9 and abs(d.normalized().z) < 0.55:
+                preposed = True
+                break
     if relation == "sit_on" and arm is not None and thighs and strategy in (None, "legs_bent"):
-        try:
-            force_fk(arm)
-            set_sit_pose(arm, thighs, shins, forward)
+        if preposed:
             posed = True
-        except Exception:
-            posed = False
+        else:
+            try:
+                force_fk(arm)
+                set_sit_pose(arm, thighs, shins, forward)
+                posed = True
+            except Exception:
+                posed = False
     result["has_armature"] = bool(arm is not None)
     result["posed"] = bool(posed)
     amin, amax = world_bounds(actor_objs)

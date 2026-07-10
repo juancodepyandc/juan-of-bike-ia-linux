@@ -163,6 +163,10 @@ if height > 0.01 and mh > 0.01:
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
         print("RIGIFY_INFO: metarig retourne 180 (orientation avant/arriere detectee)")
     metarig.location = ((mn.x + mx.x) / 2.0, (mn.y + mx.y) / 2.0, mn.z)
+    bpy.ops.object.select_all(action="DESELECT")
+    metarig.select_set(True)
+    bpy.context.view_layer.objects.active = metarig
+    bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
     print("RIGIFY_INFO: metarig ajuste: hauteur mesh %.3f, facteur %.3f" % (height, f))
 
 if metarig_kind != "quadruped":
@@ -399,6 +403,46 @@ if not _skin_ok(mesh):
         print("RIGIFY_ERROR: skinning toujours vide apres proxy")
         sys.exit(8)
 
+pose_mode = argv[4] if len(argv) > 4 else ""
+if pose_mode == "sit":
+    try:
+        feet = [rig.pose.bones.get(n) for n in ("foot_ik.L", "foot_ik.R")]
+        feet = [b for b in feet if b is not None]
+        th_ref = (rig.pose.bones.get("thigh_fk.L") or rig.pose.bones.get("DEF-thigh.L")
+                  or rig.pose.bones.get("thigh_fk.R"))
+        if feet and th_ref is not None:
+            lt = (th_ref.tail - th_ref.head).length
+            delta = mathutils.Vector((0.0, -lt * 1.0, lt * 0.92))
+            for pb in feet:
+                M = pb.matrix.copy()
+                M.translation = M.translation + delta
+                pb.matrix = M
+                bpy.context.view_layer.update()
+            dth = rig.pose.bones.get("DEF-thigh.L") or rig.pose.bones.get("DEF-thigh.R")
+            if dth is not None:
+                dirv = (dth.tail - dth.head).normalized()
+                print("RIGIFY_INFO: pose assise appliquee (cuisse dz=%.2f)" % dirv.z)
+            for mo in [o for o in bpy.context.scene.objects if o.type == "MESH" and o.name in orig_mesh_names]:
+                arm_mods = [m2 for m2 in mo.modifiers if m2.type == "ARMATURE"]
+                for m2 in arm_mods:
+                    with bpy.context.temp_override(object=mo, active_object=mo, selected_editable_objects=[mo]):
+                        bpy.ops.object.modifier_apply(modifier=m2.name)
+            bpy.ops.object.select_all(action="DESELECT")
+            rig.select_set(True)
+            bpy.context.view_layer.objects.active = rig
+            bpy.ops.object.mode_set(mode="POSE")
+            bpy.ops.pose.armature_apply(selected=False)
+            bpy.ops.object.mode_set(mode="OBJECT")
+            for mo in [o for o in bpy.context.scene.objects if o.type == "MESH" and o.name in orig_mesh_names]:
+                if not any(m2.type == "ARMATURE" for m2 in mo.modifiers):
+                    am2 = mo.modifiers.new("aurora_arm", "ARMATURE")
+                    am2.object = rig
+            print("RIGIFY_INFO: pose assise figee en rest (mesh bake + armature_apply)")
+        else:
+            print("RIGIFY_INFO: pose assise impossible (pas de foot_ik)")
+    except Exception as _pe:
+        print("RIGIFY_INFO: pose assise echec: %s" % _pe)
+
 # v77zn: optional motion baking — bake an aurora.motion.v1 descriptor into
 # an NLA action on the freshly generated rig before exporting.
 motion_path = argv[2] if len(argv) > 2 else ""
@@ -512,6 +556,7 @@ def main() -> int:
     ap.add_argument("--output", required=True, help="output rigged GLB path")
     ap.add_argument("--motion", default="", help="optional aurora.motion.v1 JSON to bake as NLA action")
     ap.add_argument("--metarig", default="human", help="metarig family: human or quadruped")
+    ap.add_argument("--pose", default="", help="static pose to apply via IK: sit")
     args = ap.parse_args()
 
     blender = find_blender()
@@ -547,7 +592,7 @@ def main() -> int:
     env = os.environ.copy()
     env["AURORA_PYTHON_SERVICES"] = os.path.dirname(os.path.abspath(__file__))
 
-    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs, args.metarig]
+    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs, args.metarig, args.pose]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
     except subprocess.TimeoutExpired:

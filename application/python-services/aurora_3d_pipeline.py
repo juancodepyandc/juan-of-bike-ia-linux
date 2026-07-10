@@ -410,8 +410,41 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
     )
     parsed = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
     if not parsed or parsed == "null":
+        classifier = REPO_ROOT / "application" / "python-services" / "motion_intent_classifier.py"
+        baker = REPO_ROOT / "application" / "python-services" / "motion_intent_baker.py"
+        intent = {}
+        if classifier.is_file() and baker.is_file():
+            try:
+                cp = subprocess.run([sys.executable, str(classifier), "--prompt", motion_prompt],
+                                    capture_output=True, text=True, timeout=180, check=False)
+                if cp.returncode == 0:
+                    intent = json.loads(cp.stdout)
+            except Exception:  # noqa: BLE001
+                intent = {}
+        category = (intent or {}).get("category", "rigid_static")
+        confidence = float((intent or {}).get("confidence") or 0.0)
+        if category not in ("rigid_static", "", None):
+            intent_path = output_dir / f"{run_id}_intent.json"
+            intent_path.write_text(json.dumps(intent), encoding="utf-8")
+            try:
+                bp = subprocess.run([sys.executable, str(baker),
+                                     "--intent", str(intent_path),
+                                     "--input", str(rescued_mesh),
+                                     "--output", str(rigged_path)],
+                                    capture_output=True, text=True, timeout=1800, check=False)
+                bres = json.loads(bp.stdout) if (bp.stdout or "").strip().startswith("{") else {}
+            except Exception as exc:  # noqa: BLE001
+                bres = {"ok": False, "error": repr(exc)}
+            if bres.get("ok") and rigged_path.is_file() and rigged_path.stat().st_size > 1000:
+                return {"ok": True, "rigged_mesh": str(rigged_path),
+                        "motion_intent": category,
+                        "intent_confidence": confidence,
+                        "size_bytes": rigged_path.stat().st_size}
+            return {"ok": False,
+                    "error": f"intent bake failed ({category}): {bres.get('error') or bres.get('raw') or 'sans sortie'}",
+                    "motion_intent": category, "motion_prompt": motion_prompt}
         return {"ok": False, "error": "motion_parser returned null (no verb match)",
-                "motion_prompt": motion_prompt}
+                "motion_intent": category, "motion_prompt": motion_prompt}
     motion_json_path.write_text(parsed, encoding="utf-8")
 
     metarig_family = "quadruped" if (subject_kind or "").lower() in ("quadruped", "creature") else "human"
@@ -1822,7 +1855,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                             if os.path.isfile(_vp):
                                 _tr_cmd.append(_vp)
                     _p = subprocess.run(_tr_cmd,
-                                        env=_tr_env, capture_output=True, text=True, timeout=2400)
+                                        env=_tr_env, capture_output=True, text=True, timeout=6000)
                     for _line in reversed((_p.stdout or "").splitlines()):
                         if _line.startswith("AURORA_TRELLIS_RESULT:"):
                             _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
