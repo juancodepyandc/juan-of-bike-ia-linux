@@ -1299,8 +1299,8 @@ def _fluid_zone_for(target, flow_type):
     if flow_type == "waterfall":
         return {"center": [cx, y1, (z0 + z1) * 0.5],
                 "size": [max(dx * 0.6, 0.02), max(dy * 0.08, 0.01), h]}
-    return {"center": [cx, cy, z1],
-            "size": [max(dx, 0.05), max(dy, 0.05), max(h * 0.1, 0.02)]}
+    return {"center": [cx, cy, z0 + h * 0.24],
+            "size": [max(dx * 0.72, 0.05), max(dy * 0.72, 0.05), max(h * 0.06, 0.02)]}
 
 
 def _gas_zone_for(target):

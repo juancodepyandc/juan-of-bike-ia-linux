@@ -195,8 +195,7 @@ def apply_manifest(glb_path, manifest, output_path, alpha_fallback=False, ao_pat
         if not zone.get("target", {}).get("mask_png"):
             ch = dict(zone.get("channels", {}))
             if multi:
-                ch = {k: v for k, v in ch.items()
-                      if k not in surface_keys or zone.get("label") in ("glass", "water")}
+                ch = {k: v for k, v in ch.items() if k not in surface_keys}
             ef = ch.get("emissiveFactor")
             if isinstance(ef, str) and ef.startswith("#") and len(ef) >= 7:
                 try:
