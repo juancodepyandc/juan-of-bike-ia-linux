@@ -1328,6 +1328,8 @@ def bake_fluid_flow(intent, scene, fps):
         return {"error": "fluid_mesh_builder import failed: %s" % exc}
     fl = intent.get("fluid_anim") or {}
     flow_type = fl.get("flow_type") or "ripple"
+    if flow_type in ("fountain", "pour"):
+        flow_type = "ripple"
     wave_amplitude = float(fl.get("wave_amplitude") or 0.35)
     loop_s = float(fl.get("loop_s") or 3.0)
     droplets = bool(fl.get("droplets") or False)
