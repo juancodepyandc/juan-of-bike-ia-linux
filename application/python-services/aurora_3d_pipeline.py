@@ -1226,17 +1226,17 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
     if not script.is_file():
         return False
     try:
-        queries = [f"{prompt} product photo high resolution"]
+        front_queries = [f"{prompt} product photo high resolution"]
         if _re_mod.search(r"\b(led|rgb|argb|lumineux|neon|strimer|lightstrip)\b", prompt, _re_mod.I):
-            queries.insert(0, f"{prompt} product photo unlit powered off white leds")
-        cands = []
-        for query in queries:
+            front_queries.insert(0, f"{prompt} product photo unlit powered off white leds")
+        query_specs = [(q, 2) for q in front_queries]
+        query_specs.append((f"{prompt} back rear view product photo", 1))
+
+        def _fetch_cands(query):
             p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "8"],
                                capture_output=True, text=True, timeout=70)
             line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
-            cands = (json.loads(line).get("candidates") if line else None) or []
-            if cands:
-                break
+            return (json.loads(line).get("candidates") if line else None) or []
         import io as _io, base64 as _b64
         from PIL import Image as _Image
         saved = 0
@@ -1248,44 +1248,48 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 os.remove(f"{stem}_v{_old_v}.png")
             except OSError:
                 pass
-        for c in cands[:8]:
-            url = c.get("imageUrl")
-            if not url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-            try:
-                d = subprocess.run([sys.executable, str(script), "--download-url", url],
-                                   capture_output=True, text=True, timeout=45)
-                dl = next((l for l in reversed((d.stdout or "").splitlines()) if l.strip().startswith("{")), "")
-                dj = json.loads(dl) if dl else {}
-                if not dj.get("ok") or not dj.get("base64"):
+        for query, quota in query_specs:
+            if saved >= 3:
+                break
+            got_for_query = 0
+            for c in _fetch_cands(query)[:8]:
+                if saved >= 3 or got_for_query >= quota:
+                    break
+                url = c.get("imageUrl")
+                if not url or url in seen_urls:
                     continue
-                img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"])))
-                if img.mode != "RGB":
-                    img = img.convert("RGBA")
-                    _bg = _Image.new("RGB", img.size, (255, 255, 255))
-                    _bg.paste(img, mask=img.split()[3])
-                    img = _bg
-                if min(img.size) < 320:
+                seen_urls.add(url)
+                try:
+                    d = subprocess.run([sys.executable, str(script), "--download-url", url],
+                                       capture_output=True, text=True, timeout=45)
+                    dl = next((l for l in reversed((d.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+                    dj = json.loads(dl) if dl else {}
+                    if not dj.get("ok") or not dj.get("base64"):
+                        continue
+                    img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"])))
+                    if img.mode != "RGB":
+                        img = img.convert("RGBA")
+                        _bg = _Image.new("RGB", img.size, (255, 255, 255))
+                        _bg.paste(img, mask=img.split()[3])
+                        img = _bg
+                    if min(img.size) < 320:
+                        continue
+                    dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
+                    img = _clean_product_photo(img)
+                    img.save(dest)
+                    ok_photo, why = _reference_photo_ok(dest, prompt)
+                    if not ok_photo:
+                        log(f"PROGRESS:reference:photo rejetee par l'IA ({why[:60]})")
+                        try:
+                            os.remove(dest)
+                        except OSError:
+                            pass
+                        continue
+                    saved += 1
+                    got_for_query += 1
+                    log(f"PROGRESS:reference:photo {saved} validee par l'IA ({img.size[0]}x{img.size[1]}) : {url[:70]}")
+                except Exception:  # noqa: BLE001
                     continue
-                dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
-                img = _clean_product_photo(img)
-                img.save(dest)
-                ok_photo, why = _reference_photo_ok(dest, prompt)
-                if not ok_photo:
-                    log(f"PROGRESS:reference:photo rejetee par l'IA ({why[:60]})")
-                    try:
-                        os.remove(dest)
-                    except OSError:
-                        pass
-                    continue
-                log(f"PROGRESS:reference:photo validee par l'IA et nettoyee")
-                saved += 1
-                log(f"PROGRESS:reference:vraie photo {saved} ({img.size[0]}x{img.size[1]}) : {url[:70]}")
-                if saved >= 3:
-                    return True
-            except Exception:  # noqa: BLE001
-                continue
         return saved > 0
     except Exception:  # noqa: BLE001
         return False
