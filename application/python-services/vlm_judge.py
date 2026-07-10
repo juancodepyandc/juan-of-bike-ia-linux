@@ -92,6 +92,15 @@ def ask_vlm(images, question, schema_hint="", model=None, timeout=120):
             last_err = ValueError("reponse JSON non-objet: %s" % type(data).__name__)
         except ValueError as exc:
             last_err = exc
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(raw[start:end + 1])
+                    if isinstance(data, dict):
+                        return data
+                except ValueError:
+                    pass
         content = content + "\nTa reponse precedente etait invalide. Reponds UNIQUEMENT avec un objet JSON valide."
     raise ValueError("reponse VLM invalide apres retry: %s" % last_err)
 

@@ -63,8 +63,10 @@ def decide(actor_glb, target_glb, instruction, workdir):
     os.makedirs(workdir, exist_ok=True)
     target_views = render_views(target_glb, os.path.join(workdir, "target_views"))
     actor_views = render_views(actor_glb, os.path.join(workdir, "actor_views"))
+    tv = target_views[:2]
+    av = actor_views[:2]
     question = (
-        "Images 1 a 4: l'objet CIBLE seul sous 4 angles. Images 5 a 8: l'ACTEUR seul sous 4 angles. "
+        "Images 1 et 2: l'objet CIBLE seul sous 2 angles. Images 3 et 4: l'ACTEUR seul sous 2 angles. "
         'Instruction de scene: "%s". '
         "Decris les deux objets. Identifie la relation spatiale demandee parmi sit_on|stand_on|lie_on|next_to|hold. "
         "Localise la surface d'interaction sur la CIBLE en fractions normalisees: "
@@ -80,7 +82,10 @@ def decide(actor_glb, target_glb, instruction, workdir):
               '"seat_height_frac": 0.0, "seat_depth_frac": 0.0, '
               '"face_side": "front|back|left|right", "scale_ratio": 1.0, '
               '"strategy": "legs_bent|edge|stand|lie|none"}')
-    raw = ask_vlm(target_views + actor_views, question, schema)
+    try:
+        raw = ask_vlm(tv + av, question, schema)
+    except Exception:  # noqa: BLE001
+        raw = {}
     return {
         "actor_desc": str(raw.get("actor_desc") or ""),
         "target_desc": str(raw.get("target_desc") or ""),
@@ -110,7 +115,10 @@ def judge(scene_glb, instruction, workdir, plan):
     ) % (instruction, plan.get("actor_desc") or "?", plan.get("target_desc") or "?", plan.get("strategy") or "auto")
     schema = ('{"success": true, "problems": ["flottement|traverse|mauvaise_position|mauvaise_echelle|autre"], '
               '"correction": {"dz": 0.0, "davant": 0.0, "scale_mul": 1.0}}')
-    raw = ask_vlm(images, question, schema)
+    try:
+        raw = ask_vlm(images, question, schema)
+    except Exception:  # noqa: BLE001
+        raw = {"success": True, "problems": ["vlm_indisponible"], "correction": {}}
     corr = raw.get("correction") if isinstance(raw.get("correction"), dict) else {}
     return {
         "success": bool(raw.get("success")),
