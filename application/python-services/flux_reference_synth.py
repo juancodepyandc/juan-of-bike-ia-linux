@@ -120,20 +120,27 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
 
 def post_prompt(workflow: dict, comfy_base: str = COMFY_BASE) -> str:
     body = json.dumps({"prompt": workflow}).encode("utf-8")
-    req = urllib.request.Request(
-        f"{comfy_base}/prompt", data=body,
-        headers={"Content-Type": "application/json"}, method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as r:
-        data = json.loads(r.read().decode("utf-8"))
-    pid = data.get("prompt_id")
-    if not pid:
-        raise RuntimeError(f"ComfyUI /prompt did not return prompt_id: {data}")
-    return pid
+    last_exc = None
+    for attempt in range(5):
+        req = urllib.request.Request(
+            f"{comfy_base}/prompt", data=body,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                data = json.loads(r.read().decode("utf-8"))
+            pid = data.get("prompt_id")
+            if not pid:
+                raise RuntimeError(f"ComfyUI /prompt did not return prompt_id: {data}")
+            return pid
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            time.sleep(10 * (attempt + 1))
+    raise RuntimeError(f"ComfyUI /prompt unreachable after retries: {last_exc}")
 
 
 def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
-                 timeout_s: float = 600.0, interval_s: float = 2.0) -> dict:
+                 timeout_s: float = 3600.0, interval_s: float = 2.0) -> dict:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
@@ -144,7 +151,7 @@ def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
             entry = data.get(prompt_id)
             if entry and entry.get("status", {}).get("completed"):
                 return entry
-        except urllib.error.URLError:
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
             pass
         time.sleep(interval_s)
     raise TimeoutError(f"FLUX prompt {prompt_id} did not finish in {timeout_s}s")

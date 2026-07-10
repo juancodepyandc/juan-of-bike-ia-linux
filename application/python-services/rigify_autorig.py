@@ -97,21 +97,63 @@ except Exception as e:
     print("RIGIFY_ERROR: cannot enable Rigify addon: %s" % e)
     sys.exit(4)
 
-# Add a humanoid metarig at origin
-bpy.ops.object.armature_human_metarig_add()
+metarig_kind = argv[3] if len(argv) > 3 else "human"
+orig_mesh_names = set(o.name for o in meshes)
+if metarig_kind == "quadruped":
+    try:
+        bpy.ops.object.armature_wolf_metarig_add()
+    except Exception:
+        bpy.ops.object.armature_basic_quadruped_metarig_add()
+else:
+    bpy.ops.object.armature_human_metarig_add()
 metarig = bpy.context.object
 metarig.name = "aurora_metarig"
+print("RIGIFY_INFO: metarig %s" % metarig_kind)
 
 # Compute mesh bounding box height, scale metarig to match
+import mathutils, math
 mesh = meshes[0]
-bb = [mesh.matrix_world @ v.co for v in mesh.data.vertices]
-if bb:
-    ys = [v.z for v in bb]
-    height = max(ys) - min(ys)
-    if height > 0.01:
-        metarig.scale = (height, height, height)
-        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        metarig.location.z = min(ys)
+mn = mathutils.Vector((1e18,) * 3)
+mx = mathutils.Vector((-1e18,) * 3)
+for mo in meshes:
+    for corner in mo.bound_box:
+        w = mo.matrix_world @ mathutils.Vector(corner)
+        mn = mathutils.Vector(map(min, mn, w))
+        mx = mathutils.Vector(map(max, mx, w))
+height = mx.z - mn.z
+mh = max((max(b.head_local.z, b.tail_local.z) for b in metarig.data.bones), default=0.0)
+if height > 0.01 and mh > 0.01:
+    f = height / mh
+    metarig.scale = (f, f, f)
+    if metarig_kind == "quadruped" and (mx.x - mn.x) > (mx.y - mn.y):
+        metarig.rotation_euler = (0.0, 0.0, math.radians(90.0))
+    bpy.ops.object.select_all(action="DESELECT")
+    metarig.select_set(True)
+    bpy.context.view_layer.objects.active = metarig
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    metarig.location = ((mn.x + mx.x) / 2.0, (mn.y + mx.y) / 2.0, mn.z)
+    print("RIGIFY_INFO: metarig ajuste: hauteur mesh %.3f, facteur %.3f" % (height, f))
+
+if metarig_kind != "quadruped":
+    bpy.context.view_layer.objects.active = metarig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = metarig.data.edit_bones
+    arm_prefixes = ("upper_arm", "forearm", "hand", "palm", "thumb",
+                    "f_index", "f_middle", "f_ring", "f_pinky")
+    for side, sgn in (("L", 1.0), ("R", -1.0)):
+        ua = eb.get("upper_arm.%s" % side)
+        if ua is None:
+            continue
+        pivot = ua.head.copy()
+        rot = mathutils.Matrix.Rotation(math.radians(55.0) * sgn, 4, "Y")
+        for b in eb:
+            if not b.name.endswith(side):
+                continue
+            if any(b.name.startswith(p) for p in arm_prefixes):
+                b.head = rot @ (b.head - pivot) + pivot
+                b.tail = rot @ (b.tail - pivot) + pivot
+    bpy.ops.object.mode_set(mode="OBJECT")
+    print("RIGIFY_INFO: bras metarig abaisses en A-pose")
 
 # Generate the rig via Rigify
 bpy.context.view_layer.objects.active = metarig
@@ -174,43 +216,120 @@ if not _skin_ok(mesh):
     bpy.context.scene.collection.objects.link(dup)
     for vg in list(dup.vertex_groups):
         dup.vertex_groups.remove(vg)
+    for m2 in list(dup.modifiers):
+        dup.modifiers.remove(m2)
     if len(dup.data.polygons) > 40000:
         dec = dup.modifiers.new("dec", "DECIMATE")
         dec.ratio = 40000.0 / len(dup.data.polygons)
         with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
             bpy.ops.object.modifier_apply(modifier=dec.name)
+    rm = dup.modifiers.new("rm", "REMESH")
+    rm.mode = "VOXEL"
+    rm.voxel_size = max(max(dup.dimensions) / 150.0, 0.002)
+    with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
+        bpy.ops.object.modifier_apply(modifier=rm.name)
+    if len(dup.data.polygons) > 60000:
+        dec2 = dup.modifiers.new("dec2", "DECIMATE")
+        dec2.ratio = 60000.0 / len(dup.data.polygons)
+        with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
+            bpy.ops.object.modifier_apply(modifier=dec2.name)
+    print("RIGIFY_INFO: proxy remesh manifold: %d polys" % len(dup.data.polygons))
     ok_proxy = False
     try:
         with bpy.context.temp_override(active_object=rig, object=rig,
                                        selected_editable_objects=[dup, rig],
                                        selected_objects=[dup, rig]):
             bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-        ok_proxy = len(dup.vertex_groups) > 3
+        ok_proxy = _skin_ok(dup)
     except Exception as e:
         print("RIGIFY_INFO: bone-heat proxy echec: %s" % e)
     if ok_proxy:
+        from mathutils.kdtree import KDTree
         for vg in list(mesh.vertex_groups):
             mesh.vertex_groups.remove(vg)
+        name_by_idx = {}
         for vg in dup.vertex_groups:
             mesh.vertex_groups.new(name=vg.name)
-        dt = mesh.modifiers.new("dt", "DATA_TRANSFER")
-        dt.object = dup
-        dt.use_vert_data = True
-        dt.data_types_verts = {"VGROUP_WEIGHTS"}
-        dt.vert_mapping = "NEAREST"
-        dt.layers_vgroup_select_src = "ALL"
-        dt.layers_vgroup_select_dst = "NAME"
-        with bpy.context.temp_override(object=mesh, active_object=mesh, selected_editable_objects=[mesh]):
-            bpy.ops.object.modifier_apply(modifier=dt.name)
+            name_by_idx[vg.index] = vg.name
+        kd = KDTree(len(dup.data.vertices))
+        for i, v in enumerate(dup.data.vertices):
+            kd.insert(v.co, i)
+        kd.balance()
+        proxy_groups = []
+        for v in dup.data.vertices:
+            proxy_groups.append([(g.group, g.weight) for g in v.groups if g.weight > 0.01])
+        buckets = {}
+        for vi, v in enumerate(mesh.data.vertices):
+            _co, pi, _d = kd.find(v.co)
+            for gidx, wt in proxy_groups[pi]:
+                name = name_by_idx.get(gidx)
+                if name is None:
+                    continue
+                buckets.setdefault((name, round(wt, 2)), []).append(vi)
+        for (name, wt), vids in buckets.items():
+            mesh.vertex_groups[name].add(vids, wt, "REPLACE")
         has_arm = any(m2.type == "ARMATURE" for m2 in mesh.modifiers)
         if not has_arm:
             am = mesh.modifiers.new("aurora_arm", "ARMATURE")
             am.object = rig
-        print("RIGIFY_INFO: transfert de poids applique (%d groupes)" % len(mesh.vertex_groups))
+        print("RIGIFY_INFO: transfert KDTree applique (%d groupes)" % len(mesh.vertex_groups))
     try:
         bpy.data.objects.remove(dup, do_unlink=True)
     except Exception:
         pass
+    if not _skin_ok(mesh):
+        print("RIGIFY_INFO: bone-heat impossible -> skinning proximite-os (numpy)")
+        import numpy as np
+        inv = mesh.matrix_world.inverted()
+        arm_mw = rig.matrix_world
+        bones = [b for b in rig.data.bones if b.use_deform]
+        if not bones:
+            bones = list(rig.data.bones)
+        n = len(mesh.data.vertices)
+        co = np.empty(n * 3, dtype=np.float64)
+        mesh.data.vertices.foreach_get("co", co)
+        co = co.reshape(n, 3)
+        d1 = np.full(n, 1e18)
+        d2 = np.full(n, 1e18)
+        i1 = np.zeros(n, dtype=np.int32)
+        i2 = np.zeros(n, dtype=np.int32)
+        for bi, b in enumerate(bones):
+            h = np.array(inv @ (arm_mw @ b.head_local))
+            t = np.array(inv @ (arm_mw @ b.tail_local))
+            ab = t - h
+            denom = float(ab.dot(ab)) or 1e-12
+            tt = np.clip(((co - h) @ ab) / denom, 0.0, 1.0)
+            proj = h + tt[:, None] * ab
+            d = np.linalg.norm(co - proj, axis=1)
+            closer1 = d < d1
+            d2 = np.where(closer1, d1, d2)
+            i2 = np.where(closer1, i1, i2)
+            d1 = np.where(closer1, d, d1)
+            i1 = np.where(closer1, bi, i1)
+            closer2 = (~closer1) & (d < d2)
+            d2 = np.where(closer2, d, d2)
+            i2 = np.where(closer2, bi, i2)
+        eps = 1e-8
+        w1 = (d2 + eps) / (d1 + d2 + 2 * eps)
+        w2 = 1.0 - w1
+        w2 = np.where(d2 > 4.0 * (d1 + eps), 0.0, w2)
+        for vg in list(mesh.vertex_groups):
+            mesh.vertex_groups.remove(vg)
+        vgs = [mesh.vertex_groups.new(name=b.name) for b in bones]
+        buckets = {}
+        wq1 = np.round(w1 * 20) / 20.0
+        wq2 = np.round(w2 * 20) / 20.0
+        for vi in range(n):
+            if wq1[vi] > 0.01:
+                buckets.setdefault((int(i1[vi]), float(wq1[vi])), []).append(vi)
+            if wq2[vi] > 0.01:
+                buckets.setdefault((int(i2[vi]), float(wq2[vi])), []).append(vi)
+        for (bi, wt), vids in buckets.items():
+            vgs[bi].add(vids, wt, "REPLACE")
+        if not any(m2.type == "ARMATURE" for m2 in mesh.modifiers):
+            am = mesh.modifiers.new("aurora_arm", "ARMATURE")
+            am.object = rig
+        print("RIGIFY_INFO: proximite-os applique (%d os, %d verts)" % (len(bones), n))
     if not _skin_ok(mesh):
         print("RIGIFY_ERROR: skinning toujours vide apres proxy")
         sys.exit(8)
@@ -270,7 +389,11 @@ except Exception:
     pass
 
 # Export rigged GLB
-bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.select_all(action="DESELECT")
+rig.select_set(True)
+for o in bpy.context.scene.objects:
+    if o.type == "MESH" and o.name in orig_mesh_names:
+        o.select_set(True)
 try:
     # v80z: Blender 5.1 glTF I/O default animation mode dropped cross-object
     # actions when motion_baker assigned actions to multiple objects (rig +
@@ -281,7 +404,7 @@ try:
         export_format="GLB",
         export_skins=True,
         export_animations=True,
-        use_selection=False,
+        use_selection=True,
     )
     try:
         # Blender 5.1+ accepts these knobs; older versions ignore unknown kw.
@@ -323,6 +446,7 @@ def main() -> int:
     ap.add_argument("--input",  required=True, help="input GLB path")
     ap.add_argument("--output", required=True, help="output rigged GLB path")
     ap.add_argument("--motion", default="", help="optional aurora.motion.v1 JSON to bake as NLA action")
+    ap.add_argument("--metarig", default="human", help="metarig family: human or quadruped")
     args = ap.parse_args()
 
     blender = find_blender()
@@ -358,7 +482,7 @@ def main() -> int:
     env = os.environ.copy()
     env["AURORA_PYTHON_SERVICES"] = os.path.dirname(os.path.abspath(__file__))
 
-    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs]
+    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs, args.metarig]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
     except subprocess.TimeoutExpired:

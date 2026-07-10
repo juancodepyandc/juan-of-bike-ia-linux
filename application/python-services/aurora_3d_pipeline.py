@@ -391,7 +391,7 @@ def run_hunyuan3d(image_path: Path, run_id: str, output_dir: Path,
 
 
 def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
-                    output_dir: Path) -> dict:
+                    output_dir: Path, subject_kind: str = "") -> dict:
     """Optional last stage: parse motion_prompt, run rigify_autorig with the
     parsed JSON to get an animated GLB. Falls back to None if motion parser
     can't extract anything (returns null)."""
@@ -414,11 +414,13 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 "motion_prompt": motion_prompt}
     motion_json_path.write_text(parsed, encoding="utf-8")
 
+    metarig_family = "quadruped" if (subject_kind or "").lower() in ("quadruped", "creature") else "human"
     proc = subprocess.run(
         [sys.executable, str(rigify),
          "--input", str(rescued_mesh),
          "--output", str(rigged_path),
-         "--motion", str(motion_json_path)],
+         "--motion", str(motion_json_path),
+         "--metarig", metarig_family],
         capture_output=True, timeout=900, check=False,
     )
     rigify_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
@@ -1798,8 +1800,14 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
+                    _k_fid = (subject_kind_hint or kind or "").lower()
+                    _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
+                    if _fid_character and not _use_researched:
+                        audit.append({"stage": "texture_fidelity", "skipped": True,
+                                      "reason": "personnage: texture TRELLIS.2 native conservee (protection visage/yeux)"})
                     if (os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1"
                             and front_ref.is_file()
+                            and not (_fid_character and not _use_researched)
                             and (_use_researched or not multi_view)):
                         try:
                             print("PROGRESS:texture_fidelity:projection de la photo de reference sur la face avant...", flush=True)
@@ -1815,12 +1823,24 @@ def run_pipeline(prompt: str, run_id: str, *,
                                 if _fl.startswith("AURORA_FIDELITY_RESULT:"):
                                     _fid = json.loads(_fl[len("AURORA_FIDELITY_RESULT:"):]); break
                             if _fid.get("ok") and _fid_out.is_file() and _fid_out.stat().st_size > 1000:
-                                mesh_path = _fid_out
-                                audit.append({"stage": "texture_fidelity", "ok": True,
-                                              "mesh_path": str(_fid_out),
-                                              "axis": _fid.get("axis"),
-                                              "coverage": _fid.get("coverage"),
-                                              "refined": _fid.get("refined")})
+                                try:
+                                    import stage_quality_gate as _sqg
+                                    _gate = _sqg.gate(mesh_path, _fid_out, "texture_fidelity")
+                                except Exception as _ge:  # noqa: BLE001
+                                    _gate = {"skipped": True, "reason": repr(_ge)}
+                                if _gate.get("degraded"):
+                                    audit.append({"stage": "texture_fidelity", "ok": False,
+                                                  "reverted": True,
+                                                  "gate": _gate,
+                                                  "note": "projection annulee: degradation detectee, mesh precedent conserve"})
+                                else:
+                                    mesh_path = _fid_out
+                                    audit.append({"stage": "texture_fidelity", "ok": True,
+                                                  "mesh_path": str(_fid_out),
+                                                  "gate": _gate,
+                                                  "axis": _fid.get("axis"),
+                                                  "coverage": _fid.get("coverage"),
+                                                  "refined": _fid.get("refined")})
                             else:
                                 audit.append({"stage": "texture_fidelity", "ok": False,
                                               "error": _fid.get("error") or (_fp.stderr or _fp.stdout or "no output")[-300:]})
@@ -2073,6 +2093,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     if motion_prompt:
         motion_res = run_motion_bake(
             Path(final_mesh_path), motion_prompt, run_id, output_dir,
+            subject_kind=(subject_kind_hint or kind or ""),
         )
         audit.append({"stage": "motion_bake",
                       "motion_prompt": motion_prompt,
@@ -2088,13 +2109,29 @@ def run_pipeline(prompt: str, run_id: str, *,
             _mw_res = _gmw.apply_manifest(str(final_delivery_mesh),
                                           material_manifest_data, _mw_out,
                                           alpha_fallback=True)
+            _mw_gate = {}
+            if _mw_res.get("ok"):
+                try:
+                    import stage_quality_gate as _sqg
+                    _mw_gate = _sqg.gate(final_delivery_mesh, _mw_out, "material_write")
+                except Exception as _ge:  # noqa: BLE001
+                    _mw_gate = {"skipped": True, "reason": repr(_ge)}
             audit.append({"stage": "material_write", "ok": bool(_mw_res.get("ok")),
                           "output": _mw_res.get("output"),
                           "zones_applied": _mw_res.get("zones_applied"),
                           "materials_touched": _mw_res.get("materials_touched"),
                           "extensions_used": _mw_res.get("extensions_used"),
+                          "gate": _mw_gate,
                           "errors": _mw_res.get("errors")})
             if _mw_res.get("ok"):
+                if _mw_gate.get("degraded"):
+                    try:
+                        shutil.copyfile(str(final_delivery_mesh), _mw_out)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    audit.append({"stage": "material_write_revert", "reverted": True,
+                                  "reasons": _mw_gate.get("reasons"),
+                                  "note": "materiaux annules: degradation detectee, mesh precedent copie en final"})
                 final_delivery_mesh = _mw_out
         except Exception as exc:
             audit.append({"stage": "material_write", "ok": False, "error": repr(exc)})
