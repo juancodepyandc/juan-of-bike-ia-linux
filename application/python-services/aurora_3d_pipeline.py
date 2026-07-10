@@ -1944,24 +1944,26 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
+                    raw_dense_path = Path(str(mesh_path))
                     try:
-                        from reuv_rebake import reuv_rebake as _reuv
-                        _reuv_out = output_dir / f"{run_id}_mesh_reuv.glb"
-                        _rr = _reuv(mesh_path, _reuv_out, res=8192)
-                        audit.append({"stage": "reuv_rebake", **{k: _rr.get(k) for k in ("ok", "skipped", "info", "reason", "error")}})
-                        if _rr.get("ok") and not _rr.get("skipped") and _reuv_out.is_file() and _reuv_out.stat().st_size > 1000:
+                        from mesh_sanitize import sanitize_mesh as _sanit
+                        _san_out = output_dir / f"{run_id}_mesh_assaini.glb"
+                        _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=600000)
+                        audit.append({"stage": "mesh_sanitize",
+                                      **{k: _sr.get(k) for k in ("ok", "info", "error")}})
+                        if _sr.get("ok") and _san_out.is_file() and _san_out.stat().st_size > 1000:
                             try:
                                 import stage_quality_gate as _sqg
-                                _rg = _sqg.gate(mesh_path, _reuv_out, "reuv_rebake")
+                                _rg = _sqg.gate(mesh_path, _san_out, "mesh_sanitize")
                             except Exception as _ge:  # noqa: BLE001
                                 _rg = {"skipped": True, "reason": repr(_ge)}
                             if not _rg.get("degraded"):
-                                mesh_path = _reuv_out
+                                mesh_path = _san_out
                             else:
-                                audit.append({"stage": "reuv_rebake_revert", "reverted": True,
+                                audit.append({"stage": "mesh_sanitize_revert", "reverted": True,
                                               "reasons": _rg.get("reasons")})
                     except Exception as _rex:  # noqa: BLE001
-                        audit.append({"stage": "reuv_rebake", "ok": False, "error": repr(_rex)})
+                        audit.append({"stage": "mesh_sanitize", "ok": False, "error": repr(_rex)})
                     _k_fid = (subject_kind_hint or kind or "").lower()
                     _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
                     if _fid_character and not _use_researched:
@@ -2104,7 +2106,8 @@ def run_pipeline(prompt: str, run_id: str, *,
             # 4096. Recupere le detail de surface fin du mesh dense sur le mesh allege du viewer.
             _nres = int(os.environ.get("AURORA_NORMAL_RES",
                         "8192" if os.environ.get("AURORA_TRELLIS2_MANAGED") == "1" else "4096"))
-            _bake_res = _bake.bake_normal(str(mesh_path), str(final_mesh_path), _normal_png, res=_nres)
+            _dense_src = str(raw_dense_path) if ("raw_dense_path" in dir() and Path(str(raw_dense_path)).is_file()) else str(mesh_path)
+            _bake_res = _bake.bake_normal(_dense_src, str(final_mesh_path), _normal_png, res=_nres)
             audit.append({"stage": "bake_normal", **_bake_res})
             if _bake_res.get("ok") and Path(_normal_png).is_file():
                 try:
