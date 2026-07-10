@@ -1871,6 +1871,7 @@ def run_pipeline(prompt: str, run_id: str, *,
 
     # Stage 2 — Hunyuan3D
     mesh_path = output_dir / f"{run_id}_mesh.glb"
+    _keep_native = False
     if not force and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
         audit.append({"stage": "hunyuan3d", "skipped": True,
                       "mesh_path": str(mesh_path),
@@ -1951,6 +1952,12 @@ def run_pipeline(prompt: str, run_id: str, *,
                                   "reason": "geometrie TRELLIS.2 single-image native conservee "
                                             "(qualite maximale prouvee; assainissement reserve "
                                             "aux meshes issus de fusion multi-vues)"})
+                    _keep_native = not str(motion_prompt or "").strip()
+                    if _keep_native:
+                        audit.append({"stage": "native_quality", "ok": True,
+                                      "note": "objet statique TRELLIS.2: mesh+texture natifs "
+                                              "integralement conserves (fidelity/taubin/optimize/"
+                                              "normal-bake sautes, prouves destructeurs)"})
                     _k_fid = (subject_kind_hint or kind or "").lower()
                     _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
                     if _fid_character and not _use_researched:
@@ -1958,6 +1965,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                                       "reason": "personnage: texture TRELLIS.2 native conservee (protection visage/yeux)"})
                     if (os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1"
                             and front_ref.is_file()
+                            and not _keep_native
                             and not (_fid_character and not _use_researched)
                             and (_use_researched or not multi_view)):
                         try:
@@ -2080,17 +2088,23 @@ def run_pipeline(prompt: str, run_id: str, *,
     # painted UVs), leaving raw Marching-Cubes faceting (the "cubique" look).
     # Taubin moves vertex positions only (UVs/topology untouched), so it removes
     # faceting while keeping the texture intact.
-    try:
-        import mesh_taubin as _taubin  # noqa: WPS433
-        _sm_out = str(output_dir / f"{run_id}_mesh_smooth.glb")
-        _sm = _taubin.taubin_smooth(final_mesh_path, _sm_out,
-                                    iterations=int(os.environ.get("AURORA_TAUBIN_ITERS", "8")))
-        audit.append({"stage": "taubin_smooth", **{k: v for k, v in _sm.items() if k != "output"}})
-        if _sm.get("ok"):
-            final_mesh_path = _sm_out
-    except Exception as exc:  # noqa: BLE001
-        audit.append({"stage": "taubin_smooth", "ok": False, "error": repr(exc)})
-    if _optimize_textured_mesh is not None:
+    if _keep_native:
+        audit.append({"stage": "taubin_smooth", "skipped": True, "reason": "mesh natif conserve"})
+    else:
+        try:
+            import mesh_taubin as _taubin  # noqa: WPS433
+            _sm_out = str(output_dir / f"{run_id}_mesh_smooth.glb")
+            _sm = _taubin.taubin_smooth(final_mesh_path, _sm_out,
+                                        iterations=int(os.environ.get("AURORA_TAUBIN_ITERS", "8")))
+            audit.append({"stage": "taubin_smooth", **{k: v for k, v in _sm.items() if k != "output"}})
+            if _sm.get("ok"):
+                final_mesh_path = _sm_out
+        except Exception as exc:  # noqa: BLE001
+            audit.append({"stage": "taubin_smooth", "ok": False, "error": repr(exc)})
+    if _keep_native:
+        audit.append({"stage": "optimize_textured_mesh", "skipped": True,
+                      "reason": "mesh natif conserve (decimation prouvee destructrice des UV natifs)"})
+    elif _optimize_textured_mesh is not None:
         try:
             opt_out = str(output_dir / f"{run_id}_mesh_opt.glb")
             opt_res = _optimize_textured_mesh(rescue["final_mesh"], opt_out, kind)
@@ -2106,7 +2120,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     # Best-effort: skipped silently if Blender unavailable, the bake fails, or
     # the inputs aren't valid.
     try:
-        if Path(mesh_path).is_file() and Path(final_mesh_path).is_file() and str(final_mesh_path) != str(mesh_path):
+        if (not _keep_native and Path(mesh_path).is_file() and Path(final_mesh_path).is_file()
+                and str(final_mesh_path) != str(mesh_path)):
             import bake_normal_map as _bake  # noqa: WPS433
             _normal_png = str(output_dir / f"{run_id}_normal.png")
             # Normal map haute-res: 8192 en mode precision max (AURORA_TRELLIS2_MANAGED), sinon
