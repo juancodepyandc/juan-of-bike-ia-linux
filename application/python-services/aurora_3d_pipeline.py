@@ -2178,6 +2178,13 @@ def run_pipeline(prompt: str, run_id: str, *,
                             _canon["vision"] = _enriched.get("vision")
                     except Exception as _vexc:
                         _vision_info = {"ok": False, "error": repr(_vexc)}
+                try:
+                    from zone_mask_baker import bake_zone_masks as _bzm
+                    _mask_res = _bzm(str(final_mesh_path), _canon,
+                                     str(output_dir / f"{run_id}_masques"))
+                    audit.append({"stage": "zone_masks", **_mask_res})
+                except Exception as _mze:  # noqa: BLE001
+                    audit.append({"stage": "zone_masks", "ok": False, "error": repr(_mze)})
                 _materials_json = output_dir / f"{run_id}_materials.json"
                 _materials_json.write_text(json.dumps(_canon, ensure_ascii=True, indent=2),
                                            encoding="utf-8")
