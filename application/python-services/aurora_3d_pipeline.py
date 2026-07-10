@@ -1873,6 +1873,16 @@ def run_pipeline(prompt: str, run_id: str, *,
                 _tr_env.setdefault("ATTN_BACKEND", "xformers")
                 _tr = {}
                 try:
+                    _free_req = urllib.request.Request(
+                        "http://127.0.0.1:8188/free",
+                        data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                        headers={"Content-Type": "application/json"}, method="POST")
+                    with urllib.request.urlopen(_free_req, timeout=30) as _fr:
+                        _fr.read()
+                    print("PROGRESS:memoire:modeles FLUX decharges de ComfyUI avant TRELLIS", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
                     _tr_cmd = [sys.executable, _wrapper, str(front_ref), str(mesh_path)]
                     if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
                         _stem = str(front_ref)
