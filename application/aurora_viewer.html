@@ -122,11 +122,12 @@ function charge(url, nom) {
 
 function classer(nom) {
   const n = nom.toLowerCase();
-  if (n.includes('final_materials') || n.includes('_vlm') || n.includes('scene_homme_chaise_assis'))
+  if (n.includes('final_materials') || n.includes('_vlm') || n.includes('assis'))
     return { badge: '⭐ FINAL', poids: 0, final: true };
-  if (n.includes('apercu')) return { badge: 'aperçu léger', poids: 1, final: false };
-  if (n.includes('rigged')) return { badge: 'animé brut', poids: 2, final: false };
-  return { badge: 'étape', poids: 3, final: false };
+  if (n.includes('apercu')) return { badge: 'aperçu f3d', poids: 1, final: false };
+  const etapes = ['_mesh', '_rigged', '_rough', '_smooth', '_opt', '_ao', '_fidelity', '_reuv', '_assaini'];
+  if (etapes.some(e => n.includes(e))) return { badge: 'étape', poids: 3, final: false };
+  return { badge: 'résultat', poids: 1, final: false };
 }
 
 async function lienDossier(url) {
