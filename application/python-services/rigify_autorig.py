@@ -131,6 +131,37 @@ if height > 0.01 and mh > 0.01:
     metarig.select_set(True)
     bpy.context.view_layer.objects.active = metarig
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    import numpy as np
+    _vs = mesh.data.vertices
+    _co = np.empty(len(_vs) * 3, dtype=np.float64)
+    _vs.foreach_get("co", _co)
+    _co = _co.reshape(-1, 3)[::max(1, len(_vs) // 50000)]
+    _mw = np.array(mesh.matrix_world)
+    _w = _co @ _mw[:3, :3].T + _mw[:3, 3]
+    flip = False
+    if metarig_kind == "quadruped":
+        _ymid = (_w[:, 1].min() + _w[:, 1].max()) / 2.0
+        _front = _w[_w[:, 1] > _ymid]
+        _back = _w[_w[:, 1] <= _ymid]
+        if len(_front) > 50 and len(_back) > 50:
+            mesh_head_dir = 1.0 if np.percentile(_front[:, 2], 95) >= np.percentile(_back[:, 2], 95) else -1.0
+            hb = metarig.data.bones.get("head")
+            if hb is not None:
+                rig_head_dir = 1.0 if hb.head_local.y >= 0 else -1.0
+                flip = mesh_head_dir != rig_head_dir
+    else:
+        _z5 = np.percentile(_w[:, 2], 5)
+        _low = _w[_w[:, 2] <= _z5 + 0.03 * height]
+        if len(_low) > 50:
+            mesh_front_dir = 1.0 if (_low[:, 1].mean() - _w[:, 1].mean()) > 0 else -1.0
+            tb = metarig.data.bones.get("toe.L") or metarig.data.bones.get("foot.L")
+            if tb is not None:
+                rig_front_dir = 1.0 if (tb.tail_local.y - tb.head_local.y) >= 0 else -1.0
+                flip = mesh_front_dir != rig_front_dir
+    if flip:
+        metarig.rotation_euler = (0.0, 0.0, math.radians(180.0))
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+        print("RIGIFY_INFO: metarig retourne 180 (orientation avant/arriere detectee)")
     metarig.location = ((mn.x + mx.x) / 2.0, (mn.y + mx.y) / 2.0, mn.z)
     print("RIGIFY_INFO: metarig ajuste: hauteur mesh %.3f, facteur %.3f" % (height, f))
 
@@ -202,11 +233,11 @@ except Exception as e:
 def _skin_ok(m):
     if len(m.vertex_groups) < 4:
         return False
-    counted = 0
-    for v in m.data.vertices[:2000]:
-        if len(v.groups):
-            counted += 1
-    return counted > 200
+    vs = m.data.vertices
+    step = max(1, len(vs) // 2000)
+    idx = range(0, len(vs), step)
+    counted = sum(1 for i in idx if len(vs[i].groups))
+    return counted > len(idx) * 0.25
 
 
 if not _skin_ok(mesh):
@@ -225,7 +256,7 @@ if not _skin_ok(mesh):
             bpy.ops.object.modifier_apply(modifier=dec.name)
     rm = dup.modifiers.new("rm", "REMESH")
     rm.mode = "VOXEL"
-    rm.voxel_size = max(max(dup.dimensions) / 150.0, 0.002)
+    rm.voxel_size = max(max(dup.dimensions) / 60.0, 0.004)
     with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
         bpy.ops.object.modifier_apply(modifier=rm.name)
     if len(dup.data.polygons) > 60000:
@@ -233,6 +264,26 @@ if not _skin_ok(mesh):
         dec2.ratio = 60000.0 / len(dup.data.polygons)
         with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
             bpy.ops.object.modifier_apply(modifier=dec2.name)
+    try:
+        _before_names = set(o.name for o in bpy.context.scene.objects)
+        bpy.ops.object.select_all(action="DESELECT")
+        dup.select_set(True)
+        bpy.context.view_layer.objects.active = dup
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.separate(type="LOOSE")
+        bpy.ops.object.mode_set(mode="OBJECT")
+        _parts = [o for o in bpy.context.scene.objects
+                  if o.type == "MESH" and (o == dup or o.name not in _before_names)]
+        if len(_parts) > 1:
+            _parts.sort(key=lambda o: len(o.data.polygons), reverse=True)
+            dup = _parts[0]
+            for o in _parts[1:]:
+                bpy.data.objects.remove(o, do_unlink=True)
+            print("RIGIFY_INFO: proxy: %d ilots supprimes, plus grande composante gardee (%d polys)"
+                  % (len(_parts) - 1, len(dup.data.polygons)))
+    except Exception as _ie:
+        print("RIGIFY_INFO: separation ilots echec: %s" % _ie)
     print("RIGIFY_INFO: proxy remesh manifold: %d polys" % len(dup.data.polygons))
     ok_proxy = False
     try:
@@ -277,22 +328,29 @@ if not _skin_ok(mesh):
         bpy.data.objects.remove(dup, do_unlink=True)
     except Exception:
         pass
-    if not _skin_ok(mesh):
-        print("RIGIFY_INFO: bone-heat impossible -> skinning proximite-os (numpy)")
+
+    def _proximity_assign(idxs):
         import numpy as np
         inv = mesh.matrix_world.inverted()
         arm_mw = rig.matrix_world
-        bones = [b for b in rig.data.bones if b.use_deform]
-        if not bones:
-            bones = list(rig.data.bones)
-        n = len(mesh.data.vertices)
-        co = np.empty(n * 3, dtype=np.float64)
+        minor = ("toe", "ear", "jaw", "tongue", "teeth", "eye", "brow", "lip",
+                 "cheek", "nose", "forehead", "temple", "chin", "thumb",
+                 "f_index", "f_middle", "f_ring", "f_pinky", "palm", "r_", "f_",
+                 "breast", "pelvis")
+        bones = [b for b in rig.data.bones if b.use_deform
+                 and not any(b.name.lower().replace("def-", "").startswith(p) for p in minor)]
+        if len(bones) < 4:
+            bones = [b for b in rig.data.bones if b.use_deform] or list(rig.data.bones)
+        n_all = len(mesh.data.vertices)
+        co = np.empty(n_all * 3, dtype=np.float64)
         mesh.data.vertices.foreach_get("co", co)
-        co = co.reshape(n, 3)
-        d1 = np.full(n, 1e18)
-        d2 = np.full(n, 1e18)
-        i1 = np.zeros(n, dtype=np.int32)
-        i2 = np.zeros(n, dtype=np.int32)
+        co = co.reshape(n_all, 3)
+        sel = np.asarray(idxs, dtype=np.int64)
+        co = co[sel]
+        n = len(sel)
+        K = 4
+        dk = np.full((n, K), 1e18)
+        ik = np.zeros((n, K), dtype=np.int32)
         for bi, b in enumerate(bones):
             h = np.array(inv @ (arm_mw @ b.head_local))
             t = np.array(inv @ (arm_mw @ b.tail_local))
@@ -301,35 +359,42 @@ if not _skin_ok(mesh):
             tt = np.clip(((co - h) @ ab) / denom, 0.0, 1.0)
             proj = h + tt[:, None] * ab
             d = np.linalg.norm(co - proj, axis=1)
-            closer1 = d < d1
-            d2 = np.where(closer1, d1, d2)
-            i2 = np.where(closer1, i1, i2)
-            d1 = np.where(closer1, d, d1)
-            i1 = np.where(closer1, bi, i1)
-            closer2 = (~closer1) & (d < d2)
-            d2 = np.where(closer2, d, d2)
-            i2 = np.where(closer2, bi, i2)
+            worst = dk[:, K - 1]
+            better = d < worst
+            dk[better, K - 1] = d[better]
+            ik[better, K - 1] = bi
+            order = np.argsort(dk, axis=1)
+            dk = np.take_along_axis(dk, order, axis=1)
+            ik = np.take_along_axis(ik, order, axis=1)
         eps = 1e-8
-        w1 = (d2 + eps) / (d1 + d2 + 2 * eps)
-        w2 = 1.0 - w1
-        w2 = np.where(d2 > 4.0 * (d1 + eps), 0.0, w2)
-        for vg in list(mesh.vertex_groups):
-            mesh.vertex_groups.remove(vg)
-        vgs = [mesh.vertex_groups.new(name=b.name) for b in bones]
+        w = 1.0 / (dk + eps) ** 2
+        w = np.where(dk > 3.0 * (dk[:, :1] + eps), 0.0, w)
+        w = w / w.sum(axis=1, keepdims=True)
+        vg_by_name = {vg.name: vg for vg in mesh.vertex_groups}
+        vgs = []
+        for b in bones:
+            vg = vg_by_name.get(b.name)
+            if vg is None:
+                vg = mesh.vertex_groups.new(name=b.name)
+            vgs.append(vg)
         buckets = {}
-        wq1 = np.round(w1 * 20) / 20.0
-        wq2 = np.round(w2 * 20) / 20.0
+        wq = np.round(w * 50) / 50.0
         for vi in range(n):
-            if wq1[vi] > 0.01:
-                buckets.setdefault((int(i1[vi]), float(wq1[vi])), []).append(vi)
-            if wq2[vi] > 0.01:
-                buckets.setdefault((int(i2[vi]), float(wq2[vi])), []).append(vi)
+            for k in range(K):
+                if wq[vi, k] > 0.015:
+                    buckets.setdefault((int(ik[vi, k]), float(wq[vi, k])), []).append(int(sel[vi]))
         for (bi, wt), vids in buckets.items():
-            vgs[bi].add(vids, wt, "REPLACE")
-        if not any(m2.type == "ARMATURE" for m2 in mesh.modifiers):
-            am = mesh.modifiers.new("aurora_arm", "ARMATURE")
-            am.object = rig
-        print("RIGIFY_INFO: proximite-os applique (%d os, %d verts)" % (len(bones), n))
+            vgs[bi].add(vids, wt, "ADD")
+        print("RIGIFY_INFO: proximite-os: %d verts assignes sur %d os" % (n, len(bones)))
+
+    empty_idx = [i for i, v in enumerate(mesh.data.vertices)
+                 if sum(g.weight for g in v.groups) < 0.05]
+    if empty_idx:
+        print("RIGIFY_INFO: %d verts sans poids -> remplissage proximite" % len(empty_idx))
+        _proximity_assign(empty_idx)
+    if not any(m2.type == "ARMATURE" for m2 in mesh.modifiers):
+        am = mesh.modifiers.new("aurora_arm", "ARMATURE")
+        am.object = rig
     if not _skin_ok(mesh):
         print("RIGIFY_ERROR: skinning toujours vide apres proxy")
         sys.exit(8)

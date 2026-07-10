@@ -1123,6 +1123,34 @@ def _should_research_reference(prompt: str) -> bool:
     return False
 
 
+def _clean_product_photo(img):
+    try:
+        from rembg import remove as _rembg_remove
+        import numpy as _np
+        from PIL import Image as _Image
+        rgba = _rembg_remove(img.convert("RGB"))
+        a = _np.asarray(rgba)[:, :, 3].astype(_np.float32) / 255.0
+        mask = a > 0.5
+        if mask.sum() < 500:
+            return img
+        try:
+            from scipy import ndimage as _ndi
+            lab, n = _ndi.label(mask)
+            if n > 1:
+                sizes = _ndi.sum(mask, lab, range(1, n + 1))
+                mask = lab == (1 + int(_np.argmax(sizes)))
+        except Exception:  # noqa: BLE001
+            pass
+        cov = float(mask.mean())
+        if not (0.02 < cov < 0.92):
+            return img
+        rgb = _np.asarray(img.convert("RGB")).astype(_np.float32)
+        out = _np.where(mask[..., None], rgb, 255.0).astype("uint8")
+        return _Image.fromarray(out)
+    except Exception:  # noqa: BLE001
+        return img
+
+
 def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool:
     """Cherche sur le web une VRAIE photo du sujet et la telecharge -> out_path.
     Utilise reference_visual_search.py (DuckDuckGo/Bing). Best-effort: False si rien d'exploitable."""
@@ -1159,11 +1187,18 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 dj = json.loads(dl) if dl else {}
                 if not dj.get("ok") or not dj.get("base64"):
                     continue
-                img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"]))).convert("RGB")
+                img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"])))
+                if img.mode != "RGB":
+                    img = img.convert("RGBA")
+                    _bg = _Image.new("RGB", img.size, (255, 255, 255))
+                    _bg.paste(img, mask=img.split()[3])
+                    img = _bg
                 if min(img.size) < 320:
                     continue
                 dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
+                img = _clean_product_photo(img)
                 img.save(dest)
+                log(f"PROGRESS:reference:photo nettoyee (fond/ombre supprimes)")
                 saved += 1
                 log(f"PROGRESS:reference:vraie photo {saved} ({img.size[0]}x{img.size[1]}) : {url[:70]}")
                 if saved >= 3:
