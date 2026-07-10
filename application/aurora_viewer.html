@@ -4,18 +4,37 @@
 <meta charset="utf-8">
 <title>Aurora Viewer</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #1c1f24; color: #dfe3e8; font-family: sans-serif; }
+  html, body { margin: 0; height: 100%; background: #1c1f24; color: #dfe3e8;
+               font-family: system-ui, sans-serif; overflow: hidden; }
   #canvas { position: fixed; inset: 0; }
-  #panel { position: fixed; top: 0; left: 0; bottom: 0; width: 280px; overflow-y: auto;
-           background: rgba(18,20,24,.92); padding: 10px; z-index: 2; }
-  #panel h3 { margin: 6px 0; font-size: 13px; color: #9ad; }
-  #panel a { display: block; color: #cde; text-decoration: none; font-size: 12px;
-             padding: 3px 6px; border-radius: 4px; word-break: break-all; }
-  #panel a:hover { background: #2a3140; }
-  #panel a.actif { background: #2f6; color: #123; }
-  #hud { position: fixed; right: 10px; top: 10px; z-index: 2; background: rgba(18,20,24,.85);
-         padding: 8px 12px; border-radius: 6px; font-size: 12px; max-width: 380px; }
-  #togglePanel { position: fixed; left: 290px; top: 10px; z-index: 3; }
+  #panel { position: fixed; top: 0; left: 0; bottom: 0; width: 300px; overflow-y: auto;
+           background: rgba(16,18,22,.94); padding: 10px; z-index: 2; transition: transform .2s; }
+  #panel.cache { transform: translateX(-100%); }
+  #panel h2 { font-size: 15px; margin: 4px 0 10px; color: #7fd0ff; }
+  .dossier { margin-bottom: 6px; border-radius: 8px; background: #20242b; padding: 6px 8px; }
+  .dossier > .titre { font-size: 13px; font-weight: 600; color: #a8c7e8; cursor: pointer;
+                      display: flex; justify-content: space-between; }
+  .fichier { display: block; color: #cfd8e3; text-decoration: none; font-size: 12px;
+             padding: 4px 8px; margin: 2px 0; border-radius: 5px; cursor: pointer; }
+  .fichier:hover { background: #2c3442; }
+  .fichier.actif { background: #2e7d4f; color: #fff; }
+  .fichier .badge { font-size: 10px; background: #38536e; color: #bfe0ff; border-radius: 4px;
+                    padding: 1px 5px; margin-right: 5px; }
+  .fichier.final .badge { background: #2e7d4f; color: #dfffe9; }
+  .etapes { display: none; }
+  .dossier.ouvert .etapes { display: block; }
+  .plus { font-size: 11px; color: #7d8ca0; cursor: pointer; padding: 2px 8px; }
+  #barre { position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 2;
+           background: rgba(16,18,22,.92); border-radius: 10px; padding: 8px 14px;
+           display: flex; gap: 12px; align-items: center; font-size: 13px; }
+  #barre button { background: #2c3442; color: #dfe3e8; border: 0; border-radius: 6px;
+                  padding: 6px 12px; font-size: 14px; cursor: pointer; }
+  #barre button:hover { background: #3a4556; }
+  #hud { position: fixed; right: 12px; top: 12px; z-index: 2; background: rgba(16,18,22,.88);
+         padding: 8px 12px; border-radius: 8px; font-size: 12px; max-width: 400px; }
+  #ouvrirPanel { position: fixed; left: 12px; top: 12px; z-index: 3; background: #2c3442;
+                 color: #fff; border: 0; border-radius: 6px; padding: 8px 10px; cursor: pointer;
+                 display: none; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -25,61 +44,89 @@
 </script>
 </head>
 <body>
-<div id="panel"><h3>Générations</h3><div id="liste">chargement…</div></div>
-<button id="togglePanel">⇔</button>
-<div id="hud">Choisis un GLB à gauche (ou glisse un fichier). Animations en lecture automatique.</div>
+<div id="panel"><h2>Aurora — Générations 3D</h2><div id="liste">chargement…</div></div>
+<button id="ouvrirPanel">☰ fichiers</button>
+<div id="hud">Clique un fichier à gauche — les ⭐ FINAL sont les bons résultats.<br>Glisser-déposer un .glb fonctionne aussi.</div>
+<div id="barre">
+  <button id="btnPanel" title="fichiers">☰</button>
+  <button id="btnPlay" title="lecture/pause">⏸</button>
+  <label>vitesse <input id="vitesse" type="range" min="0.1" max="2" step="0.1" value="1" style="width:90px"></label>
+  <button id="btnCam" title="recadrer">🎯</button>
+  <button id="btnFond" title="fond clair/sombre">☀</button>
+</div>
 <div id="canvas"></div>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(devicePixelRatio);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.getElementById('canvas').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x23272e);
+const fonds = [0x23272e, 0xf2f2f0];
+let fondIdx = 0;
+scene.background = new THREE.Color(fonds[fondIdx]);
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.001, 5000);
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
 const clock = new THREE.Clock();
-let mixer = null, racine = null;
+let mixer = null, racine = null, enLecture = true;
+
+const draco = new DRACOLoader().setDecoderPath('/node_modules/three/examples/jsm/libs/draco/gltf/');
+const ktx2 = new KTX2Loader().setTranscoderPath('/node_modules/three/examples/jsm/libs/basis/').detectSupport(renderer);
+const loader = new GLTFLoader().setDRACOLoader(draco).setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder);
 
 const hud = document.getElementById('hud');
-const loader = new GLTFLoader();
 
-function cadre(objet) {
-  const boite = new THREE.Box3().setFromObject(objet);
-  const taille = boite.getSize(new THREE.Vector3()).length();
+function cadre() {
+  if (!racine) return;
+  const boite = new THREE.Box3().setFromObject(racine);
+  const taille = Math.max(boite.getSize(new THREE.Vector3()).length(), 1e-4);
   const centre = boite.getCenter(new THREE.Vector3());
-  camera.near = taille / 1000; camera.far = taille * 20;
-  camera.position.copy(centre).add(new THREE.Vector3(taille * .55, taille * .3, taille * .55));
+  camera.near = taille / 1000; camera.far = taille * 30;
+  camera.position.copy(centre).add(new THREE.Vector3(taille * .5, taille * .28, taille * .5));
   camera.updateProjectionMatrix();
   controls.target.copy(centre); controls.update();
 }
 
 function charge(url, nom) {
-  hud.textContent = 'chargement de ' + nom + ' …';
+  hud.textContent = '⏳ chargement de ' + nom + ' …';
   loader.load(url, g => {
-    if (racine) { scene.remove(racine); racine.traverse(o => { o.geometry?.dispose(); }); }
-    racine = g.scene; scene.add(racine); cadre(racine);
+    if (racine) scene.remove(racine);
+    racine = g.scene; scene.add(racine); cadre();
     mixer = null;
     if (g.animations.length) {
       mixer = new THREE.AnimationMixer(racine);
       g.animations.forEach(clip => mixer.clipAction(clip).setLoop(THREE.LoopRepeat).play());
     }
-    hud.textContent = nom + ' — ' + g.animations.length + ' animation(s)' +
-      (g.animations.length ? ' (lecture en boucle)' : '');
+    enLecture = true; document.getElementById('btnPlay').textContent = '⏸';
+    hud.innerHTML = '<b>' + nom + '</b><br>' + (g.animations.length
+      ? '▶ ' + g.animations.length + ' animation(s) en boucle'
+      : 'objet statique (pas d’animation)');
   }, p => {
-    if (p.total) hud.textContent = nom + ' … ' + Math.round(100 * p.loaded / p.total) + '%';
-  }, e => { hud.textContent = 'ERREUR: ' + (e.message || e); });
+    if (p.total) hud.textContent = '⏳ ' + nom + ' … ' + Math.round(100 * p.loaded / p.total) + '%';
+  }, e => { hud.textContent = '❌ ' + nom + ' : ' + (e.message || e); console.error(e); });
+}
+
+function classer(nom) {
+  const n = nom.toLowerCase();
+  if (n.includes('final_materials') || n.includes('_vlm') || n.includes('scene_homme_chaise_assis'))
+    return { badge: '⭐ FINAL', poids: 0, final: true };
+  if (n.includes('apercu')) return { badge: 'aperçu léger', poids: 1, final: false };
+  if (n.includes('rigged')) return { badge: 'animé brut', poids: 2, final: false };
+  return { badge: 'étape', poids: 3, final: false };
 }
 
 async function lienDossier(url) {
@@ -96,19 +143,34 @@ async function listeGlb() {
     for (const d of (await lienDossier(base)).filter(h => h.endsWith('/'))) {
       const fichiers = (await lienDossier(base + d)).filter(h => h.toLowerCase().endsWith('.glb'));
       if (!fichiers.length) continue;
-      const h = document.createElement('h3'); h.textContent = decodeURIComponent(d.replace('/', ''));
-      conteneur.appendChild(h);
-      for (const f of fichiers) {
-        const a = document.createElement('a');
-        a.textContent = decodeURIComponent(f);
-        a.href = '#';
-        a.onclick = ev => { ev.preventDefault();
-          [...conteneur.querySelectorAll('a')].forEach(x => x.classList.remove('actif'));
+      const bloc = document.createElement('div'); bloc.className = 'dossier';
+      const titre = document.createElement('div'); titre.className = 'titre';
+      titre.textContent = decodeURIComponent(d.replace('/', ''));
+      bloc.appendChild(titre);
+      const infos = fichiers.map(f => ({ f, ...classer(f) })).sort((a, b) => a.poids - b.poids);
+      const etapes = document.createElement('div'); etapes.className = 'etapes';
+      let nEtapes = 0;
+      for (const it of infos) {
+        const a = document.createElement('a'); a.className = 'fichier' + (it.final ? ' final' : '');
+        a.innerHTML = '<span class="badge">' + it.badge + '</span>' + decodeURIComponent(it.f);
+        a.onclick = () => {
+          document.querySelectorAll('.fichier').forEach(x => x.classList.remove('actif'));
           a.classList.add('actif');
-          charge(base + d + f, decodeURIComponent(f)); };
-        conteneur.appendChild(a);
+          charge(base + d + it.f, decodeURIComponent(it.f));
+        };
+        if (it.poids <= 1) bloc.appendChild(a);
+        else { etapes.appendChild(a); nEtapes++; }
       }
+      if (nEtapes) {
+        const plus = document.createElement('div'); plus.className = 'plus';
+        plus.textContent = '▸ ' + nEtapes + ' étape(s) intermédiaire(s)';
+        plus.onclick = () => { bloc.classList.toggle('ouvert');
+          plus.textContent = (bloc.classList.contains('ouvert') ? '▾ ' : '▸ ') + nEtapes + ' étape(s) intermédiaire(s)'; };
+        bloc.appendChild(plus); bloc.appendChild(etapes);
+      }
+      conteneur.appendChild(bloc);
     }
+    if (!conteneur.children.length) conteneur.textContent = 'aucun GLB trouvé';
   } catch (e) { conteneur.textContent = 'listing indisponible: ' + e; }
 }
 
@@ -122,17 +184,32 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
 });
-document.getElementById('togglePanel').onclick = () => {
-  const p = document.getElementById('panel');
-  p.style.display = p.style.display === 'none' ? 'block' : 'none';
+
+const panel = document.getElementById('panel');
+const ouvrirPanel = document.getElementById('ouvrirPanel');
+function basculePanel() {
+  panel.classList.toggle('cache');
+  ouvrirPanel.style.display = panel.classList.contains('cache') ? 'block' : 'none';
+}
+document.getElementById('btnPanel').onclick = basculePanel;
+ouvrirPanel.onclick = basculePanel;
+document.getElementById('btnPlay').onclick = () => {
+  enLecture = !enLecture;
+  document.getElementById('btnPlay').textContent = enLecture ? '⏸' : '▶';
 };
+document.getElementById('btnCam').onclick = cadre;
+document.getElementById('btnFond').onclick = () => {
+  fondIdx = 1 - fondIdx; scene.background = new THREE.Color(fonds[fondIdx]);
+};
+const vitesse = document.getElementById('vitesse');
 
 const param = new URLSearchParams(location.search).get('file');
 if (param) charge('/' + param.replace(/^\//, ''), param.split('/').pop());
 listeGlb();
 
 renderer.setAnimationLoop(() => {
-  if (mixer) mixer.update(clock.getDelta());
+  const dt = clock.getDelta();
+  if (mixer && enLecture) mixer.update(dt * parseFloat(vitesse.value));
   controls.update();
   renderer.render(scene, camera);
 });
