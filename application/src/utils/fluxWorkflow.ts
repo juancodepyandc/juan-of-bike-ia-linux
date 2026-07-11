@@ -45,7 +45,7 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     guidance: 4.5,
     steps: 34,
     sampler: 'euler',
-    scheduler: 'basic',
+    scheduler: 'simple',
     editDenoise: 0.12,
   },
   technical_render: {
@@ -54,7 +54,7 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     guidance: 4.8,
     steps: 34,
     sampler: 'euler',
-    scheduler: 'basic',
+    scheduler: 'simple',
     editDenoise: 0.18,
   },
   anime: {
@@ -63,7 +63,7 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     guidance: 4.3,
     steps: 30,
     sampler: 'euler',
-    scheduler: 'basic',
+    scheduler: 'simple',
     editDenoise: 0.52,
   },
   manga: {

@@ -17,7 +17,8 @@ import type { SaveDialogData } from '../components/SaveDialog'
 import SessionSwitcher from '../components/SessionSwitcher'
 import { buildThreeDModuleAssets } from '../config/moduleAssetPacks'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models'
-import { clearResumableJob, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript, toAssetUrl } from '../hooks/useTauri'
+import { clearResumableJob, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript, toAssetUrl } from '../hooks/useTauri'
+import { emitGenerationFx } from '../components/generationFx/fxBus'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero'
 import { useManagedRuntime } from '../hooks/useManagedRuntime'
 import { useModuleAssetPack } from '../hooks/useModuleAssetPack'
@@ -2260,6 +2261,7 @@ export default function ModelView() {
   const [phaseSnapshot, setPhaseSnapshot] = useState<{ label: string; percent: number }>({ label: '', percent: 0 })
   const [error, setError] = useState<string | null>(null)
   const [modelUrl, setModelUrl] = useState<string | null>(null)
+  const [viewerFullscreen, setViewerFullscreen] = useState(false)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null)
   const [referenceSupport, setReferenceSupport] = useState<ThreeDReferenceSupport | null>(null)
   const [viewPlan, setViewPlan] = useState<ThreeDViewPlan | null>(null)
@@ -3514,11 +3516,37 @@ export default function ModelView() {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian/Hunyuan multivue ne
             // servent plus que de repli si ce pipeline echoue.
+            let auroraWatch: number | undefined
             try {
               setProgress('Pipeline Aurora 3D (TRELLIS.2 natif, qualite maximale)...')
               setPhase('Pipeline Aurora 3D — geometrie native + materiaux...', 86)
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', outputDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceImagePath) auroraArgs.push('--image', referenceImagePath)
+              if (referenceImagePath) {
+                emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+              }
+              const refRoles: [string, string][] = [
+                [`${outputDir}/${runId}_reference.png`, 'face'],
+                [`${outputDir}/${runId}_reference_v2.png`, 'dos'],
+                [`${outputDir}/${runId}_reference_v3.png`, 'extra'],
+              ]
+              auroraWatch = window.setInterval(() => {
+                void (async () => {
+                  try {
+                    const refs: { url: string; role: string }[] = []
+                    for (const [p, role] of refRoles) {
+                      if (await fsExists(p)) refs.push({ url: toAssetUrl(p) + `?t=${Date.now()}`, role })
+                    }
+                    if (refs.length === 0 && referenceImagePath) refs.push({ url: toAssetUrl(referenceImagePath), role: 'face' })
+                    const meshExists = await fsExists(`${outputDir}/${runId}_mesh.glb`)
+                    emitGenerationFx('3d', {
+                      active: true,
+                      refs: refs.length ? refs : undefined,
+                      meshInfo: meshExists ? 'géométrie native posée — texture & matériaux en cours' : undefined,
+                    })
+                  } catch { /* fichier pas encore là */ }
+                })()
+              }, 8000)
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model' })
               if (/"ok":\s*true/.test(auroraOutput)) {
                 result = {
@@ -3535,6 +3563,8 @@ export default function ModelView() {
               }
             } catch {
               setProgress('Pipeline Aurora indisponible, repli ancien chemin...')
+            } finally {
+              if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
             }
           }
           if (!result) {
@@ -4278,6 +4308,7 @@ export default function ModelView() {
         completeGeneration(activeTrackerIdRef.current, {})
         activeTrackerIdRef.current = null
       }
+      setViewerFullscreen(true)
     } catch (generationError) {
       if (activeTrackerIdRef.current) {
         failGeneration(activeTrackerIdRef.current, getErrorMessage(generationError))
@@ -4406,7 +4437,15 @@ export default function ModelView() {
           <StudioDiagnosticsPanel diagnostics={diagnostics} title="Preflight 3D" />
           <ConnectorRecommendationsPanel module="3d" compact />
         </div>
-        <div className="min-w-0 rounded-[1.8rem] border border-aurora-border/40 bg-aurora-surface/45 overflow-hidden">
+        <div className={viewerFullscreen ? "fixed inset-0 z-[130] overflow-y-auto bg-[#06080d]" : "min-w-0 rounded-[1.8rem] border border-aurora-border/40 bg-aurora-surface/45 overflow-hidden"}>
+          {viewerFullscreen && (
+            <button
+              type="button"
+              onClick={() => setViewerFullscreen(false)}
+              title="Fermer le viewer (retour a l'interface)"
+              className="fixed right-6 top-6 z-[140] flex h-11 w-11 items-center justify-center rounded-full border border-aurora-border/60 bg-aurora-surface text-lg text-aurora-text hover:bg-aurora-surface-2"
+            >✕</button>
+          )}
           <div className="border-b border-aurora-border/30 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Viewer</p><h2 className="mt-1 text-lg font-semibold text-aurora-text">Mesh viewer</h2></div><div className="inline-flex items-center gap-2 rounded-full border border-aurora-border/35 bg-aurora-surface-2 px-3 py-1.5 text-[11px] text-aurora-text-dim">{viewerConfig.lockView ? <Lock size={12} /> : <Orbit size={12} />}<span>{viewerConfig.modeLabel} · {viewerConfig.modeDetail}</span></div></div></div>
           <div className="grid gap-3 p-3 sm:gap-5 sm:p-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
             <div className="min-h-[50vw] sm:min-h-[36rem]">

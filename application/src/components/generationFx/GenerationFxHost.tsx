@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useCodeStreamStore } from '../../stores/codeStreamStore'
 import type { ModuleId } from '../../types/app'
-import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxModule, type FxPatch } from './fxBus'
+import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxCounters, type FxModule, type FxPatch, type FxRef } from './fxBus'
 import { watchComfyProgress } from './comfyProgress'
 import AuroraMascot, { FX_AGENTS } from './mascots'
 import { FX_SCENES, type SceneDraw } from './scenes'
@@ -14,6 +14,24 @@ type FxEntry = {
   progress?: number
   startedAt: number
   reveal?: { url: string; kind: 'image' | 'video'; at: number }
+  refs?: FxRef[]
+  logLines?: string[]
+  counters?: FxCounters
+  meshUrl?: string
+  meshInfo?: string
+}
+
+function updateCounters(prev: FxCounters | undefined, line: string): FxCounters | undefined {
+  const l = line.toLowerCase()
+  const c: FxCounters = { ...(prev ?? {}) }
+  let touched = false
+  if (/photo .*(validee|valide)\b/.test(l)) { c.photosValidees = (c.photosValidees ?? 0) + 1; touched = true }
+  if (/photo .*(rejetee|ignoree|ecartee)/.test(l)) { c.photosRejetees = (c.photosRejetees ?? 0) + 1; touched = true }
+  const tent = l.match(/tentative[^0-9]*(\d+)/)
+  if (tent) { c.meshTentatives = Math.max(c.meshTentatives ?? 0, parseInt(tent[1], 10)); touched = true }
+  if (/nouvelle passe|regeneration|_r\d\b/.test(l)) { c.meshTentatives = (c.meshTentatives ?? 1) + 1; touched = true }
+  if (/trellis|hunyuan|geometrie/.test(l) && (c.meshTentatives ?? 0) === 0) { c.meshTentatives = 1; touched = true }
+  return touched ? c : prev
 }
 
 const CODE_PHASE_INDEX: Record<string, number> = {
@@ -100,10 +118,97 @@ function FxCanvas({ module, entry }: { module: FxModule; entry: FxEntry }) {
   return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} />
 }
 
+const ROLE_LABELS: Record<string, string> = {
+  face: 'FACE', trois_quarts: '3/4', dos: 'DOS', gauche: 'GAUCHE', droite: 'DROITE',
+  haut: 'HAUT', bas: 'BAS', extra: 'VUE +', inconnu: 'VUE',
+}
+
+function RefsPanel({ refs, accent }: { refs: FxRef[]; accent: string }) {
+  return (
+    <div style={{
+      position: 'absolute', left: 48, top: 72, bottom: 170, width: 200,
+      display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto',
+      pointerEvents: 'none',
+    }}>
+      <span style={{ fontSize: 10, letterSpacing: '.28em', color: '#8B93A7', fontFamily: "'Cascadia Code',Consolas,monospace" }}>
+        RÉFÉRENCES{refs.length > 1 ? ` · MULTI-VUES (${refs.length})` : ''}
+      </span>
+      {refs.map((r, i) => (
+        <div key={`${r.url}-${i}`} style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', border: `1px solid ${accent}44`, background: 'rgba(255,255,255,.03)' }}>
+          <img src={r.url} alt={r.role} style={{ width: '100%', display: 'block', objectFit: 'contain', maxHeight: 150 }} />
+          <span style={{
+            position: 'absolute', left: 8, top: 8, fontSize: 10, fontWeight: 700,
+            padding: '3px 8px', borderRadius: 999, letterSpacing: '.14em',
+            background: 'rgba(4,6,11,.8)', border: `1px solid ${accent}88`, color: '#fff',
+            fontFamily: "'Cascadia Code',Consolas,monospace",
+          }}>{ROLE_LABELS[r.role] ?? r.role.toUpperCase()}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ConstructionPanel({ entry, accent }: { entry: FxEntry; accent: string }) {
+  const lines = entry.logLines ?? []
+  const shown = lines.slice(-16)
+  const c = entry.counters ?? {}
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines.length])
+  return (
+    <div style={{
+      position: 'absolute', left: 280, right: 280, top: 72, bottom: 170,
+      display: 'flex', flexDirection: 'column', gap: 12, pointerEvents: 'none',
+    }}>
+      <span style={{ fontSize: 10, letterSpacing: '.28em', color: '#8B93A7', fontFamily: "'Cascadia Code',Consolas,monospace" }}>
+        CONSTRUCTION EN DIRECT
+      </span>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        {[
+          { lab: 'photos validées', val: c.photosValidees ?? 0, col: '#4ADE80' },
+          { lab: 'photos rejetées', val: c.photosRejetees ?? 0, col: '#F87171' },
+          { lab: 'tentatives mesh', val: c.meshTentatives ?? 0, col: accent },
+        ].map((k) => (
+          <span key={k.lab} style={{
+            fontSize: 11, padding: '6px 12px', borderRadius: 999,
+            border: `1px solid ${k.col}55`, color: '#E6EAF5', background: 'rgba(255,255,255,.03)',
+            fontFamily: "'Cascadia Code',Consolas,monospace",
+          }}>
+            <b style={{ color: k.col, fontSize: 14 }}>{k.val}</b>&nbsp;{k.lab}
+          </span>
+        ))}
+        {entry.meshInfo && (
+          <span style={{
+            fontSize: 11, padding: '6px 12px', borderRadius: 999,
+            border: `1px solid ${accent}55`, color: '#E6EAF5', background: `${accent}18`,
+            fontFamily: "'Cascadia Code',Consolas,monospace",
+          }}>▲ {entry.meshInfo}</span>
+        )}
+      </div>
+      <div ref={scrollRef} style={{
+        flex: 1, overflowY: 'auto', borderRadius: 12,
+        border: '1px solid rgba(255,255,255,.08)', background: 'rgba(0,0,0,.35)',
+        padding: '10px 14px', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 11,
+        lineHeight: 1.75, color: '#B7C0D4',
+      }}>
+        {shown.length === 0 && <div style={{ color: '#5A6377' }}>en attente des premiers événements du pipeline…</div>}
+        {shown.map((l, i) => (
+          <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: i === shown.length - 1 ? '#fff' : undefined }}>
+            <span style={{ color: `${accent}` }}>›</span> {l.replace(/^PROGRESS:[a-z_]*:?/i, '')}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
   const scene = FX_SCENES[module]
   const agent = FX_AGENTS[module]
   const [, force] = useState(0)
+  const [page, setPage] = useState<'scene' | 'construction'>('scene')
   useEffect(() => {
     const iv = window.setInterval(() => force((n) => n + 1), 400)
     return () => window.clearInterval(iv)
@@ -125,6 +230,26 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
       }}
     >
       <FxCanvas module={module} entry={entry} />
+      {!entry.reveal && entry.refs && entry.refs.length > 0 && (
+        <RefsPanel refs={entry.refs} accent={agent.accent} />
+      )}
+      {!entry.reveal && page === 'construction' && (
+        <ConstructionPanel entry={entry} accent={agent.accent} />
+      )}
+      {!entry.reveal && (entry.logLines?.length || entry.refs?.length) && (
+        <button
+          type="button"
+          onClick={() => setPage((p) => (p === 'scene' ? 'construction' : 'scene'))}
+          title={page === 'scene' ? 'Voir la construction en direct' : 'Revenir à la scène'}
+          style={{
+            position: 'absolute', right: 48, top: '46%', zIndex: 2,
+            width: 52, height: 52, borderRadius: '50%', cursor: 'pointer',
+            border: `1px solid ${agent.accent}77`, background: 'rgba(8,12,22,.85)',
+            color: agent.accent, fontSize: 20, fontWeight: 700,
+            boxShadow: `0 0 24px ${agent.accent}33`, pointerEvents: 'auto',
+          }}
+        >{page === 'scene' ? '❯' : '❮'}</button>
+      )}
       {entry.reveal && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -269,10 +394,18 @@ export default function GenerationFxHost() {
         return next
       }
       const cur = next[module]
+      const logLines = patch.logLine
+        ? [...(cur?.logLines ?? []), patch.logLine].slice(-300)
+        : cur?.logLines
       next[module] = {
         startedAt: cur?.startedAt ?? Date.now(),
         phase: patch.phase ?? cur?.phase,
         progress: patch.progress ?? cur?.progress,
+        refs: patch.refs ?? cur?.refs,
+        logLines,
+        counters: patch.logLine ? updateCounters(cur?.counters, patch.logLine) : cur?.counters,
+        meshUrl: patch.meshUrl ?? cur?.meshUrl,
+        meshInfo: patch.meshInfo ?? cur?.meshInfo,
       }
       return next
     })

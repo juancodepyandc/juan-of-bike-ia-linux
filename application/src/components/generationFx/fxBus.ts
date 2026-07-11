@@ -8,7 +8,19 @@ export const FX_EVENT = 'aurora:generation-fx'
 export const FX_PREF_EVENT = 'aurora:generation-fx-pref'
 const FX_PREF_KEY = 'aurora-fx-enabled'
 
-export type FxPatch = { active: boolean; phase?: string; progress?: number; resultUrl?: string; resultKind?: 'image' | 'video' }
+export type FxRef = { url: string; role: string }
+export type FxCounters = { photosValidees?: number; photosRejetees?: number; meshTentatives?: number }
+export type FxPatch = {
+  active: boolean
+  phase?: string
+  progress?: number
+  resultUrl?: string
+  resultKind?: 'image' | 'video'
+  refs?: FxRef[]
+  logLine?: string
+  meshUrl?: string
+  meshInfo?: string
+}
 
 export function generationFxEnabled(): boolean {
   try { return window.localStorage.getItem(FX_PREF_KEY) !== '0' } catch { return true }

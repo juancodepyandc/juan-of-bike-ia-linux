@@ -41,6 +41,7 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
   const lastUpdateRef = useRef<number>(Date.now())
   const lastProgressRef = useRef<string>(progress)
   const lastPhaseRef = useRef<string>(phaseLabel)
+  const lastEmittedLineRef = useRef<string>('')
 
   useEffect(() => {
     if (progress !== lastProgressRef.current || phaseLabel !== lastPhaseRef.current) {
@@ -52,11 +53,14 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
   }, [progress, phaseLabel])
 
   useEffect(() => {
+    const isNewLine = Boolean(progress) && progress !== lastEmittedLineRef.current
+    if (isNewLine) lastEmittedLineRef.current = progress
     if (active) {
       emitGenerationFx('3d', {
         active: true,
         phase: phaseLabel || progress || undefined,
         progress: phasePercent > 0 ? Math.min(1, phasePercent / 100) : undefined,
+        logLine: isNewLine ? progress : undefined,
       })
     } else {
       emitGenerationFx('3d', { active: false })
