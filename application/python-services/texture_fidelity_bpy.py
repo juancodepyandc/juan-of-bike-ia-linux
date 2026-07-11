@@ -34,10 +34,15 @@ def _world_bbox(objs):
 
 
 def _setup_cycles(scene):
+    import os as _os
     scene.render.engine = "CYCLES"
     scene.cycles.samples = 1
     scene.cycles.use_denoising = False
     scene.render.use_persistent_data = True
+    if _os.environ.get("AURORA_FIDELITY_CPU") == "1":
+        scene.cycles.device = "CPU"
+        print("FIDELITY_LOG:cycles device CPU (force)", flush=True)
+        return
     prefs = bpy.context.preferences.addons["cycles"].preferences
     for ct in ("OPTIX", "CUDA"):
         try:
