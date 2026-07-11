@@ -3524,7 +3524,8 @@ export default function ModelView() {
               const genDir = `${workspacePath}/output/3d/generations/${runId}`
               await fsMkdir(genDir).catch(() => {})
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
-              if (referenceImagePath) auroraArgs.push('--image', referenceImagePath)
+              const hasUserImage = contextFiles.some((f) => f.type.startsWith('image/'))
+              if (hasUserImage && referenceImagePath) auroraArgs.push('--image', referenceImagePath)
               if (referenceImagePath) {
                 emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
               }

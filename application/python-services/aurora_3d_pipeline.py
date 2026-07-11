@@ -1302,7 +1302,10 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         for query, _quota in query_specs:
             if slots["face"] and slots["dos"]:
                 break
-            for c in _fetch_cands(query)[:8]:
+            log(f"PROGRESS:reference:recherche web: \"{query[:80]}\"")
+            _cands = _fetch_cands(query)[:8]
+            log(f"PROGRESS:reference:{len(_cands)} candidate(s) trouvee(s)")
+            for c in _cands:
                 if slots["face"] and slots["dos"] and slots["extra"]:
                     break
                 url = c.get("imageUrl")
@@ -1347,7 +1350,7 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                         os.remove(cand)
                         continue
                     slots[slot] = cand
-                    log(f"PROGRESS:reference:photo {slot} validee ({ori}, {img.size[0]}x{img.size[1]}) : {url[:70]}")
+                    log(f"PROGRESS:reference:photo {slot} VALIDEE — orientation {ori}, {img.size[0]}x{img.size[1]}, source {url.split('/')[2] if '//' in url else url[:40]}")
                 except Exception:  # noqa: BLE001
                     continue
         if not slots["face"]:
@@ -1361,6 +1364,7 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 log(f"PROGRESS:reference:photo {k} ecartee (produit different de la face)")
                 os.remove(slots[k])
                 slots[k] = None
+        log("PROGRESS:reference:selection finale: face" + (" + dos" if slots["dos"] else "") + (" + vue extra" if slots["extra"] else ""))
         import shutil as _sh
         _sh.move(slots["face"], base)
         vi = 2
@@ -1514,6 +1518,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                 final_acceptance = run_final_acceptance(
                     proc_res["glb_path"], prompt, kind, motion_prompt,
                 )
+                print(f"PROGRESS:finalisation:controle final — note {final_acceptance.get('engineer_grade')}/100 (seuil {final_acceptance.get('threshold')})", flush=True)
                 audit.append({
                     "stage": "final_acceptance_gate",
                     "ok": final_acceptance.get("ok", False),
@@ -2040,6 +2045,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
+                    print(f"PROGRESS:shape:geometrie native posee — {_tr.get('faces') or '?'} faces ({_tr.get('quality')})", flush=True)
                     raw_dense_path = Path(str(mesh_path))
                     audit.append({"stage": "mesh_sanitize", "skipped": True,
                                   "reason": "geometrie TRELLIS.2 single-image native conservee "
@@ -2051,6 +2057,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                                       "note": "objet statique TRELLIS.2: mesh+texture natifs "
                                               "integralement conserves (fidelity/taubin/optimize/"
                                               "normal-bake sautes, prouves destructeurs)"})
+                        print("PROGRESS:qualite:mesh + texture natifs conserves integralement (aucune etape destructrice)", flush=True)
                     _k_fid = (subject_kind_hint or kind or "").lower()
                     _fid_character = _k_fid in ("character", "humanoid", "creature", "quadruped")
                     if _fid_character and not _use_researched:
@@ -2247,6 +2254,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             if _ao_bake.get("ok"):
                 _ao_out = str(output_dir / f"{run_id}_mesh_ao.glb")
                 _ao_att = _ao.attach_ao(str(final_mesh_path), _ao_png, _ao_out)
+                print(f"PROGRESS:matieres:occlusion ambiante cuite ({_ao_res}px)", flush=True)
                 audit.append({"stage": "ao_bake", "ok": bool(_ao_att.get("ok")),
                               "res": _ao_res, "ao_png": _ao_png,
                               "ao_mean": _ao_bake.get("ao_mean"),
@@ -2299,6 +2307,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     _mask_res = _bzm(str(final_mesh_path), _canon,
                                      str(output_dir / f"{run_id}_masques"))
                     audit.append({"stage": "zone_masks", **_mask_res})
+                    print(f"PROGRESS:matieres:{_mask_res.get('masks', 0)} masque(s) de zone genere(s) depuis la vision", flush=True)
                 except Exception as _mze:  # noqa: BLE001
                     audit.append({"stage": "zone_masks", "ok": False, "error": repr(_mze)})
                 _materials_json = output_dir / f"{run_id}_materials.json"
@@ -2414,6 +2423,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     _mw_gate = _sqg.gate(final_delivery_mesh, _mw_out, "material_write")
                 except Exception as _ge:  # noqa: BLE001
                     _mw_gate = {"skipped": True, "reason": repr(_ge)}
+            print(f"PROGRESS:matieres:{_mw_res.get('zones_applied', 0)} zone(s) de matiere appliquee(s)", flush=True)
             audit.append({"stage": "material_write", "ok": bool(_mw_res.get("ok")),
                           "output": _mw_res.get("output"),
                           "zones_applied": _mw_res.get("zones_applied"),

@@ -209,6 +209,8 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
   const c = entry.counters ?? {}
   const started = Boolean(entry.logLines?.length)
   const silhouette = entry.refs?.[0]?.url
+  const feed = (entry.logLines ?? []).slice(-7)
+  const lastReject = [...(entry.logLines ?? [])].reverse().find((l) => /rejet|ecart|ignor/i.test(l))
   return (
     <div style={{
       position: 'absolute', left: 280, right: 200, top: 60, bottom: 170,
@@ -251,10 +253,29 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
           <div style={{
             position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: '#5A6377', fontSize: 12, letterSpacing: '.25em',
-            fontFamily: "'Cascadia Code',Consolas,monospace', 'Consolas', monospace",
+            fontFamily: "'Cascadia Code',Consolas,monospace",
             animation: 'aurora-fx-wait 2.2s ease-in-out infinite',
           }}>EN ATTENTE DU DÉMARRAGE…</div>
         )}
+      </div>
+      {lastReject && (
+        <div style={{
+          marginTop: 6, fontSize: 10, color: '#F87171', whiteSpace: 'nowrap', overflow: 'hidden',
+          textOverflow: 'ellipsis', fontFamily: "'Cascadia Code',Consolas,monospace",
+        }}>dernier rejet : {lastReject.replace(/^PROGRESS:[a-z_]*:?/i, '')}</div>
+      )}
+      <div style={{
+        marginTop: 6, height: 128, overflow: 'hidden', borderRadius: 10,
+        border: '1px solid rgba(255,255,255,.07)', background: 'rgba(0,0,0,.32)',
+        padding: '8px 12px', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5,
+        lineHeight: 1.65, color: '#9AA5BC', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      }}>
+        {feed.length === 0 && <div style={{ color: '#5A6377' }}>le detail de chaque decision du pipeline s'affichera ici…</div>}
+        {feed.map((l, i) => (
+          <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: i === feed.length - 1 ? '#E6EAF5' : undefined }}>
+            <span style={{ color: accent }}>›</span> {l.replace(/^PROGRESS:[a-z_]*:?/i, '')}
+          </div>
+        ))}
       </div>
     </div>
   )
