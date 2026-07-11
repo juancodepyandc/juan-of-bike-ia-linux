@@ -136,6 +136,17 @@ amp_flat = size * 0.005 * amp_scale
 amp_mid = size * 0.002 * amp_scale
 amp_steep = size * 0.004 * amp_scale
 
+poids = water.astype(np.float64)
+for _ in range(6):
+    somme = np.zeros(n_verts, dtype=np.float64)
+    deg2 = np.zeros(n_verts, dtype=np.int32)
+    np.add.at(somme, edges[:, 0], poids[edges[:, 1]])
+    np.add.at(somme, edges[:, 1], poids[edges[:, 0]])
+    np.add.at(deg2, edges[:, 0], 1)
+    np.add.at(deg2, edges[:, 1], 1)
+    voisin = somme / np.maximum(deg2, 1)
+    poids = np.where(water, np.minimum(poids, 0.5 + 0.5 * voisin), 0.0)
+
 cx = float(co[water, 0].mean()) if water.any() else float(co[:, 0].mean())
 cy = float(co[water, 1].mean()) if water.any() else float(co[:, 1].mean())
 rad = np.sqrt((co[:, 0] - cx) ** 2 + (co[:, 1] - cy) ** 2)
@@ -164,6 +175,7 @@ for k in range(K):
         stream = np.sin(co[idx_steep, 2] / lam_z * 2.0 * math.pi + ph)
         disp[idx_steep] = nrm[idx_steep] * (amp_steep * 0.5 * stream)[:, None]
         disp[idx_steep, 2] -= amp_steep * (0.5 + 0.5 * stream)
+    disp *= poids[:, None]
     new_co = (co + disp).reshape(-1)
     sk.data.foreach_set("co", new_co.astype(np.float32))
     keys.append(sk)

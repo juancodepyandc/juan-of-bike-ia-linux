@@ -98,36 +98,31 @@ function installerFlux(mat, flow) {
   if (!masque) return;
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTempsFlux = tempsFlux;
-    shader.uniforms.uDirFlux = { value: new THREE.Vector2(dir[0], dir[1]).multiplyScalar(0.045 * vitesse) };
+    shader.uniforms.uDirFlux = { value: new THREE.Vector2(dir[0], dir[1]).multiplyScalar(0.0045 * vitesse) };
     shader.uniforms.uMasqueFlux = { value: masque };
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform float uTempsFlux;
         uniform vec2 uDirFlux;
-        uniform sampler2D uMasqueFlux;
-        vec2 fluxUv(vec2 uv, float phase) {
-          float t = fract(uTempsFlux * 0.5 + phase);
-          return uv + uDirFlux * t * 2.0;
-        }`)
+        uniform sampler2D uMasqueFlux;`)
       .replace('#include <map_fragment>', `
         #ifdef USE_MAP
           float poidsMasque = texture2D(uMasqueFlux, vMapUv).r;
+          vec4 sampledDiffuseColor;
           if (poidsMasque > 0.03) {
-            float tA = fract(uTempsFlux * 0.5);
-            float tB = fract(uTempsFlux * 0.5 + 0.5);
-            vec4 echA = texture2D(map, fluxUv(vMapUv, 0.0));
-            vec4 echB = texture2D(map, fluxUv(vMapUv, 0.5));
-            float melange = abs(tA * 2.0 - 1.0);
-            vec4 couleurFlux = mix(echA, echB, melange);
-            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
-            sampledDiffuseColor = mix(sampledDiffuseColor, couleurFlux, clamp(poidsMasque, 0.0, 1.0) * 0.85);
-            #ifdef DECODE_VIDEO_TEXTURE
-            #endif
-            diffuseColor *= sampledDiffuseColor;
+            vec2 rem1 = uDirFlux * sin(uTempsFlux * 2.1 + dot(vMapUv, vec2(140.0, 140.0)));
+            vec2 rem2 = uDirFlux * 0.6 * sin(uTempsFlux * 3.3 + dot(vMapUv, vec2(260.0, 90.0)) + 1.7);
+            vec2 uvEau = vMapUv + (rem1 + rem2) * poidsMasque;
+            sampledDiffuseColor = texture2D(map, uvEau);
+            float strie = 0.10 * sin(dot(vMapUv, normalize(uDirFlux) ) * 900.0 - uTempsFlux * 6.0)
+                        + 0.06 * sin(dot(vMapUv, normalize(uDirFlux) ) * 2300.0 - uTempsFlux * 11.0);
+            sampledDiffuseColor.rgb *= 1.0 + strie * clamp(poidsMasque, 0.0, 1.0);
           } else {
-            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
-            diffuseColor *= sampledDiffuseColor;
+            sampledDiffuseColor = texture2D(map, vMapUv);
           }
+          #ifdef DECODE_VIDEO_TEXTURE
+          #endif
+          diffuseColor *= sampledDiffuseColor;
         #endif`);
   };
   mat.needsUpdate = true;
