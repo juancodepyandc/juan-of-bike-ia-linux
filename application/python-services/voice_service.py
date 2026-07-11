@@ -21,6 +21,16 @@ from cache_paths import configure_ml_cache_environment
 # Voxtral-Small-24B-2507 : modele complet non-mini (remplace Mini-4B-Realtime)
 # Plus grand (24B), plus precis, meme API HuggingFace
 VOXTRAL_MODEL = "mistralai/Voxtral-Small-24B-2507"
+# STT français dedie (bofenghuang, distille de large-v3) : WER français nettement
+# meilleur que large-v3-turbo generaliste, ~2x plus rapide, format CTranslate2
+# compatible faster-whisper. Active par defaut (AURORA_WHISPER_FR != "0") avec
+# repli automatique sur large-v3-turbo si le chargement/telechargement echoue —
+# donc aucune regression possible du STT existant.
+# NB: si faster-whisper ne trouve pas les poids CT2 (sous-dossier "ctranslate2"),
+# le repo pret-a-l-emploi "brandenkmurray/faster-whisper-large-v3-french-distil-dec16"
+# est un fallback (CT2 a la racine).
+WHISPER_FR_MODEL = "bofenghuang/whisper-large-v3-french-distil-dec16"
+WHISPER_FR_ENABLED = os.environ.get("AURORA_WHISPER_FR", "1") != "0"
 WHISPER_FALLBACK = "large-v3-turbo"
 WHISPER_FALLBACK_SECONDARY = "small"
 KOKORO_MODEL = "hexgrad/Kokoro-82M"
@@ -320,6 +330,10 @@ def prepare_for_speech(text: str, lang: str = "fr") -> str:
     if not text:
         return ""
 
+    # NB: on n'injecte PAS de tags emotionnels type [excited]/[laughter]. Les moteurs
+    # reellement utilises (Kokoro / Piper / edge-tts) ne les interpretent pas — ils les
+    # liraient a voix haute. (La prosodie est geree cote TS via voiceProsody.)
+
     # 1. Retirer Markdown avant toute chose
     text = re.sub(r"```[\s\S]*?```", " ", text)              # blocs code
     text = re.sub(r"`([^`]+)`", r"\1", text)                  # inline code
@@ -548,24 +562,32 @@ def _transcribe_whisper(audio_path: str) -> dict:
     model = None
 
     try:
-        emit("stt_load", f"Chargement de Whisper {WHISPER_FALLBACK} ({device})...")
-        try:
-            model = WhisperModel(
-                WHISPER_FALLBACK,
-                device=device,
-                compute_type=compute_type,
-                num_workers=4,
-                download_root=os.environ.get("HF_HOME"),
-            )
-        except Exception as load_exc:
-            emit("stt_warn", f"Modele {WHISPER_FALLBACK} indisponible ({type(load_exc).__name__}), bascule sur {WHISPER_FALLBACK_SECONDARY}...")
-            model = WhisperModel(
-                WHISPER_FALLBACK_SECONDARY,
-                device=device,
-                compute_type=compute_type,
-                num_workers=2,
-                download_root=os.environ.get("HF_HOME"),
-            )
+        # Candidats STT par ordre de preference. Le modele francais dedie d'abord
+        # (meilleur WER FR) puis repli generaliste, puis "small". Chaque echec de
+        # chargement passe silencieusement au suivant → jamais de STT casse.
+        candidates: list[tuple[str, int]] = []
+        if WHISPER_FR_ENABLED:
+            candidates.append((WHISPER_FR_MODEL, 4))
+        candidates.append((WHISPER_FALLBACK, 4))
+        candidates.append((WHISPER_FALLBACK_SECONDARY, 2))
+
+        last_exc = None
+        for model_name, workers in candidates:
+            try:
+                emit("stt_load", f"Chargement de Whisper {model_name} ({device})...")
+                model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    num_workers=workers,
+                    download_root=os.environ.get("HF_HOME"),
+                )
+                break
+            except Exception as load_exc:
+                last_exc = load_exc
+                emit("stt_warn", f"Modele {model_name} indisponible ({type(load_exc).__name__}), essai suivant...")
+        if model is None:
+            raise last_exc if last_exc else RuntimeError("Aucun modele Whisper chargeable")
 
         # Essaie de charger en numpy (pas de ffmpeg requis pour WAV/FLAC)
         audio_input = _load_audio_numpy(audio_path)
@@ -575,7 +597,7 @@ def _transcribe_whisper(audio_path: str) -> dict:
         emit("stt_run", "Transcription Whisper en cours...")
         segments, info = model.transcribe(
             audio_input,
-            beam_size=1,
+            beam_size=5,
             language="fr",
             # --- Anti-hallucination ---
             no_speech_threshold=0.5,
@@ -940,17 +962,21 @@ def run_tts(text: str, output_path: str, lang: str = "fr", persona: str | None =
     if not clean_text:
         return {"ok": False, "error": "Texte vide apres preparation vocale."}
 
-    # ─── 1. Essai edge-tts (voix Microsoft Neural, persona-aware) ───
-    edge_result = _run_tts_edge(clean_text, output_path, lang, persona=persona)
-    if edge_result is not None:
-        return edge_result
-
-    # ─── 2. Fallback Piper (offline, bonne qualite) ───
+    # ─── 1. Piper (offline, voix naturelle) — LOCAL-FIRST ───
+    # App locale / RGPD : on privilegie systematiquement les moteurs offline.
     piper_result = _run_tts_piper(clean_text, output_path, lang)
     if piper_result is not None:
         return piper_result
 
-    # ─── 3. Fallback Kokoro (leger) ───
+    # ─── 2. edge-tts (voix Microsoft Neural, CLOUD Azure) — OPT-IN uniquement ───
+    # On n'envoie JAMAIS le texte utilisateur a un service cloud par defaut.
+    # A activer explicitement via AURORA_ALLOW_CLOUD_TTS=1.
+    if os.environ.get("AURORA_ALLOW_CLOUD_TTS") == "1":
+        edge_result = _run_tts_edge(clean_text, output_path, lang, persona=persona)
+        if edge_result is not None:
+            return edge_result
+
+    # ─── 3. Kokoro (offline, leger) — fallback terminal ───
     ensure_packages(REQUIRED_TTS)
 
     import numpy as np

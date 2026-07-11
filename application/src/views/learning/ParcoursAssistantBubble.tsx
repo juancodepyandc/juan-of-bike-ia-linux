@@ -14,6 +14,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react'
 import { MessageCircle, X, Send, Sparkles, Loader2 } from 'lucide-react'
 import type { AcademyParcoursPayload } from '../../hooks/useAcademyViewLogic'
 import { getBridgeUrl } from '../../utils/runtime'
+import { LEARNING_EVAL_MODEL } from '../../config/models.ts'
 
 const GOLD = 'oklch(0.86 0.18 75)'
 const VIOLET = 'oklch(0.62 0.22 295)'
@@ -205,7 +206,7 @@ export default function ParcoursAssistantBubble({ payload, subjectLabel, current
         headers: { 'Content-Type': 'application/json' },
         signal: abortRef.current.signal,
         body: JSON.stringify({
-          model: 'gemma3:12b',
+          model: LEARNING_EVAL_MODEL,
           stream: true,
           messages: [
             { role: 'system', content: systemPrompt },

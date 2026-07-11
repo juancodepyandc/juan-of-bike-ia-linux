@@ -13,6 +13,7 @@
  */
 
 import { getBridgeUrl } from '../utils/runtime.ts'
+import { LEARNING_EVAL_MODEL } from '../config/models.ts'
 
 function chatEndpoint(): string {
   // iter32.H: route via bridge proxy so prod build works through Cloudflare tunnel.
@@ -153,7 +154,7 @@ export async function evaluateAnswerSemantically(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gemma3:12b',
+        model: LEARNING_EVAL_MODEL,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: buildUserMessage(input) },
@@ -258,7 +259,7 @@ export async function regenerateSimilarExo(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gemma3:12b',
+        model: LEARNING_EVAL_MODEL,
         messages: [
           { role: 'system', content: REGEN_SYSTEM },
           { role: 'user', content: [

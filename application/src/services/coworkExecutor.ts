@@ -17,6 +17,7 @@ import {
   getWorkspacePath,
 } from '../hooks/useTauri'
 import { isTauriRuntime, getBridgeUrl } from '../utils/runtime'
+import { MAIN_FALLBACK_MODEL } from '../config/models.ts'
 import { searchWeb } from './auroraExtensionBridge'
 import { SAFETY_LIMITS } from './coworkSafety'
 import type { CoworkAction, CoworkActionResult, CoworkRuntime } from './coworkTypes'
@@ -113,7 +114,7 @@ async function dispatch(
         const { ollamaChat } = await import('../hooks/useTauri')
         const { useAppStore } = await import('../stores/appStore')
         const state = useAppStore.getState() as { mainModel: string }
-        const model = state.mainModel || 'llama4:scout'
+        const model = state.mainModel || MAIN_FALLBACK_MODEL
         const sys = 'Tu es un assistant analytique. Reflechis a fond a la question : structure, hypotheses, options envisagees, recommandation finale claire. Ecris en francais, organise en sections (## Contexte / ## Analyse / ## Recommandation).'
         const userMsg = `Sujet : ${action.topic}\n\n${action.prompt}`
         const ms = action.durationHintMs ?? 300_000

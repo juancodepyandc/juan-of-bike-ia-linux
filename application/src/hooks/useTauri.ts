@@ -321,7 +321,8 @@ async function ollamaGenerateStreamAsNonStream(
 
   // v77zap/v90: same first-byte budget as ollamaChatStream. Heavy local code
   // models can override it; the default still protects tunnel calls.
-  const HARD_TIMEOUT_MS = firstByteTimeoutMs ?? 90_000
+  // v120: increased to 480_000 for heavy SWAP workloads (up to 70GB SWAP allowed).
+  const HARD_TIMEOUT_MS = firstByteTimeoutMs ?? 480_000
   const internalAbort = new AbortController()
   const timeoutId = setTimeout(() => internalAbort.abort(), HARD_TIMEOUT_MS)
   if (signal) {
@@ -475,6 +476,14 @@ export async function ollamaChatStream(
   onDone: () => void,
   options?: {
     temperature?: number
+    // Sampling nucleus / top-k / penalites. Necessaire pour appliquer les presets
+    // officiels des modeles (ex. Qwen3-Instruct : temp 0.7, top_p 0.8, top_k 20).
+    // Transmis tel quel dans body.options d'Ollama (fonctionne aussi via le proxy
+    // bridge qui ne fait que relayer le corps).
+    top_p?: number
+    top_k?: number
+    min_p?: number
+    repeat_penalty?: number
     signal?: AbortSignal
     num_ctx?: number
     // v82nd : max tokens to GENERATE. Some models (qwen3-coder default,
@@ -502,6 +511,10 @@ export async function ollamaChatStream(
 
   const streamOpts: Record<string, unknown> = {}
   if (options?.temperature !== undefined) streamOpts.temperature = options.temperature
+  if (options?.top_p !== undefined) streamOpts.top_p = options.top_p
+  if (options?.top_k !== undefined) streamOpts.top_k = options.top_k
+  if (options?.min_p !== undefined) streamOpts.min_p = options.min_p
+  if (options?.repeat_penalty !== undefined) streamOpts.repeat_penalty = options.repeat_penalty
   if (options?.num_ctx) streamOpts.num_ctx = options.num_ctx
   if (options?.num_predict !== undefined) streamOpts.num_predict = options.num_predict
   if (Object.keys(streamOpts).length > 0) body.options = streamOpts
@@ -530,7 +543,8 @@ export async function ollamaChatStream(
   // a vision model) can override the first-byte timeout via firstByteTimeoutMs.
   // The timer is cleared as soon as the response headers arrive, so this only
   // bounds time-to-first-byte (TTFB), not the streaming duration.
-  const HARD_TIMEOUT_MS = options?.firstByteTimeoutMs ?? 90_000
+  // v120: increased to 480_000 for heavy SWAP workloads (up to 70GB SWAP allowed).
+  const HARD_TIMEOUT_MS = options?.firstByteTimeoutMs ?? 480_000
   const internalAbort = new AbortController()
   const timeoutId = setTimeout(() => internalAbort.abort(), HARD_TIMEOUT_MS)
   if (options?.signal) {

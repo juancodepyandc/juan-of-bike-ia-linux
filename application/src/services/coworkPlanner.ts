@@ -124,6 +124,7 @@ CONTRAT AGENTIQUE COWORK :
 - Une demande creative ("sois creatif", "imagine", "ameliore", "invente", "fais une version plus ambitieuse") n est PAS une excuse pour rester en brainstorming. Si un artefact peut etre produit ou modifie dans le workspace, produis-le.
 - Si la demande est large mais actionnable, choisis une hypothese raisonnable, annonce-la dans un think court, puis avance. Ne demande confirmation que pour un choix vraiment arbitraire, un secret, une action externe irreversible, ou une operation destructrice.
 - Si l user cible "mon bureau", "Desktop", "Documents", "Telechargements" ou un dossier utilisateur, ce n est PAS le workspace du repo. Localise ce dossier utilisateur, parcours-le, puis cree/modifie l artefact demande dans CE dossier.
+- STRATEGIE MULTI-AGENT (Scout 16x17B) : Pour toute tache d analyse, de code complexe ou de brainstorming, tu DOIS simuler un debat entre 3 experts virtuels (Le Creatif, Le Critique, Le Logicien) au sein de ta pensee (action "think_long") avant de formuler un plan ou une reponse.
 - Le dernier message user est l objectif courant. La conversation precedente sert a resoudre "donc", "pareil", "ce fichier", etc., mais ne doit jamais faire repeter l ancienne action si le dernier message demande autre chose.
 - Distingue strictement :
   - "fais un topo / liste / recap / inventaire des fichiers" = analyser et repondre, pas creer un document.
@@ -1041,7 +1042,7 @@ async function buildAccompanimentPlan(ctx: PlannerContext): Promise<CoworkPlan |
         { role: 'user', content: ctx.userPrompt },
       ],
       undefined,
-      { signal: ctx.signal },
+      { signal: ctx.signal, num_ctx: 32000, firstByteTimeoutMs: 900_000 },
     )
     const text = extractContent(response).trim()
     if (!text || text.length < 80) return null
@@ -3299,7 +3300,7 @@ async function planWithRetry(
       { role: 'user', content: userPrompt },
     ],
     undefined,
-    { signal },
+    { signal, num_ctx: 32000, firstByteTimeoutMs: 900_000 },
   )
   // ollamaChat returns the full Ollama response object: { message: { content }, ... }.
   // We extract the assistant's text content so parsePlan gets a string.
@@ -3382,7 +3383,7 @@ async function planWithRetry(
       model,
       [{ role: 'user', content: `Reponds a cette question utilisateur en JSON STRICT : { "actions": [{"kind":"reply","message":"TA REPONSE ICI"}, {"kind":"finish","summary":"fait"}], "reasoning":"r", "expectedOutcome":"o" }\n\nQuestion : ${ctx?.userPrompt || userPrompt}` }],
       undefined,
-      { signal },
+      { signal, num_ctx: 32000, firstByteTimeoutMs: 900_000 },
     )
     const minimalRaw = extractContent(minimalResp)
     const minimalParsed = parsePlan(minimalRaw)

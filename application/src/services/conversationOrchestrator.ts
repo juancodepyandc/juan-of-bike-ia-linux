@@ -227,7 +227,9 @@ async function collectDraft(
       chunks.push(token)
     },
     () => undefined,
-    { signal, temperature: 0.2 },
+    // Preset officiel Qwen3-Instruct pour la prose destinee a l'utilisateur.
+    // (Les appels JSON d'analyse/verification gardent leur temperature basse.)
+    { signal, temperature: 0.7, top_p: 0.8, top_k: 20 },
   )
 
   return stripThinkTags(chunks.join(''))

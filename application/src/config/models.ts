@@ -9,10 +9,15 @@ const __env: Record<string, string | undefined> =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {}
 const IS_CLOUD = __env.VITE_CLOUD_MODE === 'true'
 
-// RTX 5070 Ti = 16GB VRAM -> qwen3:14b (9.3GB) est le modele optimal general
-// qwen3-vl:30b (19GB) = qualite max vision avec offload CPU (32GB RAM disponibles)
-export const DEFAULT_MAIN_MODEL = 'qwen3:14b'
-export const DEFAULT_VISION_MODEL = 'qwen3:14b'
+// Modele chat principal : Qwen3-30B-A3B-Instruct-2507 (MoE, 3B actifs) — reellement
+// installe, Apache-2.0, ~20-22 t/s sur RTX 5070 Ti 16GB avec offload partiel, francais
+// propre, pas de <think> (variante Instruct). Remplace llama4:scout (67GB, jamais installe
+// ni chargeable sur 16GB VRAM + 30GB RAM).
+export const DEFAULT_MAIN_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
+// Fallback chat generaliste (JAMAIS un modele code) — utilise au cold-start quand le
+// hardware n'est pas encore connu, cf. appStore.
+export const MAIN_FALLBACK_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
+export const DEFAULT_VISION_MODEL = 'qwen3-vl:30b'
 export const DOCUMENT_EXTRACTION_PACK_LABEL = 'PyMuPDF + pdfplumber + openpyxl + pandas'
 
 // ---------------------------------------------------------------------------
@@ -22,19 +27,24 @@ export const DOCUMENT_EXTRACTION_PACK_LABEL = 'PyMuPDF + pdfplumber + openpyxl +
 // qwen3-vl:8b = vision rapide en 16GB VRAM (~5-6GB) pour mode live
 // Le code model (qwen3-coder:30b-a3b MoE, 3B actifs) fonctionne en offloading.
 // ---------------------------------------------------------------------------
-export const LOCAL_MAIN_MODEL = 'qwen3:14b'
-export const LOCAL_VISION_MODEL = 'qwen3:14b'
+export const LOCAL_MAIN_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
+export const LOCAL_VISION_MODEL = 'qwen3-vl:30b'
+
+// Modele partage pour l'evaluation semantique / audit factuel de l'Academie.
+// (Remplace les references gemma3:12b jamais installees.)
+export const LEARNING_EVAL_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
 
 // ---------------------------------------------------------------------------
 // Vision multimodale -- 3 niveaux de qualite selon contexte
-// HIGH_QUALITY: qwen3-vl:30b, analyses detaillees (image reference, video, academie)
-// LIVE: qwen3-vl:8b si installe (capture camera temps reel, latence ciblee)
-// FALLBACK: qwen3:14b (texte, fallback si aucun modele vision installe)
+// HIGH_QUALITY: qwen3-vl:30b (~19GB, offload) -- analyses detaillees (image reference,
+//   video, academie). Partage avec le module 3D : NE PAS changer sans validation.
+// LIVE: qwen3-vl:8b (~6GB, pure VRAM) -- capture camera temps reel, latence minimale.
+// FALLBACK: qwen3-vl:8b -- modele vision leger, resident VRAM, jamais le 30b lourd.
 // ---------------------------------------------------------------------------
 export const VISION_HIGH_QUALITY_MODEL = 'qwen3-vl:30b'
 export const VISION_LIVE_MODEL = 'qwen3-vl:8b'
-export const VISION_FALLBACK_MODEL = 'qwen3:14b'
-export const VISION_MODEL_PACK_LABEL = 'Qwen3-VL (30B qualite + 8B rapide)'
+export const VISION_FALLBACK_MODEL = 'qwen3-vl:8b'
+export const VISION_MODEL_PACK_LABEL = 'Qwen3-VL 30B (qualite) + Qwen3-VL 8B (live)'
 
 // ---------------------------------------------------------------------------
 // Code module -- EXPERT-MODEL ARCHITECTURE
@@ -47,7 +57,12 @@ export const CODE_NEXT_HIGH_MODEL = 'qwen3-coder-next:q8_0'
 export const CODE_NEXT_MODEL = 'qwen3-coder-next:q4_K_M'
 export const CODE_LEGACY_HIGH_MODEL = 'qwen3-coder:30b-a3b-q8_0'
 export const CODE_LEGACY_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
-export const CODE_PRIMARY_MODEL = CODE_NEXT_MODEL
+// Modele code LOCAL principal : Qwen3-Coder-30B-A3B-Instruct (MoE, 3B actifs, 18GB,
+// installe, Apache-2.0, contexte 256K). Les variantes qwen3-coder-next (q8_0 ~85GB,
+// q4_K_M 51GB) ne tiennent pas en 16GB VRAM + 30GB RAM et ne servent que sur le
+// chemin cloud >=48GB (CODE_CLOUD_HIGH_MODEL ci-dessous).
+export const CODE_LOCAL_PRIMARY_MODEL = 'qwen3-coder:30b'
+export const CODE_PRIMARY_MODEL = CODE_LOCAL_PRIMARY_MODEL
 export const CODE_CLOUD_HIGH_MODEL = CODE_NEXT_HIGH_MODEL
 export const CODE_BALANCED_MODEL = 'hf.co/Qwen/Qwen3-32B-GGUF:Q6_K'
 export const CODE_LIGHT_MODEL = 'qwen2.5-coder:7b'
@@ -55,8 +70,7 @@ export const CODE_MINI_MODEL = 'qwen2.5:7b'
 export const CODE_SINGLE_MODEL = CODE_PRIMARY_MODEL
 
 const CODE_MODEL_CANDIDATES = [
-  CODE_NEXT_HIGH_MODEL,
-  CODE_NEXT_MODEL,
+  CODE_LOCAL_PRIMARY_MODEL,
   CODE_LEGACY_HIGH_MODEL,
   CODE_LEGACY_MODEL,
   CODE_BALANCED_MODEL,
@@ -120,11 +134,14 @@ export const THREE_D_PHOTOGRAMMETRY_OPTIMAL_IMAGES = 30
 export const THREE_D_PROCEDURAL_KINEMATIC_REQUIRED = true
 export const DETOURAGE_MODEL = 'u2net'
 
-// Voxtral-Small-24B-2507 : modele STT complet non-mini (remplace Mini-4B-Realtime)
-export const VOICE_STT_MODEL = 'mistralai/Voxtral-Small-24B-2507'
+// STT reel : faster-whisper large-v3-turbo (ce que voice_service.py charge vraiment ;
+// l'ancien pointeur Voxtral-Small-24B ~55GB n'est ni installe ni appele — chemin commente).
+export const VOICE_STT_MODEL = 'openai/whisper-large-v3-turbo'
 export const VOICE_STT_FALLBACK = 'openai/whisper-large-v3-turbo'
+// TTS reel : Kokoro-82M (Apache-2.0, local, haute qualite). L'ancien pointeur
+// fishaudio/fish-speech-1.5 etait mort (jamais charge) et sous licence non-commerciale.
 export const VOICE_TTS_MODEL = 'hexgrad/Kokoro-82M'
-export const VOICE_MODEL_PACK_LABEL = 'Voxtral-Small-24B STT + Kokoro TTS'
+export const VOICE_MODEL_PACK_LABEL = 'faster-whisper large-v3-turbo STT + Kokoro-82M TTS'
 
 // Modeles legacy connus : tous redirigent vers le modele principal actuel.
 const LEGACY_MAIN_MODELS = new Set([
@@ -144,8 +161,10 @@ const LEGACY_MAIN_MODELS = new Set([
 // Anciens modeles code supprimes -- tout redirige vers CODE_SINGLE_MODEL.
 // Les modeles explicitement supportes ci-dessus restent selectionnables comme
 // fallback installe quand Qwen3-Coder-Next n'est pas disponible.
+// NOTE: 'qwen3-coder:30b' N'EST PLUS legacy — c'est desormais CODE_LOCAL_PRIMARY_MODEL,
+// le modele code de production sur cette machine. L'y remettre le redirigerait vers un
+// fallback absent (regression).
 const LEGACY_CODE_MODELS = new Set([
-  'qwen3-coder:30b',
   'qwen3-coder:30b-a3b-q6_K_M',
   'qwen3-coder:30b-a3b-q6_K',
   'qwen2.5-coder:14b',
@@ -174,7 +193,7 @@ const MODEL_ALIASES = new Map<string, string>([
   ['qwen3-coder:30b-a3b-q4_K_M', CODE_LEGACY_MODEL],
   ['qwen3-coder:30b-a3b-q8_0', CODE_LEGACY_HIGH_MODEL],
   ['hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q6_K', CODE_SINGLE_MODEL],
-  ['qwen3-coder:30b', CODE_SINGLE_MODEL],
+  // 'qwen3-coder:30b' n'est plus alias : c'est le modele code primaire installe.
   ['qwen3-coder:30b-a3b-q6_K_M', CODE_SINGLE_MODEL],
   ['qwen3-coder:30b-a3b-q6_K', CODE_SINGLE_MODEL],
   ['qwen2.5-coder:14b', CODE_SINGLE_MODEL],
@@ -331,13 +350,13 @@ export const CLOUD_MODEL_TIERS = {
   },
   low: {
     label: 'LOW (RTX 5070 Ti 16GB)',
-    main: 'qwen3:14b',
-    code: CODE_NEXT_MODEL,
-    vision: 'qwen3:14b',
+    main: 'qwen3:30b-a3b-instruct-2507-q4_K_M',
+    code: CODE_LOCAL_PRIMARY_MODEL,
+    vision: 'qwen3-vl:8b',
     image: 'flux1-schnell-fp8.safetensors',
     video: 'Lightricks/LTX-Video',
     threeD: 'tencent/Hunyuan3D-2.1',
-    stt: 'openai/whisper-large-v3',
+    stt: 'openai/whisper-large-v3-turbo',
     tts: 'hexgrad/Kokoro-82M',
   },
 } as const
@@ -363,37 +382,56 @@ export function selectAdaptivePrimaryModel(hardware: Pick<HardwareProfile, 'ram_
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detection du meilleur modele LLM installe dans Ollama
-// Priorite: qwen3:14b > qwen3:32b > gemma3:27b > qwen2.5 > llama > mistral
+// Auto-detection du meilleur modele CHAT installe dans Ollama.
+// Priorite: Qwen3-30B-A3B-Instruct-2507 (installe) > successeurs Qwen3.5 >
+//           gemma3:27b / mistral-small > plus petits Qwen/Llama en dernier recours.
 // ---------------------------------------------------------------------------
 
 const MAIN_MODEL_PRIORITY: string[] = [
-  'qwen3:14b',
-  'qwen3:14b-q4_K_M',
+  'qwen3:30b-a3b-instruct-2507-q4_K_M',
+  'qwen3:30b-a3b-instruct-2507',
+  'qwen3.5:35b',
+  'qwen3.5:27b',
   'qwen3:32b',
   'gemma3:27b',
-  'gemma3:27b-it-q4_K_M',
+  'mistral-small3.2:24b',
+  'qwen3:14b',
   'qwen2.5:14b',
   'qwen2.5:32b',
   'qwen3:7b',
   'qwen2.5:7b',
-  'llama3.3:70b',
-  'llama3.1:70b',
-  'mistral-small3.1:22b',
-  'qwen2.5-coder:7b',
   'mistral',
   'llama3.1',
   'llama3',
 ]
 
+// Un modele CHAT generaliste n'est ni un modele vision (-vl) ni un modele code
+// (-coder), ni un modele d'embedding. Sans ce filtre, le prefixe 'qwen3' matchait
+// qwen3-vl / qwen3-coder et le chat tournait sur un modele du mauvais role.
+function isGeneralChatModel(normalizedName: string): boolean {
+  return (
+    !normalizedName.includes('-vl') &&
+    !normalizedName.includes('coder') &&
+    !normalizedName.includes('embed') &&
+    !normalizedName.includes('rerank')
+  )
+}
+
 export function detectBestMainModel(installedModels: string[]): string {
-  const normalized = installedModels.map((m) => m.replace(/:latest$/, '').trim().toLowerCase())
+  const chatEntries = installedModels
+    .map((raw) => ({ raw, norm: raw.replace(/:latest$/, '').trim().toLowerCase() }))
+    .filter((entry) => isGeneralChatModel(entry.norm))
+
   for (const candidate of MAIN_MODEL_PRIORITY) {
     const candidateLower = candidate.toLowerCase()
-    if (normalized.some((m) => m === candidateLower || m.startsWith(candidateLower.split(':')[0]))) {
-      // Return the exact installed name that matched
-      const idx = normalized.findIndex((m) => m === candidateLower || m.startsWith(candidateLower.split(':')[0]))
-      return installedModels[idx] || candidate
+    const family = candidateLower.split(':')[0]
+    // Le set est deja filtre (pas de -vl/-coder), on peut donc matcher soit le tag
+    // exact, soit la famille par prefixe sans risque de croiser un autre role.
+    const match = chatEntries.find(
+      (entry) => entry.norm === candidateLower || entry.norm.startsWith(family),
+    )
+    if (match) {
+      return match.raw
     }
   }
   return DEFAULT_MAIN_MODEL

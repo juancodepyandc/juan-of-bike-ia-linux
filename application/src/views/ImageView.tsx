@@ -186,7 +186,10 @@ function buildAutoReferenceQueries(prompt: string, webSearchTerms: string[], req
 
 function shouldAutoResearchReference(prompt: string, contract: GenerationContract, isVerifiable: boolean) {
   const normalized = prompt.toLowerCase()
-  const looksReferenceSensitive = /\b(personnage|character|anime|manga|hero|heros|h[eé]ros|waifu|villain|reference|existant|existing|modele reel|real object|component|composant|cable|connecteur|connector|courroie|belt|poulie|pulley|verin|v[eé]rin|gear|engrenage|bearing|roulement)\b/i.test(normalized)
+  const isPureCreative = /\b(imaginaire|creatif|cr[eé]atif|conceptuel|concept|onirique|r[eê]ve|dream|cyberpunk|fantaisie|fantasy|invention|invent[eé]|sans\s+limite)\b/i.test(normalized)
+  if (isPureCreative) return false
+
+  const looksReferenceSensitive = /\b(personnage|character|anime|manga|hero|heros|h[eé]ros|waifu|villain|reference|existant|existing|modele reel|real object|component|composant|cable|connecteur|connector|courroie|belt|poulie|pulley|verin|v[eé]rin|gear|engrenage|bearing|roulement|asus|rog|nvidia|amd|intel|apple|iphone|samsung|nike|adidas|sony)\b/i.test(normalized)
   return contract.mode === 'create' && (contract.shouldResearch || isVerifiable || looksReferenceSensitive)
 }
 
@@ -420,26 +423,35 @@ export default function ImageView() {
           }
 
           let visionReferenceAnalysis = ''
-          if (primaryImageFile) {
-            setProgress('Analyse detaillee de la reference (Qwen3-VL)...')
-            setPhase('Analyse vision de la reference...', 40)
-            try {
-              const analysis = await analyzeImage(
-                { kind: 'blob', data: primaryImageFile },
-                {
-                  task: 'describe_reference',
-                  userPrompt: currentPrompt,
-                  language: 'fr',
-                  preferQuality: true,
-                  signal: abortRef.current?.signal,
-                },
-              )
-              if (analysis.description && analysis.description.length > 20) {
-                visionReferenceAnalysis = analysis.description
-                setProgress(`Reference analysee (${analysis.modelUsed}, ${Math.round(analysis.durationMs / 100) / 10}s)`)
+          const allImageFiles = contextFiles.filter(f => f.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(f.name))
+          
+          if (allImageFiles.length > 0) {
+            setProgress(`Analyse detaillée de ${allImageFiles.length} reference(s)...`)
+            setPhase('Analyse vision des references...', 40)
+            const analyses: string[] = []
+            
+            for (let i = 0; i < allImageFiles.length; i++) {
+              try {
+                const analysis = await analyzeImage(
+                  { kind: 'blob', data: allImageFiles[i] },
+                  {
+                    task: 'describe_reference',
+                    userPrompt: currentPrompt,
+                    language: 'fr',
+                    preferQuality: true,
+                    signal: abortRef.current?.signal,
+                  },
+                )
+                if (analysis.description && analysis.description.length > 20) {
+                  analyses.push(allImageFiles.length > 1 ? `Reference ${i + 1}: ${analysis.description}` : analysis.description)
+                }
+              } catch (err) {
+                console.warn(`[ImageView] Vision reference analysis failed for image ${i}:`, err)
               }
-            } catch (err) {
-              console.warn('[ImageView] Vision reference analysis failed:', err)
+            }
+            if (analyses.length > 0) {
+              visionReferenceAnalysis = analyses.join('\n\n')
+              setProgress(`References analysees avec succes`)
             }
           }
 
@@ -611,6 +623,7 @@ export default function ImageView() {
             '- correct count of objects and subjects as described in the prompt — no random extra copies',
             '- backgrounds must stay coherent with the subject — no random collage of unrelated scenes, no cut-outs',
             autoReferenceSummary ? `- ${autoReferenceSummary}` : '',
+            visionReferenceAnalysis ? `VISUAL REFERENCE DETAILS PROVIDED BY VISION MODEL (Use these to guide the exact look of subjects/objects if requested): \n${visionReferenceAnalysis}` : '',
             '',
             'NEGATIVE TRAITS TO AVOID: ugly, blurry, low quality, watermark, signature, extra fingers, mutated hands, poorly drawn face, malformed limbs, bad anatomy, cropped, worst quality, low-res, jpeg artifacts, text artifacts, draft sketch, overexposed, underexposed.',
           ].filter(Boolean).join('\n')

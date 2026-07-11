@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import type { UseAcademyViewLogic, AcademyParcoursExo } from '../../hooks/useAcademyViewLogic'
 import { evaluateAnswerSemantically, regenerateSimilarExo, type SemanticEvalResult } from '../../services/learningSemanticEval'
+import { LEARNING_EVAL_MODEL } from '../../config/models.ts'
 import { getBridgeUrl } from '../../utils/runtime'
 import { useLearningSessionStore } from '../../stores/learningSessionStore'
 import MapPreview from './MapPreview'
@@ -1278,7 +1279,7 @@ Réponds en JSON {"exos": [...]}.`
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemma3:12b',
+          model: LEARNING_EVAL_MODEL,
           messages: [
             { role: 'system', content: sys },
             { role: 'user', content: usr },
@@ -2644,7 +2645,7 @@ Tu retournes UNIQUEMENT un JSON pur (pas de markdown) :
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemma3:12b',
+          model: LEARNING_EVAL_MODEL,
           messages: [
             { role: 'system', content: sys },
             { role: 'user', content: usr },
@@ -2778,7 +2779,7 @@ Critères : pertinence, exactitude, vocabulaire en ${language}, structure de phr
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemma3:12b',
+          model: LEARNING_EVAL_MODEL,
           messages: [
             { role: 'system', content: sys },
             { role: 'user', content: usr },
@@ -2862,7 +2863,7 @@ Tu retournes UNIQUEMENT un JSON pur (pas de markdown) :
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemma3:12b',
+          model: LEARNING_EVAL_MODEL,
           messages: [
             { role: 'system', content: sys },
             { role: 'user', content: usr },

@@ -631,6 +631,14 @@ export async function resilientOllamaChatStream(
   onDone: () => void,
   opts?: ResilienceOptions & {
     temperature?: number
+    // Sampling nucleus / top-k / penalites — indispensables pour appliquer le preset
+    // officiel du modele (ex. Qwen3-Coder : temp 0.7, top_p 0.8, top_k 20, repeat 1.05).
+    // Avant, ces valeurs etaient acceptees par l'appelant mais jamais transmises a
+    // ollamaChatStream → sampling par defaut du modele.
+    top_p?: number
+    top_k?: number
+    min_p?: number
+    repeat_penalty?: number
     num_ctx?: number
     // v85b : forward the output budget + first-byte timeout. Without these the
     // code generation ran at Ollama's default context/length → truncated,
@@ -659,6 +667,10 @@ export async function resilientOllamaChatStream(
       return await withResilience(model, opts, (selectedModel) =>
         ollamaChatStream(selectedModel, messages, onToken, onDone, {
           temperature: opts?.temperature,
+          top_p: opts?.top_p,
+          top_k: opts?.top_k,
+          min_p: opts?.min_p,
+          repeat_penalty: opts?.repeat_penalty,
           signal: opts?.signal,
           num_ctx: ctx,
           num_predict: predictFor(ctx),
@@ -676,6 +688,10 @@ export async function resilientOllamaChatStream(
   return withResilience(model, opts, (selectedModel) =>
     ollamaChatStream(selectedModel, messages, onToken, onDone, {
       temperature: opts?.temperature,
+      top_p: opts?.top_p,
+      top_k: opts?.top_k,
+      min_p: opts?.min_p,
+      repeat_penalty: opts?.repeat_penalty,
       signal: opts?.signal,
       num_ctx: 2048,
       num_predict: predictFor(2048),

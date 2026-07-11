@@ -880,7 +880,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "width": min(width, 768),
                 "height": min(height, 512),
                 "num_frames": min(num_frames, 49),
-                "num_inference_steps": 32,
+                "num_inference_steps": 50,
             })
         elif tier == "mid":
             strategies.append({
@@ -907,9 +907,14 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         else:  # minimal
             strategies.append({
                 "id": "i2v-gguf-sequential",
-                "family": "wan",
+                # family "wan_gguf" (et non "wan") : c'est la seule branche du loader
+                # qui sait injecter des transformers GGUF via GGUFQuantizationConfig.
+                # Avec "wan", le repo GGUF etait passe a WanPipeline.from_pretrained
+                # -> crash garanti sur tres basse VRAM.
+                "family": "wan_gguf",
                 "offload": "sequential",
-                "model_override": WAN_I2V_GGUF_MODEL,
+                "gguf_repo": WAN_I2V_GGUF_REPO,
+                "gguf_quant": WAN_GGUF_QUANT_DEFAULT,
                 "width": min(width, 480),
                 "height": min(height, 320),
                 "num_frames": min(num_frames, 25),
@@ -949,7 +954,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "width": min(width, 832),
             "height": min(height, 640),
             "num_frames": min(num_frames, 81),
-            "num_inference_steps": 36,
+            "num_inference_steps": 50,
         })
     elif tier == "mid":
         strategies.append({
@@ -960,7 +965,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "width": min(width, 768),
             "height": min(height, 512),
             "num_frames": min(num_frames, 49),
-            "num_inference_steps": 32,
+            "num_inference_steps": 50,
         })
     elif tier == "low":
         strategies.append({

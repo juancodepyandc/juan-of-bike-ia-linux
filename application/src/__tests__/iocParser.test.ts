@@ -139,6 +139,32 @@ describe('parseIocs — déduplication & ordre', () => {
   })
 })
 
+describe('parseIocs — defang / refang', () => {
+  test('URL defangée hxxps://evil[.]tk extraite', () => {
+    const iocs = parseIocs('C2 hxxps://evil-c2[.]tk/login')
+    const url = iocs.find(i => i.kind === 'url')
+    assert.equal(url?.value, 'https://evil-c2.tk/login')
+  })
+
+  test('Email defangé billing[at]evil[.]tk extrait', () => {
+    const iocs = parseIocs('Contact billing[at]evil[.]tk')
+    const e = iocs.find(i => i.kind === 'email')
+    assert.equal(e?.value, 'billing@evil.tk')
+  })
+
+  test('Domaine defangé (dot) extrait', () => {
+    const iocs = parseIocs('Domaine malware(dot)xyz observé')
+    const d = iocs.find(i => i.kind === 'domain')
+    assert.equal(d?.value, 'malware.xyz')
+  })
+
+  test('Texte sans marqueur de defang → intact (pas de faux positif)', () => {
+    const iocs = parseIocs('Rapport normal sur 8.8.8.8')
+    const ip = iocs.find(i => i.kind === 'ipv4')
+    assert.equal(ip?.value, '8.8.8.8')
+  })
+})
+
 describe('summariseIocs', () => {
   test('compte par kind', () => {
     // CVE regex demande \d{4,7} après l'année, donc les vrais formats CVE-YYYY-NNNN+.

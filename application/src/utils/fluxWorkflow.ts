@@ -38,28 +38,32 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
   realistic: {
     promptPrefix: 'photorealistic RAW photograph, shot on Canon EOS R5, 85mm f/1.4 lens, available light, unretouched,',
     promptSuffix: ', razor sharp natural focus, genuine directional lighting with real soft shadows and hard shadow edges, true-to-life materials, subtle film grain, real lens imperfections chromatic aberration and bokeh, real human skin texture with visible pores fine lines moles and blemishes, authentic fabric weave and thread detail, realistic metal reflections with environment mapping, real glass caustics, subsurface scattering on skin and wax and leaves, micro-texture on every surface wood grain leather creases concrete roughness, natural color grading without oversaturation, ABSOLUTELY NO AI smoothing NO plastic skin NO airbrush NO uncanny valley NO waxy look NO blurry details NO oversharpening NO HDR glow, preserve exact facial features bone structure and identity, no morphing no distortion no symmetry forcing, imperfect human asymmetry is beautiful and required',
-    guidance: 5.5,
-    steps: 32,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    // guidance 4.5 (au lieu de 5.5) : au-dela de ~5 FLUX.1-dev sur-sature et durcit
+    // les ombres — l'effet "IA" que ce preset cherche justement a eviter. ~4.5 rend
+    // plus photographique. steps 34 : FLUX.1-dev converge vers ~28-32 steps, les 45
+    // d'avant coutaient ~35% de temps pour un gain visuel negligeable.
+    guidance: 4.5,
+    steps: 34,
+    sampler: 'euler',
+    scheduler: 'basic',
     editDenoise: 0.12,
   },
   technical_render: {
     promptPrefix: 'technical product render, engineering visualization, neutral studio lighting,',
     promptSuffix: ', precise hard-surface edges, isolated subject, faithful proportions, fixed frame and moving subassemblies clearly separated, visible connectors and routing when relevant, no decorative clutter, no cinematic bokeh, no exploded view unless explicitly requested, clean native detail, no muddy textures, no blocky pixels',
-    guidance: 5.4,
-    steps: 38,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    guidance: 4.8,
+    steps: 34,
+    sampler: 'euler',
+    scheduler: 'basic',
     editDenoise: 0.18,
   },
   anime: {
     promptPrefix: 'anime key visual, high quality anime illustration,',
     promptSuffix: ', on-model character fidelity, crisp linework, clean cel shading, readable costume details, expressive but controlled colors, no muddy textures, no accidental pixelation',
     guidance: 4.3,
-    steps: 34,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    steps: 30,
+    sampler: 'euler',
+    scheduler: 'basic',
     editDenoise: 0.52,
   },
   manga: {

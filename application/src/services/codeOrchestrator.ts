@@ -2513,7 +2513,14 @@ async function runGenerationPhase(
     () => { /* done — resolved by the promise wrapper inside resilient */ },
     {
       signal: generationSignal,
-      temperature: 0.6,
+      // Preset officiel Qwen3-Coder (temp 0.7 / top_p 0.8 / top_k 20 / repeat 1.05),
+      // abaisse a 0.3 pour du code plus deterministe sans etrangler l'echantillonnage.
+      // NB: l'ancien top_p 0.1 etait a la fois trop etroit (boucles de repetition sur
+      // un MoE) ET jamais transmis par la couche de resilience — donc sans effet.
+      temperature: 0.3,
+      top_p: 0.8,
+      top_k: 20,
+      repeat_penalty: 1.05,
       // Large enough for the system prompt + plan + existing files + a real
       // multi-file output; resilience reduces it if the local runtime OOMs.
       num_ctx: CODE_EXPERT_CONTEXT_TOKENS,

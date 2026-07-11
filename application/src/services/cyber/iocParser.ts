@@ -34,6 +34,23 @@ const SUSPICIOUS_TLD = new Set([
   'support', 'rest', 'fit', 'live', 'world',
 ])
 
+// Les rapports de menace « defangent » souvent les IOCs pour eviter les clics
+// accidentels : hxxp://evil[.]com, mail[at]evil(dot)tk. Sans refang, la regex ne
+// matche rien. On ne detecte QUE des marqueurs non ambigus (crochets/parentheses,
+// hxxp) — jamais un « dot » nu — pour ne pas alterer de la prose normale.
+const RE_DEFANG_MARKERS = /hxxps?|\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)|\[at\]|\(at\)|\[:\]|\[\/\/\]/i
+
+export function refangText(input: string): string {
+  return input
+    .replace(/hxxps/gi, 'https')
+    .replace(/hxxp/gi, 'http')
+    .replace(/fxp/gi, 'ftp')
+    .replace(/\[\.\]|\(\.\)|\{\.\}|\[dot\]|\(dot\)/gi, '.')
+    .replace(/\[:\]/g, ':')
+    .replace(/\[\/\/\]/g, '//')
+    .replace(/\[@\]|\[at\]|\(at\)/gi, '@')
+}
+
 function isPrivateIp(ip: string): boolean {
   const parts = ip.split('.').map((s) => parseInt(s, 10))
   if (parts.length !== 4) return false
@@ -77,6 +94,12 @@ function collect(re: RegExp, kind: IocKind, source: string, out: Ioc[], tagger?:
  */
 export function parseIocs(source: string): Ioc[] {
   if (!source) return []
+  // Refang uniquement si des marqueurs sont detectes : sinon comportement
+  // strictement identique (positions inchangees). Quand un rapport est defange,
+  // les positions renvoyees se rapportent au texte refange.
+  if (RE_DEFANG_MARKERS.test(source)) {
+    source = refangText(source)
+  }
   const out: Ioc[] = []
 
   // Hashes (par longueur DESC pour éviter qu'un SHA-1 soit aussi capturé comme MD5).

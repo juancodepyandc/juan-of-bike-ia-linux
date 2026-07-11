@@ -17,7 +17,7 @@ import {
   DEFAULT_MAIN_MODEL,
   DEFAULT_VISION_MODEL,
   VISION_HIGH_QUALITY_MODEL,
-  AUXILIARY_ANALYSIS_MODEL,
+  MAIN_FALLBACK_MODEL,
   detectBestMainModel,
   selectCodeModelForHardware,
   selectAdaptiveVisionModel,
@@ -440,14 +440,14 @@ export const useAppStore = create<AppState>()(
       setInstalledModels: (m) => set((state) => {
         const bestMain = detectBestMainModel(m)
         const userExplicitlyChose = state.mainModel !== DEFAULT_MAIN_MODEL
-          && state.mainModel !== selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL)
+          && state.mainModel !== selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL)
         return {
           installedModels: m,
           mainModel: userExplicitlyChose ? state.mainModel : bestMain,
           codeModel: selectCodeModelForHardware(state.hardware, m, state.codeModel),
         }
       }),
-      mainModel: selectAdaptiveReasoningModel(null, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL),
+      mainModel: selectAdaptiveReasoningModel(null, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL),
       codeModel: selectCodeModelForHardware(null),
       visionModel: VISION_HIGH_QUALITY_MODEL,  // qwen3-vl:30b par defaut (qualite max)
       // Avatar
@@ -499,7 +499,7 @@ export const useAppStore = create<AppState>()(
       setMainModel: (m) => set((state) => ({
         mainModel: resolveConfiguredModel(
           m,
-          selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL),
+          selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL),
         ),
       })),
       setCodeModel: (m) => set((state) => ({
@@ -516,7 +516,7 @@ export const useAppStore = create<AppState>()(
         const safeMainFallback = selectAdaptiveReasoningModel(
           state.hardware || state.profile?.hardware || null,
           DEFAULT_MAIN_MODEL,
-          AUXILIARY_ANALYSIS_MODEL,
+          MAIN_FALLBACK_MODEL,
         )
         const mainModel = shouldPromoteToPrimaryMainModel(state.mainModel)
           ? safeMainFallback

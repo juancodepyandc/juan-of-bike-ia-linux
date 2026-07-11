@@ -66,7 +66,10 @@ def bcrypt_hash(password: str, rounds: int = 12) -> dict:
     return {"algo": "bcrypt", "hash": h, "elapsed_ms": elapsed_ms, "rounds": rounds}
 
 
-def scrypt_hash(password: str, n: int = 2 ** 15, r: int = 8, p: int = 1) -> dict:
+def scrypt_hash(password: str, n: int = 2 ** 17, r: int = 8, p: int = 1) -> dict:
+    # Defaut N=2**17 : minimum OWASP 2025 pour scrypt (r=8, p=1). Reste dans la
+    # plage validee ci-dessous (2**10..2**18). L'analyseur TS (kdfCostAnalyzer)
+    # utilise deja 2**17 comme reference — on aligne le backend Python.
     password = validate_text_payload("password", password, max_bytes=4096)
     n = require_int_range("scrypt N", n, 2 ** 10, 2 ** 18)
     if n & (n - 1):

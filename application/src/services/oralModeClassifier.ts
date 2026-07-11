@@ -25,6 +25,7 @@
  */
 
 import { getBridgeUrl } from '../utils/runtime.ts'
+import { LEARNING_EVAL_MODEL } from '../config/models.ts'
 
 export type OralFormat = 'full' | 'mixed' | 'questions_only' | 'written'
 
@@ -241,7 +242,7 @@ export async function classifyOralMode(
   input: OralClassifierInput,
   options: { signal?: AbortSignal; timeoutMs?: number; model?: string } = {},
 ): Promise<OralClassification> {
-  const { signal, timeoutMs = 30_000, model = 'gemma3:12b' } = options
+  const { signal, timeoutMs = 30_000, model = LEARNING_EVAL_MODEL } = options
   const userPrompt = (input.userPrompt || '').trim()
   const sample = (input.uploadedTextSample || '').slice(0, 2000)
   const subject = (input.subject || '').trim()

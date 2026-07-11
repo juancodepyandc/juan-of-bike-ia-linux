@@ -1016,7 +1016,7 @@ async fn ensure_ollama_model_installed(
                 "ollama",
                 "warning",
                 28,
-                format!("ATTENTION: modele legacy '{}' detecte en VRAM. Migrez la configuration vers llama4:scout.", model),
+                format!("ATTENTION: modele legacy '{}' detecte en VRAM. Migrez la configuration vers qwen3:30b-a3b-instruct-2507.", model),
             )
             .await;
         } else {
@@ -1042,7 +1042,7 @@ async fn ensure_ollama_model_installed(
         {
             let msg = format!(
                 "Telechargement bloque: '{}' est un modele legacy retire du projet. \
-                 Verifiez la configuration — le modele principal doit etre llama4:scout.",
+                 Verifiez la configuration — le modele principal doit etre qwen3:30b-a3b-instruct-2507.",
                 model
             );
             emit_runtime_progress(app_handle, "ollama", "error", 0, msg.clone()).await;
