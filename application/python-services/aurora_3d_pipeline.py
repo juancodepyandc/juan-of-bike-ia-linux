@@ -436,16 +436,24 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             try:
                 sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
                 from sculpted_water_animator import animate_sculpted_water
+                from motion_spec import build_motion_spec
                 _eau_path = output_dir / f"{run_id}_EAU.glb"
-                _rubrique = ("Fontaine en fonctionnement: l'eau des bassins forme des ondulations "
-                             "concentriques qui se propagent du centre vers les bords; l'eau des "
-                             "cascades et deversoirs s'ecoule VERS LE BAS en continu; l'ecume "
-                             "blanche des rebords suit le mouvement descendant; la PIERRE (vasques, "
-                             "socle, margelles) reste PARFAITEMENT immobile et nette; aucune eau "
-                             "detachee ne flotte en l'air; aucune strie ni face noire.")
-                _amp = 1.0
-                for _essai in range(2):
-                    sw = animate_sculpted_water(rescued_mesh, _eau_path, amp_scale=_amp)
+                _spec = build_motion_spec(prompt if "prompt" in dir() else "", motion_prompt)
+                print(f"PROGRESS:animation:spec du mouvement ({_spec['element_mobile']}): "
+                      f"{_spec['type_mouvement']} {_spec['direction']}, vitesse {_spec['vitesse']}, "
+                      f"amplitude {_spec['amplitude']}, couleur {_spec['couleur_cible']}", flush=True)
+                print(f"PROGRESS:animation:critere de verification: {_spec['description_attendue'][:160]}", flush=True)
+                audit.append({"stage": "motion_spec", **_spec})
+                _rubrique = _spec["description_attendue"]
+                if float(_spec.get("amplitude", 1.0)) <= 0.01:
+                    print("PROGRESS:animation:matiere figee demandee — aucune animation de fluide", flush=True)
+                    water_info = "fige (spec)"
+                else:
+                  _amp = float(_spec["amplitude"])
+                  for _essai in range(2):
+                    sw = animate_sculpted_water(rescued_mesh, _eau_path, amp_scale=_amp,
+                                                couleur_cible=str(_spec["couleur_cible"]),
+                                                vitesse=float(_spec["vitesse"]))
                     if not sw.get("ok"):
                         break
                     water_info = sw.get("info")
@@ -476,8 +484,8 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         if _verdict.get("conforme"):
                             break
                         if _verdict.get("eau_trop_discrete") and _essai == 0:
-                            _amp = 1.7
-                            print("PROGRESS:animation:eau trop discrete — nouvelle passe amplifiee", flush=True)
+                            _amp = _amp * 1.7
+                            print("PROGRESS:animation:mouvement trop discret — nouvelle passe amplifiee", flush=True)
                             continue
                         break
                     except Exception as _je:  # noqa: BLE001

@@ -14,6 +14,8 @@ src, dst = argv[0], argv[1]
 fps = int(argv[2]) if len(argv) > 2 else 24
 loop_s = float(argv[3]) if len(argv) > 3 else 3.0
 amp_scale = float(argv[4]) if len(argv) > 4 else 1.0
+couleur_cible = argv[5] if len(argv) > 5 else "bleu"
+vitesse = float(argv[6]) if len(argv) > 6 else 1.0
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=src)
@@ -85,8 +87,15 @@ mn = rgb.min(axis=1)
 val = mx
 sat = np.where(mx > 1e-5, (mx - mn) / np.maximum(mx, 1e-5), 0.0)
 r, g, b = rgb[:, 0], rgb[:, 1], rgb[:, 2]
-blue_dom = (b > r * 1.22) & (b > g * 1.10) & (val > 0.30) & (sat > 0.14)
-water = blue_dom.copy()
+if couleur_cible == "chaud":
+    cible_dom = (r > b * 1.25) & (r > g * 1.05) & (val > 0.35)
+elif couleur_cible == "blanc":
+    cible_dom = (val > 0.80) & (sat < 0.12)
+elif couleur_cible == "sombre":
+    cible_dom = (val < 0.25)
+else:
+    cible_dom = (b > r * 1.22) & (b > g * 1.10) & (val > 0.30) & (sat > 0.14)
+water = cible_dom.copy()
 
 co = np.empty(n_verts * 3, dtype=np.float64)
 me.vertices.foreach_get("co", co)
@@ -159,7 +168,7 @@ for k in range(K):
     sk.data.foreach_set("co", new_co.astype(np.float32))
     keys.append(sk)
 
-frame_count = max(int(round(fps * loop_s)), K * 2)
+frame_count = max(int(round(fps * loop_s / max(vitesse, 0.2))), K * 2)
 sc = bpy.context.scene
 sc.frame_start = 1
 sc.frame_end = frame_count
@@ -179,7 +188,8 @@ print("EAU_OK: %s (K=%d, frames=%d)" % (dst, K, frame_count))
 '''
 
 
-def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800, amp_scale=1.0):
+def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800, amp_scale=1.0,
+                           couleur_cible="bleu", vitesse=1.0):
     import shutil
     blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
@@ -187,7 +197,8 @@ def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800, amp_sca
         script = fp.name
     try:
         p = subprocess.run([blender, "--background", "--python", script, "--",
-                            str(src), str(dst), str(fps), str(loop_s), str(amp_scale)],
+                            str(src), str(dst), str(fps), str(loop_s), str(amp_scale),
+                            str(couleur_cible), str(vitesse)],
                            capture_output=True, text=True, timeout=timeout_s)
     finally:
         try:
