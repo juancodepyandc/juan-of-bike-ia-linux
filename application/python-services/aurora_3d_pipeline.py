@@ -1202,23 +1202,48 @@ def _clean_product_photo(img):
         return img
 
 
-def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str]:
+def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str, str]:
     try:
         sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
         from vlm_judge import ask_vlm
         verdict = ask_vlm([png_path],
                           "Photo candidate comme reference produit pour: '%s'. "
                           "Est-elle utilisable pour une reconstruction 3D fidele ? "
-                          "Criteres stricts: le sujet est bien celui demande, fond neutre ou blanc, "
+                          "Criteres stricts: le sujet est bien celui demande (le MODELE EXACT, pas une "
+                          "variante/edition differente), fond neutre ou blanc, "
                           "AUCUN filigrane/watermark/texte superpose, pas d'eclairage colore artistique, "
-                          "produit entier non coupe." % prompt,
-                          schema_hint='{"ok": true|false, "raison": "..."}',
+                          "produit entier non coupe. "
+                          "Indique aussi l'orientation: 'face' si la face PRINCIPALE du produit est "
+                          "visible de front (celle avec les commandes/boutons/ecran/cadran), "
+                          "'trois_quarts' si la face principale est visible de biais, "
+                          "'dos' si on voit l'arriere, 'profil' sinon." % prompt,
+                          schema_hint='{"ok": true|false, "raison": "...", '
+                                      '"orientation": "face|trois_quarts|dos|profil"}',
                           timeout=90)
         if isinstance(verdict, dict) and "ok" in verdict:
-            return bool(verdict["ok"]), str(verdict.get("raison", ""))
+            ori = str(verdict.get("orientation", "")).strip().lower()
+            if ori not in ("face", "trois_quarts", "dos", "profil"):
+                ori = "inconnu"
+            return bool(verdict["ok"]), str(verdict.get("raison", "")), ori
     except Exception:  # noqa: BLE001
         pass
-    return True, "vlm indisponible: accepte par defaut"
+    return True, "vlm indisponible: accepte par defaut", "inconnu"
+
+
+def _same_product(path_a: str, path_b: str, prompt: str) -> bool:
+    try:
+        from vlm_judge import ask_vlm
+        verdict = ask_vlm([path_a, path_b],
+                          "Ces deux photos montrent-elles EXACTEMENT le meme modele de produit "
+                          "(pour: '%s') ? Reponds false si c'est une variante, une autre edition, "
+                          "une autre couleur ou un produit different." % prompt,
+                          schema_hint='{"meme_produit": true|false, "raison": "..."}',
+                          timeout=90)
+        if isinstance(verdict, dict) and "meme_produit" in verdict:
+            return bool(verdict["meme_produit"])
+    except Exception:  # noqa: BLE001
+        pass
+    return True
 
 
 def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool:
@@ -1240,8 +1265,8 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
             line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
             return (json.loads(line).get("candidates") if line else None) or []
         import io as _io, base64 as _b64
+        import tempfile as _tmpmod
         from PIL import Image as _Image
-        saved = 0
         seen_urls = set()
         base = str(out_path)
         stem = base[:-4] if base.lower().endswith(".png") else base
@@ -1250,12 +1275,12 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 os.remove(f"{stem}_v{_old_v}.png")
             except OSError:
                 pass
-        for query, quota in query_specs:
-            if saved >= 3:
+        slots = {"face": None, "dos": None, "extra": None}
+        for query, _quota in query_specs:
+            if slots["face"] and slots["dos"]:
                 break
-            got_for_query = 0
             for c in _fetch_cands(query)[:8]:
-                if saved >= 3 or got_for_query >= quota:
+                if slots["face"] and slots["dos"] and slots["extra"]:
                     break
                 url = c.get("imageUrl")
                 if not url or url in seen_urls:
@@ -1274,25 +1299,53 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                         _bg = _Image.new("RGB", img.size, (255, 255, 255))
                         _bg.paste(img, mask=img.split()[3])
                         img = _bg
-                    if min(img.size) < 320:
+                    if min(img.size) < 480:
+                        log(f"PROGRESS:reference:photo ignoree (resolution {img.size[0]}x{img.size[1]} < 480)")
                         continue
-                    dest = base if saved == 0 else f"{stem}_v{saved + 1}.png"
+                    cand = _tmpmod.mktemp(suffix=".png")
                     img = _clean_product_photo(img)
-                    img.save(dest)
-                    ok_photo, why = _reference_photo_ok(dest, prompt)
+                    img.save(cand)
+                    ok_photo, why, ori = _reference_photo_ok(cand, prompt)
                     if not ok_photo:
                         log(f"PROGRESS:reference:photo rejetee par l'IA ({why[:60]})")
-                        try:
-                            os.remove(dest)
-                        except OSError:
-                            pass
+                        os.remove(cand)
                         continue
-                    saved += 1
-                    got_for_query += 1
-                    log(f"PROGRESS:reference:photo {saved} validee par l'IA ({img.size[0]}x{img.size[1]}) : {url[:70]}")
+                    slot = None
+                    if ori in ("face", "trois_quarts") and not slots["face"]:
+                        if ori == "trois_quarts" and min(img.size) < 640:
+                            pass
+                        else:
+                            slot = "face"
+                    elif ori == "dos" and not slots["dos"]:
+                        slot = "dos"
+                    elif not slots["extra"] and ori != "inconnu":
+                        slot = "extra"
+                    if slot is None:
+                        os.remove(cand)
+                        continue
+                    slots[slot] = cand
+                    log(f"PROGRESS:reference:photo {slot} validee ({ori}, {img.size[0]}x{img.size[1]}) : {url[:70]}")
                 except Exception:  # noqa: BLE001
                     continue
-        return saved > 0
+        if not slots["face"]:
+            for k in ("dos", "extra"):
+                if slots[k]:
+                    os.remove(slots[k])
+            log("PROGRESS:reference:aucune photo de FACE trouvee -> repli synthese")
+            return False
+        for k in ("dos", "extra"):
+            if slots[k] and not _same_product(slots["face"], slots[k], prompt):
+                log(f"PROGRESS:reference:photo {k} ecartee (produit different de la face)")
+                os.remove(slots[k])
+                slots[k] = None
+        import shutil as _sh
+        _sh.move(slots["face"], base)
+        vi = 2
+        for k in ("dos", "extra"):
+            if slots[k]:
+                _sh.move(slots[k], f"{stem}_v{vi}.png")
+                vi += 1
+        return True
     except Exception:  # noqa: BLE001
         return False
     return False
