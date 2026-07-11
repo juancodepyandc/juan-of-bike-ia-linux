@@ -107,7 +107,7 @@ export const THREE_D_SHAPE_SUBFOLDER = 'hunyuan3d-dit-v2-1'
 export const THREE_D_MULTIVIEW_MODEL = 'tencent/Hunyuan3D-2mv'
 export const THREE_D_MULTIVIEW_SUBFOLDER = 'hunyuan3d-dit-v2-mv'
 export const THREE_D_TEXTURE_MODEL = 'tencent/Hunyuan3D-2'
-export const THREE_D_MODEL_PACK_LABEL = 'Linux 3D: Hunyuan3D 2.1 PBR local + TRELLIS.2 experimental 24GB+ + Blender cleanup'
+export const THREE_D_MODEL_PACK_LABEL = 'Linux 3D: TRELLIS.2-4B natif (voie principale, MIT) + Hunyuan3D repli + materiaux par zones'
 
 export const THREE_D_TRELLIS2_REPO = 'https://github.com/microsoft/TRELLIS.2'
 export const THREE_D_TRELLIS2_MODEL = 'microsoft/TRELLIS.2-4B'

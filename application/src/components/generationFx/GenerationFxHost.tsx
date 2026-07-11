@@ -114,14 +114,13 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
   return (
     <div
       style={{
-        position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)',
-        width: 'min(860px, 86vw)', height: 'min(440px, 62vh)',
+        position: 'fixed', inset: 0,
+        width: '100%', height: '100%',
         zIndex: 118, pointerEvents: 'none',
-        borderRadius: 24, overflow: 'hidden',
-        border: `1px solid ${agent.accent}55`,
-        background: 'rgba(4,6,11,.84)',
+        overflow: 'hidden',
+        background: 'rgba(4,6,11,.97)',
         backdropFilter: 'blur(14px)',
-        boxShadow: `0 40px 120px rgba(0,0,0,.6), 0 0 60px ${agent.accent}22`,
+        boxShadow: `inset 0 0 120px ${agent.accent}18`,
         animation: 'aurora-fx-in .5s cubic-bezier(.22,1,.36,1)',
       }}
     >
@@ -161,8 +160,8 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         </div>
       )}
       {!entry.reveal && (
-      <div style={{ position: 'absolute', right: 26, bottom: 104, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, animation: 'aurora-fx-float 3.6s ease-in-out infinite' }}>
-        <AuroraMascot module={module} size={76} state="working" />
+      <div style={{ position: 'absolute', right: 48, bottom: 150, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, animation: 'aurora-fx-float 3.6s ease-in-out infinite' }}>
+        <AuroraMascot module={module} size={96} state="working" />
         <span style={{
           fontSize: 11, color: '#E6EAF5', padding: '7px 13px', borderRadius: 12, borderTopLeftRadius: 3,
           background: 'rgba(255,255,255,.07)', border: '1px solid rgba(255,255,255,.15)', maxWidth: 190, textAlign: 'center',
@@ -170,7 +169,7 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         }}>{scene.says[sayIdx]}</span>
       </div>
       )}
-      <div style={{ position: 'absolute', left: 26, right: 26, bottom: 20, fontFamily: "'Cascadia Code',Consolas,monospace", pointerEvents: 'none' }}>
+      <div style={{ position: 'absolute', left: 48, right: 48, bottom: 36, fontFamily: "'Cascadia Code',Consolas,monospace", pointerEvents: 'none' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
           <span style={{ fontSize: 10, letterSpacing: '.32em', color: '#8B93A7' }}>
             {module.toUpperCase()} · {agent.name.toUpperCase()} TRAVAILLE

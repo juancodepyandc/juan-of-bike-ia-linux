@@ -677,8 +677,8 @@ function buildIco() {
 }
 
 const threeD: FxScene = {
-  phases: ['Référence FLUX', 'Hunyuan3D', 'Post-traitement', 'Score 5 axes', 'Rescue', 'Finalisation'],
-  says: ['Je sculpte la silhouette…', 'Vertex par vertex…', 'Je répare les couleurs…', 'Squelette en place.'],
+  phases: ['Analyse', 'Référence photo', 'TRELLIS.2 natif', 'Matériaux & zones', 'Animation', 'Finalisation'],
+  says: ['Je choisis la meilleure photo…', 'Je sculpte en géométrie native…', 'Je pose les matières par zones…', 'Modèle prêt.'],
   create: () => {
     const GEO = buildIco()
     let lastVerts = 0

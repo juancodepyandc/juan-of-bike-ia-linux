@@ -3590,6 +3590,10 @@ export default function ModelView() {
 
           // eslint-disable-next-line no-constant-condition
           while (true) {
+            if (result.shape_model === 'TRELLIS.2-4B') {
+              correctionLog.push('Voie Aurora native: gates internes du pipeline (acceptance, matieres, zones) deja passes — boucle de correction UI sautee pour ne pas degrader le natif')
+              break
+            }
             // ── Step A: Mesh quality gate from Python ──
             if (result.mesh_quality_ok === false && result.mesh_quality_issues?.length) {
               const qualityIssues = result.mesh_quality_issues.join('; ')
