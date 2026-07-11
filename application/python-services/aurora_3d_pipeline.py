@@ -2369,6 +2369,22 @@ def run_pipeline(prompt: str, run_id: str, *,
                             print(f"PROGRESS:matieres:masque eau affine par la couleur reelle ({_rw['refined']} zone(s), plus de bord carre)", flush=True)
                     except Exception as _rwe:  # noqa: BLE001
                         audit.append({"stage": "zone_masks_refine", "ok": False, "error": repr(_rwe)})
+                    try:
+                        _zeau = next((z for z in _canon.get("zones", [])
+                                      if str(z.get("label", "")).lower() in ("water", "eau", "lava", "lave")
+                                      and (z.get("target") or {}).get("mask_png")), None)
+                        if _zeau is not None:
+                            from texture_despeckle import despeckle_glb as _dspk
+                            _dsp_out = output_dir / f"{run_id}_mesh_propre.glb"
+                            _dsp = _dspk(str(final_mesh_path), str(_dsp_out),
+                                         mask_out=str(_zeau["target"]["mask_png"]),
+                                         couleur=("chaud" if "lav" in str(_zeau.get("label", "")).lower() else "bleu"))
+                            audit.append({"stage": "texture_despeckle", **_dsp})
+                            if _dsp.get("ok") and _dsp_out.is_file():
+                                final_mesh_path = str(_dsp_out)
+                                print(f"PROGRESS:matieres:{_dsp['mouchetures_purgees_px']} px de mouchetures purges de la texture (pierre propre)", flush=True)
+                    except Exception as _de:  # noqa: BLE001
+                        audit.append({"stage": "texture_despeckle", "ok": False, "error": repr(_de)})
                 except Exception as _mze:  # noqa: BLE001
                     audit.append({"stage": "zone_masks", "ok": False, "error": repr(_mze)})
                 _materials_json = output_dir / f"{run_id}_materials.json"
