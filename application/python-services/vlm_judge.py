@@ -84,6 +84,11 @@ def ask_vlm(images, question, schema_hint="", model=None, timeout=120):
             if model == DEFAULT_MODEL and "not found" in str(exc).lower():
                 model = FALLBACK_MODEL
                 raw = _chat(model, content, images_b64, timeout)
+            elif _attempt == 0 and ("timeout" in str(exc).lower()
+                                    or "timed out" in str(exc).lower()
+                                    or "connection" in str(exc).lower()):
+                last_err = exc
+                continue
             else:
                 raise
         try:

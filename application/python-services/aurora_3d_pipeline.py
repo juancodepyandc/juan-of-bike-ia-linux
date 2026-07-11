@@ -2283,7 +2283,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                         _mvp_out = output_dir / f"{run_id}_materials_vision.json"
                         _vision_info = _mvp.run_pass(
                             str(final_mesh_path), str(_mvp_in), str(_mvp_out),
-                            str(output_dir / f"{run_id}_matvision"))
+                            str(output_dir / f"{run_id}_matvision"),
+                            timeout=int(os.environ.get("AURORA_VISION_TIMEOUT", "300")))
                         _enriched = json.loads(_mvp_out.read_text(encoding="utf-8"))
                         _kept = [z for z in _enriched.get("zones", [])
                                  if _matman.validate({"schema": _matman.SCHEMA_ID,
@@ -2330,9 +2331,12 @@ def run_pipeline(prompt: str, run_id: str, *,
                 _zmask = (_z.get("target") or {}).get("mask_png")
                 if "roughness" in _zch and _zmask and Path(str(_zmask)).is_file():
                     _zone_masks_rough.append((str(_zmask), float(_zch["roughness"])))
+            _labels_speciaux = ("water", "glass", "crystal", "led", "screen", "gem", "ice", "mirror")
             for _z in sorted(_mat_zones, key=lambda z: -float(z.get("confidence", 0.0))):
                 _zch = _z.get("channels") or {}
-                if "roughness" in _zch and not (_z.get("target") or {}).get("mask_png"):
+                _zlab = str(_z.get("label") or "").lower()
+                if ("roughness" in _zch and not (_z.get("target") or {}).get("mask_png")
+                        and _zlab not in _labels_speciaux):
                     _base_rough = float(_zch["roughness"])
                     break
             _rough_png = str(output_dir / f"{run_id}_roughness.png")
