@@ -58,7 +58,8 @@ def _chat(model, content, images_b64, timeout):
         "format": "json",
         "think": False,
         "stream": False,
-        "options": {"temperature": 0},
+        "options": {"temperature": 0,
+                    "num_ctx": int(os.environ.get("AURORA_VLM_CTX", "16384"))},
         "messages": [{"role": "user", "content": content, "images": images_b64}],
     }
     resp = requests.post(OLLAMA_URL + "/api/chat", json=payload, timeout=timeout)
