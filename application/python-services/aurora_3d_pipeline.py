@@ -437,10 +437,52 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
                 from sculpted_water_animator import animate_sculpted_water
                 _eau_path = output_dir / f"{run_id}_EAU.glb"
-                sw = animate_sculpted_water(rescued_mesh, _eau_path)
-                if sw.get("ok"):
+                _rubrique = ("Fontaine en fonctionnement: l'eau des bassins forme des ondulations "
+                             "concentriques qui se propagent du centre vers les bords; l'eau des "
+                             "cascades et deversoirs s'ecoule VERS LE BAS en continu; l'ecume "
+                             "blanche des rebords suit le mouvement descendant; la PIERRE (vasques, "
+                             "socle, margelles) reste PARFAITEMENT immobile et nette; aucune eau "
+                             "detachee ne flotte en l'air; aucune strie ni face noire.")
+                _amp = 1.0
+                for _essai in range(2):
+                    sw = animate_sculpted_water(rescued_mesh, _eau_path, amp_scale=_amp)
+                    if not sw.get("ok"):
+                        break
                     water_info = sw.get("info")
                     gas_input = _eau_path
+                    if os.environ.get("AURORA_ANIM_JUDGE", "1") != "1":
+                        break
+                    try:
+                        from anim_frames_probe import probe_frames
+                        from vlm_judge import ask_vlm
+                        _sonde_dir = output_dir / f"{run_id}_sonde_eau"
+                        _pr = probe_frames(_eau_path, _sonde_dir)
+                        if not _pr.get("ok"):
+                            break
+                        print(f"PROGRESS:animation:juge IA — comparaison de {len(_pr['frames'])} frames a la description de reference (essai {_essai + 1})", flush=True)
+                        _verdict = ask_vlm(_pr["frames"][:3],
+                                           "Voici 3 images successives d'une animation de fontaine. "
+                                           "Description de reference attendue: " + _rubrique +
+                                           " Ces images sont-elles CONFORMES (mouvement d'eau credible, "
+                                           "pierre immobile, pas d'artefact) ?",
+                                           schema_hint='{"conforme": true|false, "defauts": ["..."], '
+                                                       '"eau_trop_discrete": true|false}',
+                                           timeout=180)
+                        _def = ", ".join((_verdict.get("defauts") or [])[:3])
+                        print(f"PROGRESS:animation:verdict juge: {'CONFORME' if _verdict.get('conforme') else 'NON conforme'} {(_def and '(' + _def[:120] + ')') or ''}", flush=True)
+                        audit.append({"stage": "eau_juge", "essai": _essai + 1,
+                                      "conforme": bool(_verdict.get("conforme")),
+                                      "defauts": _verdict.get("defauts")})
+                        if _verdict.get("conforme"):
+                            break
+                        if _verdict.get("eau_trop_discrete") and _essai == 0:
+                            _amp = 1.7
+                            print("PROGRESS:animation:eau trop discrete — nouvelle passe amplifiee", flush=True)
+                            continue
+                        break
+                    except Exception as _je:  # noqa: BLE001
+                        audit.append({"stage": "eau_juge", "ok": False, "error": repr(_je)})
+                        break
             except Exception:  # noqa: BLE001
                 pass
         if water_info and not _wants_gas:
@@ -2308,6 +2350,14 @@ def run_pipeline(prompt: str, run_id: str, *,
                                      str(output_dir / f"{run_id}_masques"))
                     audit.append({"stage": "zone_masks", **_mask_res})
                     print(f"PROGRESS:matieres:{_mask_res.get('masks', 0)} masque(s) de zone genere(s) depuis la vision", flush=True)
+                    try:
+                        from zone_mask_baker import refine_water_masks as _rwm
+                        _rw = _rwm(str(final_mesh_path), _canon)
+                        if _rw.get("refined"):
+                            audit.append({"stage": "zone_masks_refine", **_rw})
+                            print(f"PROGRESS:matieres:masque eau affine par la couleur reelle ({_rw['refined']} zone(s), plus de bord carre)", flush=True)
+                    except Exception as _rwe:  # noqa: BLE001
+                        audit.append({"stage": "zone_masks_refine", "ok": False, "error": repr(_rwe)})
                 except Exception as _mze:  # noqa: BLE001
                     audit.append({"stage": "zone_masks", "ok": False, "error": repr(_mze)})
                 _materials_json = output_dir / f"{run_id}_materials.json"

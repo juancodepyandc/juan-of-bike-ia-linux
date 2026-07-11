@@ -13,6 +13,7 @@ argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 src, dst = argv[0], argv[1]
 fps = int(argv[2]) if len(argv) > 2 else 24
 loop_s = float(argv[3]) if len(argv) > 3 else 3.0
+amp_scale = float(argv[4]) if len(argv) > 4 else 1.0
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=src)
@@ -118,19 +119,23 @@ if frac_water < 0.02:
     sys.exit(4)
 
 size = float(max(obj.dimensions))
-lam = max(size * 0.18, 1e-4)
+lam = max(size * 0.16, 1e-4)
+lam_z = max(size * 0.10, 1e-4)
 flat = nrm[:, 2] > 0.75
 steep = nrm[:, 2] < 0.35
-amp_flat = size * 0.004
-amp_mid = size * 0.0015
-amp_steep = size * 0.0025
+amp_flat = size * 0.005 * amp_scale
+amp_mid = size * 0.002 * amp_scale
+amp_steep = size * 0.004 * amp_scale
+
+cx = float(co[water, 0].mean()) if water.any() else float(co[:, 0].mean())
+cy = float(co[water, 1].mean()) if water.any() else float(co[:, 1].mean())
+rad = np.sqrt((co[:, 0] - cx) ** 2 + (co[:, 1] - cy) ** 2)
 
 if me.shape_keys is None:
     obj.shape_key_add(name="Basis", from_mix=False)
 K = 8
 keys = []
 idx_water = np.where(water)[0]
-phase_field = (co[:, 0] + co[:, 1]) / lam + co[:, 2] / (lam * 0.7)
 for k in range(K):
     ph = 2.0 * math.pi * k / K
     sk = obj.shape_key_add(name="Eau_%02d" % k, from_mix=False)
@@ -139,14 +144,17 @@ for k in range(K):
     idx_steep = idx_water[steep[idx_water]]
     idx_mid = idx_water[~flat[idx_water] & ~steep[idx_water]]
     if len(idx_flat):
-        ripple = amp_flat * np.sin(phase_field[idx_flat] * 2.0 * math.pi + ph)
+        ripple = amp_flat * np.sin(rad[idx_flat] / lam * 2.0 * math.pi - ph)
+        ripple += 0.4 * amp_flat * np.sin(rad[idx_flat] / (lam * 0.43) * 2.0 * math.pi - ph * 2.0)
         disp[idx_flat, 2] = ripple
     if len(idx_mid):
-        ripple = amp_mid * np.sin(phase_field[idx_mid] * 2.0 * math.pi + ph)
-        disp[idx_mid] = nrm[idx_mid] * ripple[:, None]
+        stream = amp_mid * np.sin(co[idx_mid, 2] / lam_z * 2.0 * math.pi + ph)
+        disp[idx_mid] = nrm[idx_mid] * stream[:, None]
+        disp[idx_mid, 2] -= amp_mid * 0.7 * (0.5 + 0.5 * np.sin(co[idx_mid, 2] / lam_z * 2.0 * math.pi + ph))
     if len(idx_steep):
-        glide = np.abs(np.sin(co[idx_steep, 2] / (lam * 0.4) * 2.0 * math.pi - ph * 1.5))
-        disp[idx_steep, 2] = -amp_steep * glide
+        stream = np.sin(co[idx_steep, 2] / lam_z * 2.0 * math.pi + ph)
+        disp[idx_steep] = nrm[idx_steep] * (amp_steep * 0.5 * stream)[:, None]
+        disp[idx_steep, 2] -= amp_steep * (0.5 + 0.5 * stream)
     new_co = (co + disp).reshape(-1)
     sk.data.foreach_set("co", new_co.astype(np.float32))
     keys.append(sk)
@@ -171,7 +179,7 @@ print("EAU_OK: %s (K=%d, frames=%d)" % (dst, K, frame_count))
 '''
 
 
-def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800):
+def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800, amp_scale=1.0):
     import shutil
     blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
@@ -179,7 +187,7 @@ def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800):
         script = fp.name
     try:
         p = subprocess.run([blender, "--background", "--python", script, "--",
-                            str(src), str(dst), str(fps), str(loop_s)],
+                            str(src), str(dst), str(fps), str(loop_s), str(amp_scale)],
                            capture_output=True, text=True, timeout=timeout_s)
     finally:
         try:

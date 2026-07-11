@@ -111,6 +111,57 @@ def bake_zone_masks(glb_path, manifest, out_dir, res=2048):
     return {"ok": True, "masks": written}
 
 
+
+def refine_water_masks(glb_path, manifest):
+    import io
+    import struct
+    from PIL import ImageFilter
+    labels_eau = ("water", "ice", "sea", "lake", "eau")
+    zones = [z for z in manifest.get("zones", [])
+             if str(z.get("label", "")).lower() in labels_eau
+             and (z.get("target") or {}).get("mask_png")
+             and Path(str(z["target"]["mask_png"])).is_file()]
+    if not zones:
+        return {"refined": 0}
+    with open(glb_path, "rb") as f:
+        f.read(12)
+        ln, _ = __import__("struct").unpack("<I4s", f.read(8))
+        g = json.loads(f.read(ln))
+        ln2, _ = __import__("struct").unpack("<I4s", f.read(8))
+        blob = f.read(ln2)
+    try:
+        mat = g["materials"][0]
+        ti = mat["pbrMetallicRoughness"]["baseColorTexture"]["index"]
+        img_meta = g["images"][g["textures"][ti]["source"]]
+        bv = g["bufferViews"][img_meta["bufferView"]]
+        data = blob[bv.get("byteOffset", 0): bv.get("byteOffset", 0) + bv["byteLength"]]
+        atlas = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        return {"refined": 0, "error": "atlas introuvable"}
+    if max(atlas.size) > 4096:
+        atlas = atlas.resize((atlas.size[0] // 2, atlas.size[1] // 2))
+    arr = np.asarray(atlas, dtype=np.float32) / 255.0
+    r, gg, b = arr[..., 0], arr[..., 1], arr[..., 2]
+    mx = arr.max(axis=2)
+    mn = arr.min(axis=2)
+    sat = np.where(mx > 1e-5, (mx - mn) / np.maximum(mx, 1e-5), 0.0)
+    bleu = (b > r * 1.18) & (b > gg * 1.06) & (mx > 0.25) & (sat > 0.10)
+    ecume = (mx > 0.82) & (sat < 0.10) & (b >= r)
+    couleur = Image.fromarray(((bleu | ecume) * 255).astype(np.uint8))
+    couleur = couleur.filter(ImageFilter.MaxFilter(5))
+    refined = 0
+    for z in zones:
+        mp = str(z["target"]["mask_png"])
+        m = Image.open(mp).convert("L")
+        cz = couleur.resize(m.size) if couleur.size != m.size else couleur
+        md = m.filter(ImageFilter.MaxFilter(9))
+        out = np.minimum(np.asarray(md, dtype=np.uint16),
+                         np.asarray(cz, dtype=np.uint16)).astype(np.uint8)
+        Image.fromarray(out).filter(ImageFilter.GaussianBlur(3)).save(mp)
+        refined += 1
+    return {"refined": refined}
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
