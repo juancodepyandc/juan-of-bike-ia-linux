@@ -425,25 +425,40 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 intent = {}
         category = (intent or {}).get("category", "rigid_static")
         confidence = float((intent or {}).get("confidence") or 0.0)
-        if category == "fluid_flow":
+        import shutil as _sh
+        _mp_low = (motion_prompt or "").lower()
+        _wants_water = any(k in _mp_low for k in ("eau", "coule", "cascade", "water"))
+        _wants_gas = (any(k in _mp_low for k in ("vapeur", "fumee", "brume", "steam", "smoke", "fog"))
+                      or category == "gas_volume")
+        water_info = None
+        gas_input = Path(rescued_mesh)
+        if category == "fluid_flow" or (_wants_water and category in ("gas_volume", "rigid_static", "", None)):
             try:
                 sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
                 from sculpted_water_animator import animate_sculpted_water
-                sw = animate_sculpted_water(rescued_mesh, rigged_path)
+                _eau_path = output_dir / f"{run_id}_EAU.glb"
+                sw = animate_sculpted_water(rescued_mesh, _eau_path)
                 if sw.get("ok"):
-                    return {"ok": True, "rigged_mesh": str(rigged_path),
-                            "motion_intent": "fluid_flow_sculpte",
-                            "water_info": sw.get("info"),
-                            "size_bytes": rigged_path.stat().st_size}
+                    water_info = sw.get("info")
+                    gas_input = _eau_path
             except Exception:  # noqa: BLE001
                 pass
+        if water_info and not _wants_gas:
+            _sh.move(str(gas_input), str(rigged_path))
+            return {"ok": True, "rigged_mesh": str(rigged_path),
+                    "motion_intent": "fluid_flow_sculpte",
+                    "water_info": water_info,
+                    "size_bytes": rigged_path.stat().st_size}
+        if _wants_gas:
+            category = "gas_volume"
+            intent = {**(intent or {}), "category": "gas_volume"}
         if category not in ("rigid_static", "", None):
             intent_path = output_dir / f"{run_id}_intent.json"
             intent_path.write_text(json.dumps(intent), encoding="utf-8")
             try:
                 bp = subprocess.run([sys.executable, str(baker),
                                      "--intent", str(intent_path),
-                                     "--input", str(rescued_mesh),
+                                     "--input", str(gas_input),
                                      "--output", str(rigged_path)],
                                     capture_output=True, text=True, timeout=1800, check=False)
                 bres = json.loads(bp.stdout) if (bp.stdout or "").strip().startswith("{") else {}
@@ -451,8 +466,16 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 bres = {"ok": False, "error": repr(exc)}
             if bres.get("ok") and rigged_path.is_file() and rigged_path.stat().st_size > 1000:
                 return {"ok": True, "rigged_mesh": str(rigged_path),
-                        "motion_intent": category,
+                        "motion_intent": category if not water_info else category + "+eau_sculptee",
                         "intent_confidence": confidence,
+                        "water_info": water_info,
+                        "size_bytes": rigged_path.stat().st_size}
+            if water_info:
+                _sh.move(str(gas_input), str(rigged_path))
+                return {"ok": True, "rigged_mesh": str(rigged_path),
+                        "motion_intent": "fluid_flow_sculpte",
+                        "water_info": water_info,
+                        "note": f"gaz echoue ({(bres.get('error') or 'sans sortie')[:120]}), eau conservee",
                         "size_bytes": rigged_path.stat().st_size}
             return {"ok": False,
                     "error": f"intent bake failed ({category}): {bres.get('error') or bres.get('raw') or 'sans sortie'}",
@@ -1932,7 +1955,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         _fluid = ("eau", "coule", "cascade", "vapeur", "fumee", "brume", "goutte",
                   "water", "steam", "smoke", "fog", "led", "clignote", "pulse")
         _rig = ("marche", "court", "danse", "saute", "vole", "nage", "assis",
-                "walk", "run", "dance", "jump", "galop", "trot", "leve", "bouge")
+                "walk", "run", "dance", "jump", "galop", "trot")
         return any(k in _mp for k in _fluid) and not any(k in _mp for k in _rig)
 
     _keep_native = False
@@ -2301,16 +2324,23 @@ def run_pipeline(prompt: str, run_id: str, *,
         try:
             import roughness_synth as _rs
             _base_rough = 0.6
+            _zone_masks_rough = []
             for _z in sorted(_mat_zones, key=lambda z: -float(z.get("confidence", 0.0))):
-                if "roughness" in (_z.get("channels") or {}):
-                    _base_rough = float(_z["channels"]["roughness"])
+                _zch = _z.get("channels") or {}
+                _zmask = (_z.get("target") or {}).get("mask_png")
+                if "roughness" in _zch and _zmask and Path(str(_zmask)).is_file():
+                    _zone_masks_rough.append((str(_zmask), float(_zch["roughness"])))
+            for _z in sorted(_mat_zones, key=lambda z: -float(z.get("confidence", 0.0))):
+                _zch = _z.get("channels") or {}
+                if "roughness" in _zch and not (_z.get("target") or {}).get("mask_png"):
+                    _base_rough = float(_zch["roughness"])
                     break
             _rough_png = str(output_dir / f"{run_id}_roughness.png")
             _rough_glb = str(output_dir / f"{run_id}_mesh_rough.glb")
             _rs_res = _rs._run(argparse.Namespace(
                 glb=str(final_mesh_path), output=_rough_png, base=_base_rough,
                 jitter=0.08, cavity=0.25, dark=0.07, size=2048, seed=7,
-                apply=_rough_glb))
+                apply=_rough_glb, masks=_zone_masks_rough))
             _synth_entry["roughness"] = {"ok": True, "base": _base_rough,
                                          "stats": _rs_res.get("stats")}
             if Path(_rough_glb).is_file():

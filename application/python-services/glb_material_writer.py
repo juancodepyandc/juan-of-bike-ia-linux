@@ -153,7 +153,7 @@ def _apply_zone(g, zone, alpha_fallback, mask_cache):
             _ensure_used(g, EXT_EMISSIVE_STRENGTH)
         if mask_tex is not None:
             mat.emissiveTexture = pygltflib.TextureInfo(index=mask_tex)
-    if "roughness" in ch or "metallic" in ch:
+    if ("roughness" in ch or "metallic" in ch) and mask_tex is None:
         if mat.pbrMetallicRoughness is None:
             mat.pbrMetallicRoughness = pygltflib.PbrMetallicRoughness()
         if "roughness" in ch:

@@ -145,6 +145,14 @@ def _run(a):
         if normal.shape[:2] != (h, w):
             normal = cv2.resize(normal, (w, h), interpolation=cv2.INTER_AREA)
     rough, cav_mean = synthesize(albedo, normal, a.base, a.jitter, a.cavity, a.dark, a.seed)
+    for _mp, _mv in (getattr(a, "masks", None) or []):
+        m = cv2.imread(str(_mp), cv2.IMREAD_GRAYSCALE)
+        if m is None:
+            continue
+        if m.shape[:2] != (h, w):
+            m = cv2.resize(m, (w, h), interpolation=cv2.INTER_AREA)
+        rough[m > 127] = float(_mv)
+    rough = np.clip(rough, 0.0, 1.0)
     rough_u8 = (rough * 255.0 + 0.5).astype(np.uint8)
     if not cv2.imwrite(a.output, rough_u8):
         raise RuntimeError("cannot write " + str(a.output))
