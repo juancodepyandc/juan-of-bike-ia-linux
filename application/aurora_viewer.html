@@ -90,6 +90,49 @@ const loader = new GLTFLoader().setDRACOLoader(draco).setKTX2Loader(ktx2).setMes
 
 const hud = document.getElementById('hud');
 
+const tempsFlux = { value: 0 };
+function installerFlux(mat, flow) {
+  const dir = Array.isArray(flow.direction) ? flow.direction : [0, -1];
+  const vitesse = Number(flow.vitesse) || 1.0;
+  const masque = mat.transmissionMap || null;
+  if (!masque) return;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTempsFlux = tempsFlux;
+    shader.uniforms.uDirFlux = { value: new THREE.Vector2(dir[0], dir[1]).multiplyScalar(0.045 * vitesse) };
+    shader.uniforms.uMasqueFlux = { value: masque };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTempsFlux;
+        uniform vec2 uDirFlux;
+        uniform sampler2D uMasqueFlux;
+        vec2 fluxUv(vec2 uv, float phase) {
+          float t = fract(uTempsFlux * 0.5 + phase);
+          return uv + uDirFlux * t * 2.0;
+        }`)
+      .replace('#include <map_fragment>', `
+        #ifdef USE_MAP
+          float poidsMasque = texture2D(uMasqueFlux, vMapUv).r;
+          if (poidsMasque > 0.03) {
+            float tA = fract(uTempsFlux * 0.5);
+            float tB = fract(uTempsFlux * 0.5 + 0.5);
+            vec4 echA = texture2D(map, fluxUv(vMapUv, 0.0));
+            vec4 echB = texture2D(map, fluxUv(vMapUv, 0.5));
+            float melange = abs(tA * 2.0 - 1.0);
+            vec4 couleurFlux = mix(echA, echB, melange);
+            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+            sampledDiffuseColor = mix(sampledDiffuseColor, couleurFlux, clamp(poidsMasque, 0.0, 1.0) * 0.85);
+            #ifdef DECODE_VIDEO_TEXTURE
+            #endif
+            diffuseColor *= sampledDiffuseColor;
+          } else {
+            vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+            diffuseColor *= sampledDiffuseColor;
+          }
+        #endif`);
+  };
+  mat.needsUpdate = true;
+}
+
 function cadre() {
   if (!racine) return;
   const boite = new THREE.Box3().setFromObject(racine);
@@ -109,7 +152,14 @@ function charge(url, nom) {
     racine.traverse(o => {
       if (o.isMesh && o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) if (m.transparent) { m.depthWrite = false; m.side = THREE.DoubleSide; }
+        for (const m of mats) {
+          if (m.transparent) { m.depthWrite = false; m.side = THREE.DoubleSide; }
+          const flow = m.userData && m.userData.aurora_flow;
+          if (flow && !m.userData._fluxInstalle) {
+            m.userData._fluxInstalle = true;
+            installerFlux(m, flow);
+          }
+        }
       }
     });
     mixer = null;
@@ -217,6 +267,7 @@ listeGlb();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer && enLecture) mixer.update(dt * parseFloat(vitesse.value));
+  if (enLecture) tempsFlux.value += dt * parseFloat(vitesse.value);
   controls.update();
   renderer.render(scene, camera);
 });

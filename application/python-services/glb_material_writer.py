@@ -160,6 +160,15 @@ def _apply_zone(g, zone, alpha_fallback, mask_cache):
             mat.pbrMetallicRoughness.roughnessFactor = float(ch["roughness"])
         if "metallic" in ch:
             mat.pbrMetallicRoughness.metallicFactor = float(ch["metallic"])
+    flow = zone.get("flow")
+    if flow and mask_tex is not None:
+        extras = dict(getattr(mat, "extras", None) or {})
+        extras["aurora_flow"] = {
+            "vitesse": float(flow.get("vitesse", 1.0)),
+            "direction": list(flow.get("direction", [0.0, -1.0])),
+            "schema": "aurora.flow.v1",
+        }
+        mat.extras = extras
     if alpha_fallback and float(ch.get("transmission", 0.0)) > 0.5:
         mat.alphaMode = "BLEND"
         if mat.pbrMetallicRoughness is None:

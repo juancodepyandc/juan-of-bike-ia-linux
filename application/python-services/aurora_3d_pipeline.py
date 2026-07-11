@@ -493,11 +493,13 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         break
             except Exception:  # noqa: BLE001
                 pass
+        _spec_out = _spec if "_spec" in dir() else None
         if water_info and not _wants_gas:
             _sh.move(str(gas_input), str(rigged_path))
             return {"ok": True, "rigged_mesh": str(rigged_path),
                     "motion_intent": "fluid_flow_sculpte",
                     "water_info": water_info,
+                    "motion_spec": _spec_out,
                     "size_bytes": rigged_path.stat().st_size}
         if _wants_gas:
             category = "gas_volume"
@@ -519,6 +521,7 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         "motion_intent": category if not water_info else category + "+eau_sculptee",
                         "intent_confidence": confidence,
                         "water_info": water_info,
+                        "motion_spec": _spec_out,
                         "size_bytes": rigged_path.stat().st_size}
             if water_info:
                 _sh.move(str(gas_input), str(rigged_path))
@@ -2465,6 +2468,17 @@ def run_pipeline(prompt: str, run_id: str, *,
                       **motion_res})
         if motion_res.get("ok"):
             rigged_mesh = motion_res["rigged_mesh"]
+            _fspec = motion_res.get("motion_spec") or {}
+            if (material_manifest_data is not None
+                    and float(_fspec.get("amplitude", 0.0) or 0.0) > 0.01):
+                _labels_fluides = ("water", "eau", "lava", "lave", "sea", "lake", "river")
+                for _z in material_manifest_data.get("zones", []):
+                    if (str(_z.get("label", "")).lower() in _labels_fluides
+                            and (_z.get("target") or {}).get("mask_png")):
+                        _z["flow"] = {"vitesse": float(_fspec.get("vitesse", 1.0)),
+                                      "direction": [0.0, -1.0]}
+                        print(f"PROGRESS:matieres:ecoulement continu embarque dans le GLB "
+                              f"(zone {_z.get('zone_id')}, vitesse {_fspec.get('vitesse', 1.0)})", flush=True)
 
     final_delivery_mesh = rigged_mesh or final_mesh_path
     if material_intel_enabled and material_manifest_data is not None:
@@ -2473,7 +2487,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             _mw_out = str(output_dir / f"{run_id}_final_materials.glb")
             _mw_res = _gmw.apply_manifest(str(final_delivery_mesh),
                                           material_manifest_data, _mw_out,
-                                          alpha_fallback=True)
+                                          alpha_fallback=False)
             _mw_gate = {}
             if _mw_res.get("ok"):
                 try:
