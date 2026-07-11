@@ -1871,13 +1871,24 @@ def run_pipeline(prompt: str, run_id: str, *,
 
     # Stage 2 — Hunyuan3D
     mesh_path = output_dir / f"{run_id}_mesh.glb"
+
+    def _native_ok(_mp):
+        _mp = str(_mp or "").strip().lower()
+        if not _mp:
+            return True
+        _fluid = ("eau", "coule", "cascade", "vapeur", "fumee", "brume", "goutte",
+                  "water", "steam", "smoke", "fog", "led", "clignote", "pulse")
+        _rig = ("marche", "court", "danse", "saute", "vole", "nage", "assis",
+                "walk", "run", "dance", "jump", "galop", "trot", "leve", "bouge")
+        return any(k in _mp for k in _fluid) and not any(k in _mp for k in _rig)
+
     _keep_native = False
     if not force and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
         audit.append({"stage": "hunyuan3d", "skipped": True,
                       "mesh_path": str(mesh_path),
                       "reason": "mesh exists; pass --force to regenerate"})
         raw_dense_path = Path(str(mesh_path))
-        _keep_native = not str(motion_prompt or "").strip()
+        _keep_native = _native_ok(motion_prompt)
         if _keep_native:
             audit.append({"stage": "native_quality", "ok": True,
                           "note": "mesh existant reutilise tel quel: aucune etape destructrice "
@@ -1958,7 +1969,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                                   "reason": "geometrie TRELLIS.2 single-image native conservee "
                                             "(qualite maximale prouvee; assainissement reserve "
                                             "aux meshes issus de fusion multi-vues)"})
-                    _keep_native = not str(motion_prompt or "").strip()
+                    _keep_native = _native_ok(motion_prompt)
                     if _keep_native:
                         audit.append({"stage": "native_quality", "ok": True,
                                       "note": "objet statique TRELLIS.2: mesh+texture natifs "
