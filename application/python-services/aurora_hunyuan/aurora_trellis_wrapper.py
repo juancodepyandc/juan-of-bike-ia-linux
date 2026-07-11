@@ -248,7 +248,8 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 mesh = pipe.run(
                     run_input, seed=seed, pipeline_type=_q,
                     max_num_tokens=int(os.environ.get("AURORA_TRELLIS2_MAXTOK", "49152")),
-                    sparse_structure_sampler_params={"steps": STEPS},
+                    sparse_structure_sampler_params={"steps": STEPS,
+                        "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_SS_CFG", "8.5"))},
                     shape_slat_sampler_params={"steps": STEPS},
                     tex_slat_sampler_params={"steps": STEPS},
                 )[0]
