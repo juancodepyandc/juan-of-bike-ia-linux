@@ -148,57 +148,113 @@ function RefsPanel({ refs, accent }: { refs: FxRef[]; accent: string }) {
   )
 }
 
-function ConstructionPanel({ entry, accent }: { entry: FxEntry; accent: string }) {
-  const lines = entry.logLines ?? []
-  const shown = lines.slice(-16)
-  const c = entry.counters ?? {}
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+function MeshForming({ url, accent }: { url: string; accent: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [lines.length])
+    const host = hostRef.current
+    if (!host) return
+    let disposed = false
+    let raf = 0
+    let renderer: import('three').WebGLRenderer | null = null
+    void (async () => {
+      const THREE = await import('three')
+      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+      if (disposed || !hostRef.current) return
+      const W = host.clientWidth || 600
+      const H = host.clientHeight || 420
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+      renderer.setSize(W, H)
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+      host.appendChild(renderer.domElement)
+      const scene = new THREE.Scene()
+      const camera = new THREE.PerspectiveCamera(45, W / H, 0.001, 5000)
+      const group = new THREE.Group()
+      scene.add(group)
+      new GLTFLoader().load(url, (g) => {
+        if (disposed) return
+        const wire = new THREE.MeshBasicMaterial({ color: new THREE.Color(accent), wireframe: true, transparent: true, opacity: 0.55 })
+        g.scene.traverse((o) => {
+          const mesh = o as import('three').Mesh
+          if (mesh.isMesh) mesh.material = wire
+        })
+        group.add(g.scene)
+        const box = new THREE.Box3().setFromObject(g.scene)
+        const size = box.getSize(new THREE.Vector3()).length() || 1
+        const center = box.getCenter(new THREE.Vector3())
+        g.scene.position.sub(center)
+        camera.position.set(size * 0.55, size * 0.3, size * 0.55)
+        camera.lookAt(0, 0, 0)
+      }, undefined, () => { /* fichier encore en cours d'ecriture — retentera au prochain montage */ })
+      const tick = () => {
+        if (disposed || !renderer) return
+        group.rotation.y += 0.004
+        renderer.render(scene, camera)
+        raf = requestAnimationFrame(tick)
+      }
+      tick()
+    })()
+    return () => {
+      disposed = true
+      cancelAnimationFrame(raf)
+      if (renderer) {
+        renderer.dispose()
+        renderer.domElement.remove()
+      }
+    }
+  }, [url, accent])
+  return <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+}
+
+function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
+  const c = entry.counters ?? {}
+  const started = Boolean(entry.logLines?.length)
+  const silhouette = entry.refs?.[0]?.url
   return (
     <div style={{
-      position: 'absolute', left: 280, right: 280, top: 72, bottom: 170,
-      display: 'flex', flexDirection: 'column', gap: 12, pointerEvents: 'none',
+      position: 'absolute', left: 280, right: 200, top: 60, bottom: 170,
+      display: 'flex', flexDirection: 'column', pointerEvents: 'none',
     }}>
-      <span style={{ fontSize: 10, letterSpacing: '.28em', color: '#8B93A7', fontFamily: "'Cascadia Code',Consolas,monospace" }}>
-        CONSTRUCTION EN DIRECT
-      </span>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-        {[
-          { lab: 'photos validées', val: c.photosValidees ?? 0, col: '#4ADE80' },
-          { lab: 'photos rejetées', val: c.photosRejetees ?? 0, col: '#F87171' },
-          { lab: 'tentatives mesh', val: c.meshTentatives ?? 0, col: accent },
-        ].map((k) => (
-          <span key={k.lab} style={{
-            fontSize: 11, padding: '6px 12px', borderRadius: 999,
-            border: `1px solid ${k.col}55`, color: '#E6EAF5', background: 'rgba(255,255,255,.03)',
-            fontFamily: "'Cascadia Code',Consolas,monospace",
-          }}>
-            <b style={{ color: k.col, fontSize: 14 }}>{k.val}</b>&nbsp;{k.lab}
-          </span>
-        ))}
-        {entry.meshInfo && (
-          <span style={{
-            fontSize: 11, padding: '6px 12px', borderRadius: 999,
-            border: `1px solid ${accent}55`, color: '#E6EAF5', background: `${accent}18`,
-            fontFamily: "'Cascadia Code',Consolas,monospace",
-          }}>▲ {entry.meshInfo}</span>
-        )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <span style={{ fontSize: 10, letterSpacing: '.28em', color: '#8B93A7', fontFamily: "'Cascadia Code',Consolas,monospace" }}>
+          {entry.meshUrl ? 'FABRICATION — GÉOMÉTRIE RÉELLE' : started ? 'LA FORME SE PRÉPARE' : 'EN ATTENTE'}
+        </span>
+        <span style={{ display: 'flex', gap: 8 }}>
+          {[
+            { lab: 'photos ✓', val: c.photosValidees ?? 0, col: '#4ADE80' },
+            { lab: 'photos ✗', val: c.photosRejetees ?? 0, col: '#F87171' },
+            { lab: 'mesh', val: c.meshTentatives ?? 0, col: accent },
+          ].map((k) => (
+            <span key={k.lab} style={{
+              fontSize: 10, padding: '4px 10px', borderRadius: 999,
+              border: `1px solid ${k.col}55`, color: '#E6EAF5', background: 'rgba(4,6,11,.6)',
+              fontFamily: "'Cascadia Code',Consolas,monospace",
+            }}><b style={{ color: k.col, fontSize: 12 }}>{k.val}</b> {k.lab}</span>
+          ))}
+        </span>
       </div>
-      <div ref={scrollRef} style={{
-        flex: 1, overflowY: 'auto', borderRadius: 12,
-        border: '1px solid rgba(255,255,255,.08)', background: 'rgba(0,0,0,.35)',
-        padding: '10px 14px', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 11,
-        lineHeight: 1.75, color: '#B7C0D4',
-      }}>
-        {shown.length === 0 && <div style={{ color: '#5A6377' }}>en attente des premiers événements du pipeline…</div>}
-        {shown.map((l, i) => (
-          <div key={i} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: i === shown.length - 1 ? '#fff' : undefined }}>
-            <span style={{ color: `${accent}` }}>›</span> {l.replace(/^PROGRESS:[a-z_]*:?/i, '')}
+      <div style={{ position: 'relative', flex: 1 }}>
+        {entry.meshUrl ? (
+          <MeshForming url={entry.meshUrl} accent={accent} />
+        ) : silhouette && started ? (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+            <img src={silhouette} alt="silhouette" style={{
+              maxWidth: '72%', maxHeight: '92%', objectFit: 'contain',
+              filter: 'brightness(0.18) sepia(1) hue-rotate(190deg) saturate(3.2) opacity(0.8)',
+            }} />
+            <div style={{
+              position: 'absolute', left: '12%', right: '12%', height: 2,
+              background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
+              boxShadow: `0 0 18px ${accent}`, animation: 'aurora-fx-scan 2.8s ease-in-out infinite',
+            }} />
           </div>
-        ))}
+        ) : (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#5A6377', fontSize: 12, letterSpacing: '.25em',
+            fontFamily: "'Cascadia Code',Consolas,monospace', 'Consolas', monospace",
+            animation: 'aurora-fx-wait 2.2s ease-in-out infinite',
+          }}>EN ATTENTE DU DÉMARRAGE…</div>
+        )}
       </div>
     </div>
   )
@@ -208,7 +264,7 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
   const scene = FX_SCENES[module]
   const agent = FX_AGENTS[module]
   const [, force] = useState(0)
-  const [page, setPage] = useState<'scene' | 'construction'>('scene')
+  const [page, setPage] = useState<'scene' | 'construction'>(module === '3d' ? 'construction' : 'scene')
   useEffect(() => {
     const iv = window.setInterval(() => force((n) => n + 1), 400)
     return () => window.clearInterval(iv)
@@ -233,14 +289,14 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
       {!entry.reveal && entry.refs && entry.refs.length > 0 && (
         <RefsPanel refs={entry.refs} accent={agent.accent} />
       )}
-      {!entry.reveal && page === 'construction' && (
-        <ConstructionPanel entry={entry} accent={agent.accent} />
+      {!entry.reveal && module === '3d' && page === 'construction' && (
+        <CenterStage entry={entry} accent={agent.accent} />
       )}
-      {!entry.reveal && (entry.logLines?.length || entry.refs?.length) && (
+      {!entry.reveal && module === '3d' && (
         <button
           type="button"
           onClick={() => setPage((p) => (p === 'scene' ? 'construction' : 'scene'))}
-          title={page === 'scene' ? 'Voir la construction en direct' : 'Revenir à la scène'}
+          title={page === 'scene' ? 'Voir la fabrication réelle' : 'Revenir à la scène animée'}
           style={{
             position: 'absolute', right: 48, top: '46%', zIndex: 2,
             width: 52, height: 52, borderRadius: '50%', cursor: 'pointer',
@@ -475,6 +531,8 @@ export default function GenerationFxHost() {
         @keyframes aurora-fx-float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-7px) } }
         @keyframes aurora-fx-reveal { from { opacity: 0; clip-path: inset(0 100% 0 0); transform: scale(.96) } to { opacity: 1; clip-path: inset(0 0 0 0); transform: scale(1) } }
         @keyframes aurora-fx-reveal-bg { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes aurora-fx-scan { 0%,100% { top: 6% } 50% { top: 92% } }
+        @keyframes aurora-fx-wait { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
       `}</style>
       {fxForCurrent && <FullOverlay module={fxForCurrent[0]} entry={fxForCurrent[1]} />}
       {others.length > 0 && (

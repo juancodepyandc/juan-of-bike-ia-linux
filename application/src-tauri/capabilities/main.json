@@ -33,6 +33,35 @@
     "process:default",
     "process:allow-exit",
     "process:allow-restart",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        {
+          "path": "$HOME/AuroraIA"
+        },
+        {
+          "path": "$HOME/AuroraIA/**"
+        },
+        {
+          "path": "$APPDATA"
+        },
+        {
+          "path": "$APPDATA/**"
+        },
+        {
+          "path": "$TEMP"
+        },
+        {
+          "path": "$TEMP/**"
+        },
+        {
+          "path": "$HOME/Desktop"
+        },
+        {
+          "path": "$HOME/Desktop/**"
+        }
+      ]
+    }
   ]
 }

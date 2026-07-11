@@ -2262,6 +2262,7 @@ export default function ModelView() {
   const [error, setError] = useState<string | null>(null)
   const [modelUrl, setModelUrl] = useState<string | null>(null)
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
+  const [viewerWebUrl, setViewerWebUrl] = useState<string | null>(null)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null)
   const [referenceSupport, setReferenceSupport] = useState<ThreeDReferenceSupport | null>(null)
   const [viewPlan, setViewPlan] = useState<ThreeDViewPlan | null>(null)
@@ -3520,38 +3521,45 @@ export default function ModelView() {
             try {
               setProgress('Pipeline Aurora 3D (TRELLIS.2 natif, qualite maximale)...')
               setPhase('Pipeline Aurora 3D — geometrie native + materiaux...', 86)
-              const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', outputDir, '--purpose', intent.purpose, '--max-precision']
+              const genDir = `${workspacePath}/output/3d/generations/${runId}`
+              await fsMkdir(genDir).catch(() => {})
+              const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceImagePath) auroraArgs.push('--image', referenceImagePath)
               if (referenceImagePath) {
                 emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
               }
               const refRoles: [string, string][] = [
-                [`${outputDir}/${runId}_reference.png`, 'face'],
-                [`${outputDir}/${runId}_reference_v2.png`, 'dos'],
-                [`${outputDir}/${runId}_reference_v3.png`, 'extra'],
+                [`${genDir}/${runId}_reference.png`, 'face'],
+                [`${genDir}/${runId}_reference_v2.png`, 'dos'],
+                [`${genDir}/${runId}_reference_v3.png`, 'extra'],
               ]
+              let meshEmitted = false
               auroraWatch = window.setInterval(() => {
                 void (async () => {
                   try {
                     const refs: { url: string; role: string }[] = []
                     for (const [p, role] of refRoles) {
-                      if (await fsExists(p)) refs.push({ url: toAssetUrl(p) + `?t=${Date.now()}`, role })
+                      if (await fsExists(p)) refs.push({ url: toAssetUrl(p), role })
                     }
                     if (refs.length === 0 && referenceImagePath) refs.push({ url: toAssetUrl(referenceImagePath), role: 'face' })
-                    const meshExists = await fsExists(`${outputDir}/${runId}_mesh.glb`)
+                    const meshPath = `${genDir}/${runId}_mesh.glb`
+                    const meshExists = !meshEmitted && await fsExists(meshPath)
+                    if (meshExists) meshEmitted = true
                     emitGenerationFx('3d', {
                       active: true,
                       refs: refs.length ? refs : undefined,
-                      meshInfo: meshExists ? 'géométrie native posée — texture & matériaux en cours' : undefined,
+                      meshUrl: meshExists ? toAssetUrl(meshPath) : undefined,
+                      meshInfo: meshEmitted ? 'géométrie native posée — texture & matériaux en cours' : undefined,
                     })
                   } catch { /* fichier pas encore là */ }
                 })()
               }, 8000)
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model' })
               if (/"ok":\s*true/.test(auroraOutput)) {
+                setViewerWebUrl(`http://127.0.0.1:3009/aurora_viewer.html?file=output/3d/generations/${encodeURIComponent(runId)}/${encodeURIComponent(runId)}_final_materials.glb`)
                 result = {
                   ok: true,
-                  path: `${outputDir}/${runId}_final_materials.glb`,
+                  path: `${genDir}/${runId}_final_materials.glb`,
                   pipeline: 'ai_generation',
                   eu_compliant: true,
                   license: 'MIT (TRELLIS.2)',
@@ -4437,8 +4445,23 @@ export default function ModelView() {
           <StudioDiagnosticsPanel diagnostics={diagnostics} title="Preflight 3D" />
           <ConnectorRecommendationsPanel module="3d" compact />
         </div>
-        <div className={viewerFullscreen ? "fixed inset-0 z-[130] overflow-y-auto bg-[#06080d]" : "min-w-0 rounded-[1.8rem] border border-aurora-border/40 bg-aurora-surface/45 overflow-hidden"}>
-          {viewerFullscreen && (
+        {viewerFullscreen && viewerWebUrl && (
+          <div className="fixed inset-0 z-[130] bg-[#06080d]">
+            <iframe
+              src={viewerWebUrl}
+              title="Aurora Viewer"
+              className="h-full w-full border-0"
+            />
+            <button
+              type="button"
+              onClick={() => setViewerFullscreen(false)}
+              title="Retour au viewer compact"
+              className="fixed right-6 top-6 z-[140] flex items-center gap-2 rounded-full border border-aurora-border/60 bg-aurora-surface px-4 py-2 text-sm text-aurora-text hover:bg-aurora-surface-2"
+            >✕ Retour au viewer compact</button>
+          </div>
+        )}
+        <div className={viewerFullscreen && !viewerWebUrl ? "fixed inset-0 z-[130] overflow-y-auto bg-[#06080d]" : "min-w-0 rounded-[1.8rem] border border-aurora-border/40 bg-aurora-surface/45 overflow-hidden"}>
+          {viewerFullscreen && !viewerWebUrl && (
             <button
               type="button"
               onClick={() => setViewerFullscreen(false)}
