@@ -106,6 +106,12 @@ function charge(url, nom) {
   loader.load(url, g => {
     if (racine) scene.remove(racine);
     racine = g.scene; scene.add(racine); cadre();
+    racine.traverse(o => {
+      if (o.isMesh && o.material) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) if (m.transparent) { m.depthWrite = false; m.side = THREE.DoubleSide; }
+      }
+    });
     mixer = null;
     if (g.animations.length) {
       mixer = new THREE.AnimationMixer(racine);

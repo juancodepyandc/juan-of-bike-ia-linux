@@ -118,10 +118,12 @@ if frac_water < 0.02:
     sys.exit(4)
 
 size = float(max(obj.dimensions))
-amp = size * 0.006
 lam = max(size * 0.18, 1e-4)
+flat = nrm[:, 2] > 0.75
 steep = nrm[:, 2] < 0.35
-flow_amp = size * 0.008
+amp_flat = size * 0.004
+amp_mid = size * 0.0015
+amp_steep = size * 0.0025
 
 if me.shape_keys is None:
     obj.shape_key_add(name="Basis", from_mix=False)
@@ -133,13 +135,18 @@ for k in range(K):
     ph = 2.0 * math.pi * k / K
     sk = obj.shape_key_add(name="Eau_%02d" % k, from_mix=False)
     disp = np.zeros((n_verts, 3), dtype=np.float64)
-    ripple = amp * np.sin(phase_field[idx_water] * 2.0 * math.pi + ph)
-    disp[idx_water] = nrm[idx_water] * ripple[:, None]
+    idx_flat = idx_water[flat[idx_water]]
     idx_steep = idx_water[steep[idx_water]]
+    idx_mid = idx_water[~flat[idx_water] & ~steep[idx_water]]
+    if len(idx_flat):
+        ripple = amp_flat * np.sin(phase_field[idx_flat] * 2.0 * math.pi + ph)
+        disp[idx_flat, 2] = ripple
+    if len(idx_mid):
+        ripple = amp_mid * np.sin(phase_field[idx_mid] * 2.0 * math.pi + ph)
+        disp[idx_mid] = nrm[idx_mid] * ripple[:, None]
     if len(idx_steep):
-        cascade = flow_amp * np.sin(co[idx_steep, 2] / (lam * 0.4) * 2.0 * math.pi - ph * 1.5)
-        disp[idx_steep, 2] = disp[idx_steep, 2] - np.abs(cascade) * 0.35
-        disp[idx_steep] += nrm[idx_steep] * cascade[:, None] * 0.4
+        glide = np.abs(np.sin(co[idx_steep, 2] / (lam * 0.4) * 2.0 * math.pi - ph * 1.5))
+        disp[idx_steep, 2] = -amp_steep * glide
     new_co = (co + disp).reshape(-1)
     sk.data.foreach_set("co", new_co.astype(np.float32))
     keys.append(sk)
