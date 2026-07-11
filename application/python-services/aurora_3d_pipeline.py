@@ -2734,6 +2734,9 @@ def main() -> int:
     parser.add_argument("--image", action="append", dest="images", default=[],
                         help="Reference image path (repeatable). >=8 -> photogrammetry; "
                              ">=4 + 'photogrammetry'/'scan' keyword -> photogrammetry.")
+    parser.add_argument("--max-precision", action="store_true", dest="max_precision",
+                        help="Qualite maximale: TRELLIS.2 1536_cascade avec allocateur "
+                             "manage (spill RAM) + passe vision materiaux.")
     parser.add_argument("--dry-run-prompt", action="store_true", dest="dry_run_prompt",
                         help="Build and print the FLUX prompt (extract_kind + "
                              "enhance_flux_prompt + faithful-scene contract) WITHOUT "
@@ -2744,6 +2747,11 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError):
         pass
+    if args.max_precision:
+        os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "1")
+        os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
+        os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
+        os.environ.setdefault("AURORA_NORMAL_RES", "8192")
 
     if args.dry_run_prompt:
         preview = dry_run_prompt_preview(

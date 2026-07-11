@@ -11344,7 +11344,6 @@ def three_d_run_pipeline():
             # Lent (~25-30 min/objet, deborde sur la RAM) mais precision maximale.
             _run_env["AURORA_TRELLIS2_MANAGED"] = "1"
             _run_env["AURORA_TRELLIS2_QUALITY"] = "1536_cascade"
-            _run_env["AURORA_TRELLIS2_MULTIVIEW"] = "1"
             _run_env["AURORA_TRELLIS2_STEPS"] = "40"
             _run_env["AURORA_NORMAL_RES"] = "8192"
             _run_env["AURORA_TAUBIN_ITERS"] = "16"

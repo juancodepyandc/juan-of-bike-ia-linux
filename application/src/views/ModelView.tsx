@@ -2536,7 +2536,7 @@ export default function ModelView() {
       const workspace = await getWorkspacePath()
       const runId = `physics_${Date.now()}`
       const active3dSession = useModuleHistoryStore.getState().getActiveSession('3d')
-      const runPaths = buildThreeDRunOutputPaths(workspace, active3dSession, runId, motionPrompt || 'animation 3D')
+      const runPaths = buildThreeDRunOutputPaths(workspace, active3dSession, runId, 'simulation physique')
       const outputDir = runPaths.models
       await Promise.all([
         fsMkdir(runPaths.conversationDir),
@@ -3510,6 +3510,33 @@ export default function ModelView() {
           }
 
           // ── AI GENERATION PIPELINE (default + fallback) ──
+          if (!result) {
+            // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
+            // qualite native, materiaux par zones). DreamGaussian/Hunyuan multivue ne
+            // servent plus que de repli si ce pipeline echoue.
+            try {
+              setProgress('Pipeline Aurora 3D (TRELLIS.2 natif, qualite maximale)...')
+              setPhase('Pipeline Aurora 3D — geometrie native + materiaux...', 86)
+              const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', outputDir, '--purpose', intent.purpose, '--max-precision']
+              if (referenceImagePath) auroraArgs.push('--image', referenceImagePath)
+              const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model' })
+              if (/"ok":\s*true/.test(auroraOutput)) {
+                result = {
+                  ok: true,
+                  path: `${outputDir}/${runId}_final_materials.glb`,
+                  pipeline: 'ai_generation',
+                  eu_compliant: true,
+                  license: 'MIT (TRELLIS.2)',
+                  shape_model: 'TRELLIS.2-4B',
+                  shape_input_mode: 'single_view',
+                } as ModelGenerationResult
+              } else {
+                setProgress('Pipeline Aurora sans resultat exploitable, repli ancien chemin...')
+              }
+            } catch {
+              setProgress('Pipeline Aurora indisponible, repli ancien chemin...')
+            }
+          }
           if (!result) {
             // Try DreamGaussian first if preferred (EU-safe MIT license)
             if (intent.pipelineRouting.dreamgaussianPreferred) {
