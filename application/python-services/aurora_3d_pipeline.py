@@ -2420,7 +2420,15 @@ def run_pipeline(prompt: str, run_id: str, *,
             if _mw_res.get("ok"):
                 try:
                     import stage_quality_gate as _sqg
-                    _mw_gate = _sqg.gate(final_delivery_mesh, _mw_out, "material_write")
+                    _mw_transp = any(
+                        float((z.get("channels") or {}).get("transmission", 0.0)) >= 0.5
+                        and (z.get("target") or {}).get("mask_png")
+                        for z in (material_manifest_data.get("zones") or []))
+                    _mw_gate = _sqg.gate(final_delivery_mesh, _mw_out, "material_write",
+                                         expected_transparency=_mw_transp)
+                    if _mw_transp:
+                        print("PROGRESS:matieres:transparence attendue (zone eau/verre) — "
+                              "gate saturation adapte", flush=True)
                 except Exception as _ge:  # noqa: BLE001
                     _mw_gate = {"skipped": True, "reason": repr(_ge)}
             print(f"PROGRESS:matieres:{_mw_res.get('zones_applied', 0)} zone(s) de matiere appliquee(s)", flush=True)

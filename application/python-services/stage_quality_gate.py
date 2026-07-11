@@ -56,7 +56,8 @@ def _artifact_metrics(glb: Path, workdir: Path) -> dict | None:
     return {k: float(np.mean([v[k] for v in per])) for k in per[0]}
 
 
-def gate(before_glb: str | Path, after_glb: str | Path, tag: str) -> dict:
+def gate(before_glb: str | Path, after_glb: str | Path, tag: str,
+         expected_transparency: bool = False) -> dict:
     if os.environ.get("AURORA_STAGE_GATE", "1") != "1":
         return {"ok": True, "skipped": True, "reason": "AURORA_STAGE_GATE=0"}
     before_glb = Path(before_glb)
@@ -67,7 +68,8 @@ def gate(before_glb: str | Path, after_glb: str | Path, tag: str) -> dict:
     if not mb or not ma:
         return {"ok": True, "skipped": True, "reason": "rendu impossible", "tag": tag}
     reasons = []
-    if ma["saturation"] < mb["saturation"] * 0.6 and mb["saturation"] > 0.03:
+    if (ma["saturation"] < mb["saturation"] * 0.6 and mb["saturation"] > 0.03
+            and not expected_transparency):
         reasons.append("saturation effondree (delavage): %.3f -> %.3f"
                        % (mb["saturation"], ma["saturation"]))
     if ma["sharpness"] < mb["sharpness"] * 0.55 and mb["sharpness"] > 0.5:
