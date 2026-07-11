@@ -1876,6 +1876,12 @@ def run_pipeline(prompt: str, run_id: str, *,
         audit.append({"stage": "hunyuan3d", "skipped": True,
                       "mesh_path": str(mesh_path),
                       "reason": "mesh exists; pass --force to regenerate"})
+        raw_dense_path = Path(str(mesh_path))
+        _keep_native = not str(motion_prompt or "").strip()
+        if _keep_native:
+            audit.append({"stage": "native_quality", "ok": True,
+                          "note": "mesh existant reutilise tel quel: aucune etape destructrice "
+                                  "(fidelity/taubin/optimize/normal-bake sautes)"})
     else:
         # === VOIE PRINCIPALE : TRELLIS.2 (single-image -> geometrie COHERENTE + PBR) ===
         # Attaque la RACINE du "double-visage / cornes doublees / poitrine fragmentee" :
