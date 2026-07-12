@@ -2601,6 +2601,39 @@ def run_pipeline(prompt: str, run_id: str, *,
         audit.append({"stage": "material_write", "skipped": True,
                       "reason": ("AURORA_MATERIAL_INTEL=0" if not material_intel_enabled
                                  else "no material manifest")})
+
+    # v79w — Native texture precision (position-independent). Kills the baked
+    # cream/yellow tint + medium shadow bake on "white/light plastic" regions
+    # of TRELLIS.2 atlases. Purely chroma clamp + value floor on an HSV mask,
+    # NO spatial op (blur/dilate/CLAHE), so it can't reveal atlas UV islands.
+    # Opt-in via AURORA_NATIVE_PRECISION=1 (auto-set by --max-precision).
+    # Skipped silently if the mesh has no baseColorTexture (procedural, etc.).
+    if os.environ.get("AURORA_NATIVE_PRECISION") == "1":
+        try:
+            import native_texture_precision as _prec
+            _prec_out = str(output_dir / f"{run_id}_final_precision.glb")
+            _prec_res = _prec.run(
+                str(final_delivery_mesh), _prec_out,
+                delight_strength=float(os.environ.get("AURORA_PRECISION_STRENGTH", "0.55")),
+                clahe_clip=float(os.environ.get("AURORA_PRECISION_CLAHE", "0.0")),
+                clahe_tile=int(os.environ.get("AURORA_PRECISION_TILE", "32")),
+            )
+            audit.append({"stage": "native_texture_precision", **{
+                k: v for k, v in _prec_res.items() if k not in ("input", "output")
+            }, "output": _prec_out})
+            if _prec_res.get("ok"):
+                final_delivery_mesh = _prec_out
+                print("PROGRESS:matieres:precision native appliquee "
+                      f"(chroma killed {_prec_res.get('delight',{}).get('chroma_killed',0)}, "
+                      f"band lifted {_prec_res.get('delight',{}).get('band_lifted',0)})",
+                      flush=True)
+        except Exception as exc:  # noqa: BLE001
+            audit.append({"stage": "native_texture_precision", "ok": False,
+                          "error": repr(exc)})
+    else:
+        audit.append({"stage": "native_texture_precision", "skipped": True,
+                      "reason": "AURORA_NATIVE_PRECISION=0 (opt-in)"})
+
     if os.environ.get("AURORA_VLM_CRITIC") == "1":
         critic = _run_vlm_critic(final_delivery_mesh, prompt, run_id, output_dir)
         audit.append({"stage": "vlm_critic", **critic})
@@ -2916,6 +2949,11 @@ def main() -> int:
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
+        # v79w — native atlas delight/chroma-clamp (position-independent, safe
+        # on TRELLIS.2 atlases, opt-in only). Turned on by default in max-
+        # precision because it can't degrade the output (it only lifts baked
+        # shadows on the plastic mask; edge/dark preservation is built in).
+        os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
         # NB: la sim FLIP (AURORA_FLUID_SIM) n'est PLUS auto-activee ici. Sur une
         # fontaine, l'eau SCULPTEE animee (sculpted_water_animator, bassins pleins +
         # vagues + flux shader) rend bien mieux que le FLIP (blobby, verre, bassins
