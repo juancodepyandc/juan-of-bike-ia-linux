@@ -17,6 +17,7 @@ viscosite = argv[4] if len(argv) > 4 else "fluide"
 debit = float(argv[5]) if len(argv) > 5 else 1.6
 cache_dir = argv[6] if len(argv) > 6 else ""
 fps = 24
+prelude = max(24, int(frames * 1.5))
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 try:
@@ -26,7 +27,7 @@ except Exception:
 bpy.ops.import_scene.gltf(filepath=src)
 sc = bpy.context.scene
 sc.frame_start = 1
-sc.frame_end = frames
+sc.frame_end = frames + prelude
 sc.render.fps = fps
 
 meshes = [o for o in sc.objects if o.type == "MESH"]
@@ -34,6 +35,13 @@ if not meshes:
     print("SIM_FAIL: pas de mesh")
     sys.exit(2)
 socle = max(meshes, key=lambda o: len(o.data.polygons))
+
+if socle.data.shape_keys:
+    bpy.context.view_layer.objects.active = socle
+    socle.shape_key_clear()
+if socle.animation_data:
+    socle.animation_data_clear()
+print("SIM_INFO: socle fige (morphs sculptes retires — tout le mouvement vient de la sim)", flush=True)
 
 mn = Vector((1e9,) * 3)
 mx = Vector((-1e9,) * 3)
@@ -84,6 +92,7 @@ if img_socle is not None and socle.data.uv_layers.active:
     me_s.vertices.foreach_get("normal", nr0)
     nr0 = nr0.reshape(-1, 3)
     raide = np.abs(nr0[:, 2]) < 0.55
+
     a_virer = eau_v & raide
     if a_virer.sum() > 100:
         import bmesh
@@ -110,9 +119,16 @@ bpy.context.view_layer.objects.active = proxy
 bpy.ops.object.modifier_apply(modifier=dec.name)
 proxy.hide_render = True
 
-bpy.ops.mesh.primitive_cube_add(location=(centre.x, centre.y, centre.z + taille.z * 0.08))
+# Domaine SNUG (le cube Blender fait +-1 => scale S donne 2S de large). 0.58 => 116%
+# d'emprise: enveloppe la fontaine avec une petite marge, l'eau est retenue par la
+# PIERRE reelle. Plancher POSE au niveau de la base (mn.z) pour que l'eau debordante
+# soit retiree des qu'elle atteint le bassin bas, sans longue chute sous la base
+# (l'ancien domaine descendait 0.3 SOUS la fontaine -> gouttes visibles sous le socle).
+# Hauteur = 1.16*taille.z: reste de la marge en haut pour le panache du jet.
+_dom_loc_z = centre.z + taille.z * 0.18
+bpy.ops.mesh.primitive_cube_add(location=(centre.x, centre.y, _dom_loc_z))
 domaine = bpy.context.active_object
-domaine.scale = (taille.x * 0.62, taille.y * 0.62, taille.z * 0.95)
+domaine.scale = (taille.x * 0.58, taille.y * 0.58, taille.z * 0.72)
 bpy.ops.object.transform_apply(scale=True)
 fd = domaine.modifiers.new("fluide", "FLUID")
 fd.fluid_type = "DOMAIN"
@@ -122,11 +138,11 @@ ds.resolution_max = resolution
 ds.use_mesh = True
 ds.mesh_scale = 1
 try:
-    ds.mesh_particle_radius = 1.15
+    ds.mesh_particle_radius = 1.05
 except AttributeError:
     pass
 ds.cache_frame_start = 1
-ds.cache_frame_end = frames
+ds.cache_frame_end = frames + prelude
 ds.cache_type = "ALL"
 if cache_dir:
     ds.cache_directory = cache_dir
@@ -145,9 +161,9 @@ for v in socle.data.vertices:
 if haut is None:
     haut = Vector((centre.x, centre.y, mx.z))
 cellule = max(domaine.dimensions) / resolution
-ray_jet = max(rayon * 0.035, cellule * 2.3)
+ray_jet = max(rayon * 0.030, cellule * 2.3)
 g = abs(sc.gravity[2]) or 9.81
-apex = taille.z * 0.22 * debit
+apex = taille.z * 0.20 * debit
 v_jet = math.sqrt(2.0 * g * apex)
 print("SIM_INFO: taille=(%.2f,%.2f,%.2f) cellule=%.4f ray_jet=%.4f v_jet=%.2f apex=%.2f"
       % (taille.x, taille.y, taille.z, cellule, ray_jet, v_jet, apex), flush=True)
@@ -161,12 +177,6 @@ js.flow_behavior = "INFLOW"
 js.use_initial_velocity = True
 js.velocity_coord = (0.0, 0.0, v_jet)
 js.subframes = 2
-js.use_inflow = True
-js.keyframe_insert("use_inflow", frame=1)
-js.use_inflow = False
-js.keyframe_insert("use_inflow", frame=int(frames * 0.5))
-js.use_inflow = True
-js.keyframe_insert("use_inflow", frame=frames + 1)
 jet.hide_render = True
 jet.display_type = "WIRE"
 
@@ -175,13 +185,47 @@ fe.fluid_type = "EFFECTOR"
 fe.effector_settings.effector_type = "COLLISION"
 fe.effector_settings.surface_distance = rayon * 0.004
 
+# Exutoire = drainage type "pompe de recirculation". Placé au niveau de la surface
+# du BASSIN LE PLUS BAS : toute eau qui redescend jusque-là est retirée, donc le
+# bassin bas ne déborde jamais et rien ne cascade sur la pierre extérieure ni ne
+# goutte sous la base. Niveau détecté depuis les faces d'eau plates du mesh sculpté.
+niveau_drain = mn.z + taille.z * 0.16
+try:
+    import numpy as _np2
+    _me = socle.data
+    _nrz = _np2.empty(len(_me.vertices) * 3, dtype=_np2.float64)
+    _me.vertices.foreach_get("normal", _nrz)
+    _nrz = _nrz.reshape(-1, 3)
+    _co = _np2.empty(len(_me.vertices) * 3, dtype=_np2.float64)
+    _me.vertices.foreach_get("co", _co)
+    _co = _co.reshape(-1, 3)[:, 2] + socle.matrix_world.translation.z
+    _plats = _co[_nrz[:, 2] > 0.80]
+    if _plats.size > 200:
+        niveau_drain = float(_np2.percentile(_plats, 12)) + taille.z * 0.02
+except Exception as _e_drain:
+    print("SIM_INFO: niveau drain par defaut (%r)" % _e_drain, flush=True)
+bas_dom = domaine.location.z - domaine.dimensions.z / 2.0
+ep_sortie = max(niveau_drain - bas_dom, max(taille) * 6.0 / resolution)
+bpy.ops.mesh.primitive_cube_add(location=(centre.x, centre.y, bas_dom + ep_sortie / 2.0))
+sortie = bpy.context.active_object
+sortie.scale = (taille.x * 0.60, taille.y * 0.60, ep_sortie / 2.0)
+bpy.ops.object.transform_apply(scale=True)
+fo = sortie.modifiers.new("fluide", "FLUID")
+fo.fluid_type = "FLOW"
+ofs = fo.flow_settings
+ofs.flow_type = "LIQUID"
+ofs.flow_behavior = "OUTFLOW"
+sortie.hide_render = True
+sortie.display_type = "WIRE"
+print("SIM_INFO: exutoire jusqu'a z=%.4f (bassin bas)" % (bas_dom + ep_sortie), flush=True)
+
 bpy.context.view_layer.objects.active = domaine
 with bpy.context.temp_override(object=domaine, active_object=domaine, selected_objects=[domaine]):
     _ret = bpy.ops.fluid.bake_all()
 print("SIM_INFO: bake_all -> %s" % _ret, flush=True)
 import time as _t
 import glob as _g
-_attendu = int(frames * 0.8)
+_attendu = int((frames + prelude) * 0.8)
 _deadline = _t.time() + 2400
 _n_mesh = 0
 _stalle = 0
@@ -202,13 +246,13 @@ if _n_mesh < 4:
 mat_eau = bpy.data.materials.new("AuroraEauSim")
 mat_eau.use_nodes = True
 bsdf = next(n for n in mat_eau.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
-bsdf.inputs["Base Color"].default_value = (0.55, 0.78, 0.86, 1.0)
-bsdf.inputs["Roughness"].default_value = 0.03
+bsdf.inputs["Base Color"].default_value = (0.42, 0.68, 0.78, 1.0)
+bsdf.inputs["Roughness"].default_value = 0.02
 try:
-    bsdf.inputs["Transmission Weight"].default_value = 0.9
+    bsdf.inputs["Transmission Weight"].default_value = 0.95
 except KeyError:
     try:
-        bsdf.inputs["Transmission"].default_value = 0.9
+        bsdf.inputs["Transmission"].default_value = 0.95
     except KeyError:
         pass
 try:
@@ -218,7 +262,7 @@ except KeyError:
 mat_eau.surface_render_method = "BLENDED" if hasattr(mat_eau, "surface_render_method") else None
 
 dg_frames = []
-for f in range(1, frames + 1):
+for f in range(prelude + 1, prelude + frames + 1):
     sc.frame_set(f)
     dg = bpy.context.evaluated_depsgraph_get()
     dom_eval = domaine.evaluated_get(dg)
@@ -235,11 +279,12 @@ for f in range(1, frames + 1):
         dm.ratio = 0.55
         bpy.context.view_layer.objects.active = ob
         bpy.ops.object.modifier_apply(modifier=dm.name)
-    dg_frames.append((f, ob))
-print("SIM_INFO: %d frames de fluide extraites" % len(dg_frames), flush=True)
+    dg_frames.append((f - prelude, ob))
+print("SIM_INFO: %d frames de fluide extraites (prechauffe de %d frames jetee)" % (len(dg_frames), prelude), flush=True)
 if len(dg_frames) < 4:
     print("SIM_FAIL: trop peu de frames fluides")
     sys.exit(3)
+sc.frame_end = frames
 
 for f, ob in dg_frames:
     for probe in (sc.frame_start, f - 1, f, f + 1, sc.frame_end + 1):
@@ -249,7 +294,7 @@ for f, ob in dg_frames:
         ob.scale = (1.0, 1.0, 1.0) if visible else (0.0, 0.0, 0.0)
         ob.keyframe_insert("scale", frame=probe)
 
-for objet in (domaine, jet, proxy):
+for objet in (domaine, jet, proxy, sortie):
     bpy.data.objects.remove(objet, do_unlink=True)
 
 bpy.ops.object.select_all(action="SELECT")
@@ -260,7 +305,7 @@ print("SIM_OK: %s (%d frames eau)" % (dst, len(dg_frames)))
 '''
 
 
-def bake_fluid_sim(src, dst, frames=48, resolution=96, viscosite="fluide", debit=1.6, timeout_s=7200):
+def bake_fluid_sim(src, dst, frames=48, resolution=128, viscosite="fluide", debit=1.6, timeout_s=7200):
     import shutil
     blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
@@ -295,7 +340,7 @@ def main():
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--frames", type=int, default=48)
-    ap.add_argument("--resolution", type=int, default=96)
+    ap.add_argument("--resolution", type=int, default=128)
     ap.add_argument("--viscosite", default="fluide")
     ap.add_argument("--debit", type=float, default=1.6)
     a = ap.parse_args()
