@@ -396,6 +396,10 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
     parsed JSON to get an animated GLB. Falls back to None if motion parser
     can't extract anything (returns null)."""
     import subprocess
+    # `audit` propre a cette etape : la branche eau y ecrivait alors qu'`audit` n'existe
+    # que dans main() -> NameError avale (try/except) qui FAISAIT ECHOUER TOUTE
+    # l'animation d'eau en silence. Local ici = la branche eau s'execute vraiment.
+    audit: list = []
     parser = REPO_ROOT / "application" / "python-services" / "motion_parser.py"
     rigify = REPO_ROOT / "application" / "python-services" / "rigify_autorig.py"
     if not parser.is_file() or not rigify.is_file():
@@ -411,6 +415,22 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
         capture_output=True, timeout=15, check=False,
     )
     parsed = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+
+    # EAU PRIORITAIRE sur le parseur de mouvement : des mots d'eau comme "ondule",
+    # "coule", "ruisselle" matchent A TORT des presets de creature (ex: creature.slither)
+    # et envoient l'eau vers le RIGGING (qui echoue). Des qu'un NOM d'eau explicite est
+    # present, on force le chemin d'animation d'eau (sculpted_water_animator + flux).
+    _mp_low0 = (motion_prompt or "").lower()
+    _water_nouns = ("eau", " water", "cascade", "fontaine", "bassin", "riviere",
+                    "rivière", "ruisseau", "ruisselle", "mer ", "lac", "ocean",
+                    "océan", "vague", "aquatique", "flaque", "etang", "étang",
+                    "torrent", "flot", "jet d'eau")
+    if any(n in _mp_low0 for n in _water_nouns):
+        if parsed and parsed != "null":
+            print("PROGRESS:animation:sujet d'eau detecte — routage vers l'animateur d'eau "
+                  "(le parseur de mouvement avait matche un preset a tort)", flush=True)
+        parsed = "null"
+
     if not parsed or parsed == "null":
         classifier = REPO_ROOT / "application" / "python-services" / "motion_intent_classifier.py"
         baker = REPO_ROOT / "application" / "python-services" / "motion_intent_baker.py"
@@ -427,7 +447,9 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
         confidence = float((intent or {}).get("confidence") or 0.0)
         import shutil as _sh
         _mp_low = (motion_prompt or "").lower()
-        _wants_water = any(k in _mp_low for k in ("eau", "coule", "cascade", "water"))
+        _wants_water = any(k in _mp_low for k in ("eau", "coule", "cascade", "water",
+                            "ruisselle", "ruissel", "bassin", "fontaine", "flot",
+                            "riviere", "rivière", "torrent", "onde"))
         _wants_gas = (any(k in _mp_low for k in ("vapeur", "fumee", "brume", "steam", "smoke", "fog"))
                       or category == "gas_volume")
         water_info = None
