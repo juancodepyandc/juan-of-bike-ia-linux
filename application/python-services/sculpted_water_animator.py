@@ -128,13 +128,21 @@ if frac_water < 0.02:
     sys.exit(4)
 
 size = float(max(obj.dimensions))
-lam = max(size * 0.16, 1e-4)
+lam = max(size * 0.11, 1e-4)
 lam_z = max(size * 0.10, 1e-4)
 flat = nrm[:, 2] > 0.75
 steep = nrm[:, 2] < 0.35
-amp_flat = size * 0.005 * amp_scale
-amp_mid = size * 0.002 * amp_scale
-amp_steep = size * 0.004 * amp_scale
+# Amplitudes MUSCLEES : les bassins (surfaces plates) encaissent de grosses vagues
+# verticales sans dechirer -> mouvement d'eau CLAIREMENT visible dans les bassins.
+# Les cascades (dentelle delicate) restent en deplacement minuscule (elles se
+# dechirent sinon) : leur ecoulement vient du FLUX du shader dans le viewer.
+# Seuls les BASSINS (surfaces plates robustes) ondulent en morph (vagues franches,
+# clairement visibles). Le JET et les CASCADES (dentelle fine verticale) se dechirent
+# en pics des qu'on deplace leurs sommets -> deplacement quasi nul : ils gardent leur
+# belle forme sculptee et leur mouvement vient du FLUX du shader (defilement texture).
+amp_flat = size * 0.022 * amp_scale
+amp_mid = size * 0.0005 * amp_scale
+amp_steep = size * 0.0002 * amp_scale
 
 poids = water.astype(np.float64)
 for _ in range(6):
@@ -164,17 +172,28 @@ for k in range(K):
     idx_steep = idx_water[steep[idx_water]]
     idx_mid = idx_water[~flat[idx_water] & ~steep[idx_water]]
     if len(idx_flat):
-        ripple = amp_flat * np.sin(rad[idx_flat] / lam * 2.0 * math.pi - ph)
-        ripple += 0.4 * amp_flat * np.sin(rad[idx_flat] / (lam * 0.43) * 2.0 * math.pi - ph * 2.0)
+        # Vagues CONCENTRIQUES qui voyagent vers l'exterieur (le -ph fait avancer la
+        # crete quand la phase tourne) + 2e et 3e harmoniques croisees = surface d'eau
+        # riche et clairement en mouvement, + houle directionnelle lente pour l'ampleur.
+        rr = rad[idx_flat]
+        ripple = amp_flat * np.sin(rr / lam * 2.0 * math.pi - ph)
+        ripple += 0.45 * amp_flat * np.sin(rr / (lam * 0.5) * 2.0 * math.pi - ph * 2.0)
+        ripple += 0.25 * amp_flat * np.sin(rr / (lam * 1.7) * 2.0 * math.pi - ph * 0.5)
+        ripple += 0.30 * amp_flat * np.sin(co[idx_flat, 0] / (lam * 1.3) * 2.0 * math.pi - ph)
         disp[idx_flat, 2] = ripple
     if len(idx_mid):
-        stream = amp_mid * np.sin(co[idx_mid, 2] / lam_z * 2.0 * math.pi + ph)
-        disp[idx_mid] = nrm[idx_mid] * stream[:, None]
-        disp[idx_mid, 2] -= amp_mid * 0.7 * (0.5 + 0.5 * np.sin(co[idx_mid, 2] / lam_z * 2.0 * math.pi + ph))
+        # Transition bassin/cascade : ecoulement vertical doux (pas de par-normale).
+        amp_flow_m = size * 0.002 * amp_scale
+        ondm = np.sin(co[idx_mid, 2] / lam_z * 2.0 * math.pi + ph * 1.5)
+        disp[idx_mid, 2] = -amp_flow_m * (0.5 + 0.5 * ondm)
     if len(idx_steep):
-        stream = np.sin(co[idx_steep, 2] / lam_z * 2.0 * math.pi + ph)
-        disp[idx_steep] = nrm[idx_steep] * (amp_steep * 0.5 * stream)[:, None]
-        disp[idx_steep, 2] -= amp_steep * (0.5 + 0.5 * stream)
+        # ECOULEMENT descendant COHERENT : deplacement purement vertical (-Z), onde qui
+        # descend avec la hauteur -> les brins de cascade glissent tous ensemble vers le
+        # bas = flux, SANS composante par-normale qui dechire la dentelle. Amplitude
+        # moderee pour ne pas detacher les brins du rebord.
+        amp_flow = size * 0.003 * amp_scale
+        ondez = np.sin(co[idx_steep, 2] / (lam_z * 0.8) * 2.0 * math.pi + ph * 2.0)
+        disp[idx_steep, 2] = -amp_flow * (0.5 + 0.5 * ondez)
     disp *= poids[:, None]
     new_co = (co + disp).reshape(-1)
     sk.data.foreach_set("co", new_co.astype(np.float32))
@@ -192,11 +211,21 @@ for k, sk in enumerate(keys):
         sk.value = max(0.0, 1.0 - d)
         sk.keyframe_insert("value", frame=f)
 
+# FLUX SHADER : on marque le materiau eau avec aurora_flow (extras glTF -> userData
+# three.js). Le viewer fait alors DEFILER la texture d'eau (masquee par la transmission)
+# = ecoulement FRANC des cascades et shimmer des bassins SANS deformer la geometrie
+# (complementaire des vagues morph). Direction descendante, vitesse suivant le concept.
+_vit_flux = round(1.2 * max(vitesse, 0.5), 3)
+for _m in me.materials:
+    if _m is None:
+        continue
+    _m["aurora_flow"] = {"direction": [0.0, -1.0], "vitesse": _vit_flux}
+
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB",
                           export_animations=True, export_yup=True,
-                          export_morph=True)
-print("EAU_OK: %s (K=%d, frames=%d)" % (dst, K, frame_count))
+                          export_morph=True, export_extras=True)
+print("EAU_OK: %s (K=%d, frames=%d, flux=%.2f)" % (dst, K, frame_count, _vit_flux))
 '''
 
 

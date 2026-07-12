@@ -17,7 +17,9 @@ viscosite = argv[4] if len(argv) > 4 else "fluide"
 debit = float(argv[5]) if len(argv) > 5 else 1.6
 cache_dir = argv[6] if len(argv) > 6 else ""
 fps = 24
-prelude = max(24, int(frames * 1.5))
+# Prechauffe (jetee) : le temps que la cascade s'etablisse (jet + ruissellement dans
+# tous les etages) pour exporter la fontaine en REGIME etabli, pas l'a-coup de depart.
+prelude = max(36, int(frames * 1.5))
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 try:
@@ -53,6 +55,8 @@ centre = (mn + mx) / 2
 taille = mx - mn
 rayon = max(taille) / 2
 
+NIVEAU_BASSIN_BAS = mn.z + taille.z * 0.16  # defaut, affine par detection ci-dessous
+seed_ob = None
 
 img_socle = None
 for mat in socle.data.materials:
@@ -91,11 +95,52 @@ if img_socle is not None and socle.data.uv_layers.active:
     nr0 = np.empty(nv * 3, dtype=np.float64)
     me_s.vertices.foreach_get("normal", nr0)
     nr0 = nr0.reshape(-1, 3)
-    raide = np.abs(nr0[:, 2]) < 0.55
+    # Niveau de la surface du BASSIN LE PLUS BAS (12e percentile des z d'eau plate
+    # du mesh sculpte) — mesure AVANT de purger l'eau, sert a placer l'exutoire.
+    plat0 = nr0[:, 2] > 0.80
+    co0 = np.empty(nv * 3, dtype=np.float64)
+    me_s.vertices.foreach_get("co", co0)
+    co0 = co0.reshape(-1, 3)
+    _M = np.array(socle.matrix_world)  # 4x4
+    zc = co0 @ _M[2, :3] + _M[2, 3]     # z monde de chaque vertex
+    _plats_z = zc[eau_v & plat0]
+    if _plats_z.size > 200:
+        NIVEAU_BASSIN_BAS = float(np.percentile(_plats_z, 12))
 
-    a_virer = eau_v & raide
+    # AMORCE DES BASSINS : avant de purger, on recupere les faces d'eau PLATE (les
+    # surfaces des bassins voulues par l'artiste) et on les epaissit vers le bas en
+    # VOLUME de liquide initial simule (flow GEOMETRY). Les bassins demarrent donc
+    # pleins AU BON NIVEAU, puis ce liquide ONDULE sous le jet et DEBORDE par-dessus
+    # les rebords -> bassins pleins + mobiles + meme matiere que le jet. Objet nomme
+    # AuroraSeed, configure en flow plus bas (pres du jet).
+    import bmesh
+    seed_faces = eau_v & plat0
+    seed_ob = None
+    # Amorcage des bassins (INFLOW one-shot) : experimental, tres lent/instable au bake
+    # (peut exploser le pas de temps adaptatif). Desactive par defaut, opt-in explicite.
+    if os.environ.get("AURORA_FLUID_SEED") == "1" and seed_faces.sum() > 200:
+        bms = bmesh.new()
+        bms.from_mesh(me_s)
+        bms.verts.ensure_lookup_table()
+        garder = [f for f in bms.faces if all(seed_faces[v.index] for v in f.verts)]
+        a_jeter = [f for f in bms.faces if f not in set(garder)]
+        bmesh.ops.delete(bms, geom=a_jeter, context="FACES")
+        prof = taille.z * 0.06
+        if len(bms.faces) > 50:
+            bmesh.ops.solidify(bms, geom=list(bms.faces), thickness=-prof)
+            me_seed = bpy.data.meshes.new("AuroraSeed")
+            bms.to_mesh(me_seed)
+            seed_ob = bpy.data.objects.new("AuroraSeed", me_seed)
+            sc.collection.objects.link(seed_ob)
+            seed_ob.matrix_world = socle.matrix_world.copy()
+            print("SIM_INFO: amorce bassins = %d faces de surface -> volume initial" % len(garder), flush=True)
+        bms.free()
+
+    # Purge TOUTE l'eau sculptee (plate ET raide) : elle etait statique + d'une autre
+    # couleur que l'eau simulee -> "deux eaux". Desormais la SIM fournit toute l'eau
+    # (jet + bassins + cascade), une seule matiere coherente qui bouge partout.
+    a_virer = eau_v
     if a_virer.sum() > 100:
-        import bmesh
         bm = bmesh.new()
         bm.from_mesh(me_s)
         bm.verts.ensure_lookup_table()
@@ -161,7 +206,7 @@ for v in socle.data.vertices:
 if haut is None:
     haut = Vector((centre.x, centre.y, mx.z))
 cellule = max(domaine.dimensions) / resolution
-ray_jet = max(rayon * 0.030, cellule * 2.3)
+ray_jet = max(rayon * 0.035, cellule * 2.4)
 g = abs(sc.gravity[2]) or 9.81
 apex = taille.z * 0.20 * debit
 v_jet = math.sqrt(2.0 * g * apex)
@@ -180,35 +225,40 @@ js.subframes = 2
 jet.hide_render = True
 jet.display_type = "WIRE"
 
+# Amorce des bassins = INFLOW one-shot (actif frames 1-3 puis coupe) : dépose le
+# volume de liquide dans les bassins UNE fois, puis stop -> le liquide evolue ensuite
+# librement (ondule, deborde). Un GEOMETRY continu re-emettrait a chaque frame et
+# deborderait sans fin (nappe parasite). Vitesse initiale nulle : il se pose.
+if seed_ob is not None:
+    fseed = seed_ob.modifiers.new("fluide", "FLUID")
+    fseed.fluid_type = "FLOW"
+    sfs = fseed.flow_settings
+    sfs.flow_type = "LIQUID"
+    sfs.flow_behavior = "INFLOW"
+    sfs.use_initial_velocity = False
+    sfs.use_inflow = True
+    sfs.keyframe_insert("use_inflow", frame=1)
+    sfs.use_inflow = False
+    sfs.keyframe_insert("use_inflow", frame=4)
+    seed_ob.hide_render = True
+    seed_ob.display_type = "WIRE"
+
 fe = proxy.modifiers.new("fluide", "FLUID")
 fe.fluid_type = "EFFECTOR"
 fe.effector_settings.effector_type = "COLLISION"
 fe.effector_settings.surface_distance = rayon * 0.004
 
-# Exutoire = drainage type "pompe de recirculation". Placé au niveau de la surface
-# du BASSIN LE PLUS BAS : toute eau qui redescend jusque-là est retirée, donc le
-# bassin bas ne déborde jamais et rien ne cascade sur la pierre extérieure ni ne
-# goutte sous la base. Niveau détecté depuis les faces d'eau plates du mesh sculpté.
-niveau_drain = mn.z + taille.z * 0.16
-try:
-    import numpy as _np2
-    _me = socle.data
-    _nrz = _np2.empty(len(_me.vertices) * 3, dtype=_np2.float64)
-    _me.vertices.foreach_get("normal", _nrz)
-    _nrz = _nrz.reshape(-1, 3)
-    _co = _np2.empty(len(_me.vertices) * 3, dtype=_np2.float64)
-    _me.vertices.foreach_get("co", _co)
-    _co = _co.reshape(-1, 3)[:, 2] + socle.matrix_world.translation.z
-    _plats = _co[_nrz[:, 2] > 0.80]
-    if _plats.size > 200:
-        niveau_drain = float(_np2.percentile(_plats, 12)) + taille.z * 0.02
-except Exception as _e_drain:
-    print("SIM_INFO: niveau drain par defaut (%r)" % _e_drain, flush=True)
+# Exutoire = BLOC plein depuis le plancher du domaine JUSQU'a juste sous la surface du
+# bassin bas. Toute eau qui redescend dans cette zone basse (debordement, eclaboussure
+# qui s'echappe) est retiree net -> jamais de nappe parasite au sol ni d'eau hors de
+# l'objet (confinement prouve). Le bassin bas garde une fine lame d'eau a sa surface ;
+# les bassins du HAUT (au-dessus) accumulent et debordent naturellement.
+niveau_drain = NIVEAU_BASSIN_BAS + taille.z * 0.02
 bas_dom = domaine.location.z - domaine.dimensions.z / 2.0
 ep_sortie = max(niveau_drain - bas_dom, max(taille) * 6.0 / resolution)
 bpy.ops.mesh.primitive_cube_add(location=(centre.x, centre.y, bas_dom + ep_sortie / 2.0))
 sortie = bpy.context.active_object
-sortie.scale = (taille.x * 0.60, taille.y * 0.60, ep_sortie / 2.0)
+sortie.scale = (taille.x * 1.02, taille.y * 1.02, ep_sortie / 2.0)
 bpy.ops.object.transform_apply(scale=True)
 fo = sortie.modifiers.new("fluide", "FLUID")
 fo.fluid_type = "FLOW"
@@ -217,7 +267,7 @@ ofs.flow_type = "LIQUID"
 ofs.flow_behavior = "OUTFLOW"
 sortie.hide_render = True
 sortie.display_type = "WIRE"
-print("SIM_INFO: exutoire jusqu'a z=%.4f (bassin bas)" % (bas_dom + ep_sortie), flush=True)
+print("SIM_INFO: exutoire bloc jusqu'a z=%.4f (sous surface bassin bas)" % (bas_dom + ep_sortie), flush=True)
 
 bpy.context.view_layer.objects.active = domaine
 with bpy.context.temp_override(object=domaine, active_object=domaine, selected_objects=[domaine]):
@@ -294,7 +344,10 @@ for f, ob in dg_frames:
         ob.scale = (1.0, 1.0, 1.0) if visible else (0.0, 0.0, 0.0)
         ob.keyframe_insert("scale", frame=probe)
 
-for objet in (domaine, jet, proxy, sortie):
+_a_retirer = [domaine, jet, proxy, sortie]
+if seed_ob is not None:
+    _a_retirer.append(seed_ob)
+for objet in _a_retirer:
     bpy.data.objects.remove(objet, do_unlink=True)
 
 bpy.ops.object.select_all(action="SELECT")

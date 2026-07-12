@@ -2894,7 +2894,11 @@ def main() -> int:
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
-        os.environ.setdefault("AURORA_FLUID_SIM", "1")
+        # NB: la sim FLIP (AURORA_FLUID_SIM) n'est PLUS auto-activee ici. Sur une
+        # fontaine, l'eau SCULPTEE animee (sculpted_water_animator, bassins pleins +
+        # vagues + flux shader) rend bien mieux que le FLIP (blobby, verre, bassins
+        # vides). Le FLIP reste dispo en opt-in explicite AURORA_FLUID_SIM=1 pour les
+        # cas ou une vraie physique de particules est voulue (jet isole, etc.).
 
     if args.dry_run_prompt:
         preview = dry_run_prompt_preview(
