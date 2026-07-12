@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 BLENDER_SCRIPT = r'''
-import bpy, sys, math
+import bpy, sys, math, os
 from mathutils import Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]
@@ -14,6 +14,8 @@ src, dst = argv[0], argv[1]
 frames = int(argv[2]) if len(argv) > 2 else 36
 resolution = int(argv[3]) if len(argv) > 3 else 64
 viscosite = argv[4] if len(argv) > 4 else "fluide"
+debit = float(argv[5]) if len(argv) > 5 else 1.6
+cache_dir = argv[6] if len(argv) > 6 else ""
 fps = 24
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -43,6 +45,57 @@ centre = (mn + mx) / 2
 taille = mx - mn
 rayon = max(taille) / 2
 
+
+img_socle = None
+for mat in socle.data.materials:
+    if not mat or not mat.use_nodes:
+        continue
+    for n in mat.node_tree.nodes:
+        if n.type == "TEX_IMAGE" and n.image is not None and "normal" not in (n.image.name or "").lower():
+            img_socle = n.image
+            break
+    if img_socle:
+        break
+if img_socle is not None and socle.data.uv_layers.active:
+    import numpy as np
+    me_s = socle.data
+    w0, h0 = img_socle.size
+    px0 = np.empty(w0 * h0 * 4, dtype=np.float32)
+    img_socle.pixels.foreach_get(px0)
+    px0 = px0.reshape(h0, w0, 4)
+    nv = len(me_s.vertices)
+    uvd = me_s.uv_layers.active.data
+    uvs0 = np.empty(len(uvd) * 2, dtype=np.float32)
+    uvd.foreach_get("uv", uvs0)
+    uvs0 = uvs0.reshape(-1, 2)
+    lv0 = np.empty(len(me_s.loops), dtype=np.int32)
+    me_s.loops.foreach_get("vertex_index", lv0)
+    xi0 = np.clip((uvs0[:, 0] % 1.0) * (w0 - 1), 0, w0 - 1).astype(np.int32)
+    yi0 = np.clip((uvs0[:, 1] % 1.0) * (h0 - 1), 0, h0 - 1).astype(np.int32)
+    cols0 = px0[yi0, xi0, :3]
+    srgb = np.zeros((nv, 3), dtype=np.float64)
+    cnt0 = np.zeros(nv, dtype=np.int32)
+    np.add.at(srgb, lv0, cols0)
+    np.add.at(cnt0, lv0, 1)
+    rgb0 = srgb / np.maximum(cnt0, 1)[:, None]
+    b0 = rgb0[:, 2]
+    eau_v = (b0 > rgb0[:, 0] * 1.12) & (b0 > rgb0[:, 1] * 1.02)
+    nr0 = np.empty(nv * 3, dtype=np.float64)
+    me_s.vertices.foreach_get("normal", nr0)
+    nr0 = nr0.reshape(-1, 3)
+    raide = np.abs(nr0[:, 2]) < 0.55
+    a_virer = eau_v & raide
+    if a_virer.sum() > 100:
+        import bmesh
+        bm = bmesh.new()
+        bm.from_mesh(me_s)
+        bm.verts.ensure_lookup_table()
+        cible = [f for f in bm.faces if all(a_virer[v.index] for v in f.verts)]
+        bmesh.ops.delete(bm, geom=cible, context="FACES")
+        bm.to_mesh(me_s)
+        bm.free()
+        print("SIM_INFO: %d faces d'eau figee purgees" % len(cible), flush=True)
+
 proxy = socle.copy()
 proxy.data = socle.data.copy()
 sc.collection.objects.link(proxy)
@@ -59,7 +112,7 @@ proxy.hide_render = True
 
 bpy.ops.mesh.primitive_cube_add(location=(centre.x, centre.y, centre.z + taille.z * 0.08))
 domaine = bpy.context.active_object
-domaine.scale = (taille.x * 0.62, taille.y * 0.62, taille.z * 0.72)
+domaine.scale = (taille.x * 0.62, taille.y * 0.62, taille.z * 0.95)
 bpy.ops.object.transform_apply(scale=True)
 fd = domaine.modifiers.new("fluide", "FLUID")
 fd.fluid_type = "DOMAIN"
@@ -68,8 +121,15 @@ ds.domain_type = "LIQUID"
 ds.resolution_max = resolution
 ds.use_mesh = True
 ds.mesh_scale = 1
+try:
+    ds.mesh_particle_radius = 1.15
+except AttributeError:
+    pass
 ds.cache_frame_start = 1
 ds.cache_frame_end = frames
+ds.cache_type = "ALL"
+if cache_dir:
+    ds.cache_directory = cache_dir
 ds.use_adaptive_timesteps = True
 if viscosite == "epais":
     ds.use_viscosity = True
@@ -84,7 +144,14 @@ for v in socle.data.vertices:
         haut = w
 if haut is None:
     haut = Vector((centre.x, centre.y, mx.z))
-bpy.ops.mesh.primitive_uv_sphere_add(radius=rayon * 0.04, location=(haut.x, haut.y, haut.z - rayon * 0.025))
+cellule = max(domaine.dimensions) / resolution
+ray_jet = max(rayon * 0.035, cellule * 2.3)
+g = abs(sc.gravity[2]) or 9.81
+apex = taille.z * 0.22 * debit
+v_jet = math.sqrt(2.0 * g * apex)
+print("SIM_INFO: taille=(%.2f,%.2f,%.2f) cellule=%.4f ray_jet=%.4f v_jet=%.2f apex=%.2f"
+      % (taille.x, taille.y, taille.z, cellule, ray_jet, v_jet, apex), flush=True)
+bpy.ops.mesh.primitive_uv_sphere_add(radius=ray_jet, location=(haut.x, haut.y, haut.z - ray_jet * 0.55))
 jet = bpy.context.active_object
 fj = jet.modifiers.new("fluide", "FLUID")
 fj.fluid_type = "FLOW"
@@ -92,7 +159,14 @@ js = fj.flow_settings
 js.flow_type = "LIQUID"
 js.flow_behavior = "INFLOW"
 js.use_initial_velocity = True
-js.velocity_coord = (0.0, 0.0, rayon * 0.9)
+js.velocity_coord = (0.0, 0.0, v_jet)
+js.subframes = 2
+js.use_inflow = True
+js.keyframe_insert("use_inflow", frame=1)
+js.use_inflow = False
+js.keyframe_insert("use_inflow", frame=int(frames * 0.5))
+js.use_inflow = True
+js.keyframe_insert("use_inflow", frame=frames + 1)
 jet.hide_render = True
 jet.display_type = "WIRE"
 
@@ -103,8 +177,27 @@ fe.effector_settings.surface_distance = rayon * 0.004
 
 bpy.context.view_layer.objects.active = domaine
 with bpy.context.temp_override(object=domaine, active_object=domaine, selected_objects=[domaine]):
-    bpy.ops.fluid.bake_all()
-print("SIM_INFO: bake termine", flush=True)
+    _ret = bpy.ops.fluid.bake_all()
+print("SIM_INFO: bake_all -> %s" % _ret, flush=True)
+import time as _t
+import glob as _g
+_attendu = int(frames * 0.8)
+_deadline = _t.time() + 2400
+_n_mesh = 0
+_stalle = 0
+while _t.time() < _deadline:
+    _avant = _n_mesh
+    _n_mesh = len(_g.glob(os.path.join(bpy.path.abspath(ds.cache_directory), "mesh", "*.bobj.gz")))
+    if _n_mesh >= _attendu:
+        break
+    _stalle = _stalle + 1 if _n_mesh == _avant else 0
+    if _stalle >= 9:
+        break
+    _t.sleep(10)
+print("SIM_INFO: bake termine (%d fichiers mesh en cache)" % _n_mesh, flush=True)
+if _n_mesh < 4:
+    print("SIM_FAIL: cache fluide vide apres attente")
+    sys.exit(4)
 
 mat_eau = bpy.data.materials.new("AuroraEauSim")
 mat_eau.use_nodes = True
@@ -130,12 +223,18 @@ for f in range(1, frames + 1):
     dg = bpy.context.evaluated_depsgraph_get()
     dom_eval = domaine.evaluated_get(dg)
     me = bpy.data.meshes.new_from_object(dom_eval)
-    if len(me.polygons) == 0:
+    if len(me.polygons) < 50:
         bpy.data.meshes.remove(me)
         continue
+    me.polygons.foreach_set("use_smooth", [True] * len(me.polygons))
     ob = bpy.data.objects.new("EauSim_%03d" % f, me)
     ob.data.materials.append(mat_eau)
     sc.collection.objects.link(ob)
+    if len(me.polygons) > 40000:
+        dm = ob.modifiers.new("dec", "DECIMATE")
+        dm.ratio = 0.55
+        bpy.context.view_layer.objects.active = ob
+        bpy.ops.object.modifier_apply(modifier=dm.name)
     dg_frames.append((f, ob))
 print("SIM_INFO: %d frames de fluide extraites" % len(dg_frames), flush=True)
 if len(dg_frames) < 4:
@@ -156,29 +255,36 @@ for objet in (domaine, jet, proxy):
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB",
                           export_animations=True, export_yup=True,
-                          export_morph=True, export_force_sampling=False)
+                          export_morph=True, export_force_sampling=True)
 print("SIM_OK: %s (%d frames eau)" % (dst, len(dg_frames)))
 '''
 
 
-def bake_fluid_sim(src, dst, frames=36, resolution=64, viscosite="fluide", timeout_s=7200):
+def bake_fluid_sim(src, dst, frames=48, resolution=96, viscosite="fluide", debit=1.6, timeout_s=7200):
     import shutil
     blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
         fp.write(BLENDER_SCRIPT)
         script = fp.name
+    cache_dir = tempfile.mkdtemp(prefix="aurora_flip_")
     try:
         p = subprocess.run([blender, "--background", "--python", script, "--",
-                            str(src), str(dst), str(frames), str(resolution), viscosite],
+                            str(src), str(dst), str(frames), str(resolution), viscosite,
+                            str(debit), cache_dir],
                            capture_output=True, text=True, timeout=timeout_s)
     finally:
         try:
             os.unlink(script)
         except OSError:
             pass
+        import shutil as _sh2
+        _sh2.rmtree(cache_dir, ignore_errors=True)
     out = p.stdout or ""
     infos = [l for l in out.splitlines() if l.startswith("SIM_INFO")]
     ok = "SIM_OK" in out and Path(dst).is_file() and Path(dst).stat().st_size > 10000
+    if not ok:
+        infos.append("TAIL_STDOUT: " + out[-1200:].replace("\n", " | "))
+        infos.append("TAIL_STDERR: " + (p.stderr or "")[-600:].replace("\n", " | "))
     err = next((l for l in out.splitlines() if l.startswith("SIM_FAIL")), "") or (p.stderr or "")[-300:]
     return {"ok": ok, "info": " | ".join(infos), "error": None if ok else err, "output": str(dst)}
 
@@ -188,11 +294,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
-    ap.add_argument("--frames", type=int, default=36)
-    ap.add_argument("--resolution", type=int, default=64)
+    ap.add_argument("--frames", type=int, default=48)
+    ap.add_argument("--resolution", type=int, default=96)
     ap.add_argument("--viscosite", default="fluide")
+    ap.add_argument("--debit", type=float, default=1.6)
     a = ap.parse_args()
-    r = bake_fluid_sim(a.input, a.output, frames=a.frames, resolution=a.resolution, viscosite=a.viscosite)
+    r = bake_fluid_sim(a.input, a.output, frames=a.frames, resolution=a.resolution,
+                       viscosite=a.viscosite, debit=a.debit)
     print("AURORA_FLUIDSIM_RESULT:" + json.dumps(r, ensure_ascii=False))
     return 0 if r["ok"] else 1
 

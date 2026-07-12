@@ -494,12 +494,46 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             except Exception:  # noqa: BLE001
                 pass
         _spec_out = _spec if "_spec" in dir() else None
+
+        def _sim_fluide(final_path: Path) -> dict:
+            """Simulation FLIP reelle (fluid_sim_baker) sur le GLB final anime.
+            Activee par AURORA_FLUID_SIM=1 (pose par --max-precision) quand la
+            spec decrit un vrai ecoulement liquide. Echec = non bloquant."""
+            if os.environ.get("AURORA_FLUID_SIM") != "1" or _spec_out is None:
+                return {}
+            if str(_spec_out.get("type_mouvement")) not in ("ecoulement", "chute", "tourbillon", "montee"):
+                return {}
+            if float(_spec_out.get("amplitude", 1.0) or 0.0) <= 0.01:
+                return {}
+            try:
+                from fluid_sim_baker import bake_fluid_sim
+                sim_path = output_dir / f"{run_id}_SIM.glb"
+                print("PROGRESS:animation:simulation fluide reelle (FLIP Mantaflow) — cuisson physique du jet", flush=True)
+                r = bake_fluid_sim(final_path, sim_path,
+                                   viscosite=("epais" if str(_spec_out.get("viscosite")) == "epais" else "fluide"))
+                try:
+                    audit.append({"stage": "fluid_sim", "ok": bool(r.get("ok")),
+                                  "info": r.get("info"), "error": r.get("error")})
+                except Exception:  # noqa: BLE001
+                    pass
+                if r.get("ok") and sim_path.is_file():
+                    print("PROGRESS:animation:simulation fluide OK — " + str(r.get("info"))[-160:], flush=True)
+                    return {"sim_mesh": str(sim_path), "fluid_sim_info": r.get("info")}
+                print("PROGRESS:animation:simulation fluide echouee (mouvement sculpte conserve)", flush=True)
+            except Exception as _se:  # noqa: BLE001
+                try:
+                    audit.append({"stage": "fluid_sim", "ok": False, "error": repr(_se)})
+                except Exception:  # noqa: BLE001
+                    pass
+            return {}
+
         if water_info and not _wants_gas:
             _sh.move(str(gas_input), str(rigged_path))
             return {"ok": True, "rigged_mesh": str(rigged_path),
                     "motion_intent": "fluid_flow_sculpte",
                     "water_info": water_info,
                     "motion_spec": _spec_out,
+                    **_sim_fluide(rigged_path),
                     "size_bytes": rigged_path.stat().st_size}
         if _wants_gas:
             category = "gas_volume"
@@ -522,6 +556,7 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         "intent_confidence": confidence,
                         "water_info": water_info,
                         "motion_spec": _spec_out,
+                        **(_sim_fluide(rigged_path) if water_info else {}),
                         "size_bytes": rigged_path.stat().st_size}
             if water_info:
                 _sh.move(str(gas_input), str(rigged_path))
@@ -529,6 +564,7 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         "motion_intent": "fluid_flow_sculpte",
                         "water_info": water_info,
                         "note": f"gaz echoue ({(bres.get('error') or 'sans sortie')[:120]}), eau conservee",
+                        **_sim_fluide(rigged_path),
                         "size_bytes": rigged_path.stat().st_size}
             return {"ok": False,
                     "error": f"intent bake failed ({category}): {bres.get('error') or bres.get('raw') or 'sans sortie'}",
@@ -2858,6 +2894,7 @@ def main() -> int:
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
+        os.environ.setdefault("AURORA_FLUID_SIM", "1")
 
     if args.dry_run_prompt:
         preview = dry_run_prompt_preview(
