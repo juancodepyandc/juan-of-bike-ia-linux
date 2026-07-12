@@ -46,19 +46,31 @@ from typing import Any, Dict, List, Optional
 # logs a warning and skips bones that don't exist instead of crashing.
 
 TARGET_TO_BONES: Dict[str, List[str]] = {
-    # Locomotion
-    "legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R", "foot_fk.L", "foot_fk.R"],
-    "left_leg": ["thigh_fk.L", "shin_fk.L", "foot_fk.L"],
-    "right_leg": ["thigh_fk.R", "shin_fk.R", "foot_fk.R"],
-    "right_knee": ["thigh_fk.R", "shin_fk.R"],
-    "hips_knees": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R", "torso"],
+    # Locomotion — v112: switched to DEF- deform bones. Rigify's FK/IK
+    # switch is not always reachable (no custom-props exposed on the
+    # generated rig in some 5.1 builds), so keyframing FK bones leaves
+    # the mesh static because the DEF bones only follow IK. Targeting
+    # DEF bones directly (with their constraints muted upstream) makes
+    # the animation drive the mesh unconditionally. See
+    # memory/pipeline-deformation-3d.md.
+    "legs": ["DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R", "DEF-foot.L", "DEF-foot.R"],
+    "left_leg": ["DEF-thigh.L", "DEF-shin.L", "DEF-foot.L"],
+    "right_leg": ["DEF-thigh.R", "DEF-shin.R", "DEF-foot.R"],
+    "right_knee": ["DEF-thigh.R", "DEF-shin.R"],
+    "hips_knees": ["DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R", "DEF-spine"],
 
-    # Upper body
-    "arms": ["upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R"],
-    "left_arm": ["upper_arm_fk.L", "forearm_fk.L", "hand_fk.L"],
-    "right_arm": ["upper_arm_fk.R", "forearm_fk.R", "hand_fk.R"],
-    "right_arm_raised": ["upper_arm_fk.R", "forearm_fk.R", "hand_fk.R"],
-    "hands": ["hand_fk.L", "hand_fk.R"],
+    # Upper body — v112: arms drive via IK targets (hand_ik.L/R) with
+    # location keyframes, NOT DEF rotation. Reason: Rigify's arm-bone
+    # local axes are twist/abduction after A-pose adjustment, so rotating
+    # DEF-upper_arm on any single Euler axis either twists the mesh into
+    # the torso (X) or flaps the arm out (Z). The IK target sweeps the
+    # HAND forward/back and Rigify's IK chain rebuilds the shoulder-elbow
+    # curve naturally.
+    "arms": ["hand_ik.L", "hand_ik.R"],
+    "left_arm": ["hand_ik.L"],
+    "right_arm": ["hand_ik.R"],
+    "right_arm_raised": ["hand_ik.R"],
+    "hands": ["DEF-hand.L", "DEF-hand.R"],
 
     # Torso / pelvis
     "torso": ["torso", "spine_fk.001", "spine_fk.002"],
@@ -66,11 +78,12 @@ TARGET_TO_BONES: Dict[str, List[str]] = {
     "pelvis": ["torso"],
     "hips": ["torso"],
 
-    # Whole body
+    # Whole body — v112: crawl / four-point gait uses DEF- for legs
+    # (which we can rotate directly) + hand_ik for arms (IK sweep).
     "body": ["root"],
     "arms_legs": [
-        "thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R",
-        "upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R",
+        "DEF-thigh.L", "DEF-thigh.R", "DEF-shin.L", "DEF-shin.R",
+        "hand_ik.L", "hand_ik.R",
     ],
 
     # v77zt: quadruped (Rigify basic_quadruped metarig). Front legs reuse
@@ -153,7 +166,9 @@ _QUADRUPED_TARGETS = {"front_legs", "hind_legs", "back_legs", "all_four_legs"}
 
 def _is_arm_bone(bone: str) -> bool:
     b = bone.lower()
-    return ("arm" in b) or b.startswith("hand")
+    # matches upper_arm, forearm, hand, hand_ik in all Rigify prefixes
+    # (DEF-, MCH-, ORG-, plain FK/IK controls).
+    return ("arm" in b) or ("hand" in b)
 
 
 def _is_shin_bone(bone: str) -> bool:
@@ -163,7 +178,9 @@ def _is_shin_bone(bone: str) -> bool:
 
 def _is_foot_bone(bone: str) -> bool:
     b = bone.lower()
-    return b.startswith("foot") or b.startswith("toe") or "ankle" in b
+    # Rigify bones exist as DEF-foot.L, foot_ik.L, foot_fk.L, toe_ik.L etc.
+    # We match by substring so any prefix is accepted (DEF-, MCH-, ORG-, none).
+    return ("foot" in b) or ("toe" in b) or ("ankle" in b)
 
 
 def _gait_phase_for_bone(bone: str, target: Optional[str]) -> float:
@@ -201,6 +218,16 @@ def _compile_gait(p: Dict[str, Any], fps: int, frame_count: int) -> List[Dict[st
     quadruped diagonal). Lower segments (shin/forearm/foot) swing with a
     reduced amplitude so the limb articulates instead of swinging like a
     stiff pendulum.
+
+    v112 — two channels depending on bone kind:
+      • LEGS on DEF- bones — rotation around local X (index 0). Bone points
+        DOWN so local X = walking-forward direction; rotation = the swing.
+      • ARMS on hand_ik.L/R — LOCATION on world-forward axis (index 1).
+        The IK target sweeps the hand back and forth by a small distance
+        (~14 cm) and Rigify's arm IK chain rebuilds the shoulder-elbow
+        pose. Reason: DEF-upper_arm's local Euler axes are twist/abduction
+        after the A-pose adjustment; no single-axis rotation gives a clean
+        forward/back arm swing, but sweeping the IK target does.
     """
     target = p.get("target")
     bones = _resolve_target(target)
@@ -209,24 +236,56 @@ def _compile_gait(p: Dict[str, Any], fps: int, frame_count: int) -> List[Dict[st
     amplitude_deg = float(p.get("amplitude") or 30)
     amplitude_rad = math.radians(amplitude_deg)
     freq_hz = float(p.get("frequency_hz") or 1.0)
+    is_quadruped = target in _QUADRUPED_TARGETS
     out: List[Dict[str, Any]] = []
+    # Physical peak sweep for a walking arm hand (meters). Real humans swing
+    # the hand ~15–25 cm forward-back at normal walking pace; we scale this
+    # by the source amplitude (25° → 0.14 m, 50° → 0.28 m) so faster gaits
+    # produce bigger arm sweeps.
+    arm_ik_reach = 0.14 * max(0.5, amplitude_deg / 25.0)
     for bone in bones:
         phase = _gait_phase_for_bone(bone, target)
         is_shin = _is_shin_bone(bone)
         is_foot = _is_foot_bone(bone)
+        is_arm = _is_arm_bone(bone) and not is_quadruped
+        is_ik_target = bone.endswith("_ik.L") or bone.endswith("_ik.R") or bone.endswith("_ik")
+
+        if is_ik_target and is_arm:
+            # IK target sweep: hand moves forward/back on Y (walking axis).
+            channel = "location"
+            axis_idx = 1  # world-forward axis on Rigify's IK pose-bone frame
+            samples: List[tuple] = []
+            for f in range(1, frame_count + 1):
+                t = (f - 1) / fps
+                s = math.sin(2 * math.pi * freq_hz * t + 2 * math.pi * phase)
+                samples.append((f, arm_ik_reach * s))
+            out.append({
+                "bone": bone,
+                "channel": channel,
+                "axis_index": axis_idx,
+                "samples": samples,
+                "interpolation": "BEZIER",
+                "source_kind": "gait",
+                "source_target": target,
+            })
+            continue
+
         if is_foot:
             amp = amplitude_rad * 0.38
         elif is_shin:
             amp = amplitude_rad * 0.9
         else:
             amp = amplitude_rad
-        samples: List[tuple] = []
+        axis_idx = 0
+        samples = []
         for f in range(1, frame_count + 1):
             t = (f - 1) / fps
             s = math.sin(2 * math.pi * freq_hz * t + 2 * math.pi * phase)
-            if is_shin and not (target in _QUADRUPED_TARGETS):
+            if is_shin and not is_quadruped:
+                # knee flexion — only bends inward, never hyperextends
                 value = -amp * (0.10 + 0.90 * max(0.0, s))
-            elif is_foot and not (target in _QUADRUPED_TARGETS):
+            elif is_foot and not is_quadruped:
+                # foot roll — heel-strike + toe-off
                 value = amp * (0.30 * s + 0.25 * max(0.0, -s))
             else:
                 value = amp * s
@@ -234,7 +293,7 @@ def _compile_gait(p: Dict[str, Any], fps: int, frame_count: int) -> List[Dict[st
         out.append({
             "bone": bone,
             "channel": "rotation_euler",
-            "axis_index": 0,  # gait swings around X (forward/back)
+            "axis_index": axis_idx,
             "samples": samples,
             "interpolation": "BEZIER",
             "source_kind": "gait",
@@ -731,6 +790,58 @@ def compile_motion_payload(motion: Dict[str, Any]) -> Dict[str, Any]:
 #  bpy LAYER (Blender-only)
 # ---------------------------------------------------------------------------
 
+def _bind_action_slot(owner, action, id_type: str = "OBJECT"):
+    """Blender 5.0+ layered Action API: an Action carries FCurves inside a
+    Layer->Strip->ChannelBag(slot). Legacy `action.fcurves` was removed.
+
+    This helper:
+      1) creates or reuses an OBJECT slot on `action`,
+      2) binds it to the owner's animation_data.action_slot,
+      3) ensures a KEYFRAME strip exists so callers can grab the ChannelBag.
+    Returns the bound slot (or None on Blender 4.x where slots don't exist).
+    """
+    slot = None
+    if hasattr(action, "slots"):
+        try:
+            slot = action.slots.new(id_type=id_type, name=owner.name)
+        except Exception:
+            slot = action.slots[0] if len(action.slots) > 0 else None
+        if slot is not None and hasattr(owner.animation_data, "action_slot"):
+            try:
+                owner.animation_data.action_slot = slot
+            except Exception:
+                pass
+    if hasattr(action, "layers") and len(action.layers) == 0:
+        layer = action.layers.new("Layer")
+        layer.strips.new(type="KEYFRAME")
+    return slot
+
+
+def _get_action_fcurves(action, slot=None):
+    """Return the FCurve collection for `action`, transparent to the 5.x
+    layered API vs 4.x legacy. Mirrors motion_intent_bpy_runner._get_action_fcurves.
+
+    On 5.x we walk action.layers[0].strips[0].channelbag(slot, ensure=True).fcurves.
+    On 4.x we fall back to action.fcurves.
+    """
+    if hasattr(action, "layers"):
+        try:
+            layer = action.layers[0] if len(action.layers) > 0 else action.layers.new("Layer")
+            strip = layer.strips[0] if len(layer.strips) > 0 else layer.strips.new(type="KEYFRAME")
+            if hasattr(strip, "channelbag"):
+                if slot is None and hasattr(action, "slots") and len(action.slots) > 0:
+                    slot = action.slots[0]
+                cb = strip.channelbag(slot, ensure=True)
+                if cb is not None:
+                    return cb.fcurves
+        except Exception:
+            pass
+    # Blender 4.x legacy fallback
+    if hasattr(action, "fcurves"):
+        return action.fcurves
+    return []
+
+
 def _keyframe_pose_bone(pose_bone, channel: str, axis_index: int, samples) -> int:
     applied = 0
     for frame, value in samples:
@@ -899,16 +1010,49 @@ def apply_compiled_motion(rig_object, compiled: Dict[str, Any], fallback_object=
         action_owner.animation_data_create()
     action = bpy.data.actions.new(name=action_name)
     action_owner.animation_data.action = action
+    # Blender 5.0+ layered API: bind a slot on the action so keyframes can
+    # be routed via the ChannelBag. Without this the exporter still sees
+    # the keys (they were inserted via keyframe_insert) but any code path
+    # that walks `action.fcurves` raises AttributeError.
+    owner_slot = _bind_action_slot(action_owner, action, id_type="OBJECT")
 
     if has_armature:
         bpy.context.view_layer.objects.active = rig_object
         bpy.ops.object.mode_set(mode="POSE")
+
+        # v112: MUTE Rigify constraints on every DEF- bone we're about to
+        # keyframe. Rigify's default output has DEF- bones driven by
+        # COPY_TRANSFORMS constraints from MCH- (mechanism) bones that read
+        # from the FK OR IK chain based on an IK_FK slider — but that slider
+        # is a custom-property whose exposure varies across Rigify versions
+        # (in 5.1 it is often unreachable via pose_bone.keys()). Muting the
+        # constraints turns DEF- bones into raw pose bones so our keyframes
+        # drive them unconditionally, and the mesh (which is skinned to DEF-
+        # bones) follows.
+        target_def_bones = set()
+        for _ins in compiled.get("instructions", []):
+            _bn = _ins.get("bone") or ""
+            if _bn.startswith("DEF-") or _bn.startswith("DEF_"):
+                target_def_bones.add(_bn)
+        _muted = 0
+        for _bn in target_def_bones:
+            _pb = rig_object.pose.bones.get(_bn)
+            if _pb is None:
+                continue
+            for _c in _pb.constraints:
+                if not _c.mute:
+                    _c.mute = True
+                    _muted += 1
+        if _muted:
+            print("MOTION_BAKE_INFO: muted %d Rigify constraints on %d DEF- bones"
+                  % (_muted, len(target_def_bones)))
 
     applied = 0
     skipped = 0
     warnings: List[str] = []
     scene_objects = list(bpy.context.scene.objects)
     object_actions: Dict[str, Any] = {}
+    object_slots: Dict[str, Any] = {}
 
     for ins in compiled.get("instructions", []):
         bone_name = ins.get("bone")
@@ -940,11 +1084,11 @@ def apply_compiled_motion(rig_object, compiled: Dict[str, Any], fallback_object=
                 skipped += 1
                 continue
             applied += _keyframe_pose_bone(pose_bone, channel, axis_index, samples)
-            if action.fcurves:
-                for fcu in action.fcurves:
-                    if fcu.data_path.endswith(channel) and fcu.array_index == axis_index:
-                        for kp in fcu.keyframe_points:
-                            kp.interpolation = interp
+            fcurves = _get_action_fcurves(action, owner_slot)
+            for fcu in fcurves:
+                if fcu.data_path.endswith(channel) and fcu.array_index == axis_index:
+                    for kp in fcu.keyframe_points:
+                        kp.interpolation = interp
             continue
 
         # __object_root__ instruction → mesh-direct keyframing.
@@ -975,6 +1119,9 @@ def apply_compiled_motion(rig_object, compiled: Dict[str, Any], fallback_object=
                     )
                     target_obj.animation_data.action = target_action
                     object_actions[target_obj.name] = target_action
+                    object_slots[target_obj.name] = _bind_action_slot(
+                        target_obj, target_action, id_type="OBJECT",
+                    )
 
             if has_armature:
                 # Need OBJECT mode to keyframe non-armature transforms.
@@ -984,11 +1131,12 @@ def apply_compiled_motion(rig_object, compiled: Dict[str, Any], fallback_object=
                 bpy.context.view_layer.objects.active = rig_object
                 bpy.ops.object.mode_set(mode="POSE")
 
-            if target_action.fcurves:
-                for fcu in target_action.fcurves:
-                    if fcu.data_path.endswith(channel) and fcu.array_index == axis_index:
-                        for kp in fcu.keyframe_points:
-                            kp.interpolation = interp
+            slot_for_target = owner_slot if target_obj is action_owner else object_slots.get(target_obj.name)
+            fcurves_t = _get_action_fcurves(target_action, slot_for_target)
+            for fcu in fcurves_t:
+                if fcu.data_path.endswith(channel) and fcu.array_index == axis_index:
+                    for kp in fcu.keyframe_points:
+                        kp.interpolation = interp
 
     # Push primary action to NLA strip if loop=true.
     if loop and action_owner.animation_data:

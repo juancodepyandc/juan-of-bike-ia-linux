@@ -222,6 +222,38 @@ try:
 except Exception:
     pass
 
+# v112: WELD FRAGMENTED MESH before Rigify parenting. TRELLIS.2 exports
+# with dedoubled vertices at every UV seam, giving a mesh made of thousands
+# of disconnected islands. On any rotating bone, adjacent islands fly
+# apart ("shards"). Weld with a tiny distance restores connectivity while
+# preserving fine detail. Threshold scales with mesh dimension so it works
+# on any character size. See memory/pipeline-deformation-3d.md.
+if bpy.ops.object.mode_set.poll() is not False:
+    for _mo in [o for o in bpy.context.scene.objects
+                if o.type == "MESH" and o.name in orig_mesh_names]:
+        bpy.ops.object.select_all(action="DESELECT")
+        _mo.select_set(True)
+        bpy.context.view_layer.objects.active = _mo
+        try:
+            _n_before = len(_mo.data.vertices)
+            _weld_dist = max(max(_mo.dimensions) * 0.00025, 0.0002)
+            import bmesh as _bm
+            _bmm = _bm.new()
+            _bmm.from_mesh(_mo.data)
+            _bm.ops.remove_doubles(_bmm, verts=_bmm.verts, dist=_weld_dist)
+            _bmm.to_mesh(_mo.data)
+            _bmm.free()
+            _mo.data.update()
+            _n_after = len(_mo.data.vertices)
+            print("RIGIFY_INFO: mesh weld %s: %d -> %d verts (dist=%.5f)"
+                  % (_mo.name, _n_before, _n_after, _weld_dist))
+        except Exception as _we:
+            print("RIGIFY_INFO: weld skipped for %s: %s" % (_mo.name, _we))
+    try:
+        bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception:
+        pass
+
 # Parent mesh to rig with automatic weights
 bpy.ops.object.select_all(action="DESELECT")
 mesh.select_set(True)
@@ -507,6 +539,136 @@ if motion_path and os.path.isfile(motion_path):
                   len(motion_report.get("warnings", [])),
                   len(motion_report.get("mechanism_actions", [])),
               ))
+
+        # v112: post-bake polish for humanoid rigs — addresses the four
+        # plafond defects documented in memory/pipeline-deformation-3d.md
+        # (starfish hands, head dive from missing neck constraint, feet
+        # sinking through ground, feet floating). These are constant static
+        # corrections baked as single frame-1 keyframes so gltf export
+        # carries them across every frame of the walk cycle. Skipped when
+        # metarig != human.
+        _motion_id = str(_compiled.get("id") or "").lower()
+        _is_locomotion = any(t in _motion_id for t in ("walk", "run", "crawl", "march"))
+        if metarig_kind == "human" and (_motion_id or _is_locomotion):
+            try:
+                if bpy.context.mode != "OBJECT":
+                    bpy.ops.object.mode_set(mode="OBJECT")
+                bpy.ops.object.select_all(action="DESELECT")
+                rig.select_set(True)
+                bpy.context.view_layer.objects.active = rig
+                bpy.ops.object.mode_set(mode="POSE")
+
+                # 1) FINGER CURL — avoid the "starfish" hand. Rigify names
+                # finger DEF-bones "DEF-f_index.01.L" / "DEF-f_middle.02.R"
+                # etc. Segment index encoded via .01/.02/.03 (dot-separated,
+                # NOT _01_fk_). We keyframe the DEF- bones because that's
+                # what the mesh is skinned to (matches the DEF- retarget for
+                # limbs).
+                _finger_stems = ("def-f_index", "def-f_middle", "def-f_ring",
+                                 "def-f_pinky", "def-thumb")
+                _finger_curl_by_seg = {"01": 0.22, "02": 0.55, "03": 0.60}  # radians
+                _thumb_curl = {"01": 0.08, "02": 0.30, "03": 0.35}
+                _curled = 0
+                for pb in rig.pose.bones:
+                    n = pb.name.lower()
+                    if not any(n.startswith(s) for s in _finger_stems):
+                        continue
+                    seg = None
+                    for s in (".01.", ".02.", ".03."):
+                        if s in n:
+                            seg = s[1:3]
+                            break
+                    if seg is None:
+                        continue
+                    curl = (_thumb_curl if "thumb" in n else _finger_curl_by_seg).get(seg, 0.0)
+                    if curl == 0.0:
+                        continue
+                    # Mute Rigify constraints on this DEF- bone so our
+                    # keyframe isn't overridden by the driver chain.
+                    for _c in pb.constraints:
+                        _c.mute = True
+                    pb.rotation_mode = "XYZ"
+                    pb.rotation_euler.x = curl
+                    try:
+                        pb.keyframe_insert(data_path="rotation_euler", index=0, frame=1)
+                        _curled += 1
+                    except Exception:
+                        pass
+                print("RIGIFY_INFO: finger curl applied on %d bones (no starfish)" % _curled)
+
+                # 2) NECK LIMIT ROTATION — text-to-motion / procedural gait
+                # often produces a head dive (nod ~-50deg) because the neck
+                # inherits torso pitch. Clamp neck rotation so the head stays
+                # level regardless of what the motion primitives command.
+                _neck = (rig.pose.bones.get("neck") or rig.pose.bones.get("neck_fk")
+                         or rig.pose.bones.get("neck.001"))
+                if _neck is not None:
+                    _existing = [c for c in _neck.constraints if c.type == "LIMIT_ROTATION"]
+                    if not _existing:
+                        _lr = _neck.constraints.new(type="LIMIT_ROTATION")
+                        _lr.owner_space = "LOCAL"
+                        _lr.use_limit_x = True
+                        _lr.min_x = -0.244  # -14 deg
+                        _lr.max_x = 0.384   # +22 deg
+                        _lr.use_limit_z = True
+                        _lr.min_z = -0.349  # -20 deg
+                        _lr.max_z = 0.349   # +20 deg
+                        print("RIGIFY_INFO: neck LIMIT_ROTATION added (head stays level)")
+
+                # 3) FOOT GROUND PLANE — during walk the passing foot must not
+                # dip below the floor. Add a LIMIT_LOCATION on foot_ik.L/R min_z
+                # so the IK target can't sink; the mesh floor is z=min of the
+                # imported mesh in world (mn.z passed in from earlier).
+                for _side in ("L", "R"):
+                    _foot = (rig.pose.bones.get("foot_ik.%s" % _side)
+                             or rig.pose.bones.get("foot.%s" % _side))
+                    if _foot is None:
+                        continue
+                    if any(c.type == "LIMIT_LOCATION" for c in _foot.constraints):
+                        continue
+                    _ll = _foot.constraints.new(type="LIMIT_LOCATION")
+                    _ll.owner_space = "LOCAL"
+                    _ll.use_min_y = True
+                    _ll.min_y = 0.0  # foot IK local Y is height above rest
+                    print("RIGIFY_INFO: foot_ik.%s ground clamp added" % _side)
+
+                # 4) ROOT VERTICAL BOUNCE — biological walk has a subtle
+                # sinusoidal head bob (~2 cm) synchronized to the stride.
+                # If the motion payload didn't already keyframe the torso,
+                # add a soft bounce so the character isn't dragged along a
+                # perfectly flat line.
+                _torso = rig.pose.bones.get("torso") or rig.pose.bones.get("spine_fk")
+                _has_torso_z = False
+                if rig.animation_data and rig.animation_data.action:
+                    _cur_action = rig.animation_data.action
+                    try:
+                        # Peek at fcurves via the layered API to see if torso.z
+                        # is already animated.
+                        import motion_baker as _mb2  # noqa: F401
+                        _slot = None
+                        if hasattr(_cur_action, "slots") and len(_cur_action.slots) > 0:
+                            _slot = _cur_action.slots[0]
+                        _fcv = _mb.__dict__.get("_get_action_fcurves", lambda a, s: [])(_cur_action, _slot)
+                        for _fc in _fcv:
+                            if _torso and _torso.name in _fc.data_path and "location" in _fc.data_path and _fc.array_index == 2:
+                                _has_torso_z = True
+                                break
+                    except Exception:
+                        pass
+                if _torso is not None and not _has_torso_z and _is_locomotion:
+                    import math as _m
+                    _fps = int(_compiled.get("fps") or 24)
+                    _fc_end = int(_compiled.get("frame_count") or 24)
+                    _torso.rotation_mode = "XYZ"
+                    for _f in range(1, _fc_end + 1):
+                        _t = (_f - 1) / _fps
+                        _torso.location.z = 0.015 * _m.sin(2 * _m.pi * 2.0 * _t)
+                        _torso.keyframe_insert(data_path="location", index=2, frame=_f)
+                    print("RIGIFY_INFO: torso vertical bounce baked (%d frames)" % _fc_end)
+
+                bpy.ops.object.mode_set(mode="OBJECT")
+            except Exception as _polish_e:
+                print("RIGIFY_INFO: post-motion polish partial: %s" % _polish_e)
     except Exception as exc:
         print("MOTION_BAKE_WARN: %s" % exc)
 
