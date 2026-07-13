@@ -2294,6 +2294,54 @@ def run_pipeline(prompt: str, run_id: str, *,
     # load in three.js. Best-effort: skipped silently if pymeshlab / gltfpack absent
     # or the mesh has no baseColor texture. Keeps the un-optimised mesh as raw_mesh.
     final_mesh_path = rescue["final_mesh"]
+
+    # Stage 3.4 — MV-Adapter UV-aware re-texturing for hard-surface reproductions.
+    # TRELLIS.2 / Hunyuan3D paint textures into the fragmented atlas that Marching
+    # Cubes produces (hundreds of tiny UV islands), so branded symbols (X/O/Sq/Tri
+    # on a DualSense, D-pad arrows, product logos) land on random UV shards and
+    # read as scribbles. MV-Adapter regenerates a clean 4K UV atlas by diffusing
+    # 6 consistent views from the FLUX reference then un-projecting via CV-CUDA
+    # + nvdiffrast — no atlas-fragmentation artefacts, buttons cleanly individuated.
+    # Opt-in: AURORA_MVADAPTER_RETEXTURE=1 (auto-set by --max-precision when the
+    # subject is hard-surface: product/gadget/vehicle/pc_tower/computer/case).
+    # Runs in a separate conda env (mvadapter, torch cu128 Blackwell) via subprocess;
+    # ~90s of extra runtime on Blackwell. Best-effort — skipped silently if the env
+    # isn't provisioned.
+    # Hard-surface kinds where MV-Adapter's UV-aware retexturing shines. Organic
+    # subjects (character/humanoid/creature/quadruped) are excluded — their textures
+    # are noise-tolerant enough that TRELLIS's atlas paint already reads well, and
+    # MV-Adapter's ortho views quantize skin tones aggressively.
+    MVADAPTER_HARD_SURFACE_KINDS = {
+        "product", "gadget", "vehicle", "pc_tower", "case",
+        "computer", "architecture", "sphere",
+    }
+    _mv_want = os.environ.get("AURORA_MVADAPTER_RETEXTURE", "0") == "1"
+    _mv_kind_ok = kind in MVADAPTER_HARD_SURFACE_KINDS
+    if _mv_want and _mv_kind_ok:
+        try:
+            import mvadapter_retexture as _mv  # noqa: WPS433
+            _mv_pre = _mv.preflight()
+            if not _mv_pre.get("ready"):
+                audit.append({"stage": "mvadapter_retexture", "ok": False,
+                              "reason": "env not provisioned", "preflight": _mv_pre})
+            else:
+                _mv_out_dir = str(output_dir / "mvadapter")
+                _mv_res = _mv.retexture(
+                    in_mesh=final_mesh_path,
+                    reference=front_ref,
+                    save_dir=_mv_out_dir,
+                    save_name=f"{run_id}_mvadapter",
+                )
+                audit.append({"stage": "mvadapter_retexture",
+                              **{k: v for k, v in _mv_res.items() if k != "log_tail"}})
+                if _mv_res.get("ok") and _mv_res.get("out_mesh") and Path(_mv_res["out_mesh"]).is_file():
+                    final_mesh_path = _mv_res["out_mesh"]
+        except Exception as exc:  # noqa: BLE001
+            audit.append({"stage": "mvadapter_retexture", "ok": False, "error": repr(exc)})
+    elif _mv_want and not _mv_kind_ok:
+        audit.append({"stage": "mvadapter_retexture", "skipped": True,
+                      "reason": f"kind={kind} is not hard-surface"})
+
     # v90 Stage 3.45 — UV-safe Taubin smoothing on the textured mesh. The
     # manifold/smoothing rescue is skipped for textured meshes (it would wreck
     # painted UVs), leaving raw Marching-Cubes faceting (the "cubique" look).
@@ -2933,7 +2981,9 @@ def main() -> int:
                              ">=4 + 'photogrammetry'/'scan' keyword -> photogrammetry.")
     parser.add_argument("--max-precision", action="store_true", dest="max_precision",
                         help="Qualite maximale: TRELLIS.2 1536_cascade avec allocateur "
-                             "manage (spill RAM) + passe vision materiaux.")
+                             "manage (spill RAM) + passe vision materiaux + MV-Adapter "
+                             "UV-aware re-texturing pour reproductions hard-surface (produit, "
+                             "vehicule, PC, gadget) — brise le plafond de precision atlas TRELLIS.")
     parser.add_argument("--dry-run-prompt", action="store_true", dest="dry_run_prompt",
                         help="Build and print the FLUX prompt (extract_kind + "
                              "enhance_flux_prompt + faithful-scene contract) WITHOUT "
@@ -2954,6 +3004,13 @@ def main() -> int:
         # precision because it can't degrade the output (it only lifts baked
         # shadows on the plastic mask; edge/dark preservation is built in).
         os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
+        # MV-Adapter UV-aware re-texturing (Stage 3.4) for hard-surface reproductions
+        # — brise le plafond precision atlas TRELLIS sur les produits/objets manufactures
+        # (boutons individues, symboles preserves, plastique propre). Only fires for
+        # hard-surface kinds (see MVADAPTER_KINDS below) inside run_pipeline. The env
+        # var is opt-in even on --max-precision so operators can force it off if the
+        # mvadapter conda env isn't provisioned on the current host.
+        os.environ.setdefault("AURORA_MVADAPTER_RETEXTURE", "1")
         # NB: la sim FLIP (AURORA_FLUID_SIM) n'est PLUS auto-activee ici. Sur une
         # fontaine, l'eau SCULPTEE animee (sculpted_water_animator, bassins pleins +
         # vagues + flux shader) rend bien mieux que le FLIP (blobby, verre, bassins
