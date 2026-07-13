@@ -3004,13 +3004,13 @@ def main() -> int:
         # precision because it can't degrade the output (it only lifts baked
         # shadows on the plastic mask; edge/dark preservation is built in).
         os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
-        # MV-Adapter UV-aware re-texturing (Stage 3.4) for hard-surface reproductions
-        # — brise le plafond precision atlas TRELLIS sur les produits/objets manufactures
-        # (boutons individues, symboles preserves, plastique propre). Only fires for
-        # hard-surface kinds (see MVADAPTER_KINDS below) inside run_pipeline. The env
-        # var is opt-in even on --max-precision so operators can force it off if the
-        # mvadapter conda env isn't provisioned on the current host.
-        os.environ.setdefault("AURORA_MVADAPTER_RETEXTURE", "1")
+        # MV-Adapter n'est PLUS auto-active. Prouve DESTRUCTEUR par le test Xbox de zero:
+        # son script re-MAILLE le mesh en espace canonique (sortie ~2.8 Mo, drastiquement
+        # decimee) -> le beau mesh TRELLIS natif (boutons/symboles nets, cf. mesh brut 1.9M
+        # et final_materials 48k tous deux LISIBLES) devient un BLOB FONDU, et cette sortie
+        # REMPLACE le mesh final (Stage 3.4). Un outil qui casse la geometrie pour "reparer"
+        # la texture = cache-misere. Le mesh natif est meilleur. MV-Adapter reste opt-in
+        # explicite (AURORA_MVADAPTER_RETEXTURE=1) pour experimentation texture uniquement.
         # NB: la sim FLIP (AURORA_FLUID_SIM) n'est PLUS auto-activee ici. Sur une
         # fontaine, l'eau SCULPTEE animee (sculpted_water_animator, bassins pleins +
         # vagues + flux shader) rend bien mieux que le FLIP (blobby, verre, bassins
