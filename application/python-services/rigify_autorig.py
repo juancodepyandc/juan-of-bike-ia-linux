@@ -1154,6 +1154,72 @@ print("RIGIFY_OK: rigged GLB saved to %s" % output_glb)
 '''
 
 
+MIA_ROOT_DEFAULT = os.path.expanduser("~/.local/share/auroraia/external/Make-It-Animatable")
+MIA_ENV_DEFAULT = os.path.expanduser("~/.local/opt/miniforge3/envs/mia/bin/python")
+
+
+def _mia_available(mia_root: str, mia_python: str) -> bool:
+    """MIA can serve a human only if we have both the checkout AND a python
+    interpreter with the mia conda env (torch 2.11+cu128, pytorch3d, gradio,
+    trimesh) — no runtime dep-install here."""
+    return (
+        os.path.isdir(mia_root)
+        and os.path.isfile(os.path.join(mia_root, "app.py"))
+        and os.path.isfile(os.path.join(mia_root, "data", "Mixamo", "bones.fbx"))
+        and os.path.isfile(mia_python)
+    )
+
+
+def _run_mia(
+    input_glb: str,
+    output_dir: str,
+    mia_root: str,
+    mia_python: str,
+    rest_pose_type: str = "A-pose",
+    reset_to_rest: bool = False,
+    no_fingers: bool = True,
+    timeout_s: int = 900,
+) -> tuple[str, str] | tuple[None, str]:
+    """Drive `scratchpad/mia_rig.py` under the mia conda env. Returns
+    (output_glb_path, log) on success or (None, reason) on failure. The
+    output GLB has been converted from FBX with FBX2glTF native (embedded in
+    MIA's `vis_blender`), preserving fine geometry and orientation."""
+    runner = os.path.join(str(WORKSPACE.parent), "scratchpad", "mia_rig.py")
+    if not os.path.isfile(runner):
+        return None, f"MIA runner missing: {runner}"
+    # Stage the input inside output_dir so MIA writes side-outputs there,
+    # not next to the caller's input.
+    os.makedirs(output_dir, exist_ok=True)
+    staged_in = os.path.join(output_dir, "mia_input.glb")
+    try:
+        shutil.copyfile(input_glb, staged_in)
+    except Exception as e:
+        return None, f"MIA stage copy failed: {e}"
+    env = os.environ.copy()
+    env["MIA_ROOT"] = mia_root
+    cmd = [
+        mia_python,
+        runner,
+        staged_in,
+        rest_pose_type,
+        "1" if reset_to_rest else "0",
+        "1" if no_fingers else "0",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s, env=env)
+    except subprocess.TimeoutExpired:
+        return None, f"MIA timed out after {timeout_s}s"
+    log = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if "MIA_OK" not in log:
+        return None, f"MIA did not report MIA_OK (exit={proc.returncode}); tail={log.splitlines()[-6:]}"
+    # MIA writes to <staged_in_stem>/<staged_in_stem>.glb
+    stem = os.path.splitext(os.path.basename(staged_in))[0]
+    produced = os.path.join(os.path.dirname(staged_in), stem, f"{stem}.glb")
+    if not os.path.isfile(produced):
+        return None, f"MIA output missing: {produced}"
+    return produced, log
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input",  required=True, help="input GLB path")
@@ -1162,7 +1228,54 @@ def main() -> int:
     ap.add_argument("--metarig", default="human", help="metarig family: human or quadruped")
     ap.add_argument("--pose", default="", help="static pose to apply via IK: sit")
     ap.add_argument("--mocap-bvh", default="", help="optional BVH (MoMask/HumanML3D) to retarget onto the rig via retarget_bvh")
+    ap.add_argument("--use-mia", action="store_true", help="Use Make-It-Animatable (MIA) for human rigging instead of Rigify — produces a Mixamo 52-bone skeleton with anatomical skinning weights that don't bleed the T-shirt onto the arm bones. Falls back to Rigify if MIA env is unavailable.")
+    ap.add_argument("--mia-root", default=MIA_ROOT_DEFAULT, help="MIA checkout dir")
+    ap.add_argument("--mia-python", default=MIA_ENV_DEFAULT, help="Python interpreter for the mia conda env")
+    ap.add_argument("--mia-rest-pose", default="A-pose", choices=("T-pose", "A-pose", "No"), help="rest pose hint for MIA")
     args = ap.parse_args()
+
+    # --------- MIA path (opt-in via --use-mia) ---------
+    # MIA replaces Rigify for humans when the caller explicitly asks and the
+    # env is available. Skinning weights are anatomically clean (mesh/shirt
+    # separated from arm bones), so a 45° arm swing during walk doesn't
+    # explode the sleeves — the defect that plagues the Rigify path on TRELLIS
+    # meshes with proxy 50k. Falls back to Rigify silently on any error.
+    if args.use_mia and args.metarig == "human":
+        input_abs = os.path.abspath(args.input)
+        output_abs = os.path.abspath(args.output)
+        if not os.path.isfile(input_abs):
+            print(json.dumps({"ok": False, "error": f"input GLB missing: {input_abs}"}))
+            return 11
+        if _mia_available(args.mia_root, args.mia_python):
+            os.makedirs(os.path.dirname(output_abs), exist_ok=True)
+            mia_out_dir = os.path.join(os.path.dirname(output_abs), "mia_work")
+            produced, mia_log = _run_mia(
+                input_abs, mia_out_dir, args.mia_root, args.mia_python,
+                rest_pose_type=args.mia_rest_pose,
+                reset_to_rest=False,   # KEEP A-pose weights — natural walk swing
+                no_fingers=True,       # humain has hands closed/at sides
+            )
+            print("--- MIA OUTPUT ---", file=sys.stderr)
+            print(mia_log if mia_log else "(no log)", file=sys.stderr)
+            print("------------------", file=sys.stderr)
+            if produced and os.path.isfile(produced):
+                try:
+                    shutil.copyfile(produced, output_abs)
+                except Exception as e:
+                    print(json.dumps({"ok": False, "error": f"MIA output copy failed: {e}"}))
+                    return 16
+                print(json.dumps({
+                    "ok": True,
+                    "rigger": "make-it-animatable",
+                    "path": output_abs,
+                    "size_bytes": os.path.getsize(output_abs),
+                    "notes": "MIA anatomical skinning — no sleeve bleed on arm swing. skin='keep' recommended downstream (no re-bind, no Corrective Smooth).",
+                }, ensure_ascii=False))
+                return 0
+            # else: fall through to Rigify
+            print("MIA_INFO: MIA path failed, falling back to Rigify", file=sys.stderr)
+        else:
+            print("MIA_INFO: MIA env unavailable, using Rigify", file=sys.stderr)
 
     blender = find_blender()
     if not blender:
