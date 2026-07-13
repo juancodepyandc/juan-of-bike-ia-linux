@@ -2584,6 +2584,16 @@ def run_pipeline(prompt: str, run_id: str, *,
                                  else "no material manifest")})
 
     # Stage 4 (optional) — motion bake via rigify
+    # Un humain decrit le mouvement DANS la phrase ("un homme qui marche", "une
+    # fontaine qui coule"), pas dans un champ separe. Sans motion_prompt explicite,
+    # on le DERIVE du prompt principal et on laisse la machinerie de mouvement
+    # (motion_parser puis classifier LLM) trancher s'il y a un vrai mouvement :
+    # "un homme qui marche" -> character.walk_cycle ; "un homme"/"une pomme" -> null
+    # -> rigid_static -> aucune animation. Aucun verbe code en dur, c'est l'IA qui
+    # comprend le mouvement decrit naturellement.
+    if not motion_prompt and prompt and prompt.strip():
+        motion_prompt = prompt
+        print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{prompt[:80]}'", flush=True)
     rigged_mesh = None
     if motion_prompt:
         motion_res = run_motion_bake(

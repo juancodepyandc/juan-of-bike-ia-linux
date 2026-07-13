@@ -1220,6 +1220,53 @@ def _run_mia(
     return produced, log
 
 
+def _motion_is_locomotion(motion_json_path: str):
+    """If the parsed motion is a locomotion (walk/run/march), return dict of
+    procedural-walk params {frames, swing_deg, speed}; else None. MIA rigs a
+    Mixamo FK skeleton that Aurora's Rigify/IK motion presets cannot drive, so a
+    locomotion is baked procedurally on the Mixamo bones (see mia_walk_apply)."""
+    try:
+        if not motion_json_path or not os.path.isfile(motion_json_path):
+            return None
+        with open(motion_json_path, encoding="utf-8") as f:
+            m = json.load(f)
+    except Exception:
+        return None
+    label = str(m.get("label", "")).lower()
+    if not any(k in label for k in ("walk", "run", "march", "locomot", "jog", "stroll", "sprint")):
+        return None
+    frames = int(m.get("frame_count") or 36)
+    speed = 1.0
+    swing = 40.0
+    for p in (m.get("primitives") or []):
+        mods = p.get("modifiers") or {}
+        speed = float(mods.get("speedMul", speed) or speed)
+        swing *= float(mods.get("amplitudeMul", 1.0) or 1.0)
+    if "run" in label or "sprint" in label or "jog" in label:
+        swing = max(swing, 55.0)
+    return {"frames": max(8, frames), "swing_deg": max(15.0, min(70.0, swing)), "speed": speed}
+
+
+def _apply_mia_walk(in_glb: str, out_glb: str, loco: dict):
+    """Bake a procedural Mixamo walk onto a MIA-rigged GLB via Blender +
+    mia_walk_apply.py. Returns (ok, log_tail)."""
+    blender = find_blender()
+    if not blender:
+        return False, "Blender introuvable pour appliquer la marche MIA"
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mia_walk_apply.py")
+    if not os.path.isfile(script):
+        return False, f"mia_walk_apply.py manquant: {script}"
+    os.makedirs(os.path.dirname(os.path.abspath(out_glb)), exist_ok=True)
+    cmd = [blender, "-b", "-P", script, "--", in_glb, out_glb,
+           str(loco["frames"]), str(loco["swing_deg"]), str(loco["speed"])]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=False)
+    except Exception as e:  # noqa: BLE001
+        return False, f"exception: {e}"
+    log = (p.stdout or "") + (p.stderr or "")
+    return ("MIA_WALK_OK" in log and os.path.isfile(out_glb)), log[-500:]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input",  required=True, help="input GLB path")
@@ -1259,8 +1306,24 @@ def main() -> int:
             print(mia_log if mia_log else "(no log)", file=sys.stderr)
             print("------------------", file=sys.stderr)
             if produced and os.path.isfile(produced):
+                # MIA rigs a Mixamo FK skeleton with anatomical skinning but bakes
+                # NO animation. Aurora's motion_baker presets target Rigify+IK bones
+                # that don't exist here -> apply_compiled_motion would skip every bone
+                # ("exported no glTF animations"). If a locomotion was requested, bake
+                # a procedural walk DIRECTLY on the Mixamo bones so the subject moves.
+                final_src = produced
+                walk_note = ""
+                _loco = _motion_is_locomotion(args.motion)
+                if _loco:
+                    animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_walk.glb")
+                    ok_walk, wlog = _apply_mia_walk(produced, animated, _loco)
+                    if ok_walk:
+                        final_src = animated
+                        walk_note = f" + marche procedurale Mixamo bakee ({_loco['frames']}f, {_loco['swing_deg']:.0f}deg)"
+                    else:
+                        print("MIA_WALK_INFO: bake marche echoue -> rig sans animation. " + wlog, file=sys.stderr)
                 try:
-                    shutil.copyfile(produced, output_abs)
+                    shutil.copyfile(final_src, output_abs)
                 except Exception as e:
                     print(json.dumps({"ok": False, "error": f"MIA output copy failed: {e}"}))
                     return 16
@@ -1269,7 +1332,8 @@ def main() -> int:
                     "rigger": "make-it-animatable",
                     "path": output_abs,
                     "size_bytes": os.path.getsize(output_abs),
-                    "notes": "MIA anatomical skinning — no sleeve bleed on arm swing. skin='keep' recommended downstream (no re-bind, no Corrective Smooth).",
+                    "animated": bool(walk_note),
+                    "notes": "MIA anatomical skinning — no sleeve bleed on arm swing. skin='keep' recommended downstream (no re-bind, no Corrective Smooth)." + walk_note,
                 }, ensure_ascii=False))
                 return 0
             # else: fall through to Rigify
