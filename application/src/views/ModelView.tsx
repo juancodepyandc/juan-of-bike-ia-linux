@@ -1408,6 +1408,126 @@ function _collectBeltBindings(root: Object3D): BeltScrollBinding[] {
   return bindings
 }
 
+/**
+ * aurora.flow.v1 reader — continuous fluid flow (water / lava / any fluid).
+ *
+ * Fluid meshes (fountain water, cascade, lava) ship their material tagged with
+ * `aurora_flow` extras written by the fluid stage / sculpted_water_animator:
+ * { vitesse:number, direction:[u,v], schema:'aurora.flow.v1' }. Historically
+ * this spec was embedded in the GLB but NO viewer consumer existed, so the
+ * water only showed its baked morph ripples (looked almost static — the flow
+ * never played). The mesh UVs are an xatlas atlas (islands, no repeat) so a
+ * naive UV scroll (like the belt) drifts out of its island and smears the
+ * neighbouring islands. Instead we inject a two-phase flow-map blend (Valve
+ * water technique) via onBeforeCompile: two base-colour samples offset in the
+ * flow direction by a BOUNDED, phase-reset displacement, cross-faded so the
+ * surface streams continuously without ever drifting far from origin — no atlas
+ * streaking. Runs ON TOP of the baked morph ripples (geometry) so the combined
+ * read is water that genuinely "ruisselle". Injection is non-fatal: if the
+ * material has no base map the binding is skipped and the mesh renders normally.
+ */
+type FlowMeta = { schema: string; speed: number; dir: [number, number] }
+
+type FlowUniforms = {
+  uAuroraFlowTime: { value: number }
+  uAuroraFlowDir: { value: [number, number] }
+  uAuroraFlowSpeed: { value: number }
+  uAuroraFlowAmp: { value: number }
+}
+
+type FlowBinding = { uniforms: FlowUniforms }
+
+function _readFlowMeta(material: MeshStandardMaterial | MeshPhysicalMaterial): FlowMeta | null {
+  const ud = (material.userData ?? {}) as Record<string, unknown>
+  const extras = (ud.gltfExtras ?? ud.extras ?? null) as Record<string, unknown> | null
+  const candidate = (extras && (extras as Record<string, unknown>).aurora_flow)
+    ?? (ud as Record<string, unknown>).aurora_flow
+  if (!candidate || typeof candidate !== 'object') return null
+  const c = candidate as Record<string, unknown>
+  const schema = typeof c.schema === 'string' ? c.schema : ''
+  if (schema && schema !== 'aurora.flow.v1') return null
+  const speed = Number(c.vitesse)
+  const dirRaw = Array.isArray(c.direction) ? c.direction : null
+  if (!Number.isFinite(speed) || !dirRaw || dirRaw.length < 2) return null
+  const dx = Number(dirRaw[0])
+  const dy = Number(dirRaw[1])
+  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null
+  const len = Math.hypot(dx, dy) || 1
+  return { schema: schema || 'aurora.flow.v1', speed, dir: [dx / len, dy / len] }
+}
+
+function _collectFlowBindings(root: Object3D): FlowBinding[] {
+  const bindings: FlowBinding[] = []
+  root.traverse((child) => {
+    const mesh = child as Mesh
+    if (!mesh.isMesh) return
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    mats.forEach((rawMat) => {
+      const mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial | undefined
+      if (!mat) return
+      const meta = _readFlowMeta(mat)
+      if (!meta) return
+      // Need a base-colour map to flow; without it there is nothing to displace.
+      if (!(mat as MeshStandardMaterial).map) return
+      const uniforms: FlowUniforms = {
+        uAuroraFlowTime: { value: 0 },
+        uAuroraFlowDir: { value: [meta.dir[0], meta.dir[1]] },
+        // `vitesse` is authored in concept units; scale to a gentle UV cycle rate.
+        uAuroraFlowSpeed: { value: Math.max(0.02, Math.min(1.5, meta.speed * 0.2)) },
+        // Bounded displacement: max |offset| = 0.5*amp UV, small enough to stay
+        // inside the atlas island so neighbouring islands never smear in.
+        uAuroraFlowAmp: { value: 0.12 },
+      }
+      const prev = mat.onBeforeCompile
+      mat.onBeforeCompile = (shader, renderer) => {
+        try { if (typeof prev === 'function') prev(shader, renderer) } catch { /* keep going */ }
+        shader.uniforms.uAuroraFlowTime = uniforms.uAuroraFlowTime
+        shader.uniforms.uAuroraFlowDir = uniforms.uAuroraFlowDir
+        shader.uniforms.uAuroraFlowSpeed = uniforms.uAuroraFlowSpeed
+        shader.uniforms.uAuroraFlowAmp = uniforms.uAuroraFlowAmp
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            'uniform float uAuroraFlowTime;\nuniform vec2 uAuroraFlowDir;\nuniform float uAuroraFlowSpeed;\nuniform float uAuroraFlowAmp;\n#include <common>',
+          )
+          .replace(
+            '#include <map_fragment>',
+            [
+              '#ifdef USE_MAP',
+              '  vec4 _afBase = texture2D(map, vMapUv);',
+              // Fluid mask derived from the texture itself (no hardcoded hue): a fluid
+              // (water/lava) is chromatic/saturated; the stone or metal painted in the
+              // SAME atlas is desaturated grey/tan. HSV saturation separates them, so
+              // only the fluid flows and the stone stays perfectly still.
+              '  float _afMx = max(max(_afBase.r, _afBase.g), _afBase.b);',
+              '  float _afMn = min(min(_afBase.r, _afBase.g), _afBase.b);',
+              '  float _afSat = _afMx > 0.001 ? (_afMx - _afMn) / _afMx : 0.0;',
+              '  float _afMask = smoothstep(0.28, 0.52, _afSat);',
+              // Two-phase flow-map: two samples offset along the flow direction by a
+              // BOUNDED, phase-reset displacement (scaled by the mask so stone offset=0),
+              // cross-faded so the surface streams continuously without atlas streaking.
+              '  float _afCycle = fract(uAuroraFlowTime * uAuroraFlowSpeed);',
+              '  float _afOff0 = _afCycle - 0.5;',
+              '  float _afOff1 = fract(_afCycle + 0.5) - 0.5;',
+              '  vec2 _afUv0 = vMapUv + uAuroraFlowDir * _afOff0 * uAuroraFlowAmp * _afMask;',
+              '  vec2 _afUv1 = vMapUv + uAuroraFlowDir * _afOff1 * uAuroraFlowAmp * _afMask;',
+              '  float _afLerp = abs(_afCycle * 2.0 - 1.0);',
+              '  vec4 _afFlowed = mix(texture2D(map, _afUv0), texture2D(map, _afUv1), _afLerp);',
+              '  vec4 sampledDiffuseColor = mix(_afBase, _afFlowed, _afMask);',
+              '  diffuseColor *= sampledDiffuseColor;',
+              '#endif',
+            ].join('\n'),
+          )
+      }
+      // Distinct cache key so this program is never shared with a non-flow material.
+      mat.customProgramCacheKey = () => 'aurora_flow_v1'
+      mat.needsUpdate = true
+      bindings.push({ uniforms })
+    })
+  })
+  return bindings
+}
+
 function InteractiveModel({
   url,
   autoRotate,
@@ -1467,6 +1587,11 @@ function InteractiveModel({
   // OLED/LED bindings (collected on model load, reset on unmount).
   const beltBindingsRef = useRef<BeltScrollBinding[]>([])
   const beltVirtualTimeRef = useRef<number>(0)
+  // aurora.flow.v1 bindings + virtual clock. Injects a two-phase flow-map blend
+  // on the fluid material so water/lava visibly streams along its flow
+  // direction, on top of the baked morph ripples. Same lifecycle as the others.
+  const flowBindingsRef = useRef<FlowBinding[]>([])
+  const flowVirtualTimeRef = useRef<number>(0)
 
   useEffect(() => {
     if (!model) return
@@ -1627,12 +1752,15 @@ function InteractiveModel({
           // iter24.B: collect aurora.belt-scroll.v1 bindings (procedural belt loops).
           beltBindingsRef.current = _collectBeltBindings(loadedModel.scene)
           beltVirtualTimeRef.current = 0
+          // aurora.flow.v1: collect fluid-flow bindings (fountain/cascade/lava).
+          flowBindingsRef.current = _collectFlowBindings(loadedModel.scene)
+          flowVirtualTimeRef.current = 0
           setModel(loadedModel.scene)
           onModelLoaded?.(loadedModel.scene)
           const loadedClips = (loadedModel.animations ?? []) as AnimationClip[]
           setClips(loadedClips)
           onAnimationsLoaded?.(loadedClips)
-        }, undefined, () => { if (!cancelled) { setModel(null); setClips([]); onAnimationsLoaded?.([]); oledBindingsRef.current = []; ledBindingsRef.current = []; beltBindingsRef.current = [] } })
+        }, undefined, () => { if (!cancelled) { setModel(null); setClips([]); onAnimationsLoaded?.([]); oledBindingsRef.current = []; ledBindingsRef.current = []; beltBindingsRef.current = []; flowBindingsRef.current = [] } })
         return
       }
       const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js')
@@ -1662,6 +1790,9 @@ function InteractiveModel({
       // iter24.B: cleanup belt-scroll bindings on unmount/url-change
       beltBindingsRef.current = []
       beltVirtualTimeRef.current = 0
+      // aurora.flow.v1: cleanup fluid-flow bindings on unmount/url-change
+      flowBindingsRef.current = []
+      flowVirtualTimeRef.current = 0
       disposeTree(loadedObject)
     }
   }, [url, onAnimationsLoaded])
@@ -1782,6 +1913,22 @@ function InteractiveModel({
         } else {
           texture.offset.set(wrapped, 0)
         }
+      }
+    }
+    // aurora.flow.v1: advance the fluid-flow virtual clock and push it to each
+    // material's shader uniform. Same pause/scrub semantics as OLED/LED/belt.
+    if (flowBindingsRef.current.length > 0) {
+      let tFlow: number
+      if (manualTime != null) {
+        tFlow = manualTime
+      } else if (playAnimations) {
+        flowVirtualTimeRef.current += delta * (animationSpeed ?? 1)
+        tFlow = flowVirtualTimeRef.current
+      } else {
+        tFlow = flowVirtualTimeRef.current
+      }
+      for (const binding of flowBindingsRef.current) {
+        binding.uniforms.uAuroraFlowTime.value = tFlow
       }
     }
   })
