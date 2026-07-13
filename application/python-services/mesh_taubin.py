@@ -43,7 +43,39 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
     # Snapshot visuals so we can guarantee they survive the export.
     visual = getattr(mesh, "visual", None)
     try:
-        filter_taubin(mesh, lamb=lamb, nu=nu, iterations=max(1, int(iterations)))
+        import trimesh as _tm
+        # WELD-AWARE Taubin. The xatlas re-unwrap upstream SPLITS vertices along
+        # every UV seam: two vertices sit at the SAME 3D position but are separate
+        # in topology (so each UV island gets its own texels). trimesh's Laplacian
+        # treats those twins as independent vertices with different neighbourhoods,
+        # so plain filter_taubin drifts them apart and OPENS a visible crack along
+        # every seam (clean apple -> cracked plates). Fix: run the smooth on the
+        # WELDED topology (coincident twins merged into one), then copy each
+        # welded group's smoothed position back onto its split vertices. Seam twins
+        # move together -> no cracks, and UVs/faces/visual stay 1:1 (we only write
+        # new positions into the original vertex array).
+        faces = np.asarray(mesh.faces)
+        tol = max(ext0 * 1e-6, 1e-9)
+        keys = np.round(v0 / tol).astype(np.int64)
+        _, inverse = np.unique(keys, axis=0, return_inverse=True)
+        inverse = np.asarray(inverse).ravel()
+        n_groups = int(inverse.max()) + 1 if len(inverse) else 0
+        if n_groups and n_groups < len(v0):
+            # there ARE coincident twins to weld -> use the weld-aware path
+            vw = np.zeros((n_groups, 3), dtype=float)
+            counts = np.zeros(n_groups, dtype=float)
+            np.add.at(vw, inverse, v0)
+            np.add.at(counts, inverse, 1.0)
+            vw /= np.maximum(counts, 1.0)[:, None]
+            fw = inverse[faces]
+            deg = (fw[:, 0] == fw[:, 1]) | (fw[:, 1] == fw[:, 2]) | (fw[:, 0] == fw[:, 2])
+            welded = _tm.Trimesh(vertices=vw, faces=fw[~deg], process=False)
+            filter_taubin(welded, lamb=lamb, nu=nu, iterations=max(1, int(iterations)))
+            vw_s = np.asarray(welded.vertices, dtype=float)
+            mesh.vertices = vw_s[inverse]
+        else:
+            # already welded (no twins) -> smooth in place
+            filter_taubin(mesh, lamb=lamb, nu=nu, iterations=max(1, int(iterations)))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"taubin failed: {exc}"}
 
