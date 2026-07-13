@@ -145,6 +145,144 @@ def _to_pose_mode(rig):
             bpy.ops.object.mode_set(mode="POSE")
 
 
+def amplify_bvh_arm_swing(src: str, dst: str, factor: float = 1.6) -> dict:
+    """Amplify arm swing DIRECTLY at the BVH source (before retarget).
+
+    Why this matters: retarget_bvh transfers Euler rotations from BVH joints
+    to Rigify pose bones; Rigify FK controls then feed the DEF-arm bones that
+    deform the mesh. On the way, Rigify's IK auto-solver + FK->DEF chain
+    dampens the signal, and MoMask/HumanML3D-trained MoMask itself often
+    outputs walks with 5-6 cm wrist swing (below what reads as "swinging").
+    Amplifying at the pose fcurve level is fragile (rotation_mode differs
+    between rigs, quaternion component scaling is not a valid rotation
+    amplification). Amplifying at the BVH source is unambiguous: every
+    rotation is an explicit Euler angle in the joint's local frame; scaling
+    each rotation channel away from its median value stretches the pose
+    without changing its axes.
+
+    ``factor > 1.0`` broadens the swing; ``factor = 1.0`` is a no-op.
+
+    Returns a report dict with the delta amp per joint.
+    """
+    if factor <= 1.001:
+        # no-op: copy the file so the caller can pass ``dst`` uniformly
+        with open(src, "r", encoding="utf-8", errors="replace") as _in:
+            data = _in.read()
+        with open(dst, "w", encoding="utf-8") as _out:
+            _out.write(data)
+        return {"factor": factor, "amplified_joints": [], "noop": True}
+
+    import numpy as _np
+
+    # target joints — HumanML3D/MoMask BVH names. LeftShoulder is the
+    # collar bone (small motion). LeftArm is the upper arm bone (the main
+    # swing carrier — 90% of visible arm motion comes from here).
+    targets = {
+        "LeftArm": 1.0,
+        "RightArm": 1.0,
+        "LeftShoulder": 0.6,   # dampen collar since Shoulder+Arm compound
+        "RightShoulder": 0.6,
+        "LeftForeArm": 0.7,    # elbow follows shoulder swing partially
+        "RightForeArm": 0.7,
+    }
+
+    lines = open(src, "r", encoding="utf-8", errors="replace").read().splitlines()
+
+    # Parse hierarchy: build joint_name -> (start_col, n_channels).
+    # BVH order: root has 6 channels, each JOINT has 3 (or 6). We scan and
+    # accumulate channel counts in the order joints appear in the header.
+    joint_stack = []
+    joint_start = {}   # name -> starting column in the motion frame
+    joint_nch = {}     # name -> number of channels
+    joint_chan_order = {}  # name -> list of channel names (in order)
+    col = 0
+    header_end_idx = None
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if s == "MOTION":
+            header_end_idx = i
+            break
+        if s.startswith("ROOT ") or s.startswith("JOINT "):
+            name = s.split(None, 1)[1].strip()
+            joint_stack.append(name)
+        elif s.startswith("CHANNELS "):
+            parts = s.split()
+            nch = int(parts[1])
+            chans = parts[2:2 + nch]
+            name = joint_stack[-1] if joint_stack else "ROOT"
+            joint_start[name] = col
+            joint_nch[name] = nch
+            joint_chan_order[name] = chans
+            col += nch
+        elif s == "}":
+            if joint_stack:
+                joint_stack.pop()
+
+    if header_end_idx is None:
+        raise RuntimeError("BVH: no MOTION section found")
+
+    # Read motion rows into a numpy matrix
+    motion_lines = []
+    header_lines = lines[:header_end_idx + 1]
+    for ln in lines[header_end_idx + 1:]:
+        if ln.strip().startswith("Frames:") or ln.strip().startswith("Frame Time:") or ln.strip() == "":
+            header_lines.append(ln)
+            continue
+        motion_lines.append(ln)
+    if not motion_lines:
+        raise RuntimeError("BVH: empty MOTION block")
+
+    # Build matrix, tolerate ragged rows by truncating to shortest length
+    rows = []
+    ncols_all = col
+    for ln in motion_lines:
+        toks = ln.split()
+        if len(toks) < ncols_all:
+            # bad line — skip; we'll pad-drop the trailing rows later
+            continue
+        rows.append([float(t) for t in toks[:ncols_all]])
+    if not rows:
+        raise RuntimeError("BVH: no parseable motion rows")
+    M = _np.array(rows, dtype=_np.float64)  # (T, ncols_all)
+
+    report_amp = []
+    for jname, mult in targets.items():
+        if jname not in joint_start:
+            continue
+        start = joint_start[jname]
+        nch = joint_nch[jname]
+        chans = joint_chan_order[jname]
+        # only amplify rotation channels (not position)
+        for ci, chan in enumerate(chans):
+            if "rotation" not in chan.lower() and not chan.lower().endswith("rot"):
+                continue
+            column = start + ci
+            values = M[:, column]
+            # centre around median (robust) then scale
+            med = float(_np.median(values))
+            local_factor = 1.0 + (factor - 1.0) * mult
+            new_vals = med + (values - med) * local_factor
+            # clip to sane rotation range (BVH is degrees, walks stay within
+            # +/- 60 deg per axis; clamping avoids the amplified pose from
+            # gimbal-flipping the arm through the torso).
+            new_vals = _np.clip(new_vals, med - 55.0, med + 55.0)
+            M[:, column] = new_vals
+        report_amp.append((jname, local_factor))
+
+    # Write back
+    out_lines = list(header_lines)
+    for r in M:
+        out_lines.append("\t".join("%.6f" % v for v in r))
+    with open(dst, "w", encoding="utf-8") as _out:
+        _out.write("\n".join(out_lines))
+    return {
+        "factor": factor,
+        "amplified_joints": report_amp,
+        "T": int(M.shape[0]),
+        "cols": int(M.shape[1]),
+    }
+
+
 def sanitize_bvh_root(src: str, dst: str, lock_yaw: bool = True) -> None:
     """Zero out ROOT translation channels (and optionally yaw drift).
 
@@ -472,9 +610,26 @@ def run_mocap_bake(
 
     _register_retarget_bvh()
 
-    # Auto-sanitize the BVH: strip root translation. Without this the mocap
-    # walk cycle drags the upper-body controls with the ~5m Hips path and
-    # shatters the shirt / hair mesh (memory: 2026-07-13 diagnosis).
+    # STEP 1: BVH-source arm swing amplification. MoMask walks often produce
+    # 5-6 cm wrist swing; on a mesh with damped skinning that reads as "no
+    # swing at all". Amplifying the source Euler angles at the arm/shoulder
+    # joints stretches the swing WITHOUT changing rotation axes, which is
+    # unambiguous (unlike quaternion component scaling at the pose level).
+    # See ``amplify_bvh_arm_swing`` docstring.
+    _arm_amp = float(os.environ.get("AURORA_MOCAP_BVH_ARM_AMP", "1.6"))
+    if _arm_amp > 1.001:
+        try:
+            import tempfile as _tf
+            amplified = _tf.NamedTemporaryFile(suffix="_armswing.bvh", delete=False).name
+            _rep = amplify_bvh_arm_swing(bvh_path, amplified, factor=_arm_amp)
+            bvh_path = amplified
+            report["steps"]["bvh_arm_swing_amp"] = _rep
+        except Exception as exc:
+            report["steps"]["bvh_arm_swing_amp_error"] = str(exc)
+
+    # STEP 2: sanitize the BVH — strip root translation. Without this the
+    # mocap walk cycle drags the upper-body controls with the ~5m Hips path
+    # and shatters the shirt / hair mesh (memory: 2026-07-13 diagnosis).
     if os.environ.get("AURORA_MOCAP_KEEP_ROOT_TRANS", "0") != "1":
         import tempfile as _tf
         sanitized = _tf.NamedTemporaryFile(suffix="_inplace.bvh", delete=False).name

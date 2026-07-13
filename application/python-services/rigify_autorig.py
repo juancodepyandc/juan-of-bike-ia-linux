@@ -87,6 +87,70 @@ if not meshes:
     print("RIGIFY_ERROR: no MESH in the imported GLB")
     sys.exit(3)
 
+# v113: PRE-EXISTING RIG CLEANUP. When the pipeline re-runs on an already-
+# rigged GLB (humain_final_materials.glb has a full Rigify aurora_rig + 706
+# vertex groups baked in), a naive re-rig produces a DOUBLE-RIG state:
+# the mesh keeps the OLD ARMATURE modifier + OLD vertex groups AND gets a
+# NEW ARMATURE modifier + NEW vertex groups from parent_set. Weights get
+# split across two rigs and the mesh explodes during animation (torso
+# shatters, feet float, arms unresponsive — the v18 catastrophe).
+# Fix: strip existing armature(s), armature modifiers, and vertex groups
+# from all imported meshes BEFORE the metarig generation begins. The static
+# base geometry is preserved (positions untouched).
+_pre_arms = [o for o in bpy.context.scene.objects if o.type == "ARMATURE"]
+_purge_stats = []
+for m in meshes:
+    _n_groups = len(m.vertex_groups)
+    _n_arm_mods = sum(1 for mod in m.modifiers if mod.type == "ARMATURE")
+    if _n_groups or _n_arm_mods:
+        # Detach parent first so removing the armature doesn't wreck the
+        # mesh's world transform.
+        if m.parent is not None and m.parent.type == "ARMATURE":
+            _mw = m.matrix_world.copy()
+            m.parent = None
+            m.matrix_world = _mw
+        for mod in list(m.modifiers):
+            if mod.type == "ARMATURE":
+                m.modifiers.remove(mod)
+        for vg in list(m.vertex_groups):
+            m.vertex_groups.remove(vg)
+        _purge_stats.append((m.name, _n_groups, _n_arm_mods))
+for _arm in _pre_arms:
+    try:
+        bpy.data.objects.remove(_arm, do_unlink=True)
+    except Exception:
+        pass
+if _purge_stats or _pre_arms:
+    print("RIGIFY_INFO: pre-existing rig purged (%d armatures, %s meshes cleaned: %s)"
+          % (len(_pre_arms), len(_purge_stats), _purge_stats))
+
+# v113: STRAY MESH PURGE. TRELLIS.2 exports sometimes carry an environment
+# proxy (Icosphere used for material sampling, a 2m-wide light dome). If
+# left in the scene, its bbox INFLATES the height passed to the metarig
+# scale factor — a 1m humain gets a 2m rig, bones end up outside the body,
+# bone-heat produces empty groups, the proxy fallback kicks in with a
+# coarse voxel remesh, and the mesh explodes at animation time.
+# Rule: keep only the LARGEST connected mesh (by vertex count). Stray
+# icospheres, environment domes, decorative widgets are dropped.
+if len(meshes) > 1:
+    meshes_sorted = sorted(meshes, key=lambda o: len(o.data.vertices), reverse=True)
+    _keep = meshes_sorted[0]
+    _drop = meshes_sorted[1:]
+    # only drop meshes that are clearly minority (< 5% of the keeper's
+    # vertex count). If the mesh has a genuine secondary body (e.g. a
+    # weapon a character carries), we would keep it. TRELLIS typical:
+    # keeper=952k, icosphere=42 → 0.004% → drop.
+    _kv = max(1, len(_keep.data.vertices))
+    for o in _drop:
+        if len(o.data.vertices) < 0.05 * _kv:
+            print("RIGIFY_INFO: stray mesh purged: %s (%d verts vs keeper %d)"
+                  % (o.name, len(o.data.vertices), _kv))
+            try:
+                bpy.data.objects.remove(o, do_unlink=True)
+            except Exception:
+                pass
+    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+
 # Apply smooth shading to all meshes to fix faceted appearance
 for m in meshes:
     bpy.ops.object.select_all(action="DESELECT")
@@ -289,19 +353,28 @@ if not _skin_ok(mesh):
         dup.vertex_groups.remove(vg)
     for m2 in list(dup.modifiers):
         dup.modifiers.remove(m2)
-    if len(dup.data.polygons) > 40000:
+    # v113: proxy resolution UP. Prior tuning (40k decimate + voxel dim/60 +
+    # decimate 60k) collapsed a 1m humanoid to ~3400 polys, an arm cross-
+    # section had 2-3 voxels, so bone-heat merged forearm and hip weights.
+    # Result: mesh forearm/hand verts got hip weights and moved with the
+    # pelvis during walk (the v19 "cape at belt" effect). Denser proxy:
+    #   * initial decimate up to 200k (preserves geometry for remesh)
+    #   * voxel_size = dim / 220 → ~5mm on a 1m body → ~40-80k shell polys,
+    #     arm cross-section has ~10 voxels wide, forearm+hand resolvable
+    #   * second decimate ceiling raised to 120k so the resolution survives.
+    if len(dup.data.polygons) > 200000:
         dec = dup.modifiers.new("dec", "DECIMATE")
-        dec.ratio = 40000.0 / len(dup.data.polygons)
+        dec.ratio = 200000.0 / len(dup.data.polygons)
         with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
             bpy.ops.object.modifier_apply(modifier=dec.name)
     rm = dup.modifiers.new("rm", "REMESH")
     rm.mode = "VOXEL"
-    rm.voxel_size = max(max(dup.dimensions) / 60.0, 0.004)
+    rm.voxel_size = max(max(dup.dimensions) / 220.0, 0.003)
     with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
         bpy.ops.object.modifier_apply(modifier=rm.name)
-    if len(dup.data.polygons) > 60000:
+    if len(dup.data.polygons) > 120000:
         dec2 = dup.modifiers.new("dec2", "DECIMATE")
-        dec2.ratio = 60000.0 / len(dup.data.polygons)
+        dec2.ratio = 120000.0 / len(dup.data.polygons)
         with bpy.context.temp_override(object=dup, active_object=dup, selected_editable_objects=[dup]):
             bpy.ops.object.modifier_apply(modifier=dec2.name)
     try:
@@ -459,6 +532,120 @@ if not _skin_ok(mesh):
     if not _skin_ok(mesh):
         print("RIGIFY_ERROR: skinning toujours vide apres proxy")
         sys.exit(8)
+
+# v113: ANATOMICAL WEIGHT CAP. After Rigify auto-weights + proxy transfer,
+# the arm DEF- bones (upper_arm, forearm, hand) often bleed weight into
+# distant shirt/torso verts — the proxy remesh at ~49k polys represents
+# each arm with only ~200 verts, so bone-heat merges arm/shirt boundaries.
+# Result at animation: shirt mesh drags with the arm swing (the "cape/
+# stretched arms" pattern seen in v22/v23/v24 renders). Real fix = compute
+# per-vertex distance to each arm bone's line segment in rest pose; if
+# distance exceeds ~2x the arm cross-section, ZERO the arm-bone weight.
+# Anatomical fact: shirt verts on the chest are >12cm from any arm bone
+# center, real skin/muscle within the arm is <5cm from the bone. Threshold
+# scales with mesh body height. Purely geometric, no fudge factors.
+if metarig_kind == "human":
+    try:
+        import numpy as _npc
+        import mathutils as _mu
+
+        _bh = mx.z - mn.z  # body height
+        # radius of influence for arm bones (vertices within this from the
+        # bone segment KEEP their weight; farther verts get capped)
+        _arm_radius = max(_bh * 0.055, 0.045)  # 5.5% body height, min 45mm
+        _leg_radius = max(_bh * 0.08, 0.060)   # legs are bigger (thighs)
+
+        _cap_bones = {
+            # arm bones — should NEVER weight shirt/torso/legs
+            "DEF-upper_arm.L":    ("arm", _arm_radius * 1.2),  # shoulder region wider
+            "DEF-upper_arm.L.001": ("arm", _arm_radius * 1.1),
+            "DEF-upper_arm.R":    ("arm", _arm_radius * 1.2),
+            "DEF-upper_arm.R.001": ("arm", _arm_radius * 1.1),
+            "DEF-forearm.L":      ("arm", _arm_radius),
+            "DEF-forearm.L.001":  ("arm", _arm_radius),
+            "DEF-forearm.R":      ("arm", _arm_radius),
+            "DEF-forearm.R.001":  ("arm", _arm_radius),
+            "DEF-hand.L":         ("arm", _arm_radius * 0.9),
+            "DEF-hand.R":         ("arm", _arm_radius * 0.9),
+            # leg bones — should NEVER weight arms/torso
+            "DEF-thigh.L":        ("leg", _leg_radius),
+            "DEF-thigh.L.001":    ("leg", _leg_radius),
+            "DEF-thigh.R":        ("leg", _leg_radius),
+            "DEF-thigh.R.001":    ("leg", _leg_radius),
+            "DEF-shin.L":         ("leg", _leg_radius * 0.85),
+            "DEF-shin.L.001":     ("leg", _leg_radius * 0.85),
+            "DEF-shin.R":         ("leg", _leg_radius * 0.85),
+            "DEF-shin.R.001":     ("leg", _leg_radius * 0.85),
+            "DEF-foot.L":         ("leg", _leg_radius * 0.75),
+            "DEF-foot.R":         ("leg", _leg_radius * 0.75),
+        }
+
+        _cap_stats = {"capped_bones": 0, "capped_verts_total": 0}
+        for _mo in [o for o in bpy.context.scene.objects
+                    if o.type == "MESH" and o.name in orig_mesh_names]:
+            _nvt = len(_mo.data.vertices)
+            if _nvt < 100:
+                continue
+            _co = _npc.empty(_nvt * 3, dtype=_npc.float32)
+            _mo.data.vertices.foreach_get("co", _co)
+            _co = _co.reshape(_nvt, 3)
+            _mw = _npc.array(_mo.matrix_world, dtype=_npc.float32)
+            _wco = _co @ _mw[:3, :3].T + _mw[:3, 3]  # world vertex coords
+
+            _arm_mw = _npc.array(rig.matrix_world, dtype=_npc.float32)
+            _vg_by_name = {vg.name: vg for vg in _mo.vertex_groups}
+            for _bname, (_kind, _radius) in _cap_bones.items():
+                _b = rig.data.bones.get(_bname)
+                _vg = _vg_by_name.get(_bname)
+                if _b is None or _vg is None:
+                    continue
+                # bone endpoints in world coords
+                _h = _npc.array(_arm_mw @ _npc.array(_b.head_local.to_4d()))[:3]
+                _t = _npc.array(_arm_mw @ _npc.array(_b.tail_local.to_4d()))[:3]
+                _ab = _t - _h
+                _l2 = float(_ab @ _ab) or 1e-9
+                _tt = _npc.clip(((_wco - _h) @ _ab) / _l2, 0.0, 1.0)
+                _proj = _h + _tt[:, None] * _ab
+                _dist = _npc.linalg.norm(_wco - _proj, axis=1)
+                _cap_mask = _dist > _radius
+                # capped verts: remove from this vertex group
+                _cap_idx = _npc.where(_cap_mask)[0]
+                if len(_cap_idx) == 0:
+                    continue
+                # sample: only cap verts that actually had weight in this group
+                _cap_list = [int(i) for i in _cap_idx]
+                try:
+                    _vg.remove(_cap_list)
+                    _cap_stats["capped_bones"] += 1
+                    _cap_stats["capped_verts_total"] += len(_cap_list)
+                except Exception:
+                    pass
+
+            # After capping, renormalize each vertex's remaining weights so
+            # they sum to 1 (Blender then respects the new distribution).
+            import bmesh as _bmr
+            _bm3 = _bmr.new()
+            _bm3.from_mesh(_mo.data)
+            _dl = _bm3.verts.layers.deform.verify()
+            _renorm = 0
+            for _v in _bm3.verts:
+                _dv = _v[_dl]
+                _s = sum(_dv.values())
+                if _s <= 1e-6 or abs(_s - 1.0) < 1e-4:
+                    continue
+                _inv = 1.0 / _s
+                for _gi in list(_dv.keys()):
+                    _dv[_gi] = _dv[_gi] * _inv
+                _renorm += 1
+            _bm3.to_mesh(_mo.data)
+            _bm3.free()
+            _mo.data.update()
+            print("RIGIFY_INFO: anatomical cap on %s: %d bone-vert prunes, %d verts renormalized"
+                  % (_mo.name, _cap_stats["capped_verts_total"], _renorm))
+    except Exception as _cap_e:
+        print("RIGIFY_INFO: anatomical cap failed: %s" % _cap_e)
+        import traceback as _tbc
+        _tbc.print_exc()
 
 pose_mode = argv[4] if len(argv) > 4 else ""
 if pose_mode == "sit":
@@ -719,20 +906,51 @@ elif motion_path and os.path.isfile(motion_path):
         _mesh_fallback = next(
             (o for o in bpy.context.scene.objects if o.type == "MESH"), None,
         )
-        # FORCE RIGIFY TO FK MODE!
-        print("--- RIG PROPERTIES ---")
-        for pb in rig.pose.bones:
-            keys = list(pb.keys())
-            if len(keys) > 0:
-                print("BONE:", pb.name, "KEYS:", keys)
-            for k in keys:
-                if k == 'IK_FK' or k == 'ik_fk' or 'FK' in k.upper():
-                    pb[k] = 1.0  # 1.0 is usually FK in Rigify
-                    try:
-                        pb.keyframe_insert(data_path=f'["{k}"]', frame=1)
-                    except:
-                        pass
-        print("----------------------")
+        # v113: IK vs FK mode PER LIMB, driven by which bones the compiled
+        # motion actually keyframes. Previous version blanket-forced FK=1.0
+        # on every bone that had an IK_FK property. That KILLS arm swing:
+        # motion_baker writes location keyframes on hand_ik.L/R (IK targets)
+        # and the arm mesh is expected to follow via IK — but with FK=1.0,
+        # the IK constraints are muted, hand_ik.L sweeps 60cm and the arm
+        # doesn't move at all (verified by tracking DEF-hand.L world position
+        # in v21_proc_boost: hand_ik yP2P=0.616m, DEF-hand yP2P=0.000m). Fix:
+        # inspect the compiled instructions, and for each Rigify limb pair
+        # ("upper_arm"/"hand" for arms, "thigh"/"foot" for legs) decide the
+        # IK/FK setting from which bone family the motion drives.
+        _limb_targets = {
+            "IK-arm.L":  ("hand_ik.L", ("upper_arm_parent.L",), "IK_FK"),
+            "IK-arm.R":  ("hand_ik.R", ("upper_arm_parent.R",), "IK_FK"),
+            "IK-leg.L":  ("foot_ik.L", ("thigh_parent.L",), "IK_FK"),
+            "IK-leg.R":  ("foot_ik.R", ("thigh_parent.R",), "IK_FK"),
+        }
+        # Which limbs did compile touch as IK targets?
+        _instr_bones = set()
+        for _ins in _compiled.get("instructions") or []:
+            _instr_bones.add(str(_ins.get("bone") or ""))
+        _uses_ik = {
+            "IK-arm.L": "hand_ik.L" in _instr_bones,
+            "IK-arm.R": "hand_ik.R" in _instr_bones,
+            "IK-leg.L": "foot_ik.L" in _instr_bones,
+            "IK-leg.R": "foot_ik.R" in _instr_bones,
+        }
+        for _lname, (_tbone, _prop_owners, _prop_name) in _limb_targets.items():
+            _ik_wanted = 1 if _uses_ik.get(_lname) else 0
+            # 0 = full IK, 1 = full FK in Rigify convention
+            _fk_value = 0.0 if _ik_wanted else 1.0
+            for _po_name in _prop_owners:
+                _po = rig.pose.bones.get(_po_name)
+                if _po is None:
+                    continue
+                for _k in list(_po.keys()):
+                    if _k == _prop_name or "IK_FK" in _k.upper():
+                        try:
+                            _po[_k] = _fk_value
+                            _po.keyframe_insert(data_path='["%s"]' % _k, frame=1)
+                            print("RIGIFY_INFO: %s.%s = %.2f (%s mode)"
+                                  % (_po_name, _k, _fk_value,
+                                     "IK" if _ik_wanted else "FK"))
+                        except Exception:
+                            pass
         
         motion_report = _mb.apply_compiled_motion(rig, _compiled, fallback_object=_mesh_fallback)
         print("MOTION_BAKED:", _compiled.get("id"),
