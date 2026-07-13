@@ -596,14 +596,19 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
     motion_json_path.write_text(parsed, encoding="utf-8")
 
     metarig_family = "quadruped" if (subject_kind or "").lower() in ("quadruped", "creature") else "human"
-    proc = subprocess.run(
-        [sys.executable, str(rigify),
-         "--input", str(rescued_mesh),
-         "--output", str(rigged_path),
-         "--motion", str(motion_json_path),
-         "--metarig", metarig_family],
-        capture_output=True, timeout=900, check=False,
-    )
+    # MIA (Make-It-Animatable) par DEFAUT sur les humanoides : poids anatomiques premium
+    # qui separent bras/torse -> le balancier de bras ne fait plus EXPLOSER la manche
+    # (prouve A/B: Rigify DEF+proxy 50k = chemise en ailes; MIA = corps intact, marche
+    # credible). Fallback silencieux sur Rigify si l'env conda `mia` n'est pas provisionne
+    # (rigify_autorig._mia_available). Non-humanoides = Rigify inchange.
+    _rig_cmd = [sys.executable, str(rigify),
+                "--input", str(rescued_mesh),
+                "--output", str(rigged_path),
+                "--motion", str(motion_json_path),
+                "--metarig", metarig_family]
+    if metarig_family == "human" and os.environ.get("AURORA_MIA_RIG", "1") == "1":
+        _rig_cmd.append("--use-mia")
+    proc = subprocess.run(_rig_cmd, capture_output=True, timeout=1200, check=False)
     rigify_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
     rigify_stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
     if proc.returncode != 0 or not rigged_path.is_file():
