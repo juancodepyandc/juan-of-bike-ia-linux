@@ -68,6 +68,10 @@ else:
     argv = []
 input_glb  = argv[0] if len(argv) > 0 else ""
 output_glb = argv[1] if len(argv) > 1 else ""
+# extra slot for a MoMask-produced BVH to retarget onto the freshly generated
+# rig via retarget_bvh (MakeWalk). When set, we SKIP the procedural
+# motion_baker path entirely and use the BVH as the sole source of motion.
+mocap_bvh = argv[5] if len(argv) > 5 else ""
 if not input_glb or not os.path.isfile(input_glb):
     print("RIGIFY_ERROR: input GLB missing: %s" % input_glb)
     sys.exit(2)
@@ -498,9 +502,208 @@ if pose_mode == "sit":
 
 # v77zn: optional motion baking — bake an aurora.motion.v1 descriptor into
 # an NLA action on the freshly generated rig before exporting.
+# When --mocap-bvh is set, we take the MoMask/retarget_bvh path and SKIP the
+# procedural motion_baker (see application/python-services/mocap_pipeline.py).
 motion_path = argv[2] if len(argv) > 2 else ""
 motion_report = None
-if motion_path and os.path.isfile(motion_path):
+
+# ---- MoMask + retarget_bvh (MakeWalk) mocap chain ------------------------
+if mocap_bvh and os.path.isfile(mocap_bvh) and metarig_kind == "human":
+    print("MOCAP_INFO: retargeting BVH", mocap_bvh)
+    # Pre-mocap mesh hardening: mocap-scale rotations expose the classic
+    # TRELLIS.2 shirt-shard problem (thin double-shell garments tear at the
+    # shoulder). Two mitigations before the bake:
+    #   (a) SECOND WELD PASS at ~1mm on the upper-body verts only. Increases
+    #       island connectivity on the T-shirt / neckline without touching
+    #       fine facial detail (memory: >2mm destroys detail).
+    #   (b) CORRECTIVE_SMOOTH modifier (delta-mush) on each mesh. Relaxes
+    #       any deltas the Armature modifier introduces, mapping to the
+    #       skinned rest surface. Placed AFTER the Armature modifier so it
+    #       smooths the deformed state. Confirmed on the humain: without
+    #       it frame ~75 of the MoMask walk shatters the shirt into shards.
+    try:
+        import bmesh as _bm2
+        for _mo in [o for o in bpy.context.scene.objects
+                    if o.type == "MESH" and o.name in orig_mesh_names]:
+            n_before = len(_mo.data.vertices)
+            _dim = max(_mo.dimensions) if _mo.dimensions else 1.0
+            _upper_z = mn.z + 0.55 * (mx.z - mn.z)  # roughly waist-up
+            _weld = max(_dim * 0.00075, 0.0007)
+            _bmm = _bm2.new()
+            _bmm.from_mesh(_mo.data)
+            # collect verts above the upper_z threshold in world space
+            _mw = _mo.matrix_world
+            sel_verts = []
+            for v in _bmm.verts:
+                wz = (_mw @ v.co).z
+                if wz >= _upper_z:
+                    sel_verts.append(v)
+            if sel_verts:
+                _bm2.ops.remove_doubles(_bmm, verts=sel_verts, dist=_weld)
+                _bmm.to_mesh(_mo.data)
+                _mo.data.update()
+            _bmm.free()
+            n_after = len(_mo.data.vertices)
+            print("RIGIFY_INFO: upper-body weld %s: %d -> %d verts (dist=%.4f)"
+                  % (_mo.name, n_before, n_after, _weld))
+
+            # (c) LAPLACIAN WEIGHT SMOOTHING on the upper body — this is what
+            # actually EXPORTS via glTF (unlike Corrective Smooth, which is a
+            # Blender-only modifier the exporter strips). We build a numpy
+            # adjacency from mesh edges, then for each upper-body vertex
+            # replace its weight in each group with the mean of its 1-ring
+            # neighbours' weights. 22 iterations, factor 0.55.
+            # Docs: memory/pipeline-deformation-3d.md ("smooth_upper_weights").
+            import numpy as _np2
+
+            if len(_mo.vertex_groups) >= 3:
+                nvt = len(_mo.data.vertices)
+                # gather world-Z for the upper mask
+                co = _np2.empty(nvt * 3, dtype=_np2.float32)
+                _mo.data.vertices.foreach_get("co", co)
+                co = co.reshape(nvt, 3)
+                mw = _np2.array(_mo.matrix_world)
+                wco = co @ mw[:3, :3].T + mw[:3, 3]
+                upper_mask = wco[:, 2] >= _upper_z
+                # protect fingers/hands so the finger curl stays crisp
+                hand_names = {vg.name for vg in _mo.vertex_groups
+                              if any(k in vg.name.lower() for k in
+                              ("hand", "f_index", "f_middle", "f_ring",
+                               "f_pinky", "thumb", "palm"))}
+                # per-vertex weight matrix (sparse in principle; here dense
+                # over the vertex groups we actually smooth)
+                grp_ids = {vg.index: vg.name for vg in _mo.vertex_groups}
+                nvg = len(grp_ids)
+                W = _np2.zeros((nvt, nvg), dtype=_np2.float32)
+                # sort weights into W
+                sorted_gidx = sorted(grp_ids.keys())
+                gidx_to_col = {gi: i for i, gi in enumerate(sorted_gidx)}
+                for vi, v in enumerate(_mo.data.vertices):
+                    for g in v.groups:
+                        if g.group in gidx_to_col:
+                            W[vi, gidx_to_col[g.group]] = g.weight
+                # build 1-ring neighbours from edges
+                nedges = len(_mo.data.edges)
+                _e = _np2.empty(nedges * 2, dtype=_np2.int32)
+                _mo.data.edges.foreach_get("vertices", _e)
+                _e = _e.reshape(nedges, 2)
+                # accumulate neighbour weights
+                iters = 22
+                factor = 0.55
+                # For efficiency, only smooth verts in the upper mask
+                for _it in range(iters):
+                    # for each edge, accumulate contribution to each endpoint
+                    Wneigh = _np2.zeros_like(W)
+                    cnt = _np2.zeros(nvt, dtype=_np2.float32)
+                    _np2.add.at(Wneigh, _e[:, 0], W[_e[:, 1]])
+                    _np2.add.at(cnt, _e[:, 0], 1.0)
+                    _np2.add.at(Wneigh, _e[:, 1], W[_e[:, 0]])
+                    _np2.add.at(cnt, _e[:, 1], 1.0)
+                    Wneigh /= (cnt[:, None] + 1e-6)
+                    # blend
+                    new_W = W * (1.0 - factor) + Wneigh * factor
+                    # protect hands: keep original weights on hand verts
+                    for gname in hand_names:
+                        vg = _mo.vertex_groups.get(gname)
+                        if vg and vg.index in gidx_to_col:
+                            col = gidx_to_col[vg.index]
+                            new_W[:, col] = W[:, col]
+                    # only apply in upper mask
+                    W[upper_mask] = new_W[upper_mask]
+                # renormalize per-vertex so weights sum to 1
+                s = W.sum(axis=1, keepdims=True) + 1e-6
+                W = W / s
+                # write back into vertex_groups
+                nz_thresh = 0.008
+                # rebuild each group's entries in bulk
+                for gi in sorted_gidx:
+                    col = gidx_to_col[gi]
+                    vg = None
+                    for _vg in _mo.vertex_groups:
+                        if _vg.index == gi:
+                            vg = _vg
+                            break
+                    if vg is None:
+                        continue
+                    # clear existing entries in the upper mask; keep hands
+                    if grp_ids[gi] in hand_names:
+                        continue
+                    upper_idx = _np2.where(upper_mask)[0]
+                    # remove and re-add in bulk
+                    for vi in upper_idx:
+                        try:
+                            vg.remove([int(vi)])
+                        except Exception:
+                            pass
+                    # add non-negligible weights
+                    keep = upper_idx[W[upper_idx, col] > nz_thresh]
+                    if len(keep):
+                        # can only add float weight, one at a time using .add
+                        # bucket by rounded weight for a speedup
+                        buckets = {}
+                        wq = _np2.round(W[keep, col] * 100.0) / 100.0
+                        for i_local, vi in enumerate(keep):
+                            buckets.setdefault(float(wq[i_local]), []).append(int(vi))
+                        for wt, vids in buckets.items():
+                            if wt > 0.0:
+                                vg.add(vids, float(wt), "REPLACE")
+                print("RIGIFY_INFO: Laplacian weight smooth on %s (upper-body verts=%d, iters=%d)"
+                      % (_mo.name, int(upper_mask.sum()), iters))
+
+            # (d) CORRECTIVE_SMOOTH modifier — Blender-side polish only.
+            # We keep it because when the pipeline is used in Blender (viewer
+            # embed, render_anim_frames.py loads the animated GLB and the
+            # modifier is dropped anyway) it hurts nothing. On export the
+            # exporter strips it.
+            has_cs = any(m.type == "CORRECTIVE_SMOOTH" for m in _mo.modifiers)
+            if not has_cs:
+                cs = _mo.modifiers.new("aurora_cs", "CORRECTIVE_SMOOTH")
+                cs.factor = 0.55
+                cs.iterations = 8
+                try:
+                    cs.smooth_type = "LENGTH_WEIGHTED"
+                except Exception:
+                    pass
+                try:
+                    cs.use_only_smooth = False
+                except Exception:
+                    pass
+                print("RIGIFY_INFO: corrective smooth added on %s (factor=0.55, iter=8)" % _mo.name)
+    except Exception as _prep_err:
+        print("MOCAP_INFO: pre-bake hardening skipped: %s" % _prep_err)
+        import traceback as _tbp
+        _tbp.print_exc()
+    here = os.environ.get("AURORA_PYTHON_SERVICES")
+    if here and here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        os.environ["AURORA_INSIDE_BLENDER"] = "1"
+        import mocap_bake_bpy as _mb  # noqa: E402
+        _mesh_fallback = next(
+            (o for o in bpy.context.scene.objects if o.type == "MESH"), None,
+        )
+        _mocap_report = _mb.run_mocap_bake(
+            rig,
+            mocap_bvh,
+            orig_mesh_names,
+            ground_z=float(mn.z) if 'mn' in dir() else 0.0,
+            mesh_fallback=_mesh_fallback,
+            arm_swing_boost=float(os.environ.get("AURORA_MOCAP_ARM_BOOST", "1.35")),
+            per_frame_foot_lock=os.environ.get("AURORA_MOCAP_FOOT_LOCK", "1") != "0",
+        )
+        # Sync scene frame range to the retargeted action so the glTF exporter
+        # writes every frame of the walk cycle.
+        _fr = _mocap_report.get("frame_range") or [1, 1]
+        bpy.context.scene.frame_start = int(_fr[0])
+        bpy.context.scene.frame_end = int(_fr[1])
+        print("MOCAP_BAKED: frames=%s steps=%s" % (_fr, _mocap_report.get("steps")))
+    except Exception as _me:
+        print("MOCAP_ERROR: %s" % _me)
+        import traceback as _tb
+        _tb.print_exc()
+        # Fall through to procedural motion if the BVH path failed.
+        pass
+elif motion_path and os.path.isfile(motion_path):
     try:
         import json as _json
         here = os.environ.get("AURORA_PYTHON_SERVICES")
@@ -740,6 +943,7 @@ def main() -> int:
     ap.add_argument("--motion", default="", help="optional aurora.motion.v1 JSON to bake as NLA action")
     ap.add_argument("--metarig", default="human", help="metarig family: human or quadruped")
     ap.add_argument("--pose", default="", help="static pose to apply via IK: sit")
+    ap.add_argument("--mocap-bvh", default="", help="optional BVH (MoMask/HumanML3D) to retarget onto the rig via retarget_bvh")
     args = ap.parse_args()
 
     blender = find_blender()
@@ -775,7 +979,14 @@ def main() -> int:
     env = os.environ.copy()
     env["AURORA_PYTHON_SERVICES"] = os.path.dirname(os.path.abspath(__file__))
 
-    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs, args.metarig, args.pose]
+    mocap_abs = ""
+    if args.mocap_bvh:
+        mocap_abs = os.path.abspath(args.mocap_bvh)
+        if not os.path.isfile(mocap_abs):
+            print(json.dumps({"ok": False, "error": f"mocap BVH missing: {mocap_abs}"}))
+            return 15
+
+    cmd = [blender, "--background", "--python", script_path, "--", input_abs, output_abs, motion_abs, args.metarig, args.pose, mocap_abs]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
     except subprocess.TimeoutExpired:
