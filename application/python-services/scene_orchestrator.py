@@ -139,6 +139,19 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         return {"ok": False, "is_scene": True, "error": "target generation failed",
                 "plan": plan, "actor_glb": actor_glb}
 
+    # Le generateur ne garantit aucune convention d'axe: la cible sort souvent
+    # COUCHEE (une chaise sur son dossier). Composer par-dessus n'a alors aucun
+    # sens - on assied le personnage sur une chaise renversee. On la redresse.
+    upright_info = None
+    try:
+        import upright_object
+        up_out = str(Path(target_glb).with_name(Path(target_glb).stem + "_droit.glb"))
+        upright_info = upright_object.upright(target_glb, up_out, desc=plan["target"])
+        if upright_info.get("ok") and not upright_info.get("already_upright"):
+            target_glb = upright_info["output"]
+    except Exception as exc:  # noqa: BLE001
+        upright_info = {"ok": False, "error": repr(exc)}
+
     scene_out = output_dir / run_id / f"{run_id}_scene.glb"
     scene_out.parent.mkdir(parents=True, exist_ok=True)
     composer = HERE / "scene_composer.py"
@@ -158,6 +171,7 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     return {
         "ok": ok, "is_scene": True, "plan": plan,
         "actor_glb": actor_glb, "target_glb": target_glb,
+        "upright": upright_info,
         "scene_glb": str(scene_out) if ok else None,
         "composer_tail": (p.stdout or "")[-400:] + (p.stderr or "")[-200:],
     }

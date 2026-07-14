@@ -701,6 +701,17 @@ def _delta_from_reference(render_png: str, reference_png: str, delta_png: str,
     warped = cv2.warpAffine(crop, M, (R, R), flags=cv2.INTER_LANCZOS4,
                             borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
 
+    # MASQUE DE VALIDITE: hors du crop de la reference, warpAffine REPLIQUE les
+    # pixels de bord. Cette zone repliquee est du faux contenu, et sa lisiere se
+    # voit comme une arete nette en travers de la joue. On ne garde donc que ce que
+    # la reference couvre REELLEMENT, avec un fondu.
+    valid = cv2.warpAffine(np.ones(crop.shape[:2], np.float32), M, (R, R),
+                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                           borderValue=0.0)
+    k = max(3, int(0.03 * R) | 1)
+    valid = cv2.erode(valid, np.ones((k, k), np.uint8))
+    valid = cv2.GaussianBlur(valid, (0, 0), k * 0.5)[..., None]
+
     # residu de recalage (en px) = qualite de la superposition des traits
     proj = cv2.transform(lmk_crop.reshape(-1, 1, 2), M).reshape(-1, 2)
     err = float(np.linalg.norm(proj - lmk_ren, axis=1).mean())
@@ -719,13 +730,16 @@ def _delta_from_reference(render_png: str, reference_png: str, delta_png: str,
     matched = warped - cv2.GaussianBlur(warped, (0, 0), sig) \
         + cv2.GaussianBlur(ren_f, (0, 0), sig)
 
-    d = (matched - ren_f) / 255.0
+    d = (matched - ren_f) / 255.0 * valid
     enc = np.clip(d * 0.5 + 0.5, 0.0, 1.0)
     cv2.imwrite(delta_png, (enc * 65535.0).astype(np.uint16))
 
-    # la reference RECALEE dans le cadre du rendu: c'est elle qui porte le relief
+    # la reference RECALEE dans le cadre du rendu: c'est elle qui porte le relief.
+    # Hors de sa zone valide on retombe sur le rendu, sinon l'estimateur de normales
+    # verrait la lisiere repliquee comme une vraie arete et la sculpterait.
+    blend = np.clip(warped * valid + ren_f * (1.0 - valid), 0, 255)
     warped_png = os.path.splitext(delta_png)[0] + "_warped.png"
-    cv2.imwrite(warped_png, np.clip(warped, 0, 255).astype(np.uint8))
+    cv2.imwrite(warped_png, blend.astype(np.uint8))
 
     return {
         "residu_reperes_px": round(err, 2),
