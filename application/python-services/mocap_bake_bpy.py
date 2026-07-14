@@ -596,6 +596,49 @@ def _root_bounce(rig, frame_count: int, fps: int) -> int:
     return frame_count
 
 
+def _clamp_mixamo_spine(rig) -> int:
+    """Bake-clamp the Mixamo spine/neck rotation keyframes to a physiological
+    range. Retargeting a HumanML3D/MoMask BVH onto a Mixamo skeleton over-rotates
+    the spine chain (Spine1/Spine2 up to 100+deg vs ~10deg natural) because the
+    source and Mixamo spine rest orientations differ, folding the waist and
+    shattering the torso mesh. We slerp each over-limit keyframe quaternion back
+    toward identity, capping the angle, and bake it into the keys so it survives
+    glTF export (constraints are not evaluated by three.js). No-op on non-Mixamo
+    rigs (bones absent) and on already-natural motion."""
+    import mathutils
+    act = rig.animation_data.action if rig.animation_data else None
+    if not act:
+        return 0
+    limits = {
+        "mixamorig:Spine": 12.0, "mixamorig:Spine1": 12.0, "mixamorig:Spine2": 10.0,
+        "mixamorig:Neck": 22.0, "mixamorig:Head": 18.0,
+    }
+    total = 0
+    for name, max_deg in limits.items():
+        pb = rig.pose.bones.get(name)
+        if not pb:
+            continue
+        dp = pb.path_from_id("rotation_quaternion")
+        fcs = {fc.array_index: fc for fc in act.fcurves if fc.data_path == dp}
+        if len(fcs) < 4:
+            continue
+        maxr = math.radians(max_deg)
+        kmap = {i: {int(round(kp.co.x)): kp for kp in fcs[i].keyframe_points} for i in range(4)}
+        for f in sorted(kmap[0].keys()):
+            q = mathutils.Quaternion((fcs[0].evaluate(f), fcs[1].evaluate(f),
+                                      fcs[2].evaluate(f), fcs[3].evaluate(f)))
+            q.normalize()
+            if q.angle > maxr and q.angle > 1e-4:
+                qc = mathutils.Quaternion().slerp(q, maxr / q.angle)
+                for i, val in enumerate((qc.w, qc.x, qc.y, qc.z)):
+                    if f in kmap[i]:
+                        kmap[i][f].co.y = val
+                total += 1
+        for fc in fcs.values():
+            fc.update()
+    return total
+
+
 def run_mocap_bake(
     rig,
     bvh_path: str,
@@ -645,6 +688,13 @@ def run_mocap_bake(
 
     _load_and_retarget(rig, bvh_path, use_nla=False)
     report["steps"]["retarget"] = "ok"
+
+    # Mixamo spine clamp (fixes waist shatter when a MoMask BVH is retargeted
+    # onto a MIA/Mixamo rig — see _clamp_mixamo_spine). No-op on Rigify rigs.
+    try:
+        report["steps"]["mixamo_spine_clamp"] = _clamp_mixamo_spine(rig)
+    except Exception as exc:
+        report["steps"]["mixamo_spine_clamp_error"] = str(exc)
 
     # Neck / feet / fingers polish
     try:

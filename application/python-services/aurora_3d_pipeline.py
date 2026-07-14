@@ -605,6 +605,7 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 "--input", str(rescued_mesh),
                 "--output", str(rigged_path),
                 "--motion", str(motion_json_path),
+                "--motion-text", str(motion_prompt or ""),
                 "--metarig", metarig_family]
     if metarig_family == "human" and os.environ.get("AURORA_MIA_RIG", "1") == "1":
         _rig_cmd.append("--use-mia")

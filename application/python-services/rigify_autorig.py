@@ -1267,11 +1267,78 @@ def _apply_mia_walk(in_glb: str, out_glb: str, loco: dict):
     return ("MIA_WALK_OK" in log and os.path.isfile(out_glb)), log[-500:]
 
 
+def _motion_to_english(text: str) -> str:
+    """Translate a natural (any-language) motion description to a concise English
+    phrase for MoMask (HumanML3D). Uses the local Ollama LLM so it's the AI that
+    understands the movement — no hardcoded verb table. Falls back to the raw text."""
+    text = (text or "").strip()
+    if not text:
+        return "a person walks forward"
+    try:
+        import urllib.request
+        model = os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+        body = json.dumps({
+            "model": model,
+            "prompt": ("You convert a motion description to a concise English phrase for a "
+                       "text-to-motion model (HumanML3D style). Output ONLY the phrase, no "
+                       "quotes, no explanation. Input: " + text),
+            "stream": False, "options": {"temperature": 0.1},
+            # Unload the LLM from the GPU immediately after translating: the very
+            # next step (MoMask) needs the whole 15GB GPU, and a 14GB resident LLM
+            # would OOM it. keep_alive:0 frees the VRAM before MoMask runs.
+            "keep_alive": 0,
+        }).encode()
+        req = urllib.request.Request("http://127.0.0.1:11434/api/generate", data=body,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            out = json.loads(r.read().decode()).get("response", "").strip()
+        out = out.splitlines()[0].strip().strip('"').strip() if out else ""
+        return out or text
+    except Exception:
+        return text
+
+
+def _apply_mia_motion(mia_glb: str, out_glb: str, motion_text: str):
+    """GENUINE motion for a MIA/Mixamo rig (replaces the hand-authored walk):
+    MoMask text-to-motion -> BVH -> retarget onto the Mixamo skeleton (+ spine
+    clamp against waist shatter). Handles ANY described motion. Returns (ok, log)."""
+    try:
+        import momask_generate as mg
+    except Exception as e:  # noqa: BLE001
+        return False, f"momask_generate import failed: {e}"
+    motion_en = _motion_to_english(motion_text)
+    try:
+        ext = "aurora_mia_" + str(abs(hash(out_glb)) % 100000)
+        gen = mg.generate_motions(motion_en, ext=ext, repeat_times=1, gpu_id=0, timeout_s=480)
+    except Exception as e:  # noqa: BLE001
+        return False, f"MoMask exception: {e}"
+    if not gen.get("ok") or not gen.get("candidates"):
+        return False, f"MoMask no candidates ({str(gen.get('error',''))[:120]})"
+    cand = gen["candidates"][0]
+    bvh = cand.get("bvh_ik") or cand.get("bvh")
+    if not bvh or not os.path.isfile(bvh):
+        return False, "MoMask BVH missing"
+    blender = find_blender()
+    if not blender:
+        return False, "Blender introuvable pour le retarget"
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mia_mocap_retarget.py")
+    os.makedirs(os.path.dirname(os.path.abspath(out_glb)), exist_ok=True)
+    cmd = [blender, "-b", "-P", script, "--", mia_glb, bvh, out_glb]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=700, check=False)
+    except Exception as e:  # noqa: BLE001
+        return False, f"retarget subprocess exception: {e}"
+    log = (p.stdout or "") + (p.stderr or "")
+    ok = "MIA_MOCAP_OK" in log and os.path.isfile(out_glb)
+    return ok, f"motion_en='{motion_en}' | " + log[-400:]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input",  required=True, help="input GLB path")
     ap.add_argument("--output", required=True, help="output rigged GLB path")
     ap.add_argument("--motion", default="", help="optional aurora.motion.v1 JSON to bake as NLA action")
+    ap.add_argument("--motion-text", default="", dest="motion_text", help="natural-language motion description (any language) -> MoMask text-to-motion for MIA/Mixamo rigs")
     ap.add_argument("--metarig", default="human", help="metarig family: human or quadruped")
     ap.add_argument("--pose", default="", help="static pose to apply via IK: sit")
     ap.add_argument("--mocap-bvh", default="", help="optional BVH (MoMask/HumanML3D) to retarget onto the rig via retarget_bvh")
@@ -1313,15 +1380,29 @@ def main() -> int:
                 # a procedural walk DIRECTLY on the Mixamo bones so the subject moves.
                 final_src = produced
                 walk_note = ""
-                _loco = _motion_is_locomotion(args.motion)
-                if _loco:
-                    animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_walk.glb")
-                    ok_walk, wlog = _apply_mia_walk(produced, animated, _loco)
-                    if ok_walk:
+                # GENUINE motion first: MoMask text-to-motion retargeted onto the
+                # Mixamo rig (handles walk/run/dance/wave/... from the natural
+                # description). Procedural walk is only a LAST-RESORT fallback for
+                # locomotion if MoMask/retarget is unavailable — never the default.
+                motion_text = (getattr(args, "motion_text", "") or "").strip()
+                if motion_text:
+                    animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_motion.glb")
+                    ok_m, mlog = _apply_mia_motion(produced, animated, motion_text)
+                    if ok_m:
                         final_src = animated
-                        walk_note = f" + marche procedurale Mixamo bakee ({_loco['frames']}f, {_loco['swing_deg']:.0f}deg)"
+                        walk_note = " + mouvement MoMask (texte->mouvement) retargete sur Mixamo"
                     else:
-                        print("MIA_WALK_INFO: bake marche echoue -> rig sans animation. " + wlog, file=sys.stderr)
+                        print("MIA_MOTION_INFO: MoMask/retarget indispo -> fallback marche proc. " + mlog, file=sys.stderr)
+                if not walk_note:
+                    _loco = _motion_is_locomotion(args.motion)
+                    if _loco:
+                        animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_walk.glb")
+                        ok_walk, wlog = _apply_mia_walk(produced, animated, _loco)
+                        if ok_walk:
+                            final_src = animated
+                            walk_note = f" + marche procedurale Mixamo (fallback, {_loco['frames']}f)"
+                        else:
+                            print("MIA_WALK_INFO: fallback marche echoue -> rig sans animation. " + wlog, file=sys.stderr)
                 try:
                     shutil.copyfile(final_src, output_abs)
                 except Exception as e:
