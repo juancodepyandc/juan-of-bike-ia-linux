@@ -1101,6 +1101,28 @@ try:
 except Exception:
     pass
 
+# PURGE AVANT EXPORT. La purge d'import (v113) ne voit que les meshes presents a
+# l'arrivee; or le rig en CREE (widgets). Une Icosphere de 2 m se retrouvait ainsi
+# dans le GLB rigge, et le compositeur, mesurant l'englobant de l'acteur, lui
+# attribuait 2 m au lieu de 1 -> echelle divisee par deux, et un homme exactement
+# de la taille de sa chaise. On repurge donc juste avant l'export.
+_ms = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+if len(_ms) > 1:
+    _ms.sort(key=lambda o: len(o.data.vertices), reverse=True)
+    _kv = max(1, len(_ms[0].data.vertices))
+    for _o in _ms[1:]:
+        if len(_o.data.vertices) < 0.05 * _kv:
+            print("RIGIFY_INFO: parasite purge avant export: %s (%d verts vs %d)"
+                  % (_o.name, len(_o.data.vertices), _kv))
+            try:
+                orig_mesh_names.discard(_o.name)
+            except Exception:
+                pass
+            try:
+                bpy.data.objects.remove(_o, do_unlink=True)
+            except Exception:
+                pass
+
 # Export rigged GLB
 bpy.ops.object.select_all(action="DESELECT")
 rig.select_set(True)

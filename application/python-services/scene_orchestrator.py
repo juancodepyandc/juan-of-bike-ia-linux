@@ -117,6 +117,36 @@ def split_scene_prompt(prompt: str) -> Dict[str, Any]:
     }
 
 
+def real_heights(actor: str, target: str) -> Dict[str, Optional[float]]:
+    """Hauteurs REELLES des deux objets, en metres.
+
+    Chaque objet est genere NORMALISE (~1 unite): un homme et une chaise sortent
+    donc exactement de la meme taille, et composer sur les hauteurs mesurees donne
+    un homme minuscule sur un fauteuil geant. La bonne echelle n'est pas une
+    propriete de la geometrie, c'est une connaissance du MONDE - on la demande donc
+    au LLM plutot que de coder une table d'objets, qui ne generaliserait a rien.
+    """
+    q = (
+        "Give the TYPICAL real-world height in METERS of each object, as a human "
+        "would know it (an adult man ~1.75, a chair ~0.9, a mug ~0.1, a car ~1.5).\n"
+        'Reply ONLY strict JSON: {"actor_m": <number>, "target_m": <number>}\n'
+        "Object A (actor): %s\nObject B (target): %s" % (actor, target)
+    )
+    try:
+        d = _extract_json(_ollama(q)) or {}
+        a, t = float(d.get("actor_m")), float(d.get("target_m"))
+    except Exception as exc:  # noqa: BLE001
+        print("SCENE_ORCH: tailles reelles indisponibles (%r) -> echelle non "
+              "corrigee" % exc, file=sys.stderr)
+        return {"actor_m": None, "target_m": None}
+    # garde-fou: une valeur aberrante ferait pire que rien
+    if not (0.01 <= a <= 100.0 and 0.01 <= t <= 100.0):
+        print("SCENE_ORCH: tailles aberrantes (%s, %s) -> ignorees" % (a, t),
+              file=sys.stderr)
+        return {"actor_m": None, "target_m": None}
+    return {"actor_m": a, "target_m": t}
+
+
 def _generate_object(desc: str, run_id: str, output_dir: Path,
                      motion: str = "", purpose: str = "visual_preview") -> Optional[str]:
     """Generate a single object GLB via the normal pipeline. Returns the final
@@ -185,6 +215,12 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         instruction += f", {plan['actor_motion']}"
     cmd = [sys.executable, str(composer), "--actor", actor_glb, "--target", target_glb,
            "--instruction", instruction, "--output", str(scene_out)]
+    sizes = real_heights(plan["actor"], plan["target"])
+    if sizes["actor_m"] and sizes["target_m"]:
+        cmd += ["--actor-height-m", str(sizes["actor_m"]),
+                "--target-height-m", str(sizes["target_m"])]
+        print("SCENE_ORCH: tailles reelles -> acteur %.2f m, cible %.2f m"
+              % (sizes["actor_m"], sizes["target_m"]), flush=True)
     if plan["animate"]:
         cmd.append("--animate")
     try:

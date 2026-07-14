@@ -128,6 +128,12 @@ def main():
                         choices=["legs_bent", "edge", "stand", "lie", "none"])
     parser.add_argument("--dz-frac", type=float, default=None, dest="dz_frac")
     parser.add_argument("--dfwd-frac", type=float, default=None, dest="dfwd_frac")
+    # Tailles REELLES (metres). Les objets sont generes normalises: sans elles, un
+    # homme et une chaise font la meme hauteur.
+    parser.add_argument("--actor-height-m", type=float, default=None,
+                        dest="actor_height_m")
+    parser.add_argument("--target-height-m", type=float, default=None,
+                        dest="target_height_m")
     args = parser.parse_args()
     parsed = parse_instruction(args.instruction)
     relation = parsed["relation"]
@@ -137,6 +143,8 @@ def main():
     overrides = {"seat-height-frac": args.seat_height_frac,
                  "seat-depth-frac": args.seat_depth_frac,
                  "scale-mul": args.scale_mul,
+                 "actor-height-m": args.actor_height_m,
+                 "target-height-m": args.target_height_m,
                  "strategy": args.strategy,
                  "dz-frac": args.dz_frac,
                  "dfwd-frac": args.dfwd_frac}
@@ -172,6 +180,10 @@ def main():
         "relation": relation,
         "strategy": args.strategy,
         "overrides": {k: v for k, v in overrides.items() if v is not None},
+        # l'echelle reellement appliquee doit REMONTER: sans elle, impossible de
+        # savoir si la mise a l'echelle a eu lieu (la charge utile est une liste
+        # blanche de cles, et tout le reste est silencieusement jete).
+        "scale_from_real_size": scene.get("scale_from_real_size"),
         "animated": bool(scene.get("animated")),
         "contact_gap": scene.get("contact_gap"),
         "overlap_fixed": scene.get("overlap_fixed"),

@@ -47,11 +47,21 @@ def mesh_objects(objs):
     return [o for o in objs if o.type == "MESH"]
 
 
-def world_bounds(objs):
+def world_bounds(objs, main_only=False):
+    """Englobant monde. `main_only`: ne considere QUE le mesh principal.
+
+    Un objet parasite (widget de rig, dome d'environnement) ne doit jamais pouvoir
+    fausser une TAILLE. Une Icosphere de 2 unites laissee par le rig faisait mesurer
+    2 m a un homme d'1 m: l'echelle etait divisee par deux, et il se retrouvait
+    exactement de la taille de sa chaise. On mesure donc sur le plus gros mesh.
+    """
     bpy.context.view_layer.update()
+    ms = mesh_objects(objs)
+    if main_only and len(ms) > 1:
+        ms = [max(ms, key=lambda o: len(o.data.vertices))]
     mn = Vector((1e18, 1e18, 1e18))
     mx = Vector((-1e18, -1e18, -1e18))
-    for o in mesh_objects(objs):
+    for o in ms:
         for c in o.bound_box:
             w = o.matrix_world @ Vector(c)
             for i in range(3):
@@ -363,8 +373,13 @@ def run(args, result):
     actor_objs = import_glb(args["actor"])
     tmin, tmax = world_bounds(target_objs)
     amin, amax = world_bounds(actor_objs)
-    target_h = tmax.z - tmin.z
-    actor_h = amax.z - amin.z
+    # la hauteur qui sert a l'ECHELLE se mesure sur le mesh principal: un widget de
+    # rig laisse dans le GLB fausserait le rapport (verifie: Icosphere 2u -> homme
+    # a la taille de sa chaise).
+    _tmn, _tmx = world_bounds(target_objs, main_only=True)
+    _amn, _amx = world_bounds(actor_objs, main_only=True)
+    target_h = _tmx.z - _tmn.z
+    actor_h = _amx.z - _amn.z
     relation = args.get("relation", "next_to")
     strategy = args.get("strategy")
     strategy_relations = {"legs_bent": "sit_on", "edge": "sit_on", "stand": "stand_on", "lie": "lie_on"}
@@ -376,9 +391,22 @@ def run(args, result):
     seat_d_frac = _opt_float(args, "seat-depth-frac")
     scale_mul = _opt_float(args, "scale-mul")
     actor_root = make_root("AuroraActorRoot", actor_objs)
+    actor_m = _opt_float(args, "actor-height-m")
+    target_m = _opt_float(args, "target-height-m")
     if scale_mul is not None and scale_mul > 0:
         actor_root.scale = (scale_mul, scale_mul, scale_mul)
         result["scale_mul"] = scale_mul
+    elif (actor_m and target_m and actor_m > 0 and target_m > 0
+          and actor_h > 1e-6 and target_h > 1e-6):
+        # ECHELLE REELLE. Chaque objet est genere NORMALISE (~1 unite): un homme et
+        # une chaise sortent donc de la meme taille, et le rapport mesure ne veut
+        # rien dire. La bonne echelle est une connaissance du MONDE (un homme ~1.75 m,
+        # une chaise ~0.9 m), pas une propriete de la geometrie: le LLM la fournit.
+        # On met l'acteur a l'echelle de la cible, qui sert d'unite a la scene.
+        s = (actor_m / target_m) * (target_h / actor_h)
+        actor_root.scale = (s, s, s)
+        result["scale_from_real_size"] = {
+            "actor_m": actor_m, "target_m": target_m, "scale": round(s, 4)}
     elif relation == "sit_on" and target_h > 1e-6 and actor_h > 1e-6:
         ratio = actor_h / target_h
         if ratio > 2.2 or ratio < 0.5:
@@ -536,6 +564,13 @@ def run(args, result):
                                    "x": [round(min(c.x for c in cs), 2), round(max(c.x for c in cs), 2)],
                                    "y": [round(min(c.y for c in cs), 2), round(max(c.y for c in cs), 2)],
                                    "z": [round(min(c.z for c in cs), 2), round(max(c.z for c in cs), 2)]}
+    # S'ASSEOIR, C'EST S'ENFONCER. L'anti-chevauchement pousse l'acteur le long de
+    # `push` jusqu'a annuler l'interpenetration; pour sit_on push est VERTICAL, donc
+    # la seule facon d'y parvenir est de le sortir de la chaise. Il decollait ainsi
+    # de 2 unites au-dessus du siege (mesure). Un homme assis interpenetre forcement
+    # le coussin: on BORNE donc la correction, et on accepte le chevauchement
+    # residuel - c'est le contact, pas un defaut.
+    max_shift = 0.08 * actor_h if relation in ("sit_on", "lie_on") else 1e9
     for i in range(40):
         p = len(target_bvh.overlap(shifted_bvh(averts, atris, shift)))
         if best_pairs is None or p < best_pairs:
@@ -543,9 +578,17 @@ def run(args, result):
             best_shift = Vector(shift)
         if p <= tol:
             break
+        if (shift + push * step).length > max_shift:
+            result["overlap_capped"] = round(max_shift, 4)
+            break
         shift = shift + push * step
         fixed += 1
-    if best_pairs is not None and best_pairs > tol:
+    if result.get("overlap_capped"):
+        # borne atteinte: on GARDE le shift courant. Reprendre `best_shift` (celui
+        # qui minimise le chevauchement) rendrait la borne inutile - c'est justement
+        # le shift qui sort l'acteur du siege.
+        result["fit"] = "contact"
+    elif best_pairs is not None and best_pairs > tol:
         shift = best_shift
         result["fit"] = "partial"
     else:
