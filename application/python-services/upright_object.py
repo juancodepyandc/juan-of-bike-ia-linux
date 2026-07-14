@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import base64
+import re
 import json
 import os
 import shutil
@@ -58,10 +59,13 @@ objs = [o for o in bpy.context.scene.objects if o.type in ("MESH", "ARMATURE")]
 if not objs:
     print("UPRIGHT_FAIL aucun objet"); sys.exit(3)
 
+# Les RACINES ne sont pas forcement des meshes: l'import glTF interpose une EMPTY
+# ("world"). Ne parenter que les MESH/ARMATURE laisserait la hierarchie intacte et
+# la rotation sans effet - on rendrait 6 fois la MEME image.
 root = bpy.data.objects.new("AuroraUprightRoot", None)
 bpy.context.scene.collection.objects.link(root)
-for o in objs:
-    if o.parent is None:
+for o in list(bpy.context.scene.objects):
+    if o.parent is None and o is not root:
         o.parent = root
 
 scn = bpy.context.scene
@@ -116,19 +120,26 @@ print("UPRIGHT_RENDER_OK")
 
 _BPY_APPLY = r'''
 import bpy, json, math, sys
+from mathutils import Euler
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 GLB, OUT_GLB, ROT = argv[0], argv[1], json.loads(argv[2])
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=GLB)
+
+# PIEGE glTF: la conversion Z-up <-> Y-up de l'exportateur EST une rotation de 90
+# deg autour de X. Poser la rotation sur la transformation d'un noeud la lui fait
+# absorber (verifie: un modele bascule de 90 deg ressortait DEBOUT). On CUIT donc
+# la rotation dans les sommets - aucune convention d'axe ne peut plus l'annuler.
+R = Euler([math.radians(a) for a in ROT], "XYZ").to_matrix().to_4x4()
+done = set()
 for o in bpy.context.scene.objects:
-    if o.parent is None and o.type in ("MESH", "ARMATURE", "EMPTY"):
-        o.rotation_euler = (
-            o.rotation_euler.x + math.radians(ROT[0]),
-            o.rotation_euler.y + math.radians(ROT[1]),
-            o.rotation_euler.z + math.radians(ROT[2]),
-        )
+    if o.type != "MESH" or o.data.name in done:
+        continue
+    M = o.matrix_world
+    o.data.transform(M.inverted() @ R @ M)
+    done.add(o.data.name)
 bpy.context.view_layer.update()
 bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB")
 print("UPRIGHT_APPLY_OK")
@@ -162,39 +173,68 @@ def _blender(script: str, args: list, tag: str) -> str:
     return log
 
 
-def _ask_vlm(cands: list, desc: str) -> tuple[int, str]:
+def _contact_sheet(cands: list, path: str) -> None:
+    """Assemble les candidats en UNE planche-contact numerotee.
+
+    Envoyer 6 images separees ne marche pas: le modele ne les met pas en regard et
+    repond au hasard (verifie: il choisissait l'index 0 avec une raison vide, alors
+    que l'objet y etait manifestement couche). Une planche unique lui permet de
+    COMPARER, ce qui est precisement la tache demandee.
+    """
+    import cv2
+    import numpy as np
+
+    tiles = []
+    for i, c in enumerate(cands):
+        im = cv2.resize(cv2.imread(c["png"]), (320, 320))
+        cv2.rectangle(im, (0, 0), (319, 319), (60, 60, 60), 2)
+        cv2.rectangle(im, (4, 4), (58, 44), (255, 255, 255), -1)
+        cv2.putText(im, str(i), (14, 36), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
+                    (0, 0, 200), 3)
+        tiles.append(im)
+    rows = [np.hstack(tiles[0:3]), np.hstack(tiles[3:6])]
+    cv2.imwrite(path, np.vstack(rows))
+
+
+def _ask_vlm(cands: list, desc: str, sheet: str) -> tuple[int, str]:
     """Demande au modele de vision laquelle des vues montre l'objet DEBOUT."""
     import urllib.request
 
-    imgs = []
-    for c in cands:
-        with open(c["png"], "rb") as fh:
-            imgs.append(base64.b64encode(fh.read()).decode())
+    _contact_sheet(cands, sheet)
+    with open(sheet, "rb") as fh:
+        img = base64.b64encode(fh.read()).decode()
     what = desc.strip() or "cet objet"
     prompt = (
-        "Voici %d rendus du MEME objet (%s), chacun dans une orientation differente.\n"
-        "Les images sont numerotees de 0 a %d dans l'ordre ou elles te sont donnees.\n"
-        "Question: sur QUELLE image l'objet est-il pose dans sa position NATURELLE de "
-        "repos, telle qu'il se tiendrait reellement sur un sol (une chaise sur ses "
-        "pieds, une tasse sur son fond, un personnage debout) ? Ignore la couleur et "
-        "la qualite: seule l'orientation compte.\n"
-        "Reponds UNIQUEMENT en JSON: {\"index\": <numero>, \"raison\": \"<5 mots>\"}"
-        % (len(cands), what, len(cands) - 1)
+        "Cette image est une planche de %d vignettes numerotees (0 a %d, de gauche a "
+        "droite puis ligne suivante). Ce sont des rendus du MEME objet (%s), chacun "
+        "dans une ORIENTATION differente.\n"
+        "Le sol est horizontal, en bas de chaque vignette.\n"
+        "Question: dans QUELLE vignette l'objet est-il dans sa position NATURELLE de "
+        "repos, telle qu'il se tiendrait vraiment sur un sol ? (une chaise sur ses "
+        "pieds et non sur son dossier, une tasse sur son fond, une personne debout "
+        "sur ses pieds et non couchee ni la tete en bas). Ignore la couleur et la "
+        "qualite: SEULE l'orientation compte.\n"
+        "Reponds par le SEUL numero de la vignette, rien d'autre."
+        % (len(cands), len(cands) - 1, what)
     )
+    # PAS de `format: json` ici: ce modele renvoie alors une reponse VIDE (verifie).
+    # En texte libre il repond juste. On lit donc le premier entier de sa reponse.
     body = json.dumps({
-        "model": VLM, "prompt": prompt, "images": imgs, "stream": False,
-        "format": "json", "keep_alive": 0,
-        "options": {"temperature": 0.0},
+        "model": VLM, "prompt": prompt, "images": [img], "stream": False,
+        "keep_alive": 0, "options": {"temperature": 0.0},
     }).encode()
     req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as r:
+    with urllib.request.urlopen(req, timeout=600) as r:
         data = json.loads(r.read().decode())
-    out = json.loads(data.get("response") or "{}")
-    idx = int(out.get("index", 0))
+    raw = (data.get("response") or "").strip()
+    m = re.search(r"\d+", raw)
+    if not m:
+        return -1, "reponse sans numero: %r" % raw[:60]
+    idx = int(m.group())
     if not 0 <= idx < len(cands):
-        idx = 0
-    return idx, str(out.get("raison") or "")
+        return -1, "numero hors bornes (%d)" % idx
+    return idx, raw[:40]
 
 
 def upright(glb: str, out_glb: str, desc: str = "", workdir: str | None = None) -> dict:
@@ -204,9 +244,14 @@ def upright(glb: str, out_glb: str, desc: str = "", workdir: str | None = None) 
     cands = json.loads(open(os.path.join(wd, "cands.json")).read())
 
     try:
-        idx, why = _ask_vlm(cands, desc)
+        idx, why = _ask_vlm(cands, desc, os.path.join(wd, "planche.png"))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": "VLM indisponible: %r" % exc}
+    if idx < 0:
+        # NE PAS retomber silencieusement sur l'index 0: c'est precisement ce qui
+        # avait masque le bug (le module repondait "deja droit" sur un objet couche).
+        # Mieux vaut ne rien faire et le DIRE que de tourner l'objet au hasard.
+        return {"ok": False, "error": "le modele de vision n'a pas tranche (%s)" % why}
 
     rot = cands[idx]["rot"]
     if rot == [0, 0, 0] or tuple(rot) == (0, 0, 0):
