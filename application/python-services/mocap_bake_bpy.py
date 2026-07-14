@@ -670,10 +670,19 @@ def run_mocap_bake(
         except Exception as exc:
             report["steps"]["bvh_arm_swing_amp_error"] = str(exc)
 
-    # STEP 2: sanitize the BVH — strip root translation. Without this the
-    # mocap walk cycle drags the upper-body controls with the ~5m Hips path
-    # and shatters the shirt / hair mesh (memory: 2026-07-13 diagnosis).
-    if os.environ.get("AURORA_MOCAP_KEEP_ROOT_TRANS", "0") != "1":
+    # STEP 2: sanitize the BVH — strip root translation. On a RIGIFY rig the Hips
+    # BVH channel drives the torso IK and a ~5m path shatters the shirt/hair, so we
+    # zero it (walk-in-place). BUT on a MIXAMO rig the Hips is just the rigid root:
+    # translating it moves the whole body, no shatter — and zeroing it is exactly
+    # what makes the planted foot SKATE 1.5m (treadmill without a belt). Since the
+    # torso shatter is now prevented by _clamp_mixamo_spine, we KEEP the root
+    # translation on Mixamo -> the stance foot stays planted, no skating (the
+    # character advances forward, which is the physically correct walk).
+    _is_mixamo = any("mixamo" in b.name.lower() for b in rig.data.bones)
+    _keep_root = os.environ.get("AURORA_MOCAP_KEEP_ROOT_TRANS", "0") == "1" or _is_mixamo
+    if _keep_root:
+        report["steps"]["sanitize_bvh"] = "root_translation_KEPT (mixamo anti-skate)" if _is_mixamo else "root_translation_kept (env)"
+    if not _keep_root:
         import tempfile as _tf
         sanitized = _tf.NamedTemporaryFile(suffix="_inplace.bvh", delete=False).name
         try:

@@ -259,6 +259,18 @@ def attach_ao(glb_path, ao_png_path, out_path, log=print):
     if not g.materials:
         return {"ok": False, "error": "no materials in glb"}
     ao_img = Image.open(str(ao_png_path)).convert("L")
+    # AO was baked way too dark (measured mean ~0.32) and attached at strength 1.0
+    # -> ~68% multiplicative darkening + near-black cavities = the "burned" blotches
+    # on faces. Remap brighter (ao = 1-(1-ao)*k) and attach at a gentle strength:
+    # AO should be a subtle contact shadow, not a crush.
+    # The bake already brightens to [0.55,1]; the PRIMARY control is strength 0.4
+    # (gentle contact shadow). Extra remap is opt-in (k<1) to avoid double-lifting.
+    _ao_k = float(os.environ.get("AURORA_AO_REMAP_K", "1.0"))
+    _ao_strength = float(os.environ.get("AURORA_AO_STRENGTH", "0.4"))
+    if _ao_k < 0.999:
+        _aoa = np.asarray(ao_img).astype(np.float32) / 255.0
+        _aoa = 1.0 - (1.0 - _aoa) * _ao_k
+        ao_img = Image.fromarray(np.clip(_aoa * 255.0, 0, 255).astype(np.uint8), "L")
     modes = []
     orm_tex_idx = None
     for m in g.materials:
@@ -275,7 +287,7 @@ def attach_ao(glb_path, ao_png_path, out_path, log=print):
             buf = io.BytesIO()
             Image.merge("RGB", (ao_r, gch, bch)).save(buf, format="PNG")
             _replace_image_bytes(g, img_idx, buf.getvalue())
-            m.occlusionTexture = OcclusionTextureInfo(index=tex_idx)
+            m.occlusionTexture = OcclusionTextureInfo(index=tex_idx, strength=_ao_strength)
             modes.append("replace_mr_r")
         else:
             if orm_tex_idx is None:
@@ -284,7 +296,7 @@ def attach_ao(glb_path, ao_png_path, out_path, log=print):
                 Image.merge("RGB", (ao_img, white, white)).save(buf, format="PNG")
                 orm_tex_idx = _append_texture(g, buf.getvalue(), "aurora_orm")
             pbr.metallicRoughnessTexture = TextureInfo(index=orm_tex_idx)
-            m.occlusionTexture = OcclusionTextureInfo(index=orm_tex_idx)
+            m.occlusionTexture = OcclusionTextureInfo(index=orm_tex_idx, strength=_ao_strength)
             modes.append("new_orm")
     os.makedirs(os.path.dirname(str(out_path)) or ".", exist_ok=True)
     g.save_binary(str(out_path))
