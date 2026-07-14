@@ -153,6 +153,50 @@ _NAME_STOPWORDS = {
 }
 
 
+# Offline fast-path gazetteer of SINGLE-NAME icons the two-token regex misses.
+# This holds only NAMES (never appearances — the look comes from real-reference
+# research), so it is a dictionary, not hardcoded data. Anything not here is
+# confirmed by the local LLM (general mechanism, no list needed).
+_KNOWN_ICONS = {
+    "goldorak", "grendizer", "natsu", "luffy", "naruto", "sasuke", "goku", "vegeta",
+    "pikachu", "mario", "luigi", "sonic", "link", "zelda", "kirby", "batman", "superman",
+    "spiderman", "ironman", "hulk", "thor", "wolverine", "deadpool", "gandalf", "yoda",
+    "mickey", "megaman", "ichigo", "saitama", "gojo", "tanjiro", "totoro", "charizard",
+    "bulbasaur", "sangoku", "gundam", "mazinger", "voltron", "optimus", "bumblebee",
+    "sonic", "shrek", "buzz", "woody", "elsa", "pikachu", "asuka", "eva", "goldrake",
+}
+
+
+def _confirm_named_via_llm(word: str) -> dict | None:
+    """Ask the local LLM whether `word` is a widely-recognized named character/
+    celebrity. Returns {name: canonical, basis} or None. keep_alive:0 unloads the
+    model so it never hogs the GPU needed by generation."""
+    try:
+        import os as _os
+        import json as _json
+        import urllib.request as _url
+        model = _os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+        q = (f"Is '{word}' the name of a widely-known fictional character, hero, robot, "
+             f"mascot or real celebrity that a person would recognize on sight? "
+             f'Reply ONLY strict JSON: {{"is_named": true|false, "canonical": '
+             f'"<full canonical name and franchise, or empty>"}}.')
+        body = _json.dumps({"model": model, "prompt": q, "stream": False,
+                            "options": {"temperature": 0}, "keep_alive": 0}).encode()
+        req = _url.Request("http://127.0.0.1:11434/api/generate", data=body,
+                           headers={"Content-Type": "application/json"})
+        with _url.urlopen(req, timeout=60) as r:
+            out = _json.loads(r.read().decode()).get("response", "")
+        a, b = out.find("{"), out.rfind("}")
+        if a < 0 or b <= a:
+            return None
+        d = _json.loads(out[a:b + 1])
+        if d.get("is_named"):
+            return {"name": (str(d.get("canonical") or "").strip() or word), "basis": "named_identity"}
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def _detect_identity(prompt: str) -> dict | None:
     """Return {name, basis} when a named real person / known character is
     requested, else None. Never fabricates an appearance — it only flags that
@@ -171,6 +215,22 @@ def _detect_identity(prompt: str) -> dict | None:
         # A two-token capitalized name in a 3D-character prompt is almost always
         # an identity to preserve (celebrity, historical figure, named hero).
         return {"name": name, "basis": "named_identity"}
+    # SINGLE-NAME icons (Goldorak, Natsu, Ironman, Pikachu...) — the two-token
+    # regex above misses them, which is why 'Goldorak' produced a hallucinated
+    # Mazinger (no identity -> no real-reference research). Detect a lone
+    # capitalized token, confirm via gazetteer then the local LLM.
+    _llm_tried = False
+    for tok in re.findall(r"\b([A-ZÀ-Ý][\wÀ-ÿ'’-]{3,})\b", prompt):
+        low = tok.lower()
+        if low in _NAME_STOPWORDS:
+            continue
+        if low in _KNOWN_ICONS:
+            return {"name": tok, "basis": "named_identity"}
+        if not _llm_tried:
+            _llm_tried = True
+            conf = _confirm_named_via_llm(tok)
+            if conf:
+                return conf
     if fiction:
         return {"name": None, "basis": "fiction_context"}
     return None

@@ -79,7 +79,11 @@ CLASS_CHANNELS = {
     "brushed_metal": {"anisotropy": 0.8, "anisotropy_rotation": 0.0, "metallic": 1.0, "roughness": 0.35},
     "metal": {"metallic": 1.0, "roughness": 0.3},
     "led": {"emissive_strength": 6.0, "emissive_color": "#ffffff"},
-    "skin": {"specular": 0.028, "roughness": 0.5, "metallic": 0.0,
+    # specular is a 0..1 MULTIPLIER on the base dielectric F0 (0.04), NOT an F0.
+    # Skin's real F0 ~0.028 => specular = 0.028/0.04 = 0.7. The old value 0.028
+    # gave F0 = 0.04*0.028 = 0.0011 (dead-flat skin) AND diverged between engines
+    # that read KHR_materials_specular (flat) vs those that ignore it (F0 0.04).
+    "skin": {"specular": 0.7, "roughness": 0.5, "metallic": 0.0,
              "roughness_zonal": {"forehead": 0.35, "nose": 0.3, "cheeks": 0.55, "body": 0.65}},
     "stone": {"roughness": 0.9, "metallic": 0.0},
     "default": {"roughness": 0.6, "metallic": 0.0},
@@ -442,7 +446,7 @@ def self_test() -> dict:
             "prompt": "portrait realiste peau visage",
             "kind": "character",
             "expect_classes": ["skin"],
-            "expect_channels": [("skin", "specular", 0.028)],
+            "expect_channels": [("skin", "specular", 0.7)],
         },
         {
             "prompt": "ASUS ROG STRIX motherboard",

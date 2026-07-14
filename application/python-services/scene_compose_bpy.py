@@ -275,6 +275,10 @@ def leg_bones(arm):
             thighs.append(pb)
         elif any(k in low for k in ("shin", "calf", "lowerleg", "lower_leg", "loleg")):
             shins.append(pb)
+        # Mixamo shin = 'mixamorig:LeftLeg'/'RightLeg' — ends with 'leg' but is NOT
+        # the thigh ('UpLeg'). Without this the sit pose leaves the shins straight.
+        elif low.endswith("leg") and not any(k in low for k in ("upleg", "upper", "thigh")):
+            shins.append(pb)
     def pick(bones):
         defs = [b for b in bones if b.name.lower().startswith("def-") and not b.name.endswith(".001")]
         if defs:

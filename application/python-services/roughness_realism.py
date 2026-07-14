@@ -78,10 +78,12 @@ for mat in bpy.data.materials:
             arr = np.empty(n, dtype=np.float32)
             img.pixels.foreach_get(arr)
             arr = arr.reshape(-1, 4)
-            # roughness lives in G (glTF pack) but Blender feeds a channel node;
-            # lift R,G,B toward the matte floor so the sampled channel ends up
-            # matte. remap v -> floor + (1-floor)*v (keeps relative variation).
-            arr[:, :3] = FLOOR + (1.0 - FLOOR) * arr[:, :3]
+            # Lift ONLY the G channel: glTF packs roughness in G, and the SAME
+            # ORM/MR image carries occlusion in R (glb_material_writer._pack_ao_into_mr)
+            # and metalness in B. Blender's glTF import always routes G -> Roughness
+            # (Separate Color node), so lifting R,G,B would wash out the AO and inflate
+            # metalness in EVERY renderer while only G actually drives roughness.
+            arr[:, 1] = FLOOR + (1.0 - FLOOR) * arr[:, 1]
             img.pixels.foreach_set(arr.reshape(-1))
             img.update()
             lifted += 1
