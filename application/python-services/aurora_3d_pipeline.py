@@ -2767,6 +2767,41 @@ def run_pipeline(prompt: str, run_id: str, *,
         audit.append({"stage": "native_texture_precision", "skipped": True,
                       "reason": "AURORA_NATIVE_PRECISION=0 (opt-in)"})
 
+    # VISAGE : le generateur re-echantillonne sa reference a 518 px -> sur un cadrage
+    # plein-pied la tete n'y fait plus que ~55 px, et il ne peut pas sculpter des yeux
+    # qu'il ne voit pas (d'ou les yeux en pastilles et la barbe en bouillie). Mais
+    # l'information EXISTE: la reference, elle, a un visage net aux yeux ouverts.
+    # On la reprojette donc sur la tete, recalee par ses 5 reperes faciaux (le
+    # detecteur les donne sur la reference ET sur un rendu ortho du mesh), puis par
+    # flot optique. Mesure dans le vrai viewer: nettete du visage +90%/+60%/+125%.
+    # No-op silencieux si aucun visage n'est detecte (objet, animal, vehicule...).
+    if os.environ.get("AURORA_FACE_REFINE", "1") == "1":
+        try:
+            _fr_script = str(REPO_ROOT / "application" / "python-services" / "face_refine.py")
+            _fr_out = str(output_dir / f"{run_id}_face.glb")
+            _fr_cmd = [sys.executable, _fr_script, str(final_delivery_mesh),
+                       _fr_out, "--views", "3", "--res", "1024",
+                       "--strength", os.environ.get("AURORA_FACE_STRENGTH", "0.85")]
+            if front_ref.is_file():
+                _fr_cmd += ["--reference", str(front_ref)]
+            _fr = subprocess.run(_fr_cmd, capture_output=True, text=True,
+                                 timeout=2400, check=False)
+            _fr_res = {}
+            for _line in (_fr.stdout or "").splitlines():
+                if _line.startswith("AURORA_FACE_REFINE_RESULT "):
+                    _fr_res = json.loads(_line.split(" ", 1)[1])
+            if _fr_res.get("ok") and os.path.isfile(_fr_out) and os.path.getsize(_fr_out) > 1000:
+                final_delivery_mesh = _fr_out
+                audit.append({"stage": "face_refine", "ok": True,
+                              "front_azimuth": _fr_res.get("front_azimuth"),
+                              "views": len(_fr_res.get("views") or []),
+                              "texels": _fr_res.get("texels"), "output": _fr_out})
+            else:
+                audit.append({"stage": "face_refine", "skipped": True,
+                              "reason": _fr_res.get("error") or "aucun visage"})
+        except Exception as _fre:  # noqa: BLE001
+            audit.append({"stage": "face_refine", "ok": False, "error": repr(_fre)})
+
     # REALISME MATIERE : les materiaux generes sortent bien trop glossy (rugosite
     # effective ~0.35) -> sous l'IBL studio du viewer tout parait plastique mouille
     # (t-shirt = latex, pomme = boule miroir). On releve la rugosite des surfaces

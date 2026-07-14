@@ -15,7 +15,15 @@ const OUT = process.argv[3] || '/tmp/viewcap_out'
 const LABEL = process.argv[4] || 'view'
 const TIMES = (process.argv[5] || '0').split(',').map(Number)
 const GLB = GLB_IN.startsWith('/') ? GLB_IN.replace(REPO, '') : '/' + GLB_IN
-const ANGLES = [{ az: 35, el: 12, n: 'a35' }, { az: -40, el: 10, n: 'aneg40' }, { az: 90, el: 8, n: 'side' }]
+// HEAD=1 -> gros plan sur la tete (viewcap.html ?head=1). Indispensable pour juger
+// la nettete du visage: en plan large il ne fait que ~120px et tout ecart est invisible.
+// AZ0 = azimut de la VRAIE face (face_refine le mesure: 'front_azimuth'). Sans lui
+// on cadre un 3/4 et on mesure la nettete du mauvais cote du crane.
+const HEAD = process.env.HEAD === '1'
+const AZ0 = parseFloat(process.env.AZ0 || '0')
+const ANGLES = HEAD
+  ? [{ az: AZ0, el: 0, n: 'face' }, { az: AZ0 + 30, el: 5, n: 'a30' }, { az: AZ0 - 30, el: 5, n: 'aneg30' }]
+  : [{ az: 35, el: 12, n: 'a35' }, { az: -40, el: 10, n: 'aneg40' }, { az: 90, el: 8, n: 'side' }]
 mkdirSync(OUT, { recursive: true })
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 function freePort() { return new Promise((res, rej) => { const s = net.createServer(); s.listen(0, () => { const p = s.address().port; s.close(() => res(p)) }); s.on('error', rej) }) }
@@ -37,7 +45,7 @@ class CDP {
   let ver = null; for (let i = 0; i < 40; i++) { try { ver = await getJSON(`http://127.0.0.1:${port}/json/version`); break } catch { await sleep(250) } }
   if (!ver) { console.error('devtools down'); proc.kill(); server.kill(); process.exit(1) }
   for (const ang of ANGLES) {
-    const url = `http://127.0.0.1:${sp}/scratchpad/viewcap/viewcap.html?glb=${encodeURIComponent(GLB)}&az=${ang.az}&el=${ang.el}`
+    const url = `http://127.0.0.1:${sp}/scratchpad/viewcap/viewcap.html?glb=${encodeURIComponent(GLB)}&az=${ang.az}&el=${ang.el}${HEAD ? '&head=1' : ''}`
     let tab
     try { const r = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' }); const t = await r.text(); const s = t.search(/[\[{]/); tab = JSON.parse(s >= 0 ? t.slice(s) : t) } catch {}
     if (!tab?.webSocketDebuggerUrl) { const l = await getJSON(`http://127.0.0.1:${port}/json/list`); tab = l.find((t) => t.type === 'page') }

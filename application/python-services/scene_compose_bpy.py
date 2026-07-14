@@ -266,6 +266,35 @@ def find_armature(objs):
     return None
 
 
+def purge_actions(objs):
+    """Supprime l'animation importee de l'acteur (typiquement une marche bakee).
+
+    Sans ca, ses keyframes ecrasent la pose statique qu'on applique ensuite: le
+    personnage 'marche' assis sur la chaise. On repart d'une pose de repos, puis
+    la scene pose (ou reanime) ce qu'elle veut.
+    """
+    n = 0
+    for o in objs:
+        for holder in (o, o.data if hasattr(o, "data") else None):
+            ad = getattr(holder, "animation_data", None)
+            if ad is None:
+                continue
+            for trk in list(getattr(ad, "nla_tracks", []) or []):
+                ad.nla_tracks.remove(trk)
+            if ad.action is not None:
+                ad.action = None
+                n += 1
+            try:
+                holder.animation_data_clear()
+            except Exception:
+                pass
+        if o.type == "ARMATURE":
+            for pb in o.pose.bones:
+                pb.matrix_basis.identity()
+    bpy.context.view_layer.update()
+    return n
+
+
 def leg_bones(arm):
     thighs = []
     shins = []
@@ -400,6 +429,11 @@ def run(args, result):
     else:
         actor_root.rotation_euler = (0.0, 0.0, theta)
     arm = find_armature(actor_objs)
+    # L'acteur arrive souvent avec une marche bakee (le pipeline derive le mouvement
+    # du prompt). Pour une scene POSEE elle n'a aucun sens et, pire, ses keyframes
+    # ecrasent la pose assise. On la purge avant toute pose.
+    if relation in ("sit_on", "stand_on", "lie_on", "hold"):
+        result["actions_purged"] = purge_actions(actor_objs)
     skinned = False
     if arm is not None:
         try:

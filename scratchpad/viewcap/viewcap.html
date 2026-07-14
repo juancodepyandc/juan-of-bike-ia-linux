@@ -81,9 +81,18 @@ loader.load(GLB, (gltf) => {
   const ctr = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3())
   const rad = Math.max(size.x, size.y, size.z) * 0.5 || 1
   const az = AZ * Math.PI/180, el = EL * Math.PI/180
-  const D = rad*4.6
-  cam.position.set(ctr.x + Math.sin(az)*Math.cos(el)*D, ctr.y + Math.sin(el)*D + size.y*0.05, ctr.z + Math.cos(az)*Math.cos(el)*D)
-  cam.lookAt(ctr)
+  // ?head=1 -> gros plan sur la TETE (haut de la bbox): indispensable pour juger
+  // la nettete de la texture du visage (en plan large le visage ne fait que ~120px
+  // a l'ecran et toute difference de texture est invisible).
+  const headMode = params.get('head') === '1'
+  let target = ctr, D = rad*4.6
+  if (headMode) {
+    const hh = size.y * 0.16                       // hauteur de tete ~16% du corps
+    target = new THREE.Vector3(ctr.x, box.max.y - hh*0.55, ctr.z)
+    D = hh * 3.2
+  }
+  cam.position.set(target.x + Math.sin(az)*Math.cos(el)*D, target.y + Math.sin(el)*D, target.z + Math.cos(az)*Math.cos(el)*D)
+  cam.lookAt(target)
   collectFlow(root)
   // roughness override test: ?rough=0.85 forces every material matte (nulls the
   // roughness map + sets a high roughness) to check the "wet plastic" hypothesis.
