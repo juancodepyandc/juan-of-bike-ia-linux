@@ -533,6 +533,119 @@ amp = float(np.abs(delta[mask]).mean())
 print("PROJ_INFO %d texels enrichis (%.2f%% de l'atlas), detail moyen ajoute %.1f/255"
       % (int(mask.sum()), 100.0 * mask.sum() / (AW * AH), amp * 255.0))
 
+# --- RELIEF: carte de normales du visage ------------------------------------
+# Le mesh n'en a AUCUNE (verifie sur le GLB): son visage est un bloc lisse. On
+# projette la hauteur extraite de la reference, puis on laisse BLENDER en deduire
+# la normale tangente. C'est volontaire: son noeud Bump derive la hauteur SUR LA
+# SURFACE, la ou un gradient calcule dans l'atlas serait faux a chaque frontiere
+# d'ilot (l'atlas natif est tres fragmente).
+HEIGHT = cfg.get("height")
+if HEIGHT and os.path.isfile(HEIGHT.get("png", "")):
+    NRES = int(cfg.get("normal_res", 4096))
+    himg = bpy.data.images.load(HEIGHT["png"], check_existing=False)
+    himg.colorspace_settings.name = "Non-Color"
+
+    # hauteur -> atlas, par la meme projection que l'albedo
+    hbake = bpy.data.images.new("H_atlas", NRES, NRES, alpha=False,
+                                float_buffer=True, is_data=True)
+
+    front = SHOTS[0]
+    mat = bpy.data.materials.new("bk_h")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    for n0 in list(nt.nodes):
+        nt.nodes.remove(n0)
+    out_n = nt.nodes.new("ShaderNodeOutputMaterial")
+    emi = nt.nodes.new("ShaderNodeEmission")
+    nt.links.new(out_n.inputs["Surface"], emi.outputs["Emission"])
+    t = nt.nodes.new("ShaderNodeTexImage")
+    t.image = himg
+    t.extension = "EXTEND"
+    uvn = nt.nodes.new("ShaderNodeUVMap")
+    uvn.uv_map = "proj_%d" % front["i"]
+    nt.links.new(t.inputs["Vector"], uvn.outputs["UV"])
+    nt.links.new(emi.inputs["Color"], t.outputs["Color"])
+    tgt = nt.nodes.new("ShaderNodeTexImage")
+    tgt.image = hbake
+    nt.nodes.active = tgt
+    head.data.materials.clear()
+    head.data.materials.append(mat)
+    hme.uv_layers.active = hme.uv_layers[uv_atlas]
+    bpy.context.scene.render.bake.use_clear = True
+    bpy.ops.object.select_all(action="DESELECT")
+    head.select_set(True)
+    bpy.context.view_layer.objects.active = head
+    bpy.ops.object.bake(type="EMIT")
+
+    # hors du visage, la hauteur doit etre NEUTRE (0.5), pas 0: sinon le Bump
+    # verrait une falaise au bord du masque.
+    hbuf = np.empty(NRES * NRES * 4, dtype=np.float32)
+    hbake.pixels.foreach_get(hbuf)
+    hbuf = hbuf.reshape(NRES, NRES, 4)
+    _ix = (np.arange(NRES) * (AH / float(NRES))).astype(np.int64)
+    flat = acc_max[:, :, 0][np.ix_(_ix, _ix)] <= 0.02
+    hbuf[flat, 0] = hbuf[flat, 1] = hbuf[flat, 2] = 0.5
+    hbake.pixels.foreach_set(hbuf.ravel())
+    hbake.update()
+
+    # Bump -> bake de la normale TANGENTE
+    nimg = bpy.data.images.new("N_atlas", NRES, NRES, alpha=False,
+                               float_buffer=False, is_data=True)
+    npx = np.tile(np.array([0.5, 0.5, 1.0, 1.0], dtype=np.float32), NRES * NRES)
+    nimg.pixels.foreach_set(npx)
+
+    mat2 = bpy.data.materials.new("bk_n")
+    mat2.use_nodes = True
+    nt2 = mat2.node_tree
+    for n0 in list(nt2.nodes):
+        nt2.nodes.remove(n0)
+    out2 = nt2.nodes.new("ShaderNodeOutputMaterial")
+    bsdf2 = nt2.nodes.new("ShaderNodeBsdfPrincipled")
+    nt2.links.new(out2.inputs["Surface"], bsdf2.outputs["BSDF"])
+    ht = nt2.nodes.new("ShaderNodeTexImage")
+    ht.image = hbake
+    ht.interpolation = "Cubic"
+    bump = nt2.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 1.0
+    bump.inputs["Distance"].default_value = float(HEIGHT["h_scale"]) * float(
+        cfg.get("normal_strength", 1.0))
+    nt2.links.new(bump.inputs["Height"], ht.outputs["Color"])
+    nt2.links.new(bsdf2.inputs["Normal"], bump.outputs["Normal"])
+    tgt2 = nt2.nodes.new("ShaderNodeTexImage")
+    tgt2.image = nimg
+    nt2.nodes.active = tgt2
+    head.data.materials.clear()
+    head.data.materials.append(mat2)
+    bpy.context.scene.render.bake.use_clear = False   # garder la normale plate ailleurs
+    bpy.context.scene.render.bake.normal_space = "TANGENT"
+    bpy.ops.object.select_all(action="DESELECT")
+    head.select_set(True)
+    bpy.context.view_layer.objects.active = head
+    bpy.ops.object.bake(type="NORMAL")
+
+    nbuf = np.empty(NRES * NRES * 4, dtype=np.float32)
+    nimg.pixels.foreach_get(nbuf)
+    nbuf = nbuf.reshape(NRES, NRES, 4)
+    dev = float(np.abs(nbuf[:, :, :2] - 0.5).max())
+    nimg.pack()
+
+    # brancher la normale sur le materiau D'ORIGINE
+    for slot in ob.material_slots:
+        m = slot.material
+        if not m or not m.use_nodes:
+            continue
+        b = next((n0 for n0 in m.node_tree.nodes if n0.type == "BSDF_PRINCIPLED"), None)
+        if not b:
+            continue
+        nm = m.node_tree.nodes.new("ShaderNodeNormalMap")
+        tn = m.node_tree.nodes.new("ShaderNodeTexImage")
+        tn.image = nimg
+        tn.interpolation = "Linear"
+        m.node_tree.links.new(nm.inputs["Color"], tn.outputs["Color"])
+        m.node_tree.links.new(b.inputs["Normal"], nm.outputs["Normal"])
+    print("PROJ_INFO carte de normales %dx%d creee (relief +/-%.1f mm, ecart max %.3f)"
+          % (NRES, NRES, HEIGHT["h_scale"] * 500.0, dev))
+
 bpy.data.objects.remove(head, do_unlink=True)
 bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB",
                           export_materials="EXPORT")
@@ -609,13 +722,110 @@ def _delta_from_reference(render_png: str, reference_png: str, delta_png: str,
     d = (matched - ren_f) / 255.0
     enc = np.clip(d * 0.5 + 0.5, 0.0, 1.0)
     cv2.imwrite(delta_png, (enc * 65535.0).astype(np.uint16))
+
+    # la reference RECALEE dans le cadre du rendu: c'est elle qui porte le relief
+    warped_png = os.path.splitext(delta_png)[0] + "_warped.png"
+    cv2.imwrite(warped_png, np.clip(warped, 0, 255).astype(np.uint8))
+
     return {
         "residu_reperes_px": round(err, 2),
         "visage_reference_px": info.get("face_px_in"),
         "visage_restaure_px": info.get("face_px_out"),
         "identity_cosine": info.get("identity_cosine"),
         "detail": round(float(np.abs(d).mean() * 255.0), 2),
+        "warped_png": warped_png,
+        "landmarks": [[float(a), float(b)] for a, b in lmk_ren],
+        "face_px": float(fw),
     }, None
+
+
+def _integrate_slopes(p, q):
+    """Reconstruit une hauteur a partir de ses pentes (Frankot-Chellappa, par FFT).
+
+    Un champ de normales n'est pas integrable exactement (bruit, occlusions): on
+    cherche la hauteur dont le gradient est le plus proche, au sens des moindres
+    carres. La solution est directe en Fourier.
+    """
+    import numpy as np
+    H, W = p.shape
+    wx = np.fft.fftfreq(W).reshape(1, W) * 2.0 * np.pi
+    wy = np.fft.fftfreq(H).reshape(H, 1) * 2.0 * np.pi
+    P, Q = np.fft.fft2(p), np.fft.fft2(q)
+    den = wx ** 2 + wy ** 2
+    den[0, 0] = 1.0
+    Z = (-1j * wx * P - 1j * wy * Q) / den
+    Z[0, 0] = 0.0
+    return np.real(np.fft.ifft2(Z))
+
+
+def _relief_from_reference(warped_png: str, height_png: str, landmarks,
+                           face_px: float, world_per_px: float):
+    """Extrait le RELIEF du visage de la reference et l'exprime en hauteur (monde).
+
+    Le mesh n'a AUCUNE carte de normales (verifie sur le GLB): son visage est un
+    bloc lisse, ce qu'aucune texture ne compense - c'est un defaut de GEOMETRIE.
+    L'etat de l'art (Make-A-Character 2, Photo-Realistic Facial Details Synthesis)
+    represente ce detail comme un displacement en espace UV, infere de l'image.
+
+    On estime donc les normales de surface de la reference recalee (Marigold, par
+    diffusion), on les integre en hauteur, et on n'en garde que les HAUTES
+    FREQUENCES: rides, orbites, ailes du nez, sillon des levres. La forme globale
+    du visage, elle, appartient au mesh - la reprendre creerait un conflit avec sa
+    silhouette reelle.
+    """
+    import cv2
+    import numpy as np
+    import torch
+    from diffusers import MarigoldNormalsPipeline
+
+    img = cv2.imread(warped_png, cv2.IMREAD_COLOR)
+    R = img.shape[0]
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    pipe = MarigoldNormalsPipeline.from_pretrained(
+        "prs-eth/marigold-normals-v1-1",
+        torch_dtype=torch.float16 if dev == "cuda" else torch.float32).to(dev)
+    small = cv2.resize(img, (768, 768), interpolation=cv2.INTER_AREA)
+    out = pipe(cv2.cvtColor(small, cv2.COLOR_BGR2RGB), num_inference_steps=4,
+               processing_resolution=768, ensemble_size=1)
+    n = np.asarray(out.prediction[0], dtype=np.float32)
+    del pipe
+    if dev == "cuda":
+        torch.cuda.empty_cache()
+    n = cv2.resize(n, (R, R), interpolation=cv2.INTER_LINEAR)
+    nz = np.where(np.abs(n[:, :, 2]) < 0.15, 0.15 * np.sign(n[:, :, 2] + 1e-6),
+                  n[:, :, 2])
+
+    # Les conventions d'axe d'un estimateur de normales ne sont pas garanties (y
+    # vers le haut ou vers le bas, z vers ou depuis la camera). Plutot que de les
+    # supposer, on TESTE les 4 combinaisons de signes et on garde celle qui est
+    # physiquement juste: le nez RESSORT et les yeux sont EN CREUX. Les reperes du
+    # detecteur donnent ces trois points, donc le critere est objectif.
+    (rex, rey), (lex, ley), (nx_, ny_) = landmarks[0], landmarks[1], landmarks[2]
+    rad = max(3, int(0.10 * face_px))
+
+    def _disk(h, cx, cy):
+        y0, y1 = max(0, int(cy) - rad), min(R, int(cy) + rad)
+        x0, x1 = max(0, int(cx) - rad), min(R, int(cx) + rad)
+        return float(h[y0:y1, x0:x1].mean()) if y1 > y0 and x1 > x0 else 0.0
+
+    best, best_score = None, -1e30
+    for sx in (1.0, -1.0):
+        for sy in (1.0, -1.0):
+            h = _integrate_slopes(sx * (-n[:, :, 0] / nz), sy * (-n[:, :, 1] / nz))
+            score = _disk(h, nx_, ny_) - 0.5 * (_disk(h, rex, rey) + _disk(h, lex, ley))
+            if score > best_score:
+                best, best_score = h, score
+    h = best
+
+    # relief = hautes frequences seules; la forme globale reste celle du mesh
+    sig = max(2.0, 0.11 * face_px)
+    h = (h - cv2.GaussianBlur(h, (0, 0), sig)) * world_per_px
+
+    amp = float(np.percentile(np.abs(h), 99.5)) or 1e-6
+    enc = np.clip(h / (2.0 * amp) + 0.5, 0.0, 1.0)
+    cv2.imwrite(height_png, (enc * 65535.0).astype(np.uint16))
+    return {"h_scale": 2.0 * amp, "relief_mm": round(amp * 1000.0, 3),
+            "nez_saillant": bool(best_score > 0)}
 
 
 def _run_blender(script: str, args: list[str], tag: str) -> str:
@@ -642,7 +852,8 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
                 strength: float = 0.9, workdir: str | None = None,
                 upscale: int = 2, suppress: float = 0.0,
                 fidelity: float = 0.35, chroma: float = 0.8,
-                reference: str | None = None) -> dict:
+                reference: str | None = None, relief: bool = True,
+                normal_strength: float = 1.0) -> dict:
     """`res` cadre la tete pour que le visage y fasse ~500px: la RESOLUTION NATIVE
     du prior GFPGAN (512). Inutile de monter plus haut: on ne reprojette pas l'image
     restauree mais le DIFFERENTIEL de detail, qu'on ADDITIONNE a l'atlas - celui-ci
@@ -743,6 +954,7 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
     # ouverts, traits nets) que le generateur a perdue en ré-échantillonnant son
     # entree. Le prior, lui, ne peut qu'inventer a partir de la bouillie.
     kept = []
+    height_cfg = None
     if reference and os.path.isfile(reference):
         front = next((s for s in shots if abs(s["yaw"]) < 1e-6), None)
         if front is not None:
@@ -769,6 +981,21 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
                     % (info["visage_reference_px"], info["visage_restaure_px"],
                        info["residu_reperes_px"], info["identity_cosine"],
                        info["detail"]))
+
+                # RELIEF: le mesh n'a aucune carte de normales -> visage plat.
+                if relief:
+                    try:
+                        height_png = os.path.join(wd, "ref_height.png")
+                        hinfo = _relief_from_reference(
+                            info["warped_png"], height_png, info["landmarks"],
+                            info["face_px"], head_w * 1.25 / float(res))
+                        hinfo["png"] = height_png
+                        height_cfg = hinfo
+                        sys.stderr.write(
+                            "[face_refine] RELIEF extrait: +/-%.2f mm, nez saillant=%s\n"
+                            % (hinfo["relief_mm"], hinfo["nez_saillant"]))
+                    except Exception as exc:  # noqa: BLE001
+                        sys.stderr.write("[face_refine] relief indisponible: %r\n" % exc)
         if kept:
             shots = []          # la reference suffit: pas de prior a superposer
 
@@ -840,6 +1067,8 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
         "shots": kept, "strength": strength,
         "head_min": [float(x) for x in hmin], "head_max": [float(x) for x in hmax],
         "up_axis": up_axis, "lateral_axis": lat_axis,
+        "height": height_cfg, "normal_res": 4096,
+        "normal_strength": normal_strength,
     }
     p_c = os.path.join(wd, "cfg_c.json")
     open(p_c, "w").write(json.dumps(cfg_c))
@@ -858,6 +1087,8 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
         "head_scale": round(head_w, 4),
         "views": [{"yaw": s["yaw"], "png": s["png_restored"]} for s in kept],
         "texels": texels, "strength": strength,
+        "relief_mm": (height_cfg or {}).get("relief_mm"),
+        "normal_map": bool(height_cfg),
     }
 
 
@@ -877,10 +1108,14 @@ def main() -> int:
     ap.add_argument("--reference", default=None,
                     help="image de reference du run: sa face, recalee par ses "
                          "reperes, prime sur le prior (information REELLE)")
+    ap.add_argument("--no-relief", action="store_true",
+                    help="ne pas construire la carte de normales du visage")
+    ap.add_argument("--normal-strength", type=float, default=1.0)
     a = ap.parse_args()
     try:
         r = refine_face(a.glb, a.output, a.views, a.res, a.strength, a.workdir,
-                        a.upscale, a.suppress, a.fidelity, a.chroma, a.reference)
+                        a.upscale, a.suppress, a.fidelity, a.chroma, a.reference,
+                        not a.no_relief, a.normal_strength)
     except Exception as exc:
         r = {"ok": False, "error": str(exc)}
     print("AURORA_FACE_REFINE_RESULT " + json.dumps(r))

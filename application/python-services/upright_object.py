@@ -1,0 +1,238 @@
+"""upright_object.py — redresse un objet genere dont l'orientation est arbitraire.
+
+Le generateur ne garantit aucune convention d'axe: une chaise sort couchee, une
+tasse sur le flanc. Composer une scene par-dessus n'a alors aucun sens (on assied
+un personnage sur une chaise renversee).
+
+On ne peut PAS coder la regle en dur ("une chaise a ses pieds en bas"): elle ne
+generaliserait a rien d'autre. On ne peut pas non plus la deduire de la geometrie
+seule - "poser l'objet sur sa plus grande face" couche justement une chaise sur son
+dossier, et l'axe principal d'une ACP ne dit rien du haut et du bas.
+
+C'est un probleme de SENS COMMUN, pas de geometrie: on le pose donc au modele de
+vision, qui sait a quoi ressemble une chaise debout. On rend l'objet sous les 6
+orientations canoniques (chaque axe +/- porte le "haut") et on lui demande laquelle
+montre l'objet dans sa position de repos naturelle. La rotation retenue est ensuite
+appliquee au GLB.
+
+Usage:
+    python upright_object.py <in.glb> <out.glb> [--desc "une chaise"]
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+OLLAMA = os.environ.get("AURORA_OLLAMA_URL", "http://127.0.0.1:11434")
+VLM = os.environ.get("AURORA_VLM_MODEL", "qwen3-vl:30b")
+
+# Les 6 orientations canoniques: quelle rotation amene chaque axe du modele sur le
+# +Z du monde. (rx, ry, rz) en degres, appliquees dans cet ordre.
+_CANDIDATES = [
+    ("tel quel",              (0, 0, 0)),
+    ("retourne",              (180, 0, 0)),
+    ("bascule vers l'avant",  (90, 0, 0)),
+    ("bascule vers l'arriere", (-90, 0, 0)),
+    ("couche a droite",       (0, 90, 0)),
+    ("couche a gauche",       (0, -90, 0)),
+]
+
+
+_BPY_RENDER = r'''
+import bpy, json, math, os, sys
+from mathutils import Vector
+
+argv = sys.argv[sys.argv.index("--") + 1:]
+GLB, OUTDIR, CANDS = argv[0], argv[1], json.loads(argv[2])
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=GLB)
+objs = [o for o in bpy.context.scene.objects if o.type in ("MESH", "ARMATURE")]
+if not objs:
+    print("UPRIGHT_FAIL aucun objet"); sys.exit(3)
+
+root = bpy.data.objects.new("AuroraUprightRoot", None)
+bpy.context.scene.collection.objects.link(root)
+for o in objs:
+    if o.parent is None:
+        o.parent = root
+
+scn = bpy.context.scene
+scn.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in [
+    i.identifier for i in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items
+] else "BLENDER_EEVEE"
+scn.render.resolution_x = scn.render.resolution_y = 512
+scn.render.image_settings.file_format = "PNG"
+scn.render.film_transparent = False
+scn.world = bpy.data.worlds.new("w")
+scn.world.use_nodes = True
+scn.world.node_tree.nodes["Background"].inputs[0].default_value = (0.9, 0.9, 0.9, 1)
+light = bpy.data.objects.new("k", bpy.data.lights.new("k", type="SUN"))
+light.data.energy = 3.0
+light.rotation_euler = (math.radians(50), 0, math.radians(35))
+scn.collection.objects.link(light)
+
+cam_d = bpy.data.cameras.new("cam"); cam_d.type = "ORTHO"
+cam = bpy.data.objects.new("cam", cam_d); scn.collection.objects.link(cam)
+scn.camera = cam
+
+out = []
+for i, (name, rot) in enumerate(CANDS):
+    root.rotation_euler = tuple(math.radians(a) for a in rot)
+    bpy.context.view_layer.update()
+    lo = Vector((1e9, 1e9, 1e9)); hi = Vector((-1e9, -1e9, -1e9))
+    for o in objs:
+        if o.type != "MESH":
+            continue
+        for c in o.bound_box:
+            w = o.matrix_world @ Vector(c)
+            for k in range(3):
+                lo[k] = min(lo[k], w[k]); hi[k] = max(hi[k], w[k])
+    ctr = (lo + hi) * 0.5
+    span = max((hi - lo).x, (hi - lo).y, (hi - lo).z) or 1.0
+    # vue de 3/4 legerement en contre-plongee: c'est celle ou un humain juge le
+    # mieux si un objet "tient debout" (une vue de face pure est ambigue).
+    d = Vector((0.72, -0.62, 0.31)).normalized()
+    cam_d.ortho_scale = span * 1.25
+    cam.location = ctr + d * (span * 3.0)
+    cam.rotation_euler = d.to_track_quat("Z", "Y").to_euler()
+    bpy.context.view_layer.update()
+    png = os.path.join(OUTDIR, "cand_%d.png" % i)
+    scn.render.filepath = png
+    bpy.ops.render.render(write_still=True)
+    out.append({"i": i, "name": name, "rot": rot, "png": png})
+
+open(os.path.join(OUTDIR, "cands.json"), "w").write(json.dumps(out))
+print("UPRIGHT_RENDER_OK")
+'''
+
+
+_BPY_APPLY = r'''
+import bpy, json, math, sys
+
+argv = sys.argv[sys.argv.index("--") + 1:]
+GLB, OUT_GLB, ROT = argv[0], argv[1], json.loads(argv[2])
+
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=GLB)
+for o in bpy.context.scene.objects:
+    if o.parent is None and o.type in ("MESH", "ARMATURE", "EMPTY"):
+        o.rotation_euler = (
+            o.rotation_euler.x + math.radians(ROT[0]),
+            o.rotation_euler.y + math.radians(ROT[1]),
+            o.rotation_euler.z + math.radians(ROT[2]),
+        )
+bpy.context.view_layer.update()
+bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB")
+print("UPRIGHT_APPLY_OK")
+'''
+
+
+def _find_blender() -> str | None:
+    env = os.environ.get("AURORA_BLENDER")
+    if env and os.path.exists(env):
+        return env
+    for c in ("/home/juan/.local/bin/blender", "/usr/bin/blender", "blender"):
+        p = shutil.which(c) if not os.path.isabs(c) else (c if os.path.exists(c) else None)
+        if p:
+            return p
+    return None
+
+
+def _blender(script: str, args: list, tag: str) -> str:
+    b = _find_blender()
+    if not b:
+        raise RuntimeError("blender introuvable")
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+        f.write(script)
+        sp = f.name
+    r = subprocess.run([b, "-b", "--factory-startup", "-noaudio", "-P", sp, "--"] + args,
+                       capture_output=True, text=True, timeout=1800)
+    os.unlink(sp)
+    log = (r.stdout or "") + (r.stderr or "")
+    if tag not in log:
+        raise RuntimeError("%s echoue: %s" % (tag, log[-300:]))
+    return log
+
+
+def _ask_vlm(cands: list, desc: str) -> tuple[int, str]:
+    """Demande au modele de vision laquelle des vues montre l'objet DEBOUT."""
+    import urllib.request
+
+    imgs = []
+    for c in cands:
+        with open(c["png"], "rb") as fh:
+            imgs.append(base64.b64encode(fh.read()).decode())
+    what = desc.strip() or "cet objet"
+    prompt = (
+        "Voici %d rendus du MEME objet (%s), chacun dans une orientation differente.\n"
+        "Les images sont numerotees de 0 a %d dans l'ordre ou elles te sont donnees.\n"
+        "Question: sur QUELLE image l'objet est-il pose dans sa position NATURELLE de "
+        "repos, telle qu'il se tiendrait reellement sur un sol (une chaise sur ses "
+        "pieds, une tasse sur son fond, un personnage debout) ? Ignore la couleur et "
+        "la qualite: seule l'orientation compte.\n"
+        "Reponds UNIQUEMENT en JSON: {\"index\": <numero>, \"raison\": \"<5 mots>\"}"
+        % (len(cands), what, len(cands) - 1)
+    )
+    body = json.dumps({
+        "model": VLM, "prompt": prompt, "images": imgs, "stream": False,
+        "format": "json", "keep_alive": 0,
+        "options": {"temperature": 0.0},
+    }).encode()
+    req = urllib.request.Request(OLLAMA + "/api/generate", data=body,
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=300) as r:
+        data = json.loads(r.read().decode())
+    out = json.loads(data.get("response") or "{}")
+    idx = int(out.get("index", 0))
+    if not 0 <= idx < len(cands):
+        idx = 0
+    return idx, str(out.get("raison") or "")
+
+
+def upright(glb: str, out_glb: str, desc: str = "", workdir: str | None = None) -> dict:
+    wd = workdir or tempfile.mkdtemp(prefix="upright_")
+    os.makedirs(wd, exist_ok=True)
+    _blender(_BPY_RENDER, [glb, wd, json.dumps(_CANDIDATES)], "UPRIGHT_RENDER_OK")
+    cands = json.loads(open(os.path.join(wd, "cands.json")).read())
+
+    try:
+        idx, why = _ask_vlm(cands, desc)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "VLM indisponible: %r" % exc}
+
+    rot = cands[idx]["rot"]
+    if rot == [0, 0, 0] or tuple(rot) == (0, 0, 0):
+        # deja droit: on ne reexporte pas (un aller-retour GLB coute et peut degrader)
+        return {"ok": True, "already_upright": True, "choice": cands[idx]["name"],
+                "reason": why, "output": glb}
+    _blender(_BPY_APPLY, [glb, out_glb, json.dumps(rot)], "UPRIGHT_APPLY_OK")
+    return {"ok": True, "already_upright": False, "choice": cands[idx]["name"],
+            "rotation_deg": rot, "reason": why, "output": out_glb}
+
+
+def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("glb")
+    ap.add_argument("output")
+    ap.add_argument("--desc", default="")
+    ap.add_argument("--workdir", default=None)
+    a = ap.parse_args()
+    try:
+        r = upright(a.glb, a.output, a.desc, a.workdir)
+    except Exception as exc:  # noqa: BLE001
+        r = {"ok": False, "error": str(exc)}
+    print("AURORA_UPRIGHT_RESULT " + json.dumps(r, ensure_ascii=False))
+    return 0 if r.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
