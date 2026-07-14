@@ -1347,16 +1347,20 @@ def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str, str]:
         sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
         from vlm_judge import ask_vlm
         verdict = ask_vlm([png_path],
-                          "Photo candidate comme reference produit pour: '%s'. "
-                          "Est-elle utilisable pour une reconstruction 3D fidele ? "
-                          "Criteres stricts: le sujet est bien celui demande (le MODELE EXACT, pas une "
-                          "variante/edition differente), fond neutre ou blanc, "
-                          "AUCUN filigrane/watermark/texte superpose, pas d'eclairage colore artistique, "
-                          "produit entier non coupe. "
-                          "Indique aussi l'orientation: 'face' si la face PRINCIPALE du produit est "
-                          "visible de front (celle avec les commandes/boutons/ecran/cadran), "
-                          "'trois_quarts' si la face principale est visible de biais, "
-                          "'dos' si on voit l'arriere, 'profil' sinon." % prompt,
+                          "Photo candidate comme reference pour une reconstruction 3D FIDELE de: '%s'. "
+                          "Reponds ok=false (STRICT) si UN SEUL de ces defauts est present, car ils "
+                          "degradent la reconstruction: "
+                          "(1) le sujet est COUPE/RECADRE - une partie sort du cadre ou touche un bord "
+                          "(il faut le sujet ENTIER avec une marge de fond sur les 4 cotes, y compris "
+                          "le DESSOUS/l'arriere s'ils devraient etre visibles); "
+                          "(2) un filigrane/watermark/logo/texte superpose (meme discret, ex 'Magnific', "
+                          "'shutterstock', un site web); "
+                          "(3) des GOUTTES d'eau/condensation/reflets brillants parasites (ils se "
+                          "reconstruisent en relief/grumeaux); "
+                          "(4) fond non neutre, eclairage colore artistique, ou plusieurs objets; "
+                          "(5) ce n'est pas EXACTEMENT le sujet demande (variante/fan-art/autre modele). "
+                          "Sinon ok=true. Indique aussi l'orientation vue: 'face' (sujet vu de face), "
+                          "'trois_quarts' (de biais), 'dos' (arriere), 'profil' (cote)." % prompt,
                           schema_hint='{"ok": true|false, "raison": "...", '
                                       '"orientation": "face|trois_quarts|dos|profil"}',
                           timeout=90)
@@ -1393,11 +1397,42 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
     if not script.is_file():
         return False
     try:
-        front_queries = [f"{prompt} product photo high resolution"]
+        # Subject-aware queries. A named character (Goldorak, Natsu...) needs
+        # official art / a character reference sheet / turnaround (front+back+side
+        # of the CANONICAL character), NOT a "product photo" (which returns fan-art
+        # or nothing). A generic object needs the WHOLE object isolated (fixes the
+        # cropped top-down apple whose bottom came out empty). Products keep the
+        # product-photo queries.
+        _ident = None
+        try:
+            from faithful_scene_prompt import _detect_identity as _det_id
+            _ident = _det_id(prompt)
+        except Exception:  # noqa: BLE001
+            _ident = None
+        _is_char = bool(_ident and _ident.get("basis") == "named_identity")
+        _nm = (_ident or {}).get("name") or prompt
+        _is_product = bool(_REAL_BRAND_RE.search(prompt)) if "_REAL_BRAND_RE" in globals() else False
+        if _is_char:
+            front_queries = [
+                f"{_nm} official art full body front view white background",
+                f"{_nm} character reference sheet turnaround",
+                f"{_nm} 3D render full body front",
+            ]
+        elif _is_product:
+            front_queries = [f"{prompt} product photo high resolution white background"]
+        else:
+            front_queries = [
+                f"{prompt} whole object isolated on white background high resolution photo",
+                f"{prompt} full product photo studio white background",
+            ]
         if _re_mod.search(r"\b(led|rgb|argb|lumineux|neon|strimer|lightstrip)\b", prompt, _re_mod.I):
             front_queries.insert(0, f"{prompt} product photo unlit powered off white leds")
         query_specs = [(q, 2) for q in front_queries]
-        query_specs.append((f"{prompt} back rear view product photo", 1))
+        if _is_char:
+            query_specs.append((f"{_nm} character reference sheet back view", 1))
+            query_specs.append((f"{_nm} official art side profile", 1))
+        else:
+            query_specs.append((f"{prompt} back rear view isolated white background", 1))
 
         def _fetch_cands(query):
             p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "8"],
