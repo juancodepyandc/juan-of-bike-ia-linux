@@ -2698,6 +2698,31 @@ def run_pipeline(prompt: str, run_id: str, *,
         audit.append({"stage": "native_texture_precision", "skipped": True,
                       "reason": "AURORA_NATIVE_PRECISION=0 (opt-in)"})
 
+    # REALISME MATIERE : les materiaux generes sortent bien trop glossy (rugosite
+    # effective ~0.35) -> sous l'IBL studio du viewer tout parait plastique mouille
+    # (t-shirt = latex, pomme = boule miroir). On releve la rugosite des surfaces
+    # DIELECTRIQUES OPAQUES a un plancher satin (metal/verre intacts). Verifie via
+    # le vrai viewer three.js : difference spectaculaire (homme mat/realiste).
+    if os.environ.get("AURORA_ROUGHNESS_REALISM", "1") == "1":
+        try:
+            import shutil as _sh
+            _rr_script = str(REPO_ROOT / "application" / "python-services" / "roughness_realism.py")
+            _rr_out = str(output_dir / f"{run_id}_matte.glb")
+            _blender = os.environ.get("AURORA_BLENDER") or _sh.which("blender") or "blender"
+            _rr_floor = os.environ.get("AURORA_ROUGHNESS_FLOOR", "0.62")
+            _rr = subprocess.run([_blender, "-b", "-P", _rr_script, "--",
+                                  str(final_delivery_mesh), _rr_out, _rr_floor],
+                                 capture_output=True, text=True, timeout=600, check=False)
+            if "ROUGH_REALISM_OK" in (_rr.stdout or "") and os.path.isfile(_rr_out) and os.path.getsize(_rr_out) > 1000:
+                final_delivery_mesh = _rr_out
+                audit.append({"stage": "roughness_realism", "ok": True,
+                              "floor": float(_rr_floor), "output": _rr_out})
+            else:
+                audit.append({"stage": "roughness_realism", "ok": False,
+                              "error": (_rr.stderr or _rr.stdout or "")[-200:]})
+        except Exception as _rre:  # noqa: BLE001
+            audit.append({"stage": "roughness_realism", "ok": False, "error": repr(_rre)})
+
     if os.environ.get("AURORA_VLM_CRITIC") == "1":
         critic = _run_vlm_critic(final_delivery_mesh, prompt, run_id, output_dir)
         audit.append({"stage": "vlm_critic", **critic})
