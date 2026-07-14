@@ -1572,6 +1572,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                  images: list[str] | None = None,
                  purpose: str = "visual_preview",
                  subject_kind_hint: str | None = None,
+                 allow_scene: bool = True,
                  _vlm_retry: bool = False) -> dict:
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
@@ -1582,6 +1583,27 @@ def run_pipeline(prompt: str, run_id: str, *,
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
     audit: list[dict] = []
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # SCENE MULTI-OBJETS. "un homme assis sur une chaise" doit produire un homme ET
+    # une chaise: sans ce branchement, l'orchestrateur existait mais n'etait appele
+    # de NULLE PART (ni pipeline, ni bridge) et le prompt donnait un homme SEUL.
+    # `allow_scene=False` coupe la recursion: l'orchestrateur rappelle run_pipeline
+    # pour chaque objet, et "un homme" n'est evidemment pas une scene.
+    if allow_scene and os.environ.get("AURORA_SCENE_ORCH", "1") == "1":
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from scene_orchestrator import orchestrate_scene
+            _sc = orchestrate_scene(prompt, run_id, output_dir)
+            if _sc.get("is_scene"):
+                _sc.setdefault("audit_trail", []).append({
+                    "stage": "scene_orchestrator", "ok": bool(_sc.get("ok")),
+                    "plan": _sc.get("plan"), "upright": _sc.get("upright"),
+                })
+                _sc["final_mesh"] = _sc.get("scene_glb")
+                return _sc
+        except Exception as _sce:  # noqa: BLE001
+            audit.append({"stage": "scene_orchestrator", "ok": False,
+                          "error": repr(_sce)})
 
     # Stage 0 — classify
     extraction = extract_kind(prompt)

@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -72,12 +73,33 @@ def split_scene_prompt(prompt: str) -> Dict[str, Any]:
         '"<sit_on|stand_on|lie_on|next_to|hold>"}. '
         'If one object: {"is_scene": false}. '
         "A single subject in a pose (a man standing) is NOT a scene. "
+        # `actor_motion` doit etre un MOUVEMENT, pas la relation redite: "assis sur
+        # une chaise" a pour relation sit_on et pour mouvement RIEN. Sans cette
+        # precision le LLM renvoie actor_motion='assis', on fait baker une animation
+        # "assis" au rig, et le compositeur doit ensuite la purger pour poser le
+        # personnage. Du travail pour rien, et un rig incoherent.
+        "actor_motion must be a real MOVEMENT (walking, running, dancing). The "
+        "static relation itself is NOT a motion: for 'a man sitting on a chair', "
+        'relation is sit_on and actor_motion is "". '
         "Prompt: " + prompt
     )
-    try:
-        data = _extract_json(_ollama(q)) or {}
-    except Exception:
-        return {"is_scene": False}
+    # Un echec de l'appel LLM ne doit PAS etre confondu avec "ce n'est pas une
+    # scene": avale silencieusement, il rend un homme SANS chaise et personne ne
+    # sait pourquoi. On reessaie, et si ca echoue toujours on le DIT (`error`),
+    # au lieu de degrader sans bruit.
+    data, err = {}, None
+    for attempt in range(2):
+        try:
+            data = _extract_json(_ollama(q)) or {}
+            err = None
+            break
+        except Exception as exc:  # noqa: BLE001
+            err = repr(exc)
+            time.sleep(1.0 + attempt)
+    if err is not None:
+        print("SCENE_ORCH: analyse du prompt IMPOSSIBLE (%s) -> traite comme objet "
+              "unique, mais ce n'est PAS une conclusion" % err, file=sys.stderr)
+        return {"is_scene": False, "error": err}
     if not data.get("is_scene"):
         return {"is_scene": False}
     rel = data.get("relation")
@@ -106,8 +128,11 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
         return None
     sub = output_dir / run_id
     sub.mkdir(parents=True, exist_ok=True)
+    # allow_scene=False: l'orchestrateur EST deja dans une scene. Sans ce garde-fou,
+    # run_pipeline redetecterait une scene et se rappellerait sans fin.
     res = run_pipeline(desc, run_id, output_dir=sub,
-                       motion_prompt=(motion or None), purpose=purpose)
+                       motion_prompt=(motion or None), purpose=purpose,
+                       allow_scene=False)
     if not isinstance(res, dict):
         return None
     # Use the produced mesh even when res["ok"] is False: run_pipeline reports
