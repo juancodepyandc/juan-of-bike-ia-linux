@@ -1342,10 +1342,36 @@ def _clean_product_photo(img):
         return img
 
 
-def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str, str]:
+def _character_visual_desc(name: str) -> str:
+    """Ask the local LLM for a SHORT visual description of a named character so we
+    can (a) disambiguate the web search and (b) verify a candidate image actually
+    shows THAT character — even when the vision model doesn't recognize the name.
+    The LLM knows Goldorak is a giant black/white/red robot; that description
+    rejects the wrong 'Goldorak' anime-girl the raw search returns."""
+    try:
+        import urllib.request as _url
+        model = os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+        q = (f"Give a SHORT visual description (8-16 words, no name) of the appearance of "
+             f"the character/robot/subject '{name}': body type, main colors, key iconic "
+             f"features. Output ONLY the description.")
+        body = json.dumps({"model": model, "prompt": q, "stream": False,
+                           "options": {"temperature": 0.1}, "keep_alive": 0}).encode()
+        req = _url.Request("http://127.0.0.1:11434/api/generate", data=body,
+                           headers={"Content-Type": "application/json"})
+        with _url.urlopen(req, timeout=60) as r:
+            out = json.loads(r.read().decode()).get("response", "").strip()
+        return out.splitlines()[0].strip()[:160] if out else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tuple[bool, str, str]:
     try:
         sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
         from vlm_judge import ask_vlm
+        _desc_clause = ("" if not visual_desc else
+                        f" Le sujet demande ressemble a: '{visual_desc}'. Si l'image ne "
+                        f"correspond PAS a cette description (mauvais personnage/objet), ok=false.")
         verdict = ask_vlm([png_path],
                           "Photo candidate comme reference pour une reconstruction 3D FIDELE de: '%s'. "
                           "Reponds ok=false (STRICT) si UN SEUL de ces defauts est present, car ils "
@@ -1360,7 +1386,8 @@ def _reference_photo_ok(png_path: str, prompt: str) -> tuple[bool, str, str]:
                           "(4) fond non neutre, eclairage colore artistique, ou plusieurs objets; "
                           "(5) ce n'est pas EXACTEMENT le sujet demande (variante/fan-art/autre modele). "
                           "Sinon ok=true. Indique aussi l'orientation vue: 'face' (sujet vu de face), "
-                          "'trois_quarts' (de biais), 'dos' (arriere), 'profil' (cote)." % prompt,
+                          "'trois_quarts' (de biais), 'dos' (arriere), 'profil' (cote)." % prompt
+                          + _desc_clause,
                           schema_hint='{"ok": true|false, "raison": "...", '
                                       '"orientation": "face|trois_quarts|dos|profil"}',
                           timeout=90)
@@ -1412,11 +1439,18 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         _is_char = bool(_ident and _ident.get("basis") == "named_identity")
         _nm = (_ident or {}).get("name") or prompt
         _is_product = bool(_REAL_BRAND_RE.search(prompt)) if "_REAL_BRAND_RE" in globals() else False
+        # LLM visual description disambiguates the search AND lets the VLM reject a
+        # wrong candidate (the raw 'Goldorak' search returns an anime girl; the
+        # description 'giant black/white/red robot' rejects it).
+        _char_desc = _character_visual_desc(_nm) if _is_char else ""
+        if _char_desc:
+            log(f"PROGRESS:reference:description LLM du personnage: \"{_char_desc[:80]}\"")
         if _is_char:
+            _dq = (" " + _char_desc) if _char_desc else ""
             front_queries = [
-                f"{_nm} official art full body front view white background",
-                f"{_nm} character reference sheet turnaround",
-                f"{_nm} 3D render full body front",
+                f"{_nm}{_dq} official art full body front view white background",
+                f"{_nm} character reference sheet turnaround{_dq}",
+                f"{_nm}{_dq} front view",
             ]
         elif _is_product:
             front_queries = [f"{prompt} product photo high resolution white background"]
@@ -1483,7 +1517,7 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                     cand = _tmpmod.mktemp(suffix=".png")
                     img = _clean_product_photo(img)
                     img.save(cand)
-                    ok_photo, why, ori = _reference_photo_ok(cand, prompt)
+                    ok_photo, why, ori = _reference_photo_ok(cand, prompt, visual_desc=_char_desc)
                     if not ok_photo:
                         log(f"PROGRESS:reference:photo rejetee par l'IA ({why[:60]})")
                         os.remove(cand)
