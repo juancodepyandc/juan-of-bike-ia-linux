@@ -4,6 +4,7 @@ import { autoInstallRuntime, checkRuntimeAvailable, getExecutableRuntimeSpec } f
 import { detectStructuredManifestIssue, normalizeSandboxFiles, writeSandboxFiles } from './codeSandboxFiles.ts'
 import { buildCommandsForLanguage, detectDominantLanguage, generateLaunchSh, getRuntimeSpec } from './codeSandboxCommands.ts'
 import { runNodeInstallWithAutoRepair } from './codeSandboxRegistryRepair.ts'
+import { withToolchainDiagnostics } from './codeToolchainDiagnostics.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -119,7 +120,7 @@ export async function runCodeSandboxValidation({
     }
   }
 
-  const commands = buildCommandsForLanguage(lang, workingFiles)
+  const commands = withToolchainDiagnostics(lang, workingFiles, buildCommandsForLanguage(lang, workingFiles))
 
   if (commands.length === 0) {
     return {

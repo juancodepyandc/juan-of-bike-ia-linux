@@ -273,6 +273,14 @@
 - **Validation** : `codeStructuralAnalysis.test.ts` 22 verts ; `codeStaticCritics.test.ts` 49 verts ; glob Code a **522 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS8 reste ouvert** : le DoD fonctionnel pieges/God-function/>=6 langages est couvert ; restent l'integration `web-tree-sitter` WASM et les diagnostics toolchain reels `tsc`/`ruff`/`clippy` a brancher dans un increment suivant.
 
+### 2026-07-15 — Vague 2 / WS8 increment 33 applique
+
+- **Diagnostics toolchain branches au sandbox** : `codeToolchainDiagnostics.ts` produit des commandes optionnelles `tsc --noEmit`, `ruff check .` et `cargo clippy --all-targets --all-features -- -D warnings` selon les fichiers/langages presents.
+- **Insertion sans pollution d'environnement** : les diagnostics Node/Python sont inseres apres les etapes d'installation/venv existantes ; `ruff` passe par le Python du venv sandbox ; aucune installation systeme Linux non interactive n'est ajoutee.
+- **Runner conserve** : `runCodeSandboxValidation` enrichit le plan de validation via `withToolchainDiagnostics` sans changer le comportement bloquant des commandes principales.
+- **Validation** : `codeSandboxModules.test.ts` 17 verts ; glob Code a **525 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS8 reste ouvert** : les diagnostics `tsc`/`ruff`/`clippy` sont maintenant dans le pipeline sandbox ; reste l'AST WASM `web-tree-sitter` a brancher pour remplacer les heuristiques par parser quand les grammaires sont disponibles.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

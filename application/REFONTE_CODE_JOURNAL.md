@@ -1427,3 +1427,49 @@ Pour WS4, oui cote socle TypeScript : routage multi-modeles reel, verifieur dist
 ### Etat de satisfaction chantier
 
 Pour cet increment WS8, le DoD explicite est couvert : cas pieges strings/regex/templates sans faux positif, God-function detectee, analyse fonctionnelle sur plus de 6 langages. WS8 reste ouvert pour l'AST WASM `web-tree-sitter` et les diagnostics toolchain reels (`tsc`, `ruff`, `clippy`) qui devront s'integrer au harnais WS7.
+
+## 2026-07-15 — Vague 2 / WS8 increment 33 — diagnostics toolchain tsc/ruff/clippy
+
+### Reprise et diagnostic confirme
+
+- Apres l'increment 32, le DoD fonctionnel etait couvert mais la cible WS8 mentionnait encore explicitement `tsc`, `ruff` et `clippy`.
+- Le sandbox possedait deja des commandes par langage, mais aucun plan de diagnostics statiques toolchain unifie ni teste.
+- Le runner respecte deja `optional: true`, ce qui permet d'ajouter des diagnostics utiles sans bloquer une stack quand l'outil n'est pas installe dans le sandbox.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : les commandes visees sont stables et deja referencees dans le prompt.
+- Choix retenu : `codeToolchainDiagnostics.ts` separe de `codeSandboxCommands.ts`, pour eviter de regonfler ce dernier.
+- Les diagnostics Node/Python sont inseres apres les etapes d'installation/venv existantes, afin de profiter des dependances deja preparees.
+- Compromis explicite : ces commandes sont optionnelles pour enrichir les logs WS8/WS7 ; le build/test principal reste le signal bloquant.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeToolchainDiagnostics.ts` :
+  - `buildToolchainDiagnosticCommands` ;
+  - `withToolchainDiagnostics`.
+- Diagnostics produits :
+  - TypeScript : `npx tsc --noEmit --pretty false` ou script `typecheck` si present ;
+  - Python : `.venv/bin/python -m ruff check .` ;
+  - Rust : `cargo clippy --all-targets --all-features -- -D warnings`.
+- `runCodeSandboxValidation` enveloppe maintenant `buildCommandsForLanguage` avec `withToolchainDiagnostics`.
+- Tests sandbox et glob Code etendus.
+
+### Avant / apres mesurable
+
+- Avant : un projet TS pouvait passer par `npm run build` sans diagnostic typecheck dedie si aucun script ne le faisait explicitement.
+- Apres : tout projet TS avec fichiers `.ts/.tsx` ou `tsconfig.json` recoit un diagnostic `tsc --noEmit` optionnel apres `npm install`.
+- Avant : les projets Python/Rust n'exposaient pas `ruff`/`clippy` dans le plan sandbox.
+- Apres : `ruff` et `clippy` apparaissent comme diagnostics optionnels et ordonnes, sans installation systeme automatique Linux.
+- Baseline Code : 522 tests verts apres increment 32 -> 525 tests verts apres diagnostics toolchain.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxModules.test.ts` : 17 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 525 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment, la partie `tsc`/`ruff`/`clippy` de WS8 est branchee au sandbox sans casser les validations existantes. WS8 reste ouvert uniquement sur l'integration `web-tree-sitter` WASM, qui demande un adaptateur et des grammaires disponibles sans polluer le repo.

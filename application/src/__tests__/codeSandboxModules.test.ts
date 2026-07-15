@@ -24,6 +24,10 @@ import {
   formatResolvedDependencySpecForTest,
   parseNpmTargetErrorForTest,
 } from '../services/codeSandboxRegistryRepair.ts'
+import {
+  buildToolchainDiagnosticCommands,
+  withToolchainDiagnostics,
+} from '../services/codeToolchainDiagnostics.ts'
 import type { CodeFile } from '../services/codeSandboxTypes.ts'
 
 function file(name: string, content: string, language = 'text'): CodeFile {
@@ -106,6 +110,45 @@ describe('codeSandboxCommands', () => {
   test('getRuntimeSpec expose les runtimes sans commande de generation', () => {
     assert.equal(getRuntimeSpec('python')?.cmd, 'python')
     assert.equal(getRuntimeSpec('unknown'), null)
+  })
+
+  test('diagnostics toolchain ajoutent tsc optionnel apres npm install', () => {
+    const files = [
+      file('package.json', '{"name":"app","dependencies":{"typescript":"^6.0.0"}}', 'json'),
+      file('src/index.ts', 'export const x: number = 1', 'typescript'),
+    ]
+    const commands = withToolchainDiagnostics('node', files, buildCommandsForLanguage('node', files))
+
+    assert.deepEqual(commands.map((command) => command.label), [
+      'Installer les dependances',
+      'Diagnostic tsc --noEmit',
+    ])
+    assert.equal(commands[1].executable, isWindows() ? 'npx.cmd' : 'npx')
+    assert.deepEqual(commands[1].args, ['tsc', '--noEmit', '--pretty', 'false'])
+    assert.equal(commands[1].optional, true)
+  })
+
+  test('diagnostics toolchain ajoutent ruff dans le venv Python', () => {
+    const diagnostics = buildToolchainDiagnosticCommands('python', [
+      file('main.py', 'print("ok")', 'python'),
+    ])
+
+    assert.equal(diagnostics.length, 1)
+    assert.equal(diagnostics[0].label, 'Diagnostic ruff')
+    assert.deepEqual(diagnostics[0].args, ['-m', 'ruff', 'check', '.'])
+    assert.equal(diagnostics[0].optional, true)
+  })
+
+  test('diagnostics toolchain ajoutent cargo clippy pour Rust', () => {
+    const diagnostics = buildToolchainDiagnosticCommands('rust', [
+      file('Cargo.toml', '[package]\nname="demo"\nversion="0.1.0"', 'toml'),
+      file('src/main.rs', 'fn main() {}', 'rust'),
+    ])
+
+    assert.equal(diagnostics.length, 1)
+    assert.equal(diagnostics[0].label, 'Diagnostic cargo clippy')
+    assert.deepEqual(diagnostics[0].args, ['clippy', '--all-targets', '--all-features', '--', '-D', 'warnings'])
+    assert.equal(diagnostics[0].optional, true)
   })
 })
 
