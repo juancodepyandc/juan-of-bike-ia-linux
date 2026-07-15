@@ -155,8 +155,59 @@ def real_heights(actor: str, target: str) -> Dict[str, Optional[float]]:
     return {"actor_m": a, "target_m": t}
 
 
+def _seated_reference(desc: str, run_id: str, sub: Path, pose_word: str,
+                      tries: int = 4) -> Optional[str]:
+    """Genere une reference FLUX de la POSE et la VALIDE au VLM avant TRELLIS.
+
+    Sans chaise pour s'appuyer, FLUX place l'homme au sol (tailleur) ou accroupi, de
+    facon SEED-DEPENDANTE: le meme prompt donne parfois une bonne pose de chaise,
+    parfois du tailleur. On genere donc plusieurs candidats (seeds differents) et on
+    garde le PREMIER que le modele de vision juge conforme (cuisses horizontales,
+    pieds au sol, ni tailleur ni accroupi ni debout). C'est le seul moyen fiable.
+    """
+    try:
+        from flux_reference_synth import synth
+        from vlm_judge import ask_vlm
+    except Exception as exc:  # noqa: BLE001
+        print("SCENE_ORCH: synth/vlm indispo (%r) -> reference FLUX standard" % exc,
+              file=sys.stderr)
+        return None
+    want = {"assis": ("assis sur une chaise (cuisses horizontales, genoux plies vers "
+                      "le bas, pieds a plat au sol, buste droit)"),
+            "allonge": "allonge a plat sur le dos, jambes tendues"}.get(
+        pose_word, pose_word)
+    q = ("Decris la posture de la personne. Est-elle EXACTEMENT %s ? Reponds NON si "
+         "elle est assise en tailleur, accroupie, debout, ou autrement." % want)
+    schema = '{"conforme": true/false, "posture": "<3 mots>"}'
+    for i in range(tries):
+        ref = sub / ("%s_pose_%d.png" % (run_id, i))
+        try:
+            synth(desc, "%s_pose_%d" % (run_id, i), output_dir=sub, seed=1000 + i * 137)
+        except Exception as exc:  # noqa: BLE001
+            print("SCENE_ORCH: synth pose echec (%r)" % exc, file=sys.stderr)
+            continue
+        cand = sub / ("%s_pose_%d_reference.png" % (run_id, i))
+        if not cand.is_file():
+            continue
+        try:
+            v = ask_vlm([str(cand)], q, schema)
+        except Exception as exc:  # noqa: BLE001
+            print("SCENE_ORCH: VLM pose echec (%r) -> on accepte le candidat" % exc,
+                  file=sys.stderr)
+            return str(cand)
+        ok = bool(v.get("conforme"))
+        print("SCENE_ORCH: reference pose essai %d: %s (%s)"
+              % (i, "OK" if ok else "rejetee", v.get("posture")), flush=True)
+        if ok:
+            return str(cand)
+    print("SCENE_ORCH: aucune reference de pose conforme en %d essais -> FLUX standard"
+          % tries, file=sys.stderr)
+    return None
+
+
 def _generate_object(desc: str, run_id: str, output_dir: Path,
-                     motion: str = "", purpose: str = "visual_preview") -> Optional[str]:
+                     motion: str = "", purpose: str = "visual_preview",
+                     pose_word: str = "") -> Optional[str]:
     """Generate a single object GLB via the normal pipeline. Returns the final
     GLB path or None."""
     try:
@@ -166,11 +217,18 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
         return None
     sub = output_dir / run_id
     sub.mkdir(parents=True, exist_ok=True)
+    # pose statique: reference FLUX validee au VLM (voir _seated_reference), passee a
+    # TRELLIS via `images` (ce qui court-circuite la generation de reference).
+    imgs = None
+    if pose_word:
+        ref = _seated_reference(desc, run_id, sub, pose_word)
+        if ref:
+            imgs = [ref]
     # allow_scene=False: l'orchestrateur EST deja dans une scene. Sans ce garde-fou,
     # run_pipeline redetecterait une scene et se rappellerait sans fin.
     res = run_pipeline(desc, run_id, output_dir=sub,
                        motion_prompt=(motion or None), purpose=purpose,
-                       allow_scene=False)
+                       images=imgs, allow_scene=False)
     if not isinstance(res, dict):
         return None
     # Use the produced mesh even when res["ok"] is False: run_pipeline reports
@@ -206,15 +264,27 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         # tout seul a piege la recherche de reference vers l'entreprise "ASSIS". On
         # construit donc une description COMPLETE: acteur + pose, plein pied et
         # photorealiste (ce qui coupe aussi la recherche web parasite).
-        posed = (plan.get("actor_posed") or "").strip()
-        pose_word = {"sit_on": "assis", "lie_on": "allonge"}[plan["relation"]]
-        if not posed or len(posed.split()) < 2:
-            posed = "%s %s" % (plan["actor"], pose_word)
-        actor_desc = "%s, photorealiste, corps entier" % posed
+        # description POSEE, sans mentionner la CIBLE (le meuble est genere a part;
+        # "assis sur une chaise" ferait apparaitre une 2e chaise dans l'acteur). La
+        # pose emphatique ("les jambes pliees") force l'assise sans meuble; "photo-
+        # realiste plein pied" cadre le corps entier. "corps entier" seul donnait un
+        # homme DEBOUT (verifie via FLUX).
+        # posture DECRITE par la BIOMECANIQUE, pas "position assise" (qui donne du
+        # tailleur au sol - verifie: 4/4 rejetes par le filtre VLM). "cuisses
+        # horizontales, mollets verticaux, pieds au sol" donne une vraie assise de
+        # chaise (valide du 1er coup par le VLM).
+        pose_word, pose_detail = {
+            "sit_on": ("assis", "cuisses horizontales, mollets verticaux, "
+                       "pieds a plat au sol, buste droit"),
+            "lie_on": ("allonge", "a plat sur le dos, jambes tendues, horizontal"),
+        }[plan["relation"]]
+        actor_desc = "%s %s, %s, photorealiste, plein pied" % (
+            plan["actor"], pose_word, pose_detail)
         print("SCENE_ORCH: pose statique -> generation de l'acteur DEJA pose "
               "('%s'), pas de rig-pliage" % actor_desc, flush=True)
     actor_glb = _generate_object(actor_desc, run_id + "_actor", output_dir,
-                                 motion=plan["actor_motion"])
+                                 motion=plan["actor_motion"],
+                                 pose_word=(pose_word if prepose else ""))
     if not actor_glb:
         return {"ok": False, "is_scene": True, "error": "actor generation failed", "plan": plan}
     target_glb = _generate_object(plan["target"], run_id + "_target", output_dir)
