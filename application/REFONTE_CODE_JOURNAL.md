@@ -1110,3 +1110,42 @@ Pour WS1, oui : tous les fichiers applicatifs du Module Code identifies sont mai
 ### Etat de satisfaction chantier
 
 Pour cet increment WS2, oui : le modele de projet unifie existe, reste sous seuil, et couvre les premiers criteres critiques (arborescence, collisions, imports, extensionless, base64). WS2 reste ouvert : le prochain increment doit ajouter le protocole d'emission a longueur declaree et le round-trip parse -> ecrire -> relire.
+
+## 2026-07-15 — Vague 1 / WS2 increment 26 — protocole a longueur declaree
+
+### Reprise et diagnostic confirme
+
+- Le parser historique depend de marqueurs texte et de fences markdown ; le prompt WS2 demande explicitement un protocole insensible aux backticks et aux `---` internes.
+- Le `ProjectTree` de l'increment 25 fournit deja la cible memoire ; il manquait le format d'emission stable pour alimenter ce modele sans regex fragile.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le besoin est un contrat local entre le prompt Code, le parser et le futur writer.
+- Choix retenu : format `AURORA_CODE_VFS/1` avec une balise de fichier contenant des metadonnees JSON (`path`, `length`, `encoding`, `language`, `mime`) et un contenu lu par longueur declaree.
+- Raison technique : le parser ne cherche jamais de fence ou de separateur dans le contenu ; un fichier peut contenir des backticks, `---`, SQL/YAML ou meme `<<<AURORA_END>>>` sans couper le flux.
+- Compromis documente : la longueur est mesuree en caracteres JS (`string.length`) pour rester synchrone et browser-compatible ; le support byte-level pourra etre ajoute si un flux binaire non-base64 devient necessaire.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeProjectEmission.ts` avec :
+  - `serializeProjectTreeEmission` ;
+  - `parseProjectTreeEmission` ;
+  - `isStructuredProjectEmission` ;
+  - `buildStructuredEmissionInstructions` ;
+  - issues structurees (`invalid_metadata`, `invalid_length`, `length_overflow`, `missing_end_marker`, `malformed_header`).
+- Ajout de `src/__tests__/codeProjectEmission.test.ts` couvrant round-trip piege, base64, collisions, longueur invalide et instructions de contrat.
+
+### Avant / apres mesurable
+
+- Avant : aucun protocole robuste a longueur declaree ; seulement du parsing par fences/regex.
+- Apres : `codeProjectEmission.ts` 207 lignes, `codeProjectEmission.test.ts` 110 lignes.
+- Baseline Code : 493 tests verts apres l'increment ProjectTree -> 498 tests verts apres ce protocole.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectEmission.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 498 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS2, oui : le format a longueur declaree existe et les cas que le prompt nomme explicitement ne cassent plus le parsing. WS2 reste ouvert : il faut maintenant brancher ce protocole dans les prompts/parseurs existants, puis ecrire/relire via le filesystem Tauri.

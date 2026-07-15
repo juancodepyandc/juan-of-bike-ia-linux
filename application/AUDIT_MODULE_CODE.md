@@ -213,6 +213,15 @@
 - **Validation** : test dedie ProjectTree 5 verts / 0 echec ; glob Code a **493 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS2 reste ouvert** : protocole d'emission a longueur declaree, round-trip parse/ecrire/relire et writer disque Tauri restent a brancher sur ce socle.
 
+### 2026-07-15 — Vague 1 / WS2 increment 26 applique
+
+- **Protocole d'emission structure introduit** : `codeProjectEmission.ts` ajoute le format `AURORA_CODE_VFS/1` avec metadonnees JSON et contenu tranche par `length`, au lieu des fences markdown ou separateurs `---`.
+- **Robustesse prouvee** : le parser conserve les backticks imbriques, les blocs YAML/SQL contenant `---`, les marqueurs de fin presents dans le contenu, les binaires base64 et les collisions de chemins.
+- **Detection d'erreurs** : longueur incoherente, header malforme, metadonnees invalides et marqueur de fin absent remontent des issues structurees sans avaler le fichier valide suivant.
+- **Reduction mesurable / nouveaux fichiers** : `codeProjectEmission.ts` 207 lignes ; `codeProjectEmission.test.ts` 110 lignes.
+- **Validation** : test dedie emission 5 verts / 0 echec ; glob Code a **498 tests verts / 0 echec**.
+- **WS2 reste ouvert** : brancher ce protocole dans les prompts/parseurs existants et ajouter le writer disque Tauri + round-trip fichier reel.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
