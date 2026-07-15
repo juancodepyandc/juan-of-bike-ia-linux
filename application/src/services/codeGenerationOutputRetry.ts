@@ -16,6 +16,7 @@ import {
   DOCUMENTATION_EXTENSIONS_EARLY,
   clipText,
   selectModel,
+  type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import { runGenerationPhase } from './codePipelinePhases.ts'
 
@@ -113,6 +114,7 @@ export async function runGeneratedOutputRetryLoop({
   trackRecovery,
   signal,
   pivotContext,
+  modelRouting,
 }: {
   prompt: string
   enrichedPrompt: string
@@ -131,6 +133,7 @@ export async function runGeneratedOutputRetryLoop({
   trackRecovery: (event: RecoveryEvent) => void
   signal?: AbortSignal
   pivotContext?: GenerationPivotContext
+  modelRouting?: CodeModelRoutingContext
 }): Promise<OutputRetryResult> {
   const parsed = parseCodeFiles(latestRawGenerationContent)
   let initialNotes = extractNotes(latestRawGenerationContent)
@@ -195,7 +198,7 @@ export async function runGeneratedOutputRetryLoop({
 
     outputRetry++
     const escalation = outputRetry + 1
-    const retryModel = selectModel('generation', intent, escalation, generationModel)
+    const retryModel = selectModel('generation', intent, escalation, generationModel, modelRouting)
     const modelShort = retryModel.split(':')[0]
 
     setPhase(
@@ -273,6 +276,7 @@ export async function runGeneratedOutputRetryLoop({
         trackRecovery,
         signal,
         pivotContext,
+        modelRouting,
       )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)

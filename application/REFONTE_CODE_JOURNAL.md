@@ -1239,3 +1239,47 @@ Pour cet increment WS2, oui : le protocole n'est plus un module mort, il est dem
 ### Etat de satisfaction chantier
 
 Pour WS2 fondations, oui : le modele de projet, le graphe d'imports, le protocole a longueur declaree, le parsing compatible, les prompts et le writer Tauri sont en place et testes. Les prochains chantiers devront s'appuyer sur ce socle pour remplacer progressivement les chemins `CodeFile[]` plats dans WS3/WS5.
+
+## 2026-07-15 — Vague 2 / WS4 increment 29 — routage multi-modeles par roles
+
+### Reprise et diagnostic confirme
+
+- `selectModel` etait encore un NO-OP dans `codePipelineRuntime.ts` : il renvoyait toujours le modele configure, sans tenir compte de la phase, de l'intention, de l'escalade ou des modeles installes.
+- `CODE_PLANNING_MODEL` et `CODE_REVIEW_MODEL` pointaient encore sur `CODE_SINGLE_MODEL`, donc l'Architecte, le Codeur et l'Auditeur partageaient le meme modele.
+- Le store Code recuperait deja `/proxy/ollama/api/tags` et `installedModels`, mais cette information servait surtout a verifier la presence du modele avant generation ; elle n'etait pas propagee comme contexte de routage dans le pipeline.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le chantier touche un contrat local deja documente par le prompt maitre et les constantes Ollama existantes.
+- Choix retenu : routeur pur `codeModelRouting.ts`, branche par `selectModel`, qui prend en entree la phase, l'intention, le niveau d'escalade, le profil hardware et la liste `/api/tags`.
+- Raison technique : le chemin live ne bascule jamais aveuglement vers un modele absent. Le verifieur/architecte distinct n'est utilise que si `/api/tags` prouve un candidat installe (`qwen3:32b`, variante quantisee, ou modele Qwen3-32B GGUF). Sinon, fallback explicite vers le codeur operationnel pour preserver la generation.
+- Compromis documente : cet increment ne cloture pas WS4. Il livre le routage reel et le branchement `/api/tags`; restent le plan Architecte JSON schema-valide, le best-of-N et l'escalade cloud sur plateau.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeModelRouting.ts` :
+  - normalisation de noms Ollama (`:latest`, casse) ;
+  - selection du Codeur via `selectCodeModelForHardware` ;
+  - selection Architecte/Verifieur independante si un modele raisonnement est installe ;
+  - decision structuree (`role`, `reason`, `distinctFromCoder`, `installedMatch`).
+- `selectModel` expose maintenant `selectModelDecision` et route par phase au lieu de renvoyer le modele configure.
+- `codeStreamStore.ts` transmet `installedModels` et `hardware` a l'orchestrateur ; la generation garde le role Codeur meme si l'ancien helper propose un generaliste visuel.
+- `codePipelinePhases.ts`, `codeGenerationOutputRetry.ts`, `codeValidationCorrectionLoop.ts` et `codeOrchestrator.ts` propagent le contexte de routage jusque dans planning, generation, retry et correction.
+- `models.ts` declare des constantes de role Code (`CODE_REASONING_MODEL`, `CODE_VERIFIER_MODEL`, `CODE_PLANNING_MODEL`, `CODE_REVIEW_MODEL`) sans changer `AUXILIARY_ANALYSIS_MODEL` global hors Module Code.
+
+### Avant / apres mesurable
+
+- Avant : `selectModel('planning'|'correction', ..., 'qwen3-coder:30b')` retournait toujours `qwen3-coder:30b`.
+- Apres : avec `/api/tags = ['qwen3-coder:30b', 'qwen3:32b']`, planning et correction retournent `qwen3:32b`, distinct du Codeur ; avec seulement `qwen3-coder:30b`, le fallback reste explicite et teste.
+- Baseline Code : 503 tests verts apres WS2 -> 508 tests verts apres ce routage.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeModelRouting.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codePipelineRuntime.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codePipelinePhases.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 508 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS4, oui : le NO-OP est remplace par un routage multi-roles reel, branche a `/api/tags` et prouve par tests. WS4 reste ouvert : le prochain increment doit remplacer le plan markdown libre par un plan JSON valide par schema, puis ajouter best-of-N et escalade sur plateau.

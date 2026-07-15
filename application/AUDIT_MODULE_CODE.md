@@ -238,6 +238,15 @@
 - **Validation** : test dedie writer 3 verts / 0 echec ; glob Code a **503 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; scan WS1 toujours vert.
 - **WS2 cloturable cote fondation** : `ProjectTree`, graphe d'imports, protocole longueur declaree, parseurs, prompts et writer sont presents. Les integrations profondes WS3/WS5 devront maintenant utiliser ce socle plutot que les listes plates.
 
+### 2026-07-15 — Vague 2 / WS4 increment 29 applique
+
+- **`selectModel` n'est plus un NO-OP** : `codePipelineRuntime.ts` delegue a `codeModelRouting.ts`, qui route par phase (`planning`, `generation`, `review`, `correction`) au lieu de renvoyer systematiquement le modele configure.
+- **Branchement `/api/tags` effectif** : `codeStreamStore.ts` propage `installedModels` et `hardware` a l'orchestrateur ; planning, generation, retry et correction recoivent ce contexte via `CodeModelRoutingContext`.
+- **Roles distincts quand disponibles** : generation selectionne le Codeur via `selectCodeModelForHardware`; planning/correction selectionnent `qwen3:32b` ou une variante Qwen3-32B installee comme Architecte/Verifieur independant. Si aucun verifieur n'est connu dans `/api/tags`, le fallback vers le Codeur est explicite et teste.
+- **Constantes de role Code ajoutees** : `CODE_REASONING_MODEL`, `CODE_VERIFIER_MODEL`, `CODE_PLANNING_MODEL`, `CODE_REVIEW_MODEL`. `AUXILIARY_ANALYSIS_MODEL` reste inchange pour eviter une regression hors Module Code.
+- **Validation** : `codeModelRouting.test.ts` 4 verts ; `codePipelineRuntime.test.ts` 5 verts ; `codePipelinePhases.test.ts` 2 verts ; glob Code a **508 tests verts / 0 echec**.
+- **WS4 reste ouvert** : le plan Architecte est encore du markdown libre ; le schema JSON, le best-of-N et l'escalade cloud sur plateau restent a implementer et a prouver.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

@@ -35,6 +35,7 @@ import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
 export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
 import {
   selectModel,
+  type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import {
   runGenerationPhase,
@@ -155,6 +156,7 @@ export async function orchestrateCodeGeneration({
   onRecoveryEvent,
   onFollowUpAnalysis,
   signal,
+  modelRouting,
 }: {
   prompt: string
   enrichedPrompt: string
@@ -174,6 +176,7 @@ export async function orchestrateCodeGeneration({
   /** Fires as soon as the follow-up analyzer has decided the pivot kind. */
   onFollowUpAnalysis?: (analysis: FollowUpAnalysis) => void
   signal?: AbortSignal
+  modelRouting?: CodeModelRoutingContext
 }): Promise<CodeOrchestrationResult> {
   const generationModel = contextImages.length > 0 ? visionModel : configuredCodeModel
   const recoveryEvents: RecoveryEvent[] = []
@@ -202,6 +205,7 @@ export async function orchestrateCodeGeneration({
       trackRecovery,
       recoveryEvents,
       signal,
+      modelRouting,
     })
   } catch (fatalError) {
     // Absolute last resort — return error state instead of crashing
@@ -247,6 +251,7 @@ async function runFullPipeline({
   trackRecovery,
   recoveryEvents,
   signal,
+  modelRouting,
 }: {
   prompt: string
   enrichedPrompt: string
@@ -266,6 +271,7 @@ async function runFullPipeline({
   trackRecovery: (event: RecoveryEvent) => void
   recoveryEvents: RecoveryEvent[]
   signal?: AbortSignal
+  modelRouting?: CodeModelRoutingContext
 }): Promise<CodeOrchestrationResult> {
   // Phase 0: Follow-up intent analysis — only runs when there is prior context.
   // Turns "la meme chose en python" into a reformulated prompt + pivotKind so
@@ -329,6 +335,7 @@ async function runFullPipeline({
     existingFiles,
     configuredCodeModel,
     setPhase,
+    modelRouting,
   )
 
   const { planningPrompt } = await prepareCodePlanningContext({
@@ -356,6 +363,7 @@ async function runFullPipeline({
         configuredCodeModel,
         setPhase,
         trackRecovery,
+        modelRouting,
       )
   if (skipPlanningForVisual) setPhase('Projet web direct — generation sans plan lourd...', 28)
   const missionDossier = await buildCodeMissionDossier({
@@ -364,7 +372,7 @@ async function runFullPipeline({
     intent,
     existingFiles: effectiveExistingFiles,
     architecturePlan,
-    model: selectModel('planning', intent, 0, configuredCodeModel),
+    model: selectModel('planning', intent, 0, configuredCodeModel, modelRouting),
   })
 
   // Pivot context forwarded to the code generator so it can swap the
@@ -394,6 +402,7 @@ async function runFullPipeline({
     trackRecovery,
     signal,
     pivotContext,
+    modelRouting,
   )
 
   // CRITICAL: Detect LLM refusal BEFORE parsing — refuse early, retry immediately
@@ -419,13 +428,14 @@ async function runFullPipeline({
       conversationHistory,
       effectiveExistingFiles,
       contextImages,
-      selectModel('generation', intent, 2, generationModel),
+      selectModel('generation', intent, 2, generationModel, modelRouting),
       2,
       setPhase,
       onToken,
       trackRecovery,
       signal,
       pivotContext,
+      modelRouting,
     )
     // If rescue also refuses, we'll catch it in the validation loop below
     if (!isLLMRefusal(rescueContent)) {
@@ -465,6 +475,7 @@ async function runFullPipeline({
     trackRecovery,
     signal,
     pivotContext,
+    modelRouting,
   })
   let initialFiles = outputRetryResult.files
   let initialNotes = outputRetryResult.notes
@@ -508,6 +519,7 @@ async function runFullPipeline({
     onValidationUpdate,
     onCorrectionLogUpdate,
     signal,
+    modelRouting,
   )
 
   const finalFiles = upsertProjectSupportFiles(validationResult.files, intent, reformulatedEnriched, architecturePlan)

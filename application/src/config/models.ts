@@ -47,11 +47,11 @@ export const VISION_FALLBACK_MODEL = 'qwen3-vl:8b'
 export const VISION_MODEL_PACK_LABEL = 'Qwen3-VL 30B (qualite) + Qwen3-VL 8B (live)'
 
 // ---------------------------------------------------------------------------
-// Code module -- EXPERT-MODEL ARCHITECTURE
-// Le pipeline code privilegie le plus gros modele code installe.
-// Les differents roles (Architecte, Codeur, Auditeur) sont obtenus en
-// changeant le System Prompt, PAS en changeant de modele.
-// Avantage: zero swap VRAM, latence reduite, coherence maximale.
+// Code module -- architecture multi-roles
+// Le Codeur reste le meilleur modele code qui tient sur la machine locale.
+// L Architecte et l Auditeur utilisent un modele raisonnement distinct quand
+// /api/tags prouve qu il est installe ; sinon le pipeline retombe sur le codeur
+// operationnel pour ne pas casser une generation en cours.
 // ---------------------------------------------------------------------------
 export const CODE_NEXT_HIGH_MODEL = 'qwen3-coder-next:q8_0'
 export const CODE_NEXT_MODEL = 'qwen3-coder-next:q4_K_M'
@@ -68,6 +68,8 @@ export const CODE_BALANCED_MODEL = 'hf.co/Qwen/Qwen3-32B-GGUF:Q6_K'
 export const CODE_LIGHT_MODEL = 'qwen2.5-coder:7b'
 export const CODE_MINI_MODEL = 'qwen2.5:7b'
 export const CODE_SINGLE_MODEL = CODE_PRIMARY_MODEL
+export const CODE_REASONING_MODEL = 'qwen3:32b'
+export const CODE_VERIFIER_MODEL = CODE_REASONING_MODEL
 
 const CODE_MODEL_CANDIDATES = [
   CODE_LOCAL_PRIMARY_MODEL,
@@ -81,8 +83,8 @@ const CODE_MODEL_CANDIDATES = [
 // Legacy aliases -- tout redirige vers le modele expert principal
 export const DEFAULT_CODE_MODEL = CODE_SINGLE_MODEL
 export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
-export const CODE_PLANNING_MODEL = CODE_SINGLE_MODEL
-export const CODE_REVIEW_MODEL = CODE_SINGLE_MODEL
+export const CODE_PLANNING_MODEL = CODE_REASONING_MODEL
+export const CODE_REVIEW_MODEL = CODE_VERIFIER_MODEL
 
 export const HEAVY_REASONING_MIN_RAM_GB = 48
 

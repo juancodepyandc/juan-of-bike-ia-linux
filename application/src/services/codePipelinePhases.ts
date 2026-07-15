@@ -27,6 +27,7 @@ import {
   STREAM_GENERATION_TOTAL_TIMEOUT_MS,
   getModelShortName,
   selectModel,
+  type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 
 export function isArchitecturePlanUsable(plan: string | null) {
@@ -60,6 +61,7 @@ export async function runPreflightPhase(
   existingFiles: CodeFile[],
   configuredCodeModel: string,
   setPhase: PhaseCallback,
+  modelRouting?: CodeModelRoutingContext,
 ): Promise<CodePreflightReport | null> {
   try {
     setPhase('Preflight local: analyse machine, outils et fichiers existants...', 8)
@@ -68,7 +70,7 @@ export async function runPreflightPhase(
       prompt,
       intent,
       existingFiles,
-      model: selectModel('planning', intent, 0, configuredCodeModel),
+      model: selectModel('planning', intent, 0, configuredCodeModel, modelRouting),
       setPhase: (detail, progress) => setPhase(detail, Math.max(8, Math.min(18, progress))),
     }), {
       label: 'Code preflight',
@@ -88,8 +90,9 @@ export async function runPlanningPhase(
   configuredCodeModel: string,
   setPhase: PhaseCallback,
   onRecovery?: (event: RecoveryEvent) => void,
+  modelRouting?: CodeModelRoutingContext,
 ): Promise<string | null> {
-  const model = selectModel('planning', intent, 0, configuredCodeModel)
+  const model = selectModel('planning', intent, 0, configuredCodeModel, modelRouting)
   setPhase(`Architecte en reflexion (${getModelShortName(model)})...`, 10)
   const preflightBlock = preflightReport
     ? [
@@ -161,9 +164,10 @@ export async function runGenerationPhase(
   onRecovery?: (event: RecoveryEvent) => void,
   signal?: AbortSignal,
   pivotContext?: GenerationPivotContext,
+  modelRouting?: CodeModelRoutingContext,
 ): Promise<string> {
   setPhase('Generation du code en direct...', 35)
-  const model = selectModel('generation', intent, escalationLevel, configuredCodeModel)
+  const model = selectModel('generation', intent, escalationLevel, configuredCodeModel, modelRouting)
 
   const messages: OllamaMessage[] = [
     { role: 'system', content: buildCodeurSystemPrompt(intent, prompt) },

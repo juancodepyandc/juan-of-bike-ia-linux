@@ -27,6 +27,7 @@ import {
   RESEARCH_PHASE_TIMEOUT_MS,
   getModelShortName,
   selectModel,
+  type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import { computeSandboxScore, withStaticCritiqueStep } from './codeValidationScoring.ts'
 import {
@@ -91,6 +92,7 @@ export async function runValidationAndCorrectionLoop(
   onValidationUpdate: (result: CodeSandboxResult) => void,
   onCorrectionLogUpdate: (log: CorrectionPass[], attempt: number, score: number) => void,
   signal?: AbortSignal,
+  modelRouting?: CodeModelRoutingContext,
 ): Promise<ValidationCorrectionLoopResult> {
   const { runCodeSandboxValidation } = await import('./codeSandbox.ts')
   let currentFiles = initialFiles
@@ -261,7 +263,7 @@ export async function runValidationAndCorrectionLoop(
       break
     }
 
-    const correctionModel = selectModel('correction', intent, strategy!.escalation, configuredCodeModel)
+    const correctionModel = selectModel('correction', intent, strategy!.escalation, configuredCodeModel, modelRouting)
     pass.modelUsed = correctionModel
     pass.strategy = strategy!.level
     onCorrectionLogUpdate([...correctionLog], attempt, currentScore)

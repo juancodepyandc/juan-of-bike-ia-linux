@@ -8,14 +8,33 @@ import {
   clipText,
   getModelShortName,
   selectModel,
+  selectModelDecision,
 } from '../services/codePipelineRuntime.ts'
 
-const intent = { projectType: 'spa_react' } as unknown as CodeIntent
+const intent = { projectType: 'spa_react', complexity: 'complex' } as unknown as CodeIntent
 
 describe('codePipelineRuntime', () => {
-  test('selectModel preserve le routage modele existant', () => {
-    assert.equal(selectModel('planning', intent, 0, 'qwen3-coder:30b'), 'qwen3-coder:30b')
-    assert.equal(selectModel('correction', intent, 9, 'qwen3-coder:30b'), 'qwen3-coder:30b')
+  test('selectModel route les roles via les modeles installes', () => {
+    const routing = {
+      installedModels: ['qwen3-coder:30b', 'qwen3:32b'],
+      hardware: { ram_gb: 30, vram_gb: 16 },
+    }
+
+    assert.equal(selectModel('generation', intent, 0, 'qwen3-coder:30b', routing), 'qwen3-coder:30b')
+    assert.equal(selectModel('planning', intent, 0, 'qwen3-coder:30b', routing), 'qwen3:32b')
+    assert.equal(selectModel('correction', intent, 9, 'qwen3-coder:30b', routing), 'qwen3:32b')
+
+    const decision = selectModelDecision('correction', intent, 9, 'qwen3-coder:30b', routing)
+    assert.equal(decision.role, 'verifier')
+    assert.equal(decision.distinctFromCoder, true)
+    assert.equal(decision.installedMatch, true)
+  })
+
+  test('selectModel retombe sur le codeur si aucun verifieur installe n est connu', () => {
+    assert.equal(
+      selectModel('correction', intent, 3, 'qwen3-coder:30b', { installedModels: ['qwen3-coder:30b'] }),
+      'qwen3-coder:30b',
+    )
   })
 
   test('getModelShortName retire registre et tag', () => {

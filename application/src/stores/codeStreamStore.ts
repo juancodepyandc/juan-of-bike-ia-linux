@@ -325,9 +325,11 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     try { intent = classifyCodeIntent(text) } catch { intent = null }
     const isVisual = intent ? isVisualProject(intent) : true
     const routedModel = routeCodeStreamModel({ baseModel, installed, isVisual, text })
-    const model = routedModel.model
+    const model = baseModel
     const brandHint = routedModel.brandHint
-    if (model !== baseModel) console.log(`[code] route: "${baseModel}" → "${model}" (${routedModel.routeReason})`)
+    if (routedModel.model !== baseModel) {
+      console.log(`[code] route suggestion: "${baseModel}" → "${routedModel.model}" (${routedModel.routeReason}); generation keeps coder role "${baseModel}"`)
+    }
 
     // Capture the conversation BEFORE this turn so the follow-up analyzer
     // sees genuine prior context (not the message we are about to add).
@@ -438,6 +440,11 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
         contextImages: [],
         configuredCodeModel: model,
         visionModel: model,
+        modelRouting: {
+          configuredCodeModel: baseModel,
+          installedModels: installed,
+          hardware: app.hardware,
+        },
         setPhase: (detail, prog) => {
           if (abortCtrl !== ctrl) return
           const prev = get()

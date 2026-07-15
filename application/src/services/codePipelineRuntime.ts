@@ -1,4 +1,10 @@
 import type { CodeIntent } from './codeIntent.ts'
+import {
+  type CodeModelPhase,
+  type CodeModelRouteDecision,
+  type CodeModelRoutingContext,
+  selectCodeRoleModel,
+} from './codeModelRouting.ts'
 
 export const PREFLIGHT_PHASE_TIMEOUT_MS = 55_000
 export const RESEARCH_PHASE_TIMEOUT_MS = 25_000
@@ -14,18 +20,29 @@ export const CODE_EXPERT_CONTEXT_TOKENS = 24_576
 export const CODE_EXPERT_OUTPUT_TOKENS = 16_000
 export const INTERACTIVE_3D_FIDELITY_MAX_PASSES = 4
 
-/**
- * Current WS1 extraction preserves the existing behavior exactly: one
- * configured code model is used for all phases. WS4 gives this function a real
- * multi-model implementation.
- */
-export function selectModel(
-  _phase: 'planning' | 'generation' | 'review' | 'correction',
-  _intent: CodeIntent,
-  _escalationLevel: number,
+export type { CodeModelPhase, CodeModelRouteDecision, CodeModelRoutingContext }
+
+export function selectModelDecision(
+  phase: CodeModelPhase,
+  intent: CodeIntent,
+  escalationLevel: number,
   configuredCodeModel: string,
+  routingContext: CodeModelRoutingContext = {},
+): CodeModelRouteDecision {
+  return selectCodeRoleModel(phase, intent, escalationLevel, {
+    ...routingContext,
+    configuredCodeModel: routingContext.configuredCodeModel ?? configuredCodeModel,
+  })
+}
+
+export function selectModel(
+  phase: CodeModelPhase,
+  intent: CodeIntent,
+  escalationLevel: number,
+  configuredCodeModel: string,
+  routingContext: CodeModelRoutingContext = {},
 ): string {
-  return configuredCodeModel
+  return selectModelDecision(phase, intent, escalationLevel, configuredCodeModel, routingContext).model
 }
 
 export function getModelShortName(model: string) {
