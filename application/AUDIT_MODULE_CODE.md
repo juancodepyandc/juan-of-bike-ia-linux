@@ -131,6 +131,13 @@
 - **Validation** : test dedie messages correction 2 verts / 0 echec ; glob Code a **460 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 16 applique
+
+- **Scoring validation extrait de l'orchestrateur** : calcul du score sandbox, decision bloquante de critique statique, formatage du rapport et injection de l'etape interne quittent `codeOrchestrator.ts` pour `codeValidationScoring.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 1446 -> 1356 lignes. Nouveau module `codeValidationScoring.ts` (95 lignes) et test dedie `codeValidationScoring.test.ts` (120 lignes).
+- **Validation** : test dedie scoring validation 4 verts / 0 echec ; glob Code a **464 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

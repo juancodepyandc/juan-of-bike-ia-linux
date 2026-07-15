@@ -714,3 +714,40 @@ Pour cet increment WS1, oui : les phases initiales du pipeline sont isolees dans
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la construction des prompts auditeur est isolee, sous seuil, testee directement et sans dependances lourdes au chargement. WS1 reste ouvert sur la boucle validation/correction, la finalisation de l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 16 — scoring validation
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction des messages de correction, `codeOrchestrator.ts` restait a 1446 lignes.
+- Le calcul de score sandbox et l'injection de la critique statique etaient des helpers deterministes, appeles par la boucle validation/correction mais sans dependance directe au streaming.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codeValidationScoring.ts` pour le score sandbox, le formatage de rapport statique et l'etape `internal:static-critique`.
+- Raison technique : isoler le signal de validation avant d'extraire la boucle correction complete, tout en rendant les seuils de blocage testables directement.
+
+### Modifications realisees
+
+- Ajout de `codeValidationScoring.ts` pour `computeSandboxScore`, `isStaticCritiqueBlocking`, `formatStaticCritiqueReport` et `withStaticCritiqueStep`.
+- `codeOrchestrator.ts` importe ces helpers et ne porte plus le bloc de scoring/formatage.
+- Ajout de `codeValidationScoring.test.ts` couvrant les plafonds de score contenu, le score partiel avec bonus et les critiques statiques bloquantes/non bloquantes.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 1446 lignes -> 1356 lignes.
+- `codeValidationScoring.ts` : 95 lignes.
+- `codeValidationScoring.test.ts` : 120 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeValidationScoring.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 464 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : le scoring de validation est isole, sous seuil, teste directement et l'orchestrateur ne conserve plus ces helpers. WS1 reste ouvert sur l'extraction de la boucle validation/correction et les deux vues.
