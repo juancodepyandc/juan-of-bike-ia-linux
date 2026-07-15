@@ -134,6 +134,10 @@ def main():
                         dest="actor_height_m")
     parser.add_argument("--target-height-m", type=float, default=None,
                         dest="target_height_m")
+    parser.add_argument("--actor-preposed", action="store_true",
+                        dest="actor_preposed",
+                        help="l'acteur est deja dans la pose (genere assis/allonge): "
+                             "placer sans rigger ni plier")
     args = parser.parse_args()
     parsed = parse_instruction(args.instruction)
     relation = parsed["relation"]
@@ -153,7 +157,11 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     actor_path = args.actor
     rigged = False
-    if (relation in ("sit_on", "lie_on") and args.strategy in (None, "legs_bent")
+    # Acteur DEJA pose (genere assis/allonge): on ne rig PAS et on ne plie PAS - on
+    # place seulement. Plier un maillage genere deforme (etirement de la jambe).
+    if args.actor_preposed:
+        overrides["preposed"] = "1"
+    elif (relation in ("sit_on", "lie_on") and args.strategy in (None, "legs_bent")
             and not _glb_has_skin(actor_path)):
         rig_out = os.path.join(out_dir, "actor_rigged.glb")
         rig_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rigify_autorig.py")

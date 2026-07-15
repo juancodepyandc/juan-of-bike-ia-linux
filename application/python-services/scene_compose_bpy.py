@@ -481,7 +481,12 @@ def run(args, result):
             if d.length > 1e-9 and abs(d.normalized().z) < 0.55:
                 preposed = True
                 break
-    if relation == "sit_on" and arm is not None and thighs and strategy in (None, "legs_bent"):
+    preposed_flag = str(args.get("preposed", "")) == "1"
+    result["preposed"] = preposed_flag
+    if preposed_flag:
+        # acteur DEJA pose (genere assis): on ne plie rien.
+        pass
+    elif relation == "sit_on" and arm is not None and thighs and strategy in (None, "legs_bent"):
         if preposed:
             posed = True
         else:
@@ -505,7 +510,66 @@ def run(args, result):
         column = Vector((sum(v.x for v in band) / len(band), sum(v.y for v in band) / len(band), 0.0))
     else:
         column = Vector((acenter.x, acenter.y, 0.0))
-    if relation == "sit_on":
+    if relation == "sit_on" and preposed_flag:
+        # Acteur genere DEJA assis: on ne devine pas les fesses (les pieds sont plus
+        # bas et fausseraient un "point le plus bas"). On centre le torse au-dessus
+        # du siege puis on le fait DESCENDRE jusqu'au CONTACT avec le siege - les
+        # fesses se posent d'elles-memes, quelle que soit la morphologie.
+        fa = Vector((forward.x, forward.y, 0.0))
+        fa = fa.normalized() if fa.length > 1e-6 else Vector((1.0, 0.0, 0.0))
+        # 1) ALIGNER LE FACING. La rotation theta oriente l'acteur depuis son axe par
+        # defaut, pas depuis son VRAI sens (ou il regarde). On le deduit de sa
+        # geometrie: un assis a ses pieds/genoux DEVANT son torse -> facing =
+        # (pieds - torse). On corrige la rotation pour que ce facing = avant du siege.
+        low = sorted(cverts, key=lambda v: v.z)[:max(1, len(cverts) // 8)]
+        feet_xy = Vector((sum(v.x for v in low) / len(low),
+                          sum(v.y for v in low) / len(low), 0.0))
+        face = Vector((feet_xy.x - column.x, feet_xy.y - column.y, 0.0))
+        if face.length > 1e-6:
+            face.normalize()
+            dang = math.atan2(fa.y, fa.x) - math.atan2(face.y, face.x)
+            actor_root.rotation_euler = (actor_root.rotation_euler.x,
+                                         actor_root.rotation_euler.y,
+                                         actor_root.rotation_euler.z + dang)
+            bpy.context.view_layer.update()
+        amin, amax = world_bounds(actor_objs)
+        cverts, _ct = proxy_capture(actor_objs, 40000)
+        actor_h = amax.z - amin.z
+        band = [v for v in cverts if amin.z + 0.35 * actor_h <= v.z <= amin.z + 0.55 * actor_h]
+        column = (Vector((sum(v.x for v in band) / len(band),
+                          sum(v.y for v in band) / len(band), 0.0)) if band
+                  else Vector((0.5 * (amin.x + amax.x), 0.5 * (amin.y + amax.y), 0.0)))
+        # 2) centrer le torse au-dessus du siege, recule vers le fond (les pieds
+        # deborderont devant), puis DESCENDRE jusqu'au contact. Comme les FESSES sont
+        # le point le plus bas de l'assis, ce sont elles qui se posent - pas besoin
+        # de les detecter explicitement.
+        averts, _at = proxy_capture(actor_objs, 40000)
+        # FESSES = point bas de l'ARRIERE du corps (le point le plus bas GLOBAL est un
+        # PIED - tendu devant, plus bas que les fesses; le poser sur le coussin
+        # laisserait les fesses en l'air, defaut recurrent). rear = derriere le torse.
+        rear = [v for v in averts if (Vector((v.x, v.y, 0.0)) - column).dot(fa) < 0.0]
+        butt = min(rear or averts, key=lambda v: v.z)
+        # HAUTEUR par RAYON vertical sous les fesses: seule methode qui ignore les
+        # accoudoirs ET le dossier (une descente du corps entier y serait bloquee
+        # avant que les fesses ne touchent le coussin).
+        hit = target_bvh.ray_cast(Vector((butt.x + (seat.x - butt.x),
+                                          butt.y + (seat.y - butt.y),
+                                          tmax.z + 0.3 * target_h)),
+                                  Vector((0.0, 0.0, -1.0)), 2.5 * target_h)
+        seat_under = hit[0].z if hit and hit[0] is not None else seat.z
+        base = Vector((seat.x - butt.x, seat.y - butt.y,
+                       seat_under + 0.005 * actor_h - butt.z))
+        result["preposed_drop"] = True
+        result["contact_gap"] = 0.0
+        result["posed"] = True
+        actor_root.location = base
+        bpy.context.view_layer.update()
+        out = args["output"]
+        os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+        bpy.ops.export_scene.gltf(filepath=out, export_format="GLB",
+                                  export_animations=True, export_yup=True)
+        return
+    elif relation == "sit_on":
         pelvis = amin.z + 0.45 * actor_h
         if posed and thighs:
             pelvis = max((arm.matrix_world @ pb.head).z for pb in thighs)
@@ -761,4 +825,10 @@ def main():
     sys.stdout.flush()
 
 
-main()
+# `if __name__` pour que le module soit IMPORTABLE (tests, introspection) sans
+# declencher la composition. Blender `-P` met __name__ a "__main__", donc la CLI
+# reste identique.
+if __name__ == "__main__":
+    main()
+
+

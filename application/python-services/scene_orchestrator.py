@@ -68,6 +68,8 @@ def split_scene_prompt(prompt: str) -> Dict[str, Any]:
         "on a sofa, a book on a table), or just ONE object/subject. "
         "Reply ONLY strict JSON. If two objects: "
         '{"is_scene": true, "actor": "<short desc of the main/animate object>", '
+        '"actor_posed": "<same actor described AS ALREADY IN the resting pose of the '
+        'relation, e.g. a sitting man, a lying cat; same language as the prompt>", '
         '"actor_motion": "<motion phrase or empty>", "target": "<short desc of the '
         'object it sits/stands/lies on or is next to>", "relation": '
         '"<sit_on|stand_on|lie_on|next_to|hold>"}. '
@@ -110,9 +112,11 @@ def split_scene_prompt(prompt: str) -> Dict[str, Any]:
     if not actor or not target:
         return {"is_scene": False}
     motion = str(data.get("actor_motion") or "").strip()
+    posed = str(data.get("actor_posed") or "").strip()
     return {
         "is_scene": True, "actor": actor, "target": target,
         "relation": rel, "actor_motion": motion,
+        "actor_posed": posed,
         "animate": bool(motion) or rel in ("sit_on", "lie_on"),
     }
 
@@ -126,9 +130,13 @@ def real_heights(actor: str, target: str) -> Dict[str, Optional[float]]:
     propriete de la geometrie, c'est une connaissance du MONDE - on la demande donc
     au LLM plutot que de coder une table d'objets, qui ne generaliserait a rien.
     """
+    # Hauteur telle que MONTREE, pose comprise: un mesh d'homme ASSIS mesure sa
+    # hauteur ASSISE (~1.3 m du sol au sommet du crane), pas sa taille debout. Passer
+    # 1.75 a un mesh assis le rend geant (verifie: 4 unites pour une chaise de 2).
     q = (
-        "Give the TYPICAL real-world height in METERS of each object, as a human "
-        "would know it (an adult man ~1.75, a chair ~0.9, a mug ~0.1, a car ~1.5).\n"
+        "Give the TYPICAL real-world height in METERS of each object AS DESCRIBED, "
+        "POSE INCLUDED, floor to top, as a human would know it: a standing adult "
+        "~1.75, a SEATED adult ~1.3, a lying adult ~0.5, a chair ~0.9, a mug ~0.1.\n"
         'Reply ONLY strict JSON: {"actor_m": <number>, "target_m": <number>}\n'
         "Object A (actor): %s\nObject B (target): %s" % (actor, target)
     )
@@ -185,7 +193,19 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     print(f"SCENE_ORCH: scene detecte -> acteur='{plan['actor']}' cible='{plan['target']}' "
           f"relation={plan['relation']} motion='{plan['actor_motion']}'", flush=True)
 
-    actor_glb = _generate_object(plan["actor"], run_id + "_actor", output_dir,
+    # POSE STATIQUE = GENERER DEJA POSE, NE PAS PLIER. Plier un homme debout
+    # auto-riggé sur un maillage TRELLIS (soupe de ~77k ilots) etire la jambe: la
+    # deformation d'un maillage genere est un probleme non fiable. Pour une pose
+    # STATIQUE (s'asseoir, s'allonger) sans mouvement, on genere donc l'acteur DEJA
+    # dans la pose - TRELLIS produit un maillage coherent - et le compositeur le
+    # PLACE sans le deformer. On ne rig-plie que s'il y a un vrai MOUVEMENT.
+    prepose = (plan["relation"] in ("sit_on", "lie_on") and not plan["actor_motion"]
+               and bool(plan.get("actor_posed")))
+    actor_desc = plan["actor_posed"] if prepose else plan["actor"]
+    if prepose:
+        print("SCENE_ORCH: pose statique -> generation de l'acteur DEJA pose "
+              "('%s'), pas de rig-pliage" % actor_desc, flush=True)
+    actor_glb = _generate_object(actor_desc, run_id + "_actor", output_dir,
                                  motion=plan["actor_motion"])
     if not actor_glb:
         return {"ok": False, "is_scene": True, "error": "actor generation failed", "plan": plan}
@@ -215,13 +235,17 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         instruction += f", {plan['actor_motion']}"
     cmd = [sys.executable, str(composer), "--actor", actor_glb, "--target", target_glb,
            "--instruction", instruction, "--output", str(scene_out)]
-    sizes = real_heights(plan["actor"], plan["target"])
+    # pour un acteur pre-pose, la taille pertinente est celle de la POSE (assis ~1.3m)
+    sizes = real_heights(actor_desc if prepose else plan["actor"], plan["target"])
     if sizes["actor_m"] and sizes["target_m"]:
         cmd += ["--actor-height-m", str(sizes["actor_m"]),
                 "--target-height-m", str(sizes["target_m"])]
         print("SCENE_ORCH: tailles reelles -> acteur %.2f m, cible %.2f m"
               % (sizes["actor_m"], sizes["target_m"]), flush=True)
-    if plan["animate"]:
+    if prepose:
+        # l'acteur est DEJA pose: placer sans rigger ni plier.
+        cmd.append("--actor-preposed")
+    if plan["animate"] and not prepose:
         cmd.append("--animate")
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, check=False)
