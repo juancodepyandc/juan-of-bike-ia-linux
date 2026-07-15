@@ -514,3 +514,41 @@ Pour cet increment WS1, oui : le chemin clarification/follow-up est module et te
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les gates qualite deterministes sont isoles et couverts directement, tout en gardant les reexports historiques. WS1 reste ouvert sur l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 11 — fichiers de support projet
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction des gates qualite, `codeOrchestrator.ts` restait a 2922 lignes.
+- Le bloc support projet generait README, runbook, `start.sh`, index/vite SPA, injection Tailwind et purge des fichiers synthetiques ; cette responsabilite est autonome par rapport aux phases LLM/correction.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction mecanique interne.
+- Choix retenu : creer `codeProjectSupportFiles.ts`, importer `upsertProjectSupportFiles` dans l'orchestrateur et reexporter `upsertProjectSupportFilesForTest` pour compatibilite.
+- Raison technique : conserver la surface de test existante tout en isolant les transformations de fichiers post-generation.
+
+### Modifications realisees
+
+- Ajout de `codeProjectSupportFiles.ts` pour runbook, README, `start.sh`, Tailwind CDN/tooling, index/vite SPA, purge `.bat`/fallbacks synthetiques.
+- `codeOrchestrator.ts` appelle le module au lieu de porter le bloc inline.
+- Ajout de `codeProjectSupportFiles.test.ts` pour verifier les supports attendus d'une SPA Vite et la purge des artefacts synthetiques.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 2922 lignes -> 2405 lignes.
+- `codeProjectSupportFiles.ts` : 527 lignes.
+- `codeProjectSupportFiles.test.ts` : 31 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectSupportFiles.test.ts` : 1 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeGeneratedFilesNormalization.test.ts` : 9 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 444 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la generation des supports projet est isolee dans un module sous 600 lignes, testee directement et compatible avec les tests historiques. WS1 reste ouvert sur l'orchestrateur et les deux vues.

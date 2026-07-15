@@ -94,6 +94,13 @@
 - **Validation** : test dedie gates qualite 3 verts / 0 echec ; tests ciblés web/3D/normalisation 18 verts / 0 echec ; glob Code a **443 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 11 applique
+
+- **Fichiers de support projet extraits de l'orchestrateur** : runbook, README, `start.sh`, injection Tailwind CDN, support SPA Vite/index.html, tooling Tailwind/PostCSS et purge des fallbacks synthetiques quittent `codeOrchestrator.ts` pour `codeProjectSupportFiles.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 2922 -> 2405 lignes. Nouveau module `codeProjectSupportFiles.ts` (527 lignes) et test dedie `codeProjectSupportFiles.test.ts` (31 lignes).
+- **Validation** : test dedie supports projet 1 vert / 0 echec ; normalisation generation 9 verts / 0 echec ; glob Code a **444 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
