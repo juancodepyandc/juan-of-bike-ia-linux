@@ -186,6 +186,15 @@
 - **Validation** : test dedie helpers vue 5 verts / 0 echec ; glob Code a **482 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 23 applique
+
+- **Generation CodeView extraite** : le callback principal de generation, la reprise apres reload, le streaming coalesce, la clarification et la sauvegarde finale quittent `CodeView.tsx` pour `codeViewGeneration.ts`.
+- **Chrome et helpers shell separes** : le decor/hero CodeView vit dans `codeViewChrome.tsx`; les libelles projet, le guide de brief, le label pipeline et la detection vision contexte vivent dans `codeViewShellHelpers.ts`.
+- **Seuil WS1 atteint cote CodeView principal** : `CodeView.tsx` descend sous 600 lignes et redevient un shell d'etat/callbacks lisible.
+- **Reduction mesurable** : `CodeView.tsx` 1071 -> 595 lignes. Nouveaux modules `codeViewGeneration.ts` (537 lignes), `codeViewChrome.tsx` (55 lignes), `codeViewShellHelpers.ts` (81 lignes). Test helpers vue etendu a 98 lignes.
+- **Validation** : test dedie helpers vue 8 verts / 0 echec ; glob Code a **485 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : seul `AuroraV1CodeView.tsx` depasse encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

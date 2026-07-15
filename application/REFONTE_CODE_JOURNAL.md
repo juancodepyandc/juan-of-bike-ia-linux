@@ -981,3 +981,44 @@ Pour cet increment WS1, oui : le panneau livraison est isole, sous seuil et le h
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la colonne de controle est extraite sans nouveau fichier >600 et le chemin global reste vert. WS1 reste ouvert sur la logique centrale de `CodeView.tsx` et sur `AuroraV1CodeView.tsx`.
+
+## 2026-07-15 — Vague 1 / WS1 increment 23 — generation et shell CodeView
+
+### Reprise et diagnostic confirme
+
+- Apres extraction de la colonne de controle, `CodeView.tsx` restait a 1071 lignes.
+- Le plus gros bloc restant etait le callback `generate` : preparation runtime, clarification, contexte multimodal, orchestration, streaming, validation, conversation, dev-server et payload de sauvegarde.
+- Les helpers shell restants (libelles de projet, guide, label pipeline, detection vision contexte) etaient purs et donc directement testables.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : deplacer la generation dans `codeViewGeneration.ts`, et isoler le chrome UI + helpers purs dans des modules dedies.
+- Raison technique : faire passer le `CodeView.tsx` principal sous le seuil WS1 sans changer le proprietaire des etats, tout en evitant un nouveau fichier >600 lignes.
+
+### Modifications realisees
+
+- Ajout de `codeViewGeneration.ts` pour `runCodeViewGeneration`, appele par le callback `generate` de `CodeView.tsx`.
+- Ajout de `codeViewChrome.tsx` pour le decor et le `StudioHero` du module Code.
+- Ajout de `codeViewShellHelpers.ts` pour `formatProjectType`, `codeContextNeedsVision`, `isVisionContextFile`, `buildCodePipelineLabel` et `CODE_VIEW_PROMPT_GUIDE`.
+- `codeViewExtractedHelpers.test.ts` couvre maintenant les helpers shell en plus des helpers langage, preview WebGL et recherche.
+
+### Avant / apres mesurable
+
+- `CodeView.tsx` : 1071 lignes -> 595 lignes.
+- `codeViewGeneration.ts` : 537 lignes.
+- `codeViewShellHelpers.ts` : 81 lignes.
+- `codeViewChrome.tsx` : 55 lignes.
+- `codeViewExtractedHelpers.test.ts` : 98 lignes.
+- Fichier Module Code encore >600 lignes : `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeViewExtractedHelpers.test.ts` : 8 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 485 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : `CodeView.tsx` est sous seuil, les modules extraits restent sous 600 lignes et les helpers purs sont testes. WS1 reste ouvert sur `AuroraV1CodeView.tsx`.

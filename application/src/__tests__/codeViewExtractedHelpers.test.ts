@@ -4,7 +4,14 @@ import assert from 'node:assert/strict'
 import { detectFileLanguage } from '../views/codeViewLanguage.ts'
 import { isHeavyWebGLProject } from '../views/codeViewPreviewHeuristics.ts'
 import { countFileSearchMatches } from '../views/codeViewSearch.ts'
+import {
+  buildCodePipelineLabel,
+  codeContextNeedsVision,
+  formatProjectType,
+  isVisionContextFile,
+} from '../views/codeViewShellHelpers.ts'
 import type { CodeFile } from '../services/codeOrchestrator.ts'
+import type { CodeIntent, CodeProjectType } from '../services/codeIntent.ts'
 
 const file = (name: string, content: string, language = 'plaintext'): CodeFile => ({
   name,
@@ -56,4 +63,36 @@ test('countFileSearchMatches echappe la recherche utilisateur', () => {
   assert.equal(countFileSearchMatches(content, 'button.'), 1)
   assert.equal(countFileSearchMatches(content, '['), 0)
   assert.equal(countFileSearchMatches(content, ''), 0)
+})
+
+test('formatProjectType expose les libelles UI et le fallback lisible', () => {
+  assert.equal(formatProjectType('spa_react'), 'App React (SPA)')
+  assert.equal(formatProjectType('custom_stack' as CodeProjectType), 'custom stack')
+})
+
+test('codeContextNeedsVision detecte images, pdf et tableurs', () => {
+  assert.equal(isVisionContextFile({ name: 'maquette.PNG', type: 'image/png' }), true)
+  assert.equal(isVisionContextFile({ name: 'brief.pdf', type: 'application/octet-stream' }), true)
+  assert.equal(codeContextNeedsVision([
+    { name: 'notes.txt', type: 'text/plain' },
+    { name: 'data.csv', type: 'text/csv' },
+  ]), true)
+  assert.equal(codeContextNeedsVision([{ name: 'notes.txt', type: 'text/plain' }]), false)
+})
+
+test('buildCodePipelineLabel reflete les etapes activees par lintent', () => {
+  assert.equal(
+    buildCodePipelineLabel(null),
+    'Intent, preflight local, planning, generation, sandbox, correction, preview.',
+  )
+
+  const intent = {
+    needsArchitecturePlanning: true,
+    needsDevServer: true,
+    previewType: 'dev_server',
+  } as CodeIntent
+  assert.equal(
+    buildCodePipelineLabel(intent),
+    'Preflight local → Planning archi → Generation modele expert → Sandbox isole → Boucle auto-correction → Dev server → Preview',
+  )
 })
