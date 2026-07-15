@@ -306,6 +306,15 @@
 - **Validation** : scan `rg` sur `src/services/code*` et `src/__tests__/code*` sans occurrence de chemin `.venv` ; `codeSandboxModules.test.ts` 18 verts ; glob Code a **531 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS7 reste ouvert** : ce durcissement retire un anti-pattern d'environnement, mais ne remplace pas encore l'isolation conteneurisee et les quotas.
 
+### 2026-07-15 — Vague 2 / WS7 increment 37 applique
+
+- **Preflight isolation bloquant** : `runCodeSandboxValidation` detecte Podman rootless + cgroups v2 avant toute commande executable ; si indisponible, il retourne un echec WS7 au lieu d'executer le code genere sur l'hote.
+- **Wrapper Podman par commande** : `codeSandboxIsolation.ts` encapsule les commandes dans `podman run --rm --pull=never`, avec `--userns keep-id`, `--security-opt no-new-privileges`, `--cap-drop ALL`, `--read-only`, reseau coupe par defaut et image par langage.
+- **Quotas branches** : plan Podman avec `--memory 2g`, `--cpus 2`, `--pids-limit 256`, `--ulimit fsize=1048576:1048576`, tmpfs `/tmp` et `/home/aurora` a 256m. Les installs utilisent `slirp4netns:allow_host_loopback=false` ; les autres commandes utilisent `--network none`.
+- **Preuve hote** : sur cette machine, `podman`/Firecracker sont absents et cgroups v2 est present ; le mode degrade documente est donc un echec propre demandant installation hors generation, pas un fallback dangereux.
+- **Validation** : `codeSandboxIsolation.test.ts` + tests sandbox/scoring cibles 30 verts / 0 echec ; glob Code a **536 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS7 reste ouvert** : la limitation disque totale du workspace bind-mounte, la preuve runtime de lecture hors conteneur impossible, le GC des sandboxes et le compromis GPU restent a livrer.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

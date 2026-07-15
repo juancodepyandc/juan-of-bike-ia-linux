@@ -1,11 +1,11 @@
 import { fsWriteText, getWorkspacePath, runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeFile, CodeSandboxResult, CodeSandboxStepResult, DetectedLanguage } from './codeSandboxTypes.ts'
-import { autoInstallRuntime, checkRuntimeAvailable, getExecutableRuntimeSpec } from './codeSandboxRuntime.ts'
 import { detectStructuredManifestIssue, normalizeSandboxFiles, writeSandboxFiles } from './codeSandboxFiles.ts'
-import { buildCommandsForLanguage, detectDominantLanguage, generateLaunchSh, getRuntimeSpec } from './codeSandboxCommands.ts'
+import { buildCommandsForLanguage, detectDominantLanguage, generateLaunchSh } from './codeSandboxCommands.ts'
 import { runNodeInstallWithAutoRepair } from './codeSandboxRegistryRepair.ts'
 import { withToolchainDiagnostics } from './codeToolchainDiagnostics.ts'
 import { buildAcceptanceCriteriaStep } from './codeAcceptanceCriteria.ts'
+import { buildSandboxIsolationStep, detectPodmanIsolation, wrapCommandForPodman } from './codeSandboxIsolation.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -97,47 +97,6 @@ export async function runCodeSandboxValidation({
     }
 
     lang = detectDominantLanguage(workingFiles)
-    const runtimeSpec = getRuntimeSpec(lang)
-
-    // Ensure required runtime is available, auto-install if missing
-    if (runtimeSpec) {
-      const available = await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
-      if (!available) {
-        setProgress?.(`Runtime ${runtimeSpec.cmd} introuvable — installation automatique...`)
-        setPhase?.(`Installation automatique de ${runtimeSpec.cmd}...`, 89)
-        const installResult = await autoInstallRuntime(runtimeSpec.install, sandboxRoot)
-        steps.push({
-          label: `Auto-install runtime (${runtimeSpec.cmd})`,
-          command: `auto-install:${runtimeSpec.cmd}`,
-          ok: installResult.ok,
-          output: installResult.output,
-        })
-        const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
-        if (!availableAfterInstall) {
-          return {
-            ok: false,
-            rootPath: sandboxRoot,
-            summary: `Le runtime ${runtimeSpec.cmd} reste indisponible apres preparation automatique. L environnement doit etre finalise avant de reprendre les corrections de code.`,
-            question: null,
-            steps,
-            detectedLanguage: lang,
-            normalizedFiles: workingFiles,
-          } satisfies CodeSandboxResult
-        }
-        if (!installResult.ok) {
-          return {
-            ok: false,
-            rootPath: sandboxRoot,
-            summary: `Impossible d'installer le runtime ${runtimeSpec.cmd} automatiquement. ${runtimeSpec.install.message ?? ''}`,
-            question: null,
-            steps,
-            detectedLanguage: lang,
-            normalizedFiles: workingFiles,
-          } satisfies CodeSandboxResult
-        }
-      }
-    }
-
     const commands = withToolchainDiagnostics(lang, workingFiles, buildCommandsForLanguage(lang, workingFiles))
 
     if (commands.length === 0) {
@@ -156,14 +115,30 @@ export async function runCodeSandboxValidation({
       } satisfies CodeSandboxResult
     }
 
+    const isolationStatus = await detectPodmanIsolation(sandboxRoot)
+    const isolationStep = buildSandboxIsolationStep(isolationStatus)
+    steps.push(isolationStep)
+    if (!isolationStatus.ok) {
+      return {
+        ok: false,
+        rootPath: sandboxRoot,
+        summary: `Validation conteneurisee WS7 indisponible: ${isolationStatus.reason}`,
+        question: null,
+        steps,
+        detectedLanguage: lang,
+        normalizedFiles: workingFiles,
+      } satisfies CodeSandboxResult
+    }
+
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index]
+      const runnableCommand = wrapCommandForPodman(command, lang, sandboxRoot)
       const progress = Math.min(96, 90 + Math.round(((index + 1) / commands.length) * 6))
       setProgress?.(`${command.label} dans le sandbox...`)
       setPhase?.(`${command.label} dans le sandbox...`, progress)
 
       if (lang === 'node' && /installer les dependances/i.test(command.label)) {
-        const installRun = await runNodeInstallWithAutoRepair(command, workingFiles, sandboxRoot)
+        const installRun = await runNodeInstallWithAutoRepair(runnableCommand, workingFiles, sandboxRoot)
         workingFiles = installRun.files
         steps.push(...installRun.steps)
 
@@ -182,35 +157,7 @@ export async function runCodeSandboxValidation({
         continue
       }
 
-      const commandRuntime = getExecutableRuntimeSpec(command.executable)
-      if (commandRuntime) {
-        const commandAvailable = await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
-        if (!commandAvailable) {
-          setProgress?.(`Commande ${commandRuntime.cmd} introuvable - installation automatique...`)
-          setPhase?.(`Preparation de ${commandRuntime.cmd} pour la validation...`, Math.min(95, progress))
-          const installResult = await autoInstallRuntime(commandRuntime.install, sandboxRoot)
-          steps.push({
-            label: `Auto-install command (${commandRuntime.cmd})`,
-            command: `auto-install:${commandRuntime.cmd}`,
-            ok: installResult.ok,
-            output: installResult.output,
-          })
-          const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
-          if (!availableAfterInstall) {
-            return {
-              ok: false,
-              rootPath: sandboxRoot,
-              summary: `La commande ${commandRuntime.cmd} reste indisponible apres preparation automatique. Le pipeline doit resoudre l environnement avant toute reparation de code.`,
-              question: null,
-              steps,
-              detectedLanguage: lang,
-              normalizedFiles: workingFiles,
-            } satisfies CodeSandboxResult
-          }
-        }
-      }
-
-      const result = await runWorkspaceCommand(command.executable, command.args, sandboxRoot, command.timeoutMs)
+      const result = await runWorkspaceCommand(runnableCommand.executable, runnableCommand.args, sandboxRoot, command.timeoutMs)
       // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
       const rawOutput = result.output.trim()
       const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput

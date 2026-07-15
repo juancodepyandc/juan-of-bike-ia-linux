@@ -1626,3 +1626,54 @@ Pour cet increment WS7, le premier verrou mesurable est leve : une generation n'
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, le contrat "pas de chemin `.venv` dans le Module Code" est durci et testable. WS7 reste ouvert pour le vrai conteneur rootless, les quotas, la coupure egress, le GC et les preuves d'isolation host/container.
+
+## 2026-07-15 — Vague 2 / WS7 increment 37 — preflight Podman rootless et wrapper de commandes
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre identifie le sandbox actuel comme dangereux : execution sur l'hote avec droits complets et validation cosmetique.
+- L'hote courant ne fournit ni `podman` ni Firecracker (`command -v podman` et `command -v firecracker` vides), mais expose cgroups v2 (`/sys/fs/cgroup/cgroup.controllers` contient `cpu`, `memory`, `pids`, etc.).
+- Continuer a executer du code genere directement sur l'hote violerait WS7 ; le mode degrade correct est donc un echec explicite avant execution, avec installation Podman hors generation.
+
+### Recherches et choix techniques
+
+- Aucune installation systeme : le prompt interdit les installs non interactives pendant une generation, et `sudo` n'est pas suppose disponible.
+- Choix retenu : preflight `podman --version` puis `podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupVersion}}'`.
+- Le runner ne fait plus de fallback hote pour les commandes executables : si Podman rootless/cgroups v2 manque, la validation echoue avant `npm`, `python`, `cargo`, etc.
+- Compromis explicite : les quotas CPU/memoire/PIDs/fsize/tmpfs sont branches dans le plan Podman ; la quota disque totale d'un workspace bind-mounte n'est pas encore une preuve suffisante contre disk-fill.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeSandboxIsolation.ts` :
+  - detection Podman rootless + cgroups v2 ;
+  - pas de diagnostic `internal:sandbox-isolation` ;
+  - mapping langage -> image OCI ;
+  - construction `podman run --rm --pull=never` ;
+  - quotas `memory=2g`, `cpus=2`, `pids=256`, `fsize=1048576`, tmpfs 256m ;
+  - `--security-opt no-new-privileges`, `--cap-drop ALL`, `--read-only`, `--userns keep-id` ;
+  - reseau `none` par defaut, et `slirp4netns:allow_host_loopback=false` pour les commandes d'installation.
+- `runCodeSandboxValidation` :
+  - construit les commandes toolchain ;
+  - si au moins une commande doit etre executee, lance le preflight isolation ;
+  - retourne un echec WS7 si l'isolation est indisponible ;
+  - encapsule chaque commande executable via Podman quand l'isolation est verte ;
+  - garde l'auto-repair npm dans le meme wrapper Podman.
+- Ajout de `src/__tests__/codeSandboxIsolation.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : `npm install`, `python -m pytest`, `cargo check` et autres commandes pouvaient s'executer directement dans `output/code-sandbox/<timestamp>` sur l'hote.
+- Apres : ces commandes sont refusees sans Podman rootless ; si Podman est disponible, elles deviennent `podman run ... <image> <commande>`.
+- Avant : aucun quota n'etait encode dans le plan d'execution.
+- Apres : les arguments Podman testent explicitement CPU, memoire, PIDs, taille de fichier et tmpfs.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxModules.test.ts src/__tests__/codeAcceptanceCriteria.test.ts src/__tests__/codeValidationScoring.test.ts` : 30 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 536 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, le plus gros risque est reduit : le Module Code ne doit plus executer silencieusement du code LLM sur l'hote quand le harnais conteneurise manque. WS7 reste ouvert sur la preuve runtime complete avec Podman installe, la limitation disque totale, le GC des sandboxes, les tests host-read/fork-bomb/disk-fill et le compromis GPU/nvidia-container-toolkit.
