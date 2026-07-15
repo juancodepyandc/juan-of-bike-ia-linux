@@ -116,6 +116,14 @@
 - **Validation** : tests dedies runtime/diagnostics 8 verts / 0 echec ; glob Code a **456 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 14 applique
+
+- **Phases pipeline extraites de l'orchestrateur** : classification intent, preflight, planning architecte, generation streaming, contexte pivot et validation d'utilisabilite du plan quittent `codeOrchestrator.ts` pour `codePipelinePhases.ts`.
+- **Imports lourds rendus paresseux** : Ollama, preflight et mission control sont charges dynamiquement dans les chemins LLM/preflight afin que les tests purs du module restent executables avec le runner Node natif.
+- **Reduction mesurable** : `codeOrchestrator.ts` 2034 -> 1596 lignes. Nouveau module `codePipelinePhases.ts` (400 lignes) et test dedie `codePipelinePhases.test.ts` (39 lignes).
+- **Validation** : test dedie phases 2 verts / 0 echec ; glob Code a **458 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

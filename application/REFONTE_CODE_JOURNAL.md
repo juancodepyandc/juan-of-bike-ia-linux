@@ -633,3 +633,47 @@ Pour cet increment WS1, oui : la validation projet est isolee, testee directemen
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les helpers transverses sont hors orchestrateur, sous seuil, testes directement et preparent la suite de l'extraction. WS1 reste ouvert sur l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 14 — phases pipeline
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction runtime/diagnostics, `codeOrchestrator.ts` restait a 2034 lignes.
+- Les phases intent/preflight/planning/generation formaient un bloc coherent, separe de la correction, des assets sujet et de la finalisation projet.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne.
+- Choix retenu : creer `codePipelinePhases.ts`, importer les phases depuis l'orchestrateur et conserver `classifyCodeIntent` localement uniquement pour le fallback fatal.
+- Raison technique : isoler les appels LLM/streaming et preparer l'extraction ulterieure de la boucle correction/validation sans changer l'API publique.
+- Ajustement technique : rendre les imports Ollama, preflight et mission control paresseux dans les chemins qui les executent, pour que les tests purs du module ne chargent pas des dependances UI non resolues par Node.
+
+### Modifications realisees
+
+- Ajout de `codePipelinePhases.ts` pour :
+  - `runIntentPhase` ;
+  - `runPreflightPhase` ;
+  - `runPlanningPhase` ;
+  - `runGenerationPhase` ;
+  - `GenerationPivotContext` ;
+  - `isArchitecturePlanUsable`.
+- `codeOrchestrator.ts` importe ces phases et ne porte plus le bloc generation streaming.
+- Ajout de `codePipelinePhases.test.ts` pour verifier un plan exploitable et la phase intent deterministe.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 2034 lignes -> 1596 lignes.
+- `codePipelinePhases.ts` : 400 lignes.
+- `codePipelinePhases.test.ts` : 39 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codePipelinePhases.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 458 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les phases initiales du pipeline sont isolees dans un module sous 600 lignes, testees sur leurs chemins deterministes et le pipeline global reste vert. WS1 reste ouvert sur la boucle correction/finalisation de l'orchestrateur et les deux vues.

@@ -6,21 +6,15 @@
 import type { OllamaMessage } from '../types/app'
 import {
   resilientOllamaChat,
-  resilientOllamaChatStream,
   resilientOllamaGenerate,
   type RecoveryEvent,
 } from './ollamaResilience'
 import {
   type CodeIntent,
   type CodeIntentContext,
-  buildArchitecturePlanningPrompt,
   classifyCodeIntent,
 } from './codeIntent'
-import {
-  buildArchitecteSystemPrompt,
-  buildCodeurSystemPrompt,
-  buildAuditeurSystemPrompt,
-} from './codeSystemPrompts'
+import { buildAuditeurSystemPrompt } from './codeSystemPrompts'
 import {
   buildAutonomousAssumptionNotes,
   buildCodeMissionDossier,
@@ -41,7 +35,6 @@ import { searchForSolution, researchBestPractices } from './codeResearch'
 import { runCodeSandboxValidation, type CodeSandboxResult, type CodeSandboxStepResult } from './codeSandbox'
 import { analyzeStuckCorrection, buildReasoningInstructions } from './codeReasoningEngine'
 import {
-  runCodePreflight,
   serializeCodePreflightReport,
   type CodePreflightReport,
 } from './codePreflight'
@@ -73,22 +66,22 @@ import {
 } from './codeProjectValidation.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS,
-  CODE_EXPERT_OUTPUT_TOKENS,
-  CODE_PLANNING_CONTEXT_TOKENS,
   CORRECTION_FIRST_BYTE_TIMEOUT_MS,
   CORRECTION_TIMEOUT_MS,
   DOCUMENTATION_EXTENSIONS_EARLY,
-  GENERATION_FIRST_BYTE_TIMEOUT_MS,
   INTERACTIVE_3D_FIDELITY_MAX_PASSES,
-  PLANNING_FIRST_BYTE_TIMEOUT_MS,
-  PLANNING_TIMEOUT_MS,
-  PREFLIGHT_PHASE_TIMEOUT_MS,
   RESEARCH_PHASE_TIMEOUT_MS,
-  STREAM_GENERATION_TOTAL_TIMEOUT_MS,
   clipText,
   getModelShortName,
   selectModel,
 } from './codePipelineRuntime.ts'
+import {
+  runGenerationPhase,
+  runIntentPhase,
+  runPlanningPhase,
+  runPreflightPhase,
+  type GenerationPivotContext,
+} from './codePipelinePhases.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
@@ -177,437 +170,6 @@ export type CodeOrchestrationResult = {
 }
 
 export type PhaseCallback = (detail: string, progress: number) => void
-
-function isArchitecturePlanUsable(plan: string | null) {
-  if (!plan) return false
-
-  const sectionHits = [
-    /###\s*comprehension/i.test(plan),
-    /###\s*stack/i.test(plan),
-    /###\s*fichiers a generer/i.test(plan),
-    /###\s*commandes/i.test(plan) || /###\s*commandes d installation/i.test(plan),
-  ].filter(Boolean).length
-  const listedFiles = (plan.match(/`[^`\n]+\.[a-z0-9]+`/gi) || []).length
-
-  return sectionHits >= 2 && listedFiles >= 2 && plan.trim().length > 180
-}
-
-// ---------------------------------------------------------------------------
-// Pipeline phases
-// ---------------------------------------------------------------------------
-
-/** Phase 1: Classify intent (deterministic, no LLM) */
-function runIntentPhase(
-  prompt: string,
-  setPhase: PhaseCallback,
-  context?: CodeIntentContext,
-): CodeIntent {
-  setPhase('Classification du projet...', 5)
-  return classifyCodeIntent(prompt, context)
-}
-
-/** Phase 1.5: Local preflight — inspect machine, workspace and current project before coding */
-async function runPreflightPhase(
-  prompt: string,
-  intent: CodeIntent,
-  existingFiles: CodeFile[],
-  configuredCodeModel: string,
-  setPhase: PhaseCallback,
-): Promise<CodePreflightReport | null> {
-  try {
-    setPhase('Preflight local: analyse machine, outils et fichiers existants...', 8)
-    return await withTimeout(runCodePreflight({
-      prompt,
-      intent,
-      existingFiles,
-      model: selectModel('planning', intent, 0, configuredCodeModel),
-      setPhase: (detail, progress) => setPhase(detail, Math.max(8, Math.min(18, progress))),
-    }), {
-      label: 'Code preflight',
-      timeoutMs: PREFLIGHT_PHASE_TIMEOUT_MS,
-    })
-  } catch (error) {
-    setPhase('Preflight local indisponible — poursuite avec les informations connues...', 12)
-    return null
-  }
-}
-
-/** Phase 2: Deep reasoning + architecture planning (LLM — ALWAYS runs) */
-async function runPlanningPhase(
-  prompt: string,
-  intent: CodeIntent,
-  preflightReport: CodePreflightReport | null,
-  configuredCodeModel: string,
-  setPhase: PhaseCallback,
-  onRecovery?: (event: RecoveryEvent) => void,
-): Promise<string | null> {
-  const model = selectModel('planning', intent, 0, configuredCodeModel)
-  setPhase(`Architecte en reflexion (${getModelShortName(model)})...`, 10)
-  // Injecter le system prompt ARCHITECTE dans le prompt
-  const planPrompt = [
-    buildArchitecteSystemPrompt(intent),
-    '',
-    '---',
-    '',
-    buildArchitecturePlanningPrompt(prompt, intent),
-    preflightReport
-      ? [
-          '### PREFLIGHT LOCAL OBLIGATOIRE',
-          'Le plan doit s appuyer sur ce diagnostic local avant toute decision de stack ou de configuration.',
-          serializeCodePreflightReport(preflightReport),
-        ].join('\n')
-      : '',
-  ].filter(Boolean).join('\n\n')
-
-  // Le planning a un vrai budget pour les apps complexes. Si le modele echoue
-  // malgre tout, les contrats deterministes prennent le relais.
-  try {
-    const response = await resilientOllamaGenerate(model, planPrompt, {
-      timeoutMs: PLANNING_TIMEOUT_MS,
-      firstByteTimeoutMs: PLANNING_FIRST_BYTE_TIMEOUT_MS,
-      // v85c : architecte prompt is several thousand tokens; 8192 holds it
-      // without risking the VRAM OOM that 16384 flirted with on a 16 GB card.
-      num_ctx: CODE_PLANNING_CONTEXT_TOKENS,
-      neverMemorySkip: true, // v85c : never refuse to plan on transient RAM pressure
-      onRecoveryAttempt: (ev) => {
-        // Ne log que les events critiques, pas les retries normaux
-        if (ev.action !== 'retry') {
-          setPhase(`Architecte — ${ev.action}...`, 16)
-          onRecovery?.(ev)
-        }
-      },
-    })
-    const plan = response?.response?.trim()
-    if (plan && isArchitecturePlanUsable(plan)) {
-      setPhase('Plan d architecture pret — lancement de la generation...', 25)
-      return plan
-    }
-    if (plan?.length) {
-      setPhase('Plan insuffisant — le Codeur operera en autonomie...', 22)
-    }
-    return null
-  } catch (planError) {
-    // Planning echoue — ce n'est PAS un echec critique, le Codeur peut operer seul
-    const msg = planError instanceof Error ? planError.message : String(planError)
-    console.warn('[CodeOrchestrator] Planning skipped:', msg)
-    setPhase('Architecte indisponible — generation directe par le Codeur...', 25)
-    return null
-  }
-}
-
-/** Context forwarded to the Codeur when the orchestrator has resolved a pivot. */
-export type GenerationPivotContext = {
-  kind: FollowUpKind
-  migrationSummary: string | null
-}
-
-/** Phase 3: Code generation (streaming) */
-async function runGenerationPhase(
-  prompt: string,
-  intent: CodeIntent,
-  preflightReport: CodePreflightReport | null,
-  architecturePlan: string | null,
-  missionDossier: CodeMissionDossier | null,
-  conversationHistory: OllamaMessage[],
-  existingFiles: CodeFile[],
-  contextImages: string[],
-  configuredCodeModel: string,
-  escalationLevel: number,
-  setPhase: PhaseCallback,
-  onToken: (token: string) => void,
-  onRecovery?: (event: RecoveryEvent) => void,
-  signal?: AbortSignal,
-  pivotContext?: GenerationPivotContext,
-): Promise<string> {
-  setPhase('Generation du code en direct...', 35)
-  const model = selectModel('generation', intent, escalationLevel, configuredCodeModel)
-
-  // System prompt CODEUR pour la phase de generation.
-  // v68: passer le prompt au builder pour activer la variante starter la plus
-  // pertinente (saas/portfolio/ecommerce/dashboard/landing) detectee depuis
-  // les mots-cles du prompt user.
-  const messages: OllamaMessage[] = [
-    { role: 'system', content: buildCodeurSystemPrompt(intent, prompt) },
-  ]
-
-  if (preflightReport) {
-    messages.push({
-      role: 'system',
-      content: [
-        '## PREFLIGHT LOCAL DU MODULE CODE',
-        '',
-        serializeCodePreflightReport(preflightReport),
-        '',
-        'Tu dois t appuyer sur ce preflight avant de fixer les versions, la stack, les scripts et les fichiers de configuration.',
-        'Ne code jamais a l aveugle si le preflight indique quoi inspecter ou reutiliser.',
-      ].join('\n'),
-    })
-  }
-
-  // Add architecture plan as detailed implementation guide (capped to protect context window)
-  if (architecturePlan) {
-    // v85c : 12000 -> 7000. On a 16 GB / 16384-ctx budget the plan competes
-    // with the system prompt + existing files for input room; 7000 chars
-    // (~1750 tokens) is enough to guide generation without starving output.
-    const cappedPlan = architecturePlan.length > 7000
-      ? `${architecturePlan.slice(0, 7000)}\n...[plan tronque]`
-      : architecturePlan
-    messages.push({
-      role: 'system',
-      content: [
-        '## PLAN D IMPLEMENTATION DETAILLE (cree par l architecte — SUIS-LE STRICTEMENT)',
-        '',
-        cappedPlan,
-        '',
-        'INSTRUCTIONS:',
-        '- Genere TOUS les fichiers listes dans le plan, dans l ordre indique',
-        '- Respecte les dependances et versions specifiees',
-        '- Inclus un fichier README.md avec les commandes d installation et de lancement',
-        '- Le design DOIT correspondre aux specs UX du plan',
-        '- Chaque fichier doit etre COMPLET et fonctionnel',
-      ].join('\n'),
-    })
-  } else {
-    // No plan available — add minimal README instruction
-    messages.push({
-      role: 'system',
-      content: [
-        'INSTRUCTION SUPPLEMENTAIRE:',
-        '- Genere un fichier README.md qui explique comment installer et lancer le projet',
-        '- Le README doit contenir: description, pre-requis, installation, lancement, structure du projet',
-      ].join('\n'),
-    })
-  }
-
-  if (missionDossier) {
-    messages.push({
-      role: 'system',
-      content: [
-        '## DOSSIER EXECUTIF DU MODULE CODE',
-        '',
-        serializeCodeMissionDossier(missionDossier),
-        '',
-        'Respecte ce dossier avant toute optimisation locale ou toute improvisation.',
-      ].join('\n'),
-    })
-  }
-
-  // Add conversation history (capped to avoid context overflow)
-  const recentHistory = conversationHistory.length > 8
-    ? conversationHistory.slice(-8)
-    : conversationHistory
-  messages.push(...recentHistory)
-
-  // Pivot-aware context: when the user asked for a platform pivot we do NOT
-  // show the old code (that is exactly what made the model keep generating
-  // HTML when the user asked for Python). Instead we inject a MIGRATION
-  // block describing the business concept to carry over, and leave the
-  // Codeur free to produce the new stack from scratch.
-  if (pivotContext && pivotContext.kind === 'pivot_platform') {
-    messages.push({
-      role: 'user',
-      content: [
-        '## MIGRATION DE PROJET — PIVOT DE STACK DEMANDE',
-        'L utilisateur a demande de REFAIRE LE MEME CONCEPT sur une autre stack / un autre langage.',
-        'Ne reutilise PAS la stack precedente. Reimplemente le concept AU PROPRE, idiomatique, dans la nouvelle stack.',
-        pivotContext.migrationSummary
-          ? `\n### Concept metier a conserver\n${pivotContext.migrationSummary}`
-          : '',
-        '',
-        '### REGLES',
-        '- Genere un projet neuf, complet, idiomatique dans la nouvelle stack.',
-        '- NE PRODUIS PAS de fichiers HTML/CSS/JS si la nouvelle stack est Python / Go / Rust / Java / etc.',
-        '- NE PRODUIS PAS de fichier Python si la nouvelle stack est web pure. Suis RIGOUREUSEMENT le projet detecte.',
-        '- Respecte le format de sortie `--- FICHIER: chemin ---` pour chaque fichier complet.',
-        '- Inclure un README.md decrivant comment installer et lancer le nouveau projet.',
-      ].filter(Boolean).join('\n'),
-    })
-  } else if (existingFiles.length > 0) {
-    // Classic follow-up (increment / pivot_feature / no pivot): we show the
-    // existing files so the Codeur patches them surgically.
-    // v85c : budget-based inclusion. The old fixed 4000-char/file cap meant a
-    // real project (a 12k-char index.html) was only shown up to char 4000 —
-    // so the model "preserved" by REGENERATING a leaner file (a live test
-    // showed index.html shrink 17.5k -> 10.7k on a simple modification). We
-    // show each file in full until a ~13000-char pool is exhausted — enough to
-    // show typical files verbatim (so modifications preserve them) while
-    // keeping the follow-up prompt within the 12288 generation window so the
-    // output still has room. Overflow files are truncated with a keep-note.
-    let fileBudget = 13000
-    const fileBlocks: string[] = []
-    let shownCount = 0
-    for (const f of existingFiles) {
-      if (fileBudget <= 400) break
-      const perCap = Math.min(f.content.length, Math.max(2000, fileBudget))
-      const body = f.content.length > perCap
-        ? `${f.content.slice(0, perCap)}\n...[fichier tronque: ${f.content.length} chars — le reste est conserve, NE le supprime pas]`
-        : f.content
-      fileBlocks.push(`--- FICHIER: ${f.name} ---\n\`\`\`${f.language}\n${body}\n\`\`\``)
-      fileBudget -= body.length
-      shownCount += 1
-    }
-    const omitted = existingFiles.length - shownCount
-    messages.push({
-      role: 'user',
-      content: [
-        '## CONTEXTE DU PROJET EXISTANT (tu es en mode "suite de conversation")',
-        'Ce projet a deja ete genere. La nouvelle instruction utilisateur est une modification / ajout / retrait, PAS une demande de reconstruction.',
-        pivotContext?.kind === 'pivot_feature'
-          ? 'Mode: evolution majeure d une feature existante. Garde la meme stack, mais autorise des reecritures consequentes des fichiers concernes.'
-          : '',
-        '',
-        '### REGLES DE MODIFICATION',
-        '- Analyse l intention: ajout (nouvelle section/feature), retrait (section a enlever), changement (couleur/texte/comportement), refactor (structure interne).',
-        '- Ne touche QUE ce qui est demande. Ne refactore rien qui fonctionne deja. Ne regenere pas les fichiers inchanges.',
-        '- REGLE: quand tu retournes un fichier modifie, REPRENDS tout son contenu d origine et n applique QUE le changement demande. Ne resume pas, ne supprime aucune section existante qui n est pas explicitement visee par la demande.',
-        '- Pour CHAQUE fichier que tu RETOURNES, il doit etre COMPLET (pas de diff, pas de ...).',
-        '- Si un fichier ne change pas, NE le retourne PAS — il sera conserve automatiquement.',
-        '- Si un fichier est renomme, fais-le proprement (retourner l ancien fichier vide n a aucun effet, retourner le nouveau nom suffit — l orchestrateur gere le delta).',
-        '- Conserve imperativement: palette, typographie, structure globale, conventions de nommage, style des animations, ET tout le contenu existant non vise par la demande.',
-        '- Si la modification demande une section ou un asset qui n existe pas encore, cree-le en respectant le style deja etabli (meme font, meme vocabulaire d animations, meme espacement).',
-        '',
-        '### FICHIERS DEJA EN PLACE (a reprendre INTEGRALEMENT quand tu les modifies):',
-        ...fileBlocks,
-        omitted > 0
-          ? `...et ${omitted} autre(s) fichier(s) non montre(s) ici — ils restent en place, NE les supprime pas.`
-          : '',
-        'IMPORTANT: Chaque fichier que tu retournes doit etre COMPLET et reprendre tout l existant + la modification. Les fichiers non retournes sont conserves intacts.',
-        'IMPORTANT: Tu es en mode SUITE, pas en mode creation from scratch — reutilise ce qui est deja construit.',
-      ].filter(Boolean).join('\n\n'),
-    })
-  }
-
-  // Add user prompt
-  // v62: pour les projets visuels, on prefixe le user prompt avec un rappel
-  // EXPLICITE du design contract afin que le LLM ne l ecrase pas avec ses
-  // habitudes "tutoriel". Le system prompt contient deja le contract complet
-  // mais les LLMs locaux (qwen3-coder, llama4:scout) tendent a se concentrer
-  // sur la derniere consigne — donc on remet le coup de marteau juste avant
-  // la demande effective.
-  const designReminder = isVisualProjectType(intent.projectType)
-    ? [
-        '',
-        '═══════════════════════════════════════════════════════════════',
-        'RAPPEL DESIGN POUSSE — NON NEGOCIABLE',
-        '═══════════════════════════════════════════════════════════════',
-        '- Hero full-height (min-height:100vh) avec headline clamp(2.8rem, 6vw, 5.5rem) bold + visuel a droite (SVG inline / canvas / mesh gradient).',
-        '- Mesh gradient en arriere-plan hero (2-3 blobs filter:blur(120px) absolute, animes via @keyframes).',
-        '- Police Google Fonts premium (Inter / Manrope / Satoshi / DM Sans / Space Grotesk / Plus Jakarta) avec preconnect.',
-        '- 7+ sections distinctes: nav fixed (backdrop-blur au scroll), hero, features grid 3 cols, showcase/gallery, testimonials/numbers, CTA final, footer 4 cols.',
-        '- 7+ micro-interactions parmi: scroll reveal IntersectionObserver, nav qui change au scroll, parallax hero, hover cards (scale 1.02 + zoom image + overlay), counters anime, magnetic buttons, blob mousemove, stagger fade-in, gradient mesh anime, marquee carousel.',
-        '- Mode sombre/clair avec data-theme + localStorage + prefers-color-scheme.',
-        '- CSS variables completes (--color-*, --space-*, --radius-*, --shadow-*, --duration-*, --ease-*).',
-        '- Glassmorphism (backdrop-filter:blur 14px) et shadows composites multi-layer.',
-        '',
-        'INTERDICTIONS qui declenchent un REJET et regeneration:',
-        '- <h1>Bienvenue</h1> sans style. background:blue uni. boutons sans radius/transition.',
-        '- font-family Arial/Times/sans-serif default.',
-        '- table comme layout. zero animation. <img> casse.',
-        '═══════════════════════════════════════════════════════════════',
-        '',
-        'DEMANDE UTILISATEUR (a traiter avec design pousse):',
-      ].join('\n')
-    : ''
-  // Anti-skeleton clause. With a plan + dossier in context, local models can
-  // emit a SKELETON that just mirrors the plan headings
-  // (the live test dropped from ~13k chars solo to ~3.8k in the pipeline). This
-  // forces complete, fleshed-out code for every file/section.
-  const completenessDirective = [
-    '═══════════════════════════════════════════════════════════════',
-    'COMPLÉTUDE — NON NÉGOCIABLE',
-    '- Génère le code COMPLET et INTÉGRAL de CHAQUE fichier. Pas de squelette,',
-    '  pas de résumé du plan, pas de commentaire "<!-- section ici -->" ou "// à compléter".',
-    '- CHAQUE section/fonctionnalité demandée est ENTIÈREMENT implémentée : vrai',
-    '  contenu (textes réels, pas "lorem"), styles complets, et le JS qui la fait fonctionner.',
-    '- Toute interactivité demandée (toggle, accordéon, onglets, carrousel, panier…)',
-    '  DOIT avoir son JavaScript complet et fonctionnel (addEventListener, handlers).',
-    '- Si tu références un fichier local (style.css, script.js), tu DOIS le générer aussi,',
-    '  COMPLET. Ne laisse jamais un <link>/<script> pointer vers un fichier absent.',
-    '- Si tu utilises des classes utilitaires Tailwind, inclus <script src="https://cdn.tailwindcss.com"></script>',
-    '  dans le <head> ; sinon écris du vrai CSS qui style réellement la page (jamais d\'écran nu).',
-    '- Vise un résultat RICHE : pour une page/app complète, plusieurs centaines de lignes.',
-    '═══════════════════════════════════════════════════════════════',
-    '',
-  ].join('\n')
-  const userMessage: OllamaMessage = {
-    role: 'user',
-    content: `${completenessDirective}${designReminder ? `${designReminder}\n` : ''}${prompt}`,
-  }
-  if (contextImages.length > 0) {
-    userMessage.images = contextImages
-  }
-  messages.push(userMessage)
-
-  // Use array chunks instead of string concatenation to avoid O(n²) memory usage
-  // String concatenation creates a new string for every token → can crash on large outputs
-  const contentChunks: string[] = []
-  const generationSignal = signal
-    ? AbortSignal.any([signal, AbortSignal.timeout(STREAM_GENERATION_TOTAL_TIMEOUT_MS)])
-    : AbortSignal.timeout(STREAM_GENERATION_TOTAL_TIMEOUT_MS)
-  try {
-  // v85c : explicit context + output budget, TUNED FOR 16 GB VRAM. The old
-  // code passed nothing → Ollama's ~4096 default truncated the stacked CODEUR
-  // prompt + plan + existing files, giving simplistic, cut-off projects. The
-  // first oversized attempt went too far and OOM'd on the SECOND
-  // pipeline run (VRAM tighter) → the resilience layer learned a high memory
-  // floor → memory_guard then skipped the model on every retry (storm). 12288
-  // expert context starts high and is reduced by resilience if memory is tight.
-  // headroom, so it never OOMs → no learned-floor cascade. Big projects are
-  // built iteratively across turns, not crammed into one window. Resilience
-  // still degrades to 4096/2048 on any OOM and shrinks num_predict with it.
-  await resilientOllamaChatStream(
-    model,
-    messages,
-    (token) => {
-      contentChunks.push(token)
-      onToken(token)
-    },
-    () => { /* done — resolved by the promise wrapper inside resilient */ },
-    {
-      signal: generationSignal,
-      // Preset officiel Qwen3-Coder (temp 0.7 / top_p 0.8 / top_k 20 / repeat 1.05),
-      // abaisse a 0.3 pour du code plus deterministe sans etrangler l'echantillonnage.
-      // NB: l'ancien top_p 0.1 etait a la fois trop etroit (boucles de repetition sur
-      // un MoE) ET jamais transmis par la couche de resilience — donc sans effet.
-      temperature: 0.3,
-      top_p: 0.8,
-      top_k: 20,
-      repeat_penalty: 1.05,
-      // Large enough for the system prompt + plan + existing files + a real
-      // multi-file output; resilience reduces it if the local runtime OOMs.
-      num_ctx: CODE_EXPERT_CONTEXT_TOKENS,
-      num_predict: CODE_EXPERT_OUTPUT_TOKENS,
-      firstByteTimeoutMs: GENERATION_FIRST_BYTE_TIMEOUT_MS,
-      neverMemorySkip: true, // v85c : the routed code model must always run
-      onRecoveryAttempt: (ev) => {
-        setPhase(`Generation — auto-reparation: ${ev.action}...`, 38)
-        onRecovery?.(ev)
-      },
-    },
-  )
-  } catch (error) {
-    const timedOut = error instanceof DOMException && error.name === 'AbortError' && !signal?.aborted
-    if (timedOut) {
-      setPhase('Generation time-boxee — poursuite avec le draft partiel...', 44)
-      const partialContent = contentChunks.join('')
-      // Detect truncation: if the last file section has an unclosed code block, it was cut mid-generation
-      const lastFileMarker = partialContent.lastIndexOf('--- FICHIER:')
-      if (lastFileMarker > 0) {
-        const afterMarker = partialContent.slice(lastFileMarker)
-        const openBlocks = (afterMarker.match(/```\w+/g) || []).length
-        const closeBlocks = (afterMarker.match(/\n```\s*$/gm) || []).length
-        if (openBlocks > closeBlocks) {
-          // Truncated file — close it so at least the complete files are parseable
-          return partialContent + '\n```\n'
-        }
-      }
-      return partialContent
-    }
-    throw error
-  }
-
-  return contentChunks.join('')
-}
 
 /** Calculate a granular score from sandbox results AND content quality */
 function computeSandboxScore(sandboxResult: CodeSandboxResult, files: CodeFile[], intent: CodeIntent): number {
