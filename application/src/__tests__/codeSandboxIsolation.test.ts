@@ -63,6 +63,13 @@ describe('codeSandboxIsolation', () => {
     assert.equal(args[networkIndex + 1], 'slirp4netns:allow_host_loopback=false')
   })
 
+  test('buildPodmanSandboxArgs expose le GPU NVIDIA uniquement sur demande', () => {
+    const args = buildPodmanSandboxArgs(buildCommand, 'node', '/tmp/aurora/ws', DEFAULT_SANDBOX_QUOTAS, { gpu: true })
+
+    assert.match(args.join(' '), /--device nvidia\.com\/gpu=all/)
+    assert.match(args.join(' '), /--security-opt label=disable/)
+  })
+
   test('wrapCommandForPodman conserve label, timeout et optional', () => {
     const wrapped = wrapCommandForPodman({ ...buildCommand, optional: true }, 'node', '/tmp/aurora/ws')
 

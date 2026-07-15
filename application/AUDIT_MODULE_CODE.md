@@ -332,6 +332,14 @@
 - **Validation** : `codeSandboxIsolationProbes.test.ts` + tests isolation/GC/sandbox cibles 32 verts / 0 echec ; glob Code a **545 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS7 reste ouvert** : probes prêtes, mais preuve runtime effective encore dependante de Podman installe ; disque total workspace et GPU restent a traiter.
 
+### 2026-07-15 — Vague 2 / WS7 increment 40 applique
+
+- **GPU conteneurise branche** : `codeSandboxGpu.ts` detecte les signaux WebGL/WebGPU/CUDA/NVIDIA dans le brief et les fichiers ; si GPU requis, le harnais exige `nvidia-smi` hote + `nvidia-ctk cdi list` avec `nvidia.com/gpu=all`.
+- **Exposition GPU Podman** : `buildPodmanSandboxArgs` ajoute `--security-opt label=disable --device nvidia.com/gpu=all` uniquement quand le preflight CDI est vert ; pas de fallback hote silencieux.
+- **Mode degrade documente** : sur cet hote, `nvidia-smi -L` voit la RTX 5070 Ti, mais `podman` et `nvidia-ctk` sont absents ; les projets GPU restent donc bloques proprement jusqu'a installation hors generation.
+- **Validation** : tests GPU/isolation/probes/GC/sandbox cibles 38 verts / 0 echec ; glob Code a **551 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS7 reste ouvert** : GPU policy livree ; restent la limitation disque totale workspace, l'egress strictement limite aux registres, et l'execution runtime effective sur hote equipe Podman+nvidia-container-toolkit.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

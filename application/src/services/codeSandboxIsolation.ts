@@ -1,5 +1,6 @@
 import { runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeSandboxStepResult, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
+import { buildPodmanGpuArgs } from './codeSandboxGpu.ts'
 
 export type SandboxIsolationStatus = {
   ok: boolean
@@ -15,6 +16,10 @@ export type SandboxQuotaProfile = {
   pidsLimit: string
   fileSizeBlocks: string
   tmpfsSize: string
+}
+
+export type PodmanSandboxOptions = {
+  gpu?: boolean
 }
 
 export const DEFAULT_SANDBOX_QUOTAS: SandboxQuotaProfile = {
@@ -149,6 +154,7 @@ export function buildPodmanSandboxArgs(
   lang: DetectedLanguage,
   sandboxRoot: string,
   quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
+  options: PodmanSandboxOptions = {},
 ): string[] {
   return [
     'run',
@@ -162,6 +168,7 @@ export function buildPodmanSandboxArgs(
     'keep-id',
     '--security-opt',
     'no-new-privileges',
+    ...buildPodmanGpuArgs(Boolean(options.gpu)),
     '--cap-drop',
     'ALL',
     '--pids-limit',
@@ -191,10 +198,11 @@ export function wrapCommandForPodman(
   command: ValidationCommand,
   lang: DetectedLanguage,
   sandboxRoot: string,
+  options: PodmanSandboxOptions = {},
 ): ValidationCommand {
   return {
     ...command,
     executable: 'podman',
-    args: buildPodmanSandboxArgs(command, lang, sandboxRoot),
+    args: buildPodmanSandboxArgs(command, lang, sandboxRoot, DEFAULT_SANDBOX_QUOTAS, options),
   }
 }

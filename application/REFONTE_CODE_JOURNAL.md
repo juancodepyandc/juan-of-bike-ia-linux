@@ -1776,3 +1776,51 @@ Pour cet increment WS7, le GC des sandboxes est livre sans ajouter de commande s
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, les preuves d'isolation sont maintenant dans le chemin de validation quand Podman sera disponible. WS7 reste ouvert sur l'execution runtime effective sur une machine equipee, la limitation disque totale, l'egress strictement limite aux registres et le compromis GPU/nvidia-container-toolkit.
+
+## 2026-07-15 — Vague 2 / WS7 increment 40 — GPU NVIDIA via CDI Podman
+
+### Reprise et diagnostic confirme
+
+- WS7 demande explicitement que les tests GPU (WebGL/WebGPU/CUDA) exposent le GPU au conteneur via `nvidia-container-toolkit`, ou documentent un compromis d'isolation.
+- L'increment 37 savait isoler les commandes dans Podman, mais ne differenciait pas les projets GPU.
+- L'hote courant a un GPU visible (`nvidia-smi -L` -> RTX 5070 Ti), mais `podman` et `nvidia-ctk` sont absents ; aucun run GPU conteneurise local ne peut donc etre prouve aujourd'hui.
+
+### Recherches et choix techniques
+
+- Sources officielles consultees :
+  - NVIDIA Container Toolkit CDI : `https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/cdi-support.html`.
+  - NVIDIA sample workload Podman : `https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/sample-workload.html`.
+- Choix retenu : utiliser CDI, comme recommande par NVIDIA pour Podman, avec le device `nvidia.com/gpu=all`.
+- Choix de securite : ne pas executer de code genere GPU sur l'hote en fallback tant que les quotas hote equivalentes au conteneur ne sont pas prouves. Le harnais bloque donc proprement et documente l'installation requise.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeSandboxGpu.ts` :
+  - detection des signaux GPU dans brief et fichiers ;
+  - preflight `nvidia-smi -L` ;
+  - preflight `nvidia-ctk cdi list` exigeant `nvidia.com/gpu=all` ;
+  - construction du step `internal:sandbox-gpu`.
+- `codeSandboxIsolation.ts` accepte une option `{ gpu: true }` et ajoute `--security-opt label=disable --device nvidia.com/gpu=all` aux commandes Podman.
+- `runCodeSandboxValidation` :
+  - execute le preflight GPU seulement si des signaux GPU existent ;
+  - bloque les projets GPU si CDI n'est pas disponible ;
+  - passe l'option GPU aux commandes projet uniquement apres preflight vert.
+- Ajout de `src/__tests__/codeSandboxGpu.test.ts` et extension de `codeSandboxIsolation.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : un projet WebGPU/CUDA suivait le meme chemin qu'un projet CPU et n'avait aucun contrat explicite d'exposition GPU.
+- Apres : un projet GPU exige une preuve CDI avant validation projet.
+- Avant : le compromis GPU etait une dette documentaire.
+- Apres : le fallback hote non isole est refuse par defaut ; le mode degrade est explicite et testable.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxGpu.test.ts src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxIsolationProbes.test.ts src/__tests__/codeSandboxGc.test.ts src/__tests__/codeSandboxModules.test.ts` : 38 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 551 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, les projets GPU ne peuvent plus passer par le harnais comme des projets CPU ordinaires. La vraie preuve runtime reste dependante d'un hote equipe de Podman rootless et du NVIDIA Container Toolkit/CDI ; le disque total et l'egress registry-only restent ouverts.

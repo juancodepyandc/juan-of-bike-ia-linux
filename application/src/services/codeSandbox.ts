@@ -8,6 +8,12 @@ import { buildAcceptanceCriteriaStep } from './codeAcceptanceCriteria.ts'
 import { buildSandboxIsolationStep, detectPodmanIsolation, wrapCommandForPodman } from './codeSandboxIsolation.ts'
 import { buildSandboxGcStep, collectCodeSandboxGarbage } from './codeSandboxGc.ts'
 import { runSandboxIsolationProbes } from './codeSandboxIsolationProbes.ts'
+import {
+  buildSandboxGpuStep,
+  detectPodmanGpuSupport,
+  detectSandboxGpuRequirement,
+  noSandboxGpuRequired,
+} from './codeSandboxGpu.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -162,9 +168,28 @@ export async function runCodeSandboxValidation({
       } satisfies CodeSandboxResult
     }
 
+    const gpuRequirement = detectSandboxGpuRequirement(prompt, workingFiles)
+    const gpuStatus = gpuRequirement.required
+      ? await detectPodmanGpuSupport(sandboxRoot)
+      : noSandboxGpuRequired()
+    if (gpuRequirement.required) {
+      steps.push(buildSandboxGpuStep(gpuRequirement, gpuStatus))
+      if (!gpuStatus.ok) {
+        return {
+          ok: false,
+          rootPath: sandboxRoot,
+          summary: `Validation GPU WS7 indisponible: ${gpuStatus.reason}`,
+          question: null,
+          steps,
+          detectedLanguage: lang,
+          normalizedFiles: workingFiles,
+        } satisfies CodeSandboxResult
+      }
+    }
+
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index]
-      const runnableCommand = wrapCommandForPodman(command, lang, sandboxRoot)
+      const runnableCommand = wrapCommandForPodman(command, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi' })
       const progress = Math.min(96, 90 + Math.round(((index + 1) / commands.length) * 6))
       setProgress?.(`${command.label} dans le sandbox...`)
       setPhase?.(`${command.label} dans le sandbox...`, progress)
