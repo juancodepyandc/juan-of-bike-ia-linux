@@ -1195,3 +1195,47 @@ Pour cet increment WS2, oui : le format a longueur declaree existe et les cas qu
 ### Etat de satisfaction chantier
 
 Pour cet increment WS2, oui : le protocole n'est plus un module mort, il est demande par les prompts et consomme par les parseurs sans regression. WS2 reste ouvert sur le writer disque Tauri et le round-trip ecrire/relire reel.
+
+## 2026-07-15 — Vague 1 / WS2 increment 28 — writer disque ProjectTree
+
+### Reprise et diagnostic confirme
+
+- WS2 exige un writer disque reel via l'API fs Tauri et un round-trip parse -> ecrire -> relire sur des projets pieges.
+- Les wrappers existants dans `useTauri.ts` exposent deja `fsMkdir`, `fsWriteText`, `fsWriteBinary`, `fsReadText` et `fsReadBinary`; il fallait les utiliser comme API locale sans ajouter de nouveau bridge.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : integration avec l'API Tauri deja presente dans le depot.
+- Choix retenu : writer dedie `codeProjectWriter.ts` avec backend FS injectable. En production, il utilise les wrappers Tauri; en test, un FS memoire prouve le round-trip sans effet de bord disque.
+- Choix binaire : les fichiers `encoding="base64"` sont decodes en bytes a l'ecriture et re-encodes a la lecture. Cela evite le faux support binaire qui consisterait a ecrire la base64 comme texte.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeProjectWriter.ts` avec :
+  - `writeProjectTreeToDirectory` ;
+  - `readProjectTreeFromDirectory` ;
+  - `roundTripProjectTreeOnFs` ;
+  - helpers base64 bytes et `joinProjectRoot`.
+- Ajout de `src/__tests__/codeProjectWriter.test.ts` couvrant :
+  - parse -> write -> read sur contenu avec `---`, backticks et `<<<AURORA_END>>>` ;
+  - arborescence multi-niveaux ;
+  - fichier sans extension `Dockerfile` ;
+  - binaire base64/WASM ecrit en bytes puis relu sans perte.
+
+### Avant / apres mesurable
+
+- Avant : `ProjectTree` et protocole parseables, mais aucun writer Tauri dedie ni round-trip fichier.
+- Apres : `codeProjectWriter.ts` 176 lignes, `codeProjectWriter.test.ts` 87 lignes.
+- Baseline Code : 500 tests verts apres branchement prompts/parseurs -> 503 tests verts apres writer.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectWriter.test.ts` : 3 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 503 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+- Scan WS1 fichiers Module Code >600 lignes : aucun resultat.
+
+### Etat de satisfaction chantier
+
+Pour WS2 fondations, oui : le modele de projet, le graphe d'imports, le protocole a longueur declaree, le parsing compatible, les prompts et le writer Tauri sont en place et testes. Les prochains chantiers devront s'appuyer sur ce socle pour remplacer progressivement les chemins `CodeFile[]` plats dans WS3/WS5.

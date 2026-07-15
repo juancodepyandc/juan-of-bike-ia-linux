@@ -230,6 +230,14 @@
 - **Validation** : tests parseurs/prompts cibles 90 verts / 0 echec ; glob Code a **500 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; scan WS1 toujours vert.
 - **WS2 reste ouvert** : le writer disque Tauri et le round-trip ecrire/relire reel restent a livrer pour cloturer les criteres d'acceptation.
 
+### 2026-07-15 — Vague 1 / WS2 increment 28 applique
+
+- **Writer disque WS2 introduit** : `codeProjectWriter.ts` ecrit un `ProjectTree` via les wrappers fs Tauri existants (`fsMkdir`, `fsWriteText`, `fsWriteBinary`) et peut relire via `fsReadText`/`fsReadBinary`.
+- **Round-trip prouve** : test `parse -> write -> read` sur contenu piege (`---`, backticks, marqueur interne), arborescence multi-niveaux, `Dockerfile` et binaire base64/WASM.
+- **Support binaire reel** : les fichiers `encoding="base64"` sont decodes en bytes a l'ecriture puis re-encodes a la lecture, au lieu d'etre ecrits comme texte base64.
+- **Validation** : test dedie writer 3 verts / 0 echec ; glob Code a **503 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; scan WS1 toujours vert.
+- **WS2 cloturable cote fondation** : `ProjectTree`, graphe d'imports, protocole longueur declaree, parseurs, prompts et writer sont presents. Les integrations profondes WS3/WS5 devront maintenant utiliser ce socle plutot que les listes plates.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
