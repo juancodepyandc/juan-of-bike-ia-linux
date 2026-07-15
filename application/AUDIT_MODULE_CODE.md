@@ -66,6 +66,13 @@
 - **Validation** : tests dedies statiques + boucle 54 verts / 0 echec ; glob Code a **429 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : seuls `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 7 applique
+
+- **Parsing/sanitation extraits de l'orchestrateur** : detection de refus LLM, parsing du contrat `--- FICHIER: ---`, detection de langage, notes, nettoyage JSON/TSConfig/manifest et reparation de dependances quittent `codeOrchestrator.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 4798 -> 4047 lignes. Nouveaux modules : `codeGeneratedFileSanitizer.ts` (471), `codeGeneratedFileParser.ts` (253), `codeLLMRefusal.ts` (66).
+- **Validation** : test dedie parsing/sanitation 6 verts / 0 echec ; glob Code a **435 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
