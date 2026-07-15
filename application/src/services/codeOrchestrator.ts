@@ -19,10 +19,8 @@ import {
   type CodeMissionDossier,
 } from './codeMissionControl'
 import type { CorrectionPass } from './codeAutoCorrection'
-import { researchBestPractices } from './codeResearch'
 import type { CodeSandboxResult } from './codeSandbox'
 import type { CodePreflightReport } from './codePreflight'
-import { withTimeout } from './llmTimebox'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
 import { parseCodeFiles, serializeCodeFiles, extractNotes, detectNonCodePlanningNarrative } from './codeGeneratedFileParser.ts'
 export { isLLMRefusal } from './codeLLMRefusal.ts'
@@ -34,8 +32,6 @@ import {
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
 import {
   applySubjectImagePlaceholder,
-  fetchBrandProfileFromBridge,
-  fetchSubjectImages,
   mergeExistingWithUpdates,
 } from './codeSubjectAssets.ts'
 import { evaluateBrandFidelity, type BrandFidelityReport } from './codeFidelityGate'
@@ -44,7 +40,6 @@ export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
 import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import {
   DOCUMENTATION_EXTENSIONS_EARLY,
-  RESEARCH_PHASE_TIMEOUT_MS,
   clipText,
   selectModel,
 } from './codePipelineRuntime.ts'
@@ -55,6 +50,7 @@ import {
   runPreflightPhase,
   type GenerationPivotContext,
 } from './codePipelinePhases.ts'
+import { prepareCodePlanningContext } from './codePipelinePreparation.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
@@ -341,179 +337,16 @@ async function runFullPipeline({
     setPhase,
   )
 
-  // Phase 1.75: Research best practices (non-blocking, enriches planning context)
-  // Label is contextualized by the asset plan so the user understands WHY it takes time
-  // ("recherche de references premium" >> "recherche generique").
-  const ap = intent.assetPlan
-  const researchPhaseLabel = ap?.researchQueries.length
-    ? `Recherche de references visuelles en ligne (${ap.researchQueries.slice(0, 2).join(' | ')})... cela peut prendre jusqu a 30s`
-    : ap?.wantsPremiumLook
-      ? 'Recherche de tendances de design premium... cela peut prendre jusqu a 30s'
-      : 'Recherche des meilleures pratiques pour ce type de projet...'
-  setPhase(researchPhaseLabel, 14)
-  let bestPracticesContext = ''
-  try {
-    bestPracticesContext = await withTimeout(researchBestPractices(prompt, intent, configuredCodeModel), {
-      label: 'Code research best practices',
-      timeoutMs: RESEARCH_PHASE_TIMEOUT_MS,
-    })
-    if (bestPracticesContext) {
-      setPhase('Meilleures pratiques trouvees — integration dans la planification...', 16)
-    }
-  } catch {
-    // Research is non-blocking — continue without it
-  }
-
-  // v77 — DYNAMIC BRAND ENRICHMENT. When the user prompt mentions a brand we
-  // don't have in the in-memory dictionary (Lipton, Heineken, Audi, ...),
-  // the codeIntent classifier marks the subject as `inferred_brand` with no
-  // profile. We call the bridge `/api/brand/enrich` here to fetch a real
-  // BrandProfile from Wikipedia + Ollama before the planning phase, so the
-  // rest of the pipeline (image queries, productShape recipe, palette lock)
-  // works the same way for ANY brand, not just our 47 cached ones.
-  //
-  // v84r FIX : on SKIP cette phase pour les prompts qui ressemblent à un brief
-  // technique simple (mots "simple", "minimal", "page HTML", "bouton",
-  // "fonction", "calcul" etc.) — un titre "Bonjour Aurora" ne devrait pas
-  // déclencher 60s de Wikipedia + Ollama. Le brand enrich reste actif pour
-  // les vrais briefs "fais-moi le site de Coca-Cola" etc.
-  const promptLower = prompt.toLowerCase()
-  const looksLikeSimpleTechBrief = (
-    prompt.length < 300 &&
-    /\b(simple|minimal|basique|petit|petite|un\s+bouton|une\s+page|index\.html|une\s+fonction|calcul|console|cli|script)\b/i.test(promptLower) &&
-    !/\b(comme|pour|de la marque|site de|brand|logo de)\b/i.test(promptLower)
-  )
-  if (ap?.subject?.source === 'inferred_brand' && !ap.subject.brandProfile && ap.subject.canonical && !looksLikeSimpleTechBrief) {
-    setPhase(`Enrichissement dynamique du profil de marque "${ap.subject.canonical}" (Wikipedia + Ollama)...`, 13)
-    try {
-      const enriched = await withTimeout(
-        fetchBrandProfileFromBridge(ap.subject.canonical),
-        // v84r : 55s → 20s. Si Wikipedia tarde, on n'a pas le luxe d'attendre.
-        // Le code peut commencer à streamer avec la palette générique.
-        { label: 'Brand enrich (bridge)', timeoutMs: 20_000 },
-      )
-      if (enriched) {
-        // Mutate the subject in place — the rest of the pipeline now sees a
-        // full BrandProfile and treats the page as a brand page.
-        ap.subject.brandProfile = enriched
-        ;(ap.subject as { source: string }).source = 'brand'
-        // Also re-run the brand-aware research query injection that
-        // classifyCodeAssetPlan does for cached brands, so the bridge
-        // image fetch picks up the right queries from the new profile.
-        if (enriched.imageQueries?.length && ap.researchQueries) {
-          for (const q of enriched.imageQueries.slice(0, 3).reverse()) {
-            ap.researchQueries.unshift(q)
-          }
-        }
-        setPhase(`Profil "${ap.subject.canonical}" enrichi (palette ${enriched.primaryColor}, produit ${enriched.productShape ?? 'logo'}).`, 14)
-      } else {
-        setPhase(`Pas de profil enrichi trouve pour "${ap.subject.canonical}" — generic fallback.`, 14)
-      }
-    } catch (err) {
-      console.warn('[CodeOrchestrator] brand enrich failed:', err)
-    }
-  }
-
-  // Phase 1.8: Real image fetch for the detected subject — data URLs are inlined
-  // in the prompt so the LLM reuses them as <img src="..."> directly.
-  // This is how "il doit vraiment telecharger une image" happens, and it survives
-  // the user saving the project anywhere since it is a data URL, not a remote link.
-  // v71: multi-image — brand pages need 3-4 distinct shots (logo, product,
-  // lifestyle, detail), not a single hero photo. The orchestrator queries the
-  // Aurora-Connect extension first (real browser tab), then the Python bridge,
-  // then a deterministic local SVG fallback.
-  let subjectImageBlock = ''
-  // v84r : skip pour les briefs simples — pas besoin d'aller chercher 4 images
-  // si le user demande juste "page HTML avec un bouton qui calcule X".
-  const wantsRealImage = ap && (ap.wantsImages || ap.subject?.source === 'brand' || (ap.objectMentions?.length ?? 0) > 0)
-  if (wantsRealImage && !looksLikeSimpleTechBrief) {
-    const isBrand = ap.subject?.source === 'brand'
-    setPhase(
-      isBrand
-        ? 'Recuperation des images officielles de la marque (logo + produit + lifestyle)...'
-        : 'Telechargement d images reelles du sujet (peut prendre 10-30s)...',
-      17,
-    )
-    try {
-      const images = await withTimeout(
-        fetchSubjectImages(intent),
-        { label: 'Subject images fetch (multi)', timeoutMs: 45_000 },
-      )
-      // Cap each data URL at ~280KB so we don't blow up the prompt — the Codeur
-      // only needs the image to load at runtime, not to read its bytes during
-      // planning. Anything longer is dropped silently.
-      const acceptable = images.filter((img) => img.dataUrl.length <= 350_000)
-      if (acceptable.length > 0) {
-        const dataUrls = acceptable.map((img) => img.dataUrl)
-        ;(intent as any).__subjectImageDataUrls = dataUrls
-        // Keep the legacy single-marker field for any older prompt path.
-        ;(intent as any).__subjectImageDataUrl = dataUrls[0]
-
-        const sourcesLine = acceptable
-          .map((img, idx) => `  ${idx + 1}. ${img.query || 'subject'} -> ${img.source || 'unknown'}`)
-          .join('\n')
-        subjectImageBlock = [
-          `## IMAGES REELLES DU SUJET (telechargees pour toi en amont — ${acceptable.length})`,
-          `- ${acceptable.length} photo(s) / illustration(s) du sujet ont ete trouvees et converties en data URLs.`,
-          '- Tu DOIS les utiliser DIRECTEMENT dans la page avec ces markers literaux:',
-          '  - `PLACEHOLDER_SUBJECT_IMG`     -> image principale (hero / produit central).',
-          acceptable.length >= 2 ? '  - `PLACEHOLDER_SUBJECT_IMG_1`   -> image principale (alias du marker non numerote).' : '',
-          acceptable.length >= 2 ? '  - `PLACEHOLDER_SUBJECT_IMG_2`   -> image secondaire (lifestyle / contexte).' : '',
-          acceptable.length >= 3 ? '  - `PLACEHOLDER_SUBJECT_IMG_3`   -> image tertiaire (detail / texture / variante).' : '',
-          acceptable.length >= 4 ? '  - `PLACEHOLDER_SUBJECT_IMG_4`   -> image complementaire (gallery).' : '',
-          '- Au build final, chaque marker sera remplace par la data URL correspondante.',
-          '- Tu peux reutiliser le meme marker plusieurs fois (hero + showcase + footer). Tout marker sans image associee sera neutralise.',
-          '- Sources originales:',
-          sourcesLine,
-        ].filter(Boolean).join('\n')
-        setPhase(
-          isBrand
-            ? `${acceptable.length} image(s) de la marque telechargees — injection dans le prompt...`
-            : `${acceptable.length} image(s) du sujet telechargees — injection dans le prompt...`,
-          19,
-        )
-      } else if (images.length > 0) {
-        console.warn('[CodeOrchestrator] All fetched subject images exceed the 350KB inline budget — skipping.')
-      }
-    } catch (err) {
-      // Non-blocking: we continue without a real image. The Codeur falls back to
-      // its usual SVG-inline strategy thanks to the "PAS D IMAGES CASSEES" rules.
-      console.warn('[CodeOrchestrator] Subject image fetch failed:', err)
-    }
-  }
-
-  // Inject brand profile into planning context: colors, keywords, design vibe.
-  let brandProfileBlock = ''
-  const brandSubject = ap?.subject
-  if (brandSubject?.source === 'brand' && brandSubject.brandProfile) {
-    const profile = brandSubject.brandProfile
-    const palette: string[] = []
-    if (profile.primaryColor) palette.push(`primaire ${profile.primaryColor}`)
-    if (profile.secondaryColor) palette.push(`secondaire ${profile.secondaryColor}`)
-    if (profile.tertiaryColor) palette.push(`tertiaire ${profile.tertiaryColor}`)
-    brandProfileBlock = [
-      `## PROFIL DE MARQUE — ${brandSubject.canonical}`,
-      `- Domaine: ${brandSubject.domain ?? 'inconnu'}.`,
-      palette.length ? `- Palette canonique: ${palette.join(', ')}.` : '',
-      profile.productKeywords.length ? `- Produits / mots-cles: ${profile.productKeywords.join(', ')}.` : '',
-      profile.designVibe ? `- Vibe visuel: ${profile.designVibe}.` : '',
-      profile.typoVibe ? `- Typo: ${profile.typoVibe}.` : '',
-      `- Le plan d architecture et le code DOIVENT respecter cette identite. Les couleurs du starter generique ne s appliquent pas.`,
-    ].filter(Boolean).join('\n')
-  }
+  const { planningPrompt } = await prepareCodePlanningContext({
+    prompt,
+    reformulatedEnriched,
+    intent,
+    followUp,
+    configuredCodeModel,
+    setPhase,
+  })
 
   // Phase 2: Deep reasoning + architecture planning via llama4.
-  const planningExtras: string[] = []
-  if (bestPracticesContext) planningExtras.push(`## MEILLEURES PRATIQUES TROUVEES (a integrer dans le plan):\n${bestPracticesContext}`)
-  // Brand profile injected before image block so architect plan uses colors/keywords.
-  if (brandProfileBlock) planningExtras.push(brandProfileBlock)
-  if (subjectImageBlock) planningExtras.push(subjectImageBlock)
-  if (followUp?.migrationSummary && followUp.kind === 'pivot_platform') {
-    planningExtras.push(`## MIGRATION DE PROJET (conserve le concept, change la stack)\n${followUp.migrationSummary}`)
-  }
-  const planningPrompt = planningExtras.length
-    ? `${reformulatedEnriched}\n\n${planningExtras.join('\n\n')}`
-    : reformulatedEnriched
   // Skip planning only for genuinely small visual one-offs. Complex visual work
   // (multi-page, 3D, simulator, whole-product briefs) needs the architect pass:
   // the user's target is a real engineered project, not a pretty single screen.

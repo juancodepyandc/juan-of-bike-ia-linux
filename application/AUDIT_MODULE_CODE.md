@@ -146,6 +146,14 @@
 - **Validation** : test dedie boucle validation/correction 4 verts / 0 echec ; glob Code a **468 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 18 applique
+
+- **Preparation planning extraite de l'orchestrateur** : recherche best-practices, heuristique brief simple, enrichissement dynamique de marque, recuperation d'images sujet et construction des blocs planning quittent `codeOrchestrator.ts` pour `codePipelinePreparation.ts`.
+- **Imports bridge/recherche rendus paresseux** : recherche web, enrichissement marque et images sujet sont charges dynamiquement dans la preparation pour garder les helpers purs testables.
+- **Reduction mesurable** : `codeOrchestrator.ts` 939 -> 772 lignes. Nouveau module `codePipelinePreparation.ts` (189 lignes) et test dedie `codePipelinePreparation.test.ts` (87 lignes).
+- **Validation** : test dedie preparation planning 4 verts / 0 echec ; glob Code a **472 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

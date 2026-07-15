@@ -789,3 +789,40 @@ Pour cet increment WS1, oui : le scoring de validation est isole, sous seuil, te
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la boucle validation/correction est isolee, sous seuil, testee sur ses helpers purs et le chemin global reste vert. WS1 reste ouvert sur la finalisation de `codeOrchestrator.ts` et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 18 — preparation planning
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction de la boucle validation/correction, `codeOrchestrator.ts` restait a 939 lignes.
+- La preparation du contexte de planning etait un bloc coherent : recherche best-practices, detection de brief simple, enrichissement marque, images sujet et assemblage des blocs de prompt.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codePipelinePreparation.ts` avec des helpers purs pour les heuristiques et blocs de prompt, et une fonction `prepareCodePlanningContext`.
+- Raison technique : sortir les appels bridge/recherche de l'orchestrateur sans rendre les tests dependants du bridge ou d'Ollama ; les imports recherche, marque et images restent dynamiques.
+
+### Modifications realisees
+
+- Ajout de `codePipelinePreparation.ts` pour `prepareCodePlanningContext`, `looksLikeSimpleTechBrief`, `buildResearchPhaseLabel`, `buildSubjectImagePromptBlock` et `buildBrandProfileBlock`.
+- `codeOrchestrator.ts` delegue la construction du `planningPrompt` enrichi et ne porte plus les blocs recherche/marque/images.
+- Ajout de `codePipelinePreparation.test.ts` couvrant l'heuristique brief simple, le libelle de recherche, les markers d'images sujet et le bloc profil marque.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 939 lignes -> 772 lignes.
+- `codePipelinePreparation.ts` : 189 lignes.
+- `codePipelinePreparation.test.ts` : 87 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codePipelinePreparation.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 472 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la preparation planning est isolee, sous seuil, testee directement et les appels bridge/recherche restent paresseux. WS1 reste ouvert sur la finalisation de `codeOrchestrator.ts` et les deux vues.
