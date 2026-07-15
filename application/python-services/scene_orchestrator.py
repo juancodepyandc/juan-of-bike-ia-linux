@@ -199,6 +199,28 @@ def _seated_reference(desc: str, run_id: str, sub: Path, pose_word: str,
         print("SCENE_ORCH: reference pose essai %d: %s (%s)"
               % (i, "OK" if ok else "rejetee", v.get("posture")), flush=True)
         if ok:
+            # ISOLER LA PERSONNE. FLUX dessine toujours un siege pour justifier la
+            # pose; ses pieds fins font DERAILLER TRELLIS (il reconstruit un homme
+            # penche en avant, jambes droites - verifie). La segmentation personne
+            # (u2net_human_seg) retire le siege et ne laisse que l'homme assis ->
+            # TRELLIS reconstruit une vraie assise.
+            try:
+                import cv2
+                import numpy as np
+                from rembg import new_session, remove
+                _s = new_session("u2net_human_seg")
+                rgb = cv2.cvtColor(cv2.imread(str(cand)), cv2.COLOR_BGR2RGB)
+                rgba = remove(rgb, session=_s)
+                a = rgba[:, :, 3:4].astype(np.float32) / 255.0
+                comp = (rgba[:, :, :3] * a + 255.0 * (1.0 - a)).astype(np.uint8)
+                seg = sub / ("%s_pose_seg.png" % run_id)
+                cv2.imwrite(str(seg), cv2.cvtColor(comp, cv2.COLOR_RGB2BGR))
+                if float((rgba[:, :, 3] > 128).mean()) > 0.05:
+                    print("SCENE_ORCH: personne isolee (siege retire)", flush=True)
+                    return str(seg)
+            except Exception as exc:  # noqa: BLE001
+                print("SCENE_ORCH: segmentation personne indispo (%r) -> ref brute"
+                      % exc, file=sys.stderr)
             return str(cand)
     print("SCENE_ORCH: aucune reference de pose conforme en %d essais -> FLUX standard"
           % tries, file=sys.stderr)
