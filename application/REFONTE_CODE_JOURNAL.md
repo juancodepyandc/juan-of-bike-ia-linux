@@ -470,3 +470,47 @@ Pour cet increment WS1, oui : la responsabilite assets sujet est isolee dans un 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : le chemin clarification/follow-up est module et teste directement, les exports historiques restent compatibles et le glob Code reste vert. WS1 reste ouvert sur l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 10 — gates qualite deterministes
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction clarification/follow-up, `codeOrchestrator.ts` restait a 3464 lignes.
+- Le fichier portait encore les gates deterministes de qualite : jouabilite web, integrite page, fidelite 3D interactive, scoring contenu et scoring design.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction mecanique interne.
+- Choix retenu : creer `codeQualityGates.ts`, reexporter les fonctions publiques depuis `codeOrchestrator.ts`, et importer `computeContentQualityScore` / `computeDesignPolishReport` pour les chemins internes de score et retry.
+- Raison technique : isoler les heuristiques testables sans changer les tests historiques qui importent encore depuis l'orchestrateur.
+
+### Modifications realisees
+
+- Ajout de `codeQualityGates.ts` pour :
+  - `checkGamePlayability` ;
+  - `checkWebPageIntegrity` ;
+  - `checkInteractive3DFidelity` ;
+  - `computeContentQualityScore` ;
+  - `computeDesignPolishReport` / `computeDesignPolishReportPublic` ;
+  - `buildDesignRetryHint` et `isVisualProjectType`.
+- `codeOrchestrator.ts` importe ces gates et conserve les reexports publics existants.
+- Ajout de `codeQualityGates.test.ts` pour couvrir directement jouabilite, rapport design et detection de projets visuels.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 3464 lignes -> 2922 lignes.
+- `codeQualityGates.ts` : 568 lignes.
+- `codeQualityGates.test.ts` : 35 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeQualityGates.test.ts` : 3 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeWebIntegrity.test.ts src/__tests__/codeGeneratedFilesNormalization.test.ts` : 18 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 443 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les gates qualite deterministes sont isoles et couverts directement, tout en gardant les reexports historiques. WS1 reste ouvert sur l'orchestrateur et les deux vues.

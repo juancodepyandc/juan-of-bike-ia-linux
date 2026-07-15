@@ -87,6 +87,13 @@
 - **Validation** : test dedie follow-up 3 verts / 0 echec ; test integration web 9 verts / 0 echec ; glob Code a **440 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 10 applique
+
+- **Gates qualite extraits de l'orchestrateur** : jouabilite web, integrite page, fidelite 3D interactive, score contenu et rapport/retry design quittent `codeOrchestrator.ts` pour `codeQualityGates.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 3464 -> 2922 lignes. Nouveau module `codeQualityGates.ts` (568 lignes) et test dedie `codeQualityGates.test.ts` (35 lignes).
+- **Validation** : test dedie gates qualite 3 verts / 0 echec ; tests ciblés web/3D/normalisation 18 verts / 0 echec ; glob Code a **443 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
