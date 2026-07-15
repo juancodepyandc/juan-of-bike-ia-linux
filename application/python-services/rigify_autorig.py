@@ -1374,6 +1374,31 @@ def main() -> int:
     ap.add_argument("--mia-rest-pose", default="A-pose", choices=("T-pose", "A-pose", "No"), help="rest pose hint for MIA")
     args = ap.parse_args()
 
+    # SOUDER L'ENTREE AVANT TOUTE VOIE DE RIG. TRELLIS sort la surface en ~78k ilots
+    # disjoints; sous une deformation ils glissent -> jambe/vetement dechires. La
+    # soudure interne du script Rigify ne couvrait PAS la voie MIA (celle qui applique
+    # le mouvement MoMask), donc une vraie marche dechirait quand meme. On soude donc
+    # ICI, en amont: MIA comme Rigify recoivent un maillage CONNEXE. Les doublons
+    # partagent l'UV -> texture intacte (verifie: 78169->12 ilots, rendu identique).
+    if os.environ.get("AURORA_RIG_WELD", "1") == "1" and os.path.isfile(args.input):
+        try:
+            import mesh_weld
+            _welded = os.path.splitext(os.path.abspath(args.output))[0] + "_pre_weld.glb"
+            os.makedirs(os.path.dirname(_welded), exist_ok=True)
+            _wr = mesh_weld.weld(os.path.abspath(args.input), _welded, dist=0.0008)
+            if _wr.get("ok") and os.path.isfile(_welded):
+                print("RIGIFY_INFO: entree soudee %d->%d sommets, %d->%d ilots"
+                      % (_wr.get("verts_before", 0), _wr.get("verts_after", 0),
+                         _wr.get("islands_before", 0), _wr.get("islands_after", 0)),
+                      file=sys.stderr)
+                args.input = _welded
+            else:
+                print("RIGIFY_INFO: soudure amont indispo (%s) -> entree brute"
+                      % _wr.get("error"), file=sys.stderr)
+        except Exception as _we:  # noqa: BLE001
+            print("RIGIFY_INFO: soudure amont echec (%r) -> entree brute" % _we,
+                  file=sys.stderr)
+
     # --------- MIA path (opt-in via --use-mia) ---------
     # MIA replaces Rigify for humans when the caller explicitly asks and the
     # env is available. Skinning weights are anatomically clean (mesh/shirt
