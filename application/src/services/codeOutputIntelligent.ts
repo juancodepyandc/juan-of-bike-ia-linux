@@ -275,56 +275,8 @@ function wireButtons(doc: Document): { wired: number; kinds: Record<string, numb
 }
 
 // ---------------------------------------------------------------------------
-// Animation intelligence — only animate elements that should animate
+// Counter intelligence — injected only when a real DOM parse succeeds.
 // ---------------------------------------------------------------------------
-
-const SEMANTIC_ANIM_RULES = `
-/* v82ni : animations contextuelles intelligentes (sélecteurs précis) */
-@keyframes auroraFadeUp { from { opacity:0; transform:translateY(28px) } to { opacity:1; transform:translateY(0) } }
-@keyframes auroraFadeIn { from { opacity:0 } to { opacity:1 } }
-@keyframes auroraScaleIn { from { opacity:0; transform:scale(.96) } to { opacity:1; transform:scale(1) } }
-@keyframes auroraShimmer { 0% { background-position:-200% 0 } 100% { background-position:200% 0 } }
-
-/* Hero entrance — staggered title/subtitle/CTA */
-.hero h1, .hero-title, header h1, main > section:first-of-type h1 { animation: auroraFadeUp .9s cubic-bezier(.19,1,.22,1) both; }
-.hero p, .hero-subtitle, .hero-content p, header h1 + p { animation: auroraFadeUp .9s 140ms cubic-bezier(.19,1,.22,1) both; }
-.hero .btn, .hero-cta, .hero-content button, .hero-content .btn { animation: auroraFadeUp .9s 280ms cubic-bezier(.19,1,.22,1) both; }
-.hero-injected-visual { animation: auroraFadeUp 1s 200ms cubic-bezier(.19,1,.22,1) both; }
-
-/* Section reveal — only on real <section>, not header/footer */
-main > section, .feature, .card { animation: auroraFadeUp .8s cubic-bezier(.19,1,.22,1) both; }
-@supports (animation-timeline: view()) {
-  main > section, .feature, .card {
-    animation-timeline: view();
-    animation-range: entry 0% entry 60%;
-  }
-}
-
-/* Hover micro-interactions on interactive elements ONLY */
-.btn, button, .card, [role="button"] {
-  transition: transform 240ms cubic-bezier(.32,.72,0,1), box-shadow 240ms cubic-bezier(.19,1,.22,1), filter 200ms ease;
-}
-.btn:hover, button:hover, .card:hover {
-  transform: translateY(-2px) scale(1.02);
-  filter: brightness(1.05);
-}
-.btn:active, button:active { transform: translateY(0) scale(0.98); }
-
-/* Counter shimmer for stat numbers */
-.stat-number, .counter, [data-counter] {
-  background: linear-gradient(120deg, currentColor 0%, currentColor 45%, oklch(.74 .13 60) 50%, currentColor 55%, currentColor 100%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: auroraShimmer 4s ease-in-out infinite;
-}
-
-/* Reduced motion — strict respect */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
-}
-`
 
 const COUNTER_OBSERVER_JS = `
 // v82ni : counter-up + scroll-fallback contextuels (auto-injectés)
@@ -392,90 +344,6 @@ const COUNTER_OBSERVER_JS = `
   }
 })();
 `
-
-// ---------------------------------------------------------------------------
-// Color elevation — keeps the hex→oklch sweep but only inside <style>.
-// ---------------------------------------------------------------------------
-
-const HEX_TO_OKLCH: Array<[RegExp, string]> = [
-  [/#7c3aed\b/gi, 'oklch(0.55 0.27 296)'],
-  [/#6d28d9\b/gi, 'oklch(0.47 0.27 296)'],
-  [/#a855f7\b/gi, 'oklch(0.65 0.27 296)'],
-  [/#8b5cf6\b/gi, 'oklch(0.62 0.22 285)'],
-  [/#6366f1\b/gi, 'oklch(0.58 0.20 270)'],
-  [/#3b82f6\b/gi, 'oklch(0.62 0.21 250)'],
-  [/#0a0a0b\b/gi, 'oklch(0.16 0.01 270)'],
-  [/#0a0a0a\b/gi, 'oklch(0.15 0 0)'],
-  [/#121214\b/gi, 'oklch(0.18 0.01 270)'],
-  [/#131316\b/gi, 'oklch(0.18 0.01 270)'],
-  [/#1a1a1c\b/gi, 'oklch(0.22 0.01 270)'],
-  [/#1a1a1d\b/gi, 'oklch(0.22 0.01 270)'],
-  [/#222224\b/gi, 'oklch(0.26 0.01 270)'],
-  [/#222226\b/gi, 'oklch(0.26 0.01 270)'],
-  [/#f8fafc\b/gi, 'oklch(0.97 0.01 270)'],
-  [/#e2e8f0\b/gi, 'oklch(0.91 0.01 270)'],
-  [/#94a3b8\b/gi, 'oklch(0.66 0.02 270)'],
-  [/#22c55e\b/gi, 'oklch(0.72 0.18 145)'],
-  [/#f59e0b\b/gi, 'oklch(0.78 0.16 80)'],
-  [/#ef4444\b/gi, 'oklch(0.62 0.21 30)'],
-]
-
-function elevateColors(css: string): string {
-  let out = css
-  for (const [re, ok] of HEX_TO_OKLCH) out = out.replace(re, ok)
-  return out
-}
-
-/**
- * v82nk : when a brand profile is detected (with primaryColor), RECOLOR
- * the LLM's accent color across the entire CSS. The LLM's training bias
- * pushes Tailwind violet/blue defaults regardless of the brand prompt,
- * so we override post-hoc.
- *
- * Strategy : find the dominant accent color in the CSS (the most-used
- * non-neutral color) and replace it with the brand's primary. Plus
- * keyword-based : --color-accent, --accent, --primary, --color-primary
- * are renamed.
- */
-function brandRecolor(css: string, brandPrimary: string): string {
-  if (!brandPrimary) return css
-  // Normalize brandPrimary : accept #hex or oklch() or rgb()
-  let primary = brandPrimary.trim()
-  if (/^#[0-9a-f]{3}$/i.test(primary)) {
-    // Expand 3-char hex to 6-char.
-    primary = '#' + primary.slice(1).split('').map((c) => c + c).join('')
-  }
-  // Replace common accent variable values directly.
-  let out = css
-  // Pattern 1 : CSS custom property declarations for accent/primary.
-  // --color-accent: #aaa  →  --color-accent: <brandPrimary>
-  out = out.replace(
-    /(--(?:color-)?(?:accent|primary|brand|highlight)(?:-hover|-soft|-strong|-foreground)?)\s*:\s*[^;}\n]+/gi,
-    `$1: ${primary}`,
-  )
-  // Pattern 2 : the most-frequent oklch / hex value that's NOT a neutral
-  // (gray/black/white). Detect and swap.
-  const colorPattern = /oklch\([^)]+\)|#[0-9a-f]{6,8}\b/gi
-  const counts = new Map<string, number>()
-  for (const m of out.matchAll(colorPattern)) {
-    const c = m[0].toLowerCase()
-    // Skip very dark (background) and very light (foreground) values.
-    if (/^#[0-1]/.test(c) || /^#f/.test(c) || /^oklch\(0\.[01]/.test(c) || /^oklch\(0\.9/.test(c)) {
-      continue
-    }
-    counts.set(c, (counts.get(c) || 0) + 1)
-  }
-  if (counts.size > 0) {
-    const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
-    const dominant = sorted[0][0]
-    if (sorted[0][1] >= 2) {
-      // Replace dominant accent everywhere.
-      const escapedDom = dominant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      out = out.replace(new RegExp(escapedDom, 'gi'), primary)
-    }
-  }
-  return out
-}
 
 /**
  * Fix CSS background-image: url(local-path.jpg) by routing to a local
@@ -564,8 +432,8 @@ export function intelligentlyElevateFiles(
       report.buttonsWired = btnRes.wired
       report.buttonKinds = btnRes.kinds
 
-      // v82nl : DROPPED hardcoded color elevation (hex→oklch),
-      // brandRecolor, and SEMANTIC_ANIM_RULES auto-injection. The
+      // v82nl : DROPPED hardcoded color elevation, brand recolor,
+      // and semantic animation auto-injection. The
       // user explicitly said : "si tu commences a dire cette marque
       // cette couleur il apprend pas a être intelligent". The polish
       // pass LLM (runPolishPass in codeStreamStore) now does the
@@ -596,9 +464,7 @@ export function intelligentlyElevateFiles(
   }
 
   // Now build the output : replace mainHtml with elevated content, and
-  // also elevate CSS colors in standalone .css files + inject animations
-  // if a CSS file exists separately.
-  let cssAnimsInjected = false
+  // also repair background-image references in standalone .css files.
   for (const f of files) {
     if (f === mainHtml && mainHtmlContent) {
       out.push({ ...f, content: mainHtmlContent })
@@ -615,21 +481,6 @@ export function intelligentlyElevateFiles(
       continue
     }
     out.push(f)
-  }
-
-  // If animations were injected via standalone CSS file, also inject the
-  // counter/observer JS into the LAST .js file.
-  if (cssAnimsInjected) {
-    for (let i = out.length - 1; i >= 0; i--) {
-      const f = out[i]
-      if (f.language === 'javascript' || f.language === 'jsx' || /\.m?jsx?$/i.test(f.path)) {
-        if (!/IntersectionObserver/.test(f.content) || !/data-counter/.test(f.content)) {
-          out[i] = { ...f, content: f.content + '\n' + COUNTER_OBSERVER_JS }
-          report.countersWired = true
-        }
-        break
-      }
-    }
   }
 
   return { files: out, report }

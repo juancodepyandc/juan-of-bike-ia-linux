@@ -19,6 +19,14 @@
 - **Launchers Linux/macOS** : les generations automatiques et exports Code ajoutent `start.sh` au lieu de `lancement.bat` sur l'environnement Linux.
 - **Validation** : baseline Code passee de 391 a **393 tests verts / 0 echec** ; `npm run build` vert. `npm test` complet reste bloque par un test cowork hors perimetre (`/api/cowork/extract-structured` -> 502 bridge).
 
+### 2026-07-15 — Vague 1 / WS1 increment 1 applique
+
+- **Facades publiques mincies** : `codeDesignReference.ts`, `codeDesignDirectives.ts` et `codeSystemPrompts.ts` conservent leurs exports existants mais deleguent les gros blocs statiques vers des modules dedies.
+- **Code mort purge** : `codeOutputIntelligent.ts` ne contient plus les passes neutralisees `SEMANTIC_ANIM_RULES`, `HEX_TO_OKLCH`, `elevateColors`, `brandRecolor` ni la branche `cssAnimsInjected`.
+- **Reduction mesurable** : `codeDesignReference.ts` 1024 -> 116 lignes, `codeDesignDirectives.ts` 786 -> 214, `codeSystemPrompts.ts` 1066 -> 340, `codeOutputIntelligent.ts` 636 -> 487. Nouveaux modules sous 600 lignes.
+- **Validation** : `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` reste a **393 tests verts / 0 echec**.
+- **Reste ouvert WS1** : les monolithes principaux (`codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts`, `codeStaticCritics.ts`, `codeStreamStore.ts`, `codeMissionControl.ts`) depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

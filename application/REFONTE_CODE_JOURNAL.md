@@ -66,3 +66,55 @@
 ### Etat de satisfaction chantier
 
 Pour la Vague 0, oui : les degradations actives visees sont retirees, le build passe, et la baseline Code augmente de 391 a 393 tests verts. Les plafonds structurels WS1-WS15 restent ouverts.
+
+## 2026-07-15 — Vague 1 / WS1 increment 1 — extraction des blocs statiques
+
+### Reprise et diagnostic confirme
+
+- `codeDesignReference.ts`, `codeDesignDirectives.ts`, `codeSystemPrompts.ts` et `codeOutputIntelligent.ts` depassaient ou approchaient le seuil WS1 par accumulation de blocs statiques, recettes de prompts et code mort.
+- Les tests existants importaient les facades publiques (`codeDesignReference.ts`, `codeDesignDirectives.ts`, `codeSystemPrompts.ts`) : l extraction devait donc conserver les exports existants.
+- `codeOutputIntelligent.ts` contenait encore du code mort neutralise par commentaire : `SEMANTIC_ANIM_RULES`, `HEX_TO_OKLCH`, `elevateColors`, `brandRecolor` et une branche `cssAnimsInjected` jamais activee.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l increment est une decomposition interne purement structurelle, sans changement de technologie.
+- Choix retenu : facades publiques minces + modules de donnees/contracts separes, avec imports explicites et tests inchanges.
+- Raison technique : reduire la charge cognitive et preparer les extractions suivantes sans modifier le comportement du pipeline.
+
+### Modifications realisees
+
+- `codeDesignReference.ts` est devenu une facade de composition ; ajout de :
+  - `codeDesignReferenceHtml.ts`
+  - `codeDesignReferenceThree.ts`
+  - `codeDesignReferenceSubjects.ts`
+- `codeDesignDirectives.ts` conserve la detection et l API publique ; ajout de `codeDesignDirectiveBlocks.ts` pour les blocs premium/archetypes.
+- `codeSystemPrompts.ts` conserve les roles publics ; ajout de :
+  - `codeSystemPromptContracts.ts`
+  - `codeSystemPromptProductShapes.ts`
+- `codeOutputIntelligent.ts` purge physiquement les passes de recoloration/animation qui n etaient plus appelees, tout en gardant les champs de rapport publics pour compatibilite.
+
+### Avant / apres mesurable
+
+- `codeDesignReference.ts` : 1024 lignes -> 116 lignes.
+- `codeDesignDirectives.ts` : 786 lignes -> 214 lignes.
+- `codeSystemPrompts.ts` : 1066 lignes -> 340 lignes.
+- `codeOutputIntelligent.ts` : 636 lignes -> 487 lignes.
+- Nouveaux modules ajoutes, tous sous 600 lignes :
+  - `codeDesignDirectiveBlocks.ts` : 587 lignes.
+  - `codeSystemPromptContracts.ts` : 549 lignes.
+  - `codeDesignReferenceHtml.ts` : 418 lignes.
+  - `codeDesignReferenceSubjects.ts` : 329 lignes.
+  - `codeSystemPromptProductShapes.ts` : 198 lignes.
+  - `codeDesignReferenceThree.ts` : 152 lignes.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeDesignReference.test.ts` : 26 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeDesignDirectives.test.ts` : 27 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeOutputIntelligent.test.ts` : 18 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeSystemPrompts.test.ts` : 26 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 393 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les facades publiques restent stables, les tests Code sont verts, et quatre fichiers sortent de la zone monolithique. WS1 n est pas termine : les fichiers encore >600 lignes restent a decouper avant de passer a WS2.
