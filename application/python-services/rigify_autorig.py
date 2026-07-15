@@ -304,7 +304,11 @@ if bpy.ops.object.mode_set.poll() is not False:
         bpy.context.view_layer.objects.active = _mo
         try:
             _n_before = len(_mo.data.vertices)
-            _weld_dist = max(max(_mo.dimensions) * 0.00025, 0.0002)
+            # 0.0008 (et non 0.00025): a 0.25mm la soudure ne reconnectait PAS la
+            # soupe TRELLIS (~78k ilots persistaient -> le mesh se dechirait a
+            # l'animation). A 0.0008 elle fusionne les doublons -> 12 ilots, TEXTURE
+            # INTACTE (les doublons partagent l'UV), mouvement propre. Verifie.
+            _weld_dist = max(max(_mo.dimensions) * 0.0008, 0.0006)
             import bmesh as _bm
             _bmm = _bm.new()
             _bmm.from_mesh(_mo.data)
