@@ -80,6 +80,13 @@
 - **Validation** : test dedie assets sujet 2 verts / 0 echec ; glob Code a **437 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 9 applique
+
+- **Clarification/follow-up extraits de l'orchestrateur** : filtre de questions vagues, severite des clarifications et analyse de continuite/pivot quittent `codeOrchestrator.ts` pour `codeFollowUpAnalysis.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 3763 -> 3464 lignes. Nouveau module `codeFollowUpAnalysis.ts` (308 lignes) et test dedie `codeFollowUpAnalysis.test.ts` (46 lignes).
+- **Validation** : test dedie follow-up 3 verts / 0 echec ; test integration web 9 verts / 0 echec ; glob Code a **440 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

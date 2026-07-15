@@ -428,3 +428,45 @@ Pour cet increment WS1, oui : un sous-systeme complet et deja critique du pipeli
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la responsabilite assets sujet est isolee dans un module sous 600 lignes, la couverture directe existe et le pipeline Code reste vert. WS1 reste ouvert sur l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 9 — clarification et follow-up
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction assets sujet, `codeOrchestrator.ts` restait a 3763 lignes.
+- Le bloc clarification/follow-up contenait trois responsabilites autonomes : filtrer les questions vagues, classer la severite des clarifications et analyser la continuite d'une demande courte avec le projet existant.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne.
+- Choix retenu : creer `codeFollowUpAnalysis.ts`, conserver les reexports publics depuis `codeOrchestrator.ts`, et charger `ollamaResilience` dynamiquement uniquement dans le chemin LLM.
+- Raison technique : garder les imports historiques de `CodeView` compatibles tout en permettant un test Node direct des chemins deterministes sans charger toute l'infra Ollama au chargement du module.
+
+### Modifications realisees
+
+- Ajout de `codeFollowUpAnalysis.ts` pour :
+  - `isVagueClarification` ;
+  - `classifyClarificationSeverity` ;
+  - types `ClarificationSeverity`, `FollowUpKind`, `FollowUpAnalysis` ;
+  - `analyzeFollowUpIntent` avec fallback heuristique.
+- `codeOrchestrator.ts` reimporte/reexporte les fonctions et types publics, et conserve seulement le wrapper `buildAutonomousAssumption` lie a `codeMissionControl`.
+- Ajout de `codeFollowUpAnalysis.test.ts` pour les chemins deterministes (vague/critical/optional/skip/fresh_start sans contexte).
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 3763 lignes -> 3464 lignes.
+- `codeFollowUpAnalysis.ts` : 308 lignes.
+- `codeFollowUpAnalysis.test.ts` : 46 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeFollowUpAnalysis.test.ts` : 3 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeWebIntegrity.test.ts` : 9 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 440 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : le chemin clarification/follow-up est module et teste directement, les exports historiques restent compatibles et le glob Code reste vert. WS1 reste ouvert sur l'orchestrateur et les deux vues.
