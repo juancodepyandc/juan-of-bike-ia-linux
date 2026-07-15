@@ -2195,6 +2195,37 @@ def run_pipeline(prompt: str, run_id: str, *,
                 sys.path.insert(0, _tr_dir)
             import aurora_trellis_wrapper as _trellis  # noqa: WPS433
             if _trellis.is_available():
+                # MULTI-VUES COHERENTES (leve l'ambiguite de profondeur de la mono-vue).
+                # Un humain pose (assis/allonge) ressort penche ou effondre en mono-vue,
+                # et le DOS/les MAINS sont hallucines. MV-Adapter (i2mv) diffuse depuis la
+                # face 6 vues GEOMETRIQUEMENT COHERENTES du meme sujet; on en garde 2
+                # (profil + dos) que TRELLIS.2 fusionne -> reconstruction propre. Verifie:
+                # homme assis mono-vue = casse; multi-vues = assis propre sous tous angles.
+                # Actif pour les humanoides (ambiguite maximale); AURORA_MVADAPTER_MV=0 coupe.
+                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
+                          and (subject_kind_hint or kind or "").lower()
+                          in ("character", "humanoid", "creature", "human"))
+                if _mv_on and front_ref.is_file():
+                    try:
+                        sys.path.insert(0, str(Path(__file__).parent))
+                        import mvadapter_multiview as _mv
+                        if _mv.available():
+                            print("PROGRESS:shape:vues multiples coherentes (MV-Adapter) "
+                                  "pour lever l'ambiguite de profondeur...", flush=True)
+                            _mvr = _mv.generate(str(front_ref), str(output_dir),
+                                                "%s_reference" % run_id,
+                                                text=prompt)
+                            if _mvr.get("ok"):
+                                os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                                audit.append({"stage": "mvadapter_multiview", "ok": True,
+                                              "views": len(_mvr.get("views") or []),
+                                              "azimuths": _mvr.get("azimuths")})
+                            else:
+                                audit.append({"stage": "mvadapter_multiview", "ok": False,
+                                              "error": _mvr.get("error")})
+                    except Exception as _mve:  # noqa: BLE001
+                        audit.append({"stage": "mvadapter_multiview", "ok": False,
+                                      "error": repr(_mve)})
                 print("PROGRESS:shape:TRELLIS.2 — geometrie coherente + PBR depuis 1 image...", flush=True)
                 _free_gpu_before_hunyuan(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
                 # SOUS-PROCESS dedie: env propre (CUDA_HOME/nvcc pour le JIT nvdiffrast) et
