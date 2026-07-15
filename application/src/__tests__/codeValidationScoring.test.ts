@@ -80,6 +80,23 @@ describe('codeValidationScoring', () => {
     assert.equal(score, 55)
   })
 
+  test('utilise le score fractionnel des criteres d acceptation quand present', () => {
+    const score = computeSandboxScore(
+      sandbox({
+        ok: false,
+        summary: 'acceptance failed',
+        steps: [
+          { label: 'Build', command: 'npm run build', ok: true, output: 'built' },
+          { label: 'Tests acceptation Aurora', command: 'internal:acceptance-criteria', ok: false, output: 'acceptance-score=50\n[FAIL] calculator-operations' },
+        ],
+      }),
+      goodFiles,
+      cliIntent,
+    )
+
+    assert.equal(score, 50)
+  })
+
   test('ajoute une etape de critique statique non bloquante sans casser le sandbox', () => {
     const enriched = withStaticCritiqueStep(sandbox(), report())
 

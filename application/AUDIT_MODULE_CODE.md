@@ -289,6 +289,15 @@
 - **Validation** : `codeTreeSitterAst.test.ts` 2 verts ; glob Code a **527 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code). `npm audit` signale encore 4 vulnerabilites sur `postcss`/`react-router`/`vite`, pas introduites par les deux paquets AST.
 - **WS8 cloturable cote socle** : scanner lexical, DoD pieges/God-function/>=6 langages, taint, occurrences multiples, diagnostics `tsc`/`ruff`/`clippy` et adaptateur `web-tree-sitter` sont presents et testes. Le remplacement integral des heuristiques par requetes AST par langage pourra maintenant se faire incrementalement.
 
+### 2026-07-15 — Vague 2 / WS7 increment 35 applique
+
+- **Critere d'acceptation interne ajoute** : `codeAcceptanceCriteria.ts` derive un pas `internal:acceptance-criteria` depuis le brief et expose un `acceptance-score=N` base sur la fraction de criteres verts.
+- **Calculatrice fausse refusee** : une demande de calculatrice exige maintenant etat de saisie/resultat, quatre operations en logique, flux egal/resultat et clear/reset ; une UI statique avec boutons ne peut plus passer a 100 %.
+- **Aucune livraison verte sans acceptation** : `runCodeSandboxValidation` execute ce pas apres les commandes sandbox, y compris quand aucune commande toolchain n'est applicable, et retourne un echec si l'acceptation echoue.
+- **Score non gameable renforce** : `computeSandboxScore` lit `acceptance-score` et borne le score final par cette fraction de criteres verts, au lieu de se contenter du ratio d'etapes sandbox.
+- **Validation** : `codeAcceptanceCriteria.test.ts` 2 verts ; tests cibles acceptance/scoring/sandbox 24 verts ; glob Code a **530 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS7 reste ouvert** : l'isolation Podman/Firecracker, les quotas cgroups/disque, le GC de sandboxes, la preuve de lecture hors conteneur impossible et le compromis GPU ne sont pas encore livres dans cet increment.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

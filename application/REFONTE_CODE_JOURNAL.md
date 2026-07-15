@@ -1521,3 +1521,56 @@ Pour cet increment, la partie `tsc`/`ruff`/`clippy` de WS8 est branchee au sandb
 ### Etat de satisfaction chantier
 
 Pour WS8 cote socle, oui : `web-tree-sitter` WASM est present et executable, les grammaires des langages demandes sont mappees, les toolchains `tsc`/`ruff`/`clippy` sont branchees, les faux positifs de littéraux sont corriges, les God-functions sont detectees, la couverture multi-langage depasse le DoD, et la securite rapporte les occurrences multiples avec taint local. Le remplacement fin des heuristiques par requetes AST specialisees peut maintenant se faire sans changer le contrat public.
+
+## 2026-07-15 — Vague 2 / WS7 increment 35 — criteres d'acceptation figes et score fractionnel
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre impose que WS7 devienne le signal de qualite central : aucune generation terminee sans validation, score = fraction de criteres verts, et une calculatrice fausse ne doit plus passer a 100 %.
+- Le sandbox executait deja des commandes par stack et des diagnostics toolchain, mais n'avait pas encore de pas d'acceptation derive du brief et lisible par le scoring.
+- Le scoring pouvait encore recomposer un score a partir du ratio d'etapes sandbox et de la qualite de contenu sans borne explicite par des criteres fonctionnels.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment cible un trou fonctionnel local identifie par WS7.
+- Choix retenu : un module `codeAcceptanceCriteria.ts` dedie, appele depuis le sandbox et teste independamment du runner de commandes.
+- Le format `acceptance-score=N` est volontairement simple et stable pour que `codeValidationScoring.ts` puisse le consommer sans dependance circulaire.
+- Compromis explicite : cet increment livre le score fractionnel et le cas calculatrice fausse, mais ne clot pas WS7 ; l'isolation conteneur, les quotas, le GC et le GPU restent a implementer.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeAcceptanceCriteria.ts` :
+  - detection de fichiers code executables ;
+  - refus des placeholders evidents ;
+  - criteres calculatrice derives du brief : etat, quatre operations, egal/resultat, clear/reset ;
+  - generation d'un pas `internal:acceptance-criteria`.
+- `runCodeSandboxValidation` :
+  - execute le pas d'acceptation apres les commandes sandbox ;
+  - execute aussi ce pas quand aucune commande toolchain n'est applicable ;
+  - retourne un echec si un critere d'acceptation est rouge.
+- `codeValidationScoring.ts` :
+  - extrait `acceptance-score=N` ;
+  - borne le score final par cette fraction de criteres verts.
+- Tests ajoutes :
+  - une fausse calculatrice HTML statique avec `demo only` echoue et reste sous 100 % ;
+  - une calculatrice quatre operations avec logique TS passe a 100 % ;
+  - le scoring utilise bien le score fractionnel d'acceptation quand il est present.
+
+### Avant / apres mesurable
+
+- Avant : une livraison avec boutons de calculatrice sans vraie logique pouvait obtenir un score eleve si les proxys sandbox/contenu etaient verts.
+- Apres : le meme livrable echoue sur `calculator-operations` et `no-placeholder-code`, et le sandbox ne le declare pas pret.
+- Avant : le score final ne disposait pas d'un canal standard pour exprimer la fraction de criteres fonctionnels verts.
+- Apres : `acceptance-score=50` borne le score final a 50, meme si le build passe.
+- Baseline Code : 527 tests verts apres WS8 -> 530 tests verts apres cet increment WS7.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeAcceptanceCriteria.test.ts src/__tests__/codeValidationScoring.test.ts src/__tests__/codeSandboxModules.test.ts` : 24 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 530 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, le premier verrou mesurable est leve : une generation n'est plus declaree verte sans acceptation, le score fractionnel existe, et une fausse calculatrice echoue. WS7 reste volontairement ouvert : il manque encore le sandbox conteneurise Podman/Firecracker, les quotas cgroups/disque, le GC des sandboxes, la preuve d'isolation par lecture hors conteneur impossible et le traitement documente des tests GPU.

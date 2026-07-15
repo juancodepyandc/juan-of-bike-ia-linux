@@ -4,6 +4,16 @@ import type { CodeSandboxResult, CodeSandboxStepResult } from './codeSandbox.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import { computeContentQualityScore } from './codeQualityGates.ts'
 
+function extractAcceptanceScore(sandboxResult: CodeSandboxResult): number | null {
+  for (const step of sandboxResult.steps) {
+    if (step.command !== 'internal:acceptance-criteria') continue
+    const match = /acceptance-score=(\d+)/.exec(step.output)
+    if (!match) continue
+    return Math.max(0, Math.min(100, Number(match[1])))
+  }
+  return null
+}
+
 /** Calculate a granular score from sandbox results AND content quality. */
 export function computeSandboxScore(
   sandboxResult: CodeSandboxResult,
@@ -13,6 +23,11 @@ export function computeSandboxScore(
   const contentScore = computeContentQualityScore(files, intent)
   if (contentScore === 0) return 0
   if (contentScore <= 10) return contentScore
+
+  const acceptanceScore = extractAcceptanceScore(sandboxResult)
+  if (acceptanceScore !== null) {
+    return Math.min(contentScore, acceptanceScore)
+  }
 
   if (sandboxResult.ok) {
     return Math.min(100, contentScore)

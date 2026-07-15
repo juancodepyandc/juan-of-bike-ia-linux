@@ -5,8 +5,26 @@ import { detectStructuredManifestIssue, normalizeSandboxFiles, writeSandboxFiles
 import { buildCommandsForLanguage, detectDominantLanguage, generateLaunchSh, getRuntimeSpec } from './codeSandboxCommands.ts'
 import { runNodeInstallWithAutoRepair } from './codeSandboxRegistryRepair.ts'
 import { withToolchainDiagnostics } from './codeToolchainDiagnostics.ts'
+import { buildAcceptanceCriteriaStep } from './codeAcceptanceCriteria.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
+
+function acceptanceFailureResult(
+  sandboxRoot: string,
+  steps: CodeSandboxStepResult[],
+  lang: DetectedLanguage,
+  workingFiles: CodeFile[],
+): CodeSandboxResult {
+  return {
+    ok: false,
+    rootPath: sandboxRoot,
+    summary: 'Les tests d acceptation derives du brief ont echoue.',
+    question: null,
+    steps,
+    detectedLanguage: lang,
+    normalizedFiles: workingFiles,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -81,104 +99,36 @@ export async function runCodeSandboxValidation({
     lang = detectDominantLanguage(workingFiles)
     const runtimeSpec = getRuntimeSpec(lang)
 
-  // Ensure required runtime is available, auto-install if missing
-  if (runtimeSpec) {
-    const available = await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
-    if (!available) {
-      setProgress?.(`Runtime ${runtimeSpec.cmd} introuvable — installation automatique...`)
-      setPhase?.(`Installation automatique de ${runtimeSpec.cmd}...`, 89)
-      const installResult = await autoInstallRuntime(runtimeSpec.install, sandboxRoot)
-      steps.push({
-        label: `Auto-install runtime (${runtimeSpec.cmd})`,
-        command: `auto-install:${runtimeSpec.cmd}`,
-        ok: installResult.ok,
-        output: installResult.output,
-      })
-      const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
-      if (!availableAfterInstall) {
-        return {
-          ok: false,
-          rootPath: sandboxRoot,
-          summary: `Le runtime ${runtimeSpec.cmd} reste indisponible apres preparation automatique. L environnement doit etre finalise avant de reprendre les corrections de code.`,
-          question: null,
-          steps,
-          detectedLanguage: lang,
-          normalizedFiles: workingFiles,
-        } satisfies CodeSandboxResult
-      }
-      if (!installResult.ok) {
-        return {
-          ok: false,
-          rootPath: sandboxRoot,
-          summary: `Impossible d'installer le runtime ${runtimeSpec.cmd} automatiquement. ${runtimeSpec.install.message ?? ''}`,
-          question: null,
-          steps,
-          detectedLanguage: lang,
-          normalizedFiles: workingFiles,
-        } satisfies CodeSandboxResult
-      }
-    }
-  }
-
-  const commands = withToolchainDiagnostics(lang, workingFiles, buildCommandsForLanguage(lang, workingFiles))
-
-  if (commands.length === 0) {
-    return {
-      ok: true,
-      rootPath: sandboxRoot,
-      summary: 'Livraison structurelle prete. Aucun plan de validation automatique n etait applicable pour cette stack.',
-      question: 'La livraison est prete dans le sandbox. Veux-tu maintenant l exporter vers un projet cible ou repartir sur une nouvelle iteration ?',
-      steps,
-      detectedLanguage: lang,
-      normalizedFiles: workingFiles,
-    } satisfies CodeSandboxResult
-  }
-
-  for (let index = 0; index < commands.length; index += 1) {
-    const command = commands[index]
-    const progress = Math.min(96, 90 + Math.round(((index + 1) / commands.length) * 6))
-    setProgress?.(`${command.label} dans le sandbox...`)
-    setPhase?.(`${command.label} dans le sandbox...`, progress)
-
-    if (lang === 'node' && /installer les dependances/i.test(command.label)) {
-      const installRun = await runNodeInstallWithAutoRepair(command, workingFiles, sandboxRoot)
-      workingFiles = installRun.files
-      steps.push(...installRun.steps)
-
-      if (!installRun.ok) {
-        return {
-          ok: false,
-          rootPath: sandboxRoot,
-          summary: `${command.label} a echoue dans le sandbox.`,
-          question: null,
-          steps,
-          detectedLanguage: lang,
-          normalizedFiles: workingFiles,
-        } satisfies CodeSandboxResult
-      }
-
-      continue
-    }
-
-    const commandRuntime = getExecutableRuntimeSpec(command.executable)
-    if (commandRuntime) {
-      const commandAvailable = await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
-      if (!commandAvailable) {
-        setProgress?.(`Commande ${commandRuntime.cmd} introuvable - installation automatique...`)
-        setPhase?.(`Preparation de ${commandRuntime.cmd} pour la validation...`, Math.min(95, progress))
-        const installResult = await autoInstallRuntime(commandRuntime.install, sandboxRoot)
+    // Ensure required runtime is available, auto-install if missing
+    if (runtimeSpec) {
+      const available = await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
+      if (!available) {
+        setProgress?.(`Runtime ${runtimeSpec.cmd} introuvable — installation automatique...`)
+        setPhase?.(`Installation automatique de ${runtimeSpec.cmd}...`, 89)
+        const installResult = await autoInstallRuntime(runtimeSpec.install, sandboxRoot)
         steps.push({
-          label: `Auto-install command (${commandRuntime.cmd})`,
-          command: `auto-install:${commandRuntime.cmd}`,
+          label: `Auto-install runtime (${runtimeSpec.cmd})`,
+          command: `auto-install:${runtimeSpec.cmd}`,
           ok: installResult.ok,
           output: installResult.output,
         })
-        const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
+        const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(runtimeSpec.cmd, sandboxRoot)
         if (!availableAfterInstall) {
           return {
             ok: false,
             rootPath: sandboxRoot,
-            summary: `La commande ${commandRuntime.cmd} reste indisponible apres preparation automatique. Le pipeline doit resoudre l environnement avant toute reparation de code.`,
+            summary: `Le runtime ${runtimeSpec.cmd} reste indisponible apres preparation automatique. L environnement doit etre finalise avant de reprendre les corrections de code.`,
+            question: null,
+            steps,
+            detectedLanguage: lang,
+            normalizedFiles: workingFiles,
+          } satisfies CodeSandboxResult
+        }
+        if (!installResult.ok) {
+          return {
+            ok: false,
+            rootPath: sandboxRoot,
+            summary: `Impossible d'installer le runtime ${runtimeSpec.cmd} automatiquement. ${runtimeSpec.install.message ?? ''}`,
             question: null,
             steps,
             detectedLanguage: lang,
@@ -188,33 +138,109 @@ export async function runCodeSandboxValidation({
       }
     }
 
-    const result = await runWorkspaceCommand(command.executable, command.args, sandboxRoot, command.timeoutMs)
-    // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
-    const rawOutput = result.output.trim()
-    const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput
-    steps.push({
-      label: command.label,
-      command: result.command,
-      ok: result.ok,
-      output: cappedOutput,
-    })
+    const commands = withToolchainDiagnostics(lang, workingFiles, buildCommandsForLanguage(lang, workingFiles))
 
-    if (!result.ok && !command.optional) {
-      const trimmedOutput = result.output.trim()
-      const environmentFailure = /Failed to spawn command|program not found|command not found|is not recognized as an internal or external command/i.test(trimmedOutput)
+    if (commands.length === 0) {
+      const acceptanceStep = buildAcceptanceCriteriaStep(prompt, workingFiles)
+      steps.push(acceptanceStep)
+      if (!acceptanceStep.ok) return acceptanceFailureResult(sandboxRoot, steps, lang, workingFiles)
+
       return {
-        ok: false,
+        ok: true,
         rootPath: sandboxRoot,
-        summary: environmentFailure
-          ? `${command.label} a echoue dans le sandbox. Echec d environnement detecte autour de ${command.executable}.`
-          : `${command.label} a echoue dans le sandbox.`,
-        question: null,
+        summary: 'Livraison structurelle prete. Aucun plan de validation automatique n etait applicable pour cette stack.',
+        question: 'La livraison est prete dans le sandbox. Veux-tu maintenant l exporter vers un projet cible ou repartir sur une nouvelle iteration ?',
         steps,
         detectedLanguage: lang,
         normalizedFiles: workingFiles,
       } satisfies CodeSandboxResult
     }
-  }
+
+    for (let index = 0; index < commands.length; index += 1) {
+      const command = commands[index]
+      const progress = Math.min(96, 90 + Math.round(((index + 1) / commands.length) * 6))
+      setProgress?.(`${command.label} dans le sandbox...`)
+      setPhase?.(`${command.label} dans le sandbox...`, progress)
+
+      if (lang === 'node' && /installer les dependances/i.test(command.label)) {
+        const installRun = await runNodeInstallWithAutoRepair(command, workingFiles, sandboxRoot)
+        workingFiles = installRun.files
+        steps.push(...installRun.steps)
+
+        if (!installRun.ok) {
+          return {
+            ok: false,
+            rootPath: sandboxRoot,
+            summary: `${command.label} a echoue dans le sandbox.`,
+            question: null,
+            steps,
+            detectedLanguage: lang,
+            normalizedFiles: workingFiles,
+          } satisfies CodeSandboxResult
+        }
+
+        continue
+      }
+
+      const commandRuntime = getExecutableRuntimeSpec(command.executable)
+      if (commandRuntime) {
+        const commandAvailable = await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
+        if (!commandAvailable) {
+          setProgress?.(`Commande ${commandRuntime.cmd} introuvable - installation automatique...`)
+          setPhase?.(`Preparation de ${commandRuntime.cmd} pour la validation...`, Math.min(95, progress))
+          const installResult = await autoInstallRuntime(commandRuntime.install, sandboxRoot)
+          steps.push({
+            label: `Auto-install command (${commandRuntime.cmd})`,
+            command: `auto-install:${commandRuntime.cmd}`,
+            ok: installResult.ok,
+            output: installResult.output,
+          })
+          const availableAfterInstall = installResult.ok && await checkRuntimeAvailable(commandRuntime.cmd, sandboxRoot)
+          if (!availableAfterInstall) {
+            return {
+              ok: false,
+              rootPath: sandboxRoot,
+              summary: `La commande ${commandRuntime.cmd} reste indisponible apres preparation automatique. Le pipeline doit resoudre l environnement avant toute reparation de code.`,
+              question: null,
+              steps,
+              detectedLanguage: lang,
+              normalizedFiles: workingFiles,
+            } satisfies CodeSandboxResult
+          }
+        }
+      }
+
+      const result = await runWorkspaceCommand(command.executable, command.args, sandboxRoot, command.timeoutMs)
+      // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
+      const rawOutput = result.output.trim()
+      const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput
+      steps.push({
+        label: command.label,
+        command: result.command,
+        ok: result.ok,
+        output: cappedOutput,
+      })
+
+      if (!result.ok && !command.optional) {
+        const trimmedOutput = result.output.trim()
+        const environmentFailure = /Failed to spawn command|program not found|command not found|is not recognized as an internal or external command/i.test(trimmedOutput)
+        return {
+          ok: false,
+          rootPath: sandboxRoot,
+          summary: environmentFailure
+            ? `${command.label} a echoue dans le sandbox. Echec d environnement detecte autour de ${command.executable}.`
+            : `${command.label} a echoue dans le sandbox.`,
+          question: null,
+          steps,
+          detectedLanguage: lang,
+          normalizedFiles: workingFiles,
+        } satisfies CodeSandboxResult
+      }
+    }
+
+    const acceptanceStep = buildAcceptanceCriteriaStep(prompt, workingFiles)
+    steps.push(acceptanceStep)
+    if (!acceptanceStep.ok) return acceptanceFailureResult(sandboxRoot, steps, lang, workingFiles)
 
     return {
       ok: true,
