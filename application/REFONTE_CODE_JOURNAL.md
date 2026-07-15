@@ -1068,3 +1068,45 @@ Pour cet increment WS1, oui : `CodeView.tsx` est sous seuil, les modules extrait
 ### Etat de satisfaction chantier
 
 Pour WS1, oui : tous les fichiers applicatifs du Module Code identifies sont maintenant sous 600 lignes, les extractions critiques sont testees et le build reste vert. La suite de la refonte peut passer aux chantiers fonctionnels WS2+.
+
+## 2026-07-15 — Vague 1 / WS2 increment 25 — socle ProjectTree/VFS
+
+### Reprise et diagnostic confirme
+
+- Prompt maitre relu jusqu'a la fin : WS2 demande un `ProjectTree`, une arborescence preservee, une deduplication explicite, un graphe d'imports et un protocole d'emission robuste.
+- `codeOutputFiles.ts` et `codeGeneratedFileParser.ts` confirment le diagnostic : le chemin actuel extrait des blobs `--- FICHIER: ... ---` vers des listes plates, sans modele d'arbre, sans collision documentee et sans graphe.
+- Les fichiers de validation/support/sandbox consomment encore des `CodeFile[]`; l'increment devait donc poser un socle pur sans casser le comportement existant.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : la limite traitee est interne au modele de donnees et au parsing existant.
+- Choix retenu : module TypeScript pur, browser-compatible, sans `path` Node, pour pouvoir etre reutilise par l'UI, l'orchestrateur et le futur writer Tauri.
+- Choix de securite : les chemins absolus, traversals et noms vides sont recuperes sous `recovered/` au lieu d'etre ecrits a leur emplacement declare ; les collisions exactes et insensibles a la casse recoivent un suffixe deterministe `__N`.
+- Choix VFS : l'encodage est une union `utf8 | base64`, ce qui prepare les images/GLB/WASM sans forcer leur passage par du texte.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeProjectTree.ts` avec :
+  - types `ProjectTree`, `ProjectTreeFile`, `ProjectTreeDirectory`, `ProjectPathCollision`, `ProjectImportGraph` ;
+  - normalisation de chemins projet ;
+  - construction de dossiers multi-niveaux ;
+  - deduplication deterministe des chemins ;
+  - graphe d'imports JS/TS/CSS/JSON/Vue/Svelte/Astro pour imports statiques, side-effect, `require` et `import()` ;
+  - export `projectTreeToCodeFiles` pour compatibilite transitoire avec les APIs actuelles.
+- Ajout de `src/__tests__/codeProjectTree.test.ts` couvrant chemins, arborescence, collisions, fichiers sans extension, imports, binaires base64 et export texte.
+
+### Avant / apres mesurable
+
+- Avant : pas de modele VFS partage ; seulement des listes plates `ParsedFile[]` / `CodeFile[]`.
+- Apres : `codeProjectTree.ts` 449 lignes, `codeProjectTree.test.ts` 102 lignes.
+- Baseline Code : 488 tests verts apres WS1 -> 493 tests verts apres ce nouvel increment.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectTree.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 493 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS2, oui : le modele de projet unifie existe, reste sous seuil, et couvre les premiers criteres critiques (arborescence, collisions, imports, extensionless, base64). WS2 reste ouvert : le prochain increment doit ajouter le protocole d'emission a longueur declaree et le round-trip parse -> ecrire -> relire.

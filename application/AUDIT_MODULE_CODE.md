@@ -204,6 +204,15 @@
 - **Validation** : test dedie helpers V1 3 verts / 0 echec ; glob Code a **488 tests verts / 0 echec** ; `npm run build` vert ; scan lignes WS1 vert ; `git diff --check` vert.
 - **WS1 cloture** : tous les fichiers applicatifs du Module Code identifies sont sous 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS2 increment 25 applique
+
+- **Socle `ProjectTree` introduit** : nouveau modele VFS pur dans `codeProjectTree.ts` avec fichiers, dossiers, collisions de chemins, encodage texte/base64 et graphe d'imports.
+- **Limite #6 partiellement reduite** : la sortie peut maintenant etre representee autrement qu'en liste plate, avec deduplication deterministe, detection case-insensitive, recuperation des chemins dangereux sous `recovered/` et preservation des dossiers multi-niveaux.
+- **Cas WS2 couverts** : fichiers sans extension (`Dockerfile`, `Makefile`), chemins Windows normalises, collisions exactes/casse, imports relatifs resolus, imports locaux manquants signales, binaires `base64` preserves.
+- **Reduction mesurable / nouveaux fichiers** : `codeProjectTree.ts` 449 lignes ; `codeProjectTree.test.ts` 102 lignes.
+- **Validation** : test dedie ProjectTree 5 verts / 0 echec ; glob Code a **493 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS2 reste ouvert** : protocole d'emission a longueur declaree, round-trip parse/ecrire/relire et writer disque Tauri restent a brancher sur ce socle.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
