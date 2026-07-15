@@ -943,3 +943,41 @@ Pour cet increment WS1, oui : les panneaux extraits sont sous seuil, les helpers
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : le panneau livraison est isole, sous seuil et le helper de recherche est teste. WS1 reste ouvert sur la poursuite de `CodeView.tsx` et `AuroraV1CodeView.tsx`.
+
+## 2026-07-15 — Vague 1 / WS1 increment 22 — colonne controle CodeView
+
+### Reprise et diagnostic confirme
+
+- Apres extraction du panneau livraison, `CodeView.tsx` restait a 1642 lignes.
+- La colonne gauche de controle etait le dernier gros bloc JSX autonome : mission, guide, contexte, runtime, intent, preflight, correction log, design polish, conversation, export, actions et diagnostics.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codeViewControlPanel.tsx` pour la colonne et extraire son bas de panneau dans `codeViewControlActions.tsx`.
+- Raison technique : eviter de deplacer un monolithe vers un autre fichier ; chaque nouveau module reste sous 600 lignes tout en gardant `CodeView.tsx` proprietaire des etats/callbacks.
+
+### Modifications realisees
+
+- `CodeView.tsx` delegue la colonne gauche a `CodeViewControlPanel`.
+- `codeViewControlPanel.tsx` porte mission, brief, runtime, intent, preflight, logs de correction, design polish, conversation, recovery et export persistant.
+- `codeViewControlActions.tsx` porte les boutons Generer/Stop, audit design, regeneration design ciblee, statut, erreurs, diagnostics et recommandations connecteurs.
+- Le rendu du panneau droit reste delegue a `CodeViewDeliveryPanel`.
+
+### Avant / apres mesurable
+
+- `CodeView.tsx` : 1642 lignes -> 1071 lignes.
+- `codeViewControlPanel.tsx` : 552 lignes.
+- `codeViewControlActions.tsx` : 193 lignes.
+- Fichiers Module Code encore >600 lignes : `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeViewExtractedHelpers.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 482 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la colonne de controle est extraite sans nouveau fichier >600 et le chemin global reste vert. WS1 reste ouvert sur la logique centrale de `CodeView.tsx` et sur `AuroraV1CodeView.tsx`.

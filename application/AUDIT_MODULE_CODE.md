@@ -178,6 +178,14 @@
 - **Validation** : test dedie helpers vue 5 verts / 0 echec ; glob Code a **482 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 22 applique
+
+- **Colonne gauche CodeView extraite** : mission, guide de brief, fichiers contexte, pack assets, runtime, intent, preflight, corrections, design polish, conversation, export, actions et diagnostics quittent `CodeView.tsx`.
+- **Sous-decoupage sous seuil** : la colonne est scindee en `codeViewControlPanel.tsx` et `codeViewControlActions.tsx` afin de ne pas recreer un nouveau monolithe UI.
+- **Reduction mesurable** : `CodeView.tsx` 1642 -> 1071 lignes. Nouveaux modules `codeViewControlPanel.tsx` (552 lignes) et `codeViewControlActions.tsx` (193 lignes).
+- **Validation** : test dedie helpers vue 5 verts / 0 echec ; glob Code a **482 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
