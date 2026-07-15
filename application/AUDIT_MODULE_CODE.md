@@ -51,6 +51,14 @@
 - **Validation** : tests dedies store 12 verts / 0 echec ; glob Code a **419 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 5 applique
+
+- **Intent Code modularise** : `codeIntent.ts` devient une facade publique compatible et delegue types, signaux, catalogue de jeux, marques/sujets, asset plan, complexite, commandes, classification et prompts vers des modules dedies.
+- **Reduction mesurable** : `codeIntent.ts` 3221 -> 22 lignes. Les plus gros modules extraits restent sous 600 lignes : `codeIntentClassification.ts` (432), `codeIntentBrandProfilesB.ts` (382), `codeIntentBrandProfilesA.ts` (339), `codeIntentPromptGame.ts` (285), `codeIntentGameCatalog.ts` (260), `codeIntentPromptAssets.ts` (229).
+- **Validation** : test dedie intent modules 10 verts / 0 echec ; glob Code a **429 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Limite fonctionnelle non resolue** : cet increment traite WS1 (taille/responsabilites) mais ne pretend pas livrer WS6 ; la classification reste deterministe/heuristique en attendant le classifieur structure et la taxonomie etendue.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx` et `src/__tests__/codeStaticCritics.test.ts` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
