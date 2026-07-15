@@ -1,0 +1,407 @@
+import type { CodeIntent } from './codeIntent.ts'
+import type { CodeMissionDossier } from './codeMissionControl.ts'
+import {
+  buildCorrectionStrategy,
+  classifyErrors,
+  shouldContinueLoop,
+  type CorrectionPass,
+} from './codeAutoCorrection.ts'
+import type { CodeSandboxResult } from './codeSandbox.ts'
+import type { CodePreflightReport } from './codePreflight.ts'
+import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
+import { withTimeout } from './llmTimebox.ts'
+import { extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
+import { detectEnvironmentBlocker } from './codeGenerationDiagnostics.ts'
+import { buildCorrectionMessages } from './codeCorrectionMessages.ts'
+import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
+import { compositeStaticCritic } from './codeStaticCritics.ts'
+import {
+  attemptLocalFileRepair,
+  validateOutputMatchesIntent,
+} from './codeProjectValidation.ts'
+import {
+  CODE_EXPERT_CONTEXT_TOKENS,
+  CORRECTION_FIRST_BYTE_TIMEOUT_MS,
+  CORRECTION_TIMEOUT_MS,
+  INTERACTIVE_3D_FIDELITY_MAX_PASSES,
+  RESEARCH_PHASE_TIMEOUT_MS,
+  getModelShortName,
+  selectModel,
+} from './codePipelineRuntime.ts'
+import { computeSandboxScore, withStaticCritiqueStep } from './codeValidationScoring.ts'
+import {
+  checkGamePlayability,
+  checkInteractive3DFidelity,
+  checkWebPageIntegrity,
+} from './codeQualityGates.ts'
+
+type ValidationCorrectionLoopResult = {
+  files: CodeFile[]
+  notes: string
+  sandboxResult: CodeSandboxResult | null
+  correctionLog: CorrectionPass[]
+  totalAttempts: number
+  finalScore: number
+}
+
+export function normalizedFilesChanged(currentFiles: CodeFile[], normalizedFiles?: CodeFile[]): boolean {
+  if (!normalizedFiles || normalizedFiles.length === 0) return false
+  return normalizedFiles.length !== currentFiles.length
+    || normalizedFiles.some((file, index) =>
+      file.name !== currentFiles[index]?.name || file.content !== currentFiles[index]?.content,
+    )
+}
+
+export function collectFailingStepOutputs(sandboxResult: CodeSandboxResult): string[] {
+  return sandboxResult.steps
+    .filter((step) => !step.ok)
+    .map((step) => step.output)
+}
+
+export function truncateCorrectionErrors(sandboxResult: CodeSandboxResult): string[] {
+  return collectFailingStepOutputs(sandboxResult).map((output) => output.length > 1500
+    ? `${output.slice(0, 1000)}\n...[tronque: ${output.length} chars total]...\n${output.slice(-400)}`
+    : output)
+}
+
+export function compactCorrectionLog(correctionLog: CorrectionPass[]): void {
+  if (correctionLog.length <= 4) return
+
+  for (let index = 0; index < correctionLog.length - 4; index++) {
+    const old = correctionLog[index]
+    if (old.errors.length > 1 || (old.errors[0] && old.errors[0].length > 200)) {
+      correctionLog[index] = {
+        ...old,
+        errors: [`[passe archivee: ${old.errors.length} erreurs, score ${old.score}%]`],
+      }
+    }
+  }
+}
+
+export async function runValidationAndCorrectionLoop(
+  prompt: string,
+  initialFiles: CodeFile[],
+  intent: CodeIntent,
+  preflightReport: CodePreflightReport | null,
+  missionDossier: CodeMissionDossier,
+  architecturePlan: string | null,
+  configuredCodeModel: string,
+  setPhase: PhaseCallback,
+  onFilesUpdate: (files: CodeFile[], notes: string) => void,
+  onValidationUpdate: (result: CodeSandboxResult) => void,
+  onCorrectionLogUpdate: (log: CorrectionPass[], attempt: number, score: number) => void,
+  signal?: AbortSignal,
+): Promise<ValidationCorrectionLoopResult> {
+  const { runCodeSandboxValidation } = await import('./codeSandbox.ts')
+  let currentFiles = initialFiles
+  let currentNotes = ''
+  let sandboxResult: CodeSandboxResult | null = null
+  const correctionLog: CorrectionPass[] = []
+  let attempt = 0
+  let lastScore = 0
+  let rescueRegenerationUsed = false
+
+  while (true) {
+    attempt += 1
+
+    if (signal?.aborted) break
+
+    setPhase(`Sandbox passe ${attempt} — validation en cours...`, Math.min(85, 60 + attempt * 4))
+    sandboxResult = await runCodeSandboxValidation({
+      files: currentFiles,
+      prompt,
+      setPhase,
+      setProgress: (detail) => setPhase(detail, Math.min(90, 65 + attempt * 4)),
+    })
+
+    if (normalizedFilesChanged(currentFiles, sandboxResult.normalizedFiles)) {
+      currentFiles = sandboxResult.normalizedFiles!
+      onFilesUpdate(currentFiles, currentNotes)
+    }
+
+    setPhase(`Sandbox passe ${attempt} - critique statique du code...`, Math.min(90, 66 + attempt * 4))
+    const staticReport = await compositeStaticCritic({
+      generationId: `validation-${attempt}`,
+      files: currentFiles,
+    }, intent)
+    sandboxResult = withStaticCritiqueStep(sandboxResult, staticReport)
+
+    const interactive3D = checkInteractive3DFidelity(currentFiles, prompt, intent)
+    if (!interactive3D.ok && attempt <= INTERACTIVE_3D_FIDELITY_MAX_PASSES) {
+      const fidelitySummary = 'La fidelite 3D interactive demandee est incomplete.'
+      sandboxResult = {
+        ...sandboxResult,
+        ok: false,
+        summary: sandboxResult.ok
+          ? fidelitySummary
+          : `${sandboxResult.summary}\n${fidelitySummary}`,
+        steps: [
+          ...sandboxResult.steps,
+          {
+            label: 'Fidelite 3D interactive',
+            command: 'interactive-3d-fidelity-gate',
+            ok: false,
+            output: interactive3D.hint,
+          },
+        ],
+      }
+      setPhase(
+        `Passe ${attempt} - fidelite 3D incomplete (${interactive3D.missing.join(', ')})...`,
+        Math.min(90, 68 + attempt * 4),
+      )
+    }
+
+    const gamePlay =
+      intent.projectType === 'game_web'
+        ? checkGamePlayability(currentFiles, prompt)
+        : { ok: true, missing: [] as string[], hint: '' }
+    if (!gamePlay.ok) {
+      const playabilitySummary = `Jeu incomplet: ${gamePlay.missing.join(', ')}.`
+      sandboxResult = {
+        ...sandboxResult,
+        ok: false,
+        summary: sandboxResult.ok
+          ? playabilitySummary
+          : `${sandboxResult.summary}\n${playabilitySummary}`,
+        steps: [
+          ...sandboxResult.steps,
+          {
+            label: 'Jouabilité',
+            command: 'playability-gate',
+            ok: false,
+            output: gamePlay.hint,
+          },
+        ],
+      }
+      setPhase(
+        `Passe ${attempt} - jeu incomplet (${gamePlay.missing.join(', ')}) - correction ciblee...`,
+        Math.min(90, 70 + attempt * 4),
+      )
+    }
+
+    const webIntegrity =
+      intent.projectType === 'static_web'
+        ? checkWebPageIntegrity(currentFiles, prompt)
+        : { ok: true, missing: [] as string[], hint: '' }
+    if (!webIntegrity.ok) {
+      const integritySummary = `Page non fonctionnelle: ${webIntegrity.missing.join(', ')}.`
+      sandboxResult = {
+        ...sandboxResult,
+        ok: false,
+        summary: sandboxResult.ok
+          ? integritySummary
+          : `${sandboxResult.summary}\n${integritySummary}`,
+        steps: [
+          ...sandboxResult.steps,
+          {
+            label: 'Intégrité page',
+            command: 'web-integrity-gate',
+            ok: false,
+            output: webIntegrity.hint,
+          },
+        ],
+      }
+      setPhase(
+        `Passe ${attempt} - page non fonctionnelle (${webIntegrity.missing.join(', ')}) - correction ciblee...`,
+        Math.min(90, 70 + attempt * 4),
+      )
+    }
+
+    onValidationUpdate(sandboxResult)
+
+    const currentScore = computeSandboxScore(sandboxResult, currentFiles, intent)
+    const errorCategories = sandboxResult.ok ? [] : classifyErrors(sandboxResult)
+    const strategy = sandboxResult.ok
+      ? null
+      : buildCorrectionStrategy(errorCategories, attempt, correctionLog)
+
+    const pass: CorrectionPass = {
+      attempt,
+      score: currentScore,
+      errors: truncateCorrectionErrors(sandboxResult),
+      strategy: attempt === 1 ? 'initial' : (strategy?.level ?? 'initial'),
+      modelUsed: configuredCodeModel,
+      resolved: sandboxResult.ok,
+    }
+    correctionLog.push(pass)
+    compactCorrectionLog(correctionLog)
+
+    onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+
+    if (sandboxResult.ok) {
+      lastScore = 100
+      break
+    }
+
+    const environmentBlocker = detectEnvironmentBlocker(sandboxResult, errorCategories)
+    if (environmentBlocker) {
+      pass.errors = [
+        `[Blocage environnement detecte - ${environmentBlocker}]`,
+        ...pass.errors,
+      ]
+      setPhase(`Passe ${attempt} - ${environmentBlocker} (le module essaie une stack alternative)...`, Math.min(92, 70 + attempt * 3))
+    }
+
+    const localRepair = attemptLocalFileRepair(currentFiles, sandboxResult)
+    if (localRepair) {
+      currentFiles = localRepair.files
+      currentNotes = `${currentNotes ? `${currentNotes}\n\n` : ''}Auto-reparation locale: ${localRepair.reason}`
+      onFilesUpdate(currentFiles, currentNotes)
+      setPhase(`Passe ${attempt} - auto-reparation locale appliquee.`, Math.min(93, 71 + attempt * 3))
+      lastScore = currentScore
+      continue
+    }
+
+    if (!shouldContinueLoop(correctionLog, attempt, errorCategories)) {
+      lastScore = currentScore
+      const reason = currentScore >= 100
+        ? 'livraison validee a 100%'
+        : `boucle infinie detectee sur la meme erreur apres ${attempt} passes`
+      setPhase(`Arret de la boucle : ${reason}.`, 92)
+      break
+    }
+
+    const correctionModel = selectModel('correction', intent, strategy!.escalation, configuredCodeModel)
+    pass.modelUsed = correctionModel
+    pass.strategy = strategy!.level
+    onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+
+    const strategyLabel = strategy!.level.replace(/_/g, ' ')
+    const modelShort = getModelShortName(correctionModel)
+    setPhase(`Passe ${attempt} — ${strategyLabel} via ${modelShort}...`, Math.min(92, 70 + attempt * 3))
+
+    let researchContext = ''
+    if (strategy!.searchWeb) {
+      setPhase(`Passe ${attempt} — recherche de solutions en ligne...`, Math.min(93, 72 + attempt * 3))
+      const failingErrors = collectFailingStepOutputs(sandboxResult).join('\n')
+      try {
+        const { searchForSolution } = await import('./codeResearch.ts')
+        researchContext = await withTimeout(searchForSolution(failingErrors, intent, configuredCodeModel), {
+          label: 'Code correction research',
+          timeoutMs: RESEARCH_PHASE_TIMEOUT_MS,
+        })
+      } catch {
+        researchContext = ''
+      }
+    }
+
+    let reasoningContext = ''
+    const recentScores = correctionLog.slice(-3).map((passItem) => passItem.score)
+    const isFlatlining = recentScores.length >= 3 && Math.max(...recentScores) - Math.min(...recentScores) <= 4
+    if (attempt >= 2 || isFlatlining) {
+      setPhase(`Passe ${attempt} — analyse de la cause racine...`, Math.min(93, 73 + attempt * 3))
+      const currentErrors = collectFailingStepOutputs(sandboxResult)
+      const {
+        analyzeStuckCorrection,
+        buildReasoningInstructions,
+      } = await import('./codeReasoningEngine.ts')
+      const reasoning = await analyzeStuckCorrection(
+        prompt,
+        correctionLog,
+        intent,
+        currentErrors,
+        configuredCodeModel,
+      )
+      if (reasoning) {
+        reasoningContext = buildReasoningInstructions(reasoning)
+        setPhase(`Passe ${attempt} — cause identifiee: ${reasoning.rootCause.slice(0, 80)}...`, Math.min(93, 74 + attempt * 3))
+      }
+    }
+
+    const rescueEligible = (strategy!.level === 'rewrite' || strategy!.level === 'strategy_change')
+      && (!rescueRegenerationUsed || attempt % 4 === 0)
+    if (rescueEligible) {
+      rescueRegenerationUsed = true
+      const {
+        buildRescueRegenerationPrompt,
+      } = await import('./codeMissionControl.ts')
+      const rescuePrompt = buildRescueRegenerationPrompt({
+        originalPrompt: prompt,
+        missionDossier,
+        architecturePlan,
+        failingSummary: sandboxResult.summary,
+        failingErrors: collectFailingStepOutputs(sandboxResult),
+        reasoningContext,
+      })
+
+      setPhase(`Passe ${attempt} â€” regeneration de secours complete...`, Math.min(94, 75 + attempt * 3))
+      const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
+      const rescueResponse = await resilientOllamaGenerate(correctionModel, rescuePrompt, {
+        timeoutMs: CORRECTION_TIMEOUT_MS,
+        firstByteTimeoutMs: CORRECTION_FIRST_BYTE_TIMEOUT_MS,
+        signal,
+        num_ctx: CODE_EXPERT_CONTEXT_TOKENS,
+        neverMemorySkip: true,
+        onRecoveryAttempt: (ev) => {
+          setPhase(`Passe ${attempt} â€” sauvetage Ollama: ${ev.action}...`, Math.min(94, 76 + attempt * 3))
+        },
+      })
+
+      const rescueContent = rescueResponse?.response?.trim() || ''
+      const rescueFiles = parseCodeFiles(rescueContent)
+      if (rescueFiles.length > 0 && !validateOutputMatchesIntent(rescueFiles, intent)) {
+        currentFiles = rescueFiles
+        currentNotes = extractNotes(rescueContent)
+        onFilesUpdate(currentFiles, currentNotes)
+        lastScore = currentScore
+        continue
+      }
+    }
+
+    const { serializeCodeMissionDossier } = await import('./codeMissionControl.ts')
+    const { serializeCodePreflightReport } = await import('./codePreflight.ts')
+    const correctionMessages = buildCorrectionMessages({
+      prompt,
+      files: currentFiles,
+      validationResult: sandboxResult,
+      strategy: strategy!,
+      researchContext,
+      reasoningContext,
+      missionDossierText: serializeCodeMissionDossier(missionDossier),
+      architecturePlan,
+      preflightReportText: preflightReport ? serializeCodePreflightReport(preflightReport) : null,
+      intent,
+    })
+
+    setPhase(`Passe ${attempt} — ${modelShort} corrige le code...`, Math.min(94, 74 + attempt * 3))
+    const { resilientOllamaChat } = await import('./ollamaResilience.ts')
+    const repairResponse = await resilientOllamaChat(correctionModel, correctionMessages, 0.05, {
+      timeoutMs: CORRECTION_TIMEOUT_MS,
+      firstByteTimeoutMs: CORRECTION_FIRST_BYTE_TIMEOUT_MS,
+      signal,
+      num_ctx: CODE_EXPERT_CONTEXT_TOKENS,
+      neverMemorySkip: true,
+      onRecoveryAttempt: (ev) => {
+        setPhase(`Passe ${attempt} — auto-reparation Ollama: ${ev.action}...`, Math.min(94, 75 + attempt * 3))
+      },
+    })
+    const repairedContent = repairResponse?.message?.content?.trim() || ''
+    const repairedFiles = parseCodeFiles(repairedContent)
+
+    if (repairedFiles.length === 0) {
+      setPhase(`Passe ${attempt} — correction vide, tentative suivante...`, Math.min(94, 75 + attempt * 3))
+      continue
+    }
+
+    const mergedCandidate = mergeExistingWithUpdates(currentFiles, repairedFiles)
+    const correctionIssue = validateOutputMatchesIntent(mergedCandidate, intent)
+    if (correctionIssue) {
+      setPhase(`Passe ${attempt} — correction invalide (${correctionIssue.slice(0, 50)}...), on garde les fichiers actuels...`, Math.min(94, 76 + attempt * 3))
+      continue
+    }
+
+    currentFiles = mergedCandidate
+    currentNotes = extractNotes(repairedContent)
+    onFilesUpdate(currentFiles, currentNotes)
+    lastScore = currentScore
+  }
+
+  return {
+    files: currentFiles,
+    notes: currentNotes,
+    sandboxResult,
+    correctionLog,
+    totalAttempts: attempt,
+    finalScore: lastScore,
+  }
+}

@@ -751,3 +751,41 @@ Pour cet increment WS1, oui : la construction des prompts auditeur est isolee, s
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : le scoring de validation est isole, sous seuil, teste directement et l'orchestrateur ne conserve plus ces helpers. WS1 reste ouvert sur l'extraction de la boucle validation/correction et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 17 — boucle validation/correction
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction du scoring validation, `codeOrchestrator.ts` restait a 1356 lignes.
+- La boucle validation/correction etait le dernier grand bloc autonome de l'orchestrateur : sandbox, critique statique, gates deterministes, strategie, recherche, raisonnement, regeneration de secours et merge des corrections.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codeValidationCorrectionLoop.ts` pour porter la boucle complete et exposer des helpers purs testables.
+- Raison technique : isoler le cycle de validation/correction avant la finalisation du pipeline, tout en gardant les imports LLM/recherche/mission-control dynamiques pour eviter de charger `useTauri` et les configs runtime au simple import du module.
+
+### Modifications realisees
+
+- Ajout de `codeValidationCorrectionLoop.ts` pour `runValidationAndCorrectionLoop`, `normalizedFilesChanged`, `collectFailingStepOutputs`, `truncateCorrectionErrors` et `compactCorrectionLog`.
+- `codeOrchestrator.ts` importe la boucle extraite et ne porte plus les 400+ lignes de validation/correction.
+- Ajout de `codeValidationCorrectionLoop.test.ts` pour verifier le changement de fichiers normalises, la collecte/troncature d'erreurs et le compactage des anciennes passes de correction.
+- Les appels Ollama, recherche de solution, raisonnement et prompts de secours sont importes dynamiquement dans la boucle.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 1356 lignes -> 939 lignes.
+- `codeValidationCorrectionLoop.ts` : 407 lignes.
+- `codeValidationCorrectionLoop.test.ts` : 96 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeValidationCorrectionLoop.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 468 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la boucle validation/correction est isolee, sous seuil, testee sur ses helpers purs et le chemin global reste vert. WS1 reste ouvert sur la finalisation de `codeOrchestrator.ts` et les deux vues.
