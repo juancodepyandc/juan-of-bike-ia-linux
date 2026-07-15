@@ -6,6 +6,7 @@ import {
   tryParseJson,
   upsertPackageDevDependency,
 } from './codeGeneratedFileSanitizer.ts'
+import { isSyntheticFallbackFile } from './codeProjectValidation.ts'
 
 type ProjectRunbook = {
   installSteps: string[]
@@ -371,13 +372,6 @@ function ensureTailwindTooling(files: CodeFile[]) {
       ].join('\n'),
     },
   ]
-}
-
-function isSyntheticFallbackFile(name: string): boolean {
-  const normalized = name.replace(/\\/g, '/').toLowerCase()
-  return /^(?:module|script|style|page|bloc)-\d+\.[a-z0-9]+$/.test(normalized)
-    || /^output\.[a-z0-9]+$/.test(normalized)
-    || /^reponse\.(?:txt|text|md)$/.test(normalized)
 }
 
 function stripSyntheticFallbackFiles(files: CodeFile[], intent: CodeIntent): CodeFile[] {

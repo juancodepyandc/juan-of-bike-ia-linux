@@ -101,6 +101,14 @@
 - **Validation** : test dedie supports projet 1 vert / 0 echec ; normalisation generation 9 verts / 0 echec ; glob Code a **444 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 12 applique
+
+- **Validation projet extraite de l'orchestrateur** : validation de sortie vs intent, rejet des fichiers docs-only/generiques, validation `package.json`, detection des structures desktop/web/API et reparation locale TypeScript quittent `codeOrchestrator.ts` pour `codeProjectValidation.ts`.
+- **Source de verite corrigee** : `isSyntheticFallbackFile` devient partage par validation et supports projet, ce qui corrige la reference locale orpheline introduite par l'extraction precedente.
+- **Reduction mesurable** : `codeOrchestrator.ts` 2405 -> 2129 lignes. Nouveau module `codeProjectValidation.ts` (265 lignes) et test dedie `codeProjectValidation.test.ts` (85 lignes). `codeProjectSupportFiles.ts` reste sous seuil (521 lignes).
+- **Validation** : test dedie validation projet 4 verts / 0 echec ; supports + normalisation 10 verts / 0 echec ; glob Code a **448 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
