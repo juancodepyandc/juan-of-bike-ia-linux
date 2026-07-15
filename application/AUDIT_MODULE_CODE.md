@@ -195,6 +195,15 @@
 - **Validation** : test dedie helpers vue 8 verts / 0 echec ; glob Code a **485 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : seul `AuroraV1CodeView.tsx` depasse encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 24 applique
+
+- **Aurora V1 CodeView decoupee** : helpers, preview instrumentee, live view, overlays, sidebar, preview centrale et colonne output/composer quittent `AuroraV1CodeView.tsx` pour des composants dedies.
+- **Helpers purs testes** : detection langage stream et instrumentation HTML de preview sont extraites dans `auroraV1CodeHelpers.ts` et couvertes par `codeAuroraV1Helpers.test.ts`.
+- **Seuil WS1 atteint partout dans le module Code applicatif** : le scan des fichiers `*code*` / vues Code ne remonte plus aucun fichier au-dessus de 600 lignes.
+- **Reduction mesurable** : `AuroraV1CodeView.tsx` 1780 -> 414 lignes. Nouveaux modules : `auroraV1CodeOutputPane.tsx` (438), `auroraV1CodeOverlays.tsx` (304), `auroraV1CodeSidebar.tsx` (261), `auroraV1CodeHelpers.ts` (142), `auroraV1CodePreviewPane.tsx` (135), `auroraV1CodePreviewFrame.tsx` (124), `auroraV1CodeLiveView.tsx` (90), `auroraV1CodeMachinePanel.tsx` (16), `auroraV1CodePrimitives.tsx` (15).
+- **Validation** : test dedie helpers V1 3 verts / 0 echec ; glob Code a **488 tests verts / 0 echec** ; `npm run build` vert ; scan lignes WS1 vert ; `git diff --check` vert.
+- **WS1 cloture** : tous les fichiers applicatifs du Module Code identifies sont sous 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

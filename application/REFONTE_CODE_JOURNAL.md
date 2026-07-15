@@ -1022,3 +1022,49 @@ Pour cet increment WS1, oui : la colonne de controle est extraite sans nouveau f
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : `CodeView.tsx` est sous seuil, les modules extraits restent sous 600 lignes et les helpers purs sont testes. WS1 reste ouvert sur `AuroraV1CodeView.tsx`.
+
+## 2026-07-15 — Vague 1 / WS1 increment 24 — cloture AuroraV1CodeView
+
+### Reprise et diagnostic confirme
+
+- Apres l'increment 23, le seul fichier Module Code encore au-dessus du seuil WS1 etait `AuroraV1CodeView.tsx` a 1780 lignes.
+- Le fichier melangeait helpers purs, preview instrumentee, live view, overlays, sidebar, preview centrale, output/composer et panneau machines.
+- Les helpers de detection langage stream et instrumentation HTML etaient purs et pouvaient etre testes sans React.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : garder `AuroraV1CodeView.tsx` proprietaire des etats/effets, et deplacer les blocs JSX dans des composants de vue dedies.
+- Raison technique : cloturer WS1 sans casser le wiring `useCodeViewLogic`, en gardant chaque composant sous 600 lignes et en ajoutant une couverture pure pour les helpers extraits.
+
+### Modifications realisees
+
+- Ajout de `auroraV1CodeHelpers.ts` pour constantes, labels, detection langage stream et instrumentation HTML de preview.
+- Ajout de `auroraV1CodePreviewFrame.tsx`, `auroraV1CodeLiveView.tsx`, `auroraV1CodeOverlays.tsx`, `auroraV1CodeSidebar.tsx`, `auroraV1CodePreviewPane.tsx`, `auroraV1CodeOutputPane.tsx`, `auroraV1CodeMachinePanel.tsx` et `auroraV1CodePrimitives.tsx`.
+- `AuroraV1CodeView.tsx` devient une composition lisible : etats/effets au-dessus, composants dedies dans le rendu.
+- Ajout de `codeAuroraV1Helpers.test.ts` pour `detectStreamLanguage` et `instrumentPreviewHtml`.
+
+### Avant / apres mesurable
+
+- `AuroraV1CodeView.tsx` : 1780 lignes -> 414 lignes.
+- `auroraV1CodeOutputPane.tsx` : 438 lignes.
+- `auroraV1CodeOverlays.tsx` : 304 lignes.
+- `auroraV1CodeSidebar.tsx` : 261 lignes.
+- `auroraV1CodeHelpers.ts` : 142 lignes.
+- `auroraV1CodePreviewPane.tsx` : 135 lignes.
+- `auroraV1CodePreviewFrame.tsx` : 124 lignes.
+- `auroraV1CodeLiveView.tsx` : 90 lignes.
+- `auroraV1CodeMachinePanel.tsx` : 16 lignes.
+- `auroraV1CodePrimitives.tsx` : 15 lignes.
+- Scan WS1 : aucun fichier applicatif Module Code `*code*` / vue Code au-dessus de 600 lignes.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeAuroraV1Helpers.test.ts` : 3 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 488 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour WS1, oui : tous les fichiers applicatifs du Module Code identifies sont maintenant sous 600 lignes, les extractions critiques sont testees et le build reste vert. La suite de la refonte peut passer aux chantiers fonctionnels WS2+.
