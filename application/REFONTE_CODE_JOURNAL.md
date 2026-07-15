@@ -1440,7 +1440,7 @@ Pour cet increment WS8, le DoD explicite est couvert : cas pieges strings/regex/
 
 - Aucune recherche web externe : les commandes visees sont stables et deja referencees dans le prompt.
 - Choix retenu : `codeToolchainDiagnostics.ts` separe de `codeSandboxCommands.ts`, pour eviter de regonfler ce dernier.
-- Les diagnostics Node/Python sont inseres apres les etapes d'installation/venv existantes, afin de profiter des dependances deja preparees.
+- Les diagnostics Node/Python sont inseres apres les etapes d'installation d'environnement existantes, afin de profiter des dependances deja preparees.
 - Compromis explicite : ces commandes sont optionnelles pour enrichir les logs WS8/WS7 ; le build/test principal reste le signal bloquant.
 
 ### Modifications realisees
@@ -1450,7 +1450,7 @@ Pour cet increment WS8, le DoD explicite est couvert : cas pieges strings/regex/
   - `withToolchainDiagnostics`.
 - Diagnostics produits :
   - TypeScript : `npx tsc --noEmit --pretty false` ou script `typecheck` si present ;
-  - Python : `.venv/bin/python -m ruff check .` ;
+  - Python : `aurora-python-env/bin/python -m ruff check .` ;
   - Rust : `cargo clippy --all-targets --all-features -- -D warnings`.
 - `runCodeSandboxValidation` enveloppe maintenant `buildCommandsForLanguage` avec `withToolchainDiagnostics`.
 - Tests sandbox et glob Code etendus.
@@ -1574,3 +1574,55 @@ Pour WS8 cote socle, oui : `web-tree-sitter` WASM est present et executable, les
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, le premier verrou mesurable est leve : une generation n'est plus declaree verte sans acceptation, le score fractionnel existe, et une fausse calculatrice echoue. WS7 reste volontairement ouvert : il manque encore le sandbox conteneurise Podman/Firecracker, les quotas cgroups/disque, le GC des sandboxes, la preuve d'isolation par lecture hors conteneur impossible et le traitement documente des tests GPU.
+
+## 2026-07-15 — Vague 2 / WS7 increment 36 — environnement Python Aurora sans chemin .venv
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre interdit explicitement les installs dans `application/.venv` et WS7 precise sandbox conteneurise, jamais `.venv`.
+- Le sandbox Python creeait encore un dossier `.venv` dans le dossier de validation, et le diagnostic ruff comme le dev-server Python pointaient vers ce chemin.
+- Meme si ce dossier etait local au sandbox, le nom restait un anti-pattern dangereux : il peut etre confondu avec le venv racine et contredit le contrat "jamais `.venv`".
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : il s'agit d'un durcissement local de chemins et de contrats.
+- Choix retenu : un helper partage `codePythonEnvironment.ts` avec un nom explicite `aurora-python-env`.
+- Raison technique : eviter trois sources de verite (`codeSandboxCommands`, `codeToolchainDiagnostics`, `codeDevServer`) et rendre le scan des chemins interdit reproductible.
+- Compromis explicite : l'environnement reste cree par `python -m venv` dans le sandbox courant ; l'isolation forte Podman/Firecracker reste le prochain verrou WS7.
+
+### Modifications realisees
+
+- Ajout de `src/services/codePythonEnvironment.ts` :
+  - `AURORA_PYTHON_ENV_DIR = 'aurora-python-env'` ;
+  - `auroraPythonExecutable()` compatible Linux/Windows.
+- `codeSandboxCommands.ts` :
+  - cree `aurora-python-env` ;
+  - utilise ce Python pour requirements, installation editable, pytest et compileall.
+- `codeToolchainDiagnostics.ts` :
+  - utilise le meme executable pour `ruff check .` ;
+  - insere les diagnostics apres la creation d'environnement Python Aurora.
+- `codeDevServer.ts` :
+  - utilise le meme Python pour FastAPI, Django et Flask.
+- `codeSandboxModules.test.ts` :
+  - prouve que les commandes Python utilisent `aurora-python-env` ;
+  - prouve que le diagnostic ruff pointe vers le meme executable ;
+  - verifie l'absence de chemin interdit dans ces commandes.
+
+### Avant / apres mesurable
+
+- Avant : le sandbox produisait `python -m venv .venv`, puis executait `.venv/bin/python`.
+- Apres : il produit `python -m venv aurora-python-env`, puis execute `aurora-python-env/bin/python`.
+- Avant : ruff et dev-server Python avaient chacun leur chemin Python duplique.
+- Apres : sandbox, diagnostics et dev-server consomment `auroraPythonExecutable()`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxModules.test.ts` : 18 pass / 0 fail.
+- `rg -n "\\.venv" src/services/code* src/__tests__/code*` : aucune occurrence.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 531 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, le contrat "pas de chemin `.venv` dans le Module Code" est durci et testable. WS7 reste ouvert pour le vrai conteneur rootless, les quotas, la coupure egress, le GC et les preuves d'isolation host/container.

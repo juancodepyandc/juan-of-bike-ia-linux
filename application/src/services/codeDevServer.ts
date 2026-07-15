@@ -5,6 +5,7 @@
 
 import { fsReadText, runWorkspaceCommand, spawnWorkspaceCommand } from '../hooks/useTauri'
 import type { CodeIntent } from './codeIntent'
+import { auroraPythonExecutable } from './codePythonEnvironment'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,7 +101,7 @@ function getDevCommandSpec(intent: CodeIntent): DevCommandSpec | null {
 
     case 'api_fastapi':
       return {
-        executable: isWindows() ? '.venv\\Scripts\\python.exe' : '.venv/bin/python',
+        executable: auroraPythonExecutable(),
         args: ['-m', 'uvicorn', 'main:app', '--reload', '--port', '8000'],
         readyPattern: /Uvicorn running|Started server/i,
         defaultPort: 8000,
@@ -109,7 +110,7 @@ function getDevCommandSpec(intent: CodeIntent): DevCommandSpec | null {
     case 'api_django':
     case 'fullstack_django':
       return {
-        executable: isWindows() ? '.venv\\Scripts\\python.exe' : '.venv/bin/python',
+        executable: auroraPythonExecutable(),
         args: ['manage.py', 'runserver', '8000'],
         readyPattern: /Starting development server/i,
         defaultPort: 8000,
@@ -117,7 +118,7 @@ function getDevCommandSpec(intent: CodeIntent): DevCommandSpec | null {
 
     case 'api_flask':
       return {
-        executable: isWindows() ? '.venv\\Scripts\\python.exe' : '.venv/bin/python',
+        executable: auroraPythonExecutable(),
         args: ['-m', 'flask', 'run', '--port', '5000'],
         readyPattern: /Running on/i,
         defaultPort: 5000,

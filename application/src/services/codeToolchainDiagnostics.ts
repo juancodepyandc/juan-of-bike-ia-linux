@@ -1,6 +1,7 @@
 import type { CodeFile, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
 import { detectPackageManager, findFile, hasExtension, parseJsonSafely } from './codeSandboxFiles.ts'
 import { isWindows, nodeExecutable } from './codeSandboxRuntime.ts'
+import { auroraPythonExecutable } from './codePythonEnvironment.ts'
 
 type PackageManifest = {
   scripts?: Record<string, string>
@@ -55,10 +56,9 @@ function buildTypeScriptDiagnostic(files: CodeFile[]): ValidationCommand[] {
 
 function buildPythonDiagnostic(files: CodeFile[]): ValidationCommand[] {
   if (!hasPython(files)) return []
-  const venvPython = isWindows() ? '.venv\\Scripts\\python.exe' : '.venv/bin/python'
   return [{
     label: 'Diagnostic ruff',
-    executable: venvPython,
+    executable: auroraPythonExecutable(),
     args: ['-m', 'ruff', 'check', '.'],
     timeoutMs: 5 * 60_000,
     optional: true,
@@ -90,7 +90,7 @@ export function buildToolchainDiagnosticCommands(lang: DetectedLanguage, files: 
 function insertAfterLastSetup(commands: ValidationCommand[], diagnostics: ValidationCommand[]): ValidationCommand[] {
   let insertAt = 0
   for (let i = 0; i < commands.length; i += 1) {
-    if (/installer|install|creer le venv/i.test(commands[i].label)) {
+    if (/installer|install|creer (?:le )?(?:venv|environnement)/i.test(commands[i].label)) {
       insertAt = i + 1
     }
   }

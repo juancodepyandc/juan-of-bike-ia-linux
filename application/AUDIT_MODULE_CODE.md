@@ -276,7 +276,7 @@
 ### 2026-07-15 — Vague 2 / WS8 increment 33 applique
 
 - **Diagnostics toolchain branches au sandbox** : `codeToolchainDiagnostics.ts` produit des commandes optionnelles `tsc --noEmit`, `ruff check .` et `cargo clippy --all-targets --all-features -- -D warnings` selon les fichiers/langages presents.
-- **Insertion sans pollution d'environnement** : les diagnostics Node/Python sont inseres apres les etapes d'installation/venv existantes ; `ruff` passe par le Python du venv sandbox ; aucune installation systeme Linux non interactive n'est ajoutee.
+- **Insertion sans pollution d'environnement** : les diagnostics Node/Python sont inseres apres les etapes d'installation d'environnement existantes ; `ruff` passe par le Python `aurora-python-env` du sandbox ; aucune installation systeme Linux non interactive n'est ajoutee.
 - **Runner conserve** : `runCodeSandboxValidation` enrichit le plan de validation via `withToolchainDiagnostics` sans changer le comportement bloquant des commandes principales.
 - **Validation** : `codeSandboxModules.test.ts` 17 verts ; glob Code a **525 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS8 reste ouvert** : les diagnostics `tsc`/`ruff`/`clippy` sont maintenant dans le pipeline sandbox ; reste l'AST WASM `web-tree-sitter` a brancher pour remplacer les heuristiques par parser quand les grammaires sont disponibles.
@@ -297,6 +297,14 @@
 - **Score non gameable renforce** : `computeSandboxScore` lit `acceptance-score` et borne le score final par cette fraction de criteres verts, au lieu de se contenter du ratio d'etapes sandbox.
 - **Validation** : `codeAcceptanceCriteria.test.ts` 2 verts ; tests cibles acceptance/scoring/sandbox 24 verts ; glob Code a **530 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS7 reste ouvert** : l'isolation Podman/Firecracker, les quotas cgroups/disque, le GC de sandboxes, la preuve de lecture hors conteneur impossible et le compromis GPU ne sont pas encore livres dans cet increment.
+
+### 2026-07-15 — Vague 2 / WS7 increment 36 applique
+
+- **Nom Python sandbox durci** : les commandes Python creent maintenant `aurora-python-env` dans le sandbox au lieu d'un chemin `.venv`, via `codePythonEnvironment.ts`.
+- **Consommateurs unifies** : `codeSandboxCommands.ts`, `codeToolchainDiagnostics.ts` et `codeDevServer.ts` utilisent le meme executable Python Aurora pour requirements, pytest, compileall, ruff et serveurs FastAPI/Django/Flask.
+- **Preuve anti-regression** : `codeSandboxModules.test.ts` verifie la creation de l'environnement Python Aurora, l'executable ruff et l'absence de chemin interdit dans les commandes du Module Code.
+- **Validation** : scan `rg` sur `src/services/code*` et `src/__tests__/code*` sans occurrence de chemin `.venv` ; `codeSandboxModules.test.ts` 18 verts ; glob Code a **531 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS7 reste ouvert** : ce durcissement retire un anti-pattern d'environnement, mais ne remplace pas encore l'isolation conteneurisee et les quotas.
 
 ---
 

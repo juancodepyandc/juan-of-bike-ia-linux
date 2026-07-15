@@ -1,6 +1,7 @@
 import type { AutoInstallSpec, CodeFile, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
 import { isWindows, nodeExecutable } from './codeSandboxRuntime.ts'
 import { detectPackageManager, findFile, hasExtension, hasPythonTests, parseJsonSafely } from './codeSandboxFiles.ts'
+import { AURORA_PYTHON_ENV_DIR, auroraPythonExecutable } from './codePythonEnvironment.ts'
 
 // ---------------------------------------------------------------------------
 // Language-specific command builders
@@ -31,22 +32,22 @@ function buildNodeCommands(files: CodeFile[]): ValidationCommand[] {
 }
 
 function buildPythonCommands(files: CodeFile[]): ValidationCommand[] {
-  const venvPython = isWindows() ? '.venv\\Scripts\\python.exe' : '.venv/bin/python'
+  const python = auroraPythonExecutable()
   const commands: ValidationCommand[] = [
-    { label: 'Creer le venv de sandbox', executable: 'python', args: ['-m', 'venv', '.venv'], timeoutMs: 3 * 60_000 },
+    { label: 'Creer environnement Python Aurora', executable: 'python', args: ['-m', 'venv', AURORA_PYTHON_ENV_DIR], timeoutMs: 3 * 60_000 },
   ]
 
   if (findFile(files, 'requirements.txt')) {
-    commands.push({ label: 'Installer requirements', executable: venvPython, args: ['-m', 'pip', 'install', '-r', 'requirements.txt'], timeoutMs: 10 * 60_000 })
+    commands.push({ label: 'Installer requirements', executable: python, args: ['-m', 'pip', 'install', '-r', 'requirements.txt'], timeoutMs: 10 * 60_000 })
   } else if (findFile(files, 'pyproject.toml') || findFile(files, 'setup.py')) {
-    commands.push({ label: 'Installer le projet', executable: venvPython, args: ['-m', 'pip', 'install', '-e', '.'], timeoutMs: 10 * 60_000 })
+    commands.push({ label: 'Installer le projet', executable: python, args: ['-m', 'pip', 'install', '-e', '.'], timeoutMs: 10 * 60_000 })
   }
 
   if (hasPythonTests(files)) {
-    commands.push({ label: 'Installer pytest', executable: venvPython, args: ['-m', 'pip', 'install', 'pytest'], timeoutMs: 5 * 60_000 })
-    commands.push({ label: 'Lancer pytest', executable: venvPython, args: ['-m', 'pytest'], timeoutMs: 10 * 60_000 })
+    commands.push({ label: 'Installer pytest', executable: python, args: ['-m', 'pip', 'install', 'pytest'], timeoutMs: 5 * 60_000 })
+    commands.push({ label: 'Lancer pytest', executable: python, args: ['-m', 'pytest'], timeoutMs: 10 * 60_000 })
   } else {
-    commands.push({ label: 'Compiler le projet Python', executable: venvPython, args: ['-m', 'compileall', '.'], timeoutMs: 4 * 60_000 })
+    commands.push({ label: 'Compiler le projet Python', executable: python, args: ['-m', 'compileall', '.'], timeoutMs: 4 * 60_000 })
   }
 
   return commands

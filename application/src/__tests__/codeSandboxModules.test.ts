@@ -28,6 +28,7 @@ import {
   buildToolchainDiagnosticCommands,
   withToolchainDiagnostics,
 } from '../services/codeToolchainDiagnostics.ts'
+import { AURORA_PYTHON_ENV_DIR, auroraPythonExecutable } from '../services/codePythonEnvironment.ts'
 import type { CodeFile } from '../services/codeSandboxTypes.ts'
 
 function file(name: string, content: string, language = 'text'): CodeFile {
@@ -112,6 +113,19 @@ describe('codeSandboxCommands', () => {
     assert.equal(getRuntimeSpec('unknown'), null)
   })
 
+  test('buildCommandsForLanguage cree un environnement Python Aurora sans chemin interdit', () => {
+    const commands = buildCommandsForLanguage('python', [
+      file('requirements.txt', 'pytest==8.0.0', 'text'),
+      file('test_main.py', 'def test_ok(): assert True', 'python'),
+    ])
+
+    assert.deepEqual(commands[0].args, ['-m', 'venv', AURORA_PYTHON_ENV_DIR])
+    assert.equal(commands[1].executable, auroraPythonExecutable())
+    assert.equal(commands[2].executable, auroraPythonExecutable())
+    assert.equal(commands[3].executable, auroraPythonExecutable())
+    assert.doesNotMatch(commands.map((command) => `${command.executable} ${command.args.join(' ')}`).join('\n'), /[.]venv/)
+  })
+
   test('diagnostics toolchain ajoutent tsc optionnel apres npm install', () => {
     const files = [
       file('package.json', '{"name":"app","dependencies":{"typescript":"^6.0.0"}}', 'json'),
@@ -128,15 +142,17 @@ describe('codeSandboxCommands', () => {
     assert.equal(commands[1].optional, true)
   })
 
-  test('diagnostics toolchain ajoutent ruff dans le venv Python', () => {
+  test('diagnostics toolchain ajoutent ruff dans l environnement Python Aurora', () => {
     const diagnostics = buildToolchainDiagnosticCommands('python', [
       file('main.py', 'print("ok")', 'python'),
     ])
 
     assert.equal(diagnostics.length, 1)
     assert.equal(diagnostics[0].label, 'Diagnostic ruff')
+    assert.equal(diagnostics[0].executable, auroraPythonExecutable())
     assert.deepEqual(diagnostics[0].args, ['-m', 'ruff', 'check', '.'])
     assert.equal(diagnostics[0].optional, true)
+    assert.doesNotMatch(diagnostics[0].executable, /[.]venv/)
   })
 
   test('diagnostics toolchain ajoutent cargo clippy pour Rust', () => {
