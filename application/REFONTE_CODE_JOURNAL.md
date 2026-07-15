@@ -863,3 +863,44 @@ Pour cet increment WS1, oui : la preparation planning est isolee, sous seuil, te
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : l'orchestrateur passe sous 600 lignes, le retry de sortie est isole et teste, et le pipeline global reste vert. WS1 reste ouvert sur les deux vues Code.
+
+## 2026-07-15 — Vague 1 / WS1 increment 20 — panneaux CodeView
+
+### Reprise et diagnostic confirme
+
+- Apres le passage de `codeOrchestrator.ts` sous 600 lignes, les deux depassements WS1 restants etaient `CodeView.tsx` (2626 lignes) et `AuroraV1CodeView.tsx` (1780 lignes).
+- La fin de `CodeView.tsx` contenait des blocs autonomes : console pipeline, preview live multi-viewport, barre navigateur, critique statique, commentaire Lyra, puce langage et heuristiques associees.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : separer les panneaux TSX (`codeViewPreviewPanel.tsx`, `codeViewInspectorPanels.tsx`) et sortir les heuristiques pures dans des modules `.ts` directement testables (`codeViewLanguage.ts`, `codeViewPreviewHeuristics.ts`).
+- Raison technique : reduire `CodeView.tsx` sans importer de JSX dans le runner Node, tout en gardant le viewer compact et la logique de preview existants intacts.
+
+### Modifications realisees
+
+- `CodeView.tsx` importe maintenant `BigLivePreviewFrame`, `CodeConsolePanel`, `CodeCritiquePanel`, `CodeLanguageChip` et `CodeLyraCommentator` depuis des modules dedies.
+- Ajout de `codeViewLanguage.ts` pour `detectFileLanguage`, avec support propre des fichiers sans extension connus (`Dockerfile`, `Makefile`) et fallback `plaintext`.
+- Ajout de `codeViewPreviewHeuristics.ts` pour `isHeavyWebGLProject`, reutilise par la preview live.
+- Ajout de `codeViewExtractedHelpers.test.ts` couvrant detection langage, shebang, signatures source, WebGL/Three.js et seuil de taille preview.
+
+### Avant / apres mesurable
+
+- `CodeView.tsx` : 2626 lignes -> 1945 lignes.
+- `codeViewPreviewPanel.tsx` : 289 lignes.
+- `codeViewInspectorPanels.tsx` : 349 lignes.
+- `codeViewLanguage.ts` : 41 lignes.
+- `codeViewPreviewHeuristics.ts` : 12 lignes.
+- `codeViewExtractedHelpers.test.ts` : 50 lignes.
+- Fichiers Module Code encore >600 lignes : `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeViewExtractedHelpers.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 481 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les panneaux extraits sont sous seuil, les helpers critiques sont testes sans charger l'UI, et la preview compacte reste conservee. WS1 reste ouvert car `CodeView.tsx` et `AuroraV1CodeView.tsx` doivent encore etre descendus sous 600 lignes.

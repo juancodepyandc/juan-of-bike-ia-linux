@@ -162,6 +162,14 @@
 - **Validation** : test dedie retry sortie 5 verts / 0 echec ; glob Code a **477 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 20 applique
+
+- **Panneaux CodeView extraits** : console pipeline, preview live, barre navigateur, critique statique, commentaire Lyra et puce langage quittent `CodeView.tsx` pour des modules de vue dedies.
+- **Helpers purs separes** : detection langage fichier et detection de preview WebGL lourde vivent dans des modules `.ts` testables sans charger React/JSX.
+- **Reduction mesurable** : `CodeView.tsx` 2626 -> 1945 lignes. Nouveaux modules `codeViewPreviewPanel.tsx` (289), `codeViewInspectorPanels.tsx` (349), `codeViewLanguage.ts` (41), `codeViewPreviewHeuristics.ts` (12) et test `codeViewExtractedHelpers.test.ts` (50).
+- **Validation** : test dedie helpers vue 4 verts / 0 echec ; glob Code a **481 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
