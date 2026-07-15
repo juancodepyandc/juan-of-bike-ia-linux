@@ -124,6 +124,13 @@
 - **Validation** : test dedie phases 2 verts / 0 echec ; glob Code a **458 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 15 applique
+
+- **Messages de correction extraits de l'orchestrateur** : construction du prompt auditeur, priorites JSON/TypeScript, contexte recherche/raisonnement, hints design/brand et serialisation des fichiers courants quittent `codeOrchestrator.ts` pour `codeCorrectionMessages.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 1596 -> 1446 lignes. Nouveau module `codeCorrectionMessages.ts` (148 lignes) et test dedie `codeCorrectionMessages.test.ts` (77 lignes).
+- **Validation** : test dedie messages correction 2 verts / 0 echec ; glob Code a **460 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

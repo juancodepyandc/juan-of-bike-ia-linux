@@ -677,3 +677,40 @@ Pour cet increment WS1, oui : les helpers transverses sont hors orchestrateur, s
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les phases initiales du pipeline sont isolees dans un module sous 600 lignes, testees sur leurs chemins deterministes et le pipeline global reste vert. WS1 reste ouvert sur la boucle correction/finalisation de l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 15 — messages de correction
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction des phases pipeline, `codeOrchestrator.ts` restait a 1596 lignes.
+- Le bloc `buildCorrectionMessages` etait une responsabilite autonome : transformer un resultat sandbox, une strategie, un dossier mission et les contextes recherche/raisonnement en messages auditeur.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne.
+- Choix retenu : creer `codeCorrectionMessages.ts` et lui passer `missionDossierText` / `preflightReportText` deja serialises.
+- Raison technique : garder le module pur et testable directement par Node, sans charger `missionControl` ni `codePreflight`, qui ont des dependances runtime plus lourdes.
+
+### Modifications realisees
+
+- Ajout de `codeCorrectionMessages.ts` pour construire les messages system/user de correction.
+- `codeOrchestrator.ts` serialise le dossier mission et le preflight avant l'appel puis delegue la construction du prompt.
+- Ajout de `codeCorrectionMessages.test.ts` pour couvrir les priorites JSON/TypeScript, la presence mission/preflight/fichiers et l'injection recherche/raisonnement.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 1596 lignes -> 1446 lignes.
+- `codeCorrectionMessages.ts` : 148 lignes.
+- `codeCorrectionMessages.test.ts` : 77 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeCorrectionMessages.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 460 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la construction des prompts auditeur est isolee, sous seuil, testee directement et sans dependances lourdes au chargement. WS1 reste ouvert sur la boucle validation/correction, la finalisation de l'orchestrateur et les deux vues.
