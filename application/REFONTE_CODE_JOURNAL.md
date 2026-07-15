@@ -1677,3 +1677,52 @@ Pour cet increment WS7, le contrat "pas de chemin `.venv` dans le Module Code" e
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, le plus gros risque est reduit : le Module Code ne doit plus executer silencieusement du code LLM sur l'hote quand le harnais conteneurise manque. WS7 reste ouvert sur la preuve runtime complete avec Podman installe, la limitation disque totale, le GC des sandboxes, les tests host-read/fork-bomb/disk-fill et le compromis GPU/nvidia-container-toolkit.
+
+## 2026-07-15 — Vague 2 / WS7 increment 38 — GC des sandboxes de validation
+
+### Reprise et diagnostic confirme
+
+- WS7 demande explicitement le GC des sandboxes.
+- Le runner ecrit sous `output/code-sandbox/<timestamp>` mais ne supprimait aucun ancien dossier.
+- Les commandes Tauri `fs_list_dir` et `fs_remove_dir_all` existaient deja cote Rust, et le bridge exposait deja `/api/fs/list` et `/api/fs/remove-dir`; le hook front ne les rendait simplement pas accessibles.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le besoin est local et les primitives filesystem existent deja.
+- Choix retenu : GC par noms horodates, age maximal 24h et plafond 25 entrees conservees.
+- Les noms non horodates sont conserves pour eviter toute suppression inattendue d'un fichier manuel ou d'un marqueur.
+- Le GC est non bloquant : une erreur de nettoyage ne doit pas masquer un diagnostic de build/test, mais elle est journalisee dans les steps.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeSandboxGc.ts` :
+  - `planSandboxGarbageCollection` ;
+  - `collectCodeSandboxGarbage` ;
+  - `buildSandboxGcStep`.
+- `runCodeSandboxValidation` :
+  - nettoie `output/code-sandbox` avant de creer le nouveau dossier ;
+  - ajoute un step `internal:sandbox-gc` quand des dossiers sont supprimes ;
+  - signale une indisponibilite GC comme avertissement non bloquant.
+- `useTauri.ts` :
+  - expose `fsListDir` ;
+  - expose `fsRemoveDirAll` ;
+  - reutilise les commandes/endpoints deja presents, sans commande shell destructive.
+- Ajout de `src/__tests__/codeSandboxGc.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : chaque validation ajoutait un dossier horodate sans strategie de retention.
+- Apres : les sandboxes de plus de 24h ou au-dela des 25 plus recents sont planifies pour suppression.
+- Avant : supprimer via le front aurait impose un contournement shell ou un import direct Tauri repete.
+- Apres : le Module Code utilise des wrappers filesystem structures et testables.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxGc.test.ts src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxModules.test.ts` : 27 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 540 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, le GC des sandboxes est livre sans ajouter de commande shell destructive ni toucher les autres modules. WS7 reste ouvert pour les preuves runtime host-read/fork-bomb/disk-fill, la limitation disque totale du workspace, le compromis GPU et l'execution reelle dans Podman lorsque l'hote sera equipe.

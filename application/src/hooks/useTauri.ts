@@ -1634,6 +1634,23 @@ export async function fsMkdir(path: string): Promise<void> {
   await cloudInvoke<{ ok: boolean }>('/api/fs/mkdir', { path })
 }
 
+export async function fsListDir(path: string): Promise<string[]> {
+  if (isTauriRuntime()) {
+    return desktopInvoke<string[]>('fs_list_dir', { path })
+  }
+
+  const result = await cloudInvoke<{ entries: string[] }>('/api/fs/list', { path })
+  return result.entries
+}
+
+export async function fsRemoveDirAll(path: string): Promise<void> {
+  if (isTauriRuntime()) {
+    return desktopInvoke<void>('fs_remove_dir_all', { path })
+  }
+
+  await cloudInvoke<{ ok: boolean }>('/api/fs/remove-dir', { path })
+}
+
 export async function fsReadText(path: string): Promise<string> {
   if (isTauriRuntime()) {
     return desktopInvoke<string>('fs_read_text', { path })

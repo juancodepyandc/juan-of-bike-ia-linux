@@ -315,6 +315,14 @@
 - **Validation** : `codeSandboxIsolation.test.ts` + tests sandbox/scoring cibles 30 verts / 0 echec ; glob Code a **536 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS7 reste ouvert** : la limitation disque totale du workspace bind-mounte, la preuve runtime de lecture hors conteneur impossible, le GC des sandboxes et le compromis GPU restent a livrer.
 
+### 2026-07-15 — Vague 2 / WS7 increment 38 applique
+
+- **GC des sandboxes ajoute** : `codeSandboxGc.ts` planifie et supprime les anciens dossiers horodates sous `output/code-sandbox`, par age et nombre maximal conserve, sans toucher les noms non horodates.
+- **Suppression structuree** : `useTauri.ts` expose les commandes existantes `fs_list_dir` et `fs_remove_dir_all` cote desktop/cloud ; pas de `rm -rf` shell ajoute.
+- **Integration non bloquante** : `runCodeSandboxValidation` lance le GC avant de creer le nouveau sandbox et journalise un step `internal:sandbox-gc` quand une suppression a lieu ; une erreur GC est signalee sans masquer la validation.
+- **Validation** : `codeSandboxGc.test.ts` + tests isolation/sandbox cibles 27 verts / 0 echec ; glob Code a **540 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS7 reste ouvert** : GC livre ; restent la preuve runtime d'isolation avec Podman installe, fork-bomb/disk-fill/host-read, disque total et GPU.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

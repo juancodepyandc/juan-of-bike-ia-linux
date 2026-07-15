@@ -6,6 +6,7 @@ import { runNodeInstallWithAutoRepair } from './codeSandboxRegistryRepair.ts'
 import { withToolchainDiagnostics } from './codeToolchainDiagnostics.ts'
 import { buildAcceptanceCriteriaStep } from './codeAcceptanceCriteria.ts'
 import { buildSandboxIsolationStep, detectPodmanIsolation, wrapCommandForPodman } from './codeSandboxIsolation.ts'
+import { buildSandboxGcStep, collectCodeSandboxGarbage } from './codeSandboxGc.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -61,7 +62,23 @@ export async function runCodeSandboxValidation({
 
   try {
     const workspacePath = await getWorkspacePath()
-    sandboxRoot = `${workspacePath}/output/code-sandbox/${Date.now()}`
+    const sandboxBasePath = `${workspacePath}/output/code-sandbox`
+    try {
+      const gcResult = await collectCodeSandboxGarbage(sandboxBasePath)
+      if (gcResult.removed.length > 0) {
+        steps.push(buildSandboxGcStep(gcResult))
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      steps.push({
+        label: 'GC sandboxes WS7',
+        command: 'internal:sandbox-gc',
+        ok: true,
+        output: `GC non bloquant indisponible: ${message}`,
+      })
+    }
+
+    sandboxRoot = `${sandboxBasePath}/${Date.now()}`
 
     setProgress?.('Creation du bac de validation isole...')
     setPhase?.('Creation du bac de validation isole...', 88)
