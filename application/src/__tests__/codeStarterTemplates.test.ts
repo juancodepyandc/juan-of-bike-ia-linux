@@ -36,7 +36,8 @@ describe('buildStarterTemplateBlock', () => {
     const block = buildStarterTemplateBlock('landing page iPhone 16 Pro', intent)
     if (block.length > 0) {
       assert.ok(block.includes('STARTER'))
-      assert.ok(block.includes('FICHIER: index.html'))
+      assert.ok(block.includes('AURORA_CODE_VFS/1'))
+      assert.ok(block.includes('path="index.html"'))
     }
   })
 
@@ -65,12 +66,13 @@ describe('buildStarterTemplateBlock', () => {
     }
   })
 
-  test('block contient l output format avec FICHIER tag', () => {
+  test('block contient l output format structure', () => {
     const intent = classifyCodeIntent('apple style mac premium')
     const block = buildStarterTemplateBlock('apple style mac premium', intent)
     if (block.length > 100) {
       assert.ok(block.includes('OUTPUT'))
-      assert.ok(block.includes('FICHIER'))
+      assert.ok(block.includes('AURORA_CODE_VFS/1'))
+      assert.ok(block.includes('length'))
     }
   })
 })

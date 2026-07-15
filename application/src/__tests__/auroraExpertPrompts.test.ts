@@ -43,7 +43,8 @@ describe('EXPERT catalogue', () => {
 
   test('code module a outputFormat', () => {
     assert.ok(EXPERT.code.outputFormat)
-    assert.ok(EXPERT.code.outputFormat!.includes('<FILE'))
+    assert.ok(EXPERT.code.outputFormat!.includes('AURORA_CODE_VFS/1'))
+    assert.ok(EXPERT.code.outputFormat!.includes('length'))
   })
 
   test('conversation module mentionne Juan/STI2D', () => {
@@ -71,7 +72,7 @@ describe('buildSystemPrompt', () => {
   test('module avec outputFormat inclut "Format de sortie"', () => {
     const p = buildSystemPrompt('code')
     assert.ok(p.includes('Format de sortie'))
-    assert.ok(p.includes('FILE'))
+    assert.ok(p.includes('AURORA_CODE_VFS/1'))
   })
 
   test('module sans outputFormat n inclut PAS Format de sortie', () => {

@@ -1149,3 +1149,49 @@ Pour cet increment WS2, oui : le modele de projet unifie existe, reste sous seui
 ### Etat de satisfaction chantier
 
 Pour cet increment WS2, oui : le format a longueur declaree existe et les cas que le prompt nomme explicitement ne cassent plus le parsing. WS2 reste ouvert : il faut maintenant brancher ce protocole dans les prompts/parseurs existants, puis ecrire/relire via le filesystem Tauri.
+
+## 2026-07-15 — Vague 1 / WS2 increment 27 — branchement parseurs et prompts
+
+### Reprise et diagnostic confirme
+
+- Apres l'increment 26, le protocole existait mais le chemin app continuait a demander et parser prioritairement `--- FICHIER`.
+- Les deux points d'entree a proteger sont `parseCodeFiles` (orchestrateur) et `extractGeneratedFiles` (viewer compact/Aurora V1). Les deux devaient accepter le nouveau protocole sans casser les historiques.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : integration locale du contrat WS2.
+- Choix retenu : compatibilite ascendante. `AURORA_CODE_VFS/1` est prioritaire ; le format `--- FICHIER` reste parse pour les conversations anciennes, les contextes existants et les tests de non-regression.
+- Raison technique : eviter une rupture brutale du streaming et des retries pendant que le writer Tauri n'est pas encore branche.
+
+### Modifications realisees
+
+- `parseCodeFiles` parse `AURORA_CODE_VFS/1` via `parseProjectTreeEmission` et retourne des `CodeFile[]` transitoires.
+- `extractGeneratedFiles` parse le meme protocole et alimente les viewers existants en `ParsedFile[]`.
+- `isLLMRefusal` reconnait `AURORA_CODE_VFS/1` comme sortie structuree valide.
+- Les prompts Code actifs basculent vers `buildStructuredEmissionInstructions` :
+  - `codeSystemPrompts.ts` ;
+  - `codeIntentSystemPrompt.ts` ;
+  - `codeGenerationOutputRetry.ts` ;
+  - `codeMissionReview.ts` ;
+  - `codeOrchestrator.ts` rescue ;
+  - `codeStarterTemplates.ts` ;
+  - `auroraExpertPrompts.ts`.
+- Tests mis a jour/ajoutes pour prompts et parseurs structurés.
+
+### Avant / apres mesurable
+
+- Avant : protocole WS2 disponible mais non consomme par les parseurs principaux et non demande par les prompts.
+- Apres : les sorties nouvelles sont demandees en `AURORA_CODE_VFS/1`, et les parseurs principaux acceptent ce format.
+- Baseline Code : 498 tests verts apres protocole -> 500 tests verts apres branchement.
+
+### Validation
+
+- Tests cibles prompts/parseurs : 90 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 500 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+- Scan WS1 fichiers Module Code >600 lignes : aucun resultat.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS2, oui : le protocole n'est plus un module mort, il est demande par les prompts et consomme par les parseurs sans regression. WS2 reste ouvert sur le writer disque Tauri et le round-trip ecrire/relire reel.

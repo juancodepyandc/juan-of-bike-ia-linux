@@ -7,6 +7,7 @@ import {
   extractGeneratedFiles,
   extractWebPreview,
 } from '../services/codeOutputFiles.ts'
+import { serializeProjectTreeEmission } from '../services/codeProjectEmission.ts'
 
 describe('extractGeneratedFiles — edge cases', () => {
   test('stream vide → []', () => {
@@ -93,6 +94,23 @@ describe('extractGeneratedFiles — file header formats', () => {
     const stream = '`src/utils.js`\n```js\nfunction u(){}\n```'
     const r = extractGeneratedFiles(stream)
     assert.equal(r[0].path, 'src/utils.js')
+  })
+})
+
+describe('extractGeneratedFiles — protocole structure WS2', () => {
+  test('parse AURORA_CODE_VFS/1 avec contenu piege', () => {
+    const content = [
+      '---',
+      'const fence = "```"',
+      'const marker = "<<<AURORA_END>>>"',
+    ].join('\n')
+    const r = extractGeneratedFiles(serializeProjectTreeEmission([
+      { path: 'src/weird.ts', content, language: 'typescript' },
+    ]))
+
+    assert.equal(r.length, 1)
+    assert.equal(r[0].path, 'src/weird.ts')
+    assert.equal(r[0].content, content)
   })
 })
 

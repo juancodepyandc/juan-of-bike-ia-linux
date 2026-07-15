@@ -16,6 +16,7 @@ import {
   buildSubjectLockBlock,
   isVisualProject,
 } from './codeSystemPromptContracts.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 
 // ---------------------------------------------------------------------------
 // ROLE 1 — L'ARCHITECTE (THE BRAIN)
@@ -106,6 +107,7 @@ export function buildCodeurSystemPrompt(intent: CodeIntent, promptHint?: string)
   const machineFileContract = buildMachineFileContractBlock(intent)
   const deliveryContract = buildDeliveryContractBlock(intent)
   const expertEngineeringContract = buildExpertEngineeringContractBlock(intent)
+  const structuredEmissionContract = buildStructuredEmissionInstructions()
   // Inject brand/product lock block to prevent subject drift.
   const subjectLock = buildSubjectLockBlock(intent)
   // For visual projects: inject premium HTML reference (brand_landing for brands).
@@ -167,7 +169,8 @@ export function buildCodeurSystemPrompt(intent: CodeIntent, promptHint?: string)
     '- Si l utilisateur n a pas mentionne un framework, choisis le plus leger qui resout la demande sans sur-ingenierie.',
     '',
     '## REGLES DE GENERATION ABSOLUES',
-    '- FORMAT OBLIGATOIRE: Chaque fichier commence par --- FICHIER: chemin/nom.ext ---',
+    '- FORMAT OBLIGATOIRE: utilise le protocole structure AURORA_CODE_VFS/1 a longueur declaree pour chaque fichier.',
+    '- INTERDIT d utiliser les fences markdown ou le vieux separateur --- FICHIER: --- comme delimiteur principal.',
     '- ZERO placeholder, ZERO TODO, ZERO "implement here", ZERO pseudo-code, ZERO commentaire "// reste du code ici".',
     '- ZERO texte explicatif en dehors des fichiers. Pas d introduction, pas de conclusion.',
     '- Chaque fichier doit etre COMPLET et AUTONOME — JAMAIS de version tronquee ou simplifiee.',
@@ -194,13 +197,7 @@ export function buildCodeurSystemPrompt(intent: CodeIntent, promptHint?: string)
     launcherBlock,
     '',
     '## FORMAT DE SORTIE STRICT',
-    '```',
-    '--- FICHIER: <premier fichier utile a ce type de projet> ---',
-    '... contenu complet ...',
-    '',
-    '--- FICHIER: <fichier suivant> ---',
-    '... contenu complet ...',
-    '```',
+    structuredEmissionContract,
     '',
     `Projet: ${intent.projectType} | Complexite: ${intent.complexity}`,
     intent.frameworks.length > 0 ? `Stack: ${intent.frameworks.join(', ')}` : '',
@@ -220,6 +217,8 @@ export function buildCodeurSystemPrompt(intent: CodeIntent, promptHint?: string)
 // ---------------------------------------------------------------------------
 
 export function buildAuditeurSystemPrompt(): string {
+  const structuredEmissionContract = buildStructuredEmissionInstructions()
+
   return [
     '# ROLE: AUDITEUR IMPITOYABLE — LE CORRECTEUR',
     '',
@@ -264,9 +263,8 @@ export function buildAuditeurSystemPrompt(): string {
     '- Boucles de correction qui cachent une vraie cause racine (outil absent, config invalide, attente infinie)',
     '',
     '## FORMAT DE CORRECTION OBLIGATOIRE',
-    'Ta sortie DOIT etre du code corrige au format:',
-    '--- FICHIER: chemin/fichier.ext ---',
-    '// fichier complet corrige',
+    'Ta sortie DOIT etre du code corrige dans le protocole structure suivant:',
+    structuredEmissionContract,
     '',
     'REGLES:',
     '- Genere UNIQUEMENT les fichiers qui changent.',

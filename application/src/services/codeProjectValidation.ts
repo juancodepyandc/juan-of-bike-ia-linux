@@ -155,7 +155,7 @@ export function validateOutputMatchesIntent(files: CodeFile[], intent: CodeInten
 
   const allGeneric = files.every((file) => isSyntheticFallbackFile(file.name))
   if (allGeneric) {
-    return 'Les fichiers ont des noms generiques (bloc-1, module-2, script-3) — le format --- FICHIER: nom.ext --- n a pas ete suivi. Regenere avec des chemins reels comme package.json, index.html, src/App.tsx.'
+    return 'Les fichiers ont des noms generiques (bloc-1, module-2, script-3) — le protocole structure AURORA_CODE_VFS/1 n a pas fourni de chemins reels. Regenere avec des chemins comme package.json, index.html, src/App.tsx.'
   }
 
   const structuredIssue = validateStructuredFiles(files)

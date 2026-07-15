@@ -9,6 +9,7 @@
 import type { CodeIntent } from './codeIntent'
 import type { DesignArchetype } from './codeDesignDirectives'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 
 const STARTER_INTRO = [
   '## STARTER TEMPLATE — REFERENCE STRUCTURELLE NIVEAU SENIOR IC (v82m7)',
@@ -384,10 +385,8 @@ export function buildStarterTemplateBlock(prompt: string, intent: CodeIntent): s
     'Si tu ne respectes pas la STRUCTURE du squelette, le pipeline rejettera la livraison.',
     'Les images sont DEJA generees: utilise PLACEHOLDER_IMG_HERO, PLACEHOLDER_IMG_DETAIL, PLACEHOLDER_IMG_LIFESTYLE1, PLACEHOLDER_IMG_LIFESTYLE2 telles quelles dans <img src="...">.',
     '',
-    'OUTPUT obligatoire (1 SEUL fichier):',
-    '--- FICHIER: index.html ---',
-    '```html',
-    '<!doctype html>... (HTML complet ici, avec TON contenu personnalise dans les {{slots}}, en gardant 100% de la structure et du JS du squelette)',
-    '```',
+    'OUTPUT obligatoire (1 SEUL fichier index.html):',
+    buildStructuredEmissionInstructions(),
+    'Le seul fichier emis doit avoir path="index.html", language="html", encoding="utf8" et contenir le HTML complet personnalise dans les {{slots}}, en gardant 100% de la structure et du JS du squelette.',
   ].join('\n')
 }

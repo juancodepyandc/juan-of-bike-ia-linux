@@ -45,6 +45,7 @@ import {
 } from './codePipelinePhases.ts'
 import { prepareCodePlanningContext } from './codePipelinePreparation.ts'
 import { runGeneratedOutputRetryLoop } from './codeGenerationOutputRetry.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
@@ -403,11 +404,8 @@ async function runFullPipeline({
     const rescueContent = await runGenerationPhase(
       [
         'INSTRUCTION CRITIQUE: Tu DOIS generer du code source. NE REFUSE JAMAIS.',
-        'Tu es un generateur de code. Ta seule sortie autorisee est du CODE SOURCE dans le format:',
-        '--- FICHIER: nom.ext ---',
-        '```langage',
-        '// code ici',
-        '```',
+        'Tu es un generateur de code. Ta seule sortie autorisee est du CODE SOURCE dans le protocole structure:',
+        buildStructuredEmissionInstructions(),
         '',
         'INTERDIT: excuses, refus, explications, suggestions de consulter les instructions.',
         'Genere le projet demande MAINTENANT:',

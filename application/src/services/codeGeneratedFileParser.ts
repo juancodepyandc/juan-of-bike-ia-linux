@@ -6,8 +6,18 @@
 import type { CodeFile } from './codeOrchestrator.ts'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
 import { sanitizeGeneratedFileContent, stripFormattingArtifacts } from './codeGeneratedFileSanitizer.ts'
+import { isStructuredProjectEmission, parseProjectTreeEmission } from './codeProjectEmission.ts'
 
 export function parseCodeFiles(content: string): CodeFile[] {
+  if (isStructuredProjectEmission(content)) {
+    const parsed = parseProjectTreeEmission(content)
+    return parsed.tree.files.map((file) => ({
+      name: file.path,
+      language: file.language,
+      content: file.content,
+    }))
+  }
+
   const files: CodeFile[] = []
   const parts = content.split(/---\s*(?:FICHIER|FILE):\s*(.+?)\s*---/i)
 
@@ -242,6 +252,7 @@ export function detectNonCodePlanningNarrative(content: string) {
   const trimmed = stripFormattingArtifacts(content)
   if (!trimmed) return null
   if (/---\s*(?:FICHIER|FILE):\s*/i.test(trimmed)) return null
+  if (isStructuredProjectEmission(trimmed)) return null
   if (/```[\w.+-]+\s*\r?\n[\s\S]*?```/i.test(trimmed)) return null
   if (isLLMRefusal(trimmed)) return null
   if (detectContentLanguage(trimmed)) return null

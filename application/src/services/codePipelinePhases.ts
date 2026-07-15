@@ -248,7 +248,7 @@ export async function runGenerationPhase(
         '- Genere un projet neuf, complet, idiomatique dans la nouvelle stack.',
         '- NE PRODUIS PAS de fichiers HTML/CSS/JS si la nouvelle stack est Python / Go / Rust / Java / etc.',
         '- NE PRODUIS PAS de fichier Python si la nouvelle stack est web pure. Suis RIGOUREUSEMENT le projet detecte.',
-        '- Respecte le format de sortie `--- FICHIER: chemin ---` pour chaque fichier complet.',
+        '- Respecte le format de sortie structure `AURORA_CODE_VFS/1` avec longueur declaree pour chaque fichier complet.',
         '- Inclure un README.md decrivant comment installer et lancer le nouveau projet.',
       ].filter(Boolean).join('\n'),
     })

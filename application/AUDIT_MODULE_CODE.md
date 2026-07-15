@@ -222,6 +222,14 @@
 - **Validation** : test dedie emission 5 verts / 0 echec ; glob Code a **498 tests verts / 0 echec**.
 - **WS2 reste ouvert** : brancher ce protocole dans les prompts/parseurs existants et ajouter le writer disque Tauri + round-trip fichier reel.
 
+### 2026-07-15 — Vague 1 / WS2 increment 27 applique
+
+- **Parseurs recables en compatibilite ascendante** : `parseCodeFiles` et `extractGeneratedFiles` lisent maintenant `AURORA_CODE_VFS/1` en priorite, tout en gardant le vieux format `--- FICHIER` pour les historiques et les retries existants.
+- **Prompts Code bascules vers WS2** : Codeur, retry, rescue, starter templates, expert prompt et prompt intent demandent le protocole structure a longueur declaree au lieu des fences markdown.
+- **Refus LLM durci** : une sortie `AURORA_CODE_VFS/1` n'est plus classable comme refus, meme si elle contient du texte susceptible de ressembler a une reponse narrative.
+- **Validation** : tests parseurs/prompts cibles 90 verts / 0 echec ; glob Code a **500 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; scan WS1 toujours vert.
+- **WS2 reste ouvert** : le writer disque Tauri et le round-trip ecrire/relire reel restent a livrer pour cloturer les criteres d'acceptation.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

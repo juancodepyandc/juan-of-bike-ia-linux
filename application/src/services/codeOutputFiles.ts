@@ -18,6 +18,8 @@
  * file tree never crashes on loose plain-text streams.
  */
 
+import { isStructuredProjectEmission, parseProjectTreeEmission } from './codeProjectEmission.ts'
+
 export interface ParsedFile {
   path: string
   content: string
@@ -88,6 +90,15 @@ function sniffPathFromContent(content: string, fenceLang: string): string {
 
 export function extractGeneratedFiles(stream: string): ParsedFile[] {
   if (!stream || stream.trim().length === 0) return []
+  if (isStructuredProjectEmission(stream)) {
+    const parsed = parseProjectTreeEmission(stream)
+    return parsed.tree.files.map((file) => ({
+      path: file.path,
+      content: file.content,
+      language: file.language,
+    }))
+  }
+
   const lines = stream.split('\n')
   const files: ParsedFile[] = []
   let pendingPath: string | null = null

@@ -11,6 +11,7 @@ import { detectNonCodePlanningNarrative, extractNotes, parseCodeFiles } from './
 import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
 import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import { computeContentQualityScore } from './codeQualityGates.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 import {
   DOCUMENTATION_EXTENSIONS_EARLY,
   clipText,
@@ -241,10 +242,7 @@ export async function runGeneratedOutputRetryLoop({
       enrichedPrompt,
       '',
       'FORMAT OBLIGATOIRE (ne JAMAIS devier):',
-      '--- FICHIER: nom_du_fichier.ext ---',
-      '```langage',
-      '// code source complet ici',
-      '```',
+      buildStructuredEmissionInstructions(),
       '',
       intent.projectType === 'static_web'
         ? 'Pour une page web, genere AU MINIMUM: index.html, style.css, et optionnellement script.js + README.md'

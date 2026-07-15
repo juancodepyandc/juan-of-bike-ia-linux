@@ -15,11 +15,15 @@ import {
   tryParseJson,
   upsertPackageDevDependency,
 } from '../services/codeGeneratedFileSanitizer.ts'
+import { serializeProjectTreeEmission } from '../services/codeProjectEmission.ts'
 
 describe('codeLLMRefusal', () => {
   test('detecte un refus mais pas une sortie avec fichiers', () => {
     assert.equal(isLLMRefusal("I'm sorry, I cannot help generate that code."), true)
     assert.equal(isLLMRefusal('--- FICHIER: index.html ---\n```html\n<html></html>\n```'), false)
+    assert.equal(isLLMRefusal(serializeProjectTreeEmission([
+      { path: 'index.html', content: '<!doctype html><html></html>' },
+    ])), false)
   })
 })
 
@@ -30,6 +34,21 @@ describe('codeGeneratedFileParser', () => {
     assert.equal(files[0].name, 'src/App.tsx')
     assert.equal(files[0].language, 'typescript')
     assert.ok(serializeCodeFiles(files).includes('--- FICHIER: src/App.tsx ---'))
+  })
+
+  test('parse le protocole structure WS2 a longueur declaree', () => {
+    const source = [
+      'const body = ````ts`',
+      'const separator = "---"',
+      'export { body, separator }',
+    ].join('\n')
+    const files = parseCodeFiles(serializeProjectTreeEmission([
+      { path: 'src/tricky.ts', content: source, language: 'typescript' },
+    ]))
+
+    assert.equal(files.length, 1)
+    assert.equal(files[0].name, 'src/tricky.ts')
+    assert.equal(files[0].content, source)
   })
 
   test('detecte le langage depuis un bloc texte generique', () => {

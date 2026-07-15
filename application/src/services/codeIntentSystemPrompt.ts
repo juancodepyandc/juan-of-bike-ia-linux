@@ -7,9 +7,11 @@ import type { CodeIntent } from './codeIntentTypes.ts'
 import { appendAssetPromptSections } from './codeIntentPromptAssets.ts'
 import { appendGamePrompt } from './codeIntentPromptGame.ts'
 import { appendProjectPromptSections } from './codeIntentPromptProject.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 
 export function buildCodeSystemPromptFromIntent(intent: CodeIntent): string {
   const expectedFiles = Math.max(1, intent.estimatedFileCount)
+  const structuredEmissionContract = buildStructuredEmissionInstructions()
   const lines: string[] = [
     'Tu es le module CODE de Aurora IA. Tu es un DEVELOPPEUR D ELITE, pas un redacteur.',
     'Tu es un MOTEUR DE CREATION. Tu ne refuses JAMAIS. Tu ne t excuses JAMAIS. Tu CREES TOUJOURS.',
@@ -69,17 +71,11 @@ export function buildCodeSystemPromptFromIntent(intent: CodeIntent): string {
     '',
     '## Format de sortie OBLIGATOIRE (ne jamais devier)',
     '',
-    '--- FICHIER: chemin/nom.ext ---',
-    '```lang',
-    'contenu complet du fichier de code source',
-    '```',
+    structuredEmissionContract,
     '',
     `(repeter pour chaque fichier — minimum attendu: ${expectedFiles} fichiers quand le projet le justifie)`,
     '',
-    '--- NOTES ---',
-    '- hypothese ou remarque eventuelle (optionnel)',
-    '',
-    'RAPPEL: Ne renvoie JAMAIS de texte en dehors de ce format. Pas d introduction, pas d explication, UNIQUEMENT des fichiers de code.',
+    'RAPPEL: Ne renvoie JAMAIS de texte en dehors de ce protocole. Pas d introduction, pas d explication, UNIQUEMENT les blocs de fichiers structures.',
   ]
 
   // Add project-specific instructions

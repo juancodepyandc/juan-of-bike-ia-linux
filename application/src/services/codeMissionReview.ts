@@ -12,6 +12,7 @@ import {
   type CodeMissionDossier,
   type MissionFileContext,
 } from './codeMissionShared.ts'
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 
 function buildDraftReviewFallback(
   prompt: string,
@@ -332,7 +333,8 @@ export function buildDraftRegenerationPrompt({
     '- Regenere les fichiers de code complets.',
     '- Ne produis ni documentation descriptive ni squelette incomplet.',
     '- Corrige specifiquement les problemes identifies par l audit.',
-    '- Respecte le format --- FICHIER: ... --- pour chaque fichier.',
+    '- Respecte ce protocole de sortie structure pour chaque fichier:',
+    buildStructuredEmissionInstructions(),
   ].filter(Boolean).join('\n\n')
 }
 

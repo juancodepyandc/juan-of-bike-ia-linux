@@ -48,10 +48,11 @@ describe('buildCodeurSystemPrompt', () => {
     assert.ok(b.length > 100)
   })
 
-  test('contient le format FICHIER', () => {
+  test('contient le format structure WS2', () => {
     const intent = classifyCodeIntent('react app')
     const p = buildCodeurSystemPrompt(intent)
-    assert.ok(p.includes('FICHIER') || p.includes('FILE'))
+    assert.ok(p.includes('AURORA_CODE_VFS/1'))
+    assert.ok(p.includes('length'))
   })
 
   test('React 3D verrouille JSON strict et noms R3F officiels', () => {
@@ -192,6 +193,6 @@ describe('Cohérence prompts', () => {
   test('codeur prompt mentionne format sortie', () => {
     const intent = classifyCodeIntent('react')
     const p = buildCodeurSystemPrompt(intent)
-    assert.ok(/FICHIER|FILE|---/i.test(p))
+    assert.ok(/AURORA_CODE_VFS\/1|length/i.test(p))
   })
 })

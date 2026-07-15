@@ -14,6 +14,8 @@
 // Convention: prompts in French because the primary user (Juan) is FR.
 // Comments and field names stay English.
 
+import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
+
 export type ExpertSpec = {
   identity: string
   qualityBar: string
@@ -98,8 +100,9 @@ export const EXPERT = {
       `features non demandées. Pas de fake brands ni testimonials avec ` +
       `vrais visages. Pas d'analytics. Pas de markdown autour du code.`,
     outputFormat:
-      `OUTPUT: chaque fichier dans <FILE path="rel/path">...</FILE>. Le ` +
-      `premier fichier est le point d'entrée. RIEN en dehors des FILE tags.`,
+      `OUTPUT: utilise le protocole structure a longueur declaree ci-dessous. ` +
+      `Le premier fichier est le point d'entree. RIEN en dehors des blocs de fichiers.\n` +
+      buildStructuredEmissionInstructions(),
   }),
 
   // ----------------------------------------------------------------------

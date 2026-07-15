@@ -26,6 +26,7 @@ const LLM_REFUSAL_NEGATIVE_PATTERNS = [
   /```\w+\n/,           // Contains code blocks → probably not a refusal
   /--- FICHIER:/i,      // Contains file markers → structured output
   /--- FILE:/i,
+  /AURORA_CODE_VFS\/1/i,
   /import\s+\{/,        // Actual code patterns
   /export\s+(default\s+)?/,
   /function\s+\w+/,
