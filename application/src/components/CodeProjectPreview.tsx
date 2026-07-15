@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { buildAuroraInlineSvgDataUri } from '../services/codeVisualFallbacks.ts'
 
 // Heavy project detection — prevents recomputing + reloading the iframe on
 // every token when the project is Three.js/WebGL (GPU killer) or simply too
@@ -110,9 +111,8 @@ function stripFileBasename(name: string): string {
 
 /**
  * Replace any <img src="./assets/..."> (or other unresolved relative paths)
- * with a REAL image URL: `source.unsplash.com/…?query=<alt text>` so the
- * preview shows actual relevant photos instead of colored placeholders.
- * A gradient SVG stays as the ultimate fallback inside <img onerror="...">.
+ * with a deterministic inline SVG so the preview never depends on a dead
+ * third-party placeholder service or shows a broken-image icon.
  */
 /**
  * v82ns : when a small/distilled LLM hallucinates, it often loops on a
@@ -144,18 +144,9 @@ function patchUnresolvedImageSrcs(html: string): string {
       // If no alt, extract meaningful words from the path itself (e.g. hero-coca.jpg → "hero coca").
       const pathQuery = src.replace(/^[./]*/, '').replace(/\.[^.]+$/, '').replace(/[\-_/]+/g, ' ').trim()
       const query = (altRaw || pathQuery || 'hero').slice(0, 80)
-      const encoded = encodeURIComponent(query)
-
-      // Gradient fallback (only shown if Unsplash 404s / blocks CORS).
-      const seed = Math.abs(query.split('').reduce((a: number, c: string) => a + c.charCodeAt(0) * 31, 0)) % 360
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${seed}, 70%, 55%)"/><stop offset="1" stop-color="hsl(${(seed + 60) % 360}, 70%, 35%)"/></linearGradient></defs><rect width="800" height="600" fill="url(%23g)"/></svg>`
-      const fallbackData = `data:image/svg+xml;utf8,${svg.replace(/#/g, '%23').replace(/"/g, '&quot;')}`
-
-      // Real image first, gradient via onerror fallback. Unsplash Source is unauth, CORS-friendly for <img>.
-      const realUrl = `https://source.unsplash.com/1600x900/?${encoded}`
+      const fallbackData = buildAuroraInlineSvgDataUri(query, { width: 1600, height: 900 })
       const altAttr = altRaw ? '' : ` alt="${query.replace(/"/g, '&quot;')}"`
-      const onerror = ` onerror="this.onerror=null;this.src='${fallbackData}';"`
-      return `<img${prefix}src=${q}${realUrl}${q}${suffix}${altAttr}${onerror}>`
+      return `<img${prefix}src=${q}${fallbackData}${q}${suffix}${altAttr}>`
     },
   )
 }

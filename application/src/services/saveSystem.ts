@@ -146,85 +146,44 @@ function ensureCodeExportFiles(request: SaveRequest): CodeFileEntry[] | undefine
 
   const existingFiles = [...request.codeFiles]
   const normalizedNames = existingFiles.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
-  if (normalizedNames.includes('lancement.bat')) return existingFiles
+  if (normalizedNames.some((name) => /^(start|launch|lancement)\.(sh|bat)$/.test(name))) return existingFiles
 
   const projectType = readStringParameter(request.parameters, 'projectType')
   const devCommand = readStringParameter(request.parameters, 'devCommand')
   const hasPackageJson = normalizedNames.some((name) => name.endsWith('package.json'))
   const hasRequirements = normalizedNames.includes('requirements.txt')
-  const hasIndexHtml = normalizedNames.includes('index.html')
   const pythonEntry = existingFiles.find((file) => /(^|\/)(main|app)\.py$/i.test(file.name.replace(/\\/g, '/')))
 
   let content: string | null = null
 
-  if ((projectType === 'static_web' || hasIndexHtml) && !hasPackageJson) {
-    content = [
-      '@echo off',
-      'setlocal',
-      'cd /d "%~dp0"',
-      'if exist "index.html" (',
-      '  start "" "index.html"',
-      ') else (',
-      '  echo index.html introuvable dans ce dossier.',
-      '  pause',
-      '  exit /b 1',
-      ')',
-      'endlocal',
-    ].join('\n')
-  } else if (hasPackageJson) {
+  if (projectType === 'static_web' && !hasPackageJson) {
+    return existingFiles
+  }
+
+  if (hasPackageJson) {
     const runCommand = devCommand || 'npm run dev'
     content = [
-      '@echo off',
-      'setlocal',
-      'cd /d "%~dp0"',
-      'where npm >nul 2>nul',
-      'if errorlevel 1 (',
-      '  echo Node.js avec npm est requis pour ce projet.',
-      '  pause',
-      '  exit /b 1',
-      ')',
-      'if not exist "node_modules" (',
-      '  echo Installation des dependances...',
-      '  call npm install',
-      '  if errorlevel 1 (',
-      '    echo Echec de npm install.',
-      '    pause',
-      '    exit /b 1',
-      '  )',
-      ')',
-      `call ${runCommand}`,
-      'set "EXITCODE=%ERRORLEVEL%"',
-      'if not "%EXITCODE%"=="0" pause',
-      'endlocal & exit /b %EXITCODE%',
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'command -v npm >/dev/null 2>&1 || { echo "Node.js avec npm est requis." >&2; exit 1; }',
+      'if [ ! -d "node_modules" ]; then npm install; fi',
+      runCommand,
     ].join('\n')
   } else if (hasRequirements || pythonEntry) {
     const entry = pythonEntry?.name || 'main.py'
     const installLines = hasRequirements
       ? [
-          'echo Installation des dependances Python...',
-          'call python -m pip install -r requirements.txt',
-          'if errorlevel 1 (',
-          '  echo Echec de l installation Python.',
-          '  pause',
-          '  exit /b 1',
-          ')',
+          'python -m pip install -r requirements.txt',
         ]
       : []
     content = [
-      '@echo off',
-      'setlocal',
-      'cd /d "%~dp0"',
-      'where python >nul 2>nul',
-      'if errorlevel 1 (',
-      '  echo Python est requis pour ce projet.',
-      '  pause',
-      '  exit /b 1',
-      ')',
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'command -v python >/dev/null 2>&1 || { echo "Python est requis." >&2; exit 1; }',
       ...installLines,
-      `call python ${entry}`,
-      'set "EXITCODE=%ERRORLEVEL%"',
-      'if not "%EXITCODE%"=="0" pause',
-      'endlocal & exit /b %EXITCODE%',
+      `python ${entry}`,
     ].join('\n')
   }
 
@@ -232,7 +191,7 @@ function ensureCodeExportFiles(request: SaveRequest): CodeFileEntry[] | undefine
 
   return [
     ...existingFiles,
-    { name: 'lancement.bat', content },
+    { name: 'start.sh', content },
   ]
 }
 

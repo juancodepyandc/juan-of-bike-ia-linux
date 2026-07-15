@@ -6,10 +6,9 @@
  *   - brand recolor : if a brand profile is provided (with primaryColor),
  *     RECOLOR the entire CSS palette towards that brand instead of
  *     leaving the LLM's default (green if Tailwind default, etc).
- *   - image onerror fallback : every <img> gets onerror="this.src=
- *     'https://picsum.photos/seed/X/W/H'" so broken Unsplash URLs
- *     gracefully degrade instead of showing the broken-image icon.
- *   - background-image url() in CSS : if local path, swap to Unsplash.
+ *   - image fallback : broken/local images become deterministic inline SVG
+ *     visuals, avoiding dead remote placeholders and network-only previews.
+ *   - background-image url() in CSS : if local path, swap to inline SVG.
  *   - <picture> + <source srcset> : also fixed.
  *
  * v82ni : user reported the regex elevation was schoolbook —
@@ -29,6 +28,7 @@
  */
 
 import type { ParsedFile } from './codeOutputFiles'
+import { buildAuroraInlineSvgDataUri } from './codeVisualFallbacks.ts'
 
 // ---------------------------------------------------------------------------
 // Image intelligence
@@ -63,7 +63,7 @@ function isBrokenImageSrc(src: string | null | undefined): boolean {
 }
 
 /**
- * Build a real Unsplash query for this image based on context :
+ * Build a stable visual seed for this image based on context :
  *   1. its alt text (if descriptive)
  *   2. nearest preceding heading text
  *   3. parent section's data-aurora-context attr (we set this in
@@ -91,11 +91,9 @@ function inferImageQuery(img: Element, doc: Document, fallback: string): string 
 }
 
 /**
- * Replace broken <img> srcs with context-aware Unsplash URLs.
- * v82nk : adds onerror fallback to picsum so broken Unsplash queries
- * gracefully degrade instead of showing the broken-image icon. Also
- * applies to ALL <img> (not just broken ones) — the LLM's existing
- * URLs are kept but get the fallback.
+ * Replace broken <img> srcs with context-aware inline SVG visuals.
+ * Existing URLs are kept, but get a local onerror fallback so the UI
+ * never depends on a third-party placeholder host.
  */
 function fixBrokenImages(doc: Document, fallback: string): { fixed: number } {
   let fixed = 0
@@ -110,22 +108,21 @@ function fixBrokenImages(doc: Document, fallback: string): { fixed: number } {
       const h = img.getAttribute('height') || '800'
       // sig suffix so consecutive imgs differ.
       const sig = (img.getAttribute('alt') || query).replace(/\s+/g, '-').slice(0, 20)
-      const newSrc = `https://source.unsplash.com/featured/${w}x${h}/?${encodeURIComponent(query)}&sig=${encodeURIComponent(sig)}-${i}`
+      const newSrc = buildAuroraInlineSvgDataUri(`${query} ${sig}-${i}`, { width: w, height: h })
       img.setAttribute('src', newSrc)
       if (!img.getAttribute('alt') || img.getAttribute('alt')?.trim().length === 0) {
         img.setAttribute('alt', query)
       }
       fixed += 1
     }
-    // ALWAYS attach an onerror fallback : if Unsplash returns 404 or
-    // is rate-limited or the user's network blocks it, the img falls
-    // back to picsum (always works) before showing the broken icon.
+    // Always attach a local onerror fallback so remote images cannot
+    // leave a broken-image icon in the generated preview.
     if (!img.getAttribute('onerror')) {
       const w = img.getAttribute('width') || '1200'
       const h = img.getAttribute('height') || '800'
       const seedSource = (img.getAttribute('alt') || `aurora-${i}`).replace(/[^\w-]/g, '').slice(0, 20) || `aurora-${i}`
-      const fallbackUrl = `https://picsum.photos/seed/${encodeURIComponent(seedSource)}/${w}/${h}`
-      img.setAttribute('onerror', `this.onerror=null;this.src='${fallbackUrl}';`)
+      const fallbackUrl = buildAuroraInlineSvgDataUri(seedSource, { width: w, height: h })
+      img.setAttribute('onerror', `this.onerror=null;this.src=${JSON.stringify(fallbackUrl)};`)
     }
     img.setAttribute('loading', 'lazy')
     img.setAttribute('decoding', 'async')
@@ -144,7 +141,7 @@ function fixBrokenPictures(doc: Document, fallback: string): { fixed: number } {
     const srcset = source.getAttribute('srcset')
     if (!srcset || isBrokenImageSrc(srcset.split(' ')[0] || '')) {
       const query = inferImageQuery(source, doc, fallback)
-      source.setAttribute('srcset', `https://source.unsplash.com/featured/1600x900/?${encodeURIComponent(query)}`)
+      source.setAttribute('srcset', buildAuroraInlineSvgDataUri(query, { width: 1600, height: 900 }))
       fixed += 1
     }
   }
@@ -162,13 +159,13 @@ function injectMissingHeroImage(doc: Document, fallback: string): { injected: bo
   if (hero.querySelector('img, video, canvas, svg[class*="hero"], picture')) {
     return { injected: false }
   }
-  // Inject an Unsplash hero image as a sibling/last-child if there's
-  // textual content but no visual.
+  // Inject a deterministic local hero visual as a sibling/last-child
+  // if there's textual content but no visual.
   const txt = hero.textContent?.trim() || ''
   if (txt.length < 30) return { injected: false }
   const heading = hero.querySelector('h1')?.textContent?.trim() || fallback
   const img = doc.createElement('img')
-  img.setAttribute('src', `https://source.unsplash.com/featured/1600x900/?${encodeURIComponent(heading.slice(0, 80))}`)
+  img.setAttribute('src', buildAuroraInlineSvgDataUri(heading.slice(0, 80), { width: 1600, height: 900 }))
   img.setAttribute('alt', heading)
   img.setAttribute('loading', 'eager')
   img.setAttribute('decoding', 'async')
@@ -481,8 +478,8 @@ function brandRecolor(css: string, brandPrimary: string): string {
 }
 
 /**
- * Fix CSS background-image: url(local-path.jpg) by routing to a real
- * Unsplash query derived from the surrounding selector name.
+ * Fix CSS background-image: url(local-path.jpg) by routing to a local
+ * deterministic SVG derived from the surrounding selector name.
  */
 function fixCssBackgroundImages(css: string, fallbackQuery: string): { css: string; fixed: number } {
   let fixed = 0
@@ -495,7 +492,7 @@ function fixCssBackgroundImages(css: string, fallbackQuery: string): { css: stri
       const selectorMatch = full.match(/\.([a-zA-Z][\w-]*)/)
       const seed = selectorMatch ? selectorMatch[1].replace(/-/g, ' ') : fallbackQuery
       fixed += 1
-      return `${before}https://source.unsplash.com/featured/1600x900/?${encodeURIComponent(seed)}${after}`
+      return `${before}${buildAuroraInlineSvgDataUri(seed, { width: 1600, height: 900 })}${after}`
     },
   )
   return { css: out, fixed }

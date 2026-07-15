@@ -1012,12 +1012,13 @@ type DetectedLanguage =
   | 'unknown'
 
 // ---------------------------------------------------------------------------
-// Auto-generation de lancement.bat si le LLM ne l a pas inclus
+// Auto-generation d'un launcher local si le LLM ne l'a pas inclus.
+// Sur Linux, on produit start.sh. Aucun .bat n'est ajoute automatiquement.
 // ---------------------------------------------------------------------------
 
-function generateLaunchBat(files: CodeFile[], lang: DetectedLanguage): CodeFile | null {
-  const hasLaunchBat = files.some((f) => /^(launch|lancement)\.bat$/i.test(f.name.replace(/.*[/\\]/, '')))
-  if (hasLaunchBat) return null
+function generateLaunchSh(files: CodeFile[], lang: DetectedLanguage): CodeFile | null {
+  const hasLaunchScript = files.some((f) => /^(start|launch|lancement)\.(sh|bat)$/i.test(f.name.replace(/.*[/\\]/, '')))
+  if (hasLaunchScript) return null
 
   let script = ''
   switch (lang) {
@@ -1034,19 +1035,13 @@ function generateLaunchBat(files: CodeFile[], lang: DetectedLanguage): CodeFile 
         } catch { /* ignore parse error */ }
       }
       script = [
-        '@echo off',
-        'chcp 65001 >nul 2>&1',
-        'echo === Installation des dependances ===',
-        'call npm install',
-        'if errorlevel 1 (',
-        '  echo [ERREUR] npm install a echoue. Verifiez que Node.js est installe.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        'echo === Lancement du projet ===',
-        `call ${devScript}`,
-        'pause',
-      ].join('\r\n')
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'command -v npm >/dev/null 2>&1 || { echo "Node.js avec npm est requis." >&2; exit 1; }',
+        'npm install',
+        devScript,
+      ].join('\n')
       break
     }
     case 'python': {
@@ -1054,49 +1049,43 @@ function generateLaunchBat(files: CodeFile[], lang: DetectedLanguage): CodeFile 
       const entry = mainPy ? mainPy.name.replace(/\\/g, '/') : 'main.py'
       const hasRequirements = !!findFile(files, 'requirements.txt')
       script = [
-        '@echo off',
-        'chcp 65001 >nul 2>&1',
-        ...(hasRequirements ? [
-          'echo === Installation des dependances ===',
-          'pip install -r requirements.txt',
-        ] : []),
-        'echo === Lancement du projet ===',
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'command -v python >/dev/null 2>&1 || { echo "Python est requis." >&2; exit 1; }',
+        ...(hasRequirements ? ['python -m pip install -r requirements.txt'] : []),
         `python ${entry}`,
-        'pause',
-      ].join('\r\n')
+      ].join('\n')
       break
     }
     case 'rust':
-      script = '@echo off\r\nchcp 65001 >nul 2>&1\r\necho === Build et lancement ===\r\ncargo run\r\npause'
+      script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\ncargo run'
       break
     case 'go':
-      script = '@echo off\r\nchcp 65001 >nul 2>&1\r\necho === Lancement ===\r\ngo run .\r\npause'
+      script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\ngo run .'
       break
     case 'java':
-      script = '@echo off\r\nchcp 65001 >nul 2>&1\r\necho === Compilation et lancement ===\r\njavac *.java && java Main\r\npause'
+      script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\njavac *.java && java Main'
       break
     case 'c':
-      script = '@echo off\r\nchcp 65001 >nul 2>&1\r\necho === Compilation et lancement ===\r\ngcc -o out.exe *.c && out.exe\r\npause'
+      script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\ngcc -o out *.c && ./out'
       break
     case 'cpp':
-      script = '@echo off\r\nchcp 65001 >nul 2>&1\r\necho === Compilation et lancement ===\r\ng++ -o out.exe *.cpp && out.exe\r\npause'
+      script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\ng++ -o out *.cpp && ./out'
       break
     case 'typescript-standalone':
       script = [
-        '@echo off',
-        'chcp 65001 >nul 2>&1',
-        'echo === Installation de ts-node ===',
-        'call npm install -g ts-node typescript',
-        'echo === Lancement ===',
-        'ts-node index.ts',
-        'pause',
-      ].join('\r\n')
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'npx ts-node index.ts',
+      ].join('\n')
       break
     default:
       return null
   }
 
-  return { name: 'lancement.bat', language: 'batch', content: script }
+  return { name: 'start.sh', language: 'bash', content: script }
 }
 
 function detectDominantLanguage(files: CodeFile[]): DetectedLanguage {
@@ -1315,15 +1304,15 @@ export async function runCodeSandboxValidation({
   let workingFiles = normalizedSandbox.files
   let lang: DetectedLanguage = detectDominantLanguage(workingFiles)
 
-  // Auto-generation de lancement.bat si absent
-  const launchBat = generateLaunchBat(workingFiles, lang)
-  if (launchBat) {
-    workingFiles = [...workingFiles, launchBat]
+  // Auto-generation d'un launcher Linux si absent
+  const launchScript = generateLaunchSh(workingFiles, lang)
+  if (launchScript) {
+    workingFiles = [...workingFiles, launchScript]
     steps.push({
-      label: 'Auto-generation lancement.bat',
-      command: 'internal:generate-launch-bat',
+      label: `Auto-generation ${launchScript.name}`,
+      command: 'internal:generate-launch-script',
       ok: true,
-      output: 'Fichier lancement.bat genere automatiquement pour lancement en un clic.',
+      output: `Fichier ${launchScript.name} genere automatiquement pour lancement local.`,
     })
   }
 

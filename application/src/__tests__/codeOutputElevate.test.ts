@@ -1,6 +1,6 @@
 /**
  * Tests pour services/codeOutputElevate — post-process des fichiers générés
- * pour les "élever" (oklch, keyframes, images Unsplash) sans re-LLM.
+ * pour les "élever" (oklch, keyframes, images SVG locales) sans re-LLM.
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
@@ -67,10 +67,10 @@ describe('elevateGeneratedFiles — animations', () => {
 })
 
 describe('elevateGeneratedFiles — images placeholder', () => {
-  test('<img src="via.placeholder..."> → remplacé par Unsplash', () => {
+  test('<img src="via.placeholder..."> → remplace par SVG local', () => {
     const html = '<img src="https://via.placeholder.com/600x400" alt="banner">'
     const { files, report } = elevateGeneratedFiles([htmlFile(html)])
-    assert.ok(files[0].content.includes('source.unsplash.com'))
+    assert.ok(files[0].content.includes('data:image/svg+xml'))
     assert.equal(report.imagesReplaced, 1)
   })
 
@@ -89,7 +89,7 @@ describe('elevateGeneratedFiles — images placeholder', () => {
   test('img sans alt → alt="visual" injecté', () => {
     const html = '<img src="photo.png">'
     const { files } = elevateGeneratedFiles([htmlFile(html)])
-    if (files[0].content.includes('source.unsplash.com')) {
+    if (files[0].content.includes('data:image/svg+xml')) {
       assert.ok(files[0].content.includes('alt='))
     }
   })

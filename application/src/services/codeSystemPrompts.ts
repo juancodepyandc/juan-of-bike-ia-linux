@@ -445,7 +445,7 @@ function buildNonVisualQualityContract(intent: CodeIntent): string {
       lines.push('- Validation: train/val/test split explicite, metrics report (accuracy + precision + recall + F1), matrix de confusion plot.')
       break
     case 'cli_script':
-      lines.push('### CLI / SCRIPT (Rust clap / Go cobra / Python argparse-typer / Node yargs / Bash / PowerShell)')
+      lines.push('### CLI / SCRIPT (Rust clap / Go cobra / Python argparse-typer / Node yargs / Bash)')
       lines.push('- argparse / clap / yargs / cobra: chaque flag documente, --help genere automatiquement, exit codes (0=ok, 1=user error, 2=system error).')
       lines.push('- Idempotence: le meme appel deux fois doit donner le meme resultat. Pas d effet de bord cache.')
       lines.push('- Stderr pour les logs / progress, stdout pour le resultat (JSON parsable si applicable). Permet le pipe.')
@@ -888,7 +888,7 @@ function buildLauncherInstructionBlock(intent: CodeIntent): string {
   if (intent.projectType === 'static_web') {
     return [
       '## LANCEMENT',
-      '- NE genere PAS de lancement.bat ni de start.sh. Il suffit d ouvrir index.html dans un navigateur.',
+      '- NE genere PAS de script de lancement. Il suffit d ouvrir index.html dans un navigateur.',
       '- Le README.md (optionnel mais apprecie) peut mentionner: "Ouvrir index.html dans un navigateur ou servir via `npx serve`".',
     ].join('\n')
   }
@@ -898,42 +898,33 @@ function buildLauncherInstructionBlock(intent: CodeIntent): string {
     return [
       '## LANCEMENT',
       '- Si le projet se lance via une commande directe (ex. `python main.py`), un README.md suffit.',
-      '- Les fichiers .bat / .sh ne sont PAS obligatoires pour un simple script.',
+      '- Les scripts de lancement ne sont PAS obligatoires pour un simple script.',
     ].join('\n')
   }
 
-  // Pour tout le reste (SPA, API, desktop, etc.) : fournir deux launchers cross-platform.
+  // Pour tout le reste (SPA, API, desktop, etc.) : fournir un launcher Linux/macOS.
   const devCmd = intent.devCommand || 'npm run dev'
   const installCmd = inferInstallCommand(intent)
 
   return [
-    '## LANCEMENT — DEUX FICHIERS CROSS-PLATFORM',
-    'Genere a la racine du projet DEUX fichiers pour que `juan of bike IA` puisse lancer le projet sur Windows ET Mac/Linux:',
+    '## LANCEMENT — SCRIPT LOCAL LINUX/MAC',
+    'Genere a la racine du projet un fichier `start.sh` executable pour lancer le projet sur cet environnement Linux.',
     '',
-    '### 1) lancement.bat (Windows)',
-    '```bat',
-    '@echo off',
-    'echo === Installation des dependances ===',
-    `call ${installCmd}`,
-    'echo === Lancement du projet ===',
-    `call ${devCmd}`,
-    'pause',
-    '```',
-    '',
-    '### 2) lancement.sh (Mac / Linux)',
     '```bash',
     '#!/usr/bin/env bash',
-    'set -e',
+    'set -euo pipefail',
+    'cd "$(dirname "$0")"',
     'echo "=== Installation des dependances ==="',
     installCmd,
     'echo "=== Lancement du projet ==="',
     devCmd,
     '```',
     '',
+    '- N ajoute PAS de fichier `.bat` ni de script PowerShell dans cette generation Linux.',
     '- Adapte les commandes au projet reel (pip, npm, cargo, go, maven, etc.).',
-    '- Les deux fichiers doivent etre coherents entre eux.',
     '- Pour les projets multi-services (frontend + backend), chaque service doit pouvoir etre lance correctement.',
   ].join('\n')
+
 }
 
 function inferInstallCommand(intent: CodeIntent): string {

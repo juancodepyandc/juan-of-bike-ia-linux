@@ -1439,7 +1439,7 @@ export default function CodeView() {
                 <span>Export persistant</span>
               </div>
               <p className="text-xs leading-relaxed text-aurora-text-muted">
-                Les boutons restent disponibles meme si tu as ferme la popup finale. Le projet exporte inclut aussi `lancement.bat` quand un demarrage automatique est possible.
+                Les boutons restent disponibles meme si tu as ferme la popup finale. Le projet exporte inclut aussi `start.sh` quand un demarrage automatique est possible sur Linux/macOS.
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <button

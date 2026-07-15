@@ -212,6 +212,9 @@ describe('normalizeGeneratedCodeFilesForTest', () => {
     assert.ok(!names.includes('module-4.ts'), names.join(','))
     assert.ok(!names.includes('script-3.js'), names.join(','))
     assert.ok(!names.includes('style-13.css'), names.join(','))
+    assert.ok(names.includes('start.sh'), names.join(','))
+    assert.ok(!names.includes('lancement.bat'), names.join(','))
+    assert.match(files.find((f) => f.name === 'start.sh')!.content, /^#!\/usr\/bin\/env bash/)
     assert.match(files.find((f) => f.name === 'index.html')!.content, /src\/index\.tsx/)
   })
 

@@ -52,6 +52,7 @@ import {
 } from './codePreflight'
 import { withTimeout } from './llmTimebox'
 import { getBridgeUrl } from '../utils/runtime'
+import { buildAuroraInlineSvgDataUri } from './codeVisualFallbacks.ts'
 
 // Fetch real subject images: logo, product, lifestyle (for brand pages).
 
@@ -100,8 +101,8 @@ function buildSubjectImageQueries(intent: CodeIntent): string[] {
  *      so the result survives any later save-as.
  *   2) For each remaining query (or all of them if the extension is absent),
  *      POST `/api/web/image` to the local Python bridge — same path as before.
- *   3) Fallback to Unsplash / LoremFlickr only if the previous two failed for
- *      a given query.
+ *   3) Fallback to deterministic inline SVG only if the previous two failed
+ *      for a given query.
  *
  * Returns the resolved images in priority order. Empty array on full failure.
  */
@@ -169,23 +170,14 @@ async function fetchSubjectImages(intent: CodeIntent): Promise<SubjectImage[]> {
     }
   }
 
-  // Step 3 — Unsplash / LoremFlickr fallback for any remaining slot.
+  // Step 3 — deterministic local fallback for any remaining slot.
   const stillMissing = queries.filter((q) => !yieldedQueries.has(q))
   for (const query of stillMissing) {
-    const encoded = encodeURIComponent(query.trim())
-    const candidates = [
-      `https://source.unsplash.com/1600x900/?${encoded}`,
-      `https://loremflickr.com/1600/900/${encoded}`,
-    ]
-    let resolvedOne = false
-    for (const url of candidates) {
-      if (resolvedOne) break
-      const dataUrl = await downloadAsDataUrl(url)
-      if (dataUrl) {
-        out.push({ dataUrl, source: url, query })
-        resolvedOne = true
-      }
-    }
+    out.push({
+      dataUrl: buildAuroraInlineSvgDataUri(query, { width: 1600, height: 900 }),
+      source: `inline-svg:${query}`,
+      query,
+    })
   }
 
   // Deduplicate by dataUrl prefix in case two queries hit the same image.
@@ -305,7 +297,7 @@ function applySubjectImagePlaceholder(content: string, intent: CodeIntent): stri
     : (stash.__subjectImageDataUrl ? [stash.__subjectImageDataUrl] : [])
 
   // Build a fallback URL pyramid even when the bridge yielded zero images.
-  // Order : Unsplash brand-keyword query → Unsplash subject-canonical query
+  // Order : local brand-keyword SVG → local subject-canonical SVG
   // → transparent 1x1 GIF (last resort, never broken icon).
   // intent.brand n'existe pas sur CodeIntent — la marque vit dans assetPlan.subject
   // (subject.canonical = "Pepsi", "iphone 15", etc.). On garde une chaîne unique.
@@ -318,8 +310,8 @@ function applySubjectImagePlaceholder(content: string, intent: CodeIntent): stri
   const fallbackPool: string[] = images.length > 0
     ? images
     : [
-        `https://source.unsplash.com/1600x900/?${encodeURIComponent(subjectKw)}`,
-        `https://source.unsplash.com/1200x800/?${encodeURIComponent(brandKw)}`,
+        buildAuroraInlineSvgDataUri(subjectKw, { width: 1600, height: 900 }),
+        buildAuroraInlineSvgDataUri(brandKw, { width: 1200, height: 800 }),
         TRANSPARENT_GIF,
       ]
 
@@ -3495,7 +3487,6 @@ function validateOutputMatchesIntent(files: CodeFile[], intent: CodeIntent): str
 type ProjectRunbook = {
   installSteps: string[]
   runSteps: string[]
-  launchScriptLines: string[]
 }
 
 function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunbook {
@@ -3511,21 +3502,7 @@ function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunb
     return {
       installSteps: ['Aucune installation requise.'],
       runSteps: [
-        'Double-cliquer `lancement.bat` sous Windows.',
-        hasIndexHtml ? 'Sinon, ouvrir `index.html` dans un navigateur.' : 'Le projet doit fournir un `index.html` pour la preview.',
-      ],
-      launchScriptLines: [
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        'if exist "index.html" (',
-        '  start "" "index.html"',
-        ') else (',
-        '  echo index.html introuvable dans ce dossier.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        'endlocal',
+        hasIndexHtml ? 'Ouvrir `index.html` dans un navigateur.' : 'Le projet doit fournir un `index.html` pour la preview.',
       ],
     }
   }
@@ -3540,49 +3517,16 @@ function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunb
     || intent.projectType === 'api_express'
     || intent.projectType === 'cli_node'
     || intent.projectType === 'library_npm'
+    || hasPackageJson
   ) {
-    const resolvedRunCommand = runCommand || 'npm run dev'
+    const resolvedRunCommand = runCommand || (hasPackageJson ? 'npm start' : 'npm run dev')
     const installSteps = ['```bash', 'npm install', '```']
     if (intent.projectType === 'desktop_tauri' && hasCargo) {
       installSteps.push('', '```bash', 'cargo build', '```')
     }
-
     return {
       installSteps,
-      runSteps: [
-        '```bash',
-        resolvedRunCommand,
-        '```',
-        '',
-        'Sous Windows, un double-clic sur `lancement.bat` installe les dependances puis lance le projet.',
-      ],
-      launchScriptLines: [
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        'where npm >nul 2>nul',
-        'if errorlevel 1 (',
-        '  echo Node.js avec npm est requis pour ce projet.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        'if not exist "node_modules" (',
-        '  echo Installation des dependances...',
-        '  call npm install',
-        '  if errorlevel 1 (',
-        '    echo Echec de npm install.',
-        '    pause',
-        '    exit /b 1',
-        '  )',
-        ')',
-        `call ${resolvedRunCommand}`,
-        'set "EXITCODE=%ERRORLEVEL%"',
-        'if not "%EXITCODE%"=="0" (',
-        '  echo Le lancement s est termine avec le code %EXITCODE%.',
-        '  pause',
-        ')',
-        'endlocal & exit /b %EXITCODE%',
-      ],
+      runSteps: ['```bash', resolvedRunCommand, '```'],
     }
   }
 
@@ -3595,51 +3539,11 @@ function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunb
     || intent.projectType === 'data_python'
   ) {
     const resolvedRunCommand = runCommand || (pythonEntry ? `python ${pythonEntry.name}` : 'python main.py')
-    const installSteps = hasRequirements
-      ? ['```bash', 'pip install -r requirements.txt', '```']
-      : ['Installer Python 3.11+ puis les dependances du projet.']
-
-    const launchScriptLines = [
-      '@echo off',
-      'setlocal',
-      'cd /d "%~dp0"',
-      'where python >nul 2>nul',
-      'if errorlevel 1 (',
-      '  echo Python est requis pour ce projet.',
-      '  pause',
-      '  exit /b 1',
-      ')',
-    ]
-
-    if (hasRequirements) {
-      launchScriptLines.push(
-        'echo Installation des dependances Python...',
-        'call python -m pip install -r requirements.txt',
-        'if errorlevel 1 (',
-        '  echo Echec de l installation Python.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-      )
-    }
-
-    launchScriptLines.push(
-      `call ${resolvedRunCommand}`,
-      'set "EXITCODE=%ERRORLEVEL%"',
-      'if not "%EXITCODE%"=="0" pause',
-      'endlocal & exit /b %EXITCODE%',
-    )
-
     return {
-      installSteps,
-      runSteps: [
-        '```bash',
-        resolvedRunCommand,
-        '```',
-        '',
-        'Sous Windows, `lancement.bat` automatise aussi l installation des dependances quand c est possible.',
-      ],
-      launchScriptLines,
+      installSteps: hasRequirements
+        ? ['```bash', 'pip install -r requirements.txt', '```']
+        : ['Installer Python 3.11+ puis les dependances du projet.'],
+      runSteps: ['```bash', resolvedRunCommand, '```'],
     }
   }
 
@@ -3648,21 +3552,6 @@ function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunb
     return {
       installSteps: ['```bash', 'cargo build', '```'],
       runSteps: ['```bash', resolvedRunCommand, '```'],
-      launchScriptLines: [
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        'where cargo >nul 2>nul',
-        'if errorlevel 1 (',
-        '  echo Rust et Cargo sont requis pour ce projet.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        `call ${resolvedRunCommand}`,
-        'set "EXITCODE=%ERRORLEVEL%"',
-        'if not "%EXITCODE%"=="0" pause',
-        'endlocal & exit /b %EXITCODE%',
-      ],
     }
   }
 
@@ -3671,61 +3560,107 @@ function buildProjectRunbook(files: CodeFile[], intent: CodeIntent): ProjectRunb
     return {
       installSteps: ['```bash', 'go mod tidy', '```'],
       runSteps: ['```bash', resolvedRunCommand, '```'],
-      launchScriptLines: [
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        'where go >nul 2>nul',
-        'if errorlevel 1 (',
-        '  echo Go est requis pour ce projet.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        'call go mod tidy',
-        'if errorlevel 1 (',
-        '  echo Echec de go mod tidy.',
-        '  pause',
-        '  exit /b 1',
-        ')',
-        `call ${resolvedRunCommand}`,
-        'set "EXITCODE=%ERRORLEVEL%"',
-        'if not "%EXITCODE%"=="0" pause',
-        'endlocal & exit /b %EXITCODE%',
-      ],
-    }
-  }
-
-  if (hasPackageJson) {
-    const resolvedRunCommand = runCommand || 'npm start'
-    return {
-      installSteps: ['```bash', 'npm install', '```'],
-      runSteps: ['```bash', resolvedRunCommand, '```'],
-      launchScriptLines: [
-        '@echo off',
-        'setlocal',
-        'cd /d "%~dp0"',
-        'call npm install',
-        `call ${resolvedRunCommand}`,
-        'endlocal',
-      ],
     }
   }
 
   return {
     installSteps: ['Voir les fichiers de configuration du projet pour les dependances exactes.'],
     runSteps: ['Consulter le code livre et le README pour lancer manuellement le projet.'],
-    launchScriptLines: [],
   }
 }
 
-function generateWindowsLaunchScript(files: CodeFile[], intent: CodeIntent): CodeFile | null {
-  const runbook = buildProjectRunbook(files, intent)
-  if (runbook.launchScriptLines.length === 0) return null
+function buildLinuxLaunchScriptLines(files: CodeFile[], intent: CodeIntent): string[] {
+  const normalizedNames = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
+  const hasPackageJson = normalizedNames.some((name) => name.endsWith('package.json'))
+  const hasRequirements = normalizedNames.includes('requirements.txt')
+  const hasCargo = normalizedNames.some((name) => name.endsWith('cargo.toml'))
+  const pythonEntry = files.find((file) => /(^|\/)(main|app)\.py$/i.test(file.name.replace(/\\/g, '/')))
+  const runCommand = intent.devCommand || intent.buildCommand
+
+  if (intent.projectType === 'static_web') return []
+
+  if (
+    intent.projectType.startsWith('spa_')
+    || intent.projectType.startsWith('ssr_')
+    || intent.projectType === 'fullstack_mern'
+    || intent.projectType === 'fullstack_nextjs'
+    || intent.projectType === 'desktop_electron'
+    || intent.projectType === 'desktop_tauri'
+    || intent.projectType === 'api_express'
+    || intent.projectType === 'cli_node'
+    || intent.projectType === 'library_npm'
+    || hasPackageJson
+  ) {
+    const resolvedRunCommand = runCommand || (hasPackageJson ? 'npm start' : 'npm run dev')
+    const lines = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'if ! command -v npm >/dev/null 2>&1; then echo "Node.js avec npm est requis." >&2; exit 1; fi',
+      'if [ ! -d "node_modules" ]; then npm install; fi',
+    ]
+    if (intent.projectType === 'desktop_tauri' && hasCargo) {
+      lines.push('if ! command -v cargo >/dev/null 2>&1; then echo "Rust/Cargo est requis pour Tauri." >&2; exit 1; fi')
+    }
+    lines.push(resolvedRunCommand)
+    return lines
+  }
+
+  if (
+    intent.projectType === 'api_fastapi'
+    || intent.projectType === 'api_django'
+    || intent.projectType === 'api_flask'
+    || intent.projectType === 'fullstack_django'
+    || intent.projectType === 'cli_python'
+    || intent.projectType === 'data_python'
+  ) {
+    const resolvedRunCommand = runCommand || (pythonEntry ? `python ${pythonEntry.name}` : 'python main.py')
+    const lines = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'command -v python >/dev/null 2>&1 || { echo "Python est requis." >&2; exit 1; }',
+    ]
+    if (hasRequirements) lines.push('python -m pip install -r requirements.txt')
+    lines.push(resolvedRunCommand)
+    return lines
+  }
+
+  if (intent.projectType === 'api_actix' || intent.projectType === 'cli_rust' || intent.projectType === 'system_rust' || intent.projectType === 'library_crate') {
+    return [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'command -v cargo >/dev/null 2>&1 || { echo "Rust/Cargo est requis." >&2; exit 1; }',
+      runCommand || 'cargo run',
+    ]
+  }
+
+  if (intent.projectType === 'api_gin' || intent.projectType === 'cli_go') {
+    return [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'cd "$(dirname "$0")"',
+      'command -v go >/dev/null 2>&1 || { echo "Go est requis." >&2; exit 1; }',
+      'go mod tidy',
+      runCommand || 'go run .',
+    ]
+  }
+
+  return []
+}
+
+function generateLinuxLaunchScript(files: CodeFile[], intent: CodeIntent): CodeFile | null {
+  const hasLaunchScript = files.some((f) => /^(start|launch|lancement)\.(sh|bat)$/i.test(f.name.replace(/.*[/\\]/, '')))
+  if (hasLaunchScript) return null
+
+  const lines = buildLinuxLaunchScriptLines(files, intent)
+  if (lines.length === 0) return null
 
   return {
-    name: 'lancement.bat',
-    language: 'text',
-    content: runbook.launchScriptLines.join('\n'),
+    name: 'start.sh',
+    language: 'bash',
+    content: lines.join('\n'),
   }
 }
 
@@ -3950,7 +3885,7 @@ function upsertProjectSupportFiles(
 ): CodeFile[] {
   const strippedFiles = ensureTailwindCDN(files, intent.projectType).filter((file) => {
     const name = file.name.replace(/\\/g, '/').toLowerCase()
-    return name !== 'readme.md' && name !== 'lancement.bat'
+    return name !== 'readme.md' && name !== 'lancement.bat' && name !== 'start.sh'
   })
   const baseFiles = ensureSpaViteConfig(
     ensureSpaIndexHtml(stripSyntheticFallbackFiles(strippedFiles, intent), intent),
@@ -3959,7 +3894,7 @@ function upsertProjectSupportFiles(
   const supportedFiles = ensureTailwindTooling(baseFiles)
 
   const nextFiles = [...supportedFiles, generateReadme(supportedFiles, intent, prompt, architecturePlan)]
-  const launchScript = generateWindowsLaunchScript(supportedFiles, intent)
+  const launchScript = generateLinuxLaunchScript(supportedFiles, intent)
   if (launchScript) nextFiles.push(launchScript)
 
   return nextFiles
@@ -4251,7 +4186,7 @@ async function runFullPipeline({
   // v71: multi-image — brand pages need 3-4 distinct shots (logo, product,
   // lifestyle, detail), not a single hero photo. The orchestrator queries the
   // Aurora-Connect extension first (real browser tab), then the Python bridge,
-  // then Unsplash/LoremFlickr.
+  // then a deterministic local SVG fallback.
   let subjectImageBlock = ''
   // v84r : skip pour les briefs simples — pas besoin d'aller chercher 4 images
   // si le user demande juste "page HTML avec un bouton qui calcule X".
@@ -4847,9 +4782,9 @@ function generateReadme(
     '',
     runbook.runSteps.join('\n'),
     '',
-    '## Raccourci Windows',
+    '## Raccourci de lancement',
     '',
-    'Le fichier `lancement.bat` est fourni quand un demarrage automatise est possible.',
+    'Le fichier `start.sh` est fourni quand un demarrage automatise est possible sur Linux/macOS.',
     '',
     '---',
     '*Genere par Aurora IA — Module Code*',

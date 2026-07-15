@@ -358,7 +358,7 @@ function buildPreflightPrompt(
     '  "workspaceFindings": ["fait workspace"],',
     '  "reuseGuidance": ["quoi relire ou reutiliser"],',
     '  "mustInspectFirst": ["fichier ou point a inspecter en premier"],',
-    '  "validationPlan": ["verification concrete avant livraison"],',
+    '  "validationPlan": ["verification concrete avant livraison"]',
     '}',
     '',
     'Regles:',
@@ -387,10 +387,20 @@ function buildPreflightPrompt(
 
 function parsePreflightResponse(raw: string): Partial<CodePreflightReport> | null {
   try {
-    const cleaned = raw.trim()
+    let cleaned = raw
+      .replace(/<think>[\s\S]*?<\/think>/gi, '')
+      .replace(/^\s*<think>[\s\S]*?(?=\{)/i, '')
+      .trim()
       .replace(/^```json?\s*/i, '')
       .replace(/\s*```$/, '')
       .trim()
+
+    const firstBrace = cleaned.indexOf('{')
+    const lastBrace = cleaned.lastIndexOf('}')
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      cleaned = cleaned.slice(firstBrace, lastBrace + 1)
+    }
+
     return JSON.parse(cleaned) as Partial<CodePreflightReport>
   } catch {
     return null

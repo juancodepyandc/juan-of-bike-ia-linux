@@ -27,11 +27,11 @@ describe('intelligentlyElevateFiles — files vide', () => {
 })
 
 describe('intelligentlyElevateFiles — fixCssBackgroundImages (path CSS standalone)', () => {
-  test('background-image url(local.jpg) → remplacé par Unsplash', () => {
+  test('background-image url(local.jpg) → remplace par SVG local', () => {
     const { files, report } = intelligentlyElevateFiles([
       css('.hero { background-image: url("local.jpg"); }'),
     ])
-    assert.ok(files[0].content.includes('source.unsplash.com'))
+    assert.ok(files[0].content.includes('data:image/svg+xml'))
     assert.equal(report.bgImagesFixed, 1)
   })
 
@@ -44,7 +44,7 @@ describe('intelligentlyElevateFiles — fixCssBackgroundImages (path CSS standal
     assert.equal(report.bgImagesFixed, 0)
   })
 
-  test('selector name forwardé comme query Unsplash', () => {
+  test('selector name forwardé comme seed visuel local', () => {
     const { files } = intelligentlyElevateFiles([
       css('.product-showcase { background-image: url(p.jpg); }'),
     ])
@@ -65,7 +65,7 @@ describe('intelligentlyElevateFiles — fixCssBackgroundImages (path CSS standal
     ])
     // Le regex matche `background(-image)?` donc devrait traiter
     if (report.bgImagesFixed > 0) {
-      assert.ok(files[0].content.includes('source.unsplash.com'))
+      assert.ok(files[0].content.includes('data:image/svg+xml'))
     }
   })
 
@@ -96,7 +96,7 @@ describe('intelligentlyElevateFiles — fichiers passthrough', () => {
       css('.hero { background-image: url(x.jpg); }'),
       js('console.log("hi")'),
     ])
-    assert.ok(files[0].content.includes('source.unsplash.com'))
+    assert.ok(files[0].content.includes('data:image/svg+xml'))
     assert.equal(files[1].content, 'console.log("hi")')
     assert.equal(report.bgImagesFixed, 1)
   })
@@ -146,7 +146,7 @@ describe('intelligentlyElevateFiles — promptHint / brandPrimary', () => {
       css('.unstyled { background-image: url(x.jpg); }'),
     ], 'voiture sport rouge')
     // Le selector .unstyled a un nom utilisable → query basée sur selector
-    assert.ok(files[0].content.includes('unsplash'))
+    assert.ok(files[0].content.includes('data:image/svg+xml'))
   })
 
   test('promptHint trop long tronqué à 80', () => {
@@ -167,7 +167,7 @@ describe('intelligentlyElevateFiles — SCSS support', () => {
       { path: 'main.scss', language: 'scss', content: '.hero { background-image: url(x.jpg); }' },
     ])
     if (report.bgImagesFixed > 0) {
-      assert.ok(files[0].content.includes('source.unsplash.com'))
+      assert.ok(files[0].content.includes('data:image/svg+xml'))
     }
   })
 })

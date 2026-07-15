@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // codeImageGen — generate REAL images for the Code module via ComfyUI/FLUX.
-// Replaces the Unsplash/Picsum fallback when ComfyUI is reachable. Returns
+// Replaces legacy remote placeholder fallbacks when ComfyUI is reachable. Returns
 // data URLs ready to embed in <img src="..."> so the saved project never 404s.
 // Also exposes a multi-image helper to populate hero + gallery + showcase
 // slots for premium archetypes (apple_product, ecommerce, portfolio…).

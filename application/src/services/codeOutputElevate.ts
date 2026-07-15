@@ -14,6 +14,7 @@
  */
 
 import type { ParsedFile } from './codeOutputFiles'
+import { buildAuroraInlineSvgDataUri } from './codeVisualFallbacks.ts'
 
 /** Common Tailwind-default hex → oklch equivalents (perceptually
  * uniform). Triggered as a sweep over CSS files. */
@@ -107,8 +108,8 @@ function elevateAnimations(css: string): { css: string; injected: boolean } {
   return { css: out, injected: true }
 }
 
-/** Replace likely-placeholder <img src="..."> with a real Unsplash query
- * derived from the image's alt text or surrounding heading. */
+/** Replace likely-placeholder <img src="..."> with a deterministic
+ * inline SVG derived from the image's alt text or surrounding heading. */
 function elevateImages(html: string): { html: string; replaced: number } {
   let replaced = 0
   // Match <img tags with src that's a placeholder pattern OR that's
@@ -117,7 +118,7 @@ function elevateImages(html: string): { html: string; replaced: number } {
   const out = html.replace(PLACEHOLDER_RE, (_m, p1, _src, p3, _altGroup, alt, p6) => {
     replaced += 1
     const query = (alt || 'modern aesthetic photography').slice(0, 80).replace(/[^\w\s-]/g, '').trim()
-    const url = `https://source.unsplash.com/featured/1600x900/?${encodeURIComponent(query)}`
+    const url = buildAuroraInlineSvgDataUri(query, { width: 1600, height: 900 })
     const altOut = alt ? ` alt="${alt}"` : ' alt="visual"'
     return `${p1}${url}${p3}${altOut}${p6}`
   })
