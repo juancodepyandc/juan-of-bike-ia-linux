@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { detectFileLanguage } from '../views/codeViewLanguage.ts'
 import { isHeavyWebGLProject } from '../views/codeViewPreviewHeuristics.ts'
+import { countFileSearchMatches } from '../views/codeViewSearch.ts'
 import type { CodeFile } from '../services/codeOrchestrator.ts'
 
 const file = (name: string, content: string, language = 'plaintext'): CodeFile => ({
@@ -47,4 +48,12 @@ test('isHeavyWebGLProject bloque les fichiers trop volumineux', () => {
   assert.equal(isHeavyWebGLProject([
     file('src/generated.js', 'x'.repeat(80_001), 'js'),
   ]), true)
+})
+
+test('countFileSearchMatches echappe la recherche utilisateur', () => {
+  const content = 'button Button btn button. button?'
+  assert.equal(countFileSearchMatches(content, 'button'), 4)
+  assert.equal(countFileSearchMatches(content, 'button.'), 1)
+  assert.equal(countFileSearchMatches(content, '['), 0)
+  assert.equal(countFileSearchMatches(content, ''), 0)
 })

@@ -170,6 +170,14 @@
 - **Validation** : test dedie helpers vue 4 verts / 0 echec ; glob Code a **481 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 21 applique
+
+- **Panneau livraison CodeView extrait** : arborescence fichiers, actions copier/telecharger, toggle lignes, simulateur/code viewer, recherche fichier, resultat sandbox et notes quittent `CodeView.tsx` pour `codeViewDeliveryPanel.tsx`.
+- **Recherche fichier testable** : le comptage des occurrences de recherche est sorti dans `codeViewSearch.ts`, sans importer React/JSX dans les tests.
+- **Reduction mesurable** : `CodeView.tsx` 1945 -> 1642 lignes. Nouveau module `codeViewDeliveryPanel.tsx` (385 lignes), helper `codeViewSearch.ts` (10 lignes), test vue etendu a 59 lignes.
+- **Validation** : test dedie helpers vue 5 verts / 0 echec ; glob Code a **482 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

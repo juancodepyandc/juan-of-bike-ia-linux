@@ -904,3 +904,42 @@ Pour cet increment WS1, oui : l'orchestrateur passe sous 600 lignes, le retry de
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les panneaux extraits sont sous seuil, les helpers critiques sont testes sans charger l'UI, et la preview compacte reste conservee. WS1 reste ouvert car `CodeView.tsx` et `AuroraV1CodeView.tsx` doivent encore etre descendus sous 600 lignes.
+
+## 2026-07-15 — Vague 1 / WS1 increment 21 — panneau livraison CodeView
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction des panneaux console/preview/inspection, `CodeView.tsx` restait a 1945 lignes.
+- Le panneau droit "Livraison" etait autonome : actions fichier, arborescence, inspecteurs deja extraits, console deja extraite, viewer code/preview, resultat sandbox et notes.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codeViewDeliveryPanel.tsx` pour le panneau TSX complet et `codeViewSearch.ts` pour le comptage de recherche pur.
+- Raison technique : retirer un bloc JSX dense sans changer les props/state owners de `CodeView`, et continuer a couvrir les helpers de vue via le runner Node sans TSX.
+
+### Modifications realisees
+
+- `CodeView.tsx` delegue le panneau droit a `CodeViewDeliveryPanel` avec les memes etats: fichier actif, preview, recherche, console, sandbox, notes et dev-server.
+- `codeViewDeliveryPanel.tsx` porte le lazy import de `CodeBlock`, `AnimatePresence`/`motion`, `CodeFileTree` et les composants viewer/inspection deja extraits.
+- `codeViewSearch.ts` expose `countFileSearchMatches`, utilise par le panneau et couvert par le test dedie.
+- `codeViewExtractedHelpers.test.ts` couvre maintenant aussi l'echappement de la recherche utilisateur et les recherches invalides.
+
+### Avant / apres mesurable
+
+- `CodeView.tsx` : 1945 lignes -> 1642 lignes.
+- `codeViewDeliveryPanel.tsx` : 385 lignes.
+- `codeViewSearch.ts` : 10 lignes.
+- `codeViewExtractedHelpers.test.ts` : 59 lignes.
+- Fichiers Module Code encore >600 lignes : `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeViewExtractedHelpers.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 482 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : le panneau livraison est isole, sous seuil et le helper de recherche est teste. WS1 reste ouvert sur la poursuite de `CodeView.tsx` et `AuroraV1CodeView.tsx`.
