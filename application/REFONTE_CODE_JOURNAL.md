@@ -118,3 +118,53 @@ Pour la Vague 0, oui : les degradations actives visees sont retirees, le build p
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les facades publiques restent stables, les tests Code sont verts, et quatre fichiers sortent de la zone monolithique. WS1 n est pas termine : les fichiers encore >600 lignes restent a decouper avant de passer a WS2.
+
+## 2026-07-15 — Vague 1 / WS1 increment 2 — mission control et critiques statiques
+
+### Reprise et diagnostic confirme
+
+- `codeMissionControl.ts` melangeait construction de dossier, types partages, serialisation, review LLM/deterministe et prompts de regeneration.
+- `codeStaticCritics.ts` melangeait sept familles de critiques statiques independantes : syntaxe, securite, structure, accessibilite, completude livrable, integrite projet et complexite.
+- Les imports publics existants passent par `codeMissionControl.ts` et `codeStaticCritics.ts`; ces fichiers devaient donc rester des facades compatibles.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l increment est un decoupage interne, oriente responsabilites.
+- Choix retenu : extraire les familles fonctionnelles en modules separes et conserver les facades publiques avec reexports.
+- Raison technique : preparer WS7/WS13 sans monolithe de validation, tout en gardant le comportement existant stable.
+
+### Modifications realisees
+
+- `codeMissionControl.ts` conserve la construction du dossier de mission et reexporte l API existante.
+- Ajout de `codeMissionShared.ts` pour les types et helpers deterministes (`CodeMissionDossier`, `CodeDraftReview`, `MissionFileContext`, serialisation, parse JSON defensif).
+- Ajout de `codeMissionReview.ts` pour la review de draft, le prompt de regeneration et le prompt de sauvetage.
+- `codeStaticCritics.ts` devient facade + composite critic.
+- Ajout de modules par famille :
+  - `codeStaticSyntax.ts`
+  - `codeStaticSecurity.ts`
+  - `codeStaticStructure.ts`
+  - `codeStaticAccessibility.ts`
+  - `codeStaticCompleteness.ts`
+  - `codeStaticProjectIntegrity.ts`
+  - `codeStaticComplexity.ts`
+  - `codeStaticCriticShared.ts`
+
+### Avant / apres mesurable
+
+- `codeMissionControl.ts` : 789 lignes -> 323 lignes.
+- `codeStaticCritics.ts` : 1061 lignes -> 49 lignes.
+- Nouveaux modules, tous sous 600 lignes :
+  - `codeMissionReview.ts` : 374 lignes.
+  - `codeMissionShared.ts` : 124 lignes.
+  - `codeStaticSecurity.ts` : 309 lignes.
+  - `codeStaticProjectIntegrity.ts` : 279 lignes.
+  - autres modules `codeStatic*` entre 37 et 111 lignes.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeStaticCritics.test.ts src/__tests__/codeStaticCriticsRealWorld.test.ts` : 58 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 393 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les facades restent compatibles et les familles de validation sont isolables/testables. WS1 reste ouvert : les fichiers >600 restants sont `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts` et `codeStreamStore.ts`.

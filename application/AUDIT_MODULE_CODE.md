@@ -27,6 +27,14 @@
 - **Validation** : `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` reste a **393 tests verts / 0 echec**.
 - **Reste ouvert WS1** : les monolithes principaux (`codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts`, `codeStaticCritics.ts`, `codeStreamStore.ts`, `codeMissionControl.ts`) depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 2 applique
+
+- **Mission control separe** : `codeMissionControl.ts` est reduit a la construction du dossier et reexporte la review/regeneration depuis `codeMissionReview.ts`; les types/helpers communs vivent dans `codeMissionShared.ts`.
+- **Critiques statiques modularisees** : `codeStaticCritics.ts` devient une facade composite ; syntaxe, securite, structure, accessibilite, completude, integrite projet et complexite sont dans des modules dedies.
+- **Reduction mesurable** : `codeMissionControl.ts` 789 -> 323 lignes, `codeStaticCritics.ts` 1061 -> 49 lignes. Tous les nouveaux modules restent sous 600 lignes.
+- **Validation** : tests dedies critiques statiques 58 verts / 0 echec ; glob Code complet a **393 tests verts / 0 echec**.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts` et `codeStreamStore.ts` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
