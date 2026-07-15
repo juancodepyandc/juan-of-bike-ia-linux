@@ -3885,7 +3885,7 @@ function upsertProjectSupportFiles(
 ): CodeFile[] {
   const strippedFiles = ensureTailwindCDN(files, intent.projectType).filter((file) => {
     const name = file.name.replace(/\\/g, '/').toLowerCase()
-    return name !== 'readme.md' && name !== 'lancement.bat' && name !== 'start.sh'
+    return name !== 'readme.md' && name !== 'start.sh' && !name.endsWith('.bat')
   })
   const baseFiles = ensureSpaViteConfig(
     ensureSpaIndexHtml(stripSyntheticFallbackFiles(strippedFiles, intent), intent),

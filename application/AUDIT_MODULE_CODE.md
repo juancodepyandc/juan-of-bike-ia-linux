@@ -33,7 +33,16 @@
 - **Critiques statiques modularisees** : `codeStaticCritics.ts` devient une facade composite ; syntaxe, securite, structure, accessibilite, completude, integrite projet et complexite sont dans des modules dedies.
 - **Reduction mesurable** : `codeMissionControl.ts` 789 -> 323 lignes, `codeStaticCritics.ts` 1061 -> 49 lignes. Tous les nouveaux modules restent sous 600 lignes.
 - **Validation** : tests dedies critiques statiques 58 verts / 0 echec ; glob Code complet a **393 tests verts / 0 echec**.
-- **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts` et `codeStreamStore.ts` depassent encore 600 lignes.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx` et `codeStreamStore.ts` depassent encore 600 lignes.
+
+### 2026-07-15 — Vague 1 / WS1 increment 3 applique
+
+- **Sandbox modularise** : `codeSandbox.ts` conserve l API publique mais delegue les types, le runtime, les fichiers, la reparation npm et les commandes vers des modules specialises.
+- **Auto-install privilegiee retiree du chemin Code** : sur Linux, l absence d un runtime systeme ne lance plus `sudo apt-get`; elle renvoie un echec explicite en attendant le sandbox conteneurise WS7.
+- **Artefacts Windows generes nettoyes** : l orchestrateur exclut generiquement les `.bat` des fichiers de support remplaces par `start.sh`.
+- **Reduction mesurable** : `codeSandbox.ts` 1522 -> 246 lignes. Nouveaux modules `codeSandboxCommands.ts` (506), `codeSandboxFiles.ts` (297), `codeSandboxRegistryRepair.ts` (300), `codeSandboxRuntime.ts` (151), `codeSandboxTypes.ts` (48).
+- **Validation** : tests dedies sandbox 14 verts / 0 echec ; glob Code a **407 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx` et `codeStreamStore.ts` depassent encore 600 lignes.
 
 ---
 

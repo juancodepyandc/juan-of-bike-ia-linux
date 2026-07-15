@@ -168,3 +168,53 @@ Pour cet increment WS1, oui : les facades publiques restent stables, les tests C
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : les facades restent compatibles et les familles de validation sont isolables/testables. WS1 reste ouvert : les fichiers >600 restants sont `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeSandbox.ts` et `codeStreamStore.ts`.
+
+## 2026-07-15 — Vague 1 / WS1 increment 3 — sandbox en facades
+
+### Reprise et diagnostic confirme
+
+- `codeSandbox.ts` cumulait six responsabilites : types publics, detection OS/runtime, normalisation des fichiers, reparation npm, detection langage/commandes et orchestration de validation.
+- Le diagnostic sandbox est confirme : le sandbox reste un dossier horodate execute sur l hote, donc WS7 reste ouvert. Cet increment WS1 ne pretend pas livrer l isolation conteneurisee.
+- Une violation active a ete confirmee pendant la reprise : l auto-install Linux pouvait appeler `sudo apt-get install -y` depuis une generation.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l increment est un decoupage interne et une suppression de comportement explicitement interdit par le prompt.
+- Choix retenu : conserver `codeSandbox.ts` comme facade publique et deplacer les familles dans des modules mono-responsabilite.
+- Raison technique : preparer WS7 sans changer les imports consommateurs (`runCodeSandboxValidation`, `CodeSandboxResult`, `CodeSandboxStepResult`) et rendre testables les briques runtime/fichiers/commandes/reparation.
+
+### Modifications realisees
+
+- Ajout de `codeSandboxTypes.ts` pour les types publics (`CodeFile`, resultats, commandes, runtime spec, langage detecte).
+- Ajout de `codeSandboxRuntime.ts` pour OS helpers, verification de runtime et preparation de commande.
+- Ajout de `codeSandboxFiles.ts` pour nettoyage JSON/manifest, tsconfig sandbox, recherche de fichiers et ecriture disque.
+- Ajout de `codeSandboxRegistryRepair.ts` pour la reparation npm par registre avec cache borne.
+- Ajout de `codeSandboxCommands.ts` pour detection langage, launchers et commandes par stack.
+- `codeSandbox.ts` ne garde plus que l orchestration de `runCodeSandboxValidation`.
+- Suppression de l auto-install privilegiee Linux : un runtime systeme absent renvoie maintenant un echec explicite et documente au lieu de lancer `sudo apt-get`.
+- Nettoyage du filtre de support dans `codeOrchestrator.ts` : les artefacts `.bat` sont exclus generiquement, sans conserver l ancien nom de launcher Windows.
+
+### Avant / apres mesurable
+
+- `codeSandbox.ts` : 1522 lignes -> 246 lignes.
+- Nouveaux modules, tous sous 600 lignes :
+  - `codeSandboxCommands.ts` : 506 lignes.
+  - `codeSandboxFiles.ts` : 297 lignes.
+  - `codeSandboxRegistryRepair.ts` : 300 lignes.
+  - `codeSandboxRuntime.ts` : 151 lignes.
+  - `codeSandboxTypes.ts` : 48 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`, `codeStreamStore.ts`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxModules.test.ts` : 14 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 407 pass / 0 fail.
+- `npm run build` : succes Vite build.
+- `git diff --check` : aucun probleme whitespace.
+- Recherche de regression active dans le perimetre Code :
+  - `rg "sudo\\s*,|apt-get|sudo apt|source\\.unsplash\\.com|LoremFlickr|lancement\\.bat|@echo off|without holding back for plagiarism" ...`
+  - Resultat attendu : aucune occurrence dans les fichiers Code cibles.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : le sandbox est decoupe en responsabilites stables, la facade publique reste compatible, les nouveaux modules ont des tests unitaires dedies, le glob Code passe a 407 tests verts, et l auto-install Linux privilegiee est retiree. WS1 reste ouvert tant que les cinq fichiers restants depassent 600 lignes.
