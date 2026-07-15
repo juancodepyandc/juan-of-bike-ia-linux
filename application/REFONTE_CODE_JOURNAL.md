@@ -1330,3 +1330,46 @@ Pour cet increment WS4, oui : le NO-OP est remplace par un routage multi-roles r
 ### Etat de satisfaction chantier
 
 Pour cet increment WS4, oui : le plan Architecte est maintenant un contrat JSON schema-valide et les plans invalides sont rejetes. WS4 reste ouvert sur le best-of-N et l'escalade sur plateau, qui devront s'appuyer sur ce plan contractualise.
+
+## 2026-07-15 — Vague 2 / WS4 increment 31 — best-of-N planning et escalation plateau
+
+### Reprise et diagnostic confirme
+
+- WS4 demandait encore deux criteres non couverts : best-of-N sur taches critiques et demonstration d'escalade sur plateau.
+- La boucle de correction calculait deja une stagnation (`isFlatlining`) pour lancer l'analyse de cause racine, mais ce signal n'etait pas transmis au routage modele.
+- La phase Architecte etait l'endroit le plus sur pour introduire un best-of-N reel sans polluer le stream de code livre a l'UI.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extension locale du pipeline WS4 deja en place.
+- Choix retenu : best-of-2 uniquement pour les projets `complex` et `enterprise`, avec validation schema et scoring deterministe des candidats JSON.
+- Raison technique : la planification est la tache critique qui conditionne toute la generation ; scorer plusieurs plans JSON evite d'augmenter le risque de stream UI incoherent sur les fichiers.
+- Escalade plateau : si les trois derniers scores stagnent et que `/api/tags` expose un modele cloud/haut de gamme (`CODE_CLOUD_HIGH_MODEL`, `CODE_NEXT_MODEL`, Qwen3-32B), le routeur le prefere pour la correction. Sinon, fallback local inchange.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeArchitecturePlanSelection.ts` :
+  - `getArchitecturePlanCandidateCount` ;
+  - `scoreArchitecturePlan` ;
+  - `selectBestArchitecturePlan`.
+- `runPlanningPhase` produit 2 candidats Architecte pour les projets critiques, valide chaque JSON, score les plans valides et transmet le meilleur plan canonique.
+- `CodeModelRoutingContext` accepte `plateau`.
+- `codeValidationCorrectionLoop.ts` transmet `plateau: true` au routeur quand les scores stagnent.
+- `codeModelRouting.ts` ajoute les candidats d'escalade cloud/haut de gamme quand `plateau` est actif.
+
+### Avant / apres mesurable
+
+- Avant : un seul plan Architecte et aucune difference de modele en cas de stagnation, sauf les heuristiques de retry existantes.
+- Apres : projet complexe/enterprise -> 2 plans Architecte valides/scorés ; plateau de correction + modele d'escalade installe -> route `plateau-cloud-escalation`.
+- Baseline Code : 512 tests verts apres plan JSON -> 515 tests verts apres best-of-N/plateau.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeArchitecturePlanSelection.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeModelRouting.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codePipelinePhases.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 515 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour WS4, oui cote socle TypeScript : routage multi-modeles reel, verifieur distinct si installe, plan JSON schema-valide, best-of-N planning et escalade plateau sont branches et testes. Les validations de generation reelle sous Ollama resteront a rejouer avec le bridge/front vivants pendant les chantiers WS7/WS3.

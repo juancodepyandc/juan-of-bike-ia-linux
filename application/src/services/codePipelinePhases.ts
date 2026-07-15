@@ -18,6 +18,10 @@ import { withTimeout } from './llmTimebox.ts'
 import { isVisualProjectType } from './codeQualityGates.ts'
 import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
 import {
+  getArchitecturePlanCandidateCount,
+  selectBestArchitecturePlan,
+} from './codeArchitecturePlanSelection.ts'
+import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CODE_EXPERT_OUTPUT_TOKENS,
   CODE_PLANNING_CONTEXT_TOKENS,
@@ -103,26 +107,42 @@ export async function runPlanningPhase(
 
   try {
     const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
-    const response = await resilientOllamaGenerate(model, planPrompt, {
-      timeoutMs: PLANNING_TIMEOUT_MS,
-      firstByteTimeoutMs: PLANNING_FIRST_BYTE_TIMEOUT_MS,
-      num_ctx: CODE_PLANNING_CONTEXT_TOKENS,
-      neverMemorySkip: true,
-      onRecoveryAttempt: (ev) => {
-        if (ev.action !== 'retry') {
-          setPhase(`Architecte — ${ev.action}...`, 16)
-          onRecovery?.(ev)
-        }
-      },
-    })
-    const rawPlan = response?.response?.trim()
-    const parsedPlan = parseArchitecturePlanJson(rawPlan)
-    if (parsedPlan.ok) {
-      setPhase('Plan d architecture pret — lancement de la generation...', 25)
-      return parsedPlan.serialized
+    const candidateCount = getArchitecturePlanCandidateCount(intent)
+    const rawCandidates: string[] = []
+    for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
+      if (candidateCount > 1) {
+        setPhase(`Architecte best-of-${candidateCount} — candidat ${candidateIndex + 1}/${candidateCount}...`, 12 + candidateIndex * 5)
+      }
+      const response = await resilientOllamaGenerate(
+        model,
+        candidateIndex === 0
+          ? planPrompt
+          : `${planPrompt}\n\nVARIANTE ${candidateIndex + 1}: produis une architecture alternative, toujours au meme schema JSON, avec une meilleure decomposition si possible.`,
+        {
+          timeoutMs: PLANNING_TIMEOUT_MS,
+          firstByteTimeoutMs: PLANNING_FIRST_BYTE_TIMEOUT_MS,
+          num_ctx: CODE_PLANNING_CONTEXT_TOKENS,
+          neverMemorySkip: true,
+          onRecoveryAttempt: (ev) => {
+            if (ev.action !== 'retry') {
+              setPhase(`Architecte — ${ev.action}...`, 16)
+              onRecovery?.(ev)
+            }
+          },
+        },
+      )
+      rawCandidates.push(response?.response?.trim() || '')
     }
-    if (rawPlan?.length) {
-      setPhase(`Plan JSON invalide (${parsedPlan.errors.slice(0, 3).join(', ')}) — le Codeur operera en autonomie...`, 22)
+
+    const selection = selectBestArchitecturePlan(rawCandidates)
+    if (selection.selected?.serialized) {
+      const suffix = candidateCount > 1 ? ` (best-of-${candidateCount}, candidat ${selection.selected.index + 1})` : ''
+      setPhase(`Plan d architecture pret${suffix} — lancement de la generation...`, 25)
+      return selection.selected.serialized
+    }
+    const errors = selection.scored.flatMap((candidate) => candidate.errors).slice(0, 3)
+    if (rawCandidates.some((candidate) => candidate.trim())) {
+      setPhase(`Plan JSON invalide (${errors.join(', ')}) — le Codeur operera en autonomie...`, 22)
     }
     return null
   } catch (planError) {

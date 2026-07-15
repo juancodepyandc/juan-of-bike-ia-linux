@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { CodeIntent } from '../services/codeIntent.ts'
+import { CODE_CLOUD_HIGH_MODEL } from '../config/models.ts'
 import {
   codeModelNamesEqual,
   normalizeOllamaModelName,
@@ -50,5 +51,16 @@ describe('codeModelRouting', () => {
     assert.equal(decision.distinctFromCoder, false)
     assert.match(decision.reason, /fallback-coder/)
   })
-})
 
+  test('escalade sur plateau vers un modele cloud installe', () => {
+    const decision = selectCodeRoleModel('correction', intent, 6, {
+      configuredCodeModel: 'qwen3-coder:30b',
+      installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+      plateau: true,
+    })
+
+    assert.equal(decision.model, CODE_CLOUD_HIGH_MODEL)
+    assert.equal(decision.distinctFromCoder, true)
+    assert.match(decision.reason, /plateau-cloud-escalation/)
+  })
+})

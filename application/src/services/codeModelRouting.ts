@@ -1,7 +1,9 @@
 import type { HardwareProfile } from '../types/app.ts'
 import {
   CODE_BALANCED_MODEL,
+  CODE_CLOUD_HIGH_MODEL,
   CODE_LOCAL_PRIMARY_MODEL,
+  CODE_NEXT_MODEL,
   CODE_PLANNING_MODEL,
   CODE_REVIEW_MODEL,
   CODE_REASONING_MODEL,
@@ -18,6 +20,7 @@ export type CodeModelRoutingContext = {
   configuredCodeModel?: string | null
   installedModels?: string[]
   hardware?: Pick<HardwareProfile, 'ram_gb' | 'vram_gb'> | null
+  plateau?: boolean
   /**
    * Tests and explicit preparation flows can opt into returning a role model
    * before /api/tags sees it. The live pipeline keeps this false: no blind swap
@@ -56,6 +59,14 @@ const REVIEW_MODEL_CANDIDATES = [
   'qwen3:32b-q6_K_M',
   DEFAULT_MAIN_MODEL,
   MAIN_FALLBACK_MODEL,
+]
+
+const PLATEAU_ESCALATION_CANDIDATES = [
+  CODE_CLOUD_HIGH_MODEL,
+  CODE_NEXT_MODEL,
+  CODE_BALANCED_MODEL,
+  CODE_REVIEW_MODEL,
+  CODE_VERIFIER_MODEL,
 ]
 
 function compactCandidates(candidates: string[]) {
@@ -143,7 +154,11 @@ export function selectCodeRoleModel(
     }
   }
 
-  const candidates = phase === 'planning' ? PLANNING_MODEL_CANDIDATES : REVIEW_MODEL_CANDIDATES
+  const candidates = phase === 'planning'
+    ? PLANNING_MODEL_CANDIDATES
+    : context.plateau
+      ? [...PLATEAU_ESCALATION_CANDIDATES, ...REVIEW_MODEL_CANDIDATES]
+      : REVIEW_MODEL_CANDIDATES
   const selected = pickIndependentRoleModel(
     candidates,
     installedModels,
@@ -158,7 +173,11 @@ export function selectCodeRoleModel(
       model: selected.model,
       coderModel,
       distinctFromCoder: true,
-      reason: `${phase}:independent-role-model${escalationLevel > 0 ? `:escalation-${escalationLevel}` : ''}`,
+      reason: [
+        phase,
+        context.plateau ? 'plateau-cloud-escalation' : 'independent-role-model',
+        escalationLevel > 0 ? `escalation-${escalationLevel}` : '',
+      ].filter(Boolean).join(':'),
       installedMatch: selected.installedMatch,
     }
   }
@@ -176,4 +195,3 @@ export function selectCodeRoleModel(
       : Boolean(findInstalledModel(installedModels, coderModel)),
   }
 }
-

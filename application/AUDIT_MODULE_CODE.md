@@ -256,6 +256,15 @@
 - **Validation** : `codeArchitecturePlan.test.ts` 4 verts ; tests cibles prompts/phases 64 verts ; glob Code a **512 tests verts / 0 echec**.
 - **WS4 reste ouvert** : best-of-N et escalade cloud sur plateau ne sont pas encore livres.
 
+### 2026-07-15 — Vague 2 / WS4 increment 31 applique
+
+- **Best-of-N Architecte branche** : `codeArchitecturePlanSelection.ts` active un best-of-2 pour les projets `complex`/`enterprise`, valide chaque plan JSON et selectionne le meilleur par score deterministe.
+- **Planning multi-candidat reel** : `runPlanningPhase` effectue plusieurs appels Architecte serialises pour les taches critiques, puis transmet uniquement le plan canonique gagnant a l'executeur.
+- **Escalade plateau branchee** : le signal de stagnation de `codeValidationCorrectionLoop.ts` (`isFlatlining`) est transmis au routeur modele via `plateau: true`.
+- **Route plateau prouvee** : si `/api/tags` expose un modele cloud/haut de gamme (`CODE_CLOUD_HIGH_MODEL`, `CODE_NEXT_MODEL`, Qwen3-32B), `codeModelRouting.ts` le prefere en correction avec une raison `plateau-cloud-escalation`; sinon fallback local inchange.
+- **Validation** : `codeArchitecturePlanSelection.test.ts` 2 verts ; `codeModelRouting.test.ts` 5 verts ; `codePipelinePhases.test.ts` 2 verts ; glob Code a **515 tests verts / 0 echec**.
+- **WS4 socle TypeScript cloturable** : restent a rejouer des generations reelles avec Ollama/bridge dans WS7/WS3 pour prouver le comportement end-to-end sous charge.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

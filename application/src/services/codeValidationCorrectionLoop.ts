@@ -263,7 +263,10 @@ export async function runValidationAndCorrectionLoop(
       break
     }
 
-    const correctionModel = selectModel('correction', intent, strategy!.escalation, configuredCodeModel, modelRouting)
+    const recentScores = correctionLog.slice(-3).map((passItem) => passItem.score)
+    const isFlatlining = recentScores.length >= 3 && Math.max(...recentScores) - Math.min(...recentScores) <= 4
+    const correctionRouting = isFlatlining ? { ...(modelRouting ?? {}), plateau: true } : modelRouting
+    const correctionModel = selectModel('correction', intent, strategy!.escalation, configuredCodeModel, correctionRouting)
     pass.modelUsed = correctionModel
     pass.strategy = strategy!.level
     onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
@@ -288,8 +291,6 @@ export async function runValidationAndCorrectionLoop(
     }
 
     let reasoningContext = ''
-    const recentScores = correctionLog.slice(-3).map((passItem) => passItem.score)
-    const isFlatlining = recentScores.length >= 3 && Math.max(...recentScores) - Math.min(...recentScores) <= 4
     if (attempt >= 2 || isFlatlining) {
       setPhase(`Passe ${attempt} — analyse de la cause racine...`, Math.min(93, 73 + attempt * 3))
       const currentErrors = collectFailingStepOutputs(sandboxResult)
