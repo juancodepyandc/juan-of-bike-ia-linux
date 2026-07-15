@@ -199,10 +199,18 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     # STATIQUE (s'asseoir, s'allonger) sans mouvement, on genere donc l'acteur DEJA
     # dans la pose - TRELLIS produit un maillage coherent - et le compositeur le
     # PLACE sans le deformer. On ne rig-plie que s'il y a un vrai MOUVEMENT.
-    prepose = (plan["relation"] in ("sit_on", "lie_on") and not plan["actor_motion"]
-               and bool(plan.get("actor_posed")))
-    actor_desc = plan["actor_posed"] if prepose else plan["actor"]
+    prepose = (plan["relation"] in ("sit_on", "lie_on") and not plan["actor_motion"])
+    actor_desc = plan["actor"]
     if prepose:
+        # actor_posed du LLM peut n'etre que l'ADJECTIF ("assis") -> generer "assis"
+        # tout seul a piege la recherche de reference vers l'entreprise "ASSIS". On
+        # construit donc une description COMPLETE: acteur + pose, plein pied et
+        # photorealiste (ce qui coupe aussi la recherche web parasite).
+        posed = (plan.get("actor_posed") or "").strip()
+        pose_word = {"sit_on": "assis", "lie_on": "allonge"}[plan["relation"]]
+        if not posed or len(posed.split()) < 2:
+            posed = "%s %s" % (plan["actor"], pose_word)
+        actor_desc = "%s, photorealiste, corps entier" % posed
         print("SCENE_ORCH: pose statique -> generation de l'acteur DEJA pose "
               "('%s'), pas de rig-pliage" % actor_desc, flush=True)
     actor_glb = _generate_object(actor_desc, run_id + "_actor", output_dir,
