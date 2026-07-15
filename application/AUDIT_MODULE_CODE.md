@@ -59,6 +59,13 @@
 - **Limite fonctionnelle non resolue** : cet increment traite WS1 (taille/responsabilites) mais ne pretend pas livrer WS6 ; la classification reste deterministe/heuristique en attendant le classifieur structure et la taxonomie etendue.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx` et `src/__tests__/codeStaticCritics.test.ts` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 6 applique
+
+- **Test monolithe separe** : le bloc de convergence critic+patcher quitte `codeStaticCritics.test.ts` pour `codeStaticCriticsLoop.test.ts`.
+- **Reduction mesurable** : `codeStaticCritics.test.ts` 618 -> 470 lignes ; nouveau `codeStaticCriticsLoop.test.ts` 171 lignes.
+- **Validation** : tests dedies statiques + boucle 54 verts / 0 echec ; glob Code a **429 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : seuls `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

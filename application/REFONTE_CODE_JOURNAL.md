@@ -309,3 +309,38 @@ Pour cet increment WS1, oui : le store est sous le seuil, les helpers extraits o
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : le monolithe d intention est remplace par une facade compatible, chaque responsabilite majeure a un module testable sous 600 lignes, et le glob Code gagne une couverture dediee. WS1 reste ouvert tant que les quatre fichiers listes ci-dessus depassent 600 lignes.
+
+## 2026-07-15 — Vague 1 / WS1 increment 6 — tests critiques statiques sous seuil
+
+### Reprise et diagnostic confirme
+
+- Apres la modularisation de `codeIntent.ts`, le seul fichier de test Code restant au-dessus du seuil WS1 etait `src/__tests__/codeStaticCritics.test.ts` avec 618 lignes.
+- Le fichier contenait deux responsabilites distinctes : les tests unitaires de critics statiques et les tests de convergence critic+patcher.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l increment est un deplacement mecanique de tests.
+- Choix retenu : extraire uniquement la suite `boucle reelle critic+patcher — convergence` dans un fichier dedie avec ses fixtures minimales.
+- Raison technique : conserver les noms de tests et la couverture existante sans introduire de helper partage inutile pour un split de seuil.
+
+### Modifications realisees
+
+- `codeStaticCritics.test.ts` garde les suites syntaxe, securite, completude, integrite, structure, accessibilite et composite.
+- Nouveau `codeStaticCriticsLoop.test.ts` pour la convergence `patchWithLog` / `runCritiqueLoop` / `deterministicPatcher`.
+
+### Avant / apres mesurable
+
+- `codeStaticCritics.test.ts` : 618 lignes -> 470 lignes.
+- `codeStaticCriticsLoop.test.ts` : 171 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeStaticCritics.test.ts src/__tests__/codeStaticCriticsLoop.test.ts` : 54 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 429 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la couverture est preservee, les deux fichiers de test sont sous 600 lignes, et le glob Code reste vert. WS1 reste ouvert uniquement sur les trois gros fichiers de production.
