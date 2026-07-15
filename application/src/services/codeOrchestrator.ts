@@ -13,16 +13,13 @@ import {
 import {
   buildAutonomousAssumptionNotes,
   buildCodeMissionDossier,
-  buildDraftRegenerationPrompt,
-  reviewGeneratedCodeDraft,
-  serializeCodeMissionDossier,
   type CodeMissionDossier,
 } from './codeMissionControl'
 import type { CorrectionPass } from './codeAutoCorrection'
 import type { CodeSandboxResult } from './codeSandbox'
 import type { CodePreflightReport } from './codePreflight'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
-import { parseCodeFiles, serializeCodeFiles, extractNotes, detectNonCodePlanningNarrative } from './codeGeneratedFileParser.ts'
+import { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
 export { isLLMRefusal } from './codeLLMRefusal.ts'
 export { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
 export { normalizeGeneratedCodeFilesForTest } from './codeGeneratedFileSanitizer.ts'
@@ -32,15 +29,11 @@ import {
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
 import {
   applySubjectImagePlaceholder,
-  mergeExistingWithUpdates,
 } from './codeSubjectAssets.ts'
-import { evaluateBrandFidelity, type BrandFidelityReport } from './codeFidelityGate'
+import { evaluateBrandFidelity } from './codeFidelityGate'
 import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
 export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
-import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import {
-  DOCUMENTATION_EXTENSIONS_EARLY,
-  clipText,
   selectModel,
 } from './codePipelineRuntime.ts'
 import {
@@ -51,12 +44,12 @@ import {
   type GenerationPivotContext,
 } from './codePipelinePhases.ts'
 import { prepareCodePlanningContext } from './codePipelinePreparation.ts'
+import { runGeneratedOutputRetryLoop } from './codeGenerationOutputRetry.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
   checkInteractive3DFidelity,
   checkWebPageIntegrity,
-  computeContentQualityScore,
   computeDesignPolishReport,
   computeDesignPolishReportPublic,
   isVisualProjectType,
@@ -456,235 +449,30 @@ async function runFullPipeline({
     }
   }
 
-  let latestRawGenerationContent = fullContent
-  let parsed = parseCodeFiles(latestRawGenerationContent)
-  let initialNotes = extractNotes(latestRawGenerationContent)
-  // In follow-up mode (effectiveExistingFiles.length > 0), files NOT returned
-  // by the LLM are preserved — we merge the new/changed files on top of the
-  // existing set. After a pivot_platform / fresh_start, `effectiveExistingFiles`
-  // is empty so the old project is correctly wiped.
-  let initialFiles = effectiveExistingFiles.length > 0 && parsed.length > 0
-    ? mergeExistingWithUpdates(effectiveExistingFiles, parsed)
-    : parsed
-
-  // Validate output quality — retry loop to ensure LLM produced actual code.
-  // Complex briefs get more attempts and never downgrade to a tiny skeleton:
-  // time is secondary to a complete, runnable project.
-  const isExpertComplexProject = intent.complexity === 'complex' || intent.complexity === 'enterprise'
-  const MAX_OUTPUT_RETRIES = isExpertComplexProject ? 6 : 3
-  const MAX_NETWORK_ERRORS = isExpertComplexProject ? 4 : 2
-  let outputRetry = 0
-  let networkErrors = 0
-  // v71 — track the latest brand fidelity report so we can apply the score
-  // penalty/cap at the end of the orchestration.
-  let latestBrandFidelity: BrandFidelityReport | null = null
-  // v85c : remember the best non-empty attempt across the retry loop so the
-  // pipeline NEVER returns 0 files when the model actually produced usable
-  // code that a quality gate merely flagged. "Imparfait mais livré" > "rien".
-  let bestAttempt: { files: CodeFile[]; notes: string; score: number } | null = null
-
-  while (outputRetry < MAX_OUTPUT_RETRIES) {
-    const draftReview = await reviewGeneratedCodeDraft({
-      prompt,
-      intent,
-      files: initialFiles,
-      architecturePlan,
-      missionDossier,
-      // v85c : CRITICAL — without this, the draft critique defaulted to
-      // CODE_SINGLE_MODEL (qwen3-coder:30b, 20 GB) mid-pipeline, evicting the
-      // routed generation model and forcing a CPU-spill +
-      // reload thrash on every run. Pin it to the same model the rest of the
-      // pipeline uses → true single-model coherence, no swap, far faster.
-      model: configuredCodeModel,
-    })
-    // v71 — brand fidelity gate. Catches the "Coca-Cola → restaurant" drift
-    // BEFORE the sandbox/correction loop wastes minutes on a wrong-subject
-    // build. Only fires when the prompt has a brand subject; no-op otherwise.
-    const brandSubject = intent.assetPlan?.subject
-    const brandFidelity = evaluateBrandFidelity(intent, initialFiles)
-    latestBrandFidelity = brandFidelity
-    const brandIssueLine = brandFidelity.shouldRetry && brandFidelity.retryHint
-      ? `Fidelite sujet (BRAND): ${brandFidelity.retryHint}`
-      : null
-
-    const issueNarrative = detectNonCodePlanningNarrative(latestRawGenerationContent)
-    const issueIntent = validateOutputMatchesIntent(initialFiles, intent)
-    const issueDraft = draftReview.verdict === 'regenerate'
-      ? [
-          draftReview.summary,
-          ...draftReview.criticalIssues,
-          ...draftReview.missingFiles,
-        ].filter(Boolean).join(' | ')
-      : null
-    // v85d : the draft critique runs on the generation model,
-    // which the audit found false-flags 'regenerate' on perfectly valid projects.
-    // Trust the DETERMINISTIC gates (narrative / intent / brand) as primary;
-    // let the LLM-judge force a retry ONLY when the output is also thin
-    // (< 2 real code files) — otherwise it just burns retries on good output.
-    const realCodeFileCount = initialFiles.filter((f) => {
-      const e = f.name.split('.').pop()?.toLowerCase() || ''
-      return !DOCUMENTATION_EXTENSIONS_EARLY.has(e)
-    }).length
-    const draftBlocks = issueDraft && realCodeFileCount < 2 ? issueDraft : null
-    const outputIssue = issueNarrative || issueIntent || brandIssueLine || draftBlocks
-
-    // v85c : track the best non-empty attempt (most files, then content score).
-    if (initialFiles.length > 0) {
-      const q = computeContentQualityScore(initialFiles, intent)
-      if (!bestAttempt
-        || initialFiles.length > bestAttempt.files.length
-        || (initialFiles.length === bestAttempt.files.length && q > bestAttempt.score)) {
-        bestAttempt = { files: initialFiles, notes: initialNotes, score: q }
-      }
-    }
-    if (outputIssue) {
-      console.warn(
-        `[CodeOrchestrator] outputIssue @retry ${outputRetry} | files=${initialFiles.length} | `
-        + `narrative=${!!issueNarrative} intentMismatch=${issueIntent ? JSON.stringify(issueIntent.slice(0, 80)) : false} `
-        + `brand=${!!brandIssueLine} draftRegenerate=${!!issueDraft}`,
-      )
-    }
-    if (!outputIssue) break // Output is valid code
-
-    outputRetry++
-    const escalation = outputRetry + 1
-    const retryModel = selectModel('generation', intent, escalation, generationModel)
-    const modelShort = retryModel.split(':')[0]
-
-    setPhase(
-      `Sortie incorrecte (tentative ${outputRetry}/${MAX_OUTPUT_RETRIES}) — regeneration via ${modelShort}...`,
-      48 + outputRetry * 4,
-    )
-
-    // On brand drift: lock subject + palette + keywords in retry prompt.
-    const brandRetryBlock = (brandFidelity.shouldRetry && brandSubject?.source === 'brand' && brandSubject.brandProfile)
-      ? [
-          '## VERROUILLAGE SUJET — REGLE INVIOLABLE',
-          `Le sujet de cette page EST ${brandSubject.canonical}. Pas un sujet adjacent.`,
-          '',
-          'Violations detectees au tour precedent:',
-          brandFidelity.retryHint || '(pas de detail)',
-          '',
-          'Pour ce nouveau tour, applique strictement:',
-          `- Le mot "${brandSubject.canonical}" doit apparaitre dans <title>, dans le <h1> du hero, et dans au moins 3 sections.`,
-          brandSubject.brandProfile.primaryColor ? `- Couleur primaire OBLIGATOIRE: ${brandSubject.brandProfile.primaryColor}. Utilise-la pour le hero, les CTAs et les accents.` : '',
-          brandSubject.brandProfile.secondaryColor ? `- Couleur secondaire: ${brandSubject.brandProfile.secondaryColor}.` : '',
-          brandSubject.brandProfile.productKeywords.length ? `- Mots-cles produit: ${brandSubject.brandProfile.productKeywords.join(', ')}. Au moins 2 dans les titres de section.` : '',
-          brandSubject.brandProfile.designVibe ? `- Vibe visuel cible: ${brandSubject.brandProfile.designVibe}.` : '',
-          '- Markers d images REELLES deja telechargees: PLACEHOLDER_SUBJECT_IMG, PLACEHOLDER_SUBJECT_IMG_1..4. Place-en au moins 2 dans la page.',
-          '- INTERDIT: restaurant, menu du jour, blog culinaire, SaaS abstrait. C est une marque/produit emblematique, traite-la comme telle.',
-        ].filter(Boolean).join('\n')
-      : ''
-
-    const retryPrompt = [
-      `ERREUR CRITIQUE (tentative ${outputRetry + 1}): La sortie precedente etait INCORRECTE.`,
-      `Probleme: ${outputIssue}`,
-      '',
-      brandRetryBlock,
-      '',
-      `DOSSIER EXECUTIF:\n${serializeCodeMissionDossier(missionDossier)}`,
-      '',
-      'RAPPEL ABSOLU:',
-      '- Tu es un DEVELOPPEUR. Tu produis du CODE SOURCE, JAMAIS de la documentation.',
-      '- Chaque fichier DOIT etre un VRAI fichier de code (html, css, js, py, etc.)',
-      '- INTERDIT: fichiers .md, .txt, texte descriptif, listes de fonctionnalites',
-      detectNonCodePlanningNarrative(latestRawGenerationContent)
-        ? '- TA SORTIE PRECEDENTE ETAIT UN PLAN/PREFLIGHT. N envoie plus jamais de diagnostic: convertis directement la solution en fichiers.'
-        : '',
-      outputRetry >= 2 && !isExpertComplexProject
-        ? '- SIMPLIFIE: produis le MINIMUM de fichiers necessaires pour que ca fonctionne'
-        : '',
-      outputRetry >= 2 && isExpertComplexProject
-        ? '- NE SIMPLIFIE PAS LES FONCTIONNALITES: preserve le scope demande, corrige la structure et livre tous les fichiers necessaires.'
-        : '',
-      '',
-      detectNonCodePlanningNarrative(latestRawGenerationContent)
-        ? `SORTIE INTERDITE A NE PAS REPRODUIRE:\n${clipText(latestRawGenerationContent, 1400)}\n`
-        : '',
-      buildDraftRegenerationPrompt({
-        originalPrompt: prompt,
-        enrichedPrompt,
-        missionDossier,
-        draftReview,
-        architecturePlan,
-      }),
-      '',
-      architecturePlan ? `PLAN A SUIVRE:\n${architecturePlan.slice(0, 6000)}\n` : '',
-      'Voici la demande originale. Genere les VRAIS FICHIERS DE CODE:',
-      '',
-      enrichedPrompt,
-      '',
-      'FORMAT OBLIGATOIRE (ne JAMAIS devier):',
-      '--- FICHIER: nom_du_fichier.ext ---',
-      '```langage',
-      '// code source complet ici',
-      '```',
-      '',
-      intent.projectType === 'static_web'
-        ? 'Pour une page web, genere AU MINIMUM: index.html, style.css, et optionnellement script.js + README.md'
-        : intent.projectType === 'desktop_tauri'
-          ? 'Pour une application desktop Tauri, genere AU MINIMUM: package.json, src/*, src-tauri/Cargo.toml, src-tauri/tauri.conf.json, src-tauri/src/main.rs + README.md'
-          : intent.projectType === 'desktop_electron'
-            ? 'Pour une application desktop Electron, genere AU MINIMUM: package.json, main.ts|main.js, preload si utile, renderer src/* + README.md'
-        : intent.projectType.startsWith('api_')
-          ? 'Pour une API, genere les fichiers serveur: routes, models, config, entry point + README.md'
-          : 'Genere tous les fichiers source necessaires au projet + README.md',
-    ].filter(Boolean).join('\n')
-
-    let retryContent = ''
-    try {
-      retryContent = await runGenerationPhase(
-        retryPrompt,
-        intent,
-        preflightReport,
-        architecturePlan,
-        missionDossier,
-        conversationHistory,
-        effectiveExistingFiles,
-        contextImages,
-        retryModel,
-        escalation,
-        setPhase,
-        onToken,
-        trackRecovery,
-        signal,
-        pivotContext,
-      )
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (/failed to fetch|network|TypeError|524|connection closed/i.test(msg)) {
-        networkErrors += 1
-        setPhase(`Erreur reseau (${networkErrors}/${MAX_NETWORK_ERRORS}) pendant la regeneration — tentative ${outputRetry}...`, 50 + outputRetry * 4)
-        if (networkErrors >= MAX_NETWORK_ERRORS) {
-          setPhase('Trop d erreurs reseau consecutives — arret propre du pipeline.', 96)
-          break
-        }
-        // Short pause then let the outer loop retry once more.
-        await new Promise((r) => setTimeout(r, 2000))
-        continue
-      }
-      throw err
-    }
-
-    latestRawGenerationContent = retryContent
-    const retryFiles = parseCodeFiles(retryContent)
-    initialFiles = effectiveExistingFiles.length > 0 && retryFiles.length > 0
-      ? mergeExistingWithUpdates(effectiveExistingFiles, retryFiles)
-      : retryFiles
-    initialNotes = extractNotes(retryContent)
-  }
-
-  // v85c : if the retry loop exhausted while flagging issues but an earlier
-  // attempt DID produce usable files, deliver the best one (with a quality
-  // note) instead of returning nothing. The quality gates become advisory,
-  // not fatal — the user always gets a project they can iterate on.
-  if (initialFiles.length === 0 && bestAttempt && bestAttempt.files.length > 0) {
-    console.warn(`[CodeOrchestrator] retry loop exhausted — delivering best attempt (${bestAttempt.files.length} fichiers) instead of 0.`)
-    initialFiles = bestAttempt.files
-    initialNotes = bestAttempt.notes
-      ? `${bestAttempt.notes}\n\n[Aurora] Livré malgré des réserves du contrôle qualité — un ajustement manuel peut être utile.`
-      : '[Aurora] Livré malgré des réserves du contrôle qualité — un ajustement manuel peut être utile.'
-  }
+  const outputRetryResult = await runGeneratedOutputRetryLoop({
+    prompt,
+    enrichedPrompt,
+    latestRawGenerationContent: fullContent,
+    intent,
+    preflightReport,
+    architecturePlan,
+    missionDossier,
+    conversationHistory,
+    effectiveExistingFiles,
+    contextImages,
+    configuredCodeModel,
+    generationModel,
+    setPhase,
+    onToken,
+    trackRecovery,
+    signal,
+    pivotContext,
+  })
+  let initialFiles = outputRetryResult.files
+  let initialNotes = outputRetryResult.notes
+  const latestRawGenerationContent = outputRetryResult.latestRawGenerationContent
+  const outputRetry = outputRetryResult.outputRetry
+  const latestBrandFidelity = outputRetryResult.latestBrandFidelity
 
   if (initialFiles.length === 0) {
     const diagnostic = buildEmptyGenerationDiagnostic(latestRawGenerationContent, intent, outputRetry)

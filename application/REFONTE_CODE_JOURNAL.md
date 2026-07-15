@@ -826,3 +826,40 @@ Pour cet increment WS1, oui : la boucle validation/correction est isolee, sous s
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la preparation planning est isolee, sous seuil, testee directement et les appels bridge/recherche restent paresseux. WS1 reste ouvert sur la finalisation de `codeOrchestrator.ts` et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 19 — retry qualite de sortie
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction de la preparation planning, `codeOrchestrator.ts` restait a 772 lignes.
+- Le retry de qualite de sortie etait le dernier bloc massif cote orchestrateur : parsing initial, merge follow-up, review draft, brand-gate, regeneration, erreurs reseau et fallback meilleur essai.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codeGenerationOutputRetry.ts` pour isoler la boucle de retry post-generation et exposer des helpers purs testables.
+- Raison technique : faire passer `codeOrchestrator.ts` sous le seuil WS1 sans modifier le contrat public, tout en gardant `codeMissionControl` charge dynamiquement dans le retry.
+
+### Modifications realisees
+
+- Ajout de `codeGenerationOutputRetry.ts` pour `runGeneratedOutputRetryLoop`, `countRealCodeFiles`, `isNetworkGenerationError`, `rememberBestAttempt`, `applyBestAttemptFallback` et `buildBrandRetryBlock`.
+- `codeOrchestrator.ts` delegue le retry post-generation et conserve seulement l'enchainement pipeline, validation et finalisation.
+- Ajout de `codeGenerationOutputRetry.test.ts` couvrant le comptage fichiers code, les erreurs reseau, la selection du meilleur essai, le fallback et le bloc retry marque.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 772 lignes -> 560 lignes.
+- `codeGenerationOutputRetry.ts` : 311 lignes.
+- `codeGenerationOutputRetry.test.ts` : 100 lignes.
+- Fichiers Module Code encore >600 lignes : `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationOutputRetry.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 477 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : l'orchestrateur passe sous 600 lignes, le retry de sortie est isole et teste, et le pipeline global reste vert. WS1 reste ouvert sur les deux vues Code.

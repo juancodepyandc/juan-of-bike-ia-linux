@@ -154,6 +154,14 @@
 - **Validation** : test dedie preparation planning 4 verts / 0 echec ; glob Code a **472 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 19 applique
+
+- **Retry qualite de sortie extrait de l'orchestrateur** : parsing initial, merge follow-up, review draft, brand-gate, prompt de regeneration, detection reseau et fallback meilleur essai quittent `codeOrchestrator.ts` pour `codeGenerationOutputRetry.ts`.
+- **Seuil WS1 atteint cote orchestrateur** : `codeOrchestrator.ts` descend sous 600 lignes et devient une facade de pipeline lisible.
+- **Reduction mesurable** : `codeOrchestrator.ts` 772 -> 560 lignes. Nouveau module `codeGenerationOutputRetry.ts` (311 lignes) et test dedie `codeGenerationOutputRetry.test.ts` (100 lignes).
+- **Validation** : test dedie retry sortie 5 verts / 0 echec ; glob Code a **477 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
