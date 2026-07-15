@@ -1,4 +1,5 @@
-// Analyses structurelles avancées sur du code TS/JS/Python sans AST complet.
+// Analyses structurelles avancées sur du code TS/JS/Python/Rust/Go/Java/C++/
+// Swift/Kotlin/Dart avec scanner lexical partage.
 // Niveau "principal engineer" qui examine la PR pendant la code review.
 //
 // 4 analyses :
@@ -6,6 +7,8 @@
 //   2. Dead code / variables non utilisées
 //   3. Imports graph + détection de cycles
 //   4. Halstead metrics (estimation effort + bugs prédits)
+
+import { findMatchingBraceLine, maskCodeLiterals } from './codeLexicalAnalysis.ts'
 
 export type FunctionComplexity = {
   name: string
@@ -16,19 +19,72 @@ export type FunctionComplexity = {
   rating: 'simple' | 'modéré' | 'complexe' | 'très-complexe' | 'ingérable'
 }
 
-const TS_BRANCH_KEYWORDS = [
-  'if', 'else if', 'else', 'for', 'while', 'do', 'case', 'catch',
-  '&&', '||', '\\?\\?', '\\?[^.]',
-]
-const PY_BRANCH_KEYWORDS = [
-  'if', 'elif', 'else', 'for', 'while', 'except', 'and', 'or',
-]
+const CONTROL_FLOW_NAMES = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'sizeof', 'new', 'delete', 'else'])
 
 function isTsLikeLang(lang: string): boolean {
   return ['ts', 'tsx', 'js', 'jsx', 'typescript', 'javascript'].includes(lang.toLowerCase())
 }
 function isPyLikeLang(lang: string): boolean {
   return ['py', 'python'].includes(lang.toLowerCase())
+}
+function isRustLikeLang(lang: string): boolean {
+  return ['rs', 'rust'].includes(lang.toLowerCase())
+}
+function isGoLikeLang(lang: string): boolean {
+  return ['go', 'golang'].includes(lang.toLowerCase())
+}
+function isSwiftLikeLang(lang: string): boolean {
+  return ['swift'].includes(lang.toLowerCase())
+}
+function isKotlinLikeLang(lang: string): boolean {
+  return ['kt', 'kts', 'kotlin'].includes(lang.toLowerCase())
+}
+function isDartLikeLang(lang: string): boolean {
+  return ['dart'].includes(lang.toLowerCase())
+}
+function isCFamilyLang(lang: string): boolean {
+  return ['java', 'cpp', 'cc', 'cxx', 'c++', 'c', 'h', 'hpp', 'cs', 'csharp'].includes(lang.toLowerCase())
+}
+function isBraceFunctionLang(lang: string): boolean {
+  return isTsLikeLang(lang)
+    || isRustLikeLang(lang)
+    || isGoLikeLang(lang)
+    || isSwiftLikeLang(lang)
+    || isKotlinLikeLang(lang)
+    || isDartLikeLang(lang)
+    || isCFamilyLang(lang)
+}
+
+function functionNameForLine(line: string, lang: string): string | null {
+  if (isTsLikeLang(lang)) {
+    const m = /^\s*(?:export\s+default\s+)?(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{|^\s+(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::[^{]+)?\s*\{|^\s+(?:(?:public|private|protected|static|override|readonly|async)\s+)*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::[^{]+)?\s*\{/.exec(line)
+    return m ? (m[1] || m[2] || m[3] || m[4] || 'anonymous') : null
+  }
+  if (isRustLikeLang(lang)) {
+    const m = /^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_]\w*)\s*(?:<[^>{}]*>)?\s*\(/.exec(line)
+    return m?.[1] ?? null
+  }
+  if (isGoLikeLang(lang)) {
+    const m = /^\s*func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*\(/.exec(line)
+    return m?.[1] ?? null
+  }
+  if (isSwiftLikeLang(lang)) {
+    const m = /^\s*(?:(?:public|private|internal|fileprivate|open|static|mutating|override|final|class)\s+)*func\s+([A-Za-z_]\w*)\s*\(/.exec(line)
+    return m?.[1] ?? null
+  }
+  if (isKotlinLikeLang(lang)) {
+    const m = /^\s*(?:(?:public|private|protected|internal|override|suspend|inline|tailrec|operator)\s+)*fun\s+(?:[A-Za-z_][\w.<>]*\.)?([A-Za-z_]\w*)\s*\(/.exec(line)
+    return m?.[1] ?? null
+  }
+  if (isDartLikeLang(lang)) {
+    const m = /^\s*(?:(?:static|external|async|sync)\s+)*(?:[A-Za-z_<>,?][\w<>,?\s]*\s+)?([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:async\s*)?(?:\{|$)/.exec(line)
+    return m && !CONTROL_FLOW_NAMES.has(m[1]) ? m[1] : null
+  }
+  if (isCFamilyLang(lang)) {
+    const m = /^\s*(?:template\s*<[^>]+>\s*)?(?:(?:public|private|protected|static|final|virtual|override|inline|constexpr|const|async|extern|friend|synchronized|native|abstract)\s+)*(?:[\w:<>\[\],*&?\s]+\s+)?([A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>\[\],*&?\s]+)?\s*(?:\{|$)/.exec(line)
+    return m && !CONTROL_FLOW_NAMES.has(m[1]) ? m[1] : null
+  }
+  return null
 }
 
 /**
@@ -39,18 +95,15 @@ export function analyzeCyclomaticComplexity(content: string, lang: string): Func
   const out: FunctionComplexity[] = []
   const lines = content.split(/\r?\n/)
 
-  if (isTsLikeLang(lang)) {
-    // Heuristique : trouve les déclarations de fonction par regex, puis
-    // scanne le corps (balanced braces).
-    const fnStart = /^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(|^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>\s*\{|^\s+(\w+)\s*\([^)]*\)\s*\{|^\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{|^\s+(?:public|private|protected)\s+(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{/
+  if (isBraceFunctionLang(lang)) {
+    const maskedLines = maskCodeLiterals(content).split(/\r?\n/)
     for (let i = 0; i < lines.length; i += 1) {
-      const m = fnStart.exec(lines[i])
-      if (!m) continue
-      const name = m[1] || m[2] || m[3] || m[4] || m[5] || 'anonymous'
-      const endLine = findClosingBrace(lines, i)
+      const name = functionNameForLine(maskedLines[i] ?? '', lang)
+      if (!name) continue
+      const endLine = findMatchingBraceLine(lines, i)
       if (endLine === -1) continue
       const body = lines.slice(i, endLine + 1).join('\n')
-      const cc = countTsComplexity(body)
+      const cc = countCStyleComplexity(body)
       out.push({
         name,
         startLine: i + 1,
@@ -91,37 +144,19 @@ export function analyzeCyclomaticComplexity(content: string, lang: string): Func
   return out
 }
 
-function findClosingBrace(lines: string[], startLine: number): number {
-  let depth = 0
-  let started = false
-  for (let i = startLine; i < lines.length; i += 1) {
-    for (const ch of lines[i]) {
-      if (ch === '{') { depth += 1; started = true }
-      else if (ch === '}') {
-        depth -= 1
-        if (started && depth === 0) return i
-      }
-    }
-  }
-  return -1
-}
-
-function countTsComplexity(body: string): number {
-  // Strip strings + comments first.
-  const stripped = body
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/`(?:\\.|[^`\\])*`/g, '``')
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+function countCStyleComplexity(body: string): number {
+  const stripped = maskCodeLiterals(body)
   let cc = 1
   const patterns: RegExp[] = [
-    /\bif\s*\(/g,
-    /\belse\s+if\s*\(/g,
-    /\bfor\s*\(/g,
-    /\bwhile\s*\(/g,
+    /\bif\b/g,
+    /\belse\s+if\b/g,
+    /\bfor\b/g,
+    /\bwhile\b/g,
     /\bcase\s+/g,
-    /\bcatch\s*\(/g,
+    /\bcatch\b/g,
+    /\bmatch\b/g,
+    /\bselect\b/g,
+    /\bwhen\b/g,
     /&&/g,
     /\|\|/g,
     /\?\?/g,
@@ -347,15 +382,10 @@ export type HalsteadMetrics = {
 }
 
 export function computeHalstead(content: string, lang: string): HalsteadMetrics {
-  if (!isTsLikeLang(lang)) {
+  if (!isBraceFunctionLang(lang)) {
     return { n1: 0, n2: 0, N1: 0, N2: 0, vocabulary: 0, length: 0, volume: 0, difficulty: 0, effort: 0, predictedBugs: 0 }
   }
-  const stripped = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '')
-    .replace(/`(?:\\.|[^`\\])*`/g, '__t__')
-    .replace(/"(?:\\.|[^"\\])*"/g, '__s__')
-    .replace(/'(?:\\.|[^'\\])*'/g, '__s__')
+  const stripped = maskCodeLiterals(content)
   const operatorsSeen = new Map<string, number>()
   const operandsSeen = new Map<string, number>()
 

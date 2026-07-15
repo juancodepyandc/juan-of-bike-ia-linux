@@ -116,6 +116,20 @@ describe('syntaxCritic — barre expert', () => {
     const r = await syntaxCritic(project([{ name: 'empty.ts', language: 'ts', content: '' }]), fakeIntent)
     assert.ok(r.scores.compile < 1)
   })
+
+  test('brackets dans strings, regex et templates ne déclenchent pas de blocker', async () => {
+    const code = [
+      'function ok() {',
+      '  const a = "{[(])}"',
+      '  const b = /[({})]/g',
+      '  const c = `template } { [ )`',
+      '  return a + String(b) + c',
+      '}',
+    ].join('\n')
+    const r = await syntaxCritic(project([{ name: 'literals.ts', language: 'ts', content: code }]), fakeIntent)
+    assert.equal(r.hasBlocker, false, JSON.stringify(r.issues))
+    assert.ok(!r.issues.some((i) => /non équilibrés/.test(i.message)), JSON.stringify(r.issues))
+  })
 })
 
 describe('securityCritic — barre expert', () => {
@@ -129,6 +143,27 @@ describe('securityCritic — barre expert', () => {
     assert.ok(r.hasBlocker || r.scores.security <= 0.5, `score ${r.scores.security}, hasBlocker ${r.hasBlocker}`)
     // Doit avoir détecté au moins 3 issues distinctes (eval, innerHTML+concat, secret).
     assert.ok(r.issues.length >= 3, `issues count ${r.issues.length}`)
+  })
+
+  test('data-flow taint détecte les alias sans nom req/input', async () => {
+    const ts = `
+const params = new URLSearchParams(location.search)
+const next = params.get('next')
+fetch(next)
+document.querySelector('#out')!.innerHTML = next
+`.trim()
+    const r = await securityCritic(project([{ name: 'taint.ts', language: 'ts', content: ts }]), fakeIntent)
+    const taintIssues = r.issues.filter((i) => /Data-flow taint/i.test(i.message))
+    assert.ok(taintIssues.some((i) => /network URL sink/i.test(i.message)), JSON.stringify(r.issues))
+    assert.ok(taintIssues.some((i) => /DOM HTML sink/i.test(i.message)), JSON.stringify(r.issues))
+  })
+
+  test('toutes les occurrences eval sont rapportées', async () => {
+    const ts = `eval('a')\neval('b')\n`
+    const r = await securityCritic(project([{ name: 'multi.ts', language: 'ts', content: ts }]), fakeIntent)
+    const evalIssues = r.issues.filter((i) => /Usage de eval/.test(i.message))
+    assert.equal(evalIssues.length, 2, JSON.stringify(r.issues))
+    assert.deepEqual(evalIssues.map((i) => i.location?.line), [1, 2])
   })
 
   test('shell=True python détecté', async () => {
@@ -436,6 +471,13 @@ describe('structureCritic — barre expert', () => {
     const r = await structureCritic(project([{ name: 'huge.ts', language: 'ts', content: HUGE_FILE_TS }]), fakeIntent)
     assert.ok(r.scores.lint < 1)
     assert.ok(r.issues.some((i) => i.severity === 'error' && /enorme|énorme/i.test(i.message)))
+  })
+
+  test('God-function de plus de 200 lignes détectée', async () => {
+    const body = Array.from({ length: 210 }, (_, i) => `  total += ${i}`).join('\n')
+    const code = `function god() {\n  let total = 0\n${body}\n  return total\n}\n`
+    const r = await structureCritic(project([{ name: 'god.ts', language: 'ts', content: code }]), fakeIntent)
+    assert.ok(r.issues.some((i) => /fonction de plus de 200 lignes/i.test(i.message)), JSON.stringify(r.issues))
   })
 })
 

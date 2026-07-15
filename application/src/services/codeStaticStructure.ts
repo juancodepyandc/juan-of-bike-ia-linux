@@ -1,6 +1,7 @@
 import type { CodeFile, CodeProject, CriticFn, CritiqueIssue, CritiqueReport } from './codeMultiPassCritique.ts'
 import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
+import { analyzeCyclomaticComplexity } from './codeStructuralAnalysis.ts'
 import { countLines, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
 
 // --- 3. Structure critic ---------------------------------------------------
@@ -8,6 +9,13 @@ import { countLines, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
 // répétés — indicateurs structurels d'une génération mal pensée.
 
 function countFunctions(content: string, lang: string): { count: number; maxLength: number } {
+  const analyzed = analyzeCyclomaticComplexity(content, lang)
+  if (analyzed.length > 0) {
+    return {
+      count: analyzed.length,
+      maxLength: Math.max(...analyzed.map((fn) => fn.endLine - fn.startLine + 1)),
+    }
+  }
   if (isTsLike(lang)) {
     const declRe = /\b(?:function\s+\w+|const\s+\w+\s*=\s*(?:async\s+)?\([^)]*\)\s*=>|\w+\s*\([^)]*\)\s*{)/g
     const matches = content.match(declRe) ?? []
@@ -50,17 +58,15 @@ function fileStructureIssues(file: CodeFile): CritiqueIssue[] {
       suggestion: 'Envisager un découpage.',
     })
   }
-  if (isTsLike(file.language) || isPyLike(file.language)) {
-    const fn = countFunctions(file.content, file.language)
-    if (fn.maxLength > 200) {
-      issues.push({
-        axis: 'lint',
-        severity: 'warn',
-        message: `${file.name}: fonction de plus de 200 lignes`,
-        location: { file: file.name },
-        suggestion: 'Extraire des helpers ou des sous-fonctions.',
-      })
-    }
+  const fn = countFunctions(file.content, file.language)
+  if (fn.count > 0 && fn.maxLength > 200) {
+    issues.push({
+      axis: 'lint',
+      severity: 'warn',
+      message: `${file.name}: fonction de plus de 200 lignes`,
+      location: { file: file.name },
+      suggestion: 'Extraire des helpers ou des sous-fonctions.',
+    })
   }
   // TS : promesses non-await suspectes
   if (isTsLike(file.language)) {

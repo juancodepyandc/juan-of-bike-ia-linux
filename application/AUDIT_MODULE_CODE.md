@@ -265,6 +265,14 @@
 - **Validation** : `codeArchitecturePlanSelection.test.ts` 2 verts ; `codeModelRouting.test.ts` 5 verts ; `codePipelinePhases.test.ts` 2 verts ; glob Code a **515 tests verts / 0 echec**.
 - **WS4 socle TypeScript cloturable** : restent a rejouer des generations reelles avec Ollama/bridge dans WS7/WS3 pour prouver le comportement end-to-end sous charge.
 
+### 2026-07-15 — Vague 2 / WS8 increment 32 applique
+
+- **Scanner lexical partage** : `codeLexicalAnalysis.ts` masque commentaires, strings, regex et templates en conservant les lignes ; `findMatchingBraceLine` et `bracketBalanceIgnoringLiterals` remplacent les comptages bruts d'accolades/brackets.
+- **McCabe/Halstead multi-langage et God-functions** : `codeStructuralAnalysis.ts` detecte les fonctions TS/JS, Python, Rust, Go, Java, C/C++, Swift, Kotlin et Dart ; `codeStaticStructure.ts` mesure les vraies bornes de fonctions au lieu d'une moyenne.
+- **Securite plus exploitable** : `securityCritic` rapporte toutes les occurrences de chaque regle et ajoute une propagation locale de taint vers sinks HTML, reseau, SQL, commande, redirect, header et eval sans dependre uniquement des noms `req`/`input`.
+- **Validation** : `codeStructuralAnalysis.test.ts` 22 verts ; `codeStaticCritics.test.ts` 49 verts ; glob Code a **522 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS8 reste ouvert** : le DoD fonctionnel pieges/God-function/>=6 langages est couvert ; restent l'integration `web-tree-sitter` WASM et les diagnostics toolchain reels `tsc`/`ruff`/`clippy` a brancher dans un increment suivant.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

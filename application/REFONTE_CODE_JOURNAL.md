@@ -1373,3 +1373,57 @@ Pour cet increment WS4, oui : le plan Architecte est maintenant un contrat JSON 
 ### Etat de satisfaction chantier
 
 Pour WS4, oui cote socle TypeScript : routage multi-modeles reel, verifieur distinct si installe, plan JSON schema-valide, best-of-N planning et escalade plateau sont branches et testes. Les validations de generation reelle sous Ollama resteront a rejouer avec le bridge/front vivants pendant les chantiers WS7/WS3.
+
+## 2026-07-15 — Vague 2 / WS8 increment 32 — scanner lexical, multi-langage et taint
+
+### Reprise et diagnostic confirme
+
+- Le bug `findClosingBrace` etait bien un comptage brut des caracteres `{`/`}` : une accolade dans une string, une regex ou un template pouvait fermer artificiellement une fonction.
+- `bracketBalance` utilisait une pile de regex de stripping fragile ; les templates/regex pieges pouvaient encore polluer le signal syntaxique.
+- `countFunctions` dans le critic structurel calculait `total lignes / nombre de fonctions`, donc une God-function noyee parmi de petites fonctions n'etait pas mesuree comme telle.
+- `securityCritic` ne rapportait que le premier match de chaque regle (`exec` unique) et les regles SSRF/XSS etaient trop dependantes de noms `req`/`input`.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le DoD WS8 de cet increment se traite dans le socle local existant.
+- Choix retenu : un scanner lexical TypeScript local (`codeLexicalAnalysis.ts`) qui masque commentaires, strings, templates et regex en conservant les offsets de lignes.
+- Raison technique : corriger immediatement les faux positifs critiques et partager le meme masquage entre McCabe et syntax critic, avant l'integration plus lourde `web-tree-sitter` WASM.
+- Compromis explicite : cet increment couvre le DoD fonctionnel WS8 mais ne pretend pas remplacer l'integration future `web-tree-sitter` + `tsc`/`ruff`/`clippy`.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeLexicalAnalysis.ts` :
+  - `maskCodeLiterals` ;
+  - `findMatchingBraceLine` ;
+  - `bracketBalanceIgnoringLiterals`.
+- `codeStructuralAnalysis.ts` :
+  - remplace `findClosingBrace` par le scanner lexical ;
+  - etend la detection de fonctions a TS/JS, Python, Rust, Go, Java, C/C++, Swift, Kotlin et Dart ;
+  - calcule McCabe sur langages a accolades avec masquage lexical ;
+  - etend Halstead generique aux langages a accolades supportes.
+- `codeStaticSyntax.ts` reutilise `bracketBalanceIgnoringLiterals`.
+- `codeStaticStructure.ts` utilise les bornes reelles de fonctions issues de `analyzeCyclomaticComplexity` pour detecter les fonctions de plus de 200 lignes.
+- `codeStaticSecurity.ts` :
+  - clone chaque regle en regex globale pour rapporter toutes les occurrences ;
+  - ajoute une propagation locale de taint par affectation ;
+  - detecte les flux utilisateur vers sinks HTML, reseau, SQL, commande, redirect, header et eval.
+
+### Avant / apres mesurable
+
+- Avant : `function f(){ const x = "}"; } function g(){}` pouvait casser les bornes de fonction ; apres : le test piege strings/regex/templates trouve correctement `trapped` puis `after`.
+- Avant : une fonction de 214 lignes pouvait etre diluee par moyenne ; apres : `structureCritic` emet `fonction de plus de 200 lignes`.
+- Avant : `eval('a'); eval('b')` ne rapportait qu'une occurrence ; apres : les deux lignes sont rapportees.
+- Avant : `const next = new URLSearchParams(location.search)...; fetch(next)` n'etait pas un SSRF si aucun nom `req`/`input` n'apparaissait ; apres : le flux tainted vers `network URL sink` et `DOM HTML sink` est detecte.
+- Baseline Code : 515 tests verts apres WS4 -> 522 tests verts apres cet increment WS8.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeStructuralAnalysis.test.ts` : 22 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeStaticCritics.test.ts` : 49 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 522 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `git diff --check` : aucun probleme.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS8, le DoD explicite est couvert : cas pieges strings/regex/templates sans faux positif, God-function detectee, analyse fonctionnelle sur plus de 6 langages. WS8 reste ouvert pour l'AST WASM `web-tree-sitter` et les diagnostics toolchain reels (`tsc`, `ruff`, `clippy`) qui devront s'integrer au harnais WS7.

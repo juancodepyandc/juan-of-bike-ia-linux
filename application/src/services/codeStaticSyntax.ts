@@ -1,6 +1,7 @@
 import type { CodeFile, CodeProject, CriticFn, CritiqueIssue, CritiqueReport } from './codeMultiPassCritique.ts'
 import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
+import { bracketBalanceIgnoringLiterals } from './codeLexicalAnalysis.ts'
 import { isHtmlLike, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
 
 // --- 1. Syntax sanity critic -----------------------------------------------
@@ -9,41 +10,7 @@ import { isHtmlLike, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
 // imports incomplets).
 
 function bracketBalance(content: string): { ok: boolean; diff: number; kind: string } {
-  // Strip string literals + comments to avoid false positives.
-  // ORDRE CRITIQUE :
-  //   1. /* */ : retire les commentaires de bloc en premier (peuvent contenir
-  //      // ou des strings imbriquées qui se feraient mal stripper sinon).
-  //   2. //   : retire les commentaires de ligne AVANT les strings — sinon
-  //      "Anki's" dans un commentaire fait que le regex single-quote attaque
-  //      par "Anki" et mange jusqu'au prochain `'` n'importe où dans le code.
-  //   3. backtick : retire les template literals avant les single/double
-  //      pour la même raison côté FR ("l'attaque" dans une template).
-  //   4. doubles, 5. singles : ordre classique en fin.
-  //
-  // Cet ordre est arrivé après 2 bugs réels successifs détectés sur de vrai
-  // code Aurora (kdfCostAnalyzer + spacedRepetition). NE PAS le changer
-  // sans relancer le test codeStaticCriticsRealWorld.
-  const stripped = content
-    .replace(/\/\*[\s\S]*?\*\//g, '')           // /* … */
-    .replace(/\/\/[^\n]*/g, '')                 // // …
-    .replace(/`(?:\\.|[^`\\])*`/g, '``')        // `template`
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')        // "string"
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")        // 'string'
-  const pairs: Array<[string, string, string]> = [
-    ['(', ')', 'parens'],
-    ['[', ']', 'brackets'],
-    ['{', '}', 'braces'],
-  ]
-  for (const [open, close, kind] of pairs) {
-    let depth = 0
-    for (const ch of stripped) {
-      if (ch === open) depth += 1
-      else if (ch === close) depth -= 1
-      if (depth < 0) return { ok: false, diff: depth, kind }
-    }
-    if (depth !== 0) return { ok: false, diff: depth, kind }
-  }
-  return { ok: true, diff: 0, kind: '' }
+  return bracketBalanceIgnoringLiterals(content)
 }
 
 function syntaxIssues(file: CodeFile): CritiqueIssue[] {

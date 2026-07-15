@@ -92,6 +92,46 @@ def b(x):
     assert.equal(r[0].name, 'a')
     assert.equal(r[1].name, 'b')
   })
+
+  test('accolades dans strings, regex et templates ne cassent pas les bornes', () => {
+    const code = `
+function trapped() {
+  const a = "{"
+  const b = /}/g
+  const c = \`template } { literal\`
+  return a + String(b) + c
+}
+
+function after() {
+  return 1
+}
+`
+    const r = analyzeCyclomaticComplexity(code, 'ts')
+    assert.equal(r.length, 2)
+    assert.equal(r[0].name, 'trapped')
+    assert.equal(r[1].name, 'after')
+    assert.ok(r[0].endLine < r[1].startLine)
+  })
+
+  test('détection de fonctions sur au moins 6 langages', () => {
+    const samples: Array<[string, string]> = [
+      ['ts', 'function sample(x: number) { if (x > 0) return 1; return 0 }'],
+      ['py', 'def sample(x):\n    if x > 0:\n        return 1\n    return 0'],
+      ['rust', 'pub fn sample(x: i32) -> i32 { if x > 0 { 1 } else { 0 } }'],
+      ['go', 'func sample(x int) int { if x > 0 { return 1 }; return 0 }'],
+      ['java', 'public int sample(int x) { if (x > 0) return 1; return 0; }'],
+      ['cpp', 'int sample(int x) { if (x > 0) return 1; return 0; }'],
+      ['swift', 'func sample(_ x: Int) -> Int { if x > 0 { return 1 }; return 0 }'],
+      ['kotlin', 'fun sample(x: Int): Int { if (x > 0) return 1; return 0 }'],
+      ['dart', 'int sample(int x) { if (x > 0) return 1; return 0; }'],
+    ]
+    for (const [lang, code] of samples) {
+      const r = analyzeCyclomaticComplexity(code, lang)
+      assert.equal(r.length, 1, `${lang}: ${JSON.stringify(r)}`)
+      assert.equal(r[0].name, 'sample')
+      assert.ok(r[0].cyclomaticComplexity >= 2, `${lang}: CC ${r[0].cyclomaticComplexity}`)
+    }
+  })
 })
 
 describe('Dead code detector', () => {
@@ -190,5 +230,13 @@ describe('Halstead metrics', () => {
     const code = `def f(x): return x`
     const h = computeHalstead(code, 'py')
     assert.equal(h.volume, 0)
+  })
+
+  test('Rust : Halstead générique calculé', () => {
+    const code = `fn f(x: i32) -> i32 { if x > 0 { x + 1 } else { 0 } }`
+    const h = computeHalstead(code, 'rust')
+    assert.ok(h.volume > 0)
+    assert.ok(h.n1 > 0)
+    assert.ok(h.n2 > 0)
   })
 })
