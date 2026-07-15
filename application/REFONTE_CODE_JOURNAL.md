@@ -386,3 +386,45 @@ Pour cet increment WS1, oui : la couverture est preservee, les deux fichiers de 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : un sous-systeme complet et deja critique du pipeline est sorti de l'orchestrateur, les exports publics restent compatibles et les tests directs + glob Code + build passent. WS1 reste ouvert sur l'orchestrateur lui-meme et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 8 — assets sujet de l'orchestrateur
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction parsing/sanitation, `codeOrchestrator.ts` restait a 4047 lignes.
+- Le bloc initial "images sujet / marque / placeholders / merge follow-up" etait une responsabilite autonome, utilisee par la preparation de generation et la correction, mais sans dependance directe aux phases du pipeline.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et mecanique.
+- Choix retenu : creer `codeSubjectAssets.ts` avec les helpers runtime (bridge/extension/image fallback) et conserver `CodeFile` en import type-only pour ne pas deplacer le contrat public de l'orchestrateur dans cet increment.
+- Raison technique : reduire l'orchestrateur sans modifier les appels existants ni le comportement du pipeline image/marque.
+
+### Modifications realisees
+
+- Ajout de `codeSubjectAssets.ts` pour :
+  - construire les requetes d'images sujet ;
+  - recuperer les images via extension puis bridge, avec fallback SVG local ;
+  - enrichir un profil de marque via bridge ;
+  - remplacer `PLACEHOLDER_SUBJECT_IMG(_N)` ;
+  - fusionner les fichiers existants et les updates de follow-up.
+- `codeOrchestrator.ts` importe maintenant ces helpers au lieu de les porter inline.
+- Ajout de `codeSubjectAssets.test.ts` pour tester directement la substitution de placeholders et la fusion follow-up.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 4047 lignes -> 3763 lignes.
+- `codeSubjectAssets.ts` : 288 lignes.
+- `codeSubjectAssets.test.ts` : 37 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSubjectAssets.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 437 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : la responsabilite assets sujet est isolee dans un module sous 600 lignes, la couverture directe existe et le pipeline Code reste vert. WS1 reste ouvert sur l'orchestrateur et les deux vues.

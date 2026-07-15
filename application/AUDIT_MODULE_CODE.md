@@ -73,6 +73,13 @@
 - **Validation** : test dedie parsing/sanitation 6 verts / 0 echec ; glob Code a **435 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 8 applique
+
+- **Assets sujet extraits de l'orchestrateur** : recherche d'images sujet, enrichissement de profil marque, substitution des placeholders image et fusion follow-up quittent `codeOrchestrator.ts` pour `codeSubjectAssets.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 4047 -> 3763 lignes. Nouveau module `codeSubjectAssets.ts` (288 lignes) et test dedie `codeSubjectAssets.test.ts` (37 lignes).
+- **Validation** : test dedie assets sujet 2 verts / 0 echec ; glob Code a **437 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
