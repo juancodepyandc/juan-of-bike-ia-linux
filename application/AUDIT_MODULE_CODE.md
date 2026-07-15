@@ -281,6 +281,14 @@
 - **Validation** : `codeSandboxModules.test.ts` 17 verts ; glob Code a **525 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS8 reste ouvert** : les diagnostics `tsc`/`ruff`/`clippy` sont maintenant dans le pipeline sandbox ; reste l'AST WASM `web-tree-sitter` a brancher pour remplacer les heuristiques par parser quand les grammaires sont disponibles.
 
+### 2026-07-15 — Vague 2 / WS8 increment 34 applique
+
+- **AST WASM reel ajoute** : dependances `web-tree-sitter@0.20.8` (MIT) et `tree-sitter-wasms@0.1.13` (Unlicense), alignees ABI 0.20 pour charger les grammaires precompilees.
+- **Adaptateur paresseux** : `codeTreeSitterAst.ts` mappe TS/TSX/JS/Python/Rust/Go/Java/C/C++/Swift/Kotlin/Dart vers les WASM, initialise `web-tree-sitter` a la demande et retourne un resume AST compact.
+- **Preuve executable** : `codeTreeSitterAst.test.ts` parse reellement JavaScript via WASM et verifie les grammaires WS8.
+- **Validation** : `codeTreeSitterAst.test.ts` 2 verts ; glob Code a **527 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code). `npm audit` signale encore 4 vulnerabilites sur `postcss`/`react-router`/`vite`, pas introduites par les deux paquets AST.
+- **WS8 cloturable cote socle** : scanner lexical, DoD pieges/God-function/>=6 langages, taint, occurrences multiples, diagnostics `tsc`/`ruff`/`clippy` et adaptateur `web-tree-sitter` sont presents et testes. Le remplacement integral des heuristiques par requetes AST par langage pourra maintenant se faire incrementalement.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

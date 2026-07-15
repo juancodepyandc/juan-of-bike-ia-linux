@@ -45,6 +45,8 @@
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "three": "^0.183.2",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.20.8",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

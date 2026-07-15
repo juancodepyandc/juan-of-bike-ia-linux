@@ -1473,3 +1473,51 @@ Pour cet increment WS8, le DoD explicite est couvert : cas pieges strings/regex/
 ### Etat de satisfaction chantier
 
 Pour cet increment, la partie `tsc`/`ruff`/`clippy` de WS8 est branchee au sandbox sans casser les validations existantes. WS8 reste ouvert uniquement sur l'integration `web-tree-sitter` WASM, qui demande un adaptateur et des grammaires disponibles sans polluer le repo.
+
+## 2026-07-15 — Vague 2 / WS8 increment 34 — adaptateur AST web-tree-sitter WASM
+
+### Reprise et diagnostic confirme
+
+- Le dernier trou WS8 cote socle etait l'absence d'un vrai parser `tree-sitter` WASM.
+- `web-tree-sitter@0.26.11` ne chargeait pas les grammaires de `tree-sitter-wasms@0.1.13` : erreur de metadata dylink, liee a l'ABI/generation des WASM.
+- `tree-sitter-wasms@0.1.13` est construit sur l'ecosysteme 0.20.x et couvre les langages WS8, y compris Swift, Kotlin et Dart.
+
+### Recherches et choix techniques
+
+- Sources consultees : documentation officielle `web-tree-sitter`/Tree-sitter et metadata npm locale.
+- Choix retenu : aligner `web-tree-sitter` sur `0.20.8`, compatible avec les grammaires precompilees `tree-sitter-wasms`.
+- Raison technique : `@vscode/tree-sitter-wasm` est plus coherent cote runtime/grammaires, mais ne couvre pas Swift/Kotlin/Dart ; `tree-sitter-wasms` couvre le perimetre WS8 complet.
+- Chargement paresseux : l'adaptateur n'importe et n'initialise le parser que lors d'un appel explicite a `parseCodeWithTreeSitter`.
+
+### Modifications realisees
+
+- Ajout des dependances :
+  - `web-tree-sitter@0.20.8` (MIT) ;
+  - `tree-sitter-wasms@0.1.13` (Unlicense).
+- Ajout de `src/services/codeTreeSitterAst.ts` :
+  - mapping langage -> WASM pour TS/TSX/JS/Python/Rust/Go/Java/C/C++/Swift/Kotlin/Dart ;
+  - `isTreeSitterLanguageSupported` ;
+  - `getTreeSitterGrammarWasmPath` ;
+  - `listTreeSitterSupportedLanguages` ;
+  - `parseCodeWithTreeSitter`.
+- Normalisation des chemins WASM : URLs statiques pour Vite, conversion `file://` -> chemin local pour les tests Node.
+- Ajout de `src/__tests__/codeTreeSitterAst.test.ts` avec un parse JavaScript reel via WASM.
+
+### Avant / apres mesurable
+
+- Avant : WS8 avait un scanner lexical robuste et des diagnostics toolchain, mais aucun parser AST WASM executable.
+- Apres : `parseCodeWithTreeSitter('function f(x) { return x + 1 }', 'javascript')` retourne un root `program`, sans erreur, avec S-expression contenant `function_declaration`.
+- Avant : la compatibilite ABI des grammaires etait inconnue.
+- Apres : l'ABI 0.20 est prouvee par test executable.
+- Baseline Code : 525 tests verts apres diagnostics toolchain -> 527 tests verts apres adaptateur AST.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeTreeSitterAst.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 527 pass / 0 fail.
+- `npm run build` : succes ; seuls les avertissements dynamiques cowork preexistants restent affiches.
+- `npm audit --json` : 4 vulnerabilites restantes sur `postcss`, `react-router`, `react-router-dom`, `vite`; elles ne viennent pas de `web-tree-sitter` ni `tree-sitter-wasms` et devront etre traitees dans un chantier dependances separe.
+
+### Etat de satisfaction chantier
+
+Pour WS8 cote socle, oui : `web-tree-sitter` WASM est present et executable, les grammaires des langages demandes sont mappees, les toolchains `tsc`/`ruff`/`clippy` sont branchees, les faux positifs de littéraux sont corriges, les God-functions sont detectees, la couverture multi-langage depasse le DoD, et la securite rapporte les occurrences multiples avec taint local. Le remplacement fin des heuristiques par requetes AST specialisees peut maintenant se faire sans changer le contrat public.
