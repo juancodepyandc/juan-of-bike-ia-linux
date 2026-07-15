@@ -44,6 +44,13 @@
 - **Validation** : tests dedies sandbox 14 verts / 0 echec ; glob Code a **407 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx` et `codeStreamStore.ts` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 4 applique
+
+- **Store Code modularise** : `codeStreamStore.ts` conserve `useCodeStreamStore`, les selecteurs et les types publics, mais delegue types, narration, snapshots, progression et routage modele a des modules dedies.
+- **Reduction mesurable** : `codeStreamStore.ts` 921 -> 560 lignes. Nouveaux modules `codeStreamTypes.ts` (132), `codeStreamRouting.ts` (69), `codeStreamNarration.ts` (68), `codeStreamSessions.ts` (68), `codeStreamProgress.ts` (43).
+- **Validation** : tests dedies store 12 verts / 0 echec ; glob Code a **419 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

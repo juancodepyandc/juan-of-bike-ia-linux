@@ -218,3 +218,48 @@ Pour cet increment WS1, oui : les facades restent compatibles et les familles de
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : le sandbox est decoupe en responsabilites stables, la facade publique reste compatible, les nouveaux modules ont des tests unitaires dedies, le glob Code passe a 407 tests verts, et l auto-install Linux privilegiee est retiree. WS1 reste ouvert tant que les cinq fichiers restants depassent 600 lignes.
+
+## 2026-07-15 — Vague 1 / WS1 increment 4 — store de streaming Code
+
+### Reprise et diagnostic confirme
+
+- `codeStreamStore.ts` depassait encore 600 lignes et melangeait types, snapshots de session, narration TTS, progression/ETA, routage modele et actions Zustand.
+- Les consommateurs publics (`useCodeStreamStore`, `CodeWorkMode`, `RepoScanInfo`, selecteurs) passent par `codeStreamStore.ts`; la facade devait donc conserver ces exports.
+- Le store reste le chemin de la skin Aurora V1/V3 : l increment devait eviter tout changement de comportement de generation, repo mode, narration ou suivi de session.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l increment est une decomposition interne sans changement de technologie.
+- Choix retenu : extraire uniquement les blocs purs et laisser les actions Zustand/repo dans la facade.
+- Raison technique : reduire le store sous le seuil WS1 sans introduire d abstraction autour de `set/get` qui rendrait les actions asynchrones plus fragiles.
+
+### Modifications realisees
+
+- Ajout de `codeStreamTypes.ts` pour `CodeWorkMode`, `RepoScanInfo`, `CodeStreamState`, `CodeStreamStore` et `CodeSessionSnapshot`.
+- Ajout de `codeStreamNarration.ts` pour la persistance du toggle voix et les phrases de narration.
+- Ajout de `codeStreamSessions.ts` pour les snapshots multi-session.
+- Ajout de `codeStreamProgress.ts` pour ETA, phase derivee et resume de livraison.
+- Ajout de `codeStreamRouting.ts` pour l extraction de marque, le routage modele visuel/code et la detection de correction.
+- `codeStreamStore.ts` conserve la creation Zustand, les actions repo/generation et les selecteurs publics.
+
+### Avant / apres mesurable
+
+- `codeStreamStore.ts` : 921 lignes -> 560 lignes.
+- Nouveaux modules, tous sous 600 lignes :
+  - `codeStreamTypes.ts` : 132 lignes.
+  - `codeStreamRouting.ts` : 69 lignes.
+  - `codeStreamNarration.ts` : 68 lignes.
+  - `codeStreamSessions.ts` : 68 lignes.
+  - `codeStreamProgress.ts` : 43 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `codeIntent.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeStreamStoreModules.test.ts` : 12 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 419 pass / 0 fail.
+- `npm run build` : succes Vite build.
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : le store est sous le seuil, les helpers extraits ont des tests dedies, les exports publics restent inchanges et le build passe. WS1 reste ouvert tant que les quatre monolithes restants depassent 600 lignes.
