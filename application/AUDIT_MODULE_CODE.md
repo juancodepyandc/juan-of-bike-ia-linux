@@ -247,6 +247,15 @@
 - **Validation** : `codeModelRouting.test.ts` 4 verts ; `codePipelineRuntime.test.ts` 5 verts ; `codePipelinePhases.test.ts` 2 verts ; glob Code a **508 tests verts / 0 echec**.
 - **WS4 reste ouvert** : le plan Architecte est encore du markdown libre ; le schema JSON, le best-of-N et l'escalade cloud sur plateau restent a implementer et a prouver.
 
+### 2026-07-15 — Vague 2 / WS4 increment 30 applique
+
+- **Plan Architecte contractualise** : `codeArchitecturePlan.ts` introduit `CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION`, un schema JSON local, un parseur robuste, une normalisation canonique et un rejet des plans invalides.
+- **Prompts Architecte recables** : `buildArchitecteSystemPrompt` et `buildArchitecturePlanningPrompt` demandent maintenant un objet JSON valide uniquement, sans markdown ni prose hors JSON.
+- **Gate de plan durcie** : `isArchitecturePlanUsable` valide le schema au lieu de compter des sections markdown ; `runPlanningPhase` retourne le JSON canonique ou rejette le plan.
+- **Consommateur README migre** : `codeProjectSupportFiles.ts` extrait dependances et scripts depuis le plan JSON, avec fallback legacy pour les anciens plans markdown.
+- **Validation** : `codeArchitecturePlan.test.ts` 4 verts ; tests cibles prompts/phases 64 verts ; glob Code a **512 tests verts / 0 echec**.
+- **WS4 reste ouvert** : best-of-N et escalade cloud sur plateau ne sont pas encore livres.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

@@ -16,6 +16,7 @@ import type { CodeMissionDossier } from './codeMissionControl.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import { withTimeout } from './llmTimebox.ts'
 import { isVisualProjectType } from './codeQualityGates.ts'
+import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CODE_EXPERT_OUTPUT_TOKENS,
@@ -31,17 +32,7 @@ import {
 } from './codePipelineRuntime.ts'
 
 export function isArchitecturePlanUsable(plan: string | null) {
-  if (!plan) return false
-
-  const sectionHits = [
-    /###\s*comprehension/i.test(plan),
-    /###\s*stack/i.test(plan),
-    /###\s*fichiers a generer/i.test(plan),
-    /###\s*commandes/i.test(plan) || /###\s*commandes d installation/i.test(plan),
-  ].filter(Boolean).length
-  const listedFiles = (plan.match(/`[^`\n]+\.[a-z0-9]+`/gi) || []).length
-
-  return sectionHits >= 2 && listedFiles >= 2 && plan.trim().length > 180
+  return parseArchitecturePlanJson(plan).ok
 }
 
 /** Phase 1: Classify intent (deterministic, no LLM) */
@@ -124,13 +115,14 @@ export async function runPlanningPhase(
         }
       },
     })
-    const plan = response?.response?.trim()
-    if (plan && isArchitecturePlanUsable(plan)) {
+    const rawPlan = response?.response?.trim()
+    const parsedPlan = parseArchitecturePlanJson(rawPlan)
+    if (parsedPlan.ok) {
       setPhase('Plan d architecture pret — lancement de la generation...', 25)
-      return plan
+      return parsedPlan.serialized
     }
-    if (plan?.length) {
-      setPhase('Plan insuffisant — le Codeur operera en autonomie...', 22)
+    if (rawPlan?.length) {
+      setPhase(`Plan JSON invalide (${parsedPlan.errors.slice(0, 3).join(', ')}) — le Codeur operera en autonomie...`, 22)
     }
     return null
   } catch (planError) {

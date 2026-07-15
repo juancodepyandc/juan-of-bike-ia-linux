@@ -1,5 +1,6 @@
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
+import { formatArchitecturePlanDependenciesForMarkdown } from './codeArchitecturePlan.ts'
 import {
   manifestUsesPackage,
   stripFormattingArtifacts,
@@ -481,9 +482,9 @@ function generateReadme(
   // Extract dependencies from plan if available
   let depsSection = ''
   if (architecturePlan) {
-    const depsMatch = architecturePlan.match(/###\s*DEPENDANCES[^\n]*\n([\s\S]*?)(?=###|$)/i)
-    if (depsMatch?.[1]?.trim()) {
-      depsSection = `## Dependances\n\n${depsMatch[1].trim()}\n\n`
+    const dependencies = formatArchitecturePlanDependenciesForMarkdown(architecturePlan)
+    if (dependencies) {
+      depsSection = `## Dependances\n\n${dependencies}\n\n`
     }
   }
 

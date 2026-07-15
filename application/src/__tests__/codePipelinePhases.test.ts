@@ -1,26 +1,42 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION } from '../services/codeArchitecturePlan.ts'
 import {
   isArchitecturePlanUsable,
   runIntentPhase,
 } from '../services/codePipelinePhases.ts'
 
 describe('codePipelinePhases', () => {
-  test('valide uniquement les plans architecte exploitables', () => {
-    const validPlan = [
-      '### Comprehension',
-      'Application React complete avec routage et donnees persistantes.',
-      '### Stack',
-      'React, TypeScript, Vite, Zustand.',
-      '### Fichiers a generer',
-      '- `package.json`',
-      '- `src/App.tsx`',
-      '- `src/main.tsx`',
-      '- `src/store/useTodos.ts`',
-      '### Commandes',
-      '`npm install` puis `npm run dev`.',
-      'Ce plan contient assez de details pour piloter une generation fichier par fichier.',
-    ].join('\n')
+  test('valide uniquement les plans architecte JSON schema-valides', () => {
+    const validPlan = JSON.stringify({
+      schemaVersion: CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION,
+      projectType: 'spa_react',
+      summary: 'Application React complete avec routage et donnees persistantes.',
+      stack: {
+        runtime: 'node',
+        packageManager: 'npm',
+        languages: ['TypeScript'],
+        frameworks: ['React', 'Vite'],
+        dependencies: [{ name: 'react', version: '^19.0.0', type: 'runtime', reason: 'ui' }],
+        scripts: [{ name: 'dev', command: 'npm run dev', purpose: 'preview' }],
+      },
+      files: [
+        { path: 'package.json', role: 'manifest', required: true },
+        { path: 'src/App.tsx', role: 'app', required: true },
+      ],
+      dataFlow: ['user -> app -> state'],
+      execution: {
+        install: ['npm install'],
+        dev: ['npm run dev'],
+        build: ['npm run build'],
+        test: ['npm run build'],
+        preview: 'vite',
+      },
+      generationOrder: ['package.json', 'src/App.tsx'],
+      validation: ['build vert', 'preview visible'],
+      risks: [{ risk: 'imports manquants', mitigation: 'generer tous les fichiers' }],
+      design: { palette: ['oklch'], typography: ['Inter'], ux: ['fluide'], responsive: ['mobile'] },
+    })
 
     assert.equal(isArchitecturePlanUsable(validPlan), true)
     assert.equal(isArchitecturePlanUsable('### Stack\nReact'), false)

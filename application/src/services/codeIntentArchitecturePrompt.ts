@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntentTypes.ts'
+import { buildArchitecturePlanJsonInstructions } from './codeArchitecturePlan.ts'
 
 export function buildArchitecturePlanningPrompt(prompt: string, intent: CodeIntent): string {
   const isSimple = intent.complexity === 'simple'
@@ -43,42 +44,11 @@ export function buildArchitecturePlanningPrompt(prompt: string, intent: CodeInte
       ? '7. GARANTIS une architecture desktop complete: process principal Electron + renderer + preload si necessaire'
       : '',
     '',
-    '## FORMAT DE REPONSE OBLIGATOIRE',
+    buildArchitecturePlanJsonInstructions(),
     '',
-    '### COMPREHENSION',
-    '(1-3 phrases: qu est-ce que l utilisateur veut VRAIMENT?)',
-    '',
-    '### STACK TECHNIQUE',
-    `(${isSimple ? 'langages et outils' : 'frameworks, librairies, versions'})`,
-    '',
-    '### FICHIERS A GENERER',
-    '(pour CHAQUE fichier, donne:)',
-    '- `chemin/nom.ext` — role du fichier',
-    '  - Contenu principal: [description precise de ce que ce fichier doit contenir]',
-    '  - Imports/dependances: [ce dont il a besoin]',
-    isSimple ? '' : '  - Points d attention: [edge cases, pieges connus]',
-    '',
-    '### DEPENDANCES (npm/pip/cargo)',
-    '(liste EXACTE avec versions recommandees)',
-    '- nom@version — pourquoi',
-    '',
-    '### COMMANDES D INSTALLATION ET LANCEMENT',
-    '(exactement ce qu il faut taper pour faire tourner le projet)',
-    '',
-    isSimple ? '' : [
-      '### ARCHITECTURE',
-      '- Patterns utilises et pourquoi',
-      '- Communication entre composants',
-      '- Gestion d etat',
-      '- Gestion d erreurs',
-      '',
-    ].join('\n'),
-    '### DESIGN & UX',
-    '(palette couleurs, typographie, responsive, animations)',
-    '- Le design DOIT etre professionnel et moderne, pas du HTML brut',
-    '',
-    '### ORDRE DE GENERATION',
-    '(dans quel ordre generer pour minimiser les erreurs)',
+    isSimple
+      ? 'Pour un projet simple, le JSON reste obligatoire mais les tableaux peuvent etre courts si tous les fichiers et commandes restent complets.'
+      : 'Pour un projet complexe, le JSON doit decomposer tous les fichiers, dependances, risques, validations et flux critiques.',
     '',
     `## DEMANDE UTILISATEUR`,
     prompt,

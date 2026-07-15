@@ -1283,3 +1283,50 @@ Pour WS2 fondations, oui : le modele de projet, le graphe d'imports, le protocol
 ### Etat de satisfaction chantier
 
 Pour cet increment WS4, oui : le NO-OP est remplace par un routage multi-roles reel, branche a `/api/tags` et prouve par tests. WS4 reste ouvert : le prochain increment doit remplacer le plan markdown libre par un plan JSON valide par schema, puis ajouter best-of-N et escalade sur plateau.
+
+## 2026-07-15 — Vague 2 / WS4 increment 30 — plan Architecte JSON schema-valide
+
+### Reprise et diagnostic confirme
+
+- Apres l'increment 29, le routage modele etait reel mais le plan Architecte restait du markdown libre (`### COMPREHENSION`, `### STACK`, `### FICHIERS A GENERER`) valide par heuristiques.
+- `isArchitecturePlanUsable` acceptait un plan par presence de sections et de chemins entre backticks, donc un plan non machine-readable pouvait encore piloter l'execution.
+- `codeProjectSupportFiles.ts` extrayait les dependances par regex `### DEPENDANCES`, preuve que le plan n'etait pas encore un contrat parseable.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le besoin est un schema local et stable entre l'Architecte, l'orchestrateur et l'executeur.
+- Choix retenu : `codeArchitecturePlan.ts` contient le schema, le parseur, la normalisation, le rejet des chemins dangereux et la serialisation canonique JSON.
+- Raison technique : garder `architecturePlan: string | null` dans les signatures pour ne pas cascader une refonte large, mais stocker une chaine JSON canonique qui peut etre parsee par les consommateurs actuels et futurs.
+- Compatibilite : le README garde un fallback regex legacy pour les anciens plans markdown deja presents, mais les nouveaux plans LLM sont rejetes s'ils ne valident pas le schema.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeArchitecturePlan.ts` avec :
+  - `CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION` ;
+  - `CODE_ARCHITECTURE_PLAN_SCHEMA` ;
+  - `parseArchitecturePlanJson` ;
+  - `normalizeArchitecturePlan` ;
+  - `buildArchitecturePlanJsonInstructions` ;
+  - `formatArchitecturePlanDependenciesForMarkdown`.
+- Les prompts Architecte (`codeSystemPrompts.ts` et `codeIntentArchitecturePrompt.ts`) demandent maintenant uniquement un objet JSON valide, sans markdown ni texte hors JSON.
+- `runPlanningPhase` parse et valide le plan ; si le JSON est absent ou invalide, il est rejete et le Codeur opere sans plan plutot que de suivre un contrat faux.
+- `isArchitecturePlanUsable` devient un vrai test schema-valide.
+- `codeProjectSupportFiles.ts` lit les dependances et scripts depuis le JSON canonique.
+
+### Avant / apres mesurable
+
+- Avant : `isArchitecturePlanUsable('### Stack\nReact')` pouvait etre etendu par heuristiques markdown ; le contrat restait non verifiable.
+- Apres : seul un plan avec `schemaVersion: aurora.code.architecture-plan.v1`, fichiers relatifs, stack, execution, validations et risques requis est accepte.
+- Baseline Code : 508 tests verts apres routage modeles -> 512 tests verts apres plan JSON.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeArchitecturePlan.test.ts` : 4 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codePipelinePhases.test.ts` : 2 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeSystemPrompts.test.ts` : 26 pass / 0 fail.
+- `node --experimental-strip-types --test src/__tests__/codeIntent.test.ts` : 32 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 512 pass / 0 fail.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS4, oui : le plan Architecte est maintenant un contrat JSON schema-valide et les plans invalides sont rejetes. WS4 reste ouvert sur le best-of-N et l'escalade sur plateau, qui devront s'appuyer sur ce plan contractualise.
