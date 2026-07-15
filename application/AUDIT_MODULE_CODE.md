@@ -109,6 +109,13 @@
 - **Validation** : test dedie validation projet 4 verts / 0 echec ; supports + normalisation 10 verts / 0 echec ; glob Code a **448 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
 - **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
 
+### 2026-07-15 — Vague 1 / WS1 increment 13 applique
+
+- **Runtime et diagnostics pipeline extraits** : constantes de timebox/contexte, routage modele actuel, nom court modele, troncature de texte, diagnostic de generation vide/refus/narrative et detection des blocages environnement quittent `codeOrchestrator.ts`.
+- **Reduction mesurable** : `codeOrchestrator.ts` 2129 -> 2034 lignes. Nouveaux modules `codePipelineRuntime.ts` (41 lignes), `codeGenerationDiagnostics.ts` (70 lignes), tests dedies `codePipelineRuntime.test.ts` (36 lignes) et `codeGenerationDiagnostics.test.ts` (58 lignes).
+- **Validation** : tests dedies runtime/diagnostics 8 verts / 0 echec ; glob Code a **456 tests verts / 0 echec** ; `npm run build` vert ; `git diff --check` vert.
+- **Reste ouvert WS1** : `codeOrchestrator.ts`, `CodeView.tsx` et `AuroraV1CodeView.tsx` depassent encore 600 lignes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

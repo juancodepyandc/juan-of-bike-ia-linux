@@ -33,7 +33,6 @@ import {
 import {
   type CorrectionStrategy,
   type CorrectionPass,
-  type ErrorCategory,
   buildCorrectionStrategy,
   shouldContinueLoop,
   classifyErrors,
@@ -53,6 +52,10 @@ export { isLLMRefusal } from './codeLLMRefusal.ts'
 export { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
 export { normalizeGeneratedCodeFilesForTest } from './codeGeneratedFileSanitizer.ts'
 import {
+  buildEmptyGenerationDiagnostic,
+  detectEnvironmentBlocker,
+} from './codeGenerationDiagnostics.ts'
+import {
   applySubjectImagePlaceholder,
   fetchBrandProfileFromBridge,
   fetchSubjectImages,
@@ -68,6 +71,24 @@ import {
   isTypeScriptCompatibilityFailure,
   validateOutputMatchesIntent,
 } from './codeProjectValidation.ts'
+import {
+  CODE_EXPERT_CONTEXT_TOKENS,
+  CODE_EXPERT_OUTPUT_TOKENS,
+  CODE_PLANNING_CONTEXT_TOKENS,
+  CORRECTION_FIRST_BYTE_TIMEOUT_MS,
+  CORRECTION_TIMEOUT_MS,
+  DOCUMENTATION_EXTENSIONS_EARLY,
+  GENERATION_FIRST_BYTE_TIMEOUT_MS,
+  INTERACTIVE_3D_FIDELITY_MAX_PASSES,
+  PLANNING_FIRST_BYTE_TIMEOUT_MS,
+  PLANNING_TIMEOUT_MS,
+  PREFLIGHT_PHASE_TIMEOUT_MS,
+  RESEARCH_PHASE_TIMEOUT_MS,
+  STREAM_GENERATION_TOTAL_TIMEOUT_MS,
+  clipText,
+  getModelShortName,
+  selectModel,
+} from './codePipelineRuntime.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
@@ -156,122 +177,6 @@ export type CodeOrchestrationResult = {
 }
 
 export type PhaseCallback = (detail: string, progress: number) => void
-
-// ---------------------------------------------------------------------------
-// Model routing
-// ---------------------------------------------------------------------------
-
-/**
- * Expert-model architecture: un modele code dominant pour TOUT le pipeline.
- * Plus de swap VRAM, plus de fallback vers un petit modele.
- * Les differents comportements sont obtenus via les System Prompts
- * (Architecte, Codeur, Auditeur) — pas en changeant de modele.
- */
-function selectModel(
-  _phase: 'planning' | 'generation' | 'review' | 'correction',
-  _intent: CodeIntent,
-  _escalationLevel: number,
-  configuredCodeModel: string,
-): string {
-  return configuredCodeModel
-}
-
-// ---------------------------------------------------------------------------
-// Shared constants — declared early so all functions can reference them
-// ---------------------------------------------------------------------------
-
-const PREFLIGHT_PHASE_TIMEOUT_MS = 55_000
-const RESEARCH_PHASE_TIMEOUT_MS = 25_000
-const STREAM_GENERATION_TOTAL_TIMEOUT_MS = 2_700_000
-const PLANNING_TIMEOUT_MS = 900_000
-const CORRECTION_TIMEOUT_MS = 1_200_000
-const PLANNING_FIRST_BYTE_TIMEOUT_MS = 720_000
-const GENERATION_FIRST_BYTE_TIMEOUT_MS = 900_000
-const CORRECTION_FIRST_BYTE_TIMEOUT_MS = 900_000
-const DOCUMENTATION_EXTENSIONS_EARLY = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
-const CODE_PLANNING_CONTEXT_TOKENS = 16_384
-const CODE_EXPERT_CONTEXT_TOKENS = 24_576
-const CODE_EXPERT_OUTPUT_TOKENS = 16_000
-
-const INTERACTIVE_3D_FIDELITY_MAX_PASSES = 4
-
-
-
-function clipText(text: string, maxLength = 2400) {
-  const normalized = text.trim()
-  return normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, maxLength)}\n...[sortie tronquee]`
-}
-
-function buildEmptyGenerationDiagnostic(content: string, intent: CodeIntent, outputRetryCount: number) {
-  const trimmed = content.trim()
-
-  if (!trimmed) {
-    return [
-      `Le modele n a retourne aucun contenu exploitable pour le projet ${intent.projectType}.`,
-      `Tentatives de regeneration effectuees: ${outputRetryCount}.`,
-    ].join(' ')
-  }
-
-  if (isLLMRefusal(trimmed)) {
-    return [
-      'Le modele a repondu par un refus ou une excuse au lieu de livrer des fichiers de code.',
-      `Apercu: ${clipText(trimmed, 500)}`,
-    ].join(' ')
-  }
-
-  const planningIssue = detectNonCodePlanningNarrative(trimmed)
-  if (planningIssue) {
-    return [
-      'Le modele est reste bloque en mode analyse/preflight au lieu de livrer des fichiers executables.',
-      planningIssue,
-      `Apercu brut: ${clipText(trimmed, 700)}`,
-    ].join(' ')
-  }
-
-  return [
-    'Le modele a bien produit du texte, mais pas dans un format de fichiers parseable par Aurora.',
-    'Le contrat de sortie a donc ete juge invalide.',
-    `Apercu brut: ${clipText(trimmed, 700)}`,
-  ].join(' ')
-}
-
-function getModelShortName(model: string) {
-  const tail = model.split('/').pop() || model
-  return tail.split(':')[0]
-}
-
-function detectEnvironmentBlocker(
-  sandboxResult: CodeSandboxResult,
-  errorCategories: ErrorCategory[],
-): string | null {
-  if (sandboxResult.ok) return null
-
-  if (errorCategories.includes('runtime_unavailable')) {
-    const autoInstallFailure = sandboxResult.steps.find((step) => step.command.startsWith('auto-install:') && !step.ok)
-    if (autoInstallFailure) {
-      return `${autoInstallFailure.command.replace('auto-install:', '')} n a pas pu etre prepare automatiquement`
-    }
-
-    const missingCommand = sandboxResult.steps
-      .filter((step) => !step.ok)
-      .map((step) => step.output.match(/Failed to spawn command\s+([^\s:]+)/i)?.[1])
-      .find(Boolean)
-
-    if (missingCommand) {
-      return `commande ${missingCommand} absente du poste local`
-    }
-
-    return 'runtime ou toolchain absente'
-  }
-
-  if (/reste indisponible apres preparation automatique/i.test(sandboxResult.summary)) {
-    return sandboxResult.summary
-  }
-
-  return null
-}
 
 function isArchitecturePlanUsable(plan: string | null) {
   if (!plan) return false

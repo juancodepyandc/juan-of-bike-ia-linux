@@ -593,3 +593,43 @@ Pour cet increment WS1, oui : la generation des supports projet est isolee dans 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS1, oui : la validation projet est isolee, testee directement, la reference fallback orpheline est corrigee et le glob Code gagne 4 tests. WS1 reste ouvert sur l'orchestrateur et les deux vues.
+
+## 2026-07-15 — Vague 1 / WS1 increment 13 — runtime et diagnostics pipeline
+
+### Reprise et diagnostic confirme
+
+- Apres l'extraction validation projet, `codeOrchestrator.ts` restait a 2129 lignes.
+- Les constantes de timebox/contexte, le routage modele actuel, la troncature de texte et les diagnostics generation/environnement etaient des helpers purs, utilises par plusieurs phases.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : extraction interne et preservation comportementale.
+- Choix retenu : creer `codePipelineRuntime.ts` pour les constantes/routage/formatage et `codeGenerationDiagnostics.ts` pour les diagnostics de sortie et de sandbox.
+- Raison technique : preparer l'extraction des phases LLM sans dupliquer les constantes ni disperser les heuristiques de diagnostic.
+
+### Modifications realisees
+
+- Ajout de `codePipelineRuntime.ts` pour `selectModel`, `getModelShortName`, `clipText` et les constantes de timeouts/contextes.
+- Ajout de `codeGenerationDiagnostics.ts` pour `buildEmptyGenerationDiagnostic` et `detectEnvironmentBlocker`.
+- `codeOrchestrator.ts` importe ces modules et ne porte plus les helpers locaux.
+- Ajout de tests directs pour le routage modele preserve, la troncature, les constantes critiques, les diagnostics vide/refus/narratif et les blocages environnement.
+
+### Avant / apres mesurable
+
+- `codeOrchestrator.ts` : 2129 lignes -> 2034 lignes.
+- `codePipelineRuntime.ts` : 41 lignes.
+- `codeGenerationDiagnostics.ts` : 70 lignes.
+- `codePipelineRuntime.test.ts` : 36 lignes.
+- `codeGenerationDiagnostics.test.ts` : 58 lignes.
+- Fichiers Module Code encore >600 lignes : `codeOrchestrator.ts`, `CodeView.tsx`, `AuroraV1CodeView.tsx`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codePipelineRuntime.test.ts src/__tests__/codeGenerationDiagnostics.test.ts` : 8 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 456 pass / 0 fail.
+- `npm run build` : succes Vite build (avertissements cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : aucun probleme whitespace.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS1, oui : les helpers transverses sont hors orchestrateur, sous seuil, testes directement et preparent la suite de l'extraction. WS1 reste ouvert sur l'orchestrateur et les deux vues.
