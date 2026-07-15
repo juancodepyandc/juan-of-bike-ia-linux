@@ -20,11 +20,16 @@ export type SandboxGcResult = {
 
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const DEFAULT_MAX_ENTRIES = 25
+const HOST_SENTINEL_PREFIX = 'AURORA_HOST_SENTINEL_'
 
 function timestampFromEntry(entry: string): number | null {
   if (!/^\d{12,}$/.test(entry)) return null
   const value = Number(entry)
   return Number.isSafeInteger(value) ? value : null
+}
+
+function isHostSentinelEntry(entry: string): boolean {
+  return entry.startsWith(HOST_SENTINEL_PREFIX)
 }
 
 export function planSandboxGarbageCollection(
@@ -42,7 +47,7 @@ export function planSandboxGarbageCollection(
     .sort((a, b) => b.timestamp - a.timestamp)
 
   const keep = new Set<string>()
-  const remove = new Set<string>()
+  const remove = new Set<string>(entries.filter(isHostSentinelEntry))
 
   for (let index = 0; index < timestamped.length; index += 1) {
     const { entry, timestamp } = timestamped[index]

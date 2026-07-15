@@ -7,6 +7,7 @@ import { withToolchainDiagnostics } from './codeToolchainDiagnostics.ts'
 import { buildAcceptanceCriteriaStep } from './codeAcceptanceCriteria.ts'
 import { buildSandboxIsolationStep, detectPodmanIsolation, wrapCommandForPodman } from './codeSandboxIsolation.ts'
 import { buildSandboxGcStep, collectCodeSandboxGarbage } from './codeSandboxGc.ts'
+import { runSandboxIsolationProbes } from './codeSandboxIsolationProbes.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -140,6 +141,20 @@ export async function runCodeSandboxValidation({
         ok: false,
         rootPath: sandboxRoot,
         summary: `Validation conteneurisee WS7 indisponible: ${isolationStatus.reason}`,
+        question: null,
+        steps,
+        detectedLanguage: lang,
+        normalizedFiles: workingFiles,
+      } satisfies CodeSandboxResult
+    }
+
+    const isolationProbes = await runSandboxIsolationProbes(sandboxRoot)
+    steps.push(...isolationProbes.steps)
+    if (!isolationProbes.ok) {
+      return {
+        ok: false,
+        rootPath: sandboxRoot,
+        summary: 'Les preuves d isolation WS7 ont echoue.',
         question: null,
         steps,
         detectedLanguage: lang,

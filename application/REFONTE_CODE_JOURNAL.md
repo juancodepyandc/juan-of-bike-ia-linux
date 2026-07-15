@@ -1726,3 +1726,53 @@ Pour cet increment WS7, le plus gros risque est reduit : le Module Code ne doit 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, le GC des sandboxes est livre sans ajouter de commande shell destructive ni toucher les autres modules. WS7 reste ouvert pour les preuves runtime host-read/fork-bomb/disk-fill, la limitation disque totale du workspace, le compromis GPU et l'execution reelle dans Podman lorsque l'hote sera equipe.
+
+## 2026-07-15 — Vague 2 / WS7 increment 39 — probes host-read, PIDs et fsize
+
+### Reprise et diagnostic confirme
+
+- WS7 demande de prouver que le code ne peut pas lire hors conteneur et que les quotas contiennent fork-bomb/disk-fill.
+- L'increment 37 a ajoute le preflight et le wrapper Podman, mais ne lancait pas encore de probes avant les commandes du projet.
+- L'hote courant n'a toujours pas Podman ; les probes doivent donc etre construites et testees sans pretendre a une preuve runtime locale.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : les probes utilisent les primitives Podman et shell deja choisies dans l'increment 37.
+- Choix retenu : creer une sentinelle host hors sandbox, la nettoyer en `finally`, puis lancer trois commandes `sh -lc` encapsulees par le meme wrapper Podman que les commandes projet.
+- Les probes s'executent apres preflight rootless/cgroups v2 et avant `npm install`, `pytest`, `cargo`, etc.
+- Compromis explicite : le probe `fsize` prouve la limite de taille de fichier ; il ne prouve pas encore une limite de disque totale sur tous les petits fichiers du workspace bind-mounte.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeSandboxIsolationProbes.ts` :
+  - `buildSandboxIsolationProbeCommands` ;
+  - `runSandboxIsolationProbes` ;
+  - `sandboxHostSentinelPath`.
+- Probes ajoutees :
+  - `Preuve isolation host-read` : verifie que des chemins host sensibles et une sentinelle creee hors workspace ne sont pas visibles ;
+  - `Preuve quota pids` : tente de creer 400 processus et echoue si le quota ne bloque pas ;
+  - `Preuve quota taille fichier` : tente d'ecrire un fichier de 2 Go et echoue si la limite `fsize` ne bloque pas.
+- `runCodeSandboxValidation` :
+  - execute les probes apres `internal:sandbox-isolation` ;
+  - stoppe la validation si une probe echoue ;
+  - ne lance les commandes projet qu'apres probes vertes.
+- `codeSandboxGc.ts` supprime aussi les sentinelles `AURORA_HOST_SENTINEL_*` abandonnees par une interruption brutale avant le nettoyage `finally`.
+- Ajout de `src/__tests__/codeSandboxIsolationProbes.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : Podman pouvait etre detecte, puis les commandes projet auraient demarre sans preuve d'isolation active.
+- Apres : le chemin vert exige d'abord host-read, PIDs et fsize verts.
+- Avant : les quotas etaient presents dans les arguments Podman mais non consommes par des probes.
+- Apres : les tests verifient que les scripts de probes ciblent les regressions attendues et que la sentinelle host est nettoyee.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxIsolationProbes.test.ts src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxGc.test.ts src/__tests__/codeSandboxModules.test.ts` : 32 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 545 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, les preuves d'isolation sont maintenant dans le chemin de validation quand Podman sera disponible. WS7 reste ouvert sur l'execution runtime effective sur une machine equipee, la limitation disque totale, l'egress strictement limite aux registres et le compromis GPU/nvidia-container-toolkit.

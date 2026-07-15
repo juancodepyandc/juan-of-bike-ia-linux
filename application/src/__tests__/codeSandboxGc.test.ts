@@ -7,10 +7,11 @@ import {
 } from '../services/codeSandboxGc.ts'
 
 describe('codeSandboxGc', () => {
-  test('planSandboxGarbageCollection supprime les sandboxes ages et garde les noms non horodates', () => {
+  test('planSandboxGarbageCollection supprime les sandboxes ages et les sentinelles host', () => {
     const plan = planSandboxGarbageCollection([
       '1700000000000',
       '1700003600000',
+      'AURORA_HOST_SENTINEL_tmp_aurora_ws',
       'README',
       'active-lock',
     ], {
@@ -18,7 +19,7 @@ describe('codeSandboxGc', () => {
       maxAgeMs: 24 * 60 * 60 * 1000,
     })
 
-    assert.deepEqual(plan.remove, ['1700000000000'])
+    assert.deepEqual(plan.remove, ['AURORA_HOST_SENTINEL_tmp_aurora_ws', '1700000000000'])
     assert.ok(plan.keep.includes('1700003600000'))
     assert.ok(plan.keep.includes('README'))
     assert.ok(plan.keep.includes('active-lock'))

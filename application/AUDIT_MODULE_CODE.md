@@ -323,6 +323,15 @@
 - **Validation** : `codeSandboxGc.test.ts` + tests isolation/sandbox cibles 27 verts / 0 echec ; glob Code a **540 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS7 reste ouvert** : GC livre ; restent la preuve runtime d'isolation avec Podman installe, fork-bomb/disk-fill/host-read, disque total et GPU.
 
+### 2026-07-15 — Vague 2 / WS7 increment 39 applique
+
+- **Probes d'isolation ajoutees** : `codeSandboxIsolationProbes.ts` cree une sentinelle host hors sandbox, la nettoie apres execution, puis lance apres preflight Podman vert trois preuves avant les commandes projet : host-read, quota PIDs et quota taille fichier.
+- **GC des sentinelles** : le GC WS7 supprime aussi les `AURORA_HOST_SENTINEL_*` abandonnees si l'application est interrompue avant le nettoyage `finally`.
+- **Blocage avant validation projet** : `runCodeSandboxValidation` ajoute les steps de probes et retourne un echec si l'une des preuves echoue ; les commandes du projet ne demarrent qu'apres ces preuves vertes.
+- **Preuves testees sans Podman local** : les commandes Podman generees sont testees en unitaire ; sur l'hote actuel, elles ne s'executent pas car l'increment 37 bloque deja Podman absent.
+- **Validation** : `codeSandboxIsolationProbes.test.ts` + tests isolation/GC/sandbox cibles 32 verts / 0 echec ; glob Code a **545 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS7 reste ouvert** : probes prêtes, mais preuve runtime effective encore dependante de Podman installe ; disque total workspace et GPU restent a traiter.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
