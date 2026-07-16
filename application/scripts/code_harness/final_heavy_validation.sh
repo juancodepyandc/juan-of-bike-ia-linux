@@ -82,7 +82,13 @@ run_required code_test_suite "Suite complete du Module Code" \
   bash -lc 'node --experimental-strip-types --test "src/__tests__/code*.test.ts"'
 run_required python_code_suite "Suite Python aurora_code" \
   .venv/bin/python -m unittest discover -s python-services/aurora_code -p 'test_*.py'
-run_required full_repository_tests "Suite Node du depot entier" npm test
+FULL_REPOSITORY_RAW="$OUT/full-repository-tests.raw.log"
+set +e
+npm test > "$FULL_REPOSITORY_RAW" 2>&1
+FULL_REPOSITORY_EXIT=$?
+run_known_debt full_repository_tests "Suite globale: uniquement dette live Cowork connue" \
+  node scripts/code_harness/final_node_test_scope_check.mjs \
+  "$FULL_REPOSITORY_RAW" "$OUT/full-repository-test-scope.json" "$FULL_REPOSITORY_EXIT"
 run_required production_build "Build Vite de production" npm run build
 run_required cargo_check "Compilation Rust/Tauri" cargo check --manifest-path src-tauri/Cargo.toml
 
@@ -114,6 +120,8 @@ HEAD_COMMIT="$(git rev-parse HEAD)"
 BRANCH="$(git branch --show-current)"
 TRACKED_FILES="$(git ls-files | wc -l)"
 PYTHON_FILES="$(git ls-files '*.py' | wc -l)"
+REPORT_OK=false
+if (( OVERALL == 0 )); then REPORT_OK=true; fi
 jq -s \
   --arg startedAt "$STARTED_AT" \
   --arg finishedAt "$FINISHED_AT" \
@@ -121,7 +129,8 @@ jq -s \
   --arg commit "$HEAD_COMMIT" \
   --argjson trackedFiles "$TRACKED_FILES" \
   --argjson pythonFiles "$PYTHON_FILES" \
-  '{schemaVersion:"aurora.code.final-heavy-validation/1",startedAt:$startedAt,finishedAt:$finishedAt,branch:$branch,commit:$commit,trackedFiles:$trackedFiles,pythonFiles:$pythonFiles,steps:.,requiredFailures:[.[]|select(.status=="failed")],knownDebts:[.[]|select(.status=="warning")],ok:([.[]|select(.status=="failed")]|length)==0}' \
+  --argjson ok "$REPORT_OK" \
+  '{schemaVersion:"aurora.code.final-heavy-validation/1",startedAt:$startedAt,finishedAt:$finishedAt,branch:$branch,commit:$commit,trackedFiles:$trackedFiles,pythonFiles:$pythonFiles,steps:.,requiredFailures:[.[]|select(.status=="failed")],knownDebts:[.[]|select(.status=="warning")],ok:$ok}' \
   "$RESULTS" > "$OUT/final-report.json"
 
 (

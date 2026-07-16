@@ -211,12 +211,14 @@ def run_renode_stage(out_dir: Path) -> dict[str, Any]:
     ]) + "\n",
     encoding="utf-8",
   )
-  proc = run_command(
-    [renode, "--plain", "--disable-xwt", "--console", str(script)], cwd=renode_root, timeout=60
+  log = target / "renode.log"
+  ok, returncode, console, elapsed_ms = run_until_marker(
+    [renode, "--plain", "--disable-xwt", "--console", str(script)],
+    cwd=renode_root,
+    log_path=log,
+    marker=RENODE_MARKER,
+    timeout=20,
   )
-  console = (proc.stdout or "") + (proc.stderr or "")
-  (target / "renode.log").write_text(console, encoding="utf-8")
-  ok = proc.returncode == 0 and RENODE_MARKER.lower() in console.lower()
   return {
     "id": "renode_arduino_firmware",
     "label": label,
@@ -225,8 +227,9 @@ def run_renode_stage(out_dir: Path) -> dict[str, Any]:
     "realExecution": ok,
     "toolPath": renode,
     "artifactPath": str(elf),
+    "durationMs": elapsed_ms,
     "detail": "firmware Rust compile, charge sur nRF52840 Arduino et heartbeat RAM observe" if ok else None,
-    **({} if ok else {"error": tail(console or build_log)}),
+    **({} if ok else {"error": tail(console or build_log or f"renode rc={returncode}")}),
   }
 
 

@@ -3253,3 +3253,32 @@ Resultat observe : sept profils, `ok=true`, `failures=[]`, iframe `verified`, 0 
 - Podman rootless reste bloque par la configuration de l'hote. Les politiques fail-closed et tests d'isolation restent actives en attendant un hote equipe.
 - Les extras Python du pipeline image externe ne sont pas resolus dans `.venv`, conformement a l'interdiction explicite du prompt.
 - Musique/SFX restent sans service bridge. WS15 ne fabrique pas de resultat fictif.
+
+## 2026-07-16 — Auto-correction de la campagne lourde finale
+
+### Premier passage et signaux conserves
+
+- Le lanceur `final_heavy_validation.sh` a execute toute sa matrice jusqu'aux screenshots, meme apres un echec, afin de ne pas perdre les signaux suivants.
+- Suite Code : verte; suite Python Code : verte; preuves critiques agentiques/extreme/sandbox/visuelles/simulation : vertes; build Vite et `cargo check` : verts.
+- Suite Node du depot : **4 545 tests**, **4 542 verts**, **3 echecs**, tous dans `src/__tests__/coworkExtract.test.ts` : un 502 de l'endpoint Cowork et deux timeouts vision de 85 s. Aucun echec Code.
+- WS15 : huit assets/variantes relus via le bridge, export ZIP autonome, huit SHA-256 identiques.
+- UI : sept profils V1/V3/V4 verts, iframe executee, 0 px de debordement, aucun bouton tronque ou controle hors viewport, aucune erreur runtime. Les sept PNG ont les dimensions exactes et sont non vides selon l'audit pixel.
+- WS12 : trois navigateurs, telephone, tablette et deux boots QEMU verts; Renode a subi un timeout transitoire alors que le meme script rejoue seul a termine en 1,6 s avec `0xA6120042`.
+
+### Corrections appliquees avant le run definitif
+
+- `simulation_embedded.py` utilise maintenant `run_until_marker` pour Renode : le runner observe le heartbeat reel puis termine tout le groupe de processus, sans dependre de la fermeture interactive du moniteur.
+- Un test Python verifie le marqueur transmis, l'execution reelle et la duree rapportee.
+- `final_node_test_scope_check.mjs` parse le resume Node et n'autorise comme dette que `coworkExtract.test.ts`; tout autre fichier, test annule ou suite incomplete fait echouer la campagne.
+- Le rapport JSON final recoit son booleen `ok` explicitement, supprimant une ambiguite de precedence `jq` decouverte au premier passage.
+
+### Campagne definitive reproductible
+
+```bash
+./scripts/code_harness/final_heavy_validation.sh
+jq '{ok, steps: (.steps | length), requiredFailures, knownDebts}' \
+  output/final_code_refonte_validation/heavy_final/final-report.json
+sha256sum -c output/final_code_refonte_validation/heavy_final/SHA256SUMS
+```
+
+Le rapport n'est vert que si tous les controles requis passent. Les erreurs globales Cowork, le typecheck hors Code, les extras image et la restriction Podman restent visibles dans `knownDebts`; ils ne peuvent pas etre reclasses silencieusement en succes.

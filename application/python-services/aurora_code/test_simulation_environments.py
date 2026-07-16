@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import simulation_lab
 from simulation_android import ANDROID_PROFILES, _package_resumed, _tap_target, android_guest_url
-from simulation_embedded import _elf32_to_raw
+from simulation_embedded import RENODE_MARKER, _elf32_to_raw, run_renode_stage
 from simulation_tooling import unavailable
 
 
@@ -74,6 +74,20 @@ class SimulationEnvironmentTests(unittest.TestCase):
     self.assertEqual([stage["id"] for stage in stages[:4]], ["android", "renode", "raspberry", "os"])
     self.assertNotIn("webkit_real_browser", [stage["id"] for stage in stages])
     self.assertEqual(stages[-1]["status"], "deferred")
+
+  def test_renode_stops_as_soon_as_the_real_marker_is_observed(self):
+    with tempfile.TemporaryDirectory() as raw:
+      out_dir = Path(raw)
+      elf = out_dir / "firmware.elf"
+      elf.write_bytes(b"ELF")
+      with patch("simulation_embedded.find_tool", return_value="/opt/renode/renode"), \
+           patch("simulation_embedded._build_rust", return_value=(elf, "build ok")), \
+           patch("simulation_embedded.run_until_marker", return_value=(True, -15, RENODE_MARKER, 240)) as runner:
+        stage = run_renode_stage(out_dir)
+      self.assertEqual(stage["status"], "executed")
+      self.assertTrue(stage["realExecution"])
+      self.assertEqual(stage["durationMs"], 240)
+      self.assertEqual(runner.call_args.kwargs["marker"], RENODE_MARKER)
 
 
 if __name__ == "__main__":
