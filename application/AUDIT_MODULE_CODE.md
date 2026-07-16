@@ -496,6 +496,14 @@
 - **Validation** : tests cibles WS13 53 verts / 0 echec ; glob Code a **636 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS13 statut** : le socle local est couvert (cause/localite/historique, suppression des degradations, snapshot/rollback, budget adaptatif). Restent l'exploitation plus fine des diagnostics AST/visuels dans la boucle et une preuve live longue de correction LLM avec re-test WS7 complet sur projet reel.
 
+### 2026-07-15 — Vague 4 / WS9 increment 60 applique
+
+- **Contrat rendu reel** : ajout de `codeVisualRenderAudit.ts` et du schema `aurora.code.visual-render-audit/1`, scoreur base sur screenshots multi-viewports, erreurs runtime, styles calcules, densite, hierarchie, medias, interactions, rythme et verdict vision optionnel.
+- **Gate visuelle recablee** : `evaluateVisualFidelity` privilegie maintenant un audit rendu quand il est fourni ; le score `source: "render_audit"` route vers une critique render-in-the-loop au lieu du bloc regex historique.
+- **Collecteur CDP et pixel contrast** : `cdp_drive.mjs` gagne une commande `audit` 390/834/1440 avec screenshots et styles calcules ; `visual_render_audit.py` enrichit le rapport avec des contrastes WCAG mesures sur les pixels via Pillow.
+- **Validation** : tests cibles WS9 31 verts / 0 echec ; `python3 -m py_compile python-services/aurora_code/visual_render_audit.py` vert ; `node --check python-services/aurora_code/cdp_drive.mjs` vert ; glob Code a **640 tests verts / 0 echec** ; `npm run build` vert.
+- **WS9 statut** : le socle de juge rendu est en place (schema, scoreur, critique, collecteur CDP, contraste pixel). Restent a brancher l'appel automatique dans le chemin app/bridge apres lancement dev-server, a emettre `visual.score` depuis l'audit reel et a relier la recherche de references UX/UI.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

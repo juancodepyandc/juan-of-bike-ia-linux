@@ -4,11 +4,12 @@
 //
 // Usage:
 //   node cdp_drive.mjs screenshot <url> <out_png> [w h wait_ms]
+//   node cdp_drive.mjs audit <url> <out_dir> [wait_ms]
 // stdout JSON:
 //   {ok, console_errors:[], exceptions:[], failed_requests:[], canvas_present, body_text_len}
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import net from 'node:net'
@@ -92,7 +93,11 @@ class CDP {
   }
 }
 
-async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500) {
+function viewportName(width, height) {
+  return `${width}x${height}`
+}
+
+async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, mobile = false) {
   const userDir = mkdtempSync(join(tmpdir(), 'cdp_drive_'))
   const port = await freePort()
   const chrome = spawn(
@@ -140,7 +145,7 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500) {
     width,
     height,
     deviceScaleFactor: 1,
-    mobile: false,
+    mobile,
   })
 
   const consoleErrors = []
@@ -178,17 +183,93 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500) {
   await cdp.waitEvent('Page.loadEventFired', 15000)
   await sleep(waitMs)
 
-  // probe for canvas + body text length
-  let canvasPresent = false
-  let bodyLen = 0
+  // Probe rendered DOM and computed styles. The TypeScript scorer treats this
+  // as render evidence; a Python pass may later enrich contrast with pixel
+  // samples from the screenshot.
+  let renderMetrics = {}
   try {
     const ev = await cdp.send('Runtime.evaluate', {
       expression:
-        '({c: !!document.querySelector("canvas"), b: (document.body && document.body.innerText || "").length})',
+        `(() => {
+          const clamp = (n, min, max) => Math.max(min, Math.min(max, n))
+          const uniq = (arr) => [...new Set(arr.filter(Boolean))]
+          const rgb = (value) => {
+            const m = String(value || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/i)
+            if (!m) return null
+            return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] }
+          }
+          const lum = (c) => {
+            const conv = (v) => {
+              const s = v / 255
+              return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * conv(c.r) + 0.7152 * conv(c.g) + 0.0722 * conv(c.b)
+          }
+          const ratio = (fg, bg) => {
+            const a = lum(fg)
+            const b = lum(bg)
+            return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+          }
+          const visible = (el) => {
+            const rect = el.getBoundingClientRect()
+            const cs = getComputedStyle(el)
+            return rect.width > 1 && rect.height > 1 && cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity || 1) > 0.02
+          }
+          const bgFor = (el) => {
+            let cur = el
+            while (cur && cur !== document) {
+              const c = rgb(getComputedStyle(cur).backgroundColor)
+              if (c && c.a > 0.15) return c
+              cur = cur.parentElement
+            }
+            return rgb(getComputedStyle(document.body).backgroundColor) || { r: 255, g: 255, b: 255, a: 1 }
+          }
+          const all = Array.from(document.body ? document.body.querySelectorAll('*') : []).filter(visible)
+          const textEls = all.filter((el) => (el.innerText || '').trim().length > 0)
+          const textRects = textEls
+            .map((el) => el.getBoundingClientRect())
+            .filter((rect) => rect.width > 2 && rect.height > 2)
+            .sort((a, b) => a.top - b.top)
+          const gaps = []
+          for (let i = 1; i < textRects.length; i++) {
+            const gap = textRects[i].top - (textRects[i - 1].top + textRects[i - 1].height)
+            if (gap >= 0 && gap < 300) gaps.push(gap)
+          }
+          gaps.sort((a, b) => a - b)
+          const rootStyle = getComputedStyle(document.documentElement)
+          let cssVarCount = 0
+          for (let i = 0; i < rootStyle.length; i++) {
+            if (rootStyle[i] && rootStyle[i].startsWith('--')) cssVarCount += 1
+          }
+          const contrastSamples = textEls.slice(0, 36).map((el, index) => {
+            const cs = getComputedStyle(el)
+            const fg = rgb(cs.color)
+            const bg = bgFor(el)
+            const rect = el.getBoundingClientRect()
+            return fg && bg ? {
+              ratio: Math.round(ratio(fg, bg) * 100) / 100,
+              source: 'computed-style',
+              viewport: '${viewportName(width, height)}',
+              label: (el.tagName.toLowerCase() + '#' + index),
+              rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
+            } : null
+          }).filter(Boolean)
+          return {
+            canvasPresent: !!document.querySelector('canvas'),
+            bodyTextLength: (document.body && document.body.innerText || '').length,
+            textNodeCount: textEls.length,
+            headingCount: document.querySelectorAll('h1,h2,h3,[role="heading"]').length,
+            mediaCount: document.querySelectorAll('img,svg,video,picture,canvas').length,
+            interactiveCount: document.querySelectorAll('a[href],button,input,select,textarea,[role="button"],[tabindex]').length,
+            cssVarCount,
+            fontFamilies: uniq(textEls.slice(0, 80).map((el) => getComputedStyle(el).fontFamily)).slice(0, 10),
+            verticalGapMedian: gaps.length ? Math.round(gaps[Math.floor(gaps.length / 2)]) : null,
+            contrastSamples,
+          }
+        })()`,
       returnByValue: true,
     })
-    canvasPresent = !!ev.result?.value?.c
-    bodyLen = ev.result?.value?.b || 0
+    renderMetrics = ev.result?.value || {}
   } catch (_) {}
 
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
@@ -204,8 +285,50 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500) {
     console_all: consoleAll.slice(0, 30),
     exceptions,
     failed_requests: failedRequests.slice(0, 20),
-    canvas_present: canvasPresent,
-    body_text_len: bodyLen,
+    canvas_present: !!renderMetrics.canvasPresent,
+    body_text_len: renderMetrics.bodyTextLength || 0,
+    render_metrics: renderMetrics,
+  }
+}
+
+async function audit(url, outDir, waitMs = 2500) {
+  mkdirSync(outDir, { recursive: true })
+  const viewports = [
+    { width: 390, height: 844, mobile: true },
+    { width: 834, height: 1112, mobile: true },
+    { width: 1440, height: 900, mobile: false },
+  ]
+  const out = []
+  for (const viewport of viewports) {
+    const name = viewportName(viewport.width, viewport.height)
+    const screenshotPath = join(outDir, `${name}.png`)
+    const report = await inspect(url, screenshotPath, viewport.width, viewport.height, waitMs, viewport.mobile)
+    const metrics = report.render_metrics || {}
+    out.push({
+      viewport: name,
+      width: viewport.width,
+      height: viewport.height,
+      screenshotPath,
+      bodyTextLength: metrics.bodyTextLength || report.body_text_len || 0,
+      consoleErrors: (report.console_errors || []).map((item) => item.text || String(item)),
+      exceptions: (report.exceptions || []).map((item) => item.text || String(item)),
+      failedRequests: (report.failed_requests || []).map((item) => item.url ? `${item.url} ${item.errorText || ''}` : String(item)),
+      canvasPresent: !!metrics.canvasPresent,
+      textNodeCount: metrics.textNodeCount || 0,
+      headingCount: metrics.headingCount || 0,
+      mediaCount: metrics.mediaCount || 0,
+      interactiveCount: metrics.interactiveCount || 0,
+      cssVarCount: metrics.cssVarCount || 0,
+      fontFamilies: metrics.fontFamilies || [],
+      verticalGapMedian: metrics.verticalGapMedian ?? null,
+      contrastSamples: metrics.contrastSamples || [],
+    })
+  }
+  return {
+    schemaVersion: 'aurora.code.visual-render-audit/1',
+    url,
+    createdAt: Date.now(),
+    viewports: out,
   }
 }
 
@@ -218,6 +341,16 @@ async function main() {
       process.exit(2)
     }
     const report = await inspect(url, out, +w || 1280, +h || 800, +waitMs || 2500)
+    process.stdout.write(JSON.stringify(report))
+    return
+  }
+  if (cmd === 'audit') {
+    const [url, outDir, waitMs] = rest
+    if (!url || !outDir) {
+      console.error('usage: cdp_drive.mjs audit <url> <out_dir> [wait_ms]')
+      process.exit(2)
+    }
+    const report = await audit(url, outDir, +waitMs || 2500)
     process.stdout.write(JSON.stringify(report))
     return
   }

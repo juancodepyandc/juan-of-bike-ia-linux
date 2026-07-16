@@ -5,6 +5,11 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntent'
+import {
+  buildRenderedVisualAuditCritique,
+  scoreRenderedVisualAudit,
+  type CodeVisualRenderAudit,
+} from './codeVisualRenderAudit.ts'
 
 export type VisualFidelityCheck = {
   id: string
@@ -21,6 +26,8 @@ export type VisualFidelityReport = {
   checks: VisualFidelityCheck[]
   failedChecks: string[] // ids of failed checks for re-gen prompt
   summary: string
+  source?: 'source_static' | 'render_audit'
+  viewports?: string[]
 }
 
 type CodeFile = { name: string; language: string; content: string }
@@ -133,7 +140,11 @@ function isVisualType(intent: CodeIntent): boolean {
   )
 }
 
-export function evaluateVisualFidelity(files: CodeFile[], intent: CodeIntent): VisualFidelityReport {
+export function evaluateVisualFidelity(
+  files: CodeFile[],
+  intent: CodeIntent,
+  renderAudit?: CodeVisualRenderAudit | null,
+): VisualFidelityReport {
   const html = findHtml(files)
   const css = findCss(files)
   const js = findJs(files)
@@ -144,7 +155,12 @@ export function evaluateVisualFidelity(files: CodeFile[], intent: CodeIntent): V
     return {
       score: 100, passed: true, floor: 0, checks: [], failedChecks: [],
       summary: 'Projet non visuel — gate visuel non applicable.',
+      source: 'source_static',
     }
+  }
+
+  if (renderAudit && renderAudit.viewports.length > 0) {
+    return scoreRenderedVisualAudit(renderAudit)
   }
 
   // No HTML at all = catastrophic for visual project, but the delivery gate
@@ -155,6 +171,7 @@ export function evaluateVisualFidelity(files: CodeFile[], intent: CodeIntent): V
       checks: [{ id: 'has_markup', label: 'Aucun HTML/CSS livre', passed: false, weight: 100 }],
       failedChecks: ['has_markup'],
       summary: 'Aucun HTML / CSS exploitable.',
+      source: 'source_static',
     }
   }
 
@@ -352,7 +369,7 @@ export function evaluateVisualFidelity(files: CodeFile[], intent: CodeIntent): V
     ? `Rendu visuel acceptable (${score}/100).`
     : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle.`
 
-  return { score, passed, floor, checks, failedChecks, summary }
+  return { score, passed, floor, checks, failedChecks, summary, source: 'source_static' }
 }
 
 /**
@@ -362,6 +379,7 @@ export function evaluateVisualFidelity(files: CodeFile[], intent: CodeIntent): V
  */
 export function buildVisualFidelityCritique(report: VisualFidelityReport): string {
   if (report.passed) return ''
+  if (report.source === 'render_audit') return buildRenderedVisualAuditCritique(report)
 
   const failed = report.checks.filter((c) => !c.passed)
   return [

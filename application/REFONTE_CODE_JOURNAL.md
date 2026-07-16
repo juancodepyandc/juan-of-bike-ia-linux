@@ -2715,3 +2715,56 @@ Pour WS6 local, oui : les criteres majeurs sont maintenant couverts, y compris u
 ### Etat de satisfaction chantier
 
 Pour WS13 local, le socle est couvert : strategie fonction de categorie/localite/historique, suppression des strategies degradantes, snapshot comportemental et rollback automatique, budget adaptatif avec plafond machine. Restent a enrichir : reinjection plus detaillee des diagnostics AST/visuels dans le choix de strategie, preuve live longue d'une correction LLM sur projet reel et re-test WS7 complet apres cette correction.
+
+## 2026-07-15 — Vague 4 / WS9 increment 60 — Socle juge visuel rendu reel
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre demande que le score visuel provienne d'un rendu reel, pas d'une inspection regex de la source.
+- `codeVisualFidelity.ts` reste utile comme fallback deterministe, mais son score etait jusqu'ici source-only.
+- L'infra historique `python-services/aurora_code/cdp_drive.mjs` savait deja ouvrir une URL et capturer un screenshot, mais ne produisait pas de contrat multi-viewport ni de styles calcules exploitables par l'app.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment relie l'infra CDP deja presente au contrat WS9.
+- Choix retenu : schema `aurora.code.visual-render-audit/1` separe du scoreur. Le collecteur CDP produit screenshots et metriques ; le scoreur TypeScript reste pur et testable.
+- Pour le contraste, le CDP collecte les rectangles/styles de texte, puis `visual_render_audit.py` lit les PNG avec Pillow et ajoute des echantillons `source: "pixel"` derives des luminances du screenshot.
+- Raison technique : on peut tester le scoreur sans lancer Chrome, tout en gardant un chemin executable pour le vrai audit rendu.
+
+### Modifications realisees
+
+- `src/services/codeVisualRenderAudit.ts` :
+  - types du schema rendu ;
+  - scoreur multi-viewport avec checks screenshots, breakpoints 390/834/1440, contraste pixel WCAG, erreurs runtime, hierarchie, densite, medias, interactions, tokens, rythme et verdict vision optionnel ;
+  - critique render-in-the-loop.
+- `src/services/codeVisualFidelity.ts` :
+  - `evaluateVisualFidelity(files, intent, renderAudit?)` utilise le score rendu en priorite quand il est fourni ;
+  - `VisualFidelityReport` indique `source` et `viewports` ;
+  - `buildVisualFidelityCritique` route vers la critique WS9 quand `source === "render_audit"`.
+- `python-services/aurora_code/cdp_drive.mjs` :
+  - collecte de styles calcules, compteurs DOM, contrastes computed-style, erreurs runtime ;
+  - nouvelle commande `audit <url> <out_dir> [wait_ms]` sur 390x844, 834x1112 et 1440x900.
+- `python-services/aurora_code/visual_render_audit.py` :
+  - wrapper executable du CDP ;
+  - enrichissement des contrastes depuis les pixels du screenshot via Pillow.
+- Tests ajoutes :
+  - `codeVisualRenderAudit.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : le score visuel ne pouvait pas prouver qu'un navigateur avait rendu la page.
+- Apres : un rapport rendu avec screenshots multi-breakpoints peut etre score ; sans screenshot, sans breakpoint complet ou sans contraste pixel, le rendu echoue.
+- Avant : la critique de regeneration parlait seulement de patterns sources.
+- Apres : la critique peut pointer des echecs reels : screenshots absents, responsive 390/834/1440, contraste pixel, erreurs console, densite, hierarchie et verdict vision.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeVisualFidelity.test.ts src/__tests__/codeVisualRenderAudit.test.ts src/__tests__/codeStreamEvents.test.ts` : 31 pass / 0 fail.
+- `python3 -m py_compile python-services/aurora_code/visual_render_audit.py` : vert.
+- `node --check python-services/aurora_code/cdp_drive.mjs` : vert.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 640 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour WS9, le socle technique est pose mais le chantier n'est pas clos : il faut encore brancher l'appel automatique apres dev-server/sandbox, emettre `visual.score` depuis le flux `/api/code/*`, envoyer le screenshot au modele vision reel et relier la recherche de references UX/UI.
