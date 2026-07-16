@@ -2964,3 +2964,69 @@ WS9 est maintenant branche dans le chemin applicatif principal : rendu reel, con
 ### Etat de satisfaction chantier
 
 WS11 a maintenant un socle fonctionnel : viewer compact conserve, runtime applicatif navigateur prouve, preview non gelee pour projets legers, atelier multi-panneaux et editeur CodeMirror/virtualisation. Restent a poursuivre dans WS12 le branchement du panneau simulations sur le labo multi-environnements reel, et a reduire progressivement la divergence historique avec les vues AuroraV1.
+
+## 2026-07-16 — Vague 5 / WS12 increment 64 — Labo de simulation multi-environnements
+
+### Reprise et diagnostic confirme
+
+- La simulation UI historique restait essentiellement une variation de largeur (`desktop/tablet/mobile`) dans le viewer.
+- Aucun endpoint `/api/code/*` ne permettait de lancer un labo multi-device/multi-browser depuis l'app.
+- Les outils systeme disponibles au depart : Firefox systeme present mais inutilisable en headless avec profil existant ; Chromium Playwright en cache ; pas de `qemu-system-*`, pas de `renode`, pas de `adb/emulator/waydroid`, pas de WebKit headless CLI.
+- Le prompt interdit de maquiller mobile/embarque/OS par un simple redimensionnement ; les environnements absents doivent etre declares indisponibles.
+
+### Recherches et choix techniques
+
+- Verification locale `command -v` pour Podman/QEMU/Renode/Chromium/Firefox/WebKit/Android/Waydroid.
+- Ajout de `playwright` en devDependency et telechargement des navigateurs Playwright en cache utilisateur (`chromium`, `firefox`, `webkit`), sans installation dans `.venv`.
+- Playwright a signale des dependances systeme manquantes pour WebKit (`libevent`, `libavif`, `libwoff`) ; aucune commande `sudo install-deps` n'a ete lancee automatiquement.
+- Choix retenu : reutiliser CDP pour les profils Chromium avances (DPR/touch/UA/network/CPU throttling + metriques Performance) et Playwright pour la matrice multi-browser.
+- Choix retenu : rapport `aurora.code.simulation-lab/1` avec statuts explicites `executed`, `unavailable`, `deferred`, au lieu de cacher les trous.
+
+### Modifications realisees
+
+- `python-services/aurora_code/cdp_drive.mjs` :
+  - nouveau mode `simulate` ;
+  - profils Chromium desktop, mobile 4G touch, tablet slow-3G touch ;
+  - `Emulation.setDeviceMetricsOverride`, `setTouchEmulationEnabled`, `Network.emulateNetworkConditions`, `Emulation.setCPUThrottlingRate`, `Performance.getMetrics`.
+- `python-services/aurora_code/playwright_simulate.mjs` :
+  - matrice Playwright Chromium/Firefox/WebKit ;
+  - screenshots, compteurs DOM et erreurs console par navigateur.
+- `python-services/aurora_code/simulation_lab.py` :
+  - orchestration CDP + Playwright ;
+  - probes WebKit CLI, Android/Waydroid, Renode, QEMU ;
+  - consoles marquees `deferred` avec justification technique.
+- `bridge_server.py` :
+  - route `POST /api/code/simulation-lab` sous perimetre `/api/code/*` ;
+  - URLs limitees au local comme WS9, timeouts bornes.
+- `src/services/codeSimulationLab.ts` :
+  - schema/type guard/client bridge/summarizer.
+- `src/views/codeViewWorkspaceAtelier.tsx` :
+  - panneau Simu branche au labo quand un dev-server local est actif ;
+  - affiche executions reelles, indisponibles et justifications.
+- Tests :
+  - `codeSimulationLab.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : la "simulation mobile" ne changeait que la largeur.
+- Apres : le profil mobile Chromium utilise DPR 3, touch, UA Android, CPU throttle 4x et reseau 4G via CDP.
+- Avant : aucun signal sur WebKit/Firefox/Android/Renode/QEMU.
+- Apres : Playwright lance Chromium et Firefox quand possible ; WebKit, Android, Renode et QEMU sont explicitement indisponibles avec raison.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSimulationLab.test.ts src/__tests__/codeBrowserWorkspaceRuntime.test.ts` : 8 pass / 0 fail.
+- `node --check python-services/aurora_code/cdp_drive.mjs python-services/aurora_code/playwright_simulate.mjs` : vert.
+- `python3 -m py_compile bridge_server.py python-services/aurora_code/simulation_lab.py python-services/aurora_code/visual_render_audit.py` : vert.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 666 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- Preuve runtime `output/ws12_simulation_lab_proof3` sur `http://127.0.0.1:4179` :
+  - CDP Chromium desktop 1440x900 execute, `headingCount=1`, `mediaCount=1`, erreurs vides ;
+  - CDP Chromium Pixel 8 touch 4G execute, DPR 3, CPU x4, reseau 4G, erreurs vides ;
+  - CDP Chromium tablet slow-3G touch execute, DPR 2, CPU x6, reseau slow-3G ; le rapport expose que le bundle ne charge pas completement dans la fenetre courte (`headingCount=0`), ce qui est un signal de perf reel ;
+  - Playwright Chromium execute, Playwright Firefox execute, `headingCount=1`, erreurs vides ;
+  - Playwright WebKit indisponible faute de dependances systeme ; Android/Renode/QEMU indisponibles car outils absents.
+
+### Etat de satisfaction chantier
+
+WS12 n'est plus une largeur cosmetique : le labo execute de vrais navigateurs avec profils et throttling, et documente les environnements non disponibles sans les simuler faussement. Le DoD complet mobile/ESP32/Raspberry/OS boot reste conditionne a l'installation systeme de Waydroid/AVD, Renode et QEMU, explicitement absents de cette machine pendant l'increment.

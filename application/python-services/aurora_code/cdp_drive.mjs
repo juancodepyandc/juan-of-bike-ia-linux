@@ -153,7 +153,7 @@ function viewportName(width, height) {
   return `${width}x${height}`
 }
 
-async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, mobile = false) {
+async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, mobile = false, profile = {}) {
   const userDir = mkdtempSync(join(tmpdir(), 'cdp_drive_'))
   const port = await freePort()
   const chromePath = resolveChromePath()
@@ -208,12 +208,34 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
   await cdp.send('Runtime.enable')
   await cdp.send('Log.enable')
   await cdp.send('Network.enable')
+  try { await cdp.send('Performance.enable') } catch (_) {}
+  if (profile.userAgent) {
+    await cdp.send('Network.setUserAgentOverride', { userAgent: profile.userAgent })
+  }
   await cdp.send('Emulation.setDeviceMetricsOverride', {
     width,
     height,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: profile.dpr || 1,
     mobile,
   })
+  if (profile.touch || mobile) {
+    await cdp.send('Emulation.setTouchEmulationEnabled', {
+      enabled: true,
+      maxTouchPoints: profile.maxTouchPoints || 5,
+    })
+  }
+  if (profile.cpuThrottle && profile.cpuThrottle > 1) {
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: profile.cpuThrottle })
+  }
+  if (profile.network) {
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: profile.network.latencyMs || 0,
+      downloadThroughput: profile.network.downloadBytesPerSecond || -1,
+      uploadThroughput: profile.network.uploadBytesPerSecond || -1,
+      connectionType: profile.network.connectionType || 'cellular4g',
+    })
+  }
 
   const consoleErrors = []
   const exceptions = []
@@ -339,6 +361,12 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
     renderMetrics = ev.result?.value || {}
   } catch (_) {}
 
+  let performanceMetrics = {}
+  try {
+    const perf = await cdp.send('Performance.getMetrics')
+    performanceMetrics = Object.fromEntries((perf.metrics || []).map((metric) => [metric.name, metric.value]))
+  } catch (_) {}
+
   const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
   writeFileSync(outPng, Buffer.from(shot.data, 'base64'))
 
@@ -355,6 +383,123 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
     canvas_present: !!renderMetrics.canvasPresent,
     body_text_len: renderMetrics.bodyTextLength || 0,
     render_metrics: renderMetrics,
+    performance_metrics: performanceMetrics,
+    profile: {
+      id: profile.id || viewportName(width, height),
+      label: profile.label || viewportName(width, height),
+      dpr: profile.dpr || 1,
+      touch: !!(profile.touch || mobile),
+      cpuThrottle: profile.cpuThrottle || 1,
+      network: profile.network || null,
+      userAgent: profile.userAgent || null,
+    },
+  }
+}
+
+const USER_AGENTS = {
+  desktop: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+  android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Mobile Safari/537.36',
+  tablet: 'Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
+}
+
+const SIMULATION_PRESETS = [
+  {
+    id: 'chromium_desktop_fast',
+    label: 'Chromium desktop 1440 fast',
+    width: 1440,
+    height: 900,
+    dpr: 1,
+    mobile: false,
+    touch: false,
+    cpuThrottle: 1,
+    userAgent: USER_AGENTS.desktop,
+  },
+  {
+    id: 'chromium_mobile_4g_touch',
+    label: 'Chromium Pixel 8 touch 4G',
+    width: 390,
+    height: 844,
+    dpr: 3,
+    mobile: true,
+    touch: true,
+    cpuThrottle: 4,
+    userAgent: USER_AGENTS.android,
+    network: {
+      latencyMs: 90,
+      downloadBytesPerSecond: 1_600_000,
+      uploadBytesPerSecond: 750_000,
+      connectionType: 'cellular4g',
+    },
+  },
+  {
+    id: 'chromium_tablet_slow_3g_touch',
+    label: 'Chromium tablet touch slow-3G',
+    width: 834,
+    height: 1112,
+    dpr: 2,
+    mobile: true,
+    touch: true,
+    cpuThrottle: 6,
+    userAgent: USER_AGENTS.tablet,
+    network: {
+      latencyMs: 320,
+      downloadBytesPerSecond: 55_000,
+      uploadBytesPerSecond: 32_000,
+      connectionType: 'cellular3g',
+    },
+  },
+]
+
+async function simulate(url, outDir, waitMs = 2500) {
+  mkdirSync(outDir, { recursive: true })
+  const stages = []
+  for (const preset of SIMULATION_PRESETS) {
+    const screenshotPath = join(outDir, `${preset.id}.png`)
+    try {
+      const report = await inspect(url, screenshotPath, preset.width, preset.height, waitMs, preset.mobile, preset)
+      const metrics = report.render_metrics || {}
+      stages.push({
+        id: preset.id,
+        label: preset.label,
+        family: 'web',
+        browser: 'chromium',
+        status: 'executed',
+        realExecution: true,
+        viewport: viewportName(preset.width, preset.height),
+        width: preset.width,
+        height: preset.height,
+        dpr: preset.dpr,
+        touch: !!preset.touch,
+        userAgent: preset.userAgent,
+        throttling: { cpu: preset.cpuThrottle || 1, network: preset.network || null },
+        screenshotPath,
+        bodyTextLength: metrics.bodyTextLength || report.body_text_len || 0,
+        headingCount: metrics.headingCount || 0,
+        mediaCount: metrics.mediaCount || 0,
+        interactiveCount: metrics.interactiveCount || 0,
+        consoleErrors: (report.console_errors || []).map((item) => item.text || String(item)),
+        exceptions: (report.exceptions || []).map((item) => item.text || String(item)),
+        failedRequests: (report.failed_requests || []).map((item) => item.url ? `${item.url} ${item.errorText || ''}` : String(item)),
+        performanceMetrics: report.performance_metrics || {},
+      })
+    } catch (error) {
+      stages.push({
+        id: preset.id,
+        label: preset.label,
+        family: 'web',
+        browser: 'chromium',
+        status: 'unavailable',
+        realExecution: false,
+        viewport: viewportName(preset.width, preset.height),
+        error: String(error?.message || error),
+      })
+    }
+  }
+  return {
+    schemaVersion: 'aurora.code.simulation-lab/1',
+    url,
+    createdAt: Date.now(),
+    stages,
   }
 }
 
@@ -418,6 +563,16 @@ async function main() {
       process.exit(2)
     }
     const report = await audit(url, outDir, +waitMs || 2500)
+    process.stdout.write(JSON.stringify(report))
+    return
+  }
+  if (cmd === 'simulate') {
+    const [url, outDir, waitMs] = rest
+    if (!url || !outDir) {
+      console.error('usage: cdp_drive.mjs simulate <url> <out_dir> [wait_ms]')
+      process.exit(2)
+    }
+    const report = await simulate(url, outDir, +waitMs || 2500)
     process.stdout.write(JSON.stringify(report))
     return
   }

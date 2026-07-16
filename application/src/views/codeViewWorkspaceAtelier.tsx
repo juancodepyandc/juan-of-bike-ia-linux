@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { List } from 'react-window'
 import {
   Activity,
@@ -18,6 +18,11 @@ import type { CodeFile } from '../services/codeOrchestrator'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import type { DevServerState } from '../services/codeDevServer'
 import { supportsBrowserWorkspaceRuntime } from '../services/codeBrowserWorkspaceRuntime'
+import {
+  runCodeSimulationLab,
+  summarizeCodeSimulationLab,
+  type CodeSimulationLabReport,
+} from '../services/codeSimulationLab'
 
 type AtelierTab = 'tree' | 'file' | 'preview' | 'logs' | 'errors' | 'perf' | 'simulations' | 'state'
 type DockMode = 'left' | 'bottom' | 'hidden'
@@ -60,7 +65,30 @@ export function CodeViewWorkspaceAtelier({
 }) {
   const [activeTab, setActiveTab] = useState<AtelierTab>('tree')
   const [dockMode, setDockMode] = useState<DockMode>('left')
+  const [simulationReport, setSimulationReport] = useState<CodeSimulationLabReport | null>(null)
+  const [simulationError, setSimulationError] = useState<string | null>(null)
+  const [simulationRunning, setSimulationRunning] = useState(false)
+  const lastSimulationUrlRef = useRef<string | null>(null)
   const stats = useMemo(() => buildWorkspaceStats(files, consoleOutput, validationResult), [files, consoleOutput, validationResult])
+
+  useEffect(() => {
+    const url = devServerState.running ? devServerState.url : null
+    if (!url || lastSimulationUrlRef.current === url) return
+    lastSimulationUrlRef.current = url
+    const controller = new AbortController()
+    setSimulationRunning(true)
+    setSimulationError(null)
+    void runCodeSimulationLab({ url, waitMs: 1200, signal: controller.signal })
+      .then((report) => setSimulationReport(report))
+      .catch((err) => {
+        if (controller.signal.aborted) return
+        setSimulationError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSimulationRunning(false)
+      })
+    return () => controller.abort()
+  }, [devServerState.running, devServerState.url])
 
   if (dockMode === 'hidden') {
     return (
@@ -173,13 +201,11 @@ export function CodeViewWorkspaceAtelier({
           />
         )}
         {activeTab === 'simulations' && (
-          <SummaryPanel
-            rows={[
-              ['Desktop', '1440x900, rendu iframe'],
-              ['Tablet', '760x1024, cadre physique'],
-              ['Mobile', '360x720, cadre physique'],
-              ['Labo WS12', devServerState.running ? 'pret pour audit Playwright' : 'attend un serveur ou bundle iframe'],
-            ]}
+          <SimulationPanel
+            report={simulationReport}
+            running={simulationRunning}
+            error={simulationError}
+            devServerUrl={devServerState.url}
           />
         )}
         {activeTab === 'state' && (
@@ -293,6 +319,64 @@ function LogPanel({ content }: { content: string }) {
       <code>{content.split('\n').slice(-80).join('\n')}</code>
     </pre>
   )
+}
+
+function SimulationPanel({
+  report,
+  running,
+  error,
+  devServerUrl,
+}: {
+  report: CodeSimulationLabReport | null
+  running: boolean
+  error: string | null
+  devServerUrl: string | null
+}) {
+  if (running && !report) {
+    return (
+      <div className="grid h-[12rem] place-items-center rounded-xl border border-aurora-accent/25 bg-aurora-accent/10 text-center text-xs text-aurora-accent-light">
+        Labo WS12 en cours sur navigateur reel...
+      </div>
+    )
+  }
+  if (error) {
+    return (
+      <div className="rounded-xl border border-aurora-red/25 bg-aurora-red/10 px-3 py-3 text-xs text-aurora-red">
+        {error}
+      </div>
+    )
+  }
+  if (!report) {
+    return (
+      <SummaryPanel
+        rows={[
+          ['Dev-server', devServerUrl || 'inactif'],
+          ['Web', 'attend une URL locale pour Chromium/Firefox reels'],
+          ['Mobile reel', 'jamais remplace par un simple redimensionnement'],
+          ['Embedded/OS', 'Renode/QEMU requis et signales si absents'],
+        ]}
+      />
+    )
+  }
+
+  const summary = summarizeCodeSimulationLab(report)
+  const rows: Array<[string, string]> = [
+    ['Resume', summary.summary],
+    ['Executions reelles', String(summary.realExecutions)],
+    ['Navigateurs web', summary.webBrowsers.join(', ') || '-'],
+  ]
+  for (const stage of report.stages.slice(0, 8)) {
+    rows.push([
+      stage.label,
+      [
+        stage.status,
+        stage.realExecution ? 'execution reelle' : 'non execute',
+        stage.viewport,
+        stage.error || stage.detail,
+      ].filter(Boolean).join(' · '),
+    ])
+  }
+  return <SummaryPanel rows={rows} />
 }
 
 function ErrorPanel({

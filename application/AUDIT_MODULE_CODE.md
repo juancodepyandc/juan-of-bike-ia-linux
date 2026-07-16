@@ -536,6 +536,17 @@
 - **Validation** : test WS11 5 verts / 0 echec ; glob Code a **663 tests verts / 0 echec** ; `npm run build` vert ; preuve CDP reelle sur `http://127.0.0.1:4179` avec `headingCount=1`, `mediaCount=1`, `consoleErrors=[]`, `exceptions=[]`, `failedRequests=[]` aux viewports 390/834/1440.
 - **WS11 statut** : le socle viewer/runtime est applique. Restent l'integration WS12 du panneau simulations avec un labo multi-environnements reel et la convergence progressive des vues historiques AuroraV1.
 
+### 2026-07-16 — Vague 5 / WS12 increment 64 applique
+
+- **Labo simulation schema** : ajout de `aurora.code.simulation-lab/1` cote Python/bridge/TypeScript, avec statuts `executed`, `unavailable`, `deferred`.
+- **Chromium CDP avance** : `cdp_drive.mjs simulate` execute desktop, Pixel 8 touch 4G et tablet slow-3G avec DPR, touch, UA, throttling CPU/reseau et metriques Performance.
+- **Matrice Playwright** : ajout de `playwright` en devDependency et de `playwright_simulate.mjs`; Chromium et Firefox Playwright s'executent reellement, WebKit est telecharge mais bloque par dependances systeme manquantes.
+- **Bridge** : ajout de `POST /api/code/simulation-lab`, route locale uniquement, timeouts bornes, output sous `output/code_simulation_labs/`.
+- **Atelier** : panneau Simu branche au labo WS12 quand un dev-server local est actif; il affiche executions reelles, indisponibles et justifications.
+- **Pas de faux mobile/embarque** : Android/Waydroid, Renode et QEMU sont declares indisponibles quand absents; aucune simulation par simple largeur n'est presentee comme reelle.
+- **Validation** : tests WS12/WS11 8 verts / 0 echec ; glob Code complet **666 tests verts / 0 echec** ; syntaxe Node/Python verte ; `npm run build` vert ; preuve `output/ws12_simulation_lab_proof3` avec CDP Chromium desktop/mobile/tablet executes, Playwright Chromium/Firefox executes, WebKit/Android/Renode/QEMU explicitement indisponibles.
+- **WS12 statut** : socle labo reel applique pour web multi-profils et multi-browser partiel. DoD complet mobile natif/embarque/Raspberry/OS boot attend installation systeme de Waydroid/AVD, Renode et QEMU.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

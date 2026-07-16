@@ -11766,6 +11766,56 @@ def code_visual_audit():
     return jsonify({"ok": ok, "audit": audit, "error": error})
 
 
+@app.route("/api/code/simulation-lab", methods=["POST"])
+def code_simulation_lab():
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "url requise"}), 400
+    if not _code_visual_audit_url_allowed(url):
+        return jsonify({"ok": False, "error": "labo simulation limite aux URLs locales de dev-server"}), 400
+
+    try:
+        wait_ms = int(data.get("waitMs") or data.get("wait_ms") or 2500)
+    except Exception:
+        wait_ms = 2500
+    wait_ms = max(500, min(12000, wait_ms))
+
+    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "simulation_lab.py"
+    if not script.is_file():
+        return jsonify({"ok": False, "error": "simulation_lab.py introuvable"}), 500
+
+    out_dir = pathlib.Path(WORKSPACE) / "output" / "code_simulation_labs" / str(int(time.time() * 1000))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), url, str(out_dir), str(wait_ms)],
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            timeout=max(60, int(wait_ms / 1000 * 18) + 90),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout labo simulation"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"labo simulation impossible: {exc}"}), 500
+
+    try:
+        report = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"JSON labo simulation invalide: {exc}", "stderr": (proc.stderr or "")[-1200:]}), 502
+
+    if not isinstance(report, dict):
+        report = {}
+    report.setdefault("schemaVersion", "aurora.code.simulation-lab/1")
+    report.setdefault("url", url)
+    report.setdefault("stages", [])
+    ok = proc.returncode == 0 and len(report.get("stages") or []) > 0
+    error = (proc.stderr or "")[-2000:] if proc.returncode != 0 else ""
+    return jsonify({"ok": ok, "report": report, "error": error})
+
+
 def _code_stream_language(path: str) -> str:
     ext = pathlib.Path(path).suffix.lower().lstrip(".")
     return {
