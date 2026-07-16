@@ -2363,3 +2363,48 @@ Pour cet increment WS3, non, WS3 n'est pas termine : le contrat HTTP stream exis
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : l'UI consomme maintenant la route stream, mais il reste le runner WS7 pour `run_command` et la demonstration >40 fichiers coherent/buildable.
+
+## 2026-07-15 — Vague 3 / WS3 increment 53 — Runner WS7 pour `run_command`
+
+### Reprise et diagnostic confirme
+
+- `write_file`, `read_file` et `apply_patch` travaillaient deja dans le VFS projet.
+- `run_command` etait volontairement bloque avec `run_command_requires_ws7_runner`, ce qui empechait l'executor WS3 de reinjecter un vrai signal lint/build pendant la generation.
+- Le sandbox WS7 existant fournit deja les briques necessaires : ecriture sandbox, detection Podman rootless, volume quota, wrapping Podman, cleanup.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment reutilise l'infra WS7 locale deja testee.
+- Choix retenu : un runner dedie `codeGenerationCommandRunner`, injectable en tests, branche dans `runAgenticGenerationPhase`.
+- Raison technique : garder une frontiere nette entre outils VFS et execution systeme, tout en garantissant qu'aucune commande LLM ne tombe sur l'hote en direct.
+
+### Modifications realisees
+
+- `src/services/codeGenerationTools.ts` :
+  - le `CodeGenerationToolRunner` recoit maintenant `(command, reason, files)` ;
+  - `executeCodeGenerationTool` transmet le VFS courant au runner.
+- Ajout de `src/services/codeGenerationCommandRunner.ts` :
+  - normalise les fichiers via `normalizeSandboxFiles` ;
+  - ecrit le projet dans `output/code-command-runner/<timestamp>` ;
+  - exige `detectPodmanIsolation` OK ;
+  - prepare/nettoie le volume quota WS7 ;
+  - execute `sh -lc <commande>` uniquement dans le conteneur Podman.
+- `src/services/codeAgenticGenerationPhase.ts` :
+  - branche `createCodeGenerationSandboxRunner()` dans `executeCodeGenerationQueue`.
+- Ajout de `src/__tests__/codeGenerationCommandRunner.test.ts` et extension de `codeGenerationTools.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : toute action `run_command` echouait, meme si le modele produisait une commande de validation utile.
+- Apres : une action `run_command` peut etre executee dans le sandbox WS7 contre les fichiers VFS courants ; absence de Podman = echec explicite, pas fallback dangereux.
+- Limite assumee : le runner depend de l'image Podman deja disponible (`--pull=never`, politique sandbox existante) ; la demonstration live >40 fichiers reste a produire.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationCommandRunner.test.ts src/__tests__/codeGenerationTools.test.ts src/__tests__/codeGenerationExecutor.test.ts src/__tests__/codeAgenticGenerationPhase.test.ts` : 13 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 604 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : le runner WS7 est branche, mais la preuve reelle d'un projet >40 fichiers coherent/buildable reste a executer et documenter.

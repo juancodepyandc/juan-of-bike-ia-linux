@@ -437,6 +437,14 @@
 - **Validation** : tests cibles stream/store 23 verts / 0 echec ; glob Code a **601 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; controle elargi `npm test` tente et bloque sur 1 echec Cowork/bridge 502 hors fichiers modifies ; `codeStreamStore.ts` reste a 591 lignes.
 - **WS3 reste ouvert** : brancher le runner WS7 pour `run_command` et produire la preuve reelle d'un projet >40 fichiers coherent/buildable, idealement avec le flux UI actif.
 
+### 2026-07-15 — Vague 3 / WS3 increment 53 applique
+
+- **Runner WS7 pour `run_command`** : ajout de `codeGenerationCommandRunner`, qui ecrit le VFS courant dans un sandbox, exige Podman rootless/cgroups v2, prepare le volume quota WS7 et execute la commande dans le conteneur via `wrapCommandForPodman`.
+- **Integration executor** : `CodeGenerationToolRunner` recoit maintenant les fichiers VFS courants ; la phase agentique branche `createCodeGenerationSandboxRunner()` pour ne plus rejeter systematiquement les actions `run_command`.
+- **Isolation preservée** : aucune commande LLM n'est executee sur l'hote ; si Podman rootless est absent, le runner retourne un echec explicite au lieu de degrader en execution locale.
+- **Validation** : tests cibles runner/tools/executor/phase 13 verts / 0 echec ; glob Code a **604 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS3 reste ouvert** : produire la preuve reelle >40 fichiers coherent/buildable et, si necessaire, remplacer la route bridge transitoire par l'exposition directe du moteur agentique TS.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

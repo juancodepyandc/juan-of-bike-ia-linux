@@ -17,7 +17,7 @@ export type CodeGenerationToolResult = {
   error?: string
 }
 
-export type CodeGenerationToolRunner = (command: string, reason?: string) => Promise<{
+export type CodeGenerationToolRunner = (command: string, reason: string | undefined, files: CodeFile[]) => Promise<{
   ok: boolean
   output: string
 }>
@@ -76,7 +76,7 @@ export async function executeCodeGenerationTool(
     if (!runner) {
       return { ok: false, kind: action.kind, files, error: 'run_command_requires_ws7_runner' }
     }
-    const result = await runner(action.command, action.reason)
+    const result = await runner(action.command, action.reason, files)
     return { ok: result.ok, kind: action.kind, files, output: result.output, error: result.ok ? undefined : result.output }
   }
 

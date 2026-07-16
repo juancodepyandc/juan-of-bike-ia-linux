@@ -13,6 +13,7 @@ import {
   createCodeGenerationLLMActionProducer,
   type CodeGenerationActionModelClient,
 } from './codeGenerationActionProducer.ts'
+import { createCodeGenerationSandboxRunner } from './codeGenerationCommandRunner.ts'
 
 export type AgenticGenerationPhaseResult = {
   ok: boolean
@@ -84,6 +85,7 @@ export async function runAgenticGenerationPhase({
       initialFiles: existingFiles,
       produceActions: producer,
       nextMeta: createMetaFactory(),
+      runner: createCodeGenerationSandboxRunner(),
       onFilesUpdate: (files, item) => {
         setPhase(`Executor agentique WS3: ${item.path} ecrit.`, Math.min(78, 35 + item.order))
         onFilesUpdate?.(files, `Generation agentique WS3 en cours: ${item.order}/${queue.items.length}`)

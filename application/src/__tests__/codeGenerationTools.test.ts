@@ -64,14 +64,25 @@ describe('codeGenerationTools', () => {
 
   test('run_command exige un runner WS7 explicite', async () => {
     const blocked = await executeCodeGenerationTool([], { kind: 'run_command', command: 'npm test' })
+    let observedFiles = 0
     const delegated = await executeCodeGenerationTool([], { kind: 'run_command', command: 'npm test', reason: 'validation' }, async (command, reason) => ({
       ok: true,
       output: `${reason}:${command}`,
     }))
+    const withFiles = await executeCodeGenerationTool(
+      [file('package.json', '{}', 'json')],
+      { kind: 'run_command', command: 'npm test' },
+      async (_command, _reason, files) => {
+        observedFiles = files.length
+        return { ok: true, output: 'ok' }
+      },
+    )
 
     assert.equal(blocked.ok, false)
     assert.equal(blocked.error, 'run_command_requires_ws7_runner')
     assert.equal(delegated.ok, true)
     assert.equal(delegated.output, 'validation:npm test')
+    assert.equal(withFiles.ok, true)
+    assert.equal(observedFiles, 1)
   })
 })
