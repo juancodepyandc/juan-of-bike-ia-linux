@@ -15,7 +15,7 @@ export async function checkCodeBridgeReady(): Promise<CodeStreamPreflightIssue |
     return {
       title: 'Bridge AuroraIA non joignable',
       message: 'Le bridge Python (port 3001) ne répond pas. Aurora est peut-être fermé ou le tunnel a expiré.',
-      suggestion: 'Relance Aurora (start-aurora.bat) ou exécute "python bridge_doctor.py" puis clique OK pour réessayer.',
+      suggestion: 'Relance Aurora avec le lanceur de ta plateforme, ou exécute "python bridge_doctor.py" puis clique OK pour réessayer.',
     }
   }
 }
