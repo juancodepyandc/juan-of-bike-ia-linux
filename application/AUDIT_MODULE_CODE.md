@@ -470,6 +470,15 @@
 - **Validation** : tests cibles memoire/persistance/patch/contexte/producteur/phases 14 verts / 0 echec ; glob Code a **614 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS5 statut** : le socle local est couvert (durabilite, embeddings, RAG cible, `apply_patch`, non-regression protegee en tests). Reste a prouver une generation LLM live de modification incrementaliste sur projet existant et, si necessaire, a brancher un embedder Ollama (`nomic-embed-text`/`bge-m3`) derriere le meme schema.
 
+### 2026-07-15 — Vague 3 / WS6 increment 57 applique
+
+- **Taxonomie etendue** : ajout des types `embedded_esp32`, `embedded_arduino`, `compiler`, `os_kernel`, `distributed_system`, `mobile_ios`, `mobile_android`, `desktop_app`, `engine_3d`, `ide`.
+- **Classification semantique hybride** : `codeIntentSemanticSignals.ts` route deterministiquement les cibles extremes ; `codeSemanticIntentClassifier.ts` ajoute un contrat JSON schema-versionne `aurora.code.semantic-intent/1`, un parser strict, un client modele injectable et un fallback deterministe.
+- **Registre de generateurs** : `codeProjectGeneratorRegistry.ts` fournit un `ProjectGenerator` par nouvelle famille et `buildCodeSystemPromptFromIntent` injecte le bloc specialise (fichiers attendus, barre qualite, instructions).
+- **Commandes/preview/taille** : `codeIntentCommands.ts` et `codeIntentFileCount.ts` exposent les commandes build/test/dev et tailles minimales pour les nouvelles familles, sans melanger web/mobile/desktop/embarque.
+- **Validation** : tests cibles intent/generators/classifieur semantique 53 verts / 0 echec ; glob Code a **625 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS6 reste ouvert** : il reste a prouver au moins une cible extreme bout en bout sous WS7 (OS QEMU, mini-compilateur ou systeme distribue >=2 noeuds) avec la meme metrique de criteres verts.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

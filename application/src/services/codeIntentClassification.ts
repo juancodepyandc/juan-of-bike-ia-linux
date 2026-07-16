@@ -21,6 +21,7 @@ import {
   THREED_APP_SIGNALS,
   WEB_SIGNALS,
 } from './codeIntentSignals.ts'
+import { matchSemanticProjectSignal } from './codeIntentSemanticSignals.ts'
 import { containsAnySignal, containsSignal, normalizeSignalText } from './codeIntentSignalUtils.ts'
 
 export function classifyCodeIntent(prompt: string, context?: CodeIntentContext): CodeIntent {
@@ -80,18 +81,26 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
   const frameworks: string[] = []
   const features: string[] = []
 
+  const semanticSignal = matchSemanticProjectSignal(lower)
+  if (semanticSignal) {
+    projectType = semanticSignal.projectType
+    languages.push(...semanticSignal.languages)
+    frameworks.push(...semanticSignal.frameworks)
+    features.push(...semanticSignal.features)
+  }
+
   // Step 1: detect framework signals (highest priority).
   // v89b: "react native" is a SUPERSTRING of "react" and the object order lists
   // 'react' first, so "app React Native … Expo" used to match 'react' and be
   // misclassified as a React web SPA. Match the compound explicitly first.
   // (A blanket longest-keyword reorder is wrong here: it would let 'three.js'
   // beat 'react' for "React + Three.js" and lose the react-three-fiber path.)
-  if (/\breact[-\s]native\b/i.test(lower)) {
+  if (projectType === 'unknown' && /\breact[-\s]native\b/i.test(lower)) {
     projectType = 'mobile_rn'
     frameworks.push('react-native', 'expo')
     languages.push('typescript')
     features.push('mobile-native')
-  } else {
+  } else if (projectType === 'unknown') {
     for (const [keyword, signal] of Object.entries(FRAMEWORK_SIGNALS)) {
       if (containsSignal(lower, keyword)) {
         projectType = signal.projectType
@@ -365,7 +374,16 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
     previewType = 'iframe_bundled'
   } else if (projectType === 'static_web' || projectType === 'game_web') {
     previewType = 'iframe_static'
-  } else if (projectType.startsWith('cli_') || projectType.startsWith('system_') || projectType === 'script' || projectType === 'data_python') {
+  } else if (
+    projectType.startsWith('cli_')
+    || projectType.startsWith('system_')
+    || projectType.startsWith('embedded_')
+    || projectType === 'script'
+    || projectType === 'data_python'
+    || projectType === 'compiler'
+    || projectType === 'os_kernel'
+    || projectType === 'distributed_system'
+  ) {
     previewType = 'console'
   }
 
@@ -400,7 +418,16 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
     DEV_SERVER_PROJECTS.has(projectType) ? 'dev_server'
     : (BUNDLED_PREVIEW_PROJECTS.has(projectType) || projectType.startsWith('spa_')) ? 'iframe_bundled'
     : (projectType === 'static_web' || projectType === 'game_web') ? 'iframe_static'
-    : (projectType.startsWith('cli_') || projectType.startsWith('system_') || projectType === 'script' || projectType === 'data_python') ? 'console'
+    : (
+      projectType.startsWith('cli_')
+      || projectType.startsWith('system_')
+      || projectType.startsWith('embedded_')
+      || projectType === 'script'
+      || projectType === 'data_python'
+      || projectType === 'compiler'
+      || projectType === 'os_kernel'
+      || projectType === 'distributed_system'
+    ) ? 'console'
     : previewType
 
   // Game classification — only relevant when we have a game_web project

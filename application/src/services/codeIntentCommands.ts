@@ -11,11 +11,11 @@ export const DEV_SERVER_PROJECTS = new Set<CodeProjectType>([
   'fullstack_mern', 'fullstack_nextjs', 'fullstack_django', 'fullstack_rails',
   'api_express', 'api_fastapi', 'api_django', 'api_flask', 'api_spring',
   'api_gin', 'api_actix', 'api_dotnet',
-  'desktop_electron', 'desktop_tauri', 'game_web',
+  'desktop_electron', 'desktop_tauri', 'desktop_app', 'game_web', 'engine_3d', 'ide',
 ])
 
 export const BUNDLED_PREVIEW_PROJECTS = new Set<CodeProjectType>([
-  'library_npm', 'cli_node',
+  'library_npm', 'cli_node', 'engine_3d', 'ide',
 ])
 
 export function getDevCommand(projectType: CodeProjectType): string | null {
@@ -41,7 +41,13 @@ export function getDevCommand(projectType: CodeProjectType): string | null {
     case 'fullstack_rails': return 'rails server'
     case 'desktop_electron': return 'npm run dev'
     case 'desktop_tauri': return 'npm run tauri:dev'
+    case 'desktop_app': return 'cmake --build build && ./build/app'
     case 'game_web': return 'npm run dev'
+    case 'engine_3d': return 'npm run dev'
+    case 'ide': return 'npm run dev'
+    case 'mobile_android': return './gradlew installDebug'
+    case 'embedded_esp32': return 'pio run --target upload'
+    case 'embedded_arduino': return 'arduino-cli upload -p <port>'
     default: return null
   }
 }
@@ -59,9 +65,27 @@ export function getBuildCommand(projectType: CodeProjectType): string | null {
     case 'library_npm':
     case 'desktop_electron':
     case 'game_web':
+    case 'engine_3d':
+    case 'ide':
       return 'npm run build'
     case 'desktop_tauri':
       return 'npm run tauri:build'
+    case 'mobile_ios':
+      return 'xcodebuild build'
+    case 'mobile_android':
+      return './gradlew assembleDebug'
+    case 'embedded_esp32':
+      return 'pio run'
+    case 'embedded_arduino':
+      return 'arduino-cli compile --fqbn arduino:avr:uno .'
+    case 'compiler':
+      return 'cargo build'
+    case 'os_kernel':
+      return 'make'
+    case 'distributed_system':
+      return 'docker compose build'
+    case 'desktop_app':
+      return 'cmake --build build'
     case 'spa_angular': return 'npx ng build'
     case 'system_rust':
     case 'cli_rust':
@@ -95,9 +119,27 @@ export function getTestCommand(projectType: CodeProjectType): string | null {
     case 'cli_node':
     case 'desktop_electron':
     case 'game_web':
+    case 'engine_3d':
+    case 'ide':
       return 'npm test'
     case 'desktop_tauri':
       return 'cargo test'
+    case 'mobile_ios':
+      return 'xcodebuild test'
+    case 'mobile_android':
+      return './gradlew test'
+    case 'embedded_esp32':
+      return 'pio test'
+    case 'embedded_arduino':
+      return 'arduino-cli compile --fqbn arduino:avr:uno .'
+    case 'compiler':
+      return 'cargo test'
+    case 'os_kernel':
+      return 'make test'
+    case 'distributed_system':
+      return 'docker compose run --rm tests'
+    case 'desktop_app':
+      return 'ctest --test-dir build'
     case 'api_fastapi':
     case 'api_django':
     case 'api_flask':

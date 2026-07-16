@@ -25,6 +25,16 @@ export function estimateFileCount(complexity: CodeComplexity, projectType: CodeP
     api_spring: 1.5,
     desktop_electron: 1.5,
     desktop_tauri: 1.8,
+    desktop_app: 1.8,
+    mobile_ios: 1.7,
+    mobile_android: 1.7,
+    embedded_esp32: 1.4,
+    embedded_arduino: 1.2,
+    compiler: 2.0,
+    os_kernel: 2.2,
+    distributed_system: 2.1,
+    engine_3d: 2.0,
+    ide: 2.2,
   }
 
   return Math.round(base[complexity] * (multiplier[projectType] ?? 1.0))
@@ -42,7 +52,11 @@ export function minimumFileCountForIntent(projectType: CodeProjectType, features
   if (projectType.startsWith('spa_')) return wholeProduct ? 10 : 6
   if (projectType === 'desktop_tauri') return wholeProduct ? 14 : 8
   if (projectType === 'desktop_electron') return wholeProduct ? 10 : 6
-  if (projectType === 'mobile_rn' || projectType === 'mobile_flutter') return wholeProduct ? 10 : 6
+  if (projectType === 'desktop_app') return wholeProduct ? 14 : 8
+  if (projectType === 'mobile_rn' || projectType === 'mobile_flutter' || projectType === 'mobile_ios' || projectType === 'mobile_android') return wholeProduct ? 10 : 6
+  if (projectType.startsWith('embedded_')) return wholeProduct ? 8 : 5
+  if (projectType === 'compiler' || projectType === 'os_kernel' || projectType === 'distributed_system') return wholeProduct ? 16 : 8
+  if (projectType === 'engine_3d' || projectType === 'ide') return wholeProduct ? 14 : 8
   if (projectType.startsWith('api_') || projectType.startsWith('fullstack_') || projectType.startsWith('ssr_')) return wholeProduct ? 10 : 6
   if (projectType.startsWith('cli_') || projectType.startsWith('system_') || projectType === 'data_python') return wholeProduct ? 5 : 3
   return wholeProduct ? 4 : 1

@@ -2549,3 +2549,59 @@ Pour cet increment WS5, oui : la selection RAG locale exploitable est branchee s
 ### Etat de satisfaction chantier
 
 Pour cet increment WS5, oui : durabilite, embeddings locaux, RAG cible, patch incremental et non-regression protegee sont couverts par les services et les tests. Pour WS5 complet, il reste a produire une preuve live avec le modele sur un projet existant et a decider si l'embedder local deterministe suffit ou si le schema doit etre alimente par Ollama.
+
+## 2026-07-15 — Vague 3 / WS6 increment 57 — Taxonomie extreme, classifieur semantique et registre de generateurs
+
+### Reprise et diagnostic confirme
+
+- La decomposition WS1 avait laisse `codeIntentClassification.ts` en classifieur deterministe/heuristique, sans les cibles extremes demandees par le prompt maitre.
+- Les types `embedded_esp32`, `embedded_arduino`, `compiler`, `os_kernel`, `distributed_system`, `mobile_ios`, `mobile_android`, `desktop_app`, `engine_3d` et `ide` n'existaient pas dans `CodeProjectType`.
+- `buildCodeSystemPromptFromIntent` n'avait aucun registre de generateurs specialise ; les familles extremes etaient donc forcees dans des prompts generiques.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment applique la taxonomie explicitement demandee par le prompt maitre.
+- Choix retenu : classification hybride. Le chemin synchrone existant garde un fallback deterministe, et un nouveau classifieur semantique accepte une sortie LLM JSON schema-versionnee quand un client modele est fourni.
+- Raison technique : ne pas casser le pipeline actuel synchrone, tout en posant le contrat LLM structure exige par WS6.
+
+### Modifications realisees
+
+- `src/services/codeIntentTypes.ts` :
+  - ajout des nouveaux `CodeProjectType` WS6.
+- `src/services/codeIntentSemanticSignals.ts` :
+  - signaux semantiques deterministes pour embarque, compilateur, OS, distribue, mobile natif, desktop natif, moteur 3D et IDE.
+- `src/services/codeIntentClassification.ts` :
+  - applique les signaux semantiques avant les signaux frameworks/langages generiques ;
+  - evite de classer une CLI Rust avec `parser` comme compilateur ;
+  - preview console pour embarque/compiler/OS/distribue.
+- `src/services/codeSemanticIntentClassifier.ts` :
+  - prompt de classifieur LLM strict JSON ;
+  - parser schema `aurora.code.semantic-intent/1` ;
+  - application d'une classification de modele avec seuil de confiance ;
+  - fallback deterministe en cas de JSON invalide, type inconnu, confiance basse ou exception.
+- `src/services/codeProjectGeneratorRegistry.ts` :
+  - interface `ProjectGenerator` ;
+  - generateurs dedies pour chaque nouvelle famille ;
+  - bloc prompt specialise injecte dans `buildCodeSystemPromptFromIntent`.
+- `src/services/codeIntentCommands.ts` et `src/services/codeIntentFileCount.ts` :
+  - commandes build/test/dev et tailles minimales par nouvelle famille.
+- Tests ajoutes/etendus :
+  - `codeIntent.test.ts`
+  - `codeProjectGeneratorRegistry.test.ts`
+  - `codeSemanticIntentClassifier.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : une demande "noyau OS", "firmware ESP32", "compilateur", "systeme distribue" ou "IDE" tombait dans des types generiques (`script`, `desktop_tauri`, `system_rust`, etc.) sans prompt dedie.
+- Apres : ces demandes ont un type explicite, des commandes, une taille attendue, un generateur specialise et un contrat LLM JSON structure.
+- Limite assumee : cet increment route et prompt correctement ; il ne prouve pas encore un projet extreme buildable/bootable bout en bout.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeIntent.test.ts src/__tests__/codeIntentModules.test.ts src/__tests__/codeProjectGeneratorRegistry.test.ts src/__tests__/codeSemanticIntentClassifier.test.ts` : 53 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 625 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS6, oui : la taxonomie, le contrat semantique structure, le fallback deterministe et le registre de generateurs sont en place. Pour WS6 complet, non : il reste la preuve d'au moins une cible extreme de bout en bout sous WS7.

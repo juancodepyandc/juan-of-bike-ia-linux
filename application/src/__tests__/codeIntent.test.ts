@@ -94,6 +94,45 @@ describe('classifyCodeIntent — Next.js fullstack', () => {
   })
 })
 
+describe('classifyCodeIntent — taxonomie WS6 et cibles extremes', () => {
+  test('firmware ESP32 route vers embedded_esp32', () => {
+    const r = classifyCodeIntent('firmware ESP32 avec capteur temperature et logs serie')
+    assert.equal(r.projectType, 'embedded_esp32')
+    assert.ok(r.frameworks.includes('esp-idf'))
+    assert.equal(r.previewType, 'console')
+  })
+
+  test('compilateur route vers compiler', () => {
+    const r = classifyCodeIntent('cree un compilateur avec lexer parser AST et tests du langage')
+    assert.equal(r.projectType, 'compiler')
+    assert.ok(r.features.includes('compiler'))
+    assert.equal(r.testCommand, 'cargo test')
+  })
+
+  test('noyau bootable QEMU route vers os_kernel', () => {
+    const r = classifyCodeIntent('noyau OS minimal bootable sous QEMU avec heartbeat')
+    assert.equal(r.projectType, 'os_kernel')
+    assert.ok(r.features.includes('qemu'))
+    assert.equal(r.buildCommand, 'make')
+  })
+
+  test('systeme distribue multi noeuds route vers distributed_system', () => {
+    const r = classifyCodeIntent('systeme distribue multi noeuds avec consensus Raft et tests integration')
+    assert.equal(r.projectType, 'distributed_system')
+    assert.ok(r.frameworks.includes('docker-compose'))
+  })
+
+  test('mobile natif iOS/Android distingue les stacks natives', () => {
+    assert.equal(classifyCodeIntent('app iOS native SwiftUI avec liste offline').projectType, 'mobile_ios')
+    assert.equal(classifyCodeIntent('app Android native Kotlin Jetpack Compose').projectType, 'mobile_android')
+  })
+
+  test('IDE et moteur 3D ont un routage dedie', () => {
+    assert.equal(classifyCodeIntent('IDE editeur de code avec arborescence et preview').projectType, 'ide')
+    assert.equal(classifyCodeIntent('moteur 3D avec renderer scene camera et demo').projectType, 'engine_3d')
+  })
+})
+
 describe('classifyCodeIntent — Edge cases', () => {
   test('prompt vide → unknown ou minimal', () => {
     const r = classifyCodeIntent('')

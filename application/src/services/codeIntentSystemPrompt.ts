@@ -8,6 +8,7 @@ import { appendAssetPromptSections } from './codeIntentPromptAssets.ts'
 import { appendGamePrompt } from './codeIntentPromptGame.ts'
 import { appendProjectPromptSections } from './codeIntentPromptProject.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
+import { buildProjectGeneratorPromptBlock } from './codeProjectGeneratorRegistry.ts'
 
 export function buildCodeSystemPromptFromIntent(intent: CodeIntent): string {
   const expectedFiles = Math.max(1, intent.estimatedFileCount)
@@ -91,6 +92,9 @@ export function buildCodeSystemPromptFromIntent(intent: CodeIntent): string {
       lines.push(`Features detectees: ${intent.features.join(', ')}`)
     }
   }
+
+  const generatorBlock = buildProjectGeneratorPromptBlock(intent)
+  if (generatorBlock) lines.push('', generatorBlock)
 
   if (intent.projectType === 'static_web') {
     lines.push(
