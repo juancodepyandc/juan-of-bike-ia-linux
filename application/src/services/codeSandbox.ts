@@ -195,7 +195,14 @@ export async function runCodeSandboxValidation({
       setPhase?.(`${command.label} dans le sandbox...`, progress)
 
       if (lang === 'node' && /installer les dependances/i.test(command.label)) {
-        const installRun = await runNodeInstallWithAutoRepair(runnableCommand, workingFiles, sandboxRoot)
+        const installRun = await runNodeInstallWithAutoRepair(runnableCommand, workingFiles, sandboxRoot, {
+          buildRegistryLookupCommand: (packageName) => wrapCommandForPodman({
+            label: `Resolution registre npm ${packageName}`,
+            executable: 'npm',
+            args: ['view', packageName, 'versions', '--json'],
+            timeoutMs: 120_000,
+          }, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi' }),
+        })
         workingFiles = installRun.files
         steps.push(...installRun.steps)
 

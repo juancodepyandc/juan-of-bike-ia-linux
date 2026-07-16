@@ -348,6 +348,14 @@
 - **Validation** : tests reseau/isolation/GPU/probes/GC/sandbox cibles 44 verts / 0 echec ; glob Code a **557 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS7 reste ouvert** : cette couche livre une allowlist au niveau commande/env et coupe le host loopback, mais ne prouve pas encore un filtrage domaine paquet par paquet ; restent la limitation disque totale workspace et l'execution runtime effective sur hote equipe Podman.
 
+### 2026-07-15 — Vague 2 / WS7 increment 42 applique
+
+- **Fuite host npm fermee** : l'auto-reparation npm n'execute plus `npm view` directement sur l'hote ; `runNodeInstallWithAutoRepair` exige maintenant un builder de commande registre fourni par `codeSandbox.ts`.
+- **Resolution registre sandboxee** : le lookup `npm view <pkg> versions --json` passe par `wrapCommandForPodman`, avec le meme reseau registre et les memes quotas que les autres commandes WS7.
+- **Politique reseau completee** : `npm view` est explicitement allowliste comme operation registre npm, sans ouvrir les commandes inconnues.
+- **Validation** : tests cibles reseau/modules/isolation 32 verts / 0 echec ; glob Code a **559 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS7 reste ouvert** : restent la limitation disque totale workspace, l'execution runtime effective sur hote equipe Podman et le filtrage domaine paquet par paquet.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

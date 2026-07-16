@@ -41,7 +41,7 @@ export function buildSandboxNetworkPolicy(command: ValidationCommand): SandboxNe
 
   if (
     (exe === 'npm' || exe === 'pnpm' || exe === 'yarn')
-    && /(^|\s)(install|ci)(\s|$)/.test(text)
+    && /(^|\s)(install|ci|view)(\s|$)/.test(text)
   ) {
     return registryPolicy('registry:npm', {
       NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/',

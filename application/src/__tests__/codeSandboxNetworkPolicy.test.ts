@@ -23,6 +23,16 @@ describe('codeSandboxNetworkPolicy', () => {
     )
   })
 
+  test('npm view utilise aussi le registre pour la resolution de versions sandboxee', () => {
+    const policy = buildSandboxNetworkPolicy(command('npm', ['view', 'react', 'versions', '--json']))
+
+    assert.equal(policy.mode, 'registry')
+    assert.deepEqual(
+      policy.env.find(([key]) => key === 'NPM_CONFIG_REGISTRY'),
+      ['NPM_CONFIG_REGISTRY', 'https://registry.npmjs.org/'],
+    )
+  })
+
   test('pip install fixe PyPI et desactive les prompts', () => {
     const policy = buildSandboxNetworkPolicy(
       command('aurora-python', ['-m', 'pip', 'install', '-r', 'requirements.txt']),

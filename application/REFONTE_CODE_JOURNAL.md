@@ -1872,3 +1872,40 @@ Pour cet increment WS7, les projets GPU ne peuvent plus passer par le harnais co
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, le harnais ne peut plus ouvrir le reseau sur simple occurrence textuelle de `install`. WS7 reste ouvert sur deux preuves dures : quota disque total du workspace et execution runtime effective sur hote equipe Podman. Le filtrage domaine paquet par paquet reste egalement a traiter si l'on veut aller au-dela de l'allowlist commande/env actuelle.
+
+## 2026-07-15 — Vague 2 / WS7 increment 42 — Auto-reparation npm sans fuite hote
+
+### Reprise et diagnostic confirme
+
+- En relisant l'integration WS7, j'ai trouve une fuite non couverte par l'increment 41.
+- `runNodeInstallWithAutoRepair` recevait bien `npm install` deja encapsule dans Podman, mais son lookup de secours `npm view <pkg> versions --json` appelait encore `runWorkspaceCommand(npm, ...)` directement.
+- Cette execution hote contredisait l'objectif WS7 : aucun code ou acces registre lie a une generation ne doit echapper au sandbox.
+
+### Recherches et choix techniques
+
+- Aucune nouvelle recherche web externe : le probleme etait dans le code local et le wrapper Podman WS7 existait deja.
+- Choix retenu : rendre le lookup registre injectable et obligatoire, construit depuis `codeSandbox.ts` ou `wrapCommandForPodman` et le statut GPU/reseau sont disponibles.
+- Choix de securite : ne pas conserver de fallback implicite vers `npm` hote dans `codeSandboxRegistryRepair.ts`.
+
+### Modifications realisees
+
+- `runNodeInstallWithAutoRepair` exige maintenant `buildRegistryLookupCommand`.
+- `codeSandbox.ts` construit `npm view <pkg> versions --json` via `wrapCommandForPodman`.
+- `codeSandboxNetworkPolicy.ts` allowliste `npm view` comme operation registre npm, avec les memes variables `NPM_CONFIG_*`.
+- `codeSandboxModules.test.ts` prouve que la resolution de version passe par `podman`, pas par `npm` hote.
+
+### Avant / apres mesurable
+
+- Avant : un paquet npm invalide pouvait declencher une commande reseau hote pendant la correction automatique.
+- Apres : la correction automatique reste dans le meme chemin sandbox/quotas/reseau que l'installation initiale.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxNetworkPolicy.test.ts src/__tests__/codeSandboxModules.test.ts src/__tests__/codeSandboxIsolation.test.ts` : 32 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 559 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, l'egress registre ne fuit plus par l'auto-reparation npm. WS7 reste ouvert sur la limite disque totale du workspace et la preuve runtime sur un hote equipe Podman.

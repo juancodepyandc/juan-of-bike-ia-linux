@@ -23,6 +23,7 @@ import {
 import {
   formatResolvedDependencySpecForTest,
   parseNpmTargetErrorForTest,
+  runNodeInstallWithAutoRepair,
 } from '../services/codeSandboxRegistryRepair.ts'
 import {
   buildToolchainDiagnosticCommands,
@@ -210,5 +211,74 @@ describe('codeSandboxRegistryRepair', () => {
     assert.equal(formatResolvedDependencySpecForTest('~99.0.0', '19.2.1'), '~19.2.1')
     assert.equal(formatResolvedDependencySpecForTest('>=99.0.0', '19.2.1'), '^19.2.1')
     assert.equal(formatResolvedDependencySpecForTest('99.0.0', '19.2.1'), '19.2.1')
+  })
+
+  test('runNodeInstallWithAutoRepair resout les versions via une commande sandboxee', async () => {
+    const calls: Array<{ executable: string; args: string[] }> = []
+    const writes: string[] = []
+    const packageName = 'aurora-registry-sandbox-only'
+    const files = [{
+      name: 'package.json',
+      language: 'json',
+      content: JSON.stringify({
+        name: 'aurora-test',
+        version: '1.0.0',
+        dependencies: {
+          [packageName]: '99.0.0',
+        },
+      }, null, 2),
+    }]
+
+    const result = await runNodeInstallWithAutoRepair(
+      {
+        label: 'Installer les dependances',
+        executable: 'podman',
+        args: ['run', 'npm', 'install'],
+        timeoutMs: 120_000,
+      },
+      files,
+      '/tmp/aurora/ws',
+      {
+        buildRegistryLookupCommand: (targetPackage) => ({
+          label: `Resolution registre ${targetPackage}`,
+          executable: 'podman',
+          args: ['run', 'npm', 'view', targetPackage, 'versions', '--json'],
+          timeoutMs: 120_000,
+        }),
+        runCommand: async (executable, args) => {
+          calls.push({ executable, args })
+          if (args.includes('view')) {
+            return {
+              ok: true,
+              exitCode: 0,
+              output: '["1.0.0"]',
+              command: `${executable} ${args.join(' ')}`,
+            }
+          }
+          if (calls.length === 1) {
+            return {
+              ok: false,
+              exitCode: 1,
+              output: `npm ERR! No matching version found for ${packageName}@99.0.0.`,
+              command: `${executable} ${args.join(' ')}`,
+            }
+          }
+          return {
+            ok: true,
+            exitCode: 0,
+            output: 'installed',
+            command: `${executable} ${args.join(' ')}`,
+          }
+        },
+        writeFiles: async (_root, nextFiles) => {
+          writes.push(nextFiles.find((file) => file.name === 'package.json')?.content ?? '')
+        },
+      },
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(calls[1]?.executable, 'podman')
+    assert.deepEqual(calls[1]?.args, ['run', 'npm', 'view', packageName, 'versions', '--json'])
+    assert.match(writes[0] ?? '', /"aurora-registry-sandbox-only": "1\.0\.0"/)
   })
 })

@@ -1,6 +1,5 @@
 import { runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeFile, CodeSandboxStepResult, ValidationCommand } from './codeSandboxTypes.ts'
-import { nodeExecutable } from './codeSandboxRuntime.ts'
 import {
   findFile,
   getDependencySpecFromManifest,
@@ -12,6 +11,12 @@ import {
 type RegistryTarget = {
   packageName: string
   requestedSpec: string
+}
+
+type RegistryRepairOptions = {
+  buildRegistryLookupCommand: (packageName: string) => ValidationCommand
+  runCommand?: typeof runWorkspaceCommand
+  writeFiles?: typeof writeSandboxFiles
 }
 
 // MEMORY-SAFE: LRU-like cache with max entries to prevent unbounded growth
@@ -157,15 +162,16 @@ function formatResolvedDependencySpec(originalSpec: string, resolvedVersion: str
 export const parseNpmTargetErrorForTest = parseNpmTargetError
 export const formatResolvedDependencySpecForTest = formatResolvedDependencySpec
 
-async function fetchPublishedVersions(packageName: string, cwd: string) {
+async function fetchPublishedVersions(packageName: string, cwd: string, options: RegistryRepairOptions) {
   const cacheKey = packageName.toLowerCase()
   const cached = NPM_VERSION_CACHE.get(cacheKey)
   if (cached) {
     return cached
   }
 
-  const npm = nodeExecutable('npm')
-  const result = await runWorkspaceCommand(npm, ['view', packageName, 'versions', '--json'], cwd, 120_000)
+  const command = options.buildRegistryLookupCommand(packageName)
+  const runner = options.runCommand ?? runWorkspaceCommand
+  const result = await runner(command.executable, command.args, cwd, command.timeoutMs ?? 120_000)
   if (!result.ok) {
     return []
   }
@@ -212,6 +218,7 @@ async function repairNodeDependencyFromRegistry(
   files: CodeFile[],
   cwd: string,
   target: RegistryTarget,
+  options: RegistryRepairOptions,
 ) {
   if (isRemoteDependencySpec(target.requestedSpec)) {
     return null
@@ -232,7 +239,7 @@ async function repairNodeDependencyFromRegistry(
     return null
   }
 
-  const versions = await fetchPublishedVersions(target.packageName, cwd)
+  const versions = await fetchPublishedVersions(target.packageName, cwd, options)
   const resolvedVersion = choosePublishedVersion(versions, target.packageName, target.requestedSpec, manifest)
   if (!resolvedVersion) {
     return null
@@ -258,13 +265,16 @@ export async function runNodeInstallWithAutoRepair(
   command: ValidationCommand,
   files: CodeFile[],
   cwd: string,
+  options: RegistryRepairOptions,
 ) {
   const steps: CodeSandboxStepResult[] = []
   let workingFiles = files
   const maxAttempts = 4
+  const runner = options.runCommand ?? runWorkspaceCommand
+  const writer = options.writeFiles ?? writeSandboxFiles
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const result = await runWorkspaceCommand(command.executable, command.args, cwd, command.timeoutMs)
+    const result = await runner(command.executable, command.args, cwd, command.timeoutMs)
     steps.push({
       label: attempt === 1 ? command.label : `${command.label} (retry ${attempt})`,
       command: `${command.executable} ${command.args.join(' ')}`.trim(),
@@ -281,13 +291,13 @@ export async function runNodeInstallWithAutoRepair(
       return { ok: false, files: workingFiles, steps }
     }
 
-    const repaired = await repairNodeDependencyFromRegistry(workingFiles, cwd, target)
+    const repaired = await repairNodeDependencyFromRegistry(workingFiles, cwd, target, options)
     if (!repaired) {
       return { ok: false, files: workingFiles, steps }
     }
 
     workingFiles = repaired.files
-    await writeSandboxFiles(cwd, workingFiles)
+    await writer(cwd, workingFiles)
     steps.push({
       label: `Correction registre npm (${target.packageName})`,
       command: `npm view ${target.packageName} versions --json`,
