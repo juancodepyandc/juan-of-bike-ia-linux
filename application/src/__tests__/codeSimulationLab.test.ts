@@ -68,6 +68,16 @@ describe('codeSimulationLab', () => {
   test('rejette un rapport sans stages conformes', () => {
     assert.equal(isCodeSimulationLabReport({ schemaVersion: CODE_SIMULATION_LAB_SCHEMA, url: 'x', stages: [{}] }), false)
     assert.equal(isCodeSimulationLabReport({ schemaVersion: 'old', url: 'x', stages: [] }), false)
+    assert.equal(isCodeSimulationLabReport({
+      schemaVersion: CODE_SIMULATION_LAB_SCHEMA,
+      url: 'x',
+      stages: [{ id: 'fake', label: 'Fake', family: 'web', status: 'success', realExecution: true }],
+    }), false)
+    assert.equal(isCodeSimulationLabReport({
+      schemaVersion: CODE_SIMULATION_LAB_SCHEMA,
+      url: 'x',
+      stages: [{ id: 'fake', label: 'Fake', family: 'web', status: 'executed', realExecution: false }],
+    }), false)
   })
 
   test('poste vers /api/code/simulation-lab', async () => {

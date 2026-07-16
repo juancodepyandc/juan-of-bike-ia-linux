@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from simulation_android import run_android_stage
+from simulation_android import run_android_stages
 from simulation_embedded import run_qemu_os_stage, run_qemu_raspberry_stage, run_renode_stage
 
 
@@ -217,8 +217,18 @@ def _environment_stages(
       _which("MiniBrowser", "webkit2gtk-driver", "webkit2png"),
       "WebKit headless CLI introuvable; ne pas remplacer par largeur CSS.",
     ))
+  try:
+    stages.extend(run_android_stages(url, out_dir))
+  except Exception as exc:
+    stages.append({
+      "id": "android_environment_probe_error",
+      "label": "Android external environment probe",
+      "family": "mobile_real",
+      "status": "unavailable",
+      "realExecution": False,
+      "error": str(exc),
+    })
   runners = [
-    lambda: run_android_stage(url, out_dir),
     lambda: run_renode_stage(out_dir),
     lambda: run_qemu_raspberry_stage(out_dir),
     lambda: run_qemu_os_stage(out_dir),

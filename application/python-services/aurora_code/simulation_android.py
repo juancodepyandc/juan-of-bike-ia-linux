@@ -4,101 +4,27 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import socket
 import subprocess
 import time
 import zipfile
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from simulation_android_app import ACTIVITY_SOURCE, MANIFEST
+from simulation_android_profiles import ANDROID_PROFILES
 from simulation_tooling import TOOL_ROOT, android_sdk_root, run_command, tail, terminate_owned, unavailable
 
 
 ANDROID_MARKER = "AURORA_WS12_PWA_EXECUTED"
+ANDROID_INTERACTION_MARKER = "AURORA_WS12_INTERACTION_VERIFIED"
 PACKAGE = "ia.aurora.codeprobe"
 ACTIVITY = f"{PACKAGE}/.MainActivity"
 SYSTEM_IMAGE = "system-images;android-36;default;x86_64"
-AVD_NAME = "AuroraCode_API36"
-
-MANIFEST = '''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="ia.aurora.codeprobe">
-  <uses-permission android:name="android.permission.INTERNET" />
-  <application android:theme="@android:style/Theme.Material.Light.NoActionBar"
-      android:label="Aurora WS12" android:usesCleartextTraffic="true">
-    <activity android:name=".MainActivity" android:screenOrientation="portrait" android:exported="true">
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN" />
-        <category android:name="android.intent.category.LAUNCHER" />
-      </intent-filter>
-    </activity>
-  </application>
-</manifest>
-'''
-
-ACTIVITY_SOURCE = r'''package ia.aurora.codeprobe;
-
-import android.app.Activity;
-import android.graphics.Color;
-import android.os.Bundle;
-import android.util.Log;
-import android.view.ViewGroup;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.widget.LinearLayout;
-import android.widget.TextView;
-
-public final class MainActivity extends Activity {
-  private TextView status;
-  private boolean failed;
-
-  @Override public void onCreate(Bundle state) {
-    super.onCreate(state);
-    LinearLayout root = new LinearLayout(this);
-    root.setOrientation(LinearLayout.VERTICAL);
-    root.setBackgroundColor(Color.rgb(8, 14, 18));
-    status = new TextView(this);
-    status.setText("AURORA_WS12_ANDROID_CODE_RUNNING");
-    status.setTextColor(Color.WHITE);
-    status.setBackgroundColor(Color.rgb(21, 94, 117));
-    status.setTextSize(14);
-    status.setMaxLines(3);
-    status.setPadding(32, 84, 32, 24);
-    root.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT));
-    WebView web = new WebView(this);
-    web.setBackgroundColor(Color.rgb(8, 14, 18));
-    web.getSettings().setJavaScriptEnabled(true);
-    web.getSettings().setDomStorageEnabled(true);
-    web.setWebViewClient(new WebViewClient() {
-      @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-        if (request.isForMainFrame()) {
-          failed = true;
-          status.setText("AURORA_WS12_PWA_FAILED " + error.getDescription());
-        }
-      }
-      @Override public void onPageFinished(WebView view, String url) {
-        if (failed) return;
-        view.evaluateJavascript(
-            "(function(){return document.title+'|'+document.body.innerText.length+'|'+location.host})()",
-            value -> {
-              String marker = "AURORA_WS12_PWA_EXECUTED " + value;
-              status.setText("WS12 ANDROID: EXECUTED\n" + value.replace("\\\"", ""));
-              status.setContentDescription(marker);
-              Log.i("AuroraWS12", marker);
-            });
-      }
-    });
-    root.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-    setContentView(root);
-    String target = getIntent().getStringExtra("target_url");
-    web.loadUrl(target == null ? "about:blank" : target);
-  }
-}
-'''
 
 
 def android_guest_url(url: str) -> str:
@@ -142,22 +68,28 @@ def _find_avdmanager(sdk: Path) -> Path | None:
   return candidates[0] if candidates else None
 
 
-def _ensure_avd(sdk: Path, avd_home: Path, env: dict[str, str]) -> tuple[bool, str]:
+def _ensure_avd(
+  sdk: Path,
+  avd_home: Path,
+  env: dict[str, str],
+  avd_name: str,
+  device: str,
+) -> tuple[bool, str]:
   avd_home.mkdir(parents=True, exist_ok=True)
-  if (avd_home / f"{AVD_NAME}.avd" / "config.ini").is_file():
+  if (avd_home / f"{avd_name}.avd" / "config.ini").is_file():
     return True, "AVD deja present"
   manager = _find_avdmanager(sdk)
   if not manager:
     return False, "avdmanager introuvable"
   proc = run_command(
-    [str(manager), "create", "avd", "--force", "--name", AVD_NAME, "--package", SYSTEM_IMAGE, "--device", "pixel_6"],
+    [str(manager), "create", "avd", "--force", "--name", avd_name, "--package", SYSTEM_IMAGE, "--device", device],
     cwd=avd_home,
     timeout=90,
     env=env,
     input_text="no\n",
   )
   log = (proc.stdout or "") + (proc.stderr or "")
-  return proc.returncode == 0 and (avd_home / f"{AVD_NAME}.avd").is_dir(), log
+  return proc.returncode == 0 and (avd_home / f"{avd_name}.avd").is_dir(), log
 
 
 def _build_apk(sdk: Path, target: Path, env: dict[str, str]) -> tuple[Path | None, str]:
@@ -223,7 +155,7 @@ def _build_apk(sdk: Path, target: Path, env: dict[str, str]) -> tuple[Path | Non
 
 
 def _free_emulator_port() -> int | None:
-  for port in range(5588, 5680, 2):
+  for port in [*range(5554, 5588, 2), *range(5588, 5680, 2)]:
     with socket.socket() as probe:
       probe.settimeout(0.05)
       if probe.connect_ex(("127.0.0.1", port)) != 0:
@@ -235,29 +167,54 @@ def _adb(adb: Path, serial: str, target: Path, env: dict[str, str], *args: str, 
   return run_command([str(adb), "-s", serial, *args], cwd=target, timeout=timeout, env=env)
 
 
-def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
-  label = "Android AVD APK/PWA execution"
+def _tap_target(xml: str, label: str) -> tuple[int, int] | None:
+  try:
+    root = ElementTree.fromstring(xml)
+  except ElementTree.ParseError:
+    return None
+  for node in root.iter("node"):
+    if label.casefold() not in node.attrib.get("text", "").casefold():
+      continue
+    bounds = re.fullmatch(r"\[(\d+),(\d+)]\[(\d+),(\d+)]", node.attrib.get("bounds", ""))
+    if bounds:
+      left, top, right, bottom = (int(value) for value in bounds.groups())
+      return (left + right) // 2, (top + bottom) // 2
+  return None
+
+
+def _package_resumed(raw: str) -> bool:
+  return any(
+    PACKAGE in line and ("topResumedActivity" in line or "mResumedActivity" in line)
+    for line in raw.splitlines()
+  )
+
+
+def run_android_stage(url: str, out_dir: Path, profile_name: str = "phone") -> dict[str, Any]:
+  profile = ANDROID_PROFILES.get(profile_name)
+  if not profile:
+    raise ValueError(f"profil Android inconnu: {profile_name}")
+  label = profile["label"]
   sdk = android_sdk_root()
   if not sdk:
-    return unavailable("android_real_mobile", label, "mobile_real", "Android SDK emulator/adb introuvable")
-  target = (out_dir / "android_avd").resolve()
+    return unavailable(profile["stageId"], label, "mobile_real", "Android SDK emulator/adb introuvable")
+  target = (out_dir / profile["target"]).resolve()
   avd_home = TOOL_ROOT / "android-avd"
   env = _android_env(sdk, avd_home)
-  ready, avd_log = _ensure_avd(sdk, avd_home, env)
+  ready, avd_log = _ensure_avd(sdk, avd_home, env, profile["avdName"], profile["device"])
   if not ready:
-    return unavailable("android_real_mobile", label, "mobile_real", tail(avd_log))
+    return unavailable(profile["stageId"], label, "mobile_real", tail(avd_log))
   apk, build_log = _build_apk(sdk, target, env)
   (target / "build.log").write_text(build_log, encoding="utf-8")
   if not apk:
-    return unavailable("android_real_mobile", label, "mobile_real", tail(build_log))
+    return unavailable(profile["stageId"], label, "mobile_real", tail(build_log))
   port = _free_emulator_port()
   if not port:
-    return unavailable("android_real_mobile", label, "mobile_real", "aucun port emulator libre")
+    return unavailable(profile["stageId"], label, "mobile_real", "aucun port emulator libre")
   emulator, adb = sdk / "emulator" / "emulator", sdk / "platform-tools" / "adb"
   serial, emulator_log = f"emulator-{port}", target / "emulator.log"
   stream = emulator_log.open("w", encoding="utf-8")
   proc = subprocess.Popen(
-    [str(emulator), "-avd", AVD_NAME, "-port", str(port), "-no-window", "-no-audio", "-no-boot-anim",
+    [str(emulator), "-avd", profile["avdName"], "-port", str(port), "-no-window", "-no-audio", "-no-boot-anim",
      "-no-snapshot", "-gpu", "swiftshader_indirect", "-accel", "auto"],
     cwd=target,
     stdout=stream,
@@ -266,7 +223,8 @@ def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
     env=env,
     start_new_session=True,
   )
-  marker_xml, marker_log, booted, error = "", "", False, ""
+  marker_xml, marker_log, before_xml, booted = "", "", "", False
+  interaction_ok, interaction_verified, error = False, False, ""
   started = time.monotonic()
   try:
     deadline = time.monotonic() + 180
@@ -282,11 +240,11 @@ def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
     else:
       _adb(adb, serial, target, env, "shell", "settings", "put", "global", "window_animation_scale", "0")
       _adb(adb, serial, target, env, "uninstall", PACKAGE, timeout=45)
-      install = _adb(adb, serial, target, env, "install", "-r", str(apk), timeout=90)
+      install = _adb(adb, serial, target, env, "install", "--no-incremental", "-r", str(apk), timeout=90)
       guest_url = android_guest_url(url)
       _adb(adb, serial, target, env, "logcat", "-c", timeout=20)
       launch = _adb(adb, serial, target, env, "shell", "am", "start", "-W", "-n", ACTIVITY,
-                    "--es", "target_url", guest_url, timeout=60)
+                    "--es", "target_url", guest_url, "--es", "device_profile", profile_name, timeout=60)
       (target / "install.log").write_text((install.stdout or "") + (install.stderr or ""), encoding="utf-8")
       (target / "launch.log").write_text((launch.stdout or "") + (launch.stderr or ""), encoding="utf-8")
       if install.returncode or launch.returncode:
@@ -299,12 +257,39 @@ def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
             break
           time.sleep(1)
         if ANDROID_MARKER in marker_log:
-          time.sleep(3)
-        _adb(adb, serial, target, env, "shell", "uiautomator", "dump", "/sdcard/aurora_ws12.xml", timeout=20)
-        dumped = _adb(adb, serial, target, env, "exec-out", "cat", "/sdcard/aurora_ws12.xml", timeout=20)
-        marker_xml = dumped.stdout or ""
+          before_xml, tap = "", None
+          for _ui_attempt in range(3):
+            _adb(adb, serial, target, env, "shell", "uiautomator", "dump", "/sdcard/aurora_before.xml", timeout=20)
+            before = _adb(adb, serial, target, env, "exec-out", "cat", "/sdcard/aurora_before.xml", timeout=20)
+            before_xml = before.stdout or ""
+            tap = _tap_target(before_xml, "Continuer sans admin")
+            if tap:
+              break
+            time.sleep(2)
+          (target / "window_before.xml").write_text(before_xml, encoding="utf-8")
+          if tap:
+            action = _adb(adb, serial, target, env, "shell", "input", "tap", str(tap[0]), str(tap[1]), timeout=20)
+            interaction_ok = action.returncode == 0
+            (target / "interaction.log").write_text(
+              f"tap Continuer sans admin at {tap[0]},{tap[1]} rc={action.returncode}\n", encoding="utf-8"
+            )
+            for _interaction_attempt in range(30):
+              marker_probe = _adb(adb, serial, target, env, "logcat", "-d", "-s", "AuroraWS12:I", "*:S", timeout=20)
+              marker_log = marker_probe.stdout or ""
+              if ANDROID_INTERACTION_MARKER in marker_log:
+                break
+              time.sleep(0.5)
+        marker_xml = before_xml
+        activity = _adb(adb, serial, target, env, "shell", "dumpsys", "activity", "activities", timeout=30)
+        activity_log = activity.stdout or ""
+        interaction_verified = (
+          interaction_ok
+          and ANDROID_INTERACTION_MARKER in marker_log
+          and _package_resumed(activity_log)
+        )
         (target / "window.xml").write_text(marker_xml, encoding="utf-8")
         (target / "marker.log").write_text(marker_log, encoding="utf-8")
+        (target / "activity.log").write_text(activity_log, encoding="utf-8")
         with (target / "android.png").open("wb") as screenshot:
           subprocess.run([str(adb), "-s", serial, "exec-out", "screencap", "-p"], cwd=target, env=env,
                          stdout=screenshot, stderr=subprocess.PIPE, timeout=30, check=False)
@@ -327,11 +312,13 @@ def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
     ANDROID_MARKER in marker_log
     and ANDROID_MARKER in marker_xml
     and PACKAGE in marker_xml
+    and interaction_ok
+    and interaction_verified
     and screenshot.is_file()
     and screenshot.stat().st_size > 1000
   )
   return {
-    "id": "android_real_mobile",
+    "id": profile["stageId"],
     "label": label,
     "family": "mobile_real",
     "status": "executed" if ok else "unavailable",
@@ -340,7 +327,14 @@ def run_android_stage(url: str, out_dir: Path) -> dict[str, Any]:
     "artifactPath": str(apk),
     "screenshotPath": str(screenshot) if screenshot.is_file() else None,
     "deviceSerial": serial,
+    "deviceProfile": profile_name,
+    "interactionExecuted": interaction_ok,
+    "interactionVerified": interaction_verified,
     "durationMs": int((time.monotonic() - started) * 1000),
-    "detail": "APK compile/signe/installe; WebView Android a execute le front local" if ok else None,
+    "detail": "APK compile/signe/installe; WebView execute; sequence utilisateur adb validee" if ok else None,
     **({} if ok else {"error": error or tail(emulator_log.read_text(encoding="utf-8", errors="replace"))}),
   }
+
+
+def run_android_stages(url: str, out_dir: Path) -> list[dict[str, Any]]:
+  return [run_android_stage(url, out_dir, profile) for profile in ANDROID_PROFILES]

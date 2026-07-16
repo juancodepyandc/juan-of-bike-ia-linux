@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import simulation_lab
-from simulation_android import android_guest_url
+from simulation_android import ANDROID_PROFILES, _package_resumed, _tap_target, android_guest_url
 from simulation_embedded import _elf32_to_raw
 from simulation_tooling import unavailable
 
@@ -28,6 +28,21 @@ class SimulationEnvironmentTests(unittest.TestCase):
       "http://10.0.2.2:1420/code?q=1",
     )
     self.assertEqual(android_guest_url("https://example.test/app"), "https://example.test/app")
+
+  def test_android_matrix_contains_real_phone_and_tablet_profiles(self):
+    self.assertEqual(set(ANDROID_PROFILES), {"phone", "tablet"})
+    self.assertNotEqual(ANDROID_PROFILES["phone"]["device"], ANDROID_PROFILES["tablet"]["device"])
+
+  def test_android_user_action_uses_accessibility_bounds(self):
+    xml = '<hierarchy><node text="Continuer sans admin" bounds="[100,200][300,260]" /></hierarchy>'
+    self.assertEqual(_tap_target(xml, "continuer sans admin"), (200, 230))
+    self.assertIsNone(_tap_target("<invalid", "Continuer"))
+
+  def test_android_foreground_activity_must_be_the_probe_package(self):
+    resumed = "topResumedActivity=ActivityRecord{1 u0 ia.aurora.codeprobe/.MainActivity t8}"
+    launcher = "topResumedActivity=ActivityRecord{1 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity}"
+    self.assertTrue(_package_resumed(resumed))
+    self.assertFalse(_package_resumed(launcher))
 
   def test_elf_load_segment_is_converted_to_raw_firmware(self):
     with tempfile.TemporaryDirectory() as raw:
@@ -51,7 +66,7 @@ class SimulationEnvironmentTests(unittest.TestCase):
       "realExecution": True,
     }
     webkit = [{"browser": "webkit", "status": "executed"}]
-    with patch.object(simulation_lab, "run_android_stage", return_value=executed("android")), \
+    with patch.object(simulation_lab, "run_android_stages", return_value=[executed("android")]), \
          patch.object(simulation_lab, "run_renode_stage", return_value=executed("renode")), \
          patch.object(simulation_lab, "run_qemu_raspberry_stage", return_value=executed("raspberry")), \
          patch.object(simulation_lab, "run_qemu_os_stage", return_value=executed("os")):

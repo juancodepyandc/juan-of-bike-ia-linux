@@ -37,6 +37,9 @@ export type CodeSimulationStage = {
   toolPath?: string
   artifactPath?: string
   deviceSerial?: string
+  deviceProfile?: string
+  interactionExecuted?: boolean
+  interactionVerified?: boolean
   durationMs?: number
   detail?: string
   error?: string
@@ -71,11 +74,14 @@ export type CodeSimulationLabRequest = {
 function isStage(value: unknown): value is CodeSimulationStage {
   if (!value || typeof value !== 'object') return false
   const stage = value as Record<string, unknown>
+  const statuses: CodeSimulationStageStatus[] = ['executed', 'detected', 'degraded', 'unavailable', 'deferred']
   return typeof stage.id === 'string'
     && typeof stage.label === 'string'
     && typeof stage.family === 'string'
-    && typeof stage.status === 'string'
+    && statuses.includes(stage.status as CodeSimulationStageStatus)
     && typeof stage.realExecution === 'boolean'
+    && (stage.status !== 'executed' || stage.realExecution === true)
+    && (stage.realExecution !== true || stage.status === 'executed')
 }
 
 export function isCodeSimulationLabReport(value: unknown): value is CodeSimulationLabReport {
