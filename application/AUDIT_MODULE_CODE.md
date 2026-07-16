@@ -536,16 +536,18 @@
 - **Validation** : test WS11 5 verts / 0 echec ; glob Code a **663 tests verts / 0 echec** ; `npm run build` vert ; preuve CDP reelle sur `http://127.0.0.1:4179` avec `headingCount=1`, `mediaCount=1`, `consoleErrors=[]`, `exceptions=[]`, `failedRequests=[]` aux viewports 390/834/1440.
 - **WS11 statut** : le socle viewer/runtime est applique. Restent l'integration WS12 du panneau simulations avec un labo multi-environnements reel et la convergence progressive des vues historiques AuroraV1.
 
-### 2026-07-16 — Vague 5 / WS12 increment 64 applique
+### 2026-07-16 — Vague 5 / WS12 increments 64, 70 et 71 appliques
 
 - **Labo simulation schema** : ajout de `aurora.code.simulation-lab/1` cote Python/bridge/TypeScript, avec statuts `executed`, `unavailable`, `deferred`.
 - **Chromium CDP avance** : `cdp_drive.mjs simulate` execute desktop, Pixel 8 touch 4G et tablet slow-3G avec DPR, touch, UA, throttling CPU/reseau et metriques Performance.
-- **Matrice Playwright** : ajout de `playwright` en devDependency et de `playwright_simulate.mjs`; Chromium et Firefox Playwright s'executent reellement, WebKit est telecharge mais bloque par dependances systeme manquantes.
+- **Matrice Playwright** : ajout de `playwright` en devDependency et de `playwright_simulate.mjs`; Chromium, Firefox et WebKit s'executent reellement.
 - **Bridge** : ajout de `POST /api/code/simulation-lab`, route locale uniquement, timeouts bornes, output sous `output/code_simulation_labs/`.
 - **Atelier** : panneau Simu branche au labo WS12 quand un dev-server local est actif; il affiche executions reelles, indisponibles et justifications.
-- **Pas de faux mobile/embarque** : Android/Waydroid, Renode et QEMU sont declares indisponibles quand absents; aucune simulation par simple largeur n'est presentee comme reelle.
-- **Validation** : tests WS12/WS11 8 verts / 0 echec ; glob Code complet **666 tests verts / 0 echec** ; syntaxe Node/Python verte ; `npm run build` vert ; preuve `output/ws12_simulation_lab_proof3` avec CDP Chromium desktop/mobile/tablet executes, Playwright Chromium/Firefox executes, WebKit/Android/Renode/QEMU explicitement indisponibles.
-- **WS12 statut** : socle labo reel applique pour web multi-profils et multi-browser partiel. DoD complet mobile natif/embarque/Raspberry/OS boot attend installation systeme de Waydroid/AVD, Renode et QEMU.
+- **Mobile reel, deux formats** : Android Emulator lance un profil telephone Pixel 6 et un profil tablette Pixel Tablet; chaque AVD installe et execute l'APK/PWA, puis une interaction UI est verifiee. Captures : `output/ws12_android_dual_final_v5/android_avd/android.png` et `output/ws12_android_dual_final_v5/android_tablet_avd/android.png`.
+- **Embarque et boot reel** : Renode execute le firmware Arduino jusqu'au marqueur serie `0xA6120042`; QEMU Raspberry Pi 2B atteint `AURORA_WS12_RASPBERRY_HEARTBEAT`; QEMU x86 boote une image OS jusqu'a `AURORA_WS12_OS_HEARTBEAT`.
+- **Pas de faux device** : les onze stages techniques sont marques `executed` et `realExecution=true`; les consoles restent le seul stage `deferred`, avec justification technique ecrite et sans redimensionnement cosmétique.
+- **Validation definitive** : tests Python WS12 **21 verts / 0 echec**; tests Code **705 verts / 0 echec** au point du run; rapport `output/ws12_simulation_definitive/report.json` avec 11 executions reelles sur 12 stages et assertion d'acceptation verte.
+- **WS12 statut** : DoD technique satisfait pour trois navigateurs, telephone et tablette Android, firmware Renode, Raspberry QEMU, image OS bootable et throttling. La simulation iOS est indisponible sous Linux; les consoles restent explicitement differees comme l'autorise le prompt.
 
 ### 2026-07-16 — Vague 4 / WS14 increment 65 applique
 
@@ -556,6 +558,34 @@
 - **Bridge** : ajout de `POST /api/code/tooling-eval`, route bornee par timeout et namespace Code.
 - **Validation** : tests WS14/WS13 cibles 52 verts / 0 echec ; syntaxe Python/bridge verte ; `npm run build` vert ; preuve `output/ws14_tooling_eval_proof/report.json` avec `python-slugify` conserve sur gain A/B **80 -> 100 (+20)** et un candidat inutile retire **100 -> 100 (+0)** ; aucun marqueur dans `application/.venv`.
 - **WS14 statut** : auto-outillage reel applique pour le cas PyPI/venv isole, branche sur plateau de correction. Les outils lourds/modeles restent soumis a quotas/allow-list avant extension.
+
+### 2026-07-16 — Vague 5 / WS15 increment 66 applique
+
+- **Client inter-modules type** : `codeInterModuleAssets.ts` et `intermodule_assets.py` portent le contrat `aurora.code.asset-bundle/1`; l'image, le pipeline 3D et la voix sont appeles comme services via le bridge, sans reecriture de leurs modules.
+- **Fichiers optimises et exportables** : l'image reelle est declinee en AVIF/WebP 480/800/1280 avec `srcset`; le GLB et la narration WAV sont ecrits comme fichiers. Le ZIP final contient dix entrees autonomes et aucune URL bridge restante.
+- **Preuve reelle** : `output/code_assets/ws15-live-selected-v6/asset-bundle.json` contient une image AVIF 1280x768 (35 482 octets), un GLB (10 014 192 octets) et une voix WAV (535 244 octets). `output/ws15_inter_module_proof/v6_selected_zip_export_report.json` verifie chaque SHA-256 et `sourceMatch=true`.
+- **Qualite 3D preservee** : `output/ws15_inter_module_proof/v6_model_mesh_score.json` donne **81,4/100**, 149 996 faces, 86 795 sommets, sans axe echoue ni retry recommande; le viewer reel est capture dans `v6_selected_model_viewer.png`.
+- **Assainissement** : zero `source.unsplash.com`; la directive de plagiat est retiree; le RAG fetch/embeddings/reranking remplace les snippets circulaires; les artefacts Windows ne sont plus ajoutes au contrat Linux.
+- **Cadrage audio honnete** : voix/TTS realisee; musique/SFX explicitement differees car aucun service de ce type n'existe dans le bridge et le prompt autorise cette dette documentee.
+- **WS15 statut** : DoD satisfait pour image, 3D, voix, optimisation, export autonome, suppression Unsplash et retrait du plagiat. La dette musique/SFX reste ouverte sans faux asset.
+
+### 2026-07-16 — WS1 strict et audit final du perimetre Code
+
+- **Unites strictement bornees** : apres extraction des facades, contrats, phases, stores, vues, helpers CDP et runtime Python, toutes les unites de production du Module Code font **moins de 400 lignes**. Les plus grandes sont `CodeView.tsx` et plusieurs services a 398 lignes; aucune n'atteint 400.
+- **Regle automatisee** : `codeModuleStructure.test.ts` inventorie le perimetre de production et echoue si une unite depasse la limite; il verrouille aussi les orchestrateurs V1/V3/V4 et les cles stables des enfants `AnimatePresence`.
+- **Code mort et sources uniques** : les anciens elevateurs/patchers et composants sans import ont ete supprimes; les tests structuraux interdisent leur retour et la duplication des contrats critiques.
+- **Surface mesuree** : environ 39 000 lignes de production Code, reparties en modules a responsabilite bornee; les tests et harnais restent hors de cette limite de production.
+
+### 2026-07-16 — Relecture du depot entier et preuve UI finale
+
+- **Depot analyse** : 1 652 fichiers suivis; 539 fichiers Python; graphe npm coherent (`npm ls --depth=0`, 44 dependances directes); metadata Cargo valide; 0 fichier de secret/environnement suivi detecte.
+- **Syntaxe Python globale** : les fichiers Python suivis ont ete parses par `ast` sans erreur. L'environnement applicatif n'a recu aucune installation WS12/WS14/WS15.
+- **Securite dependances** : `npm audit --json` rapporte 0 vulnerabilite sur 413 dependances. `pip check` expose uniquement trois dependances optionnelles manquantes du pipeline image externe (`facexlib`, `gfpgan`, `tb-nightly`), hors Module Code; elles ne sont pas installees dans `.venv`.
+- **TypeScript global** : `tsc --noEmit` reste non vert sur des erreurs preexistantes hors Code (`CoworkOverlay`, `coworkPlanner`, `coworkProjectThread`, `sessionTempStorage`, `fluxKontextWorkflow`, `pixelArtEnforcer`, `AuroraCoworkView`); aucune erreur ne pointe vers le perimetre Code.
+- **Isolation WS7** : l'hote interdit actuellement Podman rootless (`unshare`/AppArmor, `newuidmap` et `newgidmap` absents, sudo interactif). Le Module Code echoue ferme et les politiques sont testees; l'execution conteneur reelle reste une limite d'infrastructure documentee, sans affirmation d'isolation fictive.
+- **Routage UI corrige** : Aurora V3 utilise son orchestrateur Code dedie; V1, V3 et V4 montent le Module Code reel. La grille tablette, le hero mobile, les actions de livraison et les recommandations connecteur ne debordent plus.
+- **Preuve visuelle** : `output/final_code_refonte_validation/screens/report.json` couvre sept profils (V4 desktop/tablette/mobile et livraison, V1 desktop, V3 desktop). Tous ont `codeViewFound=true`, iframe executee, marqueur runtime `verified`, **0 px** de debordement horizontal, zero erreur console/page/reseau et zero warning React de cle. Les PNG adjacents constituent les preuves inspectables.
+- **Dette de shell globale** : `index.html` n'autorise actuellement que V1/V3 alors que le registre applicatif expose aussi V4. Le harnais emploie `scripts/code_harness/visual_shell.html` pour tester chaque skin directement; cette divergence est hors perimetre Module Code et n'a pas ete modifiee.
 
 ---
 

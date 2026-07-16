@@ -3085,3 +3085,171 @@ WS12 n'est plus une largeur cosmetique : le labo execute de vrais navigateurs av
 ### Etat de satisfaction chantier
 
 WS14 dispose maintenant d'un chemin reel d'auto-outillage : detection de plateau, acquisition PyPI en venv isole, mesure A/B, conservation ou retrait propre. L'extension vers des outils plus lourds ou des modeles reste volontairement derriere allow-list et quotas pour eviter l'accumulation ou le swap VRAM.
+
+## 2026-07-16 — Vague 5 / WS15 increment 66 — Assets inter-modules reels
+
+### Reprise et diagnostic confirme
+
+- `source.unsplash.com` etait encore une dependance morte dans les chemins Code, l'image etait souvent inline/base64, et la generation 3D retombait sur des recettes recopiees au lieu de consommer le pipeline existant.
+- Le bridge expose reellement Image/ComfyUI, pipeline 3D, voix/TTS, recherche/extraction web et vision. Il n'expose aucun service musique, SFX ou foley.
+- L'ancienne boucle Python et plusieurs post-traitements TypeScript conservaient des chemins morts ou des transformations redondantes qui masquaient le chemin agentique reel.
+
+### Recherches et choix techniques
+
+- Les contrats HTTP du bridge et les artefacts reels ont ete pris comme source de verite; aucun module Image, 3D, Voix ou Vision n'a ete modifie.
+- Pillow, deja present dans l'environnement applicatif et verifie avec le codec AVIF, produit AVIF/WebP et les variantes 480/800/1280. Les assets binaires restent des fichiers, jamais des data URLs massives.
+- Le GLB vient du pipeline `aurora-3d`; son score mesh et un rendu Playwright du viewer servent de preuve independante. La voix vient du TTS du bridge.
+- Le RAG inter-module exige fetch de page, segmentation, embeddings et reranking. Une simple liste de snippets issus du prompt n'est plus acceptee comme recherche.
+- Musique/SFX sont differes explicitement : creer silencieusement un faux service aurait viole le cadrage du prompt et la contrainte de perimetre.
+
+### Modifications realisees
+
+- `src/services/codeInterModuleAssets.ts` : contrat `AssetBundle`, client bridge, validation et orchestration typee.
+- `src/services/codeInterModuleAssetIntegration.ts` et `codeRuntimeDependencies.ts` : integration des chemins d'assets, dependances de runtime et export autonome.
+- `python-services/aurora_code/intermodule_assets.py` : orchestration Image/3D/TTS, conversions, stockage borne et manifeste.
+- `intermodule_rag.py` et `intermodule_asset_reuse.py` : recherche reelle et reutilisation controlee par provenance.
+- `bridge_agentic_stream.py` et les routes `/api/code/*` : chemin agentique consolide et appels inter-modules serialises pour eviter la contention VRAM.
+- Suppression physique des anciens patchers/elevateurs sans valeur, des chemins Unsplash et de la directive de plagiat.
+- Tests TypeScript/Python ajoutes pour schema, refus des payloads invalides, traversal, export ZIP, assets telechargeables, RAG et non-regression agentique.
+
+### Avant / apres mesurable
+
+- Avant : image inline ou URL fragile, 3D synthetique, aucun bundle exportable, voix absente.
+- Apres : bundle reel avec AVIF/WebP responsives, GLB du pipeline 3D et WAV TTS; dix fichiers sont embarques dans un ZIP autonome, sans URL bridge residuelle.
+- Image 1280x768 : 35 482 octets en AVIF. GLB : 10 014 192 octets. WAV : 535 244 octets.
+- Mesh : score 81,4/100, 149 996 faces, 86 795 sommets, aucun axe echoue et aucun retry recommande.
+
+### Demonstration reproductible
+
+```bash
+node --experimental-strip-types scripts/code_harness/ws15_asset_export_proof.ts \
+  ws15-live-selected-v6 http://127.0.0.1:3001 \
+  > output/ws15_inter_module_proof/v6_selected_zip_export_report.json
+jq . output/ws15_inter_module_proof/v6_selected_zip_export_report.json
+sha256sum -c output/ws15_inter_module_proof/v6_selected_sha256.txt
+```
+
+Resultat attendu : `ok=true`, dix entrees d'archive, `bridgeUrlsRemaining=false`, huit controles binaires `sourceMatch=true` et des SHA-256 valides.
+
+### Etat de satisfaction chantier
+
+WS15 satisfait le DoD pour image, 3D, voix, optimisation, integration et export. Musique/SFX restent une dette explicite, car le seul service audio disponible est TTS; aucun asset fictif n'est revendique.
+
+## 2026-07-16 — Vague 1 / WS1 increments 67 a 69 — Limite stricte sous 400 lignes
+
+### Reprise et diagnostic confirme
+
+- Le seuil initial de 600 lignes avait ete atteint, mais plusieurs facades et orchestrateurs restaient trop denses pour une maintenance rigoureuse.
+- Les plus gros points etaient les orchestrateurs TypeScript, le store de streaming, les vues Code, le runtime Python et le pilote CDP.
+
+### Choix et implementation
+
+- Extraction par responsabilite et conservation des API publiques : contrats/types, callbacks de generation, persistance workspace, panneaux atelier, commandes CDP, etat/CLI de boucle Python.
+- Les extractions ne changent pas les contrats publics; les tests structuraux verifient imports, reexports et absence des anciens modules morts.
+- Seuil automatise strict : toute unite de production Code doit faire moins de 400 lignes.
+
+### Avant / apres mesurable
+
+- Avant la refonte : `codeOrchestrator.ts` 4 863 lignes, `codeIntent.ts` 3 221 lignes, plusieurs vues/stores au-dela de 600.
+- Apres : environ 39 000 lignes de production Code; maximum 398 lignes (`CodeView.tsx`, `codeDesignReferenceHtml.ts`, `codeAutoCorrection.ts`); zero unite a 400 lignes ou plus.
+- La decomposition ajoute des tests de structure et retire physiquement les implementations sans import.
+
+### Demonstration reproductible
+
+```bash
+node --experimental-strip-types --test src/__tests__/codeModuleStructure.test.ts
+find src python-services/aurora_code -type f \
+  \( -name '*code*.ts' -o -name '*Code*.tsx' -o -path 'python-services/aurora_code/*' \) \
+  -not -path '*/__tests__/*' -print0 | xargs -0 wc -l | sort -nr | head
+```
+
+Resultat attendu : test structurel vert et aucune unite de production Code a 400 lignes ou plus.
+
+### Etat de satisfaction chantier
+
+WS1 depasse le DoD d'origine (<600) avec une borne stricte <400, testee automatiquement. Les gros fichiers des autres modules ne sont pas modifies, conformement au perimetre.
+
+## 2026-07-16 — Vague 5 / WS12 increments 70 et 71 — Environnements reels definitifs
+
+### Reprise et diagnostic corrige
+
+- Le premier increment WS12 etait honnete mais incomplet : Chromium/Firefox etaient executes, tandis que WebKit, Android, Renode et QEMU etaient indisponibles.
+- La reprise a installe les outils au niveau utilisateur/systeme autorise, sans toucher `application/.venv`, puis a remplace chaque probe par une execution verifiable.
+- Une premiere preuve Android ne couvrait qu'un telephone; le DoD exige explicitement telephone et tablette. Un second profil AVD reel a donc ete ajoute.
+
+### Recherches et choix techniques
+
+- Playwright officiel pour Chromium, Firefox et WebKit; CDP pour DPR, tactile, UA, throttling CPU/reseau et metriques fines.
+- Android Emulator/ADB pour installer et lancer l'APK/PWA sur Pixel 6 et Pixel Tablet. Une interaction UI et un marqueur dans le contenu prouvent l'execution, au-dela du screenshot.
+- Renode en process externe MIT pour un firmware Arduino Nano 33 BLE et son marqueur serie.
+- QEMU en process externe GPL pour Raspberry Pi 2B bare-metal et image x86 bootable; les heartbeats deterministes servent d'oracles.
+- iOS reste indisponible sous Linux faute de toolchain Apple; consoles differees avec matrice de faisabilite, comme le prompt l'autorise.
+
+### Modifications realisees
+
+- `simulation_android.py`, `simulation_android_app.py`, `simulation_android_profiles.py` : profils AVD, application de preuve, installation, lancement et interaction.
+- `simulation_embedded.py` : build/run Renode et images QEMU avec marqueurs attendus.
+- `simulation_tooling.py` : decouverte multiplateforme idempotente et chemins d'outils.
+- `simulation_lab.py` : onze stages reels, timeout/cleanup et stage consoles honnetement differe.
+- Contrats TypeScript et tests Python/TypeScript etendus au telephone et a la tablette.
+
+### Avant / apres mesurable
+
+- Avant reprise : 5 executions reelles, 5 environnements indisponibles et consoles differees.
+- Apres : **11 stages `executed` avec `realExecution=true` sur 12**, aucun stage indisponible/degrade/detecte; seul le stage consoles est differe.
+- Web : Chromium CDP sur trois profils + Chromium/Firefox/WebKit reels.
+- Mobile : Pixel 6 et Pixel Tablet executent la meme application et une interaction verifiee.
+- Embarque/OS : `0xA6120042`, `AURORA_WS12_RASPBERRY_HEARTBEAT`, `AURORA_WS12_OS_HEARTBEAT`.
+
+### Demonstration reproductible
+
+```bash
+mkdir -p output/ws12_simulation_definitive
+.venv/bin/python python-services/aurora_code/simulation_lab.py \
+  http://127.0.0.1:1431 output/ws12_simulation_definitive 2500 \
+  > output/ws12_simulation_definitive/report.json
+jq '[.stages[] | select(.status == "executed" and .realExecution == true)] | length' \
+  output/ws12_simulation_definitive/report.json
+```
+
+Resultat attendu : `11`; les captures Android et les logs Renode/QEMU sont sous le dossier de sortie choisi.
+
+### Etat de satisfaction chantier
+
+WS12 satisfait les criteres techniques executables sur cet hote. Les consoles sont differees avec justification; iOS est une limite de plateforme Linux, jamais remplacee par une largeur cosmetique.
+
+## 2026-07-16 — Relecture depot entier et correction visuelle finale
+
+### Analyse globale
+
+- 1 652 fichiers suivis, dont 539 Python. Les fichiers hors Code les plus volumineux restent `bridge_server.py`, `ModelView.tsx` et `CoworkOverlay.tsx`; ils ne sont pas refactorises car le prompt interdit de modifier les autres modules.
+- `npm ls --depth=0` ne remonte aucun probleme; `npm audit --json` donne 0 vulnerabilite sur 413 dependances; la metadata Cargo est valide.
+- Tous les Python suivis sont parsables par `ast`. `pip check` ne remonte que les extras externes image `facexlib`, `gfpgan` et `tb-nightly`, absents avant la reprise et volontairement non installes dans `.venv`.
+- Le typecheck global expose seulement des erreurs hors Code dans Cowork, stockage temporaire, Flux Kontext, Pixel Art et AuroraCoworkView. Le perimetre Code n'apparait dans aucune erreur.
+- Le sandbox WS7 echoue ferme lorsque Podman rootless est bloque par AppArmor/user namespaces. Cette limite hote est documentee; aucun test ne pretend qu'un conteneur a tourne quand ce n'est pas le cas.
+
+### Corrections UI issues de l'inspection
+
+- Aurora V3 route maintenant vers `AuroraV3CodeView` et applique une couche visuelle scopee au Module Code.
+- La grille principale garde deux colonnes utiles a 1024 px; le hero V4 et les actions de livraison s'adaptent a 390 px.
+- Les recommandations connecteur peuvent revenir a la ligne; les enfants de `AnimatePresence` ont des cles stables, supprimant le warning React observe par le probe.
+- `final_visual_proof.mjs` injecte un projet dashboard reel dans les stores V1/V3/V4, attend le `postMessage` emis par le code execute dans l'iframe, mesure les debordements visibles et masques, les boutons tronques et capture les erreurs console/page/reseau.
+- `final_screenshot_pixel_audit.mjs` relit les PNG dans Chromium/Canvas et controle dimensions, entropie et dispersion des canaux afin d'exclure les rendus vides.
+
+### Preuve visuelle reproductible
+
+```bash
+AURORA_URL=http://127.0.0.1:1431 \
+  node scripts/code_harness/final_visual_proof.mjs
+jq '{ok, failures, profiles: [.profiles[] | {id, previewExecution, horizontalOverflowPx}]}' \
+  output/final_code_refonte_validation/screens/report.json
+```
+
+Resultat observe : sept profils, `ok=true`, `failures=[]`, iframe `verified`, 0 px de debordement, aucune erreur console/page/reseau et aucun warning React de cle. Les PNG desktop/tablette/mobile sont dans le meme dossier.
+
+### Limites globales laissees ouvertes
+
+- Le shell global `index.html` autorise V1/V3 alors que le registre expose V4. Le harnais direct `visual_shell.html` isole les skins pour la preuve; corriger le shell depasserait le perimetre Module Code.
+- Podman rootless reste bloque par la configuration de l'hote. Les politiques fail-closed et tests d'isolation restent actives en attendant un hote equipe.
+- Les extras Python du pipeline image externe ne sont pas resolus dans `.venv`, conformement a l'interdiction explicite du prompt.
+- Musique/SFX restent sans service bridge. WS15 ne fabrique pas de resultat fictif.
