@@ -2100,3 +2100,44 @@ Pour cet increment WS3, non, WS3 n'est toujours pas termine : le contrat stream 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : le moteur n'execute pas encore la queue fichier par fichier. Mais la donnee de pilotage est maintenant construite, testee et branchee au chemin de generation actif.
+
+## 2026-07-15 — Vague 3 / WS3 increment 47 — Outils VFS du planner-executor
+
+### Reprise et diagnostic confirme
+
+- WS3 cible explicitement une boucle a outils `write_file/read_file/apply_patch/run_command`.
+- Le Module Code avait deja le VFS/protocole WS2 et la queue WS3, mais pas d'API locale commune pour appliquer des actions outil-par-outil sur le projet en memoire.
+- `run_command` ne doit pas contourner WS7 : il doit passer par un runner sandbox explicite.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : il s'agit d'un contrat interne sur `CodeFile[]` et `codeProjectTree.normalizeProjectPath`.
+- Choix retenu : un executor pur, synchrone sur le VFS pour les fichiers, asynchrone uniquement pour `run_command`.
+- Raison technique : separer l'effet fichier de l'execution sandbox permet de tester les mutations sans lancer de process et de brancher WS7 ensuite sans reecrire l'API.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeGenerationTools.ts` :
+  - types `CodeGenerationToolAction` et `CodeGenerationToolResult` ;
+  - `write_file` upsert un fichier normalise ;
+  - `read_file` retourne le contenu VFS ;
+  - `apply_patch` fait un remplacement exact, premier match par defaut ou tous les matchs avec `all=true` ;
+  - `run_command` exige un runner explicite.
+- Ajout de `executeCodeGenerationToolSequence` pour appliquer une suite d'actions et stopper au premier echec.
+- Ajout de `src/__tests__/codeGenerationTools.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : le futur executor n'avait pas de primitive VFS testee ; les reparations restaient des regenerations globales ou des merges post-generation.
+- Apres : les actions de base existent, sont testees, refusent les chemins dangereux et peuvent etre branchees a un agent sans toucher au disque hote.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationTools.test.ts src/__tests__/codeGenerationQueue.test.ts src/__tests__/codePipelinePhases.test.ts` : 10 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 582 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : les outils VFS sont prets, mais ils ne pilotent pas encore la generation LLM. La prochaine marche consiste a les connecter a une boucle executor qui traite la queue architecte et emet les evenements stream.

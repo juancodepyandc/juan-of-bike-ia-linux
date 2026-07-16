@@ -389,6 +389,14 @@
 - **Validation** : tests cibles plan/queue/phases 12 verts / 0 echec ; glob Code a **577 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS3 reste ouvert** : consommer cette queue par un executor reel, emettre `file.written` par fichier et brancher `/api/code/*` restent a livrer.
 
+### 2026-07-15 — Vague 3 / WS3 increment 47 applique
+
+- **Outils VFS WS3** : `codeGenerationTools.ts` formalise `write_file`, `read_file`, `apply_patch` et `run_command` sur un VFS `CodeFile[]`, avec resultats typés.
+- **Securite de base** : chemins absolus, `..`, NUL et fichiers secrets (`.env`, `.npmrc`, `.pypirc`) sont bloques avant ecriture ; `run_command` refuse de s'executer sans runner WS7 explicite.
+- **Execution sequencee** : `executeCodeGenerationToolSequence` applique les actions dans l'ordre et stoppe au premier echec, premiere brique du futur executor fichier-par-fichier.
+- **Validation** : tests cibles outils/queue/phases 10 verts / 0 echec ; glob Code a **582 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS3 reste ouvert** : brancher cette brique au LLM planner-executor, au sandbox WS7 pour `run_command`, au stream `file.written` live et au bridge `/api/code/*`.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
