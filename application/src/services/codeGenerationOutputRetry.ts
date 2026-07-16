@@ -5,6 +5,7 @@ import type { BrandFidelityReport } from './codeFidelityGate.ts'
 import { evaluateBrandFidelity } from './codeFidelityGate.ts'
 import { detectNonCodePlanningNarrative, extractNotes, fatalEmissionIssues, parseCodeFiles, parseCodeFilesWithReport } from './codeGeneratedFileParser.ts'
 import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
+import { assertCodePatchNonRegression, buildCodeIncrementalPatchScope } from './codeIncrementalPatchScope.ts'
 import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import { computeContentQualityScore } from './codeQualityGates.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
@@ -139,6 +140,25 @@ export async function runGeneratedOutputRetryLoop({
   let initialFiles = effectiveExistingFiles.length > 0 && parsed.length > 0
     ? mergeExistingWithUpdates(effectiveExistingFiles, parsed)
     : parsed
+
+  // WS5: en MODIFICATION d un projet existant, le scope de patch incremental
+  // designe des fichiers proteges (hors cible). On ENFORCE ici que la generation
+  // ne les a pas alteres/supprimes — le scope n etait jusqu ici qu un indice de
+  // prompt jamais verifie. Une violation est remontee (non silencieuse).
+  if (effectiveExistingFiles.length > 0 && parsed.length > 0) {
+    const scope = buildCodeIncrementalPatchScope({ prompt, files: effectiveExistingFiles })
+    const nonRegression = assertCodePatchNonRegression({
+      before: effectiveExistingFiles,
+      after: initialFiles,
+      scope,
+    })
+    if (!nonRegression.ok) {
+      const touched = nonRegression.errors.slice(0, 6).join(', ')
+      const warning = `Regression de portee WS5: ${nonRegression.errors.length} fichier(s) protege(s) modifie(s)/supprime(s) hors cible (${touched}). Verifie que seuls les fichiers pertinents ont ete changes.`
+      initialNotes = initialNotes ? `${initialNotes}\n\n${warning}` : warning
+      setPhase(warning, 14)
+    }
+  }
 
   const isExpertComplexProject = intent.complexity === 'complex' || intent.complexity === 'enterprise'
   const maxOutputRetries = isExpertComplexProject ? 6 : 3
