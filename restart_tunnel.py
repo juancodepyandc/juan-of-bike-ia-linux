@@ -27,16 +27,32 @@ import threading
 import time
 from pathlib import Path
 
+import shutil as _shutil
+import sys as _sys
+
 REPO_ROOT = Path(__file__).resolve().parent
-CLOUDFLARED = REPO_ROOT / "tools" / "cloudflared.exe"
+_IS_WINDOWS = _sys.platform.startswith("win")
+# Cross-plateforme: sur Linux/mac, cloudflared est dans le PATH (pas de .exe).
+if _IS_WINDOWS:
+    CLOUDFLARED = str(REPO_ROOT / "tools" / "cloudflared.exe")
+else:
+    CLOUDFLARED = _shutil.which("cloudflared") or str(REPO_ROOT / "tools" / "cloudflared")
 TUNNEL_URL_FILE = REPO_ROOT / "tunnel_url.txt"
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 WAIT_SECONDS = 20.0
 
 
 def kill_existing_cloudflared() -> int:
-    """Kill all running cloudflared.exe processes. Returns count killed."""
+    """Kill all running cloudflared processes. Returns count killed."""
     killed = 0
+    if not _IS_WINDOWS:
+        # Linux/mac: pkill par nom de process.
+        try:
+            r = subprocess.run(["pkill", "-f", "cloudflared tunnel"], capture_output=True, timeout=10)
+            killed = 1 if r.returncode == 0 else 0
+        except Exception as e:  # noqa: BLE001
+            print(f"[!] pkill cloudflared failed: {e}", flush=True)
+        return killed
     try:
         # Windows-specific: tasklist + taskkill
         out = subprocess.run(
@@ -61,11 +77,12 @@ def kill_existing_cloudflared() -> int:
 
 
 def main() -> int:
-    if not CLOUDFLARED.exists():
+    if not CLOUDFLARED or not Path(CLOUDFLARED).exists():
         print(f"[x] cloudflared introuvable: {CLOUDFLARED}", flush=True)
+        print(f"    Sur Linux: installe cloudflared (dans le PATH) ou place le binaire dans tools/.", flush=True)
         return 1
 
-    print(f"[1/3] kill cloudflared.exe en cours...", flush=True)
+    print(f"[1/3] kill cloudflared en cours...", flush=True)
     killed = kill_existing_cloudflared()
     print(f"      {killed} process(es) terminé(s)", flush=True)
     time.sleep(1.0)
