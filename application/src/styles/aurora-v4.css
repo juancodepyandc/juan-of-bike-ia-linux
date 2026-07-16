@@ -945,6 +945,50 @@ html[data-ui-skin="aurora_v4"] [data-code-view="true"] ::selection {
   color: #F0FDFF;
 }
 
+html[data-ui-skin="aurora_v4"] [data-code-view="true"] .code-connector-recommendations > button > span:first-child {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+html[data-ui-skin="aurora_v4"] [data-code-view="true"] .code-connector-recommendations > button > span:first-child > span {
+  max-width: 100%;
+  white-space: normal;
+}
+
+@media (max-width: 640px) {
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero {
+    margin: 8px;
+    padding: 14px;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-top {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-badge {
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-ident {
+    min-width: 0;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-title {
+    font-size: 21px;
+    line-height: 1.08;
+    overflow-wrap: anywhere;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-ready {
+    grid-column: 2;
+    justify-self: start;
+  }
+  html[data-ui-skin="aurora_v4"] [data-code-view="true"] .manga-hero-desc {
+    font-size: 12px;
+    line-height: 1.5;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-ui-skin="aurora_v4"] [data-code-view="true"] *,
   html[data-ui-skin="aurora_v4"] [data-code-view="true"]::before,

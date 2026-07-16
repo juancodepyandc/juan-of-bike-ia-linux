@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aurora Code - preuve visuelle</title>
+    <script>
+      const skin = new URLSearchParams(window.location.search).get('skin') || 'aurora_v4'
+      localStorage.clear()
+      localStorage.setItem('aurora-ui-skin', skin)
+      localStorage.setItem('aurora-ui-skin-choice', skin)
+      document.documentElement.setAttribute('data-ui-skin', skin)
+    </script>
+  </head>
+  <body class="overflow-hidden">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

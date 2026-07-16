@@ -114,7 +114,7 @@ const ImageView = pickView({
 const CodeView = pickView({
   manga:     () => import('./views/CodeView'),
   aurora_v1: () => import('./views/AuroraV1CodeView'),
-  aurora_v3: () => import('./views/AuroraV1CodeView'),
+  aurora_v3: () => import('./views/AuroraV3CodeView'),
   aurora_v4: () => import('./views/CodeView'),
 })
 const VideoView = pickView({

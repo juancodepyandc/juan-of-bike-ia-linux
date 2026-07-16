@@ -126,9 +126,9 @@ export function CodeViewDeliveryPanel({
             </div>
           </div>
 
-          <div className="grid min-h-[34rem] gap-4 p-5 xl:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
+          <div className="grid min-h-[34rem] min-w-0 gap-4 p-5 xl:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]">
             {/* File tree + Preview */}
-            <div className="min-h-0 flex flex-col gap-4">
+            <div className="min-h-0 min-w-0 flex flex-col gap-4">
               <div className="rounded-[1.6rem] border border-aurora-border/35 bg-aurora-surface/65 p-3">
                 <div className="flex items-center gap-2 px-2 pb-3 text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">
                   <FileCode2 size={13} />
@@ -328,8 +328,7 @@ export function CodeViewDeliveryPanel({
           {/* Validation result */}
           <AnimatePresence>
             {validationResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
+              <motion.div key="validation-result" initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
                 className="border-t border-aurora-border/30 px-5 py-4"
@@ -380,8 +379,7 @@ export function CodeViewDeliveryPanel({
               </motion.div>
             )}
             {notes && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
+              <motion.div key="delivery-notes" initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
                 className="border-t border-aurora-border/30 px-5 py-4"

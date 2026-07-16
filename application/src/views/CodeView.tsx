@@ -324,7 +324,7 @@ export default function CodeView() {
         projectLabel={intent ? formatProjectType(intent.projectType) : undefined}
       />
 
-      <div className="grid gap-3 px-2 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-4 xl:grid-cols-[23rem_minmax(0,1fr)]">
+      <div className="grid gap-3 px-2 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-4 lg:grid-cols-[20rem_minmax(0,1fr)] xl:grid-cols-[23rem_minmax(0,1fr)]">
         <CodeViewControlPanel
           assetPack={assetPack}
           canGenerate={canGenerate}

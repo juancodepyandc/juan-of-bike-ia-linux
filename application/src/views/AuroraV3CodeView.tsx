@@ -12,6 +12,7 @@
  * server, 22 languages, R3F + GLSL playground).
  */
 import { lazy, Suspense, useState } from 'react'
+import '../styles/aurora-v3-code.css'
 
 const CodeView = lazy(() => import('./CodeView'))
 
@@ -66,17 +67,19 @@ export default function AuroraV3CodeView() {
 
   if (live) {
     return (
-      <Suspense fallback={
-        <div style={{
-          width: '100%', height: '100%',
-          background: BG, color: AMBER,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'IBM Plex Mono, JetBrains Mono, monospace',
-          letterSpacing: '0.3em', fontSize: 13,
-        }}>AURORA.CODEX · LOADING ORCHESTRATOR…</div>
-      }>
-        <CodeView />
-      </Suspense>
+      <div data-v3-code-orchestrator="true">
+        <Suspense fallback={
+          <div style={{
+            width: '100%', height: '100%',
+            background: BG, color: AMBER,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'IBM Plex Mono, JetBrains Mono, monospace',
+            letterSpacing: '0.3em', fontSize: 13,
+          }}>AURORA.CODEX · LOADING ORCHESTRATOR…</div>
+        }>
+          <CodeView />
+        </Suspense>
+      </div>
     )
   }
 

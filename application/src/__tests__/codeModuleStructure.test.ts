@@ -45,4 +45,15 @@ describe('WS1 module Code structure', () => {
       assert.doesNotMatch(corpus, new RegExp(`(?:from\\s+['"][^'"]*|import\\s*\\(['"][^'"]*)${deadModule}`))
     }
   })
+
+  test('Ricochet route Code vers son orchestrateur dedie', () => {
+    const appSource = readFileSync('src/App.tsx', 'utf8')
+    assert.match(appSource, /aurora_v3:\s*\(\)\s*=>\s*import\('\.\/views\/AuroraV3CodeView'\)/)
+  })
+
+  test('les panneaux animes de livraison gardent des cles stables', () => {
+    const delivery = readFileSync('src/views/codeViewDeliveryPanel.tsx', 'utf8')
+    assert.match(delivery, /motion\.div key="validation-result"/)
+    assert.match(delivery, /motion\.div key="delivery-notes"/)
+  })
 })

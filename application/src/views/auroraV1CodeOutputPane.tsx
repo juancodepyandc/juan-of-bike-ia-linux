@@ -157,7 +157,7 @@ export function AuroraV1CodeOutputPane({
             )}
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <input
             id="code-draft-input"
             name="codeDraft"
@@ -174,7 +174,7 @@ export function AuroraV1CodeOutputPane({
             placeholder="Décris la modification ou demande du code… (⌘↵)"
             disabled={code.streaming}
             style={{
-              flex: 1, padding: '8px 12px',
+              flex: '1 1 14rem', minWidth: 0, padding: '8px 12px',
               background: 'var(--bg-input, var(--bg-card, rgba(255,255,255,0.04)))',
               color: 'var(--fg, #f5f5f5)',
               border: '1px solid var(--line, rgba(255,255,255,0.12))',

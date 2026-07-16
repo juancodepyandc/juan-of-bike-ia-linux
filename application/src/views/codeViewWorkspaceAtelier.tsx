@@ -111,7 +111,7 @@ export function CodeViewWorkspaceAtelier({
 
   return (
     <section
-      className={`overflow-hidden rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/65 ${
+      className={`min-w-0 max-w-full overflow-hidden rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/65 ${
         dockMode === 'bottom' ? 'xl:col-span-2' : ''
       }`}
     >
@@ -140,7 +140,7 @@ export function CodeViewWorkspaceAtelier({
         </div>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto border-b border-aurora-border/20 px-2 py-2">
+      <div className="flex flex-wrap gap-1 border-b border-aurora-border/20 px-2 py-2 sm:flex-nowrap sm:overflow-x-auto">
         {TABS.map((tab) => {
           const Icon = tab.icon
           return (

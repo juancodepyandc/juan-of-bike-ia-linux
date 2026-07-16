@@ -187,7 +187,7 @@ export function CodeViewControlActions({
           )}
 
           <StudioDiagnosticsPanel diagnostics={diagnostics} title="Preflight code" />
-          <ConnectorRecommendationsPanel module="code" compact />
+          <ConnectorRecommendationsPanel module="code" compact className="code-connector-recommendations" />
     </>
   )
 }
