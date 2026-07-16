@@ -1,6 +1,10 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildCodeProjectMemory, selectCodeProjectMemoryContext } from '../services/codeProjectMemory.ts'
+import {
+  buildCodeProjectMemory,
+  buildLocalCodeEmbedding,
+  selectCodeProjectMemoryContext,
+} from '../services/codeProjectMemory.ts'
 import type { CodeGenerationQueueItem } from '../services/codeGenerationQueue.ts'
 import type { CodeFile } from '../services/codeOrchestrator.ts'
 
@@ -34,6 +38,16 @@ describe('codeProjectMemory', () => {
     assert.deepEqual(currency.importedBy, ['src/features/billing/BillingPanel.tsx'])
     assert.ok(panel.symbols.includes('BillingPanel'))
     assert.ok(currency.terms.includes('format'))
+    assert.equal(currency.embedding?.length, 64)
+  })
+
+  test('produit des embeddings locaux normalises et deterministes', () => {
+    const first = buildLocalCodeEmbedding('billing invoice currency')
+    const second = buildLocalCodeEmbedding('billing invoice currency')
+    const norm = Math.hypot(...first)
+
+    assert.deepEqual(first, second)
+    assert.ok(Math.abs(norm - 1) < 0.00001)
   })
 
   test('selectionne le contexte par cible, imports du plan et termes du prompt', () => {

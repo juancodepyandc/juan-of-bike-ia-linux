@@ -461,6 +461,15 @@
 - **Validation** : tests cibles memoire/producteur 5 verts / 0 echec ; glob Code a **607 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS5 reste ouvert** : cet increment remplace la troncature heuristique par une memoire locale ciblee, mais ne livre pas encore l'index durable avec embeddings locaux ni la preuve de patch incremental/non-regression sur fichiers non concernes.
 
+### 2026-07-15 — Vague 3 / WS5 increment 56 applique
+
+- **Index durable + embeddings locaux** : ajout de `codeProjectMemoryPersistence.ts` ; la memoire projet est serialisee par schema `aurora.code.project-memory/1`, fingerprint de fichiers et embeddings locaux deterministes, puis rechargee via `localStorage` quand disponible.
+- **Portee patch incremental** : ajout de `codeIncrementalPatchScope.ts`, qui selectionne les fichiers cibles depuis la memoire/RAG, liste les fichiers proteges et fournit `assertCodePatchNonRegression` pour detecter une modification ou suppression hors portee.
+- **Chemins generation recables** : le producteur d'actions WS3 inclut la portee WS5 et demande `apply_patch` sur les fichiers cibles ; le fallback `runGenerationPhase` n'envoie plus les fichiers existants sequentiellement jusqu'a troncature, mais passe par `codeExistingProjectContext.ts` avec fichiers cibles et fichiers proteges.
+- **Selection FR/EN durcie** : le vocabulaire local relie les demandes francaises courantes (`facturation`, `devise`, `paiement`, `profil`, etc.) aux chemins/symboles anglophones (`billing`, `currency`, `payment`, `profile`).
+- **Validation** : tests cibles memoire/persistance/patch/contexte/producteur/phases 14 verts / 0 echec ; glob Code a **614 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS5 statut** : le socle local est couvert (durabilite, embeddings, RAG cible, `apply_patch`, non-regression protegee en tests). Reste a prouver une generation LLM live de modification incrementaliste sur projet existant et, si necessaire, a brancher un embedder Ollama (`nomic-embed-text`/`bge-m3`) derriere le meme schema.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

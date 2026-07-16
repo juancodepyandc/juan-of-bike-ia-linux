@@ -25,6 +25,7 @@ import {
   buildGenerationQueueFromArchitecturePlan,
   formatGenerationQueueForPrompt,
 } from './codeGenerationQueue.ts'
+import { buildExistingProjectPatchContext } from './codeExistingProjectContext.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CODE_EXPERT_OUTPUT_TOKENS,
@@ -275,47 +276,13 @@ export async function runGenerationPhase(
       ].filter(Boolean).join('\n'),
     })
   } else if (existingFiles.length > 0) {
-    let fileBudget = 13000
-    const fileBlocks: string[] = []
-    let shownCount = 0
-    for (const file of existingFiles) {
-      if (fileBudget <= 400) break
-      const perCap = Math.min(file.content.length, Math.max(2000, fileBudget))
-      const body = file.content.length > perCap
-        ? `${file.content.slice(0, perCap)}\n...[fichier tronque: ${file.content.length} chars — le reste est conserve, NE le supprime pas]`
-        : file.content
-      fileBlocks.push(`--- FICHIER: ${file.name} ---\n\`\`\`${file.language}\n${body}\n\`\`\``)
-      fileBudget -= body.length
-      shownCount += 1
-    }
-    const omitted = existingFiles.length - shownCount
     messages.push({
       role: 'user',
-      content: [
-        '## CONTEXTE DU PROJET EXISTANT (tu es en mode "suite de conversation")',
-        'Ce projet a deja ete genere. La nouvelle instruction utilisateur est une modification / ajout / retrait, PAS une demande de reconstruction.',
-        pivotContext?.kind === 'pivot_feature'
-          ? 'Mode: evolution majeure d une feature existante. Garde la meme stack, mais autorise des reecritures consequentes des fichiers concernes.'
-          : '',
-        '',
-        '### REGLES DE MODIFICATION',
-        '- Analyse l intention: ajout (nouvelle section/feature), retrait (section a enlever), changement (couleur/texte/comportement), refactor (structure interne).',
-        '- Ne touche QUE ce qui est demande. Ne refactore rien qui fonctionne deja. Ne regenere pas les fichiers inchanges.',
-        '- REGLE: quand tu retournes un fichier modifie, REPRENDS tout son contenu d origine et n applique QUE le changement demande. Ne resume pas, ne supprime aucune section existante qui n est pas explicitement visee par la demande.',
-        '- Pour CHAQUE fichier que tu RETOURNES, il doit etre COMPLET (pas de diff, pas de ...).',
-        '- Si un fichier ne change pas, NE le retourne PAS — il sera conserve automatiquement.',
-        '- Si un fichier est renomme, fais-le proprement (retourner l ancien fichier vide n a aucun effet, retourner le nouveau nom suffit — l orchestrateur gere le delta).',
-        '- Conserve imperativement: palette, typographie, structure globale, conventions de nommage, style des animations, ET tout le contenu existant non vise par la demande.',
-        '- Si la modification demande une section ou un asset qui n existe pas encore, cree-le en respectant le style deja etabli (meme font, meme vocabulaire d animations, meme espacement).',
-        '',
-        '### FICHIERS DEJA EN PLACE (a reprendre INTEGRALEMENT quand tu les modifies):',
-        ...fileBlocks,
-        omitted > 0
-          ? `...et ${omitted} autre(s) fichier(s) non montre(s) ici — ils restent en place, NE les supprime pas.`
-          : '',
-        'IMPORTANT: Chaque fichier que tu retournes doit etre COMPLET et reprendre tout l existant + la modification. Les fichiers non retournes sont conserves intacts.',
-        'IMPORTANT: Tu es en mode SUITE, pas en mode creation from scratch — reutilise ce qui est deja construit.',
-      ].filter(Boolean).join('\n\n'),
+      content: buildExistingProjectPatchContext({
+        prompt,
+        existingFiles,
+        pivotKind: pivotContext?.kind,
+      }),
     })
   }
 

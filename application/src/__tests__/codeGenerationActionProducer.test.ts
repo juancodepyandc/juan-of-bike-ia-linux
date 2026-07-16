@@ -37,7 +37,7 @@ describe('codeGenerationActionProducer', () => {
     const files: CodeFile[] = [
       { name: 'package.json', language: 'json', content: '{"name":"demo"}' },
       { name: 'src/App.tsx', language: 'tsx', content: 'export function App() { return null }' },
-      { name: 'docs/huge.md', language: 'markdown', content: 'x'.repeat(20_000) },
+      { name: 'docs/huge.md', language: 'markdown', content: 'NEVER_SEND_FULL_DOC '.repeat(2000) },
     ]
     const messages = buildCodeGenerationActionMessages({
       item: item('src/App.tsx', 2),
@@ -51,9 +51,11 @@ describe('codeGenerationActionProducer', () => {
 
     const body = messages.map((message) => message.content).join('\n')
     assert.match(body, /AURORA_CODE_ACTIONS\/1/)
+    assert.match(body, /PORTEE PATCH INCREMENTAL WS5/)
+    assert.match(body, /privilegie apply_patch/i)
     assert.match(body, /src\/App\.tsx/)
     assert.match(body, /package\.json/)
-    assert.doesNotMatch(body, /docs\/huge\.md/)
+    assert.doesNotMatch(body, /NEVER_SEND_FULL_DOC/)
   })
 
   test('produit des actions depuis un client LLM injecte', async () => {

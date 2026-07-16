@@ -11,7 +11,12 @@ import {
   buildCodeGenerationActionInstructions,
   parseCodeGenerationActions,
 } from './codeGenerationActionProtocol.ts'
-import { buildCodeProjectMemory, selectCodeProjectMemoryContext } from './codeProjectMemory.ts'
+import { selectCodeProjectMemoryContext } from './codeProjectMemory.ts'
+import { loadOrBuildCodeProjectMemory } from './codeProjectMemoryPersistence.ts'
+import {
+  buildCodeIncrementalPatchScope,
+  formatCodeIncrementalPatchScope,
+} from './codeIncrementalPatchScope.ts'
 
 export type CodeGenerationActionModelClient = (
   model: string,
@@ -53,7 +58,7 @@ function cap(text: string, max: number) {
 function formatRelevantFiles(files: CodeFile[], item: CodeGenerationQueueItem, prompt: string, maxChars: number) {
   const byPath = new Map(files.map((file) => [file.name.replace(/\\/g, '/').toLowerCase(), file]))
   const selected = selectCodeProjectMemoryContext({
-    memory: buildCodeProjectMemory(files),
+    memory: loadOrBuildCodeProjectMemory(files),
     item,
     prompt,
     maxFiles: 8,
@@ -98,6 +103,13 @@ export function buildCodeGenerationActionMessages(args: {
   maxFileContextChars?: number
 }): OllamaMessage[] {
   const maxContext = args.maxFileContextChars ?? 12_000
+  const patchScope = args.files.length > 0
+    ? formatCodeIncrementalPatchScope(buildCodeIncrementalPatchScope({
+        prompt: args.prompt,
+        files: args.files,
+        maxTargetFiles: 8,
+      }))
+    : null
   const userMessage: OllamaMessage = {
     role: 'user',
     content: [
@@ -108,6 +120,8 @@ export function buildCodeGenerationActionMessages(args: {
       '',
       '## FENETRE DE QUEUE',
       formatQueueWindow(args.queue, args.item),
+      '',
+      patchScope ? `## PORTEE PATCH INCREMENTAL WS5\n${patchScope}` : '',
       '',
       '## CONTEXTE FICHIERS CIBLE',
       formatRelevantFiles(args.files, args.item, args.prompt, maxContext),
@@ -125,6 +139,8 @@ export function buildCodeGenerationActionMessages(args: {
         'Tu produis uniquement des actions outil JSON pour le VFS AuroraIA.',
         'Tu ne livres jamais un blob projet complet dans ce mode.',
         'Chaque action doit etre minimale, complete et directement executable par le runner.',
+        'En modification de projet existant, privilegie apply_patch sur les fichiers cibles WS5 et ne reecris pas les fichiers proteges.',
+        'N utilise write_file sur un fichier existant que si le prompt demande explicitement une reecriture complete de ce fichier.',
         'Pour un fichier required, l action finale doit rendre le fichier present et complet.',
       ].join('\n'),
     },

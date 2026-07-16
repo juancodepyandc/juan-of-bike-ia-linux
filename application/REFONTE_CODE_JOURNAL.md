@@ -2489,3 +2489,63 @@ Pour WS3 local, les criteres majeurs sont maintenant couverts : executor VFS, ro
 ### Etat de satisfaction chantier
 
 Pour cet increment WS5, oui : la selection RAG locale exploitable est branchee sur le chemin agentique. Pour WS5 complet, non : il reste a ajouter la persistance/embeddings et a prouver une modification par `apply_patch` ciblee avec non-regression des fichiers non concernes.
+
+## 2026-07-15 — Vague 3 / WS5 increment 56 — Index durable, portee patch et non-regression protegee
+
+### Reprise et diagnostic confirme
+
+- L'increment 55 selectionnait deja mieux le contexte, mais reconstruisait l'index en memoire et ne prouvait pas encore le DoD WS5 sur patch/non-regression.
+- Le fallback mono-shot `runGenerationPhase` conservait encore l'ancien comportement : parcourir les fichiers existants dans l'ordre jusqu'a epuisement du budget, donc retomber dans la troncature que WS5 doit supprimer.
+- Les prompts utilisateur sont frequemment en francais alors que les chemins/symboles de code sont en anglais (`facturation` vs `billing`, `devise` vs `currency`) ; sans pont lexical local, le RAG peut manquer les bons fichiers.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment s'appuie sur les choix deja actés dans le prompt maitre (index local, embeddings locaux, patch incremental contre graphe).
+- Choix retenu : embeddings locaux deterministes par feature hashing, persistables avec l'index, puis schema stable `aurora.code.project-memory/1`.
+- Raison technique : obtenir une memoire durable et testable sans bloquer le build sur Ollama ; le schema reste compatible avec un futur embedder local de modele (`nomic-embed-text` ou `bge-m3`) sans changer les consommateurs.
+
+### Modifications realisees
+
+- `src/services/codeProjectMemory.ts` :
+  - ajoute `embedding` par fichier ;
+  - ajoute `buildLocalCodeEmbedding` ;
+  - ajoute une selection par prompt seul pour les patchs incrementaux ;
+  - ajoute un lexique FR/EN minimal pour les termes projet courants.
+- Ajout de `src/services/codeProjectMemoryPersistence.ts` :
+  - fingerprint stable des fichiers ;
+  - snapshot durable avec schema, date, fichiers indexes et embeddings ;
+  - restauration/cache `localStorage` quand disponible.
+- Ajout de `src/services/codeIncrementalPatchScope.ts` :
+  - calcule fichiers cibles, fichiers proteges et raisons ;
+  - formate la portee pour le prompt ;
+  - detecte les modifications/suppressions sur fichiers proteges.
+- Ajout de `src/services/codeExistingProjectContext.ts` :
+  - remplace le contexte legacy sequentiel par un contexte RAG cible ;
+  - montre uniquement les fichiers cibles et marque les autres comme proteges.
+- `src/services/codeGenerationActionProducer.ts` :
+  - utilise l'index persistant ;
+  - inclut la portee WS5 ;
+  - demande explicitement `apply_patch` en modification.
+- `src/services/codePipelinePhases.ts` :
+  - le fallback mono-shot consomme `buildExistingProjectPatchContext` au lieu d'envoyer tous les fichiers jusqu'a troncature.
+- Tests ajoutes :
+  - `codeProjectMemoryPersistence.test.ts`
+  - `codeIncrementalPatchScope.test.ts`
+  - `codeExistingProjectContext.test.ts`
+  - extensions de `codeProjectMemory.test.ts` et `codeGenerationActionProducer.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : contexte existant = ordre arbitraire des fichiers, troncature par budget, pas de cache durable, pas de verification que les fichiers non concernes restent identiques.
+- Apres : index durable par fingerprint, embeddings locaux, selection par graphe/termes/embedding, portee de patch explicable, fichiers proteges explicites et assertion de non-regression.
+- Limite assumee : la preuve est deterministe et locale ; une generation LLM live de modification incrementaliste reste a rejouer pour marquer WS5 complet cote produit.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectMemory.test.ts src/__tests__/codeProjectMemoryPersistence.test.ts src/__tests__/codeIncrementalPatchScope.test.ts src/__tests__/codeExistingProjectContext.test.ts src/__tests__/codeGenerationActionProducer.test.ts src/__tests__/codePipelinePhases.test.ts` : 14 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 614 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS5, oui : durabilite, embeddings locaux, RAG cible, patch incremental et non-regression protegee sont couverts par les services et les tests. Pour WS5 complet, il reste a produire une preuve live avec le modele sur un projet existant et a decider si l'embedder local deterministe suffit ou si le schema doit etre alimente par Ollama.
