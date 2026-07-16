@@ -421,6 +421,14 @@
 - **Validation** : tests cibles phase agentique/producteur/executor/phases 10 verts / 0 echec ; glob Code a **595 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `codeOrchestrator.ts` reste a 595 lignes.
 - **WS3 reste ouvert** : brancher un runner WS7 pour `run_command`, exposer la route `/api/code/*` stream et prouver une generation >40 fichiers buildable.
 
+### 2026-07-15 — Vague 3 / WS3 increment 51 applique
+
+- **Route bridge stream** : ajout de `POST /api/code/generate/stream` dans `bridge_server.py`, sous le namespace autorise `/api/code/*`, avec sortie `application/x-ndjson`.
+- **Contrat evenementiel HTTP** : la route emet des evenements `aurora.code.stream/1` (`phase`, `file.written`, `done`, `error`) compatibles avec le schema TS, et parse `AURORA_CODE_VFS/1` ou le vieux separateur fichier en fallback.
+- **Transitoire explicite** : le moteur applicatif principal reste l'executor TS agentique ; la route bridge sert de contrat stream HTTP pendant la migration UI/bridge complete, sans toucher aux autres modules ni au Viewer 3D.
+- **Validation** : `python3 -m py_compile bridge_server.py` vert ; tests cibles stream/agentique 6 verts / 0 echec ; glob Code a **595 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS3 reste ouvert** : faire consommer cette route par l'UI ou remplacer la route transitoire par le moteur agentique TS expose, puis prouver la generation >40 fichiers buildable.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

@@ -2273,3 +2273,44 @@ Pour cet increment WS3, non, WS3 n'est pas termine : la production d'actions LLM
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : le chemin applicatif prefere maintenant l'executor agentique, mais la route `/api/code/*`, le runner WS7 de commandes et la demonstration >40 fichiers restent a livrer.
+
+## 2026-07-15 — Vague 3 / WS3 increment 51 — Route bridge NDJSON `/api/code/generate/stream`
+
+### Reprise et diagnostic confirme
+
+- Le prompt WS3 impose une route `/api/code/*` streamée avec evenements typés.
+- Le bridge avait deja des routes `/api/code/repo/*` et l'ancien dispatcher `/api/aurora/code/generate`, mais aucune route de generation Code streamée.
+- `aurora_code_loop.py` n'est pas promu tel quel : il contient encore un chemin Windows et un modele par defaut obsolète, donc l'utiliser directement aurait reintroduit une dette.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment verifie les conventions locales Flask et le schema `aurora.code.stream/1` deja versionne.
+- Choix retenu : ajouter une route transitoire `POST /api/code/generate/stream` qui stream du NDJSON typé et parse les fichiers produits.
+- Raison technique : poser le contrat HTTP maintenant permet de brancher un client UI/bridge progressivement, sans degrader le nouveau chemin applicatif TS agentique.
+
+### Modifications realisees
+
+- `bridge_server.py` :
+  - ajout de `CODE_STREAM_SCHEMA = "aurora.code.stream/1"` ;
+  - ajout de `_code_stream_event`, `_code_stream_language`, `_code_stream_parse_files` ;
+  - ajout de `POST /api/code/generate/stream` ;
+  - streaming `phase`, `file.written`, `done`, `error` au format `application/x-ndjson`.
+- La route demande a Ollama une sortie `AURORA_CODE_VFS/1`, puis extrait les fichiers pour emettre des evenements `file.written`.
+- Aucun autre module n'est modifie ; le Viewer 3D reste intouche.
+
+### Avant / apres mesurable
+
+- Avant : aucun endpoint `/api/code/*` ne streamait la generation Code ; seul `/api/aurora/code/generate` renvoyait un JSON one-shot.
+- Apres : un client HTTP peut consommer un flux NDJSON typé compatible avec le store TS.
+- Limite assumee : cette route reste transitoire et ne remplace pas encore le moteur TS agentique ; la consommation directe par l'UI reste a brancher.
+
+### Validation
+
+- `python3 -m py_compile bridge_server.py` : vert.
+- `node --experimental-strip-types --test src/__tests__/codeStreamEvents.test.ts src/__tests__/codeAgenticGenerationPhase.test.ts` : 6 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 595 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : le contrat HTTP stream existe, mais l'UI ne le consomme pas encore et la preuve >40 fichiers buildable reste a produire.

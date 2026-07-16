@@ -11617,6 +11617,164 @@ def _aurora_code(action, data):
     return jsonify({"ok": True, "output": code, "code": code, "model": model, "module": "code"})
 
 
+CODE_STREAM_SCHEMA = "aurora.code.stream/1"
+
+
+def _code_stream_event(kind: str, run_id: int, sequence: int, **payload):
+    event = {
+        "schema": CODE_STREAM_SCHEMA,
+        "kind": kind,
+        "runId": run_id,
+        "sequence": sequence,
+        "timestamp": int(time.time() * 1000),
+    }
+    event.update(payload)
+    return json.dumps(event, ensure_ascii=False) + "\n"
+
+
+def _code_stream_language(path: str) -> str:
+    ext = pathlib.Path(path).suffix.lower().lstrip(".")
+    return {
+        "js": "javascript",
+        "jsx": "jsx",
+        "ts": "typescript",
+        "tsx": "tsx",
+        "py": "python",
+        "md": "markdown",
+        "yml": "yaml",
+    }.get(ext, ext or "text")
+
+
+def _code_stream_parse_files(raw: str) -> list[dict]:
+    files: list[dict] = []
+    prefix = "<<<AURORA_FILE "
+    end_marker = "<<<AURORA_END>>>"
+    cursor = 0
+    while True:
+        start = raw.find(prefix, cursor)
+        if start < 0:
+            break
+        meta_start = start + len(prefix)
+        meta_end = raw.find(">>>", meta_start)
+        if meta_end < 0:
+            break
+        try:
+            meta = json.loads(raw[meta_start:meta_end].strip())
+        except Exception:
+            cursor = meta_end + 3
+            continue
+        content_start = meta_end + 3
+        if raw.startswith("\r\n", content_start):
+            content_start += 2
+        elif raw.startswith("\n", content_start):
+            content_start += 1
+        length = int(meta.get("length") or 0)
+        content_end = content_start + max(0, length)
+        content = raw[content_start:content_end]
+        if raw.find(end_marker, content_end, content_end + len(end_marker) + 3) >= 0:
+            path = str(meta.get("path") or "").strip()
+            if path and content:
+                files.append({"path": path, "content": content, "language": meta.get("language") or _code_stream_language(path)})
+        cursor = max(content_end, meta_end + 3)
+    if files:
+        return files
+
+    parts = re.split(r"---\s*(?:FICHIER|FILE):\s*(.+?)\s*---", raw, flags=re.I)
+    for index in range(1, len(parts), 2):
+        path = parts[index].strip()
+        body = (parts[index + 1] if index + 1 < len(parts) else "").strip()
+        fence = re.match(r"^```[\w.+#-]*\s*\n([\s\S]*?)\n```\s*$", body)
+        content = fence.group(1).strip() if fence else body
+        if path and content:
+            files.append({"path": path, "content": content, "language": _code_stream_language(path)})
+    return files
+
+
+@app.route("/api/code/generate/stream", methods=["POST"])
+def code_generate_stream():
+    """WS3 transitional NDJSON endpoint for the Module Code stream contract.
+
+    The primary app path now runs the TS planner-executor. This bridge route
+    exposes the same typed event envelope for clients that need an HTTP stream
+    while /api/code/* parity is completed.
+    """
+    data = request.get_json(silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "prompt requis"}), 400
+    model = (data.get("model") or "qwen3-coder:30b").strip()
+    run_id = int(time.time() * 1000)
+
+    def generate():
+        sequence = 1
+        yield _code_stream_event("phase", run_id, sequence, phase="planning", message="Bridge Code stream initialise.", progress=5)
+        sequence += 1
+        system_prompt = (
+            "Tu es le Module Code AuroraIA. Genere un projet complet au format "
+            "AURORA_CODE_VFS/1 avec fichiers a longueur declaree. Aucun texte hors protocole."
+        )
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "stream": True,
+            "keep_alive": "10m",
+        }
+        chunks: list[str] = []
+        try:
+            yield _code_stream_event("phase", run_id, sequence, phase="generation", message=f"Generation Ollama via {model}.", progress=35)
+            sequence += 1
+            with requests.post(f"{OLLAMA_URL}/api/chat", json=body, stream=True, timeout=900) as resp:
+                if resp.status_code != 200:
+                    yield _code_stream_event("error", run_id, sequence, message=f"Ollama HTTP {resp.status_code}", recoverable=True)
+                    return
+                for raw_line in resp.iter_lines(decode_unicode=True):
+                    if not raw_line:
+                        continue
+                    try:
+                        obj = json.loads(raw_line)
+                    except Exception:
+                        continue
+                    token = ((obj.get("message") or {}).get("content") or "")
+                    if token:
+                        chunks.append(token)
+                    if obj.get("done"):
+                        break
+        except Exception as exc:
+            yield _code_stream_event("error", run_id, sequence, message=f"Ollama injoignable: {exc}", recoverable=True)
+            return
+
+        content = "".join(chunks)
+        files = _code_stream_parse_files(content)
+        yield _code_stream_event("phase", run_id, sequence, phase="generation", message=f"{len(files)} fichier(s) detecte(s).", progress=75)
+        sequence += 1
+        for file in files:
+            file_content = file["content"]
+            yield _code_stream_event(
+                "file.written",
+                run_id,
+                sequence,
+                path=file["path"],
+                language=file["language"],
+                bytes=len(file_content.encode("utf-8")),
+                content=file_content,
+            )
+            sequence += 1
+        yield _code_stream_event(
+            "done",
+            run_id,
+            sequence,
+            filesCount=len(files),
+            finalScore=100 if files else 0,
+            totalAttempts=1,
+            notes="Flux bridge transitoire; validation WS7 executee cote Module Code.",
+        )
+
+    return Response(stream_with_context(generate()), mimetype="application/x-ndjson; charset=utf-8")
+
+
 def _aurora_video(action, data):
     if action not in ("generate", "create", "render", "clip"):
         return jsonify({"ok": False, "error": f"aurora_video: action '{action}' inconnue (generate)"}), 400
