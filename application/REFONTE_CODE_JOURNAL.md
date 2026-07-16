@@ -2605,3 +2605,51 @@ Pour cet increment WS5, oui : durabilite, embeddings locaux, RAG cible, patch in
 ### Etat de satisfaction chantier
 
 Pour cet increment WS6, oui : la taxonomie, le contrat semantique structure, le fallback deterministe et le registre de generateurs sont en place. Pour WS6 complet, non : il reste la preuve d'au moins une cible extreme de bout en bout sous WS7.
+
+## 2026-07-15 — Vague 3 / WS6 increment 58 — Preuve extreme mini-compilateur buildable
+
+### Reprise et diagnostic confirme
+
+- Le DoD WS6 demande explicitement une preuve d'au moins une cible extreme bout en bout : OS QEMU, mini-compilateur ou systeme distribue >=2 noeuds.
+- Apres l'increment 57, la cible `compiler` etait routable et promptable, mais pas encore prouvee par execution reelle.
+- `cargo` est disponible sur l'hote (`cargo 1.96.1`), ce qui permet une preuve locale fiable sans installer de dependances et sans toucher a `.venv`.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : la preuve s'appuie sur Rust/Cargo disponible localement et sur l'executor VFS WS3 deja valide.
+- Choix retenu : mini-compilateur/interpreteur d'expressions arithmetiques en Rust, avec lexer, parser AST, evaluation, CLI et tests.
+- Raison technique : c'est une cible extreme representable par un projet court mais reel, dont la correction peut etre verifiee objectivement par `cargo test` et `cargo run`.
+
+### Modifications realisees
+
+- Ajout de `src/__tests__/codeExtremeCompilerProof.test.ts` :
+  - construit un plan architecte schema-valide `projectType: "compiler"` ;
+  - genere les fichiers via `executeCodeGenerationQueue` et actions `write_file` ;
+  - ecrit le projet dans un dossier temporaire ;
+  - lance `cargo test --quiet` ;
+  - lance `cargo run --quiet -- 2+3*4` et verifie la sortie `14`.
+- Projet genere dans la preuve :
+  - `Cargo.toml`
+  - `src/lib.rs`
+  - `src/lexer.rs`
+  - `src/parser.rs`
+  - `src/eval.rs`
+  - `src/main.rs`
+  - `tests/language.rs`
+  - `README.md`
+
+### Avant / apres mesurable
+
+- Avant : WS6 avait la taxonomie et les prompts specialises, mais aucune cible extreme n'etait compilee/executée.
+- Apres : une cible extreme `compiler` est generee par le planner-executor, compile, passe ses tests et execute un programme fige.
+- Limite assumee : preuve deterministe locale ; les preuves OS QEMU et systeme distribue restent a ajouter comme extensions WS6/WS12/WS7.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeExtremeCompilerProof.test.ts` : 1 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 626 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour WS6 local, oui : les criteres majeurs sont maintenant couverts, y compris une cible extreme bout en bout. Je ne marque pas WS6 comme definitivement clos pour toutes les familles tant que les generateurs specialises n'ont pas chacun une preuve buildable equivalente.

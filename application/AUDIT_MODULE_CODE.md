@@ -479,6 +479,14 @@
 - **Validation** : tests cibles intent/generators/classifieur semantique 53 verts / 0 echec ; glob Code a **625 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS6 reste ouvert** : il reste a prouver au moins une cible extreme bout en bout sous WS7 (OS QEMU, mini-compilateur ou systeme distribue >=2 noeuds) avec la meme metrique de criteres verts.
 
+### 2026-07-15 — Vague 3 / WS6 increment 58 applique
+
+- **Preuve cible extreme** : ajout de `codeExtremeCompilerProof.test.ts`, qui genere via `executeCodeGenerationQueue` un mini-compilateur Rust complet (lexer, parser AST, eval, CLI, tests).
+- **Execution reelle** : le projet genere est ecrit dans un dossier temporaire, puis `cargo test --quiet` et `cargo run --quiet -- 2+3*4` sont executes ; la sortie attendue `14` est verifiee.
+- **DoD WS6 couvert pour l'option mini-compilateur** : la cible extreme compile et execute correctement un programme de test fige, via le meme executor VFS que WS3.
+- **Validation** : preuve cible 1 vert / 0 echec ; glob Code a **626 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS6 statut** : les criteres locaux principaux sont couverts (taxonomie, classifieur structure + fallback, generateurs, preuve extreme mini-compilateur). Restent les autres familles extremes a enrichir progressivement et une generation LLM live longue a rejouer.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
