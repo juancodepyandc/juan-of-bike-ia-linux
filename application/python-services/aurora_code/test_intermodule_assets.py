@@ -41,6 +41,29 @@ class InterModuleAssetsTests(unittest.TestCase):
             self.assertIn("assets/generated/proof/", result["projectSrcset"])
             self.assertNotIn("base64", str(result))
 
+    def test_3d_reuse_after_fresh_failure_is_flagged_stale(self) -> None:
+        # WS15: une generation 3D fraiche qui echoue et retombe sur un vieux GLB
+        # sans rapport doit etre signalee (stale + warning), pas livree en silence.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            old_glb = root / "output" / "3d" / "generations" / "otherrun" / "mesh.glb"
+            old_glb.parent.mkdir(parents=True, exist_ok=True)
+            old_glb.write_bytes(b"glTF" + b"\x00" * 4096)  # > 1024 octets
+            out_dir = root / "output" / "code_assets" / "proof"
+
+            # post_json simule un pipeline frais en echec (aucun final_mesh).
+            with patch.object(assets, "post_json", return_value={"ok": False, "error": "pipeline ko"}):
+                asset, detail = assets.generate_3d_asset(
+                    base_url="http://x", root=root, out_dir=out_dir,
+                    prompt="un vaisseau", run_id="freshrun", fresh=True,
+                    allow_existing=True, source_run_id="", timeout=5,
+                )
+
+            self.assertIsNotNone(asset)
+            self.assertTrue(asset["stale"], "un GLB reutilise apres echec frais doit etre stale")
+            self.assertIn("peut", (asset["warning"] or "").lower())
+            self.assertTrue(detail.get("staleAssetWarning"))
+
     def test_bundle_requires_every_requested_asset(self) -> None:
         fake_asset = lambda kind: ({
             "id": kind,

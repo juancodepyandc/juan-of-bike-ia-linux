@@ -266,6 +266,9 @@ def generate_3d_asset(
         detail["error"] = detail.get("pipelineError") or "aucun GLB pipeline trouve"
         return None, detail
 
+    stale = bool(fresh and detail.get("reusedExistingPipelineAsset", False))  # WS15: reuse post-echec frais => possiblement hors-sujet
+    if stale:
+        detail["staleAssetWarning"] = "Generation 3D fraiche echouee: GLB existant reutilise, peut ne pas correspondre au prompt."
     target = out_dir / "models" / f"{slug(source.stem)}.glb"
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
@@ -282,6 +285,8 @@ def generate_3d_asset(
         "sourceModule": "3d",
         "bridgeEndpoint": "/api/3d/run-pipeline",
         "optimized": True,
+        "stale": stale,
+        "warning": detail.get("staleAssetWarning"),
         "metadata": {
             "sourcePath": _storage_path(root, source),
             "pipelineRunId": source.relative_to(root / "output" / "3d" / "generations").parts[0],
