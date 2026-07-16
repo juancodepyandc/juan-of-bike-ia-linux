@@ -12,7 +12,6 @@ import { speakAs } from '../services/auroraVoice'
 import { useModuleHistoryStore } from './moduleHistoryStore'
 import { narrate } from './codeStreamNarration.ts'
 import { checkCodeBridgeReady, checkCodeModelInstalled } from './codeStreamPreflight.ts'
-import { runCodeBridgeStreamTurn } from './codeStreamRemoteTurn.ts'
 import { computeEta, phaseFromDetail, summariseDelivery } from './codeStreamProgress.ts'
 import { isCorrectionRequest, routeCodeStreamModel } from './codeStreamRouting.ts'
 import type { CodeStreamState, CodeStreamStore } from './codeStreamTypes.ts'
@@ -184,14 +183,10 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     }
 
     try {
-      const bridgePrompt = isCorrection ? `${text}\n\n## INSTRUCTION — CORRECTION CIBLÉE\nC'est une CORRECTION, pas un ajout. Modifie UNIQUEMENT ce qui est nécessaire pour régler le problème décrit.` : text
-      const bridgeStreamHandled = await runCodeBridgeStreamTurn({
-        prompt: bridgePrompt, model, signal: ctrl.signal, workMode: get().workMode, isCorrection,
-        priorMessagesCount: priorMessages.length, existingFilesCount: existingFiles.length,
-        isCurrent: () => abortCtrl === ctrl, get, set, applyNarration,
-      })
-      if (bridgeStreamHandled) return
-
+      // WS3: moteur unique. Le second moteur bridge NDJSON (feature-flag
+      // VITE_CODE_STREAM_ENGINE), dormant et depourvu des gates WS7/WS9/WS13, a
+      // ete retire pour eliminer la divergence de capacites: l orchestrateur
+      // agentique local est le seul chemin, avec toutes les garanties qualite.
       const result = await orchestrateCodeGeneration({
         prompt: text,
         enrichedPrompt: isCorrection
