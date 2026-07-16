@@ -38,8 +38,54 @@ function hasPlaceholderCode(code: string): boolean {
   return /\b(todo|fixme|placeholder|lorem ipsum|not implemented|coming soon|demo only|mock only)\b/i.test(code)
 }
 
+const ARITH_OPS = ['+', '-', '*', '/'] as const
+type ArithOp = (typeof ARITH_OPS)[number]
+
+/**
+ * Retourne le premier operateur arithmetique binaire d une expression courte
+ * (entre deux operandes), ou null. Sert a comparer l operation REELLEMENT codee
+ * a l operateur declare.
+ */
+function firstBinaryArithmeticOp(expr: string): ArithOp | null {
+  // On ignore les operateurs unaires (ex: -1) en exigeant un operande a gauche.
+  const match = expr.match(/[A-Za-z0-9_$)\]]\s*([+\-*/])\s*[A-Za-z0-9_$([]/)
+  return match ? (match[1] as ArithOp) : null
+}
+
+/**
+ * WS7 (non-gameable): detecte les operateurs INVERSES dans les deux idiomes
+ * dominants de calculatrice — la table `'+' : (a,b) => a - b` et le
+ * `case '+': return a - b`. Les criteres regex de PRESENCE laissaient passer une
+ * calculatrice qui calcule FAUX (2+2=0). Ici, si un operateur declare est code
+ * avec une operation differente, c est un echec. Conservateur: ne se declenche
+ * que lorsqu un mapping operateur->expression est clairement analysable (pas de
+ * faux positif sur du code non concerne). La verification COMPORTEMENTALE
+ * complete (2+2=4 execute) releve du sandbox conteneurise WS7.
+ */
+export function detectInvertedCalculatorOperators(code: string): string[] {
+  const errors: string[] = []
+  for (const op of ARITH_OPS) {
+    const opClass = op === '/' ? '\\/' : op === '*' ? '\\*' : op === '+' ? '\\+' : '-'
+    // Idiome 1: table de fonctions  '<op>': (a, b) => <expr>
+    const mapRe = new RegExp(`['"\\\`]${opClass}['"\\\`]\\s*:\\s*(?:function\\s*)?\\([^)]*\\)\\s*=>\\s*\\{?\\s*(?:return\\s+)?([^,;\\n}]+)`, 'g')
+    // Idiome 2: switch  case '<op>': [return|x =] <expr>
+    const caseRe = new RegExp(`case\\s*['"\\\`]${opClass}['"\\\`]\\s*:\\s*(?:return\\s+|[A-Za-z0-9_$.\\[\\]]+\\s*=\\s*)?([^;\\n]+)`, 'g')
+    for (const re of [mapRe, caseRe]) {
+      let m: RegExpExecArray | null
+      while ((m = re.exec(code)) !== null) {
+        const coded = firstBinaryArithmeticOp(m[1])
+        if (coded && coded !== op) {
+          errors.push(`operateur '${op}' code avec '${coded}' (${m[1].trim().slice(0, 40)})`)
+        }
+      }
+    }
+  }
+  return errors
+}
+
 function calculatorCriteria(code: string): AcceptanceCriterionResult[] {
   const lower = code.toLowerCase()
+  const invertedOperators = detectInvertedCalculatorOperators(code)
   const hasState = /\b(useState|state|display|currentValue|current|accumulator|operator)\b/i.test(code)
   const hasCalculateFlow = /\b(calculate|compute|evaluate|equals|performOperation|switch\s*\(|case\s+['"`][+\-*/]['"`])\b/i.test(code)
   const hasArithmetic = [
@@ -61,10 +107,22 @@ function calculatorCriteria(code: string): AcceptanceCriterionResult[] {
     },
     {
       id: 'calculator-operations',
-      label: 'Les quatre operations arithmetiques sont implementees en logique',
-      category: 'functional',
+      label: 'Structure des quatre operations arithmetiques presente (structure, pas comportement)',
+      category: 'structure',
       ok: hasCalculateFlow && hasArithmetic >= 4,
       detail: `Flux calcul=${hasCalculateFlow ? 'oui' : 'non'}, operations detectees=${hasArithmetic}/4.`,
+    },
+    {
+      // WS7: correction arithmetique — un operateur declare mais code avec une
+      // autre operation (2+2 qui soustrait) est un ECHEC, la ou la presence
+      // regex seule laissait passer une calculatrice fausse a 100%.
+      id: 'calculator-operator-correctness',
+      label: 'Aucun operateur arithmetique inverse/mal cable detecte',
+      category: 'functional',
+      ok: invertedOperators.length === 0,
+      detail: invertedOperators.length === 0
+        ? 'Aucune inversion d operateur detectee.'
+        : `Operateur(s) mal cable(s): ${invertedOperators.join(' ; ')}`,
     },
     {
       id: 'calculator-equals',
