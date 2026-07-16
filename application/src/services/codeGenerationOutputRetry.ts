@@ -3,7 +3,7 @@ import type { CodeMissionDossier } from './codeMissionControl.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
 import type { BrandFidelityReport } from './codeFidelityGate.ts'
 import { evaluateBrandFidelity } from './codeFidelityGate.ts'
-import { detectNonCodePlanningNarrative, extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
+import { detectNonCodePlanningNarrative, extractNotes, fatalEmissionIssues, parseCodeFiles, parseCodeFilesWithReport } from './codeGeneratedFileParser.ts'
 import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
 import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import { computeContentQualityScore } from './codeQualityGates.ts'
@@ -124,8 +124,18 @@ export async function runGeneratedOutputRetryLoop({
   signal?: AbortSignal
   modelRouting?: CodeModelRoutingContext
 }): Promise<OutputRetryResult> {
-  const parsed = parseCodeFiles(latestRawGenerationContent)
+  const { files: parsed, issues: parseIssues } = parseCodeFilesWithReport(latestRawGenerationContent)
   let initialNotes = extractNotes(latestRawGenerationContent)
+  // Ne PAS laisser tomber un fichier en silence: si le flux structure contient
+  // des anomalies non recuperables (en-tete malforme, flux tronque sans marqueur
+  // de fin), on le remonte a l utilisateur au lieu de perdre le fichier sans un mot.
+  const fatalParseIssues = fatalEmissionIssues(parseIssues)
+  if (fatalParseIssues.length > 0) {
+    const kinds = [...new Set(fatalParseIssues.map((issue) => issue.type))].join(', ')
+    const warning = `Avertissement extraction: ${fatalParseIssues.length} fichier(s) non extractible(s) du flux structure (${kinds}). Le contenu est probablement tronque ; regeneration ciblee recommandee.`
+    initialNotes = initialNotes ? `${initialNotes}\n\n${warning}` : warning
+    setPhase(warning, 12)
+  }
   let initialFiles = effectiveExistingFiles.length > 0 && parsed.length > 0
     ? mergeExistingWithUpdates(effectiveExistingFiles, parsed)
     : parsed

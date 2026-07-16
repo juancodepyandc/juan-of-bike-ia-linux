@@ -6,18 +6,39 @@
 import type { CodeFile } from './codeOrchestrator.ts'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
 import { sanitizeGeneratedFileContent, stripFormattingArtifacts } from './codeGeneratedFileSanitizer.ts'
-import { isStructuredProjectEmission, parseProjectTreeEmission } from './codeProjectEmission.ts'
+import { isStructuredProjectEmission, parseProjectTreeEmission, type StructuredEmissionIssue } from './codeProjectEmission.ts'
 
-export function parseCodeFiles(content: string): CodeFile[] {
+/**
+ * Parse la sortie generee en fichiers ET remonte les anomalies structurees
+ * (marqueur de fin absent non recuperable, en-tete malforme, metadonnees
+ * invalides). Le chemin actif DOIT consulter `issues` pour ne pas laisser
+ * tomber un fichier en silence — historique d echecs silencieux du module.
+ */
+export function parseCodeFilesWithReport(content: string): { files: CodeFile[]; issues: StructuredEmissionIssue[] } {
   if (isStructuredProjectEmission(content)) {
     const parsed = parseProjectTreeEmission(content)
-    return parsed.tree.files.map((file) => ({
-      name: file.path,
-      language: file.language,
-      content: file.content,
-    }))
+    return {
+      files: parsed.tree.files.map((file) => ({
+        name: file.path,
+        language: file.language,
+        content: file.content,
+      })),
+      issues: parsed.issues,
+    }
   }
+  return { files: parseLegacyCodeFiles(content), issues: [] }
+}
 
+export function parseCodeFiles(content: string): CodeFile[] {
+  return parseCodeFilesWithReport(content).files
+}
+
+/** Anomalies structurees qui ont fait TOMBER un fichier (a distinguer des recuperations non-fatales). */
+export function fatalEmissionIssues(issues: StructuredEmissionIssue[]): StructuredEmissionIssue[] {
+  return issues.filter((issue) => issue.type !== 'recovered_length_mismatch')
+}
+
+function parseLegacyCodeFiles(content: string): CodeFile[] {
   const files: CodeFile[] = []
   const parts = content.split(/---\s*(?:FICHIER|FILE):\s*(.+?)\s*---/i)
 

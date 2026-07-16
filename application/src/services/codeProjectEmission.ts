@@ -23,6 +23,10 @@ export type StructuredEmissionIssueType =
   | 'invalid_length'
   | 'length_overflow'
   | 'missing_end_marker'
+  // Non-fatal: la longueur declaree etait incoherente (typiquement UTF-16 vs
+  // points de code) mais le fichier a ete recupere via le marqueur de fin
+  // au lieu d etre avale silencieusement.
+  | 'recovered_length_mismatch'
 
 export type StructuredEmissionIssue = {
   type: StructuredEmissionIssueType
@@ -139,6 +143,33 @@ function consumeEndMarker(stream: string, offset: number) {
   return skipLineBreak(stream, cursor)
 }
 
+/**
+ * Recovery: la longueur declaree est fausse mais le contenu reste delimite par
+ * le marqueur de fin. On cherche le prochain END_MARKER a partir du debut du
+ * contenu ; s il apparait AVANT le prochain en-tete de fichier, on recupere le
+ * fichier avec la vraie frontiere plutot que de le laisser tomber en silence.
+ * Retourne null si aucune recuperation sure n est possible (flux tronque, ou un
+ * autre en-tete de fichier s intercale — on ne veut pas avaler le fichier suivant).
+ */
+function recoverFileToEndMarker(stream: string, contentStart: number) {
+  const markerIndex = stream.indexOf(END_MARKER, contentStart)
+  if (markerIndex < 0) return null
+  const nextHeader = stream.indexOf(FILE_PREFIX, contentStart)
+  if (nextHeader >= 0 && nextHeader < markerIndex) return null
+
+  // Le serialiseur insere exactement un saut de ligne entre le contenu et le
+  // marqueur (`content\nEND_MARKER`). On retire ce separateur de jointure.
+  let contentEnd = markerIndex
+  if (stream[contentEnd - 1] === '\n') {
+    contentEnd -= 1
+    if (stream[contentEnd - 1] === '\r') contentEnd -= 1
+  }
+  return {
+    content: stream.slice(contentStart, contentEnd),
+    nextCursor: skipLineBreak(stream, markerIndex + END_MARKER.length),
+  }
+}
+
 export function isStructuredProjectEmission(stream: string) {
   return stream.includes(FILE_PREFIX) && stream.includes(STRUCTURED_PROJECT_EMISSION_VERSION)
 }
@@ -168,12 +199,43 @@ export function parseProjectTreeEmission(stream: string): StructuredEmissionPars
 
     const contentEnd = contentStart + metadata.length
     if (contentEnd > stream.length) {
+      // Longueur declaree > flux: tentative de recuperation via le marqueur de fin
+      // (le flux peut avoir ete tronque ou la longueur surestimee).
+      const recovered = recoverFileToEndMarker(stream, contentStart)
+      if (recovered) {
+        pushIssue(issues, 'recovered_length_mismatch', contentStart, 'Longueur declaree superieure au flux: fichier recupere via le marqueur de fin.')
+        files.push({
+          path: metadata.path,
+          content: recovered.content,
+          encoding: metadata.encoding,
+          language: metadata.language,
+          mime: metadata.mime,
+        })
+        cursor = recovered.nextCursor
+        continue
+      }
       pushIssue(issues, 'length_overflow', contentStart, 'La longueur declaree depasse la taille du flux.')
       break
     }
 
     const nextCursor = consumeEndMarker(stream, contentEnd)
     if (nextCursor === null) {
+      // Le marqueur de fin n est pas a la longueur declaree (longueur mal comptee,
+      // p.ex. UTF-16 vs points de code avec emojis/accents). On recupere le fichier
+      // via le marqueur de fin reel au lieu de le laisser tomber silencieusement.
+      const recovered = recoverFileToEndMarker(stream, contentStart)
+      if (recovered) {
+        pushIssue(issues, 'recovered_length_mismatch', contentStart, 'Longueur declaree incoherente: fichier recupere via le marqueur de fin.')
+        files.push({
+          path: metadata.path,
+          content: recovered.content,
+          encoding: metadata.encoding,
+          language: metadata.language,
+          mime: metadata.mime,
+        })
+        cursor = recovered.nextCursor
+        continue
+      }
       pushIssue(issues, 'missing_end_marker', contentEnd, 'Marqueur de fin absent a la longueur declaree.')
       cursor = contentEnd
       continue

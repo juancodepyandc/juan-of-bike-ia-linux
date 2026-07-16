@@ -84,7 +84,7 @@ describe('codeProjectEmission — round-trip robuste', () => {
 })
 
 describe('codeProjectEmission — erreurs detectees', () => {
-  test('rejette une longueur declaree incoherente sans avaler le fichier suivant', () => {
+  test('recupere une longueur declaree incoherente via le marqueur de fin sans avaler le fichier suivant', () => {
     const valid = serializeProjectTreeEmission([{ path: 'ok.ts', content: 'export const ok = true' }])
     const broken = [
       'AURORA_CODE_VFS/1',
@@ -95,9 +95,31 @@ describe('codeProjectEmission — erreurs detectees', () => {
     ].join('\n')
     const result = parseProjectTreeEmission(broken)
 
-    assert.equal(result.issues.some((issue) => issue.type === 'missing_end_marker'), true)
-    assert.equal(result.tree.files.some((file) => file.path === 'broken.ts'), false)
+    // Longueur mal comptee -> recuperation tracee (non-fatale) au lieu d un drop silencieux.
+    assert.equal(result.issues.some((issue) => issue.type === 'recovered_length_mismatch'), true)
+    const recovered = result.tree.files.find((file) => file.path === 'broken.ts')
+    assert.ok(recovered, 'le fichier a longueur incoherente doit etre recupere, pas droppe')
+    assert.equal(recovered?.content, 'abcdef')
+    // La garantie centrale tient: le fichier suivant n est pas avale.
     assert.equal(result.tree.files.some((file) => file.path === 'ok.ts'), true)
+  })
+
+  test('remonte une anomalie fatale et n avale pas le fichier suivant quand la recuperation est impossible', () => {
+    // Flux tronque: en-tete valide mais AUCUN marqueur de fin nulle part -> non recuperable.
+    const truncated = [
+      'AURORA_CODE_VFS/1',
+      '<<<AURORA_FILE {"path":"truncated.ts","length":9999,"encoding":"utf8"}>>>',
+      'const partial = 1',
+    ].join('\n')
+    const result = parseProjectTreeEmission(truncated)
+
+    assert.equal(result.tree.files.some((file) => file.path === 'truncated.ts'), false)
+    assert.equal(
+      result.issues.some((issue) => issue.type === 'length_overflow' || issue.type === 'missing_end_marker'),
+      true,
+    )
+    // Aucune recuperation silencieuse fabriquee.
+    assert.equal(result.issues.some((issue) => issue.type === 'recovered_length_mismatch'), false)
   })
 
   test('expose les instructions du contrat a longueur declaree', () => {
