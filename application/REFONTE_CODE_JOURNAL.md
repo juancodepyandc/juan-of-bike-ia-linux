@@ -2141,3 +2141,45 @@ Pour cet increment WS3, non, WS3 n'est pas termine : le moteur n'execute pas enc
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : les outils VFS sont prets, mais ils ne pilotent pas encore la generation LLM. La prochaine marche consiste a les connecter a une boucle executor qui traite la queue architecte et emet les evenements stream.
+
+## 2026-07-15 — Vague 3 / WS3 increment 48 — Executor de queue fichier-par-fichier
+
+### Reprise et diagnostic confirme
+
+- WS3 demande explicitement une etape 2 "executeur fichier-par-fichier" au-dessus du plan architecte.
+- Les increments precedents avaient pose le plan JSON, la queue, le schema stream et les outils VFS, mais aucune boucle ne consommait encore la queue.
+- `CodeView.tsx` et `codeStreamStore.ts` sont proches du seuil 600 lignes ; l'increment doit donc rester dans un service isole.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment assemble des contrats internes deja poses (`CodeGenerationQueue`, `CodeGenerationToolAction`, `CodeStreamEvent`).
+- Choix retenu : `executeCodeGenerationQueue` reçoit un `produceActions` injecte au lieu d'appeler directement le LLM.
+- Raison technique : cette separation permet de tester la boucle deterministement, puis de brancher un producteur LLM NDJSON/SSE sans reecrire l'execution ni le stream.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeGenerationExecutor.ts` :
+  - iteration ordonnee des items de queue ;
+  - emission `phase` par fichier ;
+  - application des actions VFS via `executeCodeGenerationTool` ;
+  - emission `file.written` a chaque mutation detectee ;
+  - blocage d'un fichier requis non produit ;
+  - tolerance configurable des echecs optionnels ;
+  - emission finale `done` ou `error`.
+- Ajout de `src/__tests__/codeGenerationExecutor.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : la queue et les outils existaient separement ; aucun composant ne prouvait un flux fichier-par-fichier complet.
+- Apres : une queue issue du plan architecte peut produire plusieurs fichiers en ordre, streamer chaque ecriture et s'arreter proprement si un fichier requis manque.
+- Limite assumee : le producteur d'actions est encore injecte dans les tests ; le branchement LLM et la route `/api/code/*` restent a faire.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationExecutor.test.ts src/__tests__/codeGenerationTools.test.ts src/__tests__/codeGenerationQueue.test.ts src/__tests__/codeStreamEvents.test.ts` : 15 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 585 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est toujours pas termine : la boucle executor existe et est testee, mais la production d'actions n'est pas encore assuree par le LLM fichier-par-fichier ni exposee par le bridge stream `/api/code/*`.

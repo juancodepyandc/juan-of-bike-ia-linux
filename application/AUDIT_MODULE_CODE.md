@@ -397,6 +397,14 @@
 - **Validation** : tests cibles outils/queue/phases 10 verts / 0 echec ; glob Code a **582 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS3 reste ouvert** : brancher cette brique au LLM planner-executor, au sandbox WS7 pour `run_command`, au stream `file.written` live et au bridge `/api/code/*`.
 
+### 2026-07-15 — Vague 3 / WS3 increment 48 applique
+
+- **Executor de queue WS3** : `codeGenerationExecutor.ts` consomme la queue architecte, demande des actions outil a un producteur injecte, applique `write_file/read_file/apply_patch/run_command` sur le VFS et conserve les resultats par item.
+- **Stream fichier-par-fichier** : chaque mutation de fichier genere des evenements typés `file.written`; l'executor emet aussi `phase`, `done` et `error` avec le schema `aurora.code.stream/1`.
+- **Controle de completude requis** : un fichier requis sans action ou absent apres execution bloque la queue; un echec optionnel peut etre consigne sans perdre les fichiers deja produits.
+- **Validation** : tests cibles executor/outils/queue/stream 15 verts / 0 echec ; glob Code a **585 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS3 reste ouvert** : le producteur d'actions doit maintenant etre branche au LLM fichier-par-fichier, puis expose via `/api/code/*` NDJSON/SSE et consomme directement par l'UI.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
