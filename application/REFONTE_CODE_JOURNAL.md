@@ -2653,3 +2653,65 @@ Pour cet increment WS6, oui : la taxonomie, le contrat semantique structure, le 
 ### Etat de satisfaction chantier
 
 Pour WS6 local, oui : les criteres majeurs sont maintenant couverts, y compris une cible extreme bout en bout. Je ne marque pas WS6 comme definitivement clos pour toutes les familles tant que les generateurs specialises n'ont pas chacun une preuve buildable equivalente.
+
+## 2026-07-15 — Vague 3 / WS13 increment 59 — Auto-correction anti-regression
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre identifie WS13 comme un chantier fort : correction pilotee par cause, suppression des strategies degradantes, harnais anti-regression et budget adaptatif.
+- `codeAutoCorrection.ts` pilotait encore l'escalade surtout par compteur et contenait des rotations degradantes apres la passe 5 : changement de stack/framework, reduction au strict minimum, suppression tests/config/docs et mono/deux fichiers.
+- `codeCorrectionMessages.ts` reinjectait une consigne de simplification/changement de librairies en `strategy_change`.
+- `codeReasoningEngine.ts` pouvait reinjecter une "simplification" demandant de reduire le nombre de fichiers au strict minimum.
+- `codeValidationCorrectionLoop.ts` acceptait un candidat des qu'il passait `validateOutputMatchesIntent`, sans snapshot comportemental avant/apres.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment traite un defaut local explicitement documente dans le prompt.
+- Choix retenu : snapshot comportemental deterministe et leger, calcule sur le VFS courant avant/apres patch, plutot qu'une execution supplementaire couteuse a chaque fusion.
+- Signaux du snapshot : fichiers non vides, fichiers de tests, scripts `package.json`, exports publics, endpoints/routes et taille fonctionnelle source.
+- Raison technique : ce garde bloque les regressions "gameables" avant meme que le score sandbox puisse etre ameliore artificiellement par suppression de capacites.
+
+### Modifications realisees
+
+- `src/services/codeAutoCorrection.ts` :
+  - ajout de `CorrectionLocality`, `CorrectionHistorySignal`, `buildCorrectionDiagnosis` et `computeAdaptiveCorrectionBudget` ;
+  - chaque `CorrectionStrategy` expose `cause`, `locality` et `history` ;
+  - budget adaptatif par complexite, plafonne par `MAX_CORRECTION_PASSES` ;
+  - suppression des consignes degradantes et remplacement par des variations conservatrices ;
+  - les tests restent des contrats d'acceptation, pas une variable a simplifier.
+- `src/services/codeRegressionGuard.ts` :
+  - nouveau schema `aurora.code.regression-snapshot/1` ;
+  - extraction des scripts, exports, endpoints Express/Flask/FastAPI/Django/Next route handlers, tests et taille source ;
+  - comparaison avant/apres et rapport formatte.
+- `src/services/codeValidationCorrectionLoop.ts` :
+  - rollback automatique des reparations locales, regenerations de secours et corrections LLM qui reduisent les capacites detectees ;
+  - ajout du rapport anti-regression dans `CorrectionPass.errors`.
+- `src/services/codeCorrectionMessages.ts` :
+  - injection cause/localite/historique dans le system prompt ;
+  - interdiction explicite de faire passer la validation en supprimant fonctionnalite, test, doc, script, export ou endpoint.
+- `src/services/codeReasoningEngine.ts` :
+  - remplacement de la simplification "strict minimum" par une simplification structurelle conservatrice ;
+  - import `ollamaResilience` rendu lazy pour tester la fonction pure sans charger le pont Tauri.
+- Tests ajoutes/etendus :
+  - `codeRegressionGuard.test.ts`
+  - `codeReasoningEngine.test.ts`
+  - `codeAutoCorrection.test.ts`
+  - `codeCorrectionMessages.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : une passe tardive pouvait demander explicitement de supprimer tests/docs/config, de produire un MVP mono-fichier ou de changer de stack pour passer.
+- Apres : ces consignes ne sont plus emises par la strategie, les messages de correction ni le raisonnement de plateau.
+- Avant : un candidat appauvri pouvait etre accepte si son intention generale semblait encore plausible.
+- Apres : un candidat qui retire fichier non vide, test, script, export, endpoint ou taille fonctionnelle importante est refuse et le VFS courant est conserve.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeAutoCorrection.test.ts src/__tests__/codeCorrectionMessages.test.ts src/__tests__/codeRegressionGuard.test.ts src/__tests__/codeReasoningEngine.test.ts src/__tests__/codeValidationCorrectionLoop.test.ts` : 53 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 636 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- Recherche anti-regression textuelle : plus d'ancienne consigne degradante dans les chemins de correction Code ; les occurrences restantes sont des assertions de tests ou un gabarit jeu HTML auto-suffisant hors auto-correction.
+
+### Etat de satisfaction chantier
+
+Pour WS13 local, le socle est couvert : strategie fonction de categorie/localite/historique, suppression des strategies degradantes, snapshot comportemental et rollback automatique, budget adaptatif avec plafond machine. Restent a enrichir : reinjection plus detaillee des diagnostics AST/visuels dans le choix de strategie, preuve live longue d'une correction LLM sur projet reel et re-test WS7 complet apres cette correction.

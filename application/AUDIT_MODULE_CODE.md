@@ -487,6 +487,15 @@
 - **Validation** : preuve cible 1 vert / 0 echec ; glob Code a **626 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS6 statut** : les criteres locaux principaux sont couverts (taxonomie, classifieur structure + fallback, generateurs, preuve extreme mini-compilateur). Restent les autres familles extremes a enrichir progressivement et une generation LLM live longue a rejouer.
 
+### 2026-07-15 — Vague 3 / WS13 increment 59 applique
+
+- **Strategie pilotee par cause** : `codeAutoCorrection.ts` expose maintenant une diagnosis structuree `(cause, localite, historique)` dans chaque `CorrectionStrategy`, avec budget adaptatif par complexite et detection de repetition/stagnation.
+- **Strategies degradantes supprimees** : retrait des rotations "changement de stack/framework", "minimum viable radical", suppression tests/docs/config et simplification de tests. `codeCorrectionMessages.ts` et `codeReasoningEngine.ts` interdisent aussi de valider en retirant fonctionnalites, tests, docs, scripts, exports ou endpoints.
+- **Harnais anti-regression** : ajout de `codeRegressionGuard.ts`, snapshot schema `aurora.code.regression-snapshot/1` couvrant fichiers non vides, tests, scripts `package.json`, exports, endpoints et taille fonctionnelle.
+- **Rollback automatique** : `codeValidationCorrectionLoop.ts` refuse et n'applique pas les reparations locales, regenerations de secours ou corrections LLM qui reduisent les capacites detectees ; le rapport est ajoute au log de correction.
+- **Validation** : tests cibles WS13 53 verts / 0 echec ; glob Code a **636 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS13 statut** : le socle local est couvert (cause/localite/historique, suppression des degradations, snapshot/rollback, budget adaptatif). Restent l'exploitation plus fine des diagnostics AST/visuels dans la boucle et une preuve live longue de correction LLM avec re-test WS7 complet sur projet reel.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

@@ -7,6 +7,8 @@ import assert from 'node:assert/strict'
 import {
   classifyErrors,
   buildCorrectionStrategy,
+  buildCorrectionDiagnosis,
+  computeAdaptiveCorrectionBudget,
   shouldContinueLoop,
   MAX_CORRECTION_PASSES,
   type CorrectionPass,
@@ -122,6 +124,8 @@ describe('buildCorrectionStrategy — niveaux escalation', () => {
     const s = buildCorrectionStrategy(['syntax'], 1, [])
     assert.equal(s.level, 'quick_fix')
     assert.equal(s.escalation, 1)
+    assert.equal(s.cause, 'syntax')
+    assert.equal(s.locality, 'single_file')
   })
 
   test('attempt 3 + dependency → targeted_repair', () => {
@@ -192,6 +196,22 @@ describe('buildCorrectionStrategy — instructions', () => {
     assert.ok(s6.instructions.includes('VARIATION'))
   })
 
+  test('strategy_change interdit les anciennes strategies degradantes', () => {
+    const stagnatingLog: CorrectionPass[] = [
+      { attempt: 1, score: 44, errors: ['long repeated build failure'], strategy: 'initial', modelUsed: 'm', resolved: false },
+      { attempt: 2, score: 45, errors: ['long repeated build failure'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+      { attempt: 3, score: 45, errors: ['long repeated build failure'], strategy: 'partial_rewrite', modelUsed: 'm', resolved: false },
+    ]
+    const s = buildCorrectionStrategy(['build_failure'], 8, stagnatingLog)
+
+    assert.equal(s.level, 'strategy_change')
+    assert.match(s.instructions, /Preserve toutes les fonctionnalites|Conserve les tests/i)
+    assert.doesNotMatch(
+      s.instructions,
+      /minimum viable|supprime tout|un seul fichier|deux maximum|change-le|Next\.js|FastAPI|simplifie les tests|Reduis le nombre/i,
+    )
+  })
+
   test('rotation cycle 4 → variations différentes', () => {
     const stagnatingLog: CorrectionPass[] = [
       { attempt: 1, score: 40, errors: ['e'], strategy: 'initial', modelUsed: 'm', resolved: false },
@@ -228,6 +248,35 @@ describe('buildCorrectionStrategy — stagnation', () => {
     ]
     const s = buildCorrectionStrategy(['unknown'], 3, log)
     assert.equal(s.escalation, 2) // ceil(3/2)
+  })
+})
+
+describe('buildCorrectionDiagnosis — cause/localité/historique', () => {
+  test('expose une cause dominante, une localité et le budget adaptatif', () => {
+    const log: CorrectionPass[] = [
+      { attempt: 1, score: 40, errors: ['Cannot find module vite'], strategy: 'initial', modelUsed: 'm', resolved: false },
+      { attempt: 2, score: 41, errors: ['Cannot find module vite'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+      { attempt: 3, score: 41, errors: ['Cannot find module vite'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+    ]
+    const diagnosis = buildCorrectionDiagnosis(['dependency_missing', 'build_failure'], log)
+
+    assert.equal(diagnosis.cause, 'dependency_missing')
+    assert.equal(diagnosis.locality, 'manifest')
+    assert.equal(diagnosis.history.stagnating, true)
+    assert.equal(diagnosis.history.repeatedErrorCount, 3)
+    assert.ok(diagnosis.history.adaptiveBudget > 6)
+  })
+
+  test('budget simple < budget complexe, avec plafond de sécurité', () => {
+    assert.equal(computeAdaptiveCorrectionBudget(['syntax'], []), 6)
+    assert.ok(computeAdaptiveCorrectionBudget(['build_failure', 'test_failure'], []) > 6)
+    const complexBudget = computeAdaptiveCorrectionBudget(['build_failure', 'test_failure', 'runtime_crash'], [
+        { attempt: 1, score: 40, errors: ['a'], strategy: 'initial', modelUsed: 'm', resolved: false },
+        { attempt: 2, score: 41, errors: ['b'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+        { attempt: 3, score: 41, errors: ['c'], strategy: 'partial_rewrite', modelUsed: 'm', resolved: false },
+    ])
+    assert.ok(complexBudget > 6)
+    assert.ok(complexBudget <= MAX_CORRECTION_PASSES)
   })
 })
 
@@ -278,6 +327,18 @@ describe('shouldContinueLoop', () => {
       resolved: false,
     }))
     assert.equal(shouldContinueLoop(log, 6), true)
+  })
+
+  test('budget simple atteint à 6 passes syntaxe', () => {
+    const log: CorrectionPass[] = Array.from({ length: 6 }, (_, i) => ({
+      attempt: i + 1,
+      score: 30 + i,
+      errors: [`SyntaxError ${i} different message`],
+      strategy: 'initial' as const,
+      modelUsed: 'm',
+      resolved: false,
+    }))
+    assert.equal(shouldContinueLoop(log, 6, ['syntax']), false)
   })
 
   test('progression normale → continuer', () => {

@@ -1,13 +1,12 @@
 // ---------------------------------------------------------------------------
 // Code Reasoning Engine — LLM-powered error analysis for stuck corrections
 // When the auto-correction loop stagnates, this module analyzes WHY and
-// proposes fundamentally different approaches instead of retrying blindly
+// proposes cause-driven approaches instead of retrying blindly
 // ---------------------------------------------------------------------------
 
-import { CODE_SINGLE_MODEL } from '../config/models'
-import { resilientOllamaGenerate } from './ollamaResilience'
-import type { CorrectionPass } from './codeAutoCorrection'
-import type { CodeIntent } from './codeIntent'
+import { CODE_SINGLE_MODEL } from '../config/models.ts'
+import type { CorrectionPass } from './codeAutoCorrection.ts'
+import type { CodeIntent } from './codeIntent.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,7 +59,7 @@ function buildDiagnosticPrompt(
     '1. Identifie le PATTERN d echec: est-ce toujours la meme erreur? Des erreurs differentes a chaque fois?',
     '2. Identifie la CAUSE RACINE: config, dependance, version, architecture, ou logique?',
     '3. Propose une solution qui CASSE le cycle d echec — pas un patch incremental',
-    '4. Si le probleme est structural, recommande une simplification radicale',
+    '4. Si le probleme est structural, recommande une simplification conservatrice qui preserve les capacites existantes',
     '',
     '## Ta reponse DOIT suivre ce format EXACTEMENT (JSON):',
     '{',
@@ -68,7 +67,7 @@ function buildDiagnosticPrompt(
     '  "suggestion": "instruction concrete pour corriger (ce que le code doit faire differemment)",',
     '  "architectureChange": "changement architectural si necessaire, ou null",',
     '  "simplificationNeeded": true/false,',
-    '  "alternativeStack": "stack alternative si la stack actuelle est le probleme, ou null"',
+    '  "alternativeStack": "alternative technique locale si la stack actuelle est prouvee incompatible, ou null"',
     '}',
     '',
     'IMPORTANT: Reponds UNIQUEMENT avec le JSON, rien d autre. JAMAIS de refus ni d excuse.',
@@ -133,6 +132,7 @@ export async function analyzeStuckCorrection(
   )
 
   try {
+    const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
     const response = await resilientOllamaGenerate(model, diagnosticPrompt, {
       timeoutMs: 60_000,
     })
@@ -167,16 +167,16 @@ export function buildReasoningInstructions(reasoning: ReasoningResult): string {
   if (reasoning.simplificationNeeded) {
     lines.push(
       '',
-      'SIMPLIFICATION REQUISE:',
-      '- Reduis le nombre de fichiers au strict minimum',
-      '- Elimine les abstractions inutiles',
-      '- Utilise des patterns simples et eprouves',
-      '- Prefere du code inline aux imports complexes',
+      'SIMPLIFICATION STRUCTURELLE CONSERVATRICE:',
+      '- Elimine seulement les abstractions inutiles reliees a la cause racine',
+      '- Conserve les fichiers, tests, scripts, endpoints et exports publics existants',
+      '- Utilise des patterns simples et eprouves sans reduire le perimetre fonctionnel',
+      '- Prefere un import explicite et stable a une chaine d abstractions fragile',
     )
   }
 
   if (reasoning.alternativeStack) {
-    lines.push('', `Stack alternative recommandee: ${reasoning.alternativeStack}`)
+    lines.push('', `Alternative technique a evaluer sans reduire le perimetre: ${reasoning.alternativeStack}`)
   }
 
   lines.push(

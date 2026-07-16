@@ -20,6 +20,10 @@ import {
   validateOutputMatchesIntent,
 } from './codeProjectValidation.ts'
 import {
+  formatCodeRegressionGuardReport,
+  inspectCodePatchRegression,
+} from './codeRegressionGuard.ts'
+import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CORRECTION_FIRST_BYTE_TIMEOUT_MS,
   CORRECTION_TIMEOUT_MS,
@@ -246,6 +250,16 @@ export async function runValidationAndCorrectionLoop(
 
     const localRepair = attemptLocalFileRepair(currentFiles, sandboxResult)
     if (localRepair) {
+      const regressionReport = inspectCodePatchRegression(currentFiles, localRepair.files)
+      if (!regressionReport.ok) {
+        const reportText = formatCodeRegressionGuardReport(regressionReport)
+        pass.errors = [`[Auto-reparation locale refusee]\n${reportText}`, ...pass.errors]
+        onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+        setPhase(`Passe ${attempt} - auto-reparation refusee par anti-regression.`, Math.min(93, 71 + attempt * 3))
+        lastScore = currentScore
+        continue
+      }
+
       currentFiles = localRepair.files
       currentNotes = `${currentNotes ? `${currentNotes}\n\n` : ''}Auto-reparation locale: ${localRepair.reason}`
       onFilesUpdate(currentFiles, currentNotes)
@@ -343,11 +357,19 @@ export async function runValidationAndCorrectionLoop(
       const rescueContent = rescueResponse?.response?.trim() || ''
       const rescueFiles = parseCodeFiles(rescueContent)
       if (rescueFiles.length > 0 && !validateOutputMatchesIntent(rescueFiles, intent)) {
-        currentFiles = rescueFiles
-        currentNotes = extractNotes(rescueContent)
-        onFilesUpdate(currentFiles, currentNotes)
-        lastScore = currentScore
-        continue
+        const regressionReport = inspectCodePatchRegression(currentFiles, rescueFiles)
+        if (regressionReport.ok) {
+          currentFiles = rescueFiles
+          currentNotes = extractNotes(rescueContent)
+          onFilesUpdate(currentFiles, currentNotes)
+          lastScore = currentScore
+          continue
+        }
+
+        const reportText = formatCodeRegressionGuardReport(regressionReport)
+        pass.errors = [`[Regeneration de secours refusee]\n${reportText}`, ...pass.errors]
+        onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+        setPhase(`Passe ${attempt} — regeneration refusee par anti-regression.`, Math.min(94, 76 + attempt * 3))
       }
     }
 
@@ -390,6 +412,16 @@ export async function runValidationAndCorrectionLoop(
     const correctionIssue = validateOutputMatchesIntent(mergedCandidate, intent)
     if (correctionIssue) {
       setPhase(`Passe ${attempt} — correction invalide (${correctionIssue.slice(0, 50)}...), on garde les fichiers actuels...`, Math.min(94, 76 + attempt * 3))
+      continue
+    }
+
+    const regressionReport = inspectCodePatchRegression(currentFiles, mergedCandidate)
+    if (!regressionReport.ok) {
+      const reportText = formatCodeRegressionGuardReport(regressionReport)
+      pass.errors = [`[Correction refusee]\n${reportText}`, ...pass.errors]
+      onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+      setPhase(`Passe ${attempt} — correction refusee par anti-regression, rollback automatique.`, Math.min(94, 76 + attempt * 3))
+      lastScore = currentScore
       continue
     }
 

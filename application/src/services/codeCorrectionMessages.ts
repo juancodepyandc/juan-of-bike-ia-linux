@@ -52,12 +52,16 @@ export function buildCorrectionMessages({
     '---',
     '',
     `Strategie: ${strategy.level} (escalation ${strategy.escalation})`,
+    `Cause dominante: ${strategy.cause}`,
+    `Localite probable: ${strategy.locality}`,
+    `Historique: stagnation=${strategy.history.stagnating ? 'oui' : 'non'}, repetition=${strategy.history.repeatedErrorCount}, budget=${strategy.history.adaptiveBudget}`,
     `Instructions: ${strategy.instructions}`,
     '',
     'Avant de toucher au code applicatif, determine si l echec vient du code, d une config locale manquante, d un script faux, d une incompatibilite de version, d un type moderne ou d un runtime absent.',
     'Si le projet utilise TypeScript, verifie d abord tsconfig.json, la version de typescript, les options du compilateur et les types installes.',
     'Ajoute ou corrige les fichiers de configuration locaux obligatoires quand ils manquent, au lieu d heriter implicitement d un dossier parent.',
     'Conserve les fichiers qui n ont pas besoin de changer.',
+    'Interdiction de faire passer la validation en supprimant une fonctionnalite, un test, une doc, un script, un export public ou un endpoint existant.',
   ]
 
   if (/package\.json|json valide|actual JSON|EJSONPARSE|JSONParseError/i.test(validationResult.summary + '\n' + failingSteps)) {
@@ -84,7 +88,7 @@ export function buildCorrectionMessages({
       '',
       'ATTENTION: Les corrections precedentes ont echoue.',
       strategy.level === 'strategy_change'
-        ? 'Change completement d approche: simplifie l architecture, utilise des patterns differents, change de librairies si necessaire.'
+        ? 'Change d angle de diagnostic, mais conserve la stack, les contrats publics et le perimetre fonctionnel sauf incompatibilite locale prouvee.'
         : 'Reecris les fichiers problematiques completement. Ne te contente pas de patcher.',
     )
   }
