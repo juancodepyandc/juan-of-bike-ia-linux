@@ -231,68 +231,17 @@ def generate_3d_asset(
     source_run_id: str,
     timeout: int,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    started = time.monotonic()
-    detail: dict[str, Any] = {"requestedEndpoint": "/api/3d/run-pipeline"}
-    generated_run_id = slug(source_run_id or f"{run_id}-3d")
-    source: pathlib.Path | None = None
-    if fresh:
-        try:
-            response = post_json(base_url, "/api/3d/run-pipeline", {
-                "prompt": prompt[:1000], "run_id": generated_run_id,
-                "purpose": "visual_preview", "multi_view": False,
-            }, timeout=timeout)
-            pipeline = response.get("pipeline") if isinstance(response.get("pipeline"), dict) else {}
-            detail["transportOk"] = bool(response.get("ok"))
-            detail["pipelineOk"] = bool(pipeline.get("ok", response.get("ok")))
-            detail["actualEndpoint"] = "/api/3d/run-pipeline"
-            run_root = (root / "output" / "3d" / "generations" / generated_run_id).resolve()
-            final_mesh = pathlib.Path(str(pipeline.get("final_mesh") or "")).resolve()
-            if final_mesh.is_file() and final_mesh.is_relative_to(run_root):
-                source = final_mesh
-            else:
-                source = latest_existing_glb(root, generated_run_id)
-            if not detail["pipelineOk"]:
-                detail["pipelineError"] = pipeline.get("error") or "audit 3D interne rejete"
-            if not source:
-                detail["pipelineError"] = response.get("error") or "GLB absent apres pipeline"
-        except Exception as error:
-            detail["pipelineError"] = str(error)
+    """Delegue au client 3D qualite max (multi-vues TRELLIS + score/rescue/retry
+    + nettoyage des intermediaires). Voir intermodule_3d_quality."""
+    from intermodule_3d_quality import generate_quality_3d_asset
 
-    if source is None and allow_existing:
-        source = latest_existing_glb(root, source_run_id)
-        detail.setdefault("actualEndpoint", "pipeline-output-cache")
-        detail["reusedExistingPipelineAsset"] = bool(source)
-    if source is None:
-        detail["error"] = detail.get("pipelineError") or "aucun GLB pipeline trouve"
-        return None, detail
-
-    stale = bool(fresh and detail.get("reusedExistingPipelineAsset", False))  # WS15: reuse post-echec frais => possiblement hors-sujet
-    if stale:
-        detail["staleAssetWarning"] = "Generation 3D fraiche echouee: GLB existant reutilise, peut ne pas correspondre au prompt."
-    target = out_dir / "models" / f"{slug(source.stem)}.glb"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    detail["durationMs"] = round((time.monotonic() - started) * 1000)
-    return {
-        "id": "model-primary",
-        "kind": "model3d",
-        "role": "product-model",
-        "path": _project_path(out_dir, target),
-        "storagePath": _storage_path(root, target),
-        "previewUrl": _preview_url(out_dir, target),
-        "mimeType": "model/gltf-binary",
-        "bytes": target.stat().st_size,
-        "sourceModule": "3d",
-        "bridgeEndpoint": "/api/3d/run-pipeline",
-        "optimized": True,
-        "stale": stale,
-        "warning": detail.get("staleAssetWarning"),
-        "metadata": {
-            "sourcePath": _storage_path(root, source),
-            "pipelineRunId": source.relative_to(root / "output" / "3d" / "generations").parts[0],
-            "freshPipelineRun": fresh and not detail.get("reusedExistingPipelineAsset", False),
-        },
-    }, detail
+    return generate_quality_3d_asset(
+        base_url=base_url, root=root, out_dir=out_dir, prompt=prompt, run_id=run_id,
+        fresh=fresh, allow_existing=allow_existing, source_run_id=source_run_id,
+        timeout=timeout, post=post_json, find_existing=latest_existing_glb,
+        slugify=slug, project_path=_project_path, storage_path=_storage_path,
+        preview_url=_preview_url,
+    )
 
 
 def generate_voice_asset(base_url: str, root: pathlib.Path, out_dir: pathlib.Path, prompt: str) -> tuple[dict[str, Any] | None, dict[str, Any]]:

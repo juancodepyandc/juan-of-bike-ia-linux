@@ -64,6 +64,64 @@ class InterModuleAssetsTests(unittest.TestCase):
             self.assertIn("peut", (asset["warning"] or "").lower())
             self.assertTrue(detail.get("staleAssetWarning"))
 
+    def test_3d_quality_loop_requests_max_quality_rescues_and_cleans_up(self) -> None:
+        # WS15 qualite: multi_view=True + purpose=product demandes; score bas ->
+        # auto-rescue -> re-score haut -> asset livre; runs commandes SUPPRIMES,
+        # runs etrangers preserves.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            generations = root / "output" / "3d" / "generations"
+            foreign = generations / "run-dun-autre-module" / "mesh.glb"
+            foreign.parent.mkdir(parents=True, exist_ok=True)
+            foreign.write_bytes(b"glTF" + b"\x00" * 4096)
+            out_dir = root / "output" / "code_assets" / "proof"
+            calls: list[tuple[str, dict]] = []
+            score_calls = {"n": 0}
+
+            def fake_post(base_url, path, payload, timeout=30):
+                calls.append((path, payload))
+                if path == "/api/3d/run-pipeline":
+                    mesh = generations / payload["run_id"] / "final_materials.glb"
+                    mesh.parent.mkdir(parents=True, exist_ok=True)
+                    mesh.write_bytes(b"glTF" + b"\x00" * 4096)
+                    (mesh.parent / "flux_reference.png").write_bytes(b"\x89PNG fake")
+                    return {"ok": True, "pipeline": {"ok": True, "final_mesh": str(mesh)}}
+                if path == "/api/3d/mesh-score":
+                    score_calls["n"] += 1
+                    low = score_calls["n"] == 1
+                    return {"ok": True, "score": {
+                        "overall_score": 48 if low else 91,
+                        "retry_recommended": low, "retry_threshold": 70,
+                        "failed_axes": ["surface_quality"] if low else [],
+                    }}
+                if path == "/api/3d/auto-rescue":
+                    rescued = pathlib.Path(payload["output"]) / "rescued.glb"
+                    rescued.parent.mkdir(parents=True, exist_ok=True)
+                    rescued.write_bytes(b"glTF" + b"\x00" * 5000)
+                    return {"ok": True, "rescue": {"ok": True, "final_mesh": str(rescued), "final_score": 91}}
+                raise AssertionError(f"endpoint inattendu: {path}")
+
+            with patch.object(assets, "post_json", side_effect=fake_post):
+                asset, detail = assets.generate_3d_asset(
+                    base_url="http://x", root=root, out_dir=out_dir,
+                    prompt="figurine dragon", run_id="coderun", fresh=True,
+                    allow_existing=True, source_run_id="", timeout=5,
+                )
+
+            self.assertIsNotNone(asset)
+            pipeline_calls = [payload for path, payload in calls if path == "/api/3d/run-pipeline"]
+            self.assertTrue(all(p["multi_view"] is True for p in pipeline_calls), "multi_view=True (TRELLIS) obligatoire")
+            self.assertTrue(all(p["purpose"] == "product" for p in pipeline_calls), "purpose=product (reglages hauts)")
+            self.assertTrue(any(path == "/api/3d/auto-rescue" for path, _ in calls), "rescue attendu sous le seuil")
+            self.assertFalse(asset["stale"])
+            self.assertEqual(asset["metadata"]["qualityScore"], 91)
+            self.assertTrue(asset["metadata"]["rescueUsed"])
+            # Sorties distinctes: l asset vit dans code_assets, les runs commandes sont purges.
+            self.assertTrue((out_dir / "models").is_dir())
+            self.assertEqual(detail.get("cleanedCommissionedRuns"), [p["run_id"] for p in pipeline_calls[:1]])
+            self.assertFalse((generations / pipeline_calls[0]["run_id"]).exists(), "run commande doit etre supprime")
+            self.assertTrue(foreign.exists(), "les runs des autres modules ne doivent JAMAIS etre touches")
+
     def test_bundle_requires_every_requested_asset(self) -> None:
         fake_asset = lambda kind: ({
             "id": kind,
