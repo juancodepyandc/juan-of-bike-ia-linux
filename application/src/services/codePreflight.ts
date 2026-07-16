@@ -1,30 +1,21 @@
 import {
   CODE_SINGLE_MODEL,
 } from '../config/models'
-import { fsExists, getWorkspacePath, runWorkspaceCommand } from '../hooks/useTauri'
+import { getWorkspacePath } from '../hooks/useTauri'
 import { resilientOllamaGenerate } from './ollamaResilience'
 import type { CodeIntent } from './codeIntent'
+import {
+  chooseRelevantPreflightTools,
+  inspectPreflightExistingFiles,
+  inspectPreflightWorkspaceMarkers,
+  probePreflightTool,
+  selectPreferredPackageManager,
+  uniquePreflightStrings as uniqueStrings,
+  type CodePreflightFile,
+  type CodePreflightToolFact,
+} from './codePreflightProbe'
 
-type PreflightCodeFile = {
-  name: string
-  language: string
-  content: string
-}
-
-type ToolProbeSpec = {
-  id: string
-  executable: string
-  args: string[]
-  label: string
-}
-
-export type CodePreflightToolFact = {
-  id: string
-  label: string
-  available: boolean
-  version: string | null
-  command: string
-}
+export type { CodePreflightToolFact } from './codePreflightProbe'
 
 export type CodePreflightReport = {
   summary: string
@@ -40,205 +31,14 @@ export type CodePreflightReport = {
   toolFacts: CodePreflightToolFact[]
 }
 
-const TOOL_SPECS: ToolProbeSpec[] = [
-  { id: 'git', label: 'Git', executable: 'git', args: ['--version'] },
-  { id: 'node', label: 'Node.js', executable: 'node', args: ['--version'] },
-  { id: 'npm', label: 'npm', executable: 'npm', args: ['--version'] },
-  { id: 'pnpm', label: 'pnpm', executable: 'pnpm', args: ['--version'] },
-  { id: 'yarn', label: 'Yarn', executable: 'yarn', args: ['--version'] },
-  { id: 'bun', label: 'Bun', executable: 'bun', args: ['--version'] },
-  { id: 'python', label: 'Python', executable: 'python', args: ['--version'] },
-  { id: 'pip', label: 'pip', executable: 'pip', args: ['--version'] },
-  { id: 'cargo', label: 'Cargo', executable: 'cargo', args: ['--version'] },
-  { id: 'rustc', label: 'rustc', executable: 'rustc', args: ['--version'] },
-  { id: 'go', label: 'Go', executable: 'go', args: ['version'] },
-  { id: 'dotnet', label: '.NET', executable: 'dotnet', args: ['--version'] },
-  { id: 'java', label: 'Java', executable: 'java', args: ['-version'] },
-  { id: 'javac', label: 'javac', executable: 'javac', args: ['-version'] },
-]
-
-const WORKSPACE_MARKERS = [
-  'package.json',
-  'pnpm-lock.yaml',
-  'yarn.lock',
-  'bun.lock',
-  'bun.lockb',
-  'tsconfig.json',
-  'vite.config.ts',
-  'vite.config.js',
-  'webpack.config.js',
-  'webpack.config.ts',
-  'pyproject.toml',
-  'requirements.txt',
-  'Cargo.toml',
-  'src-tauri/Cargo.toml',
-  'go.mod',
-  'pom.xml',
-  'build.gradle',
-  'build.gradle.kts',
-]
-
-const PREFLIGHT_TOOL_TIMEOUT_MS = 4_000
 const PREFLIGHT_SYNTHESIS_TIMEOUT_MS = 25_000
 const PREFLIGHT_HEARTBEAT_MS = 4_000
-
-function normalizeWhitespace(text: string) {
-  return text.replace(/\s+/g, ' ').trim()
-}
-
-function shorten(text: string, limit = 220) {
-  const normalized = normalizeWhitespace(text)
-  return normalized.length <= limit ? normalized : `${normalized.slice(0, limit)}...`
-}
-
-function uniqueStrings(values: string[]) {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
-}
-
-function extractVersion(output: string) {
-  const normalized = output.replace(/\r/g, '').trim()
-  const line = normalized.split('\n').find((entry) => entry.trim()) || normalized
-  const quotedVersion = line.match(/"([^"]+)"/)?.[1]
-  if (quotedVersion) return quotedVersion
-
-  const semver = line.match(/\bv?\d+\.\d+(?:\.\d+)?(?:[-+][\w.-]+)?\b/i)?.[0]
-  if (semver) return semver
-
-  return line ? shorten(line, 80) : null
-}
-
-function chooseRelevantToolIds(intent: CodeIntent) {
-  const selected = new Set<string>(['git'])
-  const projectType = intent.projectType
-
-  if (
-    projectType.startsWith('spa_')
-    || projectType.startsWith('ssr_')
-    || projectType.startsWith('fullstack_')
-    || projectType.startsWith('desktop_')
-    || projectType === 'api_express'
-    || projectType === 'cli_node'
-    || projectType === 'game_web'
-    || projectType === 'library_npm'
-  ) {
-    selected.add('node')
-    selected.add('npm')
-    selected.add('pnpm')
-    selected.add('yarn')
-    selected.add('bun')
-  }
-
-  if (
-    projectType === 'desktop_tauri'
-    || projectType === 'api_actix'
-    || projectType === 'cli_rust'
-    || projectType === 'system_rust'
-    || projectType === 'library_crate'
-  ) {
-    selected.add('cargo')
-    selected.add('rustc')
-  }
-
-  if (
-    projectType === 'api_fastapi'
-    || projectType === 'api_django'
-    || projectType === 'api_flask'
-    || projectType === 'fullstack_django'
-    || projectType === 'cli_python'
-    || projectType === 'data_python'
-  ) {
-    selected.add('python')
-    selected.add('pip')
-  }
-
-  if (projectType === 'api_gin' || projectType === 'cli_go') {
-    selected.add('go')
-  }
-
-  if (projectType === 'api_dotnet' || intent.languages.includes('csharp')) {
-    selected.add('dotnet')
-  }
-
-  if (projectType === 'api_spring' || intent.languages.includes('java') || intent.languages.includes('kotlin')) {
-    selected.add('java')
-    selected.add('javac')
-  }
-
-  return TOOL_SPECS.filter((tool) => selected.has(tool.id))
-}
-
-async function probeTool(spec: ToolProbeSpec, cwd: string): Promise<CodePreflightToolFact> {
-  try {
-    const result = await runWorkspaceCommand(spec.executable, spec.args, cwd, PREFLIGHT_TOOL_TIMEOUT_MS)
-    return {
-      id: spec.id,
-      label: spec.label,
-      available: result.ok,
-      version: result.ok ? extractVersion(result.output) : null,
-      command: `${spec.executable} ${spec.args.join(' ')}`.trim(),
-    }
-  } catch {
-    return {
-      id: spec.id,
-      label: spec.label,
-      available: false,
-      version: null,
-      command: `${spec.executable} ${spec.args.join(' ')}`.trim(),
-    }
-  }
-}
-
-async function inspectWorkspaceMarkers(rootPath: string) {
-  const checks = await Promise.all(
-    WORKSPACE_MARKERS.map(async (marker) => ({
-      marker,
-      present: await fsExists(`${rootPath}/${marker}`).catch(() => false),
-    })),
-  )
-
-  return checks.filter((entry) => entry.present).map((entry) => entry.marker)
-}
-
-function inspectExistingFiles(files: PreflightCodeFile[]) {
-  const normalized = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
-  const findings: string[] = []
-  const mustInspectFirst: string[] = []
-
-  if (files.length > 0) {
-    findings.push(`${files.length} fichier(s) existent deja dans le projet courant.`)
-    mustInspectFirst.push(...files.slice(0, 8).map((file) => file.name))
-  }
-
-  if (normalized.includes('package.json')) findings.push('Le projet courant contient deja un package.json.')
-  if (normalized.includes('tsconfig.json')) findings.push('Le projet courant contient deja un tsconfig.json.')
-  if (normalized.includes('src-tauri/cargo.toml')) findings.push('Le projet courant contient deja un shell Tauri Rust.')
-  if (normalized.includes('requirements.txt') || normalized.includes('pyproject.toml')) findings.push('Le projet courant contient deja un environnement Python.')
-  if (normalized.includes('cargo.toml')) findings.push('Le projet courant contient deja un manifeste Cargo.')
-  if (normalized.includes('go.mod')) findings.push('Le projet courant contient deja un module Go.')
-
-  return {
-    findings,
-    mustInspectFirst: uniqueStrings(mustInspectFirst),
-  }
-}
-
-function selectPreferredPackageManager(toolFacts: CodePreflightToolFact[], workspaceMarkers: string[]) {
-  const available = new Set(toolFacts.filter((tool) => tool.available).map((tool) => tool.id))
-  if (workspaceMarkers.includes('pnpm-lock.yaml') && available.has('pnpm')) return 'pnpm'
-  if (workspaceMarkers.includes('yarn.lock') && available.has('yarn')) return 'yarn'
-  if ((workspaceMarkers.includes('bun.lock') || workspaceMarkers.includes('bun.lockb')) && available.has('bun')) return 'bun'
-  if (available.has('npm')) return 'npm'
-  if (available.has('pnpm')) return 'pnpm'
-  if (available.has('yarn')) return 'yarn'
-  if (available.has('bun')) return 'bun'
-  return null
-}
 
 function buildFallbackReport(
   intent: CodeIntent,
   toolFacts: CodePreflightToolFact[],
   workspaceMarkers: string[],
-  existingFileFacts: ReturnType<typeof inspectExistingFiles>,
+  existingFileFacts: ReturnType<typeof inspectPreflightExistingFiles>,
 ): CodePreflightReport {
   const available = new Set(toolFacts.filter((tool) => tool.available).map((tool) => tool.id))
   const packageManager = selectPreferredPackageManager(toolFacts, workspaceMarkers)
@@ -341,7 +141,7 @@ function buildPreflightPrompt(
   intent: CodeIntent,
   toolFacts: CodePreflightToolFact[],
   workspaceMarkers: string[],
-  existingFileFacts: ReturnType<typeof inspectExistingFiles>,
+  existingFileFacts: ReturnType<typeof inspectPreflightExistingFiles>,
 ) {
   return [
     'Tu es l architecte preflight du module CODE d AuroraIA.',
@@ -455,20 +255,20 @@ export async function runCodePreflight({
 }: {
   prompt: string
   intent: CodeIntent
-  existingFiles: PreflightCodeFile[]
+  existingFiles: CodePreflightFile[]
   model?: string
   setPhase?: (detail: string, progress: number) => void
 }): Promise<CodePreflightReport> {
   const workspacePath = await getWorkspacePath()
-  const relevantTools = chooseRelevantToolIds(intent)
+  const relevantTools = chooseRelevantPreflightTools(intent)
 
   setPhase?.('Preflight local: scan des outils et du workspace...', 8)
   const [toolFacts, workspaceMarkers] = await Promise.all([
-    Promise.all(relevantTools.map((tool) => probeTool(tool, workspacePath))),
-    inspectWorkspaceMarkers(workspacePath),
+    Promise.all(relevantTools.map((tool) => probePreflightTool(tool, workspacePath))),
+    inspectPreflightWorkspaceMarkers(workspacePath),
   ])
 
-  const existingFileFacts = inspectExistingFiles(existingFiles)
+  const existingFileFacts = inspectPreflightExistingFiles(existingFiles)
   const fallback = buildFallbackReport(intent, toolFacts, workspaceMarkers, existingFileFacts)
 
   try {

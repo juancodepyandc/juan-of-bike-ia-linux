@@ -8,14 +8,15 @@ import {
   getGeneratedNodeDependencySpec,
   getLegacyReactThreeDependencySpec,
 } from './codeGeneratedDependencyPolicy.ts'
+import { repairGeneratedTypeScriptContent } from './codeGeneratedTypeScriptRepair.ts'
+import {
+  parseSpecVersion,
+  readManifestDependencySpec,
+  type LocalNodeManifest,
+} from './codeManifestVersion.ts'
+export { isVersionBelow, readManifestDependencySpec } from './codeManifestVersion.ts'
+export type { LocalNodeManifest } from './codeManifestVersion.ts'
 
-export type LocalNodeManifest = {
-  dependencies?: Record<string, string>
-  devDependencies?: Record<string, string>
-  optionalDependencies?: Record<string, string>
-  peerDependencies?: Record<string, string>
-  [key: string]: unknown
-}
 
 export function stripFormattingArtifacts(content: string) {
   let current = content
@@ -170,42 +171,6 @@ function repairGeneratedTsConfig(config: Record<string, unknown>) {
   }
 }
 
-function repairGeneratedTypeScriptContent(filename: string, content: string) {
-  const normalized = filename.replace(/\\/g, '/').toLowerCase()
-  if (!/\.[cm]?[jt]sx?$/.test(normalized)) return content
-
-  let next = content
-
-  // React 19 exposes a readonly ref overload when useRef<T>(null) is used with
-  // non-nullable T. Generated R3F code frequently assigns to ref.current during
-  // scene setup, so the ref must include null in its type parameter.
-  next = next.replace(
-    /\buseRef<((?:THREE\.)?(?:Mesh|Group|Object3D|InstancedMesh|PerspectiveCamera|OrthographicCamera|Camera|Scene|DirectionalLight|PointLight|SpotLight|AmbientLight|Line|Points|Sprite))>\(null\)/g,
-    'useRef<$1 | null>(null)',
-  )
-
-  // Common Zustand shape emitted by local models: the store type only accepts a
-  // concrete resources array, but components call setResources(prev => ...).
-  next = next.replace(
-    /setResources:\s*\(resources:\s*THREE\.Mesh\[\]\)\s*=>\s*void/g,
-    'setResources: (resources: THREE.Mesh[] | ((prev: THREE.Mesh[]) => THREE.Mesh[])) => void',
-  )
-  next = next.replace(
-    /setResources:\s*\(resources\)\s*=>\s*set\(\{\s*resources\s*\}\)/g,
-    "setResources: (resources) => set((state) => ({ resources: typeof resources === 'function' ? resources(state.resources) : resources }))",
-  )
-
-  if (/\binterface\s+TableProps\s*<\s*TData\s*>/.test(next) || /\bconst\s+Table\s*=\s*<\s*TData\b/.test(next)) {
-    next = next.replace(/\baccessorKey:\s*string\b/g, 'accessorKey?: keyof TData | string')
-    next = next.replace(/key=\{column\.accessorKey\}/g, 'key={String(column.accessorKey || column.header)}')
-    next = next.replace(
-      /row\[column\.accessorKey\s+as\s+keyof\s+TData\]/g,
-      '(column.accessorKey ? row[column.accessorKey as keyof TData] : undefined)',
-    )
-  }
-
-  return next
-}
 
 export function sanitizeGeneratedFileContent(filename: string, content: string) {
   const normalized = filename.replace(/\\/g, '/').toLowerCase()
@@ -426,38 +391,4 @@ export function sanitizeGeneratedFiles(files: CodeFile[]) {
 
 export function normalizeGeneratedCodeFilesForTest(files: CodeFile[]) {
   return sanitizeGeneratedFiles(files)
-}
-
-export function readManifestDependencySpec(manifest: LocalNodeManifest, dependencyName: string) {
-  for (const section of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const) {
-    const collection = manifest[section]
-    if (collection && typeof collection === 'object' && dependencyName in collection) {
-      const value = (collection as Record<string, unknown>)[dependencyName]
-      if (typeof value === 'string') {
-        return value
-      }
-    }
-  }
-
-  return null
-}
-
-function parseSpecVersion(spec: string) {
-  const match = spec.match(/(\d+)(?:\.(\d+))?(?:\.(\d+))?/)
-  if (!match) return null
-
-  return {
-    major: Number(match[1]),
-    minor: Number(match[2] || '0'),
-    patch: Number(match[3] || '0'),
-  }
-}
-
-export function isVersionBelow(spec: string, minimumMajor: number, minimumMinor: number) {
-  const version = parseSpecVersion(spec)
-  if (!version) return false
-  if (version.major !== minimumMajor) {
-    return version.major < minimumMajor
-  }
-  return version.minor < minimumMinor
 }

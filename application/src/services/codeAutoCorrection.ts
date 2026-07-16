@@ -1,9 +1,12 @@
-// ---------------------------------------------------------------------------
-// Code Auto-Correction Engine — Rule-based escalation without fixed limits
-// Equivalent of the 3D module's buildMeshCorrectionStrategy
-// ---------------------------------------------------------------------------
+// Cause-driven Code auto-correction engine.
 
 import type { CodeSandboxResult } from './codeSandbox'
+import { ERROR_PATTERNS } from './codeCorrectionErrorPatterns.ts'
+import {
+  buildPartialRewriteInstructions,
+  buildQuickFixInstructions,
+  buildTargetedRepairInstructions,
+} from './codeCorrectionInstructions.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,85 +69,6 @@ export type CorrectionPass = {
   resolved: boolean
 }
 
-// ---------------------------------------------------------------------------
-// Error classification — deterministic pattern matching
-// ---------------------------------------------------------------------------
-
-const ERROR_PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory }> = [
-  // Syntax
-  { pattern: /SyntaxError/i, category: 'syntax' },
-  { pattern: /unexpected token/i, category: 'syntax' },
-  { pattern: /expected.*got/i, category: 'syntax' },
-  { pattern: /parse error/i, category: 'syntax' },
-  { pattern: /IndentationError/i, category: 'syntax' },
-
-  // Type errors
-  { pattern: /TypeError/i, category: 'type_error' },
-  { pattern: /type.*is not assignable/i, category: 'type_error' },
-  { pattern: /Property.*does not exist/i, category: 'type_error' },
-  { pattern: /Cannot find name/i, category: 'type_error' },
-  { pattern: /error TS\d+/i, category: 'type_error' },
-
-  // Import/Module
-  { pattern: /Cannot find module/i, category: 'import_missing' },
-  { pattern: /Module not found/i, category: 'import_missing' },
-  { pattern: /ModuleNotFoundError/i, category: 'import_missing' },
-  { pattern: /ImportError/i, category: 'import_missing' },
-  { pattern: /No module named/i, category: 'import_missing' },
-  { pattern: /Could not resolve/i, category: 'import_missing' },
-  { pattern: /unresolved import/i, category: 'import_missing' },
-
-  // Dependency
-  { pattern: /npm ERR!/i, category: 'dependency_missing' },
-  { pattern: /npm error code EJSONPARSE/i, category: 'config_error' },
-  { pattern: /JSONParseError/i, category: 'config_error' },
-  { pattern: /Invalid package\.json/i, category: 'config_error' },
-  { pattern: /must be actual JSON/i, category: 'config_error' },
-  { pattern: /Failed to parse JSON data/i, category: 'config_error' },
-  { pattern: /pip.*install/i, category: 'dependency_missing' },
-  { pattern: /cargo.*could not compile/i, category: 'dependency_missing' },
-  { pattern: /ENOENT.*package\.json/i, category: 'dependency_missing' },
-  { pattern: /peer dep/i, category: 'dependency_missing' },
-
-  // Missing runtime / toolchain
-  { pattern: /Failed to spawn command/i, category: 'runtime_unavailable' },
-  { pattern: /program not found/i, category: 'runtime_unavailable' },
-  { pattern: /command not found/i, category: 'runtime_unavailable' },
-  { pattern: /is not recognized as an internal or external command/i, category: 'runtime_unavailable' },
-  { pattern: /reste indisponible apres preparation automatique/i, category: 'runtime_unavailable' },
-  { pattern: /runtime .* introuvable/i, category: 'runtime_unavailable' },
-
-  // Runtime
-  { pattern: /ReferenceError/i, category: 'runtime_crash' },
-  { pattern: /RangeError/i, category: 'runtime_crash' },
-  { pattern: /null is not an object/i, category: 'runtime_crash' },
-  { pattern: /undefined is not/i, category: 'runtime_crash' },
-  { pattern: /segmentation fault/i, category: 'runtime_crash' },
-  { pattern: /panic/i, category: 'runtime_crash' },
-  { pattern: /SIGABRT/i, category: 'runtime_crash' },
-  { pattern: /core dumped/i, category: 'runtime_crash' },
-  { pattern: /stack overflow/i, category: 'runtime_crash' },
-
-  // Test failures
-  { pattern: /FAIL/i, category: 'test_failure' },
-  { pattern: /AssertionError/i, category: 'test_failure' },
-  { pattern: /Expected.*received/i, category: 'test_failure' },
-  { pattern: /test.*failed/i, category: 'test_failure' },
-
-  // Build
-  { pattern: /Build failed/i, category: 'build_failure' },
-  { pattern: /error\[E\d+\]/i, category: 'build_failure' },
-  { pattern: /compilation.*failed/i, category: 'build_failure' },
-  { pattern: /linker.*error/i, category: 'build_failure' },
-
-  // Config
-  { pattern: /EACCES/i, category: 'permission_error' },
-  { pattern: /permission denied/i, category: 'permission_error' },
-
-  // Timeout
-  { pattern: /timeout/i, category: 'timeout' },
-  { pattern: /ETIMEDOUT/i, category: 'timeout' },
-]
 
 export function classifyErrors(sandboxResult: CodeSandboxResult): ErrorCategory[] {
   const categories: ErrorCategory[] = []
@@ -422,80 +346,6 @@ export function buildCorrectionStrategy(
   }, diagnosis)
 }
 
-// ---------------------------------------------------------------------------
-// Instruction builders per level
-// ---------------------------------------------------------------------------
-
-function buildQuickFixInstructions(categories: ErrorCategory[]): string {
-  const lines: string[] = ['Correction rapide des erreurs detectees:']
-
-  if (categories.includes('syntax')) {
-    lines.push('- Corrige les erreurs de syntaxe (parentheses, accolades, points-virgules)')
-  }
-  if (categories.includes('import_missing')) {
-    lines.push('- Corrige les imports manquants ou mal orthographies')
-    lines.push('- Verifie que tous les modules importes existent dans le projet')
-  }
-  if (categories.includes('type_error')) {
-    lines.push('- Corrige les erreurs de type (types manquants, incompatibles)')
-    lines.push('- Ajoute les declarations de type necessaires')
-  }
-
-  return lines.join('\n')
-}
-
-function buildTargetedRepairInstructions(categories: ErrorCategory[]): string {
-  const lines: string[] = ['Reparation ciblee des erreurs:']
-
-  if (categories.includes('dependency_missing')) {
-    lines.push('- Verifie que package.json / requirements.txt contient toutes les dependances')
-    lines.push('- Ajoute les dependances manquantes avec les versions correctes')
-  }
-  if (categories.includes('config_error')) {
-    lines.push('- Corrige les fichiers de configuration invalides, surtout package.json, tsconfig.json et les manifests JSON')
-    lines.push('- Les fichiers JSON doivent etre du JSON pur: aucun backtick markdown, aucun commentaire, aucune explication autour')
-  }
-  if (categories.includes('runtime_unavailable')) {
-    lines.push('- Le probleme principal est un runtime ou binaire absent: ne refactorise pas le code pour masquer ce symptome')
-    lines.push('- Corrige seulement les scripts ou commandes declares si une incoherence evidente existe')
-  }
-  if (categories.includes('config_error')) {
-    lines.push('- Verifie la configuration (tsconfig, vite.config, webpack, etc.)')
-    lines.push('- Corrige les options incompatibles')
-  }
-  if (categories.includes('runtime_crash')) {
-    lines.push('- Corrige les erreurs de reference (variables non definies)')
-    lines.push('- Ajoute les verifications null/undefined necessaires')
-  }
-
-  lines.push('- Ne touche PAS aux fichiers qui fonctionnent deja')
-
-  return lines.join('\n')
-}
-
-function buildPartialRewriteInstructions(categories: ErrorCategory[]): string {
-  const lines: string[] = [
-    'Les corrections simples n\'ont pas suffi.',
-    'Reecris les fichiers problematiques en profondeur:',
-  ]
-
-  if (categories.includes('build_failure')) {
-    lines.push('- Revois completement la configuration de build')
-    lines.push('- Verifie la compatibilite des versions de dependances')
-  }
-  if (categories.includes('test_failure')) {
-    lines.push('- Corrige la logique metier pour faire passer les tests')
-    lines.push('- Ne modifie les tests que pour une erreur de syntaxe ou fixture manifestement incoherente, jamais pour abaisser le contrat')
-  }
-  if (categories.includes('runtime_crash')) {
-    lines.push('- Refactorise la logique qui crash')
-    lines.push('- Utilise des patterns plus defensifs')
-  }
-
-  lines.push('- Utilise les solutions trouvees en ligne si disponibles')
-
-  return lines.join('\n')
-}
 
 // ---------------------------------------------------------------------------
 // Loop continuation logic — plateau detection
