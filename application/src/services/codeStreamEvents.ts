@@ -51,6 +51,9 @@ export type CodeStreamVisualScoreEvent = CodeStreamEventBase<'visual.score'> & {
   score: number
   viewport: string
   summary: string
+  source?: 'source_static' | 'render_audit'
+  viewports?: string[]
+  failedChecks?: string[]
 }
 
 export type CodeStreamCorrectionEvent = CodeStreamEventBase<'correction'> & {
@@ -210,6 +213,9 @@ export function buildCodeStreamVisualScoreEvent(args: CodeStreamEventMeta & {
   score: number
   viewport: string
   summary: string
+  source?: CodeStreamVisualScoreEvent['source']
+  viewports?: string[]
+  failedChecks?: string[]
 }): CodeStreamVisualScoreEvent {
   return {
     schema: CODE_STREAM_EVENT_SCHEMA,
@@ -220,6 +226,9 @@ export function buildCodeStreamVisualScoreEvent(args: CodeStreamEventMeta & {
     score: clampProgress(args.score),
     viewport: args.viewport,
     summary: args.summary,
+    ...(args.source ? { source: args.source } : {}),
+    ...(args.viewports ? { viewports: args.viewports.slice(0, 8) } : {}),
+    ...(args.failedChecks ? { failedChecks: args.failedChecks.slice(0, 12) } : {}),
   }
 }
 
@@ -317,6 +326,9 @@ export function isCodeStreamEvent(value: unknown): value is CodeStreamEvent {
       return isNumberInRange(event.score, 0, 100)
         && typeof event.viewport === 'string'
         && typeof event.summary === 'string'
+        && (event.source === undefined || event.source === 'source_static' || event.source === 'render_audit')
+        && (event.viewports === undefined || isStringArray(event.viewports))
+        && (event.failedChecks === undefined || isStringArray(event.failedChecks))
     case 'correction':
       return Number.isInteger(event.attempt)
         && isNumberInRange(event.score, 0, 100)

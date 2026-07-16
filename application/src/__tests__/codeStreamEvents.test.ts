@@ -99,7 +99,15 @@ describe('codeStreamEvents', () => {
         totalAttempts: 1,
         notes: 'ok',
       }),
-      buildCodeStreamVisualScoreEvent({ ...nextMeta(), score: 82, viewport: '1440x900', summary: 'hierarchie correcte' }),
+      buildCodeStreamVisualScoreEvent({
+        ...nextMeta(),
+        score: 82,
+        viewport: '390x844, 834x1112, 1440x900',
+        summary: 'hierarchie correcte',
+        source: 'render_audit',
+        viewports: ['390x844', '834x1112', '1440x900'],
+        failedChecks: [],
+      }),
       buildCodeStreamErrorEvent({ ...nextMeta(), message: 'timeout', recoverable: true }),
     ]
 

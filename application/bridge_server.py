@@ -25,6 +25,7 @@ import requests
 import secrets as _secrets
 import hashlib as _hashlib
 import hmac as _hmac
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 # CORS headers: expose picker telemetry (model, reason, history, coverage) + extraction stats.
@@ -11618,6 +11619,7 @@ def _aurora_code(action, data):
 
 
 CODE_STREAM_SCHEMA = "aurora.code.stream/1"
+CODE_VISUAL_RENDER_AUDIT_SCHEMA = "aurora.code.visual-render-audit/1"
 
 
 def _code_stream_event(kind: str, run_id: int, sequence: int, **payload):
@@ -11630,6 +11632,138 @@ def _code_stream_event(kind: str, run_id: int, sequence: int, **payload):
     }
     event.update(payload)
     return json.dumps(event, ensure_ascii=False) + "\n"
+
+
+def _code_visual_audit_url_allowed(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme in ("http", "https") and host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
+def _code_visual_parse_json_object(raw: str) -> dict:
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        match = re.search(r"\{[\s\S]*\}", raw or "")
+        if not match:
+            return {}
+        try:
+            parsed = json.loads(match.group(0))
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+
+def _code_visual_clamp_score(value) -> int:
+    try:
+        score = int(round(float(value)))
+    except Exception:
+        return 0
+    return max(0, min(100, score))
+
+
+def _code_visual_attach_vision(audit: dict, model: str) -> None:
+    prompt = (
+        "Juge ce screenshot d'une interface generee par le Module Code AuroraIA. "
+        "Retourne uniquement du JSON: "
+        "{\"score\":0-100,\"verdict\":\"tutorial|studio|mixed\",\"summary\":\"phrase courte\"}. "
+        "Score bas si la page ressemble a un tutoriel, est vide, mal hierarchisee, peu contrastee ou generic stock. "
+        "Score haut si la composition est studio-grade, dense, responsive, harmonieuse et lisible."
+    )
+    for viewport in (audit.get("viewports") or [])[:3]:
+        screenshot_path = viewport.get("screenshotPath")
+        if not screenshot_path:
+            continue
+        path = pathlib.Path(str(screenshot_path))
+        try:
+            if not path.is_file() or path.stat().st_size > 12 * 1024 * 1024:
+                continue
+            image_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+            response = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+                    "stream": False,
+                    "keep_alive": "2m",
+                    "format": "json",
+                    "options": {"temperature": 0},
+                },
+                timeout=180,
+            )
+            if response.status_code != 200:
+                continue
+            body = response.json()
+            raw = ((body.get("message") or {}).get("content") or body.get("response") or "").strip()
+            parsed = _code_visual_parse_json_object(raw)
+            verdict = str(parsed.get("verdict") or "mixed").lower()
+            if verdict not in ("tutorial", "studio", "mixed"):
+                verdict = "mixed"
+            summary = str(parsed.get("summary") or "Jugement vision sans detail.")[:500]
+            viewport["vision"] = {
+                "score": _code_visual_clamp_score(parsed.get("score")),
+                "verdict": verdict,
+                "summary": summary,
+            }
+        except Exception:
+            continue
+
+
+@app.route("/api/code/visual-audit", methods=["POST"])
+def code_visual_audit():
+    data = request.get_json(silent=True) or {}
+    url = str(data.get("url") or "").strip()
+    if not url:
+        return jsonify({"ok": False, "error": "url requise"}), 400
+    if not _code_visual_audit_url_allowed(url):
+        return jsonify({"ok": False, "error": "audit visuel limite aux URLs locales de dev-server"}), 400
+
+    try:
+        wait_ms = int(data.get("waitMs") or data.get("wait_ms") or 2500)
+    except Exception:
+        wait_ms = 2500
+    wait_ms = max(500, min(15000, wait_ms))
+
+    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "visual_render_audit.py"
+    if not script.is_file():
+        return jsonify({"ok": False, "error": "visual_render_audit.py introuvable"}), 500
+
+    out_dir = pathlib.Path(WORKSPACE) / "output" / "code_visual_audits" / str(int(time.time() * 1000))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), url, str(out_dir), str(wait_ms)],
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            timeout=max(45, int(wait_ms / 1000 * 10) + 60),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout audit visuel rendu"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"audit visuel impossible: {exc}"}), 500
+
+    try:
+        audit = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"JSON audit visuel invalide: {exc}", "stderr": (proc.stderr or "")[-1200:]}), 502
+
+    if not isinstance(audit, dict):
+        audit = {}
+    audit.setdefault("schemaVersion", CODE_VISUAL_RENDER_AUDIT_SCHEMA)
+    audit.setdefault("url", url)
+    audit.setdefault("viewports", [])
+
+    include_vision = bool(data.get("vision") or data.get("includeVision"))
+    if include_vision and audit.get("viewports"):
+        model = str(data.get("visionModel") or "qwen3-vl:30b").strip() or "qwen3-vl:30b"
+        _code_visual_attach_vision(audit, model)
+
+    ok = proc.returncode == 0 and len(audit.get("viewports") or []) > 0
+    error = audit.get("error") or ((proc.stderr or "")[-2000:] if proc.returncode != 0 else "")
+    return jsonify({"ok": ok, "audit": audit, "error": error})
 
 
 def _code_stream_language(path: str) -> str:

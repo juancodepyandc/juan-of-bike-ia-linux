@@ -515,6 +515,16 @@
 - **Validation** : tests cibles WS10 56 verts / 0 echec ; glob Code a **655 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS10 statut** : le contrat design-spec, la verification locale, la taxonomie et le deltaE sont en place. Restent l'enrichissement exhaustif des templates couvrants par famille et leur preuve sur generations longues.
 
+### 2026-07-16 — Vague 4 / WS9 increment 62 applique
+
+- **Bridge rendu branche** : ajout de `POST /api/code/visual-audit`, route limitee aux URLs locales de dev-server, qui execute `visual_render_audit.py` et retourne le schema `aurora.code.visual-render-audit/1`.
+- **Emission `visual.score` reelle** : `codeVisualAuditClient.ts` score l'audit rendu et produit un evenement `visual.score` avec `source`, `viewports` et `failedChecks`; `CodeView` lance l'audit automatiquement apres `startDevServer`.
+- **Vision optionnelle** : le bridge peut enrichir chaque viewport avec un jugement Ollama VL a partir des screenshots quand `vision=true`.
+- **References UX/UI recablees** : `prepareCodePlanningContext` appelle `runDesignResearch` pour les vrais projets visuels; la KB couvre aussi `data_dense_enterprise`, `ide_code_editor`, `os_shell`.
+- **CDP Linux corrige** : `cdp_drive.mjs` detecte Chrome/Chromium systeme ou Chromium Playwright local et ajoute les flags headless Linux necessaires.
+- **Validation** : tests cibles WS9/planification 18 verts / 0 echec ; `python3 -m py_compile bridge_server.py python-services/aurora_code/visual_render_audit.py` vert ; `node --check python-services/aurora_code/cdp_drive.mjs` vert ; audit reel bridge sur `http://localhost:1420` vert avec screenshots 390/834/1440 et 24 contrastes pixel par viewport ; glob Code a **658 tests verts / 0 echec** ; `npm run build` vert.
+- **WS9 statut** : le score visuel n'est plus source-only dans le chemin app principal. Reste une campagne de calibration sur generations longues avec vision active.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

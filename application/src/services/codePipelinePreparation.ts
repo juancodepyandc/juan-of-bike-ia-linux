@@ -28,6 +28,32 @@ export function buildResearchPhaseLabel(intent: CodeIntent): string {
   return 'Recherche des meilleures pratiques pour ce type de projet...'
 }
 
+export function shouldRunDesignReferenceResearch(intent: CodeIntent, prompt: string, simpleTechBrief = looksLikeSimpleTechBrief(prompt)): boolean {
+  if (simpleTechBrief) return false
+  const visualTypes = [
+    'static_web',
+    'spa_react',
+    'spa_vue',
+    'spa_svelte',
+    'spa_angular',
+    'ssr_nextjs',
+    'ssr_nuxt',
+    'ssr_remix',
+    'fullstack_mern',
+    'fullstack_nextjs',
+    'game_web',
+    'mobile_rn',
+    'mobile_flutter',
+    'mobile_ios',
+    'mobile_android',
+    'desktop_electron',
+    'desktop_tauri',
+    'desktop_app',
+    'ide',
+  ]
+  return visualTypes.includes(intent.projectType) || Boolean(intent.assetPlan?.wantsPremiumLook)
+}
+
 export function buildSubjectImagePromptBlock(images: SubjectImage[]): string {
   const acceptable = images.filter((img) => img.dataUrl.length <= 350_000)
   if (acceptable.length === 0) return ''
@@ -108,6 +134,22 @@ export async function prepareCodePlanningContext({
   }
 
   const simpleTechBrief = looksLikeSimpleTechBrief(prompt)
+  let designResearchBlock = ''
+  if (shouldRunDesignReferenceResearch(intent, prompt, simpleTechBrief)) {
+    setPhase('Recherche de references UX/UI par archetype design...', 15)
+    try {
+      const { runDesignResearch, serializeDesignResearch } = await import('./codeDesignResearch.ts')
+      const research = await withTimeout(
+        runDesignResearch(prompt, intent, configuredCodeModel),
+        { label: 'Design reference research', timeoutMs: RESEARCH_PHASE_TIMEOUT_MS },
+      )
+      designResearchBlock = serializeDesignResearch(research)
+      setPhase('References UX/UI integrees dans la planification.', 17)
+    } catch {
+      // Design research is a quality booster, not a hard dependency.
+    }
+  }
+
   if (ap?.subject?.source === 'inferred_brand' && !ap.subject.brandProfile && ap.subject.canonical && !simpleTechBrief) {
     setPhase(`Enrichissement dynamique du profil de marque "${ap.subject.canonical}" (Wikipedia + Ollama)...`, 13)
     try {
@@ -172,6 +214,7 @@ export async function prepareCodePlanningContext({
   const brandProfileBlock = buildBrandProfileBlock(intent)
   const planningExtras: string[] = []
   if (bestPracticesContext) planningExtras.push(`## MEILLEURES PRATIQUES TROUVEES (a integrer dans le plan):\n${bestPracticesContext}`)
+  if (designResearchBlock) planningExtras.push(designResearchBlock)
   if (brandProfileBlock) planningExtras.push(brandProfileBlock)
   if (subjectImageBlock) planningExtras.push(subjectImageBlock)
   if (followUp?.migrationSummary && followUp.kind === 'pivot_platform') {

@@ -9,16 +9,72 @@
 //   {ok, console_errors:[], exceptions:[], failed_requests:[], canvas_present, body_text_len}
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { homedir, platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import net from 'node:net'
 
-const CHROME =
-  process.env.CHROME_PATH ||
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+function firstExisting(paths) {
+  return paths.find((candidate) => candidate && existsSync(candidate)) || null
+}
+
+function findPlaywrightChromium() {
+  const root = join(homedir(), '.cache', 'ms-playwright')
+  if (!existsSync(root)) return null
+  try {
+    const dirs = readdirSync(root)
+      .filter((name) => /^chromium-\d+/.test(name))
+      .sort()
+      .reverse()
+    for (const dir of dirs) {
+      const base = join(root, dir)
+      const found = firstExisting([
+        join(base, 'chrome-linux64', 'chrome'),
+        join(base, 'chrome-linux', 'chrome'),
+        join(base, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+        join(base, 'chrome-win', 'chrome.exe'),
+      ])
+      if (found && statSync(found).isFile()) return found
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function resolveChromePath() {
+  const envPath = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+  if (envPath && existsSync(envPath)) return envPath
+
+  if (platform() === 'win32') {
+    const local = process.env.LOCALAPPDATA || ''
+    const programFiles = process.env.PROGRAMFILES || 'C:\\Program Files'
+    const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'
+    return firstExisting([
+      join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    ])
+  }
+
+  if (platform() === 'darwin') {
+    return firstExisting([
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+    ]) || findPlaywrightChromium()
+  }
+
+  return firstExisting([
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
+    '/usr/bin/brave-browser',
+  ]) || findPlaywrightChromium()
+}
 
 function freePort() {
   return new Promise((res, rej) => {
@@ -100,12 +156,18 @@ function viewportName(width, height) {
 async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, mobile = false) {
   const userDir = mkdtempSync(join(tmpdir(), 'cdp_drive_'))
   const port = await freePort()
+  const chromePath = resolveChromePath()
+  if (!chromePath) {
+    throw new Error('Chrome/Chromium introuvable: definir CHROME_PATH ou installer les navigateurs Playwright.')
+  }
   const chrome = spawn(
-    CHROME,
+    chromePath,
     [
       '--headless=new',
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${userDir}`,
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-gpu',
@@ -114,9 +176,14 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
     ],
     { stdio: 'ignore', detached: false },
   )
+  let spawnError = null
+  chrome.once('error', (error) => {
+    spawnError = error
+  })
 
   let json = null
   for (let i = 0; i < 50; i++) {
+    if (spawnError) throw spawnError
     try {
       json = await getJSON(`http://127.0.0.1:${port}/json/version`)
       break

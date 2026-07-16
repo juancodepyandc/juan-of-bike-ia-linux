@@ -237,6 +237,57 @@ const ARCHETYPE_KB: Record<DesignArchetype, ArchetypeKB> = {
     paletteHints: ['#0a0a0b', '#ec4899', '#22d3ee'],
     knownLibs: ['none — vanilla canvas + Web Audio'],
   },
+  data_dense_enterprise: {
+    inspirationSites: [
+      'linear.app',
+      'retable.io',
+      'airtable.com',
+      'attio.com',
+      'grafana.com',
+    ],
+    searchAnchors: [
+      'data dense enterprise table UI design',
+      'admin data grid dashboard UX',
+      'operations backoffice dense interface',
+      'enterprise app table filters drawer design',
+    ],
+    paletteHints: ['#0f172a', '#2563eb', '#14b8a6', '#f8fafc'],
+    knownLibs: ['TanStack Table', 'D3', 'Chart.js', 'Lucide icons'],
+  },
+  ide_code_editor: {
+    inspirationSites: [
+      'code.visualstudio.com',
+      'zed.dev',
+      'cursor.com',
+      'replit.com',
+      'stackblitz.com',
+    ],
+    searchAnchors: [
+      'modern IDE UI file tree editor terminal',
+      'code editor interface design command palette',
+      'developer tool dark UI workspace',
+      'terminal panel status bar IDE UX',
+    ],
+    paletteHints: ['#0d1117', '#1f6feb', '#2ea043', '#f0f6fc'],
+    knownLibs: ['CodeMirror 6', 'Monaco editor', 'xterm.js', 'cmdk'],
+  },
+  os_shell: {
+    inspirationSites: [
+      'gnome.org',
+      'kde.org',
+      'wezfurlong.org/wezterm',
+      'warp.dev',
+      'system76.com/pop',
+    ],
+    searchAnchors: [
+      'operating system shell UI boot console design',
+      'terminal dashboard process monitor UI',
+      'kernel boot log interface typography',
+      'system monitor console design',
+    ],
+    paletteHints: ['#020617', '#22c55e', '#38bdf8', '#e2e8f0'],
+    knownLibs: ['xterm.js', 'Canvas 2D', 'WebGL terminal effects'],
+  },
   default_premium: {
     inspirationSites: [
       'awwwards.com',

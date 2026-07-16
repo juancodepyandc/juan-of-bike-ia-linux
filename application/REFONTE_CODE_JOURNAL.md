@@ -2829,3 +2829,72 @@ Pour WS9, le socle technique est pose mais le chantier n'est pas clos : il faut 
 ### Etat de satisfaction chantier
 
 Pour WS10 local, le coeur du contrat est couvert : design-spec JSON, verification locale, taxonomie etendue, deltaE/Lab, et fin du contrat CSS web sur mobile/jeu. Le chantier n'est pas declare clos a 100 % tant que les templates couvrants n'ont pas tous ete enrichis par famille et relies aux futures generations longues.
+
+## 2026-07-16 — Vague 4 / WS9 increment 62 — Audit rendu branche dans le chemin app
+
+### Reprise et diagnostic confirme
+
+- L'increment 60 avait pose le scoreur rendu et le collecteur CDP, mais l'app ne lancait pas encore l'audit apres dev-server.
+- Le contrat `visual.score` existait, mais aucun score issu d'un vrai screenshot n'etait emis par le chemin applicatif.
+- La recherche de references UX/UI (`codeDesignResearch.ts`) restait orpheline.
+- Le test reel a expose un bug du helper CDP : sur Linux, il tentait de lancer le chemin Chrome Windows.
+
+### Recherches et choix techniques
+
+- Verification locale : bridge et Vite etaient vivants ; le bridge a ete relance avec `.venv/bin/python` existant pour charger la nouvelle route, sans installation ni modification de `.venv`.
+- Choix retenu : endpoint bridge `/api/code/visual-audit` sous le perimetre autorise `/api/code/*`, qui enveloppe `visual_render_audit.py`.
+- Choix retenu : client TS `codeVisualAuditClient.ts` qui score le rapport cote app et produit un evenement `visual.score` strict.
+- Choix retenu : jugement vision optionnel dans le bridge via screenshots + Ollama VL, afin de ne charger le modele vision que lorsque l'app le demande.
+- Choix retenu : recherche UX/UI branchee dans `prepareCodePlanningContext`, timeboxee et non bloquante, pour injecter les references avant generation.
+
+### Modifications realisees
+
+- `bridge_server.py` :
+  - route `POST /api/code/visual-audit` ;
+  - validation d'URL locale de dev-server pour eviter SSRF ;
+  - execution du wrapper Python/CDP dans `output/code_visual_audits/` ;
+  - enrichissement optionnel `vision` par screenshots + Ollama VL.
+- `python-services/aurora_code/cdp_drive.mjs` :
+  - detection Chrome/Chromium multi-plateforme ;
+  - support du Chromium installe par Playwright dans `~/.cache/ms-playwright` ;
+  - flags Linux headless `--no-sandbox` et `--disable-dev-shm-usage` ;
+  - erreur explicite si aucun navigateur n'est disponible.
+- `src/services/codeVisualAuditClient.ts` :
+  - client bridge `/api/code/visual-audit` ;
+  - scoring du rapport rendu via `scoreRenderedVisualAudit` ;
+  - conversion pure en evenement `visual.score`.
+- `src/services/codeStreamEvents.ts` :
+  - `visual.score` transporte maintenant `source`, `viewports` et `failedChecks`.
+- `src/views/codeViewGeneration.ts` :
+  - apres `startDevServer`, lancement automatique de l'audit rendu reel ;
+  - mise a jour du design report UI avec score, checks rates et penalites ;
+  - resume final enrichi par le verdict rendu.
+- `src/services/codePipelinePreparation.ts` et `codeDesignResearch.ts` :
+  - recherche references UX/UI branchee avant planning pour les vrais projets visuels ;
+  - base de references completee pour `data_dense_enterprise`, `ide_code_editor`, `os_shell`.
+- Tests ajoutes/etendus :
+  - `codeVisualAuditClient.test.ts`
+  - `codePipelinePreparation.test.ts`
+  - `codeStreamEvents.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : WS9 pouvait scorer un audit fourni par test, mais l'app ne demandait jamais ce rapport apres lancement dev-server.
+- Apres : une generation avec dev-server lance `/api/code/visual-audit`, score le rendu reel et expose le resultat dans l'UI.
+- Avant : `visual.score` ne portait pas la provenance du score.
+- Apres : l'evenement indique `source: "render_audit"`, les viewports et les checks echoues.
+- Avant : le CDP etait bloque sur Linux par un chemin Chrome Windows.
+- Apres : le helper trouve le Chromium Playwright local et capture les trois breakpoints.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codePipelinePreparation.test.ts src/__tests__/codeVisualAuditClient.test.ts src/__tests__/codeVisualRenderAudit.test.ts src/__tests__/codeStreamEvents.test.ts src/__tests__/codeStreamRemoteState.test.ts` : 18 pass / 0 fail.
+- `python3 -m py_compile bridge_server.py python-services/aurora_code/visual_render_audit.py` : vert.
+- `node --check python-services/aurora_code/cdp_drive.mjs` : vert.
+- Audit reel via bridge : `POST /api/code/visual-audit` sur `http://localhost:1420`, `waitMs=800`, `vision=false` -> `ok: true`, screenshots presents sur `390x844`, `834x1112`, `1440x900`, 24 echantillons pixel par viewport.
+- `find src/__tests__ -name 'code*.test.ts' -print | sort | xargs node --experimental-strip-types --test` : 658 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+WS9 est maintenant branche dans le chemin applicatif principal : rendu reel, contraste pixel, emission `visual.score`, endpoint bridge et references UX/UI sont relies. Reste a faire une campagne qualitative de generations longues avec vision active pour calibrer les seuils, mais le verrou "score visuel source-only" est leve.

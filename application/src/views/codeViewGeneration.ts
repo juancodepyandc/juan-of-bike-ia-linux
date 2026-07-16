@@ -7,6 +7,7 @@ import type { CodePreflightReport } from '../services/codePreflight'
 import { classifyCodeIntent, type CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import { startDevServer, stopDevServer, type DevServerState } from '../services/codeDevServer'
+import { runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
 import { generateSessionTitle } from '../services/sessionAutoNaming'
 import { prepareTaskIntelligence } from '../services/taskIntelligence'
 import { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
@@ -461,6 +462,7 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
             setRecoveryStatus(null)
 
             // Start dev server if needed
+            let visualAuditSummary: string | null = null
             if (result.intent.needsDevServer && result.sandboxResult?.rootPath) {
               setProgress('Demarrage du serveur de dev pour preview...')
               setPhase('Demarrage du dev server...', 95)
@@ -470,18 +472,36 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
                 setDevServerState,
               )
               if (url) {
-                setProgress(`Dev server pret: ${url}`)
+                setProgress(`Dev server pret: ${url}. Audit visuel rendu reel...`)
+                try {
+                  const visualAudit = await runCodeVisualRenderAudit({
+                    url,
+                    includeVision: Boolean(visionModel),
+                    visionModel,
+                    waitMs: 2500,
+                    signal: controller.signal,
+                  })
+                  visualAuditSummary = visualAudit.report.summary
+                  setDesignReport({
+                    score: visualAudit.report.score,
+                    missing: visualAudit.report.failedChecks,
+                    penalties: visualAudit.report.checks
+                      .filter((check) => !check.passed)
+                      .map((check) => check.label),
+                  })
+                } catch (auditError) {
+                  visualAuditSummary = `Audit visuel rendu indisponible: ${getErrorMessage(auditError, 'erreur inconnue')}`
+                }
               } else {
                 setProgress('Preview live indisponible. Les fichiers restent livres pour inspection manuelle.')
               }
             }
 
             // Set progress message
-            setProgress(
-              result.sandboxResult?.ok
-                ? `Livraison validee (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%).`
-                : `Livraison structuree (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%). Ameliorations manuelles recommandees.`,
-            )
+            const deliverySummary = result.sandboxResult?.ok
+              ? `Livraison validee (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%).`
+              : `Livraison structuree (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%). Ameliorations manuelles recommandees.`
+            setProgress(visualAuditSummary ? `${deliverySummary} ${visualAuditSummary}` : deliverySummary)
             setPhase('Livraison terminee.', 98)
 
             // Propose save

@@ -6,6 +6,7 @@ import {
   buildResearchPhaseLabel,
   buildSubjectImagePromptBlock,
   looksLikeSimpleTechBrief,
+  shouldRunDesignReferenceResearch,
 } from '../services/codePipelinePreparation.ts'
 
 function intent(assetPlan: Partial<NonNullable<CodeIntent['assetPlan']>>): CodeIntent {
@@ -43,6 +44,18 @@ describe('codePipelinePreparation', () => {
     assert.match(
       buildResearchPhaseLabel(intent({})),
       /meilleures pratiques/,
+    )
+  })
+
+  test('active la recherche UX/UI seulement pour les vrais projets visuels', () => {
+    assert.equal(shouldRunDesignReferenceResearch(intent({}), 'landing page premium'), true)
+    assert.equal(shouldRunDesignReferenceResearch(intent({ wantsPremiumLook: true }), 'site marque'), true)
+    assert.equal(
+      shouldRunDesignReferenceResearch(
+        { ...intent({}), projectType: 'cli_python' } as CodeIntent,
+        'script python simple',
+      ),
+      false,
     )
   })
 
