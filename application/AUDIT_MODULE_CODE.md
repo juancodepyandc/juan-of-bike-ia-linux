@@ -504,6 +504,17 @@
 - **Validation** : tests cibles WS9 31 verts / 0 echec ; `python3 -m py_compile python-services/aurora_code/visual_render_audit.py` vert ; `node --check python-services/aurora_code/cdp_drive.mjs` vert ; glob Code a **640 tests verts / 0 echec** ; `npm run build` vert.
 - **WS9 statut** : le socle de juge rendu est en place (schema, scoreur, critique, collecteur CDP, contraste pixel). Restent a brancher l'appel automatique dans le chemin app/bridge apres lancement dev-server, a emettre `visual.score` depuis l'audit reel et a relier la recherche de references UX/UI.
 
+### 2026-07-16 — Vague 4 / WS10 increment 61 applique
+
+- **Design-spec executable** : ajout de `codeDesignSpec.ts` et du schema `aurora.code.design-spec/1` couvrant palette, typographie, tokens, composants, wireframe, contraintes et plateforme.
+- **Verification contre le code** : la spec echoue maintenant sur palette perceptuelle absente, variables/tokens web manquants, composants absents, wireframe trop pauvre, CSS web dans mobile natif ou absence de boucle canvas pour un jeu.
+- **Taxonomie design etendue** : `data_dense_enterprise`, `ide_code_editor` et `os_shell` sont detectes, labels et blocs de directives inclus.
+- **Contrats plateforme corriges** : mobile natif et jeu canvas ne recoivent plus le baseline CSS web generique ; ils recoivent un standard specifique a la plateforme.
+- **Brand-check deltaE** : ajout de `codeColorMetrics.ts` ; `codeFidelityGate.ts` accepte les couleurs perceptuellement proches en hex/rgb/oklch au lieu d'exiger le hex litteral.
+- **Effet signature assoupli** : le gate brand_landing ne force plus un Fresnel unique et accepte shader, iridescence/bloom, CSS 3D, canvas ou traitement produit adapte.
+- **Validation** : tests cibles WS10 56 verts / 0 echec ; glob Code a **655 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS10 statut** : le contrat design-spec, la verification locale, la taxonomie et le deltaE sont en place. Restent l'enrichissement exhaustif des templates couvrants par famille et leur preuve sur generations longues.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

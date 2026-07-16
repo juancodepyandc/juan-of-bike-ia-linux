@@ -52,6 +52,24 @@ describe('detectDesignArchetype', () => {
     assert.equal(r, 'dashboard_dataviz')
   })
 
+  test('"data grid enterprise dense" → data_dense_enterprise', () => {
+    const intent = classifyCodeIntent('dashboard data grid enterprise dense')
+    const r = detectDesignArchetype('dashboard data grid enterprise dense table filters', intent)
+    assert.equal(r, 'data_dense_enterprise')
+  })
+
+  test('"IDE code editor" → ide_code_editor', () => {
+    const intent = classifyCodeIntent('IDE code editor avec terminal integre')
+    const r = detectDesignArchetype('IDE code editor avec terminal integre file tree', intent)
+    assert.equal(r, 'ide_code_editor')
+  })
+
+  test('"OS shell boot log" → os_shell', () => {
+    const intent = classifyCodeIntent('noyau OS boot log avec shell')
+    const r = detectDesignArchetype('OS shell boot log kernel console', intent)
+    assert.equal(r, 'os_shell')
+  })
+
   test('"portfolio créatif freelance" → portfolio_immersive', () => {
     const intent = classifyCodeIntent('portfolio créatif freelance')
     const r = detectDesignArchetype('portfolio créatif freelance', intent)
@@ -146,6 +164,20 @@ describe('buildDesignDirectives', () => {
     const r = buildDesignDirectives('site moderne avec animations', intent)
     assert.ok(r.length > 500)
   })
+
+  test('mobile natif ne reçoit pas le contrat CSS web générique', () => {
+    const intent = classifyCodeIntent('react native expo mobile app premium')
+    const r = buildDesignDirectives('react native expo mobile app premium', intent)
+    assert.match(r, /pas de contrat CSS web generique/i)
+    assert.doesNotMatch(r, /Type system editorial/)
+  })
+
+  test('jeu canvas ne reçoit pas le baseline landing CSS web', () => {
+    const intent = classifyCodeIntent('jeu pong arcade canvas')
+    const r = buildDesignDirectives('jeu pong arcade canvas', intent)
+    assert.match(r, /game canvas|jeu canvas|pas de landing page/i)
+    assert.doesNotMatch(r, /Layout — grille editoriale density/)
+  })
 })
 
 describe('describeDesignArchetype', () => {
@@ -170,7 +202,7 @@ describe('describeDesignArchetype', () => {
       'apple_product', 'narrative_landing', 'dashboard_dataviz', 'portfolio_immersive',
       'ecommerce_premium', 'saas_marketing', 'editorial_story', 'scroll_3d_journey',
       'microsite_event', 'minimal_brutalist', 'mobile_native_premium', 'desktop_native_app',
-      'game_visual_premium', 'default_premium',
+      'game_visual_premium', 'data_dense_enterprise', 'ide_code_editor', 'os_shell', 'default_premium',
     ] as const
     for (const a of archetypes) {
       assert.ok(describeDesignArchetype(a).length > 5)

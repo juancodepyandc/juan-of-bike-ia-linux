@@ -6,6 +6,11 @@
 
 import type { CodeIntent } from './codeIntent'
 import type { DesignArchetype } from './codeDesignDirectives.ts'
+import {
+  dataDenseEnterpriseBlock,
+  ideCodeEditorBlock,
+  osShellBlock,
+} from './codeDesignSpecializedBlocks.ts'
 
 // ---------------------------------------------------------------------------
 // Inspirations and CDN library hints — surfaced to the model so it knows what
@@ -534,6 +539,9 @@ export function archetypeBlock(archetype: DesignArchetype, intent: CodeIntent): 
     case 'mobile_native_premium': return mobileNativePremiumBlock(intent)
     case 'desktop_native_app': return desktopAppBlock(intent)
     case 'game_visual_premium': return gamePremiumBlock()
+    case 'data_dense_enterprise': return dataDenseEnterpriseBlock()
+    case 'ide_code_editor': return ideCodeEditorBlock()
+    case 'os_shell': return osShellBlock()
     default: return defaultPremiumBlock()
   }
 }

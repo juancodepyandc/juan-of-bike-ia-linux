@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntent'
+import { hasPerceptualColorMatch } from './codeColorMetrics.ts'
 
 /** Local file shape — a subset of `CodeFile` from codeOrchestrator. We keep
  * a local type alias to avoid a circular import (orchestrator → fidelity → orchestrator). */
@@ -53,8 +54,8 @@ const OFF_TOPIC_DRIFT_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
  *   1. The brand display name MUST appear (case-insensitive) in at least one
  *      visual file (HTML/JSX/TSX/Vue/Svelte/CSS title/comment doesn't count
  *      — must be in actual visible content). Otherwise → score capped at 30.
- *   2. The brand primary color hex MUST appear in CSS/JSX styles. -20 score
- *      and a retry hint when missing.
+ *   2. The brand primary color must appear perceptually in CSS/JSX styles
+ *      (hex/rgb/oklch accepted via deltaE Lab). -20 score when missing.
  *   3. At least one PLACEHOLDER_SUBJECT_IMG marker must appear in HTML/JSX
  *      when images were prepared (intent.__subjectImageDataUrls populated).
  *      -15 score otherwise.
@@ -105,16 +106,11 @@ export function evaluateBrandFidelity(intent: CodeIntent, files: CodeFile[]): Br
 
   // --- Rule 2: primary color must appear in CSS/styles ---------------------
   if (profile.primaryColor) {
-    const primaryHex = profile.primaryColor.toLowerCase()
-    const styleLower = styleBody.toLowerCase()
-    const hasPrimary = styleLower.includes(primaryHex)
-      // Also accept the hex without the '#' (some CSS frameworks tokenize it).
-      || styleLower.includes(primaryHex.replace('#', ''))
-    if (!hasPrimary) {
+    if (!hasPerceptualColorMatch(styleBody, profile.primaryColor)) {
       issues.push('palette_missing')
       retryHints.push(
-        `La couleur principale de ${displayName} (${profile.primaryColor}) n est pas presente dans les styles.`
-        + ` Utilise-la pour le hero, les CTAs et les accents.`,
+        `La couleur principale de ${displayName} (${profile.primaryColor}) n est pas presente perceptuellement dans les styles.`
+        + ` Utilise une couleur proche deltaE/Lab pour le hero, les CTAs et les accents (hex, rgb ou oklch accepte).`,
       )
       scorePenalty += 20
     }
@@ -165,28 +161,24 @@ export function evaluateBrandFidelity(intent: CodeIntent, files: CodeFile[]): Br
     }
   }
 
-  // --- Rule 6 (v77f) — shader signature must be present when the brand has a productShape.
-  // The brand_landing variant promised a Fresnel halo / iridescence / liquid bg
-  // shader. When the LLM drops it (cf. 7B stochasticity tour 10), we score it
-  // and ship a copy-paste code snippet in the retry hint so the next pass can
-  // just include it verbatim.
+  // --- Rule 6 — a signature visual effect must be present when the brand has
+  // a concrete product shape. This no longer forces one Fresnel shader: CSS 3D,
+  // iridescence, bloom, custom shader or a canvas product treatment are valid.
   if (profile.productShape) {
-    // Looking for any of the 5 shader options the brand_landing variant suggests.
+    // Looking for any of the signature options the brand_landing variant suggests.
     const visualBodyOriginalCase = visualFiles.map((f) => f.content).join('\n')
     const hasShader = /\bShaderMaterial\s*\(/i.test(visualBodyOriginalCase)
       || /fragmentShader\s*:/i.test(visualBodyOriginalCase)
       || /\biridescence\s*:/i.test(visualBodyOriginalCase)
       || /BokehPass\b/i.test(visualBodyOriginalCase)
       || /UnrealBloomPass\b/i.test(visualBodyOriginalCase) && /customShaderPass/i.test(visualBodyOriginalCase)
+      || /transform\s*:[^;]*(?:rotateY|rotateX|translateZ|preserve-3d|perspective)/i.test(visualBodyOriginalCase)
+      || /getContext\(\s*['"]2d['"]\s*\)|getContext\(\s*['"]webgl/i.test(visualBodyOriginalCase)
     if (!hasShader) {
       issues.push('shader_signature_missing')
       retryHints.push(
-        `${displayName} est une page brand_landing — le shader signature OBLIGATOIRE est manquant.`
-        + ` Ajoute le halo Fresnel autour du produit 3D (THREE.ShaderMaterial avec uColor=${profile.primaryColor},`
-        + ` vertexShader expose vNormalW + vViewDir, fragmentShader fresnel pow 3 + pulse sin uTime,`
-        + ` AdditiveBlending + transparent + depthWrite:false).`
-        + ` Le mesh halo est productMesh.geometry scaled 1.08x et ajoute via productMesh.add(halo).`
-        + ` Anime via haloMat.uniforms.uTime.value = clock.getElapsedTime() dans le requestAnimationFrame loop.`,
+        `${displayName} est une page brand_landing — l effet signature produit est manquant.`
+        + ` Ajoute une execution visuelle forte adaptee a la stack: shader Three.js, iridescence/bloom, produit CSS 3D, canvas product treatment ou background liquide aux couleurs de marque.`,
       )
       scorePenalty += 10
     }

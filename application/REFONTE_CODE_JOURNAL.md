@@ -2768,3 +2768,64 @@ Pour WS13 local, le socle est couvert : strategie fonction de categorie/localite
 ### Etat de satisfaction chantier
 
 Pour WS9, le socle technique est pose mais le chantier n'est pas clos : il faut encore brancher l'appel automatique apres dev-server/sandbox, emettre `visual.score` depuis le flux `/api/code/*`, envoyer le screenshot au modele vision reel et relier la recherche de references UX/UI.
+
+## 2026-07-16 — Vague 4 / WS10 increment 61 — Contrat design-spec verifiable
+
+### Reprise et diagnostic confirme
+
+- Le prompt maitre demande une passe design-spec JSON verifiee contre le code, une taxonomie etendue et un brand-check colorimetrique tolerant.
+- `buildDesignDirectives` appliquait encore le baseline CSS web a des cibles mobile/jeu, alors que ces plateformes n'ont pas le meme contrat d'interface.
+- `codeFidelityGate.ts` verifiait la couleur de marque par inclusion de hex litteral, ce qui contredisait les directives `oklch()` et les tokens proches.
+- Le gate brand_landing poussait un effet Fresnel unique au lieu d'accepter une execution visuelle signature adaptee a la stack.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment corrige des conflits locaux explicites du prompt.
+- Choix retenu : verifier les couleurs par conversion sRGB/OKLCH vers Lab puis deltaE76, suffisamment deterministe et sans dependance runtime.
+- Choix retenu : compiler une `aurora.code.design-spec/1` lisible par le modele et testable localement, plutot qu'ajouter encore des directives libres.
+- Raison technique : le contrat design devient executable par tests et gates, tout en restant compatible avec les plateformes non-web.
+
+### Modifications realisees
+
+- `src/services/codeDesignSpec.ts` :
+  - nouveau schema `aurora.code.design-spec/1` ;
+  - generation palette, typographie, tokens, composants, wireframe et contraintes ;
+  - inference de plateforme `web`, `mobile_native`, `desktop_native`, `game_canvas`, `ide`, `os_shell`, `non_visual` ;
+  - verification contre fichiers generes : palette perceptuelle, tokens CSS web/IDE, interdiction CSS web mobile native, boucle canvas jeu, composants et wireframe.
+- `src/services/codeColorMetrics.ts` :
+  - parsing hex, `rgb()` et `oklch()` ;
+  - conversion sRGB/OKLCH -> Lab ;
+  - `hasPerceptualColorMatch` avec deltaE tolerant, y compris pour cibles `oklch()`.
+- `src/services/codeDesignDirectives.ts` et `codeDesignDirectiveBlocks.ts` :
+  - taxonomie ajoutee : `data_dense_enterprise`, `ide_code_editor`, `os_shell` ;
+  - design-spec JSON injectee en tete du prompt design ;
+  - mobile natif et jeu canvas recoivent un standard plateforme dedie, sans baseline CSS web generique ;
+  - blocs specialises extraits dans `codeDesignSpecializedBlocks.ts` pour rester sous 600 lignes.
+- `src/services/codeFidelityGate.ts` :
+  - brand-check primaire par deltaE/Lab au lieu du hex litteral ;
+  - effet signature brand_landing assoupli : shader, iridescence/bloom, CSS 3D, canvas product treatment ou traitement visuel adapte.
+- Tests ajoutes/etendus :
+  - `codeDesignSpec.test.ts`
+  - `codeColorMetrics.test.ts`
+  - `codeDesignDirectives.test.ts`
+  - `codeFidelityGate.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : une couleur de marque proche en `rgb()` ou `oklch()` pouvait etre refusee si le hex exact etait absent.
+- Apres : le deltaE valide les couleurs perceptuellement proches et rejette les couleurs eloignees.
+- Avant : la directive premium web etait appliquee a tort aux jeux canvas et apps natives mobiles.
+- Apres : ces plateformes ont un contrat propre et les tests prouvent l'absence du baseline CSS web generique.
+- Avant : aucun objet design-spec n'etait verifie contre les fichiers.
+- Apres : une spec JSON structuree peut echouer sur palette, tokens, composant, wireframe ou plateforme.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeDesignDirectives.test.ts src/__tests__/codeDesignSpec.test.ts src/__tests__/codeFidelityGate.test.ts src/__tests__/codeColorMetrics.test.ts` : 56 pass / 0 fail.
+- `find src/__tests__ -name 'code*.test.ts' -print | sort | xargs node --experimental-strip-types --test` : 655 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `wc -l` : les nouveaux fichiers et fichiers touches du Module Code restent sous 600 lignes (`codeDesignDirectiveBlocks.ts` 595 lignes).
+
+### Etat de satisfaction chantier
+
+Pour WS10 local, le coeur du contrat est couvert : design-spec JSON, verification locale, taxonomie etendue, deltaE/Lab, et fin du contrat CSS web sur mobile/jeu. Le chantier n'est pas declare clos a 100 % tant que les templates couvrants n'ont pas tous ete enrichis par famille et relies aux futures generations longues.

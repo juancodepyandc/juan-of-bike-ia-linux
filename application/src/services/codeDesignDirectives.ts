@@ -13,6 +13,10 @@ import {
   buildCommonPremiumBaseline,
   depthDirectivesBlock,
 } from './codeDesignDirectiveBlocks.ts'
+import {
+  buildCodeDesignSpec,
+  formatCodeDesignSpecPrompt,
+} from './codeDesignSpec.ts'
 
 export type DesignArchetype =
   | 'apple_product'         // produit physique, hotspots, exploded view, scrub 3D
@@ -28,6 +32,9 @@ export type DesignArchetype =
   | 'mobile_native_premium' // mobile RN / Flutter — gestures, blur header, sheets
   | 'desktop_native_app'    // Tauri / Electron app — title bar, menus, panels
   | 'game_visual_premium'   // jeu web — palette neon, particles, screen shake
+  | 'data_dense_enterprise'  // enterprise dense — tables, filters, charts, detail drawers
+  | 'ide_code_editor'        // IDE / code editor — file tree, editor, terminal
+  | 'os_shell'               // OS / shell visual — terminal, boot log, status
   | 'default_premium'       // fallback — premium generique
 
 const VISUAL_PROJECT_TYPES: CodeProjectType[] = [
@@ -36,6 +43,7 @@ const VISUAL_PROJECT_TYPES: CodeProjectType[] = [
   'fullstack_mern', 'fullstack_nextjs', 'fullstack_django', 'fullstack_rails',
   'desktop_electron', 'desktop_tauri', 'mobile_rn', 'mobile_flutter',
   'game_web',
+  'mobile_ios', 'mobile_android', 'desktop_app', 'ide',
 ]
 
 export function isVisualProject(intent: CodeIntent): boolean {
@@ -68,6 +76,22 @@ const DASHBOARD_HINTS = [
   'dashboard', 'tableau de bord', 'admin', 'panel', 'console admin',
   'analytics', 'metrics', 'metriques', 'kpi', 'reporting', 'monitoring',
   'crm', 'erp', 'cms', 'back office', 'backoffice',
+]
+
+const DATA_DENSE_HINTS = [
+  'data dense', 'dense data', 'tableau dense', 'table dense', 'data grid',
+  'datagrid', 'spreadsheet', 'tableur', 'backoffice', 'back office',
+  'erp', 'crm', 'operations', 'ops', 'inventory', 'stock', 'tickets',
+]
+
+const IDE_HINTS = [
+  'ide', 'code editor', 'editeur de code', 'éditeur de code', 'monaco',
+  'vscode', 'vs code', 'file tree', 'terminal integre', 'terminal intégré',
+]
+
+const OS_SHELL_HINTS = [
+  'os shell', 'terminal os', 'kernel shell', 'boot log', 'noyau', 'system console',
+  'console systeme', 'console système', 'qemu screen',
 ]
 
 const PORTFOLIO_HINTS = [
@@ -140,6 +164,12 @@ export function detectDesignArchetype(prompt: string, intent: CodeIntent): Desig
   if (intent.projectType === 'game_web') {
     return 'game_visual_premium'
   }
+  if (intent.projectType === 'ide' || hasAny(text, IDE_HINTS)) {
+    return 'ide_code_editor'
+  }
+  if (intent.projectType === 'os_kernel' || hasAny(text, OS_SHELL_HINTS)) {
+    return 'os_shell'
+  }
 
   // Style hints take priority on visual archetypes.
   if (hasAny(text, BRUTALIST_HINTS) || ap?.styleHints.some((s) => BRUTALIST_HINTS.includes(s))) {
@@ -150,6 +180,7 @@ export function detectDesignArchetype(prompt: string, intent: CodeIntent): Desig
     return 'scroll_3d_journey'
   }
 
+  if (hasAny(text, DATA_DENSE_HINTS)) return 'data_dense_enterprise'
   if (hasAny(text, DASHBOARD_HINTS)) return 'dashboard_dataviz'
   if (hasAny(text, ECOMMERCE_HINTS)) return 'ecommerce_premium'
   if (hasAny(text, SAAS_HINTS)) return 'saas_marketing'
@@ -176,14 +207,24 @@ export function buildDesignDirectives(prompt: string, intent: CodeIntent): strin
   if (!isVisualProject(intent)) return ''
 
   const archetype = detectDesignArchetype(prompt, intent)
+  const spec = buildCodeDesignSpec(prompt, intent, archetype)
+  const usesGenericWebCssContract = !['mobile_native', 'game_canvas'].includes(spec.platform)
   const lines = [
-    ...buildCommonPremiumBaseline(),
+    formatCodeDesignSpecPrompt(spec),
+    '',
+    ...(usesGenericWebCssContract
+      ? buildCommonPremiumBaseline()
+      : [
+          '## STANDARD VISUEL SPECIFIQUE A LA PLATEFORME',
+          '- Ne pas appliquer le contrat CSS web generique a cette plateforme.',
+          '- Respecte la design-spec JSON ci-dessus comme source de verite.',
+        ]),
     '',
     ...archetypeBlock(archetype, intent),
     '',
-    ...depthDirectivesBlock(intent),
+    ...(usesGenericWebCssContract ? depthDirectivesBlock(intent) : []),
     '',
-    ...autoDepsBlock(),
+    ...(usesGenericWebCssContract ? autoDepsBlock() : []),
     '',
     `## ARCHETYPE RETENU: ${archetype}`,
     '- Reste fidele aux sections et aux effets listes ci-dessus.',
@@ -208,6 +249,9 @@ export function describeDesignArchetype(archetype: DesignArchetype): string {
     case 'mobile_native_premium': return 'Mobile native premium'
     case 'desktop_native_app': return 'Desktop native app'
     case 'game_visual_premium': return 'Game web premium juice'
+    case 'data_dense_enterprise': return 'Data-dense enterprise interface'
+    case 'ide_code_editor': return 'IDE / code editor workspace'
+    case 'os_shell': return 'OS shell / boot console'
     default: return 'Default premium'
   }
 }

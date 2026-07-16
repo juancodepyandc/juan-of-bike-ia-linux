@@ -79,6 +79,16 @@ describe('evaluateBrandFidelity — Coca-Cola', () => {
     assert.ok(!r.issues.includes('palette_missing'))
   })
 
+  test('couleur rouge brand proche en deltaE → pas de palette_missing', () => {
+    const intent = brandIntent('landing page Coca-Cola')
+    if (intent.assetPlan.subject?.source !== 'brand') return
+    const r = evaluateBrandFidelity(intent, [
+      htmlFile('<title>Coca-Cola</title><h1>Coca-Cola</h1><p>Coca-Cola</p>'),
+      { name: 'style.css', language: 'css', content: '.hero { background: #f51a20; color: white; }' },
+    ])
+    assert.ok(!r.issues.includes('palette_missing'))
+  })
+
   test('mot off-topic "restaurant" → used_off_topic_terms', () => {
     const intent = brandIntent('landing page Coca-Cola')
     if (intent.assetPlan.subject?.source !== 'brand') return
