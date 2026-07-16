@@ -445,6 +445,14 @@
 - **Validation** : tests cibles runner/tools/executor/phase 13 verts / 0 echec ; glob Code a **604 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS3 reste ouvert** : produire la preuve reelle >40 fichiers coherent/buildable et, si necessaire, remplacer la route bridge transitoire par l'exposition directe du moteur agentique TS.
 
+### 2026-07-15 — Vague 3 / WS3 increment 54 applique
+
+- **Preuve >40 fichiers** : ajout de `codeAgenticLargeProjectProof.test.ts`, qui construit un plan architecte de mini SaaS auth + CRUD + tests, le fait generer par `executeCodeGenerationQueue`, puis verifie que plus de 40 fichiers sont produits.
+- **Build/test reels** : le projet genere est ecrit dans un dossier temporaire et execute reellement `npm run build` puis `npm test` sans dependance externe ; la preuve couvre 32 entites CRUD, auth register/login/permissions et scripts Node.
+- **Anti-troncature** : la preuve passe par la queue WS3 fichier-par-fichier et verifie l'evenement final `done`, donc elle couvre le plafond de taille vise par WS3 sans blob mono-shot.
+- **Validation** : preuve cible 1 vert / 0 echec ; glob Code a **605 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS3 statut** : les criteres locaux majeurs sont couverts (executor VFS, route `/api/code/*`, UI stream, runner WS7, preuve >40 buildable) ; reste a consolider l'exposition directe du moteur agentique TS cote bridge au lieu de la route transitoire Ollama.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

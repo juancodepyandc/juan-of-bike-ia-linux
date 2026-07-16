@@ -2408,3 +2408,42 @@ Pour cet increment WS3, non, WS3 n'est pas termine : l'UI consomme maintenant la
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : le runner WS7 est branche, mais la preuve reelle d'un projet >40 fichiers coherent/buildable reste a executer et documenter.
+
+## 2026-07-15 — Vague 3 / WS3 increment 54 — Preuve >40 fichiers buildable
+
+### Reprise et diagnostic confirme
+
+- WS3 demandait explicitement de prouver qu'un projet de plus de 40 fichiers peut etre genere sans troncature et reste buildable.
+- Les briques etaient en place : plan JSON, queue d'execution, outils VFS, stream typé, runner WS7.
+- Il manquait une preuve reproductible dans la suite Code, pas seulement une affirmation documentaire.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : preuve basee sur Node natif et l'executor local.
+- Choix retenu : test de preuve deterministe qui genere un mini SaaS auth + CRUD + tests sans dependance externe.
+- Raison technique : le test reste rapide, reproductible, et mesure le vrai point WS3 : volume de fichiers + coherence importable + scripts executables.
+
+### Modifications realisees
+
+- Ajout de `src/__tests__/codeAgenticLargeProjectProof.test.ts` :
+  - construit 48 fichiers via un plan architecte schema-valide ;
+  - inclut 32 modules d'entites, auth, CRUD, index, scripts et tests ;
+  - fait produire chaque fichier par `executeCodeGenerationQueue` ;
+  - ecrit le projet genere dans un dossier temporaire ;
+  - execute reellement `npm run build` puis `npm test` sur ce projet genere.
+
+### Avant / apres mesurable
+
+- Avant : WS3 avait l'executor et le runner, mais aucune preuve automatique du seuil >40 fichiers.
+- Apres : le glob Code contient une preuve verte qui genere plus de 40 fichiers et valide build + tests sur un mini SaaS coherent.
+- Limite assumee : preuve deterministe locale, pas encore generation LLM live longue via Ollama ; la route bridge reste transitoire pour le flux HTTP.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeAgenticLargeProjectProof.test.ts` : 1 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 605 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour WS3 local, les criteres majeurs sont maintenant couverts : executor VFS, route `/api/code/*`, UI stream, runner WS7 et preuve >40 fichiers buildable. Je ne marque pas WS3 totalement clos tant que la route bridge de generation reste transitoire au lieu d'exposer directement le moteur agentique TS.
