@@ -35,6 +35,9 @@ export type CodeSimulationStage = {
   failedRequests?: string[]
   performanceMetrics?: Record<string, number>
   toolPath?: string
+  artifactPath?: string
+  deviceSerial?: string
+  durationMs?: number
   detail?: string
   error?: string
 }

@@ -150,7 +150,7 @@ export function SimulationPanel({
     ['Executions reelles', String(summary.realExecutions)],
     ['Navigateurs web', summary.webBrowsers.join(', ') || '-'],
   ]
-  for (const stage of report.stages.slice(0, 8)) {
+  for (const stage of report.stages.slice(0, 12)) {
     rows.push([
       stage.label,
       [stage.status, stage.realExecution ? 'execution reelle' : 'non execute', stage.viewport, stage.error || stage.detail]

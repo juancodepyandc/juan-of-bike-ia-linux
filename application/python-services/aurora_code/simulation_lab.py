@@ -17,6 +17,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from simulation_android import run_android_stage
+from simulation_embedded import run_qemu_os_stage, run_qemu_raspberry_stage, run_renode_stage
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CDP_HELPER = ROOT / "python-services" / "aurora_code" / "cdp_drive.mjs"
@@ -197,45 +200,50 @@ def _availability_stage(
   }
 
 
-def _environment_stages() -> list[dict[str, Any]]:
-  return [
-    _availability_stage(
+def _environment_stages(
+  url: str,
+  out_dir: Path,
+  playwright_stages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+  stages: list[dict[str, Any]] = []
+  if not any(
+    stage.get("browser") == "webkit" and stage.get("status") == "executed"
+    for stage in playwright_stages
+  ):
+    stages.append(_availability_stage(
       "webkit_real_browser",
       "WebKit real browser",
       "web",
       _which("MiniBrowser", "webkit2gtk-driver", "webkit2png"),
       "WebKit headless CLI introuvable; ne pas remplacer par largeur CSS.",
-    ),
-    _availability_stage(
-      "android_real_mobile",
-      "Android emulator / device",
-      "mobile_real",
-      _which("emulator", "adb", "waydroid"),
-      "Android emulator, adb ou Waydroid introuvable; execution mobile reelle differree.",
-    ),
-    _availability_stage(
-      "renode_microcontrollers",
-      "Renode ESP32/Arduino/Raspberry",
-      "embedded",
-      _which("renode"),
-      "Renode introuvable; firmware non simule et non remplace par mock largeur.",
-    ),
-    _availability_stage(
-      "qemu_bootable_os",
-      "QEMU OS/Raspberry boot",
-      "os_boot",
-      _which("qemu-system-x86_64", "qemu-system-aarch64", "qemu-system-arm"),
-      "QEMU introuvable; image OS/Raspberry non lancee.",
-    ),
-    {
+    ))
+  runners = [
+    lambda: run_android_stage(url, out_dir),
+    lambda: run_renode_stage(out_dir),
+    lambda: run_qemu_raspberry_stage(out_dir),
+    lambda: run_qemu_os_stage(out_dir),
+  ]
+  for runner in runners:
+    try:
+      stages.append(runner())
+    except Exception as exc:
+      stages.append({
+        "id": "environment_probe_error",
+        "label": "External environment probe",
+        "family": "os_boot",
+        "status": "unavailable",
+        "realExecution": False,
+        "error": str(exc),
+      })
+  stages.append({
       "id": "console_emulation_feasibility",
       "label": "Consoles anciennes/recentes",
       "family": "console",
       "status": "deferred",
       "realExecution": False,
       "detail": "Necessite emulateurs open-source dedies par console et ROM/SDK legalement fournis; hors execution automatique generique.",
-    },
-  ]
+  })
+  return stages
 
 
 def run_lab(url: str, out_dir: Path, wait_ms: int = 2500) -> dict[str, Any]:
@@ -246,7 +254,7 @@ def run_lab(url: str, out_dir: Path, wait_ms: int = 2500) -> dict[str, Any]:
   stages.extend(playwright_stages)
   if not any(stage.get("browser") == "firefox" and stage.get("status") == "executed" for stage in playwright_stages):
     stages.append(_run_firefox_smoke(url, out_dir, wait_ms))
-  stages.extend(_environment_stages())
+  stages.extend(_environment_stages(url, out_dir, playwright_stages))
   return {
     "schemaVersion": SCHEMA,
     "url": url,

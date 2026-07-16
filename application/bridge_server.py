@@ -11857,7 +11857,7 @@ def code_simulation_lab():
             cwd=WORKSPACE,
             capture_output=True,
             text=True,
-            timeout=max(60, int(wait_ms / 1000 * 18) + 90),
+            timeout=max(420, int(wait_ms / 1000 * 18) + 180),
             check=False,
         )
     except subprocess.TimeoutExpired:
