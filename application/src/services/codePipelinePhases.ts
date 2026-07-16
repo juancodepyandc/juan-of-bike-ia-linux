@@ -8,6 +8,8 @@ import {
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
 import { buildArchitecteSystemPrompt } from './codeSystemPrompts.ts'
 import { buildProjectGeneratorPromptBlock } from './codeProjectGeneratorRegistry.ts'
+import { detectDesignArchetype } from './codeDesignDirectives.ts'
+import { buildCodeDesignSpec, formatCodeDesignSpecPrompt } from './codeDesignSpec.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import { withTimeout } from './llmTimebox.ts'
 import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
@@ -131,6 +133,12 @@ export async function runPlanningPhase(
   // structurels attendus + la barre qualite du generateur specialise dans le
   // plan. Chaine vide (sans effet) pour les types web courants.
   const generatorBlock = buildProjectGeneratorPromptBlock(intent)
+  // WS10: injecte la design-spec platform-aware (le meme contrat verifie ensuite
+  // par le gate design-spec) pour que la plateforme correcte soit visee des le
+  // plan — pas de contrat CSS web pour du mobile natif ou un jeu canvas.
+  const designSpecBlock = formatCodeDesignSpecPrompt(
+    buildCodeDesignSpec(prompt, intent, detectDesignArchetype(prompt, intent)),
+  )
   const planPrompt = [
     buildArchitecteSystemPrompt(intent),
     '',
@@ -138,6 +146,7 @@ export async function runPlanningPhase(
     '',
     buildArchitecturePlanningPrompt(prompt, intent),
     generatorBlock,
+    designSpecBlock,
     preflightBlock,
   ].filter(Boolean).join('\n\n')
 

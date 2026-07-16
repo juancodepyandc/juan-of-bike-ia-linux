@@ -9,6 +9,12 @@ import type { CodeSandboxResult } from './codeSandbox.ts'
 import { compositeStaticCritic } from './codeStaticCritics.ts'
 import { withStaticCritiqueStep } from './codeValidationScoring.ts'
 import { INTERACTIVE_3D_FIDELITY_MAX_PASSES } from './codePipelineRuntime.ts'
+import { detectDesignArchetype } from './codeDesignDirectives.ts'
+import { buildCodeDesignSpec, formatCodeDesignSpecPrompt, verifyCodeDesignSpecAgainstFiles } from './codeDesignSpec.ts'
+
+// WS10: on ne fait respecter la design-spec que sur les premieres passes, pour
+// nudger la conformite sans bloquer la convergence sur des ecarts mineurs.
+const DESIGN_SPEC_MAX_PASSES = 2
 
 function appendFailedGate(
   result: CodeSandboxResult,
@@ -74,6 +80,34 @@ export async function runCorrectionQualityGates({
       )
       setPhase(
         `Passe ${attempt} - jeu incomplet (${gamePlay.missing.join(', ')}) - correction ciblee...`,
+        Math.min(90, 70 + attempt * 4),
+      )
+    }
+  }
+
+  // WS10: la design-spec est un CONTRAT verifie contre le code livre (palette
+  // deltaE, tokens, composants, wireframe, et surtout coherence de plateforme:
+  // pas de contrat CSS web applique a du mobile natif ni a un jeu canvas). Un
+  // ecart declenche une correction ciblee avec la spec en indice.
+  if (attempt <= DESIGN_SPEC_MAX_PASSES) {
+    const designSpec = buildCodeDesignSpec(prompt, intent, detectDesignArchetype(prompt, intent))
+    const designCheck = verifyCodeDesignSpecAgainstFiles(designSpec, files)
+    if (!designCheck.ok) {
+      const hint = [
+        'La livraison doit respecter la design-spec (contrat verifiable ci-dessous). Ecarts detectes:',
+        ...designCheck.issues.map((issue) => `- ${issue.kind}: ${issue.detail}`),
+        '',
+        formatCodeDesignSpecPrompt(designSpec),
+      ].join('\n')
+      nextResult = appendFailedGate(
+        nextResult,
+        `Ecart design-spec (${[...new Set(designCheck.issues.map((issue) => issue.kind))].join(', ')}).`,
+        'Design-spec',
+        'design-spec-gate',
+        hint,
+      )
+      setPhase(
+        `Passe ${attempt} - ecart design-spec (${designCheck.issues.length} point(s)) - correction ciblee...`,
         Math.min(90, 70 + attempt * 4),
       )
     }
