@@ -2447,3 +2447,45 @@ Pour cet increment WS3, non, WS3 n'est pas termine : le runner WS7 est branche, 
 ### Etat de satisfaction chantier
 
 Pour WS3 local, les criteres majeurs sont maintenant couverts : executor VFS, route `/api/code/*`, UI stream, runner WS7 et preuve >40 fichiers buildable. Je ne marque pas WS3 totalement clos tant que la route bridge de generation reste transitoire au lieu d'exposer directement le moteur agentique TS.
+
+## 2026-07-15 — Vague 3 / WS5 increment 55 — Memoire projet locale pour contexte cible
+
+### Reprise et diagnostic confirme
+
+- WS5 demande de remplacer la troncature de contexte par une memoire projet exploitable et des patchs incrementaux cibles.
+- Le producteur d'actions WS3 recevait deja une fenetre de queue et les fichiers existants, mais la selection de contexte reposait encore sur quelques heuristiques de chemins/imports.
+- Le socle WS2 (`ProjectTree` + graphe d'imports) etait disponible ; il fallait l'utiliser dans le chemin de generation fichier-par-fichier sans grossir `codeOrchestrator.ts`, `codeStreamStore.ts` ou `CodeView.tsx`, deja proches du seuil 600 lignes.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment est une integration RAG locale fondee sur les structures WS2 deja testees.
+- Choix retenu : une memoire projet pure et deterministe, reconstruite depuis le VFS courant, avec scoring explicable par raisons (`target`, `config`, `same-dir`, `imports`, `imported-by`, `plan-import`, `prompt-term`).
+- Raison technique : apporter un gain immediat de pertinence et de tracabilite au contexte du codeur, tout en gardant l'etape embeddings/persistance pour l'increment suivant.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeProjectMemory.ts` :
+  - construit un index par fichier depuis `buildProjectTree` ;
+  - conserve langage, taille, imports, importeurs, symboles et termes ;
+  - selectionne un contexte borne via `selectCodeProjectMemoryContext`.
+- `src/services/codeGenerationActionProducer.ts` :
+  - supprime la selection heuristique `isRelevantFile` ;
+  - selectionne les fichiers existants via la memoire projet ;
+  - ajoute les raisons de selection dans les entetes `--- EXISTING ... ---` fournis au modele.
+- Ajout de `src/__tests__/codeProjectMemory.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : un fichier etait considere pertinent par egalite de chemin, configs globales ou inclusion textuelle fragile d'un import.
+- Apres : le contexte cible s'appuie sur l'arbre projet, le graphe d'imports, les symboles, les importeurs et les termes du prompt, avec raisons auditables.
+- Limite assumee : cette memoire est encore locale/en RAM ; elle ne contient pas d'embeddings persistants et ne prouve pas encore le patch incremental anti-regression demande par le DoD WS5.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeProjectMemory.test.ts src/__tests__/codeGenerationActionProducer.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 607 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS5, oui : la selection RAG locale exploitable est branchee sur le chemin agentique. Pour WS5 complet, non : il reste a ajouter la persistance/embeddings et a prouver une modification par `apply_patch` ciblee avec non-regression des fichiers non concernes.

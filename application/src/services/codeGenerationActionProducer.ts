@@ -11,6 +11,7 @@ import {
   buildCodeGenerationActionInstructions,
   parseCodeGenerationActions,
 } from './codeGenerationActionProtocol.ts'
+import { buildCodeProjectMemory, selectCodeProjectMemoryContext } from './codeProjectMemory.ts'
 
 export type CodeGenerationActionModelClient = (
   model: string,
@@ -49,31 +50,23 @@ function cap(text: string, max: number) {
   return `${text.slice(0, head)}\n...[tronque ${text.length - max} chars]...\n${text.slice(-tail)}`
 }
 
-function normalizePath(path: string) {
-  return path.replace(/\\/g, '/').replace(/^\.\/+/, '').toLowerCase()
-}
-
-function isRelevantFile(file: CodeFile, item: CodeGenerationQueueItem) {
-  const name = normalizePath(file.name)
-  const target = normalizePath(item.path)
-  if (name === target) return true
-  if (name === 'package.json' || name.endsWith('/package.json')) return true
-  if (/^(vite|tsconfig|tailwind|postcss|eslint)\.config\./.test(name)) return true
-  return item.imports.some((entry) => {
-    const cleaned = normalizePath(entry).replace(/^\.\//, '')
-    return cleaned && (name.includes(cleaned) || cleaned.includes(name.replace(/\.[^.]+$/, '')))
+function formatRelevantFiles(files: CodeFile[], item: CodeGenerationQueueItem, prompt: string, maxChars: number) {
+  const byPath = new Map(files.map((file) => [file.name.replace(/\\/g, '/').toLowerCase(), file]))
+  const selected = selectCodeProjectMemoryContext({
+    memory: buildCodeProjectMemory(files),
+    item,
+    prompt,
+    maxFiles: 8,
   })
-}
-
-function formatRelevantFiles(files: CodeFile[], item: CodeGenerationQueueItem, maxChars: number) {
-  const selected = files.filter((file) => isRelevantFile(file, item)).slice(0, 8)
   if (selected.length === 0) return 'Aucun fichier existant pertinent dans le contexte cible.'
 
   let remaining = maxChars
   const blocks: string[] = []
-  for (const file of selected) {
+  for (const selection of selected) {
+    const file = byPath.get(selection.file.path.replace(/\\/g, '/').toLowerCase())
+    if (!file) continue
     if (remaining <= 200) break
-    const header = `--- EXISTING ${file.name} (${file.language || 'text'}) ---`
+    const header = `--- EXISTING ${file.name} (${file.language || 'text'}; raisons=${selection.reasons.join(',')}) ---`
     const body = cap(file.content, Math.max(200, remaining - header.length - 12))
     blocks.push(`${header}\n${body}`)
     remaining -= header.length + body.length + 2
@@ -117,7 +110,7 @@ export function buildCodeGenerationActionMessages(args: {
       formatQueueWindow(args.queue, args.item),
       '',
       '## CONTEXTE FICHIERS CIBLE',
-      formatRelevantFiles(args.files, args.item, maxContext),
+      formatRelevantFiles(args.files, args.item, args.prompt, maxContext),
       '',
       '## CONTRAT DE SORTIE',
       buildCodeGenerationActionInstructions(args.item),

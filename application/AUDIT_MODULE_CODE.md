@@ -453,6 +453,14 @@
 - **Validation** : preuve cible 1 vert / 0 echec ; glob Code a **605 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS3 statut** : les criteres locaux majeurs sont couverts (executor VFS, route `/api/code/*`, UI stream, runner WS7, preuve >40 buildable) ; reste a consolider l'exposition directe du moteur agentique TS cote bridge au lieu de la route transitoire Ollama.
 
+### 2026-07-15 — Vague 3 / WS5 increment 55 applique
+
+- **Memoire projet locale** : ajout de `codeProjectMemory.ts`, qui indexe le VFS courant en arbre, graphe d'imports, symboles exportes/importes et termes de recherche par fichier.
+- **Selection contexte RAG locale** : `codeGenerationActionProducer.ts` n'utilise plus la selection heuristique de noms ; il construit la memoire projet, score le fichier cible, les configs, le meme dossier, les dependances/importeurs et les termes du prompt, puis annote les raisons dans le contexte fourni au codeur.
+- **Tests de pertinence** : `codeProjectMemory.test.ts` prouve l'index imports/importedBy/symboles/termes et la priorite du fichier cible sans embarquer tout le projet.
+- **Validation** : tests cibles memoire/producteur 5 verts / 0 echec ; glob Code a **607 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS5 reste ouvert** : cet increment remplace la troncature heuristique par une memoire locale ciblee, mais ne livre pas encore l'index durable avec embeddings locaux ni la preuve de patch incremental/non-regression sur fichiers non concernes.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
