@@ -113,7 +113,46 @@ function generateLinuxLaunchScript(files: CodeFile[], intent: CodeIntent): CodeF
  * config so the page actually renders. No-op when the model wrote real CSS or
  * already included Tailwind.
  */
-function ensureTailwindCDN(files: CodeFile[], projectType?: string): CodeFile[] {
+// Convertit un hex (#rrggbb ou #rgb) en triplet "r g b" pour les CSS variables
+// rgb(var(--c-accent) / <alpha>). Retourne null si non parsable.
+function hexToRgbTriplet(hex: string | null | undefined): string | null {
+  if (!hex) return null
+  let h = hex.trim().replace(/^#/, '')
+  if (/^[0-9a-fA-F]{3}$/.test(h)) h = h.split('').map((c) => c + c).join('')
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `${r} ${g} ${b}`
+}
+
+// Mélange un triplet "r g b" vers le blanc (t=0..1) pour dériver les variantes
+// claires (accent-soft, accents en thème sombre).
+function lightenTriplet(triplet: string, t: number): string {
+  const [r, g, b] = triplet.split(' ').map(Number)
+  const mix = (c: number) => Math.round(c + (255 - c) * t)
+  return `${mix(r)} ${mix(g)} ${mix(b)}`
+}
+
+// Accent du theme injecte: couleur de MARQUE si detectee (Apple/AirPods -> pas
+// de violet generique), sinon un neutre professionnel (bleu ardoise) — jamais
+// le violet-signature "template IA" qui trahissait toutes les generations.
+function resolveThemeAccent(intent?: CodeIntent): { accent: string; soft: string; accentDark: string; softDark: string } {
+  const subject = intent?.assetPlan?.subject
+  const brandProfile = (subject?.source === 'brand' || subject?.source === 'inferred_brand')
+    ? subject.brandProfile
+    : null
+  const brandTriplet = hexToRgbTriplet(brandProfile?.primaryColor)
+  const accent = brandTriplet ?? '37 99 235' // neutre pro (#2563eb), pas de violet par defaut
+  return {
+    accent,
+    soft: lightenTriplet(accent, 0.12),
+    accentDark: lightenTriplet(accent, 0.18),
+    softDark: lightenTriplet(accent, 0.32),
+  }
+}
+
+function ensureTailwindCDN(files: CodeFile[], projectType?: string, intent?: CodeIntent): CodeFile[] {
   // A canvas game is self-styled (inline <style> + canvas draw calls) and never
   // needs Tailwind. The utility-class heuristic below false-positives on plain
   // class names like "container", injecting a ~2 KB marketing theme + an external
@@ -127,11 +166,12 @@ function ensureTailwindCDN(files: CodeFile[], projectType?: string): CodeFile[] 
   // the Play CDN + a CSS-variable theme + a Tailwind config that defines that
   // exact vocabulary, with light/dark wired to [data-theme="dark"]/.dark AND
   // prefers-color-scheme, so the page renders styled and the dark toggle works.
+  const { accent, soft, accentDark, softDark } = resolveThemeAccent(intent)
   const inject = [
     '<style data-aurora-theme>',
-    ':root{--c-surface:255 255 255;--c-surface-elevated:248 247 245;--c-card:255 255 255;--c-fg:23 23 23;--c-fg-dim:90 92 100;--c-fg-mute:140 142 150;--c-line:230 230 234;--c-accent:124 92 255;--c-accent-soft:139 110 255}',
-    '[data-theme="dark"],.dark{--c-surface:12 11 16;--c-surface-elevated:24 24 30;--c-card:22 22 28;--c-fg:240 240 245;--c-fg-dim:170 172 180;--c-fg-mute:120 122 130;--c-line:42 42 50;--c-accent:160 140 255;--c-accent-soft:175 155 255}',
-    '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--c-surface:12 11 16;--c-surface-elevated:24 24 30;--c-card:22 22 28;--c-fg:240 240 245;--c-fg-dim:170 172 180;--c-fg-mute:120 122 130;--c-line:42 42 50;--c-accent:160 140 255;--c-accent-soft:175 155 255}}',
+    `:root{--c-surface:255 255 255;--c-surface-elevated:248 247 245;--c-card:255 255 255;--c-fg:23 23 23;--c-fg-dim:90 92 100;--c-fg-mute:140 142 150;--c-line:230 230 234;--c-accent:${accent};--c-accent-soft:${soft}}`,
+    `[data-theme="dark"],.dark{--c-surface:12 11 16;--c-surface-elevated:24 24 30;--c-card:22 22 28;--c-fg:240 240 245;--c-fg-dim:170 172 180;--c-fg-mute:120 122 130;--c-line:42 42 50;--c-accent:${accentDark};--c-accent-soft:${softDark}}`,
+    `@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--c-surface:12 11 16;--c-surface-elevated:24 24 30;--c-card:22 22 28;--c-fg:240 240 245;--c-fg-dim:170 172 180;--c-fg-mute:120 122 130;--c-line:42 42 50;--c-accent:${accentDark};--c-accent-soft:${softDark}}}`,
     'body{background:rgb(var(--c-surface));color:rgb(var(--c-fg));transition:background .3s ease,color .3s ease}',
     '</style>',
     '<script src="https://cdn.tailwindcss.com"></script>',
@@ -317,7 +357,7 @@ export function upsertProjectSupportFiles(
   prompt: string,
   architecturePlan: string | null,
 ): CodeFile[] {
-  const strippedFiles = ensureTailwindCDN(files, intent.projectType).filter((file) => {
+  const strippedFiles = ensureTailwindCDN(files, intent.projectType, intent).filter((file) => {
     const name = file.name.replace(/\\/g, '/').toLowerCase()
     return name !== 'readme.md' && name !== 'start.sh' && !name.endsWith('.bat')
   })

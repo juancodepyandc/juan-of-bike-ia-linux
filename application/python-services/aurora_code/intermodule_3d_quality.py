@@ -21,11 +21,36 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import subprocess
 import time
 from typing import Any, Callable
 
 PostFn = Callable[..., dict[str, Any]]
 FindExistingFn = Callable[..., "pathlib.Path | None"]
+
+# Signatures des workers 3D lourds (GPU/CPU) qu'on ne doit JAMAIS concurrencer.
+# Lancer une 2e generation 3D pendant qu'une premiere tourne sature la VRAM
+# (16 Go) et la RAM -> gel machine constate. Regle du projet: un seul process
+# lourd a la fois.
+_HEAVY_3D_MARKERS = ("hunyuan3d_run.py", "aurora_trellis", "mv_adapter", "dreamgaussian_run.py")
+
+
+def _heavy_3d_process_running() -> str | None:
+    """Retourne la ligne de commande du 1er worker 3D lourd detecte, sinon None.
+
+    Protection anti-gel: si un worker 3D tourne deja (module 3D, autre onglet,
+    rescue en cours), le module Code NE lance PAS une generation concurrente.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-eo", "args"], capture_output=True, text=True, timeout=5,
+        ).stdout
+    except Exception:  # noqa: BLE001 — pas de ps -> on ne bloque pas, on laisse passer
+        return None
+    for line in out.splitlines():
+        if any(marker in line for marker in _HEAVY_3D_MARKERS):
+            return line.strip()[:200]
+    return None
 
 # Nombre max de runs pipeline (1 initial + 1 re-run force). Chaque run peut en
 # plus tenter un auto-rescue. Budget borne = "jusqu'a ce que ce soit bon" sans
@@ -156,6 +181,18 @@ def generate_quality_3d_asset(
     best: tuple[pathlib.Path, dict[str, Any] | None] | None = None
     rescue_used = False
 
+    if fresh:
+        busy = _heavy_3d_process_running()
+        if busy is not None:
+            # Un worker 3D lourd tourne deja -> on NE lance PAS une generation
+            # concurrente (protection anti-gel). On se rabat sur un asset
+            # existant si permis, sinon echec explicite (jamais silencieux).
+            detail["blockedByConcurrent3d"] = busy
+            fresh = False
+            if not allow_existing:
+                detail["error"] = ("Une generation 3D lourde tourne deja "
+                                   "(un seul process lourd a la fois): " + busy)
+                return None, detail
     if fresh:
         for attempt in range(1, MAX_PIPELINE_RUNS + 1):
             pipeline_run_id = slugify(source_run_id or f"{run_id}-3d") if attempt == 1 \

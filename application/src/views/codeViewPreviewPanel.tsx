@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { Monitor, Smartphone, Tablet } from 'lucide-react'
+import { ExternalLink, Maximize2, Minimize2, Monitor, Smartphone, Tablet } from 'lucide-react'
 import { parsePartialStreamFiles, buildLivePreviewHtml, webProjectFromFiles } from '../components/CodeProjectPreview'
 import { LIVE_PREVIEW_TOTAL_CAP_BYTES, shouldPauseLivePreviewDuringGeneration } from '../services/codeLivePreviewPolicy'
 import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent'
@@ -143,9 +143,29 @@ export function BigLivePreviewFrame({
     // l attribut iframe, pas de URL a revoquer.
     iframeRef.current.srcdoc = payload
     iframeRef.current.removeAttribute('src')
+    lastPayloadRef.current = payload
   }, [html, isGenerating, iframeRef, shouldSkipLivePreview])
 
   const spec = BIG_VIEWPORT_SPEC[viewport]
+
+  // Plein ecran: le simulateur compact est illisible (le cadre 1440x900 scale a
+  // ~0.35 dans le panneau etroit). Le mode plein ecran donne tout le viewport au
+  // rendu -> l utilisateur voit VRAIMENT la page a une taille utilisable.
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const lastPayloadRef = useRef<string>('')
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isFullscreen])
+
+  const openInNewTab = () => {
+    const payload = lastPayloadRef.current
+    if (!payload) return
+    const win = window.open('', '_blank')
+    if (win) { win.document.open(); win.document.write(payload); win.document.close() }
+  }
 
   // Ensures every viewport (including desktop at 1440×900) auto-scales to fit
   // the visible area. The iframe still sees the real `spec.width × spec.height`
@@ -168,30 +188,60 @@ export function BigLivePreviewFrame({
     ro.observe(wrap)
     window.addEventListener('resize', compute)
     return () => { ro.disconnect(); window.removeEventListener('resize', compute) }
-  }, [viewport, spec.width, spec.height])
+  }, [viewport, spec.width, spec.height, isFullscreen])
 
   return (
-    <div className="flex flex-col h-full min-h-[32rem] bg-[#0d1117]">
-      <div className="flex items-center justify-center gap-1 border-b border-black/5 bg-[#0a0f14] px-2 py-1.5">
-        {(['desktop', 'tablet', 'mobile'] as const).map((mode) => {
-          const Icon = mode === 'desktop' ? Monitor : mode === 'tablet' ? Tablet : Smartphone
-          const label = mode === 'desktop' ? 'Desktop' : mode === 'tablet' ? 'Tablet' : 'Mobile'
-          return (
-            <button
-              key={mode}
-              onClick={() => onViewportChange(mode)}
-              title={label}
-              className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
-                viewport === mode
-                  ? 'bg-aurora-accent/20 text-aurora-accent-light'
-                  : 'text-aurora-text-dim hover:text-aurora-text'
-              }`}
-            >
-              <Icon size={11} />
-              <span>{label}</span>
-            </button>
-          )
-        })}
+    <div
+      className={
+        isFullscreen
+          ? 'fixed inset-0 z-[120] flex flex-col bg-[#0d1117]'
+          : 'flex flex-col h-full min-h-[36rem] bg-[#0d1117]'
+      }
+    >
+      <div className="flex items-center justify-between gap-1 border-b border-black/5 bg-[#0a0f14] px-2 py-1.5">
+        <div className="flex items-center gap-1">
+          {(['desktop', 'tablet', 'mobile'] as const).map((mode) => {
+            const Icon = mode === 'desktop' ? Monitor : mode === 'tablet' ? Tablet : Smartphone
+            const label = mode === 'desktop' ? 'Desktop' : mode === 'tablet' ? 'Tablet' : 'Mobile'
+            return (
+              <button
+                key={mode}
+                onClick={() => onViewportChange(mode)}
+                title={label}
+                className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
+                  viewport === mode
+                    ? 'bg-aurora-accent/20 text-aurora-accent-light'
+                    : 'text-aurora-text-dim hover:text-aurora-text'
+                }`}
+              >
+                <Icon size={11} />
+                <span>{label}</span>
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={openInNewTab}
+            title="Ouvrir le rendu dans un nouvel onglet (taille reelle)"
+            className="flex h-6 items-center gap-1 rounded-md px-2 text-[10px] text-aurora-text-dim transition-colors hover:bg-white/5 hover:text-aurora-text"
+          >
+            <ExternalLink size={11} />
+            <span>Onglet</span>
+          </button>
+          <button
+            onClick={() => setIsFullscreen((v) => !v)}
+            title={isFullscreen ? 'Quitter le plein ecran (Echap)' : 'Agrandir le viewer en plein ecran'}
+            className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
+              isFullscreen
+                ? 'bg-aurora-accent/20 text-aurora-accent-light'
+                : 'text-aurora-text-dim hover:bg-white/5 hover:text-aurora-text'
+            }`}
+          >
+            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+            <span>{isFullscreen ? 'Reduire' : 'Agrandir'}</span>
+          </button>
+        </div>
       </div>
       <div
         ref={frameWrapRef}

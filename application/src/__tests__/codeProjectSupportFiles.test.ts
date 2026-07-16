@@ -28,4 +28,28 @@ describe('codeProjectSupportFiles', () => {
     assert.equal(names.includes('module-1.txt'), false)
     assert.equal(names.includes('lancement.bat'), false)
   })
+
+  test('le theme injecte utilise la couleur de MARQUE, jamais le violet generique', () => {
+    // Regression: une landing "airpods pro 3" (Apple) sortait avec l accent
+    // violet aurora 124 92 255 injecte en dur -> aspect template IA. Le theme
+    // doit desormais reprendre primaryColor de la marque (#000000 pour Apple).
+    const intent = {
+      projectType: 'static_web',
+      assetPlan: { subject: { source: 'brand', brandProfile: { primaryColor: '#000000' } } },
+    } as unknown as CodeIntent
+    const [html] = upsertProjectSupportFilesForTest([
+      { name: 'index.html', language: 'html', content: '<head></head><body class="bg-accent text-fg flex"></body>' },
+    ], intent, 'landing airpods pro 3', null)
+    assert.ok(html.content.includes('--c-accent:0 0 0'), 'accent = noir Apple attendu')
+    assert.equal(html.content.includes('124 92 255'), false, 'plus aucun violet generique')
+  })
+
+  test('sans marque, le theme injecte un neutre professionnel (pas de violet signature)', () => {
+    const intent = { projectType: 'static_web' } as unknown as CodeIntent
+    const [html] = upsertProjectSupportFilesForTest([
+      { name: 'index.html', language: 'html', content: '<head></head><body class="bg-accent flex text-fg"></body>' },
+    ], intent, 'une page', null)
+    assert.equal(html.content.includes('124 92 255'), false, 'pas de violet-signature par defaut')
+    assert.ok(html.content.includes('--c-accent:37 99 235'), 'neutre pro par defaut (#2563eb)')
+  })
 })
