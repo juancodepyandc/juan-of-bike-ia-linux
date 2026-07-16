@@ -1966,3 +1966,46 @@ Pour cet increment WS7, l'egress registre ne fuit plus par l'auto-reparation npm
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, la dette "disque total workspace" est traitee cote architecture et tests unitaires : le chemin vert exige un volume quote puis une probe disk-fill totale. La preuve runtime effective reste suspendue a l'installation de Podman rootless et a un stockage supportant les quotas de volume. WS7 reste ouvert sur cette preuve hote et sur le filtrage egress domaine/IP plus fin que l'allowlist commande/env actuelle.
+
+## 2026-07-15 — Vague 3 / WS3 increment 44 — Contrat de fichiers requis du plan architecte
+
+### Reprise et diagnostic confirme
+
+- Le Module Code possede deja un plan architecte JSON valide (WS4), un protocole VFS structure (WS2) et une boucle de retry de sortie.
+- Le diagnostic WS3 reste vrai sur le fond : `runGenerationPhase` est encore un appel LLM stream unique, pas un executeur outil-par-outil.
+- Avant cet increment, le plan etait injecte au Codeur comme contexte, mais la boucle de sortie ne prouvait pas que les fichiers requis par `plan.files[]` avaient ete livres.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le besoin est local et s'appuie sur les modules deja livres (`codeArchitecturePlan.ts`, `codeGenerationOutputRetry.ts`).
+- Choix retenu : commencer WS3 par un contrat machine faible mais executable, avant la refonte plus large en agent a outils.
+- Raison technique : un plan JSON qui ne contraint pas la livraison reste un prompt ; le verifier dans la boucle de retry transforme le plan en garde-fou non silencieux.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeArchitecturePlanContract.ts` :
+  - parse le plan architecte JSON ;
+  - extrait les fichiers `required !== false` ;
+  - ignore les fichiers de documentation generes ensuite par le support automatique ;
+  - retourne un diagnostic quand un fichier requis manque.
+- `codeGenerationOutputRetry.ts` :
+  - appelle `describeArchitecturePlanContractIssue` ;
+  - declenche une regeneration si un fichier requis du plan manque ;
+  - logge explicitement `plan=true` dans les diagnostics de retry.
+- Ajout de `src/__tests__/codeArchitecturePlanContract.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : un plan pouvait exiger `src/App.tsx` et `src/main.tsx`, mais une sortie avec seulement `package.json` pouvait passer aux gates suivantes si les heuristiques d'intention ne l'attrapaient pas.
+- Apres : les fichiers requis du plan sont verifies avant la validation sandbox ; une absence devient une cause de regeneration.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeArchitecturePlanContract.test.ts src/__tests__/codeGenerationOutputRetry.test.ts src/__tests__/codeArchitecturePlan.test.ts src/__tests__/codePipelinePhases.test.ts` : 14 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 569 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : c'est une marche de securisation qui rend le plan executable au niveau des fichiers requis. Il reste a remplacer le mono-appel par un executeur agentique fichier-par-fichier, puis a brancher les evenements typés vers l'UI et le bridge `/api/code/*`.

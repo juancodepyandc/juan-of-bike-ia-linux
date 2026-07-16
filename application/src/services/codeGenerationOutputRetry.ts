@@ -12,6 +12,7 @@ import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
 import { validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import { computeContentQualityScore } from './codeQualityGates.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
+import { describeArchitecturePlanContractIssue } from './codeArchitecturePlanContract.ts'
 import {
   DOCUMENTATION_EXTENSIONS_EARLY,
   clipText,
@@ -172,6 +173,7 @@ export async function runGeneratedOutputRetryLoop({
 
     const issueNarrative = detectNonCodePlanningNarrative(latestRawGenerationContent)
     const issueIntent = validateOutputMatchesIntent(initialFiles, intent)
+    const issueArchitecturePlan = describeArchitecturePlanContractIssue(initialFiles, architecturePlan)
     const issueDraft = draftReview.verdict === 'regenerate'
       ? [
           draftReview.summary,
@@ -180,7 +182,7 @@ export async function runGeneratedOutputRetryLoop({
         ].filter(Boolean).join(' | ')
       : null
     const draftBlocks = issueDraft && countRealCodeFiles(initialFiles) < 2 ? issueDraft : null
-    const outputIssue = issueNarrative || issueIntent || brandIssueLine || draftBlocks
+    const outputIssue = issueNarrative || issueIntent || issueArchitecturePlan || brandIssueLine || draftBlocks
 
     bestAttempt = rememberBestAttempt(bestAttempt, {
       files: initialFiles,
@@ -191,7 +193,7 @@ export async function runGeneratedOutputRetryLoop({
       console.warn(
         `[CodeOrchestrator] outputIssue @retry ${outputRetry} | files=${initialFiles.length} | `
         + `narrative=${!!issueNarrative} intentMismatch=${issueIntent ? JSON.stringify(issueIntent.slice(0, 80)) : false} `
-        + `brand=${!!brandIssueLine} draftRegenerate=${!!issueDraft}`,
+        + `plan=${!!issueArchitecturePlan} brand=${!!brandIssueLine} draftRegenerate=${!!issueDraft}`,
       )
     }
     if (!outputIssue) break

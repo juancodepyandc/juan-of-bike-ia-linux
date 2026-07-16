@@ -365,6 +365,14 @@
 - **Validation** : tests WS7 cibles 53 verts / 0 echec ; glob Code a **566 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS7 reste ouvert** : la preuve runtime effective reste dependante d'un hote equipe Podman rootless avec support quota volume ; le filtrage domaine paquet par paquet reste a traiter.
 
+### 2026-07-15 — Vague 3 / WS3 increment 44 applique
+
+- **Contrat fichier-par-fichier du plan** : `codeArchitecturePlanContract.ts` compare les fichiers livres aux fichiers requis du plan architecte JSON et signale les absences avant validation.
+- **Retry pilote par le plan** : `runGeneratedOutputRetryLoop` traite maintenant un fichier requis manquant comme une sortie incorrecte, au meme niveau qu'une narration non-code ou une violation d'intention.
+- **Premiere marche WS3** : la generation reste encore un appel LLM stream, mais le plan n'est plus seulement un texte de contexte ; il devient un contrat machine qui force la livraison des fichiers requis.
+- **Validation** : tests cibles plan/retry 14 verts / 0 echec ; glob Code a **569 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS3 reste ouvert** : l'executeur outil-par-outil `write_file/read_file/apply_patch/run_command`, les evenements stream typés `/api/code/*` et la generation >40 fichiers end-to-end restent a livrer.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
