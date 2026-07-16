@@ -10,6 +10,7 @@ import {
   stripFormattingArtifacts,
   tryParseJson,
 } from './codeGeneratedFileSanitizer.ts'
+import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -94,7 +95,7 @@ function repairLocalTypeScriptCompatibility(files: CodeFile[], failingOutput: st
       ...((manifest.devDependencies && typeof manifest.devDependencies === 'object')
         ? manifest.devDependencies
         : {}),
-      typescript: '^5.2.0',
+      typescript: getGeneratedNodeDependencySpec('typescript'),
     },
   }
 
@@ -106,8 +107,8 @@ function repairLocalTypeScriptCompatibility(files: CodeFile[], failingOutput: st
   return {
     files: nextFiles,
     reason: currentTypeScriptSpec
-      ? `mise a niveau automatique de TypeScript (${currentTypeScriptSpec} -> ^5.2.0) pour resoudre une incompatibilite compilateur/types`
-      : 'ajout automatique de TypeScript ^5.2.0 pour resoudre une incompatibilite compilateur/types',
+      ? `mise a niveau automatique de TypeScript (${currentTypeScriptSpec} -> ${getGeneratedNodeDependencySpec('typescript')}) pour resoudre une incompatibilite compilateur/types`
+      : `ajout automatique de TypeScript ${getGeneratedNodeDependencySpec('typescript')} pour resoudre une incompatibilite compilateur/types`,
   }
 }
 

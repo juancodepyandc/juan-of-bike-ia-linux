@@ -7,6 +7,7 @@
 import { PREMIUM_HTML_REFERENCE } from './codeDesignReferenceHtml.ts'
 import { THREE_D_SCENE_REFERENCE } from './codeDesignReferenceThree.ts'
 import { SUBJECT_VARIANTS, detectSubjectVariant, type SubjectVariant } from './codeDesignReferenceSubjects.ts'
+import { CODE_THREE_CDN_VERSION } from './codeRuntimeDependencies.ts'
 
 export { PREMIUM_HTML_REFERENCE } from './codeDesignReferenceHtml.ts'
 export { THREE_D_SCENE_REFERENCE } from './codeDesignReferenceThree.ts'
@@ -56,7 +57,7 @@ export function buildPremiumDesignReferenceBlock(promptHint?: string, forcedVari
 
   const patternBullets = isThreeDScene
     ? [
-        '- ESM via importmap CDN jsdelivr (three@0.160 + addons)',
+        `- ESM via importmap CDN jsdelivr (three@${CODE_THREE_CDN_VERSION} + addons)`,
         '- 5 lights minimum: HemisphereLight + DirectionalLight castShadow + 2 PointLights coloreees + SpotLight accent',
         '- Materials PBR uniquement (MeshPhysicalMaterial avec clearcoat, roughness, metalness)',
         '- PMREMGenerator + RoomEnvironment pour reflections offline',

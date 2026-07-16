@@ -91,9 +91,7 @@ export function parseSemanticIntentClassifierResponse(raw: string) {
   if (!VALID_PROJECT_TYPES.has(parsed.projectType as CodeProjectType)) errors.push('project_type_invalid')
   if (typeof parsed.confidence !== 'number' || parsed.confidence < 0 || parsed.confidence > 1) errors.push('confidence_invalid')
   if (errors.length > 0) return { ok: false as const, errors }
-  return {
-    ok: true as const,
-    value: {
+  const value: CodeSemanticIntent = {
       schemaVersion: CODE_SEMANTIC_INTENT_SCHEMA_VERSION,
       projectType: parsed.projectType as CodeProjectType,
       confidence: parsed.confidence as number,
@@ -101,8 +99,8 @@ export function parseSemanticIntentClassifierResponse(raw: string) {
       frameworks: stringArray(parsed.frameworks),
       features: stringArray(parsed.features),
       rationale: typeof parsed.rationale === 'string' ? parsed.rationale : '',
-    },
   }
+  return { ok: true as const, value }
 }
 
 function previewTypeFor(projectType: CodeProjectType): PreviewType {

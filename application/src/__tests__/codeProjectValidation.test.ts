@@ -80,6 +80,6 @@ describe('codeProjectValidation', () => {
 
     assert.ok(repair)
     const manifest = JSON.parse(repair.files.find((file) => file.name === 'package.json')!.content)
-    assert.equal(manifest.devDependencies.typescript, '^5.2.0')
+    assert.equal(manifest.devDependencies.typescript, '^6')
   })
 })

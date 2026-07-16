@@ -170,7 +170,10 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
       '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
-      '--disable-gpu',
+      // Headless rendering still needs WebGL for the preserved 3D viewer.
+      // SwiftShader avoids contending with FLUX/3D for the physical GPU.
+      '--use-angle=swiftshader',
+      '--enable-unsafe-swiftshader',
       `--window-size=${width},${height}`,
       'about:blank',
     ],

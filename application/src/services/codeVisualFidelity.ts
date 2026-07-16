@@ -396,7 +396,7 @@ export function buildVisualFidelityCritique(report: VisualFidelityReport): strin
     failed.find((c) => c.id === 'has_depth') ? '- AJOUTE de la profondeur via filter: blur(120-160px) sur des blobs absolute + backdrop-filter sur la nav.' : '',
     failed.find((c) => c.id === 'has_animations') ? '- AJOUTE des animations: @keyframes, transitions cubic-bezier, IntersectionObserver pour scroll reveal.' : '',
     failed.find((c) => c.id === 'has_inline_svg') ? '- AJOUTE au moins un SVG inline travaille (logo de la marque, icones, illustrations).' : '',
-    failed.find((c) => c.id === 'has_images') ? '- UTILISE les placeholders d images PLACEHOLDER_IMG_HERO/DETAIL/LIFESTYLE1/LIFESTYLE2 dans <img src="...">.' : '',
+    failed.find((c) => c.id === 'has_images') ? '- UTILISE les assets fichiers via PLACEHOLDER_IMG_HERO/DETAIL/LIFESTYLE1/LIFESTYLE2 dans <img src="...">.' : '',
     failed.find((c) => c.id === 'premium_fonts') ? '- IMPORTE Inter ou Space Grotesk via Google Fonts (preconnect + display=swap).' : '',
     failed.find((c) => c.id === 'has_css_vars') ? '- DECLARE des variables CSS dans :root pour --bg, --fg, --accent, --border.' : '',
     failed.find((c) => c.id === 'has_clamp') ? '- UTILISE clamp() pour les tailles de police responsive.' : '',

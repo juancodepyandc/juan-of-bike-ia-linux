@@ -7,6 +7,7 @@ import {
   tryParseJson,
   upsertPackageDevDependency,
 } from './codeGeneratedFileSanitizer.ts'
+import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
 import { isSyntheticFallbackFile } from './codeProjectValidation.ts'
 
 type ProjectRunbook = {
@@ -344,9 +345,9 @@ function ensureTailwindTooling(files: CodeFile[]) {
   if (packageIndex >= 0) {
     const manifest = tryParseJson(stripFormattingArtifacts(nextFiles[packageIndex].content))
     if (manifest) {
-      let nextManifest = upsertPackageDevDependency(manifest, 'tailwindcss', '^3.4.17', true)
-      nextManifest = upsertPackageDevDependency(nextManifest, 'postcss', '^8.5.6', true)
-      nextManifest = upsertPackageDevDependency(nextManifest, 'autoprefixer', '^10.4.21', true)
+      let nextManifest = upsertPackageDevDependency(manifest, 'tailwindcss', getGeneratedNodeDependencySpec('tailwindcss'), true)
+      nextManifest = upsertPackageDevDependency(nextManifest, 'postcss', getGeneratedNodeDependencySpec('postcss'), true)
+      nextManifest = upsertPackageDevDependency(nextManifest, 'autoprefixer', getGeneratedNodeDependencySpec('autoprefixer'), true)
       nextFiles = nextFiles.map((file, index) => index === packageIndex
         ? { ...file, content: `${JSON.stringify(nextManifest, null, 2)}\n` }
         : file)

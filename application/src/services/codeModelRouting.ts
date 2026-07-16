@@ -141,6 +141,25 @@ export function selectCodeRoleModel(
   const coderModel = selectCodeModelForHardware(context.hardware, installedModels, configured)
 
   if (phase === 'generation') {
+    if (context.plateau && escalationLevel > 0) {
+      const escalated = pickIndependentRoleModel(
+        PLATEAU_ESCALATION_CANDIDATES,
+        installedModels,
+        coderModel,
+        Boolean(context.allowUninstalledRoleModels),
+      )
+      if (escalated) {
+        return {
+          phase,
+          role: 'coder',
+          model: escalated.model,
+          coderModel,
+          distinctFromCoder: true,
+          reason: `generation:plateau-cloud-escalation:${escalationLevel}`,
+          installedMatch: escalated.installedMatch,
+        }
+      }
+    }
     return {
       phase,
       role: 'coder',

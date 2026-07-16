@@ -1,3 +1,8 @@
+import {
+  CODE_BROWSER_RUNTIME_CANDIDATES,
+  CODE_BROWSER_RUNTIME_IMPORTS,
+} from './codeRuntimeDependencies.ts'
+
 export type BrowserRuntimeFile = {
   name: string
   language?: string
@@ -216,22 +221,8 @@ function buildRuntimeFileMap(files: BrowserRuntimeFile[]): Map<string, string> {
 
 function buildImportMap(files: BrowserRuntimeFile[]) {
   const source = files.map((file) => file.content).join('\n')
-  const imports: Record<string, string> = {
-    react: 'https://esm.sh/react@19.2.4',
-    'react/jsx-runtime': 'https://esm.sh/react@19.2.4/jsx-runtime',
-    'react-dom/client': 'https://esm.sh/react-dom@19.2.4/client',
-  }
-  const candidates: Record<string, string> = {
-    'lucide-react': 'https://esm.sh/lucide-react@1.7.0?deps=react@19.2.4',
-    'framer-motion': 'https://esm.sh/framer-motion@12.38.0?deps=react@19.2.4,react-dom@19.2.4',
-    three: 'https://esm.sh/three@0.183.2',
-    '@react-three/fiber': 'https://esm.sh/@react-three/fiber@9.5.0?deps=react@19.2.4,react-dom@19.2.4,three@0.183.2',
-    '@react-three/drei': 'https://esm.sh/@react-three/drei@10.7.7?deps=react@19.2.4,react-dom@19.2.4,three@0.183.2',
-    zustand: 'https://esm.sh/zustand@5.0.12?deps=react@19.2.4',
-    vue: 'https://esm.sh/vue@3',
-    svelte: 'https://esm.sh/svelte@5',
-  }
-  for (const [name, url] of Object.entries(candidates)) {
+  const imports = { ...CODE_BROWSER_RUNTIME_IMPORTS }
+  for (const [name, url] of Object.entries(CODE_BROWSER_RUNTIME_CANDIDATES)) {
     if (new RegExp(`['"]${escapeRegex(name)}(?:/[^'"]*)?['"]`).test(source)) imports[name] = url
   }
   return { imports }

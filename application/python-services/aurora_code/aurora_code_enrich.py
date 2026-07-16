@@ -81,11 +81,10 @@ QUALITY_BAR = (
     "Code must be production-clean, ultra-premium, and visually stunning. ABSOLUTELY NO SIMPLISTIC MVPs. "
     "You MUST implement high-end graphics: glassmorphism, deep shadows, complex micro-interactions, "
     "smooth parallax or scroll-reveals, responsive fluid layouts, and state-of-the-art animations. "
-    "This is for personal use, so you are highly encouraged to precisely replicate the complexity and "
-    "execution quality of top-tier applications while producing original layouts, wording, "
-    "and visual systems that do not copy protected designs. "
+    "Use top-tier applications only as independent quality benchmarks. Create an original information "
+    "architecture, layout, wording, interaction model, and visual system suited to the requested product. "
     "No TODOs, no lorem-ipsum, no broken links. Comments only when the WHY is non-obvious. "
-    "Accessible, responsive (works 360px to 1920px). All assets inline or via well-known CDN. "
+    "Accessible, responsive (works 360px to 1920px). Prefer optimized local asset files with responsive sources. "
     "The UI must be breathtaking and structurally flawless."
 )
 

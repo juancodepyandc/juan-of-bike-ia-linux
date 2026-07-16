@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { BrandProfile } from './codeIntent.ts'
+import { CODE_THREE_ADDONS_BASE, CODE_THREE_CDN_BASE, CODE_THREE_CDN_VERSION } from './codeRuntimeDependencies.ts'
 
 // Generate Three.js recipe per productShape: rotating 3D brand product with texture mapping.
 export function describeProductShapeHint(
@@ -10,8 +11,8 @@ export function describeProductShapeHint(
   brandName: string,
   primaryColor: string,
 ): string | null {
-  const fallback = `- Construis un objet 3D recognoscible pour ${brandName} via Three.js (CDN jsdelivr 0.160). Texture optionnelle depuis PLACEHOLDER_SUBJECT_IMG_1.`
-  const baseImports = '`import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"; import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";`'
+  const fallback = `- Construis un objet 3D recognoscible pour ${brandName} via Three.js (CDN jsdelivr ${CODE_THREE_CDN_VERSION}). Texture optionnelle depuis PLACEHOLDER_SUBJECT_IMG_1.`
+  const baseImports = `\`import * as THREE from "${CODE_THREE_CDN_BASE}/build/three.module.js"; import { OrbitControls } from "${CODE_THREE_ADDONS_BASE}/controls/OrbitControls.js";\``
   const lighting = '- Eclairage PBR: HemisphereLight(0xffffff,0x222222,0.6) + DirectionalLight(0xffffff,1.6, position(5,8,5), castShadow:true) + PointLight accent couleur primaire (intensity 0.7).'
   const composer = '- WebGLRenderer({antialias:true,alpha:true}), pixelRatio min(devicePixelRatio,2), outputColorSpace=SRGBColorSpace, toneMapping=ACESFilmicToneMapping.'
   const orbitAuto = '- OrbitControls(enableDamping:true, dampingFactor:0.06, autoRotate:true, autoRotateSpeed:1.2). Camera PerspectiveCamera(45 fov), distance ~3-5 unites, regard centre.'

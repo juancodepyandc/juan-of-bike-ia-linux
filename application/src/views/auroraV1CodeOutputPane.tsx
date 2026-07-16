@@ -5,9 +5,6 @@ import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
 import type { ParsedFile } from '../services/codeOutputFiles'
 import { getDailyTip } from '../utils/dailyTip'
 import {
-  AFTER_HIGHLIGHT,
-  AFTER_POST,
-  AFTER_PRE,
   FOLLOWUP_LABELS,
   GREEN,
   RED,
@@ -40,7 +37,6 @@ export function AuroraV1CodeOutputPane({
   openingFolder,
   parsedFiles,
   setLive,
-  streamLen,
   tokensPerSec,
   tpsHistory,
 }: {
@@ -53,7 +49,6 @@ export function AuroraV1CodeOutputPane({
   openingFolder: boolean
   parsedFiles: ParsedFile[]
   setLive: (live: boolean) => void
-  streamLen: number
   tokensPerSec: number | null
   tpsHistory: number[]
 }) {
@@ -68,7 +63,7 @@ export function AuroraV1CodeOutputPane({
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
       }}>
         <Eyebrow dot={GREEN}>
-          {code.streaming ? 'stream · live' : code.hasOutput ? 'output · ready' : 'after · streaming'}
+          {code.streaming ? 'stream · live' : code.hasOutput ? 'output · ready' : 'output'}
         </Eyebrow>
         {code.streaming && (
           <button type="button" onClick={code.abort}
@@ -109,7 +104,7 @@ export function AuroraV1CodeOutputPane({
                   ? ` · avg ${finalStats.avg.toFixed(1)} · max ${finalStats.max.toFixed(1)} · ${finalStats.durationSec.toFixed(1)}s`
                   : ''
               }`
-              : '+18 −4 · 0.4s'}
+              : code.model}
           </span>
           {code.streaming && tpsHistory.length >= 2 && (() => {
             const max = Math.max(1, ...tpsHistory)
@@ -162,39 +157,29 @@ export function AuroraV1CodeOutputPane({
             </div>
           )}
         </div>
-      ) : (
+      ) : code.streaming ? (
         <pre style={{
           flex: '1 1 0', padding: '18px 22px', margin: 0,
           minHeight: 0,
           fontFamily: 'var(--font-mono, monospace)', fontSize: 12, lineHeight: 1.7,
           color: 'var(--fg, #f5f5f5)', overflow: 'auto',
-          whiteSpace: code.streaming ? 'pre' : 'pre-wrap',
+          whiteSpace: 'pre',
         }}>
-          {code.streaming ? (
-            <>
-              {code.streamOutput}
-              <span style={{
-                display: 'inline-block', width: 7, height: 14,
-                background: GREEN, verticalAlign: 'text-bottom',
-                animation: 'aurora-blink 1s steps(2) infinite',
-              }} />
-            </>
-          ) : (
-            <>
-              {AFTER_PRE}
-              <span style={{
-                background: `${GREEN}30`, display: 'block',
-                padding: '0 22px', margin: '0 -22px',
-              }}>{AFTER_HIGHLIGHT.slice(0, streamLen)}<span style={{
-                display: 'inline-block', width: 7, height: 14,
-                background: GREEN, verticalAlign: 'text-bottom',
-                animation: 'aurora-blink 1s steps(2) infinite',
-              }} /></span>
-              {AFTER_POST}
-            </>
-          )}
+          {code.streamOutput}
+          <span style={{
+            display: 'inline-block', width: 7, height: 14,
+            background: GREEN, verticalAlign: 'text-bottom',
+            animation: 'aurora-blink 1s steps(2) infinite',
+          }} />
           <style>{`@keyframes aurora-blink { 50% { opacity: 0 } }`}</style>
         </pre>
+      ) : (
+        <div style={{
+          flex: '1 1 0', minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          color: 'var(--fg-mute, #777)', fontFamily: 'var(--font-mono, monospace)', fontSize: 11,
+        }}>
+          <Sparkles size={16} /> Aucun résultat
+        </div>
       )}
 
       {!code.hasOutput && !code.streaming && !live && (

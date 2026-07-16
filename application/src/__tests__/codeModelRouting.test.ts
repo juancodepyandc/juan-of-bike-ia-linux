@@ -28,6 +28,19 @@ describe('codeModelRouting', () => {
     assert.equal(decision.role, 'coder')
   })
 
+  test('escalade aussi la generation quand le plateau est prouve', () => {
+    const decision = selectCodeRoleModel('generation', intent, 4, {
+      configuredCodeModel: 'qwen3-coder:30b',
+      installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+      plateau: true,
+    })
+
+    assert.equal(decision.model, CODE_CLOUD_HIGH_MODEL)
+    assert.equal(decision.role, 'coder')
+    assert.equal(decision.distinctFromCoder, true)
+    assert.match(decision.reason, /plateau-cloud-escalation:4/)
+  })
+
   test('selectionne un architecte/verifieur distinct quand /api/tags le prouve', () => {
     const decision = selectCodeRoleModel('planning', intent, 0, {
       configuredCodeModel: 'qwen3-coder:30b',

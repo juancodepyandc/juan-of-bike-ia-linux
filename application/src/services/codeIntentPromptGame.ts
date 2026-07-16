@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntentTypes.ts'
+import { CODE_THREE_ADDONS_BASE, CODE_THREE_CDN_BASE } from './codeRuntimeDependencies.ts'
 
 export function appendGamePrompt(lines: string[], intent: CodeIntent): void {
   if (intent.projectType !== 'game_web') return
@@ -26,12 +27,12 @@ if (is3D && !isGame) {
     '- INTERDIT de livrer du HTML qui SIMULE de la 3D (transforms CSS 3D) — il faut WebGL avec un VRAI rendu Three.js.',
     '',
     '### Stack obligatoire (CDN jsdelivr ESM, versions figees)',
-    '- `import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"`',
-    '- `import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js"`',
-    '- `import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js"` si le scenario charge un GLB',
-    '- `import { RGBELoader } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/RGBELoader.js"` pour HDRI',
-    '- Post-processing: `EffectComposer`, `RenderPass`, `UnrealBloomPass`, `OutputPass`, `SMAAPass` depuis `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/...`',
-    '- Physique (si la demande implique chute, collision, swing, drag&throw, dominoes): `import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.13.0/+esm"` puis `await RAPIER.init()`',
+    `- \`import * as THREE from "${CODE_THREE_CDN_BASE}/build/three.module.js"\``,
+    `- \`import { OrbitControls } from "${CODE_THREE_ADDONS_BASE}/controls/OrbitControls.js"\``,
+    `- \`import { GLTFLoader } from "${CODE_THREE_ADDONS_BASE}/loaders/GLTFLoader.js"\` si le scenario charge un GLB`,
+    `- \`import { RGBELoader } from "${CODE_THREE_ADDONS_BASE}/loaders/RGBELoader.js"\` pour HDRI`,
+    `- Post-processing: \`EffectComposer\`, \`RenderPass\`, \`UnrealBloomPass\`, \`OutputPass\`, \`SMAAPass\` depuis \`${CODE_THREE_ADDONS_BASE}/postprocessing/...\``,
+    '- Physique (si la demande implique chute, collision, swing, drag&throw, dominoes): `import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.19/+esm"` puis `await RAPIER.init()`',
     "- Si l import echoue (mode hors ligne), utilise des primitives THREE only mais GARDE le post-processing et l environnement HDRI procedural.",
     '',
     '### Architecture obligatoire de la scene',
@@ -46,7 +47,7 @@ if (is3D && !isGame) {
     '   - Les couleurs des lumieres doivent etre stylees (pas du blanc plat partout) — palette violet/orange, teal/magenta, gold/blue selon le mood.',
     '6. **Materials PBR** uniquement: `MeshStandardMaterial` ou `MeshPhysicalMaterial` (jamais `MeshBasicMaterial` sauf billboards/ciel). Configure `roughness`, `metalness`, `clearcoat`, `transmission`, `ior`, `iridescence`, `sheen` selon le sujet — lis chaque parametre comme un photographe lit la lumiere.',
     '7. **Environment / IBL**:',
-    '   - Charge un HDRI procedural via `RoomEnvironment` (`import { RoomEnvironment } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/environments/RoomEnvironment.js"`) ou un HDRI distant (Polyhaven, BridgeAPI) si autorise.',
+    `   - Charge un HDRI procedural via \`RoomEnvironment\` (\`import { RoomEnvironment } from "${CODE_THREE_ADDONS_BASE}/environments/RoomEnvironment.js"\`) ou un HDRI distant (Polyhaven, BridgeAPI) si autorise.`,
     '   - Si offline only: cree un GradientTexture procedural (CanvasTexture mappee comme equirectangular) qui simule un studio 3-point.',
     '   - Affecte le resultat a `scene.environment` ET a `scene.background = environment` ou un fond travaille.',
     '8. **Sol et reflexion**: ajoute un sol PBR (plane 100x100, MeshPhysicalMaterial avec `clearcoat:0.1, roughness:0.4`) ou un MeshReflectorMaterial pour reflexion subtile. Active les ombres sur ce plan.',

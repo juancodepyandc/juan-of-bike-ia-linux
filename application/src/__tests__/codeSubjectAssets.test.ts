@@ -1,22 +1,14 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { CodeIntent } from '../services/codeIntent.ts'
-import { applySubjectImagePlaceholder, mergeExistingWithUpdates } from '../services/codeSubjectAssets.ts'
+import { mergeExistingWithUpdates } from '../services/codeSubjectAssets.ts'
 
 describe('codeSubjectAssets', () => {
-  test('remplace les placeholders sujet par les images resolues', () => {
-    const intent = {
-      assetPlan: { subject: { canonical: 'Pepsi' } },
-      __subjectImageDataUrls: ['data:image/png;base64,ONE', 'data:image/png;base64,TWO'],
-    } as unknown as CodeIntent
-
-    const next = applySubjectImagePlaceholder(
-      '<img src="PLACEHOLDER_SUBJECT_IMG"><img src="PLACEHOLDER_SUBJECT_IMG_2">',
-      intent,
+  test('la derniere mise a jour gagne aussi avec chemins Windows normalises', () => {
+    const merged = mergeExistingWithUpdates(
+      [{ name: 'src\\App.tsx', language: 'typescript', content: 'ancien' }],
+      [{ name: 'src/App.tsx', language: 'typescript', content: 'nouveau' }],
     )
-
-    assert.equal(next.includes('PLACEHOLDER_SUBJECT_IMG'), false)
-    assert.equal(next, '<img src="data:image/png;base64,ONE"><img src="data:image/png;base64,TWO">')
+    assert.deepEqual(merged, [{ name: 'src/App.tsx', language: 'typescript', content: 'nouveau' }])
   })
 
   test('garde les fichiers existants non remplaces lors d un follow-up', () => {

@@ -4,6 +4,10 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeFile } from './codeOrchestrator.ts'
+import {
+  getGeneratedNodeDependencySpec,
+  getLegacyReactThreeDependencySpec,
+} from './codeGeneratedDependencyPolicy.ts'
 
 export type LocalNodeManifest = {
   dependencies?: Record<string, string>
@@ -120,8 +124,8 @@ export function tryParseJson(content: string) {
   }
 }
 
-const SAFE_VITE_VERSION = '^8.1.3'
-const SAFE_VITE_REACT_PLUGIN_VERSION = '^5.1.2'
+const SAFE_VITE_VERSION = getGeneratedNodeDependencySpec('vite')
+const SAFE_VITE_REACT_PLUGIN_VERSION = getGeneratedNodeDependencySpec('@vitejs/plugin-react')
 
 function repairKnownManifestDependencyNames(manifest: Record<string, unknown>) {
   let next: Record<string, unknown> = { ...manifest }
@@ -298,23 +302,12 @@ const NODE_BUILTIN_IMPORTS = new Set([
   'stream', 'string_decoder', 'timers', 'tls', 'tty', 'url', 'util', 'vm', 'zlib',
 ])
 
-const COMMON_PACKAGE_IMPORT_VERSIONS: Record<string, string> = {
-  '@monaco-editor/react': '^4.7.0',
-  '@react-spring/three': '^9.7.5',
-  '@react-three/drei': '^10.7.7',
-  '@react-three/fiber': '^9.6.1',
-  '@react-three/postprocessing': '^3.0.4',
-  '@vitejs/plugin-react': SAFE_VITE_REACT_PLUGIN_VERSION,
-  'framer-motion': '^11.18.2',
-  'lucide-react': '^0.468.0',
-  'monaco-editor': '^0.52.2',
-  'react': '^19.2.0',
-  'react-dom': '^19.2.0',
-  'react-icons': '^5.5.0',
-  'react-router-dom': '^7.13.2',
-  'three': '^0.183.2',
-  'zustand': '^5.0.2',
-}
+const COMMON_PACKAGE_IMPORTS = new Set([
+  '@monaco-editor/react', '@react-spring/three', '@react-three/drei',
+  '@react-three/fiber', '@react-three/postprocessing', '@vitejs/plugin-react',
+  'framer-motion', 'lucide-react', 'monaco-editor', 'react', 'react-dom',
+  'react-icons', 'react-router-dom', 'three', 'zustand',
+])
 
 function packageNameFromImportSpecifier(specifier: string): string | null {
   if (!specifier || specifier.startsWith('.') || specifier.startsWith('/') || specifier.startsWith('#')) return null
@@ -370,32 +363,32 @@ function repairPackageManifestFromSourceImports(files: CodeFile[]) {
     const useReact19 = reactMajor === null || reactMajor >= 19
 
     if (useReact19) {
-      manifest = upsertPackageDependency(manifest, 'react', '^19.2.0', true)
-      manifest = upsertPackageDependency(manifest, 'react-dom', '^19.2.0', true)
-      manifest = upsertPackageDevDependency(manifest, '@types/react', '^19.0.0', true)
-      manifest = upsertPackageDevDependency(manifest, '@types/react-dom', '^19.0.0', true)
-      manifest = upsertPackageDependency(manifest, '@react-three/fiber', '^9.6.1', true)
-      manifest = upsertPackageDependency(manifest, '@react-three/drei', '^10.7.7', true)
+      manifest = upsertPackageDependency(manifest, 'react', getGeneratedNodeDependencySpec('react'), true)
+      manifest = upsertPackageDependency(manifest, 'react-dom', getGeneratedNodeDependencySpec('react-dom'), true)
+      manifest = upsertPackageDevDependency(manifest, '@types/react', getGeneratedNodeDependencySpec('@types/react'), true)
+      manifest = upsertPackageDevDependency(manifest, '@types/react-dom', getGeneratedNodeDependencySpec('@types/react-dom'), true)
+      manifest = upsertPackageDependency(manifest, '@react-three/fiber', getGeneratedNodeDependencySpec('@react-three/fiber'), true)
+      manifest = upsertPackageDependency(manifest, '@react-three/drei', getGeneratedNodeDependencySpec('@react-three/drei'), true)
       if (/@react-three\/postprocessing/.test(sourceBlob)) {
-        manifest = upsertPackageDependency(manifest, '@react-three/postprocessing', '^3.0.4', true)
+        manifest = upsertPackageDependency(manifest, '@react-three/postprocessing', getGeneratedNodeDependencySpec('@react-three/postprocessing'), true)
       }
     } else {
-      manifest = upsertPackageDependency(manifest, '@react-three/fiber', '^8.18.0', true)
-      manifest = upsertPackageDependency(manifest, '@react-three/drei', '^9.122.0', true)
+      manifest = upsertPackageDependency(manifest, '@react-three/fiber', getLegacyReactThreeDependencySpec('@react-three/fiber'), true)
+      manifest = upsertPackageDependency(manifest, '@react-three/drei', getLegacyReactThreeDependencySpec('@react-three/drei'), true)
       if (/@react-three\/postprocessing/.test(sourceBlob)) {
-        manifest = upsertPackageDependency(manifest, '@react-three/postprocessing', '^2.16.3', true)
+        manifest = upsertPackageDependency(manifest, '@react-three/postprocessing', getLegacyReactThreeDependencySpec('@react-three/postprocessing'), true)
       }
     }
   }
 
-  const requiredDeps: Array<[RegExp, string, string]> = [
-    [/@react-spring\/three/, '@react-spring/three', '^9.7.5'],
-    [/framer-motion/, 'framer-motion', '^11.18.2'],
+  const requiredDeps: Array<[RegExp, string]> = [
+    [/@react-spring\/three/, '@react-spring/three'],
+    [/framer-motion/, 'framer-motion'],
   ]
 
-  for (const [pattern, dependencyName, version] of requiredDeps) {
+  for (const [pattern, dependencyName] of requiredDeps) {
     if (pattern.test(sourceBlob)) {
-      manifest = upsertPackageDependency(manifest, dependencyName, version)
+      manifest = upsertPackageDependency(manifest, dependencyName, getGeneratedNodeDependencySpec(dependencyName))
     }
   }
 
@@ -409,12 +402,11 @@ function repairPackageManifestFromSourceImports(files: CodeFile[]) {
       manifest = movePackageToDevDependency(manifest, 'vite', SAFE_VITE_VERSION)
       continue
     }
-    const version = COMMON_PACKAGE_IMPORT_VERSIONS[packageName]
-    if (version) {
-      manifest = upsertPackageDependency(manifest, packageName, version)
+    if (COMMON_PACKAGE_IMPORTS.has(packageName)) {
+      manifest = upsertPackageDependency(manifest, packageName, getGeneratedNodeDependencySpec(packageName))
     }
     if (packageName === '@monaco-editor/react') {
-      manifest = upsertPackageDependency(manifest, 'monaco-editor', COMMON_PACKAGE_IMPORT_VERSIONS['monaco-editor'])
+      manifest = upsertPackageDependency(manifest, 'monaco-editor', getGeneratedNodeDependencySpec('monaco-editor'))
     }
   }
 

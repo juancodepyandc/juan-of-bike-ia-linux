@@ -1,10 +1,6 @@
-import type { OllamaMessage } from '../types/app'
-import type { RecoveryEvent } from './ollamaResilience.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeMissionDossier } from './codeMissionControl.ts'
-import type { CodePreflightReport } from './codePreflight.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
-import type { GenerationPivotContext } from './codePipelinePhases.ts'
 import type { BrandFidelityReport } from './codeFidelityGate.ts'
 import { evaluateBrandFidelity } from './codeFidelityGate.ts'
 import { detectNonCodePlanningNarrative, extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
@@ -19,7 +15,7 @@ import {
   selectModel,
   type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
-import { runGenerationPhase } from './codePipelinePhases.ts'
+import { runAgenticGenerationPhase } from './codeAgenticGenerationPhase.ts'
 
 type BestAttempt = { files: CodeFile[]; notes: string; score: number }
 
@@ -92,7 +88,7 @@ export function buildBrandRetryBlock(
     brandSubject.brandProfile.secondaryColor ? `- Couleur secondaire: ${brandSubject.brandProfile.secondaryColor}.` : '',
     brandSubject.brandProfile.productKeywords.length ? `- Mots-cles produit: ${brandSubject.brandProfile.productKeywords.join(', ')}. Au moins 2 dans les titres de section.` : '',
     brandSubject.brandProfile.designVibe ? `- Vibe visuel cible: ${brandSubject.brandProfile.designVibe}.` : '',
-    '- Markers d images REELLES deja telechargees: PLACEHOLDER_SUBJECT_IMG, PLACEHOLDER_SUBJECT_IMG_1..4. Place-en au moins 2 dans la page.',
+    '- Asset image inter-module disponible dans le manifeste: utilise PLACEHOLDER_SUBJECT_IMG dans le hero et une section showcase.',
     '- INTERDIT: restaurant, menu du jour, blog culinaire, SaaS abstrait. C est une marque/produit emblematique, traite-la comme telle.',
   ].filter(Boolean).join('\n')
 }
@@ -102,38 +98,30 @@ export async function runGeneratedOutputRetryLoop({
   enrichedPrompt,
   latestRawGenerationContent,
   intent,
-  preflightReport,
   architecturePlan,
   missionDossier,
-  conversationHistory,
   effectiveExistingFiles,
   contextImages,
   configuredCodeModel,
   generationModel,
   setPhase,
   onToken,
-  trackRecovery,
   signal,
-  pivotContext,
   modelRouting,
 }: {
   prompt: string
   enrichedPrompt: string
   latestRawGenerationContent: string
   intent: CodeIntent
-  preflightReport: CodePreflightReport | null
-  architecturePlan: string | null
+  architecturePlan: string
   missionDossier: CodeMissionDossier
-  conversationHistory: OllamaMessage[]
   effectiveExistingFiles: CodeFile[]
   contextImages: string[]
   configuredCodeModel: string
   generationModel: string
   setPhase: PhaseCallback
   onToken: (token: string) => void
-  trackRecovery: (event: RecoveryEvent) => void
   signal?: AbortSignal
-  pivotContext?: GenerationPivotContext
   modelRouting?: CodeModelRoutingContext
 }): Promise<OutputRetryResult> {
   const parsed = parseCodeFiles(latestRawGenerationContent)
@@ -223,12 +211,7 @@ export async function runGeneratedOutputRetryLoop({
       detectNonCodePlanningNarrative(latestRawGenerationContent)
         ? '- TA SORTIE PRECEDENTE ETAIT UN PLAN/PREFLIGHT. N envoie plus jamais de diagnostic: convertis directement la solution en fichiers.'
         : '',
-      outputRetry >= 2 && !isExpertComplexProject
-        ? '- SIMPLIFIE: produis le MINIMUM de fichiers necessaires pour que ca fonctionne'
-        : '',
-      outputRetry >= 2 && isExpertComplexProject
-        ? '- NE SIMPLIFIE PAS LES FONCTIONNALITES: preserve le scope demande, corrige la structure et livre tous les fichiers necessaires.'
-        : '',
+      '- NE SIMPLIFIE PAS LES FONCTIONNALITES: preserve le scope demande, corrige la structure et livre tous les fichiers necessaires.',
       '',
       detectNonCodePlanningNarrative(latestRawGenerationContent)
         ? `SORTIE INTERDITE A NE PAS REPRODUIRE:\n${clipText(latestRawGenerationContent, 1400)}\n`
@@ -262,24 +245,26 @@ export async function runGeneratedOutputRetryLoop({
 
     let retryContent = ''
     try {
-      retryContent = await runGenerationPhase(
-        retryPrompt,
+      const retryGeneration = await runAgenticGenerationPhase({
+        prompt: retryPrompt,
         intent,
-        preflightReport,
         architecturePlan,
-        missionDossier,
-        conversationHistory,
-        effectiveExistingFiles,
+        existingFiles: effectiveExistingFiles,
         contextImages,
-        retryModel,
-        escalation,
+        generationModel,
+        escalationLevel: escalation,
         setPhase,
         onToken,
-        trackRecovery,
         signal,
-        pivotContext,
-        modelRouting,
-      )
+        modelRouting: { ...modelRouting, plateau: escalation >= 4 },
+      })
+      if (retryGeneration && !retryGeneration.ok && signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError')
+      }
+      if (!retryGeneration?.ok) {
+        throw new Error(`agentic_retry_failed:${retryGeneration?.error || 'plan_without_queue'}`)
+      }
+      retryContent = retryGeneration.content
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (isNetworkGenerationError(msg)) {

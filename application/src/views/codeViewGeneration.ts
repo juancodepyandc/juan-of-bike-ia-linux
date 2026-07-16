@@ -30,10 +30,12 @@ type CodeViewGenerationDeps = {
   getActiveSession: AnyFn
   getRecentMessages: AnyFn
   isGenerating: boolean
+  isGeneratingRef: MutableRefObject<boolean>
   preparePack: AnyFn
   prompt: string
   pushMessage: AnyFn
   renameSession: AnyFn
+  resumeAfterReloadRef: MutableRefObject<string | null>
   setActiveFile: Dispatch<SetStateAction<number>>
   setClarification: Dispatch<SetStateAction<ClarificationRequest | null>>
   setConsoleOutput: Dispatch<SetStateAction<string>>
@@ -78,10 +80,12 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
     getActiveSession,
     getRecentMessages,
     isGenerating,
+    isGeneratingRef,
     preparePack,
     prompt,
     pushMessage,
     renameSession,
+    resumeAfterReloadRef,
     setActiveFile,
     setClarification,
     setConsoleOutput,
@@ -177,11 +181,11 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
           title: isResumeRun ? 'Reprise generation code' : 'Generation code',
           services: ['ollama'],
           skipRelease: true,
-          prepare: async ({ setPhase }) => {
+          prepare: async ({ setPhase }: { setPhase: (detail: string, progress: number) => void }) => {
             await preparePack(setPhase)
           },
           ollamaModel: activeModel,
-          job: async ({ setPhase }) => {
+          job: async ({ setPhase }: { setPhase: (detail: string, progress: number) => void }) => {
             const preparedContext = contextFiles.length > 0 ? await prepareContextFiles(contextFiles) : []
             setProgress('Analyse de la demande...')
             const taskContext = await prepareTaskIntelligence({
@@ -294,7 +298,7 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
             const result: CodeOrchestrationResult = await orchestrateCodeGeneration({
               prompt: activePrompt,
               enrichedPrompt: taskContext.enrichedPrompt,
-              conversationHistory: conversationHistory.map((msg) => ({
+              conversationHistory: conversationHistory.map((msg: { role: string; content: string }) => ({
                 role: msg.role as 'user' | 'assistant',
                 content: msg.content,
               })),

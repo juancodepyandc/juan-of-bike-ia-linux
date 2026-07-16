@@ -84,8 +84,8 @@ describe('codeGeneratedFileSanitizer', () => {
       },
     }))
     const manifest = JSON.parse(content)
-    assert.equal(manifest.devDependencies.vite, '^8.1.3')
-    assert.equal(manifest.devDependencies['@vitejs/plugin-react'], '^5.1.2')
+    assert.equal(manifest.devDependencies.vite, '^8')
+    assert.equal(manifest.devDependencies['@vitejs/plugin-react'], '^6')
     assert.equal(manifest.dependencies['@react-three/fiber'], '^6.0.0')
     assert.equal(manifest.dependencies['react-three-fiber'], undefined)
 

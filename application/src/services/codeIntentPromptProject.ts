@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntentTypes.ts'
+import { CODE_REACT_THREE_COMPATIBILITY } from './codeRuntimeDependencies.ts'
 
 export function appendProjectPromptSections(lines: string[], intent: CodeIntent): void {
   // R3F guidance for non-game React projects that need 3D (spa_react,
@@ -14,7 +15,7 @@ export function appendProjectPromptSections(lines: string[], intent: CodeIntent)
     lines.push(
       '',
       '## React + 3D: utilise React Three Fiber (R3F) plutot que Three.js vanilla',
-      '- React 19 + 3D: dependances compatibles `three@^0.183.2`, `@react-three/fiber@^9.6.1`, `@react-three/drei@^10.7.7`, `@react-three/postprocessing@^3.0.4`.',
+      `- React 19 + 3D: dependances compatibles ${CODE_REACT_THREE_COMPATIBILITY}.`,
       '- React 18 + 3D: utilise `@react-three/fiber@^8.18.0`, `@react-three/drei@^9.122.0`, `@react-three/postprocessing@^2.16.3`.',
       '- Interdit dans package.json: `react-three-fiber`, `react-three/drei`, `react-three/postprocessing`.',
       '- Si physique: `npm i @react-three/rapier`',

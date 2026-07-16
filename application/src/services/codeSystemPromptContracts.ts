@@ -5,6 +5,7 @@
 import type { CodeIntent } from './codeIntent.ts'
 import { buildPremiumDesignReferenceBlock as _buildPremiumDesignReferenceBlock } from './codeDesignReference.ts'
 import { describeProductShapeHint } from './codeSystemPromptProductShapes.ts'
+import { CODE_REACT_THREE_COMPATIBILITY } from './codeRuntimeDependencies.ts'
 
 // Build quality contract per language family: systems, backend, data, CLI, library, devops, mobile.
 function buildNonVisualQualityContract(intent: CodeIntent): string {
@@ -256,7 +257,7 @@ export function buildMachineFileContractBlock(intent: CodeIntent): string {
 
   if (wantsReact3D) {
     lines.push(
-      '- React 19 + 3D: utilise le trio compatible `@react-three/fiber@^9.6.1`, `@react-three/drei@^10.7.7`, `@react-three/postprocessing@^3.0.4` avec `three@^0.183.2`.',
+      `- React 19 + 3D: utilise la matrice compatible ${CODE_REACT_THREE_COMPATIBILITY}.`,
       '- React 18 + 3D: utilise plutot `@react-three/fiber@^8.18.0` et `@react-three/drei@^9.122.0`.',
       '- Interdit: `react-three-fiber`, `react-three/drei`, `react-three/postprocessing` dans package.json. Ces noms cassent `npm install`.',
       '- Si tu importes `@react-spring/three`, declare aussi `@react-spring/three` dans `dependencies`; sinon n importe pas ce package.',

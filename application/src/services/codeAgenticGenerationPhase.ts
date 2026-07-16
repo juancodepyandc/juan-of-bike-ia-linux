@@ -49,6 +49,7 @@ export async function runAgenticGenerationPhase({
   signal,
   modelRouting,
   chatClient,
+  escalationLevel = 0,
 }: {
   prompt: string
   intent: CodeIntent
@@ -62,11 +63,12 @@ export async function runAgenticGenerationPhase({
   signal?: AbortSignal
   modelRouting?: CodeModelRoutingContext
   chatClient?: CodeGenerationActionModelClient
+  escalationLevel?: number
 }): Promise<AgenticGenerationPhaseResult | null> {
   const queue = buildGenerationQueueFromArchitecturePlan(architecturePlan)
   if (!queue || queue.items.length === 0) return null
 
-  const model = selectModel('generation', intent, 0, generationModel, modelRouting)
+  const model = selectModel('generation', intent, escalationLevel, generationModel, modelRouting)
   setPhase(`Executor agentique WS3: ${queue.items.length} fichier(s) a produire...`, 35)
   const producer = createCodeGenerationLLMActionProducer({
     prompt,

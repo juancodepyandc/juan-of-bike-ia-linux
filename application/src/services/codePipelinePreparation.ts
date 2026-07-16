@@ -4,12 +4,6 @@ import type { PhaseCallback } from './codeOrchestrator.ts'
 import { withTimeout } from './llmTimebox.ts'
 import { RESEARCH_PHASE_TIMEOUT_MS } from './codePipelineRuntime.ts'
 
-type SubjectImage = {
-  dataUrl: string
-  source?: string
-  query?: string
-}
-
 export function looksLikeSimpleTechBrief(prompt: string): boolean {
   const promptLower = prompt.toLowerCase()
   return prompt.length < 300 &&
@@ -54,29 +48,6 @@ export function shouldRunDesignReferenceResearch(intent: CodeIntent, prompt: str
   return visualTypes.includes(intent.projectType) || Boolean(intent.assetPlan?.wantsPremiumLook)
 }
 
-export function buildSubjectImagePromptBlock(images: SubjectImage[]): string {
-  const acceptable = images.filter((img) => img.dataUrl.length <= 350_000)
-  if (acceptable.length === 0) return ''
-
-  const sourcesLine = acceptable
-    .map((img, idx) => `  ${idx + 1}. ${img.query || 'subject'} -> ${img.source || 'unknown'}`)
-    .join('\n')
-  return [
-    `## IMAGES REELLES DU SUJET (telechargees pour toi en amont — ${acceptable.length})`,
-    `- ${acceptable.length} photo(s) / illustration(s) du sujet ont ete trouvees et converties en data URLs.`,
-    '- Tu DOIS les utiliser DIRECTEMENT dans la page avec ces markers literaux:',
-    '  - `PLACEHOLDER_SUBJECT_IMG`     -> image principale (hero / produit central).',
-    acceptable.length >= 2 ? '  - `PLACEHOLDER_SUBJECT_IMG_1`   -> image principale (alias du marker non numerote).' : '',
-    acceptable.length >= 2 ? '  - `PLACEHOLDER_SUBJECT_IMG_2`   -> image secondaire (lifestyle / contexte).' : '',
-    acceptable.length >= 3 ? '  - `PLACEHOLDER_SUBJECT_IMG_3`   -> image tertiaire (detail / texture / variante).' : '',
-    acceptable.length >= 4 ? '  - `PLACEHOLDER_SUBJECT_IMG_4`   -> image complementaire (gallery).' : '',
-    '- Au build final, chaque marker sera remplace par la data URL correspondante.',
-    '- Tu peux reutiliser le meme marker plusieurs fois (hero + showcase + footer). Tout marker sans image associee sera neutralise.',
-    '- Sources originales:',
-    sourcesLine,
-  ].filter(Boolean).join('\n')
-}
-
 export function buildBrandProfileBlock(intent: CodeIntent): string {
   const brandSubject = intent.assetPlan?.subject
   if (brandSubject?.source !== 'brand' || !brandSubject.brandProfile) return ''
@@ -114,7 +85,6 @@ export async function prepareCodePlanningContext({
 }): Promise<{
   planningPrompt: string
   bestPracticesContext: string
-  subjectImageBlock: string
   brandProfileBlock: string
 }> {
   const ap = intent.assetPlan
@@ -175,48 +145,11 @@ export async function prepareCodePlanningContext({
     }
   }
 
-  let subjectImageBlock = ''
-  const wantsRealImage = ap && (ap.wantsImages || ap.subject?.source === 'brand' || (ap.objectMentions?.length ?? 0) > 0)
-  if (wantsRealImage && !simpleTechBrief) {
-    const isBrand = ap.subject?.source === 'brand'
-    setPhase(
-      isBrand
-        ? 'Recuperation des images officielles de la marque (logo + produit + lifestyle)...'
-        : 'Telechargement d images reelles du sujet (peut prendre 10-30s)...',
-      17,
-    )
-    try {
-      const { fetchSubjectImages } = await import('./codeSubjectAssets.ts')
-      const images = await withTimeout(
-        fetchSubjectImages(intent),
-        { label: 'Subject images fetch (multi)', timeoutMs: 45_000 },
-      )
-      const acceptable = images.filter((img) => img.dataUrl.length <= 350_000)
-      if (acceptable.length > 0) {
-        const dataUrls = acceptable.map((img) => img.dataUrl)
-        ;(intent as any).__subjectImageDataUrls = dataUrls
-        ;(intent as any).__subjectImageDataUrl = dataUrls[0]
-        subjectImageBlock = buildSubjectImagePromptBlock(acceptable)
-        setPhase(
-          isBrand
-            ? `${acceptable.length} image(s) de la marque telechargees — injection dans le prompt...`
-            : `${acceptable.length} image(s) du sujet telechargees — injection dans le prompt...`,
-          19,
-        )
-      } else if (images.length > 0) {
-        console.warn('[CodeOrchestrator] All fetched subject images exceed the 350KB inline budget — skipping.')
-      }
-    } catch (err) {
-      console.warn('[CodeOrchestrator] Subject image fetch failed:', err)
-    }
-  }
-
   const brandProfileBlock = buildBrandProfileBlock(intent)
   const planningExtras: string[] = []
   if (bestPracticesContext) planningExtras.push(`## MEILLEURES PRATIQUES TROUVEES (a integrer dans le plan):\n${bestPracticesContext}`)
   if (designResearchBlock) planningExtras.push(designResearchBlock)
   if (brandProfileBlock) planningExtras.push(brandProfileBlock)
-  if (subjectImageBlock) planningExtras.push(subjectImageBlock)
   if (followUp?.migrationSummary && followUp.kind === 'pivot_platform') {
     planningExtras.push(`## MIGRATION DE PROJET (conserve le concept, change la stack)\n${followUp.migrationSummary}`)
   }
@@ -226,7 +159,6 @@ export async function prepareCodePlanningContext({
       ? `${reformulatedEnriched}\n\n${planningExtras.join('\n\n')}`
       : reformulatedEnriched,
     bestPracticesContext,
-    subjectImageBlock,
     brandProfileBlock,
   }
 }

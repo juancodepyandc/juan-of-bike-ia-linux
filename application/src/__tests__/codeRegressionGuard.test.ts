@@ -6,6 +6,7 @@ import {
   formatCodeRegressionGuardReport,
   inspectCodePatchRegression,
   snapshotCodeCapabilities,
+  type CodeRegressionViolationKind,
 } from '../services/codeRegressionGuard.ts'
 
 function baselineFiles(): CodeFile[] {
@@ -123,4 +124,158 @@ describe('codeRegressionGuard', () => {
     assert.ok(kinds.includes('source_file_drop'))
     assert.ok(kinds.includes('source_size_drop'))
   })
+})
+
+type RegressionCase = {
+  name: string
+  before: CodeFile[]
+  after: CodeFile[]
+  expectedKind: CodeRegressionViolationKind | null
+}
+
+const largeSources = Array.from({ length: 4 }, (_, index): CodeFile => ({
+  name: `src/large-${index}.ts`,
+  language: 'ts',
+  content: `export function feature${index}() { return "${'x'.repeat(400)}" }`,
+}))
+
+const regressionCases: RegressionCase[] = [
+  {
+    name: 'detecte un fichier retire',
+    before: baselineFiles(),
+    after: baselineFiles().filter((file) => file.name !== 'src/billing.ts'),
+    expectedKind: 'removed_file',
+  },
+  {
+    name: 'detecte un fichier vide',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/billing.ts' ? { ...file, content: '' } : file),
+    expectedKind: 'emptied_file',
+  },
+  {
+    name: 'detecte un test retire',
+    before: baselineFiles(),
+    after: baselineFiles().filter((file) => file.name !== 'tests/api.test.ts'),
+    expectedKind: 'removed_test',
+  },
+  {
+    name: 'detecte le script build retire',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'package.json'
+      ? { ...file, content: JSON.stringify({ scripts: { test: 'node --test tests/api.test.js' } }) }
+      : file),
+    expectedKind: 'removed_script',
+  },
+  {
+    name: 'detecte le script test retire',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'package.json'
+      ? { ...file, content: JSON.stringify({ scripts: { build: 'tsc -p tsconfig.json' } }) }
+      : file),
+    expectedKind: 'removed_script',
+  },
+  {
+    name: 'detecte une fonction exportee retiree',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/api.ts'
+      ? { ...file, content: file.content.replace('export function listUsers()', 'function listUsers()') }
+      : file),
+    expectedKind: 'removed_export',
+  },
+  {
+    name: 'detecte une constante exportee retiree',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/api.ts'
+      ? { ...file, content: file.content.replace('export const health', 'const health') }
+      : file),
+    expectedKind: 'removed_export',
+  },
+  {
+    name: 'detecte une route GET retiree',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/api.ts'
+      ? { ...file, content: file.content.replace('app.get("/api/users", listUsers)', '') }
+      : file),
+    expectedKind: 'removed_endpoint',
+  },
+  {
+    name: 'detecte une route POST retiree',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/api.ts'
+      ? { ...file, content: file.content.replace('app.post("/api/users", (req, res) => res.end())', '') }
+      : file),
+    expectedKind: 'removed_endpoint',
+  },
+  {
+    name: 'detecte une chute du nombre de sources',
+    before: largeSources,
+    after: largeSources.slice(0, 1),
+    expectedKind: 'source_file_drop',
+  },
+  {
+    name: 'detecte une chute du volume fonctionnel',
+    before: largeSources,
+    after: largeSources.map((file, index) => ({ ...file, content: `export const value${index} = ${index}` })),
+    expectedKind: 'source_size_drop',
+  },
+  {
+    name: 'accepte un fichier ajoute',
+    before: baselineFiles(),
+    after: [...baselineFiles(), { name: 'src/new.ts', language: 'ts', content: 'export const added = true' }],
+    expectedKind: null,
+  },
+  {
+    name: 'accepte une implementation enrichie',
+    before: baselineFiles(),
+    after: baselineFiles().map((file) => file.name === 'src/billing.ts'
+      ? { ...file, content: `${file.content}\nexport function invoiceTax() { return 0 }` }
+      : file),
+    expectedKind: null,
+  },
+  {
+    name: 'normalise la casse des chemins',
+    before: [{ name: 'SRC/API.TS', language: 'ts', content: 'export const ok = true' }],
+    after: [{ name: 'src/api.ts', language: 'ts', content: 'export const ok = true' }],
+    expectedKind: null,
+  },
+  {
+    name: 'normalise les separateurs Windows sans produire d artefact Windows',
+    before: [{ name: 'src\\api.ts', language: 'ts', content: 'export const ok = true' }],
+    after: [{ name: 'src/api.ts', language: 'ts', content: 'export const ok = true' }],
+    expectedKind: null,
+  },
+  {
+    name: 'detecte une route Next retiree',
+    before: [{ name: 'app/api/users/route.ts', language: 'ts', content: 'export function GET() { return Response.json([]) }' }],
+    after: [{ name: 'app/api/users/route.ts', language: 'ts', content: 'export const helper = true' }],
+    expectedKind: 'removed_endpoint',
+  },
+  {
+    name: 'detecte une route FastAPI retiree',
+    before: [{ name: 'api.py', language: 'py', content: '@app.get("/health")\ndef health(): return {"ok": True}' }],
+    after: [{ name: 'api.py', language: 'py', content: 'def health(): return {"ok": True}' }],
+    expectedKind: 'removed_endpoint',
+  },
+  {
+    name: 'detecte un export CommonJS retire',
+    before: [{ name: 'index.js', language: 'js', content: 'module.exports.run = () => true' }],
+    after: [{ name: 'index.js', language: 'js', content: 'const run = () => true' }],
+    expectedKind: 'removed_export',
+  },
+]
+
+describe('codeRegressionGuard cas de non-regression migres', () => {
+  for (const sample of regressionCases) {
+    test(sample.name, () => {
+      const report = inspectCodePatchRegression(sample.before, sample.after)
+      if (sample.expectedKind === null) {
+        assert.equal(report.ok, true, formatCodeRegressionGuardReport(report))
+      } else {
+        assert.ok(
+          report.violations.some((violation) => violation.kind === sample.expectedKind),
+          JSON.stringify(report.violations),
+        )
+      }
+    })
+  }
 })

@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import sysconfig
 import json
 import base64
 import requests
@@ -57,6 +58,34 @@ COMFYUI_URL = "http://127.0.0.1:8188"
 
 # Repertoire de travail (la ou se trouve le bridge)
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
+
+_CODE_INTERMODULE_RUNTIME_LOCK = threading.Lock()
+_CODE_INTERMODULE_RUNTIME_ROOT = pathlib.Path(
+    os.environ.get(
+        "AURORA_CODE_INTERMODULE_VENV",
+        pathlib.Path.home() / ".local" / "share" / "auroraia" / "venvs" / "code-intermodule",
+    )
+)
+
+
+def _code_inter_module_runtime() -> tuple[str, dict[str, str]]:
+    """Runtime isole pour les services appeles par Code, jamais application/.venv."""
+    python_path = _CODE_INTERMODULE_RUNTIME_ROOT / "bin" / "python"
+    if not python_path.is_file():
+        with _CODE_INTERMODULE_RUNTIME_LOCK:
+            if not python_path.is_file():
+                _CODE_INTERMODULE_RUNTIME_ROOT.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(
+                    [sys.executable, "-m", "venv", str(_CODE_INTERMODULE_RUNTIME_ROOT)],
+                    check=True,
+                    timeout=120,
+                )
+    env = os.environ.copy()
+    application_site = sysconfig.get_paths().get("purelib", "")
+    inherited = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (application_site, inherited)))
+    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
+    return str(python_path), env
 
 
 def _find_comfyui_path() -> str | None:
@@ -250,7 +279,8 @@ def voice_tts():
         output_path = os.path.join(WORKSPACE, "temp", "tts_out.wav")
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
 
-        cmd = ["python", script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
+        runtime_python, runtime_env = _code_inter_module_runtime()
+        cmd = [runtime_python, script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
         if voice_persona:
             cmd += ["--voice", voice_persona]
         # Timeout adaptatif: 120s sans avatar, 180s avec SadTalker
@@ -267,7 +297,7 @@ def voice_tts():
                 timeout_s = 180
 
         raw = subprocess.check_output(
-            cmd, stderr=subprocess.STDOUT, timeout=timeout_s, cwd=WORKSPACE,
+            cmd, stderr=subprocess.STDOUT, timeout=timeout_s, cwd=WORKSPACE, env=runtime_env,
         ).decode("utf-8")
 
         if not os.path.exists(output_path):
@@ -2339,9 +2369,10 @@ def web_search():
     try:
         # Crawl4AI search (avec Playwright)
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
+        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            ["python", crawl_script, "--mode", "search", "--query", query, "--limit", str(limit)],
-            capture_output=True, timeout=30, cwd=WORKSPACE,
+            [runtime_python, crawl_script, "--mode", "search", "--query", query, "--limit", str(limit)],
+            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
         )
         if result.returncode == 0:
             out = json.loads(result.stdout.decode("utf-8", errors="replace"))
@@ -2460,9 +2491,10 @@ def web_extract():
 
     try:
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
+        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            ["python", crawl_script, "--mode", "extract", "--url", url, "--prompt", prompt],
-            capture_output=True, timeout=30, cwd=WORKSPACE,
+            [runtime_python, crawl_script, "--mode", "extract", "--url", url, "--prompt", prompt],
+            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
         )
         if result.returncode == 0:
             return Response(result.stdout, mimetype="application/json")
@@ -2482,9 +2514,10 @@ def web_images():
 
     try:
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
+        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            ["python", crawl_script, "--mode", "images", "--query", query, "--limit", str(limit)],
-            capture_output=True, timeout=30, cwd=WORKSPACE,
+            [runtime_python, crawl_script, "--mode", "images", "--query", query, "--limit", str(limit)],
+            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
         )
         if result.returncode == 0:
             return Response(result.stdout, mimetype="application/json")
@@ -3002,12 +3035,11 @@ def web_image_single():
     <img src="data:..."> that never 404s after the project is saved anywhere
     on disk.
 
-    Sources probed in order (v72 — brand fidelity):
+    Sources probed in order (v72 — brand fidelity, WS15 sans Unsplash mort):
       1. Wikipedia REST API thumbnail (best for brands / named products / people)
       2. DuckDuckGo Images i.js (real image search, brand-aware)
-      3. Unsplash Source (no-auth, generic photo search)
-      4. LoremFlickr (generic tagged photo)
-      5. Picsum (truly random — last resort)
+      3. LoremFlickr (generic tagged photo)
+      4. Picsum (truly random — last resort)
 
     The first three sources return ACTUAL brand images when the query mentions
     one. Picsum-only output was the root cause of "Coca-Cola → random photo"
@@ -3051,11 +3083,11 @@ def web_image_single():
             "via": "duckduckgo",
         })
 
-    # 3-5) Generic photo-stock fallbacks.
+    # 3-4) Generic photo fallbacks. Unsplash Source is intentionally absent:
+    # the endpoint is deprecated/unreliable and must not appear in Code output.
     from urllib.parse import quote
     q_encoded = quote(query)
     candidates = [
-        ("unsplash", f"https://source.unsplash.com/{width}x{height}/?{q_encoded}"),
         ("loremflickr", f"https://loremflickr.com/{width}/{height}/{q_encoded}"),
         ("picsum", f"https://picsum.photos/seed/{q_encoded}/{width}/{height}"),
     ]
@@ -11599,23 +11631,55 @@ def _aurora_code(action, data):
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "aurora_code.generate requiert 'prompt'"}), 400
-    language = (data.get("language") or "").strip()
     model = (data.get("model") or "qwen3-coder:30b").strip()
-    sys_p = ("Tu es un expert developpeur. Genere UNIQUEMENT le code demande, complet et "
-             "fonctionnel" + (f", en {language}" if language else "") + ". Reponds avec le code dans un bloc, sans bla-bla.")
     try:
-        resp = requests.post(f"{OLLAMA_URL}/api/chat", json={
-            "model": model,
-            "messages": [{"role": "system", "content": sys_p}, {"role": "user", "content": prompt}],
-            "stream": False, "keep_alive": "10m",
-        }, timeout=300)
+        resp = requests.post(
+            "http://127.0.0.1:3001/api/code/generate/stream",
+            json={"prompt": prompt, "model": model},
+            stream=True,
+            timeout=(15, 3600),
+        )
     except Exception as exc:
-        return jsonify({"ok": False, "error": f"Ollama injoignable: {exc}"}), 502
+        return jsonify({"ok": False, "error": f"Executor agentique Code injoignable: {exc}"}), 502
     if resp.status_code != 200:
-        return jsonify({"ok": False, "error": f"Ollama HTTP {resp.status_code} (modele '{model}' installe ?)"}), 502
-    body = resp.json()
-    code = (body.get("message") or {}).get("content") or body.get("response") or ""
-    return jsonify({"ok": True, "output": code, "code": code, "model": model, "module": "code"})
+        return jsonify({"ok": False, "error": f"Executor agentique Code HTTP {resp.status_code}"}), 502
+
+    files = []
+    final_event = None
+    for raw_line in resp.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        try:
+            event = json.loads(raw_line)
+        except Exception:
+            continue
+        if event.get("schema") != CODE_STREAM_SCHEMA:
+            continue
+        if event.get("kind") == "file.written" and event.get("path") and isinstance(event.get("content"), str):
+            files.append({
+                "path": event["path"],
+                "language": event.get("language") or "text",
+                "content": event["content"],
+            })
+        elif event.get("kind") in ("done", "error"):
+            final_event = event
+
+    if not final_event or final_event.get("kind") != "done" or not files:
+        message = (final_event or {}).get("message") or "Executor agentique termine sans livraison valide"
+        return jsonify({"ok": False, "error": message, "module": "code", "agentic": True}), 502
+    output = "\n\n".join(
+        f"--- FICHIER: {item['path']} ---\n```{item['language']}\n{item['content']}\n```"
+        for item in files
+    )
+    return jsonify({
+        "ok": True,
+        "output": output,
+        "files": files,
+        "model": model,
+        "module": "code",
+        "agentic": True,
+        "validation": final_event,
+    })
 
 
 CODE_STREAM_SCHEMA = "aurora.code.stream/1"
@@ -11862,147 +11926,156 @@ def code_tooling_eval():
     return jsonify({"ok": ok, "report": report, "error": error})
 
 
-def _code_stream_language(path: str) -> str:
-    ext = pathlib.Path(path).suffix.lower().lstrip(".")
-    return {
-        "js": "javascript",
-        "jsx": "jsx",
-        "ts": "typescript",
-        "tsx": "tsx",
-        "py": "python",
-        "md": "markdown",
-        "yml": "yaml",
-    }.get(ext, ext or "text")
+@app.route("/api/code/assets/generate", methods=["POST"])
+def code_assets_generate():
+    data = request.get_json(silent=True) or {}
+    prompt = str(data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "prompt requis"}), 400
+
+    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "intermodule_assets.py"
+    if not script.is_file():
+        return jsonify({"ok": False, "error": "intermodule_assets.py introuvable"}), 500
+
+    run_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(data.get("runId") or f"code_assets_{int(time.time())}")).strip("-")
+    # Le producteur Code ne doit pas transformer le bridge en proxy SSRF.
+    base_url = "http://127.0.0.1:3001"
+    requested_kinds = data.get("requestedKinds")
+    if not isinstance(requested_kinds, list):
+        requested_kinds = ["image", "model3d", "voice"]
+    requested_kinds = list(dict.fromkeys(
+        kind for kind in requested_kinds if kind in {"image", "model3d", "voice"}
+    ))
+    if not requested_kinds:
+        return jsonify({"ok": False, "error": "requestedKinds vide ou invalide"}), 400
+
+    fresh_3d = bool(data.get("fresh3d") or False)
+    timeout_cap = 14_500 if fresh_3d else 900
+    timeout_s = max(45, min(timeout_cap, int(data.get("timeoutSec") or (14_400 if fresh_3d else 300))))
+    payload = {
+        "prompt": prompt,
+        "archetype": str(data.get("archetype") or "default"),
+        "requestedKinds": requested_kinds,
+        "runId": run_id,
+        "baseUrl": base_url,
+        "fresh3d": fresh_3d,
+        "allowExisting3d": bool(data.get("allowExisting3d", True)),
+        "sourceImageRunId": str(data.get("sourceImageRunId") or ""),
+        "source3dRunId": str(data.get("source3dRunId") or ""),
+        "sourceVoiceRunId": str(data.get("sourceVoiceRunId") or ""),
+        "threeDTimeoutSec": max(60, min(14_400, int(data.get("threeDTimeoutSec") or 14_400))),
+    }
+    if isinstance(data.get("seed"), int):
+        payload["seed"] = data["seed"]
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=WORKSPACE,
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout generation assets Code"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"generation assets impossible: {exc}"}), 500
+
+    try:
+        bundle = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"JSON assets invalide: {exc}", "stderr": (proc.stderr or "")[-1200:]}), 502
+    if not isinstance(bundle, dict):
+        bundle = {}
+    bundle.setdefault("schemaVersion", "aurora.code.asset-bundle/1")
+    bundle.setdefault("assets", [])
+    bundle.setdefault("requiredKinds", requested_kinds)
+    bundle.setdefault("missingRequired", requested_kinds)
+    ok = proc.returncode == 0 and not bundle.get("missingRequired")
+    error = (proc.stderr or "")[-2000:] if proc.returncode != 0 else ""
+    return jsonify({"ok": ok, "bundle": bundle, "error": error})
 
 
-def _code_stream_parse_files(raw: str) -> list[dict]:
-    files: list[dict] = []
-    prefix = "<<<AURORA_FILE "
-    end_marker = "<<<AURORA_END>>>"
-    cursor = 0
-    while True:
-        start = raw.find(prefix, cursor)
-        if start < 0:
-            break
-        meta_start = start + len(prefix)
-        meta_end = raw.find(">>>", meta_start)
-        if meta_end < 0:
-            break
-        try:
-            meta = json.loads(raw[meta_start:meta_end].strip())
-        except Exception:
-            cursor = meta_end + 3
-            continue
-        content_start = meta_end + 3
-        if raw.startswith("\r\n", content_start):
-            content_start += 2
-        elif raw.startswith("\n", content_start):
-            content_start += 1
-        length = int(meta.get("length") or 0)
-        content_end = content_start + max(0, length)
-        content = raw[content_start:content_end]
-        if raw.find(end_marker, content_end, content_end + len(end_marker) + 3) >= 0:
-            path = str(meta.get("path") or "").strip()
-            if path and content:
-                files.append({"path": path, "content": content, "language": meta.get("language") or _code_stream_language(path)})
-        cursor = max(content_end, meta_end + 3)
-    if files:
-        return files
-
-    parts = re.split(r"---\s*(?:FICHIER|FILE):\s*(.+?)\s*---", raw, flags=re.I)
-    for index in range(1, len(parts), 2):
-        path = parts[index].strip()
-        body = (parts[index + 1] if index + 1 < len(parts) else "").strip()
-        fence = re.match(r"^```[\w.+#-]*\s*\n([\s\S]*?)\n```\s*$", body)
-        content = fence.group(1).strip() if fence else body
-        if path and content:
-            files.append({"path": path, "content": content, "language": _code_stream_language(path)})
-    return files
+@app.route("/api/code/assets/file/<path:asset_path>", methods=["GET"])
+def code_assets_file(asset_path: str):
+    """Sert uniquement les fichiers materialises sous output/code_assets."""
+    root = (pathlib.Path(WORKSPACE) / "output" / "code_assets").resolve()
+    target = (root / asset_path).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        return jsonify({"ok": False, "error": "asset introuvable"}), 404
+    return send_file(target, conditional=True)
 
 
 @app.route("/api/code/generate/stream", methods=["POST"])
 def code_generate_stream():
-    """WS3 transitional NDJSON endpoint for the Module Code stream contract.
-
-    The primary app path now runs the TS planner-executor. This bridge route
-    exposes the same typed event envelope for clients that need an HTTP stream
-    while /api/code/* parity is completed.
-    """
+    """WS3 NDJSON planner-executor, one model call per planned file."""
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "prompt requis"}), 400
+    if len(prompt) > 200_000:
+        return jsonify({"ok": False, "error": "prompt trop volumineux"}), 413
     model = (data.get("model") or "qwen3-coder:30b").strip()
     run_id = int(time.time() * 1000)
+    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "bridge_agentic_stream.py"
+    if not script.is_file():
+        return jsonify({"ok": False, "error": "bridge_agentic_stream.py introuvable"}), 500
+
+    payload = {
+        "prompt": prompt,
+        "model": model,
+        "planningModel": (data.get("planningModel") or model).strip(),
+        "ollamaUrl": OLLAMA_URL,
+        "runId": run_id,
+    }
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(script)],
+            cwd=WORKSPACE,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(payload, ensure_ascii=False))
+        proc.stdin.close()
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"demarrage executor agentique impossible: {exc}"}), 500
 
     def generate():
-        sequence = 1
-        yield _code_stream_event("phase", run_id, sequence, phase="planning", message="Bridge Code stream initialise.", progress=5)
-        sequence += 1
-        system_prompt = (
-            "Tu es le Module Code AuroraIA. Genere un projet complet au format "
-            "AURORA_CODE_VFS/1 avec fichiers a longueur declaree. Aucun texte hors protocole."
-        )
-        body = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            "stream": True,
-            "keep_alive": "10m",
-        }
-        chunks: list[str] = []
+        emitted = False
         try:
-            yield _code_stream_event("phase", run_id, sequence, phase="generation", message=f"Generation Ollama via {model}.", progress=35)
-            sequence += 1
-            with requests.post(f"{OLLAMA_URL}/api/chat", json=body, stream=True, timeout=900) as resp:
-                if resp.status_code != 200:
-                    yield _code_stream_event("error", run_id, sequence, message=f"Ollama HTTP {resp.status_code}", recoverable=True)
-                    return
-                for raw_line in resp.iter_lines(decode_unicode=True):
-                    if not raw_line:
-                        continue
-                    try:
-                        obj = json.loads(raw_line)
-                    except Exception:
-                        continue
-                    token = ((obj.get("message") or {}).get("content") or "")
-                    if token:
-                        chunks.append(token)
-                    if obj.get("done"):
-                        break
-        except Exception as exc:
-            yield _code_stream_event("error", run_id, sequence, message=f"Ollama injoignable: {exc}", recoverable=True)
-            return
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if not line.strip():
+                    continue
+                emitted = True
+                yield line if line.endswith("\n") else line + "\n"
+            return_code = proc.wait(timeout=5)
+            if return_code != 0 and not emitted:
+                stderr = (proc.stderr.read() if proc.stderr else "")[-1200:]
+                yield _code_stream_event(
+                    "error", run_id, 1,
+                    message=f"Executor agentique termine avec code {return_code}: {stderr}",
+                    recoverable=True,
+                )
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
-        content = "".join(chunks)
-        files = _code_stream_parse_files(content)
-        yield _code_stream_event("phase", run_id, sequence, phase="generation", message=f"{len(files)} fichier(s) detecte(s).", progress=75)
-        sequence += 1
-        for file in files:
-            file_content = file["content"]
-            yield _code_stream_event(
-                "file.written",
-                run_id,
-                sequence,
-                path=file["path"],
-                language=file["language"],
-                bytes=len(file_content.encode("utf-8")),
-                content=file_content,
-            )
-            sequence += 1
-        yield _code_stream_event(
-            "done",
-            run_id,
-            sequence,
-            filesCount=len(files),
-            finalScore=100 if files else 0,
-            totalAttempts=1,
-            notes="Flux bridge transitoire; validation WS7 executee cote Module Code.",
-        )
-
-    return Response(stream_with_context(generate()), mimetype="application/x-ndjson; charset=utf-8")
+    return Response(
+        stream_with_context(generate()),
+        mimetype="application/x-ndjson; charset=utf-8",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 def _aurora_video(action, data):

@@ -27,10 +27,6 @@ import {
   buildEmptyGenerationDiagnostic,
 } from './codeGenerationDiagnostics.ts'
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
-import {
-  applySubjectImagePlaceholder,
-} from './codeSubjectAssets.ts'
-import { evaluateBrandFidelity } from './codeFidelityGate'
 import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
 export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
 import {
@@ -38,24 +34,27 @@ import {
   type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import {
-  runGenerationPhase,
+  isArchitecturePlanUsable,
   runIntentPhase,
   runPlanningPhase,
   runPreflightPhase,
-  type GenerationPivotContext,
 } from './codePipelinePhases.ts'
 import { prepareCodePlanningContext } from './codePipelinePreparation.ts'
 import { runGeneratedOutputRetryLoop } from './codeGenerationOutputRetry.ts'
 import { runAgenticGenerationPhase } from './codeAgenticGenerationPhase.ts'
-import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
+import {
+  runInterModuleAssetPhase,
+  upsertAssetManifestFile,
+  type CodeAssetBundle,
+} from './codeInterModuleAssets.ts'
+import { finalizeCodePipelineDelivery } from './codePipelineFinalization.ts'
+import { materializeInterModuleAssetReferences } from './codeInterModuleAssetIntegration.ts'
 import {
   buildDesignRetryHint,
   checkGamePlayability,
   checkInteractive3DFidelity,
   checkWebPageIntegrity,
-  computeDesignPolishReport,
   computeDesignPolishReportPublic,
-  isVisualProjectType,
   type DesignPolishReport,
 } from './codeQualityGates.ts'
 export {
@@ -316,7 +315,7 @@ async function runFullPipeline({
   // drop the existing files so the Codeur does not see the old HTML while
   // the user actually asked for a Python backend. The migration summary
   // captures the business concept to carry over.
-  const effectiveExistingFiles = followUp?.shouldResetFiles ? [] : existingFiles
+  let effectiveExistingFiles = followUp?.shouldResetFiles ? [] : [...existingFiles]
 
   // Phase 1: Intent classification (deterministic) — enriched with follow-up context.
   const intentContext: CodeIntentContext | undefined = followUp
@@ -348,25 +347,35 @@ async function runFullPipeline({
     setPhase,
   })
 
-  // Phase 2: Deep reasoning + architecture planning via llama4.
-  // Skip planning only for genuinely small visual one-offs. Complex visual work
-  // (multi-page, 3D, simulator, whole-product briefs) needs the architect pass:
-  // the user's target is a real engineered project, not a pretty single screen.
-  const skipPlanningForVisual =
-    (intent.projectType === 'static_web' || intent.projectType === 'game_web') &&
-    !intent.needsArchitecturePlanning
-  const architecturePlan = skipPlanningForVisual
-    ? null
-    : await runPlanningPhase(
-        planningPrompt,
-        intent,
-        preflightReport,
-        configuredCodeModel,
-        setPhase,
-        trackRecovery,
-        modelRouting,
-      )
-  if (skipPlanningForVisual) setPhase('Projet web direct — generation sans plan lourd...', 28)
+  // Phase 2: every project needs a valid structured plan because WS3 executes
+  // the resulting queue file by file. An invalid plan is a blocking quality gate.
+  const architecturePlan = await runPlanningPhase(
+    planningPrompt,
+    intent,
+    preflightReport,
+    configuredCodeModel,
+    setPhase,
+    trackRecovery,
+    modelRouting,
+  )
+  if (!isArchitecturePlanUsable(architecturePlan)) {
+    throw new Error('Plan d architecture absent ou invalide: execution WS3 impossible')
+  }
+
+  const assetPhase = await runInterModuleAssetPhase({
+    prompt: reformulatedPrompt,
+    enrichedPrompt: reformulatedEnriched,
+    projectType: intent.projectType,
+    wantsImages: intent.assetPlan.wantsImages,
+    wants3D: intent.assetPlan.wants3D,
+    wantsPremiumLook: intent.assetPlan.wantsPremiumLook,
+    existingFiles: effectiveExistingFiles,
+    setPhase,
+    signal,
+  })
+  effectiveExistingFiles = assetPhase.files
+  const interModuleAssetBundle: CodeAssetBundle | null = assetPhase.bundle
+
   const missionDossier = await buildCodeMissionDossier({
     prompt: reformulatedPrompt,
     enrichedPrompt: reformulatedEnriched,
@@ -375,20 +384,7 @@ async function runFullPipeline({
     architecturePlan,
     model: selectModel('planning', intent, 0, configuredCodeModel, modelRouting),
   })
-
-  // Pivot context forwarded to the code generator so it can swap the
-  // "CONTEXTE PROJET EXISTANT" block with a "MIGRATION DE PROJET" block
-  // when the user asked for a platform pivot.
-  const pivotContext: GenerationPivotContext | undefined = followUp
-    ? {
-        kind: followUp.kind,
-        migrationSummary: followUp.migrationSummary,
-      }
-    : undefined
-
-  // Phase 3: Code generation. Prefer the WS3 file-by-file executor when the
-  // architect produced a valid queue; keep the legacy mono-call as fallback
-  // until the bridge/UI stream migration reaches full parity.
+  // Phase 3: the WS3 file-by-file executor is the only generation path.
   const agenticGeneration = await runAgenticGenerationPhase({
     prompt: reformulatedEnriched,
     intent,
@@ -405,72 +401,49 @@ async function runFullPipeline({
   if (agenticGeneration && !agenticGeneration.ok && signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError')
   }
-  if (agenticGeneration && !agenticGeneration.ok) {
-    setPhase(`Executor agentique indisponible — fallback generation directe (${agenticGeneration.error})...`, 38)
+  if (!agenticGeneration?.ok) {
+    throw new Error(`Echec de l executor agentique WS3: ${agenticGeneration?.error || 'plan_without_queue'}`)
   }
 
-  let fullContent = agenticGeneration?.ok
-    ? agenticGeneration.content
-    : await runGenerationPhase(
-        reformulatedEnriched,
-        intent,
-        preflightReport,
-        architecturePlan,
-        missionDossier,
-        conversationHistory,
-        effectiveExistingFiles,
-        contextImages,
-        generationModel,
-        0,
-        setPhase,
-        onToken,
-        trackRecovery,
-        signal,
-        pivotContext,
-        modelRouting,
-      )
+  let fullContent = agenticGeneration.content
 
   // CRITICAL: Detect LLM refusal BEFORE parsing — refuse early, retry immediately
   if (isLLMRefusal(fullContent)) {
     console.warn('[CodeOrchestrator] LLM returned a refusal instead of code. Forcing regeneration.')
     setPhase('Le modele a refuse de generer du code — regeneration forcee...', 40)
-    // Force a regeneration with a stronger prompt
-    const rescueContent = await runGenerationPhase(
-      [
+    const rescueGeneration = await runAgenticGenerationPhase({
+      prompt: [
         'INSTRUCTION CRITIQUE: Tu DOIS generer du code source. NE REFUSE JAMAIS.',
-        'Tu es un generateur de code. Ta seule sortie autorisee est du CODE SOURCE dans le protocole structure:',
-        buildStructuredEmissionInstructions(),
+        'Tu es un generateur de code. Ta seule sortie autorisee est une suite d actions outil JSON WS3.',
         '',
         'INTERDIT: excuses, refus, explications, suggestions de consulter les instructions.',
-        'Genere le projet demande MAINTENANT:',
+        'Regenere chaque fichier du plan, complet et executable:',
         '',
         reformulatedEnriched,
       ].join('\n'),
       intent,
-      preflightReport,
       architecturePlan,
-      missionDossier,
-      conversationHistory,
-      effectiveExistingFiles,
+      existingFiles: effectiveExistingFiles,
       contextImages,
-      selectModel('generation', intent, 2, generationModel, modelRouting),
-      2,
+      generationModel,
+      escalationLevel: 2,
       setPhase,
       onToken,
-      trackRecovery,
+      onFilesUpdate,
       signal,
-      pivotContext,
-      modelRouting,
-    )
-    // If rescue also refuses, we'll catch it in the validation loop below
-    if (!isLLMRefusal(rescueContent)) {
-      fullContent = rescueContent
+      modelRouting: { ...modelRouting, plateau: true },
+    })
+    if (rescueGeneration && !rescueGeneration.ok && signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError')
     }
+    if (!rescueGeneration?.ok) {
+      throw new Error(`Echec de la regeneration agentique WS3: ${rescueGeneration?.error || 'plan_without_queue'}`)
+    }
+    if (isLLMRefusal(rescueGeneration.content)) {
+      throw new Error('Refus LLM persistant apres regeneration agentique WS3')
+    }
+    fullContent = rescueGeneration.content
   }
-
-  // Swap the PLACEHOLDER_SUBJECT_IMG marker with the real downloaded data URL
-  // so every <img> tag the LLM wrote resolves immediately at first render.
-  fullContent = applySubjectImagePlaceholder(fullContent, intent)
 
   // Swap USER_FILE_N markers with the real data URL of each user-attached file.
   // `userFileDataUrls` is optional in the public API — guard against every possible
@@ -487,26 +460,24 @@ async function runFullPipeline({
     enrichedPrompt,
     latestRawGenerationContent: fullContent,
     intent,
-    preflightReport,
     architecturePlan,
     missionDossier,
-    conversationHistory,
     effectiveExistingFiles,
     contextImages,
     configuredCodeModel,
     generationModel,
     setPhase,
     onToken,
-    trackRecovery,
     signal,
-    pivotContext,
     modelRouting,
   })
-  let initialFiles = outputRetryResult.files
+  let initialFiles = materializeInterModuleAssetReferences(
+    outputRetryResult.files,
+    interModuleAssetBundle,
+  )
   let initialNotes = outputRetryResult.notes
   const latestRawGenerationContent = outputRetryResult.latestRawGenerationContent
   const outputRetry = outputRetryResult.outputRetry
-  const latestBrandFidelity = outputRetryResult.latestBrandFidelity
 
   if (initialFiles.length === 0) {
     const diagnostic = buildEmptyGenerationDiagnostic(latestRawGenerationContent, intent, outputRetry)
@@ -526,6 +497,7 @@ async function runFullPipeline({
     }
   }
 
+  initialFiles = upsertAssetManifestFile(initialFiles, interModuleAssetBundle)
   initialFiles = upsertProjectSupportFiles(initialFiles, intent, reformulatedEnriched, architecturePlan)
 
   onFilesUpdate(initialFiles, initialNotes)
@@ -547,37 +519,14 @@ async function runFullPipeline({
     modelRouting,
   )
 
-  const finalFiles = upsertProjectSupportFiles(validationResult.files, intent, reformulatedEnriched, architecturePlan)
-
-  // v71 — re-evaluate the brand fidelity AFTER the validation loop has settled.
-  // The auto-correction may have rewritten copy and undone an earlier brand
-  // fix, so we score on the final files.
-  const finalBrandFidelity = evaluateBrandFidelity(intent, finalFiles)
-  let adjustedScore = validationResult.finalScore
-  if (finalBrandFidelity.scoreCap !== null) {
-    adjustedScore = Math.min(adjustedScore, finalBrandFidelity.scoreCap)
-  }
-  if (finalBrandFidelity.scorePenalty > 0) {
-    adjustedScore = Math.max(0, adjustedScore - finalBrandFidelity.scorePenalty)
-  }
-
-  const augmentedNotes = finalBrandFidelity.retryHint
-    ? `${validationResult.notes}\n\n## FIDELITE SUJET\n${finalBrandFidelity.retryHint}`
-    : validationResult.notes
-
-  // Suppress the latestBrandFidelity warning when no longer used after the
-  // post-loop re-evaluation. (Keeps the linter quiet without losing state
-  // we may want to surface in a future iteration.)
-  void latestBrandFidelity
-
-  // Compute design polish report for visual project types (badge for UI).
-  const designReport = isVisualProjectType(intent.projectType)
-    ? computeDesignPolishReport(finalFiles)
-    : null
+  const delivery = finalizeCodePipelineDelivery({
+    files: validationResult.files, notes: validationResult.notes, score: validationResult.finalScore,
+    intent, enrichedPrompt: reformulatedEnriched, architecturePlan, assetBundle: interModuleAssetBundle,
+  })
 
   return {
-    files: finalFiles,
-    notes: augmentedNotes,
+    files: delivery.files,
+    notes: delivery.notes,
     sandboxResult: validationResult.sandboxResult,
     intent,
     preflightReport,
@@ -587,9 +536,9 @@ async function runFullPipeline({
     phase: validationResult.sandboxResult?.ok ? 'done' : 'error',
     architecturePlan,
     totalAttempts: validationResult.totalAttempts,
-    finalScore: adjustedScore,
+    finalScore: delivery.score,
     recoveryEvents,
     followUp,
-    designReport,
+    designReport: delivery.designReport,
   }
 }

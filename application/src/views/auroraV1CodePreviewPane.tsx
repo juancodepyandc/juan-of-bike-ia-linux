@@ -1,6 +1,7 @@
 import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
 import type { ParsedFile } from '../services/codeOutputFiles'
-import { BEFORE, GREEN, RED } from './auroraV1CodeHelpers'
+import { FileCode2 } from 'lucide-react'
+import { GREEN } from './auroraV1CodeHelpers'
 import { CodePreviewFrame } from './auroraV1CodePreviewFrame'
 import { Eyebrow } from './auroraV1CodePrimitives'
 
@@ -35,7 +36,7 @@ export function AuroraV1CodePreviewPane({
               ? `preview · ${webPreview.kind} · ${webPreview.entry.path}`
               : activeFile
                 ? `${activeFile.path} · ${activeFile.language}`
-                : 'api/diffusion.ts · before'}
+                : 'preview'}
         </Eyebrow>
         {code.streaming && (
           <span style={{
@@ -116,19 +117,12 @@ export function AuroraV1CodePreviewPane({
           {activeFile.content}
         </pre>
       ) : (
-        <pre style={{
-          flex: 1, padding: '18px 22px', margin: 0,
-          fontFamily: 'var(--font-mono, monospace)', fontSize: 12, lineHeight: 1.7,
-          color: 'var(--fg-dim, #aaa)', overflow: 'auto',
-          whiteSpace: 'pre-wrap',
+        <div style={{
+          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          color: 'var(--fg-mute, #777)', fontFamily: 'var(--font-mono, monospace)', fontSize: 11,
         }}>
-          {`export async function diffuse(\n  prompt: string,\n  steps = 28,\n`}
-          <span style={{
-            background: `${RED}33`, display: 'block',
-            padding: '0 22px', margin: '0 -22px',
-          }}>{`  // TODO: validate guidance range\n  guidance: number,`}</span>
-          {BEFORE.slice(BEFORE.indexOf('  guidance: number,') + '  guidance: number,'.length)}
-        </pre>
+          <FileCode2 size={16} /> Aucun fichier sélectionné
+        </div>
       )}
     </div>
   )

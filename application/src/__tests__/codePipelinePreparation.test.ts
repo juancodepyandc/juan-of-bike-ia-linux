@@ -1,10 +1,10 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import type { CodeIntent } from '../services/codeIntent.ts'
 import {
   buildBrandProfileBlock,
   buildResearchPhaseLabel,
-  buildSubjectImagePromptBlock,
   looksLikeSimpleTechBrief,
   shouldRunDesignReferenceResearch,
 } from '../services/codePipelinePreparation.ts'
@@ -59,17 +59,9 @@ describe('codePipelinePreparation', () => {
     )
   })
 
-  test('construit un bloc images sujet avec markers et budget de taille', () => {
-    const block = buildSubjectImagePromptBlock([
-      { dataUrl: 'data:image/png;base64,AAA', query: 'logo', source: 'bridge' },
-      { dataUrl: 'data:image/png;base64,BBB', query: 'produit', source: 'extension' },
-      { dataUrl: `data:image/png;base64,${'x'.repeat(360_000)}`, query: 'trop lourd', source: 'bridge' },
-    ])
-
-    assert.match(block, /PLACEHOLDER_SUBJECT_IMG/)
-    assert.match(block, /PLACEHOLDER_SUBJECT_IMG_2/)
-    assert.match(block, /logo -> bridge/)
-    assert.doesNotMatch(block, /trop lourd/)
+  test('ne telecharge plus d images data URL dans la preparation', () => {
+    const source = readFileSync(new URL('../services/codePipelinePreparation.ts', import.meta.url), 'utf8')
+    assert.doesNotMatch(source, /fetchSubjectImages|__subjectImageDataUrl|converties en data URLs/)
   })
 
   test('construit le bloc profil marque avec palette et mots cles', () => {

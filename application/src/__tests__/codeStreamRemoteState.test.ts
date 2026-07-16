@@ -100,13 +100,13 @@ describe('codeStreamRemoteState', () => {
     assert.equal(next.notes, 'build vert')
   })
 
-  test('route bridge active seulement les generations neuves online par defaut', () => {
+  test('garde le planner-executor local par defaut meme en mode online', () => {
     assert.equal(shouldUseCodeBridgeStream({
       workMode: 'online',
       isCorrection: false,
       priorMessagesCount: 0,
       existingFilesCount: 0,
-    }), true)
+    }), false)
     assert.equal(shouldUseCodeBridgeStream({
       workMode: 'repo',
       isCorrection: false,

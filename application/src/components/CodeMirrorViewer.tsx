@@ -1,10 +1,10 @@
-import { memo, useEffect, useMemo, useRef, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useRef } from 'react'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, lineNumbers } from '@codemirror/view'
 import { javascript } from '@codemirror/lang-javascript'
 import { html } from '@codemirror/lang-html'
 import { css } from '@codemirror/lang-css'
-import { List } from 'react-window'
+import { List, type RowComponentProps } from 'react-window'
 
 type Props = {
   code: string
@@ -158,6 +158,12 @@ function VirtualizedCodeViewer({
   )
 }
 
+type VirtualizedLineData = {
+  lines: string[]
+  showLineNumbers: boolean
+  searchNeedle: string
+}
+
 function VirtualizedLine({
   index,
   style,
@@ -165,14 +171,7 @@ function VirtualizedLine({
   showLineNumbers,
   searchNeedle,
   ariaAttributes,
-}: {
-  index: number
-  style: CSSProperties
-  lines: string[]
-  showLineNumbers: boolean
-  searchNeedle: string
-  ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
-}) {
+}: RowComponentProps<VirtualizedLineData>) {
   const text = lines[index] ?? ''
   const match = searchNeedle && text.toLowerCase().includes(searchNeedle)
   return (

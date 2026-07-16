@@ -101,7 +101,8 @@ function parseMetadata(raw: string, offset: number, issues: StructuredEmissionIs
     pushIssue(issues, 'invalid_metadata', offset, 'Metadonnee path manquante ou vide.')
     return null
   }
-  if (!Number.isInteger(metadata.length) || metadata.length < 0) {
+  const length = metadata.length
+  if (typeof length !== 'number' || !Number.isInteger(length) || length < 0) {
     pushIssue(issues, 'invalid_length', offset, 'Metadonnee length invalide.')
     return null
   }
@@ -112,7 +113,7 @@ function parseMetadata(raw: string, offset: number, issues: StructuredEmissionIs
 
   return {
     path: metadata.path,
-    length: metadata.length,
+    length,
     encoding: metadata.encoding,
     language: typeof metadata.language === 'string' ? metadata.language : undefined,
     mime: typeof metadata.mime === 'string' ? metadata.mime : undefined,

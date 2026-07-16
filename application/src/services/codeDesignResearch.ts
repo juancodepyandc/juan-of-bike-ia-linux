@@ -4,7 +4,7 @@
 // (Awwwards / SiteInspire / Dribbble / Behance / Land-book) + injecte un brief
 // d inspiration concret dans le contexte du Codeur. Combine:
 //   1. Knowledge base in-memory (references curees, palettes connues, libs)
-//   2. DuckDuckGo / Crawl4AI search (archetype + sujet)
+//   2. Aurora web-search service (archetype + sujet)
 //   3. Ollama synthesis pour fusionner refs + sujet en directives concretes.
 // ---------------------------------------------------------------------------
 
@@ -12,7 +12,7 @@ import { CODE_SINGLE_MODEL } from '../config/models'
 import { resilientOllamaGenerate } from './ollamaResilience'
 import type { CodeIntent } from './codeIntent'
 import { detectDesignArchetype, type DesignArchetype } from './codeDesignDirectives'
-import { isTauriRuntime, getBridgeUrl } from '../utils/runtime'
+import { searchCodeWebReferences } from './codeWebResearchClient.ts'
 
 const DESIGN_RESEARCH_TIMEOUT_MS = 22_000
 const PER_QUERY_TIMEOUT_MS = 10_000
@@ -310,70 +310,7 @@ const ARCHETYPE_KB: Record<DesignArchetype, ArchetypeKB> = {
 // ---------------------------------------------------------------------------
 
 async function searchOneQuery(query: string): Promise<string[]> {
-  // Try Crawl4AI via Tauri / bridge first (richer content), fall back to
-  // DuckDuckGo HTML scrape if not available.
-  try {
-    if (isTauriRuntime()) {
-      const { runPythonScript, getWorkspacePath } = await import('../hooks/useTauri')
-      const wp = await getWorkspacePath()
-      const out = await runPythonScript(`${wp}/python-services/crawl4ai_search.py`, [
-        '--mode', 'search', '--query', query, '--limit', '6',
-      ])
-      const lines = out.split('\n').filter((line) => line.trim())
-      const last = lines[lines.length - 1]
-      if (last) {
-        const json = JSON.parse(last)
-        if (json.ok && Array.isArray(json.results)) {
-          return json.results
-            .map((r: { snippet?: string; title?: string }) => r.snippet || r.title || '')
-            .filter((s: string) => s.length > 25)
-        }
-      }
-    } else {
-      const bridge = getBridgeUrl()
-      const resp = await fetch(`${bridge}/api/web/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, limit: 6 }),
-        signal: AbortSignal.timeout(PER_QUERY_TIMEOUT_MS),
-      })
-      if (resp.ok) {
-        const text = await resp.text()
-        if (text && !text.trimStart().startsWith('<')) {
-          const data = JSON.parse(text) as { results?: string }
-          if (data.results) {
-            return data.results.split('\n').filter((s) => s.length > 25)
-          }
-        }
-      }
-    }
-  } catch {
-    // Fall through to DuckDuckGo
-  }
-
-  try {
-    const encoded = encodeURIComponent(query)
-    const resp = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AuroraIA/2.0)' },
-      signal: AbortSignal.timeout(PER_QUERY_TIMEOUT_MS),
-    })
-    if (!resp.ok) return []
-    const html = await resp.text()
-    const snippetRegex = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi
-    const snippets: string[] = []
-    let match: RegExpExecArray | null
-    while ((match = snippetRegex.exec(html)) !== null && snippets.length < 8) {
-      const cleaned = match[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
-        .trim()
-      if (cleaned.length > 30) snippets.push(cleaned)
-    }
-    return snippets
-  } catch {
-    return []
-  }
+  return searchCodeWebReferences(query, { limit: 6, timeoutMs: PER_QUERY_TIMEOUT_MS })
 }
 
 // ---------------------------------------------------------------------------

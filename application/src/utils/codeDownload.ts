@@ -7,6 +7,10 @@
  * project dependency.
  */
 import type { CodeFile } from '../services/codeOrchestrator'
+import {
+  collectAssetExportEntries,
+  rewriteAssetUrlsForExport,
+} from '../services/codeInterModuleAssetIntegration.ts'
 
 function slugify(input: string): string {
   const base = (input || 'aurora-projet')
@@ -23,13 +27,7 @@ function slugify(input: string): string {
  */
 export async function downloadProjectZip(files: CodeFile[], nameHint = 'aurora-projet'): Promise<void> {
   if (!files || files.length === 0) return
-  const { default: JSZip } = await import('jszip')
-  const zip = new JSZip()
-  for (const f of files) {
-    const rel = (f.name || 'fichier.txt').replace(/^\.\//, '').replace(/^\/+/, '')
-    zip.file(rel, f.content ?? '')
-  }
-  const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
+  const blob = await buildProjectZipBlob(files)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -39,6 +37,27 @@ export async function downloadProjectZip(files: CodeFile[], nameHint = 'aurora-p
   document.body.removeChild(a)
   // Revoke a tick later so the download has a chance to start.
   setTimeout(() => URL.revokeObjectURL(url), 4000)
+}
+
+export async function buildProjectZipBlob(
+  files: CodeFile[],
+  fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+): Promise<Blob> {
+  const { default: JSZip } = await import('jszip')
+  const zip = new JSZip()
+  const assets = collectAssetExportEntries(files)
+  for (const f of files) {
+    const rel = (f.name || 'fichier.txt').replace(/^\.\//, '').replace(/^\/+/, '')
+    zip.file(rel, rewriteAssetUrlsForExport(f.content ?? '', assets))
+  }
+  for (const asset of assets) {
+    const response = await fetchImpl(asset.url)
+    if (!response.ok) {
+      throw new Error(`Export asset impossible (${response.status}) : ${asset.path}`)
+    }
+    zip.file(asset.path, await response.arrayBuffer(), { binary: true })
+  }
+  return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' })
 }
 
 /** Format a seconds count as a compact "m min s s" / "s s" ETA label. */

@@ -1,9 +1,9 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
-import { Download, FolderGit2, FolderOpen, Globe, Save } from 'lucide-react'
+import { Download, FileCode2, FolderGit2, FolderOpen, Globe, Save } from 'lucide-react'
 import SessionSwitcher from '../components/SessionSwitcher'
 import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
 import type { ParsedFile } from '../services/codeOutputFiles'
-import { DEMO_FILES, GREEN, MODELS } from './auroraV1CodeHelpers'
+import { GREEN } from './auroraV1CodeHelpers'
 import { Eyebrow } from './auroraV1CodePrimitives'
 
 type ConfirmAction = 'download' | 'repo'
@@ -74,7 +74,7 @@ export function AuroraV1CodeSidebar({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ display: 'flex', gap: 6 }}>
               <input value={repoPathInput} onChange={(e) => setRepoPathInput(e.target.value)}
-                placeholder="C:\\chemin\\vers\\repo" spellCheck={false}
+                placeholder="/home/utilisateur/projet" spellCheck={false}
                 style={{
                   flex: 1, padding: '6px 8px', fontSize: 11, borderRadius: 6,
                   background: 'var(--bg-card, rgba(255,255,255,0.04))', color: 'var(--fg, #f5f5f5)',
@@ -213,17 +213,12 @@ export function AuroraV1CodeSidebar({
             )
           })
         ) : (
-          DEMO_FILES.map((f, i) => (
-            <div key={f} style={{
-              padding: '6px 10px', borderRadius: 6,
-              fontSize: 12, fontFamily: 'var(--font-mono, monospace)',
-              color: i === 3 ? 'var(--fg, #f5f5f5)' : 'var(--fg-dim, #aaa)',
-              background: i === 3 ? 'var(--ink-800, #1a1a1a)' : 'transparent',
-              display: 'flex', gap: 8, opacity: 0.55,
-            }}>
-              <span style={{ color: 'var(--fg-mute, #777)' }}>{i === 3 ? '◆' : '·'}</span>{f}
-            </div>
-          ))
+          <div style={{
+            minHeight: 72, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+            color: 'var(--fg-mute, #777)', fontFamily: 'var(--font-mono, monospace)', fontSize: 11,
+          }}>
+            <FileCode2 size={14} /> Aucun fichier
+          </div>
         )}
       </div>
 
@@ -235,17 +230,17 @@ export function AuroraV1CodeSidebar({
         border: '1px solid var(--line, rgba(255,255,255,0.12))',
         borderRadius: 8,
       }}>
-        <Eyebrow style={{ marginBottom: 8 }}>Modèles actifs</Eyebrow>
-        {MODELS.map(([m, r]) => (
-          <div key={m} style={{
-            display: 'flex', justifyContent: 'space-between',
-            fontFamily: 'var(--font-mono, monospace)', fontSize: 11,
-            padding: '4px 0',
-          }}>
-            <span style={{ color: 'var(--fg-dim, #aaa)' }}>{m}</span>
-            <span style={{ color: GREEN }}>{r}</span>
-          </div>
-        ))}
+        <Eyebrow style={{ marginBottom: 8 }}>Modèle code</Eyebrow>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', gap: 8,
+          fontFamily: 'var(--font-mono, monospace)', fontSize: 11,
+          padding: '4px 0',
+        }}>
+          <span title={code.modelUsed ?? code.model} style={{
+            color: 'var(--fg-dim, #aaa)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{code.modelUsed ?? code.model}</span>
+          <span style={{ color: GREEN, flexShrink: 0 }}>{code.modelUsed ? 'utilisé' : 'sélectionné'}</span>
+        </div>
       </div>
 
       <button type="button" onClick={() => setLive(true)}

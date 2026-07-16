@@ -1,4 +1,5 @@
 /** Premium Three.js reference used as 3D design-level exemplar. */
+import { CODE_THREE_ADDONS_BASE, CODE_THREE_CDN_BASE } from './codeRuntimeDependencies.ts'
 
 /**
  * v76: starter Three.js complet — single-file ESM via CDN, scene cinematique
@@ -31,8 +32,8 @@ export const THREE_D_SCENE_REFERENCE = String.raw`<!DOCTYPE html>
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        "three": "${CODE_THREE_CDN_BASE}/build/three.module.js",
+        "three/addons/": "${CODE_THREE_ADDONS_BASE}/"
       }
     }
   </script>

@@ -131,6 +131,7 @@ export type SubjectDetection = {
  * Stoplist for the inferred-brand heuristic. Capitalised words at the start of a French
  * or English sentence are not brands, so we ignore them. We also bail on UI verbs ("Crée",
  * "Build") and section nouns ("Page", "Site") that the user puts at the start of a prompt.
+ */
 
 export type CodeAssetPlan = {
   /** Free-form style tokens kept as-is (for search queries and prompt hints). */
@@ -192,6 +193,7 @@ export type CodeIntent = {
  *  - concrete objects / subjects to show ("velo gravel", "iphone 15", "chat siamois"…) → need image/3D assets
  *  - effects / animations asked ("parallax", "glow", "gsap", "three.js stars"…) → widen library hints
  *  - if paletteHints is set, the codeur will be told to reuse those colors precisely.
+ */
 
 export type CodeIntentContext = {
   /** Project type of the previous generation, if any. */

@@ -41,7 +41,7 @@ const STARTER_INTRO = [
   '- Stats editorialisees: chiffres en Instrument Serif italic + sup en JetBrains Mono accent.',
   '- Counter ease-out-expo (1-Math.pow(1-t,4)) + Number.toLocaleString.',
   '- Cursor follow subtil mix-blend difference.',
-  '- Tu utilises les images PLACEHOLDER_IMG_HERO / DETAIL / LIFESTYLE1 / LIFESTYLE2 dans <img src="..."> — l orchestrator les remplace par des data URL au build.',
+  '- Tu utilises les images PLACEHOLDER_IMG_HERO / DETAIL / LIFESTYLE1 / LIFESTYLE2 dans <img src="..."> — l orchestrateur les relie aux fichiers optimises du bundle inter-module.',
   '- Au moins 7-10 sections RICHES propres au sujet.',
   '- Au moins 2 animations 3D / scroll-driven (rotateY scroll, perspective + preserve-3d, mesh blob, scroll-timeline).',
   '',

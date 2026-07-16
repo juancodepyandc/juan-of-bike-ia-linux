@@ -14,7 +14,7 @@ describe('codeProjectSupportFiles', () => {
     } as unknown as CodeIntent
 
     const files = upsertProjectSupportFilesForTest([
-      { name: 'package.json', language: 'json', content: '{"scripts":{"dev":"vite"},"dependencies":{"@vitejs/plugin-react":"^5.1.2","vite":"^8.1.3"}}' },
+      { name: 'package.json', language: 'json', content: '{"scripts":{"dev":"vite"},"dependencies":{"@vitejs/plugin-react":"^6","vite":"^8"}}' },
       { name: 'src/main.tsx', language: 'typescript', content: 'import "./App";' },
       { name: 'module-1.txt', language: 'text', content: 'synthetic fallback' },
       { name: 'lancement.bat', language: 'batch', content: '@echo off' },

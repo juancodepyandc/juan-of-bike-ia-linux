@@ -7,6 +7,7 @@
 import { CODE_SINGLE_MODEL } from '../config/models'
 import { resilientOllamaGenerate } from './ollamaResilience'
 import type { CodeIntent } from './codeIntent'
+import { searchCodeWebReferences } from './codeWebResearchClient.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -251,72 +252,11 @@ async function synthesizeSolutionFromLLM(
 }
 
 // ---------------------------------------------------------------------------
-// Web search via Crawl4AI (Playwright) — fallback DuckDuckGo HTTP
+// Web search through Aurora's bridge-owned research service.
 // ---------------------------------------------------------------------------
 
 async function searchWeb(query: string): Promise<string[]> {
-  // Essayer Crawl4AI via le bridge ou Tauri
-  try {
-    const { isTauriRuntime, getBridgeUrl } = await import('../utils/runtime')
-    if (isTauriRuntime()) {
-      const { runPythonScript, getWorkspacePath } = await import('../hooks/useTauri')
-      const wp = await getWorkspacePath()
-      const out = await runPythonScript(`${wp}/python-services/crawl4ai_search.py`, [
-        '--mode', 'search', '--query', query, '--limit', '8',
-      ])
-      const lines = out.split('\n').filter(l => l.trim())
-      const json = JSON.parse(lines[lines.length - 1])
-      if (json.ok && json.results?.length) {
-        return json.results.map((r: any) => r.snippet || r.title || '').filter((s: string) => s.length > 20)
-      }
-    } else {
-      const r = await fetch(`${getBridgeUrl()}/api/web/search`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, limit: 8 }),
-        signal: AbortSignal.timeout(25_000),
-      })
-      if (r.ok) {
-        const text = await r.text()
-        if (text && !text.trimStart().startsWith('<')) {
-          const data = JSON.parse(text) as { results?: string }
-          if (data.results) {
-            return data.results.split('\n').filter((s: string) => s.length > 20)
-          }
-        }
-      }
-    }
-  } catch {
-    // Crawl4AI non disponible — fallback DuckDuckGo HTTP direct
-  }
-
-  // Fallback: DuckDuckGo HTML scrape
-  try {
-    const encodedQuery = encodeURIComponent(query)
-    const response = await fetch(
-      `https://html.duckduckgo.com/html/?q=${encodedQuery}`,
-      {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AuroraIA/2.0)' },
-        signal: AbortSignal.timeout(10_000),
-      },
-    )
-    if (!response.ok) return []
-    const html = await response.text()
-    const snippetRegex = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi
-    const snippets: string[] = []
-    let match: RegExpExecArray | null
-    while ((match = snippetRegex.exec(html)) !== null && snippets.length < 8) {
-      const snippet = match[1]
-        .replace(/<[^>]+>/g, '')
-        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"').replace(/&#x27;/g, "'")
-        .trim()
-      if (snippet.length > 30) snippets.push(snippet)
-    }
-    return snippets
-  } catch {
-    return []
-  }
+  return searchCodeWebReferences(query, { limit: 8, timeoutMs: 25_000 })
 }
 
 // ---------------------------------------------------------------------------

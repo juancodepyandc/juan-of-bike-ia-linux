@@ -32,11 +32,9 @@ import {
 import { AuroraV1CodeOutputPane } from './auroraV1CodeOutputPane'
 import { AuroraV1CodePreviewPane } from './auroraV1CodePreviewPane'
 import { AuroraV1CodeSidebar } from './auroraV1CodeSidebar'
-import { AFTER_HIGHLIGHT } from './auroraV1CodeHelpers'
 
 export default function AuroraV1CodeView() {
   const [live, setLive] = useState(false)
-  const [streamLen, setStreamLen] = useState(0)
   const code = useCodeViewLogic()
   const activeCodeSessionId = useModuleHistoryStore((s) => s.activeSessionId.code ?? null)
   const createCodeSession = useModuleHistoryStore((s) => s.createSession)
@@ -321,22 +319,6 @@ export default function AuroraV1CodeView() {
     disabled: code.streaming,
   })
 
-  // v82bd : la "demo" animation reste comme idle state quand l'user
-  // n'a pas encore tapé de prompt — fait vivre le pane editorial. Dès
-  // que streamOutput a du contenu, on bascule sur le vrai streaming
-  // en remplaçant AFTER_HIGHLIGHT.slice(0, streamLen) par
-  // code.streamOutput dans le rendu plus bas.
-  useEffect(() => {
-    if (live || code.hasOutput || code.streaming) return
-    const total = AFTER_HIGHLIGHT.length
-    let i = 0
-    const id = window.setInterval(() => {
-      i = (i + 4) % (total + 40)
-      setStreamLen(Math.min(i, total))
-    }, 60)
-    return () => window.clearInterval(id)
-  }, [live, code.hasOutput, code.streaming])
-
   // v82k7 : salle de code editorial native — no manga delegate.
   if (live) {
     return <AuroraV1CodeLiveView code={code} onClose={() => setLive(false)} />
@@ -403,7 +385,6 @@ export default function AuroraV1CodeView() {
         openingFolder={openingFolder}
         parsedFiles={parsedFiles}
         setLive={setLive}
-        streamLen={streamLen}
         tokensPerSec={tokensPerSec}
         tpsHistory={tpsHistory}
       />

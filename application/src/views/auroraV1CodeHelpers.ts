@@ -30,51 +30,6 @@ export function detectStreamLanguage(prompt: string, output: string): string {
 export const GREEN = 'oklch(0.72 0.12 145)'
 export const RED = 'oklch(0.55 0.18 25)'
 
-// v82n6 : DEMO_FILES kept as idle placeholder only. Once user submits and
-// streamOutput is non-empty, the file tree is replaced with a REAL parsed
-// list from extractGeneratedFiles() in the component body. The user
-// reported "j'ai toujours la même arborescence donc des choses aucun
-// rapport" — that was because this list never got updated. Now it does.
-export const DEMO_FILES = ['App.tsx', 'router.ts', 'auth/', 'api/diffusion.ts', 'lib/utils.ts', 'theme.css', 'README.md']
-
-export const MODELS: Array<[string, string]> = [
-  ['qwen3:14b', 'plan'],
-  ['deepseek-coder:33b', 'edit'],
-  ['llama3.2:3b', 'fix'],
-]
-
-export const BEFORE = `export async function diffuse(
-  prompt: string,
-  steps = 28,
-  // TODO: validate guidance range
-  guidance: number,
-) {
-  const res = await fetch('/api/flux', {
-    method: 'POST',
-    body: JSON.stringify({ prompt, steps }),
-  });
-  return res.json();
-}`
-
-export const AFTER_PRE = `export async function diffuse(
-  prompt: string,
-  steps = 28,
-`
-
-export const AFTER_HIGHLIGHT = `  guidance: number = 4.5,
-) {
-  if (guidance < 1 || guidance > 20) {
-    throw new RangeError('guidance ∈ [1, 20]');
-  }`
-
-export const AFTER_POST = `
-  const res = await fetch('/api/flux', {
-    method: 'POST',
-    body: JSON.stringify({ prompt, steps, guidance }),
-  });
-  return res.json();
-}`
-
 export function instrumentPreviewHtml(html: string): string {
   const script = `<script>
 (function(){

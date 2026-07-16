@@ -6,6 +6,7 @@
 
 import type { CodeIntent } from './codeIntent'
 import { hasPerceptualColorMatch } from './codeColorMetrics.ts'
+import { CODE_ASSET_MANIFEST_PATH } from './codeInterModuleAssets.ts'
 
 /** Local file shape — a subset of `CodeFile` from codeOrchestrator. We keep
  * a local type alias to avoid a circular import (orchestrator → fidelity → orchestrator). */
@@ -18,7 +19,7 @@ type CodeFile = {
 export type BrandFidelityIssue =
   | 'subject_name_missing'
   | 'palette_missing'
-  | 'image_markers_missing'
+  | 'image_asset_missing'
   | 'product_keywords_missing'
   | 'used_off_topic_terms'
   | 'shader_signature_missing'
@@ -56,9 +57,8 @@ const OFF_TOPIC_DRIFT_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
  *      — must be in actual visible content). Otherwise → score capped at 30.
  *   2. The brand primary color must appear perceptually in CSS/JSX styles
  *      (hex/rgb/oklch accepted via deltaE Lab). -20 score when missing.
- *   3. At least one PLACEHOLDER_SUBJECT_IMG marker must appear in HTML/JSX
- *      when images were prepared (intent.__subjectImageDataUrls populated).
- *      -15 score otherwise.
+ *   3. At least one inter-module image marker or materialized asset reference
+ *      must appear in visual code when the asset manifest provides an image.
  *   4. At least 1 product keyword from the brand profile must appear in
  *      copy (titles, paragraphs). -10 score otherwise.
  *   5. Off-topic terms ("restaurant", "menu du jour", ...) must NOT appear
@@ -116,16 +116,27 @@ export function evaluateBrandFidelity(intent: CodeIntent, files: CodeFile[]): Br
     }
   }
 
-  // --- Rule 3: image markers must be used when images were prepared --------
-  const stash = intent as unknown as { __subjectImageDataUrls?: string[]; __subjectImageDataUrl?: string }
-  const imagesPrepared = (stash.__subjectImageDataUrls?.length ?? 0) > 0 || !!stash.__subjectImageDataUrl
-  if (imagesPrepared) {
-    const hasAnyMarker = /PLACEHOLDER_SUBJECT_IMG(_\d+)?/i.test(visualBody)
-    if (!hasAnyMarker) {
-      issues.push('image_markers_missing')
+  // --- Rule 3: a generated inter-module image must be referenced ------------
+  const manifest = files.find((file) => file.name === CODE_ASSET_MANIFEST_PATH)
+  let imageReferences: string[] = []
+  try {
+    const assets = JSON.parse(manifest?.content || '{}')?.assets
+    if (Array.isArray(assets)) {
+      imageReferences = assets
+        .filter((asset) => asset?.kind === 'image')
+        .flatMap((asset) => [asset.path, asset.previewUrl].filter((value): value is string => typeof value === 'string'))
+    }
+  } catch {
+    imageReferences = []
+  }
+  if (imageReferences.length > 0) {
+    const hasImageReference = /PLACEHOLDER_(?:SUBJECT_)?IMG(?:_[A-Z0-9]+)?/i.test(visualBody)
+      || imageReferences.some((reference) => visualBody.includes(reference.toLowerCase()))
+    if (!hasImageReference) {
+      issues.push('image_asset_missing')
       retryHints.push(
-        `Des images reelles de ${displayName} ont ete telechargees mais aucun marker PLACEHOLDER_SUBJECT_IMG n a ete utilise.`
-        + ` Insere au minimum <img src="PLACEHOLDER_SUBJECT_IMG" ...> dans le hero et <img src="PLACEHOLDER_SUBJECT_IMG_2" ...> dans une section showcase.`,
+        `Un asset image optimise de ${displayName} est disponible mais le rendu ne le reference pas.`
+        + ` Utilise PLACEHOLDER_SUBJECT_IMG dans le hero ou le chemin image du manifeste ${CODE_ASSET_MANIFEST_PATH}.`,
       )
       scorePenalty += 15
     }

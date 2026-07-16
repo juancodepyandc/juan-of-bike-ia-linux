@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { List } from 'react-window'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { List, type RowComponentProps } from 'react-window'
 import {
   Activity,
   AlertTriangle,
@@ -265,6 +265,12 @@ function VirtualizedProjectTree({
   )
 }
 
+type ProjectTreeRowData = {
+  rows: Array<{ index: number; path: string; depth: number; bytes: number }>
+  activeFile: number
+  onSelectFile: (index: number) => void
+}
+
 function ProjectTreeRow({
   index,
   style,
@@ -272,14 +278,7 @@ function ProjectTreeRow({
   activeFile,
   onSelectFile,
   ariaAttributes,
-}: {
-  index: number
-  style: CSSProperties
-  rows: Array<{ index: number; path: string; depth: number; bytes: number }>
-  activeFile: number
-  onSelectFile: (index: number) => void
-  ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
-}) {
+}: RowComponentProps<ProjectTreeRowData>) {
   const row = rows[index]
   if (!row) return null
   const isActive = row.index === activeFile

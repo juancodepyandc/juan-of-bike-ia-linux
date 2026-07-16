@@ -4,6 +4,7 @@ import { CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION } from '../services/codeArchitect
 import { runAgenticGenerationPhase } from '../services/codeAgenticGenerationPhase.ts'
 import { parseCodeFiles } from '../services/codeGeneratedFileParser.ts'
 import { CODE_GENERATION_ACTION_PROTOCOL_VERSION } from '../services/codeGenerationActionProtocol.ts'
+import { CODE_CLOUD_HIGH_MODEL } from '../config/models.ts'
 
 function plan() {
   return JSON.stringify({
@@ -96,5 +97,39 @@ describe('codeAgenticGenerationPhase', () => {
     assert.equal(tokens.length, 1)
     assert.deepEqual(updates, [1, 2])
     assert.deepEqual(parseCodeFiles(result?.content ?? '').map((file) => file.name), ['package.json', 'src/App.tsx'])
+  })
+
+  test('transmet l escalade plateau au modele de chaque action', async () => {
+    const models: string[] = []
+    const result = await runAgenticGenerationPhase({
+      prompt: 'demo en echec repete',
+      intent,
+      architecturePlan: plan(),
+      existingFiles: [],
+      contextImages: [],
+      generationModel: 'qwen3-coder:30b',
+      escalationLevel: 4,
+      modelRouting: {
+        configuredCodeModel: 'qwen3-coder:30b',
+        installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+        plateau: true,
+      },
+      setPhase: () => undefined,
+      onToken: () => undefined,
+      chatClient: async (model, messages) => {
+        models.push(model)
+        const body = messages.map((message) => message.content).join('\n')
+        const path = body.match(/Fichier cible de cette etape: ([^\n]+)/)?.[1] ?? 'README.md'
+        return {
+          message: {
+            role: 'assistant',
+            content: `${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{"kind":"write_file","path":"${path}","content":"ok"}]`,
+          },
+        }
+      },
+    })
+
+    assert.equal(result?.ok, true)
+    assert.deepEqual(models, [CODE_CLOUD_HIGH_MODEL, CODE_CLOUD_HIGH_MODEL])
   })
 })

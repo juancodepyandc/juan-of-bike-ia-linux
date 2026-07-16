@@ -439,10 +439,12 @@ export default function CodeView() {
       getActiveSession,
       getRecentMessages,
       isGenerating,
+      isGeneratingRef,
       preparePack,
       prompt,
       pushMessage,
       renameSession,
+      resumeAfterReloadRef,
       setActiveFile,
       setClarification,
       setConsoleOutput,
@@ -533,6 +535,7 @@ export default function CodeView() {
           designReport={designReport}
           devServerState={devServerState}
           diagnostics={diagnostics}
+          error={error}
           files={files}
           finalScore={finalScore}
           followUpAnalysis={followUpAnalysis}

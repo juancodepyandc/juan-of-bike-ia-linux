@@ -33,10 +33,7 @@ export function shouldUseCodeBridgeStream(args: {
   const configured = import.meta.env?.VITE_CODE_STREAM_ENGINE
   if (configured === 'local') return false
   if (configured === 'bridge') return true
-  return args.workMode === 'online'
-    && !args.isCorrection
-    && args.priorMessagesCount === 0
-    && args.existingFilesCount === 0
+  return false
 }
 
 function appendAssistantDelivery(set: SetCodeStreamState, filesCount: number, score: number) {

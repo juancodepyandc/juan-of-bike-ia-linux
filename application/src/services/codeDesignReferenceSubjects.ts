@@ -5,6 +5,8 @@
  * the user is asking for — saas needs pricing tiers, ecommerce needs product
  * cards with cart, portfolio needs project gallery, dashboard needs sidebar.
  */
+import { CODE_THREE_ADDONS_BASE, CODE_THREE_CDN_BASE, CODE_THREE_CDN_VERSION } from './codeRuntimeDependencies.ts'
+
 export type SubjectVariant = 'saas' | 'portfolio' | 'ecommerce' | 'dashboard' | 'landing' | '3d_scene' | 'game' | 'mobile' | 'desktop' | 'brand_landing' | null
 
 export const SUBJECT_VARIANTS: Record<Exclude<SubjectVariant, null>, string[]> = {
@@ -69,9 +71,9 @@ export const SUBJECT_VARIANTS: Record<Exclude<SubjectVariant, null>, string[]> =
   ],
   '3d_scene': [
     '### SECTIONS SPECIFIQUES SCENE 3D INTERACTIVE',
-    '- IMPORTS THREE.JS via CDN ESM jsdelivr 0.160 — `import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"`.',
+    `- IMPORTS THREE.JS via CDN ESM jsdelivr ${CODE_THREE_CDN_VERSION} — \`import * as THREE from "${CODE_THREE_CDN_BASE}/build/three.module.js"\`.`,
     '- OrbitControls + GLTFLoader + RGBELoader + RoomEnvironment + EffectComposer + UnrealBloomPass + OutputPass via examples/jsm/.',
-    '- Si physique implicite: Rapier3D-compat — `import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.13.0/+esm"` puis `await RAPIER.init()`.',
+    '- Si physique implicite: Rapier3D-compat — `import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.19/+esm"` puis `await RAPIER.init()`.',
     '- WebGLRenderer: `antialias:true, alpha:true, powerPreference:"high-performance"`, `setPixelRatio(min(devicePixelRatio, 2))`, `outputColorSpace = SRGBColorSpace`, `toneMapping = ACESFilmicToneMapping`, `toneMappingExposure ≈ 1.1`, `shadowMap.enabled = true`, `shadowMap.type = PCFSoftShadowMap`.',
     '- Camera: PerspectiveCamera(45-55 fov, aspect, 0.1, 200), position cinematique (3/4 angle).',
     '- ECLAIRAGE PREMIUM: HemisphereLight(skyBlue→groundOrange, 0.4-0.6) + DirectionalLight cle (1.5-2.5, castShadow, mapSize 2048, bias -0.0001) + PointLight/SpotLight accent coloree.',
@@ -154,7 +156,7 @@ export const SUBJECT_VARIANTS: Record<Exclude<SubjectVariant, null>, string[]> =
     '- SECTION HERITAGE / STORYTELLING: bandeau rapide avec date/origine + 1-2 lignes mythologiques de la marque, image lifestyle PLACEHOLDER_SUBJECT_IMG_2 en arriere-plan parallax.',
     '- SECTION PRODUITS / VARIANTES: grille 3-6 cards (chaque card = un produit ou une variante). Chaque card avec PLACEHOLDER_SUBJECT_IMG_* OU SVG inline marque-coherent. Hover = scale(1.04) + tilt 3D leger (transform: perspective(1000px) rotateY(...)) selon mouseX.',
     '- SECTION 3D / EFFET SIGNATURE: au moins UN bloc visuel ambitieux:',
-    '  - Three.js via CDN ESM (https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js) — produit en rotation OrbitControls auto-rotate, MeshPhysicalMaterial PBR aux couleurs marque, environment + bloom.',
+    `  - Three.js via CDN ESM (${CODE_THREE_CDN_BASE}/build/three.module.js) — produit en rotation OrbitControls auto-rotate, MeshPhysicalMaterial PBR aux couleurs marque, environment + bloom.`,
     '  - OU CSS 3D pur: produit (canette, bottle, phone) construit en plusieurs <div> avec transform translateZ + rotateY animation infinite.',
     '  - OU canvas particle system signature (bulles montant, vapeur, etoiles, fumee de pneu) plein ecran derriere la section.',
     '- SECTION GALLERY / SHOWCASE: parallax stack ou marquee horizontale d images reelles de la marque (PLACEHOLDER_SUBJECT_IMG_1...3 + reuse).',
@@ -286,7 +288,7 @@ export const SUBJECT_VARIANTS: Record<Exclude<SubjectVariant, null>, string[]> =
     '- Donne un look CRT TV vintage immersif.',
     '',
     '### POST-PROCESSING OBLIGATOIRE (au moins UnrealBloomPass)',
-    '- import { EffectComposer } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/postprocessing/EffectComposer.js"',
+    `- import { EffectComposer } from "${CODE_THREE_ADDONS_BASE}/postprocessing/EffectComposer.js"`,
     '- import { RenderPass } from ".../examples/jsm/postprocessing/RenderPass.js"',
     '- import { UnrealBloomPass } from ".../examples/jsm/postprocessing/UnrealBloomPass.js"',
     '- import { OutputPass } from ".../examples/jsm/postprocessing/OutputPass.js"',

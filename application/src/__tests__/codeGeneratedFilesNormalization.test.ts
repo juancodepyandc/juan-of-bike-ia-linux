@@ -68,10 +68,10 @@ describe('normalizeGeneratedCodeFilesForTest', () => {
     assert.ok(manifest.dependencies['@react-three/fiber'])
     assert.ok(manifest.dependencies['@react-three/drei'])
     assert.ok(manifest.dependencies['@react-spring/three'])
-    assert.match(manifest.dependencies['@react-three/fiber'], /^\^9\./)
-    assert.match(manifest.dependencies['@react-three/drei'], /^\^10\./)
-    assert.match(manifest.devDependencies['@types/react'], /^\^19\./)
-    assert.match(manifest.devDependencies['@types/react-dom'], /^\^19\./)
+    assert.equal(manifest.dependencies['@react-three/fiber'], '^9')
+    assert.equal(manifest.dependencies['@react-three/drei'], '^10')
+    assert.equal(manifest.devDependencies['@types/react'], '^19')
+    assert.equal(manifest.devDependencies['@types/react-dom'], '^19')
   })
 
   test('common React 19 R3F and Zustand typing issues are repaired', () => {
@@ -134,8 +134,8 @@ describe('normalizeGeneratedCodeFilesForTest', () => {
     assert.ok(manifest.dependencies['react-router-dom'])
     assert.ok(manifest.dependencies['react-icons'])
     assert.ok(manifest.dependencies['monaco-editor'])
-    assert.equal(manifest.devDependencies.vite, '^8.1.3')
-    assert.equal(manifest.devDependencies['@vitejs/plugin-react'], '^5.1.2')
+    assert.equal(manifest.devDependencies.vite, '^8')
+    assert.equal(manifest.devDependencies['@vitejs/plugin-react'], '^6')
     assert.equal(manifest.dependencies['@vitejs/plugin-react'], undefined)
   })
 
@@ -250,9 +250,9 @@ describe('normalizeGeneratedCodeFilesForTest', () => {
     const names = files.map((f) => f.name.replace(/\\/g, '/').toLowerCase())
     assert.ok(names.includes('postcss.config.js'), names.join(','))
     const manifest = JSON.parse(files.find((f) => f.name === 'package.json')!.content)
-    assert.equal(manifest.devDependencies.tailwindcss, '^3.4.17')
-    assert.equal(manifest.devDependencies.postcss, '^8.5.6')
-    assert.equal(manifest.devDependencies.autoprefixer, '^10.4.21')
+    assert.equal(manifest.devDependencies.tailwindcss, '^3')
+    assert.equal(manifest.devDependencies.postcss, '^8')
+    assert.equal(manifest.devDependencies.autoprefixer, '^10')
   })
 })
 

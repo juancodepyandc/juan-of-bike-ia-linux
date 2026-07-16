@@ -26,6 +26,7 @@ type CodeViewControlPanelProps = {
   designReport: DesignReport | null
   devServerState: DevServerState
   diagnostics: ComponentProps<typeof CodeViewControlActions>['diagnostics']
+  error: string | null
   files: CodeFile[]
   finalScore: number
   followUpAnalysis: FollowUpAnalysis | null
@@ -66,6 +67,7 @@ export function CodeViewControlPanel({
   designReport,
   devServerState,
   diagnostics,
+  error,
   files,
   finalScore,
   followUpAnalysis,

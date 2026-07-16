@@ -14,7 +14,7 @@ Schema example:
     "host":        "192.168.1.42",
     "user":        "pi",
     "port":        22,
-    "key_path":    "C:/Users/Juan/.ssh/id_rsa",
+    "key_path":    "~/.ssh/id_ed25519",
     "deploy_path": "/home/pi/aurora_deploys",
     "platform":    "raspberry_pi",
     "platform_hints": "Raspberry Pi 4, ARMv7, Python 3.11, RPi.GPIO + picamera2 available, Bookworm OS",
@@ -37,8 +37,8 @@ Schema example:
   }
 }
 
-Uses the OpenSSH client on Windows (ssh.exe / scp.exe) via subprocess.
-No extra Python deps required.
+Uses the platform OpenSSH client (`ssh` / `scp`) via subprocess. No extra
+Python dependency is required.
 """
 from __future__ import annotations
 
