@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  buildBrowserWorkspacePreviewHtml,
+  supportsBrowserWorkspaceRuntime,
+} from '../services/codeBrowserWorkspaceRuntime'
 import { buildAuroraInlineSvgDataUri } from '../services/codeVisualFallbacks.ts'
 
 // Heavy project detection — prevents recomputing + reloading the iframe on
@@ -95,8 +99,10 @@ export function webProjectFromFiles(files: CodeFile[]): boolean {
 
 function isWebProject(files: CodeFile[]) {
   // A web project is anything we can put in a blob iframe: an HTML file,
-  // or at least CSS + JS that we can wrap with a minimal bootstrap document.
+  // a browser-bundled React workspace, or at least CSS + JS that we can wrap
+  // with a minimal bootstrap document.
   return files.some((f) => /\.(html|htm)$/i.test(f.name))
+      || supportsBrowserWorkspaceRuntime(files)
       || files.some((f) => /\.(css|scss|less|js|mjs|ts|tsx|jsx)$/i.test(f.name) && f.content.trim().length > 0)
 }
 
@@ -168,6 +174,8 @@ function buildPreviewHtml(files: CodeFile[]): string | null {
     if (!html) return null
     html = ensureHtmlScaffold(html)
   } else {
+    const workspaceHtml = buildBrowserWorkspacePreviewHtml(files)
+    if (workspaceHtml) return workspaceHtml
     const hasCss = files.some((f) => /\.(css|scss|less)$/i.test(f.name))
     const hasJs = files.some((f) => /\.(js|mjs)$/i.test(f.name))
     if (!hasCss && !hasJs) return null

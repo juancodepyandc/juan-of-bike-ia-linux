@@ -8,9 +8,10 @@ import type { CodeSandboxResult } from '../services/codeSandbox'
 import type { DevServerState } from '../services/codeDevServer'
 import { CodeConsolePanel, CodeCritiquePanel, CodeLanguageChip, CodeLyraCommentator } from './codeViewInspectorPanels'
 import { BigLivePreviewFrame, type BigViewport } from './codeViewPreviewPanel'
+import { CodeViewWorkspaceAtelier } from './codeViewWorkspaceAtelier'
 import { countFileSearchMatches } from './codeViewSearch'
 
-const CodeBlock = lazy(() => import('../components/CodeBlock'))
+const CodeMirrorViewer = lazy(() => import('../components/CodeMirrorViewer'))
 
 type CodeViewDeliveryPanelProps = {
   activeFile: number
@@ -141,6 +142,20 @@ export function CodeViewDeliveryPanel({
                   onSelectFile={setActiveFile}
                 />
               </div>
+
+              <CodeViewWorkspaceAtelier
+                files={files}
+                activeFile={activeFile}
+                activeFileData={activeFileData}
+                onSelectFile={setActiveFile}
+                consoleOutput={consoleOutput}
+                devServerState={devServerState}
+                error={error}
+                isGenerating={isGenerating}
+                progress={progress}
+                recoveryStatus={recoveryStatus}
+                validationResult={validationResult}
+              />
 
               {activeFileData && (
                 <>
@@ -277,8 +292,8 @@ export function CodeViewDeliveryPanel({
                     onViewportChange={setBigViewport}
                   />
                 ) : activeFileData ? (
-                  <Suspense fallback={<pre className="px-5 py-5 text-[13px] text-aurora-text-dim">Chargement du highlighter...</pre>}>
-                    <CodeBlock
+                  <Suspense fallback={<pre className="px-5 py-5 text-[13px] text-aurora-text-dim">Chargement de CodeMirror...</pre>}>
+                    <CodeMirrorViewer
                       code={activeFileData.content}
                       language={activeFileData.language ?? activeFileData.name}
                       showLineNumbers={showLineNumbers}

@@ -2898,3 +2898,69 @@ Pour WS10 local, le coeur du contrat est couvert : design-spec JSON, verificatio
 ### Etat de satisfaction chantier
 
 WS9 est maintenant branche dans le chemin applicatif principal : rendu reel, contraste pixel, emission `visual.score`, endpoint bridge et references UX/UI sont relies. Reste a faire une campagne qualitative de generations longues avec vision active pour calibrer les seuils, mais le verrou "score visuel source-only" est leve.
+
+## 2026-07-16 — Vague 5 / WS11 increment 63 — Viewer atelier et runtime navigateur
+
+### Reprise et diagnostic confirme
+
+- `BigLivePreviewFrame` gelait encore toute preview pendant generation via `shouldSkipLivePreview = isGenerating`.
+- `CodeProjectPreview` savait inliner HTML/CSS/JS simples, mais pas executer un workspace React/TSX multi-fichiers sans dev-server.
+- Le panneau livraison exposait une arborescence et un viewer code, mais pas l'atelier multi-panneaux exige par WS11.
+- L'editeur principal utilisait encore Prism (`CodeBlock`) dans la vue Code principale, avec un fallback brut pour gros fichiers.
+- Le Viewer 3D n'est pas touche : l'integration reste strictement dans les composants du Module Code.
+
+### Recherches et choix techniques
+
+- Verification locale des paquets installes : `esbuild-wasm@0.28.1`, CodeMirror 6 et `react-window@2.2.7`.
+- Lecture des types `react-window` v2 : API actuelle `List`/`Grid`, pas l'ancienne `FixedSizeList`.
+- Lecture de l'entree package locale `esbuild-wasm/esm/browser` : l'API browser expose bien `initialize`; le premier audit reel a prouve que l'import racine CDN ne l'expose pas.
+- Choix retenu : runtime iframe autonome avec VFS JSON, import-map, worker module et `esbuild-wasm` browser API.
+- Choix retenu : CodeMirror 6 pour les fichiers courants, puis `react-window` pour les fichiers gigantesques afin de conserver la reactivite.
+
+### Modifications realisees
+
+- `src/services/codeBrowserWorkspaceRuntime.ts` :
+  - detection d'entree `src/main.tsx|jsx|ts|js` et fallback synthetique `App.tsx` ;
+  - normalisation de chemins VFS et resolution d'imports locaux extensionless ;
+  - generation d'un document iframe autonome avec import-map React/lucide/framer/three/vue/svelte ;
+  - worker `esbuild-wasm` (`esm/browser`) qui bundle TS/TSX/JSX/CSS/JSON/SVG depuis la VFS ;
+  - bridge runtime iframe vers parent : `console`, `error`, `perf`, source `aurora-code-runtime`.
+- `src/components/CodeProjectPreview.tsx` :
+  - preview web et `buildLivePreviewHtml` savent maintenant utiliser le runtime workspace quand aucun HTML statique n'est present.
+- `src/services/codeLivePreviewPolicy.ts` et `src/views/codeViewPreviewPanel.tsx` :
+  - fin du gel global pendant generation ;
+  - pause live seulement si generation + projet WebGL/lourd ou taille > 150 KB.
+- `src/components/CodeMirrorViewer.tsx` :
+  - editeur read-only CodeMirror 6 ;
+  - fallback virtualise `react-window` pour tres gros fichiers.
+- `src/views/codeViewWorkspaceAtelier.tsx` et `codeViewDeliveryPanel.tsx` :
+  - atelier dockable gauche/bas/masque ;
+  - panneaux arborescence virtualisee, fichier, preview, logs, erreurs, perf, simulations, etats internes ;
+  - la vue Code principale utilise CodeMirror.
+- Dependances ajoutees :
+  - `esbuild-wasm`, `@codemirror/state`, `@codemirror/view`, `@codemirror/lang-javascript`, `@codemirror/lang-html`, `@codemirror/lang-css`, `react-window`.
+
+### Avant / apres mesurable
+
+- Avant : un projet React multi-fichiers sans `index.html` n'etait pas executable dans l'iframe statique.
+- Apres : un workspace `src/main.tsx` + `src/App.tsx` + CSS est compile en navigateur et execute sans dev-server.
+- Avant : la preview live affichait le placeholder pendant toute generation.
+- Apres : elle reste vivante pour projets legers et ne se met en pause que pour les projets lourds/WebGL.
+- Avant : pas de panneau centralisant logs, erreurs, perf, simulations et etats internes.
+- Apres : l'atelier expose ces panneaux sans remplacer le viewer compact.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeBrowserWorkspaceRuntime.test.ts` : 5 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 663 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- Preuve runtime reelle : HTML genere dans `output/ws11_browser_runtime/index.html`, servi sur `http://127.0.0.1:4179`, audite via `visual_render_audit.py`.
+  - viewports `390x844`, `834x1112`, `1440x900` ;
+  - `headingCount=1`, `mediaCount=1`, `textNodeCount=5`, `bodyTextLength=69` ;
+  - `consoleErrors=[]`, `exceptions=[]`, `failedRequests=[]` ;
+  - contrastes pixel : H1 a `17.1`, paragraphe a `10.43`.
+- `wc -l` : nouveaux fichiers sous 600 lignes (`codeBrowserWorkspaceRuntime.ts` 390, `CodeMirrorViewer.tsx` 204, `codeViewWorkspaceAtelier.tsx` 349).
+
+### Etat de satisfaction chantier
+
+WS11 a maintenant un socle fonctionnel : viewer compact conserve, runtime applicatif navigateur prouve, preview non gelee pour projets legers, atelier multi-panneaux et editeur CodeMirror/virtualisation. Restent a poursuivre dans WS12 le branchement du panneau simulations sur le labo multi-environnements reel, et a reduire progressivement la divergence historique avec les vues AuroraV1.

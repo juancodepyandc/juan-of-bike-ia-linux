@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { Monitor, Smartphone, Tablet } from 'lucide-react'
 import { parsePartialStreamFiles, buildLivePreviewHtml, webProjectFromFiles } from '../components/CodeProjectPreview'
+import { LIVE_PREVIEW_TOTAL_CAP_BYTES, shouldPauseLivePreviewDuringGeneration } from '../services/codeLivePreviewPolicy'
 import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent'
 import type { CodeFile } from '../services/codeOrchestrator'
 import { isHeavyWebGLProject } from './codeViewPreviewHeuristics'
@@ -31,7 +32,7 @@ const BIG_VIEWPORT_SPEC: Record<BigViewport, {
 // Total bytes cap: beyond this, the preview recompute on every token is too
 // expensive (split + regex + blob + iframe reload). We freeze the preview
 // until generation finishes.
-const LIVE_PREVIEW_TOTAL_CAP = 150_000
+const LIVE_PREVIEW_TOTAL_CAP = LIVE_PREVIEW_TOTAL_CAP_BYTES
 
 export function BigLivePreviewFrame({
   files,
@@ -96,20 +97,12 @@ export function BigLivePreviewFrame({
     [effectiveFiles],
   )
   const isHeavy = useMemo(() => isHeavyWebGLProject(effectiveFiles), [effectiveFiles])
-  // v77n FIX UI FREEZE: pendant TOUTE generation, skip la live preview iframe.
-  // Avant: la preview iframe se reconstruisait toutes les 600ms (debouncedStream
-  // change), avec parsePartialStreamFiles + buildLivePreviewHtml + iframe srcdoc
-  // de 50K+ chars. Sur un projet brand_landing avec shader/particles, ces
-  // operations bloquaient le main thread JS pendant >5s, ce qui declenchait le
-  // dialog Chrome 'Page ne repond pas — Attendre / Quitter'. L user n a aucun
-  // feedback que ca avance.
-  // Apres: la preview est PAUSEE pendant toute la generation. L user voit le
-  // code en direct via l onglet Code (qui reste leger — un <pre> avec stream
-  // text capped a 10K). La preview iframe arrive d un coup a la fin, ce qui
-  // est plus snappy et plus surement memory-safe. Les anciens checks heavy/
-  // total_cap sont conserves comme fallback pour les rares cas ou l user a
-  // active manuellement le mode temps-reel (futur toggle).
-  const shouldSkipLivePreview = isGenerating
+  const shouldSkipLivePreview = shouldPauseLivePreviewDuringGeneration({
+    isGenerating,
+    totalBytes,
+    isHeavy,
+    byteCap: LIVE_PREVIEW_TOTAL_CAP,
+  })
 
   const canRender = !shouldSkipLivePreview && webProjectFromFiles(effectiveFiles)
   const html = useMemo(

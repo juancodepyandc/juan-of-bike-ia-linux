@@ -525,6 +525,17 @@
 - **Validation** : tests cibles WS9/planification 18 verts / 0 echec ; `python3 -m py_compile bridge_server.py python-services/aurora_code/visual_render_audit.py` vert ; `node --check python-services/aurora_code/cdp_drive.mjs` vert ; audit reel bridge sur `http://localhost:1420` vert avec screenshots 390/834/1440 et 24 contrastes pixel par viewport ; glob Code a **658 tests verts / 0 echec** ; `npm run build` vert.
 - **WS9 statut** : le score visuel n'est plus source-only dans le chemin app principal. Reste une campagne de calibration sur generations longues avec vision active.
 
+### 2026-07-16 — Vague 5 / WS11 increment 63 applique
+
+- **Runtime navigateur in-browser** : ajout de `codeBrowserWorkspaceRuntime.ts`, qui detecte `src/main.tsx|jsx|ts|js` ou synthetise une entree `App.tsx`, construit une VFS et compile TS/TSX/JSX/CSS/JSON/SVG dans un worker `esbuild-wasm` via import-map.
+- **Preview non gelee** : `BigLivePreviewFrame` ne pause plus toute generation ; la pause ne s'applique que si generation + projet lourd/WebGL ou taille > 150 KB.
+- **Viewer compact conserve** : `BigLivePreviewFrame` reste le viewer principal ; l'enrichissement passe par le runtime HTML et un atelier ajoute.
+- **Atelier dockable** : ajout de `codeViewWorkspaceAtelier.tsx` avec panneaux arborescence virtualisee, fichier, preview, logs, erreurs, performances, simulations et etats internes.
+- **Editeur moderne** : ajout de `CodeMirrorViewer.tsx` (CodeMirror 6) avec fallback `react-window` pour fichiers tres volumineux.
+- **Viewer 3D preserve** : les fichiers touches restent dans le Module Code ; test statique verifie l'absence de reference aux vues 3D dans l'atelier/livraison.
+- **Validation** : test WS11 5 verts / 0 echec ; glob Code a **663 tests verts / 0 echec** ; `npm run build` vert ; preuve CDP reelle sur `http://127.0.0.1:4179` avec `headingCount=1`, `mediaCount=1`, `consoleErrors=[]`, `exceptions=[]`, `failedRequests=[]` aux viewports 390/834/1440.
+- **WS11 statut** : le socle viewer/runtime est applique. Restent l'integration WS12 du panneau simulations avec un labo multi-environnements reel et la convergence progressive des vues historiques AuroraV1.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
