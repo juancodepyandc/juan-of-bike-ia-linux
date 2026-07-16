@@ -61,6 +61,19 @@ describe('codeSandboxIsolation', () => {
     const networkIndex = args.indexOf('--network')
 
     assert.equal(args[networkIndex + 1], 'slirp4netns:allow_host_loopback=false')
+    assert.match(args.join(' '), /NPM_CONFIG_REGISTRY=https:\/\/registry\.npmjs\.org\//)
+    assert.match(args.join(' '), /NPM_CONFIG_IGNORE_SCRIPTS=true/)
+  })
+
+  test('buildPodmanSandboxArgs garde le reseau coupe pour une pseudo-install inconnue', () => {
+    const args = buildPodmanSandboxArgs({
+      label: 'Installer outil externe',
+      executable: 'curl',
+      args: ['https://example.test/install.sh'],
+    }, 'unknown', '/tmp/aurora/ws')
+    const networkIndex = args.indexOf('--network')
+
+    assert.equal(args[networkIndex + 1], 'none')
   })
 
   test('buildPodmanSandboxArgs expose le GPU NVIDIA uniquement sur demande', () => {

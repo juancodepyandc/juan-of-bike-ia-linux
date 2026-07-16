@@ -340,6 +340,14 @@
 - **Validation** : tests GPU/isolation/probes/GC/sandbox cibles 38 verts / 0 echec ; glob Code a **551 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS7 reste ouvert** : GPU policy livree ; restent la limitation disque totale workspace, l'egress strictement limite aux registres, et l'execution runtime effective sur hote equipe Podman+nvidia-container-toolkit.
 
+### 2026-07-15 — Vague 2 / WS7 increment 41 applique
+
+- **Egress durci par politique explicite** : `codeSandboxNetworkPolicy.ts` remplace la regex large `install|restore` par une allowlist de package managers reconnus ; le reseau Podman reste `none` par defaut.
+- **Registres fixes** : npm/PyPI/crates.io/Go proxy/pub.dev/NuGet/Hex/RubyGems/Maven injectent des variables d'environnement de registre/proxy ; npm desactive audit/fund et les lifecycle scripts dans le sandbox.
+- **Pseudo-installs bloquees** : une commande inconnue contenant `install` (`curl .../install.sh`, `wget`, script arbitraire) ne gagne plus de reseau par simple libelle.
+- **Validation** : tests reseau/isolation/GPU/probes/GC/sandbox cibles 44 verts / 0 echec ; glob Code a **557 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS7 reste ouvert** : cette couche livre une allowlist au niveau commande/env et coupe le host loopback, mais ne prouve pas encore un filtrage domaine paquet par paquet ; restent la limitation disque totale workspace et l'execution runtime effective sur hote equipe Podman.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

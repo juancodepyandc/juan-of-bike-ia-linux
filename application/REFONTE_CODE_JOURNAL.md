@@ -1824,3 +1824,51 @@ Pour cet increment WS7, les preuves d'isolation sont maintenant dans le chemin d
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, les projets GPU ne peuvent plus passer par le harnais comme des projets CPU ordinaires. La vraie preuve runtime reste dependante d'un hote equipe de Podman rootless et du NVIDIA Container Toolkit/CDI ; le disque total et l'egress registry-only restent ouverts.
+
+## 2026-07-15 — Vague 2 / WS7 increment 41 — Egress coupe par defaut et registres allowlistes
+
+### Reprise et diagnostic confirme
+
+- WS7 impose `egress coupe sauf registres`.
+- L'increment 37 avait un choix trop large : tout texte de commande contenant `install`, `requirements`, `deps.get`, `pub get` ou `restore` obtenait `slirp4netns:allow_host_loopback=false`.
+- Cette regex pouvait donc donner un acces reseau a une pseudo-install inconnue (`curl https://.../install.sh`) alors que WS7 demande un comportement non gameable.
+
+### Recherches et choix techniques
+
+- Pas de nouvelle recherche web necessaire pour cet increment : les sources officielles Podman deja consultees documentaient le mode `slirp4netns:allow_host_loopback=false`, et le besoin restant etait la politique applicative au-dessus de Podman.
+- Choix retenu : reseau `none` par defaut, ouverture seulement pour des executables de package managers connus et des sous-commandes attendues.
+- Choix de securite : injecter les registres/proxys par variables d'environnement pour rendre l'intention testable et eviter qu'un libelle contenant `install` suffise a ouvrir le reseau.
+- Limite volontairement documentee : ce n'est pas encore un pare-feu domaine/IP au niveau paquet ; c'est une allowlist de commandes avec registres imposes, a prouver plus finement quand Podman sera disponible.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeSandboxNetworkPolicy.ts` :
+  - `buildSandboxNetworkPolicy` ;
+  - `podmanEnvArgs` ;
+  - politique `network:none` par defaut.
+- Package managers reconnus avec reseau registre :
+  - npm/pnpm/yarn `install` ou `ci` vers `https://registry.npmjs.org/`, audit/fund/scripts desactives ;
+  - pip/Python `pip install` vers `https://pypi.org/simple` avec prompts desactives ;
+  - cargo `check`/`fetch`/`build`/`test` via index crates.io sparse ;
+  - go `test`/`build`/`mod download` via `https://proxy.golang.org` et `sum.golang.org` ;
+  - dart `pub get`, dotnet `restore`, mix `deps.get`, bundle `install`, mvn/gradle/gradlew.
+- `buildPodmanSandboxArgs` consomme maintenant cette politique et ajoute les `--env` correspondants.
+- Ajout de `src/__tests__/codeSandboxNetworkPolicy.test.ts` et extension de `codeSandboxIsolation.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : une regex ouvrait le reseau a toute commande ressemblant a une installation.
+- Apres : une commande inconnue contenant `install` reste en `--network none`.
+- Avant : l'ouverture reseau n'exprimait pas le registre attendu.
+- Apres : la commande Podman porte explicitement les registres/proxys attendus et garde `allow_host_loopback=false`.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxNetworkPolicy.test.ts src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxGpu.test.ts src/__tests__/codeSandboxIsolationProbes.test.ts src/__tests__/codeSandboxGc.test.ts src/__tests__/codeSandboxModules.test.ts` : 44 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 557 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, le harnais ne peut plus ouvrir le reseau sur simple occurrence textuelle de `install`. WS7 reste ouvert sur deux preuves dures : quota disque total du workspace et execution runtime effective sur hote equipe Podman. Le filtrage domaine paquet par paquet reste egalement a traiter si l'on veut aller au-dela de l'allowlist commande/env actuelle.

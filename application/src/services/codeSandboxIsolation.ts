@@ -1,6 +1,7 @@
 import { runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeSandboxStepResult, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
 import { buildPodmanGpuArgs } from './codeSandboxGpu.ts'
+import { buildSandboxNetworkPolicy, podmanEnvArgs } from './codeSandboxNetworkPolicy.ts'
 
 export type SandboxIsolationStatus = {
   ok: boolean
@@ -124,6 +125,7 @@ export function buildSandboxIsolationStep(status: SandboxIsolationStatus): CodeS
       `cgroup=${status.cgroupVersion ?? 'inconnu'}`,
       status.reason,
       `quotas=memory:${DEFAULT_SANDBOX_QUOTAS.memory},cpus:${DEFAULT_SANDBOX_QUOTAS.cpus},pids:${DEFAULT_SANDBOX_QUOTAS.pidsLimit},fsize:${DEFAULT_SANDBOX_QUOTAS.fileSizeBlocks},tmpfs:${DEFAULT_SANDBOX_QUOTAS.tmpfsSize}`,
+      'egress=none sauf commandes de registre reconnues; host_loopback=false',
     ].join('\n'),
   }
 }
@@ -137,14 +139,6 @@ function safeContainerName(sandboxRoot: string): string {
   return `aurora-code-${suffix || Date.now()}`
 }
 
-function networkModeForCommand(command: ValidationCommand): string {
-  const text = `${command.label} ${command.executable} ${command.args.join(' ')}`
-  if (/install|installer|requirements|deps\.get|pub\s+get|restore/i.test(text)) {
-    return 'slirp4netns:allow_host_loopback=false'
-  }
-  return 'none'
-}
-
 function containerExecutable(executable: string): string {
   return executable.replace(/\.cmd$/i, '').replace(/\.exe$/i, '')
 }
@@ -156,6 +150,7 @@ export function buildPodmanSandboxArgs(
   quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
   options: PodmanSandboxOptions = {},
 ): string[] {
+  const networkPolicy = buildSandboxNetworkPolicy(command)
   return [
     'run',
     '--rm',
@@ -163,7 +158,8 @@ export function buildPodmanSandboxArgs(
     '--name',
     safeContainerName(sandboxRoot),
     '--network',
-    networkModeForCommand(command),
+    networkPolicy.podmanNetwork,
+    ...podmanEnvArgs(networkPolicy),
     '--userns',
     'keep-id',
     '--security-opt',
