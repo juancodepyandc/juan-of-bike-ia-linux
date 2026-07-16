@@ -381,6 +381,14 @@
 - **Validation** : tests cibles stream 17 verts / 0 echec ; glob Code a **574 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS3 reste ouvert** : route stream bridge, consommation directe SSE/NDJSON par l'UI et executeur fichier-par-fichier restent a livrer.
 
+### 2026-07-15 — Vague 3 / WS3 increment 46 applique
+
+- **File d'execution architecte** : `codeGenerationQueue.ts` derive une queue ordonnee depuis `generationOrder[]` puis `files[]`, conserve required/optional, imports/exports/notes et signale les chemins d'ordre absents.
+- **Prompt Codeur contractualise** : `runGenerationPhase` injecte maintenant un manifeste `FILE-BY-FILE EXECUTION MANIFEST — WS3` en plus du plan JSON, afin de preparer le futur executeur `write_file/read_file/apply_patch/run_command`.
+- **Limite explicite** : la generation reste un appel LLM stream unique ; cet increment fournit la file machine stable, pas encore l'execution outil-par-outil.
+- **Validation** : tests cibles plan/queue/phases 12 verts / 0 echec ; glob Code a **577 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS3 reste ouvert** : consommer cette queue par un executor reel, emettre `file.written` par fichier et brancher `/api/code/*` restent a livrer.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

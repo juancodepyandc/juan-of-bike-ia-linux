@@ -22,6 +22,10 @@ import {
   selectBestArchitecturePlan,
 } from './codeArchitecturePlanSelection.ts'
 import {
+  buildGenerationQueueFromArchitecturePlan,
+  formatGenerationQueueForPrompt,
+} from './codeGenerationQueue.ts'
+import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CODE_EXPERT_OUTPUT_TOKENS,
   CODE_PLANNING_CONTEXT_TOKENS,
@@ -204,12 +208,14 @@ export async function runGenerationPhase(
     const cappedPlan = architecturePlan.length > 7000
       ? `${architecturePlan.slice(0, 7000)}\n...[plan tronque]`
       : architecturePlan
+    const generationQueue = buildGenerationQueueFromArchitecturePlan(architecturePlan)
     messages.push({
       role: 'system',
       content: [
         '## PLAN D IMPLEMENTATION DETAILLE (cree par l architecte — SUIS-LE STRICTEMENT)',
         '',
         cappedPlan,
+        generationQueue ? ['', formatGenerationQueueForPrompt(generationQueue)] : '',
         '',
         'INSTRUCTIONS:',
         '- Genere TOUS les fichiers listes dans le plan, dans l ordre indique',

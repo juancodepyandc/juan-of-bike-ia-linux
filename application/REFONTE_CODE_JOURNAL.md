@@ -2058,3 +2058,45 @@ Pour cet increment WS3, non, WS3 n'est pas termine : c'est une marche de securis
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est toujours pas termine : le contrat stream est maintenant explicite et teste, mais l'ancien chemin direct reste actif tant que le bridge `/api/code/*` et l'executeur fichier-par-fichier ne sont pas branches.
+
+## 2026-07-15 — Vague 3 / WS3 increment 46 — File d'execution depuis le plan architecte
+
+### Reprise et diagnostic confirme
+
+- `runGenerationPhase` restait un mono-appel LLM stream.
+- Le plan architecte JSON contenait deja `files[]` et `generationOrder[]`, mais ces champs servaient surtout de contexte textuel.
+- Pour passer vers un moteur planner-executor, il faut une file machine stable avant de brancher les outils d'ecriture.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : la source de verite est le plan JSON local valide par `codeArchitecturePlan.ts`.
+- Choix retenu : deriver une queue deterministic depuis `generationOrder[]`, puis completer avec les fichiers non ordonnes de `files[]`.
+- Raison technique : l'ordre explicite de l'architecte doit piloter le futur executor, mais on ne doit pas perdre un fichier requis oublie dans `generationOrder[]`.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeGenerationQueue.ts` :
+  - `buildGenerationQueueFromArchitecturePlan` parse le plan valide ;
+  - deduplique les chemins avec normalisation `./` et séparateurs Windows ;
+  - preserve `required`, role, language, imports, exports, notes ;
+  - signale les chemins de `generationOrder[]` absents de `files[]`.
+- `codePipelinePhases.ts` :
+  - injecte `formatGenerationQueueForPrompt(queue)` dans le contexte systeme du Codeur ;
+  - conserve le plan JSON complet/tronque existant pour compatibilite.
+- Ajout de `src/__tests__/codeGenerationQueue.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : le Codeur recevait le plan comme un bloc JSON, sans file compacte directement exploitable par un executor.
+- Apres : chaque generation avec plan valide reçoit un manifeste ordonne `FILE-BY-FILE EXECUTION MANIFEST — WS3`, pret a etre consomme par le futur moteur outil-par-outil.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationQueue.test.ts src/__tests__/codePipelinePhases.test.ts src/__tests__/codeArchitecturePlan.test.ts src/__tests__/codeArchitecturePlanContract.test.ts` : 12 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 577 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : le moteur n'execute pas encore la queue fichier par fichier. Mais la donnee de pilotage est maintenant construite, testee et branchee au chemin de generation actif.
