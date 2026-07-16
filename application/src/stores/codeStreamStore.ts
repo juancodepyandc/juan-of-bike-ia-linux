@@ -17,6 +17,7 @@ import { speakAs, stopSpeaking, clearSpeakQueue } from '../services/auroraVoice'
 import { useModuleHistoryStore } from './moduleHistoryStore'
 import { narrate, readNarrateVoice, writeNarrateVoice } from './codeStreamNarration.ts'
 import { checkCodeBridgeReady, checkCodeModelInstalled } from './codeStreamPreflight.ts'
+import { runCodeBridgeStreamTurn } from './codeStreamRemoteTurn.ts'
 import { captureSessionSnapshot, emptySessionSnapshot } from './codeStreamSessions.ts'
 import { computeEta, phaseFromDetail, summariseDelivery } from './codeStreamProgress.ts'
 import { isCorrectionRequest, routeCodeStreamModel } from './codeStreamRouting.ts'
@@ -411,10 +412,16 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     }
 
     try {
+      const bridgePrompt = isCorrection ? `${text}\n\n## INSTRUCTION — CORRECTION CIBLÉE\nC'est une CORRECTION, pas un ajout. Modifie UNIQUEMENT ce qui est nécessaire pour régler le problème décrit.` : text
+      const bridgeStreamHandled = await runCodeBridgeStreamTurn({
+        prompt: bridgePrompt, model, signal: ctrl.signal, workMode: get().workMode, isCorrection,
+        priorMessagesCount: priorMessages.length, existingFilesCount: existingFiles.length,
+        isCurrent: () => abortCtrl === ctrl, get, set, applyNarration,
+      })
+      if (bridgeStreamHandled) return
+
       const result = await orchestrateCodeGeneration({
         prompt: text,
-        // v85f : frame corrections as surgical fixes so the model doesn't
-        // rewrite/add features when the user only asked to repair something.
         enrichedPrompt: isCorrection
           ? `${text}\n\n## INSTRUCTION — CORRECTION CIBLÉE\nC'est une CORRECTION, pas un ajout. Modifie UNIQUEMENT ce qui est nécessaire pour régler le problème décrit. Ne réécris pas les fichiers qui marchent, n'ajoute AUCUNE fonctionnalité non demandée, préserve tout le reste à l'identique (structure, style, contenu). Si le souci est un écran noir / une erreur runtime, corrige la cause (CSS manquant, JS cassé, import erroné, chemin relatif) et garde le projet exécutable.`
           : text,

@@ -429,6 +429,14 @@
 - **Validation** : `python3 -m py_compile bridge_server.py` vert ; tests cibles stream/agentique 6 verts / 0 echec ; glob Code a **595 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS3 reste ouvert** : faire consommer cette route par l'UI ou remplacer la route transitoire par le moteur agentique TS expose, puis prouver la generation >40 fichiers buildable.
 
+### 2026-07-15 — Vague 3 / WS3 increment 52 applique
+
+- **Consommation UI/store** : `codeStreamStore` consomme maintenant `POST /api/code/generate/stream` pour les generations neuves online ; corrections, repos et suites de conversation restent sur l'orchestrateur TS local pour preserver la parite.
+- **Client NDJSON testable** : ajout de `codeBridgeStreamClient` pour lire les chunks, parser chaque ligne avec `aurora.code.stream/1`, rejeter les lignes non conformes et relayer les evenements types.
+- **Adaptateur state** : ajout de `codeStreamRemoteState` / `codeStreamRemoteTurn` pour appliquer `phase`, `file.written`, `test.result`, `visual.score`, `correction`, `done`, `error` au store sans alourdir `CodeView` ni casser le viewer compact.
+- **Validation** : tests cibles stream/store 23 verts / 0 echec ; glob Code a **601 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; controle elargi `npm test` tente et bloque sur 1 echec Cowork/bridge 502 hors fichiers modifies ; `codeStreamStore.ts` reste a 591 lignes.
+- **WS3 reste ouvert** : brancher le runner WS7 pour `run_command` et produire la preuve reelle d'un projet >40 fichiers coherent/buildable, idealement avec le flux UI actif.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

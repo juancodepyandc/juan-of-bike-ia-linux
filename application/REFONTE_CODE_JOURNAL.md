@@ -2314,3 +2314,52 @@ Pour cet increment WS3, non, WS3 n'est pas termine : le chemin applicatif prefer
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : le contrat HTTP stream existe, mais l'UI ne le consomme pas encore et la preuve >40 fichiers buildable reste a produire.
+
+## 2026-07-15 — Vague 3 / WS3 increment 52 — Consommation UI/store du flux `/api/code/*`
+
+### Reprise et diagnostic confirme
+
+- `codeStreamStore` fabriquait deja un journal d'evenements local, mais n'appelait pas encore la route `/api/code/generate/stream`.
+- `CodeView.tsx`, `codeStreamStore.ts` et `codeOrchestrator.ts` sont proches du seuil dur 600 lignes ; le branchement doit donc passer par des modules courts.
+- Les corrections, repos et follow-ups dependent du contexte riche TS existant ; les basculer brutalement sur la route bridge transitoire appauvrirait le chemin applicatif.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment s'appuie sur le schema local `aurora.code.stream/1`, `getBridgeUrl` et le runner Node natif.
+- Choix retenu : client NDJSON strict + adaptateur d'etat pur + micro-branchement dans `codeStreamStore`.
+- Raison technique : l'UI consomme enfin un vrai flux `/api/code/*`, tout en conservant le fallback local si la route HTTP est indisponible avant le premier evenement.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeBridgeStreamClient.ts` :
+  - POST vers `/api/code/generate/stream` ;
+  - lecture chunk par chunk du NDJSON ;
+  - validation de chaque ligne via `parseCodeStreamEventLine`.
+- Ajout de `src/stores/codeStreamRemoteState.ts` :
+  - transformation pure des evenements `phase`, `file.written`, `test.result`, `visual.score`, `correction`, `done`, `error` vers le state UI.
+- Ajout de `src/stores/codeStreamRemoteTurn.ts` :
+  - activation par defaut pour une generation neuve online ;
+  - exclusion par defaut des corrections, repos et suites de conversation ;
+  - fallback local si la route echoue avant tout evenement.
+- `src/stores/codeStreamStore.ts` :
+  - appelle `runCodeBridgeStreamTurn` avant l'orchestrateur local ;
+  - garde l'ancien chemin agentique TS quand le flux bridge n'est pas applicable.
+- Ajout de tests `codeBridgeStreamClient.test.ts` et `codeStreamRemoteState.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : l'UI exposait un journal d'evenements simule par callbacks internes, sans consommer `/api/code/*`.
+- Apres : une generation neuve online passe par le flux NDJSON bridge et met a jour fichiers, phase, score, notes et erreurs via evenements types.
+- Limite assumee : la route bridge reste transitoire et ne couvre pas encore le runner WS7 `run_command`; le moteur TS agentique reste le chemin riche pour les cas contextuels.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeBridgeStreamClient.test.ts src/__tests__/codeStreamRemoteState.test.ts src/__tests__/codeStreamEvents.test.ts src/__tests__/codeStreamStoreModules.test.ts` : 23 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 601 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `npm test` complet : 4438 pass / 1 fail ; echec hors perimetre Module Code dans `src/__tests__/coworkExtract.test.ts` (`POST /api/cowork/extract-structured` retourne bridge 502).
+- Controle taille : `codeStreamStore.ts` 591 lignes ; `CodeView.tsx` et le Viewer 3D restent intouches.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : l'UI consomme maintenant la route stream, mais il reste le runner WS7 pour `run_command` et la demonstration >40 fichiers coherent/buildable.
