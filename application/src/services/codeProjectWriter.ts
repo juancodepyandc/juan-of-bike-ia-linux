@@ -132,6 +132,28 @@ export async function writeProjectTreeToDirectory(
   }
 }
 
+/**
+ * Ecrit une liste plate de fichiers (name/content, encoding optionnel) dans un
+ * dossier reel via l API fs Tauri, en s appuyant sur le ProjectTree (dossiers
+ * imbriques a n niveaux, dedup, et surtout ecriture BINAIRE correcte pour les
+ * fichiers base64 — la sauvegarde manuelle ecrivait tout en texte). Point
+ * d entree utilise par la sauvegarde "Workspace" du module Code.
+ */
+export async function writeCodeFilesToDirectory(
+  files: Array<{ name: string; content: string; encoding?: CodeProjectFileEncoding }>,
+  rootPath: string,
+  fs: CodeProjectFs = tauriProjectFs,
+): Promise<WriteProjectTreeResult> {
+  const tree = buildProjectTree(
+    files.map((file): ProjectTreeInputFile => ({
+      name: file.name,
+      content: file.content,
+      encoding: file.encoding,
+    })),
+  )
+  return writeProjectTreeToDirectory(tree, rootPath, fs)
+}
+
 export async function readProjectTreeFromDirectory(
   template: ProjectTree,
   rootPath: string,

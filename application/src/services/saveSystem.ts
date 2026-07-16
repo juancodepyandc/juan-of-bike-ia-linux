@@ -267,18 +267,13 @@ export async function saveToWorkspace(request: SaveRequest): Promise<SaveResult>
     await fsMkdir(saveDir)
 
     if (codeFiles && codeFiles.length > 0) {
-      // Code module: write each project file individually into a project/ subdirectory
+      // Code module: ecriture du projet via le writer WS2 (dossiers imbriques a n
+      // niveaux, dedup, et ecriture BINAIRE correcte des fichiers base64 —
+      // l ancienne boucle manuelle ecrivait tout en fsWriteText, corrompant les
+      // assets binaires).
       const projectDir = `${saveDir}/project`
-      await fsMkdir(projectDir)
-      for (const file of codeFiles) {
-        // Handle nested paths (e.g. src/index.ts)
-        const filePath = `${projectDir}/${file.name}`
-        const parentDir = filePath.substring(0, filePath.lastIndexOf('/'))
-        if (parentDir !== projectDir) {
-          await fsMkdir(parentDir)
-        }
-        await fsWriteText(filePath, file.content)
-      }
+      const { writeCodeFilesToDirectory } = await import('./codeProjectWriter.ts')
+      await writeCodeFilesToDirectory(codeFiles, projectDir)
     } else {
       // Single file output (image, video, 3D, etc.)
       const ext = request.sourcePath.split('.').pop() ?? 'bin'

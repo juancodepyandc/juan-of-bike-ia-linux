@@ -5,6 +5,7 @@ import {
   encodeBytesToBase64,
   joinProjectRoot,
   roundTripProjectTreeOnFs,
+  writeCodeFilesToDirectory,
   type CodeProjectFs,
 } from '../services/codeProjectWriter.ts'
 import { parseProjectTreeEmission, serializeProjectTreeEmission } from '../services/codeProjectEmission.ts'
@@ -83,5 +84,27 @@ describe('codeProjectWriter — round-trip filesystem', () => {
   test('joint les chemins sous la racine sans perdre le dossier recovered', () => {
     assert.equal(joinProjectRoot('/tmp/root/', 'recovered/secret.ts'), '/tmp/root/recovered/secret.ts')
     assert.equal(joinProjectRoot('/tmp/root', '/src/App.tsx'), '/tmp/root/src/App.tsx')
+  })
+
+  test('writeCodeFilesToDirectory: nesting a n niveaux + ecriture binaire (backing de la sauvegarde Workspace)', async () => {
+    const bytes = [10, 20, 30, 200]
+    const fs = createMemoryFs()
+    const result = await writeCodeFilesToDirectory(
+      [
+        { name: 'src/deep/nested/App.tsx', content: 'export const App = () => null' },
+        { name: 'public/logo.png', content: encodeBytesToBase64(bytes), encoding: 'base64' },
+        { name: 'README.md', content: '# Projet' },
+      ],
+      '/tmp/proj',
+      fs,
+    )
+
+    assert.equal(result.files.length, 3)
+    // nesting multi-niveaux cree (l ancienne boucle manuelle ne gerait qu un niveau)
+    assert.equal(fs.dirs.has('/tmp/proj/src/deep/nested'), true)
+    assert.equal(fs.text.get('/tmp/proj/src/deep/nested/App.tsx'), 'export const App = () => null')
+    // fichier base64 ecrit en BINAIRE (l ancienne boucle l aurait corrompu en texte)
+    assert.deepEqual(fs.binary.get('/tmp/proj/public/logo.png'), bytes)
+    assert.equal(fs.text.has('/tmp/proj/public/logo.png'), false)
   })
 })
