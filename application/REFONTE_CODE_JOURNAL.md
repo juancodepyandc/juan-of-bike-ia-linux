@@ -2183,3 +2183,46 @@ Pour cet increment WS3, non, WS3 n'est pas termine : les outils VFS sont prets, 
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est toujours pas termine : la boucle executor existe et est testee, mais la production d'actions n'est pas encore assuree par le LLM fichier-par-fichier ni exposee par le bridge stream `/api/code/*`.
+
+## 2026-07-15 — Vague 3 / WS3 increment 49 — Producteur LLM d'actions outil
+
+### Reprise et diagnostic confirme
+
+- L'executor WS3 consomme deja des actions outil, mais le producteur restait simule par les tests.
+- Le protocole `AURORA_CODE_VFS/1` livre des fichiers complets ; il ne suffit pas pour une boucle `read_file/write_file/apply_patch/run_command`.
+- Pour brancher le LLM sans recreer un blob global, il faut un protocole d'actions distinct et un contexte cible par item de queue.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : l'increment s'appuie sur les contrats internes WS2/WS3 et sur `resilientOllamaChat` deja present.
+- Choix retenu : `AURORA_CODE_ACTIONS/1` + JSON strict `actions[]`, parse defensif et client LLM injectable.
+- Raison technique : le parseur strict empeche de melanger narration, markdown et actions executables ; l'injection du client rend la chaine testable sans charger Ollama.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeGenerationActionProtocol.ts` :
+  - constante `AURORA_CODE_ACTIONS/1` ;
+  - `parseCodeGenerationActions` avec stripping `<think>`/fences ;
+  - validation des actions `write_file`, `read_file`, `apply_patch`, `run_command` ;
+  - `buildCodeGenerationActionInstructions` specialise par item de queue.
+- Ajout de `src/services/codeGenerationActionProducer.ts` :
+  - `buildCodeGenerationActionMessages` pour le contexte cible ;
+  - selection des fichiers pertinents au lieu d'envoyer tout le projet ;
+  - `createCodeGenerationLLMActionProducer` branche sur client injecte ou `resilientOllamaChat`.
+- Ajout de `src/__tests__/codeGenerationActionProtocol.test.ts` et `src/__tests__/codeGenerationActionProducer.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : l'executor pouvait appliquer des actions, mais aucune sortie LLM structuree ne produisait ces actions.
+- Apres : un client LLM peut etre branche fichier par fichier et ses reponses sont transformees en actions VFS typées, rejetées si le protocole est absent ou invalide.
+- Limite assumee : ce producteur n'est pas encore utilise par `runGenerationPhase` et aucun endpoint `/api/code/*` ne stream encore cette boucle.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeGenerationActionProtocol.test.ts src/__tests__/codeGenerationActionProducer.test.ts src/__tests__/codeGenerationExecutor.test.ts src/__tests__/codeGenerationTools.test.ts` : 16 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 593 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : la production d'actions LLM est testable, mais elle doit encore remplacer le mono-appel de generation dans le chemin applicatif, puis etre exposee en stream bridge `/api/code/*`.

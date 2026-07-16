@@ -405,6 +405,14 @@
 - **Validation** : tests cibles executor/outils/queue/stream 15 verts / 0 echec ; glob Code a **585 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS3 reste ouvert** : le producteur d'actions doit maintenant etre branche au LLM fichier-par-fichier, puis expose via `/api/code/*` NDJSON/SSE et consomme directement par l'UI.
 
+### 2026-07-15 — Vague 3 / WS3 increment 49 applique
+
+- **Protocole d'actions LLM** : `codeGenerationActionProtocol.ts` introduit `AURORA_CODE_ACTIONS/1`, parse un JSON strict `actions[]`, retire `<think>`/fences et rejette les sorties hors protocole.
+- **Producteur LLM injectable** : `codeGenerationActionProducer.ts` construit un contexte cible par fichier (prompt, plan, fenetre de queue, fichiers pertinents), appelle un client LLM injectable ou `resilientOllamaChat`, puis renvoie des actions typées a l'executor.
+- **Contexte non global** : seuls le fichier cible, `package.json`/configs et imports proches sont envoyes, ce qui prepare la generation fichier-par-fichier sans regonfler un blob projet complet.
+- **Validation** : tests cibles protocole/producteur/executor/outils 16 verts / 0 echec ; glob Code a **593 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS3 reste ouvert** : brancher cette boucle au chemin `runGenerationPhase`, exposer le stream `/api/code/*`, puis prouver une generation >40 fichiers buildable.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE
