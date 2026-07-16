@@ -43,9 +43,10 @@ describe('codePipelinePhases', () => {
     assert.equal(isArchitecturePlanUsable(null), false)
   })
 
-  test('runIntentPhase route par le classifieur deterministe et emet la phase', () => {
+  test('runIntentPhase retombe sur le classifieur deterministe sans modele et emet la phase', async () => {
     const phases: Array<[string, number]> = []
-    const intent = runIntentPhase('cree une page HTML vitrine responsive', (detail, progress) => {
+    // Sans configuredCodeModel, aucun appel LLM: repli deterministe garanti.
+    const intent = await runIntentPhase('cree une page HTML vitrine responsive', (detail, progress) => {
       phases.push([detail, progress])
     })
 

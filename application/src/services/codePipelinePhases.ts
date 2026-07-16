@@ -7,6 +7,7 @@ import {
 } from './codeIntent.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
 import { buildArchitecteSystemPrompt } from './codeSystemPrompts.ts'
+import { buildProjectGeneratorPromptBlock } from './codeProjectGeneratorRegistry.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import { withTimeout } from './llmTimebox.ts'
 import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
@@ -28,14 +29,54 @@ export function isArchitecturePlanUsable(plan: string | null) {
   return parseArchitecturePlanJson(plan).ok
 }
 
-/** Phase 1: classify intent locally, without an LLM call. */
-export function runIntentPhase(
+const INTENT_SEMANTIC_TIMEOUT_MS = 22000
+const INTENT_SEMANTIC_FIRST_BYTE_MS = 9000
+
+/**
+ * Phase 1: classify intent. Utilise le classifieur semantique LLM (WS6) pour
+ * couvrir la taxonomie etendue (compiler, os_kernel, distributed_system,
+ * mobile natif, embedded...) que les regex ne reperent pas, avec repli
+ * DETERMINISTE garanti sur le classifieur heuristique (pas de modele, echec
+ * LLM, JSON invalide, confiance < seuil, ou timeout).
+ */
+export async function runIntentPhase(
   prompt: string,
   setPhase: PhaseCallback,
   context?: CodeIntentContext,
-): CodeIntent {
+  options?: { configuredCodeModel?: string; signal?: AbortSignal },
+): Promise<CodeIntent> {
   setPhase('Classification du projet...', 5)
-  return classifyCodeIntent(prompt, context)
+  const heuristic = classifyCodeIntent(prompt, context)
+  const model = options?.configuredCodeModel
+  if (!model) return heuristic
+
+  try {
+    const [{ classifyCodeIntentWithSemanticModel }, { resilientOllamaChat }] = await Promise.all([
+      import('./codeSemanticIntentClassifier.ts'),
+      import('./ollamaResilience.ts'),
+    ])
+    const result = await withTimeout(
+      classifyCodeIntentWithSemanticModel({
+        prompt,
+        signal: options?.signal,
+        minConfidence: 0.65,
+        modelClient: (messages, opts) =>
+          resilientOllamaChat(model, messages, 0.1, {
+            signal: opts?.signal ?? options?.signal,
+            firstByteTimeoutMs: INTENT_SEMANTIC_FIRST_BYTE_MS,
+            num_ctx: 4096,
+          }),
+      }),
+      { label: 'Code intent classification', timeoutMs: INTENT_SEMANTIC_TIMEOUT_MS },
+    )
+    if (result.source === 'semantic_model') {
+      setPhase(`Classification semantique: ${result.intent.projectType} (LLM)`, 6)
+      return result.intent
+    }
+  } catch {
+    // Repli silencieux et sur sur l heuristique context-aware.
+  }
+  return heuristic
 }
 
 /** Phase 1.5: inspect the machine and current project before planning. */
@@ -85,12 +126,18 @@ export async function runPlanningPhase(
         (await import('./codePreflight.ts')).serializeCodePreflightReport(preflightReport),
       ].join('\n')
     : ''
+  // WS6: pour les cibles etendues (compiler, os_kernel, distributed_system,
+  // mobile natif, embedded, engine_3d, ide, desktop_app), injecte les fichiers
+  // structurels attendus + la barre qualite du generateur specialise dans le
+  // plan. Chaine vide (sans effet) pour les types web courants.
+  const generatorBlock = buildProjectGeneratorPromptBlock(intent)
   const planPrompt = [
     buildArchitecteSystemPrompt(intent),
     '',
     '---',
     '',
     buildArchitecturePlanningPrompt(prompt, intent),
+    generatorBlock,
     preflightBlock,
   ].filter(Boolean).join('\n\n')
 

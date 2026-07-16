@@ -234,7 +234,10 @@ async function runFullPipeline({
   })
   const { followUp, reformulatedPrompt, reformulatedEnriched, intentContext } = followUpContext
   let { effectiveExistingFiles } = followUpContext
-  const intent = runIntentPhase(reformulatedEnriched, setPhase, intentContext)
+  const intent = await runIntentPhase(reformulatedEnriched, setPhase, intentContext, {
+    configuredCodeModel,
+    signal,
+  })
 
   // Phase 1.5: Deterministic + model-assisted preflight before any code generation
   const preflightReport = await runPreflightPhase(
