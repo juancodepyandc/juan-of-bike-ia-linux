@@ -55,6 +55,9 @@ const GRAMMAR_WASM_BY_LANGUAGE: Record<string, string> = {
 }
 
 let parserInitPromise: Promise<void> | null = null
+// Cache des grammaires chargees (par chemin WASM): ce parser tourne dans la
+// boucle de validation, on evite de recharger une grammaire par fichier.
+const grammarCache = new Map<string, ParserNamespace.Language>()
 
 function normalizeLang(lang: string): string {
   return lang.trim().toLowerCase()
@@ -123,7 +126,11 @@ export async function parseCodeWithTreeSitter(
     })
     await parserInitPromise
 
-    const parserLanguage = await Parser.Language.load(grammarWasmPath)
+    let parserLanguage = grammarCache.get(grammarWasmPath)
+    if (!parserLanguage) {
+      parserLanguage = await Parser.Language.load(grammarWasmPath)
+      grammarCache.set(grammarWasmPath, parserLanguage)
+    }
     const parser = new Parser()
     parser.setLanguage(parserLanguage)
     const tree = parser.parse(content)

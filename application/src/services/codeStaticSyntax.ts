@@ -3,30 +3,48 @@ import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import { bracketBalanceIgnoringLiterals } from './codeLexicalAnalysis.ts'
 import { isHtmlLike, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
+import { isTreeSitterLanguageSupported, parseCodeWithTreeSitter } from './codeTreeSitterAst.ts'
 
 // --- 1. Syntax sanity critic -----------------------------------------------
-// Vrai parser : non. Mais on attrape les classes d'erreurs visibles
-// (parenthèses non équilibrées, JSX mal fermé, indent Python brisé,
-// imports incomplets).
+// WS8: validite syntaxique par AST REEL (tree-sitter) pour les langages
+// supportes, avec repli sur l analyse lexicale (equilibrage de blocs ignorant
+// les litteraux) quand le langage n est pas couvert ou que le WASM est
+// indisponible. Remplace l illusion "bracket-balance regex" par un vrai parse.
 
 function bracketBalance(content: string): { ok: boolean; diff: number; kind: string } {
   return bracketBalanceIgnoringLiterals(content)
 }
 
-function syntaxIssues(file: CodeFile): CritiqueIssue[] {
+/**
+ * Verdict de validite syntaxique par AST.
+ * - { handled:true, error:true }  -> le parser a trouve une erreur de syntaxe.
+ * - { handled:true, error:false } -> le parser confirme un code valide.
+ * - { handled:false }             -> AST indisponible (langage non couvert ou
+ *   WASM non charge): l appelant retombe sur l analyse lexicale.
+ */
+async function astSyntaxOutcome(file: CodeFile): Promise<{ handled: boolean; error: boolean }> {
+  const lang = (file.language || '').toLowerCase()
+  if (!isTreeSitterLanguageSupported(lang)) return { handled: false, error: false }
+  const parsed = await parseCodeWithTreeSitter(file.content, lang)
+  if (!parsed.ok) return { handled: false, error: false }
+  return { handled: true, error: parsed.hasError }
+}
+
+function lexicalBracketIssues(file: CodeFile): CritiqueIssue[] {
+  if (!isTsLike(file.language) && !isHtmlLike(file.language)) return []
+  const bal = bracketBalance(file.content)
+  if (bal.ok) return []
+  return [{
+    axis: 'compile',
+    severity: 'block',
+    message: `${file.name}: ${bal.kind} non équilibrés (diff ${bal.diff})`,
+    location: { file: file.name },
+    suggestion: 'Vérifie les blocs ouverts/fermés.',
+  }]
+}
+
+function nonBracketSyntaxIssues(file: CodeFile): CritiqueIssue[] {
   const issues: CritiqueIssue[] = []
-  if (isTsLike(file.language) || isHtmlLike(file.language)) {
-    const bal = bracketBalance(file.content)
-    if (!bal.ok) {
-      issues.push({
-        axis: 'compile',
-        severity: 'block',
-        message: `${file.name}: ${bal.kind} non équilibrés (diff ${bal.diff})`,
-        location: { file: file.name },
-        suggestion: 'Vérifie les blocs ouverts/fermés.',
-      })
-    }
-  }
   // Empty file = suspect.
   if (file.content.trim().length === 0) {
     issues.push({
@@ -64,7 +82,27 @@ function syntaxIssues(file: CodeFile): CritiqueIssue[] {
 }
 
 export const syntaxCritic: CriticFn = async (project: CodeProject, _intent: CodeIntent): Promise<CritiqueReport> => {
-  const issues = project.files.flatMap(syntaxIssues)
+  const issues: CritiqueIssue[] = []
+  for (const file of project.files) {
+    // Verifications non-syntaxiques (fichier vide, import incomplet, indent Python).
+    issues.push(...nonBracketSyntaxIssues(file))
+
+    // Validite syntaxique: AST reel prioritaire, repli lexical si indisponible.
+    const ast = await astSyntaxOutcome(file)
+    if (ast.handled) {
+      if (ast.error) {
+        issues.push({
+          axis: 'compile',
+          severity: 'block',
+          message: `${file.name}: erreur de syntaxe (analyse AST tree-sitter ${(file.language || '').toLowerCase()})`,
+          location: { file: file.name },
+          suggestion: 'Le fichier ne parse pas comme du code valide — corrige la syntaxe.',
+        })
+      }
+    } else {
+      issues.push(...lexicalBracketIssues(file))
+    }
+  }
   const blockers = issues.filter((i) => i.severity === 'block').length
   const errors = issues.filter((i) => i.severity === 'error').length
   const filesChecked = project.files.length || 1

@@ -117,6 +117,20 @@ describe('syntaxCritic — barre expert', () => {
     assert.ok(r.scores.compile < 1)
   })
 
+  test('WS8: erreur de syntaxe Python attrapee par l AST tree-sitter (que le lexical ratait)', async () => {
+    // Crochets equilibres + indentation homogene: les checks lexicaux Python ne
+    // voient rien. Seul un vrai parse AST detecte l erreur "def f(:".
+    const brokenPy = 'def f(:\n    return 1\n'
+    const r = await syntaxCritic(project([{ name: 'broken.py', language: 'python', content: brokenPy }]), fakeIntent)
+    assert.equal(r.hasBlocker, true, `AST devrait bloquer une syntaxe Python invalide (score ${r.scores.compile})`)
+  })
+
+  test('WS8: code Python valide passe l analyse AST sans blocker', async () => {
+    const r = await syntaxCritic(project([{ name: 'ok.py', language: 'python', content: 'def f(x):\n    return x * 2\n' }]), fakeIntent)
+    assert.equal(r.hasBlocker, false)
+    assert.ok(r.scores.compile >= 0.9)
+  })
+
   test('brackets dans strings, regex et templates ne déclenchent pas de blocker', async () => {
     const code = [
       'function ok() {',
