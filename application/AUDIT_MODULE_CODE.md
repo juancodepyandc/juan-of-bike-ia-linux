@@ -356,6 +356,15 @@
 - **Validation** : tests cibles reseau/modules/isolation 32 verts / 0 echec ; glob Code a **559 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS7 reste ouvert** : restent la limitation disque totale workspace, l'execution runtime effective sur hote equipe Podman et le filtrage domaine paquet par paquet.
 
+### 2026-07-15 — Vague 2 / WS7 increment 43 applique
+
+- **Workspace quota remplace le bind rw direct** : les commandes projet ne montent plus `${sandboxRoot}:/workspace:rw`; elles montent un volume Podman nomme `aurora-code-ws-*:/workspace:rw,z`.
+- **Quota disque total obligatoire** : `prepareSandboxWorkspaceVolume` cree le volume avec `--opt o=size=768m`, copie le sandbox hote en lecture seule depuis `/aurora-input`, puis bloque la validation si la creation ou l'initialisation echoue.
+- **Probe disk-fill totale ajoutee** : les preuves WS7 incluent maintenant une ecriture de nombreux fichiers de 3 Mo, differente du probe `fsize`, pour verifier que la somme des fichiers est contenue.
+- **Nettoyage anti-accumulation** : le volume workspace est supprime en `finally`, y compris apres echec partiel d'initialisation ; l'auto-reparation npm resynchronise le volume apres modification de `package.json`.
+- **Validation** : tests WS7 cibles 53 verts / 0 echec ; glob Code a **566 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
+- **WS7 reste ouvert** : la preuve runtime effective reste dependante d'un hote equipe Podman rootless avec support quota volume ; le filtrage domaine paquet par paquet reste a traiter.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

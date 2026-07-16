@@ -1909,3 +1909,60 @@ Pour cet increment WS7, le harnais ne peut plus ouvrir le reseau sur simple occu
 ### Etat de satisfaction chantier
 
 Pour cet increment WS7, l'egress registre ne fuit plus par l'auto-reparation npm. WS7 reste ouvert sur la limite disque totale du workspace et la preuve runtime sur un hote equipe Podman.
+
+## 2026-07-15 — Vague 2 / WS7 increment 43 — Quota disque total du workspace sandbox
+
+### Reprise et diagnostic confirme
+
+- WS7 demande que `disk-fill` soit contenu.
+- Les increments precedents prouvaient `ulimit fsize`, donc un gros fichier unique, mais pas la somme de nombreux petits fichiers.
+- Le chemin courant montait `${sandboxRoot}:/workspace:rw,Z` : ce bind mount hote n'a pas de quota total encode dans les arguments Podman.
+- Un simple `tmpfs /workspace` par commande aurait perdu les artefacts d'installation entre `npm install` et `npm run build`, car le harnais garde volontairement un conteneur par commande pour changer le reseau selon la politique egress.
+
+### Recherches et choix techniques
+
+- Sources officielles Podman consultees :
+  - `podman volume create` : `https://docs.podman.io/en/latest/markdown/podman-volume-create.1.html` documente `--opt o=size=...`, les volumes, et la contrainte XFS/project quota.
+  - `--mount` Podman : `https://docs.podman.io/en/v4.4/markdown/options/mount.html` documente les mounts `tmpfs` et `tmpfs-size`, utile pour verifier que tmpfs est borne mais non adapte seul a la persistance multi-commandes.
+  - `podman run` : `https://docs.podman.io/en/latest/markdown/podman-run.1.html` confirme le modele `podman run` par commande et ses options.
+- Choix retenu : volume Podman nomme et quote pour `/workspace`, initialise depuis le dossier hote monte en lecture seule `/aurora-input`.
+- Raison technique : le volume persiste entre conteneurs successifs, ce qui conserve `node_modules`/artefacts d'installation, tout en gardant le reseau decide par commande (`none` pour build/test, registre pour install/view).
+- Limite documentee : sur un hote sans Podman, ou sans support quota volume rootless, le harnais bloque proprement. La preuve runtime locale reste impossible aujourd'hui car `podman` est absent.
+
+### Modifications realisees
+
+- `codeSandboxIsolation.ts` :
+  - ajoute `workspaceSize=768m` au profil de quotas ;
+  - ajoute `sandboxWorkspaceVolumeName` ;
+  - ajoute `buildPodmanSandboxVolumeCreateArgs` / `buildPodmanSandboxVolumeRemoveArgs` ;
+  - ajoute `buildPodmanSandboxWorkspaceInitArgs` ;
+  - remplace le bind rw `/workspace` par `aurora-code-ws-*:/workspace:rw,z`.
+- Nouveau `codeSandboxWorkspace.ts` :
+  - cree le volume quote ;
+  - initialise `/workspace` depuis `/aurora-input` ;
+  - nettoie le volume ;
+  - signale les echecs de quota comme step bloquant.
+- `codeSandbox.ts` :
+  - prepare le volume apres le preflight Podman et avant les probes ;
+  - nettoie le volume en `finally` ;
+  - resynchronise le volume apres une auto-correction npm.
+- `codeSandboxIsolationProbes.ts` :
+  - ajoute `Preuve quota disque workspace`, qui ecrit 384 fichiers de 3 Mo pour tester la limite totale sans declencher `fsize`.
+
+### Avant / apres mesurable
+
+- Avant : `/workspace` etait un bind hote rw sans quota total ; seul un fichier individuel de 2 Go etait teste.
+- Apres : `/workspace` est un volume Podman quote a 768 Mo, les commandes projet ne voient plus le chemin hote en rw, et une probe disk-fill totale est obligatoire avant les commandes projet.
+- Avant : une correction npm pouvait modifier `package.json` sur l'hote sans mettre a jour le support d'execution si celui-ci devenait non-binde.
+- Apres : la resynchronisation du volume est appelee apres chaque correction registre.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeSandboxWorkspace.test.ts src/__tests__/codeSandboxIsolation.test.ts src/__tests__/codeSandboxIsolationProbes.test.ts src/__tests__/codeSandboxNetworkPolicy.test.ts src/__tests__/codeSandboxModules.test.ts src/__tests__/codeSandboxGpu.test.ts src/__tests__/codeSandboxGc.test.ts` : 53 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 566 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS7, la dette "disque total workspace" est traitee cote architecture et tests unitaires : le chemin vert exige un volume quote puis une probe disk-fill totale. La preuve runtime effective reste suspendue a l'installation de Podman rootless et a un stockage supportant les quotas de volume. WS7 reste ouvert sur cette preuve hote et sur le filtrage egress domaine/IP plus fin que l'allowlist commande/env actuelle.

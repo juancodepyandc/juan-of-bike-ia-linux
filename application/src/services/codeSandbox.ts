@@ -14,6 +14,7 @@ import {
   detectSandboxGpuRequirement,
   noSandboxGpuRequired,
 } from './codeSandboxGpu.ts'
+import { cleanupSandboxWorkspaceVolume, prepareSandboxWorkspaceVolume } from './codeSandboxWorkspace.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -50,6 +51,7 @@ export async function runCodeSandboxValidation({
   setProgress?: (detail: string) => void
 }) {
   let sandboxRoot = 'sandbox-unresolved'
+  let workspaceVolumePrepared = false
   const steps: CodeSandboxStepResult[] = []
   const normalizedSandbox = normalizeSandboxFiles(files)
   let workingFiles = normalizedSandbox.files
@@ -154,6 +156,21 @@ export async function runCodeSandboxValidation({
       } satisfies CodeSandboxResult
     }
 
+    const workspaceVolume = await prepareSandboxWorkspaceVolume(sandboxRoot, lang)
+    steps.push(...workspaceVolume.steps)
+    workspaceVolumePrepared = workspaceVolume.created
+    if (!workspaceVolume.ok) {
+      return {
+        ok: false,
+        rootPath: sandboxRoot,
+        summary: 'Quota disque total WS7 indisponible pour le workspace conteneurise.',
+        question: null,
+        steps,
+        detectedLanguage: lang,
+        normalizedFiles: workingFiles,
+      } satisfies CodeSandboxResult
+    }
+
     const isolationProbes = await runSandboxIsolationProbes(sandboxRoot)
     steps.push(...isolationProbes.steps)
     if (!isolationProbes.ok) {
@@ -202,6 +219,13 @@ export async function runCodeSandboxValidation({
             args: ['view', packageName, 'versions', '--json'],
             timeoutMs: 120_000,
           }, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi' }),
+          afterWrite: async () => {
+            const sync = await prepareSandboxWorkspaceVolume(sandboxRoot, lang, { gpu: gpuStatus.mode === 'podman-cdi' })
+            if (!sync.ok) {
+              throw new Error('Resynchronisation du workspace quota WS7 impossible apres correction npm.')
+            }
+            return sync.steps
+          },
         })
         workingFiles = installRun.files
         steps.push(...installRun.steps)
@@ -280,5 +304,15 @@ export async function runCodeSandboxValidation({
       detectedLanguage: lang,
       normalizedFiles: workingFiles,
     } satisfies CodeSandboxResult
+  } finally {
+    if (workspaceVolumePrepared) {
+      const cleanup = await cleanupSandboxWorkspaceVolume(sandboxRoot).catch((error) => ({
+        label: 'Nettoyage volume workspace WS7',
+        command: 'podman volume rm',
+        ok: false,
+        output: error instanceof Error ? error.message : String(error),
+      }))
+      steps.push(cleanup)
+    }
   }
 }

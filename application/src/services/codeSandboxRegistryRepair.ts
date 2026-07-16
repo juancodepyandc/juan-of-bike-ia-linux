@@ -17,6 +17,7 @@ type RegistryRepairOptions = {
   buildRegistryLookupCommand: (packageName: string) => ValidationCommand
   runCommand?: typeof runWorkspaceCommand
   writeFiles?: typeof writeSandboxFiles
+  afterWrite?: () => Promise<CodeSandboxStepResult[] | void>
 }
 
 // MEMORY-SAFE: LRU-like cache with max entries to prevent unbounded growth
@@ -298,6 +299,8 @@ export async function runNodeInstallWithAutoRepair(
 
     workingFiles = repaired.files
     await writer(cwd, workingFiles)
+    const afterWriteSteps = await options.afterWrite?.()
+    if (afterWriteSteps) steps.push(...afterWriteSteps)
     steps.push({
       label: `Correction registre npm (${target.packageName})`,
       command: `npm view ${target.packageName} versions --json`,

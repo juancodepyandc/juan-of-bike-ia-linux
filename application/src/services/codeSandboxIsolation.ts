@@ -17,6 +17,7 @@ export type SandboxQuotaProfile = {
   pidsLimit: string
   fileSizeBlocks: string
   tmpfsSize: string
+  workspaceSize: string
 }
 
 export type PodmanSandboxOptions = {
@@ -29,7 +30,11 @@ export const DEFAULT_SANDBOX_QUOTAS: SandboxQuotaProfile = {
   pidsLimit: '256',
   fileSizeBlocks: '1048576',
   tmpfsSize: '256m',
+  workspaceSize: '768m',
 }
+
+const CONTAINER_WORKSPACE_PATH = '/workspace'
+const CONTAINER_INPUT_PATH = '/aurora-input'
 
 const LANGUAGE_IMAGES: Partial<Record<DetectedLanguage, string>> = {
   node: 'docker.io/library/node:22-bookworm-slim',
@@ -124,7 +129,7 @@ export function buildSandboxIsolationStep(status: SandboxIsolationStatus): CodeS
       `rootless=${status.rootless ? 'oui' : 'non'}`,
       `cgroup=${status.cgroupVersion ?? 'inconnu'}`,
       status.reason,
-      `quotas=memory:${DEFAULT_SANDBOX_QUOTAS.memory},cpus:${DEFAULT_SANDBOX_QUOTAS.cpus},pids:${DEFAULT_SANDBOX_QUOTAS.pidsLimit},fsize:${DEFAULT_SANDBOX_QUOTAS.fileSizeBlocks},tmpfs:${DEFAULT_SANDBOX_QUOTAS.tmpfsSize}`,
+      `quotas=memory:${DEFAULT_SANDBOX_QUOTAS.memory},cpus:${DEFAULT_SANDBOX_QUOTAS.cpus},pids:${DEFAULT_SANDBOX_QUOTAS.pidsLimit},fsize:${DEFAULT_SANDBOX_QUOTAS.fileSizeBlocks},tmpfs:${DEFAULT_SANDBOX_QUOTAS.tmpfsSize},workspace:${DEFAULT_SANDBOX_QUOTAS.workspaceSize}`,
       'egress=none sauf commandes de registre reconnues; host_loopback=false',
     ].join('\n'),
   }
@@ -139,20 +144,22 @@ function safeContainerName(sandboxRoot: string): string {
   return `aurora-code-${suffix || Date.now()}`
 }
 
+export function sandboxWorkspaceVolumeName(sandboxRoot: string): string {
+  const suffix = sandboxRoot.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(-48)
+  return `aurora-code-ws-${suffix || Date.now()}`
+}
+
 function containerExecutable(executable: string): string {
   return executable.replace(/\.cmd$/i, '').replace(/\.exe$/i, '')
 }
 
-export function buildPodmanSandboxArgs(
-  command: ValidationCommand,
-  lang: DetectedLanguage,
+function commonPodmanRunArgs(
   sandboxRoot: string,
-  quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
-  options: PodmanSandboxOptions = {},
+  networkPolicy: ReturnType<typeof buildSandboxNetworkPolicy>,
+  quotas: SandboxQuotaProfile,
+  options: PodmanSandboxOptions,
 ): string[] {
-  const networkPolicy = buildSandboxNetworkPolicy(command)
   return [
-    'run',
     '--rm',
     '--pull=never',
     '--name',
@@ -180,10 +187,71 @@ export function buildPodmanSandboxArgs(
     `/tmp:rw,nosuid,nodev,size=${quotas.tmpfsSize}`,
     '--tmpfs',
     `/home/aurora:rw,nosuid,nodev,size=${quotas.tmpfsSize}`,
+  ]
+}
+
+export function buildPodmanSandboxVolumeCreateArgs(
+  sandboxRoot: string,
+  quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
+): string[] {
+  return [
+    'volume',
+    'create',
+    '--ignore',
+    '--label',
+    'aurora.role=code-sandbox-workspace',
+    '--opt',
+    `o=size=${quotas.workspaceSize}`,
+    sandboxWorkspaceVolumeName(sandboxRoot),
+  ]
+}
+
+export function buildPodmanSandboxVolumeRemoveArgs(sandboxRoot: string): string[] {
+  return ['volume', 'rm', '-f', sandboxWorkspaceVolumeName(sandboxRoot)]
+}
+
+export function buildPodmanSandboxWorkspaceInitArgs(
+  lang: DetectedLanguage,
+  sandboxRoot: string,
+  quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
+  options: PodmanSandboxOptions = {},
+): string[] {
+  const networkPolicy = buildSandboxNetworkPolicy({
+    label: 'Initialiser workspace sandbox',
+    executable: 'sh',
+    args: ['-lc', 'cp'],
+  })
+  return [
+    'run',
+    ...commonPodmanRunArgs(sandboxRoot, networkPolicy, quotas, options),
     '--volume',
-    `${sandboxRoot}:/workspace:rw,Z`,
+    `${sandboxRoot}:${CONTAINER_INPUT_PATH}:ro,Z`,
+    '--volume',
+    `${sandboxWorkspaceVolumeName(sandboxRoot)}:${CONTAINER_WORKSPACE_PATH}:rw,z`,
     '--workdir',
-    '/workspace',
+    CONTAINER_WORKSPACE_PATH,
+    imageForLanguage(lang),
+    'sh',
+    '-lc',
+    `find ${CONTAINER_WORKSPACE_PATH} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && cp -a ${CONTAINER_INPUT_PATH}/. ${CONTAINER_WORKSPACE_PATH}/`,
+  ]
+}
+
+export function buildPodmanSandboxArgs(
+  command: ValidationCommand,
+  lang: DetectedLanguage,
+  sandboxRoot: string,
+  quotas: SandboxQuotaProfile = DEFAULT_SANDBOX_QUOTAS,
+  options: PodmanSandboxOptions = {},
+): string[] {
+  const networkPolicy = buildSandboxNetworkPolicy(command)
+  return [
+    'run',
+    ...commonPodmanRunArgs(sandboxRoot, networkPolicy, quotas, options),
+    '--volume',
+    `${sandboxWorkspaceVolumeName(sandboxRoot)}:${CONTAINER_WORKSPACE_PATH}:rw,z`,
+    '--workdir',
+    CONTAINER_WORKSPACE_PATH,
     imageForLanguage(lang),
     containerExecutable(command.executable),
     ...command.args,

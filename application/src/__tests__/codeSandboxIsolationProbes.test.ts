@@ -7,13 +7,14 @@ import {
 } from '../services/codeSandboxIsolationProbes.ts'
 
 describe('codeSandboxIsolationProbes', () => {
-  test('buildSandboxIsolationProbeCommands construit les probes host-read, pids et fsize sous Podman', () => {
+  test('buildSandboxIsolationProbeCommands construit les probes host-read, pids, fsize et disque sous Podman', () => {
     const commands = buildSandboxIsolationProbeCommands('/tmp/aurora/ws')
 
     assert.deepEqual(commands.map((command) => command.label), [
       'Preuve isolation host-read',
       'Preuve quota pids',
       'Preuve quota taille fichier',
+      'Preuve quota disque workspace',
     ])
     assert.ok(commands.every((command) => command.executable === 'podman'))
     assert.ok(commands.every((command) => {
@@ -31,10 +32,11 @@ describe('codeSandboxIsolationProbes', () => {
   })
 
   test('les scripts de probe cherchent les regressions attendues', () => {
-    const [hostRead, pids, fsize] = buildSandboxIsolationProbeCommands('/tmp/aurora/ws')
+    const [hostRead, pids, fsize, disk] = buildSandboxIsolationProbeCommands('/tmp/aurora/ws')
     const hostScript = hostRead.args.at(-1) ?? ''
     const pidsScript = pids.args.at(-1) ?? ''
     const fsizeScript = fsize.args.at(-1) ?? ''
+    const diskScript = disk.args.at(-1) ?? ''
 
     assert.match(hostScript, /AURORA_HOST_SENTINEL/)
     assert.match(pidsScript, /while \[ "\$started" -lt 400 \]/)
@@ -42,6 +44,9 @@ describe('codeSandboxIsolationProbes', () => {
     assert.match(pidsScript, /exit 2/)
     assert.match(fsizeScript, /dd if=\/dev\/zero/)
     assert.match(fsizeScript, /count=2048/)
+    assert.match(diskScript, /aurora-disk-quota-probe/)
+    assert.match(diskScript, /while \[ "\$i" -lt 384 \]/)
+    assert.match(diskScript, /bs=3M/)
   })
 
   test('runSandboxIsolationProbes cree puis nettoie la sentinelle host et stoppe au premier echec', async () => {

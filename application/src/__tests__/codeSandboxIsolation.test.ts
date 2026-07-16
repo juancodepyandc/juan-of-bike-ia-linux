@@ -2,10 +2,14 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildPodmanSandboxArgs,
+  buildPodmanSandboxVolumeCreateArgs,
+  buildPodmanSandboxVolumeRemoveArgs,
+  buildPodmanSandboxWorkspaceInitArgs,
   buildSandboxIsolationStep,
   DEFAULT_SANDBOX_QUOTAS,
   detectPodmanIsolation,
   parsePodmanIsolationInfo,
+  sandboxWorkspaceVolumeName,
   wrapCommandForPodman,
 } from '../services/codeSandboxIsolation.ts'
 import type { ValidationCommand } from '../services/codeSandboxTypes.ts'
@@ -52,8 +56,47 @@ describe('codeSandboxIsolation', () => {
     assert.match(joined, /--read-only/)
     assert.match(joined, /fsize=1048576:1048576/)
     assert.match(joined, /\/tmp:rw,nosuid,nodev,size=256m/)
-    assert.match(joined, /\/tmp\/aurora\/ws:\/workspace:rw/)
+    assert.match(joined, /aurora-code-ws-tmp-aurora-ws:\/workspace:rw/)
     assert.deepEqual(args.slice(-4), ['docker.io/library/node:22-bookworm-slim', 'npm', 'run', 'build'])
+  })
+
+  test('buildPodmanSandboxArgs monte un volume workspace quote au lieu du bind host rw', () => {
+    const args = buildPodmanSandboxArgs(buildCommand, 'node', '/tmp/aurora/ws')
+
+    assert.equal(sandboxWorkspaceVolumeName('/tmp/aurora/ws'), 'aurora-code-ws-tmp-aurora-ws')
+    assert.ok(args.includes('aurora-code-ws-tmp-aurora-ws:/workspace:rw,z'))
+    assert.ok(!args.some((arg) => arg.includes('/tmp/aurora/ws:/workspace:rw')))
+  })
+
+  test('buildPodmanSandboxVolumeCreateArgs encode le quota disque total workspace', () => {
+    const args = buildPodmanSandboxVolumeCreateArgs('/tmp/aurora/ws')
+
+    assert.deepEqual(args, [
+      'volume',
+      'create',
+      '--ignore',
+      '--label',
+      'aurora.role=code-sandbox-workspace',
+      '--opt',
+      `o=size=${DEFAULT_SANDBOX_QUOTAS.workspaceSize}`,
+      'aurora-code-ws-tmp-aurora-ws',
+    ])
+    assert.deepEqual(buildPodmanSandboxVolumeRemoveArgs('/tmp/aurora/ws'), [
+      'volume',
+      'rm',
+      '-f',
+      'aurora-code-ws-tmp-aurora-ws',
+    ])
+  })
+
+  test('buildPodmanSandboxWorkspaceInitArgs copie le sandbox hote en lecture seule vers le volume quote', () => {
+    const args = buildPodmanSandboxWorkspaceInitArgs('node', '/tmp/aurora/ws')
+
+    assert.match(args.join(' '), /--network none/)
+    assert.ok(args.includes('/tmp/aurora/ws:/aurora-input:ro,Z'))
+    assert.ok(args.includes('aurora-code-ws-tmp-aurora-ws:/workspace:rw,z'))
+    assert.match(args.at(-1) ?? '', /find \/workspace -mindepth 1/)
+    assert.match(args.at(-1) ?? '', /cp -a \/aurora-input\/\. \/workspace\//)
   })
 
   test('buildPodmanSandboxArgs limite le reseau des installs au mode sans loopback hote', () => {

@@ -89,7 +89,25 @@ export function buildSandboxIsolationProbeCommands(sandboxRoot: string): Validat
     ].join('; '),
   )
 
-  return [hostReadProbe, forkProbe, fileSizeProbe].map((command) => wrapCommandForPodman(command, 'unknown', sandboxRoot))
+  const workspaceQuotaProbe = probeCommand(
+    'Preuve quota disque workspace',
+    [
+      'probe_dir=/workspace/aurora-disk-quota-probe',
+      'trap "rm -rf $probe_dir" EXIT',
+      'mkdir -p "$probe_dir"',
+      'i=0',
+      [
+        'while [ "$i" -lt 384 ]; do',
+        'i=$((i + 1))',
+        'dd if=/dev/zero of="$probe_dir/chunk-$i.bin" bs=3M count=1 status=none || exit 0',
+        'done',
+      ].join(' '),
+      'exit 2',
+    ].join('; '),
+  )
+
+  return [hostReadProbe, forkProbe, fileSizeProbe, workspaceQuotaProbe]
+    .map((command) => wrapCommandForPodman(command, 'unknown', sandboxRoot))
 }
 
 export async function runSandboxIsolationProbes(
