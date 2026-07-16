@@ -10,7 +10,6 @@ import { useManagedRuntime } from '../hooks/useManagedRuntime'
 import { useModuleAssetPack } from '../hooks/useModuleAssetPack'
 import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics'
 import {
-  parseCodeFiles,
   type CodeFile,
   type FollowUpAnalysis,
 } from '../services/codeOrchestrator'
@@ -19,7 +18,6 @@ import type { CodePreflightReport } from '../services/codePreflight'
 import type { CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import { stopDevServer, type DevServerState } from '../services/codeDevServer'
-import { saveAndExportZip, saveToWorkspace } from '../services/saveSystem'
 import { useAppStore } from '../stores/appStore'
 import { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
 import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
@@ -34,6 +32,8 @@ import {
   codeContextNeedsVision,
   formatProjectType,
 } from './codeViewShellHelpers'
+import { useCodeViewWorkspacePersistence } from './useCodeViewWorkspacePersistence'
+import { useCodeViewActions } from './useCodeViewActions'
 
 export default function CodeView() {
   const { codeModel, hardware, installedModels, mainModel, runtimeServices, visionModel } = useAppStore()
@@ -56,10 +56,6 @@ export default function CodeView() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState('')
   const [streamPreview, setStreamPreview] = useState('')
-  // v77n: counter cumulatif de chars recus (non cappe) pour montrer
-  // VISUELLEMENT que la generation avance — meme quand la live preview est
-  // pausee. Sans ca, l user voit '...' fige sur le progress et a l impression
-  // que la page freeze.
   const [streamCharsTotal, setStreamCharsTotal] = useState(0)
   const streamCharsTotalRef = useRef(0)
   // Coalesce streaming-token appends: without batching, a 50K-char generation
@@ -112,8 +108,6 @@ export default function CodeView() {
   const [preflightReport, setPreflightReport] = useState<CodePreflightReport | null>(null)
   const [followUpAnalysis, setFollowUpAnalysis] = useState<FollowUpAnalysis | null>(null)
   const resumeAfterReloadRef = useRef<string | null>(null)
-  const workspaceHydrationTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
-  const [workspacePersistenceReady, setWorkspacePersistenceReady] = useState(false)
   // Mirror `isGenerating` in a ref so callbacks that must NOT rebuild every
   // toggle (handleSessionChange) can still read the latest value without
   // listing `isGenerating` as a dependency (that would cause a re-render loop).
@@ -125,126 +119,58 @@ export default function CodeView() {
   const activeSession = getActiveSession('code')
   const hasConversation = recentMessages.length > 0
   const conversationTurns = Math.ceil(recentMessages.length / 2)
-
-  const armWorkspacePersistence = useCallback(() => {
-    if (workspaceHydrationTimerRef.current) {
-      window.clearTimeout(workspaceHydrationTimerRef.current)
-    }
-
-    workspaceHydrationTimerRef.current = window.setTimeout(() => {
-      setWorkspacePersistenceReady(true)
-      workspaceHydrationTimerRef.current = null
-    }, 0)
-  }, [])
-
-  const applyPersistedWorkspaceSnapshot = useCallback((snapshot: ReturnType<typeof useCodeWorkspaceStore.getState>) => {
-    setPrompt(snapshot.prompt)
-    setProgress(snapshot.progress)
-    setNotes(snapshot.notes)
-    setFiles(snapshot.files)
-    setActiveFile(snapshot.activeFile)
-    setError(null)
-    setValidationResult(snapshot.validationResult)
-    setCorrectionLog(snapshot.correctionLog)
-    setIntent(snapshot.intent)
-    setTotalAttempts(snapshot.totalAttempts)
-    setFinalScore(snapshot.finalScore)
-    setConsoleOutput(snapshot.consoleOutput)
-    setRecoveryStatus(null)
-    setPreflightReport(snapshot.preflightReport)
-  }, [])
-
-  const hydrateFromSessionHistory = useCallback(() => {
-    const sessionMessages = getRecentMessages('code', 20)
-    const lastAssistantMsg = [...sessionMessages].reverse().find((m) => m.role === 'assistant')
-    if (lastAssistantMsg?.content) {
-      const restored = parseCodeFiles(lastAssistantMsg.content)
-      setFiles(restored.length > 0 ? restored : [])
-    } else {
-      setFiles([])
-    }
-  }, [getRecentMessages])
-
-  // Session change handler — resets UI state, then restores files from session history
-  const handleSessionChange = useCallback(() => {
-    // If a generation is currently running, DO NOT re-apply a snapshot
-    // restoration that could re-arm a resume. The active generate() already
-    // owns the workspace lifecycle; touching it here causes the "page se
-    // relance apres generation finie" symptom. Using the ref keeps this
-    // guard out of the useCallback dependency array.
-    if (isGeneratingRef.current) {
-      return
-    }
-    setWorkspacePersistenceReady(false)
-    if (workspaceHydrationTimerRef.current) {
-      window.clearTimeout(workspaceHydrationTimerRef.current)
-      workspaceHydrationTimerRef.current = null
-    }
-    setActiveFile(0)
-    setPrompt('')
-    setNotes('')
-    setStreamPreview('')
-    setValidationResult(null)
-    setCorrectionLog([])
-    setIntent(null)
-    setTotalAttempts(0)
-    setFinalScore(0)
-    setConsoleOutput('')
-    setError(null)
-    setProgress('')
-    setRecoveryStatus(null)
-    setPreflightReport(null)
-    setFollowUpAnalysis(null)
-    setSaveDialogData(null)
-    setSavedProjectData(null)
-    setSaveTarget(null)
-    setSaveFeedback(null)
-    setSavedProjectPath(null)
-    void stopDevServer()
-    setDevServerState({ running: false, port: null, url: null, process: 'stopped', error: null, rootPath: null })
-
-    const snapshot = useCodeWorkspaceStore.getState()
-    const hasSnapshotForSession = snapshot.sessionId === activeSession.id
-      && (
-        snapshot.prompt.trim().length > 0
-        || snapshot.files.length > 0
-        || snapshot.pendingResume
-        || Boolean(snapshot.progress)
-      )
-
-    if (hasSnapshotForSession) {
-      applyPersistedWorkspaceSnapshot(snapshot)
-      // Reprise agressive: on privilegie la continuite de la mission, avec un petit
-      // delai pour eviter uniquement les boucles de crash ultra-serrees.
-      const maxResumeAttempts = 12
-      const minResumeIntervalMs = 2_500
-      const resumeFailCount = snapshot.resumeFailCount ?? 0
-      const lastResumeAttempt = snapshot.lastResumeAttempt ?? 0
-      const timeSinceLastResume = Date.now() - lastResumeAttempt
-      const canResume = snapshot.pendingResume
-        && snapshot.prompt.trim()
-        && resumeFailCount < maxResumeAttempts
-        && timeSinceLastResume > minResumeIntervalMs
-
-      if (canResume) {
-        setProgress('Session restauree apres redemarrage. Reprise automatique programmee...')
-        resumeAfterReloadRef.current = snapshot.prompt
-      } else if (snapshot.pendingResume && snapshot.prompt.trim()) {
-        // Trop de tentatives ou trop rapide — on clear le flag et on laisse l'user decider
-        useCodeWorkspaceStore.getState().setWorkspaceSnapshot({
-          pendingResume: false,
-          resumeFailCount: 0,
-          lastResumeAttempt: null,
-        })
-        setProgress('Reprise automatique suspendue apres une serie de redemarrages consecutifs. Relance manuelle disponible.')
-      }
-      armWorkspacePersistence()
-      return
-    }
-
-    hydrateFromSessionHistory()
-    armWorkspacePersistence()
-  }, [activeSession.id, applyPersistedWorkspaceSnapshot, armWorkspacePersistence, hydrateFromSessionHistory])
+  const workspaceViewState = useMemo(() => ({
+    prompt,
+    progress,
+    notes,
+    files,
+    activeFile,
+    error,
+    validationResult,
+    correctionLog,
+    intent,
+    totalAttempts,
+    finalScore,
+    consoleOutput,
+    recoveryStatus,
+    preflightReport,
+  }), [
+    activeFile, consoleOutput, correctionLog, error, files, finalScore, intent,
+    notes, preflightReport, progress, prompt, recoveryStatus, totalAttempts, validationResult,
+  ])
+  const workspaceSetters = useMemo(() => ({
+    setPrompt,
+    setProgress,
+    setNotes,
+    setFiles,
+    setActiveFile,
+    setError,
+    setValidationResult,
+    setCorrectionLog,
+    setIntent,
+    setTotalAttempts,
+    setFinalScore,
+    setConsoleOutput,
+    setRecoveryStatus,
+    setPreflightReport,
+    setFollowUpAnalysis,
+    setStreamPreview,
+    setSaveDialogData,
+    setSavedProjectData,
+    setSaveTarget,
+    setSaveFeedback,
+    setSavedProjectPath,
+    setDevServerState,
+  }), [])
+  const { handleSessionChange, workspacePersistenceReady } = useCodeViewWorkspacePersistence({
+    activeSessionId: activeSession.id,
+    getRecentMessages,
+    isGeneratingRef,
+    resumeAfterReloadRef,
+    state: workspaceViewState,
+    setters: workspaceSetters,
+    setWorkspaceSnapshot,
+  })
 
   const activeFileData = files[activeFile] || null
   const ollamaLabel = runtimeServices.ollama.running
@@ -271,161 +197,35 @@ export default function CodeView() {
   }, [])
 
   useEffect(() => {
-    return () => {
-      if (workspaceHydrationTimerRef.current) {
-        window.clearTimeout(workspaceHydrationTimerRef.current)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    handleSessionChange()
-  }, [handleSessionChange])
-
-  useEffect(() => {
-    if (!workspacePersistenceReady) return
-
-    setWorkspaceSnapshot({
-      sessionId: activeSession.id,
-      prompt,
-      progress,
-      notes,
-      files,
-      activeFile,
-      error,
-      validationResult,
-      correctionLog,
-      intent,
-      totalAttempts,
-      finalScore,
-      consoleOutput,
-      recoveryStatus,
-      preflightReport,
-    })
-  }, [
-    activeFile,
-    activeSession.id,
-    correctionLog,
-    consoleOutput,
-    error,
-    files,
-    finalScore,
-    intent,
-    notes,
-    preflightReport,
-    progress,
-    prompt,
-    recoveryStatus,
-    setWorkspaceSnapshot,
-    totalAttempts,
-    validationResult,
-    workspacePersistenceReady,
-  ])
-
-  useEffect(() => {
     if (!error) return
     if (diagnostics.blockingReason) return
     if (!/^(Ollama|ComfyUI|Shell natif):/i.test(error)) return
     setError(null)
   }, [diagnostics.blockingReason, error])
 
-  const copyCurrentFile = useCallback(() => {
-    if (!activeFileData) return
-    const pureCode = activeFileData.content
-      .replace(/^```[\w-]*\n?/, '')
-      .replace(/\n?```$/, '')
-      .trim()
-    void navigator.clipboard.writeText(pureCode)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
-  }, [activeFileData])
-
-  const finalizeSavedResult = useCallback((savedPath: string, payload: SaveDialogData | null) => {
-    if (!payload) return
-    addPrompt({
-      module: 'code',
-      prompt: payload.prompt,
-      fidelityScore: payload.fidelityScore,
-      parameters: payload.parameters,
-      tags: ['code'],
-    })
-    setSavedProjectPath(savedPath)
-    setSaveFeedback(null)
-    setProgress(`Resultat sauvegarde: ${savedPath}`)
-  }, [addPrompt])
-
-  const handlePersistentSave = useCallback(async (target: 'workspace' | 'zip') => {
-    if (!savedProjectData) return
-    setSaveTarget(target)
-    setSaveFeedback(null)
-
-    const result = target === 'workspace'
-      ? await saveToWorkspace({ ...savedProjectData, codeFiles: savedProjectData.codeFiles })
-      : await saveAndExportZip({ ...savedProjectData, codeFiles: savedProjectData.codeFiles })
-
-    if (result.ok) {
-      finalizeSavedResult(result.savedPath, savedProjectData)
-    } else {
-      setSaveFeedback(result.error ?? 'Erreur inconnue pendant la sauvegarde.')
-    }
-
-    setSaveTarget(null)
-  }, [finalizeSavedResult, savedProjectData])
-
-  const clearConversation = useCallback(() => {
-    clearHistory('code')
-    resumeAfterReloadRef.current = null
-    setFiles([])
-    setActiveFile(0)
-    setNotes('')
-    setStreamPreview('')
-    setValidationResult(null)
-    setCorrectionLog([])
-    setIntent(null)
-    setTotalAttempts(0)
-    setFinalScore(0)
-    setConsoleOutput('')
-    setError(null)
-    setProgress('')
-    setSaveDialogData(null)
-    setSavedProjectData(null)
-    setSaveTarget(null)
-    setSaveFeedback(null)
-    setSavedProjectPath(null)
-    setPreflightReport(null)
-    setFollowUpAnalysis(null)
-    setPrompt('')
-    setRecoveryStatus(null)
-    void stopDevServer()
-    setDevServerState({ running: false, port: null, url: null, process: 'stopped', error: null, rootPath: null })
-    resetWorkspaceSnapshot()
-  }, [clearHistory, resetWorkspaceSnapshot])
-
-  const stopGeneration = useCallback(() => {
-    // v77m fix bug critique OOM: stopper la generation doit
-    // (1) abort le pipeline TS (signal.aborted),
-    // (2) immediatement clear le state UI pour liberer la memoire ET
-    //     debloquer le bouton Generate (avant ce fix, isGenerating
-    //     restait true tant qu Ollama n avait pas reagi a l abort,
-    //     et streamBufferRef continuait a accumuler).
-    abortRef.current?.abort()
-    abortRef.current = null
-    // Clear streaming buffers immediately — sinon les chunks deja en transit
-    // continuent a s accumuler en memoire jusqu a ce que setTimeout flush.
-    if (streamTimerRef.current !== null) {
-      clearTimeout(streamTimerRef.current)
-      streamTimerRef.current = null
-    }
-    streamBufferRef.current = []
-    streamCharsTotalRef.current = 0
-    setStreamCharsTotal(0)
-    setStreamPreview('')
-    setProgress('Generation arretee.')
-    setIsGenerating(false)
-    isGeneratingRef.current = false
-    // Le reste du state (files, notes, validationResult, correctionLog)
-    // n est PAS clear : l user veut voir ce qui a ete genere jusque la.
-  }, [])
+  const {
+    clearConversation,
+    copyCurrentFile,
+    finalizeSavedResult,
+    handlePersistentSave,
+    stopGeneration,
+  } = useCodeViewActions({
+    activeFileData,
+    savedProjectData,
+    addPrompt,
+    clearHistory,
+    resetWorkspaceSnapshot,
+    setters: workspaceSetters,
+    abortRef,
+    resumeAfterReloadRef,
+    isGeneratingRef,
+    streamBufferRef,
+    streamCharsTotalRef,
+    streamTimerRef,
+    setCopied,
+    setIsGenerating,
+    setStreamCharsTotal,
+  })
 
   const generate = useCallback(
     (options?: CodeViewGenerateOptions) => runCodeViewGeneration({

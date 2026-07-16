@@ -1,0 +1,100 @@
+import type { CodeIntent } from './codeIntent.ts'
+import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
+import {
+  checkGamePlayability,
+  checkInteractive3DFidelity,
+  checkWebPageIntegrity,
+} from './codeQualityGates.ts'
+import type { CodeSandboxResult } from './codeSandbox.ts'
+import { compositeStaticCritic } from './codeStaticCritics.ts'
+import { withStaticCritiqueStep } from './codeValidationScoring.ts'
+import { INTERACTIVE_3D_FIDELITY_MAX_PASSES } from './codePipelineRuntime.ts'
+
+function appendFailedGate(
+  result: CodeSandboxResult,
+  summary: string,
+  label: string,
+  command: string,
+  output: string,
+): CodeSandboxResult {
+  return {
+    ...result,
+    ok: false,
+    summary: result.ok ? summary : `${result.summary}\n${summary}`,
+    steps: [...result.steps, { label, command, ok: false, output }],
+  }
+}
+
+export async function runCorrectionQualityGates({
+  result,
+  files,
+  prompt,
+  intent,
+  attempt,
+  setPhase,
+}: {
+  result: CodeSandboxResult
+  files: CodeFile[]
+  prompt: string
+  intent: CodeIntent
+  attempt: number
+  setPhase: PhaseCallback
+}): Promise<CodeSandboxResult> {
+  setPhase(`Sandbox passe ${attempt} - critique statique du code...`, Math.min(90, 66 + attempt * 4))
+  const staticReport = await compositeStaticCritic({
+    generationId: `validation-${attempt}`,
+    files,
+  }, intent)
+  let nextResult = withStaticCritiqueStep(result, staticReport)
+
+  const interactive3D = checkInteractive3DFidelity(files, prompt, intent)
+  if (!interactive3D.ok && attempt <= INTERACTIVE_3D_FIDELITY_MAX_PASSES) {
+    nextResult = appendFailedGate(
+      nextResult,
+      'La fidelite 3D interactive demandee est incomplete.',
+      'Fidelite 3D interactive',
+      'interactive-3d-fidelity-gate',
+      interactive3D.hint,
+    )
+    setPhase(
+      `Passe ${attempt} - fidelite 3D incomplete (${interactive3D.missing.join(', ')})...`,
+      Math.min(90, 68 + attempt * 4),
+    )
+  }
+
+  if (intent.projectType === 'game_web') {
+    const gamePlay = checkGamePlayability(files, prompt)
+    if (!gamePlay.ok) {
+      nextResult = appendFailedGate(
+        nextResult,
+        `Jeu incomplet: ${gamePlay.missing.join(', ')}.`,
+        'Jouabilité',
+        'playability-gate',
+        gamePlay.hint,
+      )
+      setPhase(
+        `Passe ${attempt} - jeu incomplet (${gamePlay.missing.join(', ')}) - correction ciblee...`,
+        Math.min(90, 70 + attempt * 4),
+      )
+    }
+  }
+
+  if (intent.projectType === 'static_web') {
+    const webIntegrity = checkWebPageIntegrity(files, prompt)
+    if (!webIntegrity.ok) {
+      nextResult = appendFailedGate(
+        nextResult,
+        `Page non fonctionnelle: ${webIntegrity.missing.join(', ')}.`,
+        'Intégrité page',
+        'web-integrity-gate',
+        webIntegrity.hint,
+      )
+      setPhase(
+        `Passe ${attempt} - page non fonctionnelle (${webIntegrity.missing.join(', ')}) - correction ciblee...`,
+        Math.min(90, 70 + attempt * 4),
+      )
+    }
+  }
+
+  return nextResult
+}

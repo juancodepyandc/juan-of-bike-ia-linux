@@ -1,24 +1,18 @@
 import { create } from 'zustand'
 import { selectCodeModelForHardware } from '../config/models'
 import { useAppStore } from './appStore'
-import {
-  readHistory, pushHistory, removeHistoryEntry,
-  type PromptHistoryEntry,
-} from '../utils/promptHistory'
+import { readHistory, pushHistory } from '../utils/promptHistory'
 import { classifyCodeIntent } from '../services/codeIntent'
 import { isVisualProject } from '../services/codeDesignDirectives'
 import {
   orchestrateCodeGeneration,
-  type CodeFile,
 } from '../services/codeOrchestrator'
 import type { OllamaMessage } from '../types/app'
-import { getBridgeUrl } from '../utils/runtime'
-import { speakAs, stopSpeaking, clearSpeakQueue } from '../services/auroraVoice'
+import { speakAs } from '../services/auroraVoice'
 import { useModuleHistoryStore } from './moduleHistoryStore'
-import { narrate, readNarrateVoice, writeNarrateVoice } from './codeStreamNarration.ts'
+import { narrate } from './codeStreamNarration.ts'
 import { checkCodeBridgeReady, checkCodeModelInstalled } from './codeStreamPreflight.ts'
 import { runCodeBridgeStreamTurn } from './codeStreamRemoteTurn.ts'
-import { captureSessionSnapshot, emptySessionSnapshot } from './codeStreamSessions.ts'
 import { computeEta, phaseFromDetail, summariseDelivery } from './codeStreamProgress.ts'
 import { isCorrectionRequest, routeCodeStreamModel } from './codeStreamRouting.ts'
 import type { CodeStreamState, CodeStreamStore } from './codeStreamTypes.ts'
@@ -33,6 +27,8 @@ import {
   makeCodeStreamValidationEvent,
   makeInitialCodeStreamPhaseEvent,
 } from './codeStreamEventLog.ts'
+import { createCodeStreamCoreActions, readNarrateVoice } from './codeStreamCoreActions.ts'
+import { createCodeStreamRepoActions } from './codeStreamRepoActions.ts'
 
 export type { CodeWorkMode, RepoScanInfo } from './codeStreamTypes.ts'
 
@@ -80,236 +76,12 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
   activeSessionId: null,
   sessionSnapshots: {},
 
-  dismissErrorDialog() { set({ errorDialog: null }) },
+  ...createCodeStreamCoreActions(set, get, () => {
+    abortCtrl?.abort()
+    abortCtrl = null
+  }),
 
-  async retryAfterError() {
-    set({ errorDialog: null })
-    await get().submit()
-  },
-
-  setNarrateVoice(on) {
-    writeNarrateVoice(on)
-    if (!on) { stopSpeaking(); clearSpeakQueue() }
-    set({ narrateVoice: on })
-  },
-
-  setDraft(s) { set({ draft: s }) },
-
-  recallPrompt(entry) {
-    const sessionId = typeof entry.meta?.sessionId === 'string' ? entry.meta.sessionId : null
-    const session = useModuleHistoryStore.getState().openPromptSession('code', entry.prompt, sessionId)
-    get().activateSession(session.id)
-    set({ draft: entry.prompt })
-  },
-
-  removeHistory(p) { set({ history: removeHistoryEntry('code', p) }) },
-
-  setWorkMode(mode) { set({ workMode: mode }) },
-
-  setRepoPath(path) { set({ repoPath: path }) },
-
-  clearRepoWriteResult() { set({ repoWriteResult: null }) },
-
-  activateSession(sessionId) {
-    const state = get()
-    if (!sessionId || state.activeSessionId === sessionId) return
-
-    if (state.streaming && abortCtrl) {
-      abortCtrl.abort()
-      abortCtrl = null
-      stopSpeaking(); clearSpeakQueue()
-    }
-
-    const snapshots = { ...state.sessionSnapshots }
-    if (state.activeSessionId) {
-      snapshots[state.activeSessionId] = captureSessionSnapshot(state)
-    }
-    const next = snapshots[sessionId] ?? emptySessionSnapshot()
-
-    set({
-      ...next,
-      streaming: false,
-      errorDialog: null,
-      repoBusy: false,
-      activeSessionId: sessionId,
-      sessionSnapshots: snapshots,
-    })
-  },
-
-  newProject() {
-    if (abortCtrl) abortCtrl.abort()
-    stopSpeaking(); clearSpeakQueue()
-    set({
-      streaming: false, streamOutput: '', draft: '', error: null,
-      files: [], notes: '', messages: [], followUpKind: null,
-      finalScore: 0, totalAttempts: 0, phase: 'idle', phaseMessage: '',
-      events: [],
-      progressPct: 0, genStartedAt: null, etaSecondsRemaining: null,
-      etaTotalSeconds: null, repoWriteResult: null,
-      narration: '', narrationLog: [],
-    })
-  },
-
-  abort() {
-    if (abortCtrl) abortCtrl.abort()
-    stopSpeaking(); clearSpeakQueue()
-    set({ streaming: false, phase: get().streamOutput ? 'done' : 'idle' })
-  },
-
-  reset() {
-    if (abortCtrl) abortCtrl.abort()
-    set({
-      streaming: false, streamOutput: '', draft: '', error: null,
-      phase: 'idle', phaseMessage: '', progressPct: 0,
-      events: [],
-      genStartedAt: null, etaSecondsRemaining: null, etaTotalSeconds: null,
-    })
-  },
-
-  async pickRepo() {
-    set({ repoBusy: true, repoMessage: 'Sélection du dossier…' })
-    try {
-      const r = await fetch(`${getBridgeUrl()}/api/code/repo/pick`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-        signal: AbortSignal.timeout(120_000),
-      })
-      const j = await r.json() as { ok?: boolean; path?: string; error?: string }
-      if (j?.ok && j.path) {
-        set({ repoPath: j.path })
-        await get().scanRepo(j.path)
-      } else {
-        set({ repoBusy: false, repoMessage: j?.error || 'Aucun dossier sélectionné.' })
-      }
-    } catch (e) {
-      set({
-        repoBusy: false,
-        repoMessage: `Sélecteur indisponible : ${e instanceof Error ? e.message : String(e)}. Colle le chemin manuellement.`,
-      })
-    }
-  },
-
-  async scanRepo(path) {
-    const target = (path ?? get().repoPath ?? '').trim()
-    if (!target) { set({ repoMessage: 'Chemin du repo vide.' }); return }
-    set({ repoBusy: true, repoMessage: 'Lecture du dépôt en cours…' })
-    try {
-      const r = await fetch(`${getBridgeUrl()}/api/code/repo/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: target, max_files: 120, max_bytes: 1_400_000 }),
-        signal: AbortSignal.timeout(60_000),
-      })
-      const j = await r.json() as {
-        ok?: boolean
-        error?: string
-        path?: string
-        label?: string
-        branch?: string | null
-        truncated?: boolean
-        total_files?: number
-        total_bytes?: number
-        files?: Array<{ path: string; content: string; language?: string }>
-      }
-      if (!j?.ok || !Array.isArray(j.files)) {
-        set({ repoBusy: false, repoLoaded: false, repoMessage: j?.error || 'Lecture du dépôt échouée.' })
-        return
-      }
-      const files: CodeFile[] = j.files.map((f) => ({
-        name: f.path,
-        language: f.language || 'text',
-        content: f.content,
-      }))
-      set({
-        repoPath: j.path || target,
-        repoLabel: j.label || target.split(/[\\/]/).filter(Boolean).pop() || target,
-        repoLoaded: true,
-        repoBusy: false,
-        repoScan: {
-          files: j.total_files ?? files.length,
-          bytes: j.total_bytes ?? 0,
-          branch: j.branch ?? null,
-          truncated: Boolean(j.truncated),
-        },
-        repoMessage: `${files.length} fichier(s) chargé(s) comme contexte${j.branch ? ` · branche ${j.branch}` : ''}.`,
-        // Seed the project with the real repo files so the orchestrator
-        // iterates on the actual codebase. Fresh conversation for this repo.
-        files,
-        messages: [],
-        followUpKind: null,
-        streamOutput: '',
-        notes: '',
-      })
-    } catch (e) {
-      set({
-        repoBusy: false,
-        repoLoaded: false,
-        repoMessage: `Lecture échouée : ${e instanceof Error ? e.message : String(e)}`,
-      })
-    }
-  },
-
-  async writeRepo() {
-    const path = (get().repoPath ?? '').trim()
-    const files = get().files
-    if (!path) { set({ repoMessage: 'Aucun repo sélectionné.' }); return }
-    if (files.length === 0) { set({ repoMessage: 'Aucun fichier à écrire.' }); return }
-    set({ repoBusy: true, repoMessage: 'Écriture des changements dans le dépôt…' })
-    try {
-      const r = await fetch(`${getBridgeUrl()}/api/code/repo/write`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          path,
-          files: files.map((f) => ({ path: f.name, content: f.content })),
-          backup: true,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      })
-      const j = await r.json() as { ok?: boolean; written?: string[]; error?: string }
-      if (j?.ok) {
-        set({
-          repoBusy: false,
-          repoWriteResult: { written: j.written ?? [], path, ts: Date.now() },
-          repoMessage: `${(j.written ?? []).length} fichier(s) écrit(s) dans ${path}.`,
-        })
-      } else {
-        set({ repoBusy: false, repoMessage: j?.error || 'Écriture échouée.' })
-      }
-    } catch (e) {
-      set({
-        repoBusy: false,
-        repoMessage: `Écriture échouée : ${e instanceof Error ? e.message : String(e)}`,
-      })
-    }
-  },
-
-  async installRepoDeps() {
-    const path = (get().repoPath ?? '').trim()
-    if (!path) { set({ repoMessage: 'Aucun repo sélectionné.' }); return }
-    set({ repoBusy: true, repoMessage: 'Détection + installation des dépendances…' })
-    try {
-      const r = await fetch(`${getBridgeUrl()}/api/code/repo/install`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-        signal: AbortSignal.timeout(15_000),
-      })
-      const j = await r.json() as { ok?: boolean; command?: string; manifest?: string; error?: string }
-      set({
-        repoBusy: false,
-        repoMessage: j?.ok
-          ? `Installation lancée : ${j.command} (suis la progression dans la console qui s'est ouverte).`
-          : (j?.error || 'Installation échouée.'),
-      })
-    } catch (e) {
-      set({
-        repoBusy: false,
-        repoMessage: `Installation échouée : ${e instanceof Error ? e.message : String(e)}`,
-      })
-    }
-  },
+  ...createCodeStreamRepoActions(set, get),
 
   async submit(modelOverride) {
     const text = get().draft.trim()

@@ -1,5 +1,5 @@
 import type { ComponentProps, Dispatch, SetStateAction } from 'react'
-import { Archive, BookOpen, Bot, Code2, FolderOpen, Globe, Loader2, MessageSquare, ScanSearch, Sparkles, Workflow } from 'lucide-react'
+import { BookOpen, Bot, Loader2, ScanSearch, Sparkles, Workflow } from 'lucide-react'
 import CodeCorrectionLog from '../components/CodeCorrectionLog'
 import ContextFilesField from '../components/ContextFilesField'
 import VoicePushToTalk from '../components/VoicePushToTalk'
@@ -12,9 +12,16 @@ import type { CodeIntent, CodeProjectType } from '../services/codeIntent'
 import type { DevServerState } from '../services/codeDevServer'
 import type { SaveDialogData } from '../components/SaveDialog'
 import { CodeViewControlActions } from './codeViewControlActions'
-
-type RecentCodeMessage = { role: string; content?: string }
-type DesignReport = { score: number; missing: string[]; penalties: string[] }
+import {
+  CodeConversationPanel,
+  CodeDesignPanel,
+  CodeDevServerStatus,
+  CodeIntentPanel,
+  CodePreflightPanel,
+  CodeSavedProjectPanel,
+  type DesignReport,
+  type RecentCodeMessage,
+} from './codeViewControlStatusPanels'
 
 type CodeViewControlPanelProps = {
   assetPack: ComponentProps<typeof ModuleAssetPackCard>['pack']
@@ -280,103 +287,9 @@ export function CodeViewControlPanel({
             </div>
           </div>
 
-          {/* Intent panel (shows after classification) */}
-          {intent && (
-            <div className="rounded-[1.5rem] border border-aurora-accent/20 bg-aurora-accent/8 px-4 py-3 space-y-2">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-aurora-accent-light">
-                <Code2 size={13} />
-                <span>Projet detecte</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <span className="text-aurora-text-dim">Type: </span>
-                  <span className="text-aurora-text">{formatProjectType(intent.projectType)}</span>
-                </div>
-                <div>
-                  <span className="text-aurora-text-dim">Complexite: </span>
-                  <span className="text-aurora-text">{intent.complexity}</span>
-                </div>
-                {intent.frameworks.length > 0 && (
-                  <div className="col-span-2">
-                    <span className="text-aurora-text-dim">Frameworks: </span>
-                    <span className="text-aurora-text">{intent.frameworks.join(', ')}</span>
-                  </div>
-                )}
-                {intent.gameKind && (
-                  <div className="col-span-2">
-                    <span className="text-aurora-text-dim">Mode jeu: </span>
-                    <span className="text-aurora-text">
-                      {intent.gameKind === 'clone' && intent.knownGame
-                        ? `Clone de ${intent.knownGame.canonical}`
-                        : intent.gameKind === 'creative'
-                          ? '✦ Création originale'
-                          : 'Jeu générique'}
-                    </span>
-                  </div>
-                )}
-                {intent.features.length > 0 && (
-                  <div className="col-span-2">
-                    <span className="text-aurora-text-dim">Features: </span>
-                    <span className="text-aurora-text">{intent.features.join(', ')}</span>
-                  </div>
-                )}
-                <div>
-                  <span className="text-aurora-text-dim">Preview: </span>
-                  <span className="text-aurora-text">{intent.previewType.replace(/_/g, ' ')}</span>
-                </div>
-                <div>
-                  <span className="text-aurora-text-dim">~Fichiers: </span>
-                  <span className="text-aurora-text">{intent.estimatedFileCount}</span>
-                </div>
-              </div>
-              {intent.needsDevServer && (
-                <div className="flex items-center gap-1.5 text-[11px] text-aurora-accent-light">
-                  <Globe size={11} />
-                  <span>Dev server: {intent.devCommand}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {preflightReport && (
-            <div className="rounded-[1.5rem] border border-sky-400/20 bg-sky-400/10 px-4 py-3 space-y-3">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-sky-300">
-                <ScanSearch size={13} />
-                <span>Preflight local</span>
-              </div>
-              <p className="text-xs leading-relaxed text-aurora-text">{preflightReport.summary}</p>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div>
-                  <span className="text-aurora-text-dim">Stack: </span>
-                  <span className="text-aurora-text">{preflightReport.chosenStack}</span>
-                </div>
-                <div>
-                  <span className="text-aurora-text-dim">PM: </span>
-                  <span className="text-aurora-text">{preflightReport.packageManager || 'aucun'}</span>
-                </div>
-              </div>
-              {preflightReport.mustInspectFirst.length > 0 && (
-                <p className="text-[11px] leading-relaxed text-aurora-text-muted">
-                  A inspecter d abord: {preflightReport.mustInspectFirst.slice(0, 4).join(', ')}
-                </p>
-              )}
-              {preflightReport.localConstraints.length > 0 && (
-                <p className="text-[11px] leading-relaxed text-aurora-text-muted">
-                  Contraintes locales: {preflightReport.localConstraints.slice(0, 2).join(' | ')}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Dev server status */}
-          {devServerState.running && devServerState.url && (
-            <div className="rounded-[1.5rem] border border-green-500/25 bg-green-500/10 px-4 py-3">
-              <div className="flex items-center gap-2 text-[11px] text-green-400">
-                <Globe size={13} />
-                <span>Dev server actif: {devServerState.url}</span>
-              </div>
-            </div>
-          )}
+          {intent && <CodeIntentPanel intent={intent} formatProjectType={formatProjectType} />}
+          {preflightReport && <CodePreflightPanel report={preflightReport} />}
+          <CodeDevServerStatus state={devServerState} />
 
           {/* Correction log */}
           <CodeCorrectionLog
@@ -387,101 +300,15 @@ export function CodeViewControlPanel({
             isRunning={isGenerating}
           />
 
-          {/* v73: design polish badge — only for visual projects, gives the
-              user a one-glance signal of whether the LLM produced premium
-              CSS or just a stub. Click to expand the missing-checks list. */}
-          {designReport && (
-            <details className="rounded-[1.5rem] border border-purple-500/25 bg-gradient-to-br from-purple-500/8 to-pink-500/5 px-4 py-3">
-              <summary className="cursor-pointer flex items-center justify-between gap-2 text-[11px]">
-                <div className="flex items-center gap-2">
-                  <span className="text-purple-300">{designReport.score >= 80 ? '✨' : designReport.score >= 60 ? '🎨' : '⚠'}</span>
-                  <span className="text-aurora-text">Design polish</span>
-                  <span className={`font-semibold ${designReport.score >= 80 ? 'text-emerald-300' : designReport.score >= 60 ? 'text-amber-300' : 'text-rose-300'}`}>
-                    {designReport.score}/100
-                  </span>
-                </div>
-                <span className="text-[10px] text-aurora-text-muted">
-                  {designReport.score >= 80 ? 'premium' : designReport.score >= 60 ? 'correct' : 'a refaire'}
-                </span>
-              </summary>
-              {(designReport.missing.length > 0 || designReport.penalties.length > 0) && (
-                <div className="mt-3 space-y-2 text-[10.5px] text-aurora-text-muted">
-                  {designReport.missing.length > 0 && (
-                    <div>
-                      <div className="text-amber-300 font-semibold mb-1">Manquant ({designReport.missing.length})</div>
-                      <ul className="space-y-0.5 pl-3 list-disc">
-                        {designReport.missing.slice(0, 6).map((m, i) => <li key={i}>{m}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                  {designReport.penalties.length > 0 && (
-                    <div>
-                      <div className="text-rose-300 font-semibold mb-1">Penalites ({designReport.penalties.length})</div>
-                      <ul className="space-y-0.5 pl-3 list-disc">
-                        {designReport.penalties.map((p, i) => <li key={i}>{p}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
-            </details>
-          )}
+          {designReport && <CodeDesignPanel report={designReport} />}
 
-          {/* Conversation context — enriched with mode + last 2 turns */}
           {hasConversation && (
-            <div className="rounded-[1.5rem] border border-aurora-accent/20 bg-aurora-accent/8 px-4 py-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 text-[11px] text-aurora-accent-light">
-                  <MessageSquare size={13} />
-                  <span>Discussion active ({conversationTurns} tour{recentMessages.length > 2 ? 's' : ''})</span>
-                </div>
-                <button
-                  onClick={clearConversation}
-                  className="text-[10px] uppercase tracking-wider text-aurora-text-muted hover:text-aurora-text transition-colors"
-                  title="Effacer la discussion et repartir a zero"
-                >
-                  Reset
-                </button>
-              </div>
-              {followUpAnalysis && (
-                <div className={`rounded-xl px-2.5 py-1.5 text-[11px] ${
-                  followUpAnalysis.kind === 'pivot_platform' ? 'border border-amber-400/30 bg-amber-400/10 text-amber-200'
-                  : followUpAnalysis.kind === 'fresh_start' ? 'border border-sky-400/30 bg-sky-400/10 text-sky-200'
-                  : followUpAnalysis.kind === 'pivot_feature' ? 'border border-violet-400/30 bg-violet-400/10 text-violet-200'
-                  : 'border border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                }`}>
-                  <span className="font-semibold">
-                    {followUpAnalysis.kind === 'pivot_platform' ? 'Mode: Pivot plateforme'
-                    : followUpAnalysis.kind === 'pivot_feature' ? 'Mode: Pivot fonctionnel'
-                    : followUpAnalysis.kind === 'fresh_start' ? 'Mode: Nouveau projet'
-                    : followUpAnalysis.kind === 'clarify_only' ? 'Mode: Clarification'
-                    : 'Mode: Patch incremental'}
-                  </span>
-                  {followUpAnalysis.pivotReason && (
-                    <span className="ml-1 opacity-80">— {followUpAnalysis.pivotReason.slice(0, 80)}</span>
-                  )}
-                </div>
-              )}
-              {recentMessages.length > 0 && (
-                <div className="space-y-1">
-                  {recentMessages.slice(-4).map((msg, idx) => {
-                    const preview = (msg.content || '').replace(/\s+/g, ' ').slice(0, 110)
-                    const isUser = msg.role === 'user'
-                    return (
-                      <div key={idx} className="text-[10px] leading-snug">
-                        <span className={isUser ? 'text-aurora-cyan' : 'text-aurora-accent-light'}>
-                          {isUser ? 'Toi:' : 'IA:'}
-                        </span>{' '}
-                        <span className="text-aurora-text-muted">{preview}{preview.length >= 110 ? '...' : ''}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <p className="text-[10px] text-aurora-text-muted">
-                Tape une suite (&laquo;ajoute un bouton&raquo;, &laquo;la m&ecirc;me chose en Python&raquo;...). Le prompt se conserve apr&egrave;s g&eacute;n&eacute;ration.
-              </p>
-            </div>
+            <CodeConversationPanel
+              conversationTurns={conversationTurns}
+              recentMessages={recentMessages}
+              followUpAnalysis={followUpAnalysis}
+              clearConversation={clearConversation}
+            />
           )}
 
           {/* Recovery status */}
@@ -495,43 +322,12 @@ export function CodeViewControlPanel({
           )}
 
           {savedProjectData && (
-            <div className="rounded-[1.5rem] border border-aurora-accent/25 bg-aurora-accent/8 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-aurora-accent-light">
-                <Archive size={13} />
-                <span>Export persistant</span>
-              </div>
-              <p className="text-xs leading-relaxed text-aurora-text-muted">
-                Les boutons restent disponibles meme si tu as ferme la popup finale. Le projet exporte inclut aussi `start.sh` quand un demarrage automatique est possible sur Linux/macOS.
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => void handlePersistentSave('workspace')}
-                  disabled={saveTarget !== null}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-aurora-border/35 bg-aurora-surface/70 px-3 py-3 text-sm text-aurora-text transition-colors hover:border-aurora-accent/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {saveTarget === 'workspace' ? <Loader2 size={15} className="animate-spin" /> : <FolderOpen size={15} />}
-                  <span>Workspace</span>
-                </button>
-                <button
-                  onClick={() => void handlePersistentSave('zip')}
-                  disabled={saveTarget !== null}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-aurora-border/35 bg-aurora-surface/70 px-3 py-3 text-sm text-aurora-text transition-colors hover:border-aurora-accent/35 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {saveTarget === 'zip' ? <Loader2 size={15} className="animate-spin" /> : <Archive size={15} />}
-                  <span>ZIP</span>
-                </button>
-              </div>
-              {savedProjectPath && (
-                <p className="text-[11px] leading-relaxed text-aurora-text-dim break-all">
-                  Derniere sauvegarde: {savedProjectPath}
-                </p>
-              )}
-              {saveFeedback && (
-                <p className="text-[11px] leading-relaxed text-aurora-red break-all">
-                  {saveFeedback}
-                </p>
-              )}
-            </div>
+            <CodeSavedProjectPanel
+              savedProjectPath={savedProjectPath}
+              saveFeedback={saveFeedback}
+              saveTarget={saveTarget}
+              onSave={handlePersistentSave}
+            />
           )}
 
           <CodeViewControlActions

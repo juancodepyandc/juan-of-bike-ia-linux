@@ -9,149 +9,11 @@
 //   {ok, console_errors:[], exceptions:[], failed_requests:[], canvas_present, body_text_len}
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { homedir, platform, tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import net from 'node:net'
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-function firstExisting(paths) {
-  return paths.find((candidate) => candidate && existsSync(candidate)) || null
-}
-
-function findPlaywrightChromium() {
-  const root = join(homedir(), '.cache', 'ms-playwright')
-  if (!existsSync(root)) return null
-  try {
-    const dirs = readdirSync(root)
-      .filter((name) => /^chromium-\d+/.test(name))
-      .sort()
-      .reverse()
-    for (const dir of dirs) {
-      const base = join(root, dir)
-      const found = firstExisting([
-        join(base, 'chrome-linux64', 'chrome'),
-        join(base, 'chrome-linux', 'chrome'),
-        join(base, 'chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'),
-        join(base, 'chrome-win', 'chrome.exe'),
-      ])
-      if (found && statSync(found).isFile()) return found
-    }
-  } catch {
-    return null
-  }
-  return null
-}
-
-function resolveChromePath() {
-  const envPath = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
-  if (envPath && existsSync(envPath)) return envPath
-
-  if (platform() === 'win32') {
-    const local = process.env.LOCALAPPDATA || ''
-    const programFiles = process.env.PROGRAMFILES || 'C:\\Program Files'
-    const programFilesX86 = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'
-    return firstExisting([
-      join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-      join(local, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    ])
-  }
-
-  if (platform() === 'darwin') {
-    return firstExisting([
-      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium',
-    ]) || findPlaywrightChromium()
-  }
-
-  return firstExisting([
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/snap/bin/chromium',
-    '/usr/bin/brave-browser',
-  ]) || findPlaywrightChromium()
-}
-
-function freePort() {
-  return new Promise((res, rej) => {
-    const s = net.createServer()
-    s.listen(0, () => {
-      const p = s.address().port
-      s.close(() => res(p))
-    })
-    s.on('error', rej)
-  })
-}
-
-async function getJSON(url) {
-  const r = await fetch(url)
-  const txt = await r.text()
-  const start = txt.search(/[\[{]/)
-  return JSON.parse(start >= 0 ? txt.slice(start) : txt)
-}
-
-class CDP {
-  constructor(wsUrl) {
-    this.wsUrl = wsUrl
-    this.id = 0
-    this.pending = new Map()
-    this.events = []
-    this.handlers = new Map()
-  }
-  on(method, fn) {
-    if (!this.handlers.has(method)) this.handlers.set(method, [])
-    this.handlers.get(method).push(fn)
-  }
-  connect() {
-    return new Promise((res, rej) => {
-      this.ws = new WebSocket(this.wsUrl)
-      this.ws.onopen = () => res()
-      this.ws.onerror = (e) => rej(e)
-      this.ws.onmessage = (m) => {
-        const msg = JSON.parse(m.data)
-        if (msg.id && this.pending.has(msg.id)) {
-          const { res, rej } = this.pending.get(msg.id)
-          this.pending.delete(msg.id)
-          msg.error ? rej(new Error(JSON.stringify(msg.error))) : res(msg.result)
-        } else if (msg.method) {
-          this.events.push(msg)
-          const hs = this.handlers.get(msg.method) || []
-          for (const h of hs) try { h(msg.params) } catch (_) {}
-        }
-      }
-    })
-  }
-  send(method, params = {}) {
-    const id = ++this.id
-    return new Promise((res, rej) => {
-      this.pending.set(id, { res, rej })
-      this.ws.send(JSON.stringify({ id, method, params }))
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id)
-          rej(new Error('timeout ' + method))
-        }
-      }, 30000)
-    })
-  }
-  async waitEvent(method, timeoutMs = 15000) {
-    const t0 = Date.now()
-    while (Date.now() - t0 < timeoutMs) {
-      const e = this.events.find((x) => x.method === method)
-      if (e) return e
-      await sleep(80)
-    }
-    return null
-  }
-}
-
-function viewportName(width, height) {
-  return `${width}x${height}`
-}
+import { CDP, freePort, getJSON, resolveChromePath, sleep } from './cdp_client.mjs'
+import { audit, simulate, viewportName } from './cdp_scenarios.mjs'
 
 async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, mobile = false, profile = {}) {
   const userDir = mkdtempSync(join(tmpdir(), 'cdp_drive_'))
@@ -399,154 +261,6 @@ async function inspect(url, outPng, width = 1280, height = 800, waitMs = 2500, m
   }
 }
 
-const USER_AGENTS = {
-  desktop: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
-  android: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Mobile Safari/537.36',
-  tablet: 'Mozilla/5.0 (Linux; Android 14; Pixel Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36',
-}
-
-const SIMULATION_PRESETS = [
-  {
-    id: 'chromium_desktop_fast',
-    label: 'Chromium desktop 1440 fast',
-    width: 1440,
-    height: 900,
-    dpr: 1,
-    mobile: false,
-    touch: false,
-    cpuThrottle: 1,
-    userAgent: USER_AGENTS.desktop,
-  },
-  {
-    id: 'chromium_mobile_4g_touch',
-    label: 'Chromium Pixel 8 touch 4G',
-    width: 390,
-    height: 844,
-    dpr: 3,
-    mobile: true,
-    touch: true,
-    cpuThrottle: 4,
-    userAgent: USER_AGENTS.android,
-    network: {
-      latencyMs: 90,
-      downloadBytesPerSecond: 1_600_000,
-      uploadBytesPerSecond: 750_000,
-      connectionType: 'cellular4g',
-    },
-  },
-  {
-    id: 'chromium_tablet_slow_3g_touch',
-    label: 'Chromium tablet touch slow-3G',
-    width: 834,
-    height: 1112,
-    dpr: 2,
-    mobile: true,
-    touch: true,
-    cpuThrottle: 6,
-    userAgent: USER_AGENTS.tablet,
-    network: {
-      latencyMs: 320,
-      downloadBytesPerSecond: 55_000,
-      uploadBytesPerSecond: 32_000,
-      connectionType: 'cellular3g',
-    },
-  },
-]
-
-async function simulate(url, outDir, waitMs = 2500) {
-  mkdirSync(outDir, { recursive: true })
-  const stages = []
-  for (const preset of SIMULATION_PRESETS) {
-    const screenshotPath = join(outDir, `${preset.id}.png`)
-    try {
-      const report = await inspect(url, screenshotPath, preset.width, preset.height, waitMs, preset.mobile, preset)
-      const metrics = report.render_metrics || {}
-      stages.push({
-        id: preset.id,
-        label: preset.label,
-        family: 'web',
-        browser: 'chromium',
-        status: 'executed',
-        realExecution: true,
-        viewport: viewportName(preset.width, preset.height),
-        width: preset.width,
-        height: preset.height,
-        dpr: preset.dpr,
-        touch: !!preset.touch,
-        userAgent: preset.userAgent,
-        throttling: { cpu: preset.cpuThrottle || 1, network: preset.network || null },
-        screenshotPath,
-        bodyTextLength: metrics.bodyTextLength || report.body_text_len || 0,
-        headingCount: metrics.headingCount || 0,
-        mediaCount: metrics.mediaCount || 0,
-        interactiveCount: metrics.interactiveCount || 0,
-        consoleErrors: (report.console_errors || []).map((item) => item.text || String(item)),
-        exceptions: (report.exceptions || []).map((item) => item.text || String(item)),
-        failedRequests: (report.failed_requests || []).map((item) => item.url ? `${item.url} ${item.errorText || ''}` : String(item)),
-        performanceMetrics: report.performance_metrics || {},
-      })
-    } catch (error) {
-      stages.push({
-        id: preset.id,
-        label: preset.label,
-        family: 'web',
-        browser: 'chromium',
-        status: 'unavailable',
-        realExecution: false,
-        viewport: viewportName(preset.width, preset.height),
-        error: String(error?.message || error),
-      })
-    }
-  }
-  return {
-    schemaVersion: 'aurora.code.simulation-lab/1',
-    url,
-    createdAt: Date.now(),
-    stages,
-  }
-}
-
-async function audit(url, outDir, waitMs = 2500) {
-  mkdirSync(outDir, { recursive: true })
-  const viewports = [
-    { width: 390, height: 844, mobile: true },
-    { width: 834, height: 1112, mobile: true },
-    { width: 1440, height: 900, mobile: false },
-  ]
-  const out = []
-  for (const viewport of viewports) {
-    const name = viewportName(viewport.width, viewport.height)
-    const screenshotPath = join(outDir, `${name}.png`)
-    const report = await inspect(url, screenshotPath, viewport.width, viewport.height, waitMs, viewport.mobile)
-    const metrics = report.render_metrics || {}
-    out.push({
-      viewport: name,
-      width: viewport.width,
-      height: viewport.height,
-      screenshotPath,
-      bodyTextLength: metrics.bodyTextLength || report.body_text_len || 0,
-      consoleErrors: (report.console_errors || []).map((item) => item.text || String(item)),
-      exceptions: (report.exceptions || []).map((item) => item.text || String(item)),
-      failedRequests: (report.failed_requests || []).map((item) => item.url ? `${item.url} ${item.errorText || ''}` : String(item)),
-      canvasPresent: !!metrics.canvasPresent,
-      textNodeCount: metrics.textNodeCount || 0,
-      headingCount: metrics.headingCount || 0,
-      mediaCount: metrics.mediaCount || 0,
-      interactiveCount: metrics.interactiveCount || 0,
-      cssVarCount: metrics.cssVarCount || 0,
-      fontFamilies: metrics.fontFamilies || [],
-      verticalGapMedian: metrics.verticalGapMedian ?? null,
-      contrastSamples: metrics.contrastSamples || [],
-    })
-  }
-  return {
-    schemaVersion: 'aurora.code.visual-render-audit/1',
-    url,
-    createdAt: Date.now(),
-    viewports: out,
-  }
-}
-
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2)
   if (cmd === 'screenshot') {
@@ -565,7 +279,7 @@ async function main() {
       console.error('usage: cdp_drive.mjs audit <url> <out_dir> [wait_ms]')
       process.exit(2)
     }
-    const report = await audit(url, outDir, +waitMs || 2500)
+    const report = await audit(url, outDir, +waitMs || 2500, inspect)
     process.stdout.write(JSON.stringify(report))
     return
   }
@@ -575,7 +289,7 @@ async function main() {
       console.error('usage: cdp_drive.mjs simulate <url> <out_dir> [wait_ms]')
       process.exit(2)
     }
-    const report = await simulate(url, outDir, +waitMs || 2500)
+    const report = await simulate(url, outDir, +waitMs || 2500, inspect)
     process.stdout.write(JSON.stringify(report))
     return
   }

@@ -1,18 +1,18 @@
-import { startTransition, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import type { ClarificationRequest } from '../components/ClarificationDialog'
 import type { SaveDialogData } from '../components/SaveDialog'
-import { orchestrateCodeGeneration, classifyClarificationSeverity, buildAutonomousAssumption, serializeCodeFiles, type CodeFile, type CodeOrchestrationResult, type FollowUpAnalysis } from '../services/codeOrchestrator'
+import { orchestrateCodeGeneration, serializeCodeFiles, type CodeFile, type CodeOrchestrationResult, type FollowUpAnalysis } from '../services/codeOrchestrator'
 import type { CorrectionPass } from '../services/codeAutoCorrection'
 import type { CodePreflightReport } from '../services/codePreflight'
-import { classifyCodeIntent, type CodeIntent } from '../services/codeIntent'
+import type { CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import { startDevServer, stopDevServer, type DevServerState } from '../services/codeDevServer'
 import { runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
 import { generateSessionTitle } from '../services/sessionAutoNaming'
-import { prepareTaskIntelligence } from '../services/taskIntelligence'
 import { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
 import { getErrorMessage } from '../utils/errors'
-import { prepareContextFiles } from '../utils/multimodalContext'
+import { prepareCodeViewTaskContext } from './codeViewGenerationContext'
+import { createCodeViewGenerationCallbacks } from './codeViewGenerationCallbacks'
 
 export type CodeViewGenerateOptions = { resumeMode?: 'after_reload'; overridePrompt?: string }
 
@@ -186,101 +186,15 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
           },
           ollamaModel: activeModel,
           job: async ({ setPhase }: { setPhase: (detail: string, progress: number) => void }) => {
-            const preparedContext = contextFiles.length > 0 ? await prepareContextFiles(contextFiles) : []
-            setProgress('Analyse de la demande...')
-            const taskContext = await prepareTaskIntelligence({
-              module: 'code',
-              prompt: activePrompt,
-              model: preparedContext.some((file) => file.imageBase64) ? visionModel : activeModel,
-              files: preparedContext,
+            const { preparedContext, taskContext, userFileDataUrls } = await prepareCodeViewTaskContext({
+              activePrompt,
+              activeModel,
+              visionModel,
+              contextFiles,
               setPhase,
-              phaseBase: 2,
-              phaseSpan: 8,
+              setProgress,
+              setClarification,
             })
-
-            // Smart clarification: only block the user for CRITICAL, stack-forking
-            // decisions. Everything else auto-proceeds with a documented assumption
-            // so the user never has to answer a vague "could you clarify?" dialog.
-            if (taskContext.clarificationQuestion) {
-              const earlyIntent = classifyCodeIntent(activePrompt)
-              const severity = classifyClarificationSeverity(
-                taskContext.clarificationQuestion,
-                earlyIntent,
-                activePrompt,
-              )
-
-              if (severity === 'critical') {
-                setPhase('Clarification critique requise.', 12)
-                const userAnswer = await new Promise<string | null>((resolve) => {
-                  setClarification({ question: taskContext.clarificationQuestion!, onRespond: resolve })
-                })
-                setClarification(null)
-                if (userAnswer) {
-                  taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nPrecision utilisateur: ${userAnswer}`
-                  taskContext.generationPrompt = `${taskContext.generationPrompt}\n\nUser clarification: ${userAnswer}`
-                } else {
-                  const assumption = buildAutonomousAssumption(activePrompt, earlyIntent)
-                  taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nHypotheses autonomes (utilisateur a passe la clarification):\n${assumption}`
-                }
-              } else if (severity === 'optional') {
-                // Optional: auto-proceed but document the assumption so the user
-                // understands what the module decided.
-                const assumption = buildAutonomousAssumption(activePrompt, earlyIntent)
-                taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nHypotheses autonomes du module (choix par defaut documente):\n${assumption}`
-                taskContext.generationPrompt = `${taskContext.generationPrompt}\n\nAutonomous assumptions:\n${assumption}`
-              }
-              // severity === 'skip' → silently ignore the vague question.
-            }
-
-            // Enrich the prompt with a dedicated "## FICHIERS FOURNIS PAR L UTILISATEUR" block
-            // so the Codeur knows the role of every attached file and how to integrate it:
-            //   - images  → listed with a placeholder data URL the Codeur can reuse in <img src=...>
-            //   - css     → merge into the project stylesheet so the user theme is preserved
-            //   - json    → treat as data source (hero, products, testimonials, …)
-            //   - text/md → treat as editorial copy to feed the page content
-            // Build an id → data URL map for the placeholders injected in the prompt.
-            const userFileDataUrls: Record<string, string> = {}
-            if (preparedContext.length > 0) {
-              preparedContext.forEach((file, idx) => {
-                if (file.imageBase64) {
-                  userFileDataUrls[`USER_FILE_${idx}`] = `data:image/jpeg;base64,${file.imageBase64}`
-                }
-              })
-            }
-            if (preparedContext.length > 0) {
-              const userFilesLines: string[] = [
-                '## FICHIERS FOURNIS PAR L UTILISATEUR (a integrer fidelement)',
-                '- Ces fichiers sont joints au prompt. Tu DOIS comprendre leur role et les incorporer.',
-                '- Images → utilise-les comme <img src="USER_FILE_<id>"> (placeholder) — elles seront injectees au build en data URL.',
-                '- CSS → fusionne leurs regles dans ta feuille de styles (conserve la palette/typographie qui y figure).',
-                '- JSON → utilise leurs donnees pour remplir la page (products, faqs, testimonials, features, etc.).',
-                '- Texte / Markdown → traite leur contenu comme le copywriting attendu dans la page.',
-                '',
-              ]
-              preparedContext.forEach((file, idx) => {
-                const id = `USER_FILE_${idx}`
-                if (file.kind === 'image') {
-                  userFilesLines.push(`### ${file.name} — IMAGE (${file.kind})`)
-                  userFilesLines.push(`  Reference prompt: ${id}`)
-                  userFilesLines.push(`  Consigne: remplace les visuels adaptes par <img src="${id}" alt="...">.`)
-                } else if (file.kind === 'text' || file.kind === 'pdf' || file.kind === 'spreadsheet' || file.kind === 'other') {
-                  const ext = file.name.split('.').pop()?.toLowerCase() || ''
-                  const role = ext === 'css' || ext === 'scss' ? 'FEUILLE DE STYLE A FUSIONNER'
-                    : ext === 'json' ? 'DONNEES JSON A UTILISER DANS LA PAGE'
-                    : ext === 'md' || ext === 'markdown' ? 'COPY EDITORIAL'
-                    : ext === 'html' || ext === 'htm' ? 'FRAGMENT HTML A INTEGRER'
-                    : 'CONTEXTE TEXTE'
-                  userFilesLines.push(`### ${file.name} — ${role}`)
-                  const excerpt = (file.extractedText || '').slice(0, 2500)
-                  if (excerpt) {
-                    userFilesLines.push('```')
-                    userFilesLines.push(excerpt)
-                    userFilesLines.push('```')
-                  }
-                }
-              })
-              taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\n${userFilesLines.join('\n')}`
-            }
 
             const lastUserMessage = [...getRecentMessages('code', 4)].reverse().find((msg) => msg.role === 'user')
             if (!lastUserMessage || lastUserMessage.content !== taskContext.enrichedPrompt) {
@@ -293,6 +207,25 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
 
             setProgress('Classification du projet et demarrage du pipeline...')
             setPhase('Classification et pipeline expert code...', 15)
+            const callbacks = createCodeViewGenerationCallbacks({
+              setPhase,
+              setProgress,
+              setActiveFile,
+              setConsoleOutput,
+              setCorrectionLog,
+              setFiles,
+              setFinalScore,
+              setFollowUpAnalysis,
+              setNotes,
+              setRecoveryStatus,
+              setStreamCharsTotal,
+              setStreamPreview,
+              setTotalAttempts,
+              setValidationResult,
+              streamBufferRef,
+              streamCharsTotalRef,
+              streamTimerRef,
+            })
 
             // Full orchestration pipeline
             const result: CodeOrchestrationResult = await orchestrateCodeGeneration({
@@ -312,113 +245,7 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
               userFileDataUrls,
               configuredCodeModel: activeModel,
               visionModel,
-              setPhase: (detail, prog) => {
-                setProgress(detail)
-                setPhase(detail, prog)
-              },
-              onToken: (token) => {
-                // Coalesce via rAF + memory cap. A fast Ollama stream emits hundreds
-                // of tokens per second; re-rendering CodeView per token is what made
-                // the UI freeze on long generations. We accumulate into a ref and
-                // schedule ONE state flush per animation frame.
-                streamBufferRef.current.push(token)
-                streamCharsTotalRef.current += token.length
-                if (streamTimerRef.current !== null) return
-                streamTimerRef.current = setTimeout(() => {
-                  streamTimerRef.current = null
-                  const toFlush = streamBufferRef.current.join('')
-                  streamBufferRef.current = []
-                  if (!toFlush) return
-                  setStreamPreview((prev) => {
-                    const merged = prev + toFlush
-                    // v77m: cap reduit de 20K a 10K et fenetre 7K. Pour les projets
-                    // WebGL/Three.js (shader Fresnel + particles + textures) la
-                    // sortie depasse facilement 30K chars; le <pre> qui re-render
-                    // a chaque flush etait un gros contributeur a l OOM Chrome.
-                    // L user voit toujours le stream complet via l onglet Code
-                    // qui lit `files` (post-parse, pas `prev`).
-                    if (merged.length > 10_000) return merged.slice(-7_000)
-                    return merged
-                  })
-                  // v77n: refresh le counter visible (a basse frequence — chaque
-                  // flush, pas chaque token).
-                  setStreamCharsTotal(streamCharsTotalRef.current)
-                }, 250)
-              },
-              onFilesUpdate: (newFiles, newNotes) => {
-                // v77o: marquer ces setState comme NON-URGENT via startTransition.
-                // Sans ca, setFiles avec 7+ fichiers de 5K chars chacun (35K
-                // total) re-rendre tous les enfants de CodeView en sync (panel
-                // Files, panel Code, panel Notes), bloquant le main thread JS
-                // et pouvant declencher 'Page ne repond pas' Chrome. Avec
-                // startTransition, React peut interrompre ce re-render si une
-                // interaction urgente arrive (ex: clic Stop button) — la
-                // reactivite est preservee.
-                startTransition(() => {
-                  setFiles(newFiles)
-                  setActiveFile(0)
-                  setNotes(newNotes)
-                })
-              },
-              onValidationUpdate: (sandboxRes) => {
-                // v77o: idem startTransition — le validationResult panel
-                // re-render avec les sandbox steps, qui peuvent contenir
-                // plusieurs KB chacun.
-                startTransition(() => {
-                  setValidationResult(sandboxRes)
-
-                  // MEMORY-SAFE: Cap encore plus agressif pour gros projets.
-                  // Chaque step peut avoir plusieurs KB — on cap chaque step
-                  // AVANT le join, puis le total a 30K au lieu de 50K.
-                  const perStepCap = 4_000
-                  const output = sandboxRes.steps
-                    .map((s) => {
-                      const outStr = s.output.length > perStepCap
-                        ? `${s.output.slice(0, 2_500)}\n...[step tronque: ${s.output.length} chars]...\n${s.output.slice(-1_000)}`
-                        : s.output
-                      return `$ ${s.command}\n${outStr}`
-                    })
-                    .join('\n\n')
-                  setConsoleOutput(
-                    output.length > 30_000
-                      ? `${output.slice(0, 12_000)}\n...[tronque]...\n${output.slice(-12_000)}`
-                      : output,
-                  )
-                })
-              },
-              onCorrectionLogUpdate: (log, attempt, score) => {
-                // MEMORY-SAFE: on stocke au max 8 dernieres passes en state React
-                // (le reste est deja archive cote orchestrateur). Evite un gros
-                // re-render de la colonne quand on a 10+ passes.
-                // v77o: startTransition pour ne pas bloquer le clic Stop button
-                // si l user veut interrompre pendant qu une passe se termine.
-                startTransition(() => {
-                  setCorrectionLog(log.length > 8 ? log.slice(-8) : log)
-                  setTotalAttempts(attempt)
-                  setFinalScore(score)
-                })
-              },
-              onFollowUpAnalysis: (analysis) => {
-                setFollowUpAnalysis(analysis)
-              },
-              onRecoveryEvent: (ev) => {
-                const labels: Record<string, string> = {
-                  retry: 'Reconnexion Ollama...',
-                  restart_service: 'Redemarrage du service Ollama...',
-                  model_fallback: `Bascule vers ${ev.model}...`,
-                  health_check: 'Verification sante Ollama...',
-                  memory_guard: ev.error.startsWith('RAM insuffisante')
-                    ? `Memoire protegee: ${ev.error}`
-                    : 'Protection memoire active...',
-                  release_models: 'Dechargement memoire Ollama...',
-                  auto_install_fallback: `Installation du fallback ${ev.model}...`,
-                  exhausted: `Toutes les tentatives echouees: ${ev.error}`,
-                }
-                setRecoveryStatus(labels[ev.action] || ev.action)
-                if (ev.action === 'exhausted') {
-                  setTimeout(() => setRecoveryStatus(null), 5000)
-                }
-              },
+              ...callbacks,
               signal: controller.signal,
             })
 

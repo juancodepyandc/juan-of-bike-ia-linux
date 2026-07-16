@@ -8,7 +8,7 @@ export type DevCommandSpec = {
   defaultPort: number
 }
 
-function isWindows(): boolean {
+export function isWindows(): boolean {
   return typeof navigator !== 'undefined' && /windows/i.test(navigator.userAgent)
 }
 

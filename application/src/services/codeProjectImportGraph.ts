@@ -1,5 +1,6 @@
 import type {
   ProjectImportGraph,
+  ProjectImportEdge,
   ProjectImportKind,
   ProjectTreeFile,
 } from './codeProjectTree.ts'

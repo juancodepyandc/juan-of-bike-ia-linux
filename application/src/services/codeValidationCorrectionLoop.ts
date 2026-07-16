@@ -14,7 +14,6 @@ import { extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
 import { detectEnvironmentBlocker } from './codeGenerationDiagnostics.ts'
 import { buildCorrectionMessages } from './codeCorrectionMessages.ts'
 import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
-import { compositeStaticCritic } from './codeStaticCritics.ts'
 import {
   attemptLocalFileRepair,
   validateOutputMatchesIntent,
@@ -27,18 +26,13 @@ import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CORRECTION_FIRST_BYTE_TIMEOUT_MS,
   CORRECTION_TIMEOUT_MS,
-  INTERACTIVE_3D_FIDELITY_MAX_PASSES,
   RESEARCH_PHASE_TIMEOUT_MS,
   getModelShortName,
   selectModel,
   type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
-import { computeSandboxScore, withStaticCritiqueStep } from './codeValidationScoring.ts'
-import {
-  checkGamePlayability,
-  checkInteractive3DFidelity,
-  checkWebPageIntegrity,
-} from './codeQualityGates.ts'
+import { computeSandboxScore } from './codeValidationScoring.ts'
+import { runCorrectionQualityGates } from './codeCorrectionQualityGates.ts'
 
 type ValidationCorrectionLoopResult = {
   files: CodeFile[]
@@ -126,93 +120,14 @@ export async function runValidationAndCorrectionLoop(
       onFilesUpdate(currentFiles, currentNotes)
     }
 
-    setPhase(`Sandbox passe ${attempt} - critique statique du code...`, Math.min(90, 66 + attempt * 4))
-    const staticReport = await compositeStaticCritic({
-      generationId: `validation-${attempt}`,
+    sandboxResult = await runCorrectionQualityGates({
+      result: sandboxResult,
       files: currentFiles,
-    }, intent)
-    sandboxResult = withStaticCritiqueStep(sandboxResult, staticReport)
-
-    const interactive3D = checkInteractive3DFidelity(currentFiles, prompt, intent)
-    if (!interactive3D.ok && attempt <= INTERACTIVE_3D_FIDELITY_MAX_PASSES) {
-      const fidelitySummary = 'La fidelite 3D interactive demandee est incomplete.'
-      sandboxResult = {
-        ...sandboxResult,
-        ok: false,
-        summary: sandboxResult.ok
-          ? fidelitySummary
-          : `${sandboxResult.summary}\n${fidelitySummary}`,
-        steps: [
-          ...sandboxResult.steps,
-          {
-            label: 'Fidelite 3D interactive',
-            command: 'interactive-3d-fidelity-gate',
-            ok: false,
-            output: interactive3D.hint,
-          },
-        ],
-      }
-      setPhase(
-        `Passe ${attempt} - fidelite 3D incomplete (${interactive3D.missing.join(', ')})...`,
-        Math.min(90, 68 + attempt * 4),
-      )
-    }
-
-    const gamePlay =
-      intent.projectType === 'game_web'
-        ? checkGamePlayability(currentFiles, prompt)
-        : { ok: true, missing: [] as string[], hint: '' }
-    if (!gamePlay.ok) {
-      const playabilitySummary = `Jeu incomplet: ${gamePlay.missing.join(', ')}.`
-      sandboxResult = {
-        ...sandboxResult,
-        ok: false,
-        summary: sandboxResult.ok
-          ? playabilitySummary
-          : `${sandboxResult.summary}\n${playabilitySummary}`,
-        steps: [
-          ...sandboxResult.steps,
-          {
-            label: 'Jouabilité',
-            command: 'playability-gate',
-            ok: false,
-            output: gamePlay.hint,
-          },
-        ],
-      }
-      setPhase(
-        `Passe ${attempt} - jeu incomplet (${gamePlay.missing.join(', ')}) - correction ciblee...`,
-        Math.min(90, 70 + attempt * 4),
-      )
-    }
-
-    const webIntegrity =
-      intent.projectType === 'static_web'
-        ? checkWebPageIntegrity(currentFiles, prompt)
-        : { ok: true, missing: [] as string[], hint: '' }
-    if (!webIntegrity.ok) {
-      const integritySummary = `Page non fonctionnelle: ${webIntegrity.missing.join(', ')}.`
-      sandboxResult = {
-        ...sandboxResult,
-        ok: false,
-        summary: sandboxResult.ok
-          ? integritySummary
-          : `${sandboxResult.summary}\n${integritySummary}`,
-        steps: [
-          ...sandboxResult.steps,
-          {
-            label: 'Intégrité page',
-            command: 'web-integrity-gate',
-            ok: false,
-            output: webIntegrity.hint,
-          },
-        ],
-      }
-      setPhase(
-        `Passe ${attempt} - page non fonctionnelle (${webIntegrity.missing.join(', ')}) - correction ciblee...`,
-        Math.min(90, 70 + attempt * 4),
-      )
-    }
+      prompt,
+      intent,
+      attempt,
+      setPhase,
+    })
 
     onValidationUpdate(sandboxResult)
 

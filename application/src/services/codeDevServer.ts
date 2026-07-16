@@ -5,7 +5,7 @@
 
 import { fsReadText, runWorkspaceCommand, spawnWorkspaceCommand } from '../hooks/useTauri'
 import type { CodeIntent } from './codeIntent'
-import { getDevCommandSpec, type DevCommandSpec } from './codeDevServerCommand'
+import { getDevCommandSpec, isWindows, type DevCommandSpec } from './codeDevServerCommand'
 
 // ---------------------------------------------------------------------------
 // Types

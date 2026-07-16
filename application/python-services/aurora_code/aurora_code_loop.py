@@ -18,45 +18,26 @@ Usage:
 """
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import subprocess
-import sys
 import time
 from dataclasses import asdict
 from datetime import datetime
-from pathlib import Path
 
 from aurora_code_enrich import EnrichedPrompt, enrich
 from aurora_code_validators import validate as run_validator, complexity_check
 from aurora_code_remote import (
     Target, deploy as remote_deploy, enrich_for_target,
-    load_targets, remote_validate_node, remote_validate_python,
+    remote_validate_node, remote_validate_python,
     remote_validate_static_web,
 )
 from code_loop_files import extract_files, make_pack_dir, slugify, syntax_check_files, write_project
 from code_loop_runtime import CODE_MODEL, cdp_screenshot, free_port, halo, ollama_chat, score_preview_vision, serve_static
-
-REPO = Path(__file__).resolve().parent
-STATE_FILE = REPO / "code_loop_state.json"
+from code_loop_state import load_state, save_state
 
 log = logging.getLogger("code-loop")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-def load_state() -> dict:
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    return {"completed": [], "failed": [], "attempts": {}}
-
-
-def save_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -370,64 +351,17 @@ def process_scene(prompt: str, name: str | None, min_score: float, max_retries: 
 
 def run_queue(queue: list[dict], min_score: float, max_retries: int,
                 target: Target | None = None, use_tunnel: bool = False) -> int:
-    state = load_state()
-    n_ok = 0
-    for idx, entry in enumerate(queue, 1):
-        scene_id = entry.get("name") or slugify(entry["prompt"])
-        if scene_id in state["completed"]:
-            log.info(f"[{idx}/{len(queue)}] skip {scene_id}: already completed")
-            n_ok += 1
-            continue
-        log.info(f"[{idx}/{len(queue)}] === {scene_id} ===")
-        # per-entry target override possible: entry["target"] = "my-pi"
-        entry_target = target
-        if entry.get("target") and entry_target is None:
-            tgts = load_targets()
-            entry_target = tgts.get(entry["target"])
-        ok = process_scene(entry["prompt"], entry.get("name"), min_score, max_retries,
-                            state, target=entry_target, use_tunnel=use_tunnel)
-        if ok:
-            state["completed"].append(scene_id)
-            n_ok += 1
-        else:
-            if scene_id not in state["failed"]:
-                state["failed"].append(scene_id)
-        save_state(state)
-    log.info(f"=== queue done: {n_ok}/{len(queue)} succeeded ===")
-    return 0
+    from code_loop_cli import run_queue as run_cli_queue
+    return run_cli_queue(
+        queue, min_score, max_retries, process_scene,
+        target=target, use_tunnel=use_tunnel,
+    )
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--queue", type=Path)
-    ap.add_argument("--prompt", type=str)
-    ap.add_argument("--name", type=str)
-    ap.add_argument("--min-score", type=float, default=0.65)
-    ap.add_argument("--max-retries", type=int, default=2)
-    ap.add_argument("--target", type=str, default=None,
-                     help="remote target name from ~/.aurora_code_targets.json (deploy + validate over SSH)")
-    ap.add_argument("--tunnel", action="store_true",
-                     help="Keep the server alive and expose it via localtunnel for manual UI testing")
-    args = ap.parse_args()
-
-    target = None
-    if args.target:
-        targets = load_targets()
-        target = targets.get(args.target)
-        if target is None:
-            log.error(f"unknown target {args.target}. Available: {list(targets)}")
-            return 2
-        log.info(f"target locked: {args.target} ({target.remote()})")
-
-    if args.prompt:
-        queue = [{"prompt": args.prompt, "name": args.name}]
-    elif args.queue:
-        queue = json.loads(args.queue.read_text(encoding="utf-8"))
-    else:
-        log.error("provide --prompt or --queue")
-        return 2
-    return run_queue(queue, args.min_score, args.max_retries, target=target, use_tunnel=args.tunnel)
+    from code_loop_cli import main as run_cli
+    return run_cli(process_scene)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

@@ -6,7 +6,7 @@ import type { CodeFile } from '../services/codeOrchestrator'
 import type { CodePreflightReport } from '../services/codePreflight'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 
-type PersistedCodeWorkspaceState = {
+export type PersistedCodeWorkspaceState = {
   sessionId: string | null
   prompt: string
   progress: string

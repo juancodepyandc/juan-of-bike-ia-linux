@@ -10,7 +10,6 @@ import { CodeConsolePanel, CodeCritiquePanel, CodeLanguageChip, CodeLyraCommenta
 import { BigLivePreviewFrame, type BigViewport } from './codeViewPreviewPanel'
 import { CodeViewWorkspaceAtelier } from './codeViewWorkspaceAtelier'
 import { countFileSearchMatches } from './codeViewSearch'
-
 const CodeMirrorViewer = lazy(() => import('../components/CodeMirrorViewer'))
 
 type CodeViewDeliveryPanelProps = {
