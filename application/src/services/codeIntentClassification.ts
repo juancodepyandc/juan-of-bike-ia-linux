@@ -7,7 +7,7 @@ import type { CodeIntent, CodeIntentContext, CodeProjectType, PreviewType } from
 import { classifyCodeAssetPlan } from './codeIntentAssets.ts'
 import { BUNDLED_PREVIEW_PROJECTS, DEV_SERVER_PROJECTS, getBuildCommand, getDevCommand, getTestCommand } from './codeIntentCommands.ts'
 import { estimateComplexity } from './codeIntentComplexity.ts'
-import { estimateFileCount, isWholeProductRequest, minimumFileCountForIntent } from './codeIntentFileCount.ts'
+import { estimateFileCount } from './codeIntentFileCount.ts'
 import { classifyGameKind } from './codeIntentGameCatalog.ts'
 import { hasExplicitStackMention } from './codeIntentFollowup.ts'
 import { looksLikeDesktopAppRequest, looksLikeMobileAppRequest } from './codeIntentPlatformHeuristics.ts'
@@ -23,6 +23,7 @@ import {
 } from './codeIntentSignals.ts'
 import { matchSemanticProjectSignal } from './codeIntentSemanticSignals.ts'
 import { containsAnySignal, containsSignal, normalizeSignalText } from './codeIntentSignalUtils.ts'
+import { finalizeCodeIntentClassification } from './codeIntentFinalization.ts'
 
 export function classifyCodeIntent(prompt: string, context?: CodeIntentContext): CodeIntent {
   const lower = normalizeSignalText(prompt)
@@ -338,122 +339,12 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
     languages.push('typescript')
   }
 
-  // Step 9: detect feature keywords
-  const featureKeywords: Record<string, string> = {
-    'auth': 'authentication', 'login': 'authentication', 'connexion': 'authentication',
-    'jwt': 'jwt', 'oauth': 'oauth', 'database': 'database', 'base de donnee': 'database',
-    'bdd': 'database', 'mongodb': 'mongodb', 'postgres': 'postgresql', 'mysql': 'mysql',
-    'sqlite': 'sqlite', 'redis': 'redis', 'cache': 'caching', 'websocket': 'websocket',
-    'upload': 'file-upload', 'email': 'email', 'notification': 'notifications',
-    'search': 'search', 'recherche': 'search', 'pagination': 'pagination',
-    'dark mode': 'dark-mode', 'responsive': 'responsive', 'i18n': 'i18n',
-    'internationalisation': 'i18n', 'test': 'testing', 'docker': 'docker',
-    'ci/cd': 'ci-cd', 'deploy': 'deployment', 'stripe': 'payments',
-    'paiement': 'payments', 'payment': 'payments',
-  }
-
-  for (const [keyword, feature] of Object.entries(featureKeywords)) {
-    if (containsSignal(lower, keyword) && !features.includes(feature)) {
-      features.push(feature)
-    }
-  }
-
-  // Deduplicate
-  const uniqueLangs = [...new Set(languages)]
-  const uniqueFrameworks = [...new Set(frameworks)]
-  const uniqueFeatures = [...new Set(features)]
-
-  const complexity = estimateComplexity(prompt)
-  const needsDevServer = DEV_SERVER_PROJECTS.has(projectType)
-  const needsBundling = BUNDLED_PREVIEW_PROJECTS.has(projectType) || projectType.startsWith('spa_')
-
-  let previewType: PreviewType = 'none'
-  if (needsDevServer) {
-    previewType = 'dev_server'
-  } else if (needsBundling) {
-    previewType = 'iframe_bundled'
-  } else if (projectType === 'static_web' || projectType === 'game_web') {
-    previewType = 'iframe_static'
-  } else if (
-    projectType.startsWith('cli_')
-    || projectType.startsWith('system_')
-    || projectType.startsWith('embedded_')
-    || projectType === 'script'
-    || projectType === 'data_python'
-    || projectType === 'compiler'
-    || projectType === 'os_kernel'
-    || projectType === 'distributed_system'
-  ) {
-    previewType = 'console'
-  }
-
-  const wholeProductRequest = isWholeProductRequest(lower)
-  const needsArchitecturePlanning = complexity === 'complex'
-    || complexity === 'enterprise'
-    || uniqueFeatures.length >= 3
-    || wholeProductRequest
-  const assetPlan = classifyCodeAssetPlan(prompt)
-  if (assetPlan.wants3D && !uniqueFeatures.includes('3d')) {
-    uniqueFeatures.push('3d')
-  }
-
-  // Late upgrade: if the asset plan detected 3D content but the project type is
-  // still a plain static page (or SPA without explicit framework), bump it to
-  // game_web so the LLM gets the Three.js / canvas-loop instructions.
-  if (assetPlan.wants3D && (projectType === 'static_web' || (projectType as string) === 'unknown')) {
-    projectType = 'game_web'
-    if (!uniqueFrameworks.includes('three.js')) uniqueFrameworks.push('three.js')
-    if (!uniqueLangs.includes('javascript')) uniqueLangs.push('javascript')
-  } else if (assetPlan.wants3D) {
-    const supportsWeb3D = projectType === 'game_web'
-      || projectType.startsWith('spa_')
-      || projectType.startsWith('ssr_')
-      || projectType.startsWith('fullstack_')
-      || projectType.startsWith('desktop_')
-    if (supportsWeb3D && !uniqueFrameworks.includes('three.js')) uniqueFrameworks.push('three.js')
-  }
-
-  // Re-compute preview type after possible projectType upgrade
-  const finalPreviewType: PreviewType =
-    DEV_SERVER_PROJECTS.has(projectType) ? 'dev_server'
-    : (BUNDLED_PREVIEW_PROJECTS.has(projectType) || projectType.startsWith('spa_')) ? 'iframe_bundled'
-    : (projectType === 'static_web' || projectType === 'game_web') ? 'iframe_static'
-    : (
-      projectType.startsWith('cli_')
-      || projectType.startsWith('system_')
-      || projectType.startsWith('embedded_')
-      || projectType === 'script'
-      || projectType === 'data_python'
-      || projectType === 'compiler'
-      || projectType === 'os_kernel'
-      || projectType === 'distributed_system'
-    ) ? 'console'
-    : previewType
-
-  // Game classification — only relevant when we have a game_web project
-  const isGameRequest = projectType === 'game_web'
-  const { gameKind, knownGame } = classifyGameKind(lower, isGameRequest)
-  const estimatedFileCount = Math.max(
-    estimateFileCount(complexity, projectType),
-    minimumFileCountForIntent(projectType, uniqueFeatures, wholeProductRequest),
-  )
-
-  return {
+  return finalizeCodeIntentClassification({
+    prompt,
+    normalizedPrompt: lower,
     projectType,
-    complexity,
-    languages: uniqueLangs,
-    frameworks: uniqueFrameworks,
-    features: uniqueFeatures,
-    needsDevServer: DEV_SERVER_PROJECTS.has(projectType),
-    needsBundling: BUNDLED_PREVIEW_PROJECTS.has(projectType) || projectType.startsWith('spa_'),
-    previewType: finalPreviewType,
-    devCommand: getDevCommand(projectType),
-    buildCommand: getBuildCommand(projectType),
-    testCommand: getTestCommand(projectType),
-    primaryModelRole: needsArchitecturePlanning ? 'planning' : 'code',
-    needsArchitecturePlanning,
-    estimatedFileCount,
-    assetPlan,
-    ...(isGameRequest ? { gameKind, ...(knownGame ? { knownGame } : {}) } : {}),
-  }
+    languages,
+    frameworks,
+    features,
+  })
 }

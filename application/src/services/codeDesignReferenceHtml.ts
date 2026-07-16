@@ -1,5 +1,4 @@
 /** Premium HTML reference used as design-level exemplar. */
-
 // v82m7 — PREMIUM_HTML_REFERENCE eleve au niveau ingenieur senior
 // (Linear / Vercel / Arc / Stripe / Anthropic). Ancien starter etait scolaire:
 // Inter par defaut, gradient violet→cyan→ambre Bootstrap-ish, accent vibrant
@@ -30,24 +29,20 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
       --fg-faint: oklch(0.97 0.005 252 / 0.38);
       --accent: oklch(0.72 0.18 286);        /* electric violet, 1 accent */
       --accent-soft: oklch(0.72 0.18 286 / 0.14);
-
       --radius-1: 6px;
       --radius-2: 10px;
       --radius-3: 14px;
       --radius-4: 20px;
       --radius-pill: 999px;
-
       /* Spacing tokens — 4-base modular */
       --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px;
       --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px; --s-16: 64px;
       --s-20: 80px; --s-24: 96px; --s-32: 128px;
-
       /* Shadows — composites a 2-3 couches, jamais du flat */
       --sh-1: 0 1px 2px oklch(0 0 0 / 0.18);
       --sh-2: 0 1px 2px oklch(0 0 0 / 0.16), 0 8px 24px -4px oklch(0 0 0 / 0.18), inset 0 1px 0 oklch(1 0 0 / 0.04);
       --sh-3: 0 2px 4px oklch(0 0 0 / 0.16), 0 16px 32px -8px oklch(0 0 0 / 0.22), 0 32px 64px -24px oklch(0 0 0 / 0.28), inset 0 1px 0 oklch(1 0 0 / 0.06);
       --sh-glow: 0 0 0 1px oklch(0.72 0.18 286 / 0.12), 0 12px 36px -8px oklch(0.72 0.18 286 / 0.42);
-
       /* Easing tokens — vocabulaire senior */
       --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
       --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
@@ -55,7 +50,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
       --d-fast: 160ms;
       --d-base: 240ms;
       --d-slow: 480ms;
-
       --container: 1280px;
       --gutter: clamp(20px, 4vw, 56px);
     }
@@ -97,7 +91,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .btn-accent:hover { transform: translateY(-1px) scale(1.02); }
     .btn .arrow { transition: transform var(--d-base) var(--ease-spring); }
     .btn:hover .arrow { transform: translateX(3px); }
-
     /* Nav — glass mesure, inset 1px white signature Apple/Linear */
     nav.top { position: fixed; inset: 0 0 auto 0; z-index: 50; padding: 14px 0; transition: padding var(--d-base) var(--ease-out-expo), background var(--d-base) var(--ease-out-expo), border-color var(--d-base) var(--ease-out-expo); border-bottom: 1px solid transparent; }
     nav.top.scrolled { padding: 10px 0; background: oklch(from var(--bg) l c h / 0.72); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border-bottom-color: var(--border); box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.06); }
@@ -107,7 +100,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     nav.top ul { display: flex; gap: var(--s-6); list-style: none; }
     nav.top ul a { color: var(--fg-dim); text-decoration: none; font-size: 13px; transition: color var(--d-fast) var(--ease-out-expo); }
     nav.top ul a:hover { color: var(--fg); }
-
     /* Hero — grille 12-col, display italic serif, mesh gradient en arriere-plan */
     section.hero { position: relative; min-height: 100vh; display: flex; align-items: center; padding: 140px 0 96px; overflow: hidden; container-type: inline-size; }
     .hero-bg { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
@@ -137,7 +129,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .hero .visual .frame { position: absolute; inset: 0; border-radius: 24px; overflow: hidden; border: 1px solid var(--border-strong); background: var(--surface); box-shadow: var(--sh-3); }
     .hero .visual .frame::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle at 30% 20%, oklch(1 0 0 / 0.08), transparent 60%); pointer-events: none; }
     .hero .visual img { width: 100%; height: 100%; object-fit: cover; }
-
     /* Section base */
     section { padding-block: clamp(80px, 12vw, 160px); position: relative; }
     .section-head { display: grid; gap: 16px; max-width: 720px; margin-bottom: clamp(48px, 6vw, 80px); }
@@ -146,7 +137,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .section-head h2 { font-size: clamp(32px, 4.4vw, 56px); font-weight: 500; line-height: 1.05; letter-spacing: -0.03em; max-width: 22ch; }
     .section-head h2 .em { font-family: "Instrument Serif", serif; font-style: italic; font-weight: 400; }
     .section-head p { color: var(--fg-dim); font-size: 16px; line-height: 1.55; max-width: 60ch; }
-
     /* Features — mosaique inegale 12-col, pas une grille uniforme */
     .features-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: clamp(12px, 1.2vw, 20px); }
     .feature { padding: clamp(24px, 2.4vw, 36px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-4); position: relative; overflow: hidden; transition: transform var(--d-base) var(--ease-out-expo), border-color var(--d-fast) var(--ease-out-expo), background var(--d-fast) var(--ease-out-expo); }
@@ -161,7 +151,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .feature.small { grid-column: span 4; }
     .feature.wide { grid-column: span 8; }
     @media (max-width: 880px) { .feature, .feature.large, .feature.medium, .feature.small, .feature.wide { grid-column: span 12; } }
-
     /* Numbers — chiffres editoriaux Instrument Serif italic */
     section.numbers { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding-block: clamp(64px, 8vw, 120px); }
     .numbers-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: clamp(24px, 3vw, 48px); align-items: end; }
@@ -170,14 +159,12 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .stat .v sup { font-family: "JetBrains Mono", monospace; font-style: normal; font-size: 14px; vertical-align: super; color: var(--accent); margin-left: 4px; }
     .stat .l { font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim); }
     @media (max-width: 880px) { .stat { grid-column: span 6; } }
-
     /* CTA final — bandeau editorial centre, generous whitespace */
     section.cta-final { text-align: center; padding-block: clamp(96px, 14vw, 180px); }
     .cta-final h2 { font-size: clamp(40px, 6vw, 80px); font-weight: 500; line-height: 1; letter-spacing: -0.04em; max-width: 16ch; margin-inline: auto; }
     .cta-final h2 .em { font-family: "Instrument Serif", serif; font-style: italic; font-weight: 400; }
     .cta-final p { color: var(--fg-dim); font-size: 16px; line-height: 1.55; max-width: 50ch; margin: 24px auto 40px; }
     .cta-final .ctas { display: inline-flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
-
     /* Footer — dense 4-col */
     footer { padding-block: 64px 40px; border-top: 1px solid var(--border); }
     .footer-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: clamp(24px, 3vw, 48px); align-items: start; }
@@ -190,7 +177,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
     .footer-col a:hover { color: var(--fg); }
     .footer-base { display: flex; align-items: center; justify-content: space-between; padding-top: 32px; margin-top: 48px; border-top: 1px solid var(--border); font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 0.04em; color: var(--fg-faint); }
     @media (max-width: 880px) { .footer-brand, .footer-col { grid-column: span 6; } }
-
     /* Reveal — IntersectionObserver fallback. Modern: animation-timeline: view() */
     .reveal { opacity: 0; transform: translateY(20px); transition: opacity var(--d-slow) var(--ease-out-expo), transform var(--d-slow) var(--ease-out-expo); }
     .reveal.in { opacity: 1; transform: translateY(0); }
@@ -206,17 +192,14 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
       .reveal-modern { animation: revealIn linear both; animation-timeline: view(); animation-range: entry 0% entry 60%; }
     }
     @keyframes revealIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-
     /* Theme toggle */
     .theme-toggle { width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg-dim); cursor: pointer; transition: all var(--d-fast) var(--ease-out-expo); display: grid; place-items: center; }
     .theme-toggle:hover { color: var(--fg); }
     .theme-toggle svg { width: 14px; height: 14px; }
-
     /* Cursor follow blob — subtle, mix-blend difference */
     .cursor { position: fixed; pointer-events: none; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--fg); transform: translate3d(-100px, -100px, 0); transition: transform 80ms linear, width var(--d-fast) var(--ease-spring), height var(--d-fast) var(--ease-spring); mix-blend-mode: difference; z-index: 100; }
     .cursor.on-link { width: 36px; height: 36px; }
     @media (hover: none) { .cursor { display: none; } }
-
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation: none !important; transition: none !important; }
       .reveal, .stagger > * { opacity: 1; transform: none; }
@@ -241,7 +224,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
       </div>
     </div>
   </nav>
-
   <main>
     <section class="hero">
       <div class="hero-bg"><div class="blob a"></div><div class="blob b"></div></div>
@@ -266,7 +248,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
         </div>
       </div>
     </section>
-
     <section id="features">
       <div class="container">
         <div class="section-head reveal">
@@ -284,7 +265,6 @@ export const PREMIUM_HTML_REFERENCE = String.raw`<!DOCTYPE html>
         </div>
       </div>
     </section>
-
     <section class="numbers" id="numbers">
       <div class="container">
         <div class="numbers-grid stagger">

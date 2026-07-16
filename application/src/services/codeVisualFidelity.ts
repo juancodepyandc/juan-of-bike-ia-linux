@@ -6,10 +6,11 @@
 
 import type { CodeIntent } from './codeIntent'
 import {
-  buildRenderedVisualAuditCritique,
   scoreRenderedVisualAudit,
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
+
+export { buildVisualFidelityCritique } from './codeVisualFidelityCritique.ts'
 
 export type VisualFidelityCheck = {
   id: string
@@ -370,47 +371,4 @@ export function evaluateVisualFidelity(
     : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle.`
 
   return { score, passed, floor, checks, failedChecks, summary, source: 'source_static' }
-}
-
-/**
- * Build the critique block injected in the regeneration prompt when the
- * visual fidelity check fails. Concrete and direct so the LLM understands
- * what needs to change.
- */
-export function buildVisualFidelityCritique(report: VisualFidelityReport): string {
-  if (report.passed) return ''
-  if (report.source === 'render_audit') return buildRenderedVisualAuditCritique(report)
-
-  const failed = report.checks.filter((c) => !c.passed)
-  return [
-    '## ECHEC DU CONTROLE QUALITE VISUEL — REGENERATION OBLIGATOIRE',
-    `Score actuel: ${report.score}/100 (seuil minimum: ${report.floor}).`,
-    '',
-    'Ta page precedente etait trop pauvre. Voici les controles qui ont echoue:',
-    ...failed.map((c) => `- ${c.label}${c.evidence ? ` — ${c.evidence}` : ''}`),
-    '',
-    'CORRIGE ABSOLUMENT POUR LA PROCHAINE LIVRAISON:',
-    failed.find((c) => c.id === 'no_scolaire_title') ? '- SUPPRIME tout titre "Bienvenue chez X" — remplace par un slogan court et fort en deux lignes.' : '',
-    failed.find((c) => c.id === 'min_sections') ? '- AJOUTE des sections (objectif: 7-10): hero / anatomie / materiaux / galerie / specs / KPIs / compare / testimonials / CTA / footer.' : '',
-    failed.find((c) => c.id === 'has_gradient') ? '- AJOUTE des gradients (mesh blobs en arriere-plan, gradient text sur les hero, gradient buttons).' : '',
-    failed.find((c) => c.id === 'has_depth') ? '- AJOUTE de la profondeur via filter: blur(120-160px) sur des blobs absolute + backdrop-filter sur la nav.' : '',
-    failed.find((c) => c.id === 'has_animations') ? '- AJOUTE des animations: @keyframes, transitions cubic-bezier, IntersectionObserver pour scroll reveal.' : '',
-    failed.find((c) => c.id === 'has_inline_svg') ? '- AJOUTE au moins un SVG inline travaille (logo de la marque, icones, illustrations).' : '',
-    failed.find((c) => c.id === 'has_images') ? '- UTILISE les assets fichiers via PLACEHOLDER_IMG_HERO/DETAIL/LIFESTYLE1/LIFESTYLE2 dans <img src="...">.' : '',
-    failed.find((c) => c.id === 'premium_fonts') ? '- IMPORTE Inter ou Space Grotesk via Google Fonts (preconnect + display=swap).' : '',
-    failed.find((c) => c.id === 'has_css_vars') ? '- DECLARE des variables CSS dans :root pour --bg, --fg, --accent, --border.' : '',
-    failed.find((c) => c.id === 'has_clamp') ? '- UTILISE clamp() pour les tailles de police responsive.' : '',
-    failed.find((c) => c.id === 'has_hover') ? '- AJOUTE des etats :hover sur les liens, cartes, boutons.' : '',
-    failed.find((c) => c.id === 'html_size') ? '- DEVELOPPE le contenu — la page doit faire au moins 8 ko de HTML, pas 1 ko.' : '',
-    failed.find((c) => c.id === 'rich_styling') ? '- DEVELOPPE le CSS — la page doit avoir au moins 2-3 ko de CSS, pas 200 lignes.' : '',
-    failed.find((c) => c.id === 'has_3d_transforms') ? '- AJOUTE des transformations 3D: rotateY au scroll OU perspective + preserve-3d sur les cards (flip 3D) OU rotation continue de la bouteille/produit.' : '',
-    failed.find((c) => c.id === 'has_scroll_driven') ? '- AJOUTE une animation pilotee par scroll: section sticky avec --p, IntersectionObserver, OU ScrollTrigger. Le visuel principal doit reagir au scroll.' : '',
-    failed.find((c) => c.id === 'has_layered_gradients') ? '- AJOUTE au moins 2 gradients layered (mesh blobs en fond + gradient hero text).' : '',
-    failed.find((c) => c.id === 'no_flat_card_cluster')
-      ? '- ECHEC CRITIQUE: tu as livre des CARTES PLATES COLOREES sans images (`<div style="background:red">Texte</div>`). C est exactement le pattern interdit.\n  CORRIGE: chaque carte DOIT contenir soit un <img src="PLACEHOLDER_IMG_*">, soit un SVG inline travaille (>100 chars), soit un canvas. Les cards sans visuel sont REJETEES.\n  Si tu utilises des cards (saveurs, materiaux, produits, services), CHACUNE doit avoir une image au-dessus du texte.'
-      : '',
-    '',
-    'Reprends le STARTER TEMPLATE fourni et remplace UNIQUEMENT les {{slots}} par du contenu adapte. NE simplifie PAS le squelette.',
-    'AUCUN DIV avec `background: <couleur unie>` SANS image/svg/canvas a l interieur. Aucune exception.',
-  ].filter(Boolean).join('\n')
 }

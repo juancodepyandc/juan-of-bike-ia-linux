@@ -28,153 +28,12 @@
  */
 
 import type { ParsedFile } from './codeOutputFiles'
-import { buildAuroraInlineSvgDataUri } from './codeVisualFallbacks.ts'
-
-// ---------------------------------------------------------------------------
-// Image intelligence
-// ---------------------------------------------------------------------------
-
-/**
- * Decide whether an <img>'s src is "broken" : empty, relative-local,
- * placeholder pattern, data URL of a 1x1, or just a logo SVG repeated
- * everywhere.
- */
-function isBrokenImageSrc(src: string | null | undefined): boolean {
-  if (!src) return true
-  const s = src.trim()
-  const sl = s.toLowerCase()
-  if (s === '' || s === '#' || sl === 'javascript:void(0)') return true
-  // v82nq : LLM placeholder patterns like [URL_IMAGE_UNSPLASH],
-  // {{image_url}}, %image%, $IMG_SRC$, IMAGE_URL_HERE etc.
-  if (/^\s*[\[{<%$]+\s*(URL|IMG|IMAGE|PHOTO|HERO|PICTURE|SRC|UNSPLASH|HOLD|PLACE)/i.test(s)) return true
-  if (/^\s*[\w_-]*(URL|IMG|IMAGE|PHOTO|HERO|PICTURE|SRC|UNSPLASH|HOLD|PLACE)[\w_-]*\s*[\]}>%$]+\s*$/i.test(s)) return true
-  if (/^\{\{[^}]+\}\}$/.test(s) || /^\$\{[^}]+\}$/.test(s)) return true
-  if (/^\s*(YOUR[_-]?IMAGE|IMAGE[_-]?HERE|TODO|FIXME|TBD|N\/?A|EXAMPLE)\b/i.test(s)) return true
-  if (/^(via\.placeholder|placehold|loremflickr|placedog|placekitten)/.test(sl)) return true
-  if (/^(https?:)?\/\/(www\.)?(via\.placeholder|placehold|loremflickr)/.test(sl)) return true
-  // Data URL of an SVG is usually a placeholder logo
-  if (sl.startsWith('data:image/svg')) return true
-  // Local relative path with no actual file (.png .jpg .webp without origin)
-  if (/^[\w./-]+\.(png|jpe?g|webp|gif|avif)$/i.test(s) && !sl.startsWith('http')) return true
-  if (s.startsWith('./') || s.startsWith('../')) return true
-  // Single-pixel inline data placeholder
-  if (sl.startsWith('data:image/png;base64,iVBORw') && s.length < 200) return true
-  return false
-}
-
-/**
- * Build a stable visual seed for this image based on context :
- *   1. its alt text (if descriptive)
- *   2. nearest preceding heading text
- *   3. parent section's data-aurora-context attr (we set this in
- *      enrichSection)
- *   4. page title fallback
- */
-function inferImageQuery(img: Element, doc: Document, fallback: string): string {
-  // Priority 1 : non-trivial alt text
-  const alt = (img.getAttribute('alt') || '').trim()
-  if (alt.length >= 4 && !/^(image|photo|picture|placeholder|logo)$/i.test(alt)) {
-    return alt
-  }
-  // Priority 2 : ancestor section's heading
-  let parent: Element | null = img.parentElement
-  while (parent && parent !== doc.body) {
-    const h = parent.querySelector('h1, h2, h3')
-    if (h && h.textContent && h.textContent.trim().length >= 4) {
-      return h.textContent.trim().slice(0, 80)
-    }
-    parent = parent.parentElement
-  }
-  // Priority 3 : page title
-  const title = doc.title || doc.querySelector('h1')?.textContent || fallback
-  return title.trim().slice(0, 80)
-}
-
-/**
- * Replace broken <img> srcs with context-aware inline SVG visuals.
- * Existing URLs are kept, but get a local onerror fallback so the UI
- * never depends on a third-party placeholder host.
- */
-function fixBrokenImages(doc: Document, fallback: string): { fixed: number } {
-  let fixed = 0
-  const imgs = Array.from(doc.querySelectorAll('img'))
-  let i = 0
-  for (const img of imgs) {
-    const src = img.getAttribute('src')
-    const broken = isBrokenImageSrc(src)
-    if (broken) {
-      const query = inferImageQuery(img, doc, fallback)
-      const w = img.getAttribute('width') || '1200'
-      const h = img.getAttribute('height') || '800'
-      // sig suffix so consecutive imgs differ.
-      const sig = (img.getAttribute('alt') || query).replace(/\s+/g, '-').slice(0, 20)
-      const newSrc = buildAuroraInlineSvgDataUri(`${query} ${sig}-${i}`, { width: w, height: h })
-      img.setAttribute('src', newSrc)
-      if (!img.getAttribute('alt') || img.getAttribute('alt')?.trim().length === 0) {
-        img.setAttribute('alt', query)
-      }
-      fixed += 1
-    }
-    // Always attach a local onerror fallback so remote images cannot
-    // leave a broken-image icon in the generated preview.
-    if (!img.getAttribute('onerror')) {
-      const w = img.getAttribute('width') || '1200'
-      const h = img.getAttribute('height') || '800'
-      const seedSource = (img.getAttribute('alt') || `aurora-${i}`).replace(/[^\w-]/g, '').slice(0, 20) || `aurora-${i}`
-      const fallbackUrl = buildAuroraInlineSvgDataUri(seedSource, { width: w, height: h })
-      img.setAttribute('onerror', `this.onerror=null;this.src=${JSON.stringify(fallbackUrl)};`)
-    }
-    img.setAttribute('loading', 'lazy')
-    img.setAttribute('decoding', 'async')
-    i += 1
-  }
-  return { fixed }
-}
-
-/**
- * Replace broken <picture><source srcset=...> elements similarly.
- */
-function fixBrokenPictures(doc: Document, fallback: string): { fixed: number } {
-  let fixed = 0
-  const sources = Array.from(doc.querySelectorAll('picture source'))
-  for (const source of sources) {
-    const srcset = source.getAttribute('srcset')
-    if (!srcset || isBrokenImageSrc(srcset.split(' ')[0] || '')) {
-      const query = inferImageQuery(source, doc, fallback)
-      source.setAttribute('srcset', buildAuroraInlineSvgDataUri(query, { width: 1600, height: 900 }))
-      fixed += 1
-    }
-  }
-  return { fixed }
-}
-
-/**
- * Some pages have NO <img> at all in places where one is needed (hero,
- * features). Detect and inject. We add an <img> only when the section
- * has substantial text but no visual.
- */
-function injectMissingHeroImage(doc: Document, fallback: string): { injected: boolean } {
-  const hero = doc.querySelector('.hero, [class*="hero"], header.hero, section.hero, main > section:first-of-type')
-  if (!hero) return { injected: false }
-  if (hero.querySelector('img, video, canvas, svg[class*="hero"], picture')) {
-    return { injected: false }
-  }
-  // Inject a deterministic local hero visual as a sibling/last-child
-  // if there's textual content but no visual.
-  const txt = hero.textContent?.trim() || ''
-  if (txt.length < 30) return { injected: false }
-  const heading = hero.querySelector('h1')?.textContent?.trim() || fallback
-  const img = doc.createElement('img')
-  img.setAttribute('src', buildAuroraInlineSvgDataUri(heading.slice(0, 80), { width: 1600, height: 900 }))
-  img.setAttribute('alt', heading)
-  img.setAttribute('loading', 'eager')
-  img.setAttribute('decoding', 'async')
-  img.className = 'hero-injected-visual'
-  // Style inline so it adapts even without CSS support.
-  img.setAttribute('style', 'width:100%;max-height:520px;object-fit:cover;border-radius:14px;margin-top:24px;animation:auroraFadeUp 1s cubic-bezier(0.19,1,0.22,1) both 200ms;')
-  hero.appendChild(img)
-  return { injected: true }
-}
+import {
+  fixBrokenImages,
+  fixBrokenPictures,
+  fixCssBackgroundImages,
+  injectMissingHeroImage,
+} from './codeOutputImageRepair.ts'
 
 // ---------------------------------------------------------------------------
 // Button intelligence
@@ -344,27 +203,6 @@ const COUNTER_OBSERVER_JS = `
   }
 })();
 `
-
-/**
- * Fix CSS background-image: url(local-path.jpg) by routing to a local
- * deterministic SVG derived from the surrounding selector name.
- */
-function fixCssBackgroundImages(css: string, fallbackQuery: string): { css: string; fixed: number } {
-  let fixed = 0
-  const out = css.replace(
-    /(\.[a-zA-Z][\w-]*\s*\{[^}]*?background(?:-image)?\s*:\s*[^;}]*url\s*\(\s*['"]?)([^'")]+)(['"]?\s*\))/gi,
-    (full, before, url, after) => {
-      const trimmed = url.trim()
-      if (/^https?:/i.test(trimmed)) return full // keep working URLs
-      // Derive query from selector.
-      const selectorMatch = full.match(/\.([a-zA-Z][\w-]*)/)
-      const seed = selectorMatch ? selectorMatch[1].replace(/-/g, ' ') : fallbackQuery
-      fixed += 1
-      return `${before}${buildAuroraInlineSvgDataUri(seed, { width: 1600, height: 900 })}${after}`
-    },
-  )
-  return { css: out, fixed }
-}
 
 // ---------------------------------------------------------------------------
 // Public API
