@@ -59,35 +59,6 @@ COMFYUI_URL = "http://127.0.0.1:8188"
 # Repertoire de travail (la ou se trouve le bridge)
 WORKSPACE = os.path.dirname(os.path.abspath(__file__))
 
-_CODE_INTERMODULE_RUNTIME_LOCK = threading.Lock()
-_CODE_INTERMODULE_RUNTIME_ROOT = pathlib.Path(
-    os.environ.get(
-        "AURORA_CODE_INTERMODULE_VENV",
-        pathlib.Path.home() / ".local" / "share" / "auroraia" / "venvs" / "code-intermodule",
-    )
-)
-
-
-def _code_inter_module_runtime() -> tuple[str, dict[str, str]]:
-    """Runtime isole pour les services appeles par Code, jamais application/.venv."""
-    python_path = _CODE_INTERMODULE_RUNTIME_ROOT / "bin" / "python"
-    if not python_path.is_file():
-        with _CODE_INTERMODULE_RUNTIME_LOCK:
-            if not python_path.is_file():
-                _CODE_INTERMODULE_RUNTIME_ROOT.parent.mkdir(parents=True, exist_ok=True)
-                subprocess.run(
-                    [sys.executable, "-m", "venv", str(_CODE_INTERMODULE_RUNTIME_ROOT)],
-                    check=True,
-                    timeout=120,
-                )
-    env = os.environ.copy()
-    application_site = sysconfig.get_paths().get("purelib", "")
-    inherited = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (application_site, inherited)))
-    env["PIP_DISABLE_PIP_VERSION_CHECK"] = "1"
-    return str(python_path), env
-
-
 def _find_comfyui_path() -> str | None:
     """Detect the ComfyUI installation directory for model path resolution.
 
@@ -279,8 +250,7 @@ def voice_tts():
         output_path = os.path.join(WORKSPACE, "temp", "tts_out.wav")
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
 
-        runtime_python, runtime_env = _code_inter_module_runtime()
-        cmd = [runtime_python, script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
+        cmd = [sys.executable, script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
         if voice_persona:
             cmd += ["--voice", voice_persona]
         # Timeout adaptatif: 120s sans avatar, 180s avec SadTalker
@@ -297,7 +267,7 @@ def voice_tts():
                 timeout_s = 180
 
         raw = subprocess.check_output(
-            cmd, stderr=subprocess.STDOUT, timeout=timeout_s, cwd=WORKSPACE, env=runtime_env,
+            cmd, stderr=subprocess.STDOUT, timeout=timeout_s, cwd=WORKSPACE,
         ).decode("utf-8")
 
         if not os.path.exists(output_path):
@@ -2369,10 +2339,9 @@ def web_search():
     try:
         # Crawl4AI search (avec Playwright)
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
-        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            [runtime_python, crawl_script, "--mode", "search", "--query", query, "--limit", str(limit)],
-            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
+            [sys.executable, crawl_script, "--mode", "search", "--query", query, "--limit", str(limit)],
+            capture_output=True, timeout=30, cwd=WORKSPACE,
         )
         if result.returncode == 0:
             out = json.loads(result.stdout.decode("utf-8", errors="replace"))
@@ -2491,10 +2460,9 @@ def web_extract():
 
     try:
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
-        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            [runtime_python, crawl_script, "--mode", "extract", "--url", url, "--prompt", prompt],
-            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
+            [sys.executable, crawl_script, "--mode", "extract", "--url", url, "--prompt", prompt],
+            capture_output=True, timeout=30, cwd=WORKSPACE,
         )
         if result.returncode == 0:
             return Response(result.stdout, mimetype="application/json")
@@ -2514,10 +2482,9 @@ def web_images():
 
     try:
         crawl_script = os.path.join(WORKSPACE, "python-services", "crawl4ai_search.py")
-        runtime_python, runtime_env = _code_inter_module_runtime()
         result = subprocess.run(
-            [runtime_python, crawl_script, "--mode", "images", "--query", query, "--limit", str(limit)],
-            capture_output=True, timeout=180, cwd=WORKSPACE, env=runtime_env,
+            [sys.executable, crawl_script, "--mode", "images", "--query", query, "--limit", str(limit)],
+            capture_output=True, timeout=30, cwd=WORKSPACE,
         )
         if result.returncode == 0:
             return Response(result.stdout, mimetype="application/json")
