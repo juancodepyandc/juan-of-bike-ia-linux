@@ -547,6 +547,16 @@
 - **Validation** : tests WS12/WS11 8 verts / 0 echec ; glob Code complet **666 tests verts / 0 echec** ; syntaxe Node/Python verte ; `npm run build` vert ; preuve `output/ws12_simulation_lab_proof3` avec CDP Chromium desktop/mobile/tablet executes, Playwright Chromium/Firefox executes, WebKit/Android/Renode/QEMU explicitement indisponibles.
 - **WS12 statut** : socle labo reel applique pour web multi-profils et multi-browser partiel. DoD complet mobile natif/embarque/Raspberry/OS boot attend installation systeme de Waydroid/AVD, Renode et QEMU.
 
+### 2026-07-16 — Vague 4 / WS14 increment 65 applique
+
+- **Boucle ReAct outillee** : ajout des actions declarees `run_shell`, `run_tests`, `search_pkg`, `install_dep`, `add_model`; la boucle de correction appelle WS14 quand les scores plafonnent.
+- **Venv isole obligatoire** : `tooling_eval.py` installe uniquement dans `~/.local/share/auroraia/venvs/code-auto-tools`, jamais dans `application/.venv`; l'allow-list refuse tout outil non approuve.
+- **Evaluation A/B** : chaque candidat mesure baseline vs outil; gain reel -> venv conserve avec marqueur `aurora_tooling_eval.json`; gain nul -> venv supprime.
+- **Resolveur multi-registres** : `codeToolingLoop.ts` couvre npm, PyPI, crates.io et Maven avec URLs allow-list et parsing de version.
+- **Bridge** : ajout de `POST /api/code/tooling-eval`, route bornee par timeout et namespace Code.
+- **Validation** : tests WS14/WS13 cibles 52 verts / 0 echec ; syntaxe Python/bridge verte ; `npm run build` vert ; preuve `output/ws14_tooling_eval_proof/report.json` avec `python-slugify` conserve sur gain A/B **80 -> 100 (+20)** et un candidat inutile retire **100 -> 100 (+0)** ; aucun marqueur dans `application/.venv`.
+- **WS14 statut** : auto-outillage reel applique pour le cas PyPI/venv isole, branche sur plateau de correction. Les outils lourds/modeles restent soumis a quotas/allow-list avant extension.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

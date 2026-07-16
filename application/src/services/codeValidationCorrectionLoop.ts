@@ -106,6 +106,7 @@ export async function runValidationAndCorrectionLoop(
   let attempt = 0
   let lastScore = 0
   let rescueRegenerationUsed = false
+  let toolingEvaluationUsed = false
 
   while (true) {
     attempt += 1
@@ -304,6 +305,32 @@ export async function runValidationAndCorrectionLoop(
       }
     }
 
+    let toolingContext = ''
+    if (isFlatlining && !toolingEvaluationUsed) {
+      toolingEvaluationUsed = true
+      setPhase(`Passe ${attempt} — auto-outillage WS14 en venv isole...`, Math.min(93, 73 + attempt * 3))
+      try {
+        const {
+          evaluateAutoToolingForCorrection,
+          formatToolingReportForCorrection,
+        } = await import('./codeToolingLoop.ts')
+        const toolingReport = await evaluateAutoToolingForCorrection({
+          correctionLog,
+          errorCategories,
+          failingOutputs: collectFailingStepOutputs(sandboxResult),
+          intent,
+          signal,
+        })
+        if (toolingReport) {
+          toolingContext = formatToolingReportForCorrection(toolingReport)
+          pass.errors = [`[Auto-outillage WS14]\n${toolingContext}`, ...pass.errors]
+          onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+        }
+      } catch {
+        toolingContext = ''
+      }
+    }
+
     let reasoningContext = ''
     if (attempt >= 2 || isFlatlining) {
       setPhase(`Passe ${attempt} — analyse de la cause racine...`, Math.min(93, 73 + attempt * 3))
@@ -323,6 +350,9 @@ export async function runValidationAndCorrectionLoop(
         reasoningContext = buildReasoningInstructions(reasoning)
         setPhase(`Passe ${attempt} — cause identifiee: ${reasoning.rootCause.slice(0, 80)}...`, Math.min(93, 74 + attempt * 3))
       }
+    }
+    if (toolingContext) {
+      reasoningContext = [toolingContext, reasoningContext].filter(Boolean).join('\n\n')
     }
 
     const rescueEligible = (strategy!.level === 'rewrite' || strategy!.level === 'strategy_change')

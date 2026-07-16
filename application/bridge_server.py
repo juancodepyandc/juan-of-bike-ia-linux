@@ -11816,6 +11816,52 @@ def code_simulation_lab():
     return jsonify({"ok": ok, "report": report, "error": error})
 
 
+@app.route("/api/code/tooling-eval", methods=["POST"])
+def code_tooling_eval():
+    data = request.get_json(silent=True) or {}
+    candidates = data.get("candidates") or []
+    if not isinstance(candidates, list) or not candidates:
+        return jsonify({"ok": False, "error": "candidates requis"}), 400
+
+    try:
+        timeout_ms = int(data.get("timeoutMs") or data.get("timeout_ms") or 90_000)
+    except Exception:
+        timeout_ms = 90_000
+    timeout_ms = max(10_000, min(180_000, timeout_ms))
+
+    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "tooling_eval.py"
+    if not script.is_file():
+        return jsonify({"ok": False, "error": "tooling_eval.py introuvable"}), 500
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=WORKSPACE,
+            input=json.dumps({"candidates": candidates, "timeoutMs": timeout_ms}),
+            capture_output=True,
+            text=True,
+            timeout=max(30, int(timeout_ms / 1000) + 30),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "timeout auto-outillage Code"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"auto-outillage impossible: {exc}"}), 500
+
+    try:
+        report = json.loads(proc.stdout or "{}")
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"JSON auto-outillage invalide: {exc}", "stderr": (proc.stderr or "")[-1200:]}), 502
+
+    if not isinstance(report, dict):
+        report = {}
+    report.setdefault("schemaVersion", "aurora.code.tooling-eval/1")
+    report.setdefault("candidates", [])
+    ok = proc.returncode == 0 and len(report.get("candidates") or []) > 0
+    error = report.get("error") or ((proc.stderr or "")[-2000:] if proc.returncode != 0 else "")
+    return jsonify({"ok": ok, "report": report, "error": error})
+
+
 def _code_stream_language(path: str) -> str:
     ext = pathlib.Path(path).suffix.lower().lstrip(".")
     return {

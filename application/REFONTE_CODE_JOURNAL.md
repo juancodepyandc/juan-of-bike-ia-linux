@@ -3030,3 +3030,58 @@ WS11 a maintenant un socle fonctionnel : viewer compact conserve, runtime applic
 ### Etat de satisfaction chantier
 
 WS12 n'est plus une largeur cosmetique : le labo execute de vrais navigateurs avec profils et throttling, et documente les environnements non disponibles sans les simuler faussement. Le DoD complet mobile/ESP32/Raspberry/OS boot reste conditionne a l'installation systeme de Waydroid/AVD, Renode et QEMU, explicitement absents de cette machine pendant l'increment.
+
+## 2026-07-16 — Vague 4 / WS14 increment 65 — Boucle d'auto-outillage isolee
+
+### Reprise et diagnostic confirme
+
+- La boucle de correction WS13 detectait deja cause, localite, historique et plateau, mais elle ne pouvait pas acquerir puis evaluer un outil externe.
+- Le prompt impose que les installs d'auto-amelioration n'aillent jamais dans `application/.venv`.
+- Le besoin n'est pas seulement "installer une lib" : il faut mesurer A/B contre la reference, conserver si meilleur, et retirer si inutile.
+
+### Recherches et choix techniques
+
+- Point d'insertion retenu : plateau dans `runValidationAndCorrectionLoop`, apres recherche web et avant injection du diagnostic de cause racine.
+- Isolation retenue : venvs dedies sous `~/.local/share/auroraia/venvs/code-auto-tools`, avec allow-list stricte.
+- Cas de preuve retenu : `python-slugify==8.0.4` sur PyPI, car il montre un gain mesurable sur translitteration Unicode sans dependance lourde.
+- Resolveur ajoute cote TS pour npm, PyPI, crates.io et Maven ; l'installation automatique reste allow-listee pour eviter une acquisition arbitraire.
+
+### Modifications realisees
+
+- `src/services/codeToolingLoop.ts` :
+  - registre ReAct (`run_shell`, `run_tests`, `search_pkg`, `install_dep`, `add_model`) ;
+  - resolveur multi-registres avec URLs allow-list ;
+  - detection de plateau et selection de candidat PyPI pour blocage Python slug/Unicode ;
+  - client `POST /api/code/tooling-eval`, type guard, resume et format d'injection correction.
+- `python-services/aurora_code/tooling_eval.py` :
+  - creation de venv isole ;
+  - installation pip allow-listee ;
+  - evaluation baseline vs outil ;
+  - conservation du venv avec marqueur si gain reel, suppression si gain insuffisant.
+- `bridge_server.py` :
+  - route `POST /api/code/tooling-eval` sous namespace Code.
+- `src/services/codeValidationCorrectionLoop.ts` :
+  - appel WS14 non bloquant lorsque les trois derniers scores plafonnent.
+- Tests :
+  - `codeToolingLoop.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : un plateau relancait surtout recherche, reasoning et regeneration.
+- Apres : un plateau peut declencher une acquisition outillee mesuree en A/B.
+- Avant : aucun contrat n'empechait une install d'auto-outillage dans `.venv`.
+- Apres : le chemin WS14 expose explicitement `appVenvInstallForbidden=true` et n'ecrit que dans le venv dedie.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeToolingLoop.test.ts src/__tests__/codeValidationCorrectionLoop.test.ts src/__tests__/codeAutoCorrection.test.ts` : 52 pass / 0 fail.
+- `python3 -m py_compile python-services/aurora_code/tooling_eval.py bridge_server.py` : vert.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- Preuve reelle `output/ws14_tooling_eval_proof/report.json` :
+  - candidat utile `proof-python-slugify-kept` : baseline 80, outil 100, gain +20, venv conserve sous `~/.local/share/auroraia/venvs/code-auto-tools` ;
+  - candidat inutile `proof-python-slugify-removed` : baseline 100, outil 100, gain 0, venv supprime ;
+  - `application/.venv` contient 0 marqueur `aurora_tooling_eval.json`.
+
+### Etat de satisfaction chantier
+
+WS14 dispose maintenant d'un chemin reel d'auto-outillage : detection de plateau, acquisition PyPI en venv isole, mesure A/B, conservation ou retrait propre. L'extension vers des outils plus lourds ou des modeles reste volontairement derriere allow-list et quotas pour eviter l'accumulation ou le swap VRAM.
