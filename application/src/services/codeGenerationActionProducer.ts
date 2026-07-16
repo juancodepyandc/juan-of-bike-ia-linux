@@ -22,6 +22,7 @@ export type CodeGenerationActionProducerOptions = {
   prompt: string
   model: string
   architecturePlan?: string | null
+  contextImages?: string[]
   maxFileContextChars?: number
   signal?: AbortSignal
   numCtx?: number
@@ -100,9 +101,29 @@ export function buildCodeGenerationActionMessages(args: {
   files: CodeFile[]
   prompt: string
   architecturePlan?: string | null
+  contextImages?: string[]
   maxFileContextChars?: number
 }): OllamaMessage[] {
   const maxContext = args.maxFileContextChars ?? 12_000
+  const userMessage: OllamaMessage = {
+    role: 'user',
+    content: [
+      '## DEMANDE UTILISATEUR',
+      args.prompt,
+      '',
+      args.architecturePlan ? `## PLAN ARCHITECTE JSON\n${cap(args.architecturePlan, 8_000)}` : '',
+      '',
+      '## FENETRE DE QUEUE',
+      formatQueueWindow(args.queue, args.item),
+      '',
+      '## CONTEXTE FICHIERS CIBLE',
+      formatRelevantFiles(args.files, args.item, maxContext),
+      '',
+      '## CONTRAT DE SORTIE',
+      buildCodeGenerationActionInstructions(args.item),
+    ].filter(Boolean).join('\n\n'),
+  }
+  if (args.contextImages?.length) userMessage.images = args.contextImages
   return [
     {
       role: 'system',
@@ -114,24 +135,7 @@ export function buildCodeGenerationActionMessages(args: {
         'Pour un fichier required, l action finale doit rendre le fichier present et complet.',
       ].join('\n'),
     },
-    {
-      role: 'user',
-      content: [
-        '## DEMANDE UTILISATEUR',
-        args.prompt,
-        '',
-        args.architecturePlan ? `## PLAN ARCHITECTE JSON\n${cap(args.architecturePlan, 8_000)}` : '',
-        '',
-        '## FENETRE DE QUEUE',
-        formatQueueWindow(args.queue, args.item),
-        '',
-        '## CONTEXTE FICHIERS CIBLE',
-        formatRelevantFiles(args.files, args.item, maxContext),
-        '',
-        '## CONTRAT DE SORTIE',
-        buildCodeGenerationActionInstructions(args.item),
-      ].filter(Boolean).join('\n\n'),
-    },
+    userMessage,
   ]
 }
 
@@ -161,6 +165,7 @@ export function createCodeGenerationLLMActionProducer(
       files,
       prompt: options.prompt,
       architecturePlan: options.architecturePlan,
+      contextImages: options.contextImages,
       maxFileContextChars: options.maxFileContextChars,
     })
     const response = await chatClient(options.model, messages, {

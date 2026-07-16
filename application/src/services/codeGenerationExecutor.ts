@@ -38,6 +38,7 @@ export type CodeGenerationExecutorOptions = {
   nextMeta: () => CodeStreamEventMeta
   runner?: CodeGenerationToolRunner
   onEvent?: (event: CodeStreamEvent) => void
+  onFilesUpdate?: (files: CodeFile[], item: CodeGenerationQueueItem, result: CodeGenerationToolResult) => void
   includeFileContentInEvents?: boolean
   stopOnOptionalFailure?: boolean
 }
@@ -142,6 +143,7 @@ export async function executeCodeGenerationQueue(
       }
 
       files = result.files
+      options.onFilesUpdate?.(files, item, result)
       for (const event of buildCodeStreamFileWrittenEvents({
         files,
         previousFiles,

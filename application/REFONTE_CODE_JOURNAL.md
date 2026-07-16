@@ -2226,3 +2226,50 @@ Pour cet increment WS3, non, WS3 n'est toujours pas termine : la boucle executor
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : la production d'actions LLM est testable, mais elle doit encore remplacer le mono-appel de generation dans le chemin applicatif, puis etre exposee en stream bridge `/api/code/*`.
+
+## 2026-07-15 — Vague 3 / WS3 increment 50 — Branchement agentique dans le pipeline actif
+
+### Reprise et diagnostic confirme
+
+- Le producteur d'actions LLM et l'executor etaient prets, mais `runFullPipeline` appelait encore directement `runGenerationPhase`.
+- L'orchestrateur est proche du seuil WS1 : toute integration doit rester courte et deleguer la logique a un service dedie.
+- La migration doit conserver la parite tant que `/api/code/*` n'est pas expose et tant que `run_command` n'a pas de runner WS7 branche.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : il s'agit d'un branchement interne entre les briques WS3 deja testees.
+- Choix retenu : `runAgenticGenerationPhase` se place avant le mono-appel historique, uniquement si `buildGenerationQueueFromArchitecturePlan` retourne une queue.
+- Raison technique : le chemin applicatif commence a produire fichier par fichier sans supprimer le fallback tant que la route stream bridge n'est pas livree.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeAgenticGenerationPhase.ts` :
+  - construit la queue depuis le plan ;
+  - cree le producteur LLM d'actions ;
+  - execute la queue VFS ;
+  - pousse `onFilesUpdate` apres chaque fichier ecrit ;
+  - serialise le resultat final en `AURORA_CODE_VFS/1` pour le reste du pipeline existant.
+- `codeOrchestrator.ts` :
+  - tente la phase agentique avant `runGenerationPhase` ;
+  - conserve le fallback mono-appel avec message de phase explicite en cas d'echec ;
+  - garde l'annulation utilisateur prioritaire.
+- `codeGenerationExecutor.ts` expose `onFilesUpdate` par mutation reussie.
+- `codeGenerationActionProducer.ts` propage les images contexte dans le message utilisateur.
+- Ajout de `src/__tests__/codeAgenticGenerationPhase.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : les briques agentiques etaient testees mais non appelees par la generation reelle.
+- Apres : le chemin applicatif tente d'abord l'execution fichier-par-fichier, alimente les fichiers live, puis livre un flux final parseable par les validations existantes.
+- Limite assumee : le fallback mono-appel existe encore pour parite ; WS3 ne sera clos qu'apres route `/api/code/*`, runner WS7 et preuve >40 fichiers buildable.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeAgenticGenerationPhase.test.ts src/__tests__/codeGenerationActionProducer.test.ts src/__tests__/codeGenerationExecutor.test.ts src/__tests__/codePipelinePhases.test.ts` : 10 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 595 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- Controle taille : `codeOrchestrator.ts` 595 lignes, sous le seuil dur 600.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est pas termine : le chemin applicatif prefere maintenant l'executor agentique, mais la route `/api/code/*`, le runner WS7 de commandes et la demonstration >40 fichiers restent a livrer.

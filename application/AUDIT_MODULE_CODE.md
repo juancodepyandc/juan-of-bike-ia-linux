@@ -413,6 +413,14 @@
 - **Validation** : tests cibles protocole/producteur/executor/outils 16 verts / 0 echec ; glob Code a **593 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code).
 - **WS3 reste ouvert** : brancher cette boucle au chemin `runGenerationPhase`, exposer le stream `/api/code/*`, puis prouver une generation >40 fichiers buildable.
 
+### 2026-07-15 — Vague 3 / WS3 increment 50 applique
+
+- **Chemin applicatif agentique** : `runFullPipeline` appelle maintenant `runAgenticGenerationPhase` avant le mono-appel historique quand un plan JSON fournit une queue exploitable.
+- **Emission live vers l'UI existante** : la phase agentique pousse `onFilesUpdate` apres chaque fichier ecrit, ce qui alimente le viewer compact et le journal `file.written` sans toucher au Viewer 3D.
+- **Fallback transitoire** : si le producteur LLM sort du protocole ou si l'executor echoue, le pipeline bascule encore sur `runGenerationPhase` mono-appel afin de conserver la parite pendant la migration `/api/code/*`.
+- **Validation** : tests cibles phase agentique/producteur/executor/phases 10 verts / 0 echec ; glob Code a **595 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `codeOrchestrator.ts` reste a 595 lignes.
+- **WS3 reste ouvert** : brancher un runner WS7 pour `run_command`, exposer la route `/api/code/*` stream et prouver une generation >40 fichiers buildable.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

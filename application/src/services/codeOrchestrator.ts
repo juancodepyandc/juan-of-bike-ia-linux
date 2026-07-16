@@ -46,6 +46,7 @@ import {
 } from './codePipelinePhases.ts'
 import { prepareCodePlanningContext } from './codePipelinePreparation.ts'
 import { runGeneratedOutputRetryLoop } from './codeGenerationOutputRetry.ts'
+import { runAgenticGenerationPhase } from './codeAgenticGenerationPhase.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 import {
   buildDesignRetryHint,
@@ -385,25 +386,49 @@ async function runFullPipeline({
       }
     : undefined
 
-  // Phase 3: Code generation (streaming, guided by plan)
-  let fullContent = await runGenerationPhase(
-    reformulatedEnriched,
+  // Phase 3: Code generation. Prefer the WS3 file-by-file executor when the
+  // architect produced a valid queue; keep the legacy mono-call as fallback
+  // until the bridge/UI stream migration reaches full parity.
+  const agenticGeneration = await runAgenticGenerationPhase({
+    prompt: reformulatedEnriched,
     intent,
-    preflightReport,
     architecturePlan,
-    missionDossier,
-    conversationHistory,
-    effectiveExistingFiles,
+    existingFiles: effectiveExistingFiles,
     contextImages,
     generationModel,
-    0,
     setPhase,
     onToken,
-    trackRecovery,
+    onFilesUpdate,
     signal,
-    pivotContext,
     modelRouting,
-  )
+  })
+  if (agenticGeneration && !agenticGeneration.ok && signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError')
+  }
+  if (agenticGeneration && !agenticGeneration.ok) {
+    setPhase(`Executor agentique indisponible — fallback generation directe (${agenticGeneration.error})...`, 38)
+  }
+
+  let fullContent = agenticGeneration?.ok
+    ? agenticGeneration.content
+    : await runGenerationPhase(
+        reformulatedEnriched,
+        intent,
+        preflightReport,
+        architecturePlan,
+        missionDossier,
+        conversationHistory,
+        effectiveExistingFiles,
+        contextImages,
+        generationModel,
+        0,
+        setPhase,
+        onToken,
+        trackRecovery,
+        signal,
+        pivotContext,
+        modelRouting,
+      )
 
   // CRITICAL: Detect LLM refusal BEFORE parsing — refuse early, retry immediately
   if (isLLMRefusal(fullContent)) {
