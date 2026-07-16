@@ -1,9 +1,3 @@
-/**
- * codeStreamStore — global zustand store driving the Aurora Code module.
- *
- * The state lives here (not in the component) so an in-flight generation
- * survives module navigation.
- */
 import { create } from 'zustand'
 import { selectCodeModelForHardware } from '../config/models'
 import { useAppStore } from './appStore'
@@ -22,10 +16,22 @@ import { getBridgeUrl } from '../utils/runtime'
 import { speakAs, stopSpeaking, clearSpeakQueue } from '../services/auroraVoice'
 import { useModuleHistoryStore } from './moduleHistoryStore'
 import { narrate, readNarrateVoice, writeNarrateVoice } from './codeStreamNarration.ts'
+import { checkCodeBridgeReady, checkCodeModelInstalled } from './codeStreamPreflight.ts'
 import { captureSessionSnapshot, emptySessionSnapshot } from './codeStreamSessions.ts'
 import { computeEta, phaseFromDetail, summariseDelivery } from './codeStreamProgress.ts'
 import { isCorrectionRequest, routeCodeStreamModel } from './codeStreamRouting.ts'
 import type { CodeStreamState, CodeStreamStore } from './codeStreamTypes.ts'
+import {
+  appendCodeStreamEvents,
+  createCodeStreamEventMetaFactory,
+  makeCodeStreamCorrectionEvent,
+  makeCodeStreamDoneEvent,
+  makeCodeStreamErrorEvent,
+  makeCodeStreamFileEvents,
+  makeCodeStreamPhaseEvent,
+  makeCodeStreamValidationEvent,
+  makeInitialCodeStreamPhaseEvent,
+} from './codeStreamEventLog.ts'
 
 export type { CodeWorkMode, RepoScanInfo } from './codeStreamTypes.ts'
 
@@ -51,6 +57,7 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
   followUpKind: null,
   finalScore: 0,
   totalAttempts: 0,
+  events: [],
 
   progressPct: 0,
   genStartedAt: null,
@@ -135,6 +142,7 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
       streaming: false, streamOutput: '', draft: '', error: null,
       files: [], notes: '', messages: [], followUpKind: null,
       finalScore: 0, totalAttempts: 0, phase: 'idle', phaseMessage: '',
+      events: [],
       progressPct: 0, genStartedAt: null, etaSecondsRemaining: null,
       etaTotalSeconds: null, repoWriteResult: null,
       narration: '', narrationLog: [],
@@ -152,13 +160,10 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     set({
       streaming: false, streamOutput: '', draft: '', error: null,
       phase: 'idle', phaseMessage: '', progressPct: 0,
+      events: [],
       genStartedAt: null, etaSecondsRemaining: null, etaTotalSeconds: null,
     })
   },
-
-  // -------------------------------------------------------------------------
-  // Repo mode — pick / scan / write back through the bridge
-  // -------------------------------------------------------------------------
 
   async pickRepo() {
     set({ repoBusy: true, repoMessage: 'Sélection du dossier…' })
@@ -305,10 +310,6 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     }
   },
 
-  // -------------------------------------------------------------------------
-  // submit — the real pipeline (continuity + quality)
-  // -------------------------------------------------------------------------
-
   async submit(modelOverride) {
     const text = get().draft.trim()
     if (!text || get().streaming) return
@@ -338,22 +339,26 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
 
     useModuleHistoryStore.getState().pushMessage('code', { role: 'user', content: text })
     const activeCodeSession = useModuleHistoryStore.getState().getActiveSession('code')
+    const nextRunId = get().runId + 1
+    const nextEventMeta = createCodeStreamEventMetaFactory(nextRunId)
+    const initialPhaseMessage = priorMessages.length > 0 || existingFiles.length > 0
+      ? '🔁 Analyse du contexte de la conversation…'
+      : '🔍 Démarrage du pipeline expert…'
 
     set({
       history: pushHistory('code', text, { model, sessionId: activeCodeSession.id }),
-      runId: get().runId + 1,
+      runId: nextRunId,
       streaming: true,
       streamOutput: '',
       error: null,
       phase: 'planning',
-      phaseMessage: priorMessages.length > 0 || existingFiles.length > 0
-        ? '🔁 Analyse du contexte de la conversation…'
-        : '🔍 Démarrage du pipeline expert…',
+      phaseMessage: initialPhaseMessage,
       modelUsed: model,
       brandPrimary: null,
       followUpKind: null,
       finalScore: 0,
       totalAttempts: 0,
+      events: [makeInitialCodeStreamPhaseEvent(nextEventMeta, initialPhaseMessage)],
       progressPct: 1,
       genStartedAt: Date.now(),
       etaSecondsRemaining: null,
@@ -363,14 +368,8 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
       messages: [...get().messages, { role: 'user', content: text }],
     })
 
-    // v85f : detect a CORRECTION request so generation stays surgical and the
-    // narration says "je corrige" (not "j'ajoute"). The user reported that a
-    // "corrige X" was treated as "ajouter des modifications".
     const isCorrection = isCorrectionRequest(text)
 
-    // v85e : compute + apply the first-person narration whenever the phase
-    // changes (and speak it if the enunciate toggle is on). Deduped so the
-    // streaming phase doesn't re-announce on every token.
     const applyNarration = (ph: CodeStreamState['phase']) => {
       const st = get()
       const line = narrate(ph, st.phaseMessage, {
@@ -386,41 +385,25 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
     }
     applyNarration('planning')
 
-    // Pre-flight 1 — bridge alive.
-    try {
-      const probe = await fetch(`${getBridgeUrl()}/healthz`, { signal: AbortSignal.timeout(4_000) })
-      if (!probe.ok) throw new Error('bridge_unhealthy')
-    } catch {
-      set({
+    const bridgeIssue = await checkCodeBridgeReady()
+    if (bridgeIssue) {
+      set((prev) => ({
         streaming: false, phase: 'error', phaseMessage: '',
-        errorDialog: {
-          title: 'Bridge AuroraIA non joignable',
-          message: 'Le bridge Python (port 3001) ne répond pas. Aurora est peut-être fermé ou le tunnel a expiré.',
-          suggestion: 'Relance Aurora (start-aurora.bat) ou exécute "python bridge_doctor.py" puis clique OK pour réessayer.',
-        },
-      })
+        events: appendCodeStreamEvents(prev.events, [makeCodeStreamErrorEvent(nextEventMeta, bridgeIssue.message)]),
+        errorDialog: bridgeIssue,
+      }))
       return
     }
 
-    // Pre-flight 2 — model present.
-    try {
-      const tagsResp = await fetch(`${getBridgeUrl()}/proxy/ollama/api/tags`, { signal: AbortSignal.timeout(6_000) })
-      if (tagsResp.ok) {
-        const tags = await tagsResp.json() as { models?: Array<{ name?: string }> }
-        const have = (tags.models ?? []).map((m) => m.name ?? '').filter(Boolean)
-        if (have.length > 0 && !have.includes(model)) {
-          set({
-            streaming: false, phase: 'error', phaseMessage: '',
-            errorDialog: {
-              title: `Modèle "${model}" non installé`,
-              message: `Le modèle ${model} n'est pas dans Ollama. Disponibles : ${have.slice(0, 6).join(', ')}${have.length > 6 ? '…' : ''}.`,
-              suggestion: `Lance "ollama pull ${model}" puis clique OK pour réessayer.`,
-            },
-          })
-          return
-        }
-      }
-    } catch { /* best-effort */ }
+    const modelIssue = await checkCodeModelInstalled(model)
+    if (modelIssue) {
+      set((prev) => ({
+        streaming: false, phase: 'error', phaseMessage: '',
+        events: appendCodeStreamEvents(prev.events, [makeCodeStreamErrorEvent(nextEventMeta, modelIssue.message)]),
+        errorDialog: modelIssue,
+      }))
+      return
+    }
 
     if (ctrl.signal.aborted || abortCtrl !== ctrl) {
       set({ phase: 'idle', phaseMessage: '', streaming: false })
@@ -451,13 +434,16 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
           const nextProg = Math.max(prev.progressPct, Math.min(99, Math.round(prog)))
           const { remaining, total } = computeEta(prev.genStartedAt, nextProg, prev.etaSecondsRemaining)
           const nextPhase = phaseFromDetail(detail, nextProg)
-          set({
+          set((current) => ({
             phaseMessage: detail,
             progressPct: nextProg,
             phase: nextPhase,
             etaSecondsRemaining: remaining,
             etaTotalSeconds: total,
-          })
+            events: appendCodeStreamEvents(current.events, [
+              makeCodeStreamPhaseEvent(nextEventMeta, detail, nextProg),
+            ]),
+          }))
           applyNarration(nextPhase)
         },
         onToken: (token) => {
@@ -472,12 +458,31 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
         },
         onFilesUpdate: (files, notes) => {
           if (abortCtrl !== ctrl) return
-          set({ files, notes })
+          const previousFiles = get().files
+          const fileEvents = makeCodeStreamFileEvents(nextEventMeta, files, previousFiles)
+          set((prev) => ({
+            files,
+            notes,
+            events: appendCodeStreamEvents(prev.events, fileEvents),
+          }))
         },
-        onValidationUpdate: () => { /* validation surfaced via phase + score */ },
+        onValidationUpdate: (result) => {
+          if (abortCtrl !== ctrl) return
+          set((prev) => ({
+            events: appendCodeStreamEvents(prev.events, [
+              makeCodeStreamValidationEvent(nextEventMeta, result),
+            ]),
+          }))
+        },
         onCorrectionLogUpdate: (_log, attempt, score) => {
           if (abortCtrl !== ctrl) return
-          set({ totalAttempts: attempt, finalScore: score })
+          set((prev) => ({
+            totalAttempts: attempt,
+            finalScore: score,
+            events: appendCodeStreamEvents(prev.events, [
+              makeCodeStreamCorrectionEvent(nextEventMeta, _log, attempt, score),
+            ]),
+          }))
         },
         onFollowUpAnalysis: (analysis) => {
           if (abortCtrl !== ctrl) return
@@ -492,15 +497,19 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
         result.intent?.assetPlan?.subject?.brandProfile?.primaryColor ?? null
 
       if (result.files.length === 0) {
-        set({
+        const message = result.notes?.slice(0, 600) || 'Le pipeline n\'a produit aucun fichier exploitable.'
+        set((prev) => ({
           streaming: false, phase: 'error', phaseMessage: '',
           notes: result.notes,
+          events: appendCodeStreamEvents(prev.events, [
+            makeCodeStreamErrorEvent(nextEventMeta, message),
+          ]),
           errorDialog: {
             title: 'Aucun fichier livré',
-            message: result.notes?.slice(0, 600) || 'Le pipeline n\'a produit aucun fichier exploitable.',
+            message,
             suggestion: 'Reformule ou précise la demande puis clique OK pour réessayer.',
           },
-        })
+        }))
         return
       }
 
@@ -513,7 +522,7 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
       }
       useModuleHistoryStore.getState().pushMessage('code', { role: 'assistant', content: deliverySummary })
 
-      set({
+      set((prev) => ({
         streaming: false,
         files: result.files,
         notes: result.notes,
@@ -528,7 +537,16 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
         etaSecondsRemaining: 0,
         etaTotalSeconds: get().etaTotalSeconds,
         messages: [...get().messages, assistantTurn],
-      })
+        events: appendCodeStreamEvents(prev.events, [
+          makeCodeStreamDoneEvent(
+            nextEventMeta,
+            result.files,
+            result.finalScore,
+            result.totalAttempts,
+            result.notes,
+          ),
+        ]),
+      }))
       applyNarration('done')
     } catch (e) {
       if (ctrl.signal.aborted) {
@@ -549,19 +567,18 @@ export const useCodeStreamStore = create<CodeStreamStore>()((set, get) => ({
         title = 'Bridge Aurora non joignable'
         suggestion = 'Relance Aurora ou bridge_doctor.py puis OK pour réessayer.'
       }
-      set({
+      set((prev) => ({
         error: errMsg, streaming: false, phase: 'error', phaseMessage: '',
+        events: appendCodeStreamEvents(prev.events, [
+          makeCodeStreamErrorEvent(nextEventMeta, errMsg),
+        ]),
         errorDialog: { title, message: errMsg, suggestion },
-      })
+      }))
       applyNarration('error')
     }
   },
 }))
 
-/**
- * Selector helpers — zustand pattern, lets a component subscribe to
- * just one slice without re-rendering on every state change.
- */
 export const selectCodeStreaming = (s: CodeStreamStore) => s.streaming
 export const selectCodeOutput = (s: CodeStreamStore) => s.streamOutput
 export const selectCodeError = (s: CodeStreamStore) => s.error

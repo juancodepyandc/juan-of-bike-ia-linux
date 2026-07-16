@@ -1,6 +1,11 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { narrate, readNarrateVoice, writeNarrateVoice } from '../stores/codeStreamNarration.ts'
+import {
+  appendCodeStreamEvents,
+  createCodeStreamEventMetaFactory,
+  makeCodeStreamPhaseEvent,
+} from '../stores/codeStreamEventLog.ts'
 import { computeEta, phaseFromDetail, summariseDelivery } from '../stores/codeStreamProgress.ts'
 import { captureSessionSnapshot, emptySessionSnapshot } from '../stores/codeStreamSessions.ts'
 import { extractBrandHint, isCorrectionRequest, routeCodeStreamModel } from '../stores/codeStreamRouting.ts'
@@ -41,6 +46,7 @@ function state(overrides: Partial<CodeStreamState> = {}): CodeStreamState {
     followUpKind: null,
     finalScore: 0,
     totalAttempts: 0,
+    events: [],
     progressPct: 0,
     genStartedAt: null,
     etaSecondsRemaining: null,
@@ -78,6 +84,23 @@ describe('codeStreamNarration', () => {
 
     assert.match(correction, /corrige/)
     assert.match(generation, /J.écris/i)
+  })
+})
+
+describe('codeStreamEventLog', () => {
+  test('attribue des sequences par run et borne le journal', () => {
+    const nextMeta = createCodeStreamEventMetaFactory(12)
+    const first = makeCodeStreamPhaseEvent(nextMeta, 'Plan', 10)
+    const second = makeCodeStreamPhaseEvent(nextMeta, 'Validation sandbox', 90)
+
+    assert.equal(first.runId, 12)
+    assert.equal(first.sequence, 1)
+    assert.equal(second.sequence, 2)
+
+    const events = Array.from({ length: 245 }, (_, index) => makeCodeStreamPhaseEvent(nextMeta, `Etape ${index}`, index))
+    const capped = appendCodeStreamEvents([first, second], events)
+    assert.equal(capped.length, 240)
+    assert.equal(capped[0].kind, 'phase')
   })
 })
 

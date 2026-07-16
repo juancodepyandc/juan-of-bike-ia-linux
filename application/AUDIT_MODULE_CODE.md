@@ -373,6 +373,14 @@
 - **Validation** : tests cibles plan/retry 14 verts / 0 echec ; glob Code a **569 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
 - **WS3 reste ouvert** : l'executeur outil-par-outil `write_file/read_file/apply_patch/run_command`, les evenements stream typés `/api/code/*` et la generation >40 fichiers end-to-end restent a livrer.
 
+### 2026-07-15 — Vague 3 / WS3 increment 45 applique
+
+- **Contrat stream type** : `codeStreamEvents.ts` definit le schema NDJSON `aurora.code.stream/1` avec les evenements requis `phase`, `file.written`, `test.result`, `visual.score`, `correction`, `done`, `error`, plus validation runtime.
+- **Store prepare pour `/api/code/*`** : `codeStreamStore` conserve maintenant un journal borne d'evenements typés et traduit les callbacks existants phase/fichiers/validation/correction/fin/erreur sans casser l'UI actuelle ; l'adaptation et le preflight sont extraits pour garder le store sous 600 lignes.
+- **Parite progressive** : `visual.score` est formalise mais restera emis par WS9 quand le juge visuel render-in-the-loop sera branche ; le bridge `/api/code/*` reste a ajouter ensuite sur ce contrat.
+- **Validation** : tests cibles stream 17 verts / 0 echec ; glob Code a **574 tests verts / 0 echec** ; `npm run build` vert (avertissements cowork dynamiques existants, hors perimetre Code) ; `git diff --check` propre.
+- **WS3 reste ouvert** : route stream bridge, consommation directe SSE/NDJSON par l'UI et executeur fichier-par-fichier restent a livrer.
+
 ---
 
 ## SYNTHÈSE EXÉCUTIVE

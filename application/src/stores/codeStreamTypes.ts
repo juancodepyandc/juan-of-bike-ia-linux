@@ -1,5 +1,6 @@
 import type { PromptHistoryEntry } from '../utils/promptHistory.ts'
 import type { CodeFile, FollowUpKind } from '../services/codeOrchestrator.ts'
+import type { CodeStreamEvent } from '../services/codeStreamEvents.ts'
 import type { OllamaMessage } from '../types/app.ts'
 
 export type CodeWorkMode = 'online' | 'repo'
@@ -42,6 +43,8 @@ export interface CodeStreamState {
   followUpKind: FollowUpKind | null
   finalScore: number
   totalAttempts: number
+  /** Typed WS3 stream contract, ready for the future /api/code/* NDJSON bridge. */
+  events: CodeStreamEvent[]
 
   // --- v85 : real-time progress + ETA ---
   progressPct: number
@@ -116,6 +119,7 @@ export type CodeSessionSnapshot = {
   followUpKind: FollowUpKind | null
   finalScore: number
   totalAttempts: number
+  events: CodeStreamEvent[]
   progressPct: number
   genStartedAt: number | null
   etaSecondsRemaining: number | null

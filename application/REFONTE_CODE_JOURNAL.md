@@ -2009,3 +2009,52 @@ Pour cet increment WS7, la dette "disque total workspace" est traitee cote archi
 ### Etat de satisfaction chantier
 
 Pour cet increment WS3, non, WS3 n'est pas termine : c'est une marche de securisation qui rend le plan executable au niveau des fichiers requis. Il reste a remplacer le mono-appel par un executeur agentique fichier-par-fichier, puis a brancher les evenements typés vers l'UI et le bridge `/api/code/*`.
+
+## 2026-07-15 — Vague 3 / WS3 increment 45 — Contrat d'evenements typés pour le stream Code
+
+### Reprise et diagnostic confirme
+
+- Le prompt WS3 exige une route `/api/code/*` streamée en SSE ou NDJSON avec evenements typés.
+- Le chemin app reel reste encore local au front : `codeStreamStore` appelle directement `orchestrateCodeGeneration` et consomme des callbacks libres (`setPhase`, `onToken`, `onFilesUpdate`, `onValidationUpdate`, `onCorrectionLogUpdate`).
+- Avant cet increment, aucune source de verite ne definissait le schema `phase` / `file.written` / `test.result` / `visual.score` / `correction` / `done` / `error`.
+
+### Recherches et choix techniques
+
+- Aucune recherche web externe : le besoin est un contrat interne entre orchestrateur, bridge et UI.
+- Choix retenu : NDJSON versionne `aurora.code.stream/1`, validable a l'execution et independant de React/Zustand.
+- Raison technique : poser le schema avant la route bridge evite de figer une API implicite et rend la migration UI incrementalement testable.
+
+### Modifications realisees
+
+- Ajout de `src/services/codeStreamEvents.ts` :
+  - types d'evenements stream obligatoires ;
+  - builders deterministes pour phase, fichier ecrit, resultat sandbox, score visuel, correction, fin et erreur ;
+  - serialisation NDJSON + parsing defensif ;
+  - validation runtime `isCodeStreamEvent`.
+- `codeStreamStore.ts` :
+  - initialise un `runId` et une sequence par generation ;
+  - conserve un journal borne de 240 evenements ;
+  - traduit les callbacks existants en evenements typés sans modifier le rendu actuel.
+- `codeStreamEventLog.ts` et `codeStreamPreflight.ts` :
+  - sortent l'adaptation stream et les prevols bridge/modele du store ;
+  - maintiennent `codeStreamStore.ts` sous le seuil WS1 de 600 lignes.
+- `codeStreamTypes.ts` et `codeStreamSessions.ts` :
+  - ajout du champ `events` aux snapshots de session.
+- Ajout de `src/__tests__/codeStreamEvents.test.ts` et adaptation de `codeStreamStoreModules.test.ts`.
+
+### Avant / apres mesurable
+
+- Avant : la progression Code etait un ensemble de champs libres (`phaseMessage`, `progressPct`, `files`, `finalScore`) impossible a exposer tel quel en API stable.
+- Apres : le meme chemin produit une chronologie typée et serialisable. Le bridge `/api/code/*` pourra streamer cette chronologie sans inventer de nouveau format.
+- Limite assumee : `visual.score` est defini mais pas encore emis par le store, faute de juge visuel reel avant WS9.
+
+### Validation
+
+- `node --experimental-strip-types --test src/__tests__/codeStreamEvents.test.ts src/__tests__/codeStreamStoreModules.test.ts` : 17 pass / 0 fail.
+- `node --experimental-strip-types --test 'src/__tests__/code*.test.ts'` : 574 pass / 0 fail.
+- `npm run build` : vert (avertissements Vite cowork dynamiques existants, hors perimetre Code).
+- `git diff --check` : propre.
+
+### Etat de satisfaction chantier
+
+Pour cet increment WS3, non, WS3 n'est toujours pas termine : le contrat stream est maintenant explicite et teste, mais l'ancien chemin direct reste actif tant que le bridge `/api/code/*` et l'executeur fichier-par-fichier ne sont pas branches.
