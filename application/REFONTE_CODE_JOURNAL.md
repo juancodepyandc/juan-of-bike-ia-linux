@@ -3278,7 +3278,7 @@ Resultat observe : sept profils, `ok=true`, `failures=[]`, iframe `verified`, 0 
 ./scripts/code_harness/final_heavy_validation.sh
 jq '{ok, steps: (.steps | length), requiredFailures, knownDebts}' \
   output/final_code_refonte_validation/heavy_final/final-report.json
-sha256sum -c output/final_code_refonte_validation/heavy_final/SHA256SUMS
+(cd output/final_code_refonte_validation/heavy_final && sha256sum -c SHA256SUMS)
 ```
 
 Le rapport n'est vert que si tous les controles requis passent. Les erreurs globales Cowork, le typecheck hors Code, les extras image et la restriction Podman restent visibles dans `knownDebts`; ils ne peuvent pas etre reclasses silencieusement en succes.

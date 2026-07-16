@@ -135,8 +135,21 @@ jq -s \
 
 (
   cd "$OUT"
-  find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+  find . -type f ! -name SHA256SUMS ! -name checksum-verification.log -print0 \
+    | sort -z | xargs -0 sha256sum > SHA256SUMS
 )
+
+if ! (cd "$OUT" && sha256sum -c SHA256SUMS > checksum-verification.log); then
+  OVERALL=1
+  jq '.ok = false | .requiredFailures += [{id:"checksum_manifest",description:"Verification SHA-256 des preuves",severity:"required",status:"failed",exitCode:1,durationMs:0,log:"output/final_code_refonte_validation/heavy_final/checksum-verification.log"}]' \
+    "$OUT/final-report.json" > "$OUT/final-report.tmp.json"
+  mv "$OUT/final-report.tmp.json" "$OUT/final-report.json"
+  (
+    cd "$OUT"
+    find . -type f ! -name SHA256SUMS ! -name checksum-verification.log -print0 \
+      | sort -z | xargs -0 sha256sum > SHA256SUMS
+  )
+fi
 
 jq '{ok,startedAt,finishedAt,steps:(.steps|length),requiredFailures,knownDebts}' "$OUT/final-report.json"
 exit "$OVERALL"
