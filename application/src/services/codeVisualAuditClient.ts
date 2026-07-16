@@ -5,11 +5,46 @@ import {
   type CodeStreamVisualScoreEvent,
 } from './codeStreamEvents.ts'
 import {
+  buildRenderedVisualAuditCritique,
   CODE_VISUAL_RENDER_AUDIT_SCHEMA,
   scoreRenderedVisualAudit,
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
 import type { VisualFidelityReport } from './codeVisualFidelity.ts'
+
+export type BlendedFinalScore = {
+  score: number
+  visualScore: number
+  belowThreshold: boolean
+  hint: string | null
+}
+
+/**
+ * WS9: fait COMPTER le juge visuel dans le score final livre. L audit rendu
+ * (screenshot multi-viewport + metriques WCAG + vision) etait purement
+ * decoratif (setDesignReport) et n alimentait pas le finalScore. Ici il pondere
+ * le score du modele: un rendu visuellement insuffisant (report.passed=false)
+ * plafonne le score livre et marque belowThreshold pour recommander/declencher
+ * une regeneration ciblee avec la critique de rendu en indice.
+ */
+export function blendRenderedVisualIntoFinalScore(
+  modelScore: number,
+  report: VisualFidelityReport,
+): BlendedFinalScore {
+  const clampedModel = Math.max(0, Math.min(100, Math.round(modelScore)))
+  const visualScore = Math.max(0, Math.min(100, Math.round(report.score)))
+  // Correctness (modele) dominante, apparence (visuel) significative.
+  let blended = Math.round(clampedModel * 0.65 + visualScore * 0.35)
+  // Un rendu qui echoue son seuil ne peut pas etre livre comme "excellent".
+  if (!report.passed) blended = Math.min(blended, Math.min(clampedModel, 84))
+  const belowThreshold = !report.passed || visualScore < (report.floor || 70)
+  return {
+    score: Math.max(0, Math.min(100, blended)),
+    visualScore,
+    belowThreshold,
+    hint: belowThreshold ? buildRenderedVisualAuditCritique(report) : null,
+  }
+}
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 

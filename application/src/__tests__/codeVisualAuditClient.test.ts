@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  blendRenderedVisualIntoFinalScore,
   buildVisualScoreEventFromReport,
   runCodeVisualRenderAudit,
 } from '../services/codeVisualAuditClient.ts'
@@ -79,5 +80,36 @@ describe('codeVisualAuditClient', () => {
     assert.equal(event.score, 42)
     assert.equal(event.viewport, '390x844')
     assert.deepEqual(event.failedChecks, ['pixel_contrast_wcag'])
+  })
+})
+
+describe('WS9: blendRenderedVisualIntoFinalScore fait compter le juge visuel', () => {
+  function report(overrides: Partial<VisualFidelityReport>): VisualFidelityReport {
+    return {
+      score: 90, passed: true, floor: 70, checks: [], failedChecks: [],
+      summary: 'ok', source: 'render_audit', viewports: ['1440x900'],
+      ...overrides,
+    }
+  }
+
+  test('un rendu excellent tire le score final vers le haut mais reste pondere', () => {
+    const blended = blendRenderedVisualIntoFinalScore(80, report({ score: 100, passed: true }))
+    // 80*0.65 + 100*0.35 = 87
+    assert.equal(blended.score, 87)
+    assert.equal(blended.belowThreshold, false)
+    assert.equal(blended.hint, null)
+  })
+
+  test('un rendu qui echoue le seuil plafonne le score et fournit un indice de regeneration', () => {
+    const blended = blendRenderedVisualIntoFinalScore(95, report({ score: 40, passed: false, floor: 70, failedChecks: ['pixel_contrast_wcag'] }))
+    assert.equal(blended.belowThreshold, true)
+    assert.ok(blended.score <= 84, `score plafonne attendu <=84, recu ${blended.score}`)
+    assert.ok(blended.score < 95, 'le rendu insuffisant doit faire baisser le score modele')
+    assert.ok(typeof blended.hint === 'string' && blended.hint.length > 0, 'un indice de regeneration doit etre fourni')
+  })
+
+  test('un rendu juste sous le seuil est signale belowThreshold', () => {
+    const blended = blendRenderedVisualIntoFinalScore(88, report({ score: 68, passed: false, floor: 70 }))
+    assert.equal(blended.belowThreshold, true)
   })
 })

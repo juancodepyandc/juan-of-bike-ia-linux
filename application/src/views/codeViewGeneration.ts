@@ -7,7 +7,7 @@ import type { CodePreflightReport } from '../services/codePreflight'
 import type { CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import { startDevServer, stopDevServer, type DevServerState } from '../services/codeDevServer'
-import { runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
+import { blendRenderedVisualIntoFinalScore, runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
 import { generateSessionTitle } from '../services/sessionAutoNaming'
 import { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
 import { getErrorMessage } from '../utils/errors'
@@ -294,6 +294,8 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
 
             // Start dev server if needed
             let visualAuditSummary: string | null = null
+            // WS9: le juge visuel doit COMPTER dans le score livre (repondere par le rendu reel).
+            let effectiveFinalScore = result.finalScore
             if (result.intent.needsDevServer && result.sandboxResult?.rootPath) {
               setProgress('Demarrage du serveur de dev pour preview...')
               setPhase('Demarrage du dev server...', 95)
@@ -320,6 +322,12 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
                       .filter((check) => !check.passed)
                       .map((check) => check.label),
                   })
+                  const blended = blendRenderedVisualIntoFinalScore(result.finalScore, visualAudit.report)
+                  effectiveFinalScore = blended.score
+                  setFinalScore(blended.score)
+                  if (blended.belowThreshold) {
+                    visualAuditSummary = `${visualAudit.report.summary} Qualite visuelle sous le seuil (rendu ${blended.visualScore}/100) — regeneration ciblee recommandee.`
+                  }
                 } catch (auditError) {
                   visualAuditSummary = `Audit visuel rendu indisponible: ${getErrorMessage(auditError, 'erreur inconnue')}`
                 }
@@ -330,14 +338,15 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
 
             // Set progress message
             const deliverySummary = result.sandboxResult?.ok
-              ? `Livraison validee (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%).`
-              : `Livraison structuree (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${result.finalScore}%). Ameliorations manuelles recommandees.`
+              ? `Livraison validee (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${effectiveFinalScore}%).`
+              : `Livraison structuree (${result.totalAttempts} passe${result.totalAttempts > 1 ? 's' : ''}, score ${effectiveFinalScore}%). Ameliorations manuelles recommandees.`
             setProgress(visualAuditSummary ? `${deliverySummary} ${visualAuditSummary}` : deliverySummary)
             setPhase('Livraison terminee.', 98)
 
             // Propose save
             if (result.files.length > 0) {
-              const fidelity = result.finalScore
+              // WS9: la fidelite enregistree integre le score visuel reel (rendu).
+              const fidelity = effectiveFinalScore
               const savePayload: SaveDialogData = {
                 module: 'code',
                 sourcePath: result.sandboxResult?.rootPath ?? '',

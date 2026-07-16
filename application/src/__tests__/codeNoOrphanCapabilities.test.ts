@@ -51,6 +51,7 @@ const GUARDED_CAPABILITIES: GuardedCapability[] = [
   { ws: 'WS2', symbol: 'writeCodeFilesToDirectory', definedIn: 'codeProjectWriter.ts' },
   { ws: 'WS2', symbol: 'parseCodeFilesWithReport', definedIn: 'codeGeneratedFileParser.ts' },
   { ws: 'WS5', symbol: 'assertCodePatchNonRegression', definedIn: 'codeIncrementalPatchScope.ts' },
+  { ws: 'WS9', symbol: 'blendRenderedVisualIntoFinalScore', definedIn: 'codeVisualAuditClient.ts' },
 ]
 
 describe('anti-orphelin: chaque capacite livrable a un appelant de production', () => {
