@@ -88,7 +88,13 @@ export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
 // multi-fichiers natifs). Role: planification/agent + verifieur INDEPENDANT du
 // codeur. La generation de code pur reste sur qwen3-coder:30b (superieur a
 // Qwen2.5-Coder-32B sur les benchmarks recents — verifie 2026-07).
-export const CODE_AGENT_MODEL = 'devstral'
+// Agent/planificateur. A/B COMPLEXE local (2026-07, plan SaaS 12+ fichiers):
+// qwen3.6:27b produit un plan PLUS COMPLET que devstral (14 fichiers/couverture
+// totale vs 12/4-sur-6). Plus lent (~275s vs 35s) mais qualite > vitesse. Sur
+// tache simple ils sont a egalite -> qwen3.6 >= devstral partout, donc primaire.
+export const CODE_AGENT_MODEL = 'qwen3.6:27b'
+// Devstral conserve comme REPLI rapide (resilience si qwen3.6 echoue/timeout).
+export const CODE_AGENT_FALLBACK_MODEL = 'devstral'
 // Verifieur/directeur = modele de RAISONNEMENT independant du codeur (un codeur
 // qui se juge se sur-note). deepseek-r1:32b (distill Qwen, ~20GB): chain-of-
 // thought, attrape les bugs subtils. Confirme par A/B local (2026-07): bug

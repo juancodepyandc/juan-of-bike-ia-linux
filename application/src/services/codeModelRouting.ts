@@ -1,6 +1,7 @@
 import type { HardwareProfile } from '../types/app.ts'
 import {
   CODE_AGENT_MODEL,
+  CODE_AGENT_FALLBACK_MODEL,
   CODE_BALANCED_MODEL,
   CODE_CLOUD_HIGH_MODEL,
   CODE_LOCAL_PRIMARY_MODEL,
@@ -41,9 +42,10 @@ export type CodeModelRouteDecision = {
 }
 
 const PLANNING_MODEL_CANDIDATES = [
-  // Devstral en tete: meilleur agent/planificateur de la classe 16GB (installe
-  // -> il gagne; absent -> on retombe proprement sur les candidats suivants).
+  // qwen3.6:27b: meilleur planificateur sur tache complexe (confirme A/B) ->
+  // primaire. devstral en repli rapide. (Installe -> gagne; absent -> suivant.)
   CODE_AGENT_MODEL,
+  CODE_AGENT_FALLBACK_MODEL,
   CODE_PLANNING_MODEL,
   CODE_REASONING_MODEL,
   CODE_BALANCED_MODEL,
@@ -56,10 +58,10 @@ const PLANNING_MODEL_CANDIDATES = [
 
 const REVIEW_MODEL_CANDIDATES = [
   // Verifieur/directeur INDEPENDANT du codeur (un codeur qui se juge se sur-note).
-  // deepseek-r1:32b (raisonnement, CODE_REVIEW_MODEL) en tete = juge chain-of-
-  // thought confirme par A/B; devstral en repli (agentique installe).
+  // deepseek-r1:32b (raisonnement) en tete = juge chain-of-thought confirme par
+  // A/B (attrape le bug closure subtil); devstral en repli independant et rapide.
   CODE_REVIEW_MODEL,
-  CODE_AGENT_MODEL,
+  CODE_AGENT_FALLBACK_MODEL,
   CODE_VERIFIER_MODEL,
   CODE_BALANCED_MODEL,
   'qwen3:32b-q4_K_M',
