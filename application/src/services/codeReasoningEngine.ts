@@ -132,6 +132,8 @@ export async function analyzeStuckCorrection(
   )
 
   try {
+    const { ensureExclusiveCodeModel } = await import('./codeModelResidency.ts')
+    await ensureExclusiveCodeModel(model)
     const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
     const response = await resilientOllamaGenerate(model, diagnosticPrompt, {
       timeoutMs: 60_000,

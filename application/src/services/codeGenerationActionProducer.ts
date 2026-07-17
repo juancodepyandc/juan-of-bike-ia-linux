@@ -202,6 +202,10 @@ export function createCodeGenerationLLMActionProducer(
       contextImages: options.contextImages,
       maxFileContextChars: options.maxFileContextChars,
     })
+    // Anti-crash: decharge tout autre gros modele code avant de charger le
+    // codeur (transition agent -> codeur). Un seul gros modele resident.
+    const { ensureExclusiveCodeModel } = await import('./codeModelResidency.ts')
+    await ensureExclusiveCodeModel(options.model)
     const response = await chatClient(options.model, messages, {
       signal: options.signal,
       num_ctx: options.numCtx,

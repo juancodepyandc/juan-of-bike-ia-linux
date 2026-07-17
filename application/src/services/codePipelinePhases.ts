@@ -151,6 +151,10 @@ export async function runPlanningPhase(
   ].filter(Boolean).join('\n\n')
 
   try {
+    // Anti-crash residence: decharge tout autre gros modele code avant le
+    // planificateur (devstral) — un seul gros modele resident a la fois.
+    const { ensureExclusiveCodeModel } = await import('./codeModelResidency.ts')
+    await ensureExclusiveCodeModel(model)
     const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
     const candidateCount = getArchitecturePlanCandidateCount(intent)
     const rawCandidates: string[] = []
