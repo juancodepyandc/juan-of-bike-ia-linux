@@ -269,6 +269,24 @@ def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
         freed.append("comfyui/flux")
     except Exception:
         pass
+    # ATTENDRE que la VRAM soit REELLEMENT rendue avant de charger le modele suivant.
+    # Sans ca, un modele lourd (TRELLIS/SDXL/Hunyuan) peut demarrer alors que le
+    # precedent n'a pas fini de rendre sa VRAM -> deux charges en meme temps -> GEL.
+    # Best-effort: on sonde nvidia-smi, plafonne l'attente, et on n'echoue jamais.
+    _vram_wait = float(os.environ.get("AURORA_VRAM_WAIT_S", "20"))
+    _vram_floor = int(os.environ.get("AURORA_VRAM_FREE_MB", "3000"))
+    _t0 = time.time()
+    while time.time() - _t0 < _vram_wait:
+        try:
+            _q = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
+                                 "--format=csv,noheader,nounits"],
+                                capture_output=True, text=True, timeout=5)
+            _used = int((_q.stdout or "0").strip().splitlines()[0])
+            if _used <= _vram_floor:
+                break
+        except Exception:  # noqa: BLE001
+            break
+        time.sleep(2)
     if audit is not None:
         audit.append({"stage": "vram_evict_before_paint", "ok": True, "freed": freed})
     print(f"PROGRESS:vram:VRAM liberee avant paint (evince: {', '.join(freed) or 'rien'})", flush=True)
