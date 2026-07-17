@@ -89,8 +89,14 @@ export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
 // codeur. La generation de code pur reste sur qwen3-coder:30b (superieur a
 // Qwen2.5-Coder-32B sur les benchmarks recents — verifie 2026-07).
 export const CODE_AGENT_MODEL = 'devstral'
+// Verifieur/directeur = modele de RAISONNEMENT independant du codeur (un codeur
+// qui se juge se sur-note). deepseek-r1:32b (distill Qwen, ~20GB): chain-of-
+// thought, attrape les bugs subtils. Confirme par A/B local (2026-07): bug
+// attrape; role review/verification ou la latence (raisonnement) est toleree
+// car il tourne moins souvent que la generation.
+export const CODE_VERIFIER_REASONING_MODEL = 'deepseek-r1:32b'
 export const CODE_PLANNING_MODEL = CODE_REASONING_MODEL
-export const CODE_REVIEW_MODEL = CODE_VERIFIER_MODEL
+export const CODE_REVIEW_MODEL = CODE_VERIFIER_REASONING_MODEL
 
 export const HEAVY_REASONING_MIN_RAM_GB = 48
 

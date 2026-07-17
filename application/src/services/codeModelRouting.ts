@@ -55,10 +55,11 @@ const PLANNING_MODEL_CANDIDATES = [
 ]
 
 const REVIEW_MODEL_CANDIDATES = [
-  // Verifieur INDEPENDANT du codeur (devstral != qwen3-coder) — un codeur qui se
-  // juge lui-meme se sur-note.
-  CODE_AGENT_MODEL,
+  // Verifieur/directeur INDEPENDANT du codeur (un codeur qui se juge se sur-note).
+  // deepseek-r1:32b (raisonnement, CODE_REVIEW_MODEL) en tete = juge chain-of-
+  // thought confirme par A/B; devstral en repli (agentique installe).
   CODE_REVIEW_MODEL,
+  CODE_AGENT_MODEL,
   CODE_VERIFIER_MODEL,
   CODE_BALANCED_MODEL,
   'qwen3:32b-q4_K_M',
