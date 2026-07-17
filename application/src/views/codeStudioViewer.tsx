@@ -44,7 +44,11 @@ export function CodeStudioLauncher(props: CodeStudioData) {
     <>
       <button
         onClick={() => setOpen(true)}
-        disabled={props.files.length === 0}
+        // Actif aussi PENDANT la generation (pas seulement une fois des fichiers
+        // livres): le Studio sait afficher le flux en direct (streamPreview +
+        // "generation…"). Sans ca le bouton restait grise a 40% d'opacite tout le
+        // long de la generation -> invisible a l'oeil, impossible d'ouvrir le viewer live.
+        disabled={props.files.length === 0 && !props.isGenerating}
         title="Ouvrir le Studio — environnement complet plein ecran (arbo, editeur, preview multi-appareils, logs, erreurs, runtime)"
         className="inline-flex items-center gap-1.5 rounded-xl border border-aurora-accent/40 bg-gradient-to-r from-aurora-accent/20 to-cyan-400/10 px-3 py-2 text-xs font-semibold text-aurora-text transition-colors hover:border-aurora-accent/70 disabled:opacity-40 disabled:cursor-not-allowed"
       >
