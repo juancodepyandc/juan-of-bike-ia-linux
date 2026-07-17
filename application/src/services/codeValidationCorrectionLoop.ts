@@ -151,7 +151,13 @@ export async function runValidationAndCorrectionLoop(
     onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
 
     if (sandboxResult.ok) {
-      lastScore = 100
+      // Le sandbox qui passe prouve seulement que le code TOURNE, pas qu il est
+      // bon. Fixer 100 en dur masquait toute generation mediocre mais executable
+      // (ex: une landing ratee "acceptee a 100%") -> c est le "ca accepte le 0%".
+      // On conserve le VRAI score qualite (contenu + criteres d acceptation), pour
+      // que le score affiche soit honnete et que les gates de fidelite/qualite en
+      // aval puissent pousser une amelioration reelle au lieu de s arreter.
+      lastScore = currentScore
       break
     }
 

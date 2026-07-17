@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { ExternalLink, Maximize2, Minimize2, Monitor, Smartphone, Tablet } from 'lucide-react'
 import { instrumentPreviewHtml } from './auroraV1CodeHelpers'
+
+type PreviewViewport = 'desktop' | 'tablet' | 'mobile'
+const VIEWPORT_WIDTH: Record<PreviewViewport, string> = {
+  desktop: '100%', tablet: '834px', mobile: '390px',
+}
 
 type PreviewRuntimeMessage = {
   source?: string
@@ -70,8 +76,62 @@ export function CodePreviewFrame({ html, title }: { html: string; title: string 
   // and used to re-raise it even on a perfectly rendered page.
   const showStalled = stalled && !ready
 
+  // Viewer: appareils (desktop/tablet/mobile) + OUVRIR DANS UN ONGLET + PLEIN
+  // ECRAN. Sans ca, la skin Editorial (aurora_v1) n avait aucun moyen de voir le
+  // rendu en grand -> le user "j ai pas de bouton pour aller sur le viewer".
+  const [viewport, setViewport] = useState<PreviewViewport>('desktop')
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  useEffect(() => {
+    if (!isFullscreen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isFullscreen])
+  const openInNewTab = () => {
+    const win = window.open('', '_blank')
+    if (win) { win.document.open(); win.document.write(html); win.document.close() }
+  }
+  const btn = (active: boolean): CSSProperties => ({
+    display: 'flex', alignItems: 'center', gap: 4, height: 24, padding: '0 8px',
+    borderRadius: 6, fontSize: 10, cursor: 'pointer', border: 'none',
+    background: active ? 'oklch(0.72 0.12 145 / 0.18)' : 'transparent',
+    color: active ? 'oklch(0.82 0.14 145)' : 'var(--fg-dim, #aaa)',
+    fontFamily: 'var(--font-mono, monospace)',
+  })
+
   return (
-    <div style={{ flex: 1, minHeight: 0, position: 'relative', background: '#fff' }}>
+    <div style={{
+      flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#0d1117',
+      ...(isFullscreen ? { position: 'fixed', inset: 0, zIndex: 120 } : { position: 'relative' }),
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '6px 10px', borderBottom: '1px solid rgba(255,255,255,0.08)', background: '#0a0f14',
+      }}>
+        <div style={{ display: 'flex', gap: 2 }}>
+          {(['desktop', 'tablet', 'mobile'] as const).map((mode) => {
+            const Icon = mode === 'desktop' ? Monitor : mode === 'tablet' ? Tablet : Smartphone
+            const label = mode === 'desktop' ? 'Desktop' : mode === 'tablet' ? 'Tablet' : 'Mobile'
+            return (
+              <button key={mode} onClick={() => setViewport(mode)} style={btn(viewport === mode)} title={label}>
+                <Icon size={11} /><span>{label}</span>
+              </button>
+            )
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <button onClick={openInNewTab} style={btn(false)} title="Ouvrir le rendu dans un nouvel onglet (taille reelle)">
+            <ExternalLink size={11} /><span>Onglet</span>
+          </button>
+          <button onClick={() => setIsFullscreen((v) => !v)} style={btn(isFullscreen)} title={isFullscreen ? 'Quitter le plein ecran (Echap)' : 'Agrandir le viewer en plein ecran'}>
+            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}<span>{isFullscreen ? 'Reduire' : 'Agrandir'}</span>
+          </button>
+        </div>
+      </div>
+      <div style={{
+        flex: 1, minHeight: 0, position: 'relative', background: '#fff',
+        display: 'flex', justifyContent: 'center',
+      }}>
       <iframe
         ref={iframeRef}
         srcDoc={instrumentedHtml}
@@ -84,9 +144,10 @@ export function CodePreviewFrame({ html, title }: { html: string; title: string 
         // enough for a runnable preview without letting generated links steer Aurora.
         sandbox="allow-scripts allow-forms allow-modals"
         style={{
-          width: '100%',
+          width: VIEWPORT_WIDTH[viewport],
+          maxWidth: '100%',
           height: '100%',
-          border: 'none',
+          border: viewport === 'desktop' ? 'none' : '1px solid rgba(0,0,0,0.15)',
           background: '#fff',
         }}
       />
@@ -119,6 +180,7 @@ export function CodePreviewFrame({ html, title }: { html: string; title: string 
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }
