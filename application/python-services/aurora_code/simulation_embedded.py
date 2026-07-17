@@ -197,7 +197,10 @@ def run_renode_stage(out_dir: Path) -> dict[str, Any]:
   (target / "build.log").write_text(build_log, encoding="utf-8")
   if not elf:
     return unavailable("renode_arduino_firmware", label, "embedded", tail(build_log))
-  renode_root = Path(renode).parent
+  # resolve() suit le symlink (~/.local/bin/renode -> ~/renode-portable/renode)
+  # pour tomber sur le VRAI repertoire d'install ou vivent platforms/boards/*.repl.
+  # Sans ca, Renode cherche @~/.local/bin/platforms/... (inexistant) -> stage KO.
+  renode_root = Path(renode).resolve().parent
   script = target / "run.resc"
   script.write_text(
     "\n".join([

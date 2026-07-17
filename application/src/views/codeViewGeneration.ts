@@ -6,8 +6,8 @@ import type { CorrectionPass } from '../services/codeAutoCorrection'
 import type { CodePreflightReport } from '../services/codePreflight'
 import type { CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
-import { startDevServer, stopDevServer, type DevServerState } from '../services/codeDevServer'
-import { blendRenderedVisualIntoFinalScore, runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
+import { stopDevServer, type DevServerState } from '../services/codeDevServer'
+import { runVisualCorrectionLoop } from './codeViewVisualCorrectionLoop'
 import { generateSessionTitle } from '../services/sessionAutoNaming'
 import { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
 import { getErrorMessage } from '../utils/errors'
@@ -227,8 +227,9 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
               streamTimerRef,
             })
 
-            // Full orchestration pipeline
-            const result: CodeOrchestrationResult = await orchestrateCodeGeneration({
+            // Full orchestration pipeline. `let` car le juge visuel peut relancer
+            // une passe esthetique ciblee et remplacer le resultat livre.
+            let result: CodeOrchestrationResult = await orchestrateCodeGeneration({
               prompt: activePrompt,
               enrichedPrompt: taskContext.enrichedPrompt,
               conversationHistory: conversationHistory.map((msg: { role: string; content: string }) => ({
@@ -292,49 +293,43 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
 
             setRecoveryStatus(null)
 
-            // Start dev server if needed
-            let visualAuditSummary: string | null = null
-            // WS9: le juge visuel doit COMPTER dans le score livre (repondere par le rendu reel).
-            let effectiveFinalScore = result.finalScore
-            if (result.intent.needsDevServer && result.sandboxResult?.rootPath) {
-              setProgress('Demarrage du serveur de dev pour preview...')
-              setPhase('Demarrage du dev server...', 95)
-              const url = await startDevServer(
-                result.sandboxResult.rootPath,
-                result.intent,
-                setDevServerState,
-              )
-              if (url) {
-                setProgress(`Dev server pret: ${url}. Audit visuel rendu reel...`)
-                try {
-                  const visualAudit = await runCodeVisualRenderAudit({
-                    url,
-                    includeVision: Boolean(visionModel),
-                    visionModel,
-                    waitMs: 2500,
-                    signal: controller.signal,
-                  })
-                  visualAuditSummary = visualAudit.report.summary
-                  setDesignReport({
-                    score: visualAudit.report.score,
-                    missing: visualAudit.report.failedChecks,
-                    penalties: visualAudit.report.checks
-                      .filter((check) => !check.passed)
-                      .map((check) => check.label),
-                  })
-                  const blended = blendRenderedVisualIntoFinalScore(result.finalScore, visualAudit.report)
-                  effectiveFinalScore = blended.score
-                  setFinalScore(blended.score)
-                  if (blended.belowThreshold) {
-                    visualAuditSummary = `${visualAudit.report.summary} Qualite visuelle sous le seuil (rendu ${blended.visualScore}/100) — regeneration ciblee recommandee.`
-                  }
-                } catch (auditError) {
-                  visualAuditSummary = `Audit visuel rendu indisponible: ${getErrorMessage(auditError, 'erreur inconnue')}`
-                }
-              } else {
-                setProgress('Preview live indisponible. Les fichiers restent livres pour inspection manuelle.')
-              }
-            }
+            // WS9: le juge visuel COMPTE dans le score ET declenche une
+            // regeneration ciblee sur l apparence (boucle bornee) quand le rendu
+            // reel est sous le seuil — plus une simple recommandation decorative.
+            const visualLoop = await runVisualCorrectionLoop(result, {
+              visionModel,
+              signal: controller.signal,
+              setProgress,
+              setPhase,
+              setDevServerState,
+              setDesignReport,
+              setFinalScore,
+              regenerate: (directive, existingFiles) => orchestrateCodeGeneration({
+                prompt: activePrompt,
+                enrichedPrompt: `${taskContext.enrichedPrompt}\n\n${directive}`,
+                conversationHistory: conversationHistory.map((msg: { role: string; content: string }) => ({
+                  role: msg.role as 'user' | 'assistant',
+                  content: msg.content,
+                })),
+                existingFiles,
+                contextImages: preparedContext.flatMap((file) => file.imageBase64 ? [file.imageBase64] : []),
+                userFileDataUrls,
+                configuredCodeModel: activeModel,
+                visionModel,
+                ...callbacks,
+                signal: controller.signal,
+              }),
+              applyRegenResult: (regen) => {
+                setFiles(regen.files)
+                setNotes(regen.notes)
+                setValidationResult(regen.sandboxResult)
+                setCorrectionLog(regen.correctionLog)
+                setTotalAttempts(regen.totalAttempts)
+              },
+            })
+            result = visualLoop.result
+            const effectiveFinalScore = visualLoop.effectiveFinalScore
+            const visualAuditSummary = visualLoop.visualAuditSummary
 
             // Set progress message
             const deliverySummary = result.sandboxResult?.ok
