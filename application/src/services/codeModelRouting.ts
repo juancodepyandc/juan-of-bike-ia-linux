@@ -12,6 +12,7 @@ import {
   CODE_VERIFIER_MODEL,
   DEFAULT_MAIN_MODEL,
   MAIN_FALLBACK_MODEL,
+  codeModelFitsRuntime,
   selectCodeModelForHardware,
 } from '../config/models.ts'
 import type { CodeIntent } from './codeIntent.ts'
@@ -117,8 +118,13 @@ function pickIndependentRoleModel(
   installedModels: string[],
   coderModel: string,
   allowUninstalled: boolean,
+  hardware?: CodeModelRoutingContext['hardware'],
 ) {
-  const compacted = compactCandidates(candidates)
+  // Garde anti-gel: on ne considere jamais un modele qui ne tient pas en memoire
+  // rapide locale (sinon pagination disque -> gel du poste, vecu avec le 80B).
+  const compacted = compactCandidates(candidates).filter((candidate) =>
+    codeModelFitsRuntime(candidate, hardware),
+  )
   for (const candidate of compacted) {
     const installed = findInstalledModel(installedModels, candidate)
     if (installed && !codeModelNamesEqual(installed, coderModel)) {
@@ -157,6 +163,7 @@ export function selectCodeRoleModel(
         installedModels,
         coderModel,
         Boolean(context.allowUninstalledRoleModels),
+        context.hardware,
       )
       if (escalated) {
         return {
@@ -193,6 +200,7 @@ export function selectCodeRoleModel(
     installedModels,
     coderModel,
     Boolean(context.allowUninstalledRoleModels),
+    context.hardware,
   )
 
   if (selected) {

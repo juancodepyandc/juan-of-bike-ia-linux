@@ -457,6 +457,49 @@ export function detectBestMainModel(installedModels: string[]): string {
   return DEFAULT_MAIN_MODEL
 }
 
+// ---------------------------------------------------------------------------
+// GARDE ANTI-GEL. Un modele code qui depasse la memoire rapide (VRAM+RAM)
+// pagaie le disque et FIGE le poste (vecu: qwen3-coder-next 51GB charge sur
+// 16GB VRAM + 30GB RAM = gel dur). La table ne liste QUE les modeles LOURDS a
+// surveiller ; tout autre modele (le codeur 30b 18GB, qwen3.6, deepseek, ...)
+// passe toujours. Sur un build desktop local ces familles sont refusees quel
+// que soit leur statut installe -> le gel devient structurellement impossible.
+const CODE_HEAVY_MODEL_GB: Array<{ match: string; gb: number }> = [
+  { match: 'coder-next:q8', gb: 85 },
+  { match: 'coder-next:q6', gb: 66 },
+  { match: 'coder-next', gb: 51 }, // q4_K_M + defaut de la famille next
+  { match: '30b-a3b-q8', gb: 33 },
+]
+
+/** Taille approx (Go) si le modele est dans la table des LOURDS, sinon null. */
+export function codeModelApproxHeavyGb(model: string | null | undefined): number | null {
+  const n = (model ?? '').trim().toLowerCase().replace(/:latest$/, '')
+  if (!n) return null
+  for (const entry of CODE_HEAVY_MODEL_GB) {
+    if (n.includes(entry.match)) return entry.gb
+  }
+  return null
+}
+
+/**
+ * true si le modele tient en memoire rapide locale. Les modeles legers/inconnus
+ * passent toujours (jamais de faux blocage). Un modele LOURD est juge sur sa
+ * taille reelle vs la memoire disponible (VRAM+RAM, marge OS 15%) :
+ *  - hardware connu : autorise seulement si le budget le couvre ;
+ *  - hardware inconnu : cloud autorise (machines costaudes), desktop refuse
+ *    (poste typique 16-24GB VRAM + <=32GB RAM ou ces familles figent le PC).
+ */
+export function codeModelFitsRuntime(
+  model: string,
+  hardware?: Pick<HardwareProfile, 'ram_gb' | 'vram_gb'> | null,
+): boolean {
+  const gb = codeModelApproxHeavyGb(model)
+  if (gb == null) return true
+  const budget = (Number(hardware?.vram_gb ?? 0) + Number(hardware?.ram_gb ?? 0)) * 0.85
+  if (budget > 0) return gb <= budget
+  return IS_CLOUD
+}
+
 /**
  * Retourne le modele code expert operationnel.
  * Si le Q8 est installe il est prioritaire, sinon le Q4_K_M local reste le

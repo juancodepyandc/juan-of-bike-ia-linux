@@ -32,6 +32,8 @@ describe('codeModelRouting', () => {
     const decision = selectCodeRoleModel('generation', intent, 4, {
       configuredCodeModel: 'qwen3-coder:30b',
       installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+      // machine costaude: le gros modele cloud tient -> escalade autorisee.
+      hardware: { ram_gb: 128, vram_gb: 80 },
       plateau: true,
     })
 
@@ -69,11 +71,27 @@ describe('codeModelRouting', () => {
     const decision = selectCodeRoleModel('correction', intent, 6, {
       configuredCodeModel: 'qwen3-coder:30b',
       installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+      // machine costaude: le gros modele cloud tient -> escalade autorisee.
+      hardware: { ram_gb: 128, vram_gb: 80 },
       plateau: true,
     })
 
     assert.equal(decision.model, CODE_CLOUD_HIGH_MODEL)
     assert.equal(decision.distinctFromCoder, true)
     assert.match(decision.reason, /plateau-cloud-escalation/)
+  })
+
+  test('GARDE ANTI-GEL: refuse un modele cloud trop gros sur un poste local', () => {
+    // Meme cas mais poste local (16GB VRAM + 30GB RAM): le 80B ne tient pas ->
+    // la garde le retire des candidats -> retombe sur le codeur (pas de gel).
+    const decision = selectCodeRoleModel('correction', intent, 6, {
+      configuredCodeModel: 'qwen3-coder:30b',
+      installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+      hardware: { ram_gb: 30, vram_gb: 16 },
+      plateau: true,
+    })
+
+    assert.notEqual(decision.model, CODE_CLOUD_HIGH_MODEL)
+    assert.equal(decision.model, 'qwen3-coder:30b')
   })
 })

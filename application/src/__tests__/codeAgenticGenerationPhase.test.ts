@@ -131,6 +131,9 @@ describe('codeAgenticGenerationPhase', () => {
       modelRouting: {
         configuredCodeModel: 'qwen3-coder:30b',
         installedModels: ['qwen3-coder:30b', CODE_CLOUD_HIGH_MODEL],
+        // machine costaude: le gros modele cloud tient -> escalade autorisee
+        // (garde anti-gel: un poste local le refuserait).
+        hardware: { ram_gb: 128, vram_gb: 80 },
         plateau: true,
       },
       setPhase: () => undefined,
