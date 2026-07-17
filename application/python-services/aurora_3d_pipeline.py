@@ -2136,6 +2136,42 @@ def run_pipeline(prompt: str, run_id: str, *,
                       "attempts": res.get("attempts"),
                       "terminal_recommendation": res.get("terminal_recommendation")})
 
+        # VERROU PERSONNAGE. Quand la recherche web echoue, on tombe sur FLUX qui
+        # INVENTE le personnage SANS aucun controle -> il peut sortir un autre perso
+        # (la reference "un peu dans le theme mais pas le bon perso" que tu decris).
+        # On valide donc la reference FLUX contre la description du perso, et on
+        # REGENERE (seed different, cues renforcees) si elle ne correspond pas.
+        _k_lock = (subject_kind_hint or kind or "").lower()
+        if (not multi_view and _k_lock in ("character", "humanoid", "creature")
+                and _should_research_reference(prompt) and front_ref.is_file()
+                and os.environ.get("AURORA_CHARACTER_LOCK", "1") == "1"):
+            try:
+                _nm_lock = None
+                if compose_faithful_prompt is not None:
+                    _idl = compose_faithful_prompt(prompt)["analysis"].get("identity") or {}
+                    _nm_lock = _idl.get("name")
+                _desc_lock = _character_visual_desc(_nm_lock or prompt)
+                for _try in range(2):
+                    _okc, _whyc, _ = _reference_photo_ok(str(front_ref), prompt,
+                                                         visual_desc=_desc_lock)
+                    audit.append({"stage": "character_lock_check", "attempt": _try,
+                                  "ok": _okc, "why": _whyc[:120]})
+                    if _okc:
+                        break
+                    print("PROGRESS:reference:la reference ne correspond pas au "
+                          "personnage (%s) -> regeneration renforcee..." % _whyc[:60],
+                          flush=True)
+                    _fp2 = "%s, %s, EXACTEMENT ce personnage, personnage officiel" % (
+                        flux_prompt, _desc_lock or "")
+                    _res2 = synth(_fp2, run_id, output_dir=output_dir,
+                                  width=1024, height=1408, steps=44,
+                                  seed=(1234 + _try * 911))
+                    if not _res2.get("ok"):
+                        break
+            except Exception as _lce:  # noqa: BLE001
+                audit.append({"stage": "character_lock_check", "ok": False,
+                              "error": repr(_lce)})
+
     if multi_view:
         view_paths = {
             "front": front_ref,
