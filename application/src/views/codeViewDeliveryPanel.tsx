@@ -1,6 +1,7 @@
 import { lazy, Suspense, type Dispatch, type RefObject, type SetStateAction } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, Clipboard, Code2, Download, Eye, FileCode2, Globe, Loader2, Search, Sparkles } from 'lucide-react'
+import { CodeStudioLauncher } from './codeStudioViewer'
 import CodeFileTree from '../components/CodeFileTree'
 import type { CodeFile } from '../services/codeOrchestrator'
 import type { CodeIntent } from '../services/codeIntent'
@@ -84,6 +85,7 @@ export function CodeViewDeliveryPanel({
                 <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Livraison</p>
                 <h2 className="mt-1 text-lg font-semibold text-aurora-text">Scene code</h2>
               </div>
+              <CodeStudioLauncher files={files} activeFile={activeFile} setActiveFile={setActiveFile} consoleOutput={consoleOutput} devServerState={devServerState} error={error} validationResult={validationResult} intent={intent} notes={notes} streamPreview={streamPreview} isGenerating={isGenerating} viewport={bigViewport} setViewport={setBigViewport} iframeRef={bigPreviewIframeRef} />
 
               {activeFileData && (
                 <div className="flex flex-wrap items-center gap-2">
