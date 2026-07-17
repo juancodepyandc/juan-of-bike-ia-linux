@@ -96,10 +96,12 @@ export function scoreRenderedVisualAudit(audit: CodeVisualRenderAudit): VisualFi
   const screenshots = viewports.filter(hasScreenshot)
   const contrastSamples = collectContrastSamples(audit)
   const pixelContrastSamples = contrastSamples.filter((sample) => sample.source === 'pixel')
-  const minContrast = contrastSamples.length
-    ? Math.min(...contrastSamples.map((sample) => sample.ratio))
-    : 0
-  const contrastRate = contrastPassRate(contrastSamples)
+  // Repli computed-style quand trop peu d echantillons pixel: un vrai defaut de
+  // contraste reste attrape meme si le rendu est pauvre en pixels mesurables.
+  const evaluatedContrast = pixelContrastSamples.length >= 3 ? pixelContrastSamples : contrastSamples
+  const contrastHasEvidence = evaluatedContrast.length > 0
+  const minContrast = contrastHasEvidence ? Math.min(...evaluatedContrast.map((sample) => sample.ratio)) : 0
+  const contrastRate = contrastHasEvidence ? contrastPassRate(evaluatedContrast) : 0
   const textMedian = median(viewports.map((viewport) => viewport.bodyTextLength)) ?? 0
   const textNodeMedian = median(viewports.map((viewport) => viewport.textNodeCount)) ?? 0
   const headingMedian = median(viewports.map((viewport) => viewport.headingCount)) ?? 0
@@ -133,10 +135,15 @@ export function scoreRenderedVisualAudit(audit: CodeVisualRenderAudit): VisualFi
     ),
     check(
       'pixel_contrast_wcag',
-      `Contraste WCAG mesure sur pixels (min ${minContrast.toFixed(2)}, pass ${Math.round(contrastRate * 100)}%)`,
-      pixelContrastSamples.length >= 3 && minContrast >= 3 && contrastRate >= 0.8,
-      18,
-      pixelContrastSamples.length === 0 ? 'Aucun echantillon pixel fourni par le rendu.' : undefined,
+      contrastHasEvidence
+        ? `Contraste WCAG (min ${minContrast.toFixed(2)}, pass ${Math.round(contrastRate * 100)}%, ${pixelContrastSamples.length >= 3 ? 'pixels' : 'computed-style'})`
+        : 'Contraste WCAG non mesurable (rendu sans texte contrastable) — non concluant.',
+      // Non concluant (aucune evidence) -> passe avec poids 0: sort du denominateur
+      // et NE bloque PAS. Un petit outil accessible (peu de texte) n est plus
+      // plafonne a 84 ni renvoye en regeneration pour un signal absent. Une vraie
+      // evidence de faible contraste echoue et bloque toujours.
+      contrastHasEvidence ? minContrast >= 3 && contrastRate >= 0.8 : true,
+      contrastHasEvidence ? 18 : 0,
     ),
     check(
       'rendered_no_runtime_errors',

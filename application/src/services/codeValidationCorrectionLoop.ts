@@ -99,6 +99,7 @@ export async function runValidationAndCorrectionLoop(
   const correctionLog: CorrectionPass[] = []
   let attempt = 0
   let lastScore = 0
+  let functionalGreenPasses = 0
   let rescueRegenerationUsed = false
   let toolingEvaluationUsed = false
 
@@ -120,12 +121,17 @@ export async function runValidationAndCorrectionLoop(
       onFilesUpdate(currentFiles, currentNotes)
     }
 
+    // Fonctionnel-vert capture AVANT les gates (qui peuvent forcer ok=false):
+    // budget design-spec relatif au fonctionnel, pas au numero absolu de passe.
+    if (sandboxResult.ok) functionalGreenPasses += 1
+
     sandboxResult = await runCorrectionQualityGates({
       result: sandboxResult,
       files: currentFiles,
       prompt,
       intent,
       attempt,
+      functionalGreenPasses,
       setPhase,
     })
 

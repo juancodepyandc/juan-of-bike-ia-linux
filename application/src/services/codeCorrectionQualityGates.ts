@@ -37,6 +37,7 @@ export async function runCorrectionQualityGates({
   prompt,
   intent,
   attempt,
+  functionalGreenPasses = 0,
   setPhase,
 }: {
   result: CodeSandboxResult
@@ -44,6 +45,10 @@ export async function runCorrectionQualityGates({
   prompt: string
   intent: CodeIntent
   attempt: number
+  /** Nb de passes ou le fonctionnel (build/test/runtime) est deja vert. Rend le
+   *  budget design-spec RELATIF au fonctionnel-vert: un projet complexe dont les
+   *  premieres passes sont mangees par des fixes compile ne perd pas le polish. */
+  functionalGreenPasses?: number
   setPhase: PhaseCallback
 }): Promise<CodeSandboxResult> {
   setPhase(`Sandbox passe ${attempt} - critique statique du code...`, Math.min(90, 66 + attempt * 4))
@@ -89,7 +94,11 @@ export async function runCorrectionQualityGates({
   // deltaE, tokens, composants, wireframe, et surtout coherence de plateforme:
   // pas de contrat CSS web applique a du mobile natif ni a un jeu canvas). Un
   // ecart declenche une correction ciblee avec la spec en indice.
-  if (attempt <= DESIGN_SPEC_MAX_PASSES) {
+  // Budget design-spec relatif au fonctionnel-vert (union ADDITIVE, aucune
+  // enforcement retiree): actif passes 1-2 (simple inchange) ET sur les 2
+  // premieres passes ou le fonctionnel est vert (complexe: le polish est
+  // enforce une fois le code qui compile/tourne, pas sacrifie aux fixes compile).
+  if (attempt <= DESIGN_SPEC_MAX_PASSES || (functionalGreenPasses >= 1 && functionalGreenPasses <= DESIGN_SPEC_MAX_PASSES)) {
     const designSpec = buildCodeDesignSpec(prompt, intent, detectDesignArchetype(prompt, intent))
     const designCheck = verifyCodeDesignSpecAgainstFiles(designSpec, files)
     if (!designCheck.ok) {

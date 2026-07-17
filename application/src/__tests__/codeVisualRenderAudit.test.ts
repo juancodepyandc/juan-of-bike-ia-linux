@@ -129,4 +129,26 @@ describe('codeVisualRenderAudit', () => {
     // qu'un rendu non juge — le signal absent n'est ni recompense ni penalise.
     assert.ok(noVisionScore < studioScore, `no-vision ${noVisionScore} doit etre < studio ${studioScore}`)
   })
+
+  test('GARDE UNIFORMITE: un petit outil accessible sans echantillons de contraste n est pas bloque', () => {
+    // Un rendu soigne mais pauvre en texte contrastable (calculatrice, petit
+    // outil) ne fournit pas 3 echantillons pixel: le check contraste devient NON
+    // CONCLUANT (poids 0, hors denominateur, non bloquant) au lieu de plafonner a
+    // 84 et declencher une regeneration inutile.
+    const widths = [390, 834, 1440]
+    const minimal = audit({ viewports: widths.map((w) => viewport(w, { contrastSamples: [] })) })
+    const report = scoreRenderedVisualAudit(minimal)
+    assert.ok(!report.failedChecks.includes('pixel_contrast_wcag'), 'contraste non mesurable ne doit pas etre un echec bloquant')
+    assert.equal(report.passed, true)
+
+    // Mais une VRAIE evidence de faible contraste echoue et bloque toujours.
+    const lowContrast = audit({
+      viewports: widths.map((w) => viewport(w, {
+        contrastSamples: [{ viewport: `${w}x900`, source: 'computed-style', ratio: 1.8 }],
+      })),
+    })
+    const lowReport = scoreRenderedVisualAudit(lowContrast)
+    assert.ok(lowReport.failedChecks.includes('pixel_contrast_wcag'), 'un contraste reellement faible doit echouer')
+    assert.equal(lowReport.passed, false)
+  })
 })
