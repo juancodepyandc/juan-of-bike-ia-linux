@@ -66,7 +66,7 @@ export function appendAssetPromptSections(lines: string[], intent: CodeIntent): 
     '- Pour les photos realistes d un sujet concret (velo, iphone, cafe, etc.) qu il est impossible de remplacer par SVG:',
     '  - Genere une illustration SVG stylisee DU sujet (formes geometriques qui evoquent l objet), pas une photo.',
     '  - Explique dans le README section "Assets a fournir" le nom exact et la dimension attendue si l utilisateur veut plus tard une vraie photo.',
-    '- INTERDIT d utiliser: via.placeholder.com, placehold.it, picsum.photos, unsplash.com/source, loremflickr, pravatar — ces services peuvent tomber et casser la page.',
+    '- INTERDIT ABSOLU d utiliser une URL http(s) EXTERNE pour une image, une police ou une icone. Notamment: images.unsplash.com, source.unsplash.com, plus.unsplash.com, unsplash.com/source, via.placeholder.com, placehold.it/.co, picsum.photos, loremflickr, pravatar, pixabay, pexels, cloudinary, cdnjs.cloudflare.com, cdn.jsdelivr.net (pour images/icones). Ces liens sont hors-sujet et cassent hors-ligne. TOUT visuel doit etre LOCAL (asset livre / data: URL) ou INLINE (SVG). Une image externe hotlinkee sera REECRITE ou REJETEE automatiquement.',
     '- Pour un favicon, integre un SVG inline dans <link rel="icon" href="data:image/svg+xml,...">.',
     '- Aucun `<img>` ne doit rester "broken" (cercle avec croix) au chargement de la page. Test mental: je ferme internet et je ouvre index.html → tout doit s afficher impeccable.',
   )

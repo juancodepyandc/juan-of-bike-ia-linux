@@ -1,5 +1,19 @@
 import { getBridgeUrl } from '../utils/runtime.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
+import { detectSubject } from './codeIntentSubject.ts'
+
+/**
+ * #7: construit un prompt IMAGE dedie au SUJET exact (produit) plutot que le
+ * prompt PROJET. "AirPods Pro product shot, studio lighting" donne une vraie
+ * image produit; "site landing page vitrine airpods..." donnait du hors-sujet.
+ * Retourne undefined si aucun sujet resolu (l'appelant retombe sur le prompt).
+ */
+export function buildSubjectImagePrompt(prompt: string): string | undefined {
+  const subject = detectSubject(prompt)
+  if (!subject.canonical || subject.source === 'none') return undefined
+  const base = subject.brandProfile?.imageQueries?.[0] ?? `${subject.canonical} product`
+  return `${base}, studio lighting, clean neutral background, high detail, photorealistic, no text`
+}
 
 export const CODE_ASSET_BUNDLE_SCHEMA = 'aurora.code.asset-bundle/1'
 export const CODE_ASSET_MANIFEST_PATH = 'assets/aurora-asset-bundle.json'
@@ -70,6 +84,8 @@ export type CodeAssetBundle = {
 
 export type GenerateAssetsForArchetypeRequest = {
   prompt: string
+  /** #7: prompt IMAGE dedie au sujet exact (produit) au lieu du prompt projet. */
+  imagePrompt?: string
   archetype?: string
   requestedKinds?: CodeAssetKind[]
   runId?: string
@@ -96,6 +112,7 @@ export type CodeAssetSelectionInput = {
 
 export type InterModuleAssetPhaseRequest = CodeAssetSelectionInput & {
   enrichedPrompt: string
+  imagePrompt?: string
   existingFiles: CodeFile[]
   setPhase: (detail: string, progress: number) => void
   bridgeUrl?: string
@@ -127,6 +144,7 @@ export function selectInterModuleAssetKinds(input: CodeAssetSelectionInput): Cod
 
 export async function runInterModuleAssetPhase({
   enrichedPrompt,
+  imagePrompt,
   existingFiles,
   setPhase,
   bridgeUrl,
@@ -141,6 +159,8 @@ export async function runInterModuleAssetPhase({
     setPhase(`Assets inter-modules: ${requestedKinds.join(', ')}...`, 30)
     const bundle = await generateAssetsForArchetype({
       prompt: enrichedPrompt,
+      // #7: image commandee sur le SUJET exact (produit) et non le prompt projet.
+      imagePrompt: imagePrompt ?? buildSubjectImagePrompt(selection.prompt),
       archetype: selection.projectType,
       requestedKinds,
       fresh3d: requestedKinds.includes('model3d'),
@@ -287,6 +307,7 @@ function combineSignals(signal: AbortSignal | undefined, timeoutSec: number): Ab
 
 export async function generateAssetsForArchetype({
   prompt,
+  imagePrompt,
   archetype = 'default',
   requestedKinds = ['image'],
   runId,
@@ -310,6 +331,7 @@ export async function generateAssetsForArchetype({
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       prompt,
+      ...(imagePrompt ? { imagePrompt } : {}),
       archetype,
       requestedKinds: kinds,
       runId,

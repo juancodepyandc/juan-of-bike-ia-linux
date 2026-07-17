@@ -173,6 +173,22 @@ describe('codeInterModuleAssets manifeste', () => {
     assert.ok(entries.every((entry) => entry.url.startsWith('http://bridge.test/')))
   })
 
+  test('FILET #6: un hotlink externe (Unsplash/CDN) est reecrit vers l asset LOCAL du bundle', () => {
+    // Le modele hotlink souvent une image externe hors-sujet (iPhone Unsplash) au
+    // lieu d'utiliser l'asset reel. Le filet deterministe la remplace par l'asset local.
+    const source = '<img src="https://images.unsplash.com/photo-1695?w=600" alt="iPhone 15 Pro" class="hero">'
+    const out = applyInterModuleAssetPlaceholders(source, sampleBundle(), 'http://bridge.test')
+    assert.doesNotMatch(out, /images\.unsplash\.com/, 'le hotlink externe doit disparaitre')
+    assert.match(out, /http:\/\/bridge\.test\/api\/code\/assets\/file\/ws15-test\/images\/hero-1400\.avif/, 'remplace par l asset local du bundle')
+  })
+
+  test('FILET #6: les images LOCALES / data: / SVG inline ne sont pas touchees', () => {
+    const source = '<img src="./assets/logo.svg"><img src="data:image/svg+xml,abc"><svg><path/></svg>'
+    const out = applyInterModuleAssetPlaceholders(source, sampleBundle(), 'http://bridge.test')
+    assert.match(out, /\.\/assets\/logo\.svg/)
+    assert.match(out, /data:image\/svg\+xml,abc/)
+  })
+
   test('resout les marqueurs pour la preview puis restaure les chemins dans le ZIP', () => {
     const source = '<img src="PLACEHOLDER_IMG_HERO"><model-viewer src="PLACEHOLDER_ASSET_GLB"></model-viewer>'
     const preview = applyInterModuleAssetPlaceholders(source, sampleBundle(), 'http://bridge.test')

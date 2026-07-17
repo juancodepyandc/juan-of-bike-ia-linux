@@ -33,6 +33,44 @@ function replaceAll(content: string, markers: string[], replacement: string): st
   return next
 }
 
+function collectImageAssetUrls(bundle: CodeAssetBundle, bridgeUrl: string): string[] {
+  const urls: string[] = []
+  for (const asset of bundle.assets) {
+    if (asset.kind !== 'image') continue
+    const main = absoluteAssetUrl(bridgeUrl, asset.previewUrl)
+    if (main) urls.push(main)
+    for (const variant of asset.variants ?? []) {
+      const v = absoluteAssetUrl(bridgeUrl, variant.previewUrl)
+      if (v && !urls.includes(v)) urls.push(v)
+    }
+  }
+  return urls
+}
+
+/**
+ * Filet DETERMINISTE (independant du modele). Le modele hotlink souvent des
+ * images externes (images.unsplash.com etc.) — souvent HORS-SUJET (iPhone au
+ * lieu d'AirPods) — au lieu d'utiliser l'asset REEL genere pour le sujet. On
+ * reecrit donc tout <img src="http externe"> et url(http externe) vers l'asset
+ * local du bundle: la vraie image du sujet apparait MEME si le modele a ignore
+ * le contrat PLACEHOLDER. Les data:/chemins locaux/markers deja materialises ne
+ * sont pas touches. Plusieurs assets -> on alterne pour varier.
+ */
+function rewriteExternalImagesToBundle(content: string, imageUrls: string[]): string {
+  if (imageUrls.length === 0) return content
+  let i = 0
+  const nextUrl = () => imageUrls[(i++) % imageUrls.length]
+  let next = content.replace(
+    /(<img\b[^>]*?\bsrc\s*=\s*["'])(https?:\/\/[^"']+)(["'])/gi,
+    (_m, pre: string, _url: string, post: string) => `${pre}${nextUrl()}${post}`,
+  )
+  next = next.replace(
+    /url\(\s*(["']?)(https?:\/\/[^"')]+\.(?:jpg|jpeg|png|webp|avif|gif))\1\s*\)/gi,
+    (_m, q: string) => `url(${q}${nextUrl()}${q})`,
+  )
+  return next
+}
+
 export function applyInterModuleAssetPlaceholders(
   content: string,
   bundle: CodeAssetBundle | null,
@@ -41,12 +79,15 @@ export function applyInterModuleAssetPlaceholders(
   if (!bundle || !content) return content
   let next = content
   const first = (kind: CodeGeneratedAsset['kind']) => bundle.assets.find((asset) => asset.kind === kind)
-  const imageUrl = absoluteAssetUrl(bridgeUrl, first('image')?.previewUrl)
+  const imageUrls = collectImageAssetUrls(bundle, bridgeUrl)
+  const imageUrl = imageUrls[0] ?? absoluteAssetUrl(bridgeUrl, first('image')?.previewUrl)
   const modelUrl = absoluteAssetUrl(bridgeUrl, first('model3d')?.previewUrl)
   const voiceUrl = absoluteAssetUrl(bridgeUrl, first('voice')?.previewUrl)
   if (imageUrl) next = replaceAll(next, IMAGE_MARKERS, imageUrl)
   if (modelUrl) next = replaceAll(next, ['PLACEHOLDER_MODEL_3D', 'PLACEHOLDER_ASSET_GLB'], modelUrl)
   if (voiceUrl) next = replaceAll(next, ['PLACEHOLDER_VOICE_NARRATION', 'PLACEHOLDER_ASSET_VOICE'], voiceUrl)
+  // Filet: apres les markers, forcer l'usage de l'asset local sur tout hotlink restant.
+  if (imageUrls.length > 0) next = rewriteExternalImagesToBundle(next, imageUrls)
   return next
 }
 

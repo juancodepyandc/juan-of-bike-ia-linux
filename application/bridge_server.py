@@ -11934,6 +11934,9 @@ def code_assets_generate():
     }
     if isinstance(data.get("seed"), int):
         payload["seed"] = data["seed"]
+    image_prompt = str(data.get("imagePrompt") or "").strip()
+    if image_prompt:
+        payload["imagePrompt"] = image_prompt[:400]
     try:
         proc = subprocess.run(
             [sys.executable, str(script)],

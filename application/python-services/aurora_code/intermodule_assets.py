@@ -283,6 +283,10 @@ def generate_voice_asset(base_url: str, root: pathlib.Path, out_dir: pathlib.Pat
 def build_bundle(payload: dict[str, Any]) -> dict[str, Any]:
     root = workspace_root()
     prompt = str(payload.get("prompt") or "Aurora premium product").strip()
+    # #7: prompt IMAGE dedie au sujet exact ("AirPods Pro 3 product shot studio")
+    # au lieu du prompt PROJET ("site landing page vitrine...") qui produisait une
+    # image generique/hors-sujet. Fallback sur le prompt projet si absent.
+    image_prompt = str(payload.get("imagePrompt") or "").strip() or prompt
     base_url = str(payload.get("baseUrl") or os.environ.get("AURORA_BRIDGE_URL") or "http://127.0.0.1:3001").rstrip("/")
     run_id = slug(str(payload.get("runId") or f"ws15_{int(time.time())}"))
     out_dir = root / "output" / "code_assets" / run_id
@@ -293,7 +297,7 @@ def build_bundle(payload: dict[str, Any]) -> dict[str, Any]:
     routes: list[dict[str, Any]] = []
 
     producers: dict[str, Any] = {
-        "image": lambda: reuse_or_generate(root, out_dir, str(payload.get("sourceImageRunId") or ""), "image", lambda: generate_image_asset(base_url, root, out_dir, prompt, seed)),
+        "image": lambda: reuse_or_generate(root, out_dir, str(payload.get("sourceImageRunId") or ""), "image", lambda: generate_image_asset(base_url, root, out_dir, image_prompt, seed)),
         "model3d": lambda: generate_3d_asset(
             base_url, root, out_dir, prompt, run_id,
             bool(payload.get("fresh3d", False)), bool(payload.get("allowExisting3d", True)),
