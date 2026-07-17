@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bonjour Brume</title>
+  <style data-file="styles/main.css">
+@charset "UTF-8";
+
+/* Palette de couleurs chaude café */
+:root {
+  --coffee-brown: #5D4037;
+  --light-brown: #8D6E63;
+  --warm-orange: #FF9800;
+  --cream: #FFF3E0;
+  --highlight-yellow: #FFEB3B;
+}
+
+/* Réinitialisation et base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--cream);
+  color: var(--coffee-brown);
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem;
+}
+
+main {
+  text-align: center;
+  max-width: 800px;
+  width: 100%;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 2.5rem);
+  margin-bottom: 1.5rem;
+  color: var(--coffee-brown);
+}
+
+p {
+  font-size: clamp(1rem, 2.5vw, 1.1rem);
+  line-height: 1.6;
+  margin-bottom: 2rem;
+  color: var(--light-brown);
+}
+
+.cta-button {
+  background-color: var(--warm-orange);
+  color: white;
+  border: none;
+  padding: 1rem 2rem;
+  font-size: clamp(1rem, 2.5vw, 1.1rem);
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.cta-button:hover {
+  background-color: var(--highlight-yellow);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  h1 {
+    font-size: 2rem;
+  }
+  
+  p {
+    font-size: 1rem;
+  }
+  
+  .cta-button {
+    padding: 0.8rem 1.5rem;
+    font-size: 1rem;
+  }
+}
+</style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Bonjour Brume</h1>
+      <p>Bienvenue dans notre univers chaleureux et authentique. Découvrez nos créations inspirées par les tons du café et de la chaleur.</p>
+      <button class="cta-button">Commander</button>
+    </section>
+  </main>
+</body>
+</html>

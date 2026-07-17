@@ -1,7 +1,7 @@
 // Pilote une VRAIE generation de code dans l'UI (aurora_v4) et capture le rendu.
 // Usage: node ui_generate_capture.mjs <baseUrl> <outDir> "<prompt>"
 import { chromium } from 'playwright'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const baseUrl = process.argv[2] || 'http://localhost:1420'
@@ -60,24 +60,27 @@ for (const label of ['Generer', 'Générer', 'Continuer']) {
 }
 if (!clicked) { log('bouton Generer introuvable/desactive'); await page.screenshot({ path: `${outDir}/00_nobtn.png` }); await browser.close(); process.exit(2) }
 
-// Attendre le demarrage (spinner/Generation) puis la fin.
+// Attendre la fin: fichiers STABLES (n a plus bouge depuis 3 checks) OU erreur.
 const started = Date.now()
-let sawGenerating = false
-let done = false
+let outcome = 'timeout'
+let stableCount = 0, lastFiles = -1
 while (Date.now() - started < GEN_TIMEOUT_MS) {
   await sleep(4000)
-  const state = await page.evaluate(() => {
+  const st = await page.evaluate(() => {
     const txt = document.body?.innerText || ''
-    const generating = /Generation|construction|passe \d|sandbox|correction|planification|analyse/i.test(txt)
-    const fileCount = document.querySelectorAll('[class*="file"], [data-file], pre').length
-    return { generating, len: txt.length, hasScore: /\b(\d{1,3})\s*%/.test(txt) }
+    const fm = txt.match(/FICHIERS?\s*\((\d+)\)/i)
+    const files = fm ? Number(fm[1]) : 0
+    const errM = txt.match(/Erreur fatale[^\n]{0,120}|Echec de l[^\n]{0,80}/i)
+    return { files, err: errM ? errM[0] : null }
   })
-  if (state.generating) sawGenerating = true
   const elapsed = Math.round((Date.now() - started) / 1000)
-  if (sawGenerating && !state.generating) { done = true; log(`generation terminee (~${elapsed}s)`); break }
-  if (elapsed % 20 === 0) log(`... en cours ${elapsed}s (generating=${state.generating})`)
+  if (st.err) { outcome = `ERREUR: ${st.err}`; log(outcome); break }
+  if (st.files > 0 && st.files === lastFiles) { stableCount++ } else { stableCount = 0 }
+  lastFiles = st.files
+  if (st.files > 0 && stableCount >= 3) { outcome = `OK: ${st.files} fichiers`; log(`${outcome} (~${elapsed}s)`); break }
+  if (elapsed % 24 === 0) log(`... ${elapsed}s (fichiers=${st.files}, stable=${stableCount})`)
 }
-await sleep(3000)
+await sleep(2500)
 
 await page.screenshot({ path: `${outDir}/01_result.png` })
 // Basculer sur le simulateur si un toggle existe
@@ -86,11 +89,22 @@ await page.screenshot({ path: `${outDir}/02_simulator.png` })
 // Plein ecran
 try { await page.locator('button:has-text("Agrandir")').first().click({ timeout: 3000 }); await sleep(2000); await page.screenshot({ path: `${outDir}/03_fullscreen.png` }) } catch (e) { log('bouton Agrandir non trouve: ' + e.message) }
 
+// Dump du HTML assemble reellement rendu (pour diagnostiquer un rendu casse).
+try {
+  const previewHtml = await page.evaluate(() => {
+    const frames = Array.from(document.querySelectorAll('iframe'))
+    const f = frames.find((x) => (x.getAttribute('srcdoc') || '').length > 20) || frames[0]
+    return f ? (f.getAttribute('srcdoc') || '') : ''
+  })
+  writeFileSync(`${outDir}/preview.html`, previewHtml)
+  log(`preview.html dumpe (${previewHtml.length} chars)`)
+} catch (e) { log('dump preview echoue: ' + e.message) }
+
 // Metrics du rendu + score affiche
 const metrics = await page.evaluate(() => {
   const txt = document.body?.innerText || ''
   const scoreMatch = txt.match(/(\d{1,3})\s*%/)
   return { score: scoreMatch ? scoreMatch[1] : null, bodyLen: txt.length }
 })
-console.log(JSON.stringify({ done, sawGenerating, metrics, errors: errors.slice(0, 5), shots: ['00_before','01_result','02_simulator','03_fullscreen'].map(s => `${outDir}/${s}.png`) }, null, 2))
+console.log(JSON.stringify({ outcome, metrics, errors: errors.slice(0, 5), shots: ['00_before','01_result','02_simulator','03_fullscreen'].map(s => `${outDir}/${s}.png`) }, null, 2))
 await browser.close()
