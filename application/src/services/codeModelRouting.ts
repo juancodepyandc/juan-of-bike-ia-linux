@@ -1,5 +1,6 @@
 import type { HardwareProfile } from '../types/app.ts'
 import {
+  CODE_AGENT_MODEL,
   CODE_BALANCED_MODEL,
   CODE_CLOUD_HIGH_MODEL,
   CODE_LOCAL_PRIMARY_MODEL,
@@ -40,6 +41,9 @@ export type CodeModelRouteDecision = {
 }
 
 const PLANNING_MODEL_CANDIDATES = [
+  // Devstral en tete: meilleur agent/planificateur de la classe 16GB (installe
+  // -> il gagne; absent -> on retombe proprement sur les candidats suivants).
+  CODE_AGENT_MODEL,
   CODE_PLANNING_MODEL,
   CODE_REASONING_MODEL,
   CODE_BALANCED_MODEL,
@@ -51,6 +55,9 @@ const PLANNING_MODEL_CANDIDATES = [
 ]
 
 const REVIEW_MODEL_CANDIDATES = [
+  // Verifieur INDEPENDANT du codeur (devstral != qwen3-coder) — un codeur qui se
+  // juge lui-meme se sur-note.
+  CODE_AGENT_MODEL,
   CODE_REVIEW_MODEL,
   CODE_VERIFIER_MODEL,
   CODE_BALANCED_MODEL,

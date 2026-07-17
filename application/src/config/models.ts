@@ -83,6 +83,12 @@ const CODE_MODEL_CANDIDATES = [
 // Legacy aliases -- tout redirige vers le modele expert principal
 export const DEFAULT_CODE_MODEL = CODE_SINGLE_MODEL
 export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
+// Devstral Small 24B (Mistral, Apache-2.0, ~14GB Q4 -> tient dans 16GB VRAM):
+// meilleur modele AGENTIQUE de sa classe (SWE-bench Verified 52.3%, tool-use et
+// multi-fichiers natifs). Role: planification/agent + verifieur INDEPENDANT du
+// codeur. La generation de code pur reste sur qwen3-coder:30b (superieur a
+// Qwen2.5-Coder-32B sur les benchmarks recents — verifie 2026-07).
+export const CODE_AGENT_MODEL = 'devstral'
 export const CODE_PLANNING_MODEL = CODE_REASONING_MODEL
 export const CODE_REVIEW_MODEL = CODE_VERIFIER_MODEL
 
