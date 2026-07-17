@@ -56,12 +56,21 @@ describe('codeGenerationActionProtocol', () => {
     assert.equal(result.actions[0].kind, 'write_file')
   })
 
-  test('rejette les sorties sans marqueur ou JSON invalide', () => {
+  test('TOLERANT: parse des actions JSON valides meme SANS le marqueur', () => {
+    // Regression: le modele local emet souvent le tableau d actions sans le
+    // prefixe -> avant on rejetait et le JSON brut finissait ecrit dans le
+    // fichier (page affichant {"actions":[...]}). Desormais on le parse.
     const missing = parseCodeGenerationActions('[{"kind":"write_file","path":"x","content":"y"}]')
-    const invalid = parseCodeGenerationActions(`${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{]`)
+    assert.equal(missing.ok, true)
+    assert.equal(missing.actions.length, 1)
+    assert.equal(missing.actions[0].kind, 'write_file')
+  })
 
-    assert.equal(missing.ok, false)
-    assert.deepEqual(missing.errors, ['protocol_marker_missing'])
+  test('rejette une sortie sans aucun JSON, et un JSON invalide', () => {
+    const noJson = parseCodeGenerationActions('juste de la prose, aucun code')
+    assert.equal(noJson.ok, false)
+    assert.deepEqual(noJson.errors, ['protocol_marker_missing'])
+    const invalid = parseCodeGenerationActions(`${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{]`)
     assert.equal(invalid.ok, false)
     assert.deepEqual(invalid.errors, ['json_payload_invalid'])
   })

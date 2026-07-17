@@ -126,13 +126,18 @@ function extractActionArray(parsed: unknown, errors: string[]) {
 
 export function parseCodeGenerationActions(raw: string): CodeGenerationActionParseResult {
   const text = stripThinkingAndFences(raw)
-  if (!text.includes(CODE_GENERATION_ACTION_PROTOCOL_VERSION)) {
-    return { ok: false, actions: [], errors: ['protocol_marker_missing'] }
-  }
-
-  const afterMarker = text.slice(text.indexOf(CODE_GENERATION_ACTION_PROTOCOL_VERSION) + CODE_GENERATION_ACTION_PROTOCOL_VERSION.length)
-  const json = findFirstJsonValue(afterMarker)
-  if (!json) return { ok: false, actions: [], errors: ['json_payload_missing'] }
+  // Tolerant au marqueur manquant: les modeles locaux (qwen3-coder...) emettent
+  // tres souvent le tableau d actions JSON SANS le prefixe AURORA_CODE_ACTIONS/1.
+  // Auparavant on echouait sec ('protocol_marker_missing') puis le contenu JSON
+  // brut etait ecrit tel quel dans le fichier (page affichant {"actions":[...]}).
+  // On cherche donc la 1ere valeur JSON dans tout le texte quand le marqueur
+  // manque, et on ne bascule sur le repli code-brut que si aucune action valide.
+  const hasMarker = text.includes(CODE_GENERATION_ACTION_PROTOCOL_VERSION)
+  const searchZone = hasMarker
+    ? text.slice(text.indexOf(CODE_GENERATION_ACTION_PROTOCOL_VERSION) + CODE_GENERATION_ACTION_PROTOCOL_VERSION.length)
+    : text
+  const json = findFirstJsonValue(searchZone)
+  if (!json) return { ok: false, actions: [], errors: [hasMarker ? 'json_payload_missing' : 'protocol_marker_missing'] }
 
   const errors: string[] = []
   let parsed: unknown

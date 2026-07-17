@@ -179,6 +179,10 @@ function extractRawFileContent(raw: string): string | null {
   text = text.trim()
   // Rejette une sortie manifestement non-code (refus, phrase courte).
   if (text.length < 20) return null
+  // Ne JAMAIS ecrire un payload d actions JSON comme contenu de fichier (sinon la
+  // page affiche {"actions":[{"kind":"write_file"...}]} en texte). Ce cas doit
+  // etre parse comme des actions, pas traite en code brut.
+  if (/"kind"\s*:\s*"(write_file|read_file|apply_patch|run_command)"/.test(text)) return null
   const looksLikeCode = /[<{};=]|function|const |import |export |def |class |<!doctype|<html|<div|=>/i.test(text)
   return looksLikeCode ? text : null
 }
