@@ -3,8 +3,10 @@ import assert from 'node:assert/strict'
 import { CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION } from '../services/codeArchitecturePlan.ts'
 import {
   buildGenerationQueueFromArchitecturePlan,
+  buildGenerationQueueWithFallback,
   formatGenerationQueueForPrompt,
 } from '../services/codeGenerationQueue.ts'
+import type { CodeIntent } from '../services/codeIntent.ts'
 
 function plan() {
   return JSON.stringify({
@@ -55,6 +57,28 @@ describe('codeGenerationQueue', () => {
 
   test('ignore les plans invalides', () => {
     assert.equal(buildGenerationQueueFromArchitecturePlan('### fichiers'), null)
+  })
+
+  test('REPLI: un plan non parseable ne fait JAMAIS 0 fichier (fin de plan_without_queue)', () => {
+    // Regression: le vrai pipeline echouait fatalement ("Erreur fatale: plan_without_queue")
+    // quand qwen3-coder rendait du markdown au lieu du JSON attendu.
+    const web = buildGenerationQueueWithFallback('du texte pas du json', { projectType: 'static_web', languages: ['html'] } as unknown as CodeIntent)
+    assert.equal(web.usedFallback, true)
+    assert.deepEqual(web.queue.items.map((i) => i.path), ['index.html', 'style.css', 'script.js'])
+    assert.ok(web.queue.items.every((i) => i.required))
+
+    const react = buildGenerationQueueWithFallback(null, { projectType: 'spa_react', languages: ['TypeScript'] } as unknown as CodeIntent)
+    assert.equal(react.usedFallback, true)
+    assert.ok(react.queue.items.some((i) => i.path === 'src/App.tsx'))
+
+    const py = buildGenerationQueueWithFallback('', { projectType: 'cli_tool', languages: ['Python'] } as unknown as CodeIntent)
+    assert.deepEqual(py.queue.items.map((i) => i.path), ['main.py'])
+  })
+
+  test('REPLI: un plan VALIDE est prefere au repli', () => {
+    const res = buildGenerationQueueWithFallback(plan(), { projectType: 'spa_react', languages: ['TypeScript'] } as unknown as CodeIntent)
+    assert.equal(res.usedFallback, false)
+    assert.equal(res.queue.items[0].path, 'package.json')
   })
 
   test('formate un manifeste exploitable par le futur executeur outil-par-outil', () => {

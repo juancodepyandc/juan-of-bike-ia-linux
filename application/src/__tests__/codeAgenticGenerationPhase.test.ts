@@ -49,7 +49,11 @@ const intent = {
 } as any
 
 describe('codeAgenticGenerationPhase', () => {
-  test('retourne null sans plan architecte exploitable', async () => {
+  test('REPLI: sans plan exploitable, utilise une file par defaut (jamais 0 fichier)', async () => {
+    // Regression du vrai pipeline: un plan non parseable faisait echouer la
+    // generation a 0 fichier ("Erreur fatale: plan_without_queue"). Desormais on
+    // retombe sur une file par defaut derivee de l intent.
+    const files: string[] = []
     const result = await runAgenticGenerationPhase({
       prompt: 'demo',
       intent,
@@ -57,11 +61,26 @@ describe('codeAgenticGenerationPhase', () => {
       existingFiles: [],
       contextImages: [],
       generationModel: 'fake',
+      modelRouting: { installedModels: ['fake'] },
       setPhase: () => undefined,
       onToken: () => undefined,
+      onFilesUpdate: (fs) => { files.length = 0; files.push(...fs.map((f) => f.name)) },
+      chatClient: async (_model, messages) => {
+        const body = messages.map((m) => m.content).join('\n')
+        const path = body.match(/Fichier cible de cette etape: ([^\n]+)/)?.[1] ?? 'index.html'
+        return {
+          message: {
+            role: 'assistant',
+            content: `${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{"kind":"write_file","path":"${path}","content":"<!doctype html><html><body>ok</body></html>"}]`,
+          },
+        }
+      },
     })
 
-    assert.equal(result, null)
+    assert.equal(result?.ok, true)
+    // spa_react -> file de repli avec les fichiers d entree React
+    assert.ok(files.includes('src/App.tsx'), `attendu src/App.tsx dans ${files.join(',')}`)
+    assert.ok((result?.files.length ?? 0) >= 3, 'au moins 3 fichiers produits par le repli')
   })
 
   test('execute une generation agentique et serialise en AURORA_CODE_VFS/1', async () => {

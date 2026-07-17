@@ -7,7 +7,7 @@ import {
   selectModel,
 } from './codePipelineRuntime.ts'
 import { serializeProjectTreeEmission } from './codeProjectEmission.ts'
-import { buildGenerationQueueFromArchitecturePlan } from './codeGenerationQueue.ts'
+import { buildGenerationQueueWithFallback } from './codeGenerationQueue.ts'
 import { executeCodeGenerationQueue } from './codeGenerationExecutor.ts'
 import {
   createCodeGenerationLLMActionProducer,
@@ -65,11 +65,19 @@ export async function runAgenticGenerationPhase({
   chatClient?: CodeGenerationActionModelClient
   escalationLevel?: number
 }): Promise<AgenticGenerationPhaseResult | null> {
-  const queue = buildGenerationQueueFromArchitecturePlan(architecturePlan)
-  if (!queue || queue.items.length === 0) return null
+  // Repli garanti: si le plan d architecture ne parse pas en file exploitable,
+  // on synthetise une file par defaut depuis l intent au lieu d echouer a 0
+  // fichier (cause reelle de "Erreur fatale du pipeline: plan_without_queue").
+  const { queue, usedFallback } = buildGenerationQueueWithFallback(architecturePlan, intent)
+  if (queue.items.length === 0) return null
 
   const model = selectModel('generation', intent, escalationLevel, generationModel, modelRouting)
-  setPhase(`Executor agentique WS3: ${queue.items.length} fichier(s) a produire...`, 35)
+  setPhase(
+    usedFallback
+      ? `Executor agentique WS3: plan non exploitable -> file de repli (${queue.items.length} fichier(s))...`
+      : `Executor agentique WS3: ${queue.items.length} fichier(s) a produire...`,
+    35,
+  )
   const producer = createCodeGenerationLLMActionProducer({
     prompt,
     model,
