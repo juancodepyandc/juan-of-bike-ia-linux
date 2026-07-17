@@ -165,6 +165,37 @@ const VIEW_MAP = {
   cyber: CyberView,
 } as const
 
+/**
+ * Garde chaque module MONTE une fois visite (masque en display:none quand
+ * inactif) au lieu de le demonter au changement de module. Consequence: aucun
+ * etat volatil (generation en cours, flux/streamPreview, saisie) n'est perdu en
+ * naviguant puis en revenant — uniforme pour TOUS les modules. La generation
+ * async continue d'ecrire dans un composant TOUJOURS monte, et le retour
+ * re-affiche l'etat live au lieu d'une vue vierge. Un module n'est monte qu'a sa
+ * premiere visite (pas de cout initial pour les modules jamais ouverts).
+ */
+function PersistentModuleHost({
+  active,
+  render,
+}: {
+  active: ModuleId
+  render: (id: ModuleId) => ReactNode
+}) {
+  const [mounted, setMounted] = useState<ModuleId[]>(() => [active])
+  useEffect(() => {
+    setMounted((prev) => (prev.includes(active) ? prev : [...prev, active]))
+  }, [active])
+  return (
+    <>
+      {mounted.map((id) => (
+        <div key={id} data-aurora-module={id} style={{ display: id === active ? 'contents' : 'none' }}>
+          {render(id)}
+        </div>
+      ))}
+    </>
+  )
+}
+
 function buildMachineSignature(hw: { os: string; cpu: string; cores: number; ram_gb: number; gpu: string }) {
   return `${hw.os}|${hw.cpu}|${hw.cores}|${Math.round(hw.ram_gb)}|${hw.gpu}`
 }
@@ -1292,7 +1323,7 @@ function V3DesktopWrapper(props: ShellRouterProps) {
     }}>
       <div className="aurora-v3-backdrop" aria-hidden="true" />
       <div
-        key={teamOpen ? 'team' : props.activeModule}
+        key={teamOpen ? 'team' : 'modules'}
         className="aurora-v3-module"
         style={{
           // v82s-studio fix #3 : 84px = hauteur du dock flottant
@@ -1303,7 +1334,7 @@ function V3DesktopWrapper(props: ShellRouterProps) {
           background: 'var(--bg, #0e0e0e)',
         }}
       >
-        {teamOpen ? <AuroraV3TeamManager /> : props.renderModule(props.activeModule)}
+        {teamOpen ? <AuroraV3TeamManager /> : <PersistentModuleHost active={props.activeModule} render={props.renderModule} />}
       </div>
 
       {/* v82s-studio iter12 : la scène-personnage est REVENUE — l'agent du
@@ -1416,7 +1447,7 @@ function ShellRouter(props: ShellRouterProps) {
               props.setActiveModule(id as ModuleId)
             }}
           >
-            {props.renderModule(props.activeModule)}
+            <PersistentModuleHost active={props.activeModule} render={props.renderModule} />
           </LAZY_V4_SHELL>
         </Suspense>
       )
@@ -1441,7 +1472,7 @@ function ShellRouter(props: ShellRouterProps) {
             props.setActiveModule(id as ModuleId)
           }}
         >
-          {props.renderModule(props.activeModule)}
+          <PersistentModuleHost active={props.activeModule} render={props.renderModule} />
         </AuroraV1AppShell>
       )
     }
