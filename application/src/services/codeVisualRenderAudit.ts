@@ -185,8 +185,12 @@ export function scoreRenderedVisualAudit(audit: CodeVisualRenderAudit): VisualFi
       'vision_studio_verdict',
       `Verdict vision studio (${avgVision === null ? 'n/a' : Math.round(avgVision)}/100)`,
       avgVision === null ? true : avgVision >= 72 && studioVerdicts >= Math.ceil(visions.length / 2),
-      12,
-      visions.length === 0 ? 'Vision non fournie: score base sur rendu + metriques.' : undefined,
+      // Poids 0 quand la vision n'a pas tourne: le check sort du denominateur
+      // (score renormalise sur les checks reellement mesures) au lieu d'empocher
+      // 12 points gratuits — un livrable non juge par la vision ne doit etre ni
+      // recompense ni penalise pour un signal absent (uniformite de la mesure).
+      avgVision === null ? 0 : 12,
+      visions.length === 0 ? 'Vision non fournie: check retire du denominateur (score renormalise sur les checks mesures).' : undefined,
     ),
   ]
 

@@ -160,9 +160,18 @@ export async function runGeneratedOutputRetryLoop({
     }
   }
 
-  const isExpertComplexProject = intent.complexity === 'complex' || intent.complexity === 'enterprise'
-  const maxOutputRetries = isExpertComplexProject ? 6 : 3
-  const maxNetworkErrors = isExpertComplexProject ? 4 : 2
+  // Le budget de CORRECTION depend de l'effort reel exige (planning, volume de
+  // fichiers), pas d'un prejuge de complexite a priori : un projet 'moderate'
+  // feature-riche route en planning doit pouvoir corriger un meme defaut de gate
+  // autant qu'un 'complex' (sinon il est abandonne 2x plus tot au "best attempt").
+  // La resilience RESEAU est independante de la complexite : une panne transitoire
+  // ne doit pas livrer un petit projet moins completement qu'un gros.
+  const isHighEffortIntent = intent.complexity === 'complex'
+    || intent.complexity === 'enterprise'
+    || intent.needsArchitecturePlanning
+    || (intent.estimatedFileCount ?? 0) >= 8
+  const maxOutputRetries = isHighEffortIntent ? 6 : 5
+  const maxNetworkErrors = 4
   let outputRetry = 0
   let networkErrors = 0
   let latestBrandFidelity: BrandFidelityReport | null = null

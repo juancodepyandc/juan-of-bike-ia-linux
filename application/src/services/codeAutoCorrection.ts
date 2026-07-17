@@ -1,7 +1,7 @@
 // Cause-driven Code auto-correction engine.
 
 import type { CodeSandboxResult } from './codeSandbox'
-import { ERROR_PATTERNS } from './codeCorrectionErrorPatterns.ts'
+import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
 import {
   buildPartialRewriteInstructions,
   buildQuickFixInstructions,
@@ -382,8 +382,9 @@ export function shouldContinueLoop(
   // Score parfait → succes
   if (latestScore >= 100) return false
 
-  // Budget adaptatif par complexite, avec plafond dur pour la stabilite machine.
-  if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog)) return false
+  if (correctionLog.length >= MAX_CORRECTION_PASSES) return false // plafond dur machine, jamais depasser
+  // Au budget adaptatif on ne coupe que si la progression ne paie plus (un run qui grimpe encore va jusqu'au plafond dur).
+  if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog) && !isCorrectionScoreClimbing(correctionLog)) return false
 
   // Boucle infinie reelle : meme erreur exacte qui revient 6+ fois consecutives.
   if (correctionLog.length >= 6) {

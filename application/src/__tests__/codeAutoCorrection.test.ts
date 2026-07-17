@@ -352,4 +352,24 @@ describe('shouldContinueLoop', () => {
   test('MAX_CORRECTION_PASSES vaut 10', () => {
     assert.equal(MAX_CORRECTION_PASSES, 10)
   })
+
+  test('GARDE UNIFORMITE: un run qui grimpe nettement n est pas coupe au budget adaptatif', () => {
+    const pass = (attempt: number, score: number) => ({
+      attempt, score, errors: [`erreur distincte ${attempt}`],
+      strategy: 'quick_fix' as const, modelUsed: 'm', resolved: false,
+    })
+    const budget = computeAdaptiveCorrectionBudget([], [])
+    assert.ok(budget < MAX_CORRECTION_PASSES, 'il doit rester de la marge machine-safe')
+    const build = (last3: number[]) => [
+      ...Array.from({ length: budget - 3 }, (_, i) => pass(i, 50)),
+      ...last3.map((s, i) => pass(budget - 3 + i, s)),
+    ]
+    // 3 dernieres passes en nette hausse -> on continue jusqu au plafond dur.
+    assert.equal(shouldContinueLoop(build([70, 80, 88]), budget, []), true)
+    // Plateau sur les 3 dernieres -> la progression ne paie plus -> on coupe.
+    assert.equal(shouldContinueLoop(build([84, 84, 84]), budget, []), false)
+    // Le plafond dur reste absolu meme si ca grimpe encore.
+    const climbingAtCap = Array.from({ length: MAX_CORRECTION_PASSES }, (_, i) => pass(i, 40 + i * 6))
+    assert.equal(shouldContinueLoop(climbingAtCap, MAX_CORRECTION_PASSES, []), false)
+  })
 })

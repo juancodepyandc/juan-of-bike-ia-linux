@@ -105,4 +105,28 @@ describe('codeVisualRenderAudit', () => {
 
     assert.match(buildVisualFidelityCritique(poor), /RENDER-IN-THE-LOOP/)
   })
+
+  test('GARDE UNIFORMITE: sans jugement vision, le check studio ne rapporte pas 12 points gratuits', () => {
+    // Plusieurs checks non-vision echouent (poids gagne nettement < total), pour
+    // que l'ecart vision-presente/absente survive l'arrondi. On garde screenshots
+    // + contraste (checks bloquants) valides: c'est bien un rendu, seul le soin
+    // visuel non-vision est moyen.
+    const widths = [390, 834, 1440]
+    const middling = { headingCount: 1, mediaCount: 0, interactiveCount: 0, cssVarCount: 0, verticalGapMedian: 4, fontFamilies: ['Arial'], bodyTextLength: 400, textNodeCount: 6 }
+    const noVision = audit({
+      viewports: widths.map((w) => viewport(w, { ...middling, vision: undefined })),
+    })
+    const withStudioVision = audit({
+      viewports: widths.map((w) => viewport(w, {
+        ...middling,
+        vision: { score: 84, verdict: 'studio', summary: 'composition mature' },
+      })),
+    })
+    const noVisionScore = scoreRenderedVisualAudit(noVision).score
+    const studioScore = scoreRenderedVisualAudit(withStudioVision).score
+    // Avant le fix, les deux etaient EGAUX (12 points gratuits en l'absence de
+    // vision). Desormais un rendu reellement juge studio marque STRICTEMENT plus
+    // qu'un rendu non juge — le signal absent n'est ni recompense ni penalise.
+    assert.ok(noVisionScore < studioScore, `no-vision ${noVisionScore} doit etre < studio ${studioScore}`)
+  })
 })

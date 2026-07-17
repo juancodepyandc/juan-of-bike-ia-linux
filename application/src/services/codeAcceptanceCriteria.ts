@@ -35,7 +35,17 @@ function hasCalculatorIntent(prompt: string): boolean {
 }
 
 function hasPlaceholderCode(code: string): boolean {
-  return /\b(todo|fixme|placeholder|lorem ipsum|not implemented|coming soon|demo only|mock only)\b/i.test(code)
+  // Neutralise les usages LEGITIMES de "placeholder" (attribut HTML/JSX, cle
+  // d objet, pseudo-element/classe/prefixe CSS) qui n indiquent PAS du code
+  // inacheve — sinon toute UI porteuse d un champ de formulaire (donc plus riche
+  // et interactive) echouerait ce critere et serait plafonnee a 50%, punie pour
+  // sa richesse et non sa qualite. La qualite doit rester uniforme.
+  const sanitized = code
+    .replace(/placeholder\s*=/gi, '') // <input placeholder="..."> / placeholder={label} (attribut HTML/JSX)
+    .replace(/[.:#-]{1,2}placeholder/gi, '') // ::placeholder / .placeholder / -webkit-input-placeholder (CSS)
+  // Note: on ne neutralise PAS `placeholder:` — un vrai stub `// placeholder: a
+  // implementer` doit rester detecte (le cas objet {placeholder:'x'} est rare).
+  return /\b(todo|fixme|placeholder|lorem ipsum|not implemented|coming soon|demo only|mock only)\b/i.test(sanitized)
 }
 
 const ARITH_OPS = ['+', '-', '*', '/'] as const

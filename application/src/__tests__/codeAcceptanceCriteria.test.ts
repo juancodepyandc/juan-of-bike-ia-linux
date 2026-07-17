@@ -83,4 +83,28 @@ export function clear() { display = '0' }
     assert.equal(detectInvertedCalculatorOperators(`const ops = { '+': (a, b) => a + b, '*': (a, b) => a * b }`).length, 0)
     assert.equal(detectInvertedCalculatorOperators(`switch(op){ case '/': return a / b }`).length, 0)
   })
+
+  test('GARDE UNIFORMITE: un input placeholder legitime ne fait PAS echouer le critere no-placeholder', () => {
+    // Une UI riche avec un champ de recherche etait plafonnee a 50% (punie pour
+    // sa richesse) car "placeholder" matchait l'attribut HTML. Ne doit plus.
+    const files = [file('index.html', `
+<main>
+  <header><h1>Tableau de bord</h1></header>
+  <form><input type="search" placeholder="Rechercher un produit" aria-label="Recherche"></form>
+  <section class="grid"><article>Produit A</article><article>Produit B</article></section>
+  <style>input::placeholder{color:#888}.placeholder-glow{opacity:.5}</style>
+  <script>document.querySelector('form').addEventListener('submit', (e)=>e.preventDefault())</script>
+</main>`, 'html')]
+    const results = evaluateAcceptanceCriteria('un dashboard produits avec recherche', files)
+    const placeholderCriterion = results.find((r) => r.id === 'no-placeholder-code')
+    assert.ok(placeholderCriterion && placeholderCriterion.ok, 'no-placeholder-code doit passer sur une UI a formulaire')
+    assert.equal(scoreAcceptanceCriteria(results), 100)
+  })
+
+  test('un VRAI stub placeholder echoue toujours le critere', () => {
+    const files = [file('app.js', `function render(){ /* placeholder: a implementer plus tard */ }`, 'js')]
+    const results = evaluateAcceptanceCriteria('une petite app', files)
+    const placeholderCriterion = results.find((r) => r.id === 'no-placeholder-code')
+    assert.ok(placeholderCriterion && !placeholderCriterion.ok, 'un stub placeholder doit toujours echouer')
+  })
 })

@@ -79,3 +79,16 @@ export const ERROR_PATTERNS: Array<{ pattern: RegExp; category: ErrorCategory }>
   { pattern: /timeout/i, category: 'timeout' },
   { pattern: /ETIMEDOUT/i, category: 'timeout' },
 ]
+
+/**
+ * Vrai si les 3 dernieres passes de correction montrent une progression NETTE et
+ * strictement croissante (>= 5 pts au total). Sert a ne pas couper au budget
+ * adaptatif un run qui atteint reellement son but — il continue jusqu'au plafond
+ * dur machine. Sans ce credit, un projet complexe qui progresse encore serait
+ * livre inacheve au meme titre qu'un run reellement bloque.
+ */
+export function isCorrectionScoreClimbing(correctionLog: Array<{ score: number }>): boolean {
+  if (correctionLog.length < 3) return false
+  const recent = correctionLog.slice(-3).map((pass) => pass.score)
+  return recent[2] > recent[1] && recent[1] > recent[0] && recent[2] - recent[0] >= 5
+}
