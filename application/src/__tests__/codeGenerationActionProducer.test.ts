@@ -99,4 +99,21 @@ describe('codeGenerationActionProducer', () => {
       /action_protocol_invalid:protocol_marker_missing/,
     )
   })
+
+  test('REPLI tolerant: du code BRUT sans protocole est ecrit dans le fichier cible', async () => {
+    // qwen3-coder & modeles locaux emettent souvent le code direct (fence) sans
+    // le marqueur d actions -> le WS3 echouait a chaque generation. Desormais on
+    // ecrit ce code brut dans le fichier cible au lieu d avorter.
+    const html = '<!doctype html><html><head><title>Cafe Brume</title></head><body><h1>Bienvenue chez Brume</h1><button>Reserver</button></body></html>'
+    const producer = createCodeGenerationLLMActionProducer({
+      prompt: 'Cree la landing',
+      model: 'qwen3-coder:30b',
+      chatClient: async () => ({ message: { role: 'assistant', content: '```html\n' + html + '\n```' } }),
+    })
+    const actions = await producer({ item: item('index.html', 1), itemIndex: 0, queue: queue(), files: [] })
+    assert.equal(actions.length, 1)
+    assert.equal(actions[0].kind, 'write_file')
+    assert.equal((actions[0] as { path: string }).path, 'index.html')
+    assert.match((actions[0] as { content: string }).content, /Cafe Brume/)
+  })
 })

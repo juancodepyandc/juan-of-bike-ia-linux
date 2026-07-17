@@ -162,6 +162,27 @@ async function defaultChatClient(
   })
 }
 
+// Tolerance modeles locaux: qwen3-coder & co emettent tres souvent le CODE BRUT
+// (fence ```lang ... ``` ou HTML direct) SANS le marqueur de protocole d actions
+// -> le WS3 echouait fatalement ("protocol_marker_missing") a CHAQUE generation.
+// On recupere alors le contenu de fichier depuis la sortie brute pour le fichier
+// cible de l etape, au lieu d avorter tout le pipeline.
+function extractRawFileContent(raw: string): string | null {
+  if (!raw) return null
+  // Retire les blocs de raisonnement <think>...</think>.
+  let text = raw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
+  // Si des blocs fences existent, prend le plus long (le fichier complet).
+  const fences = [...text.matchAll(/```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g)].map((m) => m[1].trim()).filter(Boolean)
+  if (fences.length > 0) {
+    text = fences.sort((a, b) => b.length - a.length)[0]
+  }
+  text = text.trim()
+  // Rejette une sortie manifestement non-code (refus, phrase courte).
+  if (text.length < 20) return null
+  const looksLikeCode = /[<{};=]|function|const |import |export |def |class |<!doctype|<html|<div|=>/i.test(text)
+  return looksLikeCode ? text : null
+}
+
 export function createCodeGenerationLLMActionProducer(
   options: CodeGenerationActionProducerOptions,
 ): CodeGenerationActionProducer {
@@ -186,6 +207,13 @@ export function createCodeGenerationLLMActionProducer(
     options.onRawResponse?.({ item, raw })
     const parsed = parseCodeGenerationActions(raw)
     if (!parsed.ok) {
+      // Repli tolerant: le modele a rendu du code brut sans le protocole d actions.
+      // On l ecrit dans le fichier cible de l etape plutot que d echouer tout le run.
+      const rawContent = extractRawFileContent(raw)
+      if (rawContent) {
+        options.onRawResponse?.({ item, raw: `[repli code-brut -> write_file ${item.path}]` })
+        return [{ kind: 'write_file', path: item.path, language: item.language ?? undefined, content: rawContent }]
+      }
       throw new Error(`action_protocol_invalid:${parsed.errors.join(',')}`)
     }
     return parsed.actions
