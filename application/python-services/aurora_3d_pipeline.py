@@ -2201,8 +2201,12 @@ def run_pipeline(prompt: str, run_id: str, *,
                 # face 6 vues GEOMETRIQUEMENT COHERENTES du meme sujet; on en garde 2
                 # (profil + dos) que TRELLIS.2 fusionne -> reconstruction propre. Verifie:
                 # homme assis mono-vue = casse; multi-vues = assis propre sous tous angles.
-                # Actif pour les humanoides (ambiguite maximale); AURORA_MVADAPTER_MV=0 coupe.
-                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
+                # OPT-IN (defaut OFF) pour ne PAS empiler les modeles en VRAM par
+                # defaut: MV-Adapter charge SDXL ~15 Go, sur une carte 16 Go c'est
+                # tres serre et empile-le a FLUX/TRELLIS = GEL du PC. L'orchestrateur
+                # de scene l'active (AURORA_MVADAPTER_MV=1) UNIQUEMENT pour un humain
+                # POSE (assis/allonge), la ou la mono-vue casse et ou ca vaut le cout.
+                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "0") == "1"
                           and (subject_kind_hint or kind or "").lower()
                           in ("character", "humanoid", "creature", "human"))
                 if _mv_on and front_ref.is_file():
@@ -2210,6 +2214,10 @@ def run_pipeline(prompt: str, run_id: str, *,
                         sys.path.insert(0, str(Path(__file__).parent))
                         import mvadapter_multiview as _mv
                         if _mv.available():
+                            # LIBERER LA VRAM D'ABORD. MV-Adapter charge SDXL (~15 Go);
+                            # si FLUX/ComfyUI (~12 Go) est encore resident, la carte 16 Go
+                            # sature -> GEL du PC. On evince ComfyUI+Ollama avant.
+                            _free_gpu_before_hunyuan(audit)
                             print("PROGRESS:shape:vues multiples coherentes (MV-Adapter) "
                                   "pour lever l'ambiguite de profondeur...", flush=True)
                             _mvr = _mv.generate(str(front_ref), str(output_dir),

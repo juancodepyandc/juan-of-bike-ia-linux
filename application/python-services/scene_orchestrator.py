@@ -242,15 +242,26 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
     # pose statique: reference FLUX validee au VLM (voir _seated_reference), passee a
     # TRELLIS via `images` (ce qui court-circuite la generation de reference).
     imgs = None
+    _mv_prev = os.environ.get("AURORA_MVADAPTER_MV")
     if pose_word:
         ref = _seated_reference(desc, run_id, sub, pose_word)
         if ref:
             imgs = [ref]
-    # allow_scene=False: l'orchestrateur EST deja dans une scene. Sans ce garde-fou,
-    # run_pipeline redetecterait une scene et se rappellerait sans fin.
-    res = run_pipeline(desc, run_id, output_dir=sub,
-                       motion_prompt=(motion or None), purpose=purpose,
-                       images=imgs, allow_scene=False)
+        # UNIQUEMENT pour un humain POSE, on active le multi-vues coherent (la ou la
+        # mono-vue casse). Ailleurs il reste OFF (memoire, pas de gel). Sequentiel:
+        # MV-Adapter (SDXL) et TRELLIS sont chacun un sous-process, VRAM liberee entre.
+        os.environ["AURORA_MVADAPTER_MV"] = "1"
+    try:
+        # allow_scene=False: l'orchestrateur EST deja dans une scene. Sans ce garde-fou,
+        # run_pipeline redetecterait une scene et se rappellerait sans fin.
+        res = run_pipeline(desc, run_id, output_dir=sub,
+                           motion_prompt=(motion or None), purpose=purpose,
+                           images=imgs, allow_scene=False)
+    finally:
+        if _mv_prev is None:
+            os.environ.pop("AURORA_MVADAPTER_MV", None)
+        else:
+            os.environ["AURORA_MVADAPTER_MV"] = _mv_prev
     if not isinstance(res, dict):
         return None
     # Use the produced mesh even when res["ok"] is False: run_pipeline reports
