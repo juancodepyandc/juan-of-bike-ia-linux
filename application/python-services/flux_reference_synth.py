@@ -139,9 +139,29 @@ def post_prompt(workflow: dict, comfy_base: str = COMFY_BASE) -> str:
     raise RuntimeError(f"ComfyUI /prompt unreachable after retries: {last_exc}")
 
 
+class JobLostError(RuntimeError):
+    """Le job n'existe plus cote ComfyUI (serveur redemarre en cours de route)."""
+
+
+def _job_known(prompt_id: str, comfy_base: str) -> bool:
+    """Le job est-il encore dans la queue (running/pending) de ComfyUI ?"""
+    try:
+        with urllib.request.urlopen(f"{comfy_base}/queue", timeout=10) as r:
+            q = json.loads(r.read().decode("utf-8"))
+        for key in ("queue_running", "queue_pending"):
+            for item in q.get(key) or []:
+                # format: [number, prompt_id, workflow, ...]
+                if len(item) > 1 and item[1] == prompt_id:
+                    return True
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return True  # doute -> on ne conclut pas a la perte
+    return False
+
+
 def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
-                 timeout_s: float = 3600.0, interval_s: float = 2.0) -> dict:
+                 timeout_s: float = 1800.0, interval_s: float = 2.0) -> dict:
     deadline = time.time() + timeout_s
+    lost_checks = 0
     while time.time() < deadline:
         try:
             with urllib.request.urlopen(
@@ -151,6 +171,20 @@ def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
             entry = data.get(prompt_id)
             if entry and entry.get("status", {}).get("completed"):
                 return entry
+            # Job absent de l'historique: encore en queue ? Si ComfyUI a ete
+            # tue/redemarre (OOM...), sa queue est VIDE et le job n'existera
+            # JAMAIS -> attendre 1h en silence est un faux gel. 5 constats
+            # d'absence (~10 s) => JobLostError, l'appelant re-soumet.
+            if entry is None and not _job_known(prompt_id, comfy_base):
+                lost_checks += 1
+                if lost_checks >= 5:
+                    raise JobLostError(
+                        f"job {prompt_id} absent de la queue et de l'historique "
+                        "(ComfyUI redemarre ?) -> re-soumettre")
+            else:
+                lost_checks = 0
+        except JobLostError:
+            raise
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
             pass
         time.sleep(interval_s)
@@ -829,8 +863,14 @@ def synth(prompt: str, run_id: str, *,
         return {"ok": False, "error": f"submit failed: {exc}"}
 
     try:
-        entry = poll_history(prompt_id, comfy_base=comfy_base)
-    except TimeoutError as exc:
+        try:
+            entry = poll_history(prompt_id, comfy_base=comfy_base)
+        except JobLostError:
+            # ComfyUI tue/redemarre en cours de job (OOM...): la queue est vide,
+            # le job n'aboutira jamais. On re-soumet UNE fois sur le serveur neuf.
+            prompt_id = post_prompt(workflow, comfy_base)
+            entry = poll_history(prompt_id, comfy_base=comfy_base)
+    except (TimeoutError, JobLostError, RuntimeError, urllib.error.URLError) as exc:
         return {"ok": False, "error": str(exc), "prompt_id": prompt_id}
 
     try:
