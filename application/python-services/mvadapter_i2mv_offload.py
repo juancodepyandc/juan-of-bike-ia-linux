@@ -45,31 +45,43 @@ def main() -> int:
     vendor = _load_vendor(mv_root)
 
     import torch  # noqa: WPS433 (dans l'env mvadapter)
+    from diffusers import AutoencoderKL  # noqa: WPS433
+    from mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import (  # noqa: WPS433
+        MVAdapterI2MVSDXLPipeline)
+    from mvadapter.schedulers.scheduling_shift_snr import ShiftSNRScheduler  # noqa: WPS433
 
     num_views = len(args.azimuth_deg)
-    pipe = vendor.prepare_pipeline(
-        base_model="stabilityai/stable-diffusion-xl-base-1.0",
-        vae_model="madebyollin/sdxl-vae-fp16-fix",
-        unet_model=None,
-        lora_model=None,
-        adapter_path="huanngzh/mv-adapter",
-        scheduler=None,
-        num_views=num_views,
-        device="cuda",
-        dtype=torch.float16,
-    )
-    # LE fix VRAM: un module a la fois sur le GPU. Le cond_encoder (petit) n'est pas
-    # toujours couvert par la sequence d'offload diffusers -> on le garde sur le GPU.
+    # Chargement DIRECT en fp16 (torch_dtype au from_pretrained): les tenseurs sont
+    # castes A LA LECTURE -> pic RAM ~7 Go. Le prepare_pipeline vendor chargeait en
+    # fp32 (~14 Go transitoires) puis castait: c'est ce pic qui debordait le plafond
+    # memoire et faisait churner le swap (gel machine constate a la boite noire).
+    vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix",
+                                        torch_dtype=torch.float16)
+    pipe = MVAdapterI2MVSDXLPipeline.from_pretrained(
+        "stabilityai/stable-diffusion-xl-base-1.0",
+        vae=vae, torch_dtype=torch.float16)
+    pipe.scheduler = ShiftSNRScheduler.from_scheduler(
+        pipe.scheduler, shift_mode="interpolated", shift_scale=8.0,
+        scheduler_class=None)
+    pipe.init_custom_adapter(num_views=num_views)
+    pipe.load_custom_adapter("huanngzh/mv-adapter",
+                             weight_name="mvadapter_i2mv_sdxl.safetensors")
+    pipe.to(dtype=torch.float16)
+    pipe.enable_vae_slicing()
+    # LE fix VRAM: un module a la fois sur le GPU (pic ~5-7 Go au lieu de 15.8 qui
+    # privait l'affichage). Le cond_encoder (petit) n'est pas toujours couvert par
+    # la sequence d'offload diffusers -> on le garde sur le GPU.
     try:
         pipe.enable_model_cpu_offload()
         try:
-            pipe.cond_encoder.to("cuda")
+            pipe.cond_encoder.to(device="cuda", dtype=torch.float16)
         except Exception:  # noqa: BLE001
             pass
-        print("[offload] enable_model_cpu_offload actif", flush=True)
+        print("[offload] fp16 direct + enable_model_cpu_offload actifs", flush=True)
     except Exception as exc:  # noqa: BLE001
-        print("[offload] indisponible (%r) -> full GPU (comportement vendor)" % exc,
-              flush=True)
+        pipe.to("cuda")
+        pipe.cond_encoder.to(device="cuda", dtype=torch.float16)
+        print("[offload] indisponible (%r) -> full GPU" % exc, flush=True)
 
     images, _ref = vendor.run_pipeline(
         pipe,

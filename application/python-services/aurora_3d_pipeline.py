@@ -261,9 +261,12 @@ def _reexec_under_mem_scope() -> None:
             return
     except Exception:  # noqa: BLE001
         return
-    _high = os.environ.get("AURORA_MEM_HIGH_GB", "20")
-    _max = os.environ.get("AURORA_MEM_MAX_GB", "22")
-    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "8")
+    # Swap INTERDIT (SwapMax=0): le gel machine = churn swap qui sature le disque
+    # (3 morts au journal sans OOM kernel). Deborder = mourir proprement, jamais
+    # baratter. High+Max dimensionnes pour laisser bureau+ComfyUI vivre dans 30 Go.
+    _high = os.environ.get("AURORA_MEM_HIGH_GB", "17")
+    _max = os.environ.get("AURORA_MEM_MAX_GB", "20")
+    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "0")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
