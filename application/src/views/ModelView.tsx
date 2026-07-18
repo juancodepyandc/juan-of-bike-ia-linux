@@ -3717,6 +3717,7 @@ export default function ModelView() {
 
           // ── AI GENERATION PIPELINE (default + fallback) ──
           let auroraAttempted = false
+          let auroraFailReason = ''
           if (!result) {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian/Hunyuan multivue ne
@@ -3774,9 +3775,21 @@ export default function ModelView() {
                   shape_input_mode: 'single_view',
                 } as ModelGenerationResult
               } else {
+                // Extraire la VRAIE raison du pipeline (sentinelle anti-gel, OOM,
+                // job ComfyUI perdu, reference refusee...) au lieu d'un message
+                // generique qui cache tout.
+                try {
+                  const errMatch = auroraOutput.match(/"error":\s*"((?:[^"\\]|\\.)*)"/)
+                  if (errMatch) auroraFailReason = JSON.parse(`"${errMatch[1]}"`)
+                } catch { /* raison illisible */ }
+                if (!auroraFailReason) {
+                  const sentinel = auroraOutput.split('\n').reverse().find((l) => l.startsWith('PROGRESS:error:'))
+                  if (sentinel) auroraFailReason = sentinel.slice('PROGRESS:error:'.length)
+                }
                 setProgress('Pipeline Aurora sans resultat exploitable, repli ancien chemin...')
               }
-            } catch {
+            } catch (auroraExc) {
+              auroraFailReason = auroraExc instanceof Error ? auroraExc.message : String(auroraExc)
               setProgress('Pipeline Aurora indisponible, repli ancien chemin...')
             } finally {
               if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
@@ -3786,7 +3799,8 @@ export default function ModelView() {
           // sur Hunyuan/DreamGaussian (2e gros modele apres coup = risque de gel, et
           // l'utilisateur veut pouvoir se passer de Hunyuan). Echec propre.
           if (!result && auroraAttempted && trellisOnly) {
-            throw new Error('TRELLIS.2 n a pas produit de mesh et le repli Hunyuan3D est desactive (TRELLIS-only). Relance la generation, ou reactive le repli dans les reglages (aurora3d_trellis_only=0).')
+            const reason = auroraFailReason ? `${auroraFailReason} — ` : ''
+            throw new Error(`${reason}TRELLIS.2 n a pas produit de mesh (repli Hunyuan3D desactive, TRELLIS-only). Relance la generation, ou reactive le repli via aurora3d_trellis_only=0.`)
           }
           if (!result) {
             // Try DreamGaussian first if preferred (EU-safe MIT license)
