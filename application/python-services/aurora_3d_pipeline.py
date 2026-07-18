@@ -310,6 +310,7 @@ def _freeze_sentinel() -> None:
 
     def _watch() -> None:
         bad_io = 0
+        bad_mem = 0
         bad_ram = 0
         bad_vram = 0
         bad_nvme = 0
@@ -319,6 +320,14 @@ def _freeze_sentinel() -> None:
                 with open("/proc/pressure/io", "r", encoding="utf-8") as fh:
                     _full = [ln for ln in fh if ln.startswith("full")]
                 io_avg = float(_full[0].split("avg10=")[1].split()[0]) if _full else 0.0
+                # Pression MEMOIRE 'full': l'agonie fatale mesuree (94% pendant
+                # 9 min, mort 12:43) avait psiIo BAS (swap NVMe rapide) et RAM
+                # libre >800M (tout partait en swap): seuls les stalls memoire
+                # la voyaient. C'est LE signal du sur-engagement (ex: Ollama
+                # 17G + FLUX2 25G sur 30G).
+                with open("/proc/pressure/memory", "r", encoding="utf-8") as fh:
+                    _fullm = [ln for ln in fh if ln.startswith("full")]
+                mem_avg = float(_fullm[0].split("avg10=")[1].split()[0]) if _fullm else 0.0
                 with open("/proc/meminfo", "r", encoding="utf-8") as fh:
                     _ma = [ln for ln in fh if ln.startswith("MemAvailable")]
                 avail_mb = int(_ma[0].split()[1]) // 1024 if _ma else 99999
@@ -354,13 +363,14 @@ def _freeze_sentinel() -> None:
             except Exception:  # noqa: BLE001
                 pass
             bad_io = bad_io + 1 if io_avg > 45.0 else 0
+            bad_mem = bad_mem + 1 if mem_avg > 65.0 else 0
             bad_ram = bad_ram + 1 if avail_mb < 800 else 0
             bad_vram = bad_vram + 1 if vram_mb > 15200 else 0
             bad_nvme = bad_nvme + 1 if nvme_c >= 76 else 0
-            if bad_io >= 3 or bad_ram >= 3 or bad_vram >= 2 or bad_nvme >= 2:
-                print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% ram=%dMo "
-                      "vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
-                      % (io_avg, avail_mb, vram_mb, nvme_c), flush=True)
+            if bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 2 or bad_nvme >= 2:
+                print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% memPsi=%.0f%% "
+                      "ram=%dMo vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
+                      % (io_avg, mem_avg, avail_mb, vram_mb, nvme_c), flush=True)
                 sys.stdout.flush()
                 os.kill(os.getpid(), signal.SIGTERM)
                 time.sleep(5)

@@ -118,7 +118,34 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
     }
 
 
+def _unload_ollama() -> None:
+    """Decharge les modeles Ollama residents AVANT de charger FLUX2.
+
+    Mort mesuree a la boite noire (12:34-12:43): llama-server 17.4G (appels LLM
+    du pipeline, service systeme NON plafonne) + ComfyUI/FLUX2 25G = 42G sur
+    30G -> pression memoire 94%, agonie, gel. Les appels LLM sont finis quand
+    on arrive ici: keep_alive=0 les evince. Best-effort, ne bloque jamais.
+    """
+    base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+    try:
+        with urllib.request.urlopen(f"{base}/api/ps", timeout=8) as r:
+            loaded = json.loads(r.read().decode("utf-8")).get("models", [])
+        for m in loaded:
+            req = urllib.request.Request(
+                f"{base}/api/generate",
+                data=json.dumps({"model": m.get("name"), "keep_alive": 0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=20) as rr:
+                rr.read()
+        if loaded:
+            print("PROGRESS:memoire:%d modele(s) Ollama decharges avant FLUX"
+                  % len(loaded), flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def post_prompt(workflow: dict, comfy_base: str = COMFY_BASE) -> str:
+    _unload_ollama()
     body = json.dumps({"prompt": workflow}).encode("utf-8")
     last_exc = None
     for attempt in range(5):
