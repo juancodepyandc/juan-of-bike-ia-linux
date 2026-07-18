@@ -2417,6 +2417,10 @@ export default function ModelView() {
   const [refConfirm, setRefConfirm] = useState<{ urls: string[]; title: string; resolve: (d: { accepted: boolean; reason?: string }) => void } | null>(null)
   const [refReason, setRefReason] = useState('')
   const referenceConfirmEnabled = (() => { try { return localStorage.getItem('aurora3d_ref_confirm') !== '0' } catch { return true } })()
+  // TRELLIS-only: l'utilisateur veut le meilleur (TRELLIS + outils) et pouvoir se
+  // passer de Hunyuan3D. Si TRELLIS a ete tente et echoue, on N'enchaine PAS sur
+  // Hunyuan (2e gros modele = risque de gel); on echoue proprement. (aurora3d_trellis_only=0 pour reautoriser le repli)
+  const trellisOnly = (() => { try { return localStorage.getItem('aurora3d_trellis_only') !== '0' } catch { return true } })()
   const renderRefBlobRef = useRef<((promptText: string, stepsOverride?: number, label?: string) => Promise<Blob>) | null>(null)
   const baseRefPromptRef = useRef<string>('')
   const referenceLockedRef = useRef<boolean>(false)
@@ -3710,10 +3714,12 @@ export default function ModelView() {
           }
 
           // ── AI GENERATION PIPELINE (default + fallback) ──
+          let auroraAttempted = false
           if (!result) {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian/Hunyuan multivue ne
             // servent plus que de repli si ce pipeline echoue.
+            auroraAttempted = true
             let auroraWatch: number | undefined
             try {
               setProgress('Pipeline Aurora 3D (TRELLIS.2 natif, qualite maximale)...')
@@ -3772,6 +3778,12 @@ export default function ModelView() {
             } finally {
               if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
             }
+          }
+          // TRELLIS-ONLY: si TRELLIS a ete tente et n'a rien rendu, on N'enchaine PAS
+          // sur Hunyuan/DreamGaussian (2e gros modele apres coup = risque de gel, et
+          // l'utilisateur veut pouvoir se passer de Hunyuan). Echec propre.
+          if (!result && auroraAttempted && trellisOnly) {
+            throw new Error('TRELLIS.2 n a pas produit de mesh et le repli Hunyuan3D est desactive (TRELLIS-only). Relance la generation, ou reactive le repli dans les reglages (aurora3d_trellis_only=0).')
           }
           if (!result) {
             // Try DreamGaussian first if preferred (EU-safe MIT license)
