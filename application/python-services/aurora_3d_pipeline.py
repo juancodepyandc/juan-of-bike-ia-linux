@@ -261,16 +261,18 @@ def _reexec_under_mem_scope() -> None:
             return
     except Exception:  # noqa: BLE001
         return
-    # Swap INTERDIT (SwapMax=0): le gel machine = churn swap qui sature le disque
-    # (3 morts au journal sans OOM kernel). Deborder = mourir proprement, jamais
-    # baratter.
+    # Swap BORNE (6G): TRELLIS a besoin de ~25.5G au chargement (mesure OOM
+    # kernel) — impossible en RAM pure sur 30G, mais un debordement BREF en swap
+    # passe tres bien. Ce qui gele la machine est le CHURN SOUTENU, pas le pic:
+    # sans MemoryHigh il n'y a pas de boucle de recyclage, et oomd
+    # (ManagedOOMSwap=kill) tue le scope si le swap churne vraiment.
     # PAS de MemoryHigh: l'allocateur TRELLIS managé utilise de la memoire CUDA
     # UNIFIEE, NON-RECUPERABLE par le noyau. Un High force alors un recyclage
     # perpetuel a vide (pression 40-60%, process fige a High pile, pilote GPU
     # bloque -> ecran fige — constate a la boite noire, mort 06:29). Seul le
     # plafond DUR reste: le depasser = OOM-kill NET, pas d'agonie.
     _max = os.environ.get("AURORA_MEM_MAX_GB", "26")
-    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "0")
+    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "6")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
