@@ -214,6 +214,17 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         from PIL import Image
         import o_voxel
 
+        # RESERVE VRAM POUR L'AFFICHAGE. Le bake texture 8192 monte a 15.8/16.3 Go
+        # (mesure boite noire, 2 gels identiques): l'ecran n'a plus de VRAM et la
+        # machine fige. Plafonner torch a ~92% force un vrai OOM CUDA que la
+        # ladder to_glb attrape -> retombe a 4096 proprement. L'ecran garde ~1.2 Go.
+        try:
+            _vf = float(os.environ.get("AURORA_VRAM_FRACTION", "0.92"))
+            if 0.5 <= _vf < 1.0:
+                torch.cuda.set_per_process_memory_fraction(_vf, 0)
+        except Exception:  # noqa: BLE001
+            pass
+
         ptype = pipeline_type or QUALITY
         # Texture 8192 NATIF (le bake to_glb 16384 OOM sur 16 Go: manque ~4 Go). Le vrai 16K
         # est obtenu ensuite par upscale RealESRGAN x2 en tuiles (faible VRAM). Configurable.

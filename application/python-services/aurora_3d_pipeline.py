@@ -311,6 +311,7 @@ def _freeze_sentinel() -> None:
     def _watch() -> None:
         bad_io = 0
         bad_ram = 0
+        bad_vram = 0
         while True:
             time.sleep(10)
             try:
@@ -322,12 +323,24 @@ def _freeze_sentinel() -> None:
                 avail_mb = int(_ma[0].split()[1]) // 1024 if _ma else 99999
             except Exception:  # noqa: BLE001
                 continue
+            # VRAM: 2 gels reels a ~15.8/16.3 Go (bake texture) = affichage prive
+            # de VRAM. >15.2 Go soutenus -> abandon propre.
+            vram_mb = 0
+            try:
+                _sm = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=memory.used",
+                     "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True, timeout=8)
+                vram_mb = int((_sm.stdout or "0").strip().splitlines()[0])
+            except Exception:  # noqa: BLE001
+                pass
             bad_io = bad_io + 1 if io_avg > 45.0 else 0
             bad_ram = bad_ram + 1 if avail_mb < 800 else 0
-            if bad_io >= 3 or bad_ram >= 3:
-                print("PROGRESS:error:SENTINELLE ANTI-GEL — pression io=%.0f%% "
-                      "ram_dispo=%dMo: abandon propre AVANT le gel machine"
-                      % (io_avg, avail_mb), flush=True)
+            bad_vram = bad_vram + 1 if vram_mb > 15200 else 0
+            if bad_io >= 3 or bad_ram >= 3 or bad_vram >= 2:
+                print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% ram=%dMo "
+                      "vram=%dMo: abandon propre AVANT le gel machine"
+                      % (io_avg, avail_mb, vram_mb), flush=True)
                 sys.stdout.flush()
                 os.kill(os.getpid(), signal.SIGTERM)
                 time.sleep(5)

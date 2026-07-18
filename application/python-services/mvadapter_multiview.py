@@ -129,9 +129,17 @@ def generate(front_png: str, out_dir: str, stem: str, text: str = "",
         env["MV_ROOT"] = MV_ROOT
     else:
         _script = os.path.join(MV_ROOT, "scripts", "inference_i2mv_sdxl.py")
+    # ANCRAGE DE POSE. Sans lui, i2mv derive vers d'autres poses canoniques du
+    # personnage (Sonic debout -> vues de dos EN BOULE, constate sur 3 lots) et
+    # assombrit les couleurs. On ancre: meme pose que la reference, debout,
+    # couleurs vives, fond uni.
+    _anchor = ("same character, exact same standing pose as the reference, "
+               "full body, bright vivid colors, even studio lighting, "
+               "plain white background")
+    _text = ("%s, %s" % (text, _anchor)) if text else ("high quality, %s" % _anchor)
     cmd = [MV_PY, _script,
            "--image", os.path.abspath(front_png),
-           "--text", text or "high quality, photorealistic, plain background",
+           "--text", _text,
            "--output", strip,
            "--num_inference_steps", str(steps), "--seed", str(seed)]
     try:
