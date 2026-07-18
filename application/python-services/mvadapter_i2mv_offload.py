@@ -63,25 +63,41 @@ def main() -> int:
     pipe.scheduler = ShiftSNRScheduler.from_scheduler(
         pipe.scheduler, shift_mode="interpolated", shift_scale=8.0,
         scheduler_class=None)
-    pipe.init_custom_adapter(num_views=num_views)
+    # init_custom_adapter DUPLIQUE les modules d'attention de l'UNet; par defaut
+    # ils naissent en fp32 (~20 Go d'anon mesures a l'OOM kernel: anon-rss 19.8G
+    # en 16 s). En fp16 des la creation: moitie moins, l'init tient dans le
+    # plafond memoire au lieu d'exiger une machine vide.
+    torch.set_default_dtype(torch.float16)
+    try:
+        pipe.init_custom_adapter(num_views=num_views)
+    finally:
+        torch.set_default_dtype(torch.float32)
     pipe.load_custom_adapter("huanngzh/mv-adapter",
                              weight_name="mvadapter_i2mv_sdxl.safetensors")
     pipe.to(dtype=torch.float16)
     pipe.enable_vae_slicing()
-    # LE fix VRAM: un module a la fois sur le GPU (pic ~5-7 Go au lieu de 15.8 qui
-    # privait l'affichage). Le cond_encoder (petit) n'est pas toujours couvert par
-    # la sequence d'offload diffusers -> on le garde sur le GPU.
+    # PLEIN GPU comme le vendor. L'offload CPU casse l'attention-reference de
+    # MV-Adapter (KeyError 'attn1.processor': le cache des etats de reference
+    # n'est pas peuple sous hooks d'offload — teste, plante a l'inference). La
+    # boite noire montre que la VRAM n'a jamais ete la cause des gels (toujours
+    # basse aux morts): le vrai gain est le chargement fp16 (RAM /2) ci-dessus.
+    # PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True (pose par l'appelant)
+    # reduit la gourmandise de l'allocateur (~15.8G observes en vendor).
+    pipe.to("cuda")
+    pipe.cond_encoder.to(device="cuda", dtype=torch.float16)
+    # Rendre a l'OS les arenes hote liberees par le transfert GPU: sans ca la RSS
+    # reste a ~14.7G (arenes retenues) et l'inference empile par-dessus -> 27.5G
+    # mesures = ne tient que sur machine vide. Apres trim: le pic total tient
+    # dans le plafond memoire du pipeline.
+    import ctypes
+    import gc
+    gc.collect()
     try:
-        pipe.enable_model_cpu_offload()
-        try:
-            pipe.cond_encoder.to(device="cuda", dtype=torch.float16)
-        except Exception:  # noqa: BLE001
-            pass
-        print("[offload] fp16 direct + enable_model_cpu_offload actifs", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        pipe.to("cuda")
-        pipe.cond_encoder.to(device="cuda", dtype=torch.float16)
-        print("[offload] indisponible (%r) -> full GPU" % exc, flush=True)
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:  # noqa: BLE001
+        pass
+    print("[offload] fp16 direct + plein GPU + malloc_trim (offload retire: casse l'attention-reference)",
+          flush=True)
 
     images, _ref = vendor.run_pipeline(
         pipe,

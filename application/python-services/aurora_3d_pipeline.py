@@ -263,24 +263,23 @@ def _reexec_under_mem_scope() -> None:
         return
     # Swap INTERDIT (SwapMax=0): le gel machine = churn swap qui sature le disque
     # (3 morts au journal sans OOM kernel). Deborder = mourir proprement, jamais
-    # baratter. High+Max dimensionnes pour laisser bureau+ComfyUI vivre dans 30 Go.
-    # NB: High=18 (pas moins) — les chargements de modeles mappent 15-17G de page
-    # cache RECUPERABLE; un High trop bas force un recyclage permanent (pression
-    # 67% mesuree) sans aucun danger reel.
-    _high = os.environ.get("AURORA_MEM_HIGH_GB", "18")
-    _max = os.environ.get("AURORA_MEM_MAX_GB", "20")
+    # baratter.
+    # PAS de MemoryHigh: l'allocateur TRELLIS managé utilise de la memoire CUDA
+    # UNIFIEE, NON-RECUPERABLE par le noyau. Un High force alors un recyclage
+    # perpetuel a vide (pression 40-60%, process fige a High pile, pilote GPU
+    # bloque -> ecran fige — constate a la boite noire, mort 06:29). Seul le
+    # plafond DUR reste: le depasser = OOM-kill NET, pas d'agonie.
+    _max = os.environ.get("AURORA_MEM_MAX_GB", "26")
     _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "0")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
     os.execvp("systemd-run", [
         "systemd-run", "--user", "--scope", "--quiet", "--collect",
-        "-p", f"MemoryHigh={_high}G",
         "-p", f"MemoryMax={_max}G",
         "-p", f"MemorySwapMax={_swap}G",
         # oomd surveille le SWAP du scope (le vrai mecanisme du gel). PAS de kill
-        # a la pression: les chargements de modeles (mmap 15-17G recuperables)
-        # depassent 60% de pression sans danger — tir ami constate a 67%.
+        # a la pression (tir ami constate a 67% sur un chargement mmap sain).
         "-p", "ManagedOOMSwap=kill",
         sys.executable, *sys.argv,
     ])

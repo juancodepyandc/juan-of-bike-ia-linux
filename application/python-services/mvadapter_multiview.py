@@ -115,6 +115,10 @@ def generate(front_png: str, out_dir: str, stem: str, text: str = "",
            "CUDA_HOME": os.environ.get("CUDA_HOME", "/usr/local/cuda-12.8"),
            "HF_HOME": os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")),
            "PYTHONPATH": MV_ROOT}
+    # PAS de PYTORCH_CUDA_ALLOC_CONF=expandable_segments ici: sur ce driver (open
+    # kernel module), les tenseurs partent en RAM HOTE au lieu de la VRAM (mesure:
+    # VRAM<800M, anon 19.8G -> OOM). Sans: VRAM 11.9G reelle, RAM ~8G.
+    env.pop("PYTORCH_CUDA_ALLOC_CONF", None)
     # Offload CPU par defaut: le script vendor plein-GPU culmine a 15.8/16.3 Go
     # (bureau prive de VRAM -> affichage fige). Le runner offload garde UN module
     # a la fois sur le GPU (~5-7 Go), sortie identique. AURORA_MVADAPTER_OFFLOAD=0
