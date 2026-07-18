@@ -3732,7 +3732,19 @@ export default function ModelView() {
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               const hasUserImage = contextFiles.some((f) => f.type.startsWith('image/'))
-              if (hasUserImage && referenceImagePath) auroraArgs.push('--image', referenceImagePath)
+              if (hasUserImage) {
+                // TOUTES les images fournies partent au pipeline: 1 image = il
+                // complete/devine le reste; plusieurs = vraies vues TRELLIS
+                // multivue (reproduction fidele, aucune regeneration).
+                const seenImgs = new Set<string>()
+                if (referenceImagePath) { auroraArgs.push('--image', referenceImagePath); seenImgs.add(referenceImagePath) }
+                for (const img of preparedImages) {
+                  if (img.stagedPath && !seenImgs.has(img.stagedPath)) {
+                    auroraArgs.push('--image', img.stagedPath)
+                    seenImgs.add(img.stagedPath)
+                  }
+                }
+              }
               if (referenceImagePath) {
                 emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
               }

@@ -2179,6 +2179,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                           "note": "aucune photo web exploitable -> FLUX (creation)"})
 
     input_reference_result = None
+    _user_extra_views: list = []
     requested_images = [str(img).strip() for img in (images or []) if str(img).strip()]
     if requested_images:
         import re  # subprocess est deja importe au niveau module (l'import local ici rendait
@@ -2265,6 +2266,34 @@ def run_pipeline(prompt: str, run_id: str, *,
             "mode": input_reference_result["mode"],
             "views": {v: {"path": d.get("path"), "source": d.get("source")} for v, d in staged_views.items()},
         })
+
+        # PLUSIEURS images fournies = VRAIES vues -> TRELLIS multivue directement.
+        # Regle utilisateur: on REPRODUIT fidelement ce qui est fourni, on ne
+        # regenere RIEN (plus il y a d'images, plus c'est precis). Les vues non-face
+        # deviennent {run}_reference_v2/_v3/... que le wrapper TRELLIS consomme
+        # (extra_views), et la derivation MV-Adapter est SAUTEE (les vraies vues
+        # priment sur des vues devinees). 1 seule image = comportement existant:
+        # MV-Adapter devine les vues manquantes (lot a valider).
+        if len(staged_views) >= 2:
+            import shutil as _shcp
+            _slot = 2
+            for _v in ("back", "left", "right"):
+                _sv = staged_views.get(_v) or {}
+                _srcp = _sv.get("path")
+                if _srcp and os.path.isfile(_srcp):
+                    _dstp = output_dir / f"{run_id}_reference_v{_slot}.png"
+                    try:
+                        _shcp.copyfile(_srcp, str(_dstp))
+                        _user_extra_views.append(str(_dstp))
+                        _slot += 1
+                    except Exception:  # noqa: BLE001
+                        pass
+            if _user_extra_views:
+                os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                audit.append({"stage": "user_multiview_input", "ok": True,
+                              "extra_views": len(_user_extra_views),
+                              "note": "vraies vues utilisateur -> TRELLIS multivue; "
+                                      "MV-Adapter et toute regeneration SAUTES"})
 
     if _use_researched:
         audit.append({"stage": "flux_synth", "skipped": True,
@@ -2506,7 +2535,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                 # liberee AVANT (l._free_gpu_before_hunyuan juste dessous) et APRES (fin du
                 # sous-process). Un seul gros modele a la fois: FLUX -> libere -> MV-Adapter
                 # -> libere -> TRELLIS. (C'est le double-chargement, pas le multivue, qui gelait.)
-                _mv_on = os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
+                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
+                          and not _user_extra_views)
                 if _mv_on and front_ref.is_file():
                     try:
                         sys.path.insert(0, str(Path(__file__).parent))
@@ -2602,7 +2632,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
                         _stem = str(front_ref)
                         _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
-                        for _vi in (2, 3):
+                        for _vi in (2, 3, 4):
                             _vp = f"{_stem}_v{_vi}.png"
                             if os.path.isfile(_vp):
                                 _tr_cmd.append(_vp)
