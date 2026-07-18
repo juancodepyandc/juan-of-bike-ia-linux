@@ -795,3 +795,44 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
 
   return workflow
 }
+
+export interface Flux2WorkflowOptions {
+  prompt: string
+  width: number
+  height: number
+  steps: number
+  filenamePrefix: string
+  seed?: number | null
+  negativePrompt?: string
+}
+
+/**
+ * Graphe FLUX.2-dev (encodeur Mistral-3, Flux2Scheduler + SamplerCustomAdvanced).
+ * Copie EXACTE du graphe backend flux_reference_synth.build_workflow, valide
+ * end-to-end. L'ancien graphe FLUX.1 (DualCLIPLoader t5xxl+clip_l) casse sur ce
+ * torch avec "Could not find schema for aten::matmul" au CLIPTextEncode — les
+ * chemins 3D passent donc par FLUX.2, qui est aussi le maximum de qualite.
+ */
+export function createFlux2Workflow(options: Flux2WorkflowOptions): Record<string, unknown> {
+  const {
+    prompt, width, height, steps, filenamePrefix,
+    seed: seedOpt = null,
+    negativePrompt = 'cropped, cut off, out of frame, partial view, close-up, truncated body, missing limbs, blurry, low detail',
+  } = options
+  const seed = seedOpt ?? Math.floor(Math.random() * 2 ** 32)
+  return {
+    '11': { class_type: 'CLIPLoader', inputs: { clip_name: 'mistral_3_small_flux2_fp8.safetensors', type: 'flux2' } },
+    '12': { class_type: 'UNETLoader', inputs: { unet_name: 'flux2_dev_fp8mixed.safetensors', weight_dtype: 'default' } },
+    '10': { class_type: 'VAELoader', inputs: { vae_name: 'flux2-vae.safetensors' } },
+    '6': { class_type: 'CLIPTextEncode', inputs: { clip: ['11', 0], text: prompt } },
+    '33': { class_type: 'CLIPTextEncode', inputs: { clip: ['11', 0], text: negativePrompt } },
+    '27': { class_type: 'EmptyFlux2LatentImage', inputs: { width, height, batch_size: 1 } },
+    '40': { class_type: 'Flux2Scheduler', inputs: { steps, width, height } },
+    '41': { class_type: 'KSamplerSelect', inputs: { sampler_name: 'euler' } },
+    '26': { class_type: 'CFGGuider', inputs: { model: ['12', 0], positive: ['6', 0], negative: ['33', 0], cfg: 5.0 } },
+    '42': { class_type: 'RandomNoise', inputs: { noise_seed: seed } },
+    '31': { class_type: 'SamplerCustomAdvanced', inputs: { noise: ['42', 0], guider: ['26', 0], sampler: ['41', 0], sigmas: ['40', 0], latent_image: ['27', 0] } },
+    '8': { class_type: 'VAEDecode', inputs: { samples: ['31', 0], vae: ['10', 0] } },
+    '9': { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: filenamePrefix } },
+  }
+}

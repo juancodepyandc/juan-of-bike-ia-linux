@@ -40,7 +40,7 @@ import { getErrorMessage } from '../utils/errors'
 import { useGenerationTrackerStore } from '../stores/generationTrackerStore'
 import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
 import RecoveryBanner from '../components/RecoveryBanner'
-import { createFluxWorkflow, type FluxStyle } from '../utils/fluxWorkflow'
+import { createFlux2Workflow, type FluxStyle } from '../utils/fluxWorkflow'
 import { prepareContextFiles, type PreparedContextFile } from '../utils/multimodalContext'
 import { pickPrimaryPreparedImage, stageBlobToComfyInput } from '../utils/referenceMedia'
 import type { HardwareProfile } from '../types/app'
@@ -261,14 +261,17 @@ async function generateSyntheticView(
   const antiSplitSuffix = ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
   const safePrompt = fluxPrompt + antiSplitSuffix
 
-  const workflow = createFluxWorkflow({
+  // FLUX.2 (graphe backend valide). FLUX.1 casse au CLIPTextEncode
+  // ("Could not find schema for aten::matmul"). t2i pur: la variante img2img
+  // (referenceSeed) n'est plus utilisee sur le chemin TRELLIS.
+  void style
+  void referenceSeed
+  const workflow = createFlux2Workflow({
     prompt: safePrompt,
     width,
     height,
     steps,
     filenamePrefix,
-    style,
-    referenceImage: referenceSeed,
   })
   // Free VRAM before each FLUX queue: on a 16 GB card, FLUX UNet + T5 XXL
   // alone eat ~22 GiB so anything else pinned (vision LLM, previous CLIP
@@ -3499,14 +3502,13 @@ export default function ModelView() {
               const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, Boolean(referenceSeed), currentPrompt, referenceSupportPlan)
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
-                const workflow = createFluxWorkflow({
+                // FLUX.2 (le graphe FLUX.1 casse: aten::matmul au CLIPTextEncode)
+                const workflow = createFlux2Workflow({
                   prompt: promptText,
                   width: referenceWorkflow.width,
                   height: referenceWorkflow.height,
                   steps: stepsOverride,
                   filenamePrefix: 'juan_bike_3d_ref',
-                  style: referenceWorkflow.style,
-                  referenceImage: referenceSeed ? { filename: referenceSeed.filename, denoise: referenceDenoise(intent, true, referenceSupportPlan) } : null,
                 })
                 return runReferenceWorkflow({
                   workflow,
@@ -4130,14 +4132,12 @@ export default function ModelView() {
 
               const correctedRefWorkflow = resolveReferenceWorkflow(intent, hardware, false, currentPrompt, referenceSupportPlan)
               const extraSteps = correctionStrategy.escalation === 'maximum' ? 12 : correctionStrategy.escalation === 'strong' ? 8 : 4
-              const correctedWorkflow = createFluxWorkflow({
+              const correctedWorkflow = createFlux2Workflow({
                 prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt),
                 width: correctedRefWorkflow.width,
                 height: correctedRefWorkflow.height,
                 steps: correctedRefWorkflow.steps + extraSteps,
                 filenamePrefix: `juan_bike_3d_ref_corr${correctionAttempt}`,
-                style: correctedRefWorkflow.style,
-                referenceImage: null,
               })
               try {
                 const correctedRefBlob = await runReferenceWorkflow({
