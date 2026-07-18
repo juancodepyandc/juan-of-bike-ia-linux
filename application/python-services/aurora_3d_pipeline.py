@@ -312,6 +312,7 @@ def _freeze_sentinel() -> None:
         bad_io = 0
         bad_ram = 0
         bad_vram = 0
+        bad_nvme = 0
         while True:
             time.sleep(10)
             try:
@@ -334,13 +335,32 @@ def _freeze_sentinel() -> None:
                 vram_mb = int((_sm.stdout or "0").strip().splitlines()[0])
             except Exception:  # noqa: BLE001
                 pass
+            # NVMe: le Crucial T705 (Gen5) surchauffe sous ecritures soutenues ->
+            # blocage controleur -> root en I/O error -> machine figee (ecran
+            # 'Failed to spawn executor: Input/output error' constate). On abandonne
+            # AVANT le seuil de blocage (~80°C+): 76°C soutenus = stop propre.
+            nvme_c = 0
+            try:
+                import glob as _glob
+                for _h in _glob.glob("/sys/class/hwmon/hwmon*"):
+                    try:
+                        with open(_h + "/name", "r", encoding="utf-8") as fh:
+                            if fh.read().strip() != "nvme":
+                                continue
+                        with open(_h + "/temp1_input", "r", encoding="utf-8") as fh:
+                            nvme_c = max(nvme_c, int(fh.read().strip()) // 1000)
+                    except Exception:  # noqa: BLE001
+                        continue
+            except Exception:  # noqa: BLE001
+                pass
             bad_io = bad_io + 1 if io_avg > 45.0 else 0
             bad_ram = bad_ram + 1 if avail_mb < 800 else 0
             bad_vram = bad_vram + 1 if vram_mb > 15200 else 0
-            if bad_io >= 3 or bad_ram >= 3 or bad_vram >= 2:
+            bad_nvme = bad_nvme + 1 if nvme_c >= 76 else 0
+            if bad_io >= 3 or bad_ram >= 3 or bad_vram >= 2 or bad_nvme >= 2:
                 print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% ram=%dMo "
-                      "vram=%dMo: abandon propre AVANT le gel machine"
-                      % (io_avg, avail_mb, vram_mb), flush=True)
+                      "vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
+                      % (io_avg, avail_mb, vram_mb, nvme_c), flush=True)
                 sys.stdout.flush()
                 os.kill(os.getpid(), signal.SIGTERM)
                 time.sleep(5)
