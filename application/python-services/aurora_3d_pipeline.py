@@ -271,8 +271,13 @@ def _reexec_under_mem_scope() -> None:
     # perpetuel a vide (pression 40-60%, process fige a High pile, pilote GPU
     # bloque -> ecran fige — constate a la boite noire, mort 06:29). Seul le
     # plafond DUR reste: le depasser = OOM-kill NET, pas d'agonie.
-    _max = os.environ.get("AURORA_MEM_MAX_GB", "26")
-    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "6")
+    # Dimension mesuree: la geometrie 1536_cascade managee a tenu 25 min sous
+    # 26G+6G avant OOM, avec psiIo=0 tout du long (swap = pages froides parquees,
+    # PAS de churn). Le pic legitime demande ~28G+quelques G de parking. La
+    # protection anti-gel n'est PAS le plafond (il tue le travail legitime) mais
+    # la SENTINELLE (_freeze_sentinel): churn IO / RAM epuisee -> abort propre.
+    _max = os.environ.get("AURORA_MEM_MAX_GB", "28")
+    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "16")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
@@ -285,6 +290,50 @@ def _reexec_under_mem_scope() -> None:
         "-p", "ManagedOOMSwap=kill",
         sys.executable, *sys.argv,
     ])
+
+
+def _freeze_sentinel() -> None:
+    """Sentinelle anti-gel INTEGREE: surveille la pression IO et la RAM.
+
+    Signature d'un gel imminent (mesuree sur 4 gels reels): pression IO/memoire
+    SOUTENUE + RAM epuisee -> le bureau se fige avant que quiconque reagisse.
+    Signature d'un run sain (mesuree aussi): psiIo ~0 meme avec 8G en swap
+    (pages froides parquees). La sentinelle tue donc le pipeline PROPREMENT
+    (SIGTERM puis exit) si: psi io 'full' avg10 > 45 sur 3 mesures consecutives,
+    ou MemAvailable < 800 Mo sur 3 mesures. Toujours active, cout nul.
+    Desactivable: AURORA_FREEZE_SENTINEL=0.
+    """
+    if os.environ.get("AURORA_FREEZE_SENTINEL", "1") != "1":
+        return
+    import signal
+    import threading
+
+    def _watch() -> None:
+        bad_io = 0
+        bad_ram = 0
+        while True:
+            time.sleep(10)
+            try:
+                with open("/proc/pressure/io", "r", encoding="utf-8") as fh:
+                    _full = [ln for ln in fh if ln.startswith("full")]
+                io_avg = float(_full[0].split("avg10=")[1].split()[0]) if _full else 0.0
+                with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+                    _ma = [ln for ln in fh if ln.startswith("MemAvailable")]
+                avail_mb = int(_ma[0].split()[1]) // 1024 if _ma else 99999
+            except Exception:  # noqa: BLE001
+                continue
+            bad_io = bad_io + 1 if io_avg > 45.0 else 0
+            bad_ram = bad_ram + 1 if avail_mb < 800 else 0
+            if bad_io >= 3 or bad_ram >= 3:
+                print("PROGRESS:error:SENTINELLE ANTI-GEL — pression io=%.0f%% "
+                      "ram_dispo=%dMo: abandon propre AVANT le gel machine"
+                      % (io_avg, avail_mb), flush=True)
+                sys.stdout.flush()
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(5)
+                os._exit(75)  # noqa: WPS437
+
+    threading.Thread(target=_watch, daemon=True, name="freeze-sentinel").start()
 
 
 def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
@@ -3429,6 +3478,7 @@ def main() -> int:
     # ANTI-GEL: tout le pipeline (et ses sous-process) sous plafond memoire cgroup.
     # Une etape qui deborde meurt proprement — le PC ne gele jamais (thrash swap).
     _reexec_under_mem_scope()
+    _freeze_sentinel()
     parser = argparse.ArgumentParser(description="Aurora 3D end-to-end pipeline")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--run-id", required=True, dest="run_id")
