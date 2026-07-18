@@ -42,11 +42,41 @@ def available() -> bool:
             and os.path.isfile(MV_PY))
 
 
+def _clean_bg_white(bgr):
+    """Detoure le sujet (rembg u2net) et le pose sur fond BLANC uni.
+
+    Les vues generees par MV-Adapter ont des fonds sales (taches grises/noires):
+    TRELLIS les integre dans la reconstruction -> artefacts (tete, silhouette).
+    Fond blanc = meme convention que la reference FLUX. Desactivable:
+    AURORA_MV_CLEAN_BG=0. Best-effort: en cas d'echec on garde la vue brute.
+    """
+    if os.environ.get("AURORA_MV_CLEAN_BG", "1") != "1":
+        return bgr
+    try:
+        import cv2
+        import numpy as np
+        from rembg import new_session, remove
+        global _REMBG_SESSION  # noqa: WPS420 (reutilise entre vues)
+        try:
+            _REMBG_SESSION
+        except NameError:
+            _REMBG_SESSION = new_session("u2net")
+        rgba = remove(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
+                      session=_REMBG_SESSION)
+        alpha = rgba[:, :, 3:4].astype("float32") / 255.0
+        rgb = rgba[:, :, :3].astype("float32")
+        out = rgb * alpha + 255.0 * (1.0 - alpha)
+        return cv2.cvtColor(out.astype("uint8"), cv2.COLOR_RGB2BGR)
+    except Exception:  # noqa: BLE001
+        return bgr
+
+
 def _split_strip(strip_png: str, out_dir: str, stem: str, pick: list) -> list:
     """Decoupe la bande MV-Adapter (6 vues cote a cote) et ecrit les vues choisies.
 
     `pick`: indices de vues a garder comme vues SUPPLEMENTAIRES (v2, v3, ...). La vue
-    0 (face) n'est PAS reecrite: elle reste la reference d'origine.
+    0 (face) n'est PAS reecrite: elle reste la reference d'origine. Chaque vue gardee
+    est detouree sur fond blanc (voir _clean_bg_white).
     """
     import cv2
 
@@ -59,7 +89,7 @@ def _split_strip(strip_png: str, out_dir: str, stem: str, pick: list) -> list:
     for slot, vi in enumerate(pick, start=2):
         if vi >= n:
             continue
-        view = im[:, vi * h:(vi + 1) * h]
+        view = _clean_bg_white(im[:, vi * h:(vi + 1) * h])
         p = os.path.join(out_dir, "%s_v%d.png" % (stem, slot))
         cv2.imwrite(p, view)
         outs.append(p)
@@ -85,7 +115,17 @@ def generate(front_png: str, out_dir: str, stem: str, text: str = "",
            "CUDA_HOME": os.environ.get("CUDA_HOME", "/usr/local/cuda-12.8"),
            "HF_HOME": os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface")),
            "PYTHONPATH": MV_ROOT}
-    cmd = [MV_PY, os.path.join(MV_ROOT, "scripts", "inference_i2mv_sdxl.py"),
+    # Offload CPU par defaut: le script vendor plein-GPU culmine a 15.8/16.3 Go
+    # (bureau prive de VRAM -> affichage fige). Le runner offload garde UN module
+    # a la fois sur le GPU (~5-7 Go), sortie identique. AURORA_MVADAPTER_OFFLOAD=0
+    # pour revenir au vendor plein-GPU.
+    if os.environ.get("AURORA_MVADAPTER_OFFLOAD", "1") == "1":
+        _script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "mvadapter_i2mv_offload.py")
+        env["MV_ROOT"] = MV_ROOT
+    else:
+        _script = os.path.join(MV_ROOT, "scripts", "inference_i2mv_sdxl.py")
+    cmd = [MV_PY, _script,
            "--image", os.path.abspath(front_png),
            "--text", text or "high quality, photorealistic, plain background",
            "--output", strip,

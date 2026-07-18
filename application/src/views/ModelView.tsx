@@ -2421,6 +2421,7 @@ export default function ModelView() {
   // passer de Hunyuan3D. Si TRELLIS a ete tente et echoue, on N'enchaine PAS sur
   // Hunyuan (2e gros modele = risque de gel); on echoue proprement. (aurora3d_trellis_only=0 pour reautoriser le repli)
   const trellisOnly = (() => { try { return localStorage.getItem('aurora3d_trellis_only') !== '0' } catch { return true } })()
+  const confirmReqHandledRef = useRef<Set<string>>(new Set())
   const renderRefBlobRef = useRef<((promptText: string, stepsOverride?: number, label?: string) => Promise<Blob>) | null>(null)
   const baseRefPromptRef = useRef<string>('')
   const referenceLockedRef = useRef<boolean>(false)
@@ -3626,36 +3627,13 @@ export default function ModelView() {
           const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, referenceSeedForWorkflow, currentPrompt, referenceSupportPlan)
           const activePipeline = intent.pipelineRouting.pipeline
 
-          // ── VALIDATION DE LA REFERENCE (vert/rouge) avant la reconstruction ──
-          // On ne lance PAS la 3D (~20 min) sur une reference au mauvais sujet.
-          // Regle voulue: si la photo est BONNE, on ne la regenere JAMAIS.
-          //   - ACCEPTE (vert) -> la photo mono-vue est VERROUILLEE telle quelle; la
-          //     reconstruction part de CETTE image (single-view). Si plus tard elle
-          //     "ne colle pas" (mono-vue ambigue), le backend derive des vues
-          //     supplementaires DEPUIS elle (MV-Adapter la reproduit) et on redemande
-          //     en LOT - jamais un autre sujet.
-          //   - REFUSE (rouge) = mauvais sujet -> on REGENERE (motif optionnel).
-          if (referenceConfirmEnabled && referenceImageUrl) {
-            for (let _rtry = 0; _rtry < 6; _rtry++) {
-              const _dec = await askReferenceConfirm(
-                [toAssetUrl(referenceImagePath)],
-                'Cette reference est-elle le bon sujet ?')
-              if (_dec.accepted) { referenceLockedRef.current = true; break }
-              const _fb = (_dec.reason || '').trim()
-              if (!renderRefBlobRef.current) { break }
-              try {
-                setProgress('Regeneration de la reference selon votre retour...')
-                const _rerollPrompt = [baseRefPromptRef.current || currentPrompt, _fb]
-                  .filter(Boolean).join('. ') + '. Autre variation, exactement le sujet demande.'
-                const _blob = await renderRefBlobRef.current(_rerollPrompt, undefined, 'Regeneration selon votre retour...')
-                await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await _blob.arrayBuffer())))
-                lastReferenceImagePathRef.current = referenceImagePath
-                setReferenceImageUrl(toAssetUrl(referenceImagePath) + `?r=${Date.now()}`)
-              } catch (_re) {
-                break
-              }
-            }
-          }
+          // ── VALIDATION DE LA REFERENCE (vert/rouge) ──
+          // Elle se fait desormais DANS le pipeline Aurora (--confirm-ref): le
+          // pipeline s'arrete sur SA reference (la vraie entree de la reconstruction)
+          // puis sur le LOT de vues derivees, emet PROGRESS:confirm_req:<request.json>
+          // et attend la reponse. L'UI repond via l'overlay (voir onPythonProgress).
+          // On ne valide plus ici une image que le backend n'utilise pas — une seule
+          // demande, sur la bonne image, et le lot en une fois (pas du 1 par 1).
 
           // ── PIPELINE ROUTING: choose the best generation backend ──
           unlistenRef.current?.()
@@ -3663,6 +3641,30 @@ export default function ModelView() {
             if (!message.startsWith('PROGRESS:')) return
             const parts = message.split(':')
             const stage = parts[1] || 'run'
+            if (stage === 'confirm_req') {
+              // Le pipeline attend une validation vert/rouge (reference ou lot de
+              // vues derivees). On lit la demande, on ouvre l'overlay, on ecrit la
+              // reponse ({accepted, reason}) la ou le pipeline la poll.
+              const reqPath = parts.slice(2).join(':').trim()
+              if (reqPath && !confirmReqHandledRef.current.has(reqPath)) {
+                confirmReqHandledRef.current.add(reqPath)
+                void (async () => {
+                  try {
+                    const raw = await fsReadBinary(reqPath)
+                    const req = JSON.parse(new TextDecoder().decode(new Uint8Array(raw))) as { title?: string; images?: string[]; answer_path?: string }
+                    if (!req.answer_path || !Array.isArray(req.images) || req.images.length === 0) return
+                    const dec = await askReferenceConfirm(
+                      req.images.map((p) => toAssetUrl(p) + `?r=${Date.now()}`),
+                      req.title || 'Valider ces images ?')
+                    await fsWriteBinary(req.answer_path, utf8Bytes(JSON.stringify({ accepted: dec.accepted, reason: (dec.reason || '').trim() })))
+                  } catch { /* sans reponse le pipeline continue apres timeout */ }
+                })()
+              }
+              setProgress('En attente de votre validation (vert = garder, rouge = regenerer)...')
+              setPhase('Validation par vous — la photo acceptee sera gardee telle quelle', 87)
+              setPhaseSnapshot({ label: 'En attente de votre validation...', percent: 87 })
+              return
+            }
             const detail = parts.slice(2).join(':') || parts[1] || 'Execution Python en cours...'
             setProgress(detail)
             const phaseProgress = stage === 'install' ? 82 : stage === 'device' || stage === 'bg' || stage === 'asset_scan' ? 84 : stage === 'asset_download' || stage === 'shape_fallback' || stage === 'shape_load' ? 86 : stage === 'shape_run' || stage === 'gaussian' ? 90 : stage === 'texture_load' || stage === 'texture_run' || stage === 'texture_retry' || stage === 'texture_warn' || stage === 'mesh_extract' ? 92 : stage === 'export' || stage === 'export_fallback' ? 95 : stage === 'procedural' ? 88 : stage === 'sfm' || stage === 'photogrammetry' ? 87 : stage === 'validate' ? 94 : stage === 'rig' ? 93 : 88
@@ -3727,6 +3729,7 @@ export default function ModelView() {
               const genDir = `${workspacePath}/output/3d/generations/${runId}`
               await fsMkdir(genDir).catch(() => {})
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
+              if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               const hasUserImage = contextFiles.some((f) => f.type.startsWith('image/'))
               if (hasUserImage && referenceImagePath) auroraArgs.push('--image', referenceImagePath)
               if (referenceImagePath) {

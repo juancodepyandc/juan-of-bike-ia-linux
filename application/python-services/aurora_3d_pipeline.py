@@ -228,6 +228,112 @@ def _kind_to_intent_purpose(kind: str | None) -> str:
     return "visual_preview"
 
 
+def _reexec_under_mem_scope() -> None:
+    """Re-execute le pipeline ENTIER sous un plafond memoire cgroup (anti-GEL).
+
+    Cause racine des gels machine (verifiee au journal): PAS un OOM kernel, mais un
+    THRASH SWAP — 30 Go de RAM + 71 Go de swap: quand une etape lourde deborde
+    (textures 16K ~1 Go/couche, spill GPU->RAM de l'allocateur TRELLIS), le systeme
+    part en pagination massive, le bureau gele, et seul un reset dur s'en sort
+    (journal qui s'arrete net a 05:17 sans aucun message).
+
+    Fix GENERAL (pas un cache-misere): tout le pipeline + ses sous-process (TRELLIS,
+    MV-Adapter, Blender...) tournent dans un scope systemd avec MemoryHigh/MemoryMax
+    et MemorySwapMax bornes. Si une etape deborde, ELLE meurt (erreur claire dans
+    l'audit) — la machine, elle, ne gele JAMAIS. Overridable par env, opt-out via
+    AURORA_MEM_SCOPE_DISABLE=1.
+    """
+    if os.environ.get("AURORA_MEM_SCOPED") == "1":
+        print("PROGRESS:memoire:plafond memoire actif (scope systemd) — le PC ne peut plus geler",
+              flush=True)
+        return
+    if os.environ.get("AURORA_MEM_SCOPE_DISABLE") == "1":
+        return
+    import shutil as _sh
+    if not _sh.which("systemd-run"):
+        return
+    try:
+        _probe = subprocess.run(
+            ["systemd-run", "--user", "--scope", "--quiet", "--collect",
+             "-p", "MemoryMax=1G", "true"],
+            capture_output=True, timeout=15)
+        if _probe.returncode != 0:
+            return
+    except Exception:  # noqa: BLE001
+        return
+    _high = os.environ.get("AURORA_MEM_HIGH_GB", "20")
+    _max = os.environ.get("AURORA_MEM_MAX_GB", "22")
+    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "8")
+    os.environ["AURORA_MEM_SCOPED"] = "1"
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execvp("systemd-run", [
+        "systemd-run", "--user", "--scope", "--quiet", "--collect",
+        "-p", f"MemoryHigh={_high}G",
+        "-p", f"MemoryMax={_max}G",
+        "-p", f"MemorySwapMax={_swap}G",
+        # systemd-oomd surveille ce scope (kill AVANT le thrash swap global)
+        "-p", "ManagedOOMSwap=kill",
+        "-p", "ManagedOOMMemoryPressure=kill",
+        sys.executable, *sys.argv,
+    ])
+
+
+def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
+                         tag: str, audit: list) -> dict:
+    """Demande a l'utilisateur (via l'UI) de valider des images — dans le VRAI chemin.
+
+    Protocole fichier (marche depuis l'app Tauri, le bridge ou un humain en CLI):
+      1. ecrit {run_id}_confirm_{tag}_request.json {title, images[], answer_path}
+      2. print PROGRESS:confirm_req:<chemin du request> — l'UI ouvre l'overlay
+         vert/rouge (lot si plusieurs images) et ecrit la reponse
+      3. poll {run_id}_confirm_{tag}_answer.json: {"accepted": bool, "reason": str}
+    Timeout (AURORA_REF_CONFIRM_TIMEOUT, defaut 600 s) -> accepte tacitement pour ne
+    jamais bloquer un run non surveille. N'est appele QUE si AURORA_REF_CONFIRM=1
+    (flag --confirm-ref passe par l'UI).
+    """
+    req = Path(output_dir) / f"{run_id}_confirm_{tag}_request.json"
+    ans = Path(output_dir) / f"{run_id}_confirm_{tag}_answer.json"
+    try:
+        ans.unlink(missing_ok=True)
+        req.write_text(json.dumps({
+            "title": title,
+            "images": [str(p) for p in image_paths],
+            "answer_path": str(ans),
+            "tag": tag,
+        }, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        audit.append({"stage": f"confirm_{tag}", "ok": False, "error": repr(exc)})
+        return {"accepted": True, "reason": "", "timeout": False}
+    print(f"PROGRESS:confirm_req:{req}", flush=True)
+    _t0 = time.time()
+    _limit = float(os.environ.get("AURORA_REF_CONFIRM_TIMEOUT", "600"))
+    while time.time() - _t0 < _limit:
+        if ans.is_file():
+            try:
+                _d = json.loads(ans.read_text(encoding="utf-8"))
+                _out = {"accepted": bool(_d.get("accepted")),
+                        "reason": str(_d.get("reason") or "").strip(),
+                        "timeout": False}
+                audit.append({"stage": f"confirm_{tag}", "accepted": _out["accepted"],
+                              "reason": _out["reason"][:160]})
+                try:
+                    req.unlink(missing_ok=True)
+                    ans.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                return _out
+            except Exception:  # noqa: BLE001
+                time.sleep(1.0)
+        time.sleep(2.0)
+    audit.append({"stage": f"confirm_{tag}", "accepted": True, "timeout": True})
+    try:
+        req.unlink(missing_ok=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"accepted": True, "reason": "", "timeout": True}
+
+
 def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
     """Libere la VRAM des AUTRES process GPU avant le shape+paint Hunyuan.
 
@@ -2172,6 +2278,51 @@ def run_pipeline(prompt: str, run_id: str, *,
                 audit.append({"stage": "character_lock_check", "ok": False,
                               "error": repr(_lce)})
 
+    # VALIDATION UTILISATEUR (vert/rouge) de la reference — dans le VRAI chemin.
+    # Couvre la ref FLUX inventee ET la ref recuperee sur le web (le cas "il a
+    # choppe un autre personnage du meme nom"). Pas la ref fournie via --image
+    # (l'utilisateur l'a choisie lui-meme). Regle: une photo ACCEPTEE est
+    # VERROUILLEE telle quelle (jamais retouchee). Un REFUS (motif optionnel,
+    # COMPRIS: injecte dans le prompt de regeneration) regenere; 3 refus ->
+    # echec propre plutot que 20 min de reconstruction sur un mauvais sujet.
+    if (os.environ.get("AURORA_REF_CONFIRM") == "1" and front_ref.is_file()
+            and input_reference_result is None and not multi_view):
+        # LIBERER LA MEMOIRE AVANT D'ATTENDRE. Pendant que l'utilisateur regarde la
+        # photo (minutes), FLUX restait residant dans ComfyUI (~15 Go RAM) -> avec le
+        # reste du systeme, 30 Go satures -> thrash swap -> ecran fige/noir (constate
+        # au journal, mort 05:55 sans OOM kernel). La ref est deja ecrite: on decharge.
+        # Un refus rechargera FLUX (plus lent, mais le PC ne gele jamais).
+        _free_gpu_before_hunyuan(audit)
+        _dec = {"accepted": True}
+        for _cft in range(3):
+            _dec = _interactive_confirm(
+                [front_ref], "Cette reference est-elle le bon sujet ?",
+                output_dir, run_id, "front", audit)
+            if _dec["accepted"]:
+                break
+            _fb = _dec["reason"]
+            print("PROGRESS:reference:reference refusee (%s) -> regeneration..."
+                  % (_fb[:60] or "sans motif"), flush=True)
+            try:
+                _fp_base = flux_prompt  # voie synth: prompt enrichi deja construit
+            except NameError:  # voie recherche web: pas encore de prompt FLUX
+                _fp_base = enhance_flux_prompt(
+                    prompt, motion_prompt=motion_prompt,
+                    subject_kind=subject_kind_hint or kind)
+            _fpc = ("%s. %s. EXACTEMENT le sujet demande." % (_fp_base, _fb)
+                    if _fb else _fp_base)
+            _resc = synth(_fpc, run_id, output_dir=output_dir,
+                          width=1024, height=1408, steps=44,
+                          seed=(4242 + _cft * 977))
+            if not _resc.get("ok"):
+                audit.append({"stage": "confirm_front_regen", "ok": False,
+                              "error": _resc.get("error")})
+                break
+        if not _dec["accepted"]:
+            return {"ok": False,
+                    "error": "reference refusee par l'utilisateur (3 tentatives)",
+                    "audit_trail": audit}
+
     if multi_view:
         view_paths = {
             "front": front_ref,
@@ -2257,14 +2408,15 @@ def run_pipeline(prompt: str, run_id: str, *,
                 # face 6 vues GEOMETRIQUEMENT COHERENTES du meme sujet; on en garde 2
                 # (profil + dos) que TRELLIS.2 fusionne -> reconstruction propre. Verifie:
                 # homme assis mono-vue = casse; multi-vues = assis propre sous tous angles.
-                # OPT-IN (defaut OFF) pour ne PAS empiler les modeles en VRAM par
-                # defaut: MV-Adapter charge SDXL ~15 Go, sur une carte 16 Go c'est
-                # tres serre et empile-le a FLUX/TRELLIS = GEL du PC. L'orchestrateur
-                # de scene l'active (AURORA_MVADAPTER_MV=1) UNIQUEMENT pour un humain
-                # POSE (assis/allonge), la ou la mono-vue casse et ou ca vaut le cout.
-                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "0") == "1"
-                          and (subject_kind_hint or kind or "").lower()
-                          in ("character", "humanoid", "creature", "human"))
+                # MULTI-VUES PAR DEFAUT (demande utilisateur: precision multi-vues au
+                # lieu d'inventer le dos/les cotes en mono-vue). S'applique a TOUT sujet
+                # reconstruit par TRELLIS.2 — un objet aussi a un dos REEL a ne pas
+                # halluciner. Le flag reste la porte de sortie (AURORA_MVADAPTER_MV=0 coupe).
+                # PAS DE GEL: MV-Adapter (SDXL ~15 Go) tourne en SOUS-PROCESS, la VRAM est
+                # liberee AVANT (l._free_gpu_before_hunyuan juste dessous) et APRES (fin du
+                # sous-process). Un seul gros modele a la fois: FLUX -> libere -> MV-Adapter
+                # -> libere -> TRELLIS. (C'est le double-chargement, pas le multivue, qui gelait.)
+                _mv_on = os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
                 if _mv_on and front_ref.is_file():
                     try:
                         sys.path.insert(0, str(Path(__file__).parent))
@@ -2276,17 +2428,47 @@ def run_pipeline(prompt: str, run_id: str, *,
                             _free_gpu_before_hunyuan(audit)
                             print("PROGRESS:shape:vues multiples coherentes (MV-Adapter) "
                                   "pour lever l'ambiguite de profondeur...", flush=True)
-                            _mvr = _mv.generate(str(front_ref), str(output_dir),
-                                                "%s_reference" % run_id,
-                                                text=prompt)
-                            if _mvr.get("ok"):
-                                os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                            # Lot de vues derivees DEPUIS la photo acceptee. Si l'UI est
+                            # la (--confirm-ref), on demande "ce lot convient-il ?" —
+                            # refus (motif compris) = nouvelles vues; 3 refus = repli
+                            # front-only (jamais un lot refuse dans la reconstruction).
+                            _mv_seed = 42
+                            _mv_text = prompt
+                            for _lot_try in range(3):
+                                _mvr = _mv.generate(str(front_ref), str(output_dir),
+                                                    "%s_reference" % run_id,
+                                                    text=_mv_text, seed=_mv_seed)
+                                if not _mvr.get("ok"):
+                                    audit.append({"stage": "mvadapter_multiview",
+                                                  "ok": False,
+                                                  "error": _mvr.get("error")})
+                                    break
                                 audit.append({"stage": "mvadapter_multiview", "ok": True,
                                               "views": len(_mvr.get("views") or []),
-                                              "azimuths": _mvr.get("azimuths")})
+                                              "azimuths": _mvr.get("azimuths"),
+                                              "attempt": _lot_try})
+                                if os.environ.get("AURORA_REF_CONFIRM") != "1":
+                                    os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                                    break
+                                _lot = ([str(front_ref)]
+                                        + [str(v) for v in (_mvr.get("views") or [])])
+                                _dlc = _interactive_confirm(
+                                    _lot,
+                                    "Ce lot de vues (derivees de la photo acceptee) convient-il ?",
+                                    output_dir, run_id, "lot", audit)
+                                if _dlc["accepted"]:
+                                    os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                                    break
+                                _mv_seed += 1013 + _lot_try
+                                if _dlc["reason"]:
+                                    _mv_text = "%s. %s" % (prompt, _dlc["reason"])
+                                print("PROGRESS:reference:lot refuse -> nouvelles vues derivees...",
+                                      flush=True)
                             else:
+                                os.environ.pop("AURORA_TRELLIS2_MULTIVIEW", None)
                                 audit.append({"stage": "mvadapter_multiview", "ok": False,
-                                              "error": _mvr.get("error")})
+                                              "user_refused_lots": True,
+                                              "note": "repli front-only (la face acceptee reste la seule source)"})
                     except Exception as _mve:  # noqa: BLE001
                         audit.append({"stage": "mvadapter_multiview", "ok": False,
                                       "error": repr(_mve)})
@@ -3236,6 +3418,9 @@ def render_pretty(result: dict) -> str:
 
 
 def main() -> int:
+    # ANTI-GEL: tout le pipeline (et ses sous-process) sous plafond memoire cgroup.
+    # Une etape qui deborde meurt proprement — le PC ne gele jamais (thrash swap).
+    _reexec_under_mem_scope()
     parser = argparse.ArgumentParser(description="Aurora 3D end-to-end pipeline")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--run-id", required=True, dest="run_id")
@@ -3267,6 +3452,10 @@ def main() -> int:
                              "manage (spill RAM) + passe vision materiaux + MV-Adapter "
                              "UV-aware re-texturing pour reproductions hard-surface (produit, "
                              "vehicule, PC, gadget) — brise le plafond de precision atlas TRELLIS.")
+    parser.add_argument("--confirm-ref", action="store_true", dest="confirm_ref",
+                        help="Mode interactif (UI): pause pour validation vert/rouge de "
+                             "la reference puis du lot de vues derivees (protocole "
+                             "fichier request/answer + PROGRESS:confirm_req).")
     parser.add_argument("--dry-run-prompt", action="store_true", dest="dry_run_prompt",
                         help="Build and print the FLUX prompt (extract_kind + "
                              "enhance_flux_prompt + faithful-scene contract) WITHOUT "
@@ -3277,6 +3466,8 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError):
         pass
+    if args.confirm_ref:
+        os.environ["AURORA_REF_CONFIRM"] = "1"
     if args.max_precision:
         os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "1")
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
@@ -3287,7 +3478,19 @@ def main() -> int:
         # precision because it can't degrade the output (it only lifts baked
         # shadows on the plastic mask; edge/dark preservation is built in).
         os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
-        # MV-Adapter n'est PLUS auto-active. Prouve DESTRUCTEUR par le test Xbox de zero:
+        # MULTI-VUES COHERENTES par defaut en precision max (demande utilisateur):
+        # MV-Adapter (i2mv) derive des vues COHERENTES depuis la face acceptee, et
+        # TRELLIS.2 les fusionne (extra_views) => vrai dos/cotes RECONSTRUITS au lieu
+        # d'etre halluciner en mono-vue. VRAM sequencee (FLUX -> libere -> MV-Adapter
+        # sous-process -> libere -> TRELLIS sous-process) = un seul gros modele a la
+        # fois = pas de gel. C'EST le multivue-INPUT (Stage 2), a NE PAS confondre avec
+        # le retexturing MV-Adapter (Stage 3.4, AURORA_MVADAPTER_RETEXTURE) laisse OFF.
+        os.environ.setdefault("AURORA_MVADAPTER_MV", "1")
+        # TEXTURE 16K (demande utilisateur: minimum 8K-16K). 8192 bake natif TRELLIS
+        # puis upscale RealESRGAN x2 -> 16384 en tuiles (le bake natif 16K OOM sur 16 Go).
+        os.environ.setdefault("AURORA_TRELLIS2_TEXTURE", "8192")
+        os.environ.setdefault("AURORA_TRELLIS2_16K", "1")
+        # MV-Adapter RE-texturing (Stage 3.4) n'est PLUS auto-active. Prouve DESTRUCTEUR par le test Xbox de zero:
         # son script re-MAILLE le mesh en espace canonique (sortie ~2.8 Mo, drastiquement
         # decimee) -> le beau mesh TRELLIS natif (boutons/symboles nets, cf. mesh brut 1.9M
         # et final_materials 48k tous deux LISIBLES) devient un BLOB FONDU, et cette sortie
