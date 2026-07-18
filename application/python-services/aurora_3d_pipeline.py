@@ -2167,7 +2167,9 @@ def run_pipeline(prompt: str, run_id: str, *,
     # photo sur le web et TRELLIS la reproduit fidelement. Sujet generique/creatif -> FLUX invente.
     _use_researched = False
     _req_imgs_now = [str(img).strip() for img in (images or []) if str(img).strip()]
-    if not _req_imgs_now and not (not force and front_ref.is_file()) and _should_research_reference(prompt):
+    if (not _req_imgs_now and not (not force and front_ref.is_file())
+            and os.environ.get("AURORA_REFERENCE_RESEARCH", "1") == "1"
+            and _should_research_reference(prompt)):
         print("PROGRESS:reference:sujet reel detecte -> recherche autonome d'une vraie photo...", flush=True)
         if _research_real_reference(prompt, front_ref, log=lambda m: print(m, flush=True)):
             _use_researched = True
