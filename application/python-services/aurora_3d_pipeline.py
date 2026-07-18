@@ -2243,11 +2243,13 @@ def run_pipeline(prompt: str, run_id: str, *,
         # contredisent. Valide sur RTX 5070 Ti 16 Go (peak ~3.6 Go, ~4 min). Fallback
         # automatique sur Hunyuan3D si indispo (kernels absents) ou echec.
         _trellis_ok = False
+        _trellis_available = False
         try:
             _tr_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
             if _tr_dir not in sys.path:
                 sys.path.insert(0, _tr_dir)
             import aurora_trellis_wrapper as _trellis  # noqa: WPS433
+            _trellis_available = bool(_trellis.is_available())
             if _trellis.is_available():
                 # MULTI-VUES COHERENTES (leve l'ambiguite de profondeur de la mono-vue).
                 # Un humain pose (assis/allonge) ressort penche ou effondre en mono-vue,
@@ -2417,6 +2419,27 @@ def run_pipeline(prompt: str, run_id: str, *,
             audit.append({"stage": "trellis2", "ok": False, "error": repr(_e),
                           "note": "fallback Hunyuan3D"})
 
+        # TRELLIS-ONLY quand il est INSTALLE. L'utilisateur veut le meilleur (TRELLIS)
+        # et pouvoir se passer de Hunyuan; surtout, charger Hunyuan APRES un echec
+        # TRELLIS = deux gros modeles a la suite = risque de GEL. Donc: si TRELLIS est
+        # installe mais a echoue, on N'appelle PAS Hunyuan (sauf AURORA_HUNYUAN_FALLBACK=1);
+        # on echoue proprement (l'utilisateur relance, ou active le repli). Hunyuan ne
+        # sert QUE si TRELLIS n'est pas installe du tout.
+        if not _trellis_ok and _trellis_available and \
+                os.environ.get("AURORA_HUNYUAN_FALLBACK", "0") != "1":
+            _tr_err = (_tr.get("error") if isinstance(_tr, dict) else None) or "echec TRELLIS.2"
+            audit.append({"stage": "hunyuan3d", "skipped": True,
+                          "reason": "TRELLIS installe mais a echoue; repli Hunyuan DESACTIVE "
+                                    "(AURORA_HUNYUAN_FALLBACK=1 pour l'activer). Evite le "
+                                    "double-chargement de modeles (gel).",
+                          "trellis_error": str(_tr_err)[:300]})
+            _record_pipeline_dispatch(run_id, prompt, started_at_iso, status="blocked",
+                                      verdict="trellis failed, hunyuan fallback disabled")
+            return {"ok": False,
+                    "error": "TRELLIS.2 a echoue et le repli Hunyuan est desactive "
+                             "(AURORA_HUNYUAN_FALLBACK=1 pour l'autoriser). Detail: %s"
+                             % (str(_tr_err)[:200]),
+                    "audit_trail": audit}
         if not _trellis_ok:
             # v90: map the Stage-0 kind to the worker's intent_purpose so the right
             # shape-quality branch fires (character → octree 512/steps 70, etc.).

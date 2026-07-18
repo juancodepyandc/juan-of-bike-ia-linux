@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, BookOpen, Box, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles } from 'lucide-react'
+import { AlertCircle, BookOpen, Box, Check, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
 import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, Color, Group, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector3 } from 'three'
@@ -2411,6 +2411,21 @@ export default function ModelView() {
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
   const [viewerWebUrl, setViewerWebUrl] = useState<string | null>(null)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null)
+  // Validation de la reference AVANT la reconstruction 3D (~20 min): l'utilisateur
+  // accepte (vert) ou refuse (rouge, avec un motif optionnel) l'image en LOT. Sur
+  // acceptation, la photo est VERROUILLEE (jamais retouchee, reproduite fidelement).
+  const [refConfirm, setRefConfirm] = useState<{ urls: string[]; title: string; resolve: (d: { accepted: boolean; reason?: string }) => void } | null>(null)
+  const [refReason, setRefReason] = useState('')
+  const referenceConfirmEnabled = (() => { try { return localStorage.getItem('aurora3d_ref_confirm') !== '0' } catch { return true } })()
+  const renderRefBlobRef = useRef<((promptText: string, stepsOverride?: number, label?: string) => Promise<Blob>) | null>(null)
+  const baseRefPromptRef = useRef<string>('')
+  const referenceLockedRef = useRef<boolean>(false)
+  // Lot d'images a valider (1 = mono-vue de depart; N = vues derivees quand la
+  // mono-vue ne suffit pas). title decrit ce qu'on demande de valider.
+  const askReferenceConfirm = useCallback((urls: string[], title: string) => new Promise<{ accepted: boolean; reason?: string }>((resolve) => {
+    setRefReason('')
+    setRefConfirm({ urls, title, resolve })
+  }), [])
   const [referenceSupport, setReferenceSupport] = useState<ThreeDReferenceSupport | null>(null)
   const [viewPlan, setViewPlan] = useState<ThreeDViewPlan | null>(null)
   const [referenceAnalysis, setReferenceAnalysis] = useState<VisualReferenceAnalysis | null>(null)
@@ -3497,6 +3512,10 @@ export default function ModelView() {
                   vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
                 })
               }
+              // expose au scope externe pour la regeneration sur refus (voir porte
+              // de validation apres la reference).
+              renderRefBlobRef.current = renderReferenceBlob
+              baseRefPromptRef.current = baseReferencePrompt
 
               let imageBlob = await renderReferenceBlob(baseReferencePrompt)
               let referenceAssessment = await verifyGeneratedReferenceVisual({
@@ -3602,6 +3621,37 @@ export default function ModelView() {
           }
           const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, referenceSeedForWorkflow, currentPrompt, referenceSupportPlan)
           const activePipeline = intent.pipelineRouting.pipeline
+
+          // ── VALIDATION DE LA REFERENCE (vert/rouge) avant la reconstruction ──
+          // On ne lance PAS la 3D (~20 min) sur une reference au mauvais sujet.
+          // Regle voulue: si la photo est BONNE, on ne la regenere JAMAIS.
+          //   - ACCEPTE (vert) -> la photo mono-vue est VERROUILLEE telle quelle; la
+          //     reconstruction part de CETTE image (single-view). Si plus tard elle
+          //     "ne colle pas" (mono-vue ambigue), le backend derive des vues
+          //     supplementaires DEPUIS elle (MV-Adapter la reproduit) et on redemande
+          //     en LOT - jamais un autre sujet.
+          //   - REFUSE (rouge) = mauvais sujet -> on REGENERE (motif optionnel).
+          if (referenceConfirmEnabled && referenceImageUrl) {
+            for (let _rtry = 0; _rtry < 6; _rtry++) {
+              const _dec = await askReferenceConfirm(
+                [toAssetUrl(referenceImagePath)],
+                'Cette reference est-elle le bon sujet ?')
+              if (_dec.accepted) { referenceLockedRef.current = true; break }
+              const _fb = (_dec.reason || '').trim()
+              if (!renderRefBlobRef.current) { break }
+              try {
+                setProgress('Regeneration de la reference selon votre retour...')
+                const _rerollPrompt = [baseRefPromptRef.current || currentPrompt, _fb]
+                  .filter(Boolean).join('. ') + '. Autre variation, exactement le sujet demande.'
+                const _blob = await renderRefBlobRef.current(_rerollPrompt, undefined, 'Regeneration selon votre retour...')
+                await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await _blob.arrayBuffer())))
+                lastReferenceImagePathRef.current = referenceImagePath
+                setReferenceImageUrl(toAssetUrl(referenceImagePath) + `?r=${Date.now()}`)
+              } catch (_re) {
+                break
+              }
+            }
+          }
 
           // ── PIPELINE ROUTING: choose the best generation backend ──
           unlistenRef.current?.()
@@ -5076,6 +5126,25 @@ export default function ModelView() {
         </div>
       </div>
       </div>
+
+      {refConfirm && (
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-black/70 p-6 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-[1.6rem] border border-aurora-border/50 bg-aurora-surface/95 p-6 shadow-2xl">
+            <p className="text-sm font-medium text-aurora-text">{refConfirm.title}</p>
+            <p className="mt-1 text-xs text-aurora-text-muted">Validez avant la reconstruction 3D (~20 min). Acceptez si le sujet est le bon; refusez sinon (la photo acceptee est gardee telle quelle).</p>
+            <div className={`mt-4 grid gap-3 ${refConfirm.urls.length > 1 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-1'}`}>
+              {refConfirm.urls.map((u, i) => (
+                <img key={i} src={u} alt={`Reference ${i + 1}`} className="max-h-[46vh] w-full rounded-[1rem] border border-aurora-border/40 bg-[#091116] object-contain" />
+              ))}
+            </div>
+            <textarea value={refReason} onChange={(e) => setRefReason(e.target.value)} placeholder="Optionnel (seulement si vous refusez): pourquoi ca ne va pas / laquelle" rows={2} className="mt-4 w-full rounded-[0.9rem] border border-aurora-border/40 bg-aurora-surface-2 p-3 text-sm text-aurora-text placeholder:text-aurora-text-dim" />
+            <div className="mt-4 flex items-center justify-end gap-3">
+              <button type="button" onClick={() => { const r = refConfirm.resolve; setRefConfirm(null); r({ accepted: false, reason: refReason }) }} className="flex items-center gap-2 rounded-[0.9rem] border border-aurora-red/50 bg-aurora-red/15 px-4 py-2 text-sm font-medium text-aurora-red transition hover:bg-aurora-red/25"><X size={16} /> Refuser</button>
+              <button type="button" onClick={() => { const r = refConfirm.resolve; setRefConfirm(null); r({ accepted: true }) }} className="flex items-center gap-2 rounded-[0.9rem] border border-emerald-500/50 bg-emerald-500/20 px-5 py-2 text-sm font-medium text-emerald-300 transition hover:bg-emerald-500/30"><Check size={16} /> Accepter</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
