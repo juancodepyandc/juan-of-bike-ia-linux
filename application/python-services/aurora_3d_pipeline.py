@@ -333,8 +333,11 @@ def _freeze_sentinel() -> None:
                 avail_mb = int(_ma[0].split()[1]) // 1024 if _ma else 99999
             except Exception:  # noqa: BLE001
                 continue
-            # VRAM: 2 gels reels a ~15.8/16.3 Go (bake texture) = affichage prive
-            # de VRAM. >15.2 Go soutenus -> abandon propre.
+            # VRAM: seuil 15900 (et non 15200). nvidia-smi lit le TOTAL GPU
+            # (torch + contexte CUDA ~0.5G + bureau/UI ~1G) alors que
+            # AURORA_VRAM_FRACTION=0.92 ne borne QUE torch (~15.0G): un bake 8192
+            # SAIN atteignait donc 15.2-16.2G et la sentinelle tuait le pipeline
+            # AVANT que le ladder to_glb ne retombe a 4096 (faux positif structurel).
             vram_mb = 0
             try:
                 _sm = subprocess.run(

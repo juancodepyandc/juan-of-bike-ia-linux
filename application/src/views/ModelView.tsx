@@ -40,7 +40,7 @@ import { getErrorMessage } from '../utils/errors'
 import { useGenerationTrackerStore } from '../stores/generationTrackerStore'
 import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
 import RecoveryBanner from '../components/RecoveryBanner'
-import { createFlux2Workflow, type FluxStyle } from '../utils/fluxWorkflow'
+import { createFluxWorkflow, type FluxStyle } from '../utils/fluxWorkflow'
 import { prepareContextFiles, type PreparedContextFile } from '../utils/multimodalContext'
 import { pickPrimaryPreparedImage, stageBlobToComfyInput } from '../utils/referenceMedia'
 import type { HardwareProfile } from '../types/app'
@@ -261,17 +261,18 @@ async function generateSyntheticView(
   const antiSplitSuffix = ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
   const safePrompt = fluxPrompt + antiSplitSuffix
 
-  // FLUX.2 (graphe backend valide). FLUX.1 casse au CLIPTextEncode
-  // ("Could not find schema for aten::matmul"). t2i pur: la variante img2img
-  // (referenceSeed) n'est plus utilisee sur le chemin TRELLIS.
-  void style
-  void referenceSeed
-  const workflow = createFlux2Workflow({
+  // FLUX.1 (unet 17.2G + t5xxl + clip_l + ae: les SEULS poids reellement presents).
+  // Les fichiers FLUX.2 du disque sont des telechargements tronques de 133 octets:
+  // ComfyUI y lit 33.8 Go de tenseurs declares, tente de les charger et SEGFAUTE
+  // (c'etait aussi l'origine de "Could not find schema for aten::matmul").
+  const workflow = createFluxWorkflow({
     prompt: safePrompt,
     width,
     height,
     steps,
     filenamePrefix,
+    style,
+    referenceImage: referenceSeed,
   })
   // Free VRAM before each FLUX queue: on a 16 GB card, FLUX UNet + T5 XXL
   // alone eat ~22 GiB so anything else pinned (vision LLM, previous CLIP
@@ -3502,13 +3503,16 @@ export default function ModelView() {
               const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, Boolean(referenceSeed), currentPrompt, referenceSupportPlan)
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
-                // FLUX.2 (le graphe FLUX.1 casse: aten::matmul au CLIPTextEncode)
-                const workflow = createFlux2Workflow({
+                // FLUX.1: seuls poids reels sur disque (les fichiers FLUX.2 sont
+                // tronques a 133 octets et font segfauter ComfyUI).
+                const workflow = createFluxWorkflow({
                   prompt: promptText,
                   width: referenceWorkflow.width,
                   height: referenceWorkflow.height,
                   steps: stepsOverride,
                   filenamePrefix: 'juan_bike_3d_ref',
+                  style: referenceWorkflow.style,
+                  referenceImage: referenceSeed ? { filename: referenceSeed.filename, denoise: referenceDenoise(intent, true, referenceSupportPlan) } : null,
                 })
                 return runReferenceWorkflow({
                   workflow,
@@ -4132,12 +4136,14 @@ export default function ModelView() {
 
               const correctedRefWorkflow = resolveReferenceWorkflow(intent, hardware, false, currentPrompt, referenceSupportPlan)
               const extraSteps = correctionStrategy.escalation === 'maximum' ? 12 : correctionStrategy.escalation === 'strong' ? 8 : 4
-              const correctedWorkflow = createFlux2Workflow({
+              const correctedWorkflow = createFluxWorkflow({
                 prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt),
                 width: correctedRefWorkflow.width,
                 height: correctedRefWorkflow.height,
                 steps: correctedRefWorkflow.steps + extraSteps,
                 filenamePrefix: `juan_bike_3d_ref_corr${correctionAttempt}`,
+                style: correctedRefWorkflow.style,
+                referenceImage: null,
               })
               try {
                 const correctedRefBlob = await runReferenceWorkflow({
