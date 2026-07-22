@@ -334,9 +334,13 @@ def _reexec_under_mem_scope() -> None:
         "systemd-run", "--user", "--scope", "--quiet", "--collect",
         "-p", f"MemoryMax={_max}G",
         "-p", f"MemorySwapMax={_swap}G",
-        # oomd surveille le SWAP du scope (le vrai mecanisme du gel). PAS de kill
-        # a la pression (tir ami constate a 67% sur un chargement mmap sain).
-        "-p", "ManagedOOMSwap=kill",
+        # PAS de ManagedOOMSwap=kill: mesure du 2026-07-22 19:25 — oomd a tue un run
+        # PARFAITEMENT SAIN (pression memoire 0%, pression disque 0%) uniquement
+        # parce que le swap atteignait 5.2 Go. Depuis le retrait de la cle USB il ne
+        # reste que 8 Go de swap: le declencheur "90% du swap" devient un cheveu sur
+        # la gachette pour une charge qui deborde normalement de quelques Go.
+        # La vraie borne reste MemoryMax (plafond DUR) + la sentinelle (io/memoire/
+        # vram/nvme), qui elles jugent la DETRESSE et pas le simple volume.
         sys.executable, *sys.argv,
     ])
 
