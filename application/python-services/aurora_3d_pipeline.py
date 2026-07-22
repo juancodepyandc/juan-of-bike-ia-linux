@@ -420,7 +420,15 @@ def _freeze_sentinel() -> None:
                 pass
             bad_io = bad_io + 1 if io_avg > 45.0 else 0
             bad_mem = bad_mem + 1 if mem_avg > 65.0 else 0
-            bad_ram = bad_ram + 1 if avail_mb < 800 else 0
+            # RAM libre basse SEULE != danger, depuis que le swap est un fichier
+            # NVMe de 32 Go (plus de cle USB lente). Mesure 2026-07-22 19:32: le
+            # chargement de TRELLIS fait descendre la RAM dispo a 639 Mo avec
+            # io=1% et memPsi=0% — le noyau pagine tranquillement sur du rapide,
+            # aucun gel. On exige donc RAM basse ET un debut de detresse (pression
+            # memoire reelle), tout en gardant un PLANCHER ABSOLU a 250 Mo qui
+            # coupe quoi qu'il arrive (lecon du 18:51: ne jamais tout relacher).
+            bad_ram = bad_ram + 1 if (avail_mb < 250
+                                      or (avail_mb < 800 and mem_avg > 15.0)) else 0
             # VRAM: nvidia-smi lit le TOTAL GPU (TRELLIS cape a 0.92 + contexte CUDA
             # + bureau/UI). Un bake 8192 SAIN atteint ~15.6-16.2G brievement -> le
             # cap torch force deja l'OOM->ladder 4096, la sentinelle ne doit PAS le
