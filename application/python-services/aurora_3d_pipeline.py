@@ -326,7 +326,7 @@ def _reexec_under_mem_scope() -> None:
     # protection anti-gel n'est PAS le plafond (il tue le travail legitime) mais
     # la SENTINELLE (_freeze_sentinel): churn IO / RAM epuisee -> abort propre.
     _max = os.environ.get("AURORA_MEM_MAX_GB", "28")
-    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "16")
+    _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "28")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
     sys.stderr.flush()
