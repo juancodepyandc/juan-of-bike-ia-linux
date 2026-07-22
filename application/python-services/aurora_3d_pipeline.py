@@ -365,9 +365,17 @@ def _freeze_sentinel() -> None:
             bad_io = bad_io + 1 if io_avg > 45.0 else 0
             bad_mem = bad_mem + 1 if mem_avg > 65.0 else 0
             bad_ram = bad_ram + 1 if avail_mb < 800 else 0
-            bad_vram = bad_vram + 1 if vram_mb > 15200 else 0
-            bad_nvme = bad_nvme + 1 if nvme_c >= 76 else 0
-            if bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 2 or bad_nvme >= 2:
+            # VRAM: nvidia-smi lit le TOTAL GPU (TRELLIS cape a 0.92 + contexte CUDA
+            # + bureau/UI). Un bake 8192 SAIN atteint ~15.6-16.2G brievement -> le
+            # cap torch force deja l'OOM->ladder 4096, la sentinelle ne doit PAS le
+            # doubler. Seuil releve a 15900 (juste sous le 16303 physique) et 3
+            # echantillons (30s) pour ne capter QUE la famine reelle soutenue.
+            bad_vram = bad_vram + 1 if vram_mb > 15900 else 0
+            # NVMe: le T705 Gen5 tourne HOT (72-80C normal en ecriture, throttle
+            # interne ~82-84C), d'autant que APST=0 + pcie_aspm=off le maintiennent
+            # pleine puissance. 76C etait un faux positif; le vrai risque est 82C+.
+            bad_nvme = bad_nvme + 1 if nvme_c >= 82 else 0
+            if bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 3 or bad_nvme >= 2:
                 print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% memPsi=%.0f%% "
                       "ram=%dMo vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
                       % (io_avg, mem_avg, avail_mb, vram_mb, nvme_c), flush=True)
