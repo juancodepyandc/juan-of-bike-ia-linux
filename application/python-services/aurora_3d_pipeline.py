@@ -414,8 +414,16 @@ def _freeze_sentinel() -> None:
                         continue
             except Exception:  # noqa: BLE001
                 pass
-            bad_io = bad_io + 1 if io_avg > 45.0 else 0
-            bad_mem = bad_mem + 1 if mem_avg > 65.0 else 0
+            # PRESSION SEULE != DANGER. Mesure du 2026-07-22: le chargement
+            # LEGITIME de TRELLIS (25.5 Go lus depuis le disque) produit io=90% et
+            # memPsi=90% pendant plusieurs dizaines de secondes, avec 2 Go de RAM
+            # libre, VRAM a 0 et NVMe a 48 C — aucun danger, et la sentinelle tuait
+            # pourtant la generation. La VRAIE signature d'un gel (mesuree les
+            # 16-18/07) est pression forte ET reserve de RAM epuisee simultanement.
+            # On exige donc les DEUX, et on allonge la fenetre (30 s au lieu de 20).
+            _ram_tendue = avail_mb < 1500
+            bad_io = bad_io + 1 if (io_avg > 45.0 and _ram_tendue) else 0
+            bad_mem = bad_mem + 1 if (mem_avg > 80.0 and _ram_tendue) else 0
             bad_ram = bad_ram + 1 if avail_mb < 800 else 0
             # VRAM: nvidia-smi lit le TOTAL GPU (TRELLIS cape a 0.92 + contexte CUDA
             # + bureau/UI). Un bake 8192 SAIN atteint ~15.6-16.2G brievement -> le
@@ -427,7 +435,7 @@ def _freeze_sentinel() -> None:
             # interne ~82-84C), d'autant que APST=0 + pcie_aspm=off le maintiennent
             # pleine puissance. 76C etait un faux positif; le vrai risque est 82C+.
             bad_nvme = bad_nvme + 1 if nvme_c >= 82 else 0
-            if bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 3 or bad_nvme >= 2:
+            if bad_io >= 3 or bad_mem >= 3 or bad_ram >= 3 or bad_vram >= 3 or bad_nvme >= 2:
                 print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% memPsi=%.0f%% "
                       "ram=%dMo vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
                       % (io_avg, mem_avg, avail_mb, vram_mb, nvme_c), flush=True)
