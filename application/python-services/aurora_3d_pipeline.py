@@ -3683,7 +3683,16 @@ def main() -> int:
     if args.confirm_ref:
         os.environ["AURORA_REF_CONFIRM"] = "1"
     if args.max_precision:
-        os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "1")
+        # ALLOCATEUR MANAGE = DESACTIVE PAR DEFAUT (2026-07-22). Il fait deborder
+        # la memoire GPU dans la RAM ("spill GPU->RAM"): TRELLIS passe alors de
+        # ~21 Go a ~25.5 Go de RAM sur une machine de 30 Go, le surplus part en
+        # SWAP, et comme le swap est reparti a egalite entre le NVMe et une cle
+        # USB lente, le noyau bloque sur des ecritures a quelques Mo/s -> io=90%
+        # -> GEL COMPLET de la machine (mesure: gel 84 s apres le debut du
+        # chargement TRELLIS). Sans lui, TRELLIS reste dans les 16 Go de VRAM et
+        # l'echelle de repli (to_glb 8192->4096->2048) gere les cas trop lourds.
+        # AURORA_TRELLIS2_MANAGED=1 pour le reactiver une fois le swap assaini.
+        os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "0")
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
