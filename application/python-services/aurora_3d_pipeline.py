@@ -228,6 +228,55 @@ def _kind_to_intent_purpose(kind: str | None) -> str:
     return "visual_preview"
 
 
+def trellis_python() -> str:
+    """Interpreteur qui sait REELLEMENT charger TRELLIS.2.
+
+    CAUSE RACINE mesuree le 2026-07-22 (l'app et le CLI ne se comportaient pas
+    pareil): l'application lance le pipeline avec le python de ComfyUI, ou
+    TRELLIS est INDISPONIBLE ("ImportError: No module named 'flex_gemm'"), alors
+    que le venv de l'application le charge parfaitement. Resultat: depuis l'UI,
+    TRELLIS etait juge absent -> bascule multivue/Hunyuan -> echecs, pendant que
+    les memes commandes en CLI (venv app) marchaient. On resout en pointant
+    explicitement l'interpreteur qui possede TRELLIS.
+    Surchargeable par AURORA_TRELLIS_PY.
+    """
+    env_py = os.environ.get("AURORA_TRELLIS_PY")
+    if env_py and os.path.isfile(env_py):
+        return env_py
+    venv_py = REPO_ROOT / "application" / ".venv" / "bin" / "python"
+    if venv_py.is_file():
+        return str(venv_py)
+    return sys.executable
+
+
+_TRELLIS_AVAIL_CACHE: dict = {}
+
+
+def trellis_is_available() -> bool:
+    """Teste la dispo de TRELLIS DANS l'interpreteur qui l'executera (sous-process).
+
+    Un import in-process repondait selon le python COURANT (celui de ComfyUI
+    depuis l'app) et donnait donc une reponse fausse pour le sous-process reel.
+    """
+    py = trellis_python()
+    if py in _TRELLIS_AVAIL_CACHE:
+        return _TRELLIS_AVAIL_CACHE[py]
+    ok = False
+    try:
+        _dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+        r = subprocess.run(
+            [py, "-c",
+             "import sys; sys.path.insert(0, %r);"
+             "import aurora_trellis_wrapper as t;"
+             "print('TRELLIS_OK' if t.is_available() else 'TRELLIS_NO')" % _dir],
+            capture_output=True, text=True, timeout=180)
+        ok = "TRELLIS_OK" in (r.stdout or "")
+    except Exception:  # noqa: BLE001
+        ok = False
+    _TRELLIS_AVAIL_CACHE[py] = ok
+    return ok
+
+
 def _reexec_under_mem_scope() -> None:
     """Re-execute le pipeline ENTIER sous un plafond memoire cgroup (anti-GEL).
 
@@ -2165,8 +2214,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         _tr_probe_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
         if _tr_probe_dir not in sys.path:
             sys.path.insert(0, _tr_probe_dir)
-        import aurora_trellis_wrapper as _trellis_probe  # noqa: WPS433
-        if _trellis_probe.is_available():
+        if trellis_is_available():
             multi_view = False
             audit.append({"stage": "trellis2_singleview", "ok": True,
                           "note": "TRELLIS.2 dispo -> single-view, synthese 4-vues sautee"})
@@ -2371,6 +2419,29 @@ def run_pipeline(prompt: str, run_id: str, *,
                 res = synth(flux_prompt, run_id, output_dir=output_dir,
                             width=1216, height=1216, steps=44)
         reference_synth_result = res
+        if not res.get("ok") and multi_view and front_ref.is_file() and front_ref.stat().st_size > 50_000:
+            # REPLI NON DESTRUCTIF. La synthese multivue echoue des qu'UNE vue
+            # derivee diverge (palette/nettete) — alors que la FACE, elle, est
+            # bonne et suffit a TRELLIS.2 (qui reconstruit depuis une seule image).
+            # Avant, ce cas tuait toute la generation (constate en reel: "back:
+            # palette diverges too much from front reference" -> 0 mesh alors que
+            # les 4 images etaient produites). On jette les vues divergentes et on
+            # continue en single-view au lieu de tout perdre.
+            for _bad in (back_ref, left_ref, right_ref):
+                try:
+                    _bad.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    pass
+            multi_view = False
+            audit.append({"stage": "multiview_degrade_to_single", "ok": True,
+                          "reason": str(res.get("error"))[:200],
+                          "note": "vues derivees divergentes jetees; la FACE valide "
+                                  "suffit a TRELLIS.2 -> on continue au lieu d'echouer"})
+            print("PROGRESS:reference:vues derivees incoherentes -> on garde la face "
+                  "et on continue en vue unique", flush=True)
+            res = {"ok": True, "degraded_to_single_view": True,
+                   "error": None, "elapsed_s": res.get("elapsed_s")}
+            reference_synth_result = res
         if not res.get("ok"):
             _record_pipeline_dispatch(run_id, prompt, started_at_iso,
                                       status="blocked",
@@ -2541,9 +2612,8 @@ def run_pipeline(prompt: str, run_id: str, *,
             _tr_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
             if _tr_dir not in sys.path:
                 sys.path.insert(0, _tr_dir)
-            import aurora_trellis_wrapper as _trellis  # noqa: WPS433
-            _trellis_available = bool(_trellis.is_available())
-            if _trellis.is_available():
+            _trellis_available = trellis_is_available()
+            if _trellis_available:
                 # MULTI-VUES COHERENTES (leve l'ambiguite de profondeur de la mono-vue).
                 # Un humain pose (assis/allonge) ressort penche ou effondre en mono-vue,
                 # et le DOS/les MAINS sont hallucines. MV-Adapter (i2mv) diffuse depuis la
@@ -2651,7 +2721,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                 except Exception:  # noqa: BLE001
                     pass
                 try:
-                    _tr_cmd = [sys.executable, _wrapper, str(front_ref), str(mesh_path)]
+                    _tr_cmd = [trellis_python(), _wrapper, str(front_ref), str(mesh_path)]
                     if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
                         _stem = str(front_ref)
                         _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
