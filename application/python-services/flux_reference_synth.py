@@ -408,7 +408,17 @@ def _single_view_base_prompt(prompt: str) -> str:
     for pattern in replacements:
         cleaned = re.sub(pattern, "single clean reconstruction view", cleaned, flags=re.I)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip(" ,.")
-    return cleaned or prompt
+    cleaned = cleaned or prompt
+    # STYLE REALISTE PAR DEFAUT. Sans directive, FLUX rend un sujet nomme (surtout
+    # un perso d'anime comme Goldorak) en illustration cartoon plate — mauvais pour
+    # la reconstruction 3D ET non demande par l'utilisateur. On force un rendu 3D
+    # realiste (qualite figurine/studio) SAUF si un style est explicitement demande.
+    if not re.search(r"\b(cartoon|anime|manga|toon|cel[-\s]?shad|stylis|dessin\s*anim|comic|bd|illustration|flat|2d|pixel[-\s]?art|low\s*poly|chibi)\b",
+                     cleaned, re.I):
+        cleaned += (", realistic 3D render, high-detail collectible figure, studio "
+                    "product photography lighting, physically based materials, "
+                    "sharp fine surface detail, NOT a flat 2D cartoon or cel-shaded drawing")
+    return cleaned
 
 
 def _retry_single_view_prompt(prompt: str, attempt_index: int, failures: list[str]) -> str:
