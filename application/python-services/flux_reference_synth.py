@@ -410,6 +410,30 @@ MULTIVIEW_SUFFIXES = {
 }
 
 
+# Mots par lesquels un HUMAIN demande un style (francais ecrit naturellement,
+# accents compris) — teste sur de vraies formulations: "goldorak facon anime",
+# "un dragon en dessin anime", "un robot stylise", "style pixar", "facon peluche".
+# Piege corrige: "anime" (sans accent) ne matchait PAS "anime" (avec accent),
+# et un \b apres "stylis" ne matchait pas "stylise".
+_STYLE_RX = re.compile(
+    r"(cartoon|dessin[s]?\s*anim|anim[eé]|manga|toon|cel[-\s]?shad|comic|"
+    r"bande[-\s]?dessin|\bbd\b|stylis|illustration|dessin|croquis|aquarelle|"
+    r"peinture|pixel[-\s]?art|low[-\s]?poly|voxel|chibi|kawaii|"
+    r"pixar|disney|ghibli|lego|playmobil|peluche|jouet|figurine\s+cartoon|"
+    r"\b2d\b|plat\b|flat\b|retro|vintage|steampunk|cyberpunk|"
+    r"aquarel|bd\b|comics?|manhwa|webtoon)",
+    re.I)
+
+
+def _style_demande(texte: str) -> bool:
+    """L'utilisateur a-t-il demande un style precis ? (sinon: realiste par defaut)
+
+    Rend True des qu'une intention de style apparait, quelle que soit la tournure:
+    "facon X", "style X", "en X", "type X", "version X", "comme dans X".
+    """
+    return bool(_STYLE_RX.search(texte or ""))
+
+
 def _single_view_base_prompt(prompt: str) -> str:
     """Remove phrases that make FLUX draw all orthographic views in one image.
 
@@ -433,8 +457,7 @@ def _single_view_base_prompt(prompt: str) -> str:
     # un perso d'anime comme Goldorak) en illustration cartoon plate — mauvais pour
     # la reconstruction 3D ET non demande par l'utilisateur. On force un rendu 3D
     # realiste (qualite figurine/studio) SAUF si un style est explicitement demande.
-    if not re.search(r"\b(cartoon|anime|manga|toon|cel[-\s]?shad|stylis|dessin\s*anim|comic|bd|illustration|flat|2d|pixel[-\s]?art|low\s*poly|chibi)\b",
-                     cleaned, re.I):
+    if not _style_demande(cleaned):
         cleaned += (", realistic 3D render, high-detail collectible figure, studio "
                     "product photography lighting, physically based materials, "
                     "sharp fine surface detail, NOT a flat 2D cartoon or cel-shaded drawing")

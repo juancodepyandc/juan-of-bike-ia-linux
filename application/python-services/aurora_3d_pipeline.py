@@ -3372,6 +3372,30 @@ def run_pipeline(prompt: str, run_id: str, *,
         except Exception as _rre:  # noqa: BLE001
             audit.append({"stage": "roughness_realism", "ok": False, "error": repr(_rre)})
 
+    # ── GEOMETRIE PURE (toujours produite) ──────────────────────────────────
+    # Demande utilisateur: parmi les nombreux fichiers (matte, ao, rough,
+    # final_materials...) on ne distingue pas la geometrie. On produit donc
+    # SYSTEMATIQUEMENT un rendu blanc mat, sans texture ni couleur, clairement
+    # nomme GEOMETRIE — pour juger le lissage, les details et la progression
+    # d'une generation a l'autre. Desactivable: AURORA_GEOMETRIE=0.
+    if os.environ.get("AURORA_GEOMETRIE", "1") == "1":
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from mesh_screenshot import render_mesh_screenshots as _rms  # noqa: WPS433
+            _geo_png = str(output_dir / f"{run_id}_GEOMETRIE.png")
+            print("PROGRESS:geometrie:rendu de la geometrie pure (blanc mat, sans texture)...",
+                  flush=True)
+            _geo = _rms(mesh_path=str(final_delivery_mesh), output_path=_geo_png,
+                        views=["front", "left", "back", "right"],
+                        resolution=(900, 900), clay=True)
+            audit.append({"stage": "geometrie_pure", "ok": bool(_geo.get("ok")),
+                          "vues": [s.get("path") for s in (_geo.get("screenshots") or [])],
+                          "sommets": _geo.get("vertex_count"),
+                          "faces": _geo.get("face_count"),
+                          "error": _geo.get("error")})
+        except Exception as _geoe:  # noqa: BLE001
+            audit.append({"stage": "geometrie_pure", "ok": False, "error": repr(_geoe)})
+
     if os.environ.get("AURORA_VLM_CRITIC") == "1":
         critic = _run_vlm_critic(final_delivery_mesh, prompt, run_id, output_dir)
         audit.append({"stage": "vlm_critic", **critic})
