@@ -60,6 +60,7 @@ def _render_with_blender(
     output_path: str,
     views: list[str],
     resolution: tuple[int, int],
+    clay: bool = False,
 ) -> dict[str, Any] | None:
     blender = _find_blender_executable()
     if not blender:
@@ -78,6 +79,7 @@ mesh_path = {json.dumps(os.path.abspath(mesh_path))}
 output_path = {json.dumps(os.path.abspath(output_path))}
 views = {json.dumps(views)}
 resolution = {json.dumps(list(resolution))}
+CLAY_MODE = {"True" if clay else "False"}
 
 view_positions = {{
     "front": (0.0, -3.2, 0.12),
@@ -130,6 +132,32 @@ if not meshes:
 
 vertices = sum(len(obj.data.vertices) for obj in meshes)
 faces = sum(len(obj.data.polygons) for obj in meshes)
+
+if CLAY_MODE:
+    # VUE CLAY: remplace TOUTE couleur/texture par un blanc mat uniforme, pour
+    # juger la GEOMETRIE seule (lissage, details, coutures) sans distraction.
+    clay_mat = bpy.data.materials.new("aurora_clay")
+    clay_mat.use_nodes = True
+    _bsdf = clay_mat.node_tree.nodes.get("Principled BSDF")
+    if _bsdf:
+        _bsdf.inputs["Base Color"].default_value = (0.82, 0.82, 0.82, 1.0)
+        try:
+            _bsdf.inputs["Roughness"].default_value = 0.75
+            _bsdf.inputs["Metallic"].default_value = 0.0
+            if "Specular IOR Level" in _bsdf.inputs:
+                _bsdf.inputs["Specular IOR Level"].default_value = 0.3
+            elif "Specular" in _bsdf.inputs:
+                _bsdf.inputs["Specular"].default_value = 0.3
+        except Exception:
+            pass
+    for obj in meshes:
+        obj.data.materials.clear()
+        obj.data.materials.append(clay_mat)
+        # Le mesh a plusieurs zones (peau/metal/...): apres avoir vide les slots,
+        # les faces pointent encore vers d'anciens index inexistants et ne
+        # s'affichent plus. On force chaque face sur l'unique slot clay.
+        for _poly in obj.data.polygons:
+            _poly.material_index = 0
 
 
 def scene_bounds():
@@ -245,8 +273,13 @@ def render_mesh_screenshots(
     output_path: str,
     views: list[str] | None = None,
     resolution: tuple[int, int] = (1024, 1024),
+    clay: bool = False,
 ) -> dict[str, Any]:
-    """Load a mesh and render screenshots from specified view angles."""
+    """Load a mesh and render screenshots from specified view angles.
+
+    clay=True: remplace textures/couleurs par un blanc mat uniforme pour juger la
+    geometrie seule (lissage, details) sans distraction de la texture.
+    """
     try:
         import trimesh
         import numpy as np
@@ -289,7 +322,7 @@ def render_mesh_screenshots(
     # The trimesh path is still useful as a fallback, but it can flatten
     # transforms in ways that hide hierarchy or motion defects.
     if Path(mesh_path).suffix.lower() in {".glb", ".gltf"}:
-        blender_result = _render_with_blender(mesh_path, output_path, views, resolution)
+        blender_result = _render_with_blender(mesh_path, output_path, views, resolution, clay=clay)
         if blender_result and blender_result.get("ok"):
             return blender_result
 
@@ -302,7 +335,7 @@ def render_mesh_screenshots(
     except Exception:
         mesh_extent = 0.0
     if max(scene_extent, mesh_extent) <= 1e-9:
-        blender_result = _render_with_blender(mesh_path, output_path, views, resolution)
+        blender_result = _render_with_blender(mesh_path, output_path, views, resolution, clay=clay)
         if blender_result and blender_result.get("ok"):
             return blender_result
         if blender_result and blender_result.get("error"):
@@ -376,7 +409,7 @@ def render_mesh_screenshots(
     except Exception:
         screenshots = []
 
-    blender_result = _render_with_blender(mesh_path, output_path, views, resolution)
+    blender_result = _render_with_blender(mesh_path, output_path, views, resolution, clay=clay)
     if blender_result and blender_result.get("ok"):
         return blender_result
 
@@ -515,6 +548,7 @@ def main():
     parser.add_argument("--views", default="front_3q", help="Comma-separated view names: front,front_3q,back,left,right,top,bottom,iso")
     parser.add_argument("--width", type=int, default=1024, help="Image width")
     parser.add_argument("--height", type=int, default=1024, help="Image height")
+    parser.add_argument("--clay", action="store_true", help="Rendu clay: blanc mat uniforme, geometrie seule sans texture")
     args = parser.parse_args()
 
     if not os.path.isfile(args.mesh):
@@ -532,6 +566,7 @@ def main():
         output_path=args.output,
         views=views,
         resolution=(args.width, args.height),
+        clay=args.clay,
     )
     print(json.dumps(result))
 
