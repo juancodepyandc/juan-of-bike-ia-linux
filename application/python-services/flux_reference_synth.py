@@ -52,10 +52,18 @@ COMFY_BASE = "http://127.0.0.1:8188"
 # reussies, et un job de controle a rendu une image en 5.72 s.
 # Pour repasser a FLUX.2: telecharger les VRAIS poids, puis definir
 # AURORA_FLUX_UNET / AURORA_FLUX_VAE / AURORA_FLUX_CLIP.
-DEFAULT_UNET = os.environ.get("AURORA_FLUX_UNET", "flux1-dev-fp8.safetensors")
-DEFAULT_VAE = os.environ.get("AURORA_FLUX_VAE", "ae.safetensors")
-DEFAULT_CLIP = os.environ.get("AURORA_FLUX_CLIP", "t5xxl_fp8_e4m3fn.safetensors")
-DEFAULT_CLIP2 = os.environ.get("AURORA_FLUX_CLIP2", "clip_l.safetensors")
+# FLUX.2 en GGUF Q4_K_M (18.7 Go). Le fp8mixed (33 Go) a GELE la machine: mesure
+# du 2026-07-23 03:41-03:43, ComfyUI monte a 25.2 Go RSS + 14 Go VRAM sur 30 Go ->
+# 2.7 Go libres, pression memoire 82%, journal coupe net. Le Q4_K_M a l'empreinte
+# de FLUX.1 (17 Go) qui tournait sans effort, en gardant les capacites FLUX.2.
+DEFAULT_UNET = os.environ.get("AURORA_FLUX_UNET", "flux2-dev-Q4_K_M.gguf")
+# Encodeur texte sur CPU: le fp8 COMPLET (16.8 Go) ne tient pas dans 15.8 Go de
+# VRAM, mais sur CPU il donne un resultat IDENTIQUE (encodage deterministe) sans
+# aucune perte de qualite — contrairement a une version quantifiee fp4. Cout: ~1 min.
+CLIP_DEVICE = os.environ.get("AURORA_FLUX_CLIP_DEVICE", "cpu")
+DEFAULT_VAE = os.environ.get("AURORA_FLUX_VAE", "flux2-vae.safetensors")
+DEFAULT_CLIP = os.environ.get("AURORA_FLUX_CLIP", "mistral_3_small_flux2_fp8.safetensors")
+DEFAULT_CLIP2 = os.environ.get("AURORA_FLUX_CLIP2", "")  # FLUX.2 = encodeur unique (Mistral)
 
 # Taille minimale plausible d'un poids de modele. En dessous, le fichier est un
 # telechargement tronque / un pointeur LFS: le signaler AVANT de faire segfauter
@@ -72,11 +80,17 @@ def check_models_present(comfy_models_dir: str | None = None) -> dict:
     root = Path(comfy_models_dir or (REPO_ROOT / "modele" / "comfyui" / "models"))
     if not root.is_dir():
         return {"ok": True, "stubs": [], "missing": [], "skipped": True}
+    _names = {DEFAULT_UNET, DEFAULT_VAE, DEFAULT_CLIP}
+    if DEFAULT_CLIP2:
+        _names.add(DEFAULT_CLIP2)
     wanted = [("unet", DEFAULT_UNET), ("diffusion_models", DEFAULT_UNET),
-              ("vae", DEFAULT_VAE), ("clip", DEFAULT_CLIP), ("clip", DEFAULT_CLIP2),
-              ("text_encoders", DEFAULT_CLIP)]
+              ("vae", DEFAULT_VAE), ("clip", DEFAULT_CLIP),
+              ("text_encoders", DEFAULT_CLIP), ("text_encoders", DEFAULT_CLIP2),
+              ("clip", DEFAULT_CLIP2)]
     stubs, seen_ok = [], set()
     for sub, name in wanted:
+        if not name:
+            continue
         p = root / sub / name
         if not p.is_file():
             continue
@@ -84,29 +98,31 @@ def check_models_present(comfy_models_dir: str | None = None) -> dict:
             stubs.append("%s (%d octets)" % (p, p.stat().st_size))
         else:
             seen_ok.add(name)
-    missing = [n for n in {DEFAULT_UNET, DEFAULT_VAE, DEFAULT_CLIP, DEFAULT_CLIP2}
-               if n not in seen_ok]
+    missing = [n for n in _names if n not in seen_ok]
     return {"ok": not stubs and not missing, "stubs": stubs, "missing": missing}
 
 
 def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                    steps: int = 25, seed: int | None = None,
                    filename_prefix: str = "aurora_flux") -> dict:
-    """FLUX.1-dev workflow (DualCLIPLoader t5xxl+clip_l, FluxGuidance + KSampler).
-    Valide end-to-end sur RTX 5070 Ti 16GB (fp8): image rendue en 5.72 s.
-    Node graph mirrors ComfyUI's official image_flux2_text_to_image template."""
+    """FLUX.2-dev workflow (encodeur Mistral-3, Flux2Scheduler + SamplerCustomAdvanced).
+    Poids REELS presents (diffusion 33 Go + Mistral 16.8 Go + VAE 0.31 Go).
+    Miroir du template officiel ComfyUI image_flux2_text_to_image."""
     if seed is None:
         seed = randint(1, 2**32 - 1)
     return {
         "11": {
-            "class_type": "DualCLIPLoader",
-            "inputs": {"clip_name1": DEFAULT_CLIP, "clip_name2": DEFAULT_CLIP2,
-                       "type": "flux"},
+            "class_type": "CLIPLoader",
+            "inputs": {"clip_name": DEFAULT_CLIP, "type": "flux2",
+                       "device": CLIP_DEVICE},
         },
-        "12": {
+        "12": ({
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {"unet_name": DEFAULT_UNET},
+        } if str(DEFAULT_UNET).lower().endswith(".gguf") else {
             "class_type": "UNETLoader",
-            "inputs": {"unet_name": DEFAULT_UNET, "weight_dtype": "fp8_e4m3fn"},
-        },
+            "inputs": {"unet_name": DEFAULT_UNET, "weight_dtype": "default"},
+        }),
         "10": {
             "class_type": "VAELoader",
             "inputs": {"vae_name": DEFAULT_VAE},
@@ -120,27 +136,31 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "inputs": {"clip": ["11", 0], "text": "cropped, cut off, out of frame, partial view, close-up, truncated body, missing limbs, blurry, low detail"},
         },
         "27": {
-            "class_type": "EmptyLatentImage",
+            "class_type": "EmptyFlux2LatentImage",
             "inputs": {"width": width, "height": height, "batch_size": 1},
         },
+        "40": {
+            "class_type": "Flux2Scheduler",
+            "inputs": {"steps": steps, "width": width, "height": height},
+        },
+        "41": {
+            "class_type": "KSamplerSelect",
+            "inputs": {"sampler_name": "euler"},
+        },
         "26": {
-            "class_type": "FluxGuidance",
-            "inputs": {"conditioning": ["6", 0], "guidance": 3.5},
+            "class_type": "CFGGuider",
+            "inputs": {"model": ["12", 0], "positive": ["6", 0],
+                       "negative": ["33", 0], "cfg": 5.0},
+        },
+        "42": {
+            "class_type": "RandomNoise",
+            "inputs": {"noise_seed": seed},
         },
         "31": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["12", 0],
-                "positive": ["26", 0],
-                "negative": ["33", 0],
-                "latent_image": ["27", 0],
-                "seed": seed,
-                "steps": steps,
-                "cfg": 1.0,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1.0,
-            },
+            "class_type": "SamplerCustomAdvanced",
+            "inputs": {"noise": ["42", 0], "guider": ["26", 0],
+                       "sampler": ["41", 0], "sigmas": ["40", 0],
+                       "latent_image": ["27", 0]},
         },
         "8": {
             "class_type": "VAEDecode",

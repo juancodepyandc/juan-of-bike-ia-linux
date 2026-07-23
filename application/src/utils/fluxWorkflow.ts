@@ -643,21 +643,25 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   const styledPrompt = buildStyledPrompt(augmentedPrompt, style, Boolean(referenceImage), editIntent)
   const referenceDenoise = referenceImage?.denoise ?? (referenceImage ? editIntent?.editContract.denoise ?? styleConfig.editDenoise : 1.0)
   const workflow: Record<string, unknown> = {
+    // FLUX.2: encodeur unique Mistral, sur CPU (16.8 Go ne tiennent pas dans
+    // 15.8 Go de VRAM; sur CPU le resultat est IDENTIQUE, sans perte de qualite).
     '1': {
-      class_type: 'DualCLIPLoader',
+      class_type: 'CLIPLoader',
       inputs: {
-        clip_name1: IMAGE_T5_MODEL,
-        clip_name2: IMAGE_CLIP_MODEL,
-        type: 'flux',
+        clip_name: IMAGE_T5_MODEL,
+        type: 'flux2',
+        device: 'cpu',
       },
     },
-    '2': {
-      class_type: 'UNETLoader',
-      inputs: {
-        unet_name: IMAGE_UNET_MODEL,
-        weight_dtype: inferFluxWeightDtype(IMAGE_UNET_MODEL),
-      },
-    },
+    '2': IMAGE_UNET_MODEL.toLowerCase().endsWith('.gguf')
+      ? { class_type: 'UnetLoaderGGUF', inputs: { unet_name: IMAGE_UNET_MODEL } }
+      : {
+          class_type: 'UNETLoader',
+          inputs: {
+            unet_name: IMAGE_UNET_MODEL,
+            weight_dtype: inferFluxWeightDtype(IMAGE_UNET_MODEL),
+          },
+        },
     '3': {
       class_type: 'VAELoader',
       inputs: { vae_name: IMAGE_VAE_MODEL },
@@ -708,7 +712,7 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
     nextNodeId += 1
   } else {
     workflow[String(nextNodeId)] = {
-      class_type: 'EmptySD3LatentImage',
+      class_type: 'EmptyFlux2LatentImage',
       inputs: { width, height, batch_size: 1 },
     }
     latentNode = [String(nextNodeId), 0]

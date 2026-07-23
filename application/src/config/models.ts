@@ -106,11 +106,13 @@ export const CODE_REVIEW_MODEL = CODE_VERIFIER_REASONING_MODEL
 
 export const HEAVY_REASONING_MIN_RAM_GB = 48
 
-export const IMAGE_UNET_MODEL = 'flux1-dev-fp8.safetensors'
-export const IMAGE_T5_MODEL = 't5xxl_fp8_e4m3fn.safetensors'
-export const IMAGE_CLIP_MODEL = 'clip_l.safetensors'
-export const IMAGE_VAE_MODEL = 'ae.safetensors'
-export const IMAGE_MODEL_PACK_LABEL = 'FLUX FP8 + T5 XXL FP8 + CLIP-L + AE'
+// UNIFIE SUR FLUX.2 (2026-07-23): un seul modele pour TOUTE l'app (3D + image).
+// GGUF Q4_K_M + encodeur Mistral sur CPU (qualite pleine) + VAE flux2.
+export const IMAGE_UNET_MODEL = 'flux2-dev-Q4_K_M.gguf'
+export const IMAGE_T5_MODEL = 'mistral_3_small_flux2_fp8.safetensors'
+export const IMAGE_CLIP_MODEL = ''  // FLUX.2 = encodeur unique
+export const IMAGE_VAE_MODEL = 'flux2-vae.safetensors'
+export const IMAGE_MODEL_PACK_LABEL = 'FLUX.2 Q4_K_M + Mistral-3 (CPU) + VAE FLUX.2'
 
 export const VIDEO_T2V_MODEL = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
 export const VIDEO_I2V_MODEL = 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
