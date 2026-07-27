@@ -60,6 +60,11 @@ OUTPUT_DIR = WORKSPACE / "generated" / "videos"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 VISION_MODEL = os.environ.get("AURORA_VISION_MODEL", "qwen3-vl:8b")
 
+# v91 : plancher absolu de qualite. En dessous, un plan n'est jamais livre,
+# meme si l'appelant a desactive la porte stricte. Mesure a l'origine : des
+# plans notes 2.8/10 ("wheels are stationary") et 0.0/10 ont ete livres.
+ABSOLUTE_QUALITY_FLOOR = float(os.environ.get("AURORA_QUALITY_FLOOR", "4.5"))
+
 
 def emit(stage: str, detail: str):
     print(f"PROGRESS:{stage}:{detail}", flush=True)
@@ -3650,9 +3655,29 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     "shot": idx,
                     "quality": accepted_qa,
                 }
+            # v91 — PLANCHER ABSOLU. Constat sur un film reel : le juge a note
+            # un plan 2.8/10 avec l'issue "wheels are stationary despite
+            # required continuous motion", a relance deux fois, a echoue deux
+            # fois... puis a livre quand meme via shot_accept_best. Un autre
+            # plan a ete accepte a 0.0/10.
+            # `strict_quality_gate` est un choix de l'appelant, mais il ne peut
+            # pas autoriser l'indefendable : sous ce plancher, et seulement si
+            # la qualite a REELLEMENT ete mesuree (une panne vision ne doit
+            # jamais faire echouer un film), on refuse.
+            avg = shot_quality_average(accepted_qa)
+            if shot_quality_is_measured(accepted_qa) and avg < ABSOLUTE_QUALITY_FLOOR:
+                emit("shot_fail_floor",
+                     f"{quality_error} — sous le plancher absolu "
+                     f"{ABSOLUTE_QUALITY_FLOOR}/10, plan refuse")
+                return {
+                    "ok": False,
+                    "error": quality_error + f" (plancher absolu {ABSOLUTE_QUALITY_FLOOR}/10)",
+                    "shot": idx,
+                    "quality": accepted_qa,
+                }
             emit(
                 "shot_accept_best",
-                f"plan {idx} accepted best available avg={shot_quality_average(accepted_qa):.1f}/10",
+                f"plan {idx} accepted best available avg={avg:.1f}/10",
             )
         shot_quality.append(accepted_qa)
 

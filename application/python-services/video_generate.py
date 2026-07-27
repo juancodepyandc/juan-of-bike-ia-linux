@@ -1005,17 +1005,43 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "num_inference_steps": max(36, ltx_steps - 14),
         }
 
-        if mode == "i2v":
-            return [
-                {**base_wan, "id": "wan5b-i2v-primary"},
-                {**base_ltx, "id": "ltx-i2v-safety"},
-                {**base_ltx_safe, "id": "ltx-i2v-lowmem"},
-            ]
-        return [
-            {**base_wan, "id": "wan5b-t2v-primary"},
-            {**base_ltx, "id": "ltx-t2v-safety"},
-            {**base_ltx_safe, "id": "ltx-t2v-lowmem"},
+        # v91 — ECHELLE HOMOGENE : PLUS AUCUN MELANGE DE MOTEURS.
+        # Mesure sur un film reel : 8 segments sur 15 sont tombes de Wan vers
+        # LTX-Video, parfois DEUX moteurs dans le meme plan. Un film dont les
+        # plans ne sortent pas du meme modele ne peut pas etre coherent :
+        # LTX-Video 2B n'a ni la meme physique, ni le meme rendu, ni la meme
+        # comprehension des sujets nommes que Wan 2.2.
+        # Le repli reste donc DANS la famille Wan : meme modele, meme
+        # apprentissage, seule la resolution baisse. Si Wan ne peut vraiment
+        # pas, on echoue bruyamment — c'est preferable a un plan etranger au
+        # reste du film.
+        # AURORA_ALLOW_ENGINE_MIX=1 retablit l'ancien comportement (filet LTX)
+        # pour qui prefererait un rendu heterogene a un echec.
+        allow_mix = os.environ.get("AURORA_ALLOW_ENGINE_MIX") == "1"
+
+        def _wan_step_down(factor, steps_delta=0):
+            """Repli intra-famille : meme moteur Wan, resolution reduite."""
+            w = round_to_32(max(320, int(wan_w * factor)))
+            h = round_to_32(max(320, int(wan_h * factor)))
+            return {
+                **base_wan,
+                "width": w,
+                "height": h,
+                "num_inference_steps": max(30, wan_steps - steps_delta),
+            }
+
+        tag = "i2v" if mode == "i2v" else "t2v"
+        chain = [
+            {**base_wan, "id": f"wan5b-{tag}-primary"},
+            {**_wan_step_down(0.82, 6), "id": f"wan5b-{tag}-repli1"},
+            {**_wan_step_down(0.66, 12), "id": f"wan5b-{tag}-repli2"},
         ]
+        if allow_mix:
+            chain += [
+                {**base_ltx, "id": f"ltx-{tag}-safety"},
+                {**base_ltx_safe, "id": f"ltx-{tag}-lowmem"},
+            ]
+        return chain
 
     if mode == "i2v":
         strategies = []
