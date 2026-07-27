@@ -3742,7 +3742,36 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 })
                 # Continue without dialogue rather than crash the whole pipeline
             else:
-                if needs_lipsync:
+                # v91 : ne PAS tenter un lipsync quand aucun moteur n'est
+                # installe. Le plan a deja ete GENERE anime pour cette raison
+                # (cf. lipsync_absent plus haut) ; retenter ici produisait une
+                # erreur "lipsync required but failed" qui, sous porte stricte,
+                # faisait echouer tout le film au plan 1 — alors que
+                # l'absence de moteur est une limite CONNUE de l'installation,
+                # pas un defaut du rendu. On mute donc le contrat en
+                # "impossible" (et non "echoue"), on muxe la voix, et on
+                # remonte l'information sans condamner le film.
+                if needs_lipsync and not lipsync_engine_ready:
+                    muxed_mp4 = work_dir / f"shot_{shot_id:02d}_muxed.mp4"
+                    mux_result = mux_audio_fit(str(silent_mp4), voice_wav_path,
+                                               str(muxed_mp4))
+                    if mux_result.get("ok"):
+                        final_mp4 = muxed_mp4
+                    warnings.append(
+                        f"plan {idx}: lipsync impossible (aucun moteur installe) "
+                        f"— plan genere anime, levres non synchronisees")
+                    dialogue_quality.append({
+                        "shot": shot_id,
+                        "speaker": speaker,
+                        "voice_ok": True,
+                        "voice_engine": voice_result.get("engine"),
+                        "voice_preset": voice_result.get("voice_preset") or voice_preset,
+                        "lipsync_required": True,
+                        "lipsync_ok": False,
+                        "lipsync_impossible": True,
+                        "error": "aucun moteur de lipsync installe",
+                    })
+                elif needs_lipsync:
                     sync_mp4 = work_dir / f"shot_{shot_id:02d}_synced.mp4"
                     sync_result = apply_lipsync(str(silent_mp4), voice_wav_path, str(sync_mp4))
                     if sync_result.get("ok"):
