@@ -81,6 +81,14 @@ WS-V0 est **réellement en place et vérifié dans le code** : `python-services/
 5. **Aucun contrôle structurel** — grep VACE/depth/canny/control **vide** dans `video_generate.py` et `cinema_pipeline.py`. La capacité « lieu fidèle restylé » n'a **aucun code**.
 6. **A14B jamais téléchargeable en l'état** — index seuls + `gguf` absent de `.venv` → le chemin « premium Q8 » annoncé (`video_generate.py:33-35`) **n'a jamais pu s'exécuter**.
 
+### 3.2 bis ✅ Livré et validé le 2026-07-27 (session Claude)
+- **Correctif d'orientation** (`video_generate.py`) : les budgets et plafonds natifs sont transposés en portrait. **Prouvé en rendu réel** — une demande 9:16 sort en **704×1280** (avant : 720×720 carré). Test A : 97 frames, 60 steps, 804 s, validation frame passée.
+- **4 correctifs d'interpréteur** (`bridge_server.py`) : `["python", …]` → `sys.executable`. `/api/python/run` renvoyait *« No such file or directory »* à **chaque** appel ; vérifié réparé en direct.
+- **`video_upscale_chain.py`** : chaîne de finition (deflicker → reconstruction x4 → descente → interpolation → grain → master 10 bits), reprise après interruption, cinq champs de vérité, refus d'étiqueter « 4K » sans reconstruction. Validée : 176×320 → 720×1308, ProRes 10 bits. *(Contournement : `realesrgan`/`basicsr` sont cassés dans ce venv — alias `torchvision.transforms.functional_tensor` posé en mémoire, jamais de patch du venv.)*
+- **`video_longform.py`** : orchestrateur de long métrage, scène par scène, reprise, **estimation calibrée sur mesures réelles**. Ordres de grandeur : 2 min → 8 h ; 10 min → 1 j 18 h ; 30 min → 5 j ; **90 min → 16 jours**. ⚠️ Piège évité : le pipeline **ne génère pas à la résolution cible** (le budget adaptatif plafonne la surface à ~0,51 Mpix) — estimer sur la cible surestime d'un **facteur 4**. **Aucun texte à l'image par défaut.**
+- **`image_to_motion.py`** : animation d'image importée avec **garde faciale**. Mesure le visage, le projette dans la résolution de génération, et agit **avant** de générer (recadrage auto, adoucissement du mouvement, refus explicite). Détection par tuiles 2/3/4/6 car BlazeFace rate un visage sous ~5 % de la largeur. Validé : visage 139 px dans une photo 3840×2160 → retrouvé → recadré → **185 px en génération**. **BlazeFace/mediapipe (Apache) et non InsightFace (NC)** — corrige une des dépendances non-commerciales de §2.5.
+- **SeedVR2 7B sharp fp16 + VAE téléchargés** (16 Go) dans `modele/comfyui/models/SEEDVR2/` — à câbler dans la chaîne (WS-V1).
+
 ### 3.3 🔴 Ruptures de PARITÉ CLI / bridge / Tauri / tunnel (MESURÉES par sonde)
 | | CLI direct | Bridge `/run-async` | Tauri natif | Bridge `/run` |
 |---|---|---|---|---|
@@ -98,6 +106,8 @@ WS-V0 est **réellement en place et vérifié dans le code** : `python-services/
 - 🔴 **Tauri contourne la file GPU** (`commands.rs:1767-1806` spawn direct) → vidéo + 3D simultanées possibles sur la même carte.
 - 🔴 **`/api/tunnel/url` ment** : renvoie `ok:true` sans test de vie sur une URL morte depuis 10 jours.
 - 🔴 **`/api/python/progress` est un flux GLOBAL** → deux jobs se maintiennent mutuellement « vivants », le watchdog anti-gel ne détecte jamais un vrai gel.
+- 🔴 **JOB ZOMBIE — constaté en direct le 2026-07-27.** Un `cinema_pipeline.py` a été tué par l'OOM killer (`stderr.log` **vide**, process disparu, aucun code de sortie) et le bridge a continué d'annoncer `status: "running"` **indéfiniment**. Aucune détection de liveness du process. C'est un échec silencieux de premier ordre : l'UI aurait affiché « en cours » pour toujours. → **Le suivi de job doit vérifier que le PID est vivant**, et passer en `died` avec un diagnostic (dernier stage atteint, RAM au moment de la mort) sinon.
+- 🔴 **AUCUNE GARDE MÉMOIRE (RAM) — cause racine de la mort ci-dessus.** La file GPU sérialise les jobs GPU, et `ensure_space()` garde le disque, mais **rien ne garde la RAM**. Or le rendu cinéma coexiste avec ComfyUI (FLUX2 Q4 = 20 Go), des téléchargements, et toute tâche CPU lourde ; avec 30 Go de RAM et 31 Go de swap, l'OOM killer arbitre. **Reproduit involontairement** : un téléchargement de 16 Go + une inférence RealESRGAN CPU + mediapipe lancés pendant un rendu ont fait monter la mémoire à 20 Go + 14 Go de swap et tué le pipeline. → Étendre le prévol à la **RAM** (refus ou mise en file si la mémoire disponible est insuffisante), et **décharger ComfyUI** (`/free`) avant tout job de rendu, ce que le pipeline fait déjà entre ses étapes mais pas au démarrage.
 - 🔴 **CSP Tauri** : `media-src` **sans `https:`** → une vidéo servie par le tunnel est bloquée dans le shell Tauri ; `assetProtocol.scope` ne couvre pas le tier froid.
 
 ---
@@ -113,7 +123,8 @@ WS-V0 est **réellement en place et vérifié dans le code** : `python-services/
 5. **Profil de licence.** Chaque brique du manifeste porte `perso` | `commercial`. Un job en profil `commercial` **REFUSE** de charger une brique `perso` (erreur honnête, jamais de repli muet). Le profil est inscrit dans le résultat et dans les métadonnées du master.
 6. **Chaîne 10 bits de bout en bout.** Tous les intermédiaires en ≥10 bits ; dither léger avant l'encodage 8 bits de livraison. C'est ce qui règle le banding du ciel — **plus visible à l'écran que le passage de 1080p à 4K**.
 7. **Parité stricte.** CLI, bridge, Tauri et tunnel produisent **le même résultat pour le même spec**. Toute logique de génération vit en **Python**, jamais en TypeScript.
-8. **Sérialisation GPU** (file unique, tous chemins) et **réservation d'espace calculée** avant tout job.
+8. **Sérialisation GPU** (file unique, tous chemins), **réservation d'espace disque calculée**, et **garde RAM** avant tout job — les trois, pas seulement la première (§3.3 : un job a été tué par l'OOM killer faute de garde mémoire).
+10. **Liveness des jobs.** Un job dont le process est mort ne reste JAMAIS `running` : le suivi vérifie le PID et bascule en `died` avec diagnostic. Un statut qui ment est pire qu'une erreur.
 9. **QA mesurée, jamais synthétique.** Aucun score en dur ; le grade porte sur le **pire** passage QA ; la couverture QA est exposée.
 
 ---
