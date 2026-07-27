@@ -1826,6 +1826,76 @@ def validate_rendered_shot(
 # v82l6 : Character keyframe pre-generation via FLUX (anchor for i2v)
 # --------------------------------------------------------------------------
 
+def validate_object_completeness(
+    image_path: str,
+    description: str,
+    ollama_url: str = "http://127.0.0.1:11434",
+    model: str = VISION_MODEL,
+) -> dict:
+    """Verifie qu'une reference d'OBJET est anatomiquement COMPLETE.
+
+    Le score de ressemblance ne suffit pas pour un objet mecanique : une
+    reference peut "ressembler beaucoup" a un velo et n'avoir NI PEDALES NI
+    CHAINE. C'est arrive : le velo canonique du film Natsu etait note bon par
+    la porte de ressemblance alors qu'il lui manquait les pedales, et l'objet
+    incomplet s'est propage a tous les plans qu'il ancrait.
+
+    On pose donc au juge une question differente et plus dure : non pas
+    "est-ce que ca ressemble ?" mais "QU'EST-CE QUI MANQUE ?". Demander une
+    LISTE de pieces manquantes force un examen piece par piece, la ou une note
+    globale invite a l'indulgence.
+
+    Retourne { ok, missing[], malformed[], reason, graded }. Une panne vision
+    ne fabrique jamais un succes : ok=False et graded=False.
+    """
+    try:
+        import base64
+        with open(image_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        prompt = (
+            "You are a strict technical illustrator reviewing a reference image "
+            "of a single object.\n"
+            f"The object is supposed to be: {description}\n\n"
+            "Examine it part by part. Real objects have ALL their functional "
+            "parts: a bicycle has pedals, a crank, a chain, two complete wheels "
+            "with hubs and spokes, a saddle, handlebars, brakes; a car has four "
+            "wheels, mirrors, door handles; and so on.\n\n"
+            "List EVERY essential part that is MISSING from the image, and every "
+            "part that is present but MALFORMED (bent, fused, floating, "
+            "duplicated, anatomically impossible).\n"
+            "Also report whether any PERSON or human body part appears: a "
+            "reference of an object must contain the object ALONE.\n\n"
+            "Reply ONLY with JSON: {\"missing\": [\"...\"], \"malformed\": "
+            "[\"...\"], \"person_present\": true|false}"
+        )
+        payload = _ollama_vision_json(prompt, [b64], ollama_url, model,
+                                      timeout=120, num_ctx=4096)
+        if payload is None:
+            return {"ok": False, "missing": [], "malformed": [],
+                    "reason": "vision JSON parse failed", "graded": False}
+        missing = [str(x)[:60] for x in (payload.get("missing") or [])][:8]
+        malformed = [str(x)[:60] for x in (payload.get("malformed") or [])][:8]
+        person = bool(payload.get("person_present"))
+        problems = []
+        if missing:
+            problems.append("pieces manquantes: " + ", ".join(missing))
+        if malformed:
+            problems.append("pieces deformees: " + ", ".join(malformed))
+        if person:
+            problems.append("une personne apparait alors que l'objet doit etre seul")
+        return {
+            "ok": not problems,
+            "missing": missing,
+            "malformed": malformed,
+            "person_present": person,
+            "reason": " | ".join(problems) or "objet complet",
+            "graded": True,
+        }
+    except Exception as e:
+        return {"ok": False, "missing": [], "malformed": [],
+                "reason": f"vision skip: {str(e)[:80]}", "graded": False}
+
+
 def validate_keyframe_with_vision(
     image_path: str,
     description: str,
@@ -2046,9 +2116,28 @@ def pregenerate_character_keyframes(
                 # On reject (score < 7), fallback au seed suivant. Last attempt
                 # accepted regardless to ensure we have something.
                 check = validate_keyframe_with_vision(str(keyframe_path), desc)
+
+                # v91 : pour un OBJET, la ressemblance ne suffit pas. Une image
+                # peut "ressembler beaucoup" a un velo et n'avoir ni pedales ni
+                # chaine — c'est arrive, et l'objet incomplet s'est propage a
+                # tous les plans qu'il ancrait. On pose donc la question dure :
+                # qu'est-ce qui MANQUE ?
+                completeness = None
+                if entity_is_object:
+                    completeness = validate_object_completeness(
+                        str(keyframe_path), desc)
+                    if completeness.get("graded") and not completeness["ok"]:
+                        check = dict(check)
+                        check["ok"] = False
+                        check["reason"] = completeness["reason"]
+
                 if check["ok"] or attempt == 3:
                     produced = str(keyframe_path)
-                    emit("char_ok", f"{name} -> {keyframe_path.name} (seed {seed}, score {check['score']})")
+                    detail = f"{name} -> {keyframe_path.name} (seed {seed}, score {check['score']})"
+                    if completeness is not None and completeness.get("graded") \
+                            and not completeness["ok"]:
+                        detail += f" [INCOMPLET: {completeness['reason'][:90]}]"
+                    emit("char_ok", detail)
                     break
                 else:
                     last_reject_reason = str(check.get("reason") or "")

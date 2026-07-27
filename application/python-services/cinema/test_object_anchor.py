@@ -147,5 +147,62 @@ class ObjectKeyframePromptTest(unittest.TestCase):
         self.assertIn("concept art", p)
 
 
+
+class ObjectCompletenessTest(unittest.TestCase):
+    """Une reference d'objet doit etre COMPLETE, pas seulement ressemblante.
+
+    Cas reel a l'origine : le velo canonique du film Natsu passait la porte de
+    ressemblance alors qu'il lui manquait les PEDALES et qu'un garcon
+    generique figurait derriere lui. L'objet incomplet s'est ensuite propage a
+    tous les plans qu'il ancrait, et le garcon a remplace le personnage.
+    Verifie en direct sur l'artefact fautif : le juge renvoie
+    missing=['pedals','brake calipers'], person_present=True.
+    """
+
+    def _with_payload(self, payload):
+        original = CP._ollama_vision_json
+        CP._ollama_vision_json = lambda *a, **k: payload
+        try:
+            import tempfile, os
+            fd, p = tempfile.mkstemp(suffix=".png")
+            os.write(fd, b"\0" * 64)
+            os.close(fd)
+            try:
+                return CP.validate_object_completeness(p, "un velo de course")
+            finally:
+                os.unlink(p)
+        finally:
+            CP._ollama_vision_json = original
+
+    def test_objet_complet_passe(self):
+        r = self._with_payload({"missing": [], "malformed": [],
+                                "person_present": False})
+        self.assertTrue(r["ok"])
+        self.assertTrue(r["graded"])
+
+    def test_piece_manquante_refuse(self):
+        r = self._with_payload({"missing": ["pedals"], "malformed": [],
+                                "person_present": False})
+        self.assertFalse(r["ok"])
+        self.assertIn("pedals", r["reason"])
+
+    def test_piece_deformee_refuse(self):
+        r = self._with_payload({"missing": [], "malformed": ["front wheel"],
+                                "person_present": False})
+        self.assertFalse(r["ok"])
+        self.assertIn("deformees", r["reason"])
+
+    def test_personne_presente_refuse(self):
+        """Une reference d'objet doit contenir l'objet SEUL."""
+        r = self._with_payload({"missing": [], "malformed": [],
+                                "person_present": True})
+        self.assertFalse(r["ok"])
+        self.assertIn("personne", r["reason"])
+
+    def test_panne_vision_ne_fabrique_jamais_un_succes(self):
+        r = self._with_payload(None)
+        self.assertFalse(r["ok"])
+        self.assertFalse(r["graded"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
