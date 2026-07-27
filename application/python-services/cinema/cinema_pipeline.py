@@ -1965,7 +1965,10 @@ def pregenerate_character_keyframes(
         # Composite prompt : character description + style. Humanoids get a
         # portrait; drones/objects get a centered product-like concept view so
         # their silhouette is not accidentally turned into a face.
-        prompt = build_character_keyframe_prompt(desc, style_suffix)
+        # v91 : `anchor_as_object` prime sur l'heuristique par mots-cles pour
+        # decider portrait vs objet isole (cf. build_character_keyframe_prompt).
+        entity_is_object = bool(meta.get("anchor_as_object"))
+        prompt = build_character_keyframe_prompt(desc, style_suffix, entity_is_object)
         keyframe_path = work_dir / f"char_{idx}_{name.lower().replace(' ', '_')}.png"
         provided_keyframe = (
             meta.get("keyframe_path")
@@ -1999,7 +2002,8 @@ def pregenerate_character_keyframes(
                 enriched = _rewrite_desc_visually(desc, last_reject_reason)
                 if enriched != desc:
                     current_desc = enriched
-                    prompt = build_character_keyframe_prompt(current_desc, style_suffix)
+                    prompt = build_character_keyframe_prompt(
+                        current_desc, style_suffix, entity_is_object)
                     emit("char_enrich", f"{name}: {enriched[:100]}")
             emit("char_keyframe", f"FLUX {name} attempt {attempt}/3 (seed={seed})")
             attempt_run_id = f"{run_id}_a{attempt}"
@@ -2139,11 +2143,26 @@ def generate_scene_backdrop(
         return str(candidates[0])
 
 
-def build_character_keyframe_prompt(description: str, style_suffix: str) -> str:
+def build_character_keyframe_prompt(description: str, style_suffix: str,
+                                    is_object: bool = False) -> str:
+    """Prompt de la reference canonique d'une entite.
+
+    `is_object` vient du champ explicite `anchor_as_object` du storyboard et
+    prime sur l'heuristique par mots-cles. Mesure a l'origine de ce parametre :
+    la description "a bright red carbon road racing bicycle with drop
+    handlebars..." ne contient AUCUN des mots-cles de is_object_like_character
+    ("drone, robot, vehicle, machine, device, object, mechanical, triangular,
+    metallic, brass"). Elle recevait donc le prompt PORTRAIT, et FLUX a place
+    un garcon generique derriere le velo. Cette reference devenant l'ancre i2v,
+    le garcon a remplace Natsu dans deux plans sur cinq.
+    Une reference d'objet ne doit contenir QUE l'objet.
+    """
     desc = (description or "").strip()
-    if is_object_like_character(desc):
+    if is_object or is_object_like_character(desc):
         return (
             f"centered full-body concept art of {desc}, exact silhouette, "
+            f"the object completely alone in frame, no person, no human, "
+            f"nobody holding it, nobody behind it, unoccupied, "
             f"clean background, orthographic product view, no human face, no extra eyes, "
             f"no arms or legs unless explicitly described{style_suffix}"
         )

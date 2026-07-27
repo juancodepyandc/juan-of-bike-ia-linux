@@ -108,5 +108,44 @@ class ObjectAnchorTest(unittest.TestCase):
                          "validate_character": False}), "")
 
 
+class ObjectKeyframePromptTest(unittest.TestCase):
+    """La reference canonique d'un objet ne doit contenir QUE l'objet.
+
+    Mesure a l'origine : la description "a bright red carbon road racing
+    bicycle with drop handlebars..." ne matche AUCUN mot-cle de
+    is_object_like_character. Elle recevait donc le prompt PORTRAIT, FLUX a
+    place un garcon generique derriere le velo, et cette reference servant
+    d'ancre i2v, le garcon a remplace Natsu dans 2 plans sur 5.
+    """
+
+    VELO = ("a bright red carbon road racing bicycle with drop handlebars, "
+            "deep-section black rims and a chrome chainring")
+
+    def test_heuristique_seule_rate_un_velo(self):
+        """Constat qui justifie le champ explicite : le mot-cle ne suffit pas."""
+        self.assertFalse(CP.is_object_like_character(self.VELO))
+
+    def test_anchor_as_object_force_le_prompt_objet(self):
+        p = CP.build_character_keyframe_prompt(self.VELO, "", is_object=True)
+        self.assertNotIn("portrait of", p)
+        self.assertIn("concept art", p)
+
+    def test_prompt_objet_exclut_explicitement_toute_personne(self):
+        p = CP.build_character_keyframe_prompt(self.VELO, "", is_object=True)
+        for interdit in ("no person", "no human", "nobody holding it",
+                         "nobody behind it", "unoccupied"):
+            self.assertIn(interdit, p, interdit)
+
+    def test_personnage_garde_le_prompt_portrait(self):
+        p = CP.build_character_keyframe_prompt(
+            "a young man with spiky pink hair", "", is_object=False)
+        self.assertIn("portrait of", p)
+
+    def test_heuristique_toujours_active_sans_le_champ(self):
+        """Non-regression : un descriptif contenant un mot-cle reste un objet."""
+        p = CP.build_character_keyframe_prompt("a small metallic drone", "")
+        self.assertIn("concept art", p)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
