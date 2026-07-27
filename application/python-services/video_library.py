@@ -103,6 +103,58 @@ def read_json(path):
         return {}
 
 
+def publish_job(job_dir, work_dir, title, final_mp4, kind="film"):
+    """Publie un rendu termine dans la bibliotheque et renvoie son dossier.
+
+    Appelee directement par cinema_pipeline a la fin d'un rendu : c'est ce qui
+    fait qu'un film apparait dans `output/videos/films/` sans intervention.
+    Le job reste intact dans temp/ (on COPIE), pour que la publication ne
+    puisse jamais detruire un resultat coutant des heures de calcul.
+    """
+    if not final_mp4 or not os.path.exists(final_mp4):
+        raise RuntimeError(f"livrable introuvable : {final_mp4}")
+    if os.path.getsize(final_mp4) < 10000:
+        raise RuntimeError(f"livrable trop petit : {final_mp4}")
+
+    date = time.strftime("%Y-%m-%d")
+    base = f"{date}_{slugify(title or os.path.basename(job_dir))}"
+    if kind == "sample":
+        base += "_essai"
+    dest = os.path.join(FILMS, base)
+    if os.path.exists(dest):
+        dest = os.path.join(FILMS, base + "_" + time.strftime("%Hh%M"))
+    for sub in ("plans", "references", "audio"):
+        os.makedirs(os.path.join(dest, sub), exist_ok=True)
+
+    shutil.copy2(final_mp4, os.path.join(dest, "film.mp4"))
+    for f in ("storyboard.json", "status.json"):
+        p = os.path.join(job_dir, f)
+        if os.path.exists(p):
+            shutil.copy2(p, os.path.join(dest, f))
+
+    if work_dir and os.path.isdir(work_dir):
+        for f in os.listdir(work_dir):
+            p = os.path.join(work_dir, f)
+            if not os.path.isfile(p):
+                continue
+            if f.startswith("char_") and f.endswith(".png"):
+                shutil.copy2(p, os.path.join(dest, "references", f))
+            elif f.endswith((".wav", ".mp3")):
+                shutil.copy2(p, os.path.join(dest, "audio", f))
+            elif f.startswith("shot_") and f.endswith(".mp4"):
+                shutil.copy2(p, os.path.join(dest, "plans", f))
+
+    film = os.path.join(dest, "film.mp4")
+    with open(os.path.join(dest, "rapport.json"), "w") as f:
+        json.dump({
+            "titre": title, "date": date, "type": kind,
+            "video": probe(film), "sha256": sha256(film),
+            "source_job": job_dir, "source_work": work_dir,
+            "publie_le": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }, f, ensure_ascii=False, indent=2)
+    return dest
+
+
 def discover():
     """Inventorie les dossiers de rendu et les classe."""
     entries = []

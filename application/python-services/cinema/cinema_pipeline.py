@@ -3945,9 +3945,36 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         postprocess_chain=postprocess_chain,
     )
     actual = int(time.time() - started)
+
+    # v91 — PUBLICATION AUTOMATIQUE DANS LA BIBLIOTHEQUE.
+    # Le pipeline ecrivait uniquement dans temp/cinema/job_<id>/, c'est-a-dire
+    # dans un repertoire TEMPORAIRE : rien n'apparaissait dans output/videos,
+    # le resultat n'etait ni citable ni retrouvable, et il fallait lancer un
+    # rangement a la main. Desormais chaque film est publie des sa fin, sous un
+    # nom lisible, avec ses plans, ses references, son audio et son rapport.
+    # Best-effort strict : une erreur de publication ne doit JAMAIS invalider un
+    # film qui a demande des heures de calcul — elle est remontee en warning.
+    published = None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from video_library import publish_job  # noqa: E402
+
+        published = publish_job(
+            job_dir=str(Path(output_mp4).parent),
+            work_dir=str(work_dir),
+            title=storyboard.get("title") or "",
+            final_mp4=output_mp4,
+        )
+        if published:
+            emit("publie", published)
+    except Exception as exc:  # pragma: no cover - defensif
+        warnings.append(f"publication bibliotheque impossible: {exc}")
+        emit("publie_warn", str(exc)[:160])
+
     return {
         "ok": integrity["ok"],
         "video": output_mp4,
+        "library_path": published,
         "shots": len(shots),
         "actual_time_s": actual,
         "estimated_time_s": estimated,
