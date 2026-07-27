@@ -2470,6 +2470,37 @@ def musetalk_available() -> bool:
     return ok
 
 
+_LIPSYNC_AVAILABLE = None
+
+
+def lipsync_available() -> bool:
+    """Vrai si AU MOINS un moteur de lipsync peut reellement animer une bouche.
+
+    Sert a decider si l'on peut se permettre un plan fige (que le lipsync
+    animera) ou s'il faut generer un plan anime. Repond une seule fois par
+    process : la verification lance des sous-process.
+    """
+    global _LIPSYNC_AVAILABLE
+    if _LIPSYNC_AVAILABLE is not None:
+        return _LIPSYNC_AVAILABLE
+    if musetalk_available():
+        _LIPSYNC_AVAILABLE = True
+        return True
+    # SadTalker : repli historique, anime la premiere frame.
+    try:
+        th = Path(__file__).resolve().parent.parent / "talking_head.py"
+        if th.exists():
+            rc, stdout, _ = _run([sys.executable, str(th), "--mode", "check"],
+                                 timeout=60)
+            last = (stdout or "").strip().split("\n")[-1]
+            _LIPSYNC_AVAILABLE = bool(json.loads(last).get("ready"))
+            return _LIPSYNC_AVAILABLE
+    except Exception:
+        pass
+    _LIPSYNC_AVAILABLE = False
+    return False
+
+
 def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str) -> dict:
     """v90 : lipsync qui PRÉSERVE le mouvement du plan.
 
@@ -3184,13 +3215,34 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             except Exception:
                 return False
 
+        # v91 — LE PLAN FIGE N'A DE SENS QUE SI UN LIPSYNC PEUT L'ANIMER.
+        # Ce chemin fabrique un composite (portrait + fond) puis une video
+        # STRICTEMENT FIXE, en pariant sur le lipsync pour animer la bouche.
+        # Quand aucun moteur de lipsync n'est installe, le pari est perdu et le
+        # plan reste une photographie avec une bande son.
+        # Mesure sur un film reel : mouvement inter-frames de 0.00 sur les deux
+        # plans dialogues, contre 3.12 et 12.05 sur les plans generes. Le
+        # spectateur voit des images collees qui ne parlent pas.
+        # Desormais : sans moteur de lipsync, on repasse par la generation i2v
+        # normale — les levres ne seront pas synchronisees, mais le personnage
+        # bouge, respire et le plan vit. Un plan anime imparfait vaut mieux
+        # qu'une photographie muette.
+        lipsync_engine_ready = lipsync_available()
         dialogue_closeup_source = bool(
             dialogue
             and needs_lipsync
             and "close" in camera
             and anchor
             and Path(str(anchor)).exists()
+            and lipsync_engine_ready
         )
+        if (dialogue and needs_lipsync and "close" in camera
+                and anchor and not lipsync_engine_ready):
+            emit(
+                "lipsync_absent",
+                f"plan {idx}: aucun moteur de lipsync installe -> generation "
+                f"animee au lieu d'une image fixe (levres non synchronisees)",
+            )
         if dialogue_closeup_source:
             max_quality_attempts = 1
         strict_quality_gate = storyboard.get("strict_quality_gate")

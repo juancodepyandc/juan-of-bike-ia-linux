@@ -140,6 +140,68 @@ def extract_frames(src, frames_dir, deflicker):
 
 
 # -------------------------------------------------------------------- etage 3
+SEEDVR2_CLI = os.path.join(
+    os.path.dirname(WORKSPACE), "modele", "comfyui", "custom_nodes",
+    "ComfyUI-SeedVR2_VideoUpscaler", "inference_cli.py")
+SEEDVR2_MODELS = os.path.join(
+    os.path.dirname(WORKSPACE), "modele", "comfyui", "models", "SEEDVR2")
+SEEDVR2_DIT = "seedvr2_ema_7b_sharp_fp16.safetensors"
+
+
+def seedvr2_available():
+    return (os.path.exists(SEEDVR2_CLI)
+            and os.path.exists(os.path.join(SEEDVR2_MODELS, SEEDVR2_DIT)))
+
+
+def upscale_seedvr2(src, dst, target_short, batch_size, blocks_to_swap, seed):
+    """Reconstruction video par SeedVR2 v2.5 (DiT one-step, Apache 2.0).
+
+    Superieur a RealESRGAN sur le point qui compte ici : SeedVR2 est
+    TEMPORELLEMENT CONSCIENT. Un upscaler par-frame comme RealESRGAN
+    re-synthetise chaque image independamment, ce qui fait scintiller les
+    micro-details en mouvement ; SeedVR2 traite un lot de frames ensemble.
+
+    Reglages imposes :
+      - batch_size en 4n+1 (1, 5, 9 ... 33). Hors de cette formule le modele
+        perd sa coherence temporelle. Un batch >= 25 est necessaire pour
+        eviter le scintillement.
+      - uniform_batch_size : sans lui, le dernier lot (plus court) recoit un
+        contexte different et sort avec une luminosite legerement autre, ce
+        qui se voit comme un "pompage" aux jointures.
+      - offload DiT et VAE vers la RAM + blocks_to_swap : le 7B fp16 pese
+        16,5 Go, il ne tient pas seul dans 16 Go de VRAM.
+      - color_correction lab : recolle les derives de teinte entre lots.
+    """
+    if batch_size % 4 != 1:
+        batch_size = max(1, (batch_size // 4) * 4 + 1)
+    cmd = [
+        sys.executable, SEEDVR2_CLI, src,
+        "--output", dst,
+        "--output_format", "mp4",
+        "--model_dir", SEEDVR2_MODELS,
+        "--dit_model", SEEDVR2_DIT,
+        "--resolution", str(target_short),
+        "--batch_size", str(batch_size),
+        "--uniform_batch_size",
+        "--temporal_overlap", "4",
+        "--color_correction", "lab",
+        "--seed", str(seed),
+        "--dit_offload_device", "cpu",
+        "--vae_offload_device", "cpu",
+        "--tensor_offload_device", "cpu",
+        "--blocks_to_swap", str(blocks_to_swap),
+        "--10bit",
+    ]
+    emit("seedvr2", f"7B sharp fp16, cible {target_short}p, batch {batch_size}, "
+                    f"block-swap {blocks_to_swap}")
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=86400,
+                          cwd=os.path.dirname(SEEDVR2_CLI))
+    if proc.returncode != 0 or not os.path.exists(dst):
+        raise RuntimeError(
+            "SeedVR2 a echoue : " + (proc.stderr or proc.stdout or "")[-1500:])
+    return dst
+
+
 def _shim_torchvision():
     """Alias en memoire pour `torchvision.transforms.functional_tensor`.
 
@@ -314,6 +376,15 @@ def main():
     ap.add_argument("--no-deflicker", action="store_true")
     ap.add_argument("--no-upscale", action="store_true",
                     help="montage/master seulement, sans reconstruction")
+    ap.add_argument("--upscaler", default="auto",
+                    choices=["auto", "seedvr2", "realesrgan"],
+                    help="auto = SeedVR2 si installe (temporellement coherent), "
+                         "sinon RealESRGAN (par frame, peut scintiller)")
+    ap.add_argument("--batch-size", type=int, default=33,
+                    help="SeedVR2 : taille de lot, doit etre 4n+1")
+    ap.add_argument("--blocks-to-swap", type=int, default=36,
+                    help="SeedVR2 : blocs deportes en RAM (16 Go de VRAM)")
+    ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--workdir", default="")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--keep-frames", action="store_true")
@@ -356,6 +427,75 @@ def main():
                    "resolution": f"{info['width']}x{info['height']}",
                    "frames": len(names),
                    "deflicker": not args.no_deflicker})
+
+    # --- Chemin SeedVR2 : il traite la VIDEO entiere, pas des frames isolees,
+    # donc il court-circuite les etages 3-4 par-frame ci-dessous.
+    chosen = args.upscaler
+    if chosen == "auto":
+        chosen = "seedvr2" if seedvr2_available() else "realesrgan"
+    if not args.no_upscale and chosen == "seedvr2":
+        if not seedvr2_available():
+            print(json.dumps({"ok": False,
+                              "error": f"SeedVR2 absent ({SEEDVR2_CLI})"}))
+            return 1
+        tmp_out = os.path.join(workdir, "seedvr2_out.mp4")
+        os.makedirs(workdir, exist_ok=True)
+        upscale_seedvr2(src, tmp_out, target_short, args.batch_size,
+                        args.blocks_to_swap, args.seed)
+        up_info = probe(tmp_out)
+        stages.append({"stage": "reconstruction",
+                       "model": "SeedVR2 v2.5 7B sharp fp16",
+                       "resolution": f"{up_info.get('width')}x{up_info.get('height')}"})
+        reconstructed = True
+        models_run.append("SeedVR2 v2.5 7B sharp fp16 (DiT temporellement coherent)")
+        out_fps = args.fps or info["fps"]
+        emit("assemble", f"master {args.codec} depuis la sortie SeedVR2")
+        # SeedVR2 a deja produit une video : on la remuxe au format master.
+        audio = src if has_audio(src) else None
+        vf = []
+        if args.grain and args.grain > 0:
+            vf.append(f"noise=alls={max(1, int(args.grain * 12))}:allf=t")
+        cmd = [ffmpeg_bin(), "-v", "error", "-y", "-i", tmp_out]
+        if audio:
+            cmd += ["-i", audio]
+        if vf:
+            cmd += ["-vf", ",".join(vf)]
+        if args.codec == "prores":
+            cmd += ["-c:v", "prores_ks", "-profile:v", "3", "-qscale:v", "9",
+                    "-pix_fmt", "yuv422p10le"]
+            depth = "10 bits (ProRes 422 HQ, yuv422p10le)"
+        else:
+            cmd += ["-c:v", "libx265", "-crf", "14", "-preset", "slow",
+                    "-pix_fmt", "yuv420p10le", "-x265-params", "aq-mode=3"]
+            depth = "10 bits (x265 CRF 14, yuv420p10le)"
+        cmd += ["-color_primaries", "bt709", "-color_trc", "bt709",
+                "-colorspace", "bt709"]
+        if audio:
+            cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
+        cmd += [os.path.abspath(args.output)]
+        run(cmd, timeout=7200)
+        final = probe(os.path.abspath(args.output))
+        stages.append({"stage": "master",
+                       "resolution": f"{final['width']}x{final['height']}",
+                       "fps": final["fps"], "depth": depth,
+                       "grain": args.grain, "audio": bool(audio)})
+        if not args.keep_frames:
+            shutil.rmtree(workdir, ignore_errors=True)
+        result = {
+            "ok": True, "path": os.path.abspath(args.output),
+            "source_resolution": f"{info['width']}x{info['height']}",
+            "stage_resolutions": [s.get("resolution") for s in stages
+                                  if s.get("resolution")],
+            "master_resolution": f"{final['width']}x{final['height']}",
+            "bit_depth": depth, "reconstruction_models": models_run,
+            "reconstructed": True, "resolution_label": args.target,
+            "fps": final["fps"], "duration_s": final["duration_s"],
+            "size_bytes": os.path.getsize(os.path.abspath(args.output)),
+            "elapsed_s": round(time.time() - t_start, 1), "stages": stages,
+        }
+        emit("done", f"{result['master_resolution']} en {result['elapsed_s']}s")
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
 
     # 3-4
     if args.no_upscale:
