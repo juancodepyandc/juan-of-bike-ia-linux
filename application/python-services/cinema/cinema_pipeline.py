@@ -200,6 +200,8 @@ STYLE_NEGATIVE = {
 
 
 def style_for(style_id: str) -> str:
+    if style_id == "raw":
+        return ""
     return STYLE_SUFFIX.get(style_id, STYLE_SUFFIX["realistic"])
 
 
@@ -233,7 +235,7 @@ def combine_negative_prompt(*parts: str) -> str:
     return ", ".join(out)
 
 
-def _score(value, default: int = 7) -> int:
+def _score(value, default: int = 0) -> int:
     try:
         if value is None:
             return default
@@ -249,6 +251,18 @@ def shot_quality_average(q: dict) -> float:
         + _score(q.get("identity_score"))
         + _score(q.get("action_score"))
     ) / 4.0
+
+
+def shot_quality_is_measured(q: dict) -> bool:
+    """True only when every score used by the quality gate is real."""
+    if not isinstance(q, dict):
+        return False
+    if q.get("graded") is False:
+        return False
+    return all(
+        isinstance(q.get(key), (int, float)) and not isinstance(q.get(key), bool)
+        for key in ("score", "physics_score", "identity_score", "action_score")
+    )
 
 
 def has_blocking_visual_issue(q: dict) -> bool:
@@ -358,12 +372,12 @@ def has_only_validation_parse_issue(q: dict) -> bool:
 
 
 def shot_quality_ok(q: dict, quality_mode: str = "auto") -> bool:
+    if not shot_quality_is_measured(q):
+        return False
     min_scene = 7 if quality_mode == "premium" else 6
     min_other = 7 if quality_mode == "premium" else 6
     if quality_mode in ("premium", "balanced") and has_blocking_visual_issue(q):
         return False
-    if quality_mode in ("premium", "balanced") and has_only_validation_parse_issue(q):
-        return _score(q.get("score"), default=5) >= 5
     if (
         quality_mode in ("premium", "balanced")
         and _score(q.get("physics_score")) >= min_other
@@ -392,17 +406,32 @@ def shot_quality_ok(q: dict, quality_mode: str = "auto") -> bool:
 
 
 def dedupe_shot_quality(items: list) -> list:
-    best_by_id = {}
+    """Conserve le pire passage mesure pour ne pas masquer une degradation.
+
+    Un plan est evalue avant puis apres voix/lipsync. Garder le meilleur des
+    deux autorisait une bouche degradee a heriter de la bonne note pre-audio.
+    Une panne de parseur n'est toutefois pas une mesure à 0/10 : lorsqu'une
+    autre passe sur le même média produit les quatre notes, elle fournit la
+    couverture réelle à conserver.
+    """
+    worst_by_id = {}
     order = []
     for item in items or []:
         shot_id = item.get("shot_id")
-        if shot_id not in best_by_id:
+        if shot_id not in worst_by_id:
             order.append(shot_id)
-            best_by_id[shot_id] = item
+            worst_by_id[shot_id] = item
             continue
-        if shot_quality_average(item) > shot_quality_average(best_by_id[shot_id]):
-            best_by_id[shot_id] = item
-    return [best_by_id[shot_id] for shot_id in order if shot_id in best_by_id]
+        previous = worst_by_id[shot_id]
+        item_measured = shot_quality_is_measured(item)
+        previous_measured = shot_quality_is_measured(previous)
+        if item_measured and not previous_measured:
+            worst_by_id[shot_id] = item
+        elif item_measured == previous_measured and (
+            shot_quality_average(item) < shot_quality_average(previous)
+        ):
+            worst_by_id[shot_id] = item
+    return [worst_by_id[shot_id] for shot_id in order if shot_id in worst_by_id]
 
 
 def clean_retry_note(text: str) -> str:
@@ -493,7 +522,13 @@ def check_temporal_coherence(video_path: str) -> dict:
     """
     p = Path(video_path)
     if not p.exists():
-        return {"ok": True, "cuts_count": 0, "cuts": [], "error": "no file"}
+        return {
+            "ok": None,
+            "graded": False,
+            "cuts_count": 0,
+            "cuts": [],
+            "error": "fichier video absent; coherence temporelle non mesuree",
+        }
     try:
         # showinfo prints frame data on stderr; select with scene filter
         # only keeps frames where scene change > 0.4. We then count those.
@@ -530,12 +565,19 @@ def check_temporal_coherence(video_path: str) -> dict:
         ok = len(cuts) <= 1
         return {
             "ok": ok,
+            "graded": True,
             "cuts_count": len(cuts),
             "cuts": cuts[:5],
             "duration_s": round(duration, 2),
         }
     except Exception as e:
-        return {"ok": True, "cuts_count": 0, "cuts": [], "error": str(e)[:120]}
+        return {
+            "ok": None,
+            "graded": False,
+            "cuts_count": 0,
+            "cuts": [],
+            "error": str(e)[:120],
+        }
 
 
 # v82lq : audio integrity check via ffmpeg silencedetect
@@ -549,14 +591,45 @@ def has_audio_stream(video_path: str) -> bool:
     return rc == 0 and "audio" in stdout.strip()
 
 
+def _dialogue_audio_detected(
+    has_audio: bool,
+    expected_duration_s: float,
+    total_silence_s: float,
+) -> bool:
+    """Return whether a dialogue track contains a meaningful audible region.
+
+    A ratio-only threshold rejects short, perfectly valid utterances padded
+    with natural lead-in/out silence (for example a one-second sentence in a
+    2.5-second shot). Require both an absolute audible span and a small
+    relative span instead, while still rejecting absent or almost fully
+    silent tracks.
+    """
+    duration = max(0.0, float(expected_duration_s or 0.0))
+    silence = min(duration, max(0.0, float(total_silence_s or 0.0)))
+    audible_s = max(0.0, duration - silence)
+    if not has_audio or duration <= 0:
+        return False
+    minimum_audible_s = min(0.35, max(0.12, duration * 0.10))
+    audible_ratio = audible_s / duration
+    return audible_s >= minimum_audible_s and audible_ratio >= 0.05
+
+
 def check_audio_silence(video_path: str, expected_duration_s: float, expected_dialogue: bool = False) -> dict:
     """Run ffmpeg silencedetect on the audio track. Returns:
       { has_audio, total_silence_s, silence_ratio, silences: [{start, end}], ok }
-    ok = True si silence_ratio < 0.5 quand dialogue attendu (sinon True quel que soit).
+    A short utterance may legitimately occupy less than half of the shot.
+    ``ok`` therefore means that a meaningful audible region was measured,
+    while ``density_warning`` preserves a truthful sparse-dialogue warning.
     """
     p = Path(video_path)
     if not p.exists():
-        return {"ok": True, "has_audio": False, "silences": [], "error": "no file"}
+        return {
+            "ok": None,
+            "graded": False,
+            "has_audio": False,
+            "silences": [],
+            "error": "fichier video absent; audio non mesure",
+        }
     try:
         # Extract audio + run silencedetect filter.
         rc, _, stderr = _run([
@@ -579,23 +652,34 @@ def check_audio_silence(video_path: str, expected_duration_s: float, expected_di
             silences.append({"start": round(s, 2), "end": round(e, 2)})
         total_silence = sum(durs) if durs else 0.0
         ratio = (total_silence / expected_duration_s) if expected_duration_s > 0 else 0.0
-        # OK if : no dialogue expected (silence ratio doesn't matter), OR ratio < 0.5
-        ok = (not expected_dialogue) or (ratio < 0.5)
         # Detect "no audio" case : if the stream has no audio track at all,
         # silencedetect does nothing. We use ffprobe quick check.
         has_audio = has_audio_stream(video_path)
-        if not has_audio and expected_dialogue:
-            ok = False
+        audible_s = max(0.0, float(expected_duration_s) - total_silence)
+        ok = (
+            not expected_dialogue
+            or _dialogue_audio_detected(has_audio, expected_duration_s, total_silence)
+        )
+        density_warning = bool(expected_dialogue and ratio >= 0.65)
         return {
             "ok": ok,
+            "graded": True,
             "has_audio": has_audio,
             "total_silence_s": round(total_silence, 2),
             "silence_ratio": round(ratio, 3),
+            "audible_s": round(audible_s, 2),
+            "density_warning": density_warning,
             "silences": silences[:5],
             "expected_dialogue": expected_dialogue,
         }
     except Exception as e:
-        return {"ok": True, "has_audio": False, "silences": [], "error": str(e)[:120]}
+        return {
+            "ok": None,
+            "graded": False,
+            "has_audio": False,
+            "silences": [],
+            "error": str(e)[:120],
+        }
 
 
 # v82lp : extract 3 frames (start, middle, end) for physics + identity validation
@@ -713,7 +797,14 @@ def validate_shot_physics(
     """Vision LLM scores physics coherence + identity continuity over 3 frames.
     Returns { physics_score, identity_score, ok, issues[] }."""
     if not triplet.get("start") or not triplet.get("end"):
-        return {"physics_score": None, "identity_score": None, "ok": True, "issues": []}
+        return {
+            "physics_score": None,
+            "identity_score": None,
+            "action_score": None,
+            "ok": False,
+            "graded": False,
+            "issues": ["frames start/end absentes; validation non effectuee"],
+        }
 
     try:
         import base64
@@ -747,9 +838,12 @@ def validate_shot_physics(
         payload = _ollama_vision_json(prompt, images_b64, ollama_url, model, timeout=180, num_ctx=6144)
         if payload is not None:
             try:
-                phys = int(payload.get("physics_score", 7))
-                idn = int(payload.get("identity_score", 7))
-                action = int(payload.get("action_score", 7))
+                required = ("physics_score", "identity_score", "action_score")
+                if any(payload.get(key) is None for key in required):
+                    raise ValueError("vision response missing required scores")
+                phys = int(payload["physics_score"])
+                idn = int(payload["identity_score"])
+                action = int(payload["action_score"])
                 issues = payload.get("issues") or []
                 if not isinstance(issues, list):
                     issues = []
@@ -758,6 +852,7 @@ def validate_shot_physics(
                     "identity_score": idn,
                     "action_score": action,
                     "ok": phys >= 6 and idn >= 6 and action >= 6,
+                    "graded": True,
                     "issues": [str(s)[:200] for s in issues[:3]],
                 }
             except Exception:
@@ -766,13 +861,15 @@ def validate_shot_physics(
             "physics_score": None,
             "identity_score": None,
             "action_score": None,
-            "ok": True,
+            "ok": False,
+            "graded": False,
             "issues": ["vision JSON parse failed; validation skipped"],
         }
     except Exception as e:
         return {
             "physics_score": None, "identity_score": None, "action_score": None,
-            "ok": True, "issues": [f"vision skip: {str(e)[:80]}"],
+            "ok": False, "graded": False,
+            "issues": [f"vision skip: {str(e)[:80]}"],
         }
 
 
@@ -822,6 +919,8 @@ def render_shot_video(
     negative_prompt: str = None,
     seed: int = None,
     camera: str = None,
+    motion_interp: str = "1",
+    force_strategy: str = "auto",
 ) -> dict:
     """Generate a single shot video by delegating to the existing video_generate.py.
 
@@ -860,6 +959,8 @@ def render_shot_video(
             "--width", str(cw),
             "--height", str(ch),
             "--num_frames", str(num_frames),
+            "--motion_interp", str(motion_interp),
+            "--force_strategy", str(force_strategy),
         ]
         if anchor_image and Path(anchor_image).exists():
             cmd.extend(["--image", anchor_image])
@@ -877,8 +978,12 @@ def render_shot_video(
             cmd.extend(["--seed", str(int(seed))])
 
         retry_tag = f" retry#{attempt}" if attempt else ""
-        emit("shot_render", f"Wan2.2 {cw}x{ch} {num_frames}f{' i2v' if anchor_image else ''}{retry_tag}")
-        rc, stdout, stderr = _run(cmd, timeout=2400)
+        emit("shot_render", f"Video {cw}x{ch} {num_frames}f{' i2v' if anchor_image else ' t2v'}{retry_tag}")
+        segment_timeout_s = max(
+            2400,
+            int(os.environ.get("AURORA_VIDEO_SEGMENT_TIMEOUT_S", "7200")),
+        )
+        rc, stdout, stderr = _run(cmd, timeout=segment_timeout_s)
 
         # v82m0 : full stdout+stderr to disk for diagnostic (the frontend reads
         # it from job_dir). Last attempt wins the log.
@@ -892,9 +997,35 @@ def render_shot_video(
         except Exception:
             pass
 
+        worker_result = None
+        for line in reversed((stdout or "").splitlines()):
+            line = line.strip()
+            if not (line.startswith("{") and line.endswith("}")):
+                continue
+            try:
+                candidate = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(candidate, dict):
+                worker_result = candidate
+                break
         if rc == 0 and Path(output_mp4).exists():
-            return {"ok": True, "mp4": output_mp4, "frames": num_frames,
-                    "gen_w": cw, "gen_h": ch, "downsteps": attempt}
+            actual_model = (worker_result or {}).get("model") or "moteur non déclaré"
+            actual_strategy = (worker_result or {}).get("strategy") or "strategie non déclarée"
+            emit("shot_backend", f"{actual_model} via {actual_strategy}")
+            return {
+                "ok": True,
+                "mp4": output_mp4,
+                "frames": num_frames,
+                "gen_w": cw,
+                "gen_h": ch,
+                "downsteps": attempt,
+                "model": (worker_result or {}).get("model"),
+                "strategy": (worker_result or {}).get("strategy"),
+                "render_truth": (worker_result or {}).get("render_truth"),
+                "warnings": (worker_result or {}).get("warnings", []),
+                "validation": (worker_result or {}).get("validation"),
+            }
 
         err_text = (stderr or stdout or "")
         hint = ""
@@ -1041,6 +1172,74 @@ def extract_last_frame(video_path: str, output_png: str) -> bool:
     return rc == 0 and Path(output_png).exists()
 
 
+def _laplacian_variance(image_path: str) -> float:
+    """Mesure de netteté sans dépendance OpenCV (Laplacien discret)."""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        gray = np.asarray(Image.open(image_path).convert("L"), dtype=np.float32)
+        if gray.shape[0] < 3 or gray.shape[1] < 3:
+            return 0.0
+        center = gray[1:-1, 1:-1]
+        laplacian = (
+            -4.0 * center
+            + gray[:-2, 1:-1]
+            + gray[2:, 1:-1]
+            + gray[1:-1, :-2]
+            + gray[1:-1, 2:]
+        )
+        return float(np.var(laplacian))
+    except Exception:
+        return 0.0
+
+
+def extract_sharp_tail_frame(video_path: str, output_png: str, samples: int = 5) -> bool:
+    """Choisit l'ancre la plus nette dans la dernière seconde du segment.
+
+    Une dernière image en plein flou de mouvement propageait ce flou au segment
+    suivant. On échantillonne la queue, classe par variance du Laplacien, puis
+    garde la meilleure. Le chemin historique reste le repli explicite.
+    """
+    source = Path(video_path)
+    target = Path(output_png)
+    if not source.is_file():
+        return False
+    duration = probe_video_duration(str(source))
+    sample_count = max(3, min(9, int(samples)))
+    start = max(0.0, duration - 1.0)
+    sample_dir = target.parent / f".{target.stem}_sharp_samples"
+    try:
+        if sample_dir.exists():
+            shutil.rmtree(sample_dir)
+        sample_dir.mkdir(parents=True, exist_ok=True)
+        pattern = sample_dir / "frame_%02d.png"
+        rc, _, _ = _run([
+            _ffmpeg_bin(), "-y",
+            "-ss", f"{start:.3f}",
+            "-i", str(source),
+            "-vf", f"fps={sample_count}",
+            "-frames:v", str(sample_count),
+            "-loglevel", "error",
+            str(pattern),
+        ], timeout=60)
+        candidates = sorted(sample_dir.glob("frame_*.png")) if rc == 0 else []
+        if candidates:
+            best = max(candidates, key=lambda item: _laplacian_variance(str(item)))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(best, target)
+            return target.is_file()
+    except Exception:
+        pass
+    finally:
+        try:
+            if sample_dir.exists():
+                shutil.rmtree(sample_dir)
+        except Exception:
+            pass
+    return extract_last_frame(str(source), str(target))
+
+
 def extend_video_to_duration(video_path: str, target_s: float, output_mp4: str) -> dict:
     """Prolonge un clip jusqu'à target_s en clonant la dernière frame (tpad).
 
@@ -1125,24 +1324,36 @@ SEGMENT_MAX_COUNT = 5
 
 
 def plan_shot_segments(duration_s: float, fps: int = SEGMENT_FPS) -> list:
-    """Découpe une durée de plan en frames par segment, équilibrés.
+    """Découpe une durée en segments équilibrés compatibles Wan et LTX.
 
-    <= 97 frames -> 1 segment (comportement historique).
-    Au-delà -> ceil(total/97) segments de tailles quasi égales, chacun dans
-    [25, 97] frames, plafonné à 5 segments (~20 s par plan).
+    LTX recommande 8k+1 images et le VAE Wan accepte cette même grille. On
+    choisit donc la combinaison la plus courte qui couvre toute la durée
+    demandée, sans jamais raccourcir silencieusement un plan.
     """
     total = int(round(max(0.5, float(duration_s)) * fps))
     total = max(SEGMENT_MIN_FRAMES, total)
     hard_cap = SEGMENT_MAX_FRAMES * SEGMENT_MAX_COUNT
     total = min(total, hard_cap)
-    if total <= SEGMENT_MAX_FRAMES:
-        return [total]
     import math
-    count = min(SEGMENT_MAX_COUNT, math.ceil(total / SEGMENT_MAX_FRAMES))
-    base = total // count
-    rem = total - base * count
-    segments = [base + (1 if i < rem else 0) for i in range(count)]
-    return [max(SEGMENT_MIN_FRAMES, min(SEGMENT_MAX_FRAMES, s)) for s in segments]
+    import itertools
+
+    allowed = list(range(SEGMENT_MIN_FRAMES, SEGMENT_MAX_FRAMES + 1, 8))
+    count = min(
+        SEGMENT_MAX_COUNT,
+        max(1, math.ceil(total / SEGMENT_MAX_FRAMES)),
+    )
+    candidates = (
+        combo
+        for combo in itertools.combinations_with_replacement(allowed, count)
+        if sum(combo) >= total
+    )
+    best = min(
+        candidates,
+        key=lambda combo: (sum(combo), max(combo) - min(combo)),
+    )
+    # Les plus longs segments d'abord limitent la dérive d'identité avant la
+    # première ancre i2v tout en gardant l'ensemble aussi équilibré que possible.
+    return sorted(best, reverse=True)
 
 
 def concat_segments(segment_files: list, output_mp4: str) -> dict:
@@ -1198,6 +1409,8 @@ def render_long_shot(
     seed: int = None,
     camera: str = None,
     attempt_tag: str = "",
+    motion_interp: str = "1",
+    force_strategy: str = "auto",
 ) -> dict:
     """Rendu d'un plan de durée arbitraire via segments Wan chaînés i2v.
 
@@ -1207,7 +1420,7 @@ def render_long_shot(
     """
     segments = plan_shot_segments(duration_s)
     if len(segments) == 1:
-        return render_shot_video(
+        result = render_shot_video(
             scene_prompt=scene_prompt,
             style_id=style_id,
             duration_s=segments[0] / SEGMENT_FPS,
@@ -1219,10 +1432,29 @@ def render_long_shot(
             negative_prompt=negative_prompt,
             seed=seed,
             camera=camera,
+            motion_interp=motion_interp,
+            force_strategy=force_strategy,
         )
+        if result.get("ok"):
+            delivered = probe_video_duration(str(result.get("mp4") or output_mp4))
+            if delivered + 0.20 < duration_s:
+                return {
+                    **result,
+                    "ok": False,
+                    "error": (
+                        f"plan trop court: {delivered:.2f}s mesurées pour "
+                        f"{duration_s:.2f}s demandées; aucun succès partiel"
+                    ),
+                    "requested_duration_s": duration_s,
+                    "delivered_duration_s": delivered,
+                }
+            result["requested_duration_s"] = duration_s
+            result["delivered_duration_s"] = delivered
+        return result
 
     emit("shot_segments", f"plan long {duration_s:.1f}s -> {len(segments)} segments chaines i2v")
     seg_files = []
+    segment_results = []
     seg_anchor = anchor_image
     for si, frames in enumerate(segments, 1):
         seg_out = work_dir / f"shot_{shot_id:02d}{attempt_tag}_seg{si}.mp4"
@@ -1244,17 +1476,28 @@ def render_long_shot(
             negative_prompt=negative_prompt,
             seed=(seed + si * 17) if seed is not None else None,
             camera=camera,
+            motion_interp=motion_interp,
+            force_strategy=force_strategy,
         )
         if not result.get("ok"):
-            if seg_files:
-                # Partial delivery beats total failure : concat what we have,
-                # the caller sees the real (shorter) duration via ffprobe.
-                emit("shot_segment_warn", f"segment {si}/{len(segments)} failed -> plan livre partiel")
-                break
-            return result
+            emit(
+                "shot_segment_fail",
+                f"segment {si}/{len(segments)} échoué : durée demandée non livrable",
+            )
+            return {
+                **result,
+                "ok": False,
+                "error": (
+                    f"segment {si}/{len(segments)} échoué; aucun succès partiel "
+                    f"n'est présenté comme le plan complet: {result.get('error', '')}"
+                ),
+                "failed_segment": si,
+                "completed_segments": len(seg_files),
+            }
         seg_files.append(str(seg_out))
+        segment_results.append(result)
         last_png = work_dir / f"shot_{shot_id:02d}{attempt_tag}_seg{si}_last.png"
-        if extract_last_frame(str(seg_out), str(last_png)):
+        if extract_sharp_tail_frame(str(seg_out), str(last_png)):
             seg_anchor = str(last_png)
         else:
             seg_anchor = None
@@ -1262,7 +1505,44 @@ def render_long_shot(
     cat = concat_segments(seg_files, output_mp4)
     if not cat.get("ok"):
         return {"ok": False, "error": f"segment concat failed: {cat.get('error')}"}
-    return {"ok": True, "mp4": output_mp4, "segments": len(seg_files)}
+    delivered_duration = probe_video_duration(output_mp4)
+    if delivered_duration + 0.20 < duration_s:
+        return {
+            "ok": False,
+            "error": (
+                f"plan concaténé trop court: {delivered_duration:.2f}s mesurées "
+                f"pour {duration_s:.2f}s demandées; aucun succès partiel"
+            ),
+            "mp4": output_mp4,
+            "requested_duration_s": duration_s,
+            "delivered_duration_s": delivered_duration,
+            "segments": len(seg_files),
+            "segment_results": segment_results,
+        }
+    models = list(dict.fromkeys(
+        str(item.get("model")) for item in segment_results if item.get("model")
+    ))
+    strategies = list(dict.fromkeys(
+        str(item.get("strategy")) for item in segment_results if item.get("strategy")
+    ))
+    warnings = [
+        warning
+        for item in segment_results
+        for warning in (item.get("warnings") or [])
+        if isinstance(warning, dict)
+    ]
+    return {
+        "ok": True,
+        "mp4": output_mp4,
+        "segments": len(seg_files),
+        "segment_results": segment_results,
+        "models": models,
+        "strategies": strategies,
+        "warnings": warnings,
+        "anchor_strategy": "sharpest_laplacian_tail_frame",
+        "requested_duration_s": duration_s,
+        "delivered_duration_s": delivered_duration,
+    }
 
 
 def apply_text_locks(video_path: str, output_mp4: str, work_dir: Path, shot_id: int, text_locks) -> dict:
@@ -1497,7 +1777,12 @@ def validate_rendered_shot(
     attempt: int = 1,
 ) -> dict:
     triplet = extract_keyframes_triplet(str(final_mp4), work_dir, shot_id)
-    scene_score_data = {"score": None, "reason": "frame extraction failed", "ok": True}
+    scene_score_data = {
+        "score": None,
+        "reason": "frame extraction failed",
+        "ok": False,
+        "graded": False,
+    }
     if triplet.get("mid"):
         scene_score_data = validate_keyframe_with_vision(
             triplet["mid"],
@@ -1520,6 +1805,12 @@ def validate_rendered_shot(
         "identity_score": phys_data.get("identity_score"),
         "action_score": phys_data.get("action_score"),
         "issues": phys_data.get("issues", []),
+        "graded": (
+            scene_score_data.get("score") is not None
+            and phys_data.get("physics_score") is not None
+            and phys_data.get("identity_score") is not None
+            and phys_data.get("action_score") is not None
+        ),
         "attempt": attempt,
         "avg_score": round(shot_quality_average({
             "score": scene_score_data.get("score"),
@@ -1545,8 +1836,8 @@ def validate_keyframe_with_vision(
     Ollama with a prompt asking to rate 1-10 how well the image matches
     the character description.
 
-    Returns { ok: bool, score: int, reason: str }. ok=True if score >= 7.
-    Falls back to ok=True if Ollama unreachable (graceful, no false negatives).
+    Returns { ok, score, reason, graded }. Une panne vision ne fabrique jamais
+    une note de passage : le rendu continue mais reste explicitement non note.
     """
     try:
         import base64
@@ -1573,13 +1864,23 @@ def validate_keyframe_with_vision(
                     "ok": score >= 7,
                     "score": score,
                     "reason": reason,
+                    "graded": True,
                 }
             except Exception:
                 pass
-        return {"ok": False, "score": 5, "reason": "vision JSON parse failed"}
+        return {
+            "ok": False,
+            "score": None,
+            "reason": "vision JSON parse failed",
+            "graded": False,
+        }
     except Exception as e:
-        # Ollama down or other — pass through (don't block pipeline).
-        return {"ok": True, "score": 7, "reason": f"vision skip: {str(e)[:80]}"}
+        return {
+            "ok": False,
+            "score": None,
+            "reason": f"vision skip: {str(e)[:80]}",
+            "graded": False,
+        }
 
 
 def _rewrite_desc_visually(
@@ -1863,10 +2164,11 @@ def is_object_like_character(description: str) -> bool:
 def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframes: dict) -> tuple:
     """Pick the best i2v anchor for a shot.
 
-    Dialogue-free close-ups still need identity continuity. Wide or medium
-    shots should remain text-to-video: portrait/product keyframes have clean
-    backgrounds and can pollute an environment composition when used as i2v
-    anchors.
+    Portrait keyframes are reliable for close-ups and medium shots on a
+    simple/compatible backdrop. Wide or environment-heavy shots remain
+    text-to-video because a clean portrait background can otherwise replace
+    the requested location. ``identity_priority`` lets personal reproduction
+    workflows explicitly prefer identity on any non-wide human shot.
     """
     if shot.get("validate_character") is False:
         return "", None
@@ -1879,30 +2181,103 @@ def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframe
         "sprout", "lock", "docking", "dock", "door", "rail", "puddle",
         "water", "glass",
     )
+    # A token mention alone is not a focus signal: "Testeur makes a hand
+    # gesture" is still a character shot. Treat it as object-focused only
+    # when the object precedes the named subject or the framing explicitly
+    # asks for a close/macro/detail view of that object.
+    import re as _re
+    object_positions = []
+    for token in non_character_focus:
+        match = _re.search(rf"\b{_re.escape(token)}\b", early_scene)
+        if match:
+            object_positions.append((match.start(), token))
+    character_positions = []
+    for name in ({speaker} | set((keyframes or {}).keys())):
+        if not name:
+            continue
+        pos = early_scene.find(str(name).lower())
+        if pos >= 0:
+            character_positions.append(pos)
+    first_object_pos = min((pos for pos, _ in object_positions), default=-1)
+    first_character_pos = min(character_positions, default=-1)
+    explicit_object_focus = any(
+        _re.search(
+            rf"\b(?:close[- ]?up|macro|detail(?:ed)? shot)\b[^.]*\b{_re.escape(token)}\b",
+            early_scene,
+        )
+        for _, token in object_positions
+    )
+    non_character_focused = bool(
+        explicit_object_focus
+        or (
+            first_object_pos >= 0
+            and (first_character_pos < 0 or first_object_pos < first_character_pos)
+        )
+    )
+    is_close = "close" in camera
+    is_wide = any(token in camera for token in (
+        "wide", "large", "long shot", "establishing", "aerial", "drone",
+    ))
+    simple_backdrop = any(token in early_scene for token in (
+        "clean background", "plain background", "neutral background",
+        "simple background", "seamless backdrop", "studio backdrop",
+        "film studio", "photo studio", "photography studio",
+    ))
+    identity_priority = bool(shot.get("identity_priority"))
+    portrait_anchor_allowed = (
+        is_close
+        or (
+            not is_wide
+            and not non_character_focused
+            and (identity_priority or simple_backdrop)
+        )
+    )
+
+    # v91 — ANCRAGE D'OBJET EXPLICITE (opt-in, additif, evalue AVANT la porte
+    # portrait). Une entite portant `anchor_as_object: true` est un OBJET dont
+    # l'apparence doit rester identique d'un plan a l'autre (un produit, un
+    # vehicule, une piece unique).
+    # Les regles plus bas ecartent systematiquement les entites "object-like"
+    # de l'ancrage : c'est le bon reflexe pour eviter qu'un portrait-produit
+    # remplace un decor demande, mais c'est exactement l'inverse de ce qu'il
+    # faut quand LE PLAN PORTE SUR CET OBJET. Et la porte `portrait_anchor_
+    # allowed` ne concerne que les visages : elle n'a pas a bloquer un objet.
+    # Mesure a l'origine du correctif : un velo note 10/10 au plan 1 est revenu
+    # meconnaissable au plan 5 (cadre deforme, roue elliptique) faute d'ancre.
+    # Opt-in strict : aucun storyboard existant ne porte ce champ, le
+    # comportement par defaut est donc inchange.
+    if not (shot.get("needs_lipsync") or str(shot.get("dialogue") or "").strip()):
+        object_anchors = []
+        for name, path in (keyframes or {}).items():
+            if not name or not path:
+                continue
+            if not (characters.get(name, {}) or {}).get("anchor_as_object"):
+                continue
+            idx = scene.find(str(name).lower())
+            if idx >= 0:
+                object_anchors.append((idx, name, path))
+        if object_anchors:
+            _, name, path = sorted(object_anchors, key=lambda it: it[0])[0]
+            return name, path
 
     if speaker and keyframes.get(speaker):
         if shot.get("needs_lipsync") or str(shot.get("dialogue") or "").strip():
             desc = (characters.get(speaker, {}) or {}).get("description") or ""
             if is_object_like_character(desc):
                 return "", None
-            # v90.1 : le portrait studio du speaker n'ancre que les CLOSE-UPS.
-            # Testé en E2E : un plan LARGE parlé ancré sur le portrait (fond
-            # studio) ne compose jamais le décor demandé — Wan anime le
-            # portrait au lieu du "wide shot port au crépuscule". Les plans
-            # larges/moyens parlés passent par l'ancre de lieu ou t2v pur.
-            if "close" not in camera:
+            if not portrait_anchor_allowed:
                 return "", None
             return speaker, keyframes.get(speaker)
-        if "close" not in camera:
+        if not portrait_anchor_allowed:
             return "", None
-        if any(token in early_scene for token in non_character_focus):
+        if non_character_focused:
             return "", None
         desc = (characters.get(speaker, {}) or {}).get("description") or ""
         if is_object_like_character(desc):
             return "", None
         return speaker, keyframes.get(speaker)
 
-    if "close" not in camera:
+    if not portrait_anchor_allowed:
         return "", None
 
     mentioned = []
@@ -1918,7 +2293,7 @@ def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframe
         if first_idx < 120 and is_object_like_character(first_desc):
             return "", None
 
-    if any(token in early_scene for token in non_character_focus):
+    if non_character_focused:
         return "", None
 
     matches = []
@@ -2279,6 +2654,56 @@ def integrity_check(mp4_path: str, expected_duration_s: float = 0.0) -> dict:
     }
 
 
+def probe_render_truth(
+    mp4_path: str,
+    native_width: int,
+    native_height: int,
+    native_fps: float = 24.0,
+    native_frames: int | None = None,
+    native_shots: list | None = None,
+    postprocess_chain: list | None = None,
+) -> dict:
+    """Expose native generation facts separately from the delivered container."""
+    delivered_width = 0
+    delivered_height = 0
+    delivered_fps = 0.0
+    delivered_frames = 0
+    ffprobe = "ffprobe.exe" if os.name == "nt" else "ffprobe"
+    try:
+        rc, stdout, _ = _run([
+            ffprobe, "-v", "error", "-select_streams", "v:0",
+            "-count_frames",
+            "-show_entries", "stream=width,height,r_frame_rate,nb_read_frames,nb_frames",
+            "-of", "json", str(mp4_path),
+        ], timeout=60)
+        if rc == 0:
+            stream = (json.loads(stdout).get("streams") or [{}])[0]
+            delivered_width = int(stream.get("width") or 0)
+            delivered_height = int(stream.get("height") or 0)
+            delivered_frames = int(stream.get("nb_read_frames") or stream.get("nb_frames") or 0)
+            rate = str(stream.get("r_frame_rate") or "0/1").split("/", 1)
+            delivered_fps = float(rate[0]) / max(1.0, float(rate[1]))
+    except Exception:
+        pass
+    return {
+        "native_width": int(native_width),
+        "native_height": int(native_height),
+        "native_fps": round(float(native_fps), 3),
+        "native_frames": int(native_frames if native_frames is not None else delivered_frames),
+        "native_shots": list(native_shots or []),
+        "delivered_width": delivered_width,
+        "delivered_height": delivered_height,
+        "delivered_fps": round(delivered_fps, 3),
+        "delivered_frames": delivered_frames,
+        "postprocess_chain": list(postprocess_chain or []),
+        "is_upscaled": bool(
+            delivered_width
+            and delivered_height
+            and (delivered_width != int(native_width) or delivered_height != int(native_height))
+        ),
+    }
+
+
 # v82le : SRT subtitle generation from storyboard dialogues.
 def build_srt_from_storyboard(shots: list, output_srt: str) -> dict:
     """For each shot with dialogue, emit one .srt entry. Subtitles span the
@@ -2605,10 +3030,12 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     "score": check.get("score"),
                     "reason": check.get("reason"),
                     "ok": check.get("ok"),
+                    "graded": check.get("graded", check.get("score") is not None),
                     "keyframe_path": path,
                 }
 
     shot_files = []
+    accepted_render_metadata = []
     shot_quality = []  # v82lk : per-shot vision scores
     audio_quality = []  # v82lq : per-shot audio silence/integrity scores
     dialogue_quality = []  # v86 : per-shot voice + lipsync contract state
@@ -2750,7 +3177,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         manual_accept_floor = shot.get("manual_accept_quality_floor")
 
         def manual_accepts_quality(qa: dict) -> bool:
-            if manual_accept_floor is None:
+            if manual_accept_floor is None or not shot_quality_is_measured(qa):
                 return False
             try:
                 return shot_quality_average(qa) >= float(manual_accept_floor)
@@ -2842,36 +3269,57 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     # v90.5 : QA VISION RÉELLE du composite. L'ancien 8/10
                     # hardcodé a laissé passer 15 s de Sherlock sur fond
                     # studio blanc au lieu du salon au coin du feu.
-                    mid_png = work_dir / f"shot_{shot_id:02d}_still_mid.png"
-                    scene_check = {"score": 8, "reason": "vision unavailable", "ok": True}
-                    if extract_middle_frame(str(silent_mp4_candidate), str(mid_png)):
+                    triplet = extract_keyframes_triplet(
+                        str(silent_mp4_candidate), work_dir, shot_id,
+                    )
+                    scene_check = {
+                        "score": None,
+                        "reason": "frame extraction failed",
+                        "ok": False,
+                        "graded": False,
+                    }
+                    if triplet.get("mid"):
                         scene_check = validate_keyframe_with_vision(
-                            str(mid_png),
+                            triplet["mid"],
                             scene + style_validation_contract(style),
                         )
+                    phys_check = validate_shot_physics(
+                        triplet,
+                        scene,
+                        character_desc=(characters.get(speaker, {}) or {}).get("description", ""),
+                        action_contract=action_contract,
+                    )
                     qa = {
                         "shot_id": shot_id,
                         "scene_excerpt": scene[:120],
                         "score": scene_check.get("score"),
                         "reason": scene_check.get("reason"),
                         "ok": scene_check.get("ok"),
-                        "physics_score": 10,
-                        "identity_score": 10,
-                        "action_score": 8,
-                        "issues": [],
+                        "physics_score": phys_check.get("physics_score"),
+                        "identity_score": phys_check.get("identity_score"),
+                        "action_score": phys_check.get("action_score"),
+                        "issues": phys_check.get("issues", []),
+                        "graded": (
+                            scene_check.get("score") is not None
+                            and phys_check.get("physics_score") is not None
+                            and phys_check.get("identity_score") is not None
+                            and phys_check.get("action_score") is not None
+                        ),
                         "attempt": quality_attempt,
                         "avg_score": round(shot_quality_average({
                             "score": scene_check.get("score"),
-                            "physics_score": 10,
-                            "identity_score": 10,
-                            "action_score": 8,
+                            "physics_score": phys_check.get("physics_score"),
+                            "identity_score": phys_check.get("identity_score"),
+                            "action_score": phys_check.get("action_score"),
                         }), 2),
                     }
-                    candidate_results.append((qa, silent_mp4_candidate))
+                    candidate_results.append((qa, silent_mp4_candidate, result))
                     emit(
                         "shot_score",
                         f"plan {idx} attempt {quality_attempt}: scene={scene_check.get('score')}/10 "
-                        f"phys=10/10 id=10/10 act=8/10 (composite)",
+                        f"phys={qa.get('physics_score')}/10 "
+                        f"id={qa.get('identity_score')}/10 "
+                        f"act={qa.get('action_score')}/10 (composite)",
                     )
                     break
             else:
@@ -2952,12 +3400,13 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 emit("shot_score_warn", f"plan {idx} validation failed: {str(_e)[:80]}")
                 qa = {
                     "shot_id": shot_id, "scene_excerpt": scene[:120],
-                    "score": None, "reason": str(_e)[:120], "ok": True,
+                    "score": None, "reason": str(_e)[:120], "ok": False,
                     "physics_score": None, "identity_score": None, "action_score": None, "issues": [],
-                    "attempt": quality_attempt, "avg_score": 7.0,
+                    "graded": False,
+                    "attempt": quality_attempt, "avg_score": 0.0,
                 }
 
-            candidate_results.append((qa, silent_mp4_candidate))
+            candidate_results.append((qa, silent_mp4_candidate, result))
             emit(
                 "shot_score",
                 f"plan {idx} attempt {quality_attempt}: scene={qa.get('score')}/10 "
@@ -2967,6 +3416,12 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             for issue in (qa.get("issues") or [])[:3]:
                 emit("shot_issue", f"plan {idx}: {issue[:100]}")
 
+            # Re-rendering cannot repair an unavailable/invalid QA response.
+            # Keep the candidate with an explicit ungraded warning instead of
+            # burning another multi-minute GPU attempt for the same frames.
+            if not shot_quality_is_measured(qa):
+                emit("shot_ungraded", f"plan {idx}: validation indisponible, rendu conservé sans note")
+                break
             if shot_quality_ok(qa, quality_mode):
                 break
             if manual_accepts_quality(qa):
@@ -2989,11 +3444,33 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             item for item in candidate_results
             if shot_quality_ok(item[0], quality_mode)
         ]
-        accepted_qa, silent_mp4 = sorted(
+        accepted_qa, silent_mp4, accepted_render = sorted(
             passing_candidates or candidate_results,
             key=lambda item: shot_quality_average(item[0]),
             reverse=True,
         )[0]
+        segment_metadata = list(accepted_render.get("segment_results") or [])
+        if segment_metadata:
+            for segment_index, segment in enumerate(segment_metadata, 1):
+                accepted_render_metadata.append({
+                    "shot_id": shot_id,
+                    "segment": segment_index,
+                    "model": segment.get("model"),
+                    "strategy": segment.get("strategy"),
+                    **(segment.get("render_truth") or {}),
+                })
+        else:
+            accepted_render_metadata.append({
+                "shot_id": shot_id,
+                "segment": 1,
+                "model": accepted_render.get("model") or (
+                    "still_frame" if dialogue_closeup_source else None
+                ),
+                "strategy": accepted_render.get("strategy") or (
+                    "still_dialogue_source" if dialogue_closeup_source else None
+                ),
+                **(accepted_render.get("render_truth") or {}),
+            })
         if not shot_quality_ok(accepted_qa, quality_mode):
             quality_error = (
                 f"plan {idx} failed quality gate avg={shot_quality_average(accepted_qa):.1f}/10 "
@@ -3005,7 +3482,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     "shot_accept_manual",
                     f"plan {idx} accepted best candidate by manual floor avg={shot_quality_average(accepted_qa):.1f}/10",
                 )
-            elif strict_quality_gate:
+            elif strict_quality_gate and shot_quality_is_measured(accepted_qa):
                 emit("shot_fail_quality", quality_error)
                 return {
                     "ok": False,
@@ -3100,20 +3577,23 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         try:
             triplet = extract_keyframes_triplet(str(final_mp4), work_dir, shot_id)
             if dialogue_closeup_source:
-                # v90.5 : score scène RÉEL aussi après lipsync (l'ancien 8/10
-                # hardcodé masquait les composites sans décor).
-                scene_score_data = {"score": 8, "reason": "vision unavailable", "ok": True}
+                scene_score_data = {
+                    "score": None,
+                    "reason": "frame extraction failed",
+                    "ok": False,
+                    "graded": False,
+                }
                 if triplet.get("mid"):
                     scene_score_data = validate_keyframe_with_vision(
                         triplet["mid"],
                         scene + style_validation_contract(style),
                     )
-                phys_data = {
-                    "physics_score": 10,
-                    "identity_score": 10,
-                    "action_score": 8,
-                    "issues": [],
-                }
+                phys_data = validate_shot_physics(
+                    triplet,
+                    scene,
+                    character_desc=(characters.get(speaker, {}) or {}).get("description", ""),
+                    action_contract=action_contract,
+                )
             else:
                 char_desc = ""
                 if shot.get("validate_character", True):
@@ -3123,7 +3603,12 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                         char_desc = (characters[speaker].get("description") or "").strip()
 
                 # Scene match score (existing v82lk via mid frame).
-                scene_score_data = {"score": None, "reason": "frame extraction failed", "ok": True}
+                scene_score_data = {
+                    "score": None,
+                    "reason": "frame extraction failed",
+                    "ok": False,
+                    "graded": False,
+                }
                 if triplet.get("mid"):
                     scene_score_data = validate_keyframe_with_vision(
                         triplet["mid"],
@@ -3149,6 +3634,12 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 "identity_score": phys_data.get("identity_score"),
                 "action_score": phys_data.get("action_score"),
                 "issues": phys_data.get("issues", []),
+                "graded": (
+                    scene_score_data.get("score") is not None
+                    and phys_data.get("physics_score") is not None
+                    and phys_data.get("identity_score") is not None
+                    and phys_data.get("action_score") is not None
+                ),
             }
             shot_quality.append(post_qa)
             emit(
@@ -3162,6 +3653,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 emit("shot_issue", f"plan {idx}: {issue[:100]}")
             if (
                 strict_quality_gate
+                and shot_quality_is_measured(post_qa)
                 and not shot_quality_ok(post_qa, quality_mode)
                 and not dialogue_closeup_source
                 and not manual_accepts_quality(post_qa)
@@ -3189,8 +3681,9 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             emit("shot_score_warn", f"plan {idx} validation failed: {str(_e)[:80]}")
             shot_quality.append({
                 "shot_id": shot_id, "scene_excerpt": scene[:120],
-                "score": None, "reason": str(_e)[:120], "ok": True,
+                "score": None, "reason": str(_e)[:120], "ok": False,
                 "physics_score": None, "identity_score": None, "action_score": None, "issues": [],
+                "graded": False,
             })
 
         # v90 : durée RÉELLE du clip livré. Sert au SRT, au check audio et à
@@ -3315,6 +3808,90 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         emit("integrity_warn", "; ".join(integrity.get("errors", [])))
 
     shot_quality = dedupe_shot_quality(shot_quality)
+    quality_grade = _compute_quality_grade(
+        shot_quality, audio_quality, temporal_quality, integrity, char_quality,
+    )
+    warnings = []
+    for q in shot_quality:
+        if not shot_quality_is_measured(q):
+            warnings.append({
+                "code": "shot_qa_ungraded",
+                "shot_id": q.get("shot_id"),
+                "message": "Validation visuelle incomplète : aucune note de remplacement n'a été inventée.",
+                "impact": "Le rendu est conservé, mais son exportabilité qualité n'est pas certifiée.",
+            })
+    for name, q in (char_quality or {}).items():
+        if not isinstance(q.get("score"), (int, float)) or isinstance(q.get("score"), bool):
+            warnings.append({
+                "code": "character_qa_ungraded",
+                "character": name,
+                "message": f"Le keyframe de {name} n'a pas pu être noté.",
+                "impact": "La fidélité du personnage doit être contrôlée visuellement.",
+            })
+    for item in dialogue_quality:
+        if item.get("voice_ok") is False:
+            warnings.append({
+                "code": "voice_missing",
+                "shot_id": item.get("shot"),
+                "message": "La voix demandée n'a pas été produite pour ce plan.",
+                "impact": "Le plan peut être muet.",
+            })
+        elif item.get("lipsync_required") and item.get("lipsync_ok") is not True:
+            warnings.append({
+                "code": "lipsync_failed",
+                "shot_id": item.get("shot"),
+                "message": "La synchronisation labiale demandée n'a pas été obtenue.",
+                "impact": "L'audio peut être présent sans mouvement de bouche fidèle.",
+            })
+    if music_info is not None and not music_info.get("ok"):
+        warnings.append({
+            "code": "music_failed",
+            "message": "La musique demandée n'a pas pu être ajoutée.",
+            "impact": "La vidéo finale ne contient pas la musique prévue.",
+        })
+    if not integrity.get("ok"):
+        warnings.append({
+            "code": "integrity_failed",
+            "message": "; ".join(integrity.get("errors") or ["Contrôle d'intégrité échoué."]),
+            "impact": "Le fichier peut être incomplet ou avoir une durée incorrecte.",
+        })
+
+    worker_postprocess = []
+    for metadata in accepted_render_metadata:
+        for step in metadata.get("postprocess_chain") or []:
+            if step not in worker_postprocess:
+                worker_postprocess.append(step)
+    postprocess_chain = worker_postprocess + ["shot_concat"]
+    if (gen_w, gen_h) != (target_w, target_h):
+        postprocess_chain.append("lanczos_upscale_unsharp")
+    if music_info and music_info.get("ok"):
+        postprocess_chain.append("music_mix")
+    if subtitle_info:
+        postprocess_chain.append("subtitle_mux")
+    measured_native = [
+        item for item in accepted_render_metadata
+        if item.get("native_width") and item.get("native_height")
+    ]
+    native_width = min(
+        (int(item["native_width"]) for item in measured_native),
+        default=gen_w,
+    )
+    native_height = min(
+        (int(item["native_height"]) for item in measured_native),
+        default=gen_h,
+    )
+    native_frames = sum(
+        int(item.get("native_frames") or 0) for item in measured_native
+    ) or None
+    render_truth = probe_render_truth(
+        output_mp4,
+        native_width=native_width,
+        native_height=native_height,
+        native_fps=SEGMENT_FPS,
+        native_frames=native_frames,
+        native_shots=accepted_render_metadata,
+        postprocess_chain=postprocess_chain,
+    )
     actual = int(time.time() - started)
     return {
         "ok": integrity["ok"],
@@ -3338,9 +3915,9 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         # v82ls : per-shot temporal coherence (scene cuts inside shot)
         "temporal_quality": temporal_quality,
         # v82lt : aggregate quality grade (A/B/C/D)
-        "quality_grade": _compute_quality_grade(
-            shot_quality, audio_quality, temporal_quality, integrity, char_quality,
-        ),
+        "quality_grade": quality_grade,
+        "warnings": warnings,
+        "render_truth": render_truth,
     }
 
 
@@ -3367,63 +3944,126 @@ def _compute_quality_grade(
     C : 55-69% (needs work — at least 1 shot needs redo)
     D : < 55% (unusable — re-render storyboard)
     """
-    def shot_avg(q: dict) -> float:
-        scores = [
-            q.get("score"), q.get("physics_score"), q.get("identity_score"),
-            q.get("action_score"),
-        ]
-        valid = [s for s in scores if s is not None]
-        return (sum(valid) / len(valid)) if valid else 7.0
+    def numeric(value) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
 
-    shot_scores = [shot_avg(q) * 10 for q in shot_quality] if shot_quality else [70.0]
+    def shot_avg(q: dict) -> float:
+        # Missing dimensions count as zero for the grade and are separately
+        # exposed by coverage. They must never be replaced by a passing score.
+        return sum(
+            float(q.get(key)) if numeric(q.get(key)) else 0.0
+            for key in ("score", "physics_score", "identity_score", "action_score")
+        ) / 4.0
+
+    shot_items = list(shot_quality or [])
+    shot_expected = max(1, len(shot_items)) * 4
+    shot_measured = sum(
+        1
+        for q in shot_items
+        for key in ("score", "physics_score", "identity_score", "action_score")
+        if numeric(q.get(key))
+    )
+    shot_scores = [shot_avg(q) * 10 for q in shot_items] if shot_items else [0.0]
     shot_pct = sum(shot_scores) / len(shot_scores)
 
-    char_scores = [c.get("score", 7) * 10 for c in (char_quality or {}).values()]
-    char_pct = (sum(char_scores) / len(char_scores)) if char_scores else 70.0
+    char_items = list((char_quality or {}).values())
+    char_expected = len(char_items)
+    char_values = [float(c["score"]) for c in char_items if numeric(c.get("score"))]
+    char_measured = len(char_values)
+    char_pct = (sum(char_values) / char_expected * 10) if char_expected else None
 
-    audio_pct = 100.0 if not audio_quality else (
-        sum(1 for a in audio_quality if a.get("ok", True)) / len(audio_quality) * 100
+    audio_items = list(audio_quality or [])
+    audio_expected = len(audio_items)
+    audio_measured_items = [a for a in audio_items if isinstance(a.get("ok"), bool)]
+    audio_measured = len(audio_measured_items)
+    audio_pct = (
+        sum(1 for a in audio_measured_items if a["ok"]) / audio_expected * 100
+        if audio_expected else None
     )
-    temporal_pct = 100.0 if not temporal_quality else (
-        sum(1 for t in temporal_quality if t.get("ok", True)) / len(temporal_quality) * 100
+
+    temporal_items = list(temporal_quality or [])
+    # Every rendered shot should receive the inexpensive temporal check.
+    temporal_expected = max(len(shot_items), len(temporal_items))
+    temporal_measured_items = [t for t in temporal_items if isinstance(t.get("ok"), bool)]
+    temporal_measured = len(temporal_measured_items)
+    temporal_pct = (
+        sum(1 for t in temporal_measured_items if t["ok"]) / temporal_expected * 100
+        if temporal_expected else None
     )
     integ_pct = 100.0 if integrity.get("ok") else 50.0
 
-    overall = (
-        0.40 * shot_pct
-        + 0.20 * char_pct
-        + 0.15 * audio_pct
-        + 0.15 * temporal_pct
-        + 0.10 * integ_pct
-    )
+    weighted_metrics = [(0.40, shot_pct), (0.10, integ_pct)]
+    if char_pct is not None:
+        weighted_metrics.append((0.20, char_pct))
+    if audio_pct is not None:
+        weighted_metrics.append((0.15, audio_pct))
+    if temporal_pct is not None:
+        weighted_metrics.append((0.15, temporal_pct))
+    applied_weight = sum(weight for weight, _ in weighted_metrics)
+    overall = sum(weight * value for weight, value in weighted_metrics) / applied_weight
+
+    expected = shot_expected + char_expected + audio_expected + temporal_expected + 1
+    measured = shot_measured + char_measured + audio_measured + temporal_measured + 1
+    coverage_pct = (measured / expected * 100) if expected else 0.0
 
     if overall >= 85: grade = "A"
     elif overall >= 70: grade = "B"
     elif overall >= 55: grade = "C"
     else: grade = "D"
+    # A visually attractive render is not certifiable when much of its QA was
+    # never measured. Preserve its raw score but cap the trust grade.
+    if coverage_pct < 50:
+        grade = "D"
+    elif coverage_pct < 80 or shot_measured < shot_expected:
+        grade = "C" if grade in ("A", "B") else grade
 
-    # Identify weak shots (avg < 6) so UI can highlight them.
+    # A high average must not conceal a failed mandatory dimension. For
+    # example 7/10 scene + 10/10 physics + 10/10 identity + 5/10 action is
+    # not an A export: the requested action is visibly absent.
+    blocking_dimension = False
     weak_shots = []
     for q in shot_quality or []:
         avg = shot_avg(q)
-        if avg < 6:
+        measured_dimensions = {
+            key: float(q.get(key))
+            for key in ("score", "physics_score", "identity_score", "action_score")
+            if numeric(q.get(key))
+        }
+        failed_dimensions = [
+            key for key, value in measured_dimensions.items() if value < 6
+        ]
+        if failed_dimensions:
+            blocking_dimension = True
+        if avg < 6 or failed_dimensions:
             weak_shots.append({
                 "shot_id": q.get("shot_id"),
                 "avg_score": round(avg, 1),
+                "failed_dimensions": failed_dimensions,
             })
+    if blocking_dimension and grade in ("A", "B"):
+        grade = "C"
 
     return {
         "grade": grade,
         "overall_pct": round(overall, 1),
         "breakdown": {
             "shot_pct": round(shot_pct, 1),
-            "char_pct": round(char_pct, 1),
-            "audio_pct": round(audio_pct, 1),
-            "temporal_pct": round(temporal_pct, 1),
+            "char_pct": round(char_pct, 1) if char_pct is not None else None,
+            "audio_pct": round(audio_pct, 1) if audio_pct is not None else None,
+            "temporal_pct": round(temporal_pct, 1) if temporal_pct is not None else None,
             "integrity_pct": round(integ_pct, 1),
         },
+        "coverage": {
+            "overall_pct": round(coverage_pct, 1),
+            "measured": measured,
+            "expected": expected,
+            "shot": {"measured": shot_measured, "expected": shot_expected},
+            "character": {"measured": char_measured, "expected": char_expected},
+            "audio": {"measured": audio_measured, "expected": audio_expected},
+            "temporal": {"measured": temporal_measured, "expected": temporal_expected},
+        },
         "weak_shots": weak_shots,
-        "exportable": grade in ("A", "B"),  # v82lu : auto-block C/D
+        "exportable": grade in ("A", "B") and coverage_pct >= 80 and not blocking_dimension,
     }
 
 
