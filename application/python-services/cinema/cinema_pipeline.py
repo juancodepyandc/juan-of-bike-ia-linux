@@ -973,6 +973,15 @@ def render_shot_video(
                 emit("anchor", f"i2v from {Path(anchor_image).name}")
         if quality_mode in ("balanced", "premium"):
             cmd.extend(["--quality_mode", quality_mode])
+        # v91 : interpolation de mouvement DESACTIVEE pour les plans du cinema.
+        # video_generate.py a `--motion_interp 1` par defaut et le pipeline ne
+        # le passait jamais : chaque plan etait donc double a 48 im/s par
+        # ffmpeg minterpolate. Or l'estimation de mouvement par blocs ne trouve
+        # JAMAIS une rotation sur une roue en aliasing — elle trouve une
+        # translation, et renforce donc visuellement le glissement lateral tout
+        # en ajoutant du ghosting sur les rayons. Le montage final est de toute
+        # facon assemble a 24 im/s.
+        cmd.extend(["--motion_interp", "0"])
         # v82ln : negative prompt anti-artefacts. Best-effort — argparse ignores
         # the flag on revs that don't support it.
         merged_negative = combine_negative_prompt(negative_prompt or "", style_negative_for(style_id))
@@ -1831,11 +1840,23 @@ def validate_rendered_shot(
 # v82l6 : Character keyframe pre-generation via FLUX (anchor for i2v)
 # --------------------------------------------------------------------------
 
+def _object_judge_model() -> str:
+    """Modele de vision pour l'examen de completude d'un objet.
+
+    Un pedalier fait quelques dizaines de pixels : c'est exactement la tache
+    ou un modele 8B decroche. qwen3-vl:30b est installe sur cette machine et
+    n'etait utilise par aucune porte. Il est nettement plus lent, ce qui est
+    sans importance ici : la reference d'un objet est generee une seule fois
+    par film et conditionne tous les plans qu'elle ancre.
+    """
+    return os.environ.get("AURORA_OBJECT_VISION_MODEL", "qwen3-vl:30b")
+
+
 def validate_object_completeness(
     image_path: str,
     description: str,
     ollama_url: str = "http://127.0.0.1:11434",
-    model: str = VISION_MODEL,
+    model: str = None,
 ) -> dict:
     """Verifie qu'une reference d'OBJET est anatomiquement COMPLETE.
 
@@ -1853,6 +1874,7 @@ def validate_object_completeness(
     Retourne { ok, missing[], malformed[], reason, graded }. Une panne vision
     ne fabrique jamais un succes : ok=False et graded=False.
     """
+    model = model or _object_judge_model()
     try:
         import base64
         with open(image_path, "rb") as f:
@@ -2136,12 +2158,31 @@ def pregenerate_character_keyframes(
                         check["ok"] = False
                         check["reason"] = completeness["reason"]
 
-                if check["ok"] or attempt == 3:
+                # v91 : un OBJET incomplet n'est JAMAIS accepte, meme au
+                # dernier essai. L'acceptation inconditionnelle a `attempt == 3`
+                # est raisonnable pour un personnage (mieux vaut un portrait
+                # imparfait que pas de reference du tout), mais pas pour un
+                # objet : une reference amputee se PROPAGE a tous les plans
+                # qu'elle ancre. C'est exactement ainsi qu'un velo sans pedales
+                # est parti en production avec, pour toute sanction, un tag
+                # texte dans le journal.
+                # Mieux vaut aucune ancre — le plan retombe en t2v — qu'une
+                # ancre fausse repetee cinq fois.
+                object_incomplete = bool(
+                    completeness is not None
+                    and completeness.get("graded")
+                    and not completeness["ok"]
+                )
+                if object_incomplete and attempt == 3:
+                    emit("char_reject_objet",
+                         f"{name}: reference REFUSEE apres 3 essais — "
+                         f"{completeness['reason'][:120]}. Aucune ancre ne sera "
+                         f"utilisee pour cet objet (repli t2v).")
+                    break
+
+                if (check["ok"] and not object_incomplete) or attempt == 3:
                     produced = str(keyframe_path)
                     detail = f"{name} -> {keyframe_path.name} (seed {seed}, score {check['score']})"
-                    if completeness is not None and completeness.get("graded") \
-                            and not completeness["ok"]:
-                        detail += f" [INCOMPLET: {completeness['reason'][:90]}]"
                     emit("char_ok", detail)
                     break
                 else:
