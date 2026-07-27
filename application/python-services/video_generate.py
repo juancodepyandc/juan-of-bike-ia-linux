@@ -14,10 +14,12 @@ import math
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 from cache_paths import configure_ml_cache_environment
 
@@ -25,14 +27,12 @@ from cache_paths import configure_ml_cache_environment
 WAN_T2V_MODEL = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
 WAN_I2V_MODEL = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
 
-# Wan 2.2 A14B GGUF — the 14B MoE model quantized down to 4-bit so that both
-# the HighNoise and LowNoise experts fit in 16 GB VRAM simultaneously via
-# group-block offload. This is the quality-winning path on consumer cards:
-# you get the full A14B architecture (not a 5B distillation, not LTX) at
-# ~9.65 GB per expert, which is what the user explicitly asked for.
+# Wan 2.2 A14B GGUF. AuroraIA's final-render contract starts at Q8_0:
+# lower precision may fit more easily but is not silently substituted for a
+# quality-first personal render.
 WAN_T2V_GGUF_REPO = "QuantStack/Wan2.2-T2V-A14B-GGUF"
 WAN_I2V_GGUF_REPO = "QuantStack/Wan2.2-I2V-A14B-GGUF"
-WAN_GGUF_QUANT_DEFAULT = "Q4_K_M"  # 9.65 GB per expert — fits 16 GB with offload
+WAN_GGUF_QUANT_DEFAULT = "Q8_0"
 
 # Wan 2.2 TI2V-5B — unified 5B parameter text+image-to-video from Wan-AI.
 # ~34 GB fp16 on disk but only ~10-14 GB active VRAM during inference with
@@ -47,6 +47,10 @@ LTX_SPEED_MODEL = "Lightricks/LTX-Video"              # ltxv-2b-distilled (rapid
 # transformer variants inside, so we point both modes at it. Diffusers will
 # pick the right weights based on config.json.
 LTX_QUALITY_MODEL = "Lightricks/LTX-Video"
+
+VIDEO_SEGMENT_MAX_FRAMES = 97
+VIDEO_LONG_MAX_SEGMENTS = 5
+VIDEO_LONG_MAX_FRAMES = VIDEO_SEGMENT_MAX_FRAMES * VIDEO_LONG_MAX_SEGMENTS
 
 REQUIRED_PACKAGES = {
     "torch": "torch",
@@ -104,13 +108,15 @@ def ensure_dependencies():
         except Exception:
             missing.append(pip_name)
     if missing:
-        emit("install", f"Installation automatique de {', '.join(missing)}...")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--quiet"] + missing,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        # Le runtime application est partage avec FLUX et la 3D. Installer ici
+        # modifierait cet environnement en plein rendu et peut casser les autres
+        # modules. Les dependances video lourdes vivent dans un venv dedie.
+        raise RuntimeError(
+            "Dependances video absentes du runtime actif: "
+            f"{', '.join(missing)}. Configure un environnement isole sous "
+            "~/.local/share/auroraia/venvs/video puis relance le job avec son "
+            "interpreteur Python; aucune installation automatique n'a ete faite."
         )
-        emit("install", "Dependances video installees.")
 
 
 def preflight_model_access(model_ids):
@@ -145,6 +151,48 @@ def preflight_model_access(model_ids):
     return results
 
 
+def managed_model_storage_access(model_id: str, manifest_path: str | None = None) -> tuple[bool, str]:
+    """Refuse a broken cold symlink before Hugging Face can try a redownload."""
+    try:
+        path = Path(
+            manifest_path
+            or Path(__file__).resolve().parents[1] / "config" / "storage_manifest.json"
+        )
+        if not path.exists():
+            return True, "unmanaged"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        entries = document if isinstance(document, list) else document.get("entries", [])
+        repo_dir = f"models--{model_id.replace('/', '--')}"
+        entry = next(
+            (
+                item for item in entries
+                if Path(str(item.get("hot_path") or "")).name == repo_dir
+            ),
+            None,
+        )
+        if entry is None:
+            return True, "unmanaged"
+        hot_path = Path(str(entry.get("hot_path") or ""))
+        if entry.get("tier") == "cold":
+            cold_path = Path(str(entry.get("cold_path") or ""))
+            mount_root = Path(
+                os.environ.get("AURORA_COLD_STORAGE")
+                or (document.get("mount_path") if isinstance(document, dict) else None)
+                or "/mnt/aurora_models"
+            )
+            if not os.path.ismount(mount_root):
+                return False, "cold_storage_offline"
+            if not cold_path.exists() or not hot_path.exists():
+                return False, "cold_model_missing"
+            return True, "cold"
+        if not hot_path.exists():
+            return False, "managed_model_missing"
+        return True, str(entry.get("tier") or "hot")
+    except Exception as exc:
+        # A malformed manifest must be surfaced, never bypassed with a download.
+        return False, f"storage_manifest_error:{type(exc).__name__}"
+
+
 def filter_strategies_by_access(strategies):
     """Drop strategies whose primary model is gated/unreachable.
 
@@ -159,12 +207,41 @@ def filter_strategies_by_access(strategies):
         if mid and mid not in seen:
             seen.add(mid)
             unique_ids.append(mid)
+    storage_verdicts = {
+        mid: managed_model_storage_access(mid)
+        for mid in unique_ids
+    }
+    locally_kept = []
+    locally_dropped = []
+    for strategy in strategies:
+        mid = strategy.get("model_override") or strategy.get("companion_model") or strategy.get("ltx_model")
+        ok, reason = storage_verdicts.get(mid, (True, "unmanaged"))
+        if not ok:
+            locally_dropped.append(f"{strategy['id']} ({reason})")
+        else:
+            locally_kept.append(strategy)
+    if locally_dropped:
+        emit("preflight", f"Strategies indisponibles sur le stockage: {', '.join(locally_dropped)}")
+    if not locally_kept:
+        raise RuntimeError(
+            "Aucun modele video gere n'est disponible: support froid absent "
+            "ou poids manquant. Rebrancher le support AURORA_MODELS; aucun "
+            "re-telechargement silencieux n'a ete tente."
+        )
+
+    remote_ids = []
+    remote_seen = set()
+    for strategy in locally_kept:
+        mid = strategy.get("model_override") or strategy.get("companion_model") or strategy.get("ltx_model")
+        if mid and mid not in remote_seen:
+            remote_seen.add(mid)
+            remote_ids.append(mid)
     verdicts = dict()
-    for mid, ok, reason in preflight_model_access(unique_ids):
+    for mid, ok, reason in preflight_model_access(remote_ids):
         verdicts[mid] = ok
     kept = []
     dropped = []
-    for s in strategies:
+    for s in locally_kept:
         mid = s.get("model_override") or s.get("companion_model") or s.get("ltx_model")
         if mid and verdicts.get(mid) is False:
             dropped.append(s["id"])
@@ -174,7 +251,7 @@ def filter_strategies_by_access(strategies):
         emit("preflight", f"Strategies ignorees (modele gate/inaccessible): {', '.join(dropped)}")
     if not kept:
         emit("preflight", "Toutes les strategies sont inaccessibles; on reessaye la derniere en mode degrade.")
-        return strategies[-1:]
+        return locally_kept[-1:]
     return kept
 
 
@@ -220,8 +297,31 @@ def _try_vram_unblock():
 
 
 def _exit_when_parent_dies():
-    """Watchdog Windows : thread qui attend la mort du process parent et
-    termine immediatement ce worker (os._exit). Best-effort, silencieux."""
+    """Lie le worker a son parent pour ne jamais conserver la VRAM en orphelin.
+
+    Linux utilise PR_SET_PDEATHSIG, atomique dans le noyau. Windows conserve le
+    watchdog par handle. La verification du PPID apres ``prctl`` ferme la petite
+    course ou le parent mourrait entre la lecture du PPID et l'armement.
+    """
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+
+            parent_pid = os.getppid()
+            libc = ctypes.CDLL(None, use_errno=True)
+            PR_SET_PDEATHSIG = 1
+            if libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0) != 0:
+                errno_value = ctypes.get_errno()
+                raise OSError(errno_value, os.strerror(errno_value))
+            if os.getppid() != parent_pid:
+                os.kill(os.getpid(), signal.SIGTERM)
+            return
+        except Exception as exc:
+            emit("worker_guard_warn", f"PR_SET_PDEATHSIG indisponible: {exc}")
+
+    if sys.platform != "win32":
+        return
+
     try:
         import ctypes
         import threading as _th
@@ -413,6 +513,13 @@ def monitor_vram(stop_event, pid):
     consecutive_warn = 0
     consecutive_critical = 0
     last_bucket = None
+    # v91 : on ne raisonne plus seulement en POURCENTAGE mais aussi en Mo
+    # LIBRES ABSOLUS. Un pourcentage tolere 68 Mo libres sur 16 Go (99,6 %),
+    # ce qui parait "tendu mais OK" — sauf que toute allocation paresseuse de
+    # CUDA a besoin de bien plus : le handle cuSOLVER demande a lui seul
+    # 144 Mo (mesure). C'est ainsi qu'un rendu Wan mourait sur une matrice 3x3
+    # et basculait en silence sur le moteur de secours.
+    FREE_FLOOR_MB = 400        # plancher dur : sous ce seuil on desature
     WARN_THRESHOLD = 0.995     # 99.5 % — trigger empty_cache
     SATURATION_THRESHOLD = 0.999  # 99.9 % — real saturation
     WARN_POLLS_BEFORE_UNBLOCK = 6  # 6 × 5 s = 30 s before we try to unblock
@@ -434,6 +541,18 @@ def monitor_vram(stop_event, pid):
                     except Exception:
                         pass
                     sys.exit(1)
+            elif free * 1024 < FREE_FLOOR_MB:
+                # Plancher absolu : meme si le pourcentage parait acceptable,
+                # il n'y a plus de quoi servir une allocation paresseuse.
+                consecutive_warn += 1
+                consecutive_critical = 0
+                if consecutive_warn == 1:
+                    emit("vram", f"VRAM sous le plancher ({free*1024:.0f}MB < "
+                                 f"{FREE_FLOOR_MB}MB) — desaturation immediate")
+                if unblock_attempts < MAX_UNBLOCK_ATTEMPTS:
+                    unblock_attempts += 1
+                    _try_vram_unblock()
+                    consecutive_warn = 0
             elif used_pct >= WARN_THRESHOLD:
                 # Tier 1: VRAM between 99.5 % and 99.9 %. Not catastrophic,
                 # but almost no headroom for the next step. After ~30 s we
@@ -471,6 +590,14 @@ def parse_args():
     parser.add_argument("--thumbnail")
     parser.add_argument("--vram_gb", type=float, default=0.0)
     parser.add_argument("--model_mode", default="speed", choices=["speed", "quality"])
+    parser.add_argument(
+        "--force_strategy",
+        default="auto",
+        help=(
+            "A/B only: auto, wan5b, ltx, or an exact strategy id. "
+            "Never changes precision and never downloads an unavailable managed model."
+        ),
+    )
     parser.add_argument(
         "--quality_mode",
         default="auto",
@@ -519,7 +646,7 @@ def parse_args():
         args.output = args.positional[1]
         args.width = int(args.positional[2])
         args.height = int(args.positional[3])
-        args.num_frames = min(int(args.positional[4]), 97)
+        args.num_frames = int(args.positional[4])
         return args
 
     raise ValueError(
@@ -529,6 +656,20 @@ def parse_args():
 
 def round_to_32(value):
     return max(32, round(value / 32) * 32)
+
+
+def normalize_requested_frames(value: int) -> int:
+    """Clip rapide : 1 à 5 segments natifs, sans plafond silencieux à 97."""
+    return max(25, min(int(value), VIDEO_LONG_MAX_FRAMES))
+
+
+def normalize_model_frames(value: int) -> int:
+    """Aligne un segment sur 8k+1, grille commune sûre Wan/LTX."""
+    bounded = max(25, min(int(value), VIDEO_SEGMENT_MAX_FRAMES))
+    return min(
+        VIDEO_SEGMENT_MAX_FRAMES,
+        max(25, math.ceil((bounded - 1) / 8) * 8 + 1),
+    )
 
 
 def _ffmpeg_interpolate(src_path, dst_path, src_fps=24, target_fps=48):
@@ -778,22 +919,16 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         tier = "minimal"
 
     # VRAM-tight path (12-22 GB cards like the 5070 Ti, 4080, 3080 Ti, A4000).
-    # Priority: Wan 2.2 A14B GGUF Q4_K_M (true 14B MoE quality, ~9.6 GB per
-    # expert, with aggressive offload both experts fit in 16 GB) → Wan 2.2
-    # TI2V-5B (unified 5B fallback) → LTX (safety net).
+    # Priority on this machine: Wan 2.2 TI2V-5B → LTX safety net. A14B GGUF
+    # stays outside this proven 16 GB path until a Q8_0/FP8 A/B is measured.
     #
     # Step counts tuned for visual sharpness, not speed. Below ~40 LTX steps
     # you get the motion blur + morphing limbs the user complained about.
     # Resolutions pinned to each model's NATIVE training resolution so the
     # diffusion output isn't a bilinear upscale that looks soft.
     #
-    # PREMIUM MODE: the caller accepts long render times in exchange for
-    # maximum fidelity. On 32 GB RAM + 16 GB VRAM, the full fp16 A14B
-    # (42 GB resident) does NOT fit — attempting it segfaults during load.
-    # Instead we escalate GGUF quantization: Q4_K_M → Q6_K (nearly imperceptible
-    # quality loss vs fp16, 12 GB per expert) → Q5_K_M as secondary. Combined
-    # with sequential CPU offload and 60 steps this produces clean anatomy and
-    # stable identity across frames, which is what the user actually asked for.
+    # PREMIUM MODE accepts long render times, but never lowers the main model
+    # below the Q8_0/FP8-scaled final-render floor.
     # 16 GB VRAM path. Wan 2.2 TI2V-5B primary + LTX safety.
     #
     # Why TI2V-5B over A14B on 16 GB:
@@ -821,13 +956,26 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         # TI2V-5B supports up to 1280×720 @ 24 fps per the Wan-AI model card.
         # We cap at that upper bound (native HD), letting the adaptive budget
         # choose between 1280×720 (short clip) and e.g. 704×480 (long clip).
-        wan_frames = min(max(num_frames, 33), 73)
+        wan_frames = num_frames
         wan_budget_w, wan_budget_h = _adaptive_resolution_budget(wan_frames, quality_mode, vram_gb)
         ltx_budget_w, ltx_budget_h = _adaptive_resolution_budget(ltx_frames, quality_mode, vram_gb)
-        wan_w = min(width, wan_budget_w, 1280)
-        wan_h = min(height, wan_budget_h, 720)
-        ltx_w = min(width, ltx_budget_w, 1920)
-        ltx_h = min(height, ltx_budget_h, 1088)
+        # v91 : les budgets adaptatifs ET les plafonds natifs sont exprimes en
+        # PAYSAGE. Sans transposition, min(height, ..., 720) ecrasait une
+        # demande verticale 720x1280 en 720x720 CARRE (format 9:16 impossible).
+        # On transpose les deux quand la cible est en portrait.
+        portrait = height > width
+        if portrait:
+            wan_budget_w, wan_budget_h = wan_budget_h, wan_budget_w
+            ltx_budget_w, ltx_budget_h = ltx_budget_h, ltx_budget_w
+            wan_cap_w, wan_cap_h = 720, 1280
+            ltx_cap_w, ltx_cap_h = 1088, 1920
+        else:
+            wan_cap_w, wan_cap_h = 1280, 720
+            ltx_cap_w, ltx_cap_h = 1920, 1088
+        wan_w = min(width, wan_budget_w, wan_cap_w)
+        wan_h = min(height, wan_budget_h, wan_cap_h)
+        ltx_w = min(width, ltx_budget_w, ltx_cap_w)
+        ltx_h = min(height, ltx_budget_h, ltx_cap_h)
         wan_steps = 60 if quality_mode == "premium" else 50  # bumped from 40/50
         ltx_steps = 60 if quality_mode == "premium" else 50
 
@@ -853,7 +1001,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             **base_ltx,
             "width": min(ltx_w, 768),
             "height": min(ltx_h, 512),
-            "num_frames": min(ltx_frames, 65),
+            "num_frames": ltx_frames,
             "num_inference_steps": max(36, ltx_steps - 14),
         }
 
@@ -879,7 +1027,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "offload": "none",
                 "width": min(width, 768),
                 "height": min(height, 512),
-                "num_frames": min(num_frames, 49),
+                "num_frames": num_frames,
                 "num_inference_steps": 50,
             })
         elif tier == "mid":
@@ -890,7 +1038,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "num_blocks_per_group": 4,
                 "width": min(width, 640),
                 "height": min(height, 480),
-                "num_frames": min(num_frames, 33),
+                "num_frames": num_frames,
                 "num_inference_steps": 30,
             })
         elif tier == "low":
@@ -901,7 +1049,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "num_blocks_per_group": 2,
                 "width": min(width, 480),
                 "height": min(height, 320),
-                "num_frames": min(num_frames, 25),
+                "num_frames": num_frames,
                 "num_inference_steps": 26,
             })
         else:  # minimal
@@ -917,7 +1065,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "gguf_quant": WAN_GGUF_QUANT_DEFAULT,
                 "width": min(width, 480),
                 "height": min(height, 320),
-                "num_frames": min(num_frames, 25),
+                "num_frames": num_frames,
                 "num_inference_steps": 22,
             })
 
@@ -928,7 +1076,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "offload": "model_cpu",
             "width": min(width, 512),
             "height": min(height, 320),
-            "num_frames": min(num_frames, 25),
+            "num_frames": num_frames,
             "num_inference_steps": 22,
         })
         strategies.append({
@@ -938,7 +1086,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "offload": "ltx_group",
             "width": min(width, 576),
             "height": min(height, 576),
-            "num_frames": min(max(num_frames, 17), 81),
+            "num_frames": num_frames,
             "num_inference_steps": 30,
         })
         return strategies
@@ -953,7 +1101,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "offload": "none",
             "width": min(width, 832),
             "height": min(height, 640),
-            "num_frames": min(num_frames, 81),
+            "num_frames": num_frames,
             "num_inference_steps": 50,
         })
     elif tier == "mid":
@@ -964,7 +1112,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "num_blocks_per_group": 4,
             "width": min(width, 768),
             "height": min(height, 512),
-            "num_frames": min(num_frames, 49),
+            "num_frames": num_frames,
             "num_inference_steps": 50,
         })
     elif tier == "low":
@@ -975,7 +1123,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "num_blocks_per_group": 2,
             "width": min(width, 512),
             "height": min(height, 384),
-            "num_frames": min(num_frames, 33),
+            "num_frames": num_frames,
             "num_inference_steps": 28,
         })
     else:  # minimal
@@ -985,7 +1133,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "offload": "sequential",
             "width": min(width, 480),
             "height": min(height, 320),
-            "num_frames": min(num_frames, 25),
+            "num_frames": num_frames,
             "num_inference_steps": 22,
         })
 
@@ -995,7 +1143,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         "offload": "model_cpu",
         "width": min(width, 640),
         "height": min(height, 384),
-        "num_frames": min(num_frames, 33),
+        "num_frames": num_frames,
         "num_inference_steps": 26,
     })
     strategies.append({
@@ -1005,10 +1153,36 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         "offload": "ltx_group",
         "width": min(width, 768),
         "height": min(height, 512),
-        "num_frames": min(max(num_frames, 17), 97),
+        "num_frames": num_frames,
         "num_inference_steps": 36,
     })
     return strategies
+
+
+def select_forced_strategies(strategies: list[dict], requested: str) -> list[dict]:
+    """Restrict auto-repair to one engine for reproducible A/B comparisons."""
+    force = (requested or "auto").strip().lower()
+    if force in {"", "auto"}:
+        return strategies
+    if force == "wan5b":
+        selected = [
+            strategy for strategy in strategies
+            if strategy.get("model_override") == WAN_TI2V_5B_MODEL
+        ]
+    elif force == "ltx":
+        selected = [strategy for strategy in strategies if strategy.get("family") == "ltx"]
+    else:
+        selected = [
+            strategy for strategy in strategies
+            if str(strategy.get("id") or "").lower() == force
+        ]
+    if not selected:
+        available = ", ".join(str(item.get("id")) for item in strategies)
+        raise RuntimeError(
+            f"Strategie A/B '{requested}' indisponible pour ce mode/materiel. "
+            f"Disponibles: {available}"
+        )
+    return selected
 
 
 def align_dimensions(pipe, width, height):
@@ -1047,6 +1221,44 @@ def apply_offload_strategy(torch, text_encoder, transformer, use_stream=False, n
         num_blocks_per_group=num_blocks_per_group,
         use_stream=use_stream,
     )
+
+
+def use_wan_image_pipeline(mode: str, model_id: str) -> bool:
+    """Select Diffusers' image-conditioned class for every Wan I2V request.
+
+    This includes the unified TI2V-5B checkpoint: it has no CLIP image
+    encoder, but WanImageToVideoPipeline handles that checkpoint through its
+    VAE/``expand_timesteps`` path.
+    """
+    return str(mode).lower() == "i2v" and str(model_id).startswith("Wan-AI/")
+
+
+def _warm_cusolver():
+    """Cree le handle cuSOLVER PENDANT que la VRAM est encore libre.
+
+    Cause racine mesuree sur un film reel : 8 segments sur 15 n'ont PAS ete
+    generes par Wan mais par LTX-Video, en repli silencieux. Le coupable est
+    minuscule — UniPCMultistepScheduler.multistep_uni_c_bh_update resout un
+    systeme lineaire 3x3 a chaque pas via torch.linalg.solve ; sur CUDA cela
+    passe par cuSOLVER, dont la creation PARESSEUSE du handle demande
+    144 Mo (mesure exacte sur cette machine). Quand le DiT a deja sature la
+    VRAM il ne reste que ~68 Mo : la generation meurt sur une matrice 3x3
+    apres 350 s de calcul, et tombe sur le moteur de secours.
+
+    Reserver ces 144 Mo au demarrage coute 0,02 s et supprime la cause.
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return
+        a = torch.eye(3, device="cuda", dtype=torch.float32)
+        b = torch.ones(3, 1, device="cuda", dtype=torch.float32)
+        torch.linalg.solve(a, b)
+        torch.cuda.synchronize()
+        del a, b
+        emit("cusolver", "handle cuSOLVER prechauffe (144 Mo reserves)")
+    except Exception as exc:
+        emit("cusolver_warn", f"prechauffage cuSOLVER impossible: {str(exc)[:120]}")
 
 
 def load_video_pipeline(mode, model_id, strategy):
@@ -1275,10 +1487,12 @@ def load_video_pipeline(mode, model_id, strategy):
             pipe.vae.enable_tiling()
         return pipe
 
-    # Wan 2.2 TI2V-5B is a UNIFIED text+image-to-video model — there is no
-    # image_encoder subfolder; the image path is passed directly to the pipe
-    # call and WanPipeline routes it internally. Force the T2V path for
-    # either mode so we don't try to load a non-existent image_encoder.
+    # Wan 2.2 TI2V-5B is a UNIFIED text+image-to-video model and has no CLIP
+    # image_encoder subfolder. Diffusers still requires two distinct runtime
+    # classes: WanPipeline for T2V and WanImageToVideoPipeline for I2V. The
+    # latter encodes the first frame through the Wan VAE when image_dim is
+    # None and expand_timesteps is enabled. Passing ``image`` to WanPipeline
+    # is invalid (its call signature is text-only).
     is_ti2v_unified = model_id == WAN_TI2V_5B_MODEL
 
     if mode == "i2v" and not is_ti2v_unified:
@@ -1357,6 +1571,11 @@ def load_video_pipeline(mode, model_id, strategy):
             )
             pipe.enable_model_cpu_offload()
     else:
+        unified_pipeline_cls = (
+            WanImageToVideoPipeline
+            if use_wan_image_pipeline(mode, model_id) and is_ti2v_unified
+            else WanPipeline
+        )
         vae = AutoencoderKLWan.from_pretrained(
             model_id,
             subfolder="vae",
@@ -1384,7 +1603,7 @@ def load_video_pipeline(mode, model_id, strategy):
                 cache_dir=cache_dir,
             )
             apply_offload_strategy(torch, text_encoder, transformer, num_blocks_per_group=blocks)
-            pipe = WanPipeline.from_pretrained(
+            pipe = unified_pipeline_cls.from_pretrained(
                 model_id,
                 vae=vae,
                 transformer=transformer,
@@ -1394,7 +1613,7 @@ def load_video_pipeline(mode, model_id, strategy):
             )
             # pipe.to("cuda") forbidden after group_offloading (see I2V path).
         elif offload_type == "none":
-            pipe = WanPipeline.from_pretrained(
+            pipe = unified_pipeline_cls.from_pretrained(
                 model_id,
                 vae=vae,
                 torch_dtype=compute_dtype,
@@ -1402,7 +1621,7 @@ def load_video_pipeline(mode, model_id, strategy):
             )
             pipe.to("cuda")
         elif offload_type == "sequential":
-            pipe = WanPipeline.from_pretrained(
+            pipe = unified_pipeline_cls.from_pretrained(
                 model_id,
                 vae=vae,
                 torch_dtype=compute_dtype,
@@ -1410,7 +1629,7 @@ def load_video_pipeline(mode, model_id, strategy):
             )
             pipe.enable_sequential_cpu_offload()
         else:  # model_cpu or any unknown fallback
-            pipe = WanPipeline.from_pretrained(
+            pipe = unified_pipeline_cls.from_pretrained(
                 model_id,
                 vae=vae,
                 torch_dtype=compute_dtype,
@@ -1456,13 +1675,22 @@ def run_worker(worker_config):
         "init",
         f"Initialisation du pipeline {mode.upper()} via {strategy['id']} ({strategy['width']}x{strategy['height']}, {strategy['num_frames']} frames)",
     )
+    _warm_cusolver()
     pipe = load_video_pipeline(mode, model_id, strategy)
     width, height = align_dimensions(pipe, round_to_32(strategy["width"]), round_to_32(strategy["height"]))
 
     negative_prompt = (
         # Quality floor
         "worst quality, low quality, low resolution, pixelation, mosaic artifacts, compression noise, "
-        "jpeg artifacts, aliasing, blurry, out of focus, motion blur, soft focus, hazy, ghosting, "
+        # v91 : "motion blur" RETIRE du negatif global. A 24 im/s, une roue de
+        # velo qui tourne fait 49 degres par image, au-dela de la limite de
+        # Nyquist de 36 degres pour une jante a 5 branches : le rendu
+        # physiquement correct EST du flou radial. En interdisant le flou
+        # partout, on ne laissait au modele qu'une seule sortie possible pour
+        # "ca avance" — la translation rigide. C'est la cause du velo qui
+        # glissait lateralement au lieu de rouler. Un plan de dialogue en gros
+        # plan peut toujours l'interdire via son negative_prompt propre.
+        "jpeg artifacts, aliasing, blurry, out of focus, soft focus, hazy, ghosting, "
         "frame ghosting, temporal incoherence, frame jump, frame jitter, frame freeze, stuttering, "
         # Anatomy — HUMAN
         "warped anatomy, melted face, morphing body, melting limbs, extra limbs, missing limbs, "
@@ -1487,7 +1715,7 @@ def run_worker(worker_config):
     # v82lo : append shot-specific negative prompt provided by cinema_pipeline.
     # Preserves the anatomy/physics baseline above + adds shot-specific terms
     # (e.g. "motion blur" for action shots, "close-up artifacts" for wides).
-    extra_neg = getattr(_args_global, "negative_prompt", None) if "_args_global" in globals() else None
+    extra_neg = worker_config.get("negative_prompt")
     if extra_neg:
         negative_prompt = f"{negative_prompt}, {extra_neg}"
 
@@ -1516,7 +1744,7 @@ def run_worker(worker_config):
     # v82lo : seed pour reproduction stricte. torch.Generator + manual_seed
     # sur cuda si dispo, sinon cpu. Si seed est None, le generator n'est
     # pas passé, le pipeline utilise random.
-    seed_val = getattr(_args_global, "seed", None) if "_args_global" in globals() else None
+    seed_val = worker_config.get("seed")
     if seed_val is not None:
         try:
             import torch as _torch
@@ -1612,11 +1840,17 @@ def run_worker(worker_config):
     # `minterpolate` filter — no extra dependency, runs on CPU in seconds.
     # Pull from env so the pipeline signature stays unchanged — the main()
     # entrypoint writes AURORA_VIDEO_MOTION_INTERP before spawning the worker.
-    interp_level = os.environ.get("AURORA_VIDEO_MOTION_INTERP", "1")
+    interp_level = worker_config.get(
+        "motion_interp",
+        os.environ.get("AURORA_VIDEO_MOTION_INTERP", "1"),
+    )
     try:
         interp_level_int = int(interp_level)
     except Exception:
         interp_level_int = 1
+    delivered_fps = export_fps
+    postprocess_chain = []
+    warnings = []
     if interp_level_int >= 1:
         target_fps = 60 if interp_level_int >= 2 else 48
         interp_out = output_path.replace(".mp4", f"_smooth{target_fps}.mp4")
@@ -1626,8 +1860,15 @@ def run_worker(worker_config):
             # downloads / players pick it up transparently.
             if os.path.exists(interp_out) and os.path.getsize(interp_out) > 1024:
                 os.replace(interp_out, output_path)
+                delivered_fps = target_fps
+                postprocess_chain.append(f"ffmpeg_minterpolate_{export_fps}_to_{target_fps}")
                 emit("saving", f"Motion-interpolation {export_fps}->{target_fps} fps applique")
         except Exception as interp_err:
+            warnings.append({
+                "code": "frame_interpolation_failed",
+                "message": str(interp_err),
+                "impact": f"sortie conservee a {export_fps} fps",
+            })
             emit("saving", f"Interpolation ignoree ({interp_err})")
     print(f"SAVED:{output_path}", flush=True)
     print(
@@ -1639,6 +1880,20 @@ def run_worker(worker_config):
                 "mode": mode,
                 "model": active_model_id,
                 "strategy": strategy["id"],
+                "render_truth": {
+                    "native_width": width,
+                    "native_height": height,
+                    "native_fps": export_fps,
+                    "delivered_fps": delivered_fps,
+                    "native_frames": strategy["num_frames"],
+                    "requested_frames": worker_config.get(
+                        "requested_frames",
+                        strategy["num_frames"],
+                    ),
+                    "postprocess_chain": postprocess_chain,
+                    "is_upscaled": False,
+                },
+                "warnings": warnings,
                 "output_validated": True,
                 "validation_summary": validation_summary,
                 "validation": {
@@ -1725,6 +1980,202 @@ def run_worker_subprocess(worker_config):
     return exit_code, output
 
 
+def build_worker_config(
+    args,
+    *,
+    prompt,
+    output_path,
+    image_path,
+    thumbnail_path,
+    mode,
+    model_id,
+    strategy,
+):
+    """Construit le contrat serialisable transmis au worker GPU.
+
+    Cette fonction pure existe volontairement comme garde de non-regression :
+    seed, negative prompt et preference d'interpolation doivent traverser la
+    frontiere de processus, pas dependre de globals propres au parent.
+    """
+    return {
+        "prompt": prompt,
+        "output_path": output_path,
+        "image_path": image_path,
+        "thumbnail_path": thumbnail_path,
+        "mode": mode,
+        "model_id": model_id,
+        "strategy": strategy,
+        "seed": getattr(args, "seed", None),
+        "negative_prompt": getattr(args, "negative_prompt", None),
+        "motion_interp": getattr(args, "motion_interp", "1"),
+        "requested_frames": getattr(args, "num_frames", strategy.get("num_frames")),
+    }
+
+
+def run_segmented_parent(
+    args,
+    *,
+    width: int,
+    height: int,
+    requested_frames: int,
+    raw_requested_frames: int,
+) -> None:
+    """Rend un clip rapide >97 images via le segmenteur cinéma éprouvé.
+
+    Le process courant reste l'unique propriétaire du job GPU. Chaque segment
+    est rendu dans un worker enfant puis entièrement libéré avant le suivant.
+    """
+    from cinema.cinema_pipeline import (
+        extract_middle_frame,
+        probe_video_duration,
+        render_long_shot,
+    )
+
+    started = time.time()
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    work_root = Path(__file__).resolve().parents[1] / "temp" / "cinema"
+    work_root.mkdir(parents=True, exist_ok=True)
+    work_dir = work_root / f"quick_long_{int(started)}_{os.getpid()}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    warnings = []
+    if raw_requested_frames > VIDEO_LONG_MAX_FRAMES:
+        warnings.append({
+            "code": "quick_clip_duration_capped",
+            "message": (
+                f"Le clip rapide accepte au plus {VIDEO_LONG_MAX_FRAMES / 24:.1f}s "
+                "en prise continue; utiliser le mode Cinéma pour un film multi-plans."
+            ),
+            "impact": (
+                f"{raw_requested_frames} images demandées, "
+                f"{requested_frames} images planifiées."
+            ),
+        })
+
+    quality_mode = getattr(args, "quality_mode", "auto")
+    if quality_mode == "auto":
+        quality_mode = "premium"
+    emit(
+        "shot_segments",
+        (
+            f"Clip long {requested_frames / 24:.1f}s : segmentation qualité "
+            f"(maximum {VIDEO_SEGMENT_MAX_FRAMES} images par diffusion)"
+        ),
+    )
+    result = render_long_shot(
+        scene_prompt=str(args.prompt),
+        style_id="raw",
+        duration_s=requested_frames / 24.0,
+        width=width,
+        height=height,
+        output_mp4=str(output_path),
+        work_dir=work_dir,
+        shot_id=1,
+        quality_mode=quality_mode,
+        anchor_image=args.image,
+        negative_prompt=args.negative_prompt,
+        seed=args.seed,
+        motion_interp=str(getattr(args, "motion_interp", "1")),
+        force_strategy=str(getattr(args, "force_strategy", "auto")),
+    )
+    if not result.get("ok") or not output_path.is_file():
+        print(json.dumps({
+            "ok": False,
+            "error": result.get("error") or "rendu segmente sans fichier final",
+            "work_dir": str(work_dir),
+            "warnings": warnings + list(result.get("warnings") or []),
+        }), flush=True)
+        raise SystemExit(1)
+
+    if args.thumbnail:
+        thumbnail = Path(args.thumbnail)
+        thumbnail.parent.mkdir(parents=True, exist_ok=True)
+        if extract_middle_frame(str(output_path), str(thumbnail)):
+            print(f"THUMBNAIL:{thumbnail}", flush=True)
+
+    duration = probe_video_duration(str(output_path))
+    segment_results = list(result.get("segment_results") or [])
+    truths = [
+        item.get("render_truth")
+        for item in segment_results
+        if isinstance(item.get("render_truth"), dict)
+    ]
+    models = list(result.get("models") or [])
+    strategies = list(result.get("strategies") or [])
+    native_widths = [int(item["native_width"]) for item in truths if item.get("native_width")]
+    native_heights = [int(item["native_height"]) for item in truths if item.get("native_height")]
+    delivered_fps = [int(item["delivered_fps"]) for item in truths if item.get("delivered_fps")]
+    generated_native_frames = sum(
+        int(item.get("native_frames") or 0)
+        for item in truths
+    )
+    warnings.extend(result.get("warnings") or [])
+    warnings.append({
+        "code": "long_clip_segmented",
+        "message": (
+            f"{len(segment_results)} segments diffusion reliés par l'image de fin "
+            "la plus nette (variance laplacienne)."
+        ),
+        "impact": "La durée est livrée sans réduire silencieusement le nombre d'images.",
+    })
+    validation_summary = (
+        f"{len(segment_results)} segments validés, "
+        f"durée mesurée {duration:.2f}s"
+    )
+    expected_duration = requested_frames / 24.0
+    if duration + 0.20 < expected_duration:
+        print(json.dumps({
+            "ok": False,
+            "error": (
+                f"durée livrée insuffisante: {duration:.2f}s mesurées pour "
+                f"{expected_duration:.2f}s planifiées; aucun succès partiel"
+            ),
+            "path": str(output_path),
+            "work_dir": str(work_dir),
+            "warnings": warnings,
+        }, ensure_ascii=False), flush=True)
+        raise SystemExit(1)
+    print(f"SAVED:{output_path}", flush=True)
+    print(json.dumps({
+        "ok": True,
+        "path": str(output_path),
+        "elapsed_seconds": round(time.time() - started, 1),
+        "mode": "i2v" if args.image else "t2v",
+        "model": " + ".join(models) if models else "video_segment_workers",
+        "strategy": " + ".join(strategies) if strategies else "segmented",
+        "render_truth": {
+            "native_width": min(native_widths) if native_widths else width,
+            "native_height": min(native_heights) if native_heights else height,
+            "native_fps": 24,
+            "delivered_fps": min(delivered_fps) if delivered_fps else 24,
+            "native_frames": generated_native_frames or requested_frames,
+            "planned_frames": requested_frames,
+            "requested_frames": raw_requested_frames,
+            "requested_duration_s": round(expected_duration, 3),
+            "delivered_duration_s": round(duration, 3),
+            "segments": len(segment_results),
+            "anchor_strategy": result.get("anchor_strategy"),
+            "postprocess_chain": ["per_segment_interpolation", "segment_concat_crf16"],
+            "is_upscaled": False,
+        },
+        "warnings": warnings,
+        "output_validated": duration > 0,
+        "validation_summary": validation_summary,
+        "validation": {
+            "ok": duration > 0,
+            "reason": None if duration > 0 else "ffprobe_duration_missing",
+            "summary": validation_summary,
+            "segments": [
+                item.get("validation")
+                for item in segment_results
+                if item.get("validation")
+            ],
+            "thumbnail_path": args.thumbnail,
+        },
+    }, ensure_ascii=False), flush=True)
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+
 def main():
     args = parse_args()
     configure_runtime_environment()
@@ -1763,13 +2214,25 @@ def main():
     ensure_dependencies()
     width = round_to_32(int(args.width))
     height = round_to_32(int(args.height))
-    num_frames = min(int(args.num_frames), 97)
+    raw_requested_frames = max(25, int(args.num_frames))
+    num_frames = normalize_requested_frames(raw_requested_frames)
     prompt = args.prompt
     output_path = args.output
     image_path = args.image
     thumbnail_path = args.thumbnail
     mode = "i2v" if image_path else "t2v"
     model_id = WAN_I2V_MODEL if image_path else WAN_T2V_MODEL
+
+    if num_frames > VIDEO_SEGMENT_MAX_FRAMES:
+        run_segmented_parent(
+            args,
+            width=width,
+            height=height,
+            requested_frames=num_frames,
+            raw_requested_frames=raw_requested_frames,
+        )
+        return
+    num_frames = normalize_model_frames(num_frames)
 
     # v84 : eviction Ollama + budget commit AVANT la mesure de VRAM — sinon
     # le clamp resolution ci-dessous lit la VRAM pendant que qwen (qui vient
@@ -1784,17 +2247,21 @@ def main():
     detected_vram = args.vram_gb if args.vram_gb > 0 else total_vram
     emit("vram", f"VRAM disponible: {free_vram:.1f}GB libre / {total_vram:.1f}GB total (tier base: {detected_vram:.1f}GB)")
 
-    # Pre-check VRAM: si moins de 2GB libre, reduire automatiquement la resolution
+    # Pre-check VRAM: réduire la résolution si nécessaire, jamais la durée.
     if total_vram > 0 and free_vram < 2.0:
-        emit("vram", f"VRAM tres basse ({free_vram:.1f}GB libre). Reduction automatique de la resolution.")
+        emit(
+            "vram",
+            f"VRAM tres basse ({free_vram:.1f}GB libre). Reduction de resolution sans raccourcir le clip.",
+        )
         width = min(width, 480)
         height = min(height, 320)
-        num_frames = min(num_frames, 25)
     elif total_vram > 0 and free_vram < 4.0:
-        emit("vram", f"VRAM limitee ({free_vram:.1f}GB libre). Ajustement conservateur.")
+        emit(
+            "vram",
+            f"VRAM limitee ({free_vram:.1f}GB libre). Ajustement de resolution sans raccourcir le clip.",
+        )
         width = min(width, 640)
         height = min(height, 480)
-        num_frames = min(num_frames, 33)
 
     stop_monitor = threading.Event()
     monitor_thread = threading.Thread(target=monitor_vram, args=(stop_monitor, os.getpid()), daemon=True)
@@ -1815,6 +2282,10 @@ def main():
             mode, width, height, num_frames,
             vram_gb=detected_vram, ltx_model=ltx_model, quality_mode=quality_mode,
         )
+        strategies = select_forced_strategies(
+            strategies,
+            getattr(args, "force_strategy", "auto"),
+        )
         # Pre-check each strategy's model on HF: gated / 404 / network-down
         # repos get dropped BEFORE we spend minutes downloading before a
         # terminal auth error. This is what was making LTX-Video-13B-fp8
@@ -1831,15 +2302,18 @@ def main():
             )
             # Allow strategy to override the default model (e.g. GGUF variant for low VRAM)
             effective_model_id = strategy.get("model_override", model_id)
-            worker_config = {
-                "prompt": prompt,
-                "output_path": output_path,
-                "image_path": image_path,
-                "thumbnail_path": thumbnail_path,
-                "mode": mode,
-                "model_id": effective_model_id,
-                "strategy": strategy,
-            }
+            # Contrat parent -> worker explicite. Avant WS-V0, seed et negative
+            # prompt restaient dans ``_args_global`` du parent et etaient perdus.
+            worker_config = build_worker_config(
+                args,
+                prompt=prompt,
+                output_path=output_path,
+                image_path=image_path,
+                thumbnail_path=thumbnail_path,
+                mode=mode,
+                model_id=effective_model_id,
+                strategy=strategy,
+            )
             exit_code, output = run_worker_subprocess(worker_config)
             result = parse_last_json_line(output)
 
@@ -1854,10 +2328,30 @@ def main():
             }
 
             if attempt < len(strategies):
-                emit(
-                    "repair",
-                    f"Echec de {strategy['id']} ({last_failure['error']}). Nouvelle tentative plus conservative...",
-                )
+                # v91 : CHANGER DE FAMILLE DE MODELE N'EST PAS UNE "REPARATION".
+                # Mesure sur un film reel : 8 segments sur 15 sont tombes de Wan
+                # vers LTX-Video (7x plus petit, physique nettement plus faible)
+                # sans qu'aucun avertissement ne remonte — parfois DEUX moteurs
+                # differents a l'interieur du MEME plan, ce qui explique a lui
+                # seul que les plans ne s'enchainaient pas.
+                # Un repli intra-famille (meme moteur, resolution plus basse)
+                # reste une reparation ; un changement de moteur est une
+                # DEGRADATION et doit etre criee.
+                next_family = strategies[attempt].get("family")
+                if next_family and next_family != strategy.get("family"):
+                    emit(
+                        "engine_downgrade",
+                        f"DEGRADATION MOTEUR : {strategy.get('family')} -> "
+                        f"{next_family} apres echec de {strategy['id']} "
+                        f"({last_failure['error']}). Le rendu ne sera PAS "
+                        f"homogene avec les autres plans.",
+                    )
+                else:
+                    emit(
+                        "repair",
+                        f"Echec de {strategy['id']} ({last_failure['error']}). "
+                        f"Nouvelle tentative plus conservative...",
+                    )
                 time.sleep(1)
 
         final_error = last_failure or {
