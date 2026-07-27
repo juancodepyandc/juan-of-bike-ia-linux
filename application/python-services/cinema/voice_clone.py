@@ -2,15 +2,14 @@
 voice_clone.py -- Voice cloning + bibliotheque globale de voix.
 
 Routage par langue:
-  - francais (fr) -> Coqui XTTS-v2 (excellent FR + clonage zero-shot)
-  - anglais  (en) -> F5-TTS (excellent EN + clonage)
-  - autres        -> XTTS-v2 (multilingue)
+  1. Fun-CosyVoice3 0.5B (FR officiel, multilingue, clone zero-shot)
+  2. XTTS-v2 / F5-TTS uniquement comme replis explicites
 
 Bibliotheque:
   application/voices/library/{character_slug}/
     reference.wav   <- echantillon de la voix (15-30s, mono 16kHz)
     embedding.npy   <- embedding ECAPA pour fingerprint
-    metadata.json   <- {character, source, lang, extracted_at, quality_score}
+    metadata.json   <- {character, source, lang, transcript, extracted_at, quality_score}
 
 Usage:
   python voice_clone.py --check
@@ -20,7 +19,7 @@ Usage:
   python voice_clone.py --synthesize-fresh --voice-preset "young_male_french" --text "..." --output out.wav
 
 Output JSON sur stdout (derniere ligne):
-  {"ok": true, "wav": "out.wav", "duration_s": 3.2, "engine": "xtts-v2|f5-tts"}
+  {"ok": true, "wav": "out.wav", "duration_s": 3.2, "engine": "cosyvoice3|xtts-v2|f5-tts"}
 """
 
 import argparse
@@ -44,6 +43,7 @@ LIBRARY_DIR = WORKSPACE / "voices" / "library"
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR = WORKSPACE / "temp" / "voice_clone"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+COSYVOICE3_ADAPTER = Path(__file__).resolve().parent / "cosyvoice3_adapter.py"
 
 
 def emit(stage: str, detail: str):
@@ -59,21 +59,148 @@ def slugify(name: str) -> str:
 
 
 def detect_language(text: str) -> str:
-    """Heuristique simple FR vs EN. La detection robuste se fait cote LLM en amont,
-    cette fonction est juste un filet de securite pour le routage TTS."""
-    fr_markers = [" le ", " la ", " les ", " un ", " une ", " est ", " et ", " que ", " qui ", " avec ", " pour ", "ca ", "ce "]
-    en_markers = [" the ", " a ", " an ", " is ", " are ", " and ", " that ", " with ", " for ", " this ", " it "]
-    t = " " + text.lower() + " "
-    fr = sum(1 for m in fr_markers if m in t)
-    en = sum(1 for m in en_markers if m in t)
-    if fr > en:
+    """Heuristique FR vs EN, avec le FRANCAIS par defaut.
+
+    L'ancienne version renvoyait "en" des que le francais ne l'emportait pas
+    STRICTEMENT, et comptait " a " comme marqueur anglais alors qu'il est
+    omnipresent en francais ("il a", "y a", "a la"). Resultat mesure : 4 phrases
+    francaises sur 6 routees vers l'anglais, dont "Merci beaucoup" et
+    "Bonjour, comment vas-tu ?". Toute replique courte basculait donc sur un
+    moteur anglais, avec l'accent qui va avec.
+
+    Regles :
+      - les caracteres accentues (e, a, c cedille...) sont un signal FORT de
+        francais : un texte anglais n'en contient pratiquement jamais ;
+      - comparaison par mots entiers, pas par sous-chaines espacees ;
+      - ambiguite ou texte trop court -> FRANCAIS (langue du projet). Basculer
+        en anglais doit demander une preuve, pas l'absence de preuve.
+    """
+    t = (text or "").lower().strip()
+    if not t:
         return "fr"
-    return "en"
+
+    # Signal fort : accents francais.
+    if re.search(r"[àâäéèêëîïôöùûüÿçœæ]", t):
+        return "fr"
+
+    words = re.findall(r"[a-z']+", t)
+    if not words:
+        return "fr"
+    ws = set(words)
+
+    fr_words = {
+        "le", "la", "les", "un", "une", "des", "du", "de", "est", "et", "que",
+        "qui", "avec", "pour", "ce", "cette", "ces", "je", "tu", "il", "elle",
+        "nous", "vous", "ils", "elles", "ne", "pas", "plus", "sur", "dans",
+        "mais", "tout", "tous", "bien", "merci", "bonjour", "salut", "oui",
+        "non", "moi", "toi", "son", "sa", "ses", "mon", "ma", "mes", "ton",
+        "ta", "tes", "au", "aux", "en", "y", "on", "se", "sont", "etre",
+        "avoir", "fait", "faire", "dit", "comme", "quand", "alors", "ici",
+        "rien", "peut", "veux", "veut", "jamais", "toujours", "tres",
+    }
+    # " a " retire volontairement : c'est le piege d'origine.
+    en_words = {
+        "the", "an", "is", "are", "was", "were", "and", "that", "with", "for",
+        "this", "these", "those", "it", "its", "you", "your", "we", "our",
+        "they", "their", "he", "she", "his", "her", "have", "has", "had",
+        "will", "would", "can", "could", "should", "there", "here", "what",
+        "when", "which", "because", "about", "from", "into", "hello", "thanks",
+        "thank", "yes", "please", "sorry", "very", "never", "always",
+    }
+    fr = len(ws & fr_words)
+    en = len(ws & en_words)
+
+    # L'anglais doit gagner NETTEMENT pour l'emporter : sur un texte court, un
+    # seul mot commun ne doit pas faire basculer toute une replique.
+    if en >= 2 and en > fr:
+        return "en"
+    return "fr"
+
+
+def _last_json_line(raw: str) -> dict | None:
+    for line in reversed((raw or "").splitlines()):
+        line = line.strip()
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
+def _cosyvoice3_python() -> Path:
+    configured = os.environ.get("AURORA_COSYVOICE3_PYTHON", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".local/share/auroraia/venvs/cosyvoice3/bin/python"
+
+
+def _is_isolated_python(python_path: Path) -> bool:
+    """Compare les racines de venv, pas les cibles de leurs liens python."""
+    candidate_prefix = os.path.normcase(os.path.abspath(str(python_path.parent.parent)))
+    current_prefix = os.path.normcase(os.path.abspath(sys.prefix))
+    return candidate_prefix != current_prefix
+
+
+def cosyvoice3_status() -> dict:
+    """Check the isolated CosyVoice3 runtime without installing anything."""
+    python_path = _cosyvoice3_python()
+    base = {
+        "ok": False,
+        "engine": "cosyvoice3",
+        "python": str(python_path),
+        "adapter": str(COSYVOICE3_ADAPTER),
+        "isolated": _is_isolated_python(python_path),
+    }
+    if not COSYVOICE3_ADAPTER.is_file():
+        return {**base, "error": "adaptateur CosyVoice3 absent"}
+    if not python_path.is_file():
+        return {
+            **base,
+            "error": (
+                "venv CosyVoice3 isole absent; definir AURORA_COSYVOICE3_PYTHON "
+                "apres installation dans ~/.local/share/auroraia/venvs/cosyvoice3"
+            ),
+        }
+    if not base["isolated"]:
+        return {
+            **base,
+            "error": (
+                "AURORA_COSYVOICE3_PYTHON pointe sur le venv partage AuroraIA; "
+                "un venv CosyVoice3 distinct est obligatoire"
+            ),
+        }
+    try:
+        proc = subprocess.run(
+            [str(python_path), str(COSYVOICE3_ADAPTER), "--check"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        parsed = _last_json_line(proc.stdout)
+        if parsed is None:
+            return {
+                **base,
+                "error": (proc.stderr or proc.stdout or "check CosyVoice3 sans JSON")[:400],
+            }
+        return {**base, **parsed, "ok": proc.returncode == 0 and bool(parsed.get("ok"))}
+    except Exception as exc:
+        return {**base, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}
 
 
 def check_dependencies() -> dict:
-    """Verify TTS engines are importable."""
-    info = {"f5_tts": False, "xtts_v2": False, "torch_cuda": False}
+    """Verify TTS engines honestly; all heavy engines may live outside this venv."""
+    cosy = cosyvoice3_status()
+    info = {
+        "cosyvoice3": bool(cosy.get("ok")),
+        "cosyvoice3_status": cosy,
+        "f5_tts": False,
+        "xtts_v2": False,
+        "torch_cuda": False,
+    }
     try:
         import torch
         info["torch_cuda"] = torch.cuda.is_available()
@@ -92,7 +219,13 @@ def check_dependencies() -> dict:
     except Exception as exc:
         info["xtts_v2_error"] = str(exc)[:120]
 
-    info["ok"] = info["f5_tts"] or info["xtts_v2"]
+    info["ok"] = info["cosyvoice3"] or info["f5_tts"] or info["xtts_v2"]
+    info["preferred_engine"] = (
+        "cosyvoice3" if info["cosyvoice3"]
+        else "xtts-v2" if info["xtts_v2"]
+        else "f5-tts" if info["f5_tts"]
+        else None
+    )
     return info
 
 
@@ -118,7 +251,10 @@ def list_library() -> dict:
                 "source": meta.get("source"),
                 "duration_s": meta.get("duration_s"),
                 "quality_score": meta.get("quality_score"),
+                "reference_quality_score": meta.get("reference_quality_score"),
+                "reference_audio": meta.get("reference_audio"),
                 "extracted_at": meta.get("extracted_at"),
+                "has_transcript": bool((meta.get("transcript") or "").strip()),
             })
     return {"ok": True, "voices": voices, "count": len(voices)}
 
@@ -182,22 +318,145 @@ def ensure_default_voice(lang: str = "fr") -> dict:
     )
 
 
+def analyze_reference_audio(reference_wav: str) -> dict:
+    """Mesure objective minimale avant d'accepter une référence de clonage."""
+    try:
+        import numpy as np
+        import soundfile as sf
+
+        audio, sample_rate = sf.read(reference_wav, always_2d=False)
+        if getattr(audio, "ndim", 1) > 1:
+            audio = np.mean(audio, axis=1)
+        audio = np.asarray(audio, dtype=np.float32)
+        duration_s = len(audio) / float(sample_rate) if sample_rate else 0.0
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        clipping_ratio = float(np.mean(np.abs(audio) >= 0.995)) if audio.size else 0.0
+        dc_offset = float(np.mean(audio)) if audio.size else 0.0
+
+        frame_len = max(1, int(sample_rate * 0.02))
+        usable = (len(audio) // frame_len) * frame_len
+        if usable:
+            frames = audio[:usable].reshape(-1, frame_len)
+            frame_rms = np.sqrt(np.mean(frames * frames, axis=1) + 1e-12)
+            active_level = float(np.percentile(frame_rms, 90))
+            noise_level = float(np.percentile(frame_rms, 10))
+            silence_threshold = max(10 ** (-45.0 / 20.0), active_level * 0.08)
+            silence_ratio = float(np.mean(frame_rms < silence_threshold))
+            snr_db = float(20.0 * np.log10((active_level + 1e-8) / (noise_level + 1e-8)))
+        else:
+            silence_ratio = 1.0
+            snr_db = 0.0
+
+        failures = []
+        warnings = []
+        if duration_s < 2.5:
+            failures.append("reference_too_short")
+        elif duration_s < 5.0:
+            warnings.append("reference_short")
+        if duration_s > 45.0:
+            warnings.append("reference_long")
+        if peak < 0.01:
+            failures.append("reference_nearly_silent")
+        if silence_ratio > 0.80:
+            failures.append("too_much_silence")
+        elif silence_ratio > 0.35:
+            warnings.append("silence_ratio_high")
+        if clipping_ratio > 0.02:
+            failures.append("severe_clipping")
+        elif clipping_ratio > 0.001:
+            warnings.append("clipping_detected")
+        if snr_db < 10.0:
+            warnings.append("low_estimated_snr")
+        if abs(dc_offset) > 0.03:
+            warnings.append("dc_offset")
+
+        score = 1.0
+        score -= min(0.35, silence_ratio * 0.45)
+        score -= min(0.35, clipping_ratio * 10.0)
+        score -= 0.20 if snr_db < 10 else 0.10 if snr_db < 18 else 0.0
+        score -= 0.12 if duration_s < 5.0 else 0.0
+        score -= 0.05 if duration_s > 45.0 else 0.0
+        return {
+            "ok": not failures,
+            "sample_rate": int(sample_rate),
+            "channels": 1,
+            "duration_s": round(duration_s, 3),
+            "peak": round(peak, 6),
+            "clipping_ratio": round(clipping_ratio, 6),
+            "silence_ratio": round(silence_ratio, 4),
+            "estimated_snr_db": round(snr_db, 2),
+            "dc_offset": round(dc_offset, 6),
+            "quality_score": round(max(0.0, min(1.0, score)), 3),
+            "failures": failures,
+            "warnings": warnings,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "failures": ["audio_decode_failed"],
+            "warnings": [],
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+
+
+def _normalize_reference_audio(source: Path, destination: Path) -> dict:
+    """Normalise le conteneur seulement : mono PCM 16 bits / 16 kHz, sans filtre de timbre."""
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run([
+        ffmpeg,
+        "-y",
+        "-i", str(source),
+        "-vn",
+        "-map_metadata", "-1",
+        "-ac", "1",
+        "-ar", "16000",
+        "-c:a", "pcm_s16le",
+        "-loglevel", "error",
+        str(destination),
+    ], capture_output=True, text=True, timeout=180)
+    if proc.returncode != 0 or not destination.is_file():
+        return {
+            "ok": False,
+            "error": (proc.stderr or proc.stdout or "normalisation ffmpeg échouée")[-400:],
+        }
+    quality = analyze_reference_audio(str(destination))
+    return {"ok": bool(quality.get("ok")), "quality": quality}
+
+
 def register_voice(character: str, reference_wav: str, lang: str = "fr",
                     source: str = "", quality_score: float = 0.0,
-                    duration_s: float = 0.0) -> dict:
+                    duration_s: float = 0.0, transcript: str = "") -> dict:
     """Add a voice to the global library. The reference WAV is copied in,
     and a fingerprint embedding is computed and stored.
     """
-    slug = slugify(character)
-    voice_dir = LIBRARY_DIR / slug
-    voice_dir.mkdir(parents=True, exist_ok=True)
-
     src = Path(reference_wav)
-    if not src.exists():
+    if not src.is_file():
         return {"ok": False, "error": f"reference not found: {reference_wav}"}
 
+    slug = slugify(character)
+    voice_dir = LIBRARY_DIR / slug
+    normalized_tmp = CACHE_DIR / f"register_{slug}_{os.getpid()}_{time.time_ns()}.wav"
+    normalized = _normalize_reference_audio(src, normalized_tmp)
+    audio_quality = normalized.get("quality") or {}
+    if not normalized.get("ok"):
+        normalized_tmp.unlink(missing_ok=True)
+        return {
+            "ok": False,
+            "error": "reference_audio_rejected",
+            "audio_quality": audio_quality,
+            "detail": normalized.get("error"),
+        }
+
+    voice_dir.mkdir(parents=True, exist_ok=True)
     target_ref = voice_dir / "reference.wav"
-    shutil.copy2(src, target_ref)
+    os.replace(normalized_tmp, target_ref)
+    duration_s = float(audio_quality.get("duration_s") or duration_s or 0.0)
 
     # Compute fingerprint embedding so future "Natsu" lookups can verify identity.
     embedding_path = voice_dir / "embedding.npy"
@@ -238,10 +497,18 @@ def register_voice(character: str, reference_wav: str, lang: str = "fr",
         "source": source,
         "extracted_at": int(time.time()),
         "quality_score": quality_score,
+        "reference_quality_score": audio_quality.get("quality_score"),
+        "reference_audio": audio_quality,
         "duration_s": duration_s,
+        "transcript": transcript.strip(),
     }
     (voice_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    return {"ok": True, "slug": slug, "path": str(target_ref)}
+    return {
+        "ok": True,
+        "slug": slug,
+        "path": str(target_ref),
+        "audio_quality": audio_quality,
+    }
 
 
 def find_voice(character: str) -> dict:
@@ -302,11 +569,11 @@ def _get_f5():
 
 
 def synthesize_xtts(text: str, reference_wav: str, output_wav: str, lang: str = "fr") -> dict:
-    """XTTS-v2 zero-shot voice cloning. Best for FR + multilingual."""
-    tts = _get_xtts()
-    emit("xtts_gen", f"synthese {lang}: {text[:60]}...")
-    Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
+    """XTTS-v2 zero-shot voice cloning, retained as an explicit fallback."""
     try:
+        tts = _get_xtts()
+        emit("xtts_gen", f"synthese {lang}: {text[:60]}...")
+        Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
         tts.tts_to_file(
             text=text,
             speaker_wav=reference_wav,
@@ -322,11 +589,11 @@ def synthesize_xtts(text: str, reference_wav: str, output_wav: str, lang: str = 
 
 
 def synthesize_f5(text: str, reference_wav: str, output_wav: str, ref_text: str = "") -> dict:
-    """F5-TTS zero-shot. English/Chinese strong, FR weaker but ok cross-lingual."""
-    f5 = _get_f5()
-    emit("f5_gen", f"synthese F5: {text[:60]}...")
-    Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
+    """F5-TTS zero-shot, retained as an explicit fallback."""
     try:
+        f5 = _get_f5()
+        emit("f5_gen", f"synthese F5: {text[:60]}...")
+        Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
         # F5-TTS API: infer(ref_audio, ref_text, gen_text, file_wave)
         f5.infer(
             ref_file=reference_wav,
@@ -342,37 +609,197 @@ def synthesize_f5(text: str, reference_wav: str, output_wav: str, ref_text: str 
         return {"ok": False, "error": str(exc)[:200], "engine": "f5-tts"}
 
 
-def synthesize(text: str, reference_wav: str, output_wav: str, lang: str = "auto") -> dict:
-    """Top-level synth: route by language, with fallback chain."""
+def _reference_prompt_text(reference_wav: str) -> str:
+    reference = Path(reference_wav)
+    metadata_path = reference.parent / "metadata.json"
+    if metadata_path.is_file():
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            transcript = str(metadata.get("transcript") or "").strip()
+            if transcript:
+                return transcript
+        except Exception:
+            pass
+    for sidecar in (reference.with_suffix(".txt"), reference.parent / "transcript.txt"):
+        if sidecar.is_file():
+            try:
+                transcript = sidecar.read_text(encoding="utf-8").strip()
+                if transcript:
+                    return transcript
+            except Exception:
+                pass
+    return ""
+
+
+def synthesize_cosyvoice3(
+    text: str,
+    reference_wav: str,
+    output_wav: str,
+    lang: str,
+    prompt_text: str = "",
+    instruction: str = "",
+) -> dict:
+    """Run the official CosyVoice3 API through its isolated Python runtime."""
+    status = cosyvoice3_status()
+    if not status.get("ok"):
+        return {
+            "ok": False,
+            "engine": "cosyvoice3",
+            "error": status.get("error") or "runtime CosyVoice3 indisponible",
+            "runtime": status,
+        }
+
+    cmd = [
+        str(_cosyvoice3_python()),
+        str(COSYVOICE3_ADAPTER),
+        "--synthesize",
+        "--text", text,
+        "--reference", reference_wav,
+        "--lang", lang,
+        "--output", output_wav,
+    ]
+    resolved_prompt = (prompt_text or _reference_prompt_text(reference_wav)).strip()
+    if resolved_prompt:
+        cmd.extend(["--prompt-text", resolved_prompt])
+    if instruction.strip():
+        cmd.extend(["--instruction", instruction.strip()])
+    emit("cosyvoice3_gen", f"synthese {lang}: {text[:60]}...")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    except Exception as exc:
+        return {"ok": False, "engine": "cosyvoice3", "error": f"{type(exc).__name__}: {exc}"}
+    parsed = _last_json_line(proc.stdout)
+    if parsed is None:
+        return {
+            "ok": False,
+            "engine": "cosyvoice3",
+            "error": (proc.stderr or proc.stdout or "sortie CosyVoice3 non JSON")[:400],
+        }
+    if proc.returncode != 0:
+        parsed["ok"] = False
+        parsed.setdefault("error", (proc.stderr or "CosyVoice3 a echoue")[:400])
+    return parsed
+
+
+def _reference_cache_identity(reference_wav: str) -> str:
+    reference = Path(reference_wav)
+    try:
+        stat = reference.stat()
+        return f"{reference.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+    except OSError:
+        return str(reference)
+
+
+def synthesize(
+    text: str,
+    reference_wav: str,
+    output_wav: str,
+    lang: str = "auto",
+    prompt_text: str = "",
+    instruction: str = "",
+) -> dict:
+    """Quality-first synthesis: CosyVoice3, then explicit legacy fallbacks."""
     if lang == "auto":
         lang = detect_language(text)
 
-    # Cache by hash(text + ref + lang)
-    key = hashlib.md5(f"{text}|{reference_wav}|{lang}".encode("utf-8")).hexdigest()[:16]
+    # Include reference content identity and prompt transcript to avoid stale clones.
+    key_material = "|".join([
+        "voice-pipeline-v3",
+        text,
+        _reference_cache_identity(reference_wav),
+        lang,
+        prompt_text,
+        instruction,
+    ])
+    key = hashlib.sha256(key_material.encode("utf-8")).hexdigest()[:20]
     cached = CACHE_DIR / f"{key}.wav"
+    cached_meta = CACHE_DIR / f"{key}.json"
     if cached.exists() and cached.stat().st_size > 1024:
+        Path(output_wav).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(cached, output_wav)
         import soundfile as sf
         info = sf.info(output_wav)
-        return {"ok": True, "wav": output_wav, "duration_s": float(info.duration), "engine": "cache"}
+        metadata = {}
+        if cached_meta.is_file():
+            try:
+                metadata = json.loads(cached_meta.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+        return {
+            "ok": True,
+            "wav": output_wav,
+            "duration_s": float(info.duration),
+            "engine": metadata.get("engine", "cache-legacy-engine-unknown"),
+            "model": metadata.get("model"),
+            "cached": True,
+        }
 
-    # Routage: FR -> XTTS-v2 (meilleur), EN -> F5-TTS, autres -> XTTS-v2 multilingue
+    attempts = []
+    engines = [
+        (
+            "cosyvoice3",
+            lambda: synthesize_cosyvoice3(
+                text,
+                reference_wav,
+                output_wav,
+                lang,
+                prompt_text=prompt_text,
+                instruction=instruction,
+            ),
+        ),
+    ]
     if lang == "en":
-        result = synthesize_f5(text, reference_wav, output_wav)
-        if not result["ok"]:
-            emit("fallback", "F5-TTS echec -> XTTS-v2")
-            result = synthesize_xtts(text, reference_wav, output_wav, lang="en")
+        engines.extend([
+            ("f5-tts", lambda: synthesize_f5(text, reference_wav, output_wav, ref_text=prompt_text)),
+            ("xtts-v2", lambda: synthesize_xtts(text, reference_wav, output_wav, lang="en")),
+        ])
     else:
-        result = synthesize_xtts(text, reference_wav, output_wav, lang=lang)
-        if not result["ok"] and lang == "en":
-            emit("fallback", "XTTS-v2 echec -> F5-TTS")
-            result = synthesize_f5(text, reference_wav, output_wav)
+        engines.extend([
+            ("xtts-v2", lambda: synthesize_xtts(text, reference_wav, output_wav, lang=lang)),
+            ("f5-tts", lambda: synthesize_f5(text, reference_wav, output_wav, ref_text=prompt_text)),
+        ])
+
+    result = {"ok": False, "engine": None, "error": "aucun moteur vocal disponible"}
+    for engine_name, run_engine in engines:
+        try:
+            candidate = run_engine()
+        except Exception as exc:
+            candidate = {
+                "ok": False,
+                "engine": engine_name,
+                "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+            }
+        attempts.append({
+            "engine": engine_name,
+            "ok": bool(candidate.get("ok")),
+            **({"error": str(candidate.get("error") or "")[:300]} if not candidate.get("ok") else {}),
+        })
+        result = candidate
+        if candidate.get("ok"):
+            break
+        emit("fallback", f"{engine_name} echec -> moteur suivant")
 
     if result.get("ok"):
+        result["fallback_chain"] = attempts
+        if attempts and attempts[0]["engine"] != result.get("engine"):
+            result["warnings"] = [{
+                "code": "voice_engine_fallback",
+                "message": (
+                    f"Moteur prioritaire indisponible; rendu vocal produit par "
+                    f"{result.get('engine')}."
+                ),
+                "attempts": attempts,
+            }]
         try:
             shutil.copy2(output_wav, cached)
+            cached_meta.write_text(json.dumps({
+                "engine": result.get("engine"),
+                "model": result.get("model"),
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
+    else:
+        result["fallback_chain"] = attempts
 
     return result
 
@@ -476,6 +903,17 @@ def main():
     parser.add_argument("--lang", default="auto", help="fr|en|auto")
     parser.add_argument("--output", help="Output WAV path")
     parser.add_argument("--source", default="", help="Provenance string (URL/file)")
+    parser.add_argument(
+        "--transcript",
+        default="",
+        help="Transcription exacte du WAV de reference, conservee dans la fiche voix",
+    )
+    parser.add_argument(
+        "--prompt-text",
+        default="",
+        help="Transcription exacte de la reference pour le clonage zero-shot",
+    )
+    parser.add_argument("--instruction", default="", help="Direction de jeu optionnelle")
     parser.add_argument("--quality-score", type=float, default=0.0)
     parser.add_argument("--duration-s", type=float, default=0.0)
     args = parser.parse_args()
@@ -506,6 +944,7 @@ def main():
             source=args.source,
             quality_score=args.quality_score,
             duration_s=args.duration_s,
+            transcript=args.transcript,
         )
         print(json.dumps(result), flush=True)
         sys.exit(0 if result["ok"] else 1)
@@ -524,14 +963,24 @@ def main():
             sys.exit(1)
         # Find reference: explicit --reference > library lookup by --character
         ref = args.reference
+        prompt_text = args.prompt_text
         if not ref and args.character:
             found = find_voice(args.character)
             if found.get("ok"):
                 ref = found["reference"]
+                if not prompt_text:
+                    prompt_text = str((found.get("metadata") or {}).get("transcript") or "")
         if not ref:
             print(json.dumps({"ok": False, "error": "no reference WAV (give --reference or --character with registered voice)"}), flush=True)
             sys.exit(1)
-        result = synthesize(args.text, ref, args.output, lang=args.lang)
+        result = synthesize(
+            args.text,
+            ref,
+            args.output,
+            lang=args.lang,
+            prompt_text=prompt_text,
+            instruction=args.instruction,
+        )
         print(json.dumps(result), flush=True)
         sys.exit(0 if result["ok"] else 1)
 
