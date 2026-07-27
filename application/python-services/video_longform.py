@@ -66,6 +66,9 @@ CALIB = {
     # surface reellement generee (le budget adaptatif plafonne, cf. estimate())
     "gen_mpix_premium": 0.51,
     "gen_mpix_balanced": 0.40,
+    # fraction des plans de dialogue rendus en composite fixe (donc non generes)
+    # tant qu'aucun moteur de lipsync anime n'est installe. Mesure : 1.0.
+    "dialogue_still_fraction": 1.0,
     "flux_keyframe_s": 60.0,        # par tentative et par personnage
     "voice_s_per_dialogue_shot": 25.0,
     "qa_vision_s_per_shot": 18.0,   # par tentative
@@ -147,11 +150,25 @@ def estimate(total_minutes, n_scenes, shots_per_scene, dialogue_ratio,
     n_shots = max(1, n_scenes * shots_per_scene)
     n_dialogue = int(n_shots * dialogue_ratio)
 
+    # MESURE 2026-07-27 : dans l'etat actuel du pipeline, un plan de dialogue
+    # en gros plan n'est PAS genere par le modele video — il est composite
+    # (portrait + fond) puis fige en video, la bouche etant censee etre animee
+    # par le lipsync. Mesure de mouvement inter-frames sur un film reel :
+    # plans dialogues = 0.00 (totalement fixes), plans generes = 3.1 a 12.0.
+    # Ces plans ne coutent donc quasiment rien en generation, ce qui expliquait
+    # une surestimation d'un facteur 2.3 du modele initial.
+    # ATTENTION : des qu'un vrai lipsync anime (S2V / InfiniteTalk) sera cable,
+    # ces plans redeviendront generes et ce terme devra repasser a 1.0.
+    animated_fraction = 1.0 - (dialogue_ratio * CALIB["dialogue_still_fraction"])
+    generated_seconds = video_seconds * animated_fraction
     gen = (CALIB["gen_s_per_videosecond_per_mpix_at60steps"]
-           * gen_mpix * video_seconds * (steps / CALIB["ref_steps"]))
+           * gen_mpix * generated_seconds * (steps / CALIB["ref_steps"]))
     # Les tentatives qualite ne rejouent qu'une fraction des plans (ceux qui
-    # echouent la porte) — on compte 35 % des plans rejoues une fois de plus.
-    gen *= 1.0 + 0.35 * (attempts - 1)
+    # echouent la porte). Calibre sur un film reel : 15 % des plans rejoues par
+    # tentative supplementaire. L'estimation conserve volontairement ~20 % de
+    # marge de planification — mieux vaut annoncer trop que trop peu quand on
+    # engage des jours de calcul.
+    gen *= 1.0 + 0.15 * (attempts - 1)
 
     keyframes = CALIB["flux_keyframe_s"] * n_characters * 1.5 * max(1, n_scenes // 4)
     voice = CALIB["voice_s_per_dialogue_shot"] * n_dialogue
