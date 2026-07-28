@@ -759,6 +759,7 @@ def _ollama_vision_json(
     24 s) alors que sans format le modèle sort un JSON propre en 4 s.
     """
     import urllib.request
+    last_raw = ""
     for attempt in range(retries + 1):
         try:
             body = json.dumps({
@@ -777,17 +778,72 @@ def _ollama_vision_json(
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode())
             text = (data.get("response") or "").strip()
-            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-            first = text.find("{")
-            last = text.rfind("}")
-            if first >= 0 and last > first:
-                payload = json.loads(text[first:last + 1])
-                if isinstance(payload, dict):
-                    return payload
+            payload = _extract_json_object(text)
+            if payload is not None:
+                return payload
+            last_raw = text
         except Exception:
             if attempt >= retries:
                 raise
         # Parse raté sans exception -> retry silencieux.
+    # v91 : ne plus echouer en silence. Un "vision JSON parse failed" muet
+    # laissait des scores None qui faussaient la porte de qualite et
+    # declenchaient de faux retries. On remonte un extrait du texte recu.
+    try:
+        emit("vision_parse_fail", (last_raw or "")[:160].replace("\n", " "))
+    except Exception:
+        pass
+    return None
+
+
+def _extract_json_object(text: str):
+    """Extrait le premier objet JSON VALIDE d'une reponse de modele.
+
+    L'ancienne methode prenait `premier {` .. `dernier }`, ce qui casse des
+    que le modele ajoute de la prose contenant une accolade, tronque sa sortie,
+    ou ouvre un <think> sans le refermer. Mesure : "vision JSON parse failed"
+    revenait en boucle et laissait des scores None — donc une porte de qualite
+    qui ne mesurait plus rien.
+
+    Ici : on nettoie les balises de raisonnement (fermees OU non), les cloture
+    markdown, puis on cherche un objet a ACCOLADES EQUILIBREES, en ignorant
+    celles qui apparaissent dans une chaine.
+    """
+    if not text:
+        return None
+    # <think>...</think> ferme, puis <think> non ferme (le modele a ete coupe)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)
+    text = re.sub(r"```(?:json)?", "", text).strip()
+
+    for start in range(len(text)):
+        if text[start] != "{":
+            continue
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        payload = json.loads(text[start:i + 1])
+                    except Exception:
+                        break  # objet mal forme : on tente le { suivant
+                    if isinstance(payload, dict):
+                        return payload
+                    break
     return None
 
 
