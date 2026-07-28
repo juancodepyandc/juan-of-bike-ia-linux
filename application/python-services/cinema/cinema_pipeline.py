@@ -3967,10 +3967,30 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             )
             for issue in (phys_data.get("issues") or [])[:3]:
                 emit("shot_issue", f"plan {idx}: {issue[:100]}")
+            # v91 — PAS DE DOUBLE PEINE SUR UN CONTENU VISUEL INCHANGE.
+            # Le plan a deja franchi la porte avant le mux ; entre les deux, on
+            # n'a fait qu'AJOUTER UNE PISTE AUDIO — les images sont identiques.
+            # Or le juge est bruite : mesure sur un plan reel, le meme contenu a
+            # ete note act=7, puis 6, puis 10 (accepte), puis 5 en post-audio,
+            # ce qui a fait echouer tout le film. Rejuger visuellement deux fois
+            # revient a exiger de passer deux fois un tirage aleatoire.
+            # La porte post-audio ne doit sanctionner que ce que le mux peut
+            # avoir casse. Si le plan etait deja passe, on conserve la decision
+            # et on se contente de tracer l'ecart.
+            visual_unchanged_since_gate = bool(
+                accepted_qa and shot_quality_ok(accepted_qa, quality_mode))
+            if visual_unchanged_since_gate and shot_quality_is_measured(post_qa) \
+                    and not shot_quality_ok(post_qa, quality_mode):
+                emit("shot_score_variance",
+                     f"plan {idx}: juge instable sur un contenu inchange "
+                     f"(porte {shot_quality_average(accepted_qa):.1f}/10 -> "
+                     f"post-audio {shot_quality_average(post_qa):.1f}/10) — "
+                     f"decision de la porte conservee")
             if (
                 strict_quality_gate
                 and shot_quality_is_measured(post_qa)
                 and not shot_quality_ok(post_qa, quality_mode)
+                and not visual_unchanged_since_gate
                 and not dialogue_closeup_source
                 and not manual_accepts_quality(post_qa)
             ):
