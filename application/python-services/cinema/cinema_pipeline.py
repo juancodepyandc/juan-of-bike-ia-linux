@@ -3147,6 +3147,11 @@ def estimate_total_seconds(shots: list, style: str, resolution: str) -> int:
 
 
 def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
+    # v91 : `warnings` est alimente tout au long du rendu (limites connues de
+    # l'installation, replis, degradations). Il etait initialise seulement en
+    # fin de fonction, ce qui faisait planter tout avertissement emis plus tot
+    # avec UnboundLocalError.
+    warnings: list = []
     style = storyboard.get("style", "realistic")
     aspect = storyboard.get("aspect", "16:9")
     resolution = storyboard.get("resolution", "1080p")
@@ -4066,7 +4071,6 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     quality_grade = _compute_quality_grade(
         shot_quality, audio_quality, temporal_quality, integrity, char_quality,
     )
-    warnings = []
     for q in shot_quality:
         if not shot_quality_is_measured(q):
             warnings.append({
