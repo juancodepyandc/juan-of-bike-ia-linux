@@ -2371,6 +2371,28 @@ def is_object_like_character(description: str) -> bool:
     ))
 
 
+
+LOCOMOTION_TOKENS = (
+    "riding", "rides", "cycling", "pedal", "running", "runs", "sprint",
+    "walking", "walks", "driving", "drives", "flying", "flies",
+    "galloping", "swimming", "skating", "rolling forward",
+)
+
+
+def _is_locomotion_shot(shot: dict) -> bool:
+    """Vrai si le plan a pour sujet un DEPLACEMENT.
+
+    Un tel plan ne doit jamais etre ancre en i2v sur une image fixe : le
+    conditionnement verrouille la pose de depart, et le modele translate un
+    bloc immobile au lieu d'animer une locomotion.
+    """
+    if shot.get("force_t2v"):
+        return True
+    blob = (str(shot.get("scene", "")) + " " +
+            str(shot.get("action_contract", ""))).lower()
+    return any(tok in blob for tok in LOCOMOTION_TOKENS)
+
+
 def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframes: dict) -> tuple:
     """Pick the best i2v anchor for a shot.
 
@@ -2395,16 +2417,7 @@ def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframe
     # Un plan de locomotion doit donc partir en t2v : on perd un peu de
     # continuite d'apparence (rattrapee par la description et le style), on
     # gagne le mouvement, qui est le sujet meme du plan.
-    if shot.get("force_t2v"):
-        return "", None
-    _scene_low = str(shot.get("scene", "")).lower()
-    _contract_low = str(shot.get("action_contract", "")).lower()
-    LOCOMOTION = (
-        "riding", "rides", "cycling", "pedal", "running", "runs", "sprint",
-        "walking", "walks", "driving", "drives", "flying", "flies",
-        "galloping", "swimming", "skating", "rolling forward",
-    )
-    if any(tok in _scene_low or tok in _contract_low for tok in LOCOMOTION):
+    if _is_locomotion_shot(shot):
         return "", None
 
     scene = str(shot.get("scene", "")).lower()
@@ -3400,7 +3413,21 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         # boat", QA 2/10). Changement de lieu -> l'ancre du lieu correspondant
         # (location_anchors) ou rien.
         same_place = (not location and not scene_anchor_location) or (location == scene_anchor_location)
-        if (dialogue or needs_lipsync) and scene_anchor and "close" not in camera and same_place:
+
+        # v91 — LA REGLE "PAS D'ANCRE SUR UN PLAN DE LOCOMOTION" DOIT VALOIR
+        # POUR LES DEUX CHEMINS D'ANCRAGE.
+        # select_anchor_character l'applique deja, mais l'ancre de SCENE et
+        # l'ancre de LIEU ci-dessous sont un chemin distinct : elles reutilisent
+        # la derniere image du plan precedent. Sur un plan de course a velo,
+        # cette image montre le velo A L'ARRET, et le conditionnement i2v
+        # verrouille cette pose — le personnage reste debout, pieds au sol.
+        # Mesure : correctif applique au seul select_anchor_character, le plan
+        # restait ancre ("anchor:i2v from shot_02_end.png") et notait
+        # phys=3/10 act=2/10 avec "Character stationary holding bike".
+        if _is_locomotion_shot(shot):
+            emit("anchor_skip",
+                 f"plan {idx}: plan de locomotion -> t2v (aucune ancre fixe)")
+        elif (dialogue or needs_lipsync) and scene_anchor and "close" not in camera and same_place:
             anchor_name, anchor = "__scene_continuity__", scene_anchor
         elif (
             location
