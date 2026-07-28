@@ -2730,6 +2730,13 @@ def lipsync_available() -> bool:
     global _LIPSYNC_AVAILABLE
     if _LIPSYNC_AVAILABLE is not None:
         return _LIPSYNC_AVAILABLE
+    try:
+        from s2v_lipsync import check as _s2v_check
+        if _s2v_check().get("ok"):
+            _LIPSYNC_AVAILABLE = True
+            return True
+    except Exception:
+        pass
     if musetalk_available():
         _LIPSYNC_AVAILABLE = True
         return True
@@ -2759,6 +2766,33 @@ def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str) -> dict:
        est absent ou échoue : tête parlante statique, mais parole complète.
     """
     is_video = str(image_or_video).lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
+
+    # v91 — S2V EN PREMIER QUAND LA SOURCE EST UNE IMAGE.
+    # Un patch de bouche (MuseTalk, LatentSync) repeint la seule boite
+    # bouche/menton : il corrige « la bouche ne suit pas la voix » mais PAS
+    # « la tete se deforme quand il parle » — la zone repeinte devient stable
+    # pendant que le crane continue de fondre autour.
+    # Wan 2.2 S2V prend l'audio comme CONDITION DE GENERATION : le plan est
+    # reproduit avec la parole en entree, donc levres, machoire, tete et
+    # epaules sont coherents par construction.
+    # Valide en reel : 85 frames en 656 s, bouche ouverte et animee (pics de
+    # mouvement 12,6 sur la zone bouche), identite du personnage intacte.
+    # L'image passee ici est deja le COMPOSITE personnage+decor, donc le fond
+    # du plan est conserve.
+    if not is_video:
+        try:
+            from s2v_lipsync import check as _s2v_check, run as _s2v_run
+            if _s2v_check().get("ok"):
+                emit("lipsync_s2v", "Wan2.2-S2V (regeneration conditionnee par l'audio)")
+                res = _s2v_run(image_or_video, audio_wav, output_mp4,
+                               prompt="a character speaking to the camera",
+                               width=640, height=640, steps=12)
+                if res.get("ok"):
+                    return {"ok": True, "mp4": res["mp4"], "engine": res["engine"]}
+                emit("lipsync_warn", f"S2V echoue: {str(res.get('error'))[:140]}")
+        except Exception as exc:
+            emit("lipsync_warn", f"S2V indisponible: {str(exc)[:140]}")
+
     if is_video and musetalk_available():
         audio_s = probe_audio_duration(audio_wav)
         video_s = probe_video_duration(image_or_video)
