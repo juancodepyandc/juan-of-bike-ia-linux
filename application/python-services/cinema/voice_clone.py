@@ -41,9 +41,19 @@ import _compat  # noqa: F401
 WORKSPACE = Path(__file__).resolve().parents[2]
 LIBRARY_DIR = WORKSPACE / "voices" / "library"
 LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+# Depot d'echantillons : tout fichier depose ici est enrole automatiquement au
+# premier dialogue du personnage correspondant. C'est le SEUL chemin par lequel
+# une vraie voix peut entrer dans le systeme — sans echantillon, aucun moteur au
+# monde ne « reproduit » une voix, il en invente une.
+DROPBOX_DIR = WORKSPACE / "voices" / "echantillons"
 CACHE_DIR = WORKSPACE / "temp" / "voice_clone"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 COSYVOICE3_ADAPTER = Path(__file__).resolve().parent / "cosyvoice3_adapter.py"
+
+# ffmpeg lit la piste audio de n'importe lequel de ces conteneurs : l'utilisateur
+# peut deposer un extrait video sans le convertir au prealable.
+SAMPLE_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".wma",
+               ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts"}
 
 
 def emit(stage: str, detail: str):
@@ -511,6 +521,127 @@ def register_voice(character: str, reference_wav: str, lang: str = "fr",
     }
 
 
+_DECORATIONS = {"style", "voice", "voix", "clone", "sample", "echantillon",
+                "ref", "reference", "extrait"}
+_LANG_TOKENS = {"fr", "en", "es", "de", "it", "jp", "ja", "vf", "vo", "vost",
+                "va", "french", "francais", "english"}
+
+
+def _core_tokens(slug: str) -> list:
+    """Retire les decorations pour comparer ce qui identifie vraiment la voix.
+
+    « style_natsu_fr » et « natsu_dragneel_VF.mp3 » designent la meme personne ;
+    seul le noyau « natsu » les relie.
+    """
+    toks = [t for t in slugify(slug).split("_") if t]
+    while toks and toks[0] in _DECORATIONS:
+        toks.pop(0)
+    while toks and (toks[-1] in _LANG_TOKENS or toks[-1] in _DECORATIONS):
+        toks.pop()
+    return toks
+
+
+def find_sample_file(character: str) -> Path | None:
+    """Cherche dans le depot un fichier qui corresponde au personnage.
+
+    Le fichier gagnant est le plus long : entre « natsu.mp3 » et
+    « natsu_dragneel_scene_complete.mkv », le second porte plus de parole donc
+    un meilleur clonage.
+    """
+    if not DROPBOX_DIR.is_dir():
+        return None
+    want = _core_tokens(character)
+    if not want:
+        return None
+    best, best_size = None, -1
+    for path in sorted(DROPBOX_DIR.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in SAMPLE_EXTS:
+            continue
+        have = _core_tokens(path.stem)
+        if not have:
+            continue
+        # Correspondance par prefixe de jetons, dans un sens ou dans l'autre.
+        n = min(len(want), len(have))
+        if have[:n] != want[:n]:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > best_size:
+            best, best_size = path, size
+    return best
+
+
+def enroll_from_dropbox(character: str, lang: str = "fr") -> dict:
+    """Enrole automatiquement un echantillon depose, s'il en existe un.
+
+    Appele avant toute synthese : c'est ce qui fait qu'un fichier depose dans
+    voices/echantillons/ devient une vraie voix clonee sans aucune commande.
+    """
+    sample = find_sample_file(character)
+    if sample is None:
+        return {"ok": False, "error": "aucun echantillon depose",
+                "dropbox": str(DROPBOX_DIR)}
+    emit("voice_enroll", f"{sample.name} -> {slugify(character)}")
+    res = register_voice(character, str(sample), lang=lang,
+                         source=f"echantillon:{sample.name}")
+    if res.get("ok"):
+        res["enrolled_from"] = str(sample)
+    return res
+
+
+def is_real_voice(meta: dict) -> bool:
+    """Vrai echantillon (donc reproduction) plutot que voix amorcee par TTS.
+
+    Une voix amorcee via Kokoro est une voix de synthese recopiee : la cloner
+    reproduit fidelement... un robot. Elle ne doit jamais compter comme une
+    reference.
+    """
+    source = str((meta or {}).get("source") or "")
+    return bool(source) and not source.startswith("bootstrap_")
+
+
+def resolve_voice(character: str, lang: str = "fr") -> dict:
+    """Etat de la voix d'un personnage, apres tentative d'enrolement.
+
+    Renvoie toujours un verdict explicite. `cloned` distingue une VRAIE
+    reproduction d'une voix inventee : c'est ce champ que le pipeline trace,
+    pour qu'une voix de synthese ne puisse plus passer pour un clonage.
+    """
+    character = (character or "").strip()
+    if not character:
+        return {"ok": False, "cloned": False, "reason": "personnage sans nom"}
+
+    found = find_voice(character)
+    if found.get("ok") and is_real_voice(found.get("metadata") or {}):
+        meta = found["metadata"]
+        return {"ok": True, "cloned": True, "slug": found["slug"],
+                "reference": found["reference"],
+                "source": meta.get("source"),
+                "duration_s": meta.get("duration_s"),
+                "quality": meta.get("reference_quality_score")}
+
+    enrolled = enroll_from_dropbox(character, lang=lang)
+    if enrolled.get("ok"):
+        again = find_voice(character)
+        return {"ok": True, "cloned": True, "slug": enrolled.get("slug"),
+                "reference": again.get("reference"),
+                "source": f"echantillon:{Path(enrolled['enrolled_from']).name}",
+                "enrolled_now": True,
+                "quality": (enrolled.get("audio_quality") or {}).get("quality_score")}
+
+    return {
+        "ok": False,
+        "cloned": False,
+        "reason": enrolled.get("error") or "aucune reference",
+        "dropbox": str(DROPBOX_DIR),
+        "hint": f"depose un extrait audio ou video de la voix, nomme "
+                f"« {'_'.join(_core_tokens(character)) or slugify(character)} »"
+                f" (wav/mp3/m4a/mp4/mkv/mov...), dans {DROPBOX_DIR}",
+    }
+
+
 def find_voice(character: str) -> dict:
     """Look up a character in the library. Returns metadata + reference path or {ok: False}."""
     slug = slugify(character)
@@ -894,6 +1025,9 @@ def main():
     parser.add_argument("--register", action="store_true")
     parser.add_argument("--synthesize", action="store_true")
     parser.add_argument("--synthesize-fresh", action="store_true")
+    parser.add_argument("--resolve", action="store_true",
+                        help="Etat de la voix d'un personnage, avec enrolement "
+                             "automatique d'un echantillon depose")
     parser.add_argument("--ensure-default", action="store_true",
                         help="v82ll : auto-bootstrap default_<lang> entry via Kokoro TTS")
     parser.add_argument("--character", default="")
@@ -926,6 +1060,12 @@ def main():
     if args.list:
         result = list_library()
         print(json.dumps(result), flush=True)
+        sys.exit(0)
+
+    if args.resolve:
+        result = resolve_voice(args.character,
+                               args.lang if args.lang != "auto" else "fr")
+        print(json.dumps(result, ensure_ascii=False), flush=True)
         sys.exit(0)
 
     if args.ensure_default:

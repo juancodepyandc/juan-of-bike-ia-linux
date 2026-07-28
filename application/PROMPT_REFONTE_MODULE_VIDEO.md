@@ -221,6 +221,25 @@ Le modèle ne doit pas « se souvenir » du lieu, il doit être **empêché de d
 
 **WS-V2/V3/V4/V5/V6/V7** — identité personnage, contrôle réalisateur, film multi-plans, voix/lipsync, post-prod, audio : conserver les objectifs, avec les corrections de licence (§2.5) et la chaîne 4K (§6.6).
 
+**WS-V14 — COHÉRENCE INTER-PLANS PAR KEYFRAME D'ACTION** *(livré le 28/07, à ne pas re-chercher).*
+Le défaut « la texture passe d'animé à réaliste entre les plans » **n'était pas** un défaut de prompt : le correctif physique précédent (« un plan de locomotion doit partir en t2v, sinon l'ancre au repos verrouille le vélo à l'arrêt ») **supprimait l'ancre** sur ces plans, pendant que les autres restaient ancrés en i2v. Le film mélangeait donc deux régimes visuels par construction.
+Parade livrée : `cinema/shot_keyframe.py` produit la **première image de chaque plan** avec FLUX.2, conditionnée par les références d'identité (`ReferenceLatent` chaîné, ≤ 3 — au-delà le conditionnement se dilue), montrant l'action **déjà engagée**. L'objection au conditionnement i2v ne vaut que pour une ancre AU REPOS. Dimensions arrondies au multiple de 32 **comme le worker vidéo** (536 → 544), sinon l'ancre est étirée de 16 px.
+Porte dédiée `validate_shot_keyframe()` : trois notes **séparées** (scène / action / style) plus un drapeau texte — une moyenne laisserait passer une image magnifique mais figée (qui reverrouille i2v à l'arrêt) ou une image juste mais photoréaliste. Une keyframe refusée **retombe sur l'ancrage habituel**, elle ne fait jamais échouer le plan.
+Activée par défaut en `quality_mode: premium` ; `AURORA_SHOT_KEYFRAMES=0|1` prime sur tout.
+**DoD** : 4 plans d'un même film jugés du **même style** par le juge VLM en aveugle, dont un plan de locomotion.
+
+**WS-V15 — REPRODUCTION DE VOIX (et non synthèse)** *(mécanisme livré le 28/07 ; reste bloqué sur un échantillon utilisateur).*
+Cause mesurée : la bibliothèque était **vide** (`{"voices": [], "count": 0}`) alors que CosyVoice3 (clonage zero-shot) était installé et prêt ; en plus, `voice_policy: "style"` envoyait vers un preset générique **même quand une référence existait**.
+Livré : dépôt `application/voices/echantillons/` — tout fichier audio **ou vidéo** nommé d'après le personnage y est enrôlé automatiquement au premier dialogue (décorations `style_`, `_fr`, `_VF` ignorées ; le plus long échantillon gagne) ; un vrai échantillon **prime sur tout preset** ; une voix amorcée par Kokoro (`source: bootstrap_*`) ne compte **jamais** comme référence ; `voice_cloned` / `voice_synthetic` tracés et remontés en avertissement du rapport.
+⚠️ **Limite irréductible** : sans échantillon fourni par l'utilisateur, aucune reproduction n'est possible — un modèle sans référence n'imite pas une voix, il en fabrique une. Ne pas re-chercher un réglage : c'est une entrée manquante, pas un défaut.
+
+**WS-V16 — LE JUGE MUET N'EST PAS UN VERDICT** *(livré le 28/07).*
+Mesuré : `flux_reference_synth._unload_ollama()` décharge Ollama avant FLUX ; le juge 30B (19,6 Go) ne peut alors plus être relogé et renvoie une réponse **vide** — pas une erreur. Les portes tombaient à `score None` (non jugé), ce qui est exactement le trou par lequel une référence amputée part en production.
+Livré : repli 30B → 8B (6,1 Go, tient à côté d'un FLUX en offload) placé dans `_ollama_vision_json`, donc valable pour **tous** les juges ; `allow_fallback=False` coupe la récursion. Plus `repair_object_reference()` : trois seeds donnent trois objets différents chacun amputé ailleurs — FLUX reconditionné par l'image existante garde forme/couleur/cadrage et ne complète que la pièce nommée par le juge.
+
+**WS-V17 — LE LIPSYNC RÉGÉNÈRE, DONC IL DOIT CONNAÎTRE LE FILM** *(livré le 28/07).*
+S2V ne repeint pas une bouche : il **régénère le plan** avec l'audio en condition. Son prompt décide donc du style de l'image finale. Il recevait `"a character speaking to the camera"` — aucune consigne de style ni de décor — ce qui reconstruisait les plans dialogués d'un film animé sans style : d'où « quand il parle ça déforme toute la tête » **et** la dérive de texture sur ces plans précisément. Il reçoit désormais la scène du plan + le suffixe de style du film.
+
 **WS-V8 — Front unifié** : une implémentation par capacité, panneaux qualité factorisés, suivi des jobs secondaires, galerie persistante, **labels honnêtes** (moteurs/fps/résolutions réels), suppression des vues mortes.
 
 **WS-V9 — QA honnête** : lois §4.2/4.9, couverture QA exposée, scoring par take, tests Python (`storyboard_norm`, gates, durées), garde anti-orphelin, métriques sous `output/video-metrics/`.

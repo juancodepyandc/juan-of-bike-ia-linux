@@ -301,6 +301,19 @@ def fetch_to(url: str, dest: Path) -> int:
 # multi-view diffusion models inject; we use the same seed across views so
 # the subject identity stays stable.
 TURNAROUND_CONTRACT = (
+    # FIBRE vs MASSE (27/07, mesure): une fibre fait ~0.07 mm quand la cellule
+    # de reconstruction fait ~1 mm — Nyquist demanderait x18000 en volume: la
+    # MECHE ne sera JAMAIS geometrique, elle appartient a la texture et au
+    # materiau (sheen/anisotropie). En revanche la MASSE de fourrure
+    # (criniere, collerette, queue touffue, culottes) fait 20-60 mm = 15 a 45
+    # cellules: elle DOIT rester geometrique. Le contrat "tout lisse" de la
+    # veille aplatissait les deux -> silhouette de levrier, lue comme "ca
+    # fond". On separe donc explicitement les deux echelles.
+    ", fur and hair as BOLD SCULPTED MASSES with clean readable silhouette "
+    "(thick mane, ruff, bushy tail and leg feathering kept as full volumes), "
+    "fine fur grain shown as SURFACE TEXTURE only, no isolated flyaway "
+    "strands, no wispy hair tufts detached from the body, sharp clean "
+    "contour against the background"
     ", STRICT SINGLE-VIEW RECONSTRUCTION REFERENCE, one full-body subject only, "
     "exactly one figure/object in the image, no duplicate copies, no lineup, no triptych, "
     "no contact sheet, no model sheet, no turnaround sheet inside the image, "
@@ -434,6 +447,63 @@ def _style_demande(texte: str) -> bool:
     return bool(_STYLE_RX.search(texte or ""))
 
 
+# DETECTION DE COMPOSITION. "un Pikachu" = un sujet seul a detourer; "une ville
+# la nuit sous la pluie" = un lieu avec plusieurs elements. Les deux ne se
+# cadrent pas pareil et ne se decrivent pas pareil a FLUX.
+_SCENE_RX = re.compile(
+    r"(paysage|panorama|ville|cit[eé]|village|rue|ruelle|avenue|place\s|quartier|"
+    r"gratte[-\s]?ciel|skyline|for[eê]t|montagne|vall[eé]e|d[eé]sert|plage|oc[eé]an|"
+    r"mer\b|lac\b|rivi[eè]re|cascade|champ|prairie|jardin|parc\b|jungle|canyon|"
+    r"int[eé]rieur|chambre|cuisine|salon|bureau\s|atelier|entrep[oô]t|usine|"
+    r"temple|ch[aâ]teau|cath[eé]drale|[eé]glise|pont\b|port\b|gare\b|a[eé]roport|"
+    r"march[eé]\b|stade|arene|champ\s+de\s+bataille|camp\b|base\b|station\b|"
+    r"scene\b|sc[eè]ne\b|d[eé]cor|environnement|ambiance|coucher\s+de\s+soleil|"
+    r"lever\s+de\s+soleil|nuit\b|brouillard|tempete|orage|pluie\b|neige\b|"
+    r"landscape|cityscape|city\b|street|forest|mountain|beach|interior|"
+    r"background|environment|scenery|skyline)", re.I)
+
+# Marqueurs de PLURALITE / composition: plusieurs sujets ou des relations
+# spatiales entre elements = une scene, pas un sujet isole.
+_PLURIEL_RX = re.compile(
+    r"(\b\w+s\s+(?:et|avec)\s+\w+s\b|\bplusieurs\b|\bgroupe\s+de\b|\bfoule\b|"
+    r"\bune\s+dizaine\b|\bdes\s+\w+s\b|\bentour[eé]\s+de\b|\bau\s+milieu\s+de\b|"
+    r"\bdevant\s+(?:un|une|le|la|les|des)\b|\bderri[eè]re\s+(?:un|une|le|la|les)\b|"
+    r"\bassis\s+sur\b|\bpos[eé]\s+sur\b|\bsur\s+(?:un|une|le|la)\s+\w+\s+dans\b|"
+    r"\bdans\s+(?:un|une|le|la)\s+\w+)", re.I)
+
+# Le sujet est explicitement demande SEUL / detoure.
+_ISOLE_RX = re.compile(
+    r"(seul\b|isol[eé]|d[eé]tour[eé]|fond\s+(?:blanc|neutre|uni|transparent)|"
+    r"sans\s+(?:fond|d[eé]cor|arri[eè]re[-\s]?plan)|\bstudio\b|"
+    r"white\s+background|isolated|cutout|no\s+background)", re.I)
+
+
+def composition_de(texte: str) -> str:
+    """'scene' (plusieurs elements / un lieu) ou 'solo' (un sujet isole).
+
+    Sert a ne PAS traiter une ville comme une figurine de collection: sans cette
+    distinction, la directive realiste "collectible figure, studio product
+    photography" s'appliquait a TOUT — un paysage se retrouvait pose sur un
+    fond de studio comme un objet sur une table.
+    """
+    t = texte or ""
+    if _ISOLE_RX.search(t):
+        return "solo"
+    if _SCENE_RX.search(t) or _PLURIEL_RX.search(t):
+        return "scene"
+    return "solo"
+
+
+def suggest_resolution(texte: str, base: int = 1024) -> tuple[int, int]:
+    """Cadrage adapte a la demande: un sujet debout se cadre en hauteur, un
+    lieu se cadre en largeur. Multiples de 64 (contrainte du VAE)."""
+    def _r64(v: int) -> int:
+        return max(512, int(round(v / 64.0)) * 64)
+    if composition_de(texte) == "scene":
+        return _r64(base * 1.375), _r64(base * 0.78)   # ~16:9 paysage
+    return _r64(base), _r64(base * 1.375)              # ~3:4 portrait
+
+
 def _single_view_base_prompt(prompt: str) -> str:
     """Remove phrases that make FLUX draw all orthographic views in one image.
 
@@ -457,11 +527,42 @@ def _single_view_base_prompt(prompt: str) -> str:
     # un perso d'anime comme Goldorak) en illustration cartoon plate — mauvais pour
     # la reconstruction 3D ET non demande par l'utilisateur. On force un rendu 3D
     # realiste (qualite figurine/studio) SAUF si un style est explicitement demande.
+    # ... mais la directive n'est pas la meme selon ce qui est demande: un sujet
+    # seul se rend comme une piece de collection sur fond neutre, un lieu se rend
+    # comme une photographie de ce lieu. Appliquer la formule "figurine studio" a
+    # une ville la posait sur une table comme un objet.
     if not _style_demande(cleaned):
-        cleaned += (", realistic 3D render, high-detail collectible figure, studio "
-                    "product photography lighting, physically based materials, "
-                    "sharp fine surface detail, NOT a flat 2D cartoon or cel-shaded drawing")
+        if composition_de(cleaned) == "scene":
+            cleaned += (", photorealistic photograph, natural environment lighting, "
+                        "wide establishing shot, deep depth of field, coherent "
+                        "perspective and scale between elements, fine material and "
+                        "surface detail, NOT a flat 2D cartoon or cel-shaded drawing")
+        else:
+            cleaned += (", realistic 3D render, high-detail collectible figure, studio "
+                        "product photography lighting, physically based materials, "
+                        "sharp fine surface detail, NOT a flat 2D cartoon or cel-shaded drawing")
+    # CHEVEUX EN MASSES SCULPTEES. Mesure sur le guerrier: les meches fines de
+    # la reference (0.5-2 mm a l'echelle du modele) sont SOUS la cellule
+    # effective de la grille TRELLIS (1.6 mm) -> la tete sort en eponge
+    # (~700 tunnels + ~5000 confettis flottants, 7.5x la peau nue). La parade
+    # amont: exiger des masses de cheveux pleines, comme une figurine.
+    if _re_detecte_sujet_chevelu(cleaned):
+        cleaned += (", hair and beard as SOLID SCULPTED MASSES like a collectible "
+                    "figurine, thick chunky strands, no thin flying wisps, no "
+                    "stray hairs, no frizz")
     return cleaned
+
+
+_CHEVELU_RX = re.compile(
+    r"(homme|femme|guerrier|guerri[eè]re|personnage|humain|soldat|chevalier|"
+    r"roi|reine|elfe|nain|barbare|viking|samoura[iï]|sorcier|magicien|"
+    r"cheveux|barbe|criniere|crini[eè]re|fourrure|poil|"
+    r"man\b|woman|warrior|character|human|knight|hair|beard|fur)", re.I)
+
+
+def _re_detecte_sujet_chevelu(texte: str) -> bool:
+    """Le sujet a-t-il probablement des cheveux/poils ? (humains, creatures)"""
+    return bool(_CHEVELU_RX.search(texte or ""))
 
 
 def _retry_single_view_prompt(prompt: str, attempt_index: int, failures: list[str]) -> str:

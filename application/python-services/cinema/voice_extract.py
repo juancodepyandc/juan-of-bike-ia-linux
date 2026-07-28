@@ -495,6 +495,13 @@ def main():
     parser.add_argument("--target-duration", type=float, default=20.0)
     parser.add_argument("--min-confidence", type=float, default=0.55)
     parser.add_argument("--max-videos", type=int, default=4)
+    parser.add_argument("--lang", default="fr")
+    parser.add_argument("--transcript", default="")
+    parser.add_argument(
+        "--auto-register",
+        action="store_true",
+        help="Ecrit aussi la fiche metadata/empreinte de la bibliotheque",
+    )
     parser.add_argument("--check", action="store_true", help="Check dependencies only")
     args = parser.parse_args()
 
@@ -533,6 +540,31 @@ def main():
         target_duration_s=args.target_duration,
         min_confidence=args.min_confidence,
     )
+    if result.get("ok") and args.auto_register:
+        try:
+            from voice_clone import register_voice
+
+            registration = register_voice(
+                character=args.character,
+                reference_wav=output,
+                lang=args.lang,
+                source=str(result.get("source") or ""),
+                quality_score=float(result.get("confidence") or 0.0),
+                duration_s=float(result.get("duration_s") or 0.0),
+                transcript=args.transcript,
+            )
+        except Exception as exc:
+            registration = {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+            }
+        result["registration"] = registration
+        if not registration.get("ok"):
+            result["ok"] = False
+            result["error"] = (
+                "audio extrait mais enregistrement bibliotheque echoue: "
+                f"{registration.get('error', 'erreur inconnue')}"
+            )
 
     print(json.dumps(result), flush=True)
     sys.exit(0 if result.get("ok") else 1)

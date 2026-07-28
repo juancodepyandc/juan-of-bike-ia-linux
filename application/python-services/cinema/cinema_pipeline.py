@@ -738,6 +738,17 @@ def extract_keyframes_triplet(video_path: str, work_dir: "Path", shot_id: int) -
     return out
 
 
+def _vision_fallbacks(primary: str) -> list:
+    """Juges de vision de secours, du plus capable au plus petit.
+
+    Un 30B pese 19,6 Go et ne peut pas etre reloge tant qu'une generation
+    occupe le GPU ; le 8B (6,1 Go) y tient. L'ordre est fixe et court : au-dela,
+    on remplacerait un jugement absent par un jugement mauvais.
+    """
+    chain = ["qwen3-vl:30b", "qwen3-vl:8b"]
+    return [m for m in chain if m != primary]
+
+
 def _ollama_vision_json(
     prompt: str,
     images_b64: list,
@@ -746,6 +757,7 @@ def _ollama_vision_json(
     timeout: int = 180,
     num_ctx: int = 6144,
     retries: int = 1,
+    allow_fallback: bool = True,
 ):
     """v90.3 : appel vision Ollama qui retourne un dict JSON parsé, ou None.
 
@@ -790,9 +802,27 @@ def _ollama_vision_json(
     # laissait des scores None qui faussaient la porte de qualite et
     # declenchaient de faux retries. On remonte un extrait du texte recu.
     try:
-        emit("vision_parse_fail", (last_raw or "")[:160].replace("\n", " "))
+        emit("vision_parse_fail",
+             f"{model}: " + ((last_raw or "REPONSE VIDE")[:140].replace("\n", " ")))
     except Exception:
         pass
+
+    # v92 — UN JUGE MUET N'EST PAS UN VERDICT.
+    # Mesure : pendant qu'une generation FLUX occupe le GPU (et apres que FLUX
+    # a decharge Ollama), le modele de vision ne peut plus etre reloge et
+    # renvoie une reponse VIDE — pas une erreur, du vide. Les portes tombaient
+    # alors a `score None`, c'est-a-dire non jugees, ce qui est precisement par
+    # ou une reference amputee passe en production. Un modele plus petit tient
+    # a cote de FLUX et juge moins bien qu'un 30B, mais infiniment mieux que
+    # personne.
+    if allow_fallback:
+        for smaller in _vision_fallbacks(model):
+            emit("vision_fallback", f"{model} muet -> {smaller}")
+            payload = _ollama_vision_json(
+                prompt, images_b64, ollama_url, smaller, timeout, num_ctx,
+                retries=0, allow_fallback=False)
+            if payload is not None:
+                return payload
     return None
 
 
@@ -1908,6 +1938,8 @@ def _object_judge_model() -> str:
     return os.environ.get("AURORA_OBJECT_VISION_MODEL", "qwen3-vl:30b")
 
 
+
+
 def validate_object_completeness(
     image_path: str,
     description: str,
@@ -1951,11 +1983,14 @@ def validate_object_completeness(
             "Reply ONLY with JSON: {\"missing\": [\"...\"], \"malformed\": "
             "[\"...\"], \"person_present\": true|false}"
         )
+        # Le repli vers un juge plus petit est assure par _ollama_vision_json.
+        graded_by = model
         payload = _ollama_vision_json(prompt, [b64], ollama_url, model,
                                       timeout=120, num_ctx=4096)
         if payload is None:
             return {"ok": False, "missing": [], "malformed": [],
-                    "reason": "vision JSON parse failed", "graded": False}
+                    "reason": "aucun juge de completude n'a repondu",
+                    "graded": False}
         missing = [str(x)[:60] for x in (payload.get("missing") or [])][:8]
         malformed = [str(x)[:60] for x in (payload.get("malformed") or [])][:8]
         person = bool(payload.get("person_present"))
@@ -1973,10 +2008,319 @@ def validate_object_completeness(
             "person_present": person,
             "reason": " | ".join(problems) or "objet complet",
             "graded": True,
+            "graded_by": graded_by,
         }
     except Exception as e:
         return {"ok": False, "missing": [], "malformed": [],
                 "reason": f"vision skip: {str(e)[:80]}", "graded": False}
+
+
+def shot_keyframes_are_enabled(storyboard: dict) -> bool:
+    """Keyframe d'action par plan : active par defaut en qualite premium.
+
+    Elle coute une image FLUX par plan (~3 min) et supprime la principale
+    source de derive de style : deux regimes visuels dans un meme film, les
+    plans ancres d'un cote et les plans t2v de l'autre.
+    """
+    env = os.environ.get("AURORA_SHOT_KEYFRAMES", "").strip().lower()
+    if env in {"0", "false", "non", "off"}:
+        return False
+    if env in {"1", "true", "oui", "on"}:
+        return True
+    explicit = storyboard.get("shot_keyframes")
+    if explicit is not None:
+        return bool(explicit)
+    return storyboard.get("quality_mode") == "premium"
+
+
+def _shot_entities(shot: dict, characters: dict) -> list:
+    """Entites nommees que ce plan doit montrer, dans l'ordre du texte.
+
+    On ne prend que ce que le plan mentionne vraiment : ajouter toutes les
+    references du film diluerait le conditionnement et ferait apparaitre des
+    personnages absents de la scene.
+    """
+    haystack = " ".join(str(shot.get(k) or "") for k in
+                        ("scene", "action_contract", "speaker")).lower()
+    found = []
+    for name in characters:
+        if str(name).lower() in haystack:
+            found.append((haystack.index(str(name).lower()), name))
+    return [n for _, n in sorted(found)]
+
+
+def build_shot_action_keyframe(shot: dict, idx: int, shot_id: int,
+                               work_dir: "Path", style_id: str,
+                               characters: dict, char_keyframes: dict,
+                               width: int, height: int, seed: int):
+    """Premiere image du plan : bonne action, bon style, bonne identite.
+
+    Retourne le chemin de l'image, ou None — auquel cas l'ancrage habituel
+    reprend la main. Une keyframe ratee ne doit jamais faire echouer un plan.
+    """
+    script = Path(__file__).resolve().parent / "shot_keyframe.py"
+    if not script.exists():
+        return None
+
+    # Keyframe deja validee et fournie par le storyboard : une keyframe coute
+    # ~14 min, la refaire a l'identique apres une interruption serait absurde.
+    provided = shot.get("keyframe_path")
+    if provided and Path(str(provided)).exists():
+        dst = work_dir / f"shot_{shot_id:02d}_keyframe.png"
+        try:
+            if Path(str(provided)).resolve() != dst.resolve():
+                shutil.copy(str(provided), dst)
+        except Exception:
+            dst = Path(str(provided))
+        emit("shot_keyframe_ok", f"plan {idx}: {dst.name} (reprise)")
+        return str(dst)
+
+    names = _shot_entities(shot, characters)
+    references = [str(char_keyframes[n]) for n in names
+                  if char_keyframes.get(n) and Path(str(char_keyframes[n])).exists()]
+    if not references:
+        # Sans reference d'identite, cette keyframe n'apporte rien de plus
+        # qu'un t2v : on laisse l'ancrage habituel decider.
+        return None
+
+    prompt = _shot_keyframe_prompt(
+        scene=str(shot.get("scene") or ""),
+        style_suffix=style_for(style_id),
+        action_contract=str(shot.get("action_contract") or ""),
+        entities=names,
+    )
+    # La keyframe doit avoir EXACTEMENT les dimensions que le worker video
+    # utilisera : celui-ci arrondit au multiple de 32 le plus proche
+    # (536 -> 544). Une ancre de 960x528 face a une video de 960x544 serait
+    # etiree de 16 px en hauteur — deformation legere, mais sur la premiere
+    # image du plan, donc propagee a tout le plan.
+    kf_w = max(32, round(width / 32) * 32)
+    kf_h = max(32, round(height / 32) * 32)
+
+    out_png = work_dir / f"shot_{shot_id:02d}_keyframe.png"
+    emit("shot_keyframe", f"plan {idx}: FLUX {kf_w}x{kf_h}, "
+                          f"{len(references)} reference(s) "
+                          f"({', '.join(names[:3])})")
+    cmd = [
+        sys.executable, str(script),
+        "--prompt", prompt,
+        "--output", str(out_png),
+        "--width", str(kf_w), "--height", str(kf_h),
+        "--seed", str(seed), "--steps", "28",
+    ]
+    for ref in references[:3]:
+        cmd.extend(["--reference", ref])
+
+    rc, stdout, stderr = _run(cmd, timeout=2400)
+    if rc != 0 or not out_png.exists():
+        emit("shot_keyframe_fail",
+             f"plan {idx}: {(stderr or stdout or '')[-160:]}")
+        return None
+
+    # La keyframe conditionne TOUT le plan : une keyframe hors sujet est pire
+    # qu'aucune keyframe, donc elle passe une porte — mais celle qui pose la
+    # bonne question. Le juge des references note un PORTRAIT ("character
+    # keyframe", penalite sur le vetement signature) : applique a une image de
+    # scene, il rejetterait de bonnes keyframes et desactiverait la fonction
+    # sans que personne ne le voie.
+    check = validate_shot_keyframe(
+        str(out_png), str(shot.get("scene") or ""),
+        str(shot.get("action_contract") or ""), style_id)
+
+    # v92b — UN SECOND TIRAGE AVANT DE RENONCER.
+    # Renoncer rend le plan a l'ancrage habituel, c'est-a-dire souvent a la
+    # derniere image du plan precedent : sur un plan « il presente le velo »,
+    # cette image est un gros plan de visage, et l'objet reapparait de nulle
+    # part — le defaut qu'on cherche justement a supprimer. Un second seed
+    # coute 14 min ; perdre l'ancre coute le plan.
+    if check.get("graded") and not check.get("ok"):
+        emit("shot_keyframe_retry",
+             f"plan {idx}: {str(check.get('reason'))[:100]} -> second essai")
+        retry_png = work_dir / f"shot_{shot_id:02d}_keyframe_b.png"
+        cmd_retry = list(cmd)
+        cmd_retry[cmd_retry.index("--seed") + 1] = str(seed + 7919)
+        cmd_retry[cmd_retry.index("--output") + 1] = str(retry_png)
+        rc2, out2, err2 = _run(cmd_retry, timeout=2400)
+        if rc2 == 0 and retry_png.exists():
+            check2 = validate_shot_keyframe(
+                str(retry_png), str(shot.get("scene") or ""),
+                str(shot.get("action_contract") or ""), style_id)
+            if check2.get("ok") or not check2.get("graded"):
+                emit("shot_keyframe_ok",
+                     f"plan {idx}: {retry_png.name} au 2e essai "
+                     f"(scene {check2.get('scene_score')}, "
+                     f"action {check2.get('action_score')}, "
+                     f"style {check2.get('style_score')})")
+                return str(retry_png)
+            # Deux essais refuses : on garde le MEILLEUR des deux plutot que
+            # rien, sauf si l'action est figee — la, l'ancre nuirait vraiment.
+            best, best_check = ((out_png, check)
+                                if _keyframe_rank(check) >= _keyframe_rank(check2)
+                                else (retry_png, check2))
+            if (best_check.get("action_score") or 0) >= 5:
+                emit("shot_keyframe_ok",
+                     f"plan {idx}: {Path(best).name} retenue malgre "
+                     f"{str(best_check.get('reason'))[:80]}")
+                return str(best)
+        emit("shot_keyframe_reject",
+             f"plan {idx}: deux essais refuses -> ancrage habituel")
+        return None
+
+    emit("shot_keyframe_ok",
+         f"plan {idx}: {out_png.name} (scene {check.get('scene_score')}, "
+         f"action {check.get('action_score')}, style {check.get('style_score')})")
+    return str(out_png)
+
+
+def _keyframe_rank(check: dict) -> int:
+    """Somme des trois notes : sert a departager deux keyframes imparfaites."""
+    return sum(int(check.get(k) or 0) for k in
+               ("scene_score", "action_score", "style_score"))
+
+
+def validate_shot_keyframe(image_path: str, scene: str, action_contract: str,
+                           style_id: str,
+                           ollama_url: str = "http://127.0.0.1:11434",
+                           model: str = VISION_MODEL) -> dict:
+    """Porte de la keyframe de plan : bonne scene, action engagee, bon style.
+
+    Trois notes separees plutot qu'une moyenne : une image magnifique mais au
+    repos est inutile ici (elle verrouillerait i2v a l'arret), et une image
+    juste mais photorealiste dans un film anime casse la coherence. Une
+    moyenne laisserait passer les deux.
+    """
+    try:
+        import base64
+        with open(image_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        wanted_style = style_validation_contract(style_id).strip() or "any style"
+        prompt = (
+            "You are a strict film director reviewing the FIRST FRAME of a shot.\n"
+            f"The shot must show: {scene}\n"
+            + (f"The action that must already be under way: {action_contract}\n"
+               if action_contract.strip() else "")
+            + f"{wanted_style}\n\n"
+            "Score three things from 1 to 10, independently:\n"
+            "- scene: does the image show this place, these subjects, this framing?\n"
+            "- action: is the action VISIBLY under way (body committed to the "
+            "movement, limbs mid-gesture), rather than a person standing still "
+            "or posing? A static pose scores at most 4.\n"
+            "- style: does it match the required visual style, with no drift "
+            "toward another style?\n"
+            "Also report whether any readable TEXT appears in the image.\n\n"
+            "Reply ONLY with JSON: {\"scene\": <int>, \"action\": <int>, "
+            "\"style\": <int>, \"text_present\": true|false, "
+            "\"reason\": \"<one short sentence>\"}"
+        )
+        payload = _ollama_vision_json(prompt, [b64], ollama_url, model,
+                                      timeout=120, num_ctx=4096)
+        if payload is None:
+            return {"ok": False, "graded": False,
+                    "reason": "aucun juge n'a repondu"}
+        scene_s = int(payload.get("scene") or 0)
+        action_s = int(payload.get("action") or 0)
+        style_s = int(payload.get("style") or 0)
+        text_present = bool(payload.get("text_present"))
+        problems = []
+        if scene_s < 6:
+            problems.append(f"scene {scene_s}/10")
+        if action_s < 5:
+            problems.append(f"action figee {action_s}/10")
+        if style_s < 6:
+            problems.append(f"style {style_s}/10")
+
+        # v92b — LE TEXTE EST UN DEFAUT MOU, PAS UN MOTIF DE RENVOI.
+        # Mesure : une keyframe par ailleurs excellente (Natsu tenant le velo
+        # complet dans la ruelle, style conforme) a ete refusee parce qu'un
+        # decalque de marque de trois pixels figurait sur le cadre du velo. La
+        # regle visait les sous-titres et les filigranes ; appliquee telle
+        # quelle, elle faisait perdre l'ancre — et un plan sans ancre fait
+        # reapparaitre l'objet de nulle part, le defaut meme qu'on corrige.
+        # Un logo minuscule coute infiniment moins cher que l'ancre perdue.
+        soft = []
+        if text_present:
+            soft.append("du texte apparait dans l'image")
+        return {
+            "ok": not problems,
+            "soft_faults": soft,
+            "graded": True,
+            "scene_score": scene_s,
+            "action_score": action_s,
+            "style_score": style_s,
+            "text_present": text_present,
+            "reason": " | ".join(problems + soft)
+                      or str(payload.get("reason") or "keyframe conforme"),
+        }
+    except Exception as e:
+        return {"ok": False, "graded": False,
+                "reason": f"porte keyframe indisponible: {str(e)[:80]}"}
+
+
+def _shot_keyframe_prompt(scene: str, style_suffix: str, action_contract: str,
+                          entities: list) -> str:
+    """Delegue a shot_keyframe.build_shot_prompt, source unique de la formule."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from shot_keyframe import build_shot_prompt
+        return build_shot_prompt(scene, style_suffix, action_contract, entities)
+    except Exception:
+        parts = [
+            "A single cinematic film still, the first frame of a shot, "
+            "captured mid-action with the movement already underway.",
+            scene.strip(),
+        ]
+        if action_contract.strip():
+            parts.append(f"The action already in progress: {action_contract.strip()}")
+        return " ".join(parts).strip() + (style_suffix or "")
+
+
+def repair_object_reference(image_path: str, description: str, missing: list,
+                            malformed: list, output_png: str,
+                            width: int, height: int, seed: int) -> dict:
+    """Repare une reference d'objet au lieu de relancer un de.
+
+    Constate : une reference de velo notee 10/10 en ressemblance n'avait qu'UNE
+    pedale. Relancer avec un autre seed redessine tout l'objet et perd ce qui
+    etait deja juste — sur trois essais, on obtenait trois velos differents,
+    tous incomplets d'une piece ou d'une autre.
+
+    FLUX conditionne par l'image existante garde la geometrie, la couleur et le
+    cadrage, et n'a plus qu'a completer la piece nommee. On repare ce qui
+    manque plutot que d'esperer un meilleur tirage.
+    """
+    script = Path(__file__).resolve().parent / "shot_keyframe.py"
+    if not script.exists():
+        return {"ok": False, "error": "shot_keyframe.py absent"}
+    faults = []
+    if missing:
+        faults.append("ADD the missing parts: " + ", ".join(missing))
+    if malformed:
+        faults.append("FIX the malformed parts: " + ", ".join(malformed))
+    if not faults:
+        return {"ok": False, "error": "rien a reparer"}
+    prompt = (
+        "Redraw the object from the reference image, keeping its exact shape, "
+        "colour, framing and art style identical. Change one thing only: "
+        + "; ".join(faults) + ". "
+        f"The object is: {description} "
+        "The object must appear ALONE on a plain background, complete, with "
+        "every functional part present and correctly attached. No person, no text."
+    )
+    cmd = [
+        sys.executable, str(script),
+        "--prompt", prompt,
+        "--reference", image_path,
+        "--output", output_png,
+        "--width", str(width), "--height", str(height),
+        "--seed", str(seed), "--steps", "30",
+    ]
+    rc, stdout, stderr = _run(cmd, timeout=1800)
+    if rc != 0:
+        return {"ok": False, "error": (stderr or stdout or "")[-300:]}
+    try:
+        return json.loads((stdout or "").strip().split("\n")[-1])
+    except Exception:
+        return {"ok": False, "error": "reparation: sortie non-JSON"}
 
 
 def validate_keyframe_with_vision(
@@ -2170,7 +2514,15 @@ def pregenerate_character_keyframes(
                 "--steps", "25",
                 "--seed", str(seed),
             ]
-            rc, stdout, stderr = _run(cmd, timeout=300)
+            # v91 : 300 s etait trop court pour un keyframe FLUX.
+            # Mesure : FLUX2 Q4 pese 20 Go, ComfyUI tourne en --novram (seule
+            # facon de le faire tenir sur 16 Go de VRAM) et offloade 19,5 Go a
+            # chaque chargement ; le sampling seul fait 25 pas a 5,7 s/pas,
+            # soit ~143 s, auxquels s'ajoute le chargement. Les trois essais
+            # tombaient donc systematiquement en timeout, le personnage
+            # perdait sa reference et le film partait sans ancre d'identite —
+            # exactement le defaut qu'on cherche a supprimer.
+            rc, stdout, stderr = _run(cmd, timeout=900)
             if rc != 0:
                 emit("char_warn", f"{name} FLUX attempt {attempt} rc={rc}: {(stderr or stdout)[:120]}")
                 continue
@@ -2209,6 +2561,42 @@ def pregenerate_character_keyframes(
                 if entity_is_object:
                     completeness = validate_object_completeness(
                         str(keyframe_path), desc)
+
+                    # v92 — REPARER PLUTOT QUE RETIRER AU SORT.
+                    # Un nouveau seed redessine TOUT l'objet et perd ce qui
+                    # etait deja juste : mesure sur le velo, trois essais ont
+                    # donne trois velos differents, chacun ampute d'une piece.
+                    # Conditionner FLUX par l'image existante conserve forme,
+                    # couleur et cadrage, et ne complete que la piece nommee.
+                    if completeness.get("graded") and not completeness["ok"]:
+                        repaired = keyframe_path.parent / (
+                            keyframe_path.stem + "_repare.png")
+                        emit("object_repair",
+                             f"{name}: {completeness['reason'][:90]}")
+                        rep = repair_object_reference(
+                            str(keyframe_path), desc,
+                            completeness.get("missing") or [],
+                            completeness.get("malformed") or [],
+                            str(repaired), width, height, seed + 1)
+                        if rep.get("ok") and Path(str(repaired)).exists():
+                            recheck = validate_object_completeness(
+                                str(repaired), desc)
+                            if recheck.get("graded") and recheck.get("ok"):
+                                emit("object_repaired",
+                                     f"{name}: piece(s) completee(s) -> "
+                                     f"{Path(str(repaired)).name}")
+                                shutil.copy(str(repaired), str(keyframe_path))
+                                completeness = recheck
+                                check = validate_keyframe_with_vision(
+                                    str(keyframe_path), desc)
+                            else:
+                                emit("object_repair_fail",
+                                     f"{name}: toujours incomplet apres "
+                                     f"reparation ({(recheck.get('reason') or '')[:80]})")
+                        else:
+                            emit("object_repair_fail",
+                                 f"{name}: {str(rep.get('error'))[:100]}")
+
                     if completeness.get("graded") and not completeness["ok"]:
                         check = dict(check)
                         check["ok"] = False
@@ -2559,6 +2947,39 @@ def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframe
 # Voice synthesis (delegates to voice_clone.py)
 # --------------------------------------------------------------------------
 
+_VOICE_RESOLUTION_CACHE: dict = {}
+
+
+def _resolve_character_voice(character_slug: str, lang: str) -> dict:
+    """Etat de la voix du personnage : reproduction reelle, ou voix inventee ?
+
+    Enrole au passage tout echantillon depose dans voices/echantillons/. Le
+    resultat est memorise : un film de 40 repliques ne relance pas 40 fois
+    l'enrolement du meme personnage.
+    """
+    key = (character_slug or "", (lang or "fr")[:2])
+    if key in _VOICE_RESOLUTION_CACHE:
+        return _VOICE_RESOLUTION_CACHE[key]
+
+    result = {"ok": False, "cloned": False, "reason": "non resolu"}
+    if character_slug:
+        voice_script = Path(__file__).resolve().parent / "voice_clone.py"
+        try:
+            rc, stdout, _ = _run(
+                [sys.executable, str(voice_script), "--resolve",
+                 "--character", character_slug, "--lang", key[1]],
+                timeout=600)
+            if rc == 0:
+                parsed = json.loads((stdout or "").strip().split("\n")[-1])
+                if isinstance(parsed, dict):
+                    result = parsed
+        except Exception as exc:
+            result = {"ok": False, "cloned": False,
+                      "reason": f"resolution impossible: {str(exc)[:120]}"}
+    _VOICE_RESOLUTION_CACHE[key] = result
+    return result
+
+
 def synthesize_voice(
     text: str,
     character_slug: str,
@@ -2567,6 +2988,7 @@ def synthesize_voice(
     voice_preset: str = "",
     voice_policy: str = "",
     public_figure: bool = False,
+    voice_direction: str = "",
 ) -> dict:
     """Tente voice_clone (cloning XTTS/F5) puis fallback Kokoro générique.
 
@@ -2586,8 +3008,26 @@ def synthesize_voice(
         "--output", output_wav,
     ]
 
+    # v91 — DIRECTION DE JEU. `--instruction` existait dans l'adaptateur
+    # CosyVoice3 ET dans le CLI de voice_clone, mais le pipeline ne l'a jamais
+    # transmis : c'etait du code mort, et c'est ce qui donne la voix plate de
+    # synthese qu'on identifie immediatement comme une IA.
+    # A defaut de direction explicite dans le storyboard, on en derive une de
+    # la ponctuation, qui porte deja l'intention du dialogue.
+    direction = (voice_direction or "").strip()
+    if not direction:
+        t = (text or "").strip()
+        if t.endswith("!") or t.count("!") >= 1:
+            direction = "ton enjoue et energique, legerement excite"
+        elif t.endswith("?"):
+            direction = "ton interrogatif, curieux, montee legere en fin de phrase"
+        elif "..." in t:
+            direction = "ton pose, hesitant, avec des pauses naturelles"
+        else:
+            direction = "ton naturel et conversationnel, avec des respirations"
+
     def try_synthesize(slug: str) -> dict:
-        cmd = base_cmd + ["--character", slug]
+        cmd = base_cmd + ["--character", slug, "--instruction", direction]
         emit("tts", f"{slug}: {text[:50]}...")
         rc, stdout, stderr = _run(cmd, timeout=300)
         if rc != 0:
@@ -2623,16 +3063,40 @@ def synthesize_voice(
 
     policy = (voice_policy or "").strip().lower()
     slug = (character_slug or "").strip()
-    prefers_style_voice = bool(voice_preset) and (
-        policy in {"style", "fresh", "synthetic"}
-        or slug.startswith("style_")
-        or (public_figure and policy != "registered")
+
+    # v92 — REPRODUCTION AVANT SYNTHESE.
+    # Le routage precedent envoyait tout personnage marque `policy=style` vers un
+    # preset generique, MEME quand un echantillon reel existait : c'est ce qui
+    # produisait des voix qu'on identifie immediatement comme une IA. Un
+    # echantillon depose est une intention explicite de reproduction ; il prime
+    # donc sur toute preference de style. Sans echantillon, rien ne change.
+    resolved = _resolve_character_voice(slug, lang)
+    has_real_reference = bool(resolved.get("cloned"))
+    if has_real_reference:
+        emit("voice_cloned",
+             f"{resolved.get('slug')} <- {resolved.get('source')}"
+             + (" (enrole a l'instant)" if resolved.get("enrolled_now") else ""))
+    else:
+        emit("voice_synthetic",
+             f"{slug or 'sans slug'}: pas d'echantillon -> voix inventee. "
+             f"{resolved.get('hint') or ''}")
+
+    prefers_style_voice = (
+        not has_real_reference
+        and bool(voice_preset)
+        and (
+            policy in {"style", "fresh", "synthetic"}
+            or slug.startswith("style_")
+            or (public_figure and policy != "registered")
+        )
     )
-    allow_registered_clone = (
-        bool(slug)
-        and policy != "style"
-        and not slug.startswith("style_")
-        and not (public_figure and policy != "registered")
+    allow_registered_clone = bool(slug) and (
+        has_real_reference
+        or (
+            policy != "style"
+            and not slug.startswith("style_")
+            and not (public_figure and policy != "registered")
+        )
     )
 
     if prefers_style_voice:
@@ -2755,7 +3219,8 @@ def lipsync_available() -> bool:
     return False
 
 
-def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str) -> dict:
+def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str,
+                  scene_prompt: str = "") -> dict:
     """v90 : lipsync qui PRÉSERVE le mouvement du plan.
 
     1. MuseTalk V1.5 video-driven : anime les lèvres directement sur le clip
@@ -2779,14 +3244,55 @@ def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str) -> dict:
     # mouvement 12,6 sur la zone bouche), identite du personnage intacte.
     # L'image passee ici est deja le COMPOSITE personnage+decor, donc le fond
     # du plan est conserve.
-    if not is_video:
+    # La source peut etre une VIDEO FIXE : le chemin dialogue compose l'image
+    # puis la transforme en clip avant d'appeler cette fonction. S2V, lui,
+    # part d'une image — on extrait donc la premiere frame, ce qui ne perd
+    # rien puisque le clip est strictement immobile.
+    s2v_source = image_or_video
+    if is_video:
+        try:
+            first = str(Path(output_mp4).with_suffix(".s2vsrc.png"))
+            rc, _, _ = _run([_ffmpeg_bin(), "-v", "error", "-y", "-i",
+                             str(image_or_video), "-frames:v", "1", first],
+                            timeout=120)
+            if rc == 0 and Path(first).exists():
+                s2v_source = first
+        except Exception:
+            s2v_source = None
+
+    if s2v_source:
         try:
             from s2v_lipsync import check as _s2v_check, run as _s2v_run
             if _s2v_check().get("ok"):
                 emit("lipsync_s2v", "Wan2.2-S2V (regeneration conditionnee par l'audio)")
-                res = _s2v_run(image_or_video, audio_wav, output_mp4,
-                               prompt="a character speaking to the camera",
-                               width=640, height=640, steps=12)
+                # v91 : S2V doit reprendre les DIMENSIONS DU PLAN. En
+                # forcant 640x640, la sortie etait carree alors que le plan
+                # fait 960x536 : le cadrage changeait et le decor de la ruelle
+                # disparaissait, d'ou une scene notee 5/10 malgre un lipsync
+                # correct (phys 10, id 10). Multiples de 16 exiges par le noeud.
+                _w, _h = 640, 640
+                try:
+                    import cv2 as _cv
+                    _c = _cv.VideoCapture(str(image_or_video))
+                    _sw = int(_c.get(_cv.CAP_PROP_FRAME_WIDTH))
+                    _sh = int(_c.get(_cv.CAP_PROP_FRAME_HEIGHT))
+                    _c.release()
+                    if _sw > 0 and _sh > 0:
+                        _w, _h = _sw - _sw % 16, _sh - _sh % 16
+                except Exception:
+                    pass
+                # v92 : S2V REGENERE le plan — son prompt decide donc du style
+                # de l'image finale, pas seulement de la bouche. Avec le prompt
+                # generique d'origine ("a character speaking to the camera"),
+                # les plans dialogues d'un film anime etaient reconstruits sans
+                # aucune consigne de style ni de decor : d'ou la tete qui se
+                # deforme et la texture qui derive vers le realisme, alors que
+                # les plans muets restaient stylises. On lui redonne la scene.
+                _prompt = (scene_prompt or "").strip() \
+                    or "a character speaking to the camera"
+                res = _s2v_run(s2v_source, audio_wav, output_mp4,
+                               prompt=_prompt[:900],
+                               width=_w, height=_h, steps=12)
                 if res.get("ok"):
                     return {"ok": True, "mp4": res["mp4"], "engine": res["engine"]}
                 emit("lipsync_warn", f"S2V echoue: {str(res.get('error'))[:140]}")
@@ -3284,6 +3790,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     resolution = storyboard.get("resolution", "1080p")
     shots = storyboard.get("shots", [])
     characters = {c.get("name", ""): c for c in storyboard.get("characters", [])}
+    shot_keyframes_enabled = shot_keyframes_are_enabled(storyboard)
 
     if not shots:
         return {"ok": False, "error": "no shots in storyboard"}
@@ -3300,6 +3807,32 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     work_dir = TEMP_DIR / f"job_{int(time.time())}"
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # v92 — DIRE SI LA VOIX EST REPRODUITE OU INVENTEE, AVANT DE RENDRE.
+    # Le defaut « les voix sont encore synthetiques » n'etait pas un reglage
+    # rate : la bibliotheque etait VIDE, donc aucun clonage n'etait possible et
+    # rien ne le disait. On resout chaque personnage parlant des le depart —
+    # ce qui enrole au passage tout echantillon depose — et l'absence de
+    # reference devient un avertissement du rapport, pas une surprise a
+    # l'ecoute.
+    for _name, _meta in characters.items():
+        if not any(s.get("speaker") == _name and s.get("dialogue")
+                   for s in shots):
+            continue
+        _slug = _meta.get("voice_slug") or _name.lower().replace(" ", "_")
+        _res = _resolve_character_voice(_slug, _meta.get("voice_lang") or "fr")
+        if _res.get("cloned"):
+            emit("voice_cloned", f"{_name} <- {_res.get('source')}")
+        else:
+            warnings.append({
+                "stage": "voice",
+                "character": _name,
+                "warning": "voix de synthese, pas une reproduction",
+                "detail": _res.get("hint") or _res.get("reason") or "",
+            })
+            emit("voice_synthetic",
+                 f"{_name}: aucun echantillon -> voix inventee. "
+                 f"{_res.get('hint') or ''}")
+
     # v82l6 : pre-generate character keyframes via FLUX so each shot
     # featuring the same character keeps the same face/silhouette/outfit.
     # v82ld : also retain the vision LLM score for each keyframe so the
@@ -3307,6 +3840,9 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     char_keyframes = {}
     char_quality = {}
     location_backdrops = {}
+    # Keyframe d'action par plan, indexee par id de plan. Remplie en une seule
+    # session FLUX avant la liberation de VRAM (cf. plus bas).
+    shot_keyframe_paths: dict = {}
     if characters:
         emit("char_phase", f"keyframes for {len(characters)} character(s)")
         char_keyframes = pregenerate_character_keyframes(
@@ -3325,6 +3861,26 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         # v82m1 : libère la VRAM ComfyUI (FLUX) après les keyframes pour
         # que Wan2.2 ait les ~10 GB nécessaires. Sans ça, exit 3221225477
         # ACCESS_VIOLATION quand le modèle vidéo essaie de s'allouer.
+        # v92 — TOUTES LES KEYFRAMES DANS LA MEME SESSION FLUX.
+        # Generees dans la boucle des plans, elles imposaient a chaque plan un
+        # cycle « charger FLUX (20 Go) -> decharger -> charger Wan -> decharger » :
+        # environ 3 min de chargement perdues par plan, et autant d'occasions
+        # de manquer de VRAM. Elles se font donc ici, tant que ComfyUI est
+        # encore chaud, juste avant la liberation.
+        if shot_keyframes_enabled:
+            for _i, _shot in enumerate(shots, 1):
+                _sid = _shot.get("id", _i)
+                _seed = _shot.get("seed")
+                if _seed is None:
+                    _seed = 1000 + (_sid * 31)
+                _kf = build_shot_action_keyframe(
+                    shot=_shot, idx=_i, shot_id=_sid, work_dir=work_dir,
+                    style_id=style, characters=characters,
+                    char_keyframes=char_keyframes,
+                    width=gen_w, height=gen_h, seed=int(_seed))
+                if _kf:
+                    shot_keyframe_paths[_sid] = _kf
+
         try:
             import urllib.request as _ur
             req = _ur.Request(
@@ -3416,6 +3972,10 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 voice_preset=char_meta.get("voice_preset") or "",
                 voice_policy=char_meta.get("voice_policy") or "",
                 public_figure=bool(char_meta.get("public_figure")),
+                # direction de jeu : champ de plan, sinon du personnage,
+                # sinon derivee de la ponctuation dans synthesize_voice
+                voice_direction=(shot.get("voice_direction")
+                                 or char_meta.get("voice_direction") or ""),
             )
             if voice_result.get("ok"):
                 voice_wav_path = str(voice_result.get("wav") or voice_wav)
@@ -3486,6 +4046,18 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         shot_seed = shot.get("seed")
         if shot_seed is None:
             shot_seed = 1000 + (shot_id * 31)  # deterministic per shot_id
+
+        # v92 — KEYFRAME D'ACTION PAR PLAN.
+        # Prime sur tous les autres ancrages, y compris sur le repli t2v des
+        # plans de locomotion. L'objection au conditionnement i2v ("il verrouille
+        # la pose de depart, donc le velo reste a l'arret") ne vaut que pour une
+        # ancre AU REPOS : ici la premiere image montre deja le geste engage,
+        # jambes sur les pedales, corps penche. La pose de depart appelle alors
+        # la suite du mouvement au lieu de l'interdire — et le plan retrouve
+        # l'identite et le style que le t2v lui faisait perdre.
+        shot_kf = shot_keyframe_paths.get(shot_id)
+        if shot_kf and Path(str(shot_kf)).exists():
+            anchor_name, anchor = "__shot_keyframe__", shot_kf
 
         # Step 1: render and validate the silent video. Premium/balanced modes
         # get one validation-driven retry. The retry prompt contains the
@@ -3584,6 +4156,18 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             candidate_seed = int(shot_seed) + ((quality_attempt - 1) * 9973)
             if dialogue_closeup_source:
                 source_image = str(anchor)
+                # v92b — UNE KEYFRAME DE PLAN EST DEJA UNE SCENE COMPLETE.
+                # Ce composite existe pour poser un PORTRAIT studio (fond uni)
+                # dans un decor. Applique a une keyframe de plan, qui contient
+                # deja le personnage EN SITUATION dans la ruelle, il detourerait
+                # le sujet d'une scene pour le recoller sur une autre : perte du
+                # cadrage, du raccord de lumiere et de la profondeur, pour
+                # remplacer un fond correct par le meme fond.
+                skip_composite = (anchor_name == "__shot_keyframe__")
+                if skip_composite:
+                    emit("shot_render",
+                         f"plan {idx}: keyframe de plan utilisee telle quelle "
+                         f"(pas de recomposition)")
                 # v90.5 : fond du composite par priorité — dernière frame vue
                 # dans CE lieu, puis ancre de scène du même lieu, puis fond
                 # FLUX pré-généré. Avant, un plan 1 en dialogue close-up
@@ -3595,7 +4179,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     backdrop_png = str(scene_anchor)
                 elif location and location_backdrops.get(location) and Path(str(location_backdrops[location])).exists():
                     backdrop_png = str(location_backdrops[location])
-                if backdrop_png:
+                if backdrop_png and not skip_composite:
                     source_png = work_dir / f"shot_{shot_id:02d}_dialogue_source.png"
                     source_result = make_dialogue_source_image(
                         str(anchor),
@@ -3919,7 +4503,11 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     })
                 elif needs_lipsync:
                     sync_mp4 = work_dir / f"shot_{shot_id:02d}_synced.mp4"
-                    sync_result = apply_lipsync(str(silent_mp4), voice_wav_path, str(sync_mp4))
+                    # Le prompt de scene + le style : S2V regenere l'image, il
+                    # doit donc savoir dans quel film il se trouve.
+                    sync_result = apply_lipsync(
+                        str(silent_mp4), voice_wav_path, str(sync_mp4),
+                        scene_prompt=f"{scene}{style_for(style)}")
                     if sync_result.get("ok"):
                         final_mp4 = Path(sync_result.get("mp4") or sync_mp4)
                         dialogue_quality.append({
@@ -4149,6 +4737,25 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         emit_eta(elapsed, idx, len(shots), f"plan {idx} ok")
         gc.collect()
 
+    # v92 — ETALONNAGE COMMUN AVANT MONTAGE.
+    # Chaque plan est genere isolement : l'un sort plus chaud, l'autre plus
+    # contraste. Mesure sur un film reel, meme lieu et meme heure pour les cinq
+    # plans : l'ecart de luminosite moyenne entre le plan le plus clair et le
+    # plus sombre atteignait 0,52 sur 1. Isolement chaque plan est correct ;
+    # c'est a la coupe que l'oeil lit la rupture. On ramene donc les plans sur
+    # la lumiere MEDIANE du film — la mediane et non la moyenne, sinon un seul
+    # plan aberrant contamine tous les autres.
+    if len(shot_files) > 1 and storyboard.get("film_grade", True):
+        try:
+            from film_grade import harmonise as _harmonise
+            graded = _harmonise(shot_files, str(work_dir / "etalonnes"))
+            if graded.get("ok") and graded.get("files"):
+                shot_files = graded["files"]
+            elif not graded.get("ok"):
+                emit("grade_warn", str(graded.get("error"))[:140])
+        except Exception as _e:
+            emit("grade_warn", f"etalonnage ignore: {str(_e)[:120]}")
+
     # Step 3: concat all shots into final video
     concat_target = output_mp4
     subtitles_flag = bool(storyboard.get("subtitles", {}).get("enabled", False))
@@ -4284,6 +4891,59 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     postprocess_chain = worker_postprocess + ["shot_concat"]
     if (gen_w, gen_h) != (target_w, target_h):
         postprocess_chain.append("lanczos_upscale_unsharp")
+
+    # v91 — BRANCHEMENT DE LA CHAINE DE FINITION.
+    # video_upscale_chain.py existait depuis des heures et n'etait JAMAIS
+    # appele : le film finissait sur `scale=lanczos + unsharp` en 8 bits.
+    # C'est precisement la signature « c'est de l'IA » : sur-nettete a halo,
+    # zero grain, scintillement intact, banding sur les degrades de ciel.
+    # La chaine remplace ce filtre par une vraie reconstruction :
+    # deflicker -> SeedVR2 (temporellement coherent) -> grain -> master 10 bits.
+    # Best-effort strict : si elle echoue, le film deja assemble reste livre,
+    # avec un warning — on ne perd jamais des heures de rendu sur une finition.
+    if os.environ.get("AURORA_SKIP_FINISH") != "1":
+        try:
+            finish_src = str(output_mp4)
+            finish_out = str(Path(output_mp4).with_name(
+                Path(output_mp4).stem + "_master.mov"))
+            chain = Path(__file__).resolve().parent.parent / "video_upscale_chain.py"
+            emit("finition", "deflicker -> reconstruction -> grain -> master 10 bits")
+            rc, out, err = _run([
+                sys.executable, str(chain),
+                "--input", finish_src, "--output", finish_out,
+                "--target", "1080p" if max(target_w, target_h) <= 1920 else "4k",
+                "--grain", "0.5", "--codec", "prores",
+            ], timeout=21600)
+            fin = None
+            for line in reversed((out or "").strip().split("\n")):
+                if line.strip().startswith("{"):
+                    try:
+                        fin = json.loads(line.strip())
+                        break
+                    except Exception:
+                        pass
+            if rc == 0 and fin and fin.get("ok"):
+                postprocess_chain += ["deflicker", "reconstruction_" +
+                                      (fin.get("reconstruction_models") or ["?"])[0].split()[0],
+                                      "grain", "master_10bit"]
+                emit("finition_ok",
+                     f"{fin.get('master_resolution')} {fin.get('bit_depth')} "
+                     f"en {fin.get('elapsed_s')}s -> {finish_out}")
+            else:
+                warnings.append({
+                    "code": "finition_echouee",
+                    "message": (fin or {}).get("error") or (err or "")[-200:],
+                    "impact": "Le film est livre sans la chaine de finition "
+                              "(pas de reconstruction, pas de grain, 8 bits).",
+                })
+                emit("finition_warn", str((fin or {}).get("error") or err)[:160])
+        except Exception as exc:
+            warnings.append({
+                "code": "finition_echouee",
+                "message": str(exc)[:200],
+                "impact": "Le film est livre sans la chaine de finition.",
+            })
+            emit("finition_warn", str(exc)[:160])
     if music_info and music_info.get("ok"):
         postprocess_chain.append("music_mix")
     if subtitle_info:
