@@ -4301,6 +4301,23 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         )
         if published:
             emit("publie", published)
+            # v91 : une fois le film publie dans la bibliotheque, le dossier de
+            # TRAVAIL n'a plus de raison d'exister. Il pesait 22 a 66 Mo par
+            # rendu (frames intermediaires, segments, logs) et s'accumulait :
+            # 323 Mo de temp pour 110 Mo de livrables reellement utiles.
+            # On ne supprime QUE si la publication a reussi, et jamais le
+            # dossier du job (qui porte status.json et sert a la reprise).
+            try:
+                import shutil as _sh
+                wd = Path(work_dir)
+                if wd.exists() and wd.resolve() != Path(output_mp4).parent.resolve():
+                    kept = sum(f.stat().st_size for f in wd.rglob("*") if f.is_file())
+                    _sh.rmtree(wd, ignore_errors=True)
+                    emit("nettoyage",
+                         f"dossier de travail supprime ({kept / 1e6:.0f} Mo) — "
+                         f"tout est dans la bibliotheque")
+            except Exception as exc:
+                emit("nettoyage_warn", str(exc)[:120])
     except Exception as exc:  # pragma: no cover - defensif
         warnings.append(f"publication bibliotheque impossible: {exc}")
         emit("publie_warn", str(exc)[:160])
