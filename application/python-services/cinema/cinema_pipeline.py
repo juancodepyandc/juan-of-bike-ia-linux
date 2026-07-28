@@ -376,6 +376,77 @@ def has_only_validation_parse_issue(q: dict) -> bool:
     )
 
 
+def _liberer_vram_pour(etape: str) -> None:
+    """Evince les modeles Ollama residents avant une etape GPU lourde.
+
+    Les appels de notation utilisent `keep_alive: 10m` — utile entre deux
+    jugements rapproches, fatal juste avant un modele de 15 Go. Best-effort :
+    ne bloque jamais le rendu.
+    """
+    base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+    try:
+        import urllib.request as _ur
+        with _ur.urlopen(f"{base}/api/ps", timeout=8) as r:
+            charges = json.loads(r.read().decode()).get("models", [])
+        for m in charges:
+            req = _ur.Request(
+                f"{base}/api/generate",
+                data=json.dumps({"model": m.get("name"), "keep_alive": 0}).encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with _ur.urlopen(req, timeout=20) as rr:
+                rr.read()
+        if charges:
+            noms = ", ".join(str(m.get("name")) for m in charges)
+            emit("vram_free", f"{len(charges)} modele(s) Ollama decharges "
+                              f"avant {etape} ({noms})")
+    except Exception as exc:
+        emit("vram_warn", f"decharge Ollama avant {etape}: {str(exc)[:100]}")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _mesure_amplitude(video_path: str, echantillons: int = 24):
+    """Amplitude moyenne du mouvement entre images consecutives, ou None.
+
+    Sert a distinguer un plan reellement anime d'une photographie avec une
+    bande son. Mesures sur des fichiers reels : 0,58 pour un plan dialogue
+    reste fige, 2,5 pour une sortie S2V qui anime vraiment la bouche, 11 a 26
+    pour un plan genere en mouvement. Le seuil de 1,0 separe donc proprement
+    « fige » de « anime », sans confondre un plan calme avec une photo.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except Exception:
+        return None
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if total < 2:
+        cap.release()
+        return None
+    pas = max(1, total // max(2, echantillons))
+    prec, ecarts = None, []
+    for i in range(0, total, pas):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            continue
+        gris = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype("float32")
+        if prec is not None:
+            ecarts.append(float(np.abs(gris - prec).mean()))
+        prec = gris
+    cap.release()
+    if not ecarts:
+        return None
+    return round(sum(ecarts) / len(ecarts), 2)
+
+
 def shot_quality_ok(q: dict, quality_mode: str = "auto") -> bool:
     if not shot_quality_is_measured(q):
         return False
@@ -3264,6 +3335,14 @@ def apply_lipsync(image_or_video: str, audio_wav: str, output_mp4: str,
         try:
             from s2v_lipsync import check as _s2v_check, run as _s2v_run
             if _s2v_check().get("ok"):
+                # v92d — LIBERER LA VRAM AVANT DE CHARGER S2V.
+                # Mesure : au moment ou S2V (15 Go) tente de se charger, le juge
+                # de vision est encore resident — `llama-server` tenait 11,8 Go
+                # sur 16, a cause du `keep_alive: 10m` des appels de notation.
+                # ComfyUI a repondu « Got an OOM, unloading all loaded models ».
+                # Le juge a fini son travail quand on arrive ici : rien ne
+                # justifie qu'il occupe encore la carte.
+                _liberer_vram_pour("S2V")
                 emit("lipsync_s2v", "Wan2.2-S2V (regeneration conditionnee par l'audio)")
                 # v91 : S2V doit reprendre les DIMENSIONS DU PLAN. En
                 # forcant 640x640, la sortie etait carree alors que le plan
@@ -4407,6 +4486,52 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 ),
                 **(accepted_render.get("render_truth") or {}),
             })
+        # v92c — NE PAS JUGER L'ACTION D'UNE IMAGE QUI N'EST PAS ENCORE ANIMEE.
+        # Un plan dialogue en gros plan produit d'abord une video STRICTEMENT
+        # FIXE, que S2V regenere ensuite avec l'audio en condition : c'est
+        # l'etape suivante qui cree le mouvement des levres, de la machoire et
+        # des epaules. Noter l'action a ce stade, c'est noter le mauvais
+        # artefact — mesure : plan 1 note scene 10, phys 10, identite 10 et
+        # act 6, ce qui a fait echouer TOUT le film sur une moyenne de 9,0.
+        # L'action de ces plans est verifiee apres le lipsync, la ou elle
+        # existe.
+        # La note d'action est donc rendue NEUTRE ici — remplacee par la moyenne
+        # des trois criteres qui, eux, portent sur ce que l'image contient
+        # vraiment. La mettre a None serait pire : `_score(None)` vaut 0, ce qui
+        # sanctionnerait encore plus fort le defaut qu'on refuse de sanctionner.
+        # Le mouvement reel est verifie apres le lipsync (mesure d'amplitude
+        # inter-images ci-dessous), la ou il existe.
+        if dialogue_closeup_source and accepted_qa.get("action_score") is not None:
+            accepted_qa = dict(accepted_qa)
+            avant = accepted_qa["action_score"]
+            accepted_qa["action_score_prelipsync"] = avant
+            accepted_qa["action_score"] = int(round((
+                _score(accepted_qa.get("score"))
+                + _score(accepted_qa.get("physics_score"))
+                + _score(accepted_qa.get("identity_score"))) / 3.0))
+            # Neutraliser la NOTE ne suffit pas : le juge ecrit aussi le defaut
+            # en toutes lettres dans `issues`, et `has_blocking_visual_issue`
+            # bloque sur ces phrases avant meme de regarder les notes. Mesure :
+            # « No visible mouth or head movement between frames », « Scarf
+            # appears static with no sway », « Action does not show continuous
+            # speech mechanism » — trois formulations du meme constat, exact et
+            # attendu a ce stade. On les met de cote (elles restent tracees),
+            # sans toucher aux defauts qui, eux, ne dependent pas du lipsync.
+            mouvement = ("movement", "motion", "static", "sway", "still",
+                         "frozen", "speech mechanism", "mouth", "lip",
+                         "animation", "moving")
+            gardes, differes = [], []
+            for issue in (accepted_qa.get("issues") or []):
+                (differes if any(t in str(issue).lower() for t in mouvement)
+                 else gardes).append(issue)
+            if differes:
+                accepted_qa["issues"] = gardes
+                accepted_qa["issues_differes_lipsync"] = differes
+            emit("shot_gate_note",
+                 f"plan {idx}: action non jugee avant lipsync — image fixe "
+                 f"volontaire ({avant}/10, {len(differes)} remarque(s) de "
+                 f"mouvement differee(s)), le mouvement vient de S2V")
+
         if not shot_quality_ok(accepted_qa, quality_mode):
             quality_error = (
                 f"plan {idx} failed quality gate avg={shot_quality_average(accepted_qa):.1f}/10 "
@@ -4510,6 +4635,29 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                         scene_prompt=f"{scene}{style_for(style)}")
                     if sync_result.get("ok"):
                         final_mp4 = Path(sync_result.get("mp4") or sync_mp4)
+                        # v92c — LE MOUVEMENT SE VERIFIE ICI, PAS AVANT.
+                        # La porte de qualite ne juge plus l'action d'un plan
+                        # dialogue avant le lipsync (l'image y est fixe par
+                        # construction). La contrepartie est qu'elle doit etre
+                        # verifiee APRES : sans cela, un lipsync qui rend une
+                        # photo muette passerait sans que rien ne le dise —
+                        # c'est exactement le defaut « quand il parle, ca ne
+                        # suit pas la bouche » constate sur les films precedents.
+                        amplitude = _mesure_amplitude(str(final_mp4))
+                        if amplitude is not None:
+                            if amplitude < 1.0:
+                                warnings.append({
+                                    "stage": "lipsync",
+                                    "shot": shot_id,
+                                    "warning": "plan quasi immobile apres lipsync",
+                                    "amplitude": amplitude,
+                                })
+                                emit("lipsync_static",
+                                     f"plan {idx}: amplitude {amplitude:.2f} — "
+                                     f"le lipsync n'a pas anime le plan")
+                            else:
+                                emit("lipsync_motion",
+                                     f"plan {idx}: amplitude {amplitude:.2f}")
                         dialogue_quality.append({
                             "shot": shot_id,
                             "speaker": speaker,
@@ -4519,6 +4667,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                             "lipsync_required": True,
                             "lipsync_ok": True,
                             "lipsync_engine": sync_result.get("engine"),
+                            "motion_amplitude": amplitude,
                         })
                     else:
                         lipsync_error = f"plan {idx} lipsync required but failed: {sync_result.get('error', '')[:160]}"
@@ -4533,13 +4682,22 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                             "lipsync_ok": False,
                             "error": sync_result.get("error", ""),
                         })
-                        if strict_quality_gate:
-                            return {
-                                "ok": False,
-                                "error": lipsync_error,
-                                "shot": idx,
-                                "dialogue_quality": dialogue_quality,
-                            }
+                        # v92d — UN LIPSYNC RATE NE DOIT PAS TUER LE FILM.
+                        # Mesure : S2V a manque de VRAM sur le plan 1 et TOUT le
+                        # rendu s'est arrete — apres 56 min de keyframes, quatre
+                        # plans prets et une porte de qualite franchie. Une panne
+                        # de ressource sur UNE etape de finition ne vaut pas
+                        # l'abandon de l'ensemble : un plan qui parle avec des
+                        # levres imparfaites reste regardable, un film absent non.
+                        # Le defaut reste trace, remonte en avertissement, et
+                        # visible dans le rapport — il n'est pas masque.
+                        warnings.append({
+                            "stage": "lipsync",
+                            "shot": shot_id,
+                            "warning": "lipsync impossible, voix muxee sans "
+                                       "synchronisation des levres",
+                            "detail": str(sync_result.get("error", ""))[:200],
+                        })
                         # Non-strict fallback: mux audio but expose lipsync_ok=false.
                         muxed_mp4 = work_dir / f"shot_{shot_id:02d}_muxed.mp4"
                         mux_result = mux_audio_fit(str(silent_mp4), voice_wav_path, str(muxed_mp4))

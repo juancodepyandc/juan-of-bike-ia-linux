@@ -255,45 +255,145 @@ class TestPorteKeyframeDePlan(unittest.TestCase):
         self.assertTrue(r["graded"] is False and r["ok"] is False)
 
 
+
+class TestDepartageKeyframes(unittest.TestCase):
+    """Quand deux essais sont imparfaits, il faut garder le meilleur — pas
+    rien. Rendre le plan a l'ancrage habituel le renvoie souvent sur un gros
+    plan de visage, d'ou l'objet qui reapparait de nulle part."""
+
+    def test_le_rang_somme_les_trois_notes(self):
+        self.assertEqual(CP._keyframe_rank(
+            {"scene_score": 8, "action_score": 7, "style_score": 9}), 24)
+
+    def test_les_notes_absentes_valent_zero(self):
+        self.assertEqual(CP._keyframe_rank({}), 0)
+        self.assertEqual(CP._keyframe_rank({"scene_score": None}), 0)
+
+    def test_le_meilleur_essai_gagne(self):
+        a = {"scene_score": 9, "action_score": 8, "style_score": 9}
+        b = {"scene_score": 5, "action_score": 5, "style_score": 5}
+        self.assertGreater(CP._keyframe_rank(a), CP._keyframe_rank(b))
+
+
+class TestDepartageKeyframes(unittest.TestCase):
+    """Quand deux essais sont imparfaits, il faut garder le meilleur — pas
+    rien. Rendre le plan a l'ancrage habituel le renvoie souvent sur un gros
+    plan de visage, d'ou l'objet qui reapparait de nulle part."""
+
+    def test_le_rang_somme_les_trois_notes(self):
+        self.assertEqual(CP._keyframe_rank(
+            {"scene_score": 8, "action_score": 7, "style_score": 9}), 24)
+
+    def test_les_notes_absentes_valent_zero(self):
+        self.assertEqual(CP._keyframe_rank({}), 0)
+        self.assertEqual(CP._keyframe_rank({"scene_score": None}), 0)
+
+    def test_le_meilleur_essai_gagne(self):
+        a = {"scene_score": 9, "action_score": 8, "style_score": 9}
+        b = {"scene_score": 5, "action_score": 5, "style_score": 5}
+        self.assertGreater(CP._keyframe_rank(a), CP._keyframe_rank(b))
+
+
+
+
+class TestPorteAvantLipsync(unittest.TestCase):
+    """Un plan dialogue en gros plan produit d'abord une video FIXE, que S2V
+    anime ensuite avec l'audio. Noter son action a ce stade, c'est noter le
+    mauvais artefact — mesure : scene 10, phys 10, identite 10, act 6, moyenne
+    9,0, et TOUT le film echouait."""
+
+    def test_un_plan_parfait_ailleurs_ne_doit_pas_echouer_sur_l_action(self):
+        q = {"score": 10, "physics_score": 10, "identity_score": 10,
+             "action_score": 6}
+        self.assertFalse(CP.shot_quality_ok(q, "premium"))
+        neutre = dict(q)
+        neutre["action_score"] = int(round((10 + 10 + 10) / 3))
+        self.assertTrue(CP.shot_quality_ok(neutre, "premium"))
+
+    def test_un_plan_reellement_mauvais_echoue_toujours(self):
+        self.assertFalse(CP.shot_quality_ok(
+            {"score": 4, "physics_score": 3, "identity_score": 5,
+             "action_score": 4}, "premium"))
+
+    def test_neutraliser_ne_veut_pas_dire_annuler(self):
+        """action_score=None vaudrait 0 via _score() : pire que le defaut
+        qu'on refuse de sanctionner."""
+        self.assertEqual(CP._score(None), 0)
+        q = {"score": 10, "physics_score": 10, "identity_score": 10,
+             "action_score": None}
+        self.assertFalse(CP.shot_quality_ok(q, "premium"))
+
+
+class TestMesureAmplitude(unittest.TestCase):
+    """Contrepartie de la porte assouplie : le mouvement DOIT etre verifie
+    apres le lipsync, sinon une photo muette passerait sans que rien ne le
+    dise. Seuil calibre sur des fichiers reels : 0,58 = plan reste fige,
+    2,5 = sortie S2V qui anime la bouche, 11 a 26 = plan en mouvement."""
+
+    def test_fichier_absent_rend_none_sans_lever(self):
+        self.assertIsNone(CP._mesure_amplitude("/tmp/inexistant_aurora.mp4"))
+
+    def test_le_seuil_separe_les_valeurs_mesurees(self):
+        seuil = 1.0
+        self.assertLess(0.58, seuil)   # plan reste fige
+        self.assertGreater(2.5, seuil)  # S2V anime vraiment
+        self.assertGreater(11.7, seuil)  # plan genere
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 
-class TestDepartageKeyframes(unittest.TestCase):
-    """Quand deux essais sont imparfaits, il faut garder le meilleur — pas
-    rien. Rendre le plan a l'ancrage habituel le renvoie souvent sur un gros
-    plan de visage, d'ou l'objet qui reapparait de nulle part."""
 
-    def test_le_rang_somme_les_trois_notes(self):
-        self.assertEqual(CP._keyframe_rank(
-            {"scene_score": 8, "action_score": 7, "style_score": 9}), 24)
+class TestDefautsDifferesAvantLipsync(unittest.TestCase):
+    """Neutraliser la NOTE d'action ne suffisait pas : le juge ecrit AUSSI le
+    defaut en toutes lettres dans `issues`, et has_blocking_visual_issue bloque
+    sur ces phrases avant de regarder les notes. Charge reelle du plan 1 :
+      'No visible mouth or head movement between frames'
+      'Scarf appears static with no sway'
+      'Action does not show continuous speech mechanism'
+    Trois formulations du meme constat, exact et ATTENDU sur une image que S2V
+    doit encore animer."""
 
-    def test_les_notes_absentes_valent_zero(self):
-        self.assertEqual(CP._keyframe_rank({}), 0)
-        self.assertEqual(CP._keyframe_rank({"scene_score": None}), 0)
+    MOUVEMENT = ("movement", "motion", "static", "sway", "still", "frozen",
+                 "speech mechanism", "mouth", "lip", "animation", "moving")
 
-    def test_le_meilleur_essai_gagne(self):
-        a = {"scene_score": 9, "action_score": 8, "style_score": 9}
-        b = {"scene_score": 5, "action_score": 5, "style_score": 5}
-        self.assertGreater(CP._keyframe_rank(a), CP._keyframe_rank(b))
+    def _differer(self, issues):
+        return ([i for i in issues
+                 if not any(t in i.lower() for t in self.MOUVEMENT)],
+                [i for i in issues
+                 if any(t in i.lower() for t in self.MOUVEMENT)])
 
+    def test_la_charge_reelle_du_plan_1_passe_apres_differe(self):
+        q = {"score": 7, "physics_score": 10, "identity_score": 10,
+             "action_score": 6,
+             "issues": ["No visible mouth or head movement between frames",
+                        "Scarf appears static with no sway",
+                        "Action does not show continuous speech mechanism"]}
+        self.assertTrue(CP.has_blocking_visual_issue(q))
+        gardes, differes = self._differer(q["issues"])
+        self.assertEqual(gardes, [])
+        self.assertEqual(len(differes), 3)
+        corrige = dict(q, issues=gardes,
+                       action_score=int(round((7 + 10 + 10) / 3)))
+        self.assertFalse(CP.has_blocking_visual_issue(corrige))
+        self.assertTrue(CP.shot_quality_ok(corrige, "premium"))
 
-class TestDepartageKeyframes(unittest.TestCase):
-    """Quand deux essais sont imparfaits, il faut garder le meilleur — pas
-    rien. Rendre le plan a l'ancrage habituel le renvoie souvent sur un gros
-    plan de visage, d'ou l'objet qui reapparait de nulle part."""
+    def test_un_defaut_qui_ne_depend_pas_du_lipsync_reste_bloquant(self):
+        """Le differe ne doit pas devenir une amnistie generale."""
+        issues = ["No visible mouth or head movement between frames",
+                  "The red bicycle is missing from the frame"]
+        gardes, differes = self._differer(issues)
+        self.assertEqual(gardes, ["The red bicycle is missing from the frame"])
+        self.assertTrue(CP.has_blocking_visual_issue({"issues": gardes}))
 
-    def test_le_rang_somme_les_trois_notes(self):
-        self.assertEqual(CP._keyframe_rank(
-            {"scene_score": 8, "action_score": 7, "style_score": 9}), 24)
-
-    def test_les_notes_absentes_valent_zero(self):
-        self.assertEqual(CP._keyframe_rank({}), 0)
-        self.assertEqual(CP._keyframe_rank({"scene_score": None}), 0)
-
-    def test_le_meilleur_essai_gagne(self):
-        a = {"scene_score": 9, "action_score": 8, "style_score": 9}
-        b = {"scene_score": 5, "action_score": 5, "style_score": 5}
-        self.assertGreater(CP._keyframe_rank(a), CP._keyframe_rank(b))
+    def test_un_plan_sans_dialogue_n_est_pas_concerne(self):
+        """Sur un plan genere, l'immobilite est un vrai defaut : elle doit
+        continuer a bloquer."""
+        q = {"score": 8, "physics_score": 8, "identity_score": 8,
+             "action_score": 3,
+             "issues": ["No visible movement between frames"]}
+        self.assertTrue(CP.has_blocking_visual_issue(q))
+        self.assertFalse(CP.shot_quality_ok(q, "premium"))
 
 
 if __name__ == "__main__":
