@@ -1017,6 +1017,11 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         # reste du film.
         # AURORA_ALLOW_ENGINE_MIX=1 retablit l'ancien comportement (filet LTX)
         # pour qui prefererait un rendu heterogene a un echec.
+        # NOTE : les poids LTX ont ete PURGES du disque (42 Go liberes) puisque
+        # plus aucun chemin de production ne les appelle. Poser
+        # AURORA_ALLOW_ENGINE_MIX=1 les fera re-telecharger automatiquement par
+        # diffusers depuis Lightricks/LTX-Video — prevoir ~42 Go et le temps
+        # correspondant.
         allow_mix = os.environ.get("AURORA_ALLOW_ENGINE_MIX") == "1"
 
         def _wan_step_down(factor, steps_delta=0):
