@@ -204,5 +204,52 @@ class ObjectCompletenessTest(unittest.TestCase):
         self.assertFalse(r["ok"])
         self.assertFalse(r["graded"])
 
+
+class LocomotionNoAnchorTest(unittest.TestCase):
+    """Un plan de LOCOMOTION ne doit pas etre ancre sur une image fixe.
+
+    Cas reel : le plan "Natsu roule dans la ruelle" etait ancre en i2v sur une
+    image de velo A L'ARRET tenu a la main. Le conditionnement i2v verrouille la
+    geometrie de depart, donc le modele a conserve la pose : personnage debout
+    derriere son velo, pieds au sol, fond immobile. Notes phys=3/10 act=2/10,
+    avec l'issue "Feet are not positioned on the pedals (he's standing)".
+    """
+
+    def anchor(self, shot, speaker=""):
+        return CP.select_anchor_character(shot, speaker, CHARS, KEYFRAMES)[0]
+
+    def test_plan_de_roulage_non_ancre(self):
+        self.assertEqual(
+            self.anchor({"scene": "Tracking shot of Milo riding the Velo down an alley",
+                         "camera": "medium"}), "")
+
+    def test_course_non_ancree(self):
+        self.assertEqual(
+            self.anchor({"scene": "Wide shot of Milo running through the street",
+                         "camera": "wide"}), "")
+
+    def test_locomotion_detectee_dans_le_contrat_d_action(self):
+        self.assertEqual(
+            self.anchor({"scene": "Medium shot of Milo and the Velo",
+                         "camera": "medium",
+                         "action_contract": "He is pedalling continuously"}), "")
+
+    def test_force_t2v_explicite(self):
+        self.assertEqual(
+            self.anchor({"scene": "Medium shot of the Velo", "camera": "medium",
+                         "force_t2v": True}), "")
+
+    def test_plan_statique_reste_ancre(self):
+        """Non-regression : un plan sans locomotion garde son ancre."""
+        self.assertEqual(
+            self.anchor({"scene": "Medium shot of the Velo leaning on a wall",
+                         "camera": "medium"}), "Velo")
+
+    def test_dialogue_statique_reste_ancre(self):
+        self.assertEqual(
+            self.anchor({"scene": "Close-up of Milo in a film studio",
+                         "camera": "close-up", "dialogue": "Salut"},
+                        speaker="Milo"), "Milo")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

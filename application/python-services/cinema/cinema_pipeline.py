@@ -2383,6 +2383,30 @@ def select_anchor_character(shot: dict, speaker: str, characters: dict, keyframe
     if shot.get("validate_character") is False:
         return "", None
 
+    # v91 — UN PLAN D'ACTION NE S'ANCRE PAS SUR UNE IMAGE FIXE.
+    # Le conditionnement i2v verrouille la geometrie de la premiere image. Si
+    # cette image montre un velo A L'ARRET tenu a la main, le chemin de moindre
+    # energie pour produire "il roule" est de conserver la pose et de translater
+    # le bloc — d'ou un personnage debout derriere son velo, pieds au sol, fond
+    # immobile, alors que le prompt demandait une course.
+    # Mesure : plan de roulage note phys=3/10 act=2/10 avec les issues
+    # "Character holds bicycle stationary instead of riding", "Feet are not
+    # positioned on the pedals (he's standing)", "Background remains static".
+    # Un plan de locomotion doit donc partir en t2v : on perd un peu de
+    # continuite d'apparence (rattrapee par la description et le style), on
+    # gagne le mouvement, qui est le sujet meme du plan.
+    if shot.get("force_t2v"):
+        return "", None
+    _scene_low = str(shot.get("scene", "")).lower()
+    _contract_low = str(shot.get("action_contract", "")).lower()
+    LOCOMOTION = (
+        "riding", "rides", "cycling", "pedal", "running", "runs", "sprint",
+        "walking", "walks", "driving", "drives", "flying", "flies",
+        "galloping", "swimming", "skating", "rolling forward",
+    )
+    if any(tok in _scene_low or tok in _contract_low for tok in LOCOMOTION):
+        return "", None
+
     scene = str(shot.get("scene", "")).lower()
     camera = str(shot.get("camera", "")).lower()
     early_scene = scene[:260]
