@@ -5358,6 +5358,31 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     # c'est a la coupe que l'oeil lit la rupture. On ramene donc les plans sur
     # la lumiere MEDIANE du film — la mediane et non la moyenne, sinon un seul
     # plan aberrant contamine tous les autres.
+    # v94 — MESURE AVANT ETALONNAGE : l'etat du film, en chiffres.
+    # La porte chiffree tourne sur CPU (DINOv2-base), donc elle ne dispute pas
+    # la VRAM. Elle constate ici ce que le juge VLM ne sait pas mesurer de
+    # facon stable : constance d'un plan a l'autre, derive interne, ecart de
+    # couleur, mouvement reel. Le resultat est TRACE, pas applique en refus —
+    # a ce stade les plans sont rendus, et l'etalonnage qui suit corrige
+    # justement la couleur. Refuser ici reviendrait a jeter le travail au lieu
+    # de le reparer.
+    mesures_chiffrees = None
+    if len(shot_files) > 1:
+        try:
+            from porte_chiffree import mesurer_film as _mesurer_film
+            mesures_chiffrees = _mesurer_film(list(shot_files))
+            for _p in (mesures_chiffrees.get("refuses") or []):
+                warnings.append({
+                    "stage": "porte_chiffree",
+                    "plan": _p.get("plan"),
+                    "warning": "; ".join(_p.get("defauts") or []),
+                })
+            emit("porte_chiffree",
+                 f"{len(mesures_chiffrees.get('refuses') or [])} plan(s) hors "
+                 f"seuils sur {len(shot_files)} — voir rapport")
+        except Exception as _e:
+            emit("porte_warn", f"mesure chiffree ignoree: {str(_e)[:120]}")
+
     if len(shot_files) > 1 and storyboard.get("film_grade", True):
         try:
             from film_grade import harmonise as _harmonise
@@ -5707,6 +5732,8 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         # v94 : plans ecartes en cours de route. Le film existe quand meme,
         # mais il ne doit jamais pretendre etre complet s'il ne l'est pas.
         "plans_abandonnes": plans_abandonnes,
+        # Mesures objectives, independantes du juge VLM.
+        "mesures_chiffrees": mesures_chiffrees,
         "plans_livres": len(shot_files),
         "plans_demandes": len(shots),
         "moteur_video": _MOTEUR_VIDEO.get("nom"),
