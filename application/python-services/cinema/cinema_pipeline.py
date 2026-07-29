@@ -3075,6 +3075,70 @@ def _resolve_character_voice(character_slug: str, lang: str) -> dict:
     return result
 
 
+_VOICE_DESIGN_CACHE: dict = {}
+
+
+def _concevoir_voix(personnage: str, description: str, projet: str,
+                    lang: str = "fr") -> dict:
+    """Voix CONCUE quand aucun echantillon n'existe — sans rien demander.
+
+    C'est la reponse a « je ne vais pas fournir un echantillon a chaque fois,
+    surtout en multi-personnages ». Une description suffit : elle est traduite
+    en registre, un timbre synthetique libre lui est attribue, et la carte est
+    FIGEE pour tout le projet — la regenerer reintroduirait une derive, comme
+    pour la planche personnage.
+
+    Prelever la voix d'une personne reelle sur le web serait la fausse bonne
+    idee : une voix est une donnee biometrique des lors qu'elle sert a
+    reproduire un locuteur. Une voix concue n'appartient a personne, et elle a
+    l'avantage d'etre inepuisable.
+    """
+    key = (projet, personnage, lang[:2])
+    if key in _VOICE_DESIGN_CACHE:
+        return _VOICE_DESIGN_CACHE[key]
+    script = Path(__file__).resolve().parent / "voice_design.py"
+    result = {"ok": False, "error": "voice_design.py absent"}
+    if script.exists():
+        try:
+            rc, stdout, stderr = _run(
+                [sys.executable, str(script), "--concevoir", personnage,
+                 "--description", description or "", "--projet", projet,
+                 "--lang", lang[:2]], timeout=900)
+            if rc == 0:
+                result = json.loads((stdout or "").strip().split("\n")[-1])
+            else:
+                result = {"ok": False,
+                          "error": (stderr or stdout or "")[-200:]}
+        except Exception as exc:
+            result = {"ok": False, "error": f"conception: {str(exc)[:140]}"}
+    _VOICE_DESIGN_CACHE[key] = result
+    return result
+
+
+def _slugify_projet(titre: str) -> str:
+    """Identifiant de projet pour la banque de voix.
+
+    Les cartes sont rangees PAR FILM : deux films peuvent avoir un personnage
+    du meme nom sans se voler leur timbre, et la porte de distinction ne
+    compare que les voix qui se croiseront reellement a l'ecran.
+    """
+    s = re.sub(r"[^a-z0-9]+", "_", (titre or "film").lower())
+    return re.sub(r"_+", "_", s).strip("_") or "film"
+
+
+def _description_voix(meta: dict, personnage: str) -> str:
+    """Description de la voix : le champ dedie, sinon celle du personnage.
+
+    A defaut de `voice_description`, la description visuelle contient presque
+    toujours l'age et le genre — de quoi choisir un registre juste, ce qui vaut
+    infiniment mieux qu'un timbre par defaut identique pour tout le casting.
+    """
+    explicite = (meta.get("voice_description") or "").strip()
+    if explicite:
+        return explicite
+    return (meta.get("description") or personnage or "").strip()[:400]
+
+
 def synthesize_voice(
     text: str,
     character_slug: str,
@@ -3084,6 +3148,7 @@ def synthesize_voice(
     voice_policy: str = "",
     public_figure: bool = False,
     voice_direction: str = "",
+    voice_card: dict = None,
 ) -> dict:
     """Tente voice_clone (cloning XTTS/F5) puis fallback Kokoro générique.
 
@@ -3134,6 +3199,41 @@ def synthesize_voice(
         except Exception:
             return {"ok": False, "error": "voice_clone non-JSON: " + last_line[:160]}
 
+    def try_carte(carte: dict) -> dict:
+        """Rend la parole francaise en clonant la graine de timbre concue.
+
+        CosyVoice3 en zero-shot : `--reference` porte la graine, `--prompt-text`
+        son contenu. On ne passe JAMAIS par `inference_sft` : le modele installe
+        (`Fun-CosyVoice3-0.5B-2512`) n'embarque pas de `spk2info.pt`, ce chemin
+        y echouerait en silence.
+        """
+        graine = (carte or {}).get("graine_wav")
+        if not graine or not Path(str(graine)).exists():
+            return {"ok": False, "error": "graine de timbre absente"}
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from voice_design import GRAINE_TEXTE_EN as _graine_txt
+        except Exception:
+            _graine_txt = ""
+        cmd = base_cmd + [
+            "--reference", str(graine),
+            "--prompt-text", _graine_txt,
+            "--instruction", direction,
+        ]
+        emit("tts_concue",
+             f"{carte.get('graine')} ({carte.get('registre')}): {text[:44]}...")
+        rc, stdout, stderr = _run(cmd, timeout=600)
+        if rc != 0:
+            return {"ok": False, "error": (stderr or stdout)[:300]}
+        try:
+            r = json.loads((stdout or "").strip().split("\n")[-1])
+            if isinstance(r, dict) and r.get("ok"):
+                r["voice_design"] = {"graine": carte.get("graine"),
+                                     "registre": carte.get("registre")}
+            return r if isinstance(r, dict) else {"ok": False, "error": "no JSON"}
+        except Exception:
+            return {"ok": False, "error": "voix concue: sortie non-JSON"}
+
     def try_fresh(preset: str) -> dict:
         if not preset:
             return {"ok": False, "error": "no voice_preset"}
@@ -3175,6 +3275,19 @@ def synthesize_voice(
         emit("voice_synthetic",
              f"{slug or 'sans slug'}: pas d'echantillon -> voix inventee. "
              f"{resolved.get('hint') or ''}")
+
+    # v93 — LA VOIX CONCUE PASSE AVANT TOUT PRESET GENERIQUE.
+    # Ordre de priorite : (1) vrai echantillon depose, (2) voix CONCUE pour ce
+    # personnage, (3) preset generique. Le preset n'est plus qu'un filet : il
+    # donne le meme timbre a tout le casting, ce qui est precisement le defaut
+    # qu'on supprime.
+    if not has_real_reference and voice_card:
+        r_carte = try_carte(voice_card)
+        if r_carte.get("ok"):
+            return r_carte
+        emit("voice_warn",
+             f"voix concue indisponible ({str(r_carte.get('error'))[:110]}) "
+             f"-> repli sur preset")
 
     prefers_style_voice = (
         not has_real_reference
@@ -3917,24 +4030,65 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     # ce qui enrole au passage tout echantillon depose — et l'absence de
     # reference devient un avertissement du rapport, pas une surprise a
     # l'ecoute.
+    voice_cards: dict = {}
     for _name, _meta in characters.items():
         if not any(s.get("speaker") == _name and s.get("dialogue")
                    for s in shots):
             continue
         _slug = _meta.get("voice_slug") or _name.lower().replace(" ", "_")
-        _res = _resolve_character_voice(_slug, _meta.get("voice_lang") or "fr")
+        _lang = (_meta.get("voice_lang") or "fr")[:2]
+        _res = _resolve_character_voice(_slug, _lang)
         if _res.get("cloned"):
             emit("voice_cloned", f"{_name} <- {_res.get('source')}")
+            continue
+
+        # v93 — PAS D'ECHANTILLON ? ON CONCOIT LA VOIX, ON NE LA SUBIT PAS.
+        # Avant, l'absence d'echantillon donnait un preset generique identique
+        # pour tout le casting, et un avertissement demandant a l'utilisateur de
+        # deposer un fichier par personnage — ce qui n'est pas tenable sur un
+        # film a cinq roles.
+        _projet = _slugify_projet(storyboard.get("title") or "film")
+        _design = _concevoir_voix(_name, _description_voix(_meta, _name),
+                                  _projet, _lang)
+        if _design.get("ok"):
+            voice_cards[_name] = _design
+            emit("voice_concue",
+                 f"{_name}: registre {_design.get('registre')}, "
+                 f"timbre {_design.get('graine')}"
+                 + (" (carte existante)" if _design.get("reprise") else ""))
         else:
             warnings.append({
                 "stage": "voice",
                 "character": _name,
-                "warning": "voix de synthese, pas une reproduction",
-                "detail": _res.get("hint") or _res.get("reason") or "",
+                "warning": "voix generique : conception indisponible",
+                "detail": str(_design.get("error"))[:200],
             })
             emit("voice_synthetic",
-                 f"{_name}: aucun echantillon -> voix inventee. "
-                 f"{_res.get('hint') or ''}")
+                 f"{_name}: conception impossible ({_design.get('error')}) "
+                 f"-> preset generique")
+
+    # Porte de distinction : deux personnages ne doivent pas se ressembler.
+    if len(voice_cards) > 1:
+        try:
+            _vd = Path(__file__).resolve().parent / "voice_design.py"
+            _projet = _slugify_projet(storyboard.get("title") or "film")
+            rc, out, _ = _run([sys.executable, str(_vd), "--projet", _projet,
+                               "--verifier-distinction"], timeout=600)
+            _verdict = json.loads((out or "{}").strip().split("\n")[-1])
+            if _verdict.get("conflits"):
+                for _c in _verdict["conflits"]:
+                    warnings.append({
+                        "stage": "voice",
+                        "warning": f"voix trop proches : {_c['a']} et {_c['b']}",
+                        "similarite": _c.get("similarite"),
+                    })
+                emit("voice_distinction",
+                     f"{len(_verdict['conflits'])} paire(s) de voix trop proches")
+            else:
+                emit("voice_distinction",
+                     f"{_verdict.get('personnages')} voix distinctes verifiees")
+        except Exception as _e:
+            emit("voice_warn", f"porte de distinction: {str(_e)[:100]}")
 
     # v82l6 : pre-generate character keyframes via FLUX so each shot
     # featuring the same character keeps the same face/silhouette/outfit.
@@ -4079,6 +4233,9 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 # sinon derivee de la ponctuation dans synthesize_voice
                 voice_direction=(shot.get("voice_direction")
                                  or char_meta.get("voice_direction") or ""),
+                # Carte de voix concue au demarrage du film : elle prime sur
+                # tout preset generique, et reste identique d'un plan a l'autre.
+                voice_card=voice_cards.get(speaker),
             )
             if voice_result.get("ok"):
                 voice_wav_path = str(voice_result.get("wav") or voice_wav)
