@@ -26,7 +26,7 @@ import requests
 import secrets as _secrets
 import hashlib as _hashlib
 import hmac as _hmac
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 app = Flask(__name__)
 # CORS headers: expose picker telemetry (model, reason, history, coverage) + extraction stats.
@@ -220,7 +220,7 @@ def voice_stt():
 
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
         raw = subprocess.check_output(
-            ["python", script, "--mode", "stt", "--audio", temp_path],
+            [sys.executable, script, "--mode", "stt", "--audio", temp_path],
             stderr=subprocess.STDOUT, timeout=120, cwd=WORKSPACE,
         ).decode("utf-8")
 
@@ -343,7 +343,7 @@ def talking_head_check():
         if not os.path.isfile(script):
             return jsonify({"ok": False, "installed": False, "reason": "script absent"})
         raw = subprocess.check_output(
-            ["python", script, "--mode", "check"],
+            [sys.executable, script, "--mode", "check"],
             stderr=subprocess.STDOUT, timeout=10, cwd=WORKSPACE,
         ).decode("utf-8")
         for line in reversed([l.strip() for l in raw.split("\n") if l.strip()]):
@@ -382,7 +382,7 @@ def talking_head_idle():
         script = os.path.join(WORKSPACE, "python-services", "talking_head.py")
 
         raw = subprocess.check_output(
-            ["python", script, "--mode", "idle",
+            [sys.executable, script, "--mode", "idle",
              "--image", avatar_abs, "--output", out_path,
              "--duration", str(duration), "--size", "256"],
             stderr=subprocess.STDOUT, timeout=120, cwd=WORKSPACE,
@@ -3155,11 +3155,22 @@ def _build_python_env() -> dict:
                 return hub.is_dir() and next(hub.glob("models--*"), None) is not None
             except Exception:
                 return False
+        def _hub_count(hub: pathlib.Path) -> int:
+            try:
+                return sum(1 for _ in hub.glob("models--*"))
+            except Exception:
+                return 0
         _am = run_env.get("AURORA_MODELS")
         _candidates = []
         if _am:
             _candidates.append(pathlib.Path(_am) / "huggingface")
         _candidates.append(pathlib.Path.home() / ".cache" / "huggingface")
+        # DEUX caches HF = DEUX telechargements du meme modele. L'app (Tauri)
+        # lance python sans HF_HOME et tombe donc sur ~/.cache/huggingface,
+        # tandis que le bridge epinglait <modele>/huggingface: Hunyuan3D s'est
+        # retrouve en double (38 Go pour rien). On prend le cache le PLUS
+        # fourni, pour que les deux chemins convergent sur le meme.
+        _candidates.sort(key=lambda p: _hub_count(p / "hub"), reverse=True)
         for _hf in _candidates:
             if _hub_has_models(_hf / "hub"):
                 run_env["HF_HOME"] = str(_hf)
@@ -3187,11 +3198,170 @@ def _clean_stderr(raw: str) -> str:
 
 _python_jobs: dict[str, dict] = {}
 _python_jobs_lock = threading.Lock()
+_python_job_processes: dict[str, subprocess.Popen] = {}
 import uuid as _uuid
+
+# File FIFO partagee par tous les gros travaux du module video. Elle vit hors
+# de Flask pour rester testable sans demarrer le bridge ni toucher au GPU.
+_video_queue_dir = pathlib.Path(WORKSPACE) / "python-services" / "cinema"
+if str(_video_queue_dir) not in sys.path:
+    sys.path.insert(0, str(_video_queue_dir))
+from video_gpu_queue import VideoGpuQueue
+
+_video_gpu_queue = VideoGpuQueue()
+
+
+def _is_video_gpu_job(script_path: str) -> bool:
+    """Vrai pour les scripts du chemin de production qui peuvent charger le GPU."""
+    script = pathlib.Path(str(script_path)).name.lower()
+    return script in {
+        "cinema_pipeline.py",
+        "cinema_preview_keyframes.py",
+        "video_ab_benchmark.py",
+        "video_generate.py",
+        "talking_head.py",
+        "voice_clone.py",
+        "voice_extract.py",
+        "ltx_direct_render.py",
+        "musetalk_runner.py",
+        # v91 : la chaine de finition charge RealESRGAN sur le GPU — sans
+        # cette entree elle demarrerait en parallele d'un rendu Wan et les
+        # deux se percuteraient sur les 16 Go.
+        "video_upscale_chain.py",
+    }
+
+
+def _queue_video_job(job_id: str, script_path: str) -> int | None:
+    if not _is_video_gpu_job(script_path):
+        return None
+    position = _video_gpu_queue.enqueue(job_id)
+    with _python_jobs_lock:
+        job = _python_jobs.get(job_id)
+        if job is not None and job.get("status") not in {"cancelled", "done"}:
+            job["status"] = "queued"
+            job["queuePosition"] = position
+            job["queueReason"] = "gpu_video_serialization"
+    return position
+
+
+def _update_video_queue_wait(job_id: str, position: int, active_job_id: str | None) -> None:
+    with _python_jobs_lock:
+        job = _python_jobs.get(job_id)
+        if job is None or job.get("status") == "cancelled":
+            return
+        job.update({
+            "status": "queued",
+            "queuePosition": position,
+            "activeGpuJobId": active_job_id,
+            "queueReason": "gpu_video_serialization",
+        })
+
+
+def _terminate_job_process(job_id: str, *, force: bool = False) -> bool:
+    """Termine le groupe complet d'un job, y compris ses workers diffusers."""
+    with _python_jobs_lock:
+        proc = _python_job_processes.get(job_id)
+    if proc is None or proc.poll() is not None:
+        return False
+    try:
+        if os.name == "posix":
+            import signal as _signal
+            os.killpg(os.getpgid(proc.pid), _signal.SIGKILL if force else _signal.SIGTERM)
+        elif force:
+            proc.kill()
+        else:
+            proc.terminate()
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        try:
+            proc.kill() if force else proc.terminate()
+            return True
+        except Exception:
+            return False
+
+
+def _persist_job_state(job_id: str, state: dict) -> None:
+    """Ecrit un etat terminal file-backed quand le job est cinema."""
+    try:
+        for prefix in ("job_", "sample_", "preview_", "benchmark_"):
+            d = pathlib.Path(WORKSPACE) / "temp" / "cinema" / f"{prefix}{job_id}"
+            if d.exists():
+                (d / "status.json").write_text(
+                    json.dumps(state, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                break
+    except Exception:
+        pass
+
+
+def _finalize_cancelled_job(job_id: str, script_path: str, started_at: float) -> None:
+    state = {
+        "status": "cancelled",
+        "output": "",
+        "error": "Job annule par l'utilisateur.",
+        "exitCode": -15,
+        "script": os.path.basename(script_path),
+        "startedAt": started_at,
+        "finishedAt": time.time(),
+        "cancelledAt": time.time(),
+    }
+    _persist_job_state(job_id, state)
+    with _python_jobs_lock:
+        previous = _python_jobs.get(job_id, {})
+        _python_jobs[job_id] = {**previous, **state}
+
+
+def _cancel_video_job_response(job_id: str):
+    with _python_jobs_lock:
+        job = _python_jobs.get(job_id)
+        if job is None:
+            return jsonify({"ok": False, "error": "job not found"}), 404
+        if not _is_video_gpu_job(str(job.get("script", ""))):
+            return jsonify({
+                "ok": False,
+                "error": "Ce job n'appartient pas au module video.",
+            }), 409
+        if job.get("status") in {"done", "cancelled"}:
+            return jsonify({
+                "ok": True,
+                "jobId": job_id,
+                "status": job.get("status"),
+                "alreadyTerminal": True,
+            })
+        job.update({
+            "status": "cancelled",
+            "cancelRequested": True,
+            "cancelledAt": time.time(),
+            "error": "Job annule par l'utilisateur.",
+        })
+        state_for_disk = dict(job)
+
+    queue_state = _video_gpu_queue.cancel(job_id)
+    signal_sent = _terminate_job_process(job_id)
+    state_for_disk.update({
+        "status": "cancelled",
+        "cancelRequested": True,
+        "cancelledAt": time.time(),
+        "error": "Job annule par l'utilisateur.",
+    })
+    _persist_job_state(job_id, state_for_disk)
+    return jsonify({
+        "ok": True,
+        "jobId": job_id,
+        "status": "cancelled",
+        "signalSent": signal_sent,
+        "wasQueued": queue_state.get("queued", False),
+        "wasActive": queue_state.get("active", False),
+    })
 
 
 def _cinema_bridge_timeout_seconds(args: list[str], default: int = 1800) -> int:
     try:
+        if "--spec" in [str(arg) for arg in args]:
+            return 8 * 3600
         storyboard_path = None
         for idx, arg in enumerate(args):
             if str(arg) == "--storyboard" and idx + 1 < len(args):
@@ -3214,8 +3384,58 @@ def _cinema_bridge_timeout_seconds(args: list[str], default: int = 1800) -> int:
         return default
 
 
+def _video_scratch_reservation_gb(script_path: str, args: list[str]) -> float:
+    """Conservative internal reservation for frames, audio and temporary MP4s."""
+    name = os.path.basename(str(script_path))
+    if name == "cinema_pipeline.py":
+        try:
+            index = [str(arg) for arg in args].index("--storyboard")
+            data = json.loads(pathlib.Path(str(args[index + 1])).read_text(encoding="utf-8-sig"))
+            shots = data.get("shots") or []
+            duration = sum(float(shot.get("duration_s") or 3.0) for shot in shots)
+            return max(2.0, min(40.0, len(shots) * 0.75 + duration * 0.08))
+        except Exception:
+            return 4.0
+    if name == "cinema_preview_keyframes.py":
+        return 1.0
+    if name == "video_ab_benchmark.py":
+        return 8.0
+    if name in {"voice_clone.py", "voice_extract.py"}:
+        return 0.5
+    return 2.0
+
+
+# GENERATION 3D EN COURS: pendant qu'aurora_3d_pipeline tourne, les requetes
+# cowork qui font tourner un LLM Ollama RECHARGENT un modele en VRAM en pleine
+# etape GPU (constate au gel du 24/07: cudaMalloc OOM d'ollama a 00:15 pendant
+# FLUX, puis Xid 109 pendant les materiaux). On refuse ces requetes avec un
+# 503 clair le temps de la generation.
+_AURORA_3D_EN_COURS = threading.Event()
+
+
+def _is_3d_generation_active() -> bool:
+    """Detect bridge-managed and independently launched Claude/terminal jobs."""
+    if _AURORA_3D_EN_COURS.is_set():
+        return True
+    try:
+        for process in psutil.process_iter(["pid", "cmdline", "status"]):
+            if process.info.get("pid") == os.getpid() or process.info.get("status") == psutil.STATUS_ZOMBIE:
+                continue
+            command = " ".join(process.info.get("cmdline") or [])
+            if "aurora_3d_pipeline.py" in command:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _run_python_job(job_id: str, script_path: str, args: list[str]):
     run_env = _build_python_env()
+    _est_3d = "aurora_3d_pipeline" in str(script_path)
+    _est_video_gpu = _is_video_gpu_job(script_path)
+    _video_slot_acquired = False
+    if _est_3d:
+        _AURORA_3D_EN_COURS.set()
     stdout_lines: list[str] = []
     stderr_buf: list[str] = []
     exit_code = -1
@@ -3224,6 +3444,80 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
 
     python_exe = sys.executable or "python"
     start_ts = time.time()
+
+    if _est_video_gpu:
+        _queue_video_job(job_id, script_path)
+        # Ne jamais lancer Wan/FLUX pendant une generation 3D partageant la
+        # meme carte. Le job reste visible et annulable dans la file.
+        while _is_3d_generation_active():
+            if _video_gpu_queue.is_cancelled(job_id):
+                _finalize_cancelled_job(job_id, script_path, start_ts)
+                return
+            with _python_jobs_lock:
+                job = _python_jobs.get(job_id)
+                if job is not None:
+                    job.update({
+                        "status": "queued",
+                        "queueReason": "generation_3d_active",
+                        "queuePosition": _video_gpu_queue.snapshot(job_id).get("position"),
+                    })
+            time.sleep(1.0)
+
+        _video_slot_acquired = _video_gpu_queue.acquire(
+            job_id,
+            on_wait=lambda position, active: _update_video_queue_wait(
+                job_id, position, active,
+            ),
+        )
+        if not _video_slot_acquired:
+            _finalize_cancelled_job(job_id, script_path, start_ts)
+            return
+        with _python_jobs_lock:
+            job = _python_jobs.get(job_id)
+            if job is not None:
+                job.update({
+                    "status": "running",
+                    "queuePosition": 0,
+                    "activeGpuJobId": job_id,
+                    "queueReason": None,
+                })
+
+        manager = globals().get("_storage_manager")
+        if manager is not None:
+            reservation = _video_scratch_reservation_gb(script_path, args)
+            try:
+                capacity = manager.ensure_space("hot", reservation)
+            except Exception as capacity_exc:
+                capacity = {
+                    "ok": False,
+                    "reason": "storage_preflight_failed",
+                    "error": str(capacity_exc)[:240],
+                }
+            if not capacity.get("ok"):
+                _video_gpu_queue.release(job_id)
+                refusal = {
+                    "ok": False,
+                    "error": (
+                        f"Espace interne insuffisant pour reserver {reservation:.1f} Go "
+                        f"sans franchir le plancher de {capacity.get('floor_gb', 20)} Go."
+                    ),
+                    "storage": capacity,
+                }
+                state = {
+                    "status": "done",
+                    "output": json.dumps(refusal, ensure_ascii=False),
+                    "error": refusal["error"],
+                    "exitCode": 1,
+                    "script": os.path.basename(script_path),
+                    "startedAt": start_ts,
+                    "finishedAt": time.time(),
+                    "storage": capacity,
+                }
+                _persist_job_state(job_id, state)
+                with _python_jobs_lock:
+                    previous = _python_jobs.get(job_id, {})
+                    _python_jobs[job_id] = {**previous, **state}
+                return
 
     # v82lz : pour les cinema jobs (long-running Wan2.2/FLUX), écrit
     # stdout/stderr directement dans des fichiers log dans le job_dir.
@@ -3234,7 +3528,7 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
     log_stderr_path = None
     is_cinema_long_running = False
     try:
-        for prefix in ("job_", "sample_", "preview_"):
+        for prefix in ("job_", "sample_", "preview_", "benchmark_"):
             for arg in args:
                 if isinstance(arg, str) and prefix + job_id in arg:
                     is_cinema_long_running = True
@@ -3271,6 +3565,11 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
                 **popen_kwargs,
             )
         else:
+            popen_kwargs = {}
+            if _est_video_gpu and sys.platform != "win32":
+                popen_kwargs["start_new_session"] = True
+            elif _est_video_gpu and sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             proc = subprocess.Popen(
                 [python_exe, "-W", "ignore", "-u", script_path] + [str(a) for a in args],
                 stdout=subprocess.PIPE,
@@ -3279,8 +3578,13 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
                 env=run_env,
                 bufsize=1,
                 text=False,
+                **popen_kwargs,
             )
+        with _python_jobs_lock:
+            _python_job_processes[job_id] = proc
     except Exception as spawn_err:
+        if _video_slot_acquired:
+            _video_gpu_queue.release(job_id)
         with _python_jobs_lock:
             _python_jobs[job_id] = {
                 "status": "done", "output": "", "error": f"Spawn echoue: {spawn_err}",
@@ -3365,58 +3669,89 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
     except Exception as runtime_err:
         crashed = f"{type(runtime_err).__name__}: {runtime_err}"
     finally:
+        if _est_3d:
+            _AURORA_3D_EN_COURS.clear()
+        was_cancelled = _video_gpu_queue.is_cancelled(job_id) if _est_video_gpu else False
         if proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            _terminate_job_process(job_id, force=not was_cancelled)
             try:
                 proc.wait(timeout=5)
             except Exception:
-                pass
+                _terminate_job_process(job_id, force=True)
         if stderr_thread is not None:
             stderr_thread.join(timeout=2)
+        with _python_jobs_lock:
+            _python_job_processes.pop(job_id, None)
+        if _video_slot_acquired:
+            _video_gpu_queue.release(job_id)
 
-    if timed_out:
+    if was_cancelled:
+        error_message = "Job annule par l'utilisateur."
+    elif timed_out:
         error_message = f"Timeout serveur ({int(timeout_seconds)}s) — le script Python a depasse la limite bridge."
     elif crashed:
         error_message = crashed
     else:
         error_message = _clean_stderr("\n".join(stderr_buf))
 
+    storage_result = None
+    if (
+        not was_cancelled
+        and exit_code == 0
+        and os.path.basename(script_path) == "cinema_pipeline.py"
+    ):
+        with _python_jobs_lock:
+            output_path_for_storage = (_python_jobs.get(job_id) or {}).get("outputPath")
+        manager = globals().get("_storage_manager")
+        if output_path_for_storage and manager is not None:
+            try:
+                storage_result = manager.migrate_final_to_cold(
+                    output_path_for_storage,
+                    job_id=job_id,
+                )
+            except Exception as storage_exc:
+                storage_result = {
+                    "ok": False,
+                    "reason": "output_migration_failed",
+                    "error": str(storage_exc)[:240],
+                }
+        elif output_path_for_storage:
+            storage_result = {
+                "ok": False,
+                "reason": "storage_manager_unavailable",
+                "error": globals().get("_storage_import_error", ""),
+            }
+
     # v82ly : persist final state to disk for survival across bridge respawn.
     final_state = {
-        "status": "done",
+        "status": "cancelled" if was_cancelled else "done",
         "output": "\n".join(stdout_lines),
         "error": error_message,
-        "exitCode": exit_code,
+        "exitCode": -15 if was_cancelled else exit_code,
         "script": os.path.basename(script_path),
         "startedAt": start_ts,
         "finishedAt": time.time(),
     }
+    if storage_result is not None:
+        final_state["storage"] = storage_result
+    if was_cancelled:
+        final_state["cancelledAt"] = time.time()
     # Find the job dir (cinema convention) and write status.json.
-    try:
-        for prefix in ("job_", "sample_", "preview_"):
-            d = CINEMA_TEMP / f"{prefix}{job_id}"
-            if d.exists():
-                (d / "status.json").write_text(
-                    json.dumps(final_state, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                break
-    except Exception:
-        pass
+    _persist_job_state(job_id, final_state)
 
     with _python_jobs_lock:
-        _python_jobs[job_id] = {
-            "status": "done",
+        previous = _python_jobs.get(job_id, {})
+        _python_jobs[job_id] = {**previous, **{
+            "status": "cancelled" if was_cancelled else "done",
             "output": "\n".join(stdout_lines),
             "error": error_message,
-            "exitCode": exit_code,
+            "exitCode": -15 if was_cancelled else exit_code,
             "script": os.path.basename(script_path),
             "startedAt": start_ts,
             "finishedAt": time.time(),
-        }
+            **({"storage": storage_result} if storage_result is not None else {}),
+            **({"cancelledAt": time.time()} if was_cancelled else {}),
+        }}
 
 
 def _gc_old_jobs():
@@ -3456,6 +3791,7 @@ def python_run_async():
             "startedAt": time.time(),
             "script": os.path.basename(script_path),
         }
+    _queue_video_job(job_id, script_path)
     t = threading.Thread(target=_run_python_job, args=(job_id, script_path, args), daemon=True)
     t.start()
     return jsonify({"ok": True, "jobId": job_id})
@@ -3625,6 +3961,12 @@ def python_job_status(job_id: str):
     return jsonify({"jobId": job_id, **job})
 
 
+@app.route("/api/python/cancel/<job_id>", methods=["POST"])
+def python_job_cancel(job_id: str):
+    """Annule un job Python video, actif ou encore dans la file GPU."""
+    return _cancel_video_job_response(job_id)
+
+
 @app.route("/api/python/run", methods=["POST"])
 def python_run():
     """Synchronous path — kept for Tauri / local browser modes where the
@@ -3637,7 +3979,7 @@ def python_run():
     try:
         run_env = _build_python_env()
         result = subprocess.run(
-            ["python", "-W", "ignore", script_path] + args,
+            [sys.executable, "-W", "ignore", script_path] + args,
             capture_output=True, timeout=900, cwd=WORKSPACE, env=run_env,
         )
         return jsonify({
@@ -3807,14 +4149,22 @@ def fs_list_dir():
 def serve_asset(filepath):
     """Sert un fichier genere (image, audio, etc.) pour le telephone."""
     # Chercher dans les repertoires de sortie connus
+    cold_gallery_candidate = None
+    if filepath.startswith("aurora-models/outputs/videos/"):
+        gallery_name = pathlib.PurePosixPath(filepath).name
+        if gallery_name == filepath.removeprefix("aurora-models/outputs/videos/"):
+            manager = globals().get("_storage_manager")
+            if manager is not None and manager.cold_mounted():
+                cold_gallery_candidate = str(manager.cold_root / "outputs" / "videos" / gallery_name)
     candidates = [
+        cold_gallery_candidate,
         os.path.join(WORKSPACE, filepath),
         os.path.join(WORKSPACE, "output", filepath),
         os.path.join(WORKSPACE, "temp", filepath),
         filepath,  # chemin absolu direct
     ]
     for candidate in candidates:
-        if os.path.isfile(candidate):
+        if candidate and os.path.isfile(candidate):
             return send_file(candidate)
     abort(404)
 
@@ -4061,6 +4411,18 @@ CINEMA_DIR = pathlib.Path(WORKSPACE) / "python-services" / "cinema"
 VOICES_LIBRARY = pathlib.Path(WORKSPACE) / "voices" / "library"
 CINEMA_TEMP = pathlib.Path(WORKSPACE) / "temp" / "cinema"
 CINEMA_TEMP.mkdir(parents=True, exist_ok=True)
+STORAGE_SERVICES_DIR = pathlib.Path(WORKSPACE) / "python-services" / "storage"
+if str(STORAGE_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(STORAGE_SERVICES_DIR))
+try:
+    from aurora_storage import AuroraStorageManager, StorageError
+    _storage_manager = AuroraStorageManager(workspace=WORKSPACE)
+    _storage_import_error = ""
+except Exception as _storage_exc:
+    AuroraStorageManager = None
+    StorageError = RuntimeError
+    _storage_manager = None
+    _storage_import_error = f"{type(_storage_exc).__name__}: {_storage_exc}"
 
 
 def _run_cinema_script_sync(script_name: str, args: list[str], timeout: int = 300) -> dict:
@@ -4258,11 +4620,10 @@ def _resolve_storyboard_model(requested: str | None) -> tuple[str, list[str]]:
 
     Order:
       1. The model explicitly requested by the caller (if installed)
-      2. qwen3:14b — current project default, fits 16 GB VRAM, strong JSON output
-      3. qwen3-coder:30b-a3b-q4_K_M — MoE Qwen3 coder (handles JSON well)
-      4. qwen2.5:7b — small fallback that always loads
-      5. qwen2.5-coder:7b — code-oriented but valid JSON output
-      6. The first installed model returned by /api/tags
+      2. qwen3.6:27b — meilleur modele generaliste installe pour narration/JSON
+      3. qwen3:30b-a3b-instruct-2507-q4_K_M — MoE instruct installe
+      4. qwen3-vl:30b — repli generaliste multimodal
+      5. qwen3-coder:30b — dernier repli installe, structure JSON solide
 
     Returns (chosen_model, candidates_tried). Empty chosen means none available.
     """
@@ -4271,10 +4632,11 @@ def _resolve_storyboard_model(requested: str | None) -> tuple[str, list[str]]:
     if requested:
         candidates.append(requested.strip())
     candidates.extend([
-        "qwen3:14b",
-        "qwen3-coder:30b-a3b-q4_K_M",
-        "qwen2.5:7b",
-        "qwen2.5-coder:7b",
+        "qwen3.6:27b",
+        "qwen3:30b-a3b-instruct-2507-q4_K_M",
+        "qwen3-vl:30b",
+        "qwen3-coder:30b",
+        "qwen3-vl:8b",
     ])
     tried: list[str] = []
     for c in candidates:
@@ -4287,11 +4649,9 @@ def _resolve_storyboard_model(requested: str | None) -> tuple[str, list[str]]:
         for inst in installed:
             if inst.startswith(c.split(":")[0] + ":") and c.split(":", 1)[-1] in inst:
                 return inst, tried
-    # Last resort: first installed model
-    if installed:
-        first = sorted(installed)[0]
-        tried.append(f"<premier installe: {first}>")
-        return first, tried
+    # Ne jamais choisir arbitrairement le premier modele (un embedder ou un
+    # coder massif pouvait devenir le realisateur). Echec explicite si aucun
+    # candidat qualifie n'est installe.
     return "", tried
 
 
@@ -4309,7 +4669,11 @@ def cinema_storyboard():
     if not model:
         return jsonify({
             "ok": False,
-            "error": "Aucun modele Ollama installe. Tente `ollama pull qwen3:14b`.",
+            "error": (
+                "Aucun modele Ollama adapte au storyboard n'est installe. "
+                "Installe qwen3.6:27b ou fournis explicitement un modele."
+            ),
+            "tried": tried,
         }), 502
 
     full_prompt = STORYBOARD_PROMPT.replace("{HINTS}", json.dumps(hints, ensure_ascii=False)).replace("{PROMPT}", prompt)
@@ -4442,6 +4806,7 @@ def cinema_sample_render():
             "jobDir": str(job_dir),
             "mode": "sample",
         }
+    _queue_video_job(job_id, str(script))
     t = threading.Thread(target=_run_python_job, args=(job_id, str(script), args), daemon=True)
     t.start()
     return jsonify({"ok": True, "jobId": job_id, "mode": "sample"})
@@ -4527,6 +4892,7 @@ def cinema_regenerate_shot():
             "jobDir": str(new_dir),
             "regenerationOf": {"jobId": job_id, "shotId": shot_id, "seed": alter_seed},
         }
+    _queue_video_job(new_job_id, str(script))
     t = threading.Thread(target=_run_python_job, args=(new_job_id, str(script), args), daemon=True)
     t.start()
 
@@ -4541,182 +4907,197 @@ def cinema_regenerate_shot():
 
 @app.route("/api/cinema/selftest", methods=["POST"])
 def cinema_selftest():
-    """v82lm : run a minimal 1-shot 2s pipeline to validate the full chain
-    (FLUX -> Wan2.2 -> voice -> mux -> ffprobe). Reports success per stage
-    so the user knows what's broken before committing 30 min of real render.
+    """Queue a real, minimal end-to-end render instead of a file/port check."""
+    _gc_old_jobs()
+    script = CINEMA_DIR / "cinema_pipeline.py"
+    if not script.exists():
+        return jsonify({"ok": False, "error": f"cinema_pipeline.py introuvable: {script}"}), 500
 
-    No body required — uses a hardcoded test storyboard.
-    Retour : {
-      ok: True,
-      stages: {
-        ollama_storyboard: { ok, ms, error? },
-        flux_keyframe: { ok, ms, error? },
-        vision_check: { ok, ms, score?, error? },
-        wan2_render: { ok, ms, frames?, error? },
-        voice_synth: { ok, ms, error? },
-        ffprobe: { ok, ms, duration_s?, error? },
-      },
-      overall_ok: bool,
-      summary: "..."
+    job_id = _uuid.uuid4().hex[:16]
+    job_dir = CINEMA_TEMP / f"sample_{job_id}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    storyboard = {
+        "title": "Aurora video self-test",
+        "summary": "Micro-rendu reel de validation de la chaine video.",
+        "style": "cinematic",
+        "aspect": "16:9",
+        "resolution": "720p",
+        "quality_mode": "auto",
+        "max_quality_attempts": 1,
+        "strict_quality_gate": False,
+        "characters": [{
+            "name": "Testeur",
+            "description": (
+                "an adult technician wearing a plain cobalt blue jacket, "
+                "short dark hair, neutral friendly expression"
+            ),
+            "voice_lang": "fr",
+            "voice_preset": "default_french",
+        }],
+        "shots": [{
+            "id": 1,
+            "scene": (
+                "Medium shot of Testeur in a softly lit film studio, making "
+                "one small natural hand gesture toward the camera. Testeur is "
+                "an adult technician wearing a plain cobalt blue jacket, short "
+                "dark hair, neutral friendly expression."
+            ),
+            "camera": "medium shot, locked camera",
+            "location": "film studio",
+            "duration_s": 2.0,
+            "speaker": "Testeur",
+            "dialogue": "Test réussi.",
+            "needs_lipsync": False,
+            "max_quality_attempts": 1,
+        }],
+        "music": {"enabled": False},
+        "subtitles": {"enabled": False},
+        "_selftest_mode": True,
     }
-    """
-    import time as _t
-    stages = {}
+    storyboard_path = job_dir / "storyboard.json"
+    storyboard_path.write_text(
+        json.dumps(storyboard, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    output_mp4 = job_dir / "sample.mp4"
+    args = ["--storyboard", str(storyboard_path), "--output", str(output_mp4)]
 
-    def stage(name: str):
-        return {"name": name, "t0": _t.time()}
-
-    def done(s, ok, **extra):
-        s["ok"] = ok
-        s["ms"] = int((_t.time() - s["t0"]) * 1000)
-        s.pop("t0", None)
-        s.pop("name", None)
-        s.update(extra)
-        return s
-
-    # Stage 1 : Ollama reachability for storyboard model.
-    s = stage("ollama")
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        stages["ollama_storyboard"] = done(s, r.status_code == 200,
-                                           model_count=len((r.json() or {}).get("models", [])))
-    except Exception as e:
-        stages["ollama_storyboard"] = done(s, False, error=str(e)[:160])
-
-    # Stage 2 : ComfyUI reachability for FLUX.
-    s = stage("comfy")
-    try:
-        r = requests.get("http://127.0.0.1:8188/system_stats", timeout=3)
-        stages["flux_keyframe"] = done(s, r.status_code == 200)
-    except Exception as e:
-        stages["flux_keyframe"] = done(s, False, error=f"ComfyUI down: {str(e)[:120]}")
-
-    # Stage 3 : Vision LLM (qwen3-vl) availability.
-    s = stage("vision")
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
-        names = [m.get("name", "") for m in (r.json() or {}).get("models", [])]
-        has_vision = any("vl" in n.lower() or "vision" in n.lower() for n in names)
-        stages["vision_check"] = done(s, has_vision,
-                                      model="qwen3-vl:30b" if has_vision else None,
-                                      error=None if has_vision else "no vision model installed")
-    except Exception as e:
-        stages["vision_check"] = done(s, False, error=str(e)[:160])
-
-    # Stage 4 : Wan2.2 video_generate.py existence.
-    s = stage("wan2")
-    vg_script = (CINEMA_DIR.parent / "video_generate.py")
-    stages["wan2_render"] = done(s, vg_script.exists(),
-                                 path=str(vg_script) if vg_script.exists() else None,
-                                 error=None if vg_script.exists() else "video_generate.py missing")
-
-    # Stage 5 : voice_service.py + voice_clone.py.
-    s = stage("voice")
-    vs = CINEMA_DIR.parent / "voice_service.py"
-    vc = CINEMA_DIR / "voice_clone.py"
-    voice_ok = vs.exists() and vc.exists()
-    stages["voice_synth"] = done(s, voice_ok,
-                                 voice_service=vs.exists(),
-                                 voice_clone=vc.exists(),
-                                 error=None if voice_ok else "voice scripts missing")
-
-    # Stage 6 : ffmpeg + ffprobe.
-    s = stage("ffmpeg")
-    try:
-        ffmpeg = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-        rc = subprocess.run([ffmpeg, "-version"], capture_output=True, timeout=5).returncode
-        ffprobe = "ffprobe.exe" if os.name == "nt" else "ffprobe"
-        rc2 = subprocess.run([ffprobe, "-version"], capture_output=True, timeout=5).returncode
-        stages["ffprobe"] = done(s, rc == 0 and rc2 == 0,
-                                 error=None if rc == 0 and rc2 == 0 else f"ffmpeg rc={rc} ffprobe rc={rc2}")
-    except Exception as e:
-        stages["ffprobe"] = done(s, False, error=str(e)[:160])
-
-    overall_ok = all(s.get("ok") for s in stages.values())
-    failing = [k for k, v in stages.items() if not v.get("ok")]
-    if overall_ok:
-        summary = "Pipeline OK — toutes les briques répondent. Commit Wan2.2 sans risque."
-    else:
-        summary = f"Pipeline DEGRADED — {len(failing)} stage(s) en échec : {', '.join(failing)}"
+    with _python_jobs_lock:
+        _python_jobs[job_id] = {
+            "status": "queued",
+            "startedAt": time.time(),
+            "script": script.name,
+            "kind": "cinema_selftest",
+            "outputPath": str(output_mp4),
+            "jobDir": str(job_dir),
+            "mode": "selftest",
+        }
+    _queue_video_job(job_id, str(script))
+    threading.Thread(
+        target=_run_python_job,
+        args=(job_id, str(script), args),
+        daemon=True,
+    ).start()
     return jsonify({
         "ok": True,
-        "stages": stages,
-        "overall_ok": overall_ok,
-        "summary": summary,
+        "jobId": job_id,
+        "status": "queued",
+        "stages": {"queue": {"ok": True, "ms": 0}},
+        "overall_ok": False,
+        "summary": "Micro-rendu reel mis en file (FLUX, video, voix, mux et ffprobe).",
+    })
+
+
+@app.route("/api/cinema/benchmark", methods=["POST"])
+def cinema_video_benchmark():
+    """Queue a reproducible same-prompt/same-seed Wan-vs-LTX A/B campaign."""
+    _gc_old_jobs()
+    data = request.get_json(silent=True) or {}
+    storyboard = data.get("storyboard") if isinstance(data.get("storyboard"), dict) else {}
+    shots = storyboard.get("shots") or []
+    first_shot = shots[0] if shots and isinstance(shots[0], dict) else {}
+    prompt = str(data.get("prompt") or first_shot.get("scene") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "prompt ou storyboard avec un plan requis"}), 400
+
+    spec = {
+        "prompt": prompt,
+        "negative_prompt": data.get("negative_prompt") or first_shot.get("negative_prompt"),
+        "width": data.get("width") or 832,
+        "height": data.get("height") or 480,
+        "num_frames": data.get("num_frames") or 49,
+        "seed": data.get("seed") if data.get("seed") is not None else first_shot.get("seed", 424242),
+        "image": data.get("image") or "",
+        "variants": data.get("variants") or ["wan5b", "ltx"],
+        "style": data.get("style") or storyboard.get("style") or "cinematic",
+        "character_description": data.get("character_description") or "",
+        "action_contract": data.get("action_contract") or first_shot.get("action_contract") or prompt,
+    }
+    job_id = _uuid.uuid4().hex[:16]
+    job_dir = CINEMA_TEMP / f"benchmark_{job_id}"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = job_dir / "spec.json"
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+    script = CINEMA_DIR / "video_ab_benchmark.py"
+    if not script.exists():
+        return jsonify({"ok": False, "error": f"harnais A/B introuvable: {script}"}), 500
+
+    args = ["--spec", str(spec_path), "--output-dir", str(job_dir)]
+    with _python_jobs_lock:
+        _python_jobs[job_id] = {
+            "status": "queued",
+            "startedAt": time.time(),
+            "script": script.name,
+            "kind": "video_ab_benchmark",
+            "jobDir": str(job_dir),
+            "outputPath": str(job_dir / "report.json"),
+        }
+    _queue_video_job(job_id, str(script))
+    threading.Thread(
+        target=_run_python_job,
+        args=(job_id, str(script), args),
+        daemon=True,
+    ).start()
+    return jsonify({
+        "ok": True,
+        "jobId": job_id,
+        "status": "queued",
+        "reportPath": str(job_dir / "report.json"),
+        "variants": spec["variants"],
     })
 
 
 @app.route("/api/cinema/preview-keyframes", methods=["POST"])
 def cinema_preview_keyframes():
-    """v82lh : pré-génère UNIQUEMENT les FLUX keyframes des personnages
-    sans lancer Wan2.2 (qui prend 30 min+). User voit les portraits avant
-    de commit le long render.
-
-    Body : { "storyboard": {...} }
-    Retour : {
-      "ok": True,
-      "char_quality": {
-        "Shadow": { "score": 9, "reason": "...", "keyframe_path": "..." }
-      }
-    }
-    """
+    """Lance l'apercu FLUX en job file-backed pour survivre au tunnel."""
+    _gc_old_jobs()
     data = request.get_json(silent=True) or {}
     storyboard = data.get("storyboard")
     if not isinstance(storyboard, dict):
         return jsonify({"ok": False, "error": "storyboard manquant"}), 400
 
-    characters = {c.get("name", ""): c for c in storyboard.get("characters", [])}
-    if not characters:
-        return jsonify({"ok": True, "char_quality": {}, "message": "no characters"})
-
     job_id = _uuid.uuid4().hex[:16]
     job_dir = CINEMA_TEMP / f"preview_{job_id}"
     job_dir.mkdir(parents=True, exist_ok=True)
+    storyboard_path = job_dir / "storyboard.json"
+    storyboard_path.write_text(
+        json.dumps(storyboard, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    result_path = job_dir / "preview.json"
+    script = CINEMA_DIR / "cinema_preview_keyframes.py"
+    if not script.exists():
+        return jsonify({
+            "ok": False,
+            "error": f"cinema_preview_keyframes.py introuvable: {script}",
+        }), 500
 
-    style = storyboard.get("style", "realistic")
-    aspect = storyboard.get("aspect", "16:9")
-    resolution = storyboard.get("resolution", "720p")
-
-    # Import the pipeline module dynamically.
-    import importlib.util
-    try:
-        vision_model, _, _ = _pick_vision_model_or_default("qwen3-vl:8b")
-        if vision_model:
-            os.environ["AURORA_VISION_MODEL"] = vision_model
-    except Exception:
-        os.environ.setdefault("AURORA_VISION_MODEL", "qwen3-vl:8b")
-    spec = importlib.util.spec_from_file_location("cp", str(CINEMA_DIR / "cinema_pipeline.py"))
-    cp = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(cp)
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"pipeline import fail: {e}"}), 500
-
-    try:
-        gen_w, gen_h, _ = cp.resolution_for_generation(resolution, aspect)
-        keyframes = cp.pregenerate_character_keyframes(characters, job_dir, style, gen_w, gen_h)
-        char_quality = {}
-        for name, path in keyframes.items():
-            desc = (characters.get(name, {}).get("description") or "").strip()
-            check = cp.validate_keyframe_with_vision(path, desc) if desc else {"score": 7, "reason": "no description", "ok": True}
-            # Convert path to bridge URL for browser preview
-            # v82lt fix : keyframe_url via /api/asset/<path> qui existe dans le
-            # bridge (les autres routes /files n'étaient pas wired).
-            abs_path = pathlib.Path(path).resolve()
-            try:
-                rel = abs_path.relative_to(pathlib.Path(WORKSPACE))
-                rel_str = str(rel).replace("\\", "/")
-            except ValueError:
-                rel_str = str(abs_path).replace("\\", "/")
-            char_quality[name] = {
-                "score": check.get("score"),
-                "reason": check.get("reason"),
-                "ok": check.get("ok"),
-                "keyframe_url": f"/api/asset/{rel_str}",
-            }
-        return jsonify({"ok": True, "char_quality": char_quality, "previewId": job_id})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+    args = [
+        "--storyboard", str(storyboard_path),
+        "--work-dir", str(job_dir),
+        "--output-json", str(result_path),
+    ]
+    with _python_jobs_lock:
+        _python_jobs[job_id] = {
+            "status": "queued",
+            "startedAt": time.time(),
+            "script": script.name,
+            "kind": "cinema_preview_keyframes",
+            "jobDir": str(job_dir),
+            "outputPath": str(result_path),
+        }
+    _queue_video_job(job_id, str(script))
+    threading.Thread(
+        target=_run_python_job,
+        args=(job_id, str(script), args),
+        daemon=True,
+    ).start()
+    return jsonify({
+        "ok": True,
+        "jobId": job_id,
+        "previewId": job_id,
+        "status": "queued",
+    })
 
 
 @app.route("/api/cinema/generate", methods=["POST"])
@@ -4768,6 +5149,7 @@ def cinema_generate():
             "outputPath": str(output_mp4),
             "jobDir": str(job_dir),
         }
+    _queue_video_job(job_id, str(script))
     t = threading.Thread(target=_run_python_job, args=(job_id, str(script), args), daemon=True)
     t.start()
     return jsonify({"ok": True, "jobId": job_id, "outputPath": str(output_mp4)})
@@ -4796,7 +5178,7 @@ def _reload_lost_cinema_job(job_id: str) -> dict | None:
          - 'running' si dir + storyboard mais pas de mp4 (interrupted)
          - 'unknown' sinon
     """
-    for prefix in ("job_", "sample_", "preview_"):
+    for prefix in ("job_", "sample_", "preview_", "benchmark_"):
         d = CINEMA_TEMP / f"{prefix}{job_id}"
         if not d.exists():
             continue
@@ -4818,8 +5200,8 @@ def _reload_lost_cinema_job(job_id: str) -> dict | None:
             if p.exists() and p.stat().st_size > 1024:
                 out_mp4 = p
                 break
-        sb_path = d / "storyboard.json"
-        if not out_mp4 and sb_path.exists():
+        control_path = d / ("spec.json" if prefix == "benchmark_" else "storyboard.json")
+        if not out_mp4 and control_path.exists():
             # v82lz : if the job was running file-backed (cinema), tail stdout.log
             # to give recent PROGRESS events.
             stdout_log = d / "stdout.log"
@@ -4867,7 +5249,7 @@ def _job_eta_from_disk(job_id: str) -> dict | None:
     Avant, l'ETA venait de `_python_progress_events`, liste GLOBALE partagée
     entre tous les jobs : un job fraîchement lancé renvoyait l'ETA périmée du
     job précédent ("plan 4/4 ok" au démarrage). Par-job ou rien."""
-    for prefix in ("job_", "sample_", "preview_"):
+    for prefix in ("job_", "sample_", "preview_", "benchmark_"):
         log = CINEMA_TEMP / f"{prefix}{job_id}" / "stdout.log"
         if log.exists():
             try:
@@ -4876,6 +5258,77 @@ def _job_eta_from_disk(job_id: str) -> dict | None:
                 return None
             return _parse_eta_from_progress(lines[-400:])
     return None
+
+
+RESULTATS_DIR = os.path.join(WORKSPACE, "output", "RESULTATS")
+
+
+@app.route("/api/cinema/films")
+def cinema_films():
+    """Bibliotheque des films livres — le SEUL endroit ou l'on recoit.
+
+    Sans cet endpoint, un film rendu en ligne de commande n'apparaissait nulle
+    part dans l'UI : elle ne sait servir que le `final.mp4` du dossier de job du
+    bridge. On ne trouvait donc pas son film, ce qui est exactement le reproche
+    qui a motive la centralisation dans `output/RESULTATS/`.
+    """
+    films = []
+    if os.path.isdir(RESULTATS_DIR):
+        for nom in sorted(os.listdir(RESULTATS_DIR), reverse=True):
+            dossier = os.path.join(RESULTATS_DIR, nom)
+            if not os.path.isdir(dossier):
+                continue
+            mp4 = os.path.join(dossier, "film.mp4")
+            if not os.path.isfile(mp4):
+                continue
+            rapport = {}
+            chemin_rapport = os.path.join(dossier, "rapport.json")
+            if os.path.isfile(chemin_rapport):
+                try:
+                    with open(chemin_rapport, encoding="utf-8") as f:
+                        rapport = json.load(f)
+                except Exception:
+                    pass
+            films.append({
+                "id": nom,
+                "module": nom.split("_", 1)[0],
+                "titre": nom.split("_", 2)[-1].replace("-", " "),
+                "video": f"/api/cinema/films/{nom}/video",
+                "taille_mo": round(os.path.getsize(mp4) / 1e6, 1),
+                "modifie": int(os.path.getmtime(mp4)),
+                "plans_livres": rapport.get("plans_livres"),
+                "plans_demandes": rapport.get("plans_demandes"),
+                "moteur": rapport.get("moteur_video"),
+                "note": rapport.get("quality_grade"),
+                "avertissements": len(rapport.get("warnings") or []),
+            })
+    return jsonify({"ok": True, "films": films, "dossier": RESULTATS_DIR})
+
+
+@app.route("/api/cinema/films/<film_id>/video")
+def cinema_film_video(film_id: str):
+    """Sert le mp4 d'un film livre. `conditional` autorise le seek du lecteur."""
+    # Un identifiant ne doit jamais pouvoir sortir du dossier de livraison.
+    if "/" in film_id or "\\" in film_id or film_id.startswith("."):
+        abort(400)
+    chemin = os.path.join(RESULTATS_DIR, film_id, "film.mp4")
+    if not os.path.isfile(os.path.realpath(chemin)):
+        abort(404)
+    if not os.path.realpath(chemin).startswith(os.path.realpath(RESULTATS_DIR)):
+        abort(403)
+    return send_file(chemin, mimetype="video/mp4", conditional=True)
+
+
+@app.route("/api/cinema/films/<film_id>/rapport")
+def cinema_film_rapport(film_id: str):
+    """Rapport chiffre du film : plans livres, mesures, voix, avertissements."""
+    if "/" in film_id or "\\" in film_id or film_id.startswith("."):
+        abort(400)
+    chemin = os.path.join(RESULTATS_DIR, film_id, "rapport.json")
+    if not os.path.isfile(chemin):
+        abort(404)
+    with open(chemin, encoding="utf-8") as f:
+        return jsonify(json.load(f))
 
 
 @app.route("/api/cinema/job/<job_id>")
@@ -4909,8 +5362,217 @@ def cinema_job_status(job_id: str):
                 except Exception:
                     pass
                 break
+    if job.get("storage") is not None:
+        result = payload.setdefault("result", {})
+        result["storage"] = job["storage"]
+        storage_warnings = job["storage"].get("warnings") or []
+        if not job["storage"].get("ok"):
+            storage_warnings = [
+                *storage_warnings,
+                {
+                    "code": job["storage"].get("reason", "storage_warning"),
+                    "message": job["storage"].get("error")
+                    or "La sortie reste sur le stockage interne.",
+                },
+            ]
+        if storage_warnings:
+            result["warnings"] = [*(result.get("warnings") or []), *storage_warnings]
 
     return jsonify(payload)
+
+
+@app.route("/api/cinema/cancel/<job_id>", methods=["POST"])
+def cinema_job_cancel(job_id: str):
+    """Annule reellement le groupe de processus, pas seulement le polling UI."""
+    return _cancel_video_job_response(job_id)
+
+
+@app.route("/api/video/queue", methods=["GET"])
+def video_gpu_queue_status():
+    """Expose la file GPU effective pour une UI honnete et les diagnostics."""
+    snapshot = _video_gpu_queue.snapshot()
+    return jsonify({
+        "ok": True,
+        "activeJobId": snapshot["active_job_id"],
+        "pendingJobIds": snapshot["pending_job_ids"],
+        "generation3dActive": _is_3d_generation_active(),
+    })
+
+
+def _storage_response(callable_fn):
+    if _storage_manager is None:
+        return jsonify({
+            "ok": False,
+            "reason": "storage_manager_unavailable",
+            "error": _storage_import_error,
+        }), 503
+    try:
+        result = callable_fn()
+    except StorageError as exc:
+        result = exc.payload
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "reason": "storage_operation_failed",
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
+def _video_model_strategy() -> dict:
+    """Load the reviewed strategy as runtime truth instead of duplicating labels."""
+    strategy_path = pathlib.Path(WORKSPACE) / "config" / "video_model_strategy.json"
+    try:
+        strategy = json.loads(strategy_path.read_text(encoding="utf-8"))
+        if not isinstance(strategy, dict) or not isinstance(strategy.get("active"), dict):
+            raise ValueError("schema actif absent")
+        return strategy
+    except Exception as exc:
+        return {
+            "version": 0,
+            "profile": "unknown",
+            "active": {},
+            "error": f"{type(exc).__name__}: {str(exc)[:240]}",
+        }
+
+
+@app.route("/api/storage/status", methods=["GET"])
+def storage_status():
+    """Read-only truth view; a directory is not a cold tier unless mounted."""
+    def status_with_strategy():
+        result = _storage_manager.status()
+        strategy = _video_model_strategy()
+        model_state = {item.get("id"): item for item in result.get("models", [])}
+        cosy_python = pathlib.Path.home() / ".local/share/auroraia/venvs/cosyvoice3/bin/python"
+        cosy_repo = pathlib.Path.home() / ".local/share/auroraia/engines/CosyVoice"
+        cosy_model = (
+            _storage_manager.cold_root / "models" / "Fun-CosyVoice3-0.5B-2512"
+            if result.get("key_mounted")
+            else pathlib.Path.home() / ".local/share/auroraia/models/Fun-CosyVoice3-0.5B-2512"
+        )
+        strategy["runtime"] = {
+            "generator_available": bool(
+                model_state.get("wan2.2-ti2v-5b", {}).get("available")
+            ),
+            "voice_clone_ready": bool(
+                cosy_python.is_file()
+                and (cosy_repo / "cosyvoice").is_dir()
+                and (cosy_model / "cosyvoice3.yaml").is_file()
+            ),
+            "voice_clone_model_path": str(cosy_model),
+        }
+        result["model_strategy"] = strategy
+        return result
+
+    return _storage_response(status_with_strategy)
+
+
+@app.route("/api/storage/tier", methods=["POST"])
+def storage_tier():
+    data = request.get_json(silent=True) or {}
+    model_id = str(data.get("model_id") or "").strip()
+    tier = str(data.get("tier") or "").strip()
+    if not model_id or tier not in {"hot", "cold"}:
+        return jsonify({"ok": False, "reason": "model_id_and_valid_tier_required"}), 400
+    return _storage_response(lambda: _storage_manager.tier_model(model_id, tier))
+
+
+@app.route("/api/storage/stage", methods=["POST"])
+def storage_stage():
+    model_id = str((request.get_json(silent=True) or {}).get("model_id") or "").strip()
+    if not model_id:
+        return jsonify({"ok": False, "reason": "model_id_required"}), 400
+    return _storage_response(lambda: _storage_manager.stage(model_id))
+
+
+@app.route("/api/storage/unstage", methods=["POST"])
+def storage_unstage():
+    model_id = str((request.get_json(silent=True) or {}).get("model_id") or "").strip()
+    if not model_id:
+        return jsonify({"ok": False, "reason": "model_id_required"}), 400
+    return _storage_response(lambda: _storage_manager.unstage(model_id))
+
+
+@app.route("/api/storage/gc", methods=["POST"])
+def storage_gc():
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get("dry_run") is not False
+    max_age = int(data.get("max_age_minutes") or 180)
+    return _storage_response(lambda: _storage_manager.gc(
+        dry_run=dry_run,
+        max_age_minutes=max_age,
+    ))
+
+
+@app.route("/api/storage/purge", methods=["POST"])
+def storage_purge():
+    data = request.get_json(silent=True) or {}
+    model_id = str(data.get("model_id") or "").strip()
+    if not model_id:
+        return jsonify({"ok": False, "reason": "model_id_required"}), 400
+    # A first call is always a recoverable dry-run. Deletion requires an
+    # explicit confirmation in the request that names the resolved model.
+    confirm = data.get("confirm") is True
+    return _storage_response(lambda: _storage_manager.purge(model_id, dry_run=not confirm))
+
+
+@app.route("/api/video/gallery", methods=["GET"])
+def video_gallery():
+    """Persistent gallery across module reloads and bridge restarts."""
+    roots = []
+    if _storage_manager is not None and _storage_manager.cold_mounted():
+        roots.append(("cold", _storage_manager.cold_root / "outputs" / "videos"))
+    roots.append(("hot", pathlib.Path(WORKSPACE) / "output" / "videos"))
+    files = []
+    seen = set()
+
+    def append_video(path: pathlib.Path, tier: str, asset_path: str):
+        if not path.is_file() or path.suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+            return
+        resolved = str(path.resolve(strict=False))
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        stat = path.stat()
+        files.append({
+            "name": path.name,
+            "path": str(path),
+            "asset_url": f"/api/asset/{asset_path}",
+            "tier": tier,
+            "size_bytes": stat.st_size,
+            "modified": stat.st_mtime,
+        })
+
+    for tier, root in roots:
+        if not root.is_dir():
+            continue
+        for path in root.iterdir():
+            if tier == "cold":
+                asset_path = f"aurora-models/outputs/videos/{quote(path.name)}"
+            else:
+                asset_path = "/".join(quote(part) for part in ("output", "videos", path.name))
+            append_video(path, tier, asset_path)
+
+    # Les jobs récents restent consultables avant migration/GC, y compris les
+    # sorties du harnais A/B. Le chemin asset demeure strictement sous WORKSPACE.
+    if CINEMA_TEMP.is_dir():
+        for job_dir in CINEMA_TEMP.iterdir():
+            if not job_dir.is_dir() or not job_dir.name.startswith(
+                ("job_", "sample_", "benchmark_")
+            ):
+                continue
+            for path in job_dir.glob("*.mp4"):
+                asset_path = "/".join(
+                    quote(part)
+                    for part in ("temp", "cinema", job_dir.name, path.name)
+                )
+                append_video(path, "hot", asset_path)
+    files.sort(key=lambda item: item["modified"], reverse=True)
+    return jsonify({
+        "ok": True,
+        "key_mounted": bool(_storage_manager and _storage_manager.cold_mounted()),
+        "files": files[:500],
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -4965,6 +5627,7 @@ def voice_register():
     character = (data.get("character") or "").strip()
     lang = (data.get("lang") or "fr").strip()
     source = (data.get("source") or "").strip()
+    transcript = (data.get("transcript") or "").strip()
     if not character:
         return jsonify({"ok": False, "error": "character manquant"}), 400
 
@@ -5001,9 +5664,33 @@ def voice_register():
     ]
     if source:
         args.extend(["--source", source])
+    if transcript:
+        args.extend(["--transcript", transcript])
 
-    result = _run_cinema_script_sync("voice_clone.py", args, timeout=180)
-    return jsonify(result), (200 if result.get("ok") else 500)
+    script = CINEMA_DIR / "voice_clone.py"
+    if not script.exists():
+        return jsonify({"ok": False, "error": "voice_clone.py introuvable"}), 500
+    job_id = _uuid.uuid4().hex[:16]
+    with _python_jobs_lock:
+        _python_jobs[job_id] = {
+            "status": "queued",
+            "startedAt": time.time(),
+            "script": script.name,
+            "kind": "voice_register",
+            "slug": re.sub(r"[^a-z0-9_]+", "_", character.lower()).strip("_"),
+        }
+    _queue_video_job(job_id, str(script))
+    threading.Thread(
+        target=_run_python_job,
+        args=(job_id, str(script), args),
+        daemon=True,
+    ).start()
+    return jsonify({
+        "ok": True,
+        "jobId": job_id,
+        "status": "queued",
+        "slug": _python_jobs[job_id]["slug"],
+    })
 
 
 @app.route("/api/voice/extract", methods=["POST"])
@@ -5019,6 +5706,7 @@ def voice_extract_async():
     max_videos = int(data.get("maxVideos") or 4)
     auto_register = bool(data.get("autoRegister", True))
     lang = (data.get("lang") or "fr").strip()
+    transcript = (data.get("transcript") or "").strip()
 
     if not query and not input_path:
         return jsonify({"ok": False, "error": "fournir query ou inputPath"}), 400
@@ -5033,7 +5721,12 @@ def voice_extract_async():
         "--target-duration", str(target_duration),
         "--min-confidence", str(min_confidence),
         "--max-videos", str(max_videos),
+        "--lang", lang,
     ]
+    if auto_register:
+        args.append("--auto-register")
+    if transcript:
+        args.extend(["--transcript", transcript])
     if input_path:
         args.extend(["--input", input_path])
     elif query:
@@ -5056,6 +5749,7 @@ def voice_extract_async():
             "autoRegister": auto_register,
             "lang": lang,
         }
+    _queue_video_job(job_id, str(script))
     t = threading.Thread(target=_run_python_job, args=(job_id, str(script), args), daemon=True)
     t.start()
     return jsonify({"ok": True, "jobId": job_id, "outputPath": str(output_wav), "slug": slug_safe})
@@ -5069,6 +5763,8 @@ def voice_synthesize():
     character = (data.get("character") or "").strip()
     text = (data.get("text") or "").strip()
     lang = (data.get("lang") or "auto").strip()
+    prompt_text = (data.get("promptText") or data.get("transcript") or "").strip()
+    instruction = (data.get("instruction") or "").strip()
     if not character or not text:
         return jsonify({"ok": False, "error": "character et text requis"}), 400
 
@@ -5084,17 +5780,14 @@ def voice_synthesize():
         "--lang", lang,
         "--output", str(out_wav),
     ]
+    if prompt_text:
+        args.extend(["--prompt-text", prompt_text])
+    if instruction:
+        args.extend(["--instruction", instruction])
 
     script = CINEMA_DIR / "voice_clone.py"
     if not script.exists():
         return jsonify({"ok": False, "error": "voice_clone.py introuvable"}), 500
-
-    sync = bool(data.get("sync", False))
-    if sync:
-        # For local Tauri callers, sync is faster (no polling round-trips).
-        result = _run_cinema_script_sync("voice_clone.py", args, timeout=600)
-        result["wavPath"] = str(out_wav) if result.get("ok") else None
-        return jsonify(result), (200 if result.get("ok") else 500)
 
     job_id = _uuid.uuid4().hex[:16]
     with _python_jobs_lock:
@@ -5105,9 +5798,16 @@ def voice_synthesize():
             "kind": "voice_synthesize",
             "outputPath": str(out_wav),
         }
+    _queue_video_job(job_id, str(script))
     t = threading.Thread(target=_run_python_job, args=(job_id, str(script), args), daemon=True)
     t.start()
-    return jsonify({"ok": True, "jobId": job_id, "outputPath": str(out_wav)})
+    return jsonify({
+        "ok": True,
+        "jobId": job_id,
+        "outputPath": str(out_wav),
+        "status": "queued",
+        **({"warning": "sync_desactive_pour_respecter_la_file_gpu"} if data.get("sync") else {}),
+    })
 
 
 @app.route("/api/voice/check", methods=["GET"])
@@ -9278,6 +9978,12 @@ def picker_history_replay():
 
 @app.route("/api/cowork/extract-structured", methods=["POST"])
 def cowork_extract_structured():
+    if _AURORA_3D_EN_COURS.is_set():
+        # Une generation 3D occupe la VRAM: recharger un LLM ollama ici a deja
+        # provoque un cudaMalloc OOM en pleine etape GPU (gel du 24/07).
+        return jsonify({"ok": False,
+                        "error": "generation 3D en cours — extraction differee "
+                                 "pour proteger la VRAM (reessayez apres)"}), 503
     """Extraction structuree comprehension-based via Ollama.
 
     Body JSON :
