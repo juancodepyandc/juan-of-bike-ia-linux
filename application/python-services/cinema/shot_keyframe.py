@@ -256,7 +256,7 @@ def run(prompt: str, references: list, output_png: str, width: int = 960,
 
 
 def build_shot_prompt(scene: str, style_suffix: str, action_contract: str = "",
-                      entities: list = None) -> str:
+                      entities: list = None, lieu: str = "") -> str:
     """Prompt de keyframe : une IMAGE FIXE qui montre l'action deja engagee.
 
     « premier instant » et non « avant l'action » : une image ou le geste a
@@ -268,6 +268,13 @@ def build_shot_prompt(scene: str, style_suffix: str, action_contract: str = "",
         "captured mid-action with the movement already underway.",
         scene.strip(),
     ]
+    # Le decor, TOUJOURS. Un insert serre ne decrit jamais son lieu — mesure sur
+    # une passe reelle : deux plans dont la description ne renommait pas le
+    # decor sont sortis dans une foret alors que le film se passe dans une
+    # ruelle de pierre. Au montage, le film teleportait puis revenait.
+    if lieu and lieu.strip():
+        parts.append(f"The shot takes place in this exact location, which must "
+                     f"be recognisable in the frame: {lieu.strip()}")
     if action_contract.strip():
         parts.append(f"The action already in progress: {action_contract.strip()}")
     if entities:

@@ -2273,7 +2273,8 @@ def _shot_entities(shot: dict, characters: dict) -> list:
 def build_shot_action_keyframe(shot: dict, idx: int, shot_id: int,
                                work_dir: "Path", style_id: str,
                                characters: dict, char_keyframes: dict,
-                               width: int, height: int, seed: int):
+                               width: int, height: int, seed: int,
+                               decors: dict = None):
     """Premiere image du plan : bonne action, bon style, bonne identite.
 
     Retourne le chemin de l'image, ou None — auquel cas l'ancrage habituel
@@ -2304,11 +2305,23 @@ def build_shot_action_keyframe(shot: dict, idx: int, shot_id: int,
         # qu'un t2v : on laisse l'ancrage habituel decider.
         return None
 
+    # v94c — LE LIEU DOIT ENTRER DANS LE PROMPT, PAS SEULEMENT DANS LE CHAMP.
+    # Defaut mesure sur une passe reelle : les plans 3 et 4 sont sortis dans une
+    # FORET alors que leur `location` disait `ruelle_pierre`. Leur description
+    # ne renommait pas le decor (« Close-up insert of the chainring turning »),
+    # et le prompt de keyframe ne recevait que `scene` + `action_contract` : le
+    # champ `location`, pourtant utilise partout ailleurs dans le pipeline,
+    # n'y entrait jamais. FLUX inventait donc un decor plausible.
+    # C'est exactement la rupture de continuite qu'on cherche a supprimer : au
+    # montage, le film coupe de la ruelle a la foret puis revient.
+    # La porte ne pouvait pas l'attraper — elle demande « l'image montre-t-elle
+    # cette scene ? », et un pedalier est bien un pedalier.
     prompt = _shot_keyframe_prompt(
         scene=str(shot.get("scene") or ""),
         style_suffix=style_for(style_id),
         action_contract=str(shot.get("action_contract") or ""),
         entities=names,
+        lieu=_description_du_lieu(shot, decors),
     )
     # La keyframe doit avoir EXACTEMENT les dimensions que le worker video
     # utilisera : celui-ci arrondit au multiple de 32 le plus proche
@@ -2477,13 +2490,52 @@ def validate_shot_keyframe(image_path: str, scene: str, action_contract: str,
                 "reason": f"porte keyframe indisponible: {str(e)[:80]}"}
 
 
+def _description_du_lieu(shot: dict, decors: dict = None) -> str:
+    """Description du decor de ce plan, pour l'injecter dans le prompt.
+
+    Priorite : description explicite du storyboard, puis la scene d'un AUTRE
+    plan du meme lieu (celui qui, lui, decrit le decor), puis le nom du lieu
+    rendu lisible. Un insert serre ne decrit jamais son decor : il faut le lui
+    donner, sinon le generateur en invente un.
+    """
+    lieu = str(shot.get("location") or "").strip()
+    if not lieu:
+        return ""
+    explicite = str(shot.get("location_description") or "").strip()
+    if explicite:
+        return explicite
+    if decors and decors.get(lieu):
+        return str(decors[lieu])
+    return lieu.replace("_", " ")
+
+
+def construire_decors(shots: list) -> dict:
+    """Une description de decor par lieu, prise sur le plan qui la porte.
+
+    On retient la scene la plus LONGUE de chaque lieu : c'est celle qui decrit
+    le decor, alors qu'un insert serre n'en dit rien.
+    """
+    decors = {}
+    for s in shots or []:
+        lieu = str(s.get("location") or "").strip()
+        if not lieu:
+            continue
+        scene = str(s.get("scene") or "").strip()
+        if len(scene) > len(decors.get(lieu, "")):
+            decors[lieu] = scene
+    # On garde la partie descriptive, pas l'action : les 220 premiers
+    # caracteres suffisent a poser un decor sans imposer une mise en scene.
+    return {k: v[:220] for k, v in decors.items()}
+
+
 def _shot_keyframe_prompt(scene: str, style_suffix: str, action_contract: str,
-                          entities: list) -> str:
+                          entities: list, lieu: str = "") -> str:
     """Delegue a shot_keyframe.build_shot_prompt, source unique de la formule."""
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from shot_keyframe import build_shot_prompt
-        return build_shot_prompt(scene, style_suffix, action_contract, entities)
+        return build_shot_prompt(scene, style_suffix, action_contract,
+                                 entities, lieu)
     except Exception:
         parts = [
             "A single cinematic film still, the first frame of a shot, "
@@ -4351,7 +4403,8 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     shot=_shot, idx=_i, shot_id=_sid, work_dir=work_dir,
                     style_id=style, characters=characters,
                     char_keyframes=char_keyframes,
-                    width=gen_w, height=gen_h, seed=int(_seed))
+                    width=gen_w, height=gen_h, seed=int(_seed),
+                    decors=construire_decors(shots))
                 if _kf:
                     shot_keyframe_paths[_sid] = _kf
 
