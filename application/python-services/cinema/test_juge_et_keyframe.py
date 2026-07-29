@@ -394,8 +394,6 @@ class TestDefautsDifferesAvantLipsync(unittest.TestCase):
         self.assertFalse(CP.shot_quality_ok(q, "premium"))
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestPortePostAudio(unittest.TestCase):
@@ -433,6 +431,73 @@ class TestPortePostAudio(unittest.TestCase):
         partiel = {"score": 5, "physics_score": None,
                    "identity_score": None, "action_score": None}
         self.assertFalse(CP.shot_quality_ok(partiel, "premium"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+
+
+class TestErreurUtile(unittest.TestCase):
+    """Le film a rapporte « musicgen failed: 6 [00:01<00:00, 628.88it/s] ».
+    Ce n'est pas une erreur, c'est un fragment de barre tqdm : le code citait
+    les 300 DERNIERS caracteres de stderr, or tqdm y ecrit sa progression. La
+    vraie exception, situee plus haut, etait invisible."""
+
+    BARRE = ("Loading weights:  95%|=====| 944/996 [00:01<00:00, 436.64it/s]\n"
+             "Loading weights: 100%|=====| 996/996 [00:01<00:00, 628.88it/s]")
+
+    def test_la_vraie_exception_prime_sur_la_barre(self):
+        flux = self.BARRE + "\ntorch.OutOfMemoryError: CUDA out of memory."
+        msg = CP._erreur_utile(flux, "")
+        self.assertIn("CUDA out of memory", msg)
+        self.assertNotIn("it/s", msg)
+
+    def test_une_barre_seule_ne_fait_pas_passer_pour_une_erreur(self):
+        msg = CP._erreur_utile(self.BARRE, "")
+        self.assertTrue(msg)
+
+    def test_les_lignes_de_progression_sont_ecartees(self):
+        flux = self.BARRE + "\nRuntimeError: model not found"
+        self.assertNotIn("436.64it/s", CP._erreur_utile(flux, ""))
+
+    def test_flux_vide(self):
+        self.assertEqual(CP._erreur_utile("", ""), "echec sans message")
+
+    def test_les_retours_chariot_sont_traites_comme_des_lignes(self):
+        flux = "avance 10%\ravance 50%\rValueError: mauvaise dimension"
+        self.assertIn("ValueError", CP._erreur_utile(flux, ""))
+
+
+class TestAmbianceParLieu(unittest.TestCase):
+    """Un plan n'est presque jamais silencieux. Le silence total s'entend comme
+    un defaut de production — c'est ce qui fait qu'une video « sonne IA » meme
+    quand l'image tient."""
+
+    def test_chaque_famille_de_lieu_a_son_fond(self):
+        cas = {
+            "ruelle_pierre": "stone street",
+            "plage_sud": "seaside",
+            "foret_nord": "forest",
+            "marche_central": "market",
+        }
+        for lieu, attendu in cas.items():
+            with self.subTest(lieu=lieu):
+                self.assertIn(attendu, CP.prompt_ambiance(lieu, ""))
+
+    def test_un_lieu_inconnu_recoit_un_fond_neutre(self):
+        p = CP.prompt_ambiance("zzz_inconnu", "")
+        self.assertIn("neutral", p)
+
+    def test_l_ambiance_n_ajoute_jamais_de_musique(self):
+        """La musique est une piste SEPAREE, avec son propre volume. Une
+        ambiance qui contient de la musique doublerait la bande son."""
+        for lieu in ("ruelle", "plage", "foret", "marche", "chambre", "inconnu"):
+            with self.subTest(lieu=lieu):
+                self.assertIn("no music", CP.prompt_ambiance(lieu, ""))
+
+    def test_la_scene_compte_autant_que_le_lieu(self):
+        p = CP.prompt_ambiance("", "heavy rain over the rooftops")
+        self.assertIn("rain", p)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,7 @@ Output JSON ligne finale:
 
 import argparse
 import gc
+import inspect
 import json
 import os
 import re
@@ -1072,6 +1073,20 @@ def extract_middle_frame(video_path: str, output_png: str) -> bool:
 # jamais modifie ensuite : c'est ce qui garantit qu'un film n'est pas rendu par
 # deux generateurs differents.
 _MOTEUR_VIDEO: dict = {"nom": "wan", "raison": "defaut"}
+
+
+def _abandonner(storyboard: dict) -> bool:
+    """Faut-il abandonner TOUT le film quand un plan echoue ?
+
+    v94 — Reponse par defaut : NON. Sur une passe longue et sans surveillance,
+    une sortie fatale au plan 9 sur 14 detruit neuf plans deja rendus et des
+    heures de calcul, pour un defaut qui ne concernait qu'un seul plan. Perdre
+    un plan sur quatorze vaut infiniment mieux que perdre les quatorze.
+    Le plan fautif est ecarte, trace dans `plans_abandonnes`, et le film est
+    monte avec ce qui tient. `abandon_si_plan_echoue: true` retablit l'ancien
+    comportement pour un rendu court qu'on surveille.
+    """
+    return bool(storyboard.get("abandon_si_plan_echoue", False))
 
 
 def choisir_moteur_video(storyboard: dict) -> dict:
@@ -3937,6 +3952,17 @@ def render_music_track(prompt: str, duration_s: float, output_wav: str) -> dict:
     music_script = Path(__file__).resolve().parent / "musicgen_render.py"
     if not music_script.exists():
         return {"ok": False, "error": "musicgen_render.py not found"}
+
+    # v94 — DEUX CAUSES A L'ECHEC MUSICAL, PAS UNE.
+    # 1) La musique est rendue APRES les plans, quand la carte est encore
+    #    occupee : musicgen-medium demande ~3 Go et le juge de vision en tient
+    #    11,8. Teste isolement, le meme appel repond {"ok": true} en 9,4 s.
+    # 2) Le message d'echec affichait les 300 DERNIERS caracteres de stderr —
+    #    or tqdm ecrit sa barre de progression sur stderr. On lisait donc
+    #    « musicgen failed: 6 [00:01<00:00, 628.88it/s] », un fragment de barre
+    #    qui masquait l'exception reelle, situee bien plus haut.
+    _liberer_vram_pour("musique")
+
     rc, stdout, stderr = _run([
         sys.executable, str(music_script),
         "--prompt", prompt,
@@ -3945,7 +3971,75 @@ def render_music_track(prompt: str, duration_s: float, output_wav: str) -> dict:
     ], timeout=1800)
     if rc == 0 and Path(output_wav).exists():
         return {"ok": True, "wav": output_wav}
-    return {"ok": False, "error": (stderr or stdout or "")[-300:]}
+    return {"ok": False, "error": _erreur_utile(stderr, stdout)}
+
+
+def prompt_ambiance(lieu: str, scene: str) -> str:
+    """Decrit le fond sonore d'un lieu, pour un lit d'ambiance sous le film.
+
+    Un plan n'est presque jamais silencieux : une ruelle a des oiseaux et des
+    pas qui resonnent, une plage a du ressac, un interieur a un bourdonnement.
+    Le silence total s'entend comme un defaut de production — c'est ce qui fait
+    qu'une video « sonne IA » meme quand l'image est bonne.
+    """
+    texte = f"{lieu} {scene}".lower()
+    tables = [
+        (("ruelle", "alley", "street", "rue", "ville", "city", "village"),
+         "quiet narrow stone street ambience, distant birds, faint footsteps "
+         "echoing on cobblestones, soft wind between walls, no music"),
+        (("foret", "forest", "bois", "jungle"),
+         "forest ambience, birdsong, rustling leaves, distant wind in trees, "
+         "no music"),
+        (("plage", "mer", "ocean", "beach", "sea", "port", "dock"),
+         "seaside ambience, gentle waves, distant seagulls, light wind, no music"),
+        (("montagne", "mountain", "sommet", "cliff", "falaise"),
+         "high altitude ambience, steady wind, distant echo, sparse birds, "
+         "no music"),
+        (("interieur", "indoor", "chambre", "room", "maison", "house",
+          "atelier", "workshop"),
+         "quiet indoor room tone, faint hum, distant muffled outdoor sounds, "
+         "no music"),
+        (("marche", "market", "foule", "crowd", "place"),
+         "busy market ambience, indistinct crowd chatter, distant footsteps, "
+         "no music"),
+        (("nuit", "night", "soir"),
+         "quiet night ambience, crickets, distant wind, occasional distant dog, "
+         "no music"),
+        (("pluie", "rain", "orage", "storm"),
+         "steady rain ambience, water dripping, distant thunder, no music"),
+    ]
+    for cles, description in tables:
+        if any(c in texte for c in cles):
+            return description
+    return ("subtle neutral outdoor ambience, faint wind, distant "
+            "indistinct background life, no music")
+
+
+def render_ambiance(lieu: str, scene: str, duration_s: float,
+                    output_wav: str) -> dict:
+    """Lit d'ambiance du lieu, rendu par le meme moteur que la musique."""
+    return render_music_track(prompt_ambiance(lieu, scene), duration_s,
+                              output_wav)
+
+
+def _erreur_utile(stderr: str, stdout: str, limite: int = 400) -> str:
+    """Extrait la ligne qui explique vraiment l'echec, pas la fin du flux.
+
+    Les barres de progression (tqdm, huggingface) ecrivent sur stderr avec des
+    retours chariot : prendre la fin du flux revient a citer la barre au lieu de
+    l'exception. On cherche donc les lignes qui portent un signe d'erreur, en
+    remontant depuis la fin.
+    """
+    marqueurs = ("Error", "error", "Exception", "Traceback", "CUDA",
+                 "out of memory", "OutOfMemory", "No such file", "Killed",
+                 "RuntimeError", "ValueError", "not found", "failed")
+    flux = ((stderr or "") + "\n" + (stdout or "")).replace("\r", "\n")
+    lignes = [l.strip() for l in flux.split("\n") if l.strip()]
+    utiles = [l for l in lignes if any(m in l for m in marqueurs)
+              and "it/s" not in l and "s/it" not in l]
+    if utiles:
+        return " | ".join(utiles[-3:])[:limite]
+    return (lignes[-1] if lignes else "echec sans message")[:limite]
 
 
 def mux_subtitles(input_mp4: str, srt_path: str, output_mp4: str) -> dict:
@@ -4150,6 +4244,9 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     # ce qui enrole au passage tout echantillon depose — et l'absence de
     # reference devient un avertissement du rapport, pas une surprise a
     # l'ecoute.
+    # Plans ecartes en cours de route : le film se monte sans eux plutot que
+    # d'echouer entierement, et le rapport les nomme.
+    plans_abandonnes: list = []
     voice_cards: dict = {}
     for _name, _meta in characters.items():
         if not any(s.get("speaker") == _name and s.get("dialogue")
@@ -4778,7 +4875,16 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 )
 
         if not candidate_results:
-            return {"ok": False, "error": f"shot {idx} render failed: {last_render_error}", "shot": idx}
+            if _abandonner(storyboard):
+                return {"ok": False,
+                        "error": f"shot {idx} render failed: {last_render_error}",
+                        "shot": idx}
+            plans_abandonnes.append({"plan": idx,
+                                     "raison": f"rendu impossible: {last_render_error}"})
+            emit("plan_abandonne",
+                 f"plan {idx} non rendu ({str(last_render_error)[:90]}) — "
+                 f"le film continue sans lui")
+            continue
 
         passing_candidates = [
             item for item in candidate_results
@@ -4870,12 +4976,13 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 )
             elif strict_quality_gate and shot_quality_is_measured(accepted_qa):
                 emit("shot_fail_quality", quality_error)
-                return {
-                    "ok": False,
-                    "error": quality_error,
-                    "shot": idx,
-                    "quality": accepted_qa,
-                }
+                if _abandonner(storyboard):
+                    return {"ok": False, "error": quality_error,
+                            "shot": idx, "quality": accepted_qa}
+                plans_abandonnes.append({"plan": idx, "raison": quality_error})
+                emit("plan_abandonne",
+                     f"plan {idx} sous la porte — le film continue sans lui")
+                continue
             # v91 — PLANCHER ABSOLU. Constat sur un film reel : le juge a note
             # un plan 2.8/10 avec l'issue "wheels are stationary despite
             # required continuous motion", a relance deux fois, a echoue deux
@@ -4890,12 +4997,19 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 emit("shot_fail_floor",
                      f"{quality_error} — sous le plancher absolu "
                      f"{ABSOLUTE_QUALITY_FLOOR}/10, plan refuse")
-                return {
-                    "ok": False,
-                    "error": quality_error + f" (plancher absolu {ABSOLUTE_QUALITY_FLOOR}/10)",
-                    "shot": idx,
-                    "quality": accepted_qa,
-                }
+                if _abandonner(storyboard):
+                    return {
+                        "ok": False,
+                        "error": quality_error + f" (plancher absolu {ABSOLUTE_QUALITY_FLOOR}/10)",
+                        "shot": idx,
+                        "quality": accepted_qa,
+                    }
+                plans_abandonnes.append({
+                    "plan": idx,
+                    "raison": quality_error + f" (sous {ABSOLUTE_QUALITY_FLOOR}/10)"})
+                emit("plan_abandonne",
+                     f"plan {idx} sous le plancher absolu — le film continue sans lui")
+                continue
             emit(
                 "shot_accept_best",
                 f"plan {idx} accepted best available avg={avg:.1f}/10",
@@ -5171,12 +5285,13 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     f"id={post_qa.get('identity_score')}/10 act={post_qa.get('action_score')}/10"
                 )
                 emit("shot_fail_quality", quality_error)
-                return {
-                    "ok": False,
-                    "error": quality_error,
-                    "shot": idx,
-                    "quality": post_qa,
-                }
+                if _abandonner(storyboard):
+                    return {"ok": False, "error": quality_error,
+                            "shot": idx, "quality": post_qa}
+                plans_abandonnes.append({"plan": idx, "raison": quality_error})
+                emit("plan_abandonne",
+                     f"plan {idx} refuse apres audio — le film continue sans lui")
+                continue
             if "close" not in str(shot.get("camera") or "").lower() and triplet.get("end"):
                 scene_anchor = triplet.get("end")
                 scene_anchor_location = location
@@ -5209,7 +5324,7 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             audio_check["shot_id"] = shot_id
             audio_quality.append(audio_check)
             if not audio_check.get("ok") and dialogue:
-                if strict_quality_gate:
+                if strict_quality_gate and _abandonner(storyboard):
                     return {
                         "ok": False,
                         "error": f"plan {idx} dialogue audio missing or silent",
@@ -5294,6 +5409,55 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         except Exception as _e:
             emit("music_warn", f"music step failed: {str(_e)[:100]}")
             music_info = {"ok": False, "error": str(_e)[:200]}
+
+    # v94 — LIT D'AMBIANCE : UN PLAN N'EST JAMAIS SILENCIEUX.
+    # Une ruelle a des oiseaux et des pas qui resonnent, une plage du ressac,
+    # un interieur un bourdonnement. Le silence total s'entend comme un defaut
+    # de production : c'est ce qui fait qu'une video « sonne IA » meme quand
+    # l'image tient. On pose donc un fond discret, choisi d'apres le LIEU, sous
+    # tout ce qui existe deja (dialogues et musique restent au premier plan).
+    ambiance_info = None
+    if storyboard.get("ambience", True):
+        try:
+            lieu_principal = ""
+            scene_principale = ""
+            for s in shots:
+                if s.get("location"):
+                    lieu_principal = str(s.get("location"))
+                    scene_principale = str(s.get("scene") or "")
+                    break
+            if not scene_principale and shots:
+                scene_principale = str(shots[0].get("scene") or "")
+            total_real = probe_video_duration(concat_target)
+            amb_wav = work_dir / "ambiance.wav"
+            emit("ambiance",
+                 f"{lieu_principal or 'lieu non nomme'} : "
+                 f"{prompt_ambiance(lieu_principal, scene_principale)[:70]}")
+            amb = render_ambiance(lieu_principal, scene_principale,
+                                  total_real, str(amb_wav))
+            if amb.get("ok"):
+                # Volume tres bas : l'ambiance se remarque quand elle manque,
+                # pas quand elle est la.
+                mixed = str(Path(concat_target).with_suffix(".amb.mp4"))
+                # 0.12 contre 0.35 pour la musique : l'ambiance doit se
+                # remarquer quand elle MANQUE, jamais quand elle est la.
+                res = mix_music_under(concat_target, str(amb_wav), mixed,
+                                      music_volume=0.12)
+                if res.get("ok"):
+                    Path(mixed).replace(concat_target)
+                    ambiance_info = {"ok": True,
+                                     "lieu": lieu_principal,
+                                     "prompt": prompt_ambiance(lieu_principal,
+                                                               scene_principale)}
+                else:
+                    emit("ambiance_warn", str(res.get("error"))[:120])
+                    ambiance_info = {"ok": False, "error": res.get("error")}
+            else:
+                emit("ambiance_warn", str(amb.get("error"))[:140])
+                ambiance_info = {"ok": False, "error": amb.get("error")}
+        except Exception as _e:
+            emit("ambiance_warn", f"ambiance ignoree: {str(_e)[:120]}")
+            ambiance_info = {"ok": False, "error": str(_e)[:200]}
 
     # v82le : embed subtitles if enabled in storyboard.
     subtitle_info = None
@@ -5540,6 +5704,16 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         "quality_grade": quality_grade,
         "warnings": warnings,
         "render_truth": render_truth,
+        # v94 : plans ecartes en cours de route. Le film existe quand meme,
+        # mais il ne doit jamais pretendre etre complet s'il ne l'est pas.
+        "plans_abandonnes": plans_abandonnes,
+        "plans_livres": len(shot_files),
+        "plans_demandes": len(shots),
+        "moteur_video": _MOTEUR_VIDEO.get("nom"),
+        "voix_conçues": {n: {"registre": c.get("registre"),
+                             "timbre": c.get("graine")}
+                         for n, c in voice_cards.items()},
+        "ambiance": ambiance_info,
     }
 
 

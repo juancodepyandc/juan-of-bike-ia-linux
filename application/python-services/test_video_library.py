@@ -84,7 +84,9 @@ class PublishJobTest(unittest.TestCase):
 
     def test_nom_lisible_et_date(self):
         d = self.publish()
-        self.assertRegex(os.path.basename(d), r"^\d{4}-\d{2}-\d{2}_un-film")
+        # v94 : prefixe de module. Le dossier de livraison est unique et recoit
+        # TOUS les modules ; sans prefixe on ne distingue plus un film d'un GLB.
+        self.assertRegex(os.path.basename(d), r"^film_\d{4}-\d{2}-\d{2}_un-film")
 
     def test_pas_de_collision_entre_deux_films_homonymes(self):
         a = self.publish()

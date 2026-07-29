@@ -46,10 +46,21 @@ import unicodedata
 
 WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CINEMA_TEMP = os.path.join(WORKSPACE, "temp", "cinema")
-VIDEO_ROOT = os.path.join(WORKSPACE, "output", "videos")
-FILMS = os.path.join(VIDEO_ROOT, "films")
-CLIPS = os.path.join(VIDEO_ROOT, "clips")
-TRAVAIL = os.path.join(VIDEO_ROOT, "_travail")
+
+# v94 — UN SEUL ENDROIT OU L'ON RECOIT.
+# Avant : les livrables etaient a `output/videos/films/<date>_<titre>/`, trois
+# niveaux sous une racine `output/` qui contenait 37 entrees, dont 26 preuves
+# d'audit de sessions passees. Resultat : on ne trouvait pas son film.
+# Desormais tout ce qui est FINI, quel que soit le module, atterrit a plat dans
+# `output/RESULTATS/`, prefixe par module (`film_`, `image_`, `modele3d_`).
+# Les repertoires de travail vivent ailleurs et sont supprimes apres
+# publication : un exemplaire de construction n'a rien a faire a cote d'un
+# livrable.
+RESULTATS = os.path.join(WORKSPACE, "output", "RESULTATS")
+FILMS = RESULTATS
+CLIPS = os.path.join(WORKSPACE, "output", "_travail", "clips")
+TRAVAIL = os.path.join(WORKSPACE, "output", "_travail")
+PREFIXE_FILM = "film_"
 
 DELIVERABLE_NAMES = {"final.mp4", "sample.mp4"}
 
@@ -117,7 +128,9 @@ def publish_job(job_dir, work_dir, title, final_mp4, kind="film"):
         raise RuntimeError(f"livrable trop petit : {final_mp4}")
 
     date = time.strftime("%Y-%m-%d")
-    base = f"{date}_{slugify(title or os.path.basename(job_dir))}"
+    # Prefixe par module : dans un dossier unique qui recoit TOUS les livrables,
+    # c'est ce qui permet de retrouver un film au milieu des images et des GLB.
+    base = f"{PREFIXE_FILM}{date}_{slugify(title or os.path.basename(job_dir))}"
     if kind == "sample":
         base += "_essai"
     dest = os.path.join(FILMS, base)
