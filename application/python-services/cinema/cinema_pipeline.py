@@ -1068,6 +1068,100 @@ def extract_middle_frame(video_path: str, output_png: str) -> bool:
         return False
 
 
+# Moteur video du film en cours. Fixe UNE fois par `choisir_moteur_video()`,
+# jamais modifie ensuite : c'est ce qui garantit qu'un film n'est pas rendu par
+# deux generateurs differents.
+_MOTEUR_VIDEO: dict = {"nom": "wan", "raison": "defaut"}
+
+
+def choisir_moteur_video(storyboard: dict) -> dict:
+    """Choisit le generateur UNE fois pour tout le film, et le dit.
+
+    Ordre : champ explicite du storyboard > variable d'environnement >
+    meilleur moteur disponible. Le choix est verrouille : aucun repli vers une
+    autre famille n'est possible ensuite, meme en cas d'echec — un echec se
+    corrige, il ne se contourne pas par un moteur qui rendra autre chose.
+    """
+    demande = (storyboard.get("video_engine")
+               or os.environ.get("AURORA_VIDEO_ENGINE", "")).strip().lower()
+
+    dispo_hy15 = False
+    detail_hy15 = ""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from hunyuan15_render import check as _hy15_check
+        etat = _hy15_check()
+        dispo_hy15 = bool(etat.get("ok"))
+        if not dispo_hy15:
+            detail_hy15 = (f"poids manquants {etat.get('poids_manquants')}, "
+                           f"noeuds manquants {etat.get('noeuds_manquants')}")
+    except Exception as exc:
+        detail_hy15 = str(exc)[:120]
+
+    if demande in {"hunyuan15", "hunyuan", "hy15"}:
+        if not dispo_hy15:
+            _MOTEUR_VIDEO.update({"nom": "wan",
+                                  "raison": f"hunyuan15 demande mais indisponible "
+                                            f"({detail_hy15})"})
+        else:
+            _MOTEUR_VIDEO.update({"nom": "hunyuan15", "raison": "demande explicite"})
+    elif demande in {"wan", "wan5b", "wan2.2"}:
+        _MOTEUR_VIDEO.update({"nom": "wan", "raison": "demande explicite"})
+    elif dispo_hy15:
+        _MOTEUR_VIDEO.update({"nom": "hunyuan15",
+                              "raison": "meilleur moteur disponible"})
+    else:
+        _MOTEUR_VIDEO.update({"nom": "wan",
+                              "raison": f"hunyuan15 indisponible ({detail_hy15})"})
+
+    emit("moteur_video",
+         f"{_MOTEUR_VIDEO['nom']} pour TOUT le film ({_MOTEUR_VIDEO['raison']}) "
+         f"— aucun changement de moteur ne sera autorise")
+    return dict(_MOTEUR_VIDEO)
+
+
+def _rendre_avec_hunyuan15(prompt: str, anchor_image: str, duration_s: float,
+                           width: int, height: int, output_mp4: str,
+                           seed=None, quality_mode: str = "auto") -> dict:
+    """Delegue le plan a HunyuanVideo 1.5 via ComfyUI, en une seule passe."""
+    script = Path(__file__).resolve().parent / "hunyuan15_render.py"
+    if not script.exists():
+        return {"ok": False, "error": "hunyuan15_render.py absent"}
+    steps = "24" if quality_mode == "premium" else "16"
+    cmd = [
+        sys.executable, str(script),
+        "--image", str(anchor_image),
+        "--output", str(output_mp4),
+        "--prompt", prompt[:1800],
+        "--duration", f"{duration_s:.2f}",
+        "--width", str(int(width)), "--height", str(int(height)),
+        "--steps", steps,
+        "--seed", str(int(seed) if seed is not None else 42),
+    ]
+    rc, stdout, stderr = _run(cmd, timeout=14400)
+    try:
+        res = json.loads((stdout or "").strip().split("\n")[-1])
+    except Exception:
+        res = {"ok": False,
+               "error": f"hunyuan15 sortie non-JSON: {(stderr or stdout or '')[-260:]}"}
+    if rc != 0 and res.get("ok"):
+        res = {"ok": False, "error": f"hunyuan15 code {rc}"}
+    if res.get("ok"):
+        # Contrat de resultat commun aux deux moteurs, pour que la suite du
+        # pipeline (portes, etalonnage, montage) n'ait pas a savoir qui a rendu.
+        res.setdefault("mp4", output_mp4)
+        res["video"] = res.get("mp4")
+        res["model"] = "tencent/HunyuanVideo-1.5"
+        res["strategy"] = "hunyuan15-720p-i2v"
+        res["render_truth"] = {
+            "engine": "hunyuanvideo-1.5",
+            "width": res.get("width"), "height": res.get("height"),
+            "frames": res.get("frames"), "fps": res.get("fps"),
+            "super_resolution": res.get("super_resolution"),
+        }
+    return res
+
+
 def render_shot_video(
     scene_prompt: str,
     style_id: str,
@@ -1096,6 +1190,23 @@ def render_shot_video(
     # v84 : valeur de plan (champ storyboard `camera`, jusqu'ici inutilise)
     # + queue qualite positive, dedupliquees contre le prompt existant.
     full_prompt += cinematography_for({"camera": camera or ""}, full_prompt)
+
+    # v94 — UN SEUL MOTEUR POUR TOUT LE FILM.
+    # Le moteur est fixe UNE FOIS au demarrage (`_MOTEUR_VIDEO`) et ne peut plus
+    # changer ensuite. Mesure sur un film reel : 9 segments sur 16 sont sortis
+    # d'un moteur different de celui demande, parfois deux moteurs dans le MEME
+    # plan — un cadre de velo qui change de forme entre deux instants s'explique
+    # d'abord par la. Un repli inter-moteurs n'est pas une securite, c'est une
+    # incoherence fabriquee.
+    if _MOTEUR_VIDEO.get("nom") == "hunyuan15":
+        if not anchor_image:
+            return {"ok": False,
+                    "error": "hunyuan15 exige une image d'ancre (i2v) ; "
+                             "aucun plan ne doit partir sans keyframe"}
+        return _rendre_avec_hunyuan15(
+            prompt=full_prompt, anchor_image=anchor_image,
+            duration_s=duration_s, width=width, height=height,
+            output_mp4=output_mp4, seed=seed, quality_mode=quality_mode)
 
     video_script = SERVICES_DIR / "video_generate.py"
     if not video_script.exists():
@@ -4007,6 +4118,15 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     shots = storyboard.get("shots", [])
     characters = {c.get("name", ""): c for c in storyboard.get("characters", [])}
     shot_keyframes_enabled = shot_keyframes_are_enabled(storyboard)
+    # Le moteur video est fixe ICI, une fois, pour tout le film.
+    moteur = choisir_moteur_video(storyboard)
+    # HunyuanVideo 1.5 est un moteur i2v : chaque plan doit avoir sa keyframe,
+    # sinon il n'a rien a animer. On force donc les keyframes de plan quand ce
+    # moteur est retenu — c'est aussi ce qui garantit l'identite et le style.
+    if moteur["nom"] == "hunyuan15" and not shot_keyframes_enabled:
+        shot_keyframes_enabled = True
+        emit("moteur_video",
+             "keyframes de plan activees d'office : hunyuan15 est un moteur i2v")
 
     if not shots:
         return {"ok": False, "error": "no shots in storyboard"}
