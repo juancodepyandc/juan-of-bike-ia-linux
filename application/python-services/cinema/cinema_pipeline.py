@@ -4548,7 +4548,19 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         # Mesure : correctif applique au seul select_anchor_character, le plan
         # restait ancre ("anchor:i2v from shot_02_end.png") et notait
         # phys=3/10 act=2/10 avec "Character stationary holding bike".
-        if _is_locomotion_shot(shot):
+        # v94d — LA REGLE DE LOCOMOTION NE VAUT QUE POUR UN MOTEUR QUI SAIT
+        # FAIRE DU T2V.
+        # Elle existe parce qu'une ancre AU REPOS fige le mouvement : le
+        # conditionnement verrouille la pose de depart et le velo reste a
+        # l'arret. Vrai pour Wan, qui sait partir sans ancre.
+        # HunyuanVideo 1.5 est i2v UNIQUEMENT : lui retirer son ancre ne fige
+        # pas le plan, ca le SUPPRIME. Mesure : plan 7 de la passe longue
+        # abandonne, « hunyuan15 exige une image d'ancre ».
+        # Sur un moteur i2v, on garde donc toujours une ancre — et l'objection
+        # d'origine ne s'applique plus, puisque la keyframe de plan montre
+        # l'action deja engagee.
+        moteur_i2v_seul = _MOTEUR_VIDEO.get("nom") == "hunyuan15"
+        if _is_locomotion_shot(shot) and not moteur_i2v_seul:
             emit("anchor_skip",
                  f"plan {idx}: plan de locomotion -> t2v (aucune ancre fixe)")
         elif (dialogue or needs_lipsync) and scene_anchor and "close" not in camera and same_place:
@@ -4588,6 +4600,31 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
         shot_kf = shot_keyframe_paths.get(shot_id)
         if shot_kf and Path(str(shot_kf)).exists():
             anchor_name, anchor = "__shot_keyframe__", shot_kf
+
+        # v94d — GARANTIE DE DERNIER RECOURS SUR UN MOTEUR i2v.
+        # Un plan sans ancre y est un plan PERDU, pas un plan degrade. Quelle
+        # que soit la raison (keyframe ratee, regle de locomotion, lieu jamais
+        # vu), on descend la chaine jusqu'a trouver une image : decor du lieu,
+        # derniere image du lieu, ancre de scene, puis n'importe quelle
+        # reference de personnage present. Une ancre imparfaite vaut toujours
+        # mieux qu'un plan absent du film.
+        if _MOTEUR_VIDEO.get("nom") == "hunyuan15" and not anchor:
+            for nom_repli, candidat in (
+                ("__decor_du_lieu__", location_backdrops.get(location)),
+                ("__derniere_image_du_lieu__", location_anchors.get(location)),
+                ("__continuite_de_scene__", scene_anchor),
+                ("__reference_personnage__",
+                 next((char_keyframes[n] for n in _shot_entities(shot, characters)
+                       if char_keyframes.get(n)), None)),
+                ("__premiere_reference__",
+                 next(iter(char_keyframes.values()), None)),
+            ):
+                if candidat and Path(str(candidat)).exists():
+                    anchor_name, anchor = nom_repli, candidat
+                    emit("anchor_repli",
+                         f"plan {idx}: moteur i2v sans ancre -> {nom_repli} "
+                         f"({Path(str(candidat)).name})")
+                    break
 
         # Step 1: render and validate the silent video. Premium/balanced modes
         # get one validation-driven retry. The retry prompt contains the
