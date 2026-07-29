@@ -340,8 +340,6 @@ class TestMesureAmplitude(unittest.TestCase):
         self.assertGreater(11.7, seuil)  # plan genere
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 class TestDefautsDifferesAvantLipsync(unittest.TestCase):
@@ -394,6 +392,47 @@ class TestDefautsDifferesAvantLipsync(unittest.TestCase):
              "issues": ["No visible movement between frames"]}
         self.assertTrue(CP.has_blocking_visual_issue(q))
         self.assertFalse(CP.shot_quality_ok(q, "premium"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+
+
+class TestPortePostAudio(unittest.TestCase):
+    """Mesure sur le plan 3 : porte pre-audio scene=5 phys=None id=None act=None
+    (juge partiel -> "non mesure" -> laisse passer SANS consommer de reprise),
+    puis post-audio scene=5 phys=8 id=9 act=7 = 7,2/10 -> tout le film echoue.
+    Les images etaient identiques, et ce plan n'a AUCUN dialogue : rien n'a ete
+    muxe. Une porte post-audio sur un plan muet ne peut sanctionner que
+    l'instabilite du juge."""
+
+    def test_un_verdict_partiel_n_est_pas_mesure(self):
+        partiel = {"score": 5, "physics_score": None,
+                   "identity_score": None, "action_score": None}
+        self.assertFalse(CP.shot_quality_is_measured(partiel))
+
+    def test_un_verdict_complet_est_mesure(self):
+        complet = {"score": 5, "physics_score": 8,
+                   "identity_score": 9, "action_score": 7}
+        self.assertTrue(CP.shot_quality_is_measured(complet))
+
+    def test_la_garde_s_arme_sur_un_plan_muet(self):
+        """Sans dialogue ni lipsync, aucun audio n'est ajoute : la garde doit
+        s'armer meme si la 1re notation etait partielle."""
+        for dialogue, needs_lipsync, attendu in (
+                (None, False, True), ("", False, True),
+                ("Salut", False, False), (None, True, False)):
+            with self.subTest(dialogue=dialogue, lipsync=needs_lipsync):
+                self.assertEqual(
+                    not bool(dialogue) and not bool(needs_lipsync), attendu)
+
+    def test_l_ancienne_garde_ne_couvrait_pas_le_verdict_partiel(self):
+        """Regression : `accepted_qa and shot_quality_ok(...)` valait False sur
+        un verdict partiel, donc la protection tombait exactement quand le juge
+        etait le plus instable."""
+        partiel = {"score": 5, "physics_score": None,
+                   "identity_score": None, "action_score": None}
+        self.assertFalse(CP.shot_quality_ok(partiel, "premium"))
 
 
 if __name__ == "__main__":

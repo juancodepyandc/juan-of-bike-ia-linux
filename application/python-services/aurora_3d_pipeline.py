@@ -365,6 +365,9 @@ def _freeze_sentinel() -> None:
         bad_io = 0
         bad_mem = 0
         bad_ram = 0
+        bad_swap = 0
+        prev_pswpin = -1.0
+        prev_pswpin_t = 0.0
         bad_vram = 0
         bad_nvme = 0
         while True:
@@ -439,11 +442,69 @@ def _freeze_sentinel() -> None:
             # interne ~82-84C), d'autant que APST=0 + pcie_aspm=off le maintiennent
             # pleine puissance. 76C etait un faux positif; le vrai risque est 82C+.
             bad_nvme = bad_nvme + 1 if nvme_c >= 82 else 0
-            if bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 3 or bad_nvme >= 2:
+            # SWAP: le gel du 24/07 (Xid 109 CTX SWITCH TIMEOUT pendant l'etape
+            # materiaux) est survenu avec TOUS les criteres ci-dessus au vert
+            # (io 0.04%, psi mem bas, RAM dispo 3.8G, NVMe froid) mais 22 Go en
+            # swap et commit 135%: le GPU fait des fautes de pages servies
+            # depuis le swap et rate son context-switch -> driver deadlock.
+            # On coupe proprement AVANT ce point de non-retour.
+            swap_gb = 0.0
+            try:
+                with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+                    _mi = {l.split(":")[0]: l.split()[1] for l in fh if ":" in l}
+                swap_gb = (float(_mi.get("SwapTotal", 0))
+                           - float(_mi.get("SwapFree", 0))) / 1048576.0
+            except Exception:  # noqa: BLE001
+                pass
+            _swap_seuil = float(os.environ.get("AURORA_SENTINEL_SWAP_GB", "15"))
+            # LE VRAI SIGNAL EST LA RELECTURE DEPUIS LE SWAP (pswpin), pas le
+            # niveau ni la croissance. 2e sortie reelle (Pikachu, 24/07 13h):
+            # swap 6->22,7 Go pendant le CHARGEMENT TRELLIS = eviction SAINE
+            # (le systeme sort du swap l'encodeur Mistral froid de 17 Go pour
+            # faire de la place — ca ecrit VERS le swap). Le mode fatal (nuit
+            # du 24/07) etait l'inverse: le GPU sert ses pages DEPUIS le swap
+            # en continu (Xid 109 apres des minutes de pswpin massif). On ne
+            # tire donc que sur une relecture SOUTENUE: pswpin > ~5000 pages/s
+            # (~20 Mo/s) sur 5 echantillons (~50 s), avec un swap deja gros.
+            pswpin_rate = 0.0
+            try:
+                with open("/proc/vmstat", "r", encoding="utf-8") as fh:
+                    _vm = dict(l.split() for l in fh if l.startswith("pswp"))
+                _pin = float(_vm.get("pswpin", 0))
+                _now_t = time.time()
+                if prev_pswpin >= 0:
+                    _dt = max(_now_t - prev_pswpin_t, 1e-3)
+                    pswpin_rate = (_pin - prev_pswpin) / _dt
+                prev_pswpin, prev_pswpin_t = _pin, _now_t
+            except Exception:  # noqa: BLE001
+                pass
+            _pin_seuil = float(os.environ.get("AURORA_SENTINEL_PSWPIN", "5000"))
+            # 26/07: la relecture seule a tue un run SAIN (60k p/s = un gros
+            # modele qui se RECHARGE depuis 64 Go de swap, psi memoire 7%).
+            # Le thrash mortel combine relecture massive ET pression memoire.
+            bad_swap = bad_swap + 1 if (swap_gb > _swap_seuil
+                                        and pswpin_rate > _pin_seuil
+                                        and mem_avg > 25.0) else 0
+            if (bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 3
+                    or bad_nvme >= 2 or bad_swap >= 5):
                 print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% memPsi=%.0f%% "
-                      "ram=%dMo vram=%dMo nvme=%d°C: abandon propre AVANT le gel machine"
-                      % (io_avg, mem_avg, avail_mb, vram_mb, nvme_c), flush=True)
+                      "ram=%dMo vram=%dMo nvme=%d°C swap=%.1fGo relecture=%.0fp/s: "
+                      "abandon propre AVANT le gel machine"
+                      % (io_avg, mem_avg, avail_mb, vram_mb, nvme_c, swap_gb,
+                         pswpin_rate),
+                      flush=True)
                 sys.stdout.flush()
+                # EMPORTER LES ENFANTS. Tuer seulement le pipeline laissait le
+                # sous-processus TRELLIS ORPHELIN avec ses 21,7 Go (constate le
+                # 24/07: 38 min de survie apres l'abandon, machine toujours
+                # saturee, relance impossible). On termine d'abord toute la
+                # descendance, puis soi-meme.
+                try:
+                    os.system("pkill -TERM -P %d" % os.getpid())
+                    time.sleep(4)
+                    os.system("pkill -KILL -P %d" % os.getpid())
+                except Exception:  # noqa: BLE001
+                    pass
                 os.kill(os.getpid(), signal.SIGTERM)
                 time.sleep(5)
                 os._exit(75)  # noqa: WPS437
@@ -452,7 +513,10 @@ def _freeze_sentinel() -> None:
 
 
 def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
-                         tag: str, audit: list) -> dict:
+                         tag: str, audit: list, mode: str = "lot") -> dict:
+    """mode: "tri" = oui / non / peut-etre sur UNE image;
+    "choix" = galerie, l'utilisateur clique UNE image puis valide;
+    "lot" = accepter/refuser un ensemble (comportement historique)."""
     """Demande a l'utilisateur (via l'UI) de valider des images — dans le VRAI chemin.
 
     Protocole fichier (marche depuis l'app Tauri, le bridge ou un humain en CLI):
@@ -466,44 +530,82 @@ def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
     """
     req = Path(output_dir) / f"{run_id}_confirm_{tag}_request.json"
     ans = Path(output_dir) / f"{run_id}_confirm_{tag}_answer.json"
+    alive = Path(output_dir) / f"{run_id}_confirm_{tag}_alive.json"
+    mode = mode or "lot"
+    # nonce: le chemin est REUTILISE a chaque nouvelle tentative du meme tag
+    # (3 essais photo, 3 essais lot). Sans lui l'UI dedoublonnait sur le chemin
+    # et ignorait en silence toutes les demandes apres la premiere.
+    nonce = str(time.time_ns())
     try:
         ans.unlink(missing_ok=True)
+        alive.unlink(missing_ok=True)
         req.write_text(json.dumps({
             "title": title,
             "images": [str(p) for p in image_paths],
             "answer_path": str(ans),
+            "alive_path": str(alive),
+            "nonce": nonce,
             "tag": tag,
+            "mode": mode,
         }, ensure_ascii=False), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         audit.append({"stage": f"confirm_{tag}", "ok": False, "error": repr(exc)})
         return {"accepted": True, "reason": "", "timeout": False}
     print(f"PROGRESS:confirm_req:{req}", flush=True)
     _t0 = time.time()
+    # Deux horloges. _limit = delai SANS personne devant l'ecran (run non
+    # surveille, CLI, bridge): on accepte tacitement pour ne jamais bloquer.
+    # _max = garde-fou absolu. Tant que l'UI ecrit son battement de coeur
+    # (fenetre ouverte devant l'utilisateur), on N'EXPIRE PAS: c'est lui qui
+    # decide, pas le chronometre.
     _limit = float(os.environ.get("AURORA_REF_CONFIRM_TIMEOUT", "600"))
-    while time.time() - _t0 < _limit:
+    _max = float(os.environ.get("AURORA_REF_CONFIRM_MAX", "7200"))
+    _beat_ttl = 45.0
+    _next_ping = 120.0
+    while True:
         if ans.is_file():
             try:
                 _d = json.loads(ans.read_text(encoding="utf-8"))
                 _out = {"accepted": bool(_d.get("accepted")),
                         "reason": str(_d.get("reason") or "").strip(),
+                        "verdict": str(_d.get("verdict") or
+                                       ("oui" if _d.get("accepted") else "non")),
+                        "choix": _d.get("choix"),
                         "timeout": False}
                 audit.append({"stage": f"confirm_{tag}", "accepted": _out["accepted"],
                               "reason": _out["reason"][:160]})
-                try:
-                    req.unlink(missing_ok=True)
-                    ans.unlink(missing_ok=True)
-                except Exception:  # noqa: BLE001
-                    pass
+                for _f in (req, ans, alive):
+                    try:
+                        _f.unlink(missing_ok=True)
+                    except Exception:  # noqa: BLE001
+                        pass
                 return _out
             except Exception:  # noqa: BLE001
+                # reponse illisible (ecriture en cours ou corrompue): on retente,
+                # mais SANS court-circuiter le garde-fou de duree ci-dessous.
                 time.sleep(1.0)
+        _el = time.time() - _t0
+        try:
+            _watched = (time.time() - alive.stat().st_mtime) < _beat_ttl
+        except OSError:
+            _watched = False
+        if _el >= _max or (_el >= _limit and not _watched):
+            break
+        if _el >= _next_ping:
+            print("PROGRESS:reference:validation attendue depuis %d s%s"
+                  % (int(_el), " (fenetre ouverte)" if _watched else
+                     " — sans reponse, acceptation tacite a %d s" % int(_limit)),
+                  flush=True)
+            _next_ping += 120.0
         time.sleep(2.0)
-    audit.append({"stage": f"confirm_{tag}", "accepted": True, "timeout": True})
-    try:
-        req.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
-    return {"accepted": True, "reason": "", "timeout": True}
+    audit.append({"stage": f"confirm_{tag}", "accepted": True, "timeout": True,
+                  "waited_s": int(time.time() - _t0)})
+    for _f in (req, alive):
+        try:
+            _f.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+    return {"accepted": True, "reason": "", "verdict": "oui", "timeout": True}
 
 
 def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
@@ -596,6 +698,31 @@ def run_hunyuan3d(image_path: Path, run_id: str, output_dir: Path,
     script = REPO_ROOT / "application" / "python-services" / "hunyuan3d_run.py"
     if not script.is_file():
         return {"ok": False, "error": f"hunyuan3d_run.py missing at {script}"}
+
+    # APLATIR L'ALPHA AVANT LA FORME. Les PNG transparents du web portent du
+    # bruit d'alpha A L'INTERIEUR du sujet (semi-transparences de detourage):
+    # le reconstructeur les lit comme des trous -> surface piquee/erodee
+    # (verifie: Pikachu ref alpha = visage ronge; yeti ref opaque = propre).
+    # Alpha binarise + composite blanc = sujet PLEIN, silhouette intacte; la
+    # reference LIVREE garde, elle, sa transparence d'origine.
+    try:
+        from PIL import Image as _Im
+        import numpy as _np
+        _im = _Im.open(image_path)
+        if "A" in _im.getbands():
+            _a = _np.asarray(_im.convert("RGBA"))
+            _al = _a[..., 3]
+            _mask = _al > 128
+            _rgb = _a[..., :3].copy()
+            _rgb[~_mask] = 255
+            output_dir.mkdir(parents=True, exist_ok=True)
+            _flat = output_dir / f"{run_id}_ref_aplatie.png"
+            _Im.fromarray(_rgb).save(str(_flat))
+            image_path = _flat
+            print("PROGRESS:shape:alpha de la reference aplati (bruit de "
+                  "detourage neutralise)", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
 
     cmd = [
         sys.executable, str(script),
@@ -727,7 +854,278 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                   "(le parseur de mouvement avait matche un preset a tort)", flush=True)
         parsed = "null"
 
+    # PLAN DE SCENE (27/07): le classifieur ne rendait QU'UNE categorie pour
+    # toute la demande -> un sujet multi-domaine (moulin: eau + engrenages +
+    # farine + lanterne + banniere) perdait tout sauf un domaine, en silence.
+    # Le routeur decompose en ACTEURS typés par la physique (8 axes enumeres,
+    # aucune liste de sujets) et dit, pour chacun, quel solveur et quelle
+    # representation glTF employer. Journalise: l'utilisateur voit ce qui a
+    # ete compris et ce qui sera produit.
+    plan_scene = {}
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+        import domain_router as _dr
+        # le routeur juge sur la demande ENTIERE (celle de l'utilisateur),
+        # jamais sur le fragment que l'orchestrateur de scene lui transmet.
+        _texte_plan = " ".join(x for x in (
+            os.environ.get("AURORA_MOTION_ORIGINAL", ""),
+            os.environ.get("AURORA_PROMPT_ORIGINAL", ""),
+            motion_prompt or "") if x)
+        plan_scene = _dr.plan(_texte_plan or motion_prompt, kind=subject_kind)
+        audit.append({"stage": "plan_scene", **{k: v for k, v in
+                                                plan_scene.items()
+                                                if k != "prompt"}})
+        if plan_scene.get("acteurs"):
+            print("PROGRESS:animation:plan de scene — %d acteur(s), domaines: %s"
+                  % (len(plan_scene["acteurs"]),
+                     ", ".join(plan_scene.get("domaines") or [])), flush=True)
+            for _a in plan_scene["acteurs"]:
+                _sup = ", ".join(x["solveur"] for x in
+                                 _a.get("solveurs_supplementaires", []))
+                print("PROGRESS:animation:  %s : %s/%s -> %s%s"
+                      % (_a.get("id"), _a.get("matiere"), _a.get("origine"),
+                         _a.get("solveur"),
+                         (" + " + _sup) if _sup else ""), flush=True)
+            if plan_scene.get("multi_domaine"):
+                print("PROGRESS:animation:demande MULTI-DOMAINE — chaque acteur "
+                      "part sur son solveur (plus de domaine perdu)", flush=True)
+    except Exception as _pse:  # noqa: BLE001
+        audit.append({"stage": "plan_scene", "ok": False, "error": repr(_pse)})
+
+    # FRISE MULTI-PISTE. "un guerrier qui attaque avec une flamme" contient
+    # DEUX demandes: un corps qui bouge et un phenomene physique. Une seule
+    # categorie etait retenue pour toute la phrase et la flamme etait perdue.
+    # On decoupe d'abord, on saura ensuite quoi produire et sur quel support.
+    timeline = {}
+    try:
+        sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+        from motion_timeline_planner import plan as _plan_timeline
+        timeline = _plan_timeline(motion_prompt)
+        if timeline.get("tracks"):
+            audit.append({"stage": "timeline", **{k: v for k, v in timeline.items()
+                                                  if k != "tracks"},
+                          "pistes": timeline["tracks"]})
+            print("PROGRESS:animation:frise du mouvement — %s"
+                  % timeline.get("resume", ""), flush=True)
+            for _t in timeline["tracks"]:
+                if _t["piste"] != "sujet":
+                    print("PROGRESS:animation:  piste %s (%s) de %.1fs a %.1fs : %s"
+                          % (_t["piste"], _t["categorie"], _t["t0"], _t["t1"],
+                             _t["texte"][:60]), flush=True)
+        if timeline.get("composite"):
+            print("PROGRESS:animation:demande COMPOSITE — le corps part sur le "
+                  "squelette, l'effet sur son propre support", flush=True)
+    except Exception as _tle:  # noqa: BLE001
+        audit.append({"stage": "timeline", "ok": False, "error": repr(_tle)})
+
+    # MOUVEMENTS NOMMES (trends, danses, memes). "fais le 67" n'est pas un
+    # verbe de geste: c'est un NOM. Le resolveur (LLM + Wikipedia, aucune
+    # liste en dur) le traduit en description biomecanique precise; cette
+    # description remplace le prompt pour la generation. Un nom non resolu
+    # echoue EXPLICITEMENT — jamais un geste invente a la place.
+    _trend_desc = ""
+    import re as _re_t
+    _named_rx = _re_t.compile(
+        r"\b(?:fais|refais|danse|execute|ex[ée]cute)\s+(?:le|la|l'|un|une)\s*[\w\d]"
+        r"|\b(?:trend|tendance|meme|m[eè]me|d[ée]fi|challenge)\b", _re_t.I)
+    if os.environ.get("AURORA_TREND", "1") == "1" and (
+            (not parsed or parsed == "null")
+            or _named_rx.search(motion_prompt or "")):
+        try:
+            sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+            import motion_trend_resolver as _mtr
+            _tr = _mtr.resolve(motion_prompt)
+            audit.append({"stage": "trend_resolver",
+                          **{k: v for k, v in _tr.items()}})
+            if _tr.get("named_move") and _tr.get("description_en"):
+                _trend_desc = _tr["description_en"]
+                _trend_nom = str(_tr.get("name") or "")
+                # duree issue de la RECHERCHE (nb de phases x tempo), pas
+                # d'une constante: sans elle, HY-Motion tronque a ~5 s et la
+                # sequence complete n'y tient pas.
+                _trend_duree = float(_tr.get("duration_s") or 0.0)
+                _parsed_avant_trend = parsed   # le prereglage reste le REPLI
+                parsed = "null"   # un mouvement nomme tente d'abord la
+                                  # generation fidele (sa vraie biomecanique)
+                print("PROGRESS:animation:mouvement nomme compris (%s, via %s) "
+                      "— generation depuis sa biomecanique"
+                      % (_tr.get("name"), _tr.get("source")), flush=True)
+            elif _tr.get("named_move"):
+                print("PROGRESS:animation:mouvement nomme '%s' NON resolu — "
+                      "rien n'est invente a sa place"
+                      % _tr.get("name"), flush=True)
+        except Exception as _tre:  # noqa: BLE001
+            audit.append({"stage": "trend_resolver", "ok": False,
+                          "error": repr(_tre)})
+
+    hymotion_bvh = ""
+    _parsed_avant_trend = locals().get("_parsed_avant_trend", None)
+    # SUJET HUMANOIDE = GENERATION D'ABORD, prereglage en REPLI. Deux raisons
+    # verifiees: (1) le rig MIA ignore les prereglages non-locomotion (ils
+    # ciblent des os Rigify inexistants -> "exported no glTF animations");
+    # (2) une description multi-phases ("s'accroupit, frappe, se releve")
+    # ecrasee en punch+jump PERD des phases. Le prereglage reste le repli via
+    # _parsed_avant_trend si la generation echoue.
+    if (parsed and parsed != "null" and _parsed_avant_trend is None
+            and str(subject_kind or "").lower() in
+            ("character", "human", "humanoid")):
+        _parsed_avant_trend = parsed
+        parsed = "null"
+        print("PROGRESS:animation:description libre — generation fidele "
+              "tentee d'abord (prereglage %s garde en repli)"
+              % "matche", flush=True)
     if not parsed or parsed == "null":
+        # HY-MOTION AVANT LE REPLI PHYSIQUE. Les 28 prefixages couvrent les
+        # gestes NOMMES; tout ce qui est decrit librement ("esquive puis
+        # contre-attaque en tournant sur lui-meme") n'y correspond a rien et ne
+        # produisait aucun mouvement. HY-Motion genere depuis la description.
+        # On ne l'appelle que pour un sujet ANIME: une fontaine ou un ventilateur
+        # doivent continuer vers le classifieur physique.
+        _hm_low = (motion_prompt or "").lower()
+        # Frontieres de mots obligatoires: en sous-chaines, "fauteuil"
+        # contient "il " et "meuble" matchait "elle" — un meuble partait en
+        # generation de mouvement humain.
+        import re as _re_v
+        _est_vivant = (str(subject_kind or "").lower() in
+                       ("character", "human", "humanoid", "creature", "animal")
+                       or bool(_re_v.search(
+                           r"\b(homme|femme|personnage|guerrier|guerriere|humain|"
+                           r"soldat|danseur|danseuse|enfant|athlete|athl\u00e8te|"
+                           r"il|elle|quelqu'un|person|man|woman|warrior|"
+                           r"character|he|she|someone)\b", _hm_low)))
+        # UN NOM SEUL N'EST PAS UN MOUVEMENT. "Pikachu" declenchait une
+        # generation de geste arbitraire (le modele invente ce qu'on ne lui a
+        # pas demande). On exige soit un verbe de geste reconnu par la frise
+        # (piste corps), soit une tournure d'action ("qui ...", "en train de",
+        # "fait", "execute"). Sans cela: repli classifieur -> respiration/idle,
+        # jamais un geste invente.
+        _a_un_geste = (any(t.get("piste") == "corps"
+                           for t in (timeline.get("tracks") or []))
+                       or bool(_re_v.search(
+                           r"\b(qui|en\s+train|fait|faisant|execute|ex\u00e9cute|"
+                           r"effectue|realise|r\u00e9alise|encha[i\u00ee]ne|"
+                           r"performing|doing|performs)\b", _hm_low)))
+        if not _a_un_geste and _est_vivant:
+            print("PROGRESS:animation:aucun geste decrit — pas de mouvement "
+                  "invente (respiration/repos par defaut)", flush=True)
+        # MOUVEMENT NOMME = D'ABORD LE BVH APPRIS D'UNE VRAIE EXECUTION
+        # (video -> pose -> BVH, motion_video_learn; memorise a vie). La
+        # generation texte->mouvement IMAGINE un geste plausible, elle ne
+        # REPRODUIT pas une choregraphie: la macarena generee etait un
+        # balancement quelconque, l'accroupi-frappe-bond a ete lu "ski".
+        _nom_appris = str(locals().get("_trend_nom") or "")
+        if (_nom_appris and not hymotion_bvh
+                and os.environ.get("AURORA_VIDEO_LEARN", "1") == "1"):
+            try:
+                _vl_py = REPO_ROOT / "application" / ".venv" / "bin" / "python"
+                _vl_script = (REPO_ROOT / "application" / "python-services"
+                              / "motion_video_learn.py")
+                print("PROGRESS:animation:apprentissage du geste depuis une "
+                      "vraie execution (video)...", flush=True)
+                _vl = subprocess.run(
+                    [str(_vl_py), str(_vl_script), "--name", _nom_appris,
+                     "--duration", str(locals().get("_trend_duree") or 8.0)],
+                    capture_output=True, text=True, timeout=1500, check=False)
+                _vlj = json.loads(next(
+                    (l for l in reversed((_vl.stdout or "").splitlines())
+                     if l.strip().startswith("{")), "{}"))
+                audit.append({"stage": "video_learn", **_vlj})
+                if (_vlj.get("ok") and _vlj.get("bvh")
+                        and os.path.isfile(_vlj["bvh"])):
+                    hymotion_bvh = _vlj["bvh"]
+                    print("PROGRESS:animation:geste appris d'une vraie "
+                          "execution (%s) — retarget direct"
+                          % (_vlj.get("source") or "video"), flush=True)
+                else:
+                    print("PROGRESS:animation:apprentissage video indisponible "
+                          "(%s) -> generation" % str(_vlj.get("error"))[:80],
+                          flush=True)
+            except Exception as _vle:  # noqa: BLE001
+                audit.append({"stage": "video_learn", "ok": False,
+                              "error": repr(_vle)})
+        if ((_est_vivant and _a_un_geste) or _trend_desc) \
+                and not hymotion_bvh \
+                and os.environ.get("AURORA_HYMOTION", "1") == "1":
+            try:
+                sys.path.insert(0, str(REPO_ROOT / "application" / "python-services"))
+                import hymotion_generate as _hm
+                _ok_hm, _why_hm = _hm.available()
+                if _ok_hm:
+                    print("PROGRESS:animation:aucun geste connu ne correspond — "
+                          "generation libre du mouvement (HY-Motion)...", flush=True)
+                    # cascade de duree: recherche du geste > frise grammaticale
+                    # > defaut court. Jamais une constante qui tronque.
+                    _hm_duree = (float(locals().get("_trend_duree") or 0.0)
+                                 or float(timeline.get("duree_s") or 0.0) or 4.0)
+                    _hmr = _hm.generate(_trend_desc or motion_prompt,
+                                        str(Path(output_dir) / f"{run_id}_hymotion"),
+                                        duration=_hm_duree)
+                    audit.append({"stage": "hymotion", **{k: v for k, v in _hmr.items()
+                                                          if k != "files"},
+                                  "fichiers": len(_hmr.get("files") or [])})
+                    if _hmr.get("ok"):
+                        print("PROGRESS:animation:mouvement genere (%d fichier(s), %ss)"
+                              % (len(_hmr.get("files") or []),
+                                 _hmr.get("elapsed_s")), flush=True)
+                        # Le .npz SMPL-X ne sert a rien tel quel: on le convertit
+                        # en BVH, le seul format que la chaine de rig sait
+                        # reprojeter sur le squelette du sujet.
+                        _npz = next((f for f in (_hmr.get("files") or [])
+                                     if str(f).endswith(".npz")), None)
+                        if _npz:
+                            try:
+                                # SOUS-PROCESSUS avec l'interpreteur de l'app:
+                                # la conversion importe torch/smplx, absents de
+                                # l'interpreteur ComfyUI qui execute ce pipeline
+                                # quand il est lance depuis l'UI. Un import
+                                # direct marchait en CLI et cassait dans l'app —
+                                # exactement la divergence deja payee une fois.
+                                _venv_py = str(REPO_ROOT / "application" / ".venv" / "bin" / "python")
+                                if not os.path.isfile(_venv_py):
+                                    _venv_py = sys.executable
+                                _bvh_out = str(Path(output_dir) / f"{run_id}_MOTION.bvh")
+                                _cvp = subprocess.run(
+                                    [_venv_py, str(REPO_ROOT / "application" /
+                                                   "python-services" / "hymotion_to_bvh.py"),
+                                     "--npz", _npz, "--output", _bvh_out],
+                                    capture_output=True, text=True, timeout=900)
+                                _cv_line = next((l for l in reversed(
+                                    (_cvp.stdout or "").splitlines())
+                                    if l.strip().startswith("{")), "{}")
+                                _cv = json.loads(_cv_line)
+                                audit.append({"stage": "hymotion_to_bvh", **_cv})
+                                if _cv.get("ok") and _cv.get("format") == "bvh":
+                                    hymotion_bvh = _cv["file"]
+                                    print("PROGRESS:animation:mouvement converti "
+                                          "(%d images) — retargetage sur le squelette"
+                                          % _cv.get("frames", 0), flush=True)
+                            except Exception as _cve:  # noqa: BLE001
+                                audit.append({"stage": "hymotion_to_bvh",
+                                              "ok": False, "error": repr(_cve)})
+                    else:
+                        print("PROGRESS:animation:generation libre indisponible (%s)"
+                              % str(_hmr.get("error"))[:90], flush=True)
+                else:
+                    audit.append({"stage": "hymotion", "ok": False, "error": _why_hm})
+            except Exception as _hme:  # noqa: BLE001
+                audit.append({"stage": "hymotion", "ok": False, "error": repr(_hme)})
+        # REPLI INTELLIGENT: la generation libre a echoue mais le parseur
+        # AVAIT un geste valide ("danse" -> dance_default)? On le reprend au
+        # lieu de degrader vers le classifieur — jeter un prereglage qui
+        # marchait a livre un Pikachu PARFAITEMENT IMMOBILE (24/07).
+        # (repli valable pour TOUT prereglage mis de cote — mouvement nomme OU
+        # description libre passee en generation d'abord: exiger _trend_desc
+        # laissait la voie libre finir en "motion_parser returned null".)
+        if (not hymotion_bvh and _parsed_avant_trend
+                and _parsed_avant_trend != "null"):
+            parsed = _parsed_avant_trend
+            print("PROGRESS:animation:generation libre indisponible -> repli "
+                  "sur le geste connu du parseur", flush=True)
+    # (re-test: le repli peut avoir RESTAURE un prereglage valide, et un BVH
+    # genere en main DOIT partir directement au rig — la branche classifieur
+    # detournait le flux vers ses bakers et rendait AVANT le retargetage: la
+    # macarena etait generee, convertie... puis jamais appliquee.)
+    if (not parsed or parsed == "null") and not hymotion_bvh:
         classifier = REPO_ROOT / "application" / "python-services" / "motion_intent_classifier.py"
         baker = REPO_ROOT / "application" / "python-services" / "motion_intent_baker.py"
         intent = {}
@@ -740,6 +1138,51 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             except Exception:  # noqa: BLE001
                 intent = {}
         category = (intent or {}).get("category", "rigid_static")
+        # LE PLAN DE SCENE FAIT AUTORITE (27/07). Une scene (moulin: eau qui
+        # entraine la roue qui entraine la meule, farine, lanterne, banniere)
+        # a des acteurs INDEPENDANTS mais COUPLES. Le classifieur n'en rendait
+        # qu'un seul et les autres disparaissaient. On garde ici l'acteur
+        # PRINCIPAL (celui qui porte le sujet) pour la passe de base, et on
+        # memorise les acteurs SECONDAIRES pour les passes suivantes.
+        _acteurs_plan = list((plan_scene or {}).get("acteurs") or [])
+        _acteurs_sec = []
+        if _acteurs_plan:
+            _ordre = {"mecanisme": 0, "rig_squelette": 0, "rbd": 1,
+                      "tissu": 2, "emissif": 3, "houdini_flip": 4,
+                      "houdini_grains": 5, "houdini_pyro": 6}
+            _acteurs_plan.sort(key=lambda a: _ordre.get(a.get("solveur"), 9))
+            _princ = _acteurs_plan[0]
+            if _princ.get("categorie_baker"):
+                category = _princ["categorie_baker"]
+                print("PROGRESS:animation:acteur principal '%s' -> categorie %s"
+                      % (_princ.get("id"), category), flush=True)
+            _vus = {category}
+            for _a in _acteurs_plan[1:]:
+                _c = _a.get("categorie_baker")
+                if _c and _c not in _vus:
+                    _vus.add(_c)
+                    _acteurs_sec.append(_a)
+                for _sup in _a.get("solveurs_supplementaires", []):
+                    _cs = {"emissif": "led_emission",
+                           "materiau_anime": "thermal_melt"}.get(_sup.get("solveur"))
+                    if _cs and _cs not in _vus:
+                        _vus.add(_cs)
+                        _acteurs_sec.append({**_a, "categorie_baker": _cs,
+                                             "id": _a.get("id", "") + "_emission"})
+            if _acteurs_sec:
+                print("PROGRESS:animation:%d acteur(s) secondaire(s) a animer: %s"
+                      % (len(_acteurs_sec),
+                         ", ".join("%s(%s)" % (a.get("id"), a.get("categorie_baker"))
+                                   for a in _acteurs_sec)), flush=True)
+        # Sur une demande composite, la piste EFFET fait autorite: le
+        # classifieur lit la phrase entiere et rendait "creature_organic" pour
+        # "un guerrier avec une flamme" — la flamme disparaissait.
+        _eff = next((t for t in (timeline.get("tracks") or [])
+                     if t.get("piste") == "effet" and t.get("categorie")), None)
+        if _eff and timeline.get("composite"):
+            print("PROGRESS:animation:effet retenu pour la 2e piste: %s"
+                  % _eff["categorie"], flush=True)
+            category = _eff["categorie"]
         confidence = float((intent or {}).get("confidence") or 0.0)
         import shutil as _sh
         _mp_low = (motion_prompt or "").lower()
@@ -817,12 +1260,23 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             """Simulation FLIP reelle (fluid_sim_baker) sur le GLB final anime.
             Activee par AURORA_FLUID_SIM=1 (pose par --max-precision) quand la
             spec decrit un vrai ecoulement liquide. Echec = non bloquant."""
-            if os.environ.get("AURORA_FLUID_SIM") != "1" or _spec_out is None:
+            if os.environ.get("AURORA_FLUID_SIM") != "1":
                 return {}
-            if str(_spec_out.get("type_mouvement")) not in ("ecoulement", "chute", "tourbillon", "montee"):
-                return {}
-            if float(_spec_out.get("amplitude", 1.0) or 0.0) <= 0.01:
-                return {}
+            # DEUX PORTES, une seule simulation. La spec d'animation ouvrait la
+            # porte, mais le classifieur d'intention a sa propre categorie
+            # "fluid_flow" qui ne la declenchait JAMAIS: une fontaine reconnue
+            # comme telle repartait quand meme sur la surface d'eau procedurale
+            # au lieu de la vraie cuisson FLIP. Les deux mènent maintenant ici.
+            _par_intention = (isinstance(intent, dict)
+                              and intent.get("category") == "fluid_flow")
+            if not _par_intention:
+                if _spec_out is None:
+                    return {}
+                if str(_spec_out.get("type_mouvement")) not in (
+                        "ecoulement", "chute", "tourbillon", "montee"):
+                    return {}
+                if float(_spec_out.get("amplitude", 1.0) or 0.0) <= 0.01:
+                    return {}
             try:
                 from fluid_sim_baker import bake_fluid_sim
                 sim_path = output_dir / f"{run_id}_SIM.glb"
@@ -845,9 +1299,142 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                     pass
             return {}
 
+        def _animer_acteurs_secondaires(glb_courant: Path) -> dict:
+            """Fait bouger CHAQUE acteur restant du plan de scene.
+
+            Une scene (moulin) a des acteurs couples: l'eau entraine la roue
+            qui entraine la meule; la lanterne emet; la banniere ondule. Le
+            pipeline n'en animait qu'UN. On enchaine ici les bakers, chacun
+            sur le resultat du precedent: les animations s'ADDITIONNENT dans
+            le meme fichier.
+            """
+            if not _acteurs_sec or os.environ.get("AURORA_MULTI_ACTEURS", "1") != "1":
+                return {}
+            faits, rates = [], []
+            courant = Path(glb_courant)
+            for _i, _a in enumerate(_acteurs_sec):
+                _cat = _a.get("categorie_baker")
+                _sortie = output_dir / ("%s_acteur%d_%s.glb" % (run_id, _i, _cat))
+                print("PROGRESS:animation:acteur %s -> %s (%d/%d)"
+                      % (_a.get("id"), _cat, _i + 1, len(_acteurs_sec)), flush=True)
+                # VRAI SOLVEUR HOUDINI pour les domaines qu'il fait le mieux
+                _hou_dom = {"houdini_flip": "flip", "houdini_grains": "grains",
+                            "houdini_pyro": "pyro",
+                            "tissu": "vellum"}.get(_a.get("solveur"))
+                if _hou_dom and os.environ.get("AURORA_HOUDINI", "1") == "1":
+                    try:
+                        import houdini_sim as _hs
+                        _ok_h, _why_h = _hs.available()
+                        if _ok_h:
+                            print("PROGRESS:animation:  simulation Houdini (%s)..."
+                                  % _hou_dom, flush=True)
+                            _hr = _hs.simulate(
+                                _hou_dom,
+                                str(output_dir / ("%s_sim_%s" % (run_id, _a.get("id")))),
+                                duration_s=4.0, fps=24,
+                                source_mesh=str(courant), timeout_s=3600)
+                            audit.append({"stage": "houdini_%s" % _hou_dom,
+                                          "acteur": _a.get("id"), **{
+                                              k: v for k, v in _hr.items()
+                                              if k != "verification"}})
+                            if _hr.get("ok"):
+                                # la sequence devient une ANIMATION glTF
+                                _glb_sim = None
+                                try:
+                                    import sim_vers_glb as _svg
+                                    _cv = _svg.convertir(
+                                        _hr["dossier"],
+                                        str(output_dir / ("%s_%s_anim.glb"
+                                                          % (run_id, _a.get("id")))),
+                                        fps=24, max_particules=4000)
+                                    audit.append({"stage": "sim_vers_glb",
+                                                  "acteur": _a.get("id"), **_cv})
+                                    if _cv.get("ok"):
+                                        _glb_sim = _cv["sortie"]
+                                        print("PROGRESS:animation:  %s -> animation "
+                                              "glTF (%s, %s images)"
+                                              % (_a.get("id"), _cv.get("mode"),
+                                                 _cv.get("frames")), flush=True)
+                                except Exception as _ce:  # noqa: BLE001
+                                    audit.append({"stage": "sim_vers_glb",
+                                                  "ok": False, "error": repr(_ce)})
+                                faits.append({"acteur": _a.get("id"),
+                                              "solveur": "houdini_" + _hou_dom,
+                                              "frames": _hr.get("frames"),
+                                              "glb_anime": _glb_sim,
+                                              "dossier": _hr.get("dossier")})
+                                print("PROGRESS:animation:  %s simule (%s images Houdini)"
+                                      % (_a.get("id"), _hr.get("frames")), flush=True)
+                                continue
+                            print("PROGRESS:animation:  Houdini %s indisponible (%s) "
+                                  "-> baker Blender" % (_hou_dom,
+                                                        str(_hr.get("erreur"))[:70]),
+                                  flush=True)
+                        else:
+                            print("PROGRESS:animation:  Houdini absent (%s)" % _why_h,
+                                  flush=True)
+                    except Exception as _he:  # noqa: BLE001
+                        audit.append({"stage": "houdini_%s" % _hou_dom,
+                                      "ok": False, "error": repr(_he)})
+                try:
+                    _int_f = output_dir / ("%s_acteur%d_intent.json" % (run_id, _i))
+                    _int_f.write_text(json.dumps({
+                        "schema": "aurora.motion-intent.v1",
+                        "category": _cat, "confidence": 0.9,
+                        "prompt": str(_a.get("texte") or motion_prompt),
+                        "params": {}}, ensure_ascii=False), encoding="utf-8")
+                    _cmd = [sys.executable, str(baker),
+                            "--intent", str(_int_f),
+                            "--input", str(courant), "--output", str(_sortie)]
+                    _p = subprocess.run(_cmd, capture_output=True, text=True,
+                                        timeout=2400, check=False)
+                    if _sortie.is_file() and _sortie.stat().st_size > 10000:
+                        courant = _sortie
+                        faits.append({"acteur": _a.get("id"), "categorie": _cat})
+                        print("PROGRESS:animation:  %s anime" % _a.get("id"), flush=True)
+                    else:
+                        _err = (_p.stderr or _p.stdout or "")[-160:]
+                        rates.append({"acteur": _a.get("id"), "categorie": _cat,
+                                      "erreur": _err})
+                        print("PROGRESS:animation:  %s NON anime (%s)"
+                              % (_a.get("id"), _err[:80]), flush=True)
+                except Exception as _ae:  # noqa: BLE001
+                    rates.append({"acteur": _a.get("id"), "categorie": _cat,
+                                  "erreur": repr(_ae)})
+            if faits and str(courant) != str(glb_courant):
+                try:
+                    _sh.copyfile(str(courant), str(glb_courant))
+                except Exception:  # noqa: BLE001
+                    pass
+            # FUSION: les simulations converties (eau, sable, fumee, tissu)
+            # rejoignent le LIVRABLE. Sans cette etape l'utilisateur recevait
+            # un moulin sans son eau: chaque sim restait dans son coin.
+            _glbs_act = [f.get("glb_anime") for f in faits if f.get("glb_anime")]
+            if _glbs_act:
+                try:
+                    import fusion_acteurs as _fa
+                    _fus = output_dir / ("%s_scene_complete.glb" % run_id)
+                    _fr = _fa.fusionner(str(glb_courant), _glbs_act, str(_fus))
+                    audit.append({"stage": "fusion_acteurs", **_fr})
+                    if _fr.get("ok"):
+                        _sh.copyfile(str(_fus), str(glb_courant))
+                        print("PROGRESS:animation:scene complete — %d simulation(s) "
+                              "fusionnee(s) dans le livrable" % _fr.get("acteurs"),
+                              flush=True)
+                    else:
+                        print("PROGRESS:animation:fusion impossible (%s)"
+                              % str(_fr.get("error"))[:80], flush=True)
+                except Exception as _fe:  # noqa: BLE001
+                    audit.append({"stage": "fusion_acteurs", "ok": False,
+                                  "error": repr(_fe)})
+            audit.append({"stage": "acteurs_secondaires",
+                          "animes": faits, "echecs": rates})
+            return {"acteurs_animes": faits, "acteurs_echoues": rates}
+
         if water_info and not _wants_gas:
             _sh.move(str(gas_input), str(rigged_path))
-            return {"ok": True, "rigged_mesh": str(rigged_path),
+            _sec = _animer_acteurs_secondaires(rigged_path)
+            return {"ok": True, "rigged_mesh": str(rigged_path), **_sec,
                     "motion_intent": "fluid_flow_sculpte",
                     "water_info": water_info,
                     "motion_spec": _spec_out,
@@ -905,6 +1492,12 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 "--metarig", metarig_family]
     if metarig_family == "human" and os.environ.get("AURORA_MIA_RIG", "1") == "1":
         _rig_cmd.append("--use-mia")
+    # BVH genere librement: rigify_autorig sait deja le reprojeter (chaine
+    # MakeWalk). Sans ce raccordement, le mouvement etait produit puis JETE.
+    if hymotion_bvh and os.path.isfile(hymotion_bvh):
+        _rig_cmd += ["--mocap-bvh", hymotion_bvh]
+        print("PROGRESS:animation:retargetage du mouvement genere sur le squelette...",
+              flush=True)
     proc = subprocess.run(_rig_cmd, capture_output=True, timeout=1200, check=False)
     rigify_stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
     rigify_stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
@@ -923,6 +1516,26 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 "rigged_mesh": str(rigged_path),
                 "stdout_tail": rigify_stdout[-600:],
             }
+        # piege connu: une action d'1 image (pose de repos) compte comme
+        # "animation" glTF — exiger une DUREE reelle (max des accesseurs
+        # d'entree des samplers), sinon le rig livre une statue.
+        _duree = 0.0
+        for _an in gltf.animations:
+            for _sm in (_an.samplers or []):
+                try:
+                    _acc = gltf.accessors[_sm.input]
+                    if _acc.max:
+                        _duree = max(_duree, float(_acc.max[0]))
+                except Exception:  # noqa: BLE001
+                    continue
+        if _duree < 0.2:
+            return {
+                "ok": False,
+                "error": f"animation degeneree ({_duree:.2f}s): pose figee exportee, pas le mouvement",
+                "motion_json_path": str(motion_json_path),
+                "rigged_mesh": str(rigged_path),
+                "stdout_tail": rigify_stdout[-600:],
+            }
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,
@@ -932,12 +1545,45 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
             "stdout_tail": rigify_stdout[-600:],
         }
 
+    # COMPOSITE: si la demande contient AUSSI un effet ("attaque AVEC une
+    # flamme"), le corps est maintenant rige — on rend le personnage ET l'effet
+    # ensemble. C'est la seule facon de les voir reunis: un GLB porte le
+    # personnage, pas le feu. Sortie = sequence d'images a cote du GLB.
+    _compose = {}
+    _eff_tr = next((t for t in (timeline.get("tracks") or [])
+                    if t.get("piste") == "effet" and t.get("categorie")), None)
+    if (timeline.get("composite") and _eff_tr
+            and os.environ.get("AURORA_COMPOSITE", "1") == "1"):
+        try:
+            import motion_composite as _mc
+            _eff_kind = {"smoke_fire": "fire", "fluid_flow": "water",
+                         "plasma": "plasma"}.get(_eff_tr["categorie"], "fire")
+            _engulf = " en feu" in (motion_prompt or "").lower() or \
+                      "couvert" in (motion_prompt or "").lower()
+            _cmp = _mc.compose(str(rigged_path), _eff_kind,
+                               str(Path(output_dir) / f"{run_id}_COMPOSITE"),
+                               engulf=_engulf)
+            audit.append({"stage": "composite", **_cmp})
+            if _cmp.get("ok"):
+                print("PROGRESS:animation:composite rendu — personnage + %s "
+                      "(%d images)" % (_eff_kind, _cmp.get("images", 0)),
+                      flush=True)
+                _compose = {"composite_dir": _cmp.get("dossier"),
+                            "composite_images": _cmp.get("images")}
+        except Exception as _ce:  # noqa: BLE001
+            audit.append({"stage": "composite", "ok": False, "error": repr(_ce)})
+
     return {
         "ok": True,
         "motion_json_path": str(motion_json_path),
         "rigged_mesh": str(rigged_path),
         "size_bytes": rigged_path.stat().st_size,
         "stdout_tail": rigify_stdout[-600:],
+        # l'audit local (trend, hymotion, conversion BVH, spec...) etait
+        # collecte puis JETE: les echecs d'etapes intermediaires devenaient
+        # invisibles dans le retour. Borne pour ne pas gonfler le JSON.
+        "audit_animation": audit[-20:],
+        **_compose,
     }
 
 
@@ -946,6 +1592,34 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
     """Final deterministic gate: texture/silhouette/motion acceptance."""
     try:
         from mesh_acceptance_gate import evaluate_acceptance  # noqa: WPS433
+        # STATIQUE-ONLY (26/07): le livrable statique ne danse pas — le volet
+        # MOUVEMENT se juge sur le fichier ANIME voisin (*_RIGGED.glb) quand
+        # il existe. Sans cela, le statique etait condamne pour "no animation
+        # channels" des qu'un mouvement etait demande.
+        if motion_prompt:
+            try:
+                from pygltflib import GLTF2 as _G2
+                _g = _G2().load(str(mesh_path))
+                _anime = bool(_g.animations)
+            except Exception:  # noqa: BLE001
+                _anime = True
+            if not _anime:
+                _rig = next(iter(sorted(
+                    Path(mesh_path).parent.glob("*_RIGGED.glb"))), None)
+                if _rig is not None and _rig.is_file():
+                    _stat = evaluate_acceptance(mesh_path, prompt, kind, None)
+                    _mot = evaluate_acceptance(_rig, prompt, kind, motion_prompt)
+                    _hf_mot = [h for h in (_mot.get("hard_failures") or [])
+                               if any(k in h.lower() for k in
+                                      ("motion", "anim", "macarena", "floss",
+                                       "dance", "clip"))]
+                    verdict = dict(_stat)
+                    verdict["motion_du_fichier_anime"] = str(_rig.name)
+                    if _hf_mot:
+                        verdict["acceptance_ok"] = False
+                        verdict["hard_failures"] = (
+                            list(_stat.get("hard_failures") or []) + _hf_mot)
+                    return verdict
         return evaluate_acceptance(mesh_path, prompt, kind, motion_prompt)
     except Exception as exc:  # noqa: BLE001
         return {
@@ -1606,22 +2280,109 @@ def _should_research_reference(prompt: str) -> bool:
     return False
 
 
+def _derived_view_defects(face_png: str, view_png: str) -> str:
+    """Une vue derivee est-elle exploitable ? Rend "" si oui, sinon la raison.
+
+    MV-Adapter part parfois en vrille (constate: la vue de profil de Pikachu
+    reduite a une tache jaune trouee sur fond de bokeh). Ces vues partaient
+    telles quelles dans TRELLIS.2 — AUCUN controle n'existait sur ce chemin, le
+    seul garde-fou ecrit couvrait la voie FLUX. Trois mesures suffisent et
+    restent valables pour n'importe quel sujet:
+      - le sujet a fondu ou a explose en taille par rapport a la face;
+      - le sujet est parti en miettes (aucune piece dominante);
+      - la couleur dominante n'a plus rien a voir avec la face.
+    """
+    try:
+        import numpy as _np
+        from PIL import Image as _Image
+
+        def _read(p):
+            im = _Image.open(p).convert("RGB")
+            a = _np.asarray(im).astype(_np.float32)
+            # SUJET = ce qui s'ecarte du FOND, quel qu'il soit. L'ancien
+            # critere "non blanc" rejetait a 100% les vues correctes de
+            # MV-Adapter (fond gris 128 = zero du VAE, convention du modele).
+            # Le fond est estime sur les 4 coins: general (blanc, gris, noir).
+            _h, _w = a.shape[:2]
+            _c = max(4, min(_h, _w) // 32)
+            _coins = _np.concatenate([
+                a[:_c, :_c].reshape(-1, 3), a[:_c, -_c:].reshape(-1, 3),
+                a[-_c:, :_c].reshape(-1, 3), a[-_c:, -_c:].reshape(-1, 3)])
+            _fond = _np.median(_coins, axis=0)
+            return a, (_np.abs(a - _fond).sum(axis=2) > 45)
+
+        _fa, _fm = _read(face_png)
+        _va, _vm = _read(view_png)
+        _fc, _vc = float(_fm.mean()), float(_vm.mean())
+        if _vc < 0.01:
+            return "vue vide"
+        # FOND CHARGE: une vue saine (sujet detoure sur blanc) ne touche
+        # presque pas les bords; une vue partie en vrille (mosaique, cadre,
+        # bokeh) les remplit. C'est CE critere qui manquait le 24/07: les vues
+        # poubelle de Pikachu (cadre noir plein bord) passaient taille/couleur
+        # et TRELLIS reconstruisait le cadre en plaque.
+        _bords = _np.concatenate([_vm[0, :], _vm[-1, :], _vm[:, 0], _vm[:, -1]])
+        if float(_bords.mean()) > 0.10:
+            return "fond charge (%d%% des bords sales)" % int(100 * _bords.mean())
+        if _fc > 0.01 and not (0.40 <= _vc / _fc <= 2.5):
+            return "sujet %d%% de la face" % int(100.0 * _vc / max(_fc, 1e-6))
+        try:
+            from scipy import ndimage as _ndi
+            _lab, _n = _ndi.label(_vm)
+            if _n > 1:
+                _sz = _ndi.sum(_vm, _lab, range(1, _n + 1))
+                if float(_sz.max()) / max(float(_sz.sum()), 1.0) < 0.55:
+                    return "sujet en miettes (%d fragments)" % _n
+        except Exception:  # noqa: BLE001
+            pass
+        if _fm.sum() > 0 and _vm.sum() > 0:
+            _fmean = _fa[_fm].mean(axis=0)
+            _vmean = _va[_vm].mean(axis=0)
+            if float(_np.abs(_fmean - _vmean).mean()) > 70.0:
+                return "couleurs sans rapport avec la face"
+        return ""
+    except Exception as _exc:  # noqa: BLE001
+        # En cas de doute on ne jette rien — mais on le DIT. Un controle qui
+        # s'eteint en silence (numpy absent de l'interpreteur, image illisible)
+        # laisse passer exactement ce qu'il devait arreter.
+        print("PROGRESS:reference:controle des vues derivees indisponible (%r) — "
+              "aucune vue n'est filtree" % (_exc,), flush=True)
+        return ""
+
+
 def _clean_product_photo(img):
+    """Isole le sujet sur fond blanc SANS l'amputer.
+
+    Deux pieges corriges (cas constate: la queue de Pikachu disparaissait):
+      - ne garder que la PLUS GROSSE composante connexe supprimait toute
+        extremite fine que le masque detache du corps (queue, oreille, antenne,
+        anse, cable, aile);
+      - un seuil alpha dur a 0.5 effacait les bords fins ou semi-transparents.
+    On ferme donc le masque pour rattacher ce qui ne tient qu'a quelques pixels,
+    et on garde TOUTES les parties significatives (une queue = 1 a 3% du corps),
+    en ne jetant que les vraies poussieres (filigrane, eclat de fond).
+    """
     try:
         from rembg import remove as _rembg_remove
         import numpy as _np
         from PIL import Image as _Image
         rgba = _rembg_remove(img.convert("RGB"))
         a = _np.asarray(rgba)[:, :, 3].astype(_np.float32) / 255.0
-        mask = a > 0.5
+        mask = a > 0.35
         if mask.sum() < 500:
             return img
         try:
             from scipy import ndimage as _ndi
-            lab, n = _ndi.label(mask)
+            _r = max(2, int(round(0.006 * max(mask.shape))))
+            _k = _np.ones((_r, _r), bool)
+            closed = _ndi.binary_closing(mask, structure=_k)
+            lab, n = _ndi.label(closed)
             if n > 1:
-                sizes = _ndi.sum(mask, lab, range(1, n + 1))
-                mask = lab == (1 + int(_np.argmax(sizes)))
+                sizes = _ndi.sum(closed, lab, range(1, n + 1))
+                _big = float(sizes.max())
+                _keep = [i + 1 for i, s in enumerate(sizes)
+                         if float(s) >= max(0.015 * _big, 150.0)]
+                mask = mask & _np.isin(lab, _keep)
         except Exception:  # noqa: BLE001
             pass
         cov = float(mask.mean())
@@ -1680,7 +2441,29 @@ def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tu
                           "(3) des GOUTTES d'eau/condensation/reflets brillants parasites (ils se "
                           "reconstruisent en relief/grumeaux); "
                           "(4) fond non neutre, eclairage colore artistique, ou plusieurs objets; "
-                          "(5) ce n'est pas EXACTEMENT le sujet demande (variante/fan-art/autre modele). "
+                          "(5) ce n'est pas EXACTEMENT le sujet demande (variante/fan-art/autre modele); "
+                          "(6) rendu ARTISTIQUE ou stylise: aquarelle, peinture, coups de pinceau, "
+                          "ECLABOUSSURES/taches, croquis, esquisse, mosaique, sticker decoratif, "
+                          "poster avec effets — il faut le rendu OFFICIEL ou photographique PROPRE "
+                          "du sujet, jamais une oeuvre d'art derivee (verifie: une aquarelle "
+                          "eclaboussee reconstruite = geometrie en miettes). Au MOINDRE doute sur "
+                          "le style, ok=false; "
+                          "(9) OMBRE PORTEE ou reflet au sol sous le sujet: elle est "
+                          "reconstruite comme une MASSE NOIRE collee au modele "
+                          "(verifie) — le sujet doit flotter sur un fond uni sans "
+                          "ombre projetee, sinon ok=false; "
+                          "(8) SILHOUETTE floue: le contour du sujet doit etre NET. "
+                          "Une fourrure est acceptee et meme normale (loup, peluche) "
+                          "tant que sa masse est lisible; ce qui est refuse, c'est un "
+                          "contour perdu dans un halo de meches volantes, un flou de "
+                          "bougé ou une profondeur de champ qui mange les bords "
+                          "(la reconstruction en fait de la mousse); "
+                          "(7) rendu PLAT sans volume: dessin anime en aplats de couleur avec "
+                          "contours noirs (cel-shading, artwork 2D officiel de personnage) — la "
+                          "reconstruction 3D a besoin d'ombres et de volume; un aplat 3/4 donne "
+                          "un blob (verifie). Seul un rendu VOLUMETRIQUE (photo, rendu 3D, "
+                          "figurine photographiee) convient; un artwork 2D plat -> ok=false "
+                          "(la synthese produira la vue volumetrique). "
                           "Sinon ok=true. Indique aussi l'orientation vue: 'face' (sujet vu de face), "
                           "'trois_quarts' (de biais), 'dos' (arriere), 'profil' (cote)." % prompt
                           + _desc_clause,
@@ -1694,7 +2477,11 @@ def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tu
             return bool(verdict["ok"]), str(verdict.get("raison", "")), ori
     except Exception:  # noqa: BLE001
         pass
-    return True, "vlm indisponible: accepte par defaut", "inconnu"
+    # POLARITE: refuser quand on ne peut pas juger. Accepter par defaut a
+    # laisse passer une aquarelle eclaboussee qui a ruine la reconstruction
+    # entiere; le repli synthese FLUX vaut toujours mieux qu'une reference
+    # non jugee.
+    return False, "vlm indisponible: refus par prudence", "inconnu"
 
 
 def _same_product(path_a: str, path_b: str, prompt: str) -> bool:
@@ -1741,17 +2528,25 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         _char_desc = _character_visual_desc(_nm) if _is_char else ""
         if _char_desc:
             log(f"PROGRESS:reference:description LLM du personnage: \"{_char_desc[:80]}\"")
+        # On cherche EN PREMIER les images a fond transparent: le sujet y est
+        # deja detoure proprement (entier, queue et extremites comprises), ce
+        # qu'aucun detourage automatique ne garantit.
         if _is_char:
             _dq = (" " + _char_desc) if _char_desc else ""
             front_queries = [
+                f"{_nm}{_dq} official art full body png transparent background",
                 f"{_nm}{_dq} official art full body front view white background",
                 f"{_nm} character reference sheet turnaround{_dq}",
                 f"{_nm}{_dq} front view",
             ]
         elif _is_product:
-            front_queries = [f"{prompt} product photo high resolution white background"]
+            front_queries = [
+                f"{prompt} png transparent background product cutout",
+                f"{prompt} product photo high resolution white background",
+            ]
         else:
             front_queries = [
+                f"{prompt} png transparent background isolated cutout",
                 f"{prompt} whole object isolated on white background high resolution photo",
                 f"{prompt} full product photo studio white background",
             ]
@@ -1785,7 +2580,21 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
             if slots["face"] and slots["dos"]:
                 break
             log(f"PROGRESS:reference:recherche web: \"{query[:80]}\"")
-            _cands = _fetch_cands(query)[:8]
+            _cands = _fetch_cands(query)
+            # LA DEFINITION DE LA REFERENCE EST LE PLAFOND DE TOUTE LA CHAINE.
+            # Les candidats arrivaient dans l'ordre du moteur de recherche: on
+            # retenait la premiere acceptable, souvent une vignette (constate:
+            # une face de 500x500 -> MV-Adapter delire -> mesh rate). On essaie
+            # desormais les plus definies d'abord, sans changer le seuil bas
+            # (mieux vaut une petite image juste que pas d'image du tout).
+            def _area(c):
+                try:
+                    return int(c.get("width") or 0) * int(c.get("height") or 0)
+                except Exception:  # noqa: BLE001
+                    return 0
+            if any(_area(c) for c in _cands):
+                _cands = sorted(_cands, key=_area, reverse=True)
+            _cands = _cands[:8]
             log(f"PROGRESS:reference:{len(_cands)} candidate(s) trouvee(s)")
             for c in _cands:
                 if slots["face"] and slots["dos"] and slots["extra"]:
@@ -1802,16 +2611,43 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                     if not dj.get("ok") or not dj.get("base64"):
                         continue
                     img = _Image.open(_io.BytesIO(_b64.b64decode(dj["base64"])))
+                    # FOND TRANSPARENT D'ORIGINE = decoupe deja faite a la main,
+                    # la meilleure source qui soit: aucun detourage automatique
+                    # ne fera mieux et ne risquera d'amputer une extremite.
+                    _orig_cutout = False
                     if img.mode != "RGB":
                         img = img.convert("RGBA")
+                        _al = img.split()[3]
+                        _px = float(img.size[0] * img.size[1]) or 1.0
+                        _orig_cutout = (sum(_al.histogram()[:16]) / _px) > 0.05
                         _bg = _Image.new("RGB", img.size, (255, 255, 255))
-                        _bg.paste(img, mask=img.split()[3])
+                        _bg.paste(img, mask=_al)
                         img = _bg
                     if min(img.size) < 480:
                         log(f"PROGRESS:reference:photo ignoree (resolution {img.size[0]}x{img.size[1]} < 480)")
                         continue
+                    # PORTE DE BORDS PROGRAMMATIQUE (26/07): le VLM laisse
+                    # passer des sujets en scene (rue en bokeh validee -> decor
+                    # reconstruit DANS le modele, "sujet eclate"). Une
+                    # reference de reconstruction a un fond uni: bords sales
+                    # -> rejet deterministe, aucune opinion.
+                    try:
+                        import numpy as _np_b
+                        _ab = _np_b.asarray(img.convert("RGB")).astype(_np_b.float32)
+                        _mb = _ab.min(axis=2) < 235
+                        _bords = _np_b.concatenate(
+                            [_mb[0, :], _mb[-1, :], _mb[:, 0], _mb[:, -1]])
+                        if float(_bords.mean()) > 0.10:
+                            log("PROGRESS:reference:photo ignoree (fond charge: "
+                                "%d%% des bords non blancs)" % int(100 * _bords.mean()))
+                            continue
+                    except Exception:  # noqa: BLE001
+                        pass
                     cand = _tmpmod.mktemp(suffix=".png")
-                    img = _clean_product_photo(img)
+                    if _orig_cutout:
+                        log("PROGRESS:reference:fond transparent d'origine — decoupe conservee telle quelle")
+                    else:
+                        img = _clean_product_photo(img)
                     img.save(cand)
                     ok_photo, why, ori = _reference_photo_ok(cand, prompt, visual_desc=_char_desc)
                     if not ok_photo:
@@ -1879,6 +2715,40 @@ def run_pipeline(prompt: str, run_id: str, *,
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
     audit: list[dict] = []
     output_dir.mkdir(parents=True, exist_ok=True)
+    # JOURNAL SUR DISQUE. Au gel du 24/07, AUCUNE trace de l'etape en cours
+    # n'a survecu (le stdout meurt avec l'app): l'etape n'a pu etre
+    # reconstituee que par les dates de fichiers. Chaque ligne est desormais
+    # AUSSI ecrite dans journal/pipeline.log, flushee ligne a ligne.
+    if os.environ.get("AURORA_LOG_DISQUE", "1") == "1":
+        try:
+            _jdir = (output_dir.parent if output_dir.name == "models"
+                     else output_dir) / "journal"
+            _jdir.mkdir(parents=True, exist_ok=True)
+            _jf = open(_jdir / "pipeline.log", "a", encoding="utf-8", buffering=1)
+            _jf.write("\n===== run %s — %s =====\n" % (run_id, started_at_iso))
+
+            class _Tee:
+                def __init__(self, *flux):
+                    self._flux = flux
+
+                def write(self, data):
+                    for f in self._flux:
+                        try:
+                            f.write(data)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    return len(data)
+
+                def flush(self):
+                    for f in self._flux:
+                        try:
+                            f.flush()
+                        except Exception:  # noqa: BLE001
+                            pass
+
+            sys.stdout = _Tee(sys.__stdout__, _jf)
+        except Exception:  # noqa: BLE001
+            pass
 
     # SCENE MULTI-OBJETS. "un homme assis sur une chaise" doit produire un homme ET
     # une chaise: sans ce branchement, l'orchestrateur existait mais n'etait appele
@@ -2518,16 +3388,49 @@ def run_pipeline(prompt: str, run_id: str, *,
         # au journal, mort 05:55 sans OOM kernel). La ref est deja ecrite: on decharge.
         # Un refus rechargera FLUX (plus lent, mais le PC ne gele jamais).
         _free_gpu_before_hunyuan(audit)
-        _dec = {"accepted": True}
-        for _cft in range(3):
+        # OUI / NON / PEUT-ETRE (demande de Juan):
+        #   OUI       -> la photo est verrouillee, on enchaine.
+        #   NON       -> la refusee est SUPPRIMEE immediatement et on regenere.
+        #   PEUT-ETRE -> la photo est mise de cote (essais/) et on regenere.
+        # Au bout de 5 tentatives sans OUI: s'il y a des "peut-etre", on les
+        # met COTE A COTE et l'utilisateur en CHOISIT une; sinon echec propre.
+        _essais_dir = Path(output_dir) / "essais"
+        _candidats: list = []
+        _dec = {"accepted": True, "verdict": "oui"}
+        _MAX_TENTATIVES = 5
+        for _cft in range(_MAX_TENTATIVES):
             _dec = _interactive_confirm(
                 [front_ref], "Cette reference est-elle le bon sujet ?",
-                output_dir, run_id, "front", audit)
+                output_dir, run_id, "front", audit, mode="tri")
             if _dec["accepted"]:
                 break
+            _verdict = _dec.get("verdict") or "non"
             _fb = _dec["reason"]
-            print("PROGRESS:reference:reference refusee (%s) -> regeneration..."
-                  % (_fb[:60] or "sans motif"), flush=True)
+            if _verdict == "peutetre":
+                try:
+                    _essais_dir.mkdir(parents=True, exist_ok=True)
+                    _cand = _essais_dir / ("essai_%d.png" % (len(_candidats) + 1))
+                    shutil.copy2(str(front_ref), str(_cand))
+                    _candidats.append(_cand)
+                    print("PROGRESS:reference:mise de cote (peut-etre %d/%d) -> "
+                          "nouvelle proposition..." % (len(_candidats),
+                                                       _MAX_TENTATIVES),
+                          flush=True)
+                except Exception as _cpe:  # noqa: BLE001
+                    audit.append({"stage": "confirm_front_essai", "ok": False,
+                                  "error": repr(_cpe)})
+            else:
+                # NON: suppression IMMEDIATE de la refusee (elle sera de toute
+                # facon remplacee, mais rien d'elle ne doit rester sur disque).
+                try:
+                    front_ref.unlink(missing_ok=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                print("PROGRESS:reference:refusee et supprimee (%s) -> "
+                      "regeneration..." % (_fb[:60] or "sans motif"),
+                      flush=True)
+            if _cft == _MAX_TENTATIVES - 1:
+                break
             try:
                 _fp_base = flux_prompt  # voie synth: prompt enrichi deja construit
             except NameError:  # voie recherche web: pas encore de prompt FLUX
@@ -2543,9 +3446,29 @@ def run_pipeline(prompt: str, run_id: str, *,
                 audit.append({"stage": "confirm_front_regen", "ok": False,
                               "error": _resc.get("error")})
                 break
+        if not _dec["accepted"] and _candidats:
+            # GALERIE: toutes les "peut-etre" cote a cote, l'utilisateur clique
+            # celle qu'il retient puis valide.
+            _pick = _interactive_confirm(
+                _candidats,
+                "Aucun oui franc: cliquez la proposition a retenir, puis validez.",
+                output_dir, run_id, "front", audit, mode="choix")
+            _idx = _pick.get("choix")
+            if isinstance(_idx, int) and 0 <= _idx < len(_candidats):
+                shutil.copy2(str(_candidats[_idx]), str(front_ref))
+                _dec = {"accepted": True, "verdict": "choix"}
+                print("PROGRESS:reference:proposition %d retenue" % (_idx + 1),
+                      flush=True)
+        # nettoyage: les essais non retenus disparaissent
+        try:
+            if _essais_dir.is_dir():
+                shutil.rmtree(_essais_dir)
+        except Exception:  # noqa: BLE001
+            pass
         if not _dec["accepted"]:
             return {"ok": False,
-                    "error": "reference refusee par l'utilisateur (3 tentatives)",
+                    "error": "reference refusee par l'utilisateur "
+                             "(%d tentatives)" % _MAX_TENTATIVES,
                     "audit_trail": audit}
 
     if multi_view:
@@ -2672,11 +3595,46 @@ def run_pipeline(prompt: str, run_id: str, *,
                                               "views": len(_mvr.get("views") or []),
                                               "azimuths": _mvr.get("azimuths"),
                                               "attempt": _lot_try})
+                                # CONTROLE QUALITE AUTOMATIQUE. Ce chemin envoyait les
+                                # vues derivees dans TRELLIS.2 sans AUCUNE verification:
+                                # une vue delirante (sujet fondu, en miettes, couleurs
+                                # parties) ruinait toute la reconstruction. On jette les
+                                # vues defectueuses; s'il n'en reste aucune, on repart
+                                # sur la face seule plutot que d'empoisonner le modele.
+                                _good_views = []
+                                for _v in (_mvr.get("views") or []):
+                                    _why = _derived_view_defects(str(front_ref), str(_v))
+                                    if _why:
+                                        print("PROGRESS:reference:vue derivee jetee (%s)"
+                                              % _why, flush=True)
+                                        audit.append({"stage": "mv_view_rejected",
+                                                      "view": os.path.basename(str(_v)),
+                                                      "reason": _why})
+                                        # une vue rejetee SUPPRIMEE tout de
+                                        # suite: laissee sur disque, elle
+                                        # partait dans la livraison comme
+                                        # "reference retenue" (damier livre).
+                                        try:
+                                            os.remove(str(_v))
+                                        except OSError:
+                                            pass
+                                    else:
+                                        _good_views.append(_v)
+                                if not _good_views:
+                                    print("PROGRESS:reference:toutes les vues derivees sont "
+                                          "inexploitables -> reconstruction depuis la face seule",
+                                          flush=True)
+                                    audit.append({"stage": "mvadapter_multiview", "ok": False,
+                                                  "all_views_rejected": True,
+                                                  "attempt": _lot_try})
+                                    _mv_seed += 1013 + _lot_try
+                                    continue
+                                _mvr["views"] = _good_views
                                 if os.environ.get("AURORA_REF_CONFIRM") != "1":
                                     os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
                                     break
                                 _lot = ([str(front_ref)]
-                                        + [str(v) for v in (_mvr.get("views") or [])])
+                                        + [str(v) for v in _good_views])
                                 _dlc = _interactive_confirm(
                                     _lot,
                                     "Ce lot de vues (derivees de la photo acceptee) convient-il ?",
@@ -2732,6 +3690,27 @@ def run_pipeline(prompt: str, run_id: str, *,
                         print("PROGRESS:memoire:%d modele(s) Ollama decharges avant TRELLIS" % len(_loaded), flush=True)
                 except Exception:  # noqa: BLE001
                     pass
+                # ECHELLE ANTI-GEL (gel du 24/07, Xid 109 pendant les
+                # materiaux avec 22 Go en swap): si le systeme est DEJA charge
+                # en entrant dans TRELLIS, on reduit la texture au lieu de
+                # tenter le 16K — un modele livre en 8K vaut mieux qu'un PC
+                # gele a 90% de l'etape. Seuil AURORA_SWAP_LADDER_GB (12 Go).
+                try:
+                    with open("/proc/meminfo", "r", encoding="utf-8") as _fh:
+                        _mi = {l.split(":")[0]: l.split()[1] for l in _fh if ":" in l}
+                    _swap_used_gb = (float(_mi.get("SwapTotal", 0))
+                                     - float(_mi.get("SwapFree", 0))) / 1048576.0
+                except Exception:  # noqa: BLE001
+                    _swap_used_gb = 0.0
+                _ladder = float(os.environ.get("AURORA_SWAP_LADDER_GB", "12"))
+                if _swap_used_gb > _ladder:
+                    os.environ["AURORA_TRELLIS2_TEXTURE"] = "4096"
+                    os.environ["AURORA_TRELLIS2_16K"] = "0"
+                    print("PROGRESS:memoire:swap deja a %.1f Go — texture reduite "
+                          "a 4K pour ne pas geler la machine (relancez plus tard "
+                          "pour le 16K)" % _swap_used_gb, flush=True)
+                    audit.append({"stage": "texture_ladder", "swap_gb": round(_swap_used_gb, 1),
+                                  "texture": "4096", "seize_k": False})
                 try:
                     _tr_cmd = [trellis_python(), _wrapper, str(front_ref), str(mesh_path)]
                     if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
@@ -2756,6 +3735,42 @@ def run_pipeline(prompt: str, run_id: str, *,
                                   "faces": _tr.get("faces"), "verts": _tr.get("verts"),
                                   "peak_vram_gb": _tr.get("peak_vram_gb"), "quality": _tr.get("quality")})
                     print(f"PROGRESS:shape:geometrie native posee — {_tr.get('faces') or '?'} faces ({_tr.get('quality')})", flush=True)
+                    # BALAYAGE CAPILLAIRE. Les meches sous la resolution de la
+                    # grille sortent en confettis fermes flottants (guerrier:
+                    # 8463 ilots de ~2 faces autour de la tete, 0 bord ouvert
+                    # -> "boucher" ne sert a rien, on BALAIE). Sous-processus
+                    # venv (trimesh) pour ne pas gonfler la RAM du pipeline.
+                    if os.environ.get("AURORA_BALAYAGE", "1") == "1":
+                        try:
+                            _venv_py2 = str(REPO_ROOT / "application" / ".venv" / "bin" / "python")
+                            if not os.path.isfile(_venv_py2):
+                                _venv_py2 = sys.executable
+                            _sw_out = str(mesh_path) + ".propre.glb"
+                            _swp = subprocess.run(
+                                [_venv_py2, str(REPO_ROOT / "application" /
+                                                "python-services" / "poussiere_capillaire.py"),
+                                 "--input", str(mesh_path), "--output", _sw_out],
+                                capture_output=True, text=True, timeout=1200)
+                            _sw_line = next((l for l in reversed(
+                                (_swp.stdout or "").splitlines())
+                                if l.strip().startswith("{")), "{}")
+                            _sw = json.loads(_sw_line)
+                            if _sw.get("ok") and os.path.isfile(_sw_out)                                     and os.path.getsize(_sw_out) > 1000:
+                                os.replace(_sw_out, str(mesh_path))
+                                audit.append({"stage": "balayage_capillaire", **_sw})
+                                if _sw.get("ilots_retires"):
+                                    print("PROGRESS:qualite:%d confettis de meches "
+                                          "balayes (%.1f%% de l'aire)"
+                                          % (_sw["ilots_retires"],
+                                             _sw.get("aire_retiree_pct", 0)),
+                                          flush=True)
+                            else:
+                                audit.append({"stage": "balayage_capillaire",
+                                              "ok": False,
+                                              "error": str(_sw.get("error"))[:160]})
+                        except Exception as _swe:  # noqa: BLE001
+                            audit.append({"stage": "balayage_capillaire",
+                                          "ok": False, "error": repr(_swe)})
                     raw_dense_path = Path(str(mesh_path))
                     audit.append({"stage": "mesh_sanitize", "skipped": True,
                                   "reason": "geometrie TRELLIS.2 single-image native conservee "
@@ -3232,7 +4247,35 @@ def run_pipeline(prompt: str, run_id: str, *,
                         print(f"PROGRESS:matieres:ecoulement continu embarque dans le GLB "
                               f"(zone {_z.get('zone_id')}, vitesse {_fspec.get('vitesse', 1.0)})", flush=True)
 
-    final_delivery_mesh = rigged_mesh or final_mesh_path
+    # MOUVEMENT EN ARGILE. Pendant anime du {run}_GEOMETRIE.png statique:
+    # les couleurs masquent les defauts de deformation (dechirures, plis,
+    # glissements de pieds); la planche argile les montre. Produit pour CHAQUE
+    # generation animee, par le meme chemin UI/CLI. AURORA_MOTION_CLAY=0 coupe.
+    if rigged_mesh and os.environ.get("AURORA_MOTION_CLAY", "1") == "1":
+        try:
+            import motion_clay_render as _mcr
+            _clay = _mcr.render(str(rigged_mesh),
+                                str(output_dir / f"{run_id}_MOUVEMENT_GEOMETRIE.png"),
+                                frames=8)
+            audit.append({"stage": "motion_clay", **{k: v for k, v in _clay.items()
+                                                     if k != "frames_dir"}})
+            if _clay.get("ok"):
+                print("PROGRESS:animation:planche argile du mouvement ecrite "
+                      "(%d instants, variation %s)" % (_clay.get("frames", 0),
+                                                       _clay.get("variation")),
+                      flush=True)
+            else:
+                print("PROGRESS:animation:planche argile impossible (%s)"
+                      % str(_clay.get("error"))[:80], flush=True)
+        except Exception as _mce:  # noqa: BLE001
+            audit.append({"stage": "motion_clay", "ok": False, "error": repr(_mce)})
+
+    # STATIQUE UNIQUEMENT. Avec rigged_mesh ici, la chaine materiaux->matte
+    # s'appliquait au modele ANIME: le "modele" livre contenait la danse, et
+    # juges/rendus/viewer regardaient une FRAME de mouvement — d'ou "bras
+    # fondus", "penche", "il tourne sur lui-meme" (verdicts utilisateur), des
+    # semaines de fausses pistes. Le fichier anime a sa propre voie.
+    final_delivery_mesh = final_mesh_path
     if material_intel_enabled and material_manifest_data is not None:
         try:
             import glb_material_writer as _gmw
@@ -3240,6 +4283,54 @@ def run_pipeline(prompt: str, run_id: str, *,
             _mw_res = _gmw.apply_manifest(str(final_delivery_mesh),
                                           material_manifest_data, _mw_out,
                                           alpha_fallback=False)
+            # GARDE D'INTEGRITE GEOMETRIQUE. Cet ecrivain a DESINTEGRE un
+            # modele (bisection 25/07: mesh_ao parfait -> final_materials en
+            # poussiere/mini, matte herite). Une etape doit PROUVER qu'elle
+            # n'a pas detruit la geometrie: faces identiques, bbox stable,
+            # sinon elle est annulee et la chaine continue sur le fichier sain.
+            if _mw_res.get("ok"):
+                try:
+                    import numpy as _np_ig
+                    import trimesh as _tm_ig
+                    _avant = _tm_ig.load(str(final_delivery_mesh),
+                                         force="mesh", process=False)
+                    _apres = _tm_ig.load(_mw_out, force="mesh", process=False)
+                    _ea = _avant.bounds[1] - _avant.bounds[0]
+                    _eb = _apres.bounds[1] - _apres.bounds[0]
+                    _der = float(_np_ig.abs(_eb - _ea).max()
+                                 / max(float(_ea.max()), 1e-6))
+                    # un ecrivain de MATERIAUX ne deplace AUCUN sommet: la
+                    # corruption "penchee" passait bbox+faces (invariants trop
+                    # laches). Comparaison directe des positions.
+                    _depl = 1e9
+                    if len(_apres.vertices) == len(_avant.vertices):
+                        _n_ech = min(20000, len(_avant.vertices))
+                        _ids = _np_ig.random.default_rng(7).choice(
+                            len(_avant.vertices), _n_ech, replace=False)
+                        _depl = float(_np_ig.linalg.norm(
+                            _np_ig.asarray(_apres.vertices)[_ids]
+                            - _np_ig.asarray(_avant.vertices)[_ids],
+                            axis=1).max()) / max(float(_ea.max()), 1e-6)
+                    if (len(_apres.faces) != len(_avant.faces)) or _der > 0.02 \
+                            or _depl > 1e-4:
+                        _mw_res = {"ok": False,
+                                   "error": "integrite geometrique violee "
+                                            "(faces %d->%d, derive bbox %.1f%%)"
+                                            % (len(_avant.faces),
+                                               len(_apres.faces), 100 * _der)
+                                            + (", deplacement sommets %.4f"
+                                               % _depl if _depl < 1e9 else
+                                               ", nb sommets change")}
+                        print("PROGRESS:matieres:etape ANNULEE — integrite "
+                              "geometrique violee, mesh precedent conserve",
+                              flush=True)
+                        try:
+                            os.remove(_mw_out)
+                        except OSError:
+                            pass
+                except Exception as _ige:  # noqa: BLE001
+                    audit.append({"stage": "material_write_integrite",
+                                  "ok": False, "error": repr(_ige)})
             _mw_gate = {}
             if _mw_res.get("ok"):
                 try:
@@ -3537,6 +4628,88 @@ def run_pipeline(prompt: str, run_id: str, *,
             "audit_trail": audit,
         }
 
+    # LIVRAISON ORGANISEE. Sans elle, tout finissait melange dans models/
+    # (GLB + photos + prompt en double) et references/ ne contenait que des
+    # vues abandonnees. Chaque chose a UN dossier lisible; versions couleurs
+    # ET geometrie pure pour le modele et le mouvement; intermediaires dans
+    # travail/. AURORA_ORGANISER=0 pour debrayer.
+    livraison = {}
+    if os.environ.get("AURORA_ORGANISER", "1") == "1":
+        try:
+            # PORTE DE PERFECTION (doctrine 25/07: « c'est a mon IA de dire
+            # s'il est parfait ou non sinon il refait »). Le pipeline repare
+            # (trous, orientation espace-brut, gouttieres) puis JUGE contre la
+            # reference. parfait=false => LIVRAISON REFUSEE: on ne livre
+            # jamais un fichier trompeur.
+            try:
+                from perfection_gate import porte as _porte
+                _ref_juge = str(front_ref) if front_ref.is_file() else None
+                # juger le LIVRABLE: en reprise, final_mesh_path peut pointer
+                # un intermediaire (mesh_rough) — prefere matte s'il existe.
+                _matte_c = Path(str(final_mesh_path)).parent / (
+                    run_id + "_matte.glb") if final_mesh_path else None
+                _cand_final = (_matte_c if (_matte_c and _matte_c.is_file())
+                               else final_mesh_path)
+                for _cible in (_cand_final, rigged_mesh):
+                    if not (_cible and Path(str(_cible)).is_file()):
+                        continue
+                    _v = _porte(str(_cible), _ref_juge, contexte=prompt)
+                    audit.append({"stage": "perfection_gate",
+                                  "fichier": Path(str(_cible)).name, **_v})
+                    print("PROGRESS:perfection:%s — score %s, %s"
+                          % (Path(str(_cible)).name, _v.get("score"),
+                             ("PARFAIT" if _v.get("parfait")
+                              else "defauts: " + "; ".join(_v.get("defauts") or [])[:160]),
+                             ), flush=True)
+                    if not _v.get("parfait") and os.environ.get(
+                            "AURORA_PERFECTION_STRICTE", "1") == "1":
+                        return {
+                            "ok": False,
+                            "error": "perfection_gate: %s refuse (%s)"
+                                     % (Path(str(_cible)).name,
+                                        "; ".join(_v.get("defauts") or [])[:300]),
+                            "audit_trail": audit,
+                        }
+            except Exception as _pge:  # noqa: BLE001
+                audit.append({"stage": "perfection_gate", "ok": False,
+                              "error": repr(_pge)})
+
+            # DILATATION D'ATLAS avant rangement: les gouttieres sombres entre
+            # ilots UV mouchetaient tout le modele aux coutures (verifie
+            # Pikachu 25/07: peau poivree -> propre apres remplissage par le
+            # texel valide le plus proche).
+            try:
+                from atlas_dilate import dilater as _dilater
+                for _g in (final_mesh_path, rigged_mesh):
+                    if _g and Path(str(_g)).is_file():
+                        _dr = _dilater(str(_g))
+                        audit.append({"stage": "atlas_dilate",
+                                      "fichier": Path(str(_g)).name,
+                                      "ok": bool(_dr.get("ok"))})
+            except Exception as _de:  # noqa: BLE001
+                audit.append({"stage": "atlas_dilate", "ok": False,
+                              "error": repr(_de)})
+            from livraison_organisee import organiser as _organiser
+            _run_root = output_dir.parent if output_dir.name == "models" else output_dir
+            livraison = _organiser(
+                _run_root, run_id,
+                final_mesh=str(final_mesh_path) if final_mesh_path else None,
+                rigged_mesh=str(rigged_mesh) if rigged_mesh else None,
+                front_reference=str(front_ref) if front_ref.is_file() else None)
+            audit.append({"stage": "livraison", **{k: v for k, v in livraison.items()
+                                                   if k != "deplaces"}})
+            if livraison.get("ok"):
+                _liv = livraison.get("livraison") or {}
+                if _liv.get("modele_couleurs"):
+                    final_mesh_path = _liv["modele_couleurs"]
+                if _liv.get("mouvement_couleurs"):
+                    rigged_mesh = _liv["mouvement_couleurs"]
+                print("PROGRESS:livraison:arborescence rangee — modele/, "
+                      "mouvement/, reference/, prompt/, journal/, travail/",
+                      flush=True)
+        except Exception as _oe:  # noqa: BLE001
+            audit.append({"stage": "livraison", "ok": False, "error": repr(_oe)})
+
     _record_pipeline_dispatch(
         run_id, prompt, started_at_iso,
         status="done",
@@ -3571,7 +4744,8 @@ def run_pipeline(prompt: str, run_id: str, *,
         "front_reference": str(front_ref),
         "raw_mesh": str(mesh_path),
         "rescued_mesh": rescue["final_mesh"],
-        "final_mesh": str(final_delivery_mesh),
+        "final_mesh": str(final_mesh_path if not rigged_mesh else rigged_mesh),
+        "livraison": (livraison.get("livraison") if isinstance(livraison, dict) else None),
         "initial_score": rescue["initial_score"],
         "final_score": rescue["final_score"],
         "score_delta": rescue["score_delta"],
@@ -3792,15 +4966,69 @@ def main() -> int:
     else:
         mv = None  # auto
 
-    result = run_pipeline(
-        args.prompt, args.run_id,
-        output_dir=Path(args.output_dir),
-        multi_view=mv, force=args.force,
-        motion_prompt=args.motion_prompt,
-        images=args.images or None,
-        purpose=args.purpose,
-        subject_kind_hint=args.subject_kind,
-    )
+    # « SINON IL REFAIT » (doctrine 25/07): tant que la porte de perfection
+    # refuse, on PURGE le run et on regenere (les tirages TRELLIS/FLUX varient
+    # d'un run a l'autre — verifie: bloc, bon Pikachu, erosion selon le
+    # tirage). Bornes genereuses, journalisees; le temps n'est pas un critere.
+    _essais_max = int(os.environ.get("AURORA_PERFECTION_ESSAIS", "4"))
+    # L'orchestrateur de scene decoupe la demande et relance le pipeline avec
+    # un SOUS-prompt (mesure: "a wooden water mill", motion=''): le routeur de
+    # domaine recevait alors un texte tronque -> 3 acteurs au lieu de 7, la
+    # farine/lanterne/banniere disparaissaient. On memorise la demande ENTIERE.
+    if args.motion_prompt:
+        os.environ.setdefault("AURORA_MOTION_ORIGINAL", args.motion_prompt)
+    if args.prompt:
+        os.environ.setdefault("AURORA_PROMPT_ORIGINAL", args.prompt)
+
+    for _essai in range(1, _essais_max + 1):
+        result = run_pipeline(
+            args.prompt, args.run_id,
+            output_dir=Path(args.output_dir),
+            multi_view=mv, force=args.force,
+            motion_prompt=args.motion_prompt,
+            images=args.images or None,
+            purpose=args.purpose,
+            subject_kind_hint=args.subject_kind,
+        )
+        _err = str(result.get("error") or "")
+        _refus = (not result.get("ok")) and (
+            _err.startswith("perfection_gate:")
+            or "final acceptance rejected" in _err)
+        # le score du refus voyage dans _err pour l'archivage
+        if _refus and "score" not in _err:
+            for _e2 in (result.get("audit_trail") or [])[::-1]:
+                if _e2.get("stage") == "perfection_gate":
+                    _err += " score %s" % _e2.get("score")
+                    break
+        if not _refus or _essai >= _essais_max:
+            break
+        print("PROGRESS:perfection:REFUS essai %d/%d — purge et regeneration "
+              "(%s)" % (_essai, _essais_max, _err[:120]), flush=True)
+        try:
+            import re as _re
+            import shutil as _shu
+            _rd = Path(args.output_dir)
+            if _rd.is_dir() and args.run_id in _rd.name:
+                # ARCHIVER l'essai refuse avant purge: les tirages varient
+                # enormement — jeter le meilleur d'hier pour un pire demain a
+                # deja coute un excellent mesh. Le score est dans le nom.
+                _sc = "xx"
+                _m = _re.search(r"score (\d+)", _err)
+                if _m:
+                    _sc = _m.group(1)
+                _arch = _rd.parent / ("essais_" + args.run_id)
+                _arch.mkdir(parents=True, exist_ok=True)
+                for _cand in _rd.glob("*_matte.glb"):
+                    _shu.copyfile(_cand, _arch / ("essai%d_score%s.glb"
+                                                  % (_essai, _sc)))
+                # la REFERENCE part avec l'essai: sans elle, aucun juge ne
+                # peut re-evaluer l'archive (paye: archive muette).
+                for _cand in _rd.glob("*_reference.png"):
+                    _shu.copyfile(_cand, _arch / "reference.png")
+                _shu.rmtree(_rd, ignore_errors=True)
+                _rd.mkdir(parents=True, exist_ok=True)
+        except Exception as _pe:  # noqa: BLE001
+            print("PROGRESS:perfection:purge impossible (%r)" % (_pe,), flush=True)
     if args.pretty:
         sys.stdout.write(render_pretty(result))
     else:

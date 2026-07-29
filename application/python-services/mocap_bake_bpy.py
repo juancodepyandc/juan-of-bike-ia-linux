@@ -377,7 +377,8 @@ def sanitize_bvh_root(src: str, dst: str, lock_yaw: bool = True) -> None:
         f.write("\n".join(out))
 
 
-def _load_and_retarget(rig, bvh_path: str, use_nla: bool = False) -> None:
+def _load_and_retarget(rig, bvh_path: str, use_nla: bool = False,
+                       target_rig: str = "") -> None:
     """Wrap mcp.load_and_retarget with the required scene/context setup."""
     from retarget_bvh.bsettings import mcpRna  # type: ignore
 
@@ -390,10 +391,28 @@ def _load_and_retarget(rig, bvh_path: str, use_nla: bool = False) -> None:
     _to_object_mode()
     _select_rig(rig)
 
+    kwargs = {"filepath": bvh_path, "useNLA": use_nla}
+    if target_rig:
+        # Squelette cible CONNU de l'addon (known_rigs/*.json): la devinette
+        # automatique se perd sur les rigs Mixamo sans doigts (MIA) — «Top of
+        # spine LeftToeBase has 0 children» — alors que la table Mixamo mappe
+        # exactement ces os. useAutoTarget=False sinon la devinette re-ecrase
+        # le choix.
+        try:
+            from retarget_bvh.bsettings import BD as _BD  # type: ignore
+            _BD.ensureTargetInited(scn)
+            mcpRna(scn).TargetRig = target_rig
+            kwargs["useAutoTarget"] = False
+            print("MOCAP_INFO: cible forcee '%s' (auto-detect coupe)" % target_rig)
+        except Exception as _te:  # noqa: BLE001
+            print("MOCAP_INFO: cible forcee '%s' indisponible (%r) -> auto"
+                  % (target_rig, _te))
+            mcpRna(scn).TargetRig = "Automatic"
+
     try:
         # retarget_bvh raises MocapMessage("...retargeted") as a soft signal on
         # success in older builds; wrap so the caller doesn't crash on it.
-        bpy.ops.mcp.load_and_retarget(filepath=bvh_path, useNLA=use_nla)
+        bpy.ops.mcp.load_and_retarget(**kwargs)
     except RuntimeError as exc:
         # Diffeomorphic uses raise MocapMessage on success in some versions —
         # the message contains "retargeted" or "BVH file(s) retargeted".
@@ -402,6 +421,17 @@ def _load_and_retarget(rig, bvh_path: str, use_nla: bool = False) -> None:
             pass
         else:
             raise
+    # Piege verifie: sur echec d'auto-detection l'addon imprime «*** BVH
+    # Retargeter Error ***» et TERMINE sans lever — l'echec passait pour un
+    # succes et on cuisait 1 frame de pose de repos (statue livree). Le
+    # retarget doit avoir depose une action couvrant plusieurs frames.
+    act = rig.animation_data.action if rig.animation_data else None
+    xs = [kp.co.x for fc in (act.fcurves if act else []) for kp in fc.keyframe_points]
+    span = (max(xs) - min(xs)) if xs else 0.0
+    if span < 2.0:
+        raise RuntimeError(
+            "retarget sans effet (action=%s, portee=%.1f frame(s)) — echec "
+            "silencieux de l'addon" % (act.name if act else "aucune", span))
 
 
 def _amplify_arm_swing(rig, factor: float = 1.4) -> int:
@@ -695,7 +725,8 @@ def run_mocap_bake(
         except Exception as exc:
             report["steps"]["sanitize_bvh_error"] = str(exc)
 
-    _load_and_retarget(rig, bvh_path, use_nla=False)
+    _load_and_retarget(rig, bvh_path, use_nla=False,
+                       target_rig="Mixamo" if _is_mixamo else "")
     report["steps"]["retarget"] = "ok"
 
     # Mixamo spine clamp (fixes waist shatter when a MoMask BVH is retargeted

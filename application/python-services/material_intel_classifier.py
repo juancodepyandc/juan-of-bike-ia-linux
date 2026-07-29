@@ -39,6 +39,15 @@ unless the prompt clearly demands otherwise):
                     neon, glowing panels)
 - skin           -> specular 0.028, roughness 0.5, metallic 0.0,
                     roughness_zonal {"forehead":0.35,"nose":0.3,"cheeks":0.55,"body":0.65}
+- fibrous        -> roughness 0.92, sheen 0.85, sheen_roughness 0.35,
+                    specular 0.25, metallic 0.0 (ANY hairy / furry / downy /
+                    plush surface: animal fur, pelt, mane, wool, plush toy
+                    fabric, feathers-as-down, carpet pile). Choose this
+                    whenever the surface is made of fibres, whether the
+                    subject is naturally furry or explicitly asked in a
+                    plush/soft style.
+- woven          -> roughness 0.85, sheen 0.45, sheen_roughness 0.5,
+                    metallic 0.0 (flat woven textile: canvas, denim, felt)
 - stone          -> roughness 0.9, metallic 0.0
 - default        -> roughness 0.6, metallic 0.0 (anything else: wood, plastic,
                     painted matte surfaces)
@@ -65,12 +74,26 @@ Rules:
 - Use ONLY the material classes listed above; map synonyms onto them
   (varnish/lacquer -> car_paint, cloth/textile -> fabric, rock -> stone).
 - Emit only channels that belong to the chosen class.
+- FIBRES FIRST: if the described subject's outer surface is made of fibres —
+  any creature covered in fur, hair, wool, down or a pelt, and anything asked
+  for as a plush / soft toy / stuffed version — its body zone MUST use
+  material_class "fibrous" (never "default", never "skin"). This is a rule
+  about the SURFACE MATERIAL, applied whatever the subject is.
 - Never invent zones the prompt does not imply; if nothing matches, emit a
   single zone with material_class "default".
 - confidence 0.95+ when materials are stated explicitly, 0.7-0.94 when
   inferred from the object identity, below 0.7 when guessing."""
 
 CLASS_CHANNELS = {
+    # FIBREUX (27/07): tout sujet poilu/duveteux tombait sur "default"
+    # (roughness 0.6) — un loup, une peluche et une boule de plastique
+    # recevaient le MEME materiau, d'ou l'aspect peint. La fibre ne peut pas
+    # etre geometrique (Nyquist): elle vit ici, dans le materiau.
+    # sheenRoughness est DECOUPLE de la rugosite de base (cf glb_material_writer).
+    "fibrous": {"roughness": 0.92, "metallic": 0.0, "sheen": 0.85,
+                "sheenRoughness": 0.35, "specular": 0.25},
+    "woven": {"roughness": 0.85, "metallic": 0.0, "sheen": 0.45,
+              "sheenRoughness": 0.5, "specular": 0.3},
     "glass": {"transmission": 1.0, "ior": 1.5, "roughness": 0.05, "metallic": 0.0},
     "water": {"transmission": 1.0, "ior": 1.33, "roughness": 0.02, "metallic": 0.0,
               "attenuation_color": "#3fbfae", "attenuation_distance": 0.8},
@@ -131,6 +154,14 @@ CANONICAL_CHANNEL_MAP = {
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 ZONE_PATTERNS = [
+    # FIBREUX en tete (27/07): mots de MATIERE uniquement (pelage, duvet,
+    # peluche, laine...), jamais de nom de sujet. Sans lui, tout animal a
+    # poil tombait sur "default" = meme materiau qu'une boule de plastique.
+    ("fibrous", r"\b(fourrures?|fur(?:ry|s)?|poils?|pelages?|pelts?|hairy|"
+                r"velus?|duvets?|duveteu(?:x|se)s?|downy|fluffy|peluches?|"
+                r"plush(?:ie|ies)?|doudous?|toutou|laines?|woolly?|wool|"
+                r"mohair|angora|moquettes?|carpet|tapis|feutres?|"
+                r"crini[eè]res?|manes?|fourr[eé]e?s?)\b"),
     ("water", r"\b(eau|water|aquatique|fontaine|fountain|oc[eé]an|ocean|mer|sea|lac|lake|rivi[eè]re|river|cascade|waterfall|piscine|pool|liquide|liquid|vague|waves?|aquarium)\b"),
     ("glass", r"\b(verre|vitre|vitrail|vitr[eé]e?s?|glass|crystal|cristal|windows?|fen[eê]tres?|bouteilles?|bottles?|miroirs?|mirrors?|lentilles?|lens)\b"),
     ("led", r"\b(leds?|rgb|argb|strimer|rog|strix|aura\s+sync|n[eé]ons?|neon|emissive|glow(?:ing)?|lumineu(?:x|se)s?|backlight|r[eé]tro[- ]?[eé]clairage)\b"),

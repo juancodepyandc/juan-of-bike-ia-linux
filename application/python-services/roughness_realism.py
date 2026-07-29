@@ -14,6 +14,7 @@ Emits: ROUGH_REALISM_OK glb=<OUT> lifted=<n>
 """
 from __future__ import annotations
 
+import os
 import sys
 
 import bpy
@@ -23,7 +24,12 @@ if len(argv) < 2:
     print("ROUGH_REALISM_FAIL: usage IN.glb OUT.glb [floor]", flush=True)
     sys.exit(2)
 IN_GLB, OUT_GLB = argv[0], argv[1]
-FLOOR = float(argv[2]) if len(argv) > 2 else 0.55
+# 27/07: 0.55 global ecrasait le CONTRASTE de matiere (fourrure 0.75,
+# coton 0.85, soie 0.52, peau 0.5, plastique 0.4 finissaient identiques
+# -> tout parait peint et plat). Filet bas seul; la valeur juste vient
+# du manifeste matiere, par zone.
+FLOOR = float(argv[2]) if len(argv) > 2 else float(
+    os.environ.get("AURORA_ROUGHNESS_FLOOR", "0.30"))
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=IN_GLB)
@@ -96,6 +102,23 @@ for mat in bpy.data.materials:
             lifted += 1
 
 bpy.ops.object.select_all(action="SELECT")
+# OMBRAGE LISSE AVANT EXPORT (27/07, mesure): sans normales lisses,
+# l'exporteur glTF ecrit UNE NORMALE PAR FACE et DEDOUBLE tous les sommets
+# (mesure: 1,25 M -> 2,95 M sommets pour 985 k faces, ratio 2.99 = chaque
+# triangle isole -> 982 835 ilots). Resultat livre: surface facettee, rendu
+# sombre et dur, fichier 3x plus lourd. C'est LE defaut que l'utilisateur
+# voyait sur la geometrie pure. L'angle preserve les vraies aretes dures.
+for _o in bpy.context.scene.objects:
+    if _o.type != "MESH":
+        continue
+    bpy.context.view_layer.objects.active = _o
+    try:
+        bpy.ops.object.shade_auto_smooth(angle=0.523599)   # 30 deg
+    except Exception:
+        try:
+            bpy.ops.object.shade_smooth()
+        except Exception:
+            pass
 bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB", export_yup=True,
                           export_animations=True, export_morph=True, export_extras=True)
 print("ROUGH_REALISM_OK glb=%s lifted=%d floor=%.2f" % (OUT_GLB, lifted, FLOOR), flush=True)

@@ -967,13 +967,23 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         if portrait:
             wan_budget_w, wan_budget_h = wan_budget_h, wan_budget_w
             ltx_budget_w, ltx_budget_h = ltx_budget_h, ltx_budget_w
-            wan_cap_w, wan_cap_h = 720, 1280
+            wan_cap_w, wan_cap_h = 704, 1280
             ltx_cap_w, ltx_cap_h = 1088, 1920
         else:
-            wan_cap_w, wan_cap_h = 1280, 720
+            wan_cap_w, wan_cap_h = 1280, 704
             ltx_cap_w, ltx_cap_h = 1920, 1088
-        wan_w = min(width, wan_budget_w, wan_cap_w)
-        wan_h = min(height, wan_budget_h, wan_cap_h)
+        # v93 — WAN DIFFUSE A SA RESOLUTION NATIVE, PAS A UN BUDGET PAR DUREE.
+        # `_adaptive_resolution_budget` reduisait la definition quand le plan
+        # s'allongeait : un plan de 6 s tombait a 832x480 alors que le modele est
+        # entraine en 1280x704. Mesure sur un film reel : 0,51 Mpix generes pour
+        # 0,90 natifs, soit 43 % de pixels en moins, rattrapes ensuite par un
+        # lanczos qui fabrique une nettete factice.
+        # Un modele de diffusion rend mal HORS de sa distribution d'entrainement,
+        # au-dessus comme en dessous. La duree ne doit donc pas toucher a la
+        # definition : si la VRAM manque, c'est l'echelle de repli Wan (repli1,
+        # repli2) qui traite le probleme, en le DISANT.
+        wan_w = min(width, wan_cap_w)
+        wan_h = min(height, wan_cap_h)
         ltx_w = min(width, ltx_budget_w, ltx_cap_w)
         ltx_h = min(height, ltx_budget_h, ltx_cap_h)
         wan_steps = 60 if quality_mode == "premium" else 50  # bumped from 40/50
@@ -1041,11 +1051,12 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             {**_wan_step_down(0.82, 6), "id": f"wan5b-{tag}-repli1"},
             {**_wan_step_down(0.66, 12), "id": f"wan5b-{tag}-repli2"},
         ]
-        if allow_mix:
-            chain += [
-                {**base_ltx, "id": f"ltx-{tag}-safety"},
-                {**base_ltx_safe, "id": f"ltx-{tag}-lowmem"},
-            ]
+        # v93 — PLUS AUCUN REPLI LTX, SOUS AUCUNE CONDITION.
+        # Mesure sur un film reel : 9 segments sur 16 sont sortis de LTX au lieu
+        # de Wan, parfois DEUX moteurs dans le meme plan. Un cadre de velo qui
+        # change de forme entre deux segments s'explique d'abord par la, pas par
+        # le modele. Un plan = un moteur : si Wan echoue a toutes ses
+        # resolutions, c'est une erreur dure, pas un rendu heterogene.
         return chain
 
     if mode == "i2v":
@@ -1100,7 +1111,7 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
                 "num_inference_steps": 22,
             })
 
-        # Always add a conservative Wan fallback then the LTX safety net
+        # Repli final : toujours Wan, jamais un autre moteur.
         strategies.append({
             "id": "i2v-cpu-offload-min",
             "family": "wan",
@@ -1109,16 +1120,6 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
             "height": min(height, 320),
             "num_frames": num_frames,
             "num_inference_steps": 22,
-        })
-        strategies.append({
-            "id": "ltx-i2v-fallback",
-            "family": "ltx",
-            "ltx_model": ltx_model or LTX_VIDEO_MODEL,
-            "offload": "ltx_group",
-            "width": min(width, 576),
-            "height": min(height, 576),
-            "num_frames": num_frames,
-            "num_inference_steps": 30,
         })
         return strategies
 
@@ -1176,16 +1177,6 @@ def build_strategies(mode, width, height, num_frames, vram_gb=0.0, ltx_model=Non
         "height": min(height, 384),
         "num_frames": num_frames,
         "num_inference_steps": 26,
-    })
-    strategies.append({
-        "id": "ltx-t2v-fallback",
-        "family": "ltx",
-        "ltx_model": ltx_model or LTX_VIDEO_MODEL,
-        "offload": "ltx_group",
-        "width": min(width, 768),
-        "height": min(height, 512),
-        "num_frames": num_frames,
-        "num_inference_steps": 36,
     })
     return strategies
 
@@ -1466,6 +1457,19 @@ def load_video_pipeline(mode, model_id, strategy):
         return pipe
 
     if strategy.get("family") == "ltx":
+        # v93 — LTX EST DESINSTALLE, ET CE CHEMIN NE DOIT PLUS JAMAIS S'OUVRIR.
+        # Les poids ont ete purges (42 Go). Ce chargeur appelle
+        # `from_pretrained("Lightricks/LTX-Video")` : le laisser accessible
+        # signifie qu'un seul echec de Wan retelecharge 42 Go en silence et
+        # remet deux moteurs dans le meme film. C'est exactement ce qui a ete
+        # mesure (9 segments sur 16 rendus par LTX au lieu de Wan).
+        raise RuntimeError(
+            "moteur LTX retire du produit : un plan = un moteur. "
+            "Si Wan echoue a toutes ses resolutions, c'est une erreur a "
+            "corriger, pas un rendu heterogene a fabriquer."
+        )
+
+    if False:  # bloc LTX conserve pour reference, jamais atteint
         _ltx_model = strategy.get("ltx_model", LTX_VIDEO_MODEL)
         transformer = AutoModel.from_pretrained(
             _ltx_model,
@@ -1856,7 +1860,12 @@ def run_worker(worker_config):
     # which is why motion looked choppy and limbs "froze". Matching the
     # model's native fps gives smooth, correctly-timed playback.
     family = strategy.get("family", "")
-    export_fps = 24 if family in {"ltx", "wan", "wan_gguf"} else 16
+    # v93 — LA CADENCE SUIT LE MODELE, ELLE N'EST PLUS CODEE EN DUR.
+    # Wan 2.2 TI2V-5B est entraine a 24 im/s ; les A14B le sont a 16. Livrer un
+    # A14B a 24 im/s l'accelererait de 50 % — le meme bug d'etirement que celui
+    # deja corrige dans l'autre sens. La cadence se lit donc sur la strategie,
+    # avec 24 comme defaut pour la famille 5B seule.
+    export_fps = int(strategy.get("fps") or (24 if family in {"wan", "wan_gguf"} else 16))
     try:
         export_to_video(video, output_path, fps=export_fps)
     except TypeError:

@@ -84,19 +84,35 @@ verts = verts.reshape(-1, 3)
 tmp_in = tempfile.mktemp(suffix=".npz")
 tmp_out = tempfile.mktemp(suffix=".npz")
 np.savez(tmp_in, v=verts, f=faces)
+# PADDING EXPLICITE (27/07): xatlas par defaut = padding 0 -> coutures
+# garanties des qu'on monte en resolution (le filtrage bilineaire lit le
+# voisin). On demande une marge et une resolution d'atlas coherente.
+_res_atlas = int(_os.environ.get("AURORA_REUV_RESOLUTION", "4096"))
+_pad = int(_os.environ.get("AURORA_REUV_PADDING", "8"))
+# bruteForce = raffinement de PACKING: +30 min sur 1 M de faces pour un
+# gain de densite marginal (timeout mesure). Le padding fait le travail.
 code = ("import numpy as np, xatlas; d = np.load(%r); "
-        "vm, idx, uv = xatlas.parametrize(d['v'], d['f'].astype(np.uint32)); "
-        "np.savez(%r, idx=idx, uv=uv)") % (tmp_in, tmp_out)
-r = sp.run([venv_py, "-c", code], capture_output=True, text=True, timeout=1800)
+        "atlas = xatlas.Atlas(); "
+        "atlas.add_mesh(d['v'], d['f'].astype(np.uint32)); "
+        "po = xatlas.PackOptions(); po.padding = %d; po.resolution = %d; "
+        
+        "atlas.generate(pack_options=po); "
+        "vm, idx, uv = atlas[0]; "
+        "np.savez(%r, idx=idx, uv=uv)") % (tmp_in, _pad, _res_atlas, tmp_out)
+r = sp.run([venv_py, "-c", code], capture_output=True, text=True, timeout=int(__import__('os').environ.get('AURORA_REUV_TIMEOUT', '5400')))
 if r.returncode != 0 or not _os.path.isfile(tmp_out):
     print("REUV_FAIL: xatlas: %s" % (r.stderr or "")[-200:])
     sys.exit(5)
 d = np.load(tmp_out)
 idx = d["idx"].astype(np.int64)
 uv_new = d["uv"].astype(np.float32)
-if uv_new.max() > 1.001 or uv_new.min() < -0.001:
+# NE PAS RENORMALISER: xatlas rend deja des UV normalises AVEC le padding
+# demande. L'etirement sur [0,1] ecrasait exactement ce padding -> coutures.
+# On se contente d'un garde-fou si la sortie deborde vraiment.
+if uv_new.max() > 1.05 or uv_new.min() < -0.05:
     rng = uv_new.max(axis=0) - uv_new.min(axis=0)
     uv_new = (uv_new - uv_new.min(axis=0)) / np.maximum(rng, 1e-8)
+    uv_new = 0.002 + uv_new * 0.996
 loop_uvs = uv_new[idx.reshape(-1)]
 new_uv = me.uv_layers.new(name="AuroraUV")
 new_uv.data.foreach_set("uv", loop_uvs.reshape(-1).astype(np.float32))

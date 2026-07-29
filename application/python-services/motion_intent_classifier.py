@@ -28,12 +28,12 @@ FALLBACK_MODEL = "qwen3:14b"
 
 # Keep this verbatim with the TS service. If you change one, update the other.
 SYSTEM_PROMPT = """You are a 3D animation intent classifier for a real-time Blender pipeline.
-Given a description of an object or subject, you decide which ONE of eight
+Given a description of an object or subject, you decide which ONE of thirty-nine
 motion primitives the system should bake. You DO NOT have a brand list — you
 reason from first principles about what the object actually is and what it
 does in real life.
 
-Eight categories (pick exactly one):
+Thirty-nine categories (pick exactly one):
 
 1. led_emission — the subject is an LED-bearing surface or cable whose
    "motion" is purely a colour pattern on its emissive material. No rig.
@@ -68,11 +68,110 @@ Eight categories (pick exactly one):
    smoke, steam, vapour, fog, mist, incense trail, chimney plume. The
    system builds crossed billboard cards with billowing morph targets.
 
+9. cloth_drape — the subject is a flexible sheet that hangs, drapes or waves:
+   curtain, flag, banner, cape, veil, tablecloth, sail, tarpaulin, dress or
+   robe hanging free, hanging towel. Simulated as real cloth under gravity
+   (and wind), then baked as a mesh sequence.
+
+10. rigid_bodies — the subject is one or more SOLID pieces in free motion
+    under gravity: falling object, toppling stack, collapsing structure,
+    scattering debris, rolling rocks, dominoes, shattering. Solids never
+    deform — they fall, hit, bounce and settle.
+
+11. soft_body — the subject is a squishy deformable volume that wobbles or
+    squashes without a skeleton: jelly, slime, dough, balloon, cushion,
+    mattress, plush toy, fat/flesh jiggle, rubber ball.
+
+12. hair_fur — the motion belongs to fine strands rather than to the body:
+    hair, fur, mane, beard, feathers, tassels, wheat field or grass swaying.
+
+13. particles — the motion belongs to a CLOUD of small independent elements:
+    sparks, embers, rain, snowfall, dust, floating debris, bubbles, confetti.
+
+14. fracture_debris — the subject BREAKS APART: shattering glass, cracking
+    concrete, splintering wood, an exploding crate, a collapsing wall.
+
+15. ocean_surface — a wide body of water with travelling waves: sea, ocean,
+    lake surface, swell. Different from fluid_flow, which is a jet or a pour.
+
+16. orbital_motion — bodies revolving at astronomical scale: planets,
+    satellites, moons, rings, a star system.
+
+17. articulated_rig — SEVERAL solid parts LINKED by joints that drive each
+    other: excavator arm, robot arm, suspension, crane, chain of segments,
+    vehicle. Different from mechanical_simple, which has a single joint.
+
+18. rope_net — a rope, cable, chain, hammock or net hanging and swinging.
+    Cloth-like, but taut and barely bending.
+
+19. growth — something that GROWS or unfurls over time: plant, tree, vine,
+    crystal, coral, mould, expanding foam.
+
+20. chemistry — the MATTER changes without the shape moving: rust spreading,
+    oxidation, tarnishing, embers lighting up, freezing over, burning.
+
+21. optics — the subject IS a light phenomenon in glass, water or crystal:
+    refraction, caustics, dispersion (rainbow), absorption, prism.
+
+22. smoke_fire — a REAL volumetric simulation of smoke, steam, fire or an
+    explosion (as opposed to gas_volume, which fakes it with flat cards).
+
+23. granular — a MATERIAL made of many grains that pours and piles: sand,
+    snow, soil, gravel, powder, rice, coffee beans.
+
+24. thermal_melt — the subject MELTS into a puddle, or a puddle solidifies:
+    melting ice/wax/metal/chocolate, freezing, lava cooling.
+
+25. plasma — glowing electrical energy: plasma, lightning arc, energy field,
+    electric aura, magic bolt, lightning bolt.
+
+26. vortex_tornado — air or debris spinning in a rising funnel: tornado,
+    whirlwind, vortex, cyclone, dust devil, whirlpool.
+
+27. buoyancy_float — the subject FLOATS and bobs on water: boat, buoy, raft,
+    duck on a pond, floating barrel, drifting on the sea.
+
+28. swarm_flock — MANY small living agents flying/swimming together as one
+    cloud: bee swarm, bird flock, fish school, butterfly cloud, bats.
+
+29. wind_sway — vegetation or a slender object swaying in the wind, base
+    anchored: tree, grass, wheat field, leaves trembling, lamppost in a storm.
+
+30. periodic_locomotion — NON-humanoid rhythmic locomotion: bird or butterfly
+    flapping wings, fish swimming (travelling body wave), snake slithering.
+
+31. levitation — hovering in the air: drone, ghost, magic crystal, UFO,
+    floating island. Gentle vertical bob + slow spin.
+
+32. oscillation — pendulum, clock balance, spring bouncing, spinning top with
+    precession. Damped analytic swing, pivot at the top.
+
+33. shockwave — an impact ring / shockwave expanding from the subject.
+
+34. muscle_tissue — flesh/muscle/fat jiggle ON a body (anchored to the bone),
+    or a volumetric jelly splat. Uses a tetrahedral Vellum solve — different
+    from soft_body (whole-object wobble, surface springs only).
+
+35. dissolve_teleport — the subject disintegrates into dust / teleports away
+    or materializes: "il se desintegre", "effet Thanos", "apparition magique".
+
+36. trail_wake — the subject moves and leaves a trail/wake behind it: boat
+    wake, light trail, condensation trail.
+
+37. ground_traces — footprints or tracks appearing in the ground as the
+    subject passes: "des pas dans la neige", "traces de pneus dans la boue".
+
+38. accumulation — a layer progressively covers the subject: snow settling,
+    dust or ash build-up.
+
+39. morphing — the subject transforms into another shape: "le vase devient
+    une sphere", "il se transforme en cube".
+
 Output ONLY a JSON object, no markdown, no commentary. Schema:
 
 {
   "schema": "aurora.motion-intent.v1",
-  "category": "<one of the 8 above>",
+  "category": "<one of the 39 above>",
   "confidence": <0.0-1.0 — how sure you are>,
   "rationale": "<one sentence explaining your reasoning>",
   "color_anim":     { "pattern": "chase|rainbow|breathing|pulse|static_color",
@@ -93,11 +192,64 @@ Output ONLY a JSON object, no markdown, no commentary. Schema:
                       "wave_amplitude": <0.0-1.0>, "loop_s": <number>,
                       "droplets": <bool> },
   "gas_anim":       { "kind": "smoke|steam|fog", "rise_speed": <number>,
-                      "billow_amplitude": <number> }
+                      "billow_amplitude": <number> },
+  "cloth_anim":     { "pinning": "top_edge|corners|top_corners|none|auto",
+                      "stiffness": <0.0-1.0>, "wind": <0.0-1.0>,
+                      "loop_s": <number> },
+  "rigid_anim":     { "event": "fall|topple|collapse|scatter|roll",
+                      "drop_height_m": <number>, "pieces": <int?>,
+                      "bounciness": <0.0-1.0>, "duration_s": <number> },
+  "soft_anim":      { "trigger": "drop|squash|jiggle", "softness": <0.0-1.0>,
+                      "bounce": <0.0-1.0>, "duration_s": <number> },
+  "hair_anim":      { "kind": "hair|fur|mane|feathers|grass",
+                      "length_m": <number>, "wind": <0.0-1.0>,
+                      "loop_s": <number> },
+  "particle_anim":  { "kind": "sparks|debris|rain|snow|dust",
+                      "count": <int>, "spread": <0.0-3.0>,
+                      "duration_s": <number> },
+  "fracture_anim":  { "pieces": <int 2-40>, "bounciness": <0.0-1.0>,
+                      "duration_s": <number> },
+  "ocean_anim":     { "wave_scale": <number>, "choppiness": <0.0-4.0>,
+                      "wind_speed": <number>, "loop_s": <number> },
+  "orbital_anim":   { "bodies": <int 1-12>, "period_s": <number>,
+                      "eccentricity": <0.0-0.8>, "tilt_deg": <number> },
+  "articulated_anim": { "segments": <int 2-12>, "joint": "hinge|point",
+                        "duration_s": <number> },
+  "rope_anim":      { "slack": <0.0-1.0>, "wind": <0.0-1.0>,
+                      "loop_s": <number> },
+  "growth_anim":    { "start_ratio": <0.0-0.9>, "sway": <0.0-1.0>,
+                      "duration_s": <number> },
+  "chemistry_anim": { "reaction": "corrosion|oxydation|combustion|gel",
+                      "duration_s": <number> },
+  "optics_anim":    { "ior": <number 1.0-2.5>, "dispersion": <0.0-1.0>,
+                      "absorption": <0.0-1.0>, "loop_s": <number> },
+  "gas_anim_real":  { "kind": "smoke|steam|fire|explosion",
+                      "resolution": <int 24-96>, "duration_s": <number> },
+  "granular_anim":  { "grains": <int 20-400>, "duration_s": <number> },
+  "thermal_anim":   { "sens": "fonte|solidification", "duration_s": <number> },
+  "plasma_anim":    { "duration_s": <number> },
+  "vortex_anim":    { "count": <int 30-300>, "duration_s": <number> },
+  "buoyancy_anim":  { "swell": <0.0-1.0>, "loop_s": <number> },
+  "swarm_anim":     { "count": <int 20-150>, "duration_s": <number> },
+  "wind_anim":      { "force": <0.0-1.0>, "loop_s": <number> },
+  "locomotion_anim": { "kind": "wings|swim|slither", "beats": <number>,
+                       "loop_s": <number> },
+  "levitation_anim": { "hover": <0.0-1.0>, "spin_turns": <number>,
+                       "loop_s": <number> },
+  "oscillation_anim": { "kind": "pendulum|spring|top", "angle_deg": <number>,
+                        "damping": <0.0-1.0>, "cycles": <number>,
+                        "duration_s": <number> },
+  "shockwave_anim": { "reach": <number>, "duration_s": <number> },
+  "muscle_anim":    { "mode": "jiggle|splat", "duration_s": <number> },
+  "dissolve_anim":  { "sens": "disparition|apparition", "duration_s": <number> },
+  "trail_anim":     { "travel_m": <number>, "duration_s": <number> },
+  "traces_anim":    { "depth": <0.0-1.0>, "duration_s": <number> },
+  "accumulation_anim": { "thickness": <0.0-1.0>, "duration_s": <number> },
+  "morph_anim":     { "target": "sphere|cube", "duration_s": <number> }
 }
 
 Include ONLY the *_anim block matching the category you chose. Omit the
-other five. For rigid_static, include none of the six blocks.
+others. For rigid_static, include none of the blocks.
 
 Reasoning checklist before answering:
 - Is the subject alive or articulated as a creature? → creature_organic.
@@ -107,7 +259,45 @@ Reasoning checklist before answering:
 - Does it have a single-DoF moving part (hinge/button/slider)? → mechanical_simple.
 - Is it liquid water in motion (fountain, waterfall, pour, ripple)? → fluid_flow.
 - Is it smoke, steam, vapour, fog or mist? → gas_volume.
+- Is it a hanging/waving sheet of fabric? → cloth_drape.
+- Do solid pieces fall, topple, collapse, scatter or shatter? → rigid_bodies.
+- Is it a squishy volume that wobbles without a skeleton? → soft_body.
+- Does the motion belong to strands (hair, fur, feathers, grass)? → hair_fur.
+- Is it a cloud of small independent elements (sparks, rain, snow, dust)? → particles.
+- Does the subject break apart into pieces? → fracture_debris.
+- Is it a wide water surface with travelling waves? → ocean_surface.
+- Do bodies revolve at astronomical scale? → orbital_motion.
+- Are several solid parts LINKED by joints driving each other? → articulated_rig.
+- Is it a rope, cable, chain or net hanging? → rope_net.
+- Does something grow or unfurl over time? → growth.
+- Does the MATTER change (rust, burn, freeze) without the shape moving? → chemistry.
+- Is it a material of many grains (sand, snow, gravel) pouring/piling? → granular.
+- Does the subject melt into a puddle or a puddle solidify? → thermal_melt.
+- Is it glowing electrical energy (plasma, lightning, energy field)? → plasma.
+- Is it air/debris spinning in a rising funnel (tornado, vortex)? → vortex_tornado.
+- Does the subject float and bob on water (boat, buoy, raft)? → buoyancy_float.
+- Are MANY small creatures moving as one cloud (swarm, flock, school)? → swarm_flock.
+- Is it vegetation swaying in the wind, base anchored? → wind_sway.
+- Is it wingbeat / fish swim / snake slither (rhythmic, non-humanoid)? → periodic_locomotion.
+- Does it hover in the air (drone, ghost, magic object)? → levitation.
+- Is it a pendulum, spring or spinning top? → oscillation.
+- Is it an expanding impact ring? → shockwave.
+- Is it flesh/muscle jiggle on a body, or a volumetric jelly? → muscle_tissue.
+- Does the subject disintegrate/teleport/materialize? → dissolve_teleport.
+- Does it leave a trail or wake behind while moving? → trail_wake.
+- Do footprints/tracks appear in the ground as it passes? → ground_traces.
+- Does a layer (snow, dust) progressively cover it? → accumulation.
+- Does it transform into another shape? → morphing.
 - Otherwise (and especially if it's plain inert hardware): rigid_static.
+
+Boundary rules that matter (these are the ones people get wrong):
+- A CREATURE whose hair or cape also moves is still creature_organic: the body
+  drives the shot. Choose cloth_drape / hair_fur only when the fabric or the
+  strands ARE the subject.
+- Something that FALLS but does not deform is rigid_bodies, never soft_body.
+- Something that deforms but keeps its volume and has no bones is soft_body,
+  never creature_organic.
+- Fabric already worn and moving WITH a walking body is creature_organic.
 
 When you choose oled_screen, ALSO choose a content_type:
   - text_scroll    if the screen scrolls a marquee/string
@@ -133,6 +323,29 @@ When you choose gas_volume, ALSO choose a kind:
   - fog    for ambient mist/fog/haze hugging the ground
   rise_speed is in metres per second (0.1 slow fog … 1.0 fast steam),
   billow_amplitude is 0.0-1.0 (how much the volume swells as it rises).
+When you choose cloth_drape, ALSO choose a pinning:
+  - top_edge     for curtains, banners and tapestries hung along a rail
+  - top_corners  for a flag or a sail held at two points
+  - corners      for a cloth held at its four corners
+  - none         for fabric simply dropped onto the ground
+  - auto         when unsure (the system pins the highest edge of the mesh)
+  stiffness 0.0 = silk … 1.0 = leather; wind 0.0 = indoors … 1.0 = gale.
+When you choose rigid_bodies, ALSO choose an event:
+  - fall     a single object dropped onto the ground
+  - topple   a standing object tipping over
+  - collapse a stack or structure caving in
+  - scatter  many pieces bursting apart
+  - roll     rounded pieces rolling down
+  drop_height_m is the starting height in metres (0.2 … 5), bounciness
+  0.0 = clay … 1.0 = rubber ball. pieces only for collapse/scatter.
+When you choose soft_body, ALSO choose a trigger:
+  - drop   the body falls and squashes on impact
+  - squash the body is compressed then recovers
+  - jiggle the body wobbles in place
+  softness 0.0 = firm rubber … 1.0 = liquid jelly.
+When you choose hair_fur, ALSO choose a kind:
+  - hair / mane / fur / feathers / grass
+  length_m is the strand length in metres (0.02 fur … 0.6 long hair).
 
 Named-character locomotion rule:
 - A named anime/manga/game/comic character or proper-name protagonist doing
@@ -158,10 +371,35 @@ CATEGORIES = {
     "led_emission", "fan_pwm", "oled_screen",
     "creature_organic", "mechanical_simple", "rigid_static",
     "fluid_flow", "gas_volume",
+    # Domaines physiques que Blender sait faire depuis toujours et qui
+    # n'etaient branches nulle part: tissu, corps rigides en chute/collision,
+    # corps mou, et les brins (cheveux, fourrure, plumes, herbe).
+    "cloth_drape", "rigid_bodies", "soft_body", "hair_fur",
+    # 2e vague: particules, fracture/destruction, etendues d'eau, orbites.
+    "particles", "fracture_debris", "ocean_surface", "orbital_motion",
+    # 3e vague: mecanismes relies, cordages, croissance, chimie visible.
+    "articulated_rig", "rope_net", "growth", "chemistry",
+    # 4e vague — voie RENDU: ce que le GLB ne sait pas porter.
+    "optics", "smoke_fire",
+    # 5e vague: granulaires, thermique, plasma.
+    "granular", "thermal_melt", "plasma",
+    # 6e vague: vortex, flottaison, essaim.
+    "vortex_tornado", "buoyancy_float", "swarm_flock",
+    # 7e vague: vent-vegetation, locomotion periodique, levitation,
+    # oscillation, onde de choc, biomecanique Vellum.
+    "wind_sway", "periodic_locomotion", "levitation", "oscillation",
+    "shockwave", "muscle_tissue",
+    # 8e vague: effets de transformation et de passage.
+    "dissolve_teleport", "trail_wake", "ground_traces", "accumulation",
+    "morphing",
 }
 
 FLOW_TYPES = ("fountain", "pour", "waterfall", "ripple", "still")
 GAS_KINDS = ("smoke", "steam", "fog")
+CLOTH_PINNINGS = ("top_edge", "top_corners", "corners", "none", "auto")
+RIGID_EVENTS = ("fall", "topple", "collapse", "scatter", "roll")
+SOFT_TRIGGERS = ("drop", "squash", "jiggle")
+HAIR_KINDS = ("hair", "fur", "mane", "feathers", "grass")
 
 
 def _ollama_chat(model: str, prompt: str, custom_text: str | None,

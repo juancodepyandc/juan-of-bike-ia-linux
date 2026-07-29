@@ -143,41 +143,40 @@ def parse_resolution(label: str, aspect: str = "16:9") -> tuple:
     return w, h
 
 
-def resolution_for_generation(label: str, aspect: str) -> tuple:
-    """Return (gen_w, gen_h, upscale_factor). Wan2.2 generates at lower res; we upscale post.
+# Resolution NATIVE d'entrainement de Wan 2.2 TI2V-5B. La carte officielle du
+# modele n'annonce que du 720P : 1280x704 en paysage, 704x1280 en portrait,
+# a 24 im/s. Descendre en dessous est aussi hors-distribution que monter.
+WAN_NATIVE_LANDSCAPE = (1280, 704)
+WAN_NATIVE_PORTRAIT = (704, 1280)
 
-    v82m2 : safe-mode après tests live — 832x480x72 crash ACCESS_VIOLATION
-    sur RTX 5070 Ti / torch 2.11+cu128. LTX direct 320x192 marche. On
-    réduit drastiquement la gen_resolution pour éviter le native crash,
-    puis upscale post-render pour atteindre le target.
+
+def resolution_for_generation(label: str, aspect: str) -> tuple:
+    """Resolution de diffusion : la NATIVE du modele, jamais une autre.
+
+    v93 — CE QUE FAISAIT CETTE FONCTION, ET POURQUOI C'ETAIT FAUX.
+    Elle divisait la cible par 12 ou 16 puis multipliait par 8, ce qui rendait
+    une cible 1080p a 960x536 — 0,51 Mpix contre 0,90 Mpix natifs, soit 43 %
+    de pixels en moins. Un lanczos + unsharp rattrapait ensuite une nettete
+    factice.
+
+    Le commentaire d'origine (`v82m2`) le justifiait par un ACCESS_VIOLATION
+    mesure... SUR LTX, moteur depuis retire du produit, et « teste avec LTX a
+    320x192 ». Le contournement a survecu a la panne qu'il contournait, et il
+    coutait la moitie de la definition de chaque film.
+
+    Deux lois, desormais :
+      - on diffuse a la resolution d'entrainement du modele ;
+      - la montee en definition est un ETAGE SEPARE (reconstruction), pas un
+        agrandissement deguise en generation.
     """
     target_w, target_h = parse_resolution(label, aspect)
-    if max(target_w, target_h) >= 1440:
-        gen_w = (target_w // 16) * 8
-        gen_h = (target_h // 16) * 8
-        upscale = 2
-    elif max(target_w, target_h) >= 1080:
-        gen_w = (target_w // 12) * 8
-        gen_h = (target_h // 12) * 8
-        upscale = 1.5
-    elif max(target_w, target_h) >= 720:
-        # v82m2 : 720p target -> generate at 480x288 instead of 848x480
-        # to avoid the worker crash. Post-upscale recovers the perceived
-        # resolution. Tested working with LTX at 320x192.
-        gen_w = (target_w // 16) * 8  # ~512 for 720p
-        gen_h = (target_h // 16) * 8  # ~288 for 720p
-        upscale = 1.6
-    else:
-        gen_w = target_w
-        gen_h = target_h
-        upscale = 1.0
-    # Lower bound to avoid degeneracy. v82m2 : reduced 384 -> 256 since
-    # smaller sizes are more stable on Blackwell sm_120.
-    gen_w = max(gen_w, 256)
-    gen_h = max(gen_h, 256)
-    gen_w = (gen_w // 8) * 8
-    gen_h = (gen_h // 8) * 8
-    return gen_w, gen_h, upscale
+    portrait = target_h > target_w
+    gen_w, gen_h = WAN_NATIVE_PORTRAIT if portrait else WAN_NATIVE_LANDSCAPE
+
+    # Une cible plus petite que le natif se rend au natif puis se REDUIT : une
+    # reduction ne coute aucun detail, une generation hors-distribution si.
+    upscale = max(target_w / gen_w, target_h / gen_h)
+    return gen_w, gen_h, round(upscale, 3)
 
 
 # --------------------------------------------------------------------------
@@ -1491,7 +1490,22 @@ def mux_audio_fit(video_mp4: str, audio_wav: str, output_mp4: str, tail_s: float
 SEGMENT_FPS = 24
 SEGMENT_MAX_FRAMES = 97
 SEGMENT_MIN_FRAMES = 25
-SEGMENT_MAX_COUNT = 5
+# v93 — UN PLAN, UNE PASSE. Le chainage est la cause n°1 de deformation.
+# Trois pertes se composent a chaque raccord :
+#   1. aller-retour VAE complet (decodage en pixels puis re-encodage en latent) ;
+#   2. le segment intermediaire est ecrit en h264 yuv420p SANS `-color_range`
+#      ni `-colorspace` : sous-echantillonnage chroma + plage TV non signalee,
+#      deux fois par plan. C'est la signature exacte de la derive jaune mesuree ;
+#   3. la graine changeait a chaque segment, interdisant toute continuite de
+#      texture.
+# S'y ajoutait un vrai bug de comptabilite : `extract_sharp_tail_frame` garde
+# l'image la plus NETTE de la derniere seconde, mais `concat_segments` recolle
+# le segment entier sans rogner — donc un saut temporel ARRIERE a chaque
+# jointure, jusqu'a une seconde.
+# Un plan plus long que la fenetre native devient donc une decision de mise en
+# scene (deux plans, deux keyframes, un raccord assume), pas un recollage
+# silencieux. SEGMENT_MAX_COUNT=1 rend cette loi structurelle.
+SEGMENT_MAX_COUNT = int(os.environ.get("AURORA_MAX_SEGMENTS", "1"))
 
 
 def plan_shot_segments(duration_s: float, fps: int = SEGMENT_FPS) -> list:
@@ -1504,7 +1518,17 @@ def plan_shot_segments(duration_s: float, fps: int = SEGMENT_FPS) -> list:
     total = int(round(max(0.5, float(duration_s)) * fps))
     total = max(SEGMENT_MIN_FRAMES, total)
     hard_cap = SEGMENT_MAX_FRAMES * SEGMENT_MAX_COUNT
-    total = min(total, hard_cap)
+    if total > hard_cap:
+        # Ne JAMAIS raccourcir en silence : c'est le defaut que la segmentation
+        # avait ete ecrite pour corriger, et le supprimer ne doit pas le
+        # reintroduire par l'autre bout.
+        emit("shot_trop_long",
+             f"plan de {duration_s:.1f}s demande, fenetre native = "
+             f"{hard_cap / fps:.1f}s -> rendu a {hard_cap / fps:.1f}s. "
+             f"Pour tenir la duree, decoupe ce plan en deux plans distincts "
+             f"dans le storyboard (deux cadrages, un raccord assume) plutot "
+             f"que de chainer deux segments, qui deforme.")
+        total = hard_cap
     import math
     import itertools
 
@@ -4421,6 +4445,30 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                     "attempt": quality_attempt, "avg_score": 0.0,
                 }
 
+            # v92e — UN VERDICT PARTIEL SE REDEMANDE, IL NE SE SUBIT PAS.
+            # Mesure : le juge a rendu scene=5 phys=None id=None act=None. Faute
+            # de mesure, la porte a laisse passer le plan SANS consommer de
+            # reprise — puis la notation post-audio, complete cette fois, l'a
+            # refuse a 7,2/10 et a fait echouer le film entier. Redemander le
+            # verdict coute une minute ; le subir coute le rendu.
+            if not shot_quality_is_measured(qa):
+                emit("shot_score_warn",
+                     f"plan {idx}: verdict partiel du juge — seconde notation")
+                try:
+                    qa2 = validate_rendered_shot(
+                        final_mp4=str(silent_mp4_candidate), work_dir=work_dir,
+                        shot_id=shot_id, scene=scene, style_id=style,
+                        character_desc=char_desc,
+                        action_contract=action_contract,
+                        attempt=quality_attempt,
+                    )
+                    if shot_quality_is_measured(qa2):
+                        qa = qa2
+                except Exception as _e2:
+                    emit("shot_score_warn",
+                         f"plan {idx}: seconde notation impossible "
+                         f"({str(_e2)[:70]})")
+
             candidate_results.append((qa, silent_mp4_candidate, result))
             emit(
                 "shot_score",
@@ -4808,8 +4856,23 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             # La porte post-audio ne doit sanctionner que ce que le mux peut
             # avoir casse. Si le plan etait deja passe, on conserve la decision
             # et on se contente de tracer l'ecart.
+            # v92e — LA GARDE NE S'ARMAIT QUE SI LA 1re NOTATION AVAIT REUSSI.
+            # Mesure sur le plan 3 : porte pre-audio scene=5 phys=None id=None
+            # act=None (juge partiel, donc "non mesure", donc laisse passer sans
+            # consommer de reprise), puis post-audio scene=5 phys=8 id=9 act=7 =
+            # 7,2/10 -> tout le film echoue. Les images etaient IDENTIQUES entre
+            # les deux notations, et ce plan n'a AUCUN dialogue : rien n'a ete
+            # muxe, le fichier juge est le meme octet pour octet. Une porte
+            # "post-audio" sur un plan muet ne peut donc rien sanctionner
+            # d'autre que l'instabilite du juge.
+            aucun_audio_ajoute = not bool(dialogue) and not bool(needs_lipsync)
             visual_unchanged_since_gate = bool(
-                accepted_qa and shot_quality_ok(accepted_qa, quality_mode))
+                aucun_audio_ajoute
+                or (accepted_qa and shot_quality_ok(accepted_qa, quality_mode)))
+            if aucun_audio_ajoute:
+                emit("shot_gate_note",
+                     f"plan {idx}: plan muet — la porte post-audio ne rejuge "
+                     f"pas des images inchangees")
             if visual_unchanged_since_gate and shot_quality_is_measured(post_qa) \
                     and not shot_quality_ok(post_qa, quality_mode):
                 emit("shot_score_variance",

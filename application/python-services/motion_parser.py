@@ -39,7 +39,17 @@ VERB_TO_PRESET: List[Tuple[re.Pattern, str]] = [
     # v80u: quadruped_jump must precede character.jump to win on "four-legged jump" / "chien qui saute"
     (re.compile(r"\b(quadruped(?:e)? saute|quadruped jump|four-legged leap|chien qui saute|cat jumping|saut quadrupede)\b", re.I), "creature.quadruped_jump"),
     (re.compile(r"\b(saute|sauter|jump|jumping|jumps|leap|leaps|leaping|bond|bondis|bondit|hop|hops|hopping|spring|springs|springing)\b", re.I), "character.jump"),
-    (re.compile(r"\b(coup de pied|kick|kicks|kicking|donne un coup de pied|footstrike|round[\s-]?house)\b", re.I), "character.kick"),
+    # ATTAQUER / FRAPPER / SE BATTRE. Les gestes existaient (punch, kick, block,
+    # parry...) mais aucun verbe francais courant n'y menait: "il attaque",
+    # "il frappe", "il se bat" rendaient null. On les rattache au geste offensif
+    # le plus proche plutot que de ne rien produire.
+    (re.compile(r"\b(coup de pied|kick|kicks|kicking|donne un coup de pied|footstrike|round[\s-]?house|coup de tatane|balaie|balayage)\b", re.I), "character.kick"),
+    (re.compile(r"\b(attaque|attaquer|attaquant|assaut|assaillir|assaille|offensive|"
+                r"frappe|frapper|frappant|cogne|cogner|ass[eè]ne|assener|percute|percuter|"
+                r"se bat|se battre|combat|combattre|combattant|bagarre|duel|"
+                r"affronte|affronter|riposte|riposter|contre[- ]attaque|"
+                r"attack|attacks|attacking|strike|strikes|striking|fight|fights|fighting)\b",
+                re.I), "character.punch"),
     (re.compile(r"\b(coup de poing|punch|punches|punching|jab|cross|hook|uppercut|donne un coup de poing|frappe du poing)\b", re.I), "character.punch"),
     (re.compile(r"\b(s assoit|s'assoit|s asseoit|assis|assoit|sit|sits|sitting|seated|s installer|prend place|takes a seat)\b", re.I), "character.sit"),
     (re.compile(r"\b(s agenouille|s'agenouille|agenouille|kneel|kneeling|kneels|se baisse|s accroupit|accroupi|crouch|crouches|crouching|squat|squats|squatting)\b", re.I), "character.kneel"),
@@ -69,6 +79,12 @@ VERB_TO_PRESET: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\b(serpente|slither|slithers|slithering|onduler|ondule|ondulant|wriggle|wriggles|wriggling|squirm|squirms)\b", re.I), "creature.slither"),
     (re.compile(r"\b(rode|r[oô]der|rodeur|prowl|prowling|stalk|stalking|sneak|sneaks|sneaking|creep|creeps|creeping)\b", re.I), "creature.prowl"),
     # Quadruped (v77zt + v80u)
+    # "il charge l'ennemi" rendait creature.quadruped_run: un humain se
+    # retrouvait a courir a quatre pattes. Les tournures explicitement humaines
+    # passent donc AVANT la regle de galop.
+    (re.compile(r"\b(se rue|se ruer|se pr[eé]cipite|se pr[eé]cipiter|fonce sur|"
+                r"charge (?:l|vers|sur|contre)|charges? (?:at|towards|into))", re.I),
+     "character.run_cycle"),
     (re.compile(r"\b(galop|galope|galoper|gallop|galloping|gallops|charge|charges|charging|fonce a quatre pattes)\b", re.I), "creature.quadruped_run"),
     (re.compile(r"\b(trotte|trotter|trot|trotting|trots|amble quadrupede|patte par patte)\b", re.I), "creature.quadruped_walk"),
     (re.compile(r"\b(remue queue|remuer la queue|wag tail|tail wag|wagging|tail wagging|fr[eé]tille|fretille la queue)\b", re.I), "creature.tail_wag"),

@@ -1258,6 +1258,10 @@ def _motion_is_locomotion(motion_json_path: str):
             m = json.load(f)
     except Exception:
         return None
+    if not isinstance(m, dict):
+        # motion.json peut contenir litteralement "null" (voie generation:
+        # aucun prereglage) — un None crashait tout le rigging en aval.
+        return None
     label = str(m.get("label", "")).lower()
     if not any(k in label for k in ("walk", "run", "march", "locomot", "jog", "stroll", "sprint")):
         return None
@@ -1324,6 +1328,24 @@ def _motion_to_english(text: str) -> str:
         return text
 
 
+def _retarget_bvh_on_mia(mia_glb: str, bvh: str, out_glb: str):
+    """Retargete un BVH DEJA GENERE (HY-Motion, MoMask, ...) sur un rig
+    MIA/Mixamo via mia_mocap_retarget.py (spine clamp inclus). Returns (ok, log)."""
+    blender = find_blender()
+    if not blender:
+        return False, "Blender introuvable pour le retarget"
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mia_mocap_retarget.py")
+    os.makedirs(os.path.dirname(os.path.abspath(out_glb)), exist_ok=True)
+    cmd = [blender, "-b", "-P", script, "--", mia_glb, bvh, out_glb]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=700, check=False)
+    except Exception as e:  # noqa: BLE001
+        return False, f"retarget subprocess exception: {e}"
+    log = (p.stdout or "") + (p.stderr or "")
+    ok = "MIA_MOCAP_OK" in log and os.path.isfile(out_glb)
+    return ok, log[-400:]
+
+
 def _apply_mia_motion(mia_glb: str, out_glb: str, motion_text: str):
     """GENUINE motion for a MIA/Mixamo rig (replaces the hand-authored walk):
     MoMask text-to-motion -> BVH -> retarget onto the Mixamo skeleton (+ spine
@@ -1344,19 +1366,8 @@ def _apply_mia_motion(mia_glb: str, out_glb: str, motion_text: str):
     bvh = cand.get("bvh_ik") or cand.get("bvh")
     if not bvh or not os.path.isfile(bvh):
         return False, "MoMask BVH missing"
-    blender = find_blender()
-    if not blender:
-        return False, "Blender introuvable pour le retarget"
-    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mia_mocap_retarget.py")
-    os.makedirs(os.path.dirname(os.path.abspath(out_glb)), exist_ok=True)
-    cmd = [blender, "-b", "-P", script, "--", mia_glb, bvh, out_glb]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=700, check=False)
-    except Exception as e:  # noqa: BLE001
-        return False, f"retarget subprocess exception: {e}"
-    log = (p.stdout or "") + (p.stderr or "")
-    ok = "MIA_MOCAP_OK" in log and os.path.isfile(out_glb)
-    return ok, f"motion_en='{motion_en}' | " + log[-400:]
+    ok, log = _retarget_bvh_on_mia(mia_glb, bvh, out_glb)
+    return ok, f"motion_en='{motion_en}' | " + log
 
 
 def main() -> int:
@@ -1436,7 +1447,19 @@ def main() -> int:
                 # description). Procedural walk is only a LAST-RESORT fallback for
                 # locomotion if MoMask/retarget is unavailable — never the default.
                 motion_text = (getattr(args, "motion_text", "") or "").strip()
-                if motion_text:
+                # Un BVH DEJA GENERE (HY-Motion en amont) prime sur tout: la branche
+                # MIA regenerait via MoMask et JETAIT ce BVH -> la danse etait
+                # produite, convertie... et le rig livre en pose figee (1 frame).
+                _mocap_pret = os.path.abspath(args.mocap_bvh) if getattr(args, "mocap_bvh", "") else ""
+                if _mocap_pret and os.path.isfile(_mocap_pret):
+                    animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_mocap.glb")
+                    ok_m, mlog = _retarget_bvh_on_mia(produced, _mocap_pret, animated)
+                    if ok_m:
+                        final_src = animated
+                        walk_note = " + BVH genere (HY-Motion) retargete sur Mixamo"
+                    else:
+                        print("MIA_MOTION_INFO: retarget du BVH fourni echoue -> repli MoMask. " + mlog, file=sys.stderr)
+                if not walk_note and motion_text:
                     animated = os.path.join(os.path.dirname(output_abs), "mia_work", "mia_motion.glb")
                     ok_m, mlog = _apply_mia_motion(produced, animated, motion_text)
                     if ok_m:

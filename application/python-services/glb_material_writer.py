@@ -137,7 +137,12 @@ def _apply_zone(g, zone, alpha_fallback, mask_cache):
         base = _rgb(ch.get("sheenColor", "#ffffff"))
         ext[EXT_SHEEN] = {
             "sheenColorFactor": [round(c * s, 6) for c in base],
-            "sheenRoughnessFactor": float(ch.get("roughness", 0.5)),
+            # DECOUPLE (27/07): cable sur la rugosite de BASE, une fourrure
+            # bien reglee (base 0.9) ecrasait son propre halo duveteux a
+            # l'invisibilite. La BRDF sheen modelise les fibres: elle a sa
+            # propre rugosite. Repli retrocompatible sur roughness.
+            "sheenRoughnessFactor": float(
+                ch.get("sheenRoughness", ch.get("roughness", 0.5))),
         }
         _ensure_used(g, EXT_SHEEN)
     if "anisotropy" in ch or "anisotropyStrength" in ch:

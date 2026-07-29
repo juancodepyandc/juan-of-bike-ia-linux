@@ -99,6 +99,38 @@ def main() -> int:
     print("[offload] fp16 direct + plein GPU + malloc_trim (offload retire: casse l'attention-reference)",
           flush=True)
 
+    # ENTREE = RGBA OBLIGATOIRE (27/07, cause racine du multi-vues).
+    # Le vendor n'appelle son preprocess_image QUE si remove_bg_fn est fourni
+    # OU si l'image est RGBA (inference_i2mv_sdxl.py:152-156). En compositant
+    # sur blanc et en passant du RGB, on sautait: recadrage sur la boite du
+    # sujet, mise a l'echelle 0.9, centrage, resize 768x768 et surtout le
+    # FOND GRIS 128 qui est le zero du VAE et la convention d'entrainement de
+    # MV-Adapter. D'ou des vues hors distribution: decor halluciné, aplats
+    # noirs, derive d'identite. On garantit donc un alpha.
+    try:
+        from PIL import Image as _Im
+        _src = _Im.open(args.image)
+        if "A" not in _src.getbands():
+            try:
+                from rembg import remove as _rembg
+                _src = _rembg(_src.convert("RGB"))
+                print("[offload] alpha cree (rembg) pour le pretraitement vendor",
+                      flush=True)
+            except Exception as _re:  # noqa: BLE001
+                print("[offload] rembg indisponible (%r) — alpha opaque force"
+                      % (_re,), flush=True)
+                _src = _src.convert("RGBA")
+        else:
+            _src = _src.convert("RGBA")
+        _tmp = args.output + ".entree_rgba.png"
+        _src.save(_tmp)
+        args.image = _tmp
+        print("[offload] entree RGBA -> preprocess vendor actif "
+              "(bbox 0.9, 768x768, fond gris 128)", flush=True)
+    except Exception as _e:  # noqa: BLE001
+        print("[offload] preparation RGBA impossible (%r) — entree brute"
+              % (_e,), flush=True)
+
     images, _ref = vendor.run_pipeline(
         pipe,
         num_views=num_views,

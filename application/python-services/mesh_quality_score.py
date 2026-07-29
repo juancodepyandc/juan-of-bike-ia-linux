@@ -242,13 +242,78 @@ def score_geometric_density(mesh, kind: str) -> tuple[int, dict]:
     return score, detail
 
 
-def score_silhouette_aspect(mesh, kind: str) -> tuple[int, dict]:
+def _bbox_sujet(image_path: Path) -> tuple[float, float] | None:
+    """(largeur, hauteur) du sujet dans une image de reference, via l'alpha
+    (fonds transparents conserves par le pipeline) ou, a defaut, l'ecart aux
+    coins de l'image. None si indecidable."""
+    try:
+        from PIL import Image
+        import numpy as np
+        im = Image.open(image_path).convert("RGBA")
+        a = np.asarray(im)
+        alpha = a[..., 3]
+        if int(alpha.min()) < 250:          # vraie transparence presente
+            mask = alpha > 10
+        else:                                # fond opaque: distance aux coins
+            rgb = a[..., :3].astype(np.int16)
+            coins = np.concatenate([rgb[:8, :8], rgb[:8, -8:],
+                                    rgb[-8:, :8], rgb[-8:, -8:]], axis=0)
+            fond = np.median(coins.reshape(-1, 3), axis=0)
+            mask = (np.abs(rgb - fond).sum(axis=-1) > 60)
+        ys, xs = np.nonzero(mask)
+        if len(xs) < 100:
+            return None
+        w = float(xs.max() - xs.min() + 1)
+        h = float(ys.max() - ys.min() + 1)
+        return (w, h) if (w > 4 and h > 4) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _aspect_depuis_references(mesh_path: Path) -> tuple[float, float, float] | None:
+    """Silhouette ATTENDUE mesuree sur les references validees du run (face =
+    largeur/hauteur, vue de cote _v2 = profondeur/hauteur) au lieu d'un a
+    priori de classe: un yeti trapu DEMANDE large ne doit pas etre note contre
+    un gabarit d'humain elance. Convention de nommage du pipeline:
+    <run_id>_reference.png / _reference_v2.png a cote du mesh."""
+    try:
+        faces = sorted(mesh_path.parent.glob("*_reference.png"))
+        cotes = sorted(mesh_path.parent.glob("*_reference_v2.png"))
+        if not faces:
+            return None
+        wh = _bbox_sujet(faces[0])
+        if not wh:
+            return None
+        larg = wh[0] / wh[1]
+        prof = None
+        if cotes:
+            wh2 = _bbox_sujet(cotes[0])
+            if wh2:
+                prof = wh2[0] / wh2[1]
+        if prof is None:
+            prof = larg * 0.55   # profil inconnu: creuse comme la plupart des sujets
+        trio = (larg, 1.0, prof)
+        m = max(trio)
+        return tuple(round(v / m, 3) for v in trio)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def score_silhouette_aspect(mesh, kind: str,
+                            mesh_path: Path | None = None) -> tuple[int, dict]:
     extents = mesh.bounding_box.extents.tolist()
     longest = max(extents) or 1.0
     norm = [round(e / longest, 3) for e in extents]
     detail = {"extents_m": [round(e, 4) for e in extents], "normalized": norm}
 
-    expected = KIND_ASPECT.get(kind, (-1, -1, -1))
+    expected = None
+    if mesh_path is not None:
+        expected = _aspect_depuis_references(Path(mesh_path))
+        if expected is not None:
+            detail["expected_source"] = "reference"
+    if expected is None:
+        expected = KIND_ASPECT.get(kind, (-1, -1, -1))
+        detail["expected_source"] = "gabarit_" + kind
     if expected[0] < 0:
         detail["expected"] = "open"
         return 100, detail
@@ -355,7 +420,7 @@ def score_mesh(path: str | Path, kind: str = "generic") -> dict:
 
     color_score, color_detail = score_color_richness(mesh, p)
     density_score, density_detail = score_geometric_density(mesh, kind_norm)
-    aspect_score, aspect_detail = score_silhouette_aspect(mesh, kind_norm)
+    aspect_score, aspect_detail = score_silhouette_aspect(mesh, kind_norm, p)
     manifold_score, manifold_detail = score_manifold_health(mesh)
     surface_score, surface_detail = score_surface_quality(mesh)
 

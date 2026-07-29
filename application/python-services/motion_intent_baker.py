@@ -67,7 +67,17 @@ def _validate_intent(intent: Dict[str, Any]) -> None:
     cat = intent.get("category")
     valid = {"led_emission", "fan_pwm", "oled_screen",
              "creature_organic", "mechanical_simple", "rigid_static",
-             "fluid_flow", "gas_volume"}
+             "fluid_flow", "gas_volume",
+             "cloth_drape", "rigid_bodies", "soft_body", "hair_fur",
+             "particles", "fracture_debris", "ocean_surface", "orbital_motion",
+             "articulated_rig", "rope_net", "growth", "chemistry",
+             "optics", "smoke_fire",
+             "granular", "thermal_melt", "plasma",
+             "vortex_tornado", "buoyancy_float", "swarm_flock",
+             "wind_sway", "periodic_locomotion", "levitation", "oscillation",
+             "shockwave", "muscle_tissue",
+             "dissolve_teleport", "trail_wake", "ground_traces",
+             "accumulation", "morphing"}
     if cat not in valid:
         raise ValueError("unknown category: %r" % cat)
 

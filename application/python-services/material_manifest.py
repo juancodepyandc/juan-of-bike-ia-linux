@@ -6,6 +6,10 @@ import sys
 SCHEMA_ID = "aurora.material-intel.v1"
 
 LABELS = {
+    # "fibrous"/"woven" (27/07): classes de MATIERE emises par le classifieur
+    # pour toute surface a fibres (pelage, peluche, laine, moquette). "fur"
+    # existait mais rien ne le produisait.
+    "fibrous", "woven",
     "glass", "water", "skin", "fabric", "fur", "brushed_metal", "led",
     "screen", "smoke", "metal", "wood", "stone", "plastic", "paint_gloss",
 }
@@ -13,6 +17,7 @@ LABELS = {
 COLOR_CHANNELS = {"attenuationColor", "sheenColor", "emissiveFactor"}
 
 CHANNEL_CLAMPS = {
+    "sheenRoughness": (0.0, 1.0),
     "transmission": (0.0, 1.0),
     "ior": (1.0, 2.5),
     "thickness": (0.0, 1000.0),
@@ -128,6 +133,19 @@ def normalize(manifest):
         channels = zone.get("channels")
         if isinstance(channels, dict):
             cleaned = {}
+            # le LLM ecrit en snake_case (sheen_roughness, sheen_color), le
+            # glTF en camelCase: sans alias les canaux tombaient en silence.
+            _alias = {
+                "sheen_roughness": "sheenRoughness",
+                "sheen_color": "sheenColor",
+                "clearcoat_roughness": "clearcoatRoughness",
+                "anisotropy_strength": "anisotropyStrength",
+                "anisotropy_rotation": "anisotropy",
+                "attenuation_color": "attenuationColor",
+                "emissive_strength": "emissiveStrength",
+                "emissive_color": "emissiveFactor",
+            }
+            channels = {_alias.get(k, k): v for k, v in channels.items()}
             for key, val in channels.items():
                 if key in COLOR_CHANNELS:
                     rgb = parse_color(val)

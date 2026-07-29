@@ -64,6 +64,36 @@ def _clean_bg_white(bgr):
         rgba = remove(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB),
                       session=_REMBG_SESSION)
         alpha = rgba[:, :, 3:4].astype("float32") / 255.0
+        # GARDE-FOU ANTI-AMPUTATION. Sur une vue deja abimee, rembg ne trouve
+        # plus de sujet net et mange des morceaux (constate: vue de profil
+        # reduite a une tache jaune trouee, donnee telle quelle a TRELLIS).
+        # Si le detourage supprime plus de la moitie de ce qui n'etait pas du
+        # fond, ou ne laisse presque rien, on rend la vue BRUTE: une vue avec un
+        # fond sale reste exploitable, une vue amputee ne l'est pas.
+        _cov = float((alpha > 0.5).mean())
+        if _cov < 0.02:
+            return bgr
+        _rgbf = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype("float32")
+        _nonwhite = (_rgbf.min(axis=2) < 235)
+        # AMPUTATION vs NETTOYAGE: l'ancien critere comparait le retrait a TOUT
+        # le non-blanc — un fond DAMIER (imitation de transparence, ~50% de
+        # l'image) faisait passer le nettoyage legitime pour une amputation et
+        # la vue restait brute -> rejetee "bords sales" -> mono-vue -> erosion.
+        # On ne compte desormais que les retraits de pixels VIFS (satures ou
+        # sombres) DANS la boite du sujet: le damier gris clair desature n'en
+        # fait pas partie.
+        _keep = alpha[:, :, 0] > 0.5
+        _ys, _xs = np.nonzero(_keep)
+        if len(_xs) < 50:
+            return bgr
+        _boite = np.zeros_like(_keep)
+        _boite[_ys.min():_ys.max() + 1, _xs.min():_xs.max() + 1] = True
+        _sat = _rgbf.max(axis=2) - _rgbf.min(axis=2)
+        _vif = _nonwhite & ~((_sat < 25) & (_rgbf.mean(axis=2) > 150))
+        _retire_vif = float((_vif & ~_keep & _boite).sum())
+        _amput = _retire_vif / max(float((_vif & _boite).sum()), 1.0)
+        if _amput > 0.35:
+            return bgr
         rgb = rgba[:, :, :3].astype("float32")
         out = rgb * alpha + 255.0 * (1.0 - alpha)
         return cv2.cvtColor(out.astype("uint8"), cv2.COLOR_RGB2BGR)
@@ -108,7 +138,10 @@ def generate(front_png: str, out_dir: str, stem: str, text: str = "",
     if not available():
         return {"ok": False, "error": "MV-Adapter indisponible (%s)" % MV_ROOT}
     if pick is None:
-        pick = [2, 3]
+        # le 4e cote (270 deg) est DEJA calcule dans le strip et etait jete:
+        # le flanc/bras gauche restait infere donc lisse ("bras fondus").
+        # Cout de calcul nul.
+        pick = [2, 3, 4]
     os.makedirs(out_dir, exist_ok=True)
     strip = os.path.join(out_dir, "%s_mvstrip.png" % stem)
     env = {**os.environ,

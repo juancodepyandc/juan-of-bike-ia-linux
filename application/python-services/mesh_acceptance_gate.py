@@ -163,7 +163,10 @@ def _body_part_coverage(lower_target_names: list[str]) -> dict[str, bool]:
         "torso": has_any(("spine", "chest", "torso")),
         "head": has_any(("head", "neck")),
         "shoulders": has_any(("shoulder", "clavicle")),
-        "upper_arms": has_any(("upper_arm", "upperarm", "arm_")),
+        # "leftarm"/"rightarm": noms Mixamo (mixamorig:LeftArm) — sans eux, un
+        # bras qui bouge amplement etait declare absent et la danse refusee.
+        "upper_arms": has_any(("upper_arm", "upperarm", "arm_", "leftarm",
+                               "rightarm")),
         "forearms": has_any(("forearm", "wrist", "hand")),
         "hands": has_any(("hand", "wrist", "finger", "palm")),
         "legs": has_any(("thigh", "shin", "knee", "foot", "leg")),
@@ -595,7 +598,12 @@ def evaluate_acceptance(
 
     extents = visual.get("extents_m") if visual.get("ok") else None
     norm = _norm_extents(extents)
-    cubic_like = bool(norm and (norm[0] - norm[-1] < 0.15))
+    # un PLACEHOLDER est toujours SIMPLE: une boite quasi cubique ne suffit
+    # pas a condamner (un sujet trapu + queue en profondeur remplit sa boite
+    # — faux positif verifie: Pikachu 1.96M faces refuse comme "bloc").
+    _fc = int((quality.get("scores") or {}).get("geometric_density", {})
+              .get("face_count", 0) or 0) if quality.get("ok") else 0
+    cubic_like = bool(norm and (norm[0] - norm[-1] < 0.15) and _fc < 100000)
     if cubic_like and kind not in OPEN_PRIMITIVE_KINDS and not expectations["allows_basic_primitive"]:
         hard_failures.append("cube-like bounding box; likely primitive/block placeholder")
 

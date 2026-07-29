@@ -260,7 +260,9 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     run_input, seed=seed, pipeline_type=_q,
                     max_num_tokens=int(os.environ.get("AURORA_TRELLIS2_MAXTOK", "49152")),
                     sparse_structure_sampler_params={"steps": STEPS,
-                        "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_SS_CFG", "8.5"))},
+                        # 27/07: 8.5 (usine 7.5) = OVERSHOOT CFG -> surfaces bosselees prises
+                        # pour du detail. Le detail vient de la resolution, pas du CFG.
+                        "guidance_strength": float(os.environ.get("AURORA_TRELLIS2_SS_CFG", "7.5"))},
                     shape_slat_sampler_params={"steps": STEPS},
                     tex_slat_sampler_params={"steps": STEPS},
                 )[0]
@@ -292,7 +294,12 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                     decimation_target=_dt, texture_size=_ts,
-                    remesh=True, remesh_band=1, remesh_project=0, verbose=False,
+                    # remesh_project=0 QUANTIFIAIT le maillage: on payait le 1536 et on
+                    # livrait du grossier. 0.9 = la valeur de la lib (reprojection
+                    # du detail sur le maillage remaille).
+                    remesh=True, remesh_band=1,
+                    remesh_project=float(os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.9")),
+                    verbose=False,
                 )
                 texture_size = _ts
                 break
