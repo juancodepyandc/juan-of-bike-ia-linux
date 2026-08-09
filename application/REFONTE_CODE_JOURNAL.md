@@ -3282,3 +3282,129 @@ jq '{ok, steps: (.steps | length), requiredFailures, knownDebts}' \
 ```
 
 Le rapport n'est vert que si tous les controles requis passent. Les erreurs globales Cowork, le typecheck hors Code, les extras image et la restriction Podman restent visibles dans `knownDebts`; ils ne peuvent pas etre reclasses silencieusement en succes.
+
+## 2026-08-09 — Le codeur ne connaissait pas la barre de qualite
+
+### Reprise et diagnostic
+
+Reprise sans faire confiance aux auto-declarations : un scanner d'orphelins a ete
+ecrit AVANT toute modification (`scripts/code_harness/orphan_scan.mjs`), qui
+construit le vrai graphe d'imports depuis les points d'entree de production
+(`codeStreamStore.ts`, `codeOrchestrator.ts`, `CodeView.tsx`) et marque ce qui
+n'est atteignable par personne. Deux niveaux : module et symbole exporte.
+
+Le scan a remonte un symbole qui explique la plainte de fond « les generations
+restent basiques » : `getSystemPromptForRole` n'a **aucun appelant de
+production**. Or c'est le seul appelant restant de `buildCodeurSystemPrompt`.
+Quand WS3 est devenu le moteur de generation (un appel modele par fichier),
+l'ancien appel unique a disparu et avec lui tout le prompt du CODEUR.
+
+Verification directe du prompt reellement envoye au modele pendant la
+generation (`codeGenerationActionProducer.ts:136-146`) : **huit lignes de
+plomberie**, « produis des actions JSON pour le VFS ». Rien d'autre. Etaient donc
+absents du prompt de generation : contrat design, verrouillage sujet/marque,
+contrat de livraison, contrat d'interactivite v89b, contrat d'ingenierie expert,
+reference design premium, directives d'archetype.
+
+Deux consequences directes, et non theoriques :
+- le contrat `PLACEHOLDER_SUBJECT_IMG` (assets reels deja telecharges) vivait
+  dans le verrouillage sujet : le codeur n'en entendait jamais parler ;
+- la recette shader Fresnel, que la gate de fidelite **rejette si absente**,
+  vivait au meme endroit : la gate exigeait une regle jamais transmise.
+
+### Recherches et choix
+
+Mesure avant de decider. Le prompt codeur complet fait **42 411 caracteres
+(~10 600 tokens)** sur un brief de marque. WS3 appelant le modele une fois par
+fichier, le recabler tel quel ajouterait ~95 000 tokens de prompt systeme sur un
+projet de neuf fichiers, avec `num_ctx = 24 576` et un modele de 18,6 Go sur un
+GPU de 16 Go : swap garanti, donc crash. Le recablage naif etait donc exclu.
+
+Choix retenu : un contrat **compact, cible sur le fichier en cours et borne**,
+dans un module dedie `codeExecutorQualityContract.ts`. Deux regimes de budget,
+parce que le cout se paie a chaque appel :
+- fichier visuel : 12 000 caracteres, assez pour le verrouillage marque COMPLET
+  (il porte les deux contrats que les gates verifient ensuite) plus l'archetype
+  et l'interactivite ;
+- fichier de configuration : 1 200 caracteres. Un `tsconfig.json` n'a que faire
+  d'une palette de marque. `vite.config.ts` et consorts sont reconnus comme
+  configuration malgre leur extension `.ts`.
+
+La troncature se fait sur une frontiere de ligne : couper au milieu d'une regle
+la rend fausse.
+
+### Modifications realisees
+
+- `src/services/codeExecutorQualityContract.ts` (nouveau) — contrat compact :
+  verrouillage sujet/marque, contrat de livraison (fichiers d'entree obligatoires
+  par type de projet), barre visuelle condensee, bloc d'archetype, contrat
+  d'interactivite. Bornage et priorisation explicites.
+- `src/services/codeGenerationActionProducer.ts` — `intent` optionnel ajoute aux
+  options et aux messages ; le contrat est injecte dans le prompt SYSTEME.
+  Sans `intent`, le comportement precedent est conserve a l'identique.
+- `src/services/codeAgenticGenerationPhase.ts` — transmet l'`intent` du run.
+- `src/services/codeDesignDirectives.ts` — correction d'un vrai bug de
+  robustesse : `ap?.styleHints.some(...)` levait un `TypeError` des qu'un
+  `assetPlan` existait sans `styleHints`, ce qui faisait tomber toute la
+  detection d'archetype. L'optional chaining porte desormais sur le tableau.
+- `src/__tests__/codeExecutorQualityContract.test.ts` (nouveau) — 10 tests.
+- `scripts/code_harness/orphan_scan.mjs` (nouveau) — garde anti-orphelin.
+
+### Avant-apres mesurable
+
+Run reel de reference AVANT correction, sur un brief complexe de marque
+(`qwen3-coder:30b`, machine reelle, 16 Go de VRAM) :
+
+| Mesure | Avant |
+|---|---|
+| Verdict | **echec** (`ok:false`, `phaseFinal:"error"`) |
+| Duree | 464 s |
+| Fichiers produits | 14 |
+| `index.html` sur un `static_web` | **absent** |
+| Score final | 0 |
+| Erreur fatale | `action_protocol_invalid:json_payload_invalid` |
+
+Le run a brule une passe de regeneration complete pour decouvrir apres coup
+l'absence de page d'entree — information que le contrat de livraison lui aurait
+donnee d'emblee.
+
+Cout du contrat injecte, mesure (brief de marque, `static_web`) :
+
+| Cible | Avant | Apres |
+|---|---|---|
+| Prompt codeur complet (recablage naif) | 42 411 car. (~10 600 tok) | — |
+| `index.html` | 0 car. | 12 000 car. (~3 000 tok) |
+| `src/main.ts` | 0 car. | 11 996 car. |
+| `tsconfig.json` | 0 car. | 509 car. (~127 tok) |
+| `vite.config.ts` (SPA) | 0 car. | 526 car. |
+| Projet non visuel (`main.py`) | 0 car. | 206 car. |
+
+Soit 3,5x moins cher que le recablage naif sur les fichiers qui en ont besoin,
+et 23x moins cher sur les fichiers de configuration.
+
+Tests : **743 verts avant, 753 verts apres, 0 echec.** Typecheck : 31
+diagnostics, tous hors perimetre Code (cowork, stockage temporaire, pixel art),
+soit exactement la dette deja allow-listee par `final_tsc_scope_check.mjs` ;
+**aucun diagnostic Code**.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/code*.test.ts'
+node scripts/code_harness/orphan_scan.mjs --json output/code/audit_v90/orphan_scan_before.json
+npx tsc --noEmit 2>&1 | grep -E "error TS" | sed -E 's/\(.*//' | sort | uniq -c
+```
+
+Preuve du run de reference avant correction :
+`application/output/code/audit_v90/cli_baseline/_harness_summary.json`
+(`ok:false`, `fileCount:14`, aucun `index.html` dans `files`).
+
+### Etat de satisfaction chantier
+
+Le codeur recoit desormais la barre de qualite, le verrouillage de marque et le
+contrat de livraison, sans faire exploser le contexte. Reste ouvert et assume :
+`buildCodeurSystemPrompt` et `getSystemPromptForRole` demeurent orphelins — le
+contrat compact les remplace dans le chemin WS3 ; les supprimer ou les reduire a
+la version compacte est un chantier de nettoyage distinct, non traite ici pour
+ne pas melanger correction fonctionnelle et suppression de code.

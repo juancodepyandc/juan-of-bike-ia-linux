@@ -1,5 +1,7 @@
 import type { OllamaMessage } from '../types/app'
 import type { CodeFile } from './codeOrchestrator.ts'
+import type { CodeIntent } from './codeIntent'
+import { buildExecutorQualityContract } from './codeExecutorQualityContract.ts'
 import type {
   CodeGenerationActionProducer,
 } from './codeGenerationExecutor.ts'
@@ -27,6 +29,9 @@ export type CodeGenerationActionModelClient = (
 export type CodeGenerationActionProducerOptions = {
   prompt: string
   model: string
+  /** Intent du run: porte le verrouillage marque et le type de projet, sans
+   *  lesquels l executor ne connait pas la barre de qualite exigee. */
+  intent?: CodeIntent
   architecturePlan?: string | null
   contextImages?: string[]
   maxFileContextChars?: number
@@ -98,6 +103,7 @@ export function buildCodeGenerationActionMessages(args: {
   queue: CodeGenerationQueue
   files: CodeFile[]
   prompt: string
+  intent?: CodeIntent
   architecturePlan?: string | null
   contextImages?: string[]
   maxFileContextChars?: number
@@ -131,6 +137,17 @@ export function buildCodeGenerationActionMessages(args: {
     ].filter(Boolean).join('\n\n'),
   }
   if (args.contextImages?.length) userMessage.images = args.contextImages
+  // Le contrat qualite (verrouillage marque, contrat de livraison, barre
+  // visuelle, archetype, interactivite) est CIBLE sur le fichier en cours et
+  // borne en taille: WS3 appelle le modele une fois par fichier, donc un prompt
+  // systeme non borne se paierait en contexte a chaque appel.
+  const qualityContract = args.intent
+    ? buildExecutorQualityContract({
+        intent: args.intent,
+        prompt: args.prompt,
+        target: { path: args.item.path, language: args.item.language, role: args.item.role },
+      })
+    : ''
   return [
     {
       role: 'system',
@@ -142,6 +159,7 @@ export function buildCodeGenerationActionMessages(args: {
         'En modification de projet existant, privilegie apply_patch sur les fichiers cibles WS5 et ne reecris pas les fichiers proteges.',
         'N utilise write_file sur un fichier existant que si le prompt demande explicitement une reecriture complete de ce fichier.',
         'Pour un fichier required, l action finale doit rendre le fichier present et complet.',
+        ...(qualityContract ? ['', qualityContract] : []),
       ].join('\n'),
     },
     userMessage,
@@ -198,6 +216,7 @@ export function createCodeGenerationLLMActionProducer(
       queue,
       files,
       prompt: options.prompt,
+      intent: options.intent,
       architecturePlan: options.architecturePlan,
       contextImages: options.contextImages,
       maxFileContextChars: options.maxFileContextChars,

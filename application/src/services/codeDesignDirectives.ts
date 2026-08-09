@@ -172,7 +172,10 @@ export function detectDesignArchetype(prompt: string, intent: CodeIntent): Desig
   }
 
   // Style hints take priority on visual archetypes.
-  if (hasAny(text, BRUTALIST_HINTS) || ap?.styleHints.some((s) => BRUTALIST_HINTS.includes(s))) {
+  // `styleHints` peut manquer sur un assetPlan partiel: l optional chaining doit
+  // porter sur le tableau lui-meme, sinon `.some` leve un TypeError et fait
+  // tomber toute la detection d archetype (donc la generation).
+  if (hasAny(text, BRUTALIST_HINTS) || ap?.styleHints?.some((s) => BRUTALIST_HINTS.includes(s))) {
     return 'minimal_brutalist'
   }
 

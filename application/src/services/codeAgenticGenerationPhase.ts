@@ -81,6 +81,9 @@ export async function runAgenticGenerationPhase({
   const producer = createCodeGenerationLLMActionProducer({
     prompt,
     model,
+    // Sans l intent, l executor perd le verrouillage marque et la barre de
+    // qualite: c est precisement ce qui rendait les generations "basiques".
+    intent,
     architecturePlan,
     contextImages,
     signal,
