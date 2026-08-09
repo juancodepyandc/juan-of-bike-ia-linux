@@ -23,7 +23,7 @@ import {
 export type CodeGenerationActionModelClient = (
   model: string,
   messages: OllamaMessage[],
-  options: { signal?: AbortSignal; num_ctx?: number; firstByteTimeoutMs?: number },
+  options: { signal?: AbortSignal; num_ctx?: number; num_predict?: number; firstByteTimeoutMs?: number },
 ) => Promise<unknown>
 
 export type CodeGenerationActionProducerOptions = {
@@ -37,6 +37,9 @@ export type CodeGenerationActionProducerOptions = {
   maxFileContextChars?: number
   signal?: AbortSignal
   numCtx?: number
+  /** Plafond de tokens GENERES. Sans lui, certains presets Modelfile coupent a
+   *  256-1024 tokens et le fichier arrive tronque. */
+  numPredict?: number
   firstByteTimeoutMs?: number
   chatClient?: CodeGenerationActionModelClient
   onRawResponse?: (args: { item: CodeGenerationQueueItem; raw: string }) => void
@@ -169,12 +172,13 @@ export function buildCodeGenerationActionMessages(args: {
 async function defaultChatClient(
   model: string,
   messages: OllamaMessage[],
-  options: { signal?: AbortSignal; num_ctx?: number; firstByteTimeoutMs?: number },
+  options: { signal?: AbortSignal; num_ctx?: number; num_predict?: number; firstByteTimeoutMs?: number },
 ) {
   const { resilientOllamaChat } = await import('./ollamaResilience.ts')
   return resilientOllamaChat(model, messages, 0.2, {
     signal: options.signal,
     num_ctx: options.num_ctx,
+    num_predict: options.num_predict,
     firstByteTimeoutMs: options.firstByteTimeoutMs,
     neverMemorySkip: true,
   })
@@ -228,6 +232,7 @@ export function createCodeGenerationLLMActionProducer(
     const response = await chatClient(options.model, messages, {
       signal: options.signal,
       num_ctx: options.numCtx,
+      num_predict: options.numPredict,
       firstByteTimeoutMs: options.firstByteTimeoutMs,
     })
     const raw = extractAssistantContent(response)

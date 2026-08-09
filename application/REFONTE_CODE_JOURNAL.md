@@ -4393,3 +4393,86 @@ Une calculatrice au calcul faux ne peut plus passer. Reste ouvert et assume :
 - la checklist regex de `codeAcceptanceCriteria.ts` reste en place dans le
   sandbox : elle est rapide et sans navigateur. Le gate comportemental s ajoute
   au lieu de la remplacer, et c est lui qui tranche sur le comportement.
+
+## 2026-08-09 — Le plafond de tokens generes n'etait jamais transmis
+
+### Reprise et diagnostic
+
+Trouve en triant les orphelins, pas en cherchant ce bug : le scan signalait
+`CODE_EXPERT_OUTPUT_TOKENS` comme symbole exporte sans aucun appelant de
+production. La constante vaut `16_000`, elle est meme verrouillee par un test
+(`assert.equal(CODE_EXPERT_OUTPUT_TOKENS, 16_000)`)... et elle n etait passee
+a personne.
+
+En suivant la chaine d appel de la generation :
+
+- `codeAgenticGenerationPhase` passe `numCtx` au producteur d actions, jamais
+  de `numPredict` ;
+- `defaultChatClient` appelle `resilientOllamaChat(model, messages, 0.2, { signal, num_ctx, firstByteTimeoutMs })` ;
+- `resilientOllamaChat` ne transmettait AUCUN `num_predict` a `ollamaChat` ;
+- `ollamaChat` ne l accepte meme pas dans sa signature.
+
+Or le depot documente lui-meme la consequence, dans le commentaire de
+`ollamaChatStream` :
+
+> « v82nd : max tokens to GENERATE. Some models (qwen3-coder default, certain
+> Modelfile presets) cap num_predict at 256-1024 → output truncates after a
+> single fence opener. **Pass 8000+ for code-gen.** »
+
+Le correctif etait donc ecrit dans le code, et jamais applique au chemin de
+generation du module Code. C est la cause racine des troncatures que la session
+avait jusque-la traitees en aval par reparation de charge utile : un fichier
+coupe en plein milieu produit une charge d actions JSON invalide.
+
+### Recherches et choix
+
+Le chemin non-streamant (`ollamaChat`) ne sait pas transmettre `num_predict`, et
+`useTauri.ts` fait partie des fichiers modifies par le chantier video en cours :
+interdit d y toucher. Mais `ollamaChatStream`, lui, est exporte ET accepte
+`num_predict`.
+
+`resilientOllamaChat` gagne donc un `num_predict` **optionnel** qui, lorsqu il
+est fourni, emprunte le flux et l accumule. Les autres modules (conversation,
+learning, cyber, voix) ne passent pas ce parametre et gardent donc EXACTEMENT
+leur chemin actuel — la resilience, les paliers de `num_ctx` et l escalade sont
+inchanges.
+
+Le plafond est borne par la fenetre (`min(num_predict, max(512, ctx * 0.6))`),
+exactement comme le fait deja le chemin `generate`.
+
+### Modifications realisees
+
+- `src/services/ollamaResilience.ts` — `num_predict` optionnel, helper
+  `chatAccumulatingStream`, bornage par la fenetre.
+- `src/services/codeGenerationActionProducer.ts` — `numPredict` dans les options
+  et transmis au client de chat.
+- `src/services/codeAgenticGenerationPhase.ts` — passe
+  `CODE_EXPERT_OUTPUT_TOKENS`.
+
+### Avant-apres mesurable
+
+| Etage | Avant | Apres |
+|---|---|---|
+| `CODE_EXPERT_OUTPUT_TOKENS` | defini, teste, **0 appelant** | passe a chaque appel de generation |
+| `num_predict` envoye au modele | **aucun** (plafond Modelfile, parfois 256) | jusqu a 16 000, borne par la fenetre |
+| Symboles orphelins | 19 | 18 |
+
+Non-regression sur les autres modules, controle sur la suite COMPLETE du depot :
+**4 673 tests, 4 670 verts, 0 echec, 3 ignores.** Le journal de juillet notait
+3 echecs Cowork sur 4 545 tests ; il n y en a plus.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/*.test.ts' | tail -6
+grep -n "numPredict: CODE_EXPERT_OUTPUT_TOKENS" src/services/codeAgenticGenerationPhase.ts
+```
+
+### Etat de satisfaction chantier
+
+La cause racine des troncatures est traitee a la source, et la reparation de
+charge utile livree plus tot reste comme filet. Reste assume : le plafond est
+uniforme (16 000) et non adapte a la taille attendue du fichier ; un budget par
+fichier serait plus fin, mais demanderait une estimation fiable de la taille
+cible.

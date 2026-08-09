@@ -585,12 +585,66 @@ async function withResilience<T>(
   )
 }
 
+/**
+ * Chat non-streamant obtenu en accumulant le flux.
+ *
+ * Existe uniquement pour pouvoir transmettre `num_predict`: `ollamaChat` ne
+ * l accepte pas, alors que `ollamaChatStream` si — et son propre commentaire
+ * previent que « qwen3-coder default, certain Modelfile presets cap num_predict
+ * at 256-1024 → output truncates ». Sans ce plafond releve, la generation de
+ * code se fait couper en plein fichier.
+ *
+ * N est emprunte QUE lorsqu un appelant demande explicitement `num_predict`,
+ * pour que les autres modules gardent exactement leur chemin actuel.
+ */
+async function chatAccumulatingStream(
+  model: string,
+  messages: OllamaMessage[],
+  temperature: number | undefined,
+  opts: { num_ctx?: number; num_predict?: number; signal?: AbortSignal; firstByteTimeoutMs?: number },
+): Promise<{ message: { role: string; content: string } }> {
+  let content = ''
+  await ollamaChatStream(
+    model,
+    messages,
+    (token) => { content += token },
+    () => undefined,
+    {
+      temperature,
+      num_ctx: opts.num_ctx,
+      num_predict: opts.num_predict,
+      signal: opts.signal,
+      firstByteTimeoutMs: opts.firstByteTimeoutMs,
+    },
+  )
+  return { message: { role: 'assistant', content } }
+}
+
 export async function resilientOllamaChat(
   model: string,
   messages: OllamaMessage[],
   temperature?: number,
-  opts?: ResilienceOptions & { num_ctx?: number },
+  opts?: ResilienceOptions & { num_ctx?: number; num_predict?: number },
 ) {
+  // num_predict ne peut pas depasser la fenetre moins le prompt.
+  const predictFor = (ctx?: number) => {
+    if (opts?.num_predict === undefined) return undefined
+    if (ctx === undefined) return opts.num_predict
+    return Math.min(opts.num_predict, Math.max(512, Math.floor(ctx * 0.6)))
+  }
+  const chatOnce = (selectedModel: string, ctx?: number) =>
+    opts?.num_predict !== undefined
+      ? chatAccumulatingStream(selectedModel, messages, temperature, {
+          num_ctx: ctx,
+          num_predict: predictFor(ctx),
+          signal: opts?.signal,
+          firstByteTimeoutMs: opts?.firstByteTimeoutMs,
+        })
+      : ollamaChat(selectedModel, messages, temperature, {
+          num_ctx: ctx,
+          signal: opts?.signal,
+          firstByteTimeoutMs: opts?.firstByteTimeoutMs,
+        })
   const ctxLevels = [opts?.num_ctx, 4096, 2048].filter(
     (v): v is number | undefined => v === undefined || (typeof v === 'number' && v > 0),
   )
@@ -600,13 +654,7 @@ export async function resilientOllamaChat(
   for (let i = 0; i < uniqueCtxLevels.length; i++) {
     const ctx = uniqueCtxLevels[i]
     try {
-      return await withResilience(model, opts, (selectedModel) =>
-        ollamaChat(selectedModel, messages, temperature, {
-          num_ctx: ctx,
-          signal: opts?.signal,
-          firstByteTimeoutMs: opts?.firstByteTimeoutMs,
-        }),
-      )
+      return await withResilience(model, opts, (selectedModel) => chatOnce(selectedModel, ctx))
     } catch (err) {
       const msg = errorMessage(err)
       const isMemoryRelated = /memory|memoire|OOM|out of memory|CUDA|VRAM|insufficient/i.test(msg)
@@ -615,13 +663,7 @@ export async function resilientOllamaChat(
     }
   }
 
-  return withResilience(model, opts, (selectedModel) =>
-    ollamaChat(selectedModel, messages, temperature, {
-      num_ctx: 2048,
-      signal: opts?.signal,
-      firstByteTimeoutMs: opts?.firstByteTimeoutMs,
-    }),
-  )
+  return withResilience(model, opts, (selectedModel) => chatOnce(selectedModel, 2048))
 }
 
 export async function resilientOllamaChatStream(

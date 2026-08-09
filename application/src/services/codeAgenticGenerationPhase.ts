@@ -3,6 +3,7 @@ import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
 import type { CodeModelRoutingContext } from './codePipelineRuntime.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS,
+  CODE_EXPERT_OUTPUT_TOKENS,
   GENERATION_FIRST_BYTE_TIMEOUT_MS,
   selectModel,
 } from './codePipelineRuntime.ts'
@@ -88,6 +89,10 @@ export async function runAgenticGenerationPhase({
     contextImages,
     signal,
     numCtx: CODE_EXPERT_CONTEXT_TOKENS,
+    // Sans plafond explicite, certains presets Modelfile coupent la generation
+    // a 256-1024 tokens: le fichier arrive tronque et la charge d actions JSON
+    // devient invalide. La constante existait deja, elle n etait jamais passee.
+    numPredict: CODE_EXPERT_OUTPUT_TOKENS,
     firstByteTimeoutMs: GENERATION_FIRST_BYTE_TIMEOUT_MS,
     chatClient,
   })
