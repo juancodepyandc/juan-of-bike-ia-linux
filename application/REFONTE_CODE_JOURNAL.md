@@ -3504,3 +3504,91 @@ famille sans aucun indice. Reste assume : si le modele hallucine DANS la bonne
 famille (par exemple `spa_vue` au lieu de `spa_react`), rien ne l arrete — mais
 le cout d une telle erreur est faible, la famille pilotant l essentiel des
 contrats.
+
+## 2026-08-09 — Une reponse modele mal formee tuait tout le projet
+
+### Reprise et diagnostic
+
+Deux runs reels consecutifs sur un brief complexe sont morts exactement de la
+meme facon, APRES avoir deja ecrit des fichiers valides :
+
+```
+Erreur fatale du pipeline: Echec de l executor agentique WS3:
+  action_producer_failed:action_protocol_invalid:json_payload_invalid
+```
+
+Run CLI : 14 fichiers ecrits, puis run perdu. Run bridge : 8 fichiers ecrits,
+puis run perdu. Une seule reponse modele mal formee suffisait a annuler tout le
+travail deja produit.
+
+Lecture du parseur (`codeGenerationActionProtocol.ts`) : `findFirstJsonValue`
+renvoie `null` quand la charge n est jamais refermee. Donc `json_payload_invalid`
+ne signifie PAS « tronque » : il signifie qu une charge **equilibree** a ete
+refusee par `JSON.parse`. La cause dominante avec un modele local qui doit
+emettre un fichier de code entier dans une chaine JSON est connue : de VRAIS
+retours a la ligne inseres dans `content` au lieu de `\n`. Le scanner ne le voit
+pas — un saut de ligne brut ne casse pas le suivi des guillemets — donc il rend
+une charge d apparence valide que `JSON.parse` rejette.
+
+Le repli existant (`extractRawFileContent`) ne pouvait pas sauver ce cas : il
+REFUSE explicitement tout texte contenant `"kind":"write_file"` pour ne pas
+ecrire un payload JSON comme contenu de fichier. Le run n avait donc aucune
+issue.
+
+### Recherches et choix
+
+Deux modes de corruption distincts, tous deux reparables :
+
+1. charge equilibree refusee par `JSON.parse` -> re-echapper les caracteres de
+   controle bruts **a l interieur des chaines uniquement** ; hors chaine ils sont
+   de l espacement legal et doivent rester intacts ;
+2. charge jamais refermee (limite de tokens atteinte au milieu du contenu) ->
+   recuperer le `write_file` partiel. Un fichier incomplet vaut mieux qu un
+   projet vide : la boucle de correction sait completer un fichier, elle ne sait
+   rien faire d un run perdu.
+
+Garde-fou sur le point 2 : un fragment de moins de 40 caracteres n est pas un
+fichier, on laisse le retry faire son travail plutot que d ecrire un moignon.
+
+Les deux reparations ne s appliquent QUE sur un chemin deja en echec : elles ne
+peuvent pas degrader une charge utile valide. Un test le verrouille explicitement.
+
+### Modifications realisees
+
+- `src/services/codeGenerationActionSalvage.ts` (nouveau) —
+  `repairJsonControlCharacters` et `salvageTruncatedWriteFile`, avec un decodeur
+  d echappements tolerant a une troncature en plein `\u`.
+- `src/services/codeGenerationActionProtocol.ts` — les deux chemins de
+  recuperation sont branches dans `parseCodeGenerationActions`, apres l echec du
+  parse normal et jamais avant.
+- `src/__tests__/codeGenerationActionSalvage.test.ts` (nouveau) — 12 tests.
+
+### Avant-apres mesurable
+
+| Charge utile modele | Avant | Apres |
+|---|---|---|
+| `content` avec de vrais sauts de ligne | `json_payload_invalid` -> **run perdu** | fichier ecrit correctement |
+| charge jamais refermee (tokens epuises) | `json_payload_missing` -> **run perdu** | fichier partiel livre, correction possible |
+| charge valide | parsee | parsee a l identique (verrouille par test) |
+| charge vraiment inexploitable | echec | echec (inchange) |
+
+Tests : **761 -> 773 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeGenerationActionSalvage.test.ts'
+```
+
+Trace des deux echecs reels avant correction :
+`application/output/code/audit_v90/cli_baseline/_harness_summary.json` (champ
+`notes`) et `application/output/code/audit_v90/bridge_runner/_stream.ndjson`
+(evenement `done`, champ `notes`).
+
+### Etat de satisfaction chantier
+
+Les deux modes de corruption observes sont couverts. Reste assume : la
+reparation ecrit un fichier partiel sans le signaler au modele lors de la passe
+suivante — la boucle de correction le detectera comme fichier incomplet, mais un
+signal explicite « ce fichier a ete tronque, termine-le » serait plus direct.

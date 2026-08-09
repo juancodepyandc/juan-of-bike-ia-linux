@@ -2,6 +2,10 @@ import type {
   CodeGenerationToolAction,
 } from './codeGenerationTools.ts'
 import type { CodeGenerationQueueItem } from './codeGenerationQueue.ts'
+import {
+  repairJsonControlCharacters,
+  salvageTruncatedWriteFile,
+} from './codeGenerationActionSalvage.ts'
 
 export const CODE_GENERATION_ACTION_PROTOCOL_VERSION = 'AURORA_CODE_ACTIONS/1' as const
 
@@ -137,14 +141,52 @@ export function parseCodeGenerationActions(raw: string): CodeGenerationActionPar
     ? text.slice(text.indexOf(CODE_GENERATION_ACTION_PROTOCOL_VERSION) + CODE_GENERATION_ACTION_PROTOCOL_VERSION.length)
     : text
   const json = findFirstJsonValue(searchZone)
-  if (!json) return { ok: false, actions: [], errors: [hasMarker ? 'json_payload_missing' : 'protocol_marker_missing'] }
+  if (!json) {
+    // Charge jamais refermee = limite de tokens atteinte au milieu du contenu.
+    // Un fichier partiel vaut mieux qu un run perdu: la boucle de correction
+    // sait completer un fichier incomplet, pas ressusciter un projet vide.
+    const salvaged = salvageTruncatedWriteFile(searchZone)
+    if (salvaged) {
+      return {
+        ok: true,
+        actions: [{
+          kind: 'write_file',
+          path: salvaged.path,
+          ...(salvaged.language ? { language: salvaged.language } : {}),
+          content: salvaged.content,
+        }],
+        errors: [],
+      }
+    }
+    return { ok: false, actions: [], errors: [hasMarker ? 'json_payload_missing' : 'protocol_marker_missing'] }
+  }
 
   const errors: string[] = []
   let parsed: unknown
   try {
     parsed = JSON.parse(json)
   } catch {
-    return { ok: false, actions: [], errors: ['json_payload_invalid'] }
+    // Cause dominante: le modele a insere de VRAIS retours a la ligne dans la
+    // chaine `content` au lieu de `\n`. Reparation exacte et sans risque: on ne
+    // touche qu une charge qui a deja echoue au parse.
+    try {
+      parsed = JSON.parse(repairJsonControlCharacters(json))
+    } catch {
+      const salvaged = salvageTruncatedWriteFile(json)
+      if (salvaged) {
+        return {
+          ok: true,
+          actions: [{
+            kind: 'write_file',
+            path: salvaged.path,
+            ...(salvaged.language ? { language: salvaged.language } : {}),
+            content: salvaged.content,
+          }],
+          errors: [],
+        }
+      }
+      return { ok: false, actions: [], errors: ['json_payload_invalid'] }
+    }
   }
 
   const actionValues = extractActionArray(parsed, errors)
