@@ -119,9 +119,20 @@ function resolveSpecifier(spec, fromFile) {
 const SPEC_RE =
   /\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|^\s*import\s+['"]([^'"]+)['"]/gm
 
+// Import dynamique par URL absolue: `import(pathToFileURL(path.resolve('src/...')))`.
+// Les runners headless chargent le graphe TS ainsi; sans cette reconnaissance,
+// un module reellement utilise par le canal tunnel serait declare orphelin.
+const RESOLVE_RE = /path\.resolve\(\s*['"]((?:src|application\/src)\/[^'"]+)['"]\s*\)/g
+
 function edgesOf(file) {
   const src = contents.get(file) ?? ''
   const out = []
+  for (const m of src.matchAll(RESOLVE_RE)) {
+    const abs = path.resolve(m[1].replace(/^application\//, ''))
+    try {
+      if (existsSync(abs) && statSync(abs).isFile()) out.push(abs)
+    } catch { /* ignore */ }
+  }
   for (const m of src.matchAll(SPEC_RE)) {
     const spec = m[1] || m[2] || m[3]
     if (!spec) continue
@@ -135,8 +146,12 @@ function edgesOf(file) {
 // BFS from the production entry points.
 // ---------------------------------------------------------------------------
 const reachable = new Set()
-const queue = [...ENTRY_POINTS]
-for (const e of ENTRY_POINTS) reachable.add(e)
+// Les runners headless sont eux aussi des points d entree de production: la
+// route bridge en spawn un, donc tout ce qu ils importent est reellement
+// atteint depuis le canal tunnel.
+const ALL_ENTRY_POINTS = [...ENTRY_POINTS, ...HARNESS_FILES]
+const queue = [...ALL_ENTRY_POINTS]
+for (const e of ALL_ENTRY_POINTS) reachable.add(e)
 while (queue.length) {
   const cur = queue.shift()
   for (const next of edgesOf(cur)) {
