@@ -3972,3 +3972,65 @@ continue de produire une structure Next.js pour une intention `static_web` — l
 reparation garantit la porte d entree, elle ne realigne pas toute la stack du
 plan sur le type de projet. Contraindre l architecte au `projectType` (ou faire
 converger l intention vers la stack planifiee) est un chantier distinct.
+
+## 2026-08-09 — Etat final de session et ce qui reste casse
+
+### Verification de bout en bout, resultat honnete
+
+Un dernier run complet a ete lance sur le canal tunnel, toutes corrections
+actives, avec le meme brief Mercedes-Benz. Il **n a pas abouti** :
+
+```
+Plan d architecture inexploitable - generation bloquee (architecture_plan_invalid:files_min_2)
+Erreur fatale du pipeline: Echec du plan d architecture structure: architecture_plan_invalid:files_min_2
+```
+
+L architecte a rendu, sur TOUS ses candidats, un plan JSON valide mais contenant
+moins de deux fichiers. Aucun repli n existe a cet endroit : c est un echec dur.
+
+Ce qui a bien fonctionne dans ce run, et qui est verifiable dans
+`output/code/audit_v90/final_after/_stream.ndjson` :
+
+- le garde-fou semantique a de nouveau ecarte l hallucination `ide`
+  (« Classification semantique ecartee (ide non corrobore) -> static_web ») —
+  troisieme reproduction consecutive du defaut, trois fois rattrapee ;
+- le runner a emis un evenement `error`, **pas** un `done` de complaisance,
+  conformement a la regle anti-echec-silencieux posee cette session.
+
+### Ce qui reste casse, explicitement
+
+1. **`architecture_plan_invalid:files_min_2` n a aucun repli.** Quand
+   l architecte rend un plan trop pauvre sur tous ses candidats, le run meurt.
+   C est aujourd hui le point de rupture le plus proche de l utilisateur sur
+   cette machine. Piste directe : appliquer au parseur de plan la meme
+   reparation de caracteres de controle que celle livree pour le protocole
+   d actions (`repairJsonControlCharacters`), puis, si le plan reste trop
+   pauvre, le completer depuis l intent au lieu d avorter — la file de repli
+   existe deja (`buildGenerationQueueWithFallback`) mais n est jamais atteinte
+   parce que `runPlanningPhase` leve avant.
+2. **L architecte ignore le `projectType`.** Il produit une structure Next.js
+   pour une intention `static_web`. La porte d entree est desormais garantie,
+   la stack ne l est pas.
+3. **La boucle du juge visuel WS9 reste dans la couche vue**
+   (`codeViewVisualCorrectionLoop.ts`), donc seul `CodeView.tsx` en beneficie.
+   Le CLI et le tunnel partagent maintenant le meme moteur, mais aucun des deux
+   n execute cette boucle. La divergence n est plus cachee ; elle n est pas
+   fermee. La deplacer dans le pipeline suppose d injecter le dev-server, qui
+   passe par Tauri (`spawnWorkspaceCommand`).
+4. **21 symboles orphelins** subsistent (liste exacte dans
+   `output/code/audit_v90/orphan_scan_after.json`), dont `buildDesignDirectives`,
+   `getSystemPromptForRole`, `evaluateVisualFidelity` et
+   `buildVisualFidelityCritique`. Aucun n a ete supprime : la suppression est un
+   chantier a part, et le contrat compact livre cette session remplace
+   fonctionnellement les deux premiers dans le chemin WS3.
+5. **La route bridge n est active qu apres redemarrage du bridge.** Non fait ici
+   pour ne pas interrompre le travail video/3D en cours de l utilisateur.
+6. **L acceptation WS7 reste une checklist regex.** Le conteneur tourne
+   desormais vraiment, donc la remplacer par une execution de tests reelle est
+   devenu possible — mais ce n est pas fait.
+
+### Etat de satisfaction session
+
+Sept increments livres, chacun avec sa preuve. La suite passe de 743 a
+**787 tests verts**, le typecheck du perimetre Code reste sans diagnostic, et
+aucun fichier des chantiers video/3D/voix en cours n a ete committe.
