@@ -4120,3 +4120,86 @@ Le pipeline ne peut plus rendre zero fichier a cause de l architecte. Reste
 assume : le plan de repli est volontairement minimal — il garantit un livrable
 executable, pas la richesse d un plan reussi. La boucle de correction reste
 chargee de completer.
+
+## 2026-08-09 — Le type de projet etait une information, pas une contrainte
+
+### Reprise et diagnostic
+
+Defaut observe : intention `static_web`, plan rendu en Next.js
+(`src/app/layout.tsx`, `next.config.js`, `tailwind.config.ts`) sans
+`index.html`. Deux mecanismes s additionnaient, et aucun n etait un hasard du
+modele.
+
+**1. Le prompt informait au lieu de contraindre.** Il annonce « Projet detecte:
+static_web », puis demande, quelques lignes plus bas, « Quelles sont les
+meilleures librairies/outils/patterns pour ce type de projet ? » et « les
+solutions les plus modernes ». On invite donc explicitement le modele a choisir
+une stack, c est-a-dire a contredire le type detecte.
+
+**2. Le scoreur recompensait la derive.** `scoreArchitecturePlan` additionne
+`requiredFiles * 4`, `files.length * 2`, `dependencySignal * 2`,
+`executionSignal * 3`. Un candidat Next.js — plus de fichiers, plus de
+dependances, plus de scripts — obtenait donc MECANIQUEMENT un meilleur score
+qu un candidat statique correct. **Le mauvais plan gagnait par construction**,
+independamment de la qualite du modele.
+
+### Recherches et choix
+
+Rendre le type contraignant des deux cotes, sans jamais rejeter durement :
+
+- **Prompt** : un bloc « TYPE DE PROJET — CONTRAINTE, PAS SUGGESTION » qui
+  impose la valeur du champ `projectType`, cite les fichiers d entree
+  obligatoires (depuis la source de verite deja partagee) et nomme les interdits
+  concrets. Il precise que la question « quelle est la stack la plus moderne »
+  ne s applique QU A L INTERIEUR de la contrainte.
+- **Selection** : une penalite de conformite retranchee du score. Calibree pour
+  renverser le biais structurel, pas pour eliminer : si tous les candidats
+  derivent, mieux vaut le moins mauvais qu aucun plan.
+
+Le contrat est declare par type, pas en dur : Next.js reste parfaitement
+legitime pour une intention `ssr_nextjs`, et le bloc ne lui interdit rien.
+
+### Modifications realisees
+
+- `src/services/codeProjectTypeStackContract.ts` (nouveau) — marqueurs interdits
+  par type, `checkPlanProjectTypeConformity`, `projectTypeConformityPenalty`,
+  `buildProjectTypeStackContract`.
+- `src/services/codeArchitecturePlanSelection.ts` — `selectBestArchitecturePlan`
+  accepte un `intent` optionnel (retro-compatible) et applique la penalite.
+- `src/services/codePipelinePhases.ts` — le contrat entre dans le prompt de
+  planification et l intent est transmis a la selection.
+- `src/__tests__/codeProjectTypeStackContract.test.ts` (nouveau) — 11 tests.
+
+### Avant-apres mesurable
+
+Le test decisif compare les DEUX chemins sur les memes candidats (un plan
+Next.js lourd et un plan statique correct, intention `static_web`) :
+
+| Selection | Candidat retenu |
+|---|---|
+| `selectBestArchitecturePlan([next, static])` (sans intent) | **le plan Next.js** — biais historique reproduit |
+| `selectBestArchitecturePlan([next, static], intent)` | **le plan statique correct** |
+
+| Conformite | Verdict |
+|---|---|
+| Plan Next.js pour `static_web` | non conforme, `index.html` manquant |
+| Plan statique pour `static_web` | conforme |
+| Plan Next.js pour `ssr_nextjs` | conforme (aucune regression sur le type qui l attend) |
+| Plan se declarant d un autre type que l intent | non conforme |
+| `cli_python` avec `package.json` | non conforme |
+
+Tests : **803 -> 806 verts** cumules avec l increment precedent, 0 echec.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeProjectTypeStackContract.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+Le type est desormais contraignant dans le prompt ET dans la selection. Reste
+assume : la penalite ne peut pas inventer un bon candidat quand tous derivent —
+elle choisit alors le moins mauvais, et la reparation de porte d entree livree
+plus tot garantit malgre tout le fichier d entree.

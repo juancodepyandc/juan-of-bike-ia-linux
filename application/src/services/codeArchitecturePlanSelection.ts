@@ -3,6 +3,7 @@ import {
   type CodeArchitecturePlan,
   parseArchitecturePlanJson,
 } from './codeArchitecturePlan.ts'
+import { projectTypeConformityPenalty } from './codeProjectTypeStackContract.ts'
 
 export type ArchitecturePlanCandidateScore = {
   index: number
@@ -42,14 +43,24 @@ export function scoreArchitecturePlan(plan: CodeArchitecturePlan) {
   )
 }
 
-export function selectBestArchitecturePlan(rawCandidates: string[]) {
+/**
+ * Selection du meilleur candidat.
+ *
+ * `intent` est optionnel pour rester retro-compatible, mais quand il est fourni
+ * la conformite au type de projet PENALISE le score. Sans cela, le scoreur
+ * favorise mecaniquement les plans les plus lourds: un plan Next.js battait un
+ * plan statique correct sur une intention `static_web`, simplement parce qu il
+ * avait plus de fichiers et plus de dependances.
+ */
+export function selectBestArchitecturePlan(rawCandidates: string[], intent?: CodeIntent) {
   const scored: ArchitecturePlanCandidateScore[] = rawCandidates.map((raw, index) => {
     const parsed = parseArchitecturePlanJson(raw)
     return parsed.ok
       ? {
           index,
           ok: true,
-          score: scoreArchitecturePlan(parsed.plan),
+          score: scoreArchitecturePlan(parsed.plan)
+            - (intent ? projectTypeConformityPenalty(parsed.plan, intent) : 0),
           errors: [],
           serialized: parsed.serialized,
         }

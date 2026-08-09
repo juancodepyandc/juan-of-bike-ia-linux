@@ -7,6 +7,7 @@ import {
 } from './codeIntent.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
 import { buildArchitecteSystemPrompt } from './codeSystemPrompts.ts'
+import { buildProjectTypeStackContract } from './codeProjectTypeStackContract.ts'
 import { buildProjectGeneratorPromptBlock } from './codeProjectGeneratorRegistry.ts'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
 import { buildCodeDesignSpec, formatCodeDesignSpecPrompt } from './codeDesignSpec.ts'
@@ -157,10 +158,16 @@ export async function runPlanningPhase(
   const designSpecBlock = formatCodeDesignSpecPrompt(
     buildCodeDesignSpec(prompt, intent, detectDesignArchetype(prompt, intent)),
   )
+  // Le type de projet doit etre une CONTRAINTE, pas une information: sans ce
+  // bloc, le prompt invite le modele a choisir "la stack la plus moderne" et il
+  // repond Next.js sur une intention static_web.
+  const projectTypeContract = buildProjectTypeStackContract(intent)
   const planPrompt = [
     buildArchitecteSystemPrompt(intent),
     '',
     '---',
+    '',
+    projectTypeContract,
     '',
     buildArchitecturePlanningPrompt(prompt, intent),
     generatorBlock,
@@ -201,7 +208,7 @@ export async function runPlanningPhase(
       rawCandidates.push(response?.response?.trim() || '')
     }
 
-    const selection = selectBestArchitecturePlan(rawCandidates)
+    const selection = selectBestArchitecturePlan(rawCandidates, intent)
     if (selection.selected?.serialized) {
       const suffix = candidateCount > 1
         ? ` (best-of-${candidateCount}, candidat ${selection.selected.index + 1})`
