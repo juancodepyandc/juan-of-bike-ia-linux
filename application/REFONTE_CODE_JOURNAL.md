@@ -4709,3 +4709,55 @@ toucher au plafond machine. Reste ouvert et assume : l escalade de modele reste
 indexee sur le NUMERO de passe et non sur la trajectoire du score (asymetrie #5
 du meme rapport) ; `isCorrectionScoreClimbing` existe et est deja consulte pour
 prolonger la boucle, mais pas pour decider QUAND changer de modele.
+
+## 2026-08-09 — Cloture de reprise: mesures finales et limites reelles
+
+### Ce qui a ete verifie a la fin
+
+| Mesure | Valeur |
+|---|---|
+| Suite Code | **786 verts, 0 echec** |
+| Suite COMPLETE du depot | **4 646 tests, 4 643 verts, 0 echec, 3 ignores** |
+| Typecheck, perimetre Code | **0 diagnostic** (31 au total, tous hors Code, allow-listes) |
+| Modules de service Code | 158 (162 au debut de reprise) |
+| Modules orphelins | **1** (4 au debut) |
+| Symboles orphelins | **13** (19 au debut) |
+| Parite bridge | **15/15** |
+| Isolation WS7 | **10/10** |
+
+### Limite d environnement rencontree, et pourquoi elle n invalide rien
+
+Les generations reelles longues n ont pas pu etre menees jusqu au bout dans
+cette session: les processus detaches sont recycles entre deux commandes, et une
+generation complexe depasse la duree d une commande unique. Le meilleur run
+observe est alle jusqu a **52 evenements, 9 fichiers ecrits, 3 validations
+sandbox et 6 passes de correction** avant d etre recycle — le pipeline atteint
+donc bien la validation et la boucle de correction.
+
+Second facteur, decouvert en fin de reprise: **le bridge (port 3001) s est
+arrete pendant la session**. Je ne l ai ni arrete ni redemarre, conformement a
+la consigne de ne pas toucher au processus vivant. Cela explique l integralite
+des `fetch failed` observes dans les runs live — assets inter-modules, preflight,
+validation sandbox — qui sont tous des appels au bridge. Ce ne sont pas des
+defauts du code livre.
+
+Les preuves deterministes (tests, controle de parite, isolation Podman,
+acceptation comportementale) ne dependent pas du bridge et restent valides.
+
+### Ce qui reste ouvert, explicitement
+
+1. **Boucle de REGENERATION esthetique** encore exclusive a l UI Tauri: elle
+   depend d un serveur de dev lance via Tauri. Les trois canaux ont desormais la
+   PORTE visuelle (score + critique), mais seul l UI declenche la repasse.
+2. **13 symboles orphelins**, tries et justifies un par un dans l entree
+   « Tri des orphelins » — dont 4 rendus caducs par le conteneur WS7 et qui
+   partiront avec le retrait officiel du chemin hote.
+3. **`codeStarterTemplates.ts`**, seul module orphelin restant: capacite reelle
+   mais concurrente de la generation par plan. Trancher demande un choix produit.
+4. **Escalade de modele indexee sur le numero de passe** et non sur la
+   trajectoire du score (asymetrie #5). `isCorrectionScoreClimbing` existe deja
+   et sert a prolonger la boucle, pas a decider du changement de modele.
+5. **Pilotage comportemental** limite aux calculatrices et a deux criteres
+   universels; chaque autre famille (tri, filtre, panier) demande son scenario.
+6. **La route bridge n est active qu apres redemarrage du bridge**, qui est
+   actuellement arrete.
