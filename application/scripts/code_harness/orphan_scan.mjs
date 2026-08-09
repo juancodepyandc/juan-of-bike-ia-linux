@@ -30,6 +30,16 @@ const ENTRY_POINTS = [
   path.join(SRC, 'views', 'MangaCodeView.tsx'),
 ].filter((f) => existsSync(f))
 
+// The headless runners are production too: the bridge route spawns the NDJSON
+// runner, so anything it calls is genuinely reachable from the tunnel channel.
+// Ignoring them would report a symbol as orphan while a live channel uses it.
+const HARNESS_DIR = path.resolve('scripts', 'code_harness')
+const HARNESS_FILES = existsSync(HARNESS_DIR)
+  ? readdirSync(HARNESS_DIR)
+      .filter((n) => /\.mjs$/.test(n))
+      .map((n) => path.join(HARNESS_DIR, n))
+  : []
+
 function walk(dir, acc = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name)
@@ -43,10 +53,35 @@ function walk(dir, acc = []) {
   return acc
 }
 
-const allFiles = walk(SRC)
+const allFiles = [...walk(SRC), ...HARNESS_FILES]
 const isTest = (f) => f.includes('__tests__') || /\.test\.tsx?$/.test(f)
 const contents = new Map()
 for (const f of allFiles) contents.set(f, readFileSync(f, 'utf8'))
+
+/**
+ * Removes comments before counting symbol references.
+ *
+ * Without this the scanner lies in the most dangerous direction: a symbol merely
+ * NAMED in a doc comment (for instance a comment explaining that it is dead)
+ * counts as a caller, so a real orphan is reported as wired. A tool meant to
+ * catch orphans must never manufacture false "wired" verdicts.
+ *
+ * Conservative on purpose: whole-line comments and block comments only, so an
+ * inline `//` inside a string (e.g. "https://…") is never mangled.
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      return !t.startsWith('//') && !t.startsWith('*')
+    })
+    .join('\n')
+}
+
+const codeOnly = new Map()
+for (const f of allFiles) codeOnly.set(f, stripComments(contents.get(f)))
 
 // ---------------------------------------------------------------------------
 // Resolve a relative specifier the way Vite / the harness hook does.
@@ -165,7 +200,7 @@ for (const file of codeServiceFiles) {
     const word = new RegExp(`\\b${name}\\b`, 'g')
     let refs = 0
     for (const other of productionFiles) {
-      const osrc = contents.get(other)
+      const osrc = codeOnly.get(other)
       if (other === file) {
         // Count references inside the defining module, minus the definition.
         const hits = (osrc.match(word) || []).length
@@ -179,7 +214,7 @@ for (const file of codeServiceFiles) {
     }
     if (refs === 0) {
       const tests = testFiles
-        .filter((t) => new RegExp(`\\b${name}\\b`).test(contents.get(t) ?? ''))
+        .filter((t) => new RegExp(`\\b${name}\\b`).test(codeOnly.get(t) ?? ''))
         .map((t) => path.relative(SRC, t))
       symbolOrphans.push({ symbol: name, module: path.relative(SRC, file), tests })
     }

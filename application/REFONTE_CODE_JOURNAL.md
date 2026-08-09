@@ -3821,3 +3821,67 @@ Restent ouverts et explicites :
 - l acceptation WS7 reste une checklist regex ; la remplacer par une vraie
   execution de tests dans le conteneur devient possible maintenant que le
   conteneur tourne, mais n est pas fait ici.
+
+## 2026-08-09 — Le detecteur d orphelins mentait dans le mauvais sens
+
+### Reprise et diagnostic
+
+Le scanner anti-orphelin livre en debut de session s est trompe sur son propre
+auteur. Apres avoir ecrit des commentaires expliquant que `buildDesignDirectives`
+et `getSystemPromptForRole` etaient orphelins, le scan les a declares... cables.
+
+Cause : il comptait toute occurrence du nom, commentaires compris. Un symbole
+seulement CITE dans une explication devenait un appelant. C est le sens d erreur
+le plus dangereux pour cet outil : il fabrique des verdicts « cable » et masque
+donc exactement ce qu il doit trouver.
+
+Second manque : le corpus s arretait a `src/`. Or le runner NDJSON vit dans
+`scripts/code_harness/` et le bridge le lance en production ; les symboles qu il
+utilise etaient donc comptes orphelins a tort.
+
+### Modifications realisees
+
+- `scripts/code_harness/orphan_scan.mjs` — `stripComments()` avant tout comptage
+  de references (volontairement conservateur : lignes de commentaire entieres et
+  blocs `/* */`, pour ne jamais abimer un `//` present dans une chaine comme une
+  URL) ; `scripts/code_harness/*.mjs` entre dans le corpus de production.
+
+### Avant-apres mesurable
+
+Mesure a outillage IDENTIQUE (le scanner courant rejoue sur le commit `2df159f`
+via un worktree jetable, puis sur HEAD) — sans quoi la comparaison n aurait
+aucun sens :
+
+| Mesure | Avant (`2df159f`) | Apres |
+|---|---|---|
+| Modules de service Code | 156 | 159 |
+| Modules cables | 155 | 158 |
+| Modules orphelins | 1 | 1 |
+| Symboles orphelins | **22** | **21** |
+| Symboles resolus | — | `serializeCodeStreamEvent` |
+| Nouveaux orphelins introduits | — | **0** |
+
+Les trois modules ajoutes cette session sont tous atteignables depuis la
+production : le compte de modules cables monte de 155 a 158 sans creer d orphelin.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node scripts/code_harness/orphan_scan.mjs --json output/code/audit_v90/orphan_scan_after.json
+
+# comparaison a outillage identique
+git worktree add -q --detach /tmp/wt_before 2df159f
+cp scripts/code_harness/orphan_scan.mjs /tmp/wt_before/application/scripts/code_harness/
+(cd /tmp/wt_before/application && node scripts/code_harness/orphan_scan.mjs --json /tmp/orphan_before.json)
+git worktree remove --force /tmp/wt_before
+```
+
+### Etat de satisfaction chantier
+
+L outil ne peut plus produire de faux « cable ». Limite connue et assumee : il
+ne modelise pas la mort TRANSITIVE. `buildCommonPremiumBaseline`,
+`depthDirectivesBlock` et `autoDepsBlock` ne sont appeles que par
+`buildDesignDirectives`, lui-meme orphelin : ils ne sont donc pas signales alors
+qu aucun chemin de production ne les atteint. `archetypeBlock`, en revanche, est
+desormais reellement atteint via le contrat qualite de l executor.
