@@ -206,8 +206,22 @@ export async function runPlanningPhase(
       const suffix = candidateCount > 1
         ? ` (best-of-${candidateCount}, candidat ${selection.selected.index + 1})`
         : ''
+      // L executor ne peut ecrire QUE les fichiers de la file issue du plan.
+      // Un plan sans porte d entree condamne donc le run: la porte de livraison
+      // refuse, la boucle regenere le meme plan, et les passes s epuisent sur un
+      // defaut que personne ne corrige. Reparation deterministe, sans appel
+      // modele supplementaire (le budget VRAM ne supporte pas une replanification).
+      const { ensureArchitecturePlanEntryFiles } = await import('./codeArchitecturePlanEntryContract.ts')
+      const repaired = ensureArchitecturePlanEntryFiles(selection.selected.serialized, intent)
+      if (repaired.added.length > 0) {
+        setPhase(
+          `Plan d architecture complete${suffix}: porte d entree ajoutee (${repaired.added.join(', ')}) - lancement de la generation agentique...`,
+          25,
+        )
+        return repaired.plan
+      }
       setPhase(`Plan d architecture pret${suffix} - lancement de la generation agentique...`, 25)
-      return selection.selected.serialized
+      return repaired.plan
     }
 
     const errors = selection.scored.flatMap((candidate) => candidate.errors).slice(0, 3)

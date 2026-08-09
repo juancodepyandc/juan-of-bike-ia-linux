@@ -3885,3 +3885,90 @@ ne modelise pas la mort TRANSITIVE. `buildCommonPremiumBaseline`,
 `buildDesignDirectives`, lui-meme orphelin : ils ne sont donc pas signales alors
 qu aucun chemin de production ne les atteint. `archetypeBlock`, en revanche, est
 desormais reellement atteint via le contrat qualite de l executor.
+
+## 2026-08-09 — Un plan sans porte d entree condamnait le run
+
+### Reprise et diagnostic
+
+Observe en direct, deux fois, sur le meme brief. L intention est correctement
+`static_web` (une fois le garde-fou semantique en place), mais l architecte
+produit un plan **Next.js** — `src/app/layout.tsx`, `src/app/page.tsx`,
+`next.config.js`, `tailwind.config.ts` — **sans `index.html`**. Ensuite :
+
+- le contrat plan/livraison passe : les fichiers livres correspondent au plan ;
+- la porte de livraison refuse : « Page web statique detectee mais `index.html`
+  est absent » ;
+- la boucle de sortie regenere... a partir du meme plan, donc le meme manque.
+
+Le run consomme ses passes (`tentative 1/6`, `tentative 2/6`, ...) sur un defaut
+que personne ne corrige. Rien ne validait le plan contre le `projectType` de
+l intention : `checkArchitecturePlanFileContract` verifie seulement que les
+fichiers LIVRES correspondent au PLAN, pas que le plan soit coherent avec le
+type de projet.
+
+Point cle : dire au codeur « `index.html` est obligatoire » — ce que fait
+desormais le contrat qualite — **ne suffit pas**, parce que l executor WS3 ne
+peut ecrire QUE les fichiers de la file issue du plan. Si le plan ne le contient
+pas, le fichier ne peut pas exister.
+
+### Recherches et choix
+
+Deux options : replanifier, ou reparer. La replanification coute un chargement
+de modele supplementaire par passe, ce que le budget VRAM de la machine (modele
+de 18,6 Go sur un GPU de 16 Go) ne supporte pas. La reparation est donc
+**deterministe et sans appel modele** : on injecte la porte d entree manquante
+dans le plan, en tete de `generationOrder` puisque les autres fichiers s y
+raccrochent.
+
+La liste des portes d entree devient une **source de verite unique**, partagee
+avec le contrat qualite envoye au codeur. Deux listes separees auraient fini par
+diverger, produisant un plan et un contrat qui se contredisent.
+
+### Modifications realisees
+
+- `src/services/codeArchitecturePlanEntryContract.ts` (nouveau) —
+  `requiredEntryFilesForProject` (source unique) et
+  `ensureArchitecturePlanEntryFiles`, sans effet quand le plan est deja conforme
+  et sans lever quand le JSON est inexploitable.
+- `src/services/codePipelinePhases.ts` — reparation branchee juste apres la
+  selection du plan, TRACEE dans la phase (« porte d entree ajoutee (...) »).
+- `src/services/codeExecutorQualityContract.ts` — consomme la source unique au
+  lieu de sa propre copie.
+- `src/__tests__/codeArchitecturePlanEntryContract.test.ts` (nouveau) — 9 tests.
+
+### Avant-apres mesurable
+
+| Plan produit pour un `static_web` | Avant | Apres |
+|---|---|---|
+| Plan Next.js sans `index.html` | passes brulees jusqu au budget, run perdu | `index.html` injecte, genere en premier |
+| Plan deja conforme | inchange | inchange (verrouille par test) |
+| `cli_python` | inchange | inchange |
+| Plan JSON inexploitable | — | rendu tel quel, sans lever |
+
+Tests : **778 -> 787 verts, 0 echec.** Typecheck : 31 diagnostics, tous hors
+perimetre Code, identiques a la baseline.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeArchitecturePlanEntryContract.test.ts'
+```
+
+Trace du defaut avant correction, run reel :
+```bash
+python3 -c "
+import json
+for l in open('output/code/audit_v90/bridge_runner_after/_stream.ndjson'):
+    e=json.loads(l); m=e.get('message','')
+    if 'tentative' in m or 'ecartee' in m: print(m)
+"
+```
+
+### Etat de satisfaction chantier
+
+La porte d entree ne peut plus manquer. Reste ouvert et assume : l architecte
+continue de produire une structure Next.js pour une intention `static_web` — la
+reparation garantit la porte d entree, elle ne realigne pas toute la stack du
+plan sur le type de projet. Contraindre l architecte au `projectType` (ou faire
+converger l intention vers la stack planifiee) est un chantier distinct.

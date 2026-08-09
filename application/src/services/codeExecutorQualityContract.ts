@@ -25,6 +25,7 @@
 import type { CodeIntent } from './codeIntent'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
 import { archetypeBlock } from './codeDesignDirectiveBlocks.ts'
+import { requiredEntryFilesForProject } from './codeArchitecturePlanEntryContract.ts'
 import { buildSubjectLockBlock } from './codeSubjectPromptContract.ts'
 import { isVisualProject } from './codeSystemPromptContracts.ts'
 
@@ -86,24 +87,12 @@ function isVisualTarget(target: ExecutorContractTarget): boolean {
  * Fichiers d entree obligatoires par type de projet. C est exactement ce qui
  * manquait au run Mercedes: le modele ne savait pas que `index.html` etait
  * non negociable pour un `static_web`.
+ *
+ * Source de verite partagee avec la reparation du plan d architecture: deux
+ * listes divergentes produiraient un plan et un contrat qui se contredisent.
  */
 function requiredEntryFiles(intent: CodeIntent): string[] {
-  switch (intent.projectType) {
-    case 'static_web':
-      return ['index.html']
-    case 'spa_react':
-    case 'spa_vue':
-    case 'spa_angular':
-    case 'spa_svelte':
-      return ['index.html', 'package.json']
-    case 'ssr_nextjs':
-    case 'fullstack_nextjs':
-      return ['package.json']
-    case 'game_web':
-      return ['index.html']
-    default:
-      return []
-  }
+  return requiredEntryFilesForProject(intent.projectType)
 }
 
 function buildDeliveryEssentials(intent: CodeIntent): string {
