@@ -72,8 +72,26 @@ export async function runIntentPhase(
       { label: 'Code intent classification', timeoutMs: INTENT_SEMANTIC_TIMEOUT_MS },
     )
     if (result.source === 'semantic_model') {
-      setPhase(`Classification semantique: ${result.intent.projectType} (LLM)`, 6)
-      return result.intent
+      // Le modele ne peut pas renverser une heuristique confiante sans le
+      // moindre indice lexical: un run reel a classe une landing page de marque
+      // en `ide`, ce qui change l archetype, le contrat de livraison et les
+      // commandes. Et c est non deterministe — meme prompt, verdict different
+      // d un run a l autre.
+      const { decideSemanticIntentOverride } = await import('./codeSemanticIntentGuard.ts')
+      const decision = decideSemanticIntentOverride({
+        prompt,
+        heuristic,
+        semantic: result.intent,
+      })
+      if (decision.accept) {
+        setPhase(`Classification semantique: ${result.intent.projectType} (LLM)`, 6)
+        return result.intent
+      }
+      setPhase(
+        `Classification semantique ecartee (${result.intent.projectType} non corrobore) -> ${heuristic.projectType}`,
+        6,
+      )
+      return heuristic
     }
   } catch {
     // Repli silencieux et sur sur l heuristique context-aware.

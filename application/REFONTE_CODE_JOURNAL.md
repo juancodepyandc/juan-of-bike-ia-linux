@@ -3408,3 +3408,99 @@ contrat de livraison, sans faire exploser le contexte. Reste ouvert et assume :
 contrat compact les remplace dans le chemin WS3 ; les supprimer ou les reduire a
 la version compacte est un chantier de nettoyage distinct, non traite ici pour
 ne pas melanger correction fonctionnelle et suppression de code.
+
+## 2026-08-09 — Le classifieur LLM pouvait transformer une landing page en IDE
+
+### Reprise et diagnostic
+
+Decouvert en observant un run reel, pas en relisant du code. Le meme prompt
+(« landing page premium pour la marque Mercedes-Benz, hero anime, section specs,
+formulaire de contact, responsive ») a donne **deux resultats differents sur deux
+runs consecutifs** :
+
+- run CLI : aucune ligne « Classification semantique » (classifieur en timeout),
+  `projectType = static_web` — correct ;
+- run bridge : `Classification semantique: ide (LLM)`, `projectType = ide`.
+
+`runIntentPhase` (`codePipelinePhases.ts:74`) acceptait le verdict du modele des
+que `source === 'semantic_model'`, **sans le moindre controle**, et remplacait
+l heuristique qui avait pourtant repondu juste.
+
+L impact n est pas cosmetique : le `projectType` pilote l archetype design, le
+contrat de livraison (page d entree obligatoire ou non), les directives, les
+commandes dev/build et les templates. Le run classe `ide` a livre
+`src/workspace/fileTree.jsx`, `src/workspace/TerminalPanel.jsx`,
+`src/components/CommandPalette.jsx` et `src/hooks/useWorkspaceState.js` : **un
+editeur de code, pas une page Mercedes-Benz**.
+
+C est aussi une rupture de conformite pure : demande identique, livraison
+differente d un run a l autre, sur n importe quel canal.
+
+### Recherches et choix
+
+Le classifieur semantique n est pas a jeter : il existe pour couvrir les types
+exotiques que les regex ne voient pas (`compiler`, `os_kernel`, `embedded_*`,
+`distributed_system`). Le desactiver ferait perdre cette couverture.
+
+Regle retenue, dans un module dedie `codeSemanticIntentGuard.ts` : le modele
+garde la main quand il APPORTE de l information, il la perd quand il CONTREDIT
+une heuristique confiante sans le moindre appui lexical.
+
+- meme type -> accepte ;
+- heuristique muette (`unknown`, `script`) -> accepte, le modele informe ;
+- meme famille (`static_web` -> `spa_react`) -> accepte, c est un affinage ;
+- changement de famille -> exige qu au moins un mot du prompt aille dans le sens
+  du verdict, sinon l heuristique est conservee.
+
+Les familles et leurs indices lexicaux (FR + EN) sont explicites et testes. Le
+but n est pas de re-implementer la classification, seulement d exiger un indice.
+
+### Modifications realisees
+
+- `src/services/codeSemanticIntentGuard.ts` (nouveau) — familles de projet et
+  `decideSemanticIntentOverride`, avec une raison explicite par decision.
+- `src/services/codePipelinePhases.ts` — le verdict semantique passe par le
+  garde-fou ; un rejet est TRACE dans la phase
+  (« Classification semantique ecartee (... non corrobore) -> ... »), jamais
+  avale en silence.
+- `src/__tests__/codeSemanticIntentGuard.test.ts` (nouveau) — 8 tests, dont le
+  cas reel `static_web` -> `ide` rejete, et les types exotiques corrobores qui
+  doivent continuer a passer.
+
+### Avant-apres mesurable
+
+| Situation | Avant | Apres |
+|---|---|---|
+| `static_web` + modele dit `ide`, prompt sans indice IDE | override accepte -> IDE livre | **rejete**, `static_web` conserve |
+| `static_web` + prompt « IDE, file tree, terminal integre » | accepte | accepte (inchange) |
+| `unknown` + modele dit `compiler` | accepte | accepte (inchange) |
+| `static_web` -> `spa_react` | accepte | accepte (inchange) |
+| Determinisme sur le prompt Mercedes | 2 verdicts sur 2 runs | verdict stable |
+
+Preuve du dommage, run reel avant correction :
+`application/output/code/audit_v90/bridge_runner/_stream.ndjson` — les evenements
+`file.written` listent `fileTree.jsx`, `TerminalPanel.jsx`, `CommandPalette.jsx`
+pour une demande de landing page de marque.
+
+Tests : **753 -> 761 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeSemanticIntentGuard.test.ts'
+python3 -c "
+import json
+for l in open('output/code/audit_v90/bridge_runner/_stream.ndjson'):
+    e=json.loads(l)
+    if e['kind']=='file.written' and 'content' in e: print(e['path'])
+"
+```
+
+### Etat de satisfaction chantier
+
+Le garde-fou est volontairement permissif : il ne bloque QUE le changement de
+famille sans aucun indice. Reste assume : si le modele hallucine DANS la bonne
+famille (par exemple `spa_vue` au lieu de `spa_react`), rien ne l arrete — mais
+le cout d une telle erreur est faible, la famille pilotant l essentiel des
+contrats.
