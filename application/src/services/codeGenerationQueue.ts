@@ -84,7 +84,7 @@ export function buildGenerationQueueFromArchitecturePlan(
 // markdown au lieu du JSON, JSON malforme...), la generation NE DOIT JAMAIS
 // echouer a 0 fichier. On synthetise une file minimale et executable pour que
 // l executor agentique produise au moins un projet lancable.
-function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string; role: string; language: string | null }> {
+export function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string; role: string; language: string | null }> {
   const pt = String(intent.projectType || '')
   const langs = Array.isArray(intent.languages) ? intent.languages.map((l) => String(l).toLowerCase()) : []
   const webTriplet = [

@@ -4034,3 +4034,89 @@ Ce qui a bien fonctionne dans ce run, et qui est verifiable dans
 Sept increments livres, chacun avec sa preuve. La suite passe de 743 a
 **787 tests verts**, le typecheck du perimetre Code reste sans diagnostic, et
 aucun fichier des chantiers video/3D/voix en cours n a ete committe.
+
+## 2026-08-09 — Un architecte defaillant ne tue plus le run
+
+### Reprise et diagnostic
+
+Point de rupture le plus proche de l utilisateur, constate sur le run de
+verification precedent :
+
+```
+Plan d architecture inexploitable - generation bloquee (architecture_plan_invalid:files_min_2)
+Erreur fatale du pipeline: Echec du plan d architecture structure
+```
+
+Le modele avait rendu, sur TOUS ses candidats, un JSON valide mais contenant
+moins de deux fichiers. Zero fichier livre, alors que l intention etait
+parfaitement connue.
+
+L ironie: le repli existe DEJA un etage plus bas.
+`buildGenerationQueueWithFallback` sait deriver une file de fichiers depuis le
+seul intent (`defaultFilesForIntent`). Il n etait simplement jamais atteint,
+parce que deux `throw` se declenchent avant lui — celui de `runPlanningPhase`,
+puis celui de `isArchitecturePlanUsable` dans `runFullPipeline`.
+
+Second defaut trouve au passage: `parseArchitecturePlanJson` souffrait de la
+MEME corruption que le protocole d actions (vrais caracteres de controle dans
+une chaine, typiquement un `summary` multi-lignes), sans la reparation livree
+plus tot dans la session.
+
+### Recherches et choix
+
+On supprime la cause, pas le symptome. Quand l architecte echoue, on
+SYNTHETISE un plan deterministe depuis l intent, valide au regard du meme
+schema, et le pipeline continue. Aucun appel modele supplementaire : une
+replanification couterait un chargement de modele que le budget VRAM de la
+machine ne supporte pas.
+
+Le plan de repli n invente rien. Il reprend `defaultFilesForIntent` (deja source
+de verite de la file de repli) et `requiredEntryFilesForProject` (deja source de
+verite du contrat de livraison). Il satisfait toutes les exigences du schema, y
+compris le minimum de deux fichiers qui avait tue le run — un projet Python
+mono-fichier recoit donc un `requirements.txt`.
+
+Il se declare aussi pour ce qu il est : son `summary` dit « repli », et il
+inscrit son propre risque (« certaines fonctionnalites du prompt peuvent
+manquer »), pour que la degradation ne soit jamais silencieuse.
+
+### Modifications realisees
+
+- `src/services/codeArchitecturePlanFallback.ts` (nouveau) —
+  `buildFallbackArchitecturePlan(intent, prompt)`.
+- `src/services/codeGenerationQueue.ts` — `defaultFilesForIntent` exporte pour
+  redevenir source de verite unique au lieu d etre recopie.
+- `src/services/codePipelinePhases.ts` — le `catch` construit le repli et
+  poursuit ; il ne leve que si le repli lui-meme est invalide (impossible en
+  pratique, verrouille par test).
+- `src/services/codeArchitecturePlan.ts` — `repairJsonControlCharacters` branche
+  sur le parseur de plan, uniquement apres un echec de parse.
+- `src/__tests__/codeArchitecturePlanFallback.test.ts` (nouveau) — 8 tests.
+
+### Avant-apres mesurable
+
+| Situation | Avant | Apres |
+|---|---|---|
+| Plan a moins de 2 fichiers sur tous les candidats | **run mort, 0 fichier** | plan de repli valide, generation poursuivie |
+| Projet Python mono-fichier | `files_min_2` fatal | `main.py` + `requirements.txt` |
+| Plan avec vrais sauts de ligne dans `summary` | `json_parse_failed` | repare et accepte |
+| Plan valide | inchange | inchange (verrouille par test) |
+
+Le repli produit un plan valide pour les 5 types de projets courants testes, et
+la file de generation qui en decoule contient au moins 2 fichiers.
+
+Tests : **795 -> 803 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeArchitecturePlanFallback.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+Le pipeline ne peut plus rendre zero fichier a cause de l architecte. Reste
+assume : le plan de repli est volontairement minimal — il garantit un livrable
+executable, pas la richesse d un plan reussi. La boucle de correction reste
+chargee de completer.

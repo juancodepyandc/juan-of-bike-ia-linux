@@ -1,3 +1,5 @@
+import { repairJsonControlCharacters } from './codeGenerationActionSalvage.ts'
+
 export const CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION = 'aurora.code.architecture-plan.v1'
 
 export type CodeArchitectureDependency = {
@@ -298,7 +300,15 @@ export function parseArchitecturePlanJson(raw: string | null | undefined): CodeA
   try {
     return normalizeArchitecturePlan(JSON.parse(jsonObject))
   } catch {
-    return { ok: false, plan: null, serialized: null, errors: ['json_parse_failed'] }
+    // Meme classe de corruption que le protocole d actions: le modele insere de
+    // VRAIS caracteres de controle dans une chaine (notes, summary multi-lignes)
+    // au lieu de les echapper. La reparation ne s applique que sur un chemin
+    // deja en echec, donc elle ne peut pas degrader un plan valide.
+    try {
+      return normalizeArchitecturePlan(JSON.parse(repairJsonControlCharacters(jsonObject)))
+    } catch {
+      return { ok: false, plan: null, serialized: null, errors: ['json_parse_failed'] }
+    }
   }
 }
 

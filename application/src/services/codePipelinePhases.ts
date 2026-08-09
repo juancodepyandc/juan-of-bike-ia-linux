@@ -229,6 +229,21 @@ export async function runPlanningPhase(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn('[CodeOrchestrator] Structured planning failed:', message)
+    // Un architecte defaillant ne doit plus tuer le run. Le repli existait deja
+    // un etage plus bas (buildGenerationQueueWithFallback derive une file depuis
+    // l intent seul) mais n etait jamais atteint: ce `throw`, puis celui de
+    // isArchitecturePlanUsable, se declenchaient avant. On synthetise donc un
+    // plan deterministe depuis l intent, valide au meme schema, et le pipeline
+    // continue. Zero appel modele supplementaire.
+    const { buildFallbackArchitecturePlan } = await import('./codeArchitecturePlanFallback.ts')
+    const fallback = buildFallbackArchitecturePlan(intent, prompt)
+    if (isArchitecturePlanUsable(fallback)) {
+      setPhase(
+        `Plan d architecte inexploitable (${message.slice(0, 60)}) - repli deterministe derive de l intent, generation poursuivie...`,
+        25,
+      )
+      return fallback
+    }
     setPhase(`Plan d architecture inexploitable - generation bloquee (${message.slice(0, 80)})`, 22)
     throw new Error(`Echec du plan d architecture structure: ${message}`)
   }
