@@ -3592,3 +3592,126 @@ Les deux modes de corruption observes sont couverts. Reste assume : la
 reparation ecrit un fichier partiel sans le signaler au modele lors de la passe
 suivante — la boucle de correction le detectera comme fichier incomplet, mais un
 signal explicite « ce fichier a ete tronque, termine-le » serait plus direct.
+
+## 2026-08-09 — Le tunnel tournait sur un autre moteur que l UI
+
+### Reprise et diagnostic
+
+Le rapport de juillet signalait un « moteur bridge NDJSON dormant » derriere le
+flag `VITE_CODE_STREAM_ENGINE`. Verification faite, le diagnostic etait a la
+fois exact et incomplet.
+
+Exact : le flag n existe nulle part ailleurs que dans un commentaire
+(`codeStreamStore.ts:187`), qui affirme que le second moteur « a ete retire ».
+
+Incomplet : il n a ete retire que du store UI. La route
+`POST /api/code/generate/stream` lancait toujours
+`python-services/aurora_code/bridge_agentic_stream.py`, et surtout cette route
+est appelee par `_aurora_code()` (`bridge_server.py`), c est-a-dire par le
+dispatcher `/api/aurora/code/generate` que **cowork, le tunnel et tout client
+externe** utilisent. Le moteur mort n etait donc pas mort : il servait un canal
+entier.
+
+Cartographie reelle des trois canaux avant correction :
+
+| Canal | Moteur | Gates |
+|---|---|---|
+| `CodeView.tsx` (UI Tauri) | `orchestrateCodeGeneration` | pipeline complet |
+| CLI `scripts/code_harness/run.mjs` | `orchestrateCodeGeneration` | pipeline complet |
+| bridge / tunnel / cowork | `bridge_agentic_stream.py` (394 l.) | **aucune** |
+
+Le moteur Python n a ni classification d intention, ni plan d architecture
+bloquant, ni assets inter-modules, ni validation sandbox, ni boucle
+d auto-correction, ni rapport de finition. C est exactement le « chemin degrade
+cache » que la conformite CLI/tunnel/UI interdit.
+
+### Recherches et choix
+
+Trancher, pas maintenir deux moteurs. Le moteur TS est celui qui porte les
+gates et celui que l UI utilise : c est lui la reference. Restait a le rendre
+appelable depuis le bridge.
+
+Le terrain etait deja pret : `run.mjs` prouve que le graphe TS de production se
+charge sous Node (shims navigateur + hook de resolution pour les imports sans
+extension), et `codeStreamEvents.ts` definit deja le protocole NDJSON
+`aurora.code.stream/1` — le MEME identifiant de schema que `CODE_STREAM_SCHEMA`
+cote Python. Les constructeurs d evenements TS etaient orphelins : personne ne
+les appelait.
+
+Choix : un runner Node qui lit le payload sur stdin, execute
+`orchestrateCodeGeneration` et emet les evenements avec ces constructeurs
+partages. Le schema ne bouge pas, donc `_aurora_code()` et ses consommateurs
+continuent de fonctionner sans modification.
+
+Deux precautions non evidentes :
+- **`console.log` est redirige vers stderr** dans le runner. Le pipeline logue
+  librement ; une seule ligne de log sur stdout corromprait le flux NDJSON que
+  le bridge lit ligne par ligne.
+- **un pipeline en erreur n est jamais annonce `done`**, meme s il a produit des
+  fichiers partiels. Les consommateurs lisent `done` comme une livraison valide ;
+  emettre `done` sur un echec transformerait une panne en succes silencieux.
+  Les fichiers partiels sont emis, puis un `error` explicite clot le flux.
+
+L environnement headless (shims + hook) est extrait dans `harness_env.mjs`
+partage par le CLI et le bridge : deux copies auraient re-diverge, ce qui est
+precisement la maladie soignee ici.
+
+### Modifications realisees
+
+- `scripts/code_harness/harness_env.mjs` (nouveau) — environnement headless
+  partage, plus `routeConsoleToStderr()`.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` (nouveau) — le runner.
+- `scripts/code_harness/run.mjs` — utilise l environnement partage.
+- `bridge_server.py` — la route lance le runner Node au lieu du moteur Python
+  (diff minimal : 3 hunks, aucun autre chantier touche).
+- `scripts/code_harness/verify_bridge_parity.py` (nouveau) — controle
+  reproductible en 11 points, sans dependre d un bridge demarre.
+
+### Avant-apres mesurable
+
+| Mesure | Avant | Apres |
+|---|---|---|
+| Moteurs distincts en production | **2** | **1** |
+| Gates sur le canal tunnel/cowork | aucune | pipeline complet |
+| Schema NDJSON | `aurora.code.stream/1` | inchange |
+| Constructeurs d evenements TS | orphelins | utilises |
+
+Run reel du runner sur un brief complexe : **38 evenements NDJSON**, 21 `phase`,
+16 `file.written`, 1 `done`, toutes les lignes au schema `aurora.code.stream/1`,
+aucune pollution de stdout. Les phases tracent le vrai pipeline (classification
+semantique, preflight, recherche de marque Mercedes-Benz, references UX/UI, plan
+d architecture, executor WS3) — toutes absentes du moteur Python.
+
+Controle de parite : **11/11 verts**, code de sortie 0.
+
+### Demonstration reproductible
+
+```bash
+cd application
+python3 scripts/code_harness/verify_bridge_parity.py
+jq '{ok, checks: [.checks[] | {check, ok}]}' output/code/audit_v90/bridge_parity_report.json
+
+# flux NDJSON reel produit par le runner
+python3 -c "
+import json, collections
+ev=[json.loads(l) for l in open('output/code/audit_v90/bridge_runner/_stream.ndjson') if l.strip()]
+print(len(ev), 'evenements', dict(collections.Counter(e['kind'] for e in ev)))
+print('schemas:', {e['schema'] for e in ev})
+"
+```
+
+### Etat de satisfaction chantier
+
+Les trois canaux partagent desormais un seul moteur. Reste ouvert et explicite :
+
+- **la route n est active qu apres un redemarrage du bridge** (Flask a charge
+  l ancien module en memoire). Le bridge n a pas ete redemarre ici pour ne pas
+  interrompre le travail video/3D en cours de l utilisateur ; le controle de
+  parite ne depend volontairement pas d un bridge demarre.
+- `bridge_agentic_stream.py` et son test sont **laisses en place**, plus
+  references par aucune route. Les supprimer est un nettoyage a part entiere,
+  separe de la correction fonctionnelle.
+- la boucle du juge visuel WS9 vit toujours dans la couche vue
+  (`codeViewVisualCorrectionLoop.ts`), donc seul `CodeView.tsx` en beneficie :
+  le CLI et le bridge ne l ont pas. La divergence n est plus cachee (les trois
+  canaux partagent le moteur), mais elle n est pas fermee.

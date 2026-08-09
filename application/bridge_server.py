@@ -12685,7 +12685,18 @@ def code_assets_file(asset_path: str):
 
 @app.route("/api/code/generate/stream", methods=["POST"])
 def code_generate_stream():
-    """WS3 NDJSON planner-executor, one model call per planned file."""
+    """WS3 NDJSON stream — runs the REAL production pipeline.
+
+    Parity fix: this route used to spawn bridge_agentic_stream.py, a standalone
+    planner-executor carrying none of the quality gates the Tauri UI runs
+    (intent classification, blocking architecture plan, inter-module assets,
+    sandbox validation, auto-correction loop, design polish). Every caller of
+    /api/aurora/code/generate — cowork, tunnel, external clients — was therefore
+    served by a hidden degraded engine. It now spawns the Node runner that calls
+    the same `orchestrateCodeGeneration` as CodeView and the CLI harness, so the
+    three channels share one engine. The NDJSON schema (aurora.code.stream/1) is
+    unchanged, so consumers keep working byte-for-byte.
+    """
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     if not prompt:
@@ -12694,9 +12705,12 @@ def code_generate_stream():
         return jsonify({"ok": False, "error": "prompt trop volumineux"}), 413
     model = (data.get("model") or "qwen3-coder:30b").strip()
     run_id = int(time.time() * 1000)
-    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "bridge_agentic_stream.py"
+    script = pathlib.Path(WORKSPACE) / "scripts" / "code_harness" / "bridge_ndjson_runner.mjs"
     if not script.is_file():
-        return jsonify({"ok": False, "error": "bridge_agentic_stream.py introuvable"}), 500
+        return jsonify({"ok": False, "error": "bridge_ndjson_runner.mjs introuvable"}), 500
+    node_bin = shutil.which("node")
+    if not node_bin:
+        return jsonify({"ok": False, "error": "node introuvable: le pipeline Code partage requiert Node"}), 500
 
     payload = {
         "prompt": prompt,
@@ -12707,7 +12721,7 @@ def code_generate_stream():
     }
     try:
         proc = subprocess.Popen(
-            [sys.executable, str(script)],
+            [node_bin, str(script)],
             cwd=WORKSPACE,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

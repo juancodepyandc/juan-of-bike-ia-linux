@@ -12,46 +12,19 @@
 // Why headless: the app routes ollamaChatStream through the bridge first, then
 // falls back to direct Ollama — so this works even when the bridge is down.
 
-import { register } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { installHeadlessCodeEnv } from './harness_env.mjs'
 
 // ---------------------------------------------------------------------------
-// 1. Browser-ish globals so the (UI-flavoured) modules load under Node.
+// 1+2. Browser-ish globals so the (UI-flavoured) modules load under Node, plus
+// the resolve hook for extensionless TS imports. Shared with the bridge NDJSON
+// runner so the CLI and the tunnel boot the pipeline in an identical
+// environment — divergence between channels is the bug this module keeps
+// paying for, so the setup lives in exactly one place.
 // ---------------------------------------------------------------------------
-const mem = new Map()
-const localStorageShim = {
-  getItem: (k) => (mem.has(k) ? mem.get(k) : null),
-  setItem: (k, v) => mem.set(k, String(v)),
-  removeItem: (k) => mem.delete(k),
-  clear: () => mem.clear(),
-  key: (i) => Array.from(mem.keys())[i] ?? null,
-  get length() {
-    return mem.size
-  },
-}
-const noop = () => {}
-globalThis.localStorage = localStorageShim
-globalThis.window = {
-  location: { hostname: 'localhost', href: 'http://localhost/', origin: 'http://localhost' },
-  localStorage: localStorageShim,
-  addEventListener: noop,
-  removeEventListener: noop,
-  matchMedia: () => ({ matches: false, addEventListener: noop, removeEventListener: noop }),
-}
-globalThis.document = {
-  documentElement: { setAttribute: noop, classList: { add: noop, remove: noop, toggle: noop } },
-  body: { setAttribute: noop },
-  addEventListener: noop,
-  createElement: () => ({ setAttribute: noop, style: {}, appendChild: noop }),
-  querySelector: () => null,
-}
-
-// ---------------------------------------------------------------------------
-// 2. Register the resolve hook for extensionless TS imports.
-// ---------------------------------------------------------------------------
-register('./hooks.mjs', import.meta.url)
+installHeadlessCodeEnv()
 
 // ---------------------------------------------------------------------------
 // 3. Parse args.
