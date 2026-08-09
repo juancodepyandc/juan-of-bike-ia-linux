@@ -3715,3 +3715,109 @@ Les trois canaux partagent desormais un seul moteur. Reste ouvert et explicite :
   (`codeViewVisualCorrectionLoop.ts`), donc seul `CodeView.tsx` en beneficie :
   le CLI et le bridge ne l ont pas. La divergence n est plus cachee (les trois
   canaux partagent le moteur), mais elle n est pas fermee.
+
+## 2026-08-09 — WS7 n etait pas bloque par l hote, mais par un nom de champ
+
+### Reprise et diagnostic
+
+Le journal repetait depuis juillet : « Podman rootless reste bloque par la
+configuration de l hote ». Verification faite sur la machine actuelle :
+
+```
+podman version 4.9.3
+podman info --format '{{.Host.Security.Rootless}}'   -> true
+stat -fc %T /sys/fs/cgroup                            -> cgroup2fs
+podman run --rm --network=none alpine echo PODMAN_OK  -> PODMAN_OK
+```
+
+Podman fonctionne, en rootless, avec cgroups v2. L hote n est plus la cause.
+
+En executant la vraie fonction de detection sur cette machine, la cause
+apparait :
+
+```
+podman info --format '{{.Host.Security.Rootless}} {{.Host.CgroupVersion}}'
+Error: template: info:1:35: can't evaluate field CgroupVersion in type *define.HostInfo
+```
+
+Podman 4.x expose `.Host.CgroupsVersion` (avec un s). Le gabarit du module
+utilisait `.Host.CgroupVersion`. La commande echouait donc TOUJOURS,
+`detectPodmanIsolation` renvoyait `unavailable`, et WS7 restait fail-closed en
+permanence — sur n importe quel hote, aussi bien equipe soit-il. Ce n etait pas
+une limite de machine, c etait un nom de champ.
+
+Second defaut, decouvert en executant reellement la chaine : le volume de
+workspace est cree avec `--opt o=size=...`, qui exige le Project Quota du
+systeme de fichiers. Ici :
+
+```
+Error: volume options size and inodes not supported. Filesystem does not support Project Quota
+```
+
+et `prepareSandboxWorkspace` faisait `if (!create.ok) return { ok: false }`.
+Autrement dit : un quota disque inapplicable desactivait TOUTE l isolation —
+reseau coupe, racine en lecture seule, plafond de PID, memoire, CPU — alors que
+ces confinements-la, eux, fonctionnent parfaitement. Une garantie souple faisait
+tomber les garanties dures.
+
+### Recherches et choix
+
+- Le gabarit est corrige, ET un repli sur `podman info --format json` est ajoute :
+  les cles JSON sont stables entre versions, la ou les noms de champs Go ne le
+  sont pas. Dependre d un nom instable est precisement ce qui a coute six
+  semaines d isolation desactivee.
+- Le quota disque devient degradable : si le systeme de fichiers le refuse, le
+  volume est cree sans lui et l etape l ecrit noir sur blanc
+  (`workspace-size=NON APPLIQUE ...; les autres confinements restent actifs`).
+  Jamais silencieux, jamais bloquant.
+
+### Modifications realisees
+
+- `src/services/codeSandboxIsolation.ts` — gabarit corrige, `parsePodmanIsolationJson`
+  en repli, `buildPodmanSandboxVolumeCreateArgsWithoutQuota`,
+  `isVolumeQuotaUnsupportedError`.
+- `src/services/codeSandboxWorkspace.ts` — degradation explicite du quota disque.
+- `src/__tests__/codeSandboxIsolation.test.ts` — 5 tests ajoutes (10 -> 15).
+- `scripts/code_harness/ws7_isolation_proof.mjs` (nouveau) — preuve d execution
+  reelle, qui appelle les fonctions de production plutot que de les reimplementer.
+
+### Avant-apres mesurable
+
+| Controle | Avant | Apres |
+|---|---|---|
+| `detectPodmanIsolation` sur cet hote | `unavailable` (gabarit refuse) | `podman-rootless`, cgroup v2 |
+| Sandbox si le FS n a pas de Project Quota | **desactivee entierement** | active, quota disque declare non applique |
+| Code execute dans le conteneur | jamais execute | `hello from sandbox` |
+| Sortie reseau | non prouvee | **refusee** |
+| Racine du conteneur | non prouvee | **lecture seule** (`Errno 30`) |
+| Fork bomb | non prouvee | **contenue en 242 ms** (`BlockingIOError`), hote intact |
+
+Preuve : 10/10 controles verts dans
+`application/output/code/audit_v90/ws7_isolation_proof.json`.
+
+Tests : **773 -> 778 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+podman pull docker.io/library/python:3.12-slim   # --pull=never exige l image locale
+node scripts/code_harness/ws7_isolation_proof.mjs --json output/code/audit_v90/ws7_isolation_proof.json
+jq '{ok, checks: [.checks[] | {check, ok}]}' output/code/audit_v90/ws7_isolation_proof.json
+```
+
+### Etat de satisfaction chantier
+
+WS7 est prouve en execution reelle pour la premiere fois, fork bomb comprise.
+Restent ouverts et explicites :
+
+- **le quota disque du workspace n est pas applique sur cet hote** (Project Quota
+  absent du systeme de fichiers). C est une vraie limite machine, desormais
+  declaree au lieu de tout desactiver.
+- `--pull=never` impose de pre-telecharger les images par langage. Seules
+  `python:3.12-slim` et `alpine` sont presentes ici ; les autres langages
+  echoueront tant que leur image n est pas tiree. Aucun test ne pretend le
+  contraire.
+- l acceptation WS7 reste une checklist regex ; la remplacer par une vraie
+  execution de tests dans le conteneur devient possible maintenant que le
+  conteneur tourne, mais n est pas fait ici.

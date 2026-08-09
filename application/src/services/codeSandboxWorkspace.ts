@@ -2,9 +2,11 @@ import { runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeSandboxStepResult, DetectedLanguage } from './codeSandboxTypes.ts'
 import {
   buildPodmanSandboxVolumeCreateArgs,
+  buildPodmanSandboxVolumeCreateArgsWithoutQuota,
   buildPodmanSandboxVolumeRemoveArgs,
   buildPodmanSandboxWorkspaceInitArgs,
   DEFAULT_SANDBOX_QUOTAS,
+  isVolumeQuotaUnsupportedError,
   sandboxWorkspaceVolumeName,
   type PodmanSandboxOptions,
 } from './codeSandboxIsolation.ts'
@@ -45,13 +47,31 @@ export async function prepareSandboxWorkspaceVolume(
   const volumeName = sandboxWorkspaceVolumeName(sandboxRoot)
   const steps: CodeSandboxStepResult[] = []
   const createArgs = buildPodmanSandboxVolumeCreateArgs(sandboxRoot)
-  const create = await runner('podman', createArgs, sandboxRoot, 30_000)
+  let create = await runner('podman', createArgs, sandboxRoot, 30_000)
+  let quotaEnforced = create.ok
+  let effectiveArgs = createArgs
+
+  // Le quota disque est la SEULE garantie qui depende du systeme de fichiers.
+  // S il est refuse, on ne sacrifie pas les autres (reseau coupe, racine en
+  // lecture seule, plafond de PID, memoire, CPU): on cree le volume sans lui et
+  // on l ecrit noir sur blanc dans l etape.
+  if (!create.ok && isVolumeQuotaUnsupportedError(create.output)) {
+    effectiveArgs = buildPodmanSandboxVolumeCreateArgsWithoutQuota(sandboxRoot)
+    create = await runner('podman', effectiveArgs, sandboxRoot, 30_000)
+  }
+
   steps.push({
     label: 'Quota disque workspace WS7',
-    command: create.command || commandLine('podman', createArgs),
+    command: create.command || commandLine('podman', effectiveArgs),
     ok: create.ok,
     output: create.ok
-      ? `volume=${volumeName}\nworkspace-size=${DEFAULT_SANDBOX_QUOTAS.workspaceSize}\n${create.output}`
+      ? [
+          `volume=${volumeName}`,
+          quotaEnforced
+            ? `workspace-size=${DEFAULT_SANDBOX_QUOTAS.workspaceSize}`
+            : `workspace-size=NON APPLIQUE (le systeme de fichiers ne supporte pas le Project Quota); les autres confinements restent actifs`,
+          create.output,
+        ].join('\n')
       : create.output,
   })
   if (!create.ok) return { ok: false, created: false, volumeName, steps }

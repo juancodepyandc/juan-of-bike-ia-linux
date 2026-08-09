@@ -57,6 +57,31 @@ export function parsePodmanIsolationInfo(output: string): Pick<SandboxIsolationS
   }
 }
 
+/**
+ * Repli sur `podman info --format json`.
+ *
+ * Le gabarit Go n a pas le meme nom de champ selon la version de Podman: 4.9.3
+ * expose `.Host.CgroupsVersion` et refuse `.Host.CgroupVersion` avec une erreur
+ * de template. Une isolation qui depend d un nom de champ instable finit
+ * fail-closed en permanence sur un hote parfaitement capable — c est exactement
+ * ce qui est arrive. Les cles JSON, elles, sont stables.
+ */
+export function parsePodmanIsolationJson(output: string): Pick<SandboxIsolationStatus, 'rootless' | 'cgroupVersion'> | null {
+  try {
+    const parsed = JSON.parse(output) as {
+      host?: { security?: { rootless?: boolean }; cgroupVersion?: string }
+    }
+    const host = parsed?.host
+    if (!host) return null
+    return {
+      rootless: host.security?.rootless === true,
+      cgroupVersion: typeof host.cgroupVersion === 'string' ? host.cgroupVersion : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function detectPodmanIsolation(
   cwd: string,
   runner: CommandRunner = runWorkspaceCommand,
@@ -77,13 +102,30 @@ export async function detectPodmanIsolation(
     }
   }
 
-  const info = await runner('podman', ['info', '--format', '{{.Host.Security.Rootless}} {{.Host.CgroupVersion}}'], cwd, 10_000).catch((error) => ({
+  // `CgroupsVersion` (avec le s) est le nom accepte par Podman 4.x; l ancien
+  // `CgroupVersion` faisait echouer le template, donc l isolation se declarait
+  // indisponible sur un hote pourtant conforme.
+  const info = await runner('podman', ['info', '--format', '{{.Host.Security.Rootless}} {{.Host.CgroupsVersion}}'], cwd, 10_000).catch((error) => ({
     ok: false,
     exitCode: 1,
     output: error instanceof Error ? error.message : String(error),
     command: 'podman info',
   }))
-  if (!info.ok) {
+
+  let parsed = info.ok ? parsePodmanIsolationInfo(info.output) : null
+  // Un gabarit refuse (nom de champ different selon la version) ne doit pas
+  // condamner l isolation: on retombe sur le JSON, dont les cles sont stables.
+  if (!parsed || !parsed.cgroupVersion) {
+    const jsonInfo = await runner('podman', ['info', '--format', 'json'], cwd, 10_000).catch((error) => ({
+      ok: false,
+      exitCode: 1,
+      output: error instanceof Error ? error.message : String(error),
+      command: 'podman info --format json',
+    }))
+    if (jsonInfo.ok) parsed = parsePodmanIsolationJson(jsonInfo.output) ?? parsed
+  }
+
+  if (!parsed) {
     return {
       ok: false,
       mode: 'unavailable',
@@ -92,8 +134,6 @@ export async function detectPodmanIsolation(
       cgroupVersion: null,
     }
   }
-
-  const parsed = parsePodmanIsolationInfo(info.output)
   if (!parsed.rootless) {
     return {
       ok: false,
@@ -204,6 +244,32 @@ export function buildPodmanSandboxVolumeCreateArgs(
     `o=size=${quotas.workspaceSize}`,
     sandboxWorkspaceVolumeName(sandboxRoot),
   ]
+}
+
+/**
+ * Meme volume, sans l option de taille.
+ *
+ * `--opt o=size=...` exige le Project Quota du systeme de fichiers. Sur un ext4
+ * sans `prjquota`, sur overlayfs ou sur btrfs par defaut, Podman refuse net:
+ * « volume options size and inodes not supported. Filesystem does not support
+ * Project Quota ». Abandonner a cet endroit revient a desactiver TOUTE
+ * l isolation (reseau, lecture seule, PID, memoire, CPU) pour un seul quota
+ * disque non applicable. On sait donc creer le volume sans lui, en le disant.
+ */
+export function buildPodmanSandboxVolumeCreateArgsWithoutQuota(sandboxRoot: string): string[] {
+  return [
+    'volume',
+    'create',
+    '--ignore',
+    '--label',
+    'aurora.role=code-sandbox-workspace',
+    sandboxWorkspaceVolumeName(sandboxRoot),
+  ]
+}
+
+/** Le systeme de fichiers refuse-t-il les quotas de volume ? */
+export function isVolumeQuotaUnsupportedError(output: string): boolean {
+  return /project quota|options size and inodes not supported/i.test(output || '')
 }
 
 export function buildPodmanSandboxVolumeRemoveArgs(sandboxRoot: string): string[] {

@@ -9,6 +9,10 @@ import {
   DEFAULT_SANDBOX_QUOTAS,
   detectPodmanIsolation,
   parsePodmanIsolationInfo,
+  parsePodmanIsolationJson,
+  isVolumeQuotaUnsupportedError,
+  buildPodmanSandboxVolumeCreateArgsWithoutQuota,
+
   sandboxWorkspaceVolumeName,
   wrapCommandForPodman,
 } from '../services/codeSandboxIsolation.ts'
@@ -157,5 +161,60 @@ describe('codeSandboxIsolation', () => {
     assert.equal(ok.ok, true)
     assert.equal(ok.mode, 'podman-rootless')
     assert.equal(buildSandboxIsolationStep(ok).ok, true)
+  })
+})
+
+// --- Deblocage WS7 (2026-08-09) ------------------------------------------
+// Podman 4.9.3 rootless est desormais installe sur l hote. Deux defauts
+// empechaient l isolation de fonctionner, independamment de la machine.
+
+describe('WS7 — deblocage isolation reelle', () => {
+  test('parsePodmanIsolationJson lit le JSON de podman info', () => {
+    const json = JSON.stringify({ host: { security: { rootless: true }, cgroupVersion: 'v2' } })
+    assert.deepEqual(parsePodmanIsolationJson(json), { rootless: true, cgroupVersion: 'v2' })
+  })
+
+  test('parsePodmanIsolationJson tolere une sortie inexploitable', () => {
+    assert.equal(parsePodmanIsolationJson('pas du json'), null)
+    assert.equal(parsePodmanIsolationJson('{}'), null)
+  })
+
+  test('detectPodmanIsolation survit a un gabarit Go refuse (repli JSON)', async () => {
+    // Podman 4.9.3 expose .Host.CgroupsVersion et refuse .Host.CgroupVersion:
+    // un gabarit errone condamnait l isolation sur un hote pourtant conforme.
+    const status = await detectPodmanIsolation('/tmp', async (_exe, args) => {
+      if (args.includes('--version')) {
+        return { ok: true, exitCode: 0, output: 'podman version 4.9.3', command: 'podman --version' }
+      }
+      if (args.includes('json')) {
+        return {
+          ok: true,
+          exitCode: 0,
+          output: JSON.stringify({ host: { security: { rootless: true }, cgroupVersion: 'v2' } }),
+          command: 'podman info --format json',
+        }
+      }
+      return { ok: false, exitCode: 125, output: "can't evaluate field CgroupVersion", command: 'podman info' }
+    })
+    assert.equal(status.ok, true)
+    assert.equal(status.mode, 'podman-rootless')
+    assert.equal(status.cgroupVersion, 'v2')
+  })
+
+  test('isVolumeQuotaUnsupportedError reconnait le refus Project Quota', () => {
+    assert.equal(
+      isVolumeQuotaUnsupportedError('Error: volume options size and inodes not supported. Filesystem does not support Project Quota'),
+      true,
+    )
+    assert.equal(isVolumeQuotaUnsupportedError('autre erreur'), false)
+  })
+
+  test('le volume sans quota garde le nom et le label, sans option de taille', () => {
+    const withQuota = buildPodmanSandboxVolumeCreateArgs('/tmp/aurora-x')
+    const without = buildPodmanSandboxVolumeCreateArgsWithoutQuota('/tmp/aurora-x')
+    assert.ok(withQuota.some((a) => a.startsWith('o=size=')))
+    assert.ok(!without.some((a) => a.startsWith('o=size=')))
+    assert.equal(without[without.length - 1], withQuota[withQuota.length - 1])
+    assert.ok(without.includes('aurora.role=code-sandbox-workspace'))
   })
 })
