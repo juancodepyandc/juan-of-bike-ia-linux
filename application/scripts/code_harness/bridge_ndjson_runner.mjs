@@ -200,6 +200,36 @@ for (const e of buildCodeStreamFileWrittenEvents({
   emit(e)
 }
 
+// WS7 — acceptation COMPORTEMENTALE: on execute le livrable au lieu de le
+// relire. La checklist regex donnait exactement le meme score a une
+// calculatrice juste et a une calculatrice fausse (71 % toutes les deux, y
+// compris le critere "operator-correctness"). Fail-soft: l absence de
+// navigateur ne doit jamais empecher une livraison.
+if (process.env.AURORA_CODE_BEHAVIOUR_ACCEPTANCE !== '0') {
+  try {
+    const { runBehaviourAcceptance } = await import('./acceptance_behaviour.mjs')
+    const behaviour = await runBehaviourAcceptance(files, prompt)
+    if (behaviour.applicable && behaviour.criteria.length > 0) {
+      const passed = behaviour.criteria.filter((c) => c.ok)
+      emit(
+        buildCodeStreamTestResultEvent(
+          {
+            ok: passed.length === behaviour.criteria.length,
+            steps: behaviour.criteria.map((c) => ({ label: c.label, ok: c.ok })),
+            summary: `Acceptation comportementale: ${passed.length}/${behaviour.criteria.length}`,
+            detectedLanguage: 'html',
+          },
+          nextMeta(),
+        ),
+      )
+      log(`[bridge-runner] acceptation comportementale ${passed.length}/${behaviour.criteria.length}`)
+      for (const c of behaviour.criteria.filter((x) => !x.ok)) log(`  FAIL ${c.id}: ${c.detail}`)
+    }
+  } catch (err) {
+    log(`[bridge-runner] acceptation comportementale indisponible: ${String(err?.message ?? err).slice(0, 160)}`)
+  }
+}
+
 // WS9 sur le canal tunnel: la porte visuelle source-statique est evaluee par le
 // pipeline pour les trois canaux, donc son verdict doit aussi etre OBSERVABLE
 // ici, pas seulement dans l UI Tauri.

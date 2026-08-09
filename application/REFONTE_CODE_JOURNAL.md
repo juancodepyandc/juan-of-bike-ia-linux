@@ -4292,3 +4292,104 @@ repasse ciblee) demeure exclusive a l UI Tauri, parce qu elle depend d un
 serveur de dev lance via Tauri. Le CLI et le tunnel detectent et penalisent une
 page faible, et emportent la critique, mais ne declenchent pas d eux-memes la
 repasse.
+
+## 2026-08-09 — Une calculatrice fausse passait l acceptation
+
+### Reprise et diagnostic
+
+Reproche explicite de l audit de juillet, jamais traite : « les tests
+d acceptation sont une checklist REGEX statique fixe (aucune execution). Une
+calculatrice au calcul FAUX passe 100 %. »
+
+Verification directe, plutot que sur parole. Deux calculatrices ont ete
+fabriquees, identiques a une ligne pres :
+
+- `calc_correct` : `if(o==='+')return a+b; if(o==='-')return a-b; ...`
+- `calc_faux`    : `if(o==='+')return a-b; if(o==='-')return a+b; ...`
+
+Puis `evaluateAcceptanceCriteria` a ete execute sur les deux :
+
+```
+checklist REGEX statique — calc_correct: score=71%
+checklist REGEX statique — calc_faux:    score=71%
+   PASS calculator-operator-correctness      <-- sur la calculatrice INVERSEE
+```
+
+**Score identique, au point pres.** Le critere cense verifier la justesse des
+operateurs passe sur celle qui les inverse. Aucune regex ne peut prouver que
+2 + 3 fait 5 : elle ne lit que la forme du code, jamais son comportement.
+
+### Recherches et choix
+
+Le conteneur Podman tourne desormais reellement (chantier precedent), mais pour
+une page web l execution utile n est pas un conteneur : c est un NAVIGATEUR.
+Playwright/Chromium est deja installe et deja utilise ailleurs dans le depot
+pour d autres preuves.
+
+Le module sert donc les fichiers livres depuis un petit serveur en memoire
+(aucun serveur de dev, donc aucune dependance a Tauri : le chemin marche en CLI
+comme dans le tunnel), ouvre la page dans Chromium headless, **clique sur ses
+vrais boutons** et **lit son vrai affichage**.
+
+Les boutons sont trouves par leur TEXTE visible, avec alias (`*`, `×`, `x`),
+pour rester independant du nommage interne choisi par le modele.
+
+Deux criteres universels s appliquent a toute page livree — pas d erreur
+JavaScript au chargement, et la page n est pas une coquille vide. Ce second
+critere ne peut pas etre un simple nombre de caracteres : une calculatrice
+correcte n affiche que des chiffres. Il accepte donc du texte OU de vrais
+controles OU une surface graphique.
+
+Branchement fail-soft dans le runner : l absence de navigateur n empeche jamais
+une livraison.
+
+### Modifications realisees
+
+- `scripts/code_harness/acceptance_behaviour.mjs` (nouveau) — serveur memoire,
+  pilotage Chromium, criteres comportementaux, plus une CLI autonome.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — acceptation comportementale
+  branchee, resultat emis en `test.result`, desactivable par
+  `AURORA_CODE_BEHAVIOUR_ACCEPTANCE=0`.
+
+### Avant-apres mesurable
+
+| Livrable | Checklist regex (avant) | Acceptation comportementale (apres) |
+|---|---|---|
+| Calculatrice correcte | 71 % | **100 %** |
+| Calculatrice aux operateurs inverses | **71 %** | **50 %** |
+
+Detail du verdict comportemental sur la calculatrice fausse :
+
+```
+FAIL calc-2+3 | affiche "-1" (attendu 5)
+FAIL calc-9-4 | affiche "13" (attendu 5)
+FAIL calc-6*7 | affiche "13" (attendu 42)
+PASS calc-8/2 | affiche "4"  (attendu 4)
+```
+
+La division reste juste dans la version fausse — et le test le dit, au lieu de
+noyer le tout dans un score global.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node scripts/code_harness/acceptance_behaviour.mjs \
+  output/code/audit_v91/ws7_acceptance/calc_correct --prompt "calculatrice"
+node scripts/code_harness/acceptance_behaviour.mjs \
+  output/code/audit_v91/ws7_acceptance/calc_faux --prompt "calculatrice"
+```
+
+Rapports : `output/code/audit_v91/ws7_acceptance/report_correct.json` (ok=true,
+score 100) et `report_faux.json` (ok=false, score 50).
+
+### Etat de satisfaction chantier
+
+Une calculatrice au calcul faux ne peut plus passer. Reste ouvert et assume :
+
+- le pilotage comportemental couvre aujourd hui les calculatrices et deux
+  criteres universels ; d autres familles (tri de tableau, filtre, panier)
+  demandent chacune leur scenario de pilotage ;
+- la checklist regex de `codeAcceptanceCriteria.ts` reste en place dans le
+  sandbox : elle est rapide et sans navigateur. Le gate comportemental s ajoute
+  au lieu de la remplacer, et c est lui qui tranche sur le comportement.
