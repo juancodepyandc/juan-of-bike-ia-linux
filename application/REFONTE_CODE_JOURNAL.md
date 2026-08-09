@@ -4761,3 +4761,97 @@ acceptation comportementale) ne dependent pas du bridge et restent valides.
    universels; chaque autre famille (tri, filtre, panier) demande son scenario.
 6. **La route bridge n est active qu apres redemarrage du bridge**, qui est
    actuellement arrete.
+
+## 2026-08-10 — Huit passes de correction contre une panne de reseau
+
+### Reprise et diagnostic
+
+Le bridge a ete redemarre (il etait arrete, GPU idle, aucun worker video/3D en
+cours). Avant de relancer des generations, profilage des runs deja captures, a
+partir des HORODATAGES du flux NDJSON — donc du temps reel, pas une estimation.
+
+Un run est alle au bout: **167 evenements, 3 332 s (55 minutes)**. Sa
+decomposition est accablante :
+
+```
+8 passes de correction, TOUTES a score 0, TOUTES sur la meme erreur: fetch failed
+  attempt 1 strategy initial          errs ['fetch failed', ... lint=95%]
+  attempt 2 strategy targeted_repair  errs ['fetch failed', ... lint=95%]
+  attempt 3 strategy targeted_repair  errs ['fetch failed', ... lint=85%]
+  attempt 4 strategy rewrite          errs ['fetch failed', ... lint=80%]
+  attempt 5..8 strategy strategy_change  errs ['fetch failed', ... lint=80%]
+```
+
+La validation sandbox passe par le bridge; le bridge etait arrete. Le pipeline a
+donc demande **huit fois** au modele de corriger du code a cause d une panne
+d infrastructure qu aucune modification de code ne pouvait resoudre.
+
+Le cout n est pas seulement du temps (~17 minutes de passes, escalade complete
+`targeted_repair` -> `rewrite` -> `strategy_change` x4, 30 fichiers reecrits).
+**La qualite a REGRESSE pendant l operation**: le score lint est passe de 95 % a
+85 % puis 80 %. Le modele a degrade du code correct en cherchant une faute
+inexistante.
+
+C est une erreur de CATEGORIE: une validation qui n a pas pu s executer ne dit
+rien sur le code.
+
+### Recherches et choix
+
+Le classifieur est volontairement ETROIT: on ne veut surtout pas requalifier une
+vraie erreur de compilation en « probleme d environnement », ce qui masquerait
+de vrais defauts. Deux conditions cumulatives pour declarer une panne
+d infrastructure :
+
+1. le resultat est en echec, ET
+2. le `summary` porte une signature reseau/bridge, OU **toutes** les etapes en
+   echec en portent une.
+
+Un echec MIXTE (une etape reseau + une erreur de syntaxe) reste donc un echec de
+code, et la boucle de correction tourne normalement. Verrouille par test.
+
+Quand la panne est confirmee: on sort immediatement, et la degradation est
+ecrite noir sur blanc dans la livraison (`## VALIDATION INDISPONIBLE`), en
+precisant que ce n est PAS un defaut du code livre.
+
+### Modifications realisees
+
+- `src/services/codeInfrastructureFailure.ts` (nouveau) — classifieur etroit,
+  note de livraison, et le traitement complet (notification, note, phase) pour
+  garder la boucle mince.
+- `src/services/codeValidationCorrectionLoop.ts` — sortie immediate sur panne
+  d infrastructure. Quatre blocs d import compactes (pur formatage) pour rester
+  sous la limite des 400 lignes.
+- `src/__tests__/codeInfrastructureFailure.test.ts` (nouveau) — 10 tests.
+
+### Avant-apres mesurable
+
+| Situation | Avant | Apres |
+|---|---|---|
+| Sandbox injoignable (`fetch failed`) | **8 passes**, ~17 min brulees, lint 95 % -> 80 % | **0 passe**, sortie immediate, note explicite |
+| Echec de compilation | boucle de correction | boucle de correction (inchange) |
+| Echec mixte reseau + syntaxe | boucle | boucle (inchange, verrouille par test) |
+| Sandbox vert | livraison | livraison (inchange) |
+
+Tests : **786 -> 796 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeInfrastructureFailure.test.ts'
+
+# le profil qui a revele le gaspillage, rejouable sur n importe quel flux capture
+python3 - <<'EOF'
+import json
+ev=[json.loads(l) for l in open('output/code/audit_v91/e2e_final/_stream.ndjson') if l.strip()]
+for e in ev:
+    if e['kind']=='correction':
+        print('attempt',e['attempt'],'score',e['score'],'strategy',e['strategy'],e['errors'][:1])
+EOF
+```
+
+### Etat de satisfaction chantier
+
+Le gaspillage le plus cher mesure sur ce module est supprime. Reste assume: la
+detection repose sur des signatures de message; un mode de panne reseau au
+libelle inedit passerait au travers et retomberait dans l ancien comportement.

@@ -1,11 +1,6 @@
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeMissionDossier } from './codeMissionControl.ts'
-import {
-  buildCorrectionStrategy,
-  classifyErrors,
-  shouldContinueLoop,
-  type CorrectionPass,
-} from './codeAutoCorrection.ts'
+import { buildCorrectionStrategy, classifyErrors, shouldContinueLoop, type CorrectionPass } from './codeAutoCorrection.ts'
 import type { CodeSandboxResult } from './codeSandbox.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
@@ -14,24 +9,14 @@ import { extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
 import { detectEnvironmentBlocker } from './codeGenerationDiagnostics.ts'
 import { buildCorrectionMessages } from './codeCorrectionMessages.ts'
 import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
+import { attemptLocalFileRepair, validateOutputMatchesIntent } from './codeProjectValidation.ts'
+import { formatCodeRegressionGuardReport, inspectCodePatchRegression } from './codeRegressionGuard.ts'
 import {
-  attemptLocalFileRepair,
-  validateOutputMatchesIntent,
-} from './codeProjectValidation.ts'
-import {
-  formatCodeRegressionGuardReport,
-  inspectCodePatchRegression,
-} from './codeRegressionGuard.ts'
-import {
-  CODE_EXPERT_CONTEXT_TOKENS,
-  CORRECTION_FIRST_BYTE_TIMEOUT_MS,
-  CORRECTION_TIMEOUT_MS,
-  RESEARCH_PHASE_TIMEOUT_MS,
-  getModelShortName,
-  selectModel,
-  type CodeModelRoutingContext,
+  CODE_EXPERT_CONTEXT_TOKENS, CORRECTION_FIRST_BYTE_TIMEOUT_MS, CORRECTION_TIMEOUT_MS,
+  RESEARCH_PHASE_TIMEOUT_MS, getModelShortName, selectModel, type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import { computeSandboxScore } from './codeValidationScoring.ts'
+import { handleSandboxInfrastructureFailure } from './codeInfrastructureFailure.ts'
 import { runCorrectionQualityGates } from './codeCorrectionQualityGates.ts'
 
 type ValidationCorrectionLoopResult = {
@@ -119,6 +104,18 @@ export async function runValidationAndCorrectionLoop(
     if (normalizedFilesChanged(currentFiles, sandboxResult.normalizedFiles)) {
       currentFiles = sandboxResult.normalizedFiles!
       onFilesUpdate(currentFiles, currentNotes)
+    }
+
+    // Une validation qui n a pas pu s executer ne dit rien sur le code (mesure
+    // reelle: 8 passes a score 0, ~17 min, lint degrade de 95 % a 80 %).
+    const infraFailure = handleSandboxInfrastructureFailure({
+      result: sandboxResult, files: currentFiles, notes: currentNotes,
+      score: 0, onValidationUpdate, onFilesUpdate, setPhase,
+    })
+    if (infraFailure) {
+      currentNotes = infraFailure.notes
+      lastScore = computeSandboxScore(sandboxResult, currentFiles, intent)
+      break
     }
 
     // Fonctionnel-vert capture AVANT les gates (qui peuvent forcer ok=false):
