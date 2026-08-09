@@ -4855,3 +4855,118 @@ EOF
 Le gaspillage le plus cher mesure sur ce module est supprime. Reste assume: la
 detection repose sur des signatures de message; un mode de panne reseau au
 libelle inedit passerait au travers et retomberait dans l ancien comportement.
+
+## 2026-08-10 — Le juge notait 87/100 une page vide et cassee
+
+### Reprise et diagnostic
+
+Bridge redemarre, puis jugement du RESULTAT et non du cablage. Les fichiers du
+run complet (167 evenements) ont ete extraits du flux NDJSON, servis, ouverts
+dans Chromium, captures en desktop et mobile, et regardes.
+
+Verdict de la porte source-statique sur cette page: **87/100, « Rendu visuel
+acceptable »**. Verdict de l oeil et de la mesure sur le rendu:
+
+- un **vide blanc d environ 1 000 px** en guise de hero;
+- la plus grosse typographie de la page, sur 1440 px de large: **18 px**
+  (echelle complete: 13/16/18) — donc aucune typo d affichage;
+- familles reellement resolues par le navigateur: **Helvetica Neue et Georgia**,
+  soit exactement les polices par defaut que le contrat design interdit;
+- **0 image**, 0 ombre, 4 elements interactifs, un « Envoyer » sans style;
+- accent cyan sans rapport avec la palette Mercedes;
+- et la page est **CASSEE au chargement**: `ReferenceError: Lenis is not defined`,
+  `SyntaxError: Unexpected identifier 'email'`.
+
+La liste des fichiers livres raconte la meme histoire: `index.html` ET
+`main.html`, plus `style-2.css`, `script-3.js`, `module-4.js`, `bloc-5.md` —
+residus des huit passes de correction inutiles corrigees dans l increment
+precedent.
+
+**La cause est structurelle**: une porte qui lit la SOURCE est trompable par
+construction. Le CSS peut declarer « Instrument Serif », des animations et une
+echelle riche; si la police ne charge jamais et que le titre sort en 18 px, le
+rendu est pauvre malgre une source flatteuse. Seul le rendu tranche.
+
+### Recherches et choix
+
+Le blocage historique — l audit rendu passe par `startDevServer` ->
+`spawnWorkspaceCommand`, couple a Tauri — n en est plus un: un **serveur en
+memoire** suffit a servir les fichiers livres, et Playwright/Chromium est deja
+installe. Aucun serveur de dev, aucune dependance Tauri, donc le CLI et le
+tunnel y ont acces.
+
+La regle de notation est un module TS **pur** (`codeRenderedAestheticScore.ts`),
+testable sans navigateur; le navigateur vit dans les scripts. La capture
+manuelle et la porte automatique importent la MEME regle, elles ne peuvent donc
+pas diverger.
+
+Chaque seuil correspond a un defaut constate sur cette page, pas a une
+intuition: >= 40 px pour la typo d affichage, >= 4 tailles distinctes, police
+non-fallback, au moins un visuel, de la profondeur, une densite proportionnee a
+la hauteur, >= 5 controles. Une erreur JavaScript au chargement est
+**eliminatoire**: une page cassee ne peut pas passer, quel que soit son score.
+
+La repasse esthetique est **bornee a UNE passe**: le budget VRAM ne supporte pas
+davantage de rechargements de modele.
+
+### Modifications realisees
+
+- `src/services/codeRenderedAestheticScore.ts` (nouveau) — regle pure + critique
+  actionnable citant la mesure constatee.
+- `scripts/code_harness/render_audit.mjs` (nouveau) — sert, ouvre, mesure, note.
+  Ne leve jamais: une panne de navigateur n empeche pas une livraison.
+- `scripts/code_harness/aesthetic_capture.mjs` (nouveau) — captures desktop et
+  mobile + metriques + verdict, pour inspection humaine.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — audit de rendu emis en
+  `visual.score` (`source: render_audit`), et **repasse esthetique ciblee**
+  quand le rendu echoue, avec re-mesure apres coup.
+- `src/__tests__/codeRenderedAestheticScore.test.ts` (nouveau) — 9 tests, dont
+  les metriques REELLES de la page Mercedes.
+
+### Avant-apres mesurable
+
+| Juge | Note sur la MEME page livree |
+|---|---|
+| Porte source-statique (avant) | **87/100 — « Rendu visuel acceptable »** |
+| Juge de rendu (apres) | **18/100 — echec** |
+
+Detail du verdict de rendu :
+
+```
+FAIL runtime_clean       4 erreur(s): Lenis is not defined | SyntaxError ...
+FAIL display_typography  plus grande taille rendue: 18px
+FAIL type_scale          3 taille(s): 13/16/18
+FAIL real_typeface       familles resolues: Helvetica Neue, Georgia
+FAIL visual_content      0 image(s)/svg, 0 canvas
+FAIL interactivity       4 element(s) interactif(s)
+PASS depth / content_density
+```
+
+Parite du canal tunnel: **15/15**. Tests : **796 -> 805 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node scripts/code_harness/aesthetic_capture.mjs \
+  output/code/audit_v92/mercedes_full \
+  --out output/code/audit_v92/mercedes_full/_shots \
+  --json output/code/audit_v92/mercedes_full/_shots/report.json
+jq '.verdict | {score, passed, failedChecks}' output/code/audit_v92/mercedes_full/_shots/report.json
+node --experimental-strip-types --test 'src/__tests__/codeRenderedAestheticScore.test.ts'
+```
+
+Captures: `output/code/audit_v92/mercedes_full/_shots/desktop.png` et
+`mobile.png`.
+
+### Etat de satisfaction chantier
+
+Le juge ne peut plus qualifier d acceptable une page vide et cassee, et la
+repasse esthetique existe desormais hors UI Tauri. Reste ouvert et assume :
+
+- la repasse est bornee a UNE passe et n est pas encore verifiee sur un cycle
+  complet degrade -> regenere -> ameliore, faute de pouvoir mener une generation
+  longue au bout dans cet environnement;
+- le juge mesure la FORME (typo, profondeur, densite, erreurs) et non le GOUT:
+  il ne dira pas qu une palette est laide, seulement qu elle est plate ou
+  par defaut.

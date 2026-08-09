@@ -11,6 +11,7 @@
 //   node scripts/code_harness/aesthetic_capture.mjs <dir> --out <dir> [--json <path>]
 
 import { createServer } from 'node:http'
+import { pathToFileURL } from 'node:url'
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
@@ -113,6 +114,23 @@ try {
 } finally {
   await browser.close().catch(() => {})
   server.close()
+}
+
+// Note le RENDU avec la meme regle que le pipeline (module TS partage), pour
+// que la capture manuelle et la porte automatique ne puissent pas diverger.
+try {
+  const { installHeadlessCodeEnv } = await import('./harness_env.mjs')
+  installHeadlessCodeEnv()
+  const { scoreRenderedAesthetics } = await import(
+    pathToFileURL(path.resolve('src/services/codeRenderedAestheticScore.ts')).href
+  )
+  report.verdict = scoreRenderedAesthetics({
+    desktop: report.viewports.desktop,
+    mobile: report.viewports.mobile ?? null,
+    consoleErrors: report.consoleErrors,
+  })
+} catch (err) {
+  report.verdictError = String(err?.message ?? err).slice(0, 200)
 }
 
 const ji = process.argv.indexOf('--json')

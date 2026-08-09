@@ -201,7 +201,7 @@ try {
 // ---------------------------------------------------------------------------
 // 5. Final authoritative delivery: every file, with content.
 // ---------------------------------------------------------------------------
-const files = result?.files?.length ? result.files : lastFiles
+let files = result?.files?.length ? result.files : lastFiles
 if (!files.length) {
   emit(
     buildCodeStreamErrorEvent({
@@ -249,6 +249,57 @@ if (process.env.AURORA_CODE_BEHAVIOUR_ACCEPTANCE !== '0') {
     }
   } catch (err) {
     log(`[bridge-runner] acceptation comportementale indisponible: ${String(err?.message ?? err).slice(0, 160)}`)
+  }
+}
+
+// WS9 — audit de RENDU et repasse esthetique, hors UI Tauri.
+// La porte source-statique avait note 87/100 une page qui, ouverte dans un
+// navigateur, affichait un vide blanc, une typo maximale de 18 px et deux
+// erreurs JavaScript: elle lit le CSS declare, pas ce qui s affiche. Ici on
+// OUVRE la page, on la mesure, et si elle echoue on relance UNE passe
+// esthetique ciblee avec la critique constatee a l ecran. Une seule passe: le
+// budget VRAM ne supporte pas davantage de rechargements de modele.
+if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
+  try {
+    const { renderAndScoreAesthetics } = await import('./render_audit.mjs')
+    let audit = await renderAndScoreAesthetics(files)
+    if (audit.applicable && audit.verdict) {
+      log(`[bridge-runner] rendu: ${audit.verdict.score}/100 (seuil ${audit.verdict.floor}) echecs=${audit.verdict.failedChecks.join(',') || 'aucun'}`)
+      emit(buildCodeStreamVisualScoreEvent({
+        ...nextMeta(), score: audit.verdict.score, viewport: 'desktop-1440',
+        summary: `Rendu reel ${audit.verdict.score}/100`, source: 'render_audit',
+        failedChecks: audit.verdict.failedChecks,
+      }))
+      if (!audit.verdict.passed) {
+        log('[bridge-runner] rendu sous le seuil -> passe esthetique ciblee')
+        emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: 'Rendu reel sous le seuil - passe esthetique ciblee...', progress: 96 }))
+        const regen = await orchestrateCodeGeneration({
+          prompt,
+          enrichedPrompt: `${prompt}\n\n${audit.verdict.critique}`,
+          conversationHistory: normalizedHistory,
+          existingFiles: files,
+          contextImages: [], userFileDataUrls: {},
+          configuredCodeModel, visionModel,
+          setPhase: (d, p) => emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: String(d ?? ''), progress: Number(p) || 96 })),
+          onToken: () => {}, onFilesUpdate: () => {},
+          onValidationUpdate: () => {}, onCorrectionLogUpdate: () => {},
+        })
+        if (regen?.files?.length) {
+          files = regen.files
+          const after = await renderAndScoreAesthetics(files)
+          if (after.applicable && after.verdict) {
+            log(`[bridge-runner] rendu apres passe esthetique: ${after.verdict.score}/100`)
+            emit(buildCodeStreamVisualScoreEvent({
+              ...nextMeta(), score: after.verdict.score, viewport: 'desktop-1440',
+              summary: `Rendu reel apres passe esthetique ${after.verdict.score}/100`,
+              source: 'render_audit', failedChecks: after.verdict.failedChecks,
+            }))
+          }
+        }
+      }
+    }
+  } catch (err) {
+    log(`[bridge-runner] audit de rendu indisponible: ${String(err?.message ?? err).slice(0, 160)}`)
   }
 }
 
