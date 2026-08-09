@@ -1,3 +1,4 @@
+import type { VisualFidelityReport } from './codeVisualFidelity.ts'
 import type { RecoveryEvent } from './ollamaResilience.ts'
 import type { CorrectionPass } from './codeAutoCorrection.ts'
 import type { CodeIntent } from './codeIntent.ts'
@@ -38,6 +39,8 @@ export type CodeOrchestrationResult = {
   recoveryEvents: RecoveryEvent[]
   followUp: FollowUpAnalysis | null
   designReport?: DesignPolishReport | null
+  /** WS9 source-statique: disponible sur les trois canaux, pas seulement l UI. */
+  visualFidelity?: VisualFidelityReport | null
 }
 
 export type PhaseCallback = (detail: string, progress: number) => void

@@ -42,11 +42,8 @@ import {
   type DesignPolishReport,
 } from './codeQualityGates.ts'
 export {
-  buildDesignRetryHint,
-  checkGamePlayability,
-  checkInteractive3DFidelity,
-  checkWebPageIntegrity,
-  computeDesignPolishReportPublic,
+  buildDesignRetryHint, checkGamePlayability, checkInteractive3DFidelity,
+  checkWebPageIntegrity, computeDesignPolishReportPublic,
 } from './codeQualityGates.ts'
 export type { DesignPolishReport } from './codeQualityGates.ts'
 import {
@@ -395,5 +392,6 @@ async function runFullPipeline({
     recoveryEvents,
     followUp,
     designReport: delivery.designReport,
+    visualFidelity: delivery.visualFidelity,
   }
 }

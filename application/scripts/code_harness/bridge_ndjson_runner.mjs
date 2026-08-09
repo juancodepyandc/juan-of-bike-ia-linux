@@ -89,6 +89,7 @@ const {
   buildCodeStreamFileWrittenEvents,
   buildCodeStreamTestResultEvent,
   buildCodeStreamCorrectionEvent,
+  buildCodeStreamVisualScoreEvent,
   buildCodeStreamDoneEvent,
   buildCodeStreamErrorEvent,
   serializeCodeStreamEvent,
@@ -197,6 +198,23 @@ for (const e of buildCodeStreamFileWrittenEvents({
   includeContent: true,
 })) {
   emit(e)
+}
+
+// WS9 sur le canal tunnel: la porte visuelle source-statique est evaluee par le
+// pipeline pour les trois canaux, donc son verdict doit aussi etre OBSERVABLE
+// ici, pas seulement dans l UI Tauri.
+const visual = result?.visualFidelity
+if (visual && Array.isArray(visual.checks) && visual.checks.length > 0) {
+  emit(
+    buildCodeStreamVisualScoreEvent({
+      ...nextMeta(),
+      score: Number(visual.score) || 0,
+      viewport: 'source',
+      summary: String(visual.summary ?? ''),
+      source: visual.source === 'render_audit' ? 'render_audit' : 'source_static',
+      failedChecks: Array.isArray(visual.failedChecks) ? visual.failedChecks : [],
+    }),
+  )
 }
 
 // Un pipeline en erreur qui a tout de meme produit des fichiers partiels ne doit

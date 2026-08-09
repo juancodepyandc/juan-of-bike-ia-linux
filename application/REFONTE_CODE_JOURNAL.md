@@ -4203,3 +4203,92 @@ Le type est desormais contraignant dans le prompt ET dans la selection. Reste
 assume : la penalite ne peut pas inventer un bon candidat quand tous derivent —
 elle choisit alors le moins mauvais, et la reparation de porte d entree livree
 plus tot garantit malgre tout le fichier d entree.
+
+## 2026-08-09 — La porte visuelle ne servait qu'a un seul canal
+
+### Reprise et diagnostic
+
+WS9 avait ete mis « in-loop » en juillet, mais dans la couche VUE :
+`codeViewGeneration.ts` appelle `runVisualCorrectionLoop`
+(`codeViewVisualCorrectionLoop.ts`). Consequence directe, verifiee par grep :
+seul `CodeView.tsx` en beneficie. Le CLI (`run.mjs`) et le canal tunnel
+appellent `orchestrateCodeGeneration` directement et livraient donc **sans
+aucune garde visuelle** — precisement la parite exigee entre canaux.
+
+Le blocage suppose etait `startDevServer` -> `spawnWorkspaceCommand`, couple a
+Tauri. Mais en relisant `codeVisualFidelity.ts`, il existe DEUX portes
+visuelles, pas une :
+
+- l audit RENDU (navigateur + serveur de dev) — celui qui est couple ;
+- `evaluateVisualFidelity`, une porte **source-statique** qui inspecte le
+  HTML/CSS/JS livre, sans navigateur ni serveur.
+
+La seconde etait un ORPHELIN : implementee, testee, jamais appelee en
+production. Elle accepte en plus un audit rendu optionnel, donc elle unifie les
+deux chemins au lieu de les concurrencer.
+
+### Recherches et choix
+
+Cabler la porte source-statique dans `finalizeCodePipelineDelivery`, c est-a-dire
+dans le pipeline lui-meme, donc sur les TROIS canaux. Zero navigateur, zero
+serveur, zero appel modele supplementaire — donc aucun cout sur le budget de
+passes ni sur la VRAM.
+
+Le mixage du score reprend la semantique deja en place pour la porte de marque
+juste au-dessus : la correction du modele reste dominante (0,75), l apparence
+pese (0,25), et un rendu qui echoue son seuil est plafonne a 84 — la meme valeur
+que celle utilisee par le mixage de l audit rendu, pour que les deux chemins
+notent pareil.
+
+La critique precise part avec la livraison (`## QUALITE VISUELLE`), donc la
+degradation n est jamais silencieuse et la directive de repasse esthetique est
+deja redigee.
+
+### Modifications realisees
+
+- `src/services/codePipelineFinalization.ts` — porte visuelle evaluee,
+  `blendVisualFidelityIntoScore` (exporte et teste), critique jointe aux notes,
+  `visualFidelity` ajoute au type de livraison.
+- `src/services/codeOrchestratorTypes.ts` / `codeOrchestrator.ts` — le rapport
+  remonte dans le resultat, donc lisible par n importe quel canal.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — emet un evenement
+  `visual.score` sur le flux tunnel.
+- `src/__tests__/codeVisualGateParity.test.ts` (nouveau) — 7 tests.
+- `src/services/codeOrchestrator.ts` — bloc de re-export compacte pour rester
+  sous la limite des 400 lignes (le garde structurel l a attrape a 400 pile).
+
+### Avant-apres mesurable
+
+| Canal | Garde visuelle avant | Apres |
+|---|---|---|
+| UI Tauri (`CodeView.tsx`) | audit rendu (couche vue) | audit rendu **+** porte source-statique |
+| CLI (`run.mjs`) | **aucune** | porte source-statique |
+| Tunnel / cowork | **aucune** | porte source-statique + evenement `visual.score` |
+
+| Cas | Avant | Apres |
+|---|---|---|
+| Page scolaire (Arial, `#fff`/`#000`, `color: blue`) notee 95 par le modele | livree a **95** | porte echouee, score **plafonne a 84** |
+| Projet non visuel note 90 | 90 | 90 (aucune penalite) |
+| Page sous le seuil | aucune trace | critique `## QUALITE VISUELLE` jointe |
+
+Orphelins resolus au passage : `evaluateVisualFidelity`,
+`buildVisualFidelityCritique`, `buildCodeStreamVisualScoreEvent`.
+
+Tests : **806 -> 813 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeVisualGateParity.test.ts'
+node scripts/code_harness/orphan_scan.mjs --json output/code/audit_v91/orphan_scan_after.json
+```
+
+### Etat de satisfaction chantier
+
+Les trois canaux ont desormais une garde visuelle qui COMPTE dans le score.
+Reste ouvert et assume : la boucle de REGENERATION esthetique (audit rendu ->
+repasse ciblee) demeure exclusive a l UI Tauri, parce qu elle depend d un
+serveur de dev lance via Tauri. Le CLI et le tunnel detectent et penalisent une
+page faible, et emportent la critique, mais ne declenchent pas d eux-memes la
+repasse.
