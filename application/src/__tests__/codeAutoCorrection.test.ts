@@ -373,3 +373,34 @@ describe('shouldContinueLoop', () => {
     assert.equal(shouldContinueLoop(climbingAtCap, MAX_CORRECTION_PASSES, []), false)
   })
 })
+
+// --- Budget proportionnel a la taille du projet (2026-08-09) ---------------
+// Asymetrie documentee depuis juillet: le budget ne dependait QUE des
+// categories d erreur. Un projet de 30 fichiers recevait exactement le meme
+// nombre de passes qu un projet de 3, alors qu il offre dix fois plus de
+// surface a corriger — donc moins de finition a mesure que la demande se
+// complexifie, ce que le module cherche precisement a eliminer.
+describe('computeAdaptiveCorrectionBudget — proportionnel a la taille', () => {
+  test('un gros projet recoit plus de passes qu un projet trivial', () => {
+    const cats = ['syntax_error'] as never
+    const petit = computeAdaptiveCorrectionBudget(cats, [], 2)
+    const gros = computeAdaptiveCorrectionBudget(cats, [], 25)
+    assert.ok(gros > petit, `gros=${gros} devrait depasser petit=${petit}`)
+  })
+
+  test('le plafond dur machine n est jamais depasse', () => {
+    const cats = ['runtime_crash', 'build_failure', 'timeout'] as never
+    for (const n of [0, 1, 3, 10, 25, 500]) {
+      assert.ok(computeAdaptiveCorrectionBudget(cats, [], n) <= MAX_CORRECTION_PASSES)
+    }
+  })
+
+  test('sans information de taille, le comportement historique est conserve', () => {
+    const cats = ['syntax_error'] as never
+    assert.equal(computeAdaptiveCorrectionBudget(cats, []), computeAdaptiveCorrectionBudget(cats, [], 0))
+  })
+
+  test('le plancher de 4 passes reste garanti', () => {
+    assert.ok(computeAdaptiveCorrectionBudget([] as never, [], 1) >= 4)
+  })
+})

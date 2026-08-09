@@ -4630,3 +4630,82 @@ jq '{ok, checks: [.checks[] | select(.check | test("followup|forwards|hardcode")
 Le tunnel peut desormais poursuivre un projet. Reste assume : `_aurora_code()`,
 le connecteur cowork one-shot, n expose pas encore ces champs a ses appelants —
 il faudrait qu il tienne une session. La route, elle, les accepte.
+
+## 2026-08-09 — Plus la demande etait complexe, moins elle etait finie
+
+### Reprise et diagnostic
+
+Dette documentee depuis juillet sous le nom « asymetrie #7 : le budget de retry
+ignore le nombre de fichiers ». Verifiee dans le code :
+
+```ts
+export function computeAdaptiveCorrectionBudget(errorCategories, _correctionLog) {
+  let budget = 6
+  if (categories.length >= 2) budget += 1
+  if (categories.some(/* categories lourdes */)) budget += 2
+  return Math.max(4, Math.min(MAX_CORRECTION_PASSES, budget))
+}
+```
+
+Le budget ne dependait QUE des categories d erreur. Un livrable de 30 fichiers
+recevait donc exactement le meme nombre de passes de correction qu un livrable
+de 3, alors qu il offre dix fois plus de surface a corriger.
+
+L effet est exactement celui que la mission cherche a supprimer: **plus la
+demande est complexe, moins elle est finie proportionnellement**.
+
+### Recherches et choix
+
+Le plafond ne bouge PAS. `MAX_CORRECTION_PASSES` est decrit dans le code comme
+« plafond dur machine, jamais depasser », et chaque passe recharge un modele et
+des processus de sandbox: relever la pointe, c est risquer le swap et le gel.
+
+On se contente donc de REPARTIR le budget existant: resserre sur les livrables
+triviaux, relache sur les gros, plafond inchange.
+
+- <= 3 fichiers : base 5 (au lieu de 6)
+- 4 a 10 fichiers : base 6 (inchange)
+- > 10 fichiers : base 7
+
+Les bonus par categorie d erreur restent identiques, et le maximum atteignable
+(7 + 1 + 2 = 10) egale exactement le plafond dur deja en vigueur. La pointe de
+consommation memoire est donc rigoureusement la meme qu avant.
+
+Retro-compatibilite: sans information de taille, le comportement historique est
+conserve a l identique — verrouille par un test.
+
+### Modifications realisees
+
+- `src/services/codeAutoCorrection.ts` — `computeAdaptiveCorrectionBudget`
+  accepte `fileCount`; `shouldContinueLoop` le transmet. Liste des categories
+  lourdes compactee pour rester sous la limite des 400 lignes (le garde
+  structurel l a attrapee a 416, puis 408, puis 403).
+- `src/services/codeValidationCorrectionLoop.ts` — passe `currentFiles.length`.
+- `src/__tests__/codeAutoCorrection.test.ts` — 4 tests ajoutes.
+
+### Avant-apres mesurable
+
+| Projet | Budget avant | Budget apres |
+|---|---|---|
+| 2 fichiers, erreur simple | 6 | **5** |
+| 8 fichiers, erreur simple | 6 | 6 |
+| 25 fichiers, erreur simple | 6 | **7** |
+| 25 fichiers, erreurs lourdes | 9 | **10** (= plafond dur, inchange) |
+| Taille inconnue | 6 | 6 (retro-compatible) |
+
+Tests : **782 -> 786 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeAutoCorrection.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+L asymetrie de finition entre projets simples et complexes est corrigee sans
+toucher au plafond machine. Reste ouvert et assume : l escalade de modele reste
+indexee sur le NUMERO de passe et non sur la trajectoire du score (asymetrie #5
+du meme rapport) ; `isCorrectionScoreClimbing` existe et est deja consulte pour
+prolonger la boucle, mais pas pour decider QUAND changer de modele.

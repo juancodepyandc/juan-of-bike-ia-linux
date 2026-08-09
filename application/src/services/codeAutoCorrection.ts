@@ -142,25 +142,22 @@ function selectDominantCause(categories: ErrorCategory[]): ErrorCategory {
   return priority.find((category) => categories.includes(category)) ?? categories[0] ?? 'unknown'
 }
 
+// Budget proportionnel a la taille du projet: un livrable de 30 fichiers
+// recevait le meme budget qu un de 3. Le PLAFOND ne bouge pas — on repartit.
 export function computeAdaptiveCorrectionBudget(
   errorCategories: ErrorCategory[],
   _correctionLog: CorrectionPass[] = [],
+  fileCount = 0,
 ): number {
   const categories = errorCategories.length > 0 ? errorCategories : ['unknown' as ErrorCategory]
-  let budget = 6
+  let budget = fileCount > 0 && fileCount <= 3 ? 5 : fileCount > 10 ? 7 : 6
 
   if (categories.length >= 2) budget += 1
-  if (categories.some((category) =>
-    category === 'config_error'
-    || category === 'dependency_missing'
-    || category === 'test_failure'
-    || category === 'runtime_crash'
-    || category === 'build_failure'
-    || category === 'timeout'
-    || category === 'unknown'
-  )) {
-    budget += 2
-  }
+  const HEAVY: ErrorCategory[] = [
+    'config_error', 'dependency_missing', 'test_failure',
+    'runtime_crash', 'build_failure', 'timeout', 'unknown',
+  ]
+  if (categories.some((category) => HEAVY.includes(category))) budget += 2
 
   return Math.max(4, Math.min(MAX_CORRECTION_PASSES, budget))
 }
@@ -375,6 +372,7 @@ export function shouldContinueLoop(
   correctionLog: CorrectionPass[],
   _currentAttempt: number,
   _errorCategories: ErrorCategory[] = [],
+  fileCount = 0,
 ): boolean {
   if (correctionLog.length === 0) return true
   const latestScore = correctionLog[correctionLog.length - 1].score
@@ -384,7 +382,7 @@ export function shouldContinueLoop(
 
   if (correctionLog.length >= MAX_CORRECTION_PASSES) return false // plafond dur machine, jamais depasser
   // Au budget adaptatif on ne coupe que si la progression ne paie plus (un run qui grimpe encore va jusqu'au plafond dur).
-  if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog) && !isCorrectionScoreClimbing(correctionLog)) return false
+  if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog, fileCount) && !isCorrectionScoreClimbing(correctionLog)) return false
 
   // Boucle infinie reelle : meme erreur exacte qui revient 6+ fois consecutives.
   if (correctionLog.length >= 6) {

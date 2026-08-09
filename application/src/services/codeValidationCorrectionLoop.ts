@@ -196,7 +196,7 @@ export async function runValidationAndCorrectionLoop(
       continue
     }
 
-    if (!shouldContinueLoop(correctionLog, attempt, errorCategories)) {
+    if (!shouldContinueLoop(correctionLog, attempt, errorCategories, currentFiles.length)) {
       lastScore = currentScore
       const reason = currentScore >= 100
         ? 'livraison validee a 100%'
