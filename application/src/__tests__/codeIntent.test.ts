@@ -8,7 +8,6 @@ import {
   classifyCodeIntent,
   hasExplicitStackMention,
   classifyPivotKindHeuristic,
-  buildCodeSystemPromptFromIntent,
 } from '../services/codeIntent.ts'
 
 describe('classifyCodeIntent — static_web', () => {
@@ -223,31 +222,3 @@ describe('classifyPivotKindHeuristic', () => {
   })
 })
 
-describe('buildCodeSystemPromptFromIntent', () => {
-  test('produit un system prompt non vide pour spa_react', () => {
-    const intent = classifyCodeIntent('react app simple compteur')
-    const p = buildCodeSystemPromptFromIntent(intent)
-    assert.ok(p.length > 200)
-  })
-
-  test('produit un system prompt non vide pour api_fastapi', () => {
-    const intent = classifyCodeIntent('FastAPI api /users')
-    const p = buildCodeSystemPromptFromIntent(intent)
-    assert.ok(p.length > 200)
-  })
-
-  test('produit un system prompt non vide pour static_web', () => {
-    const intent = classifyCodeIntent('page HTML CSS simple landing')
-    const p = buildCodeSystemPromptFromIntent(intent)
-    assert.ok(p.length > 200)
-  })
-
-  test('React Vite 3D contient les noms R3F officiels', () => {
-    const intent = classifyCodeIntent('application React Vite TypeScript 3D avec Three.js')
-    const p = buildCodeSystemPromptFromIntent(intent)
-    assert.ok(p.includes('@react-three/fiber'))
-    assert.ok(p.includes('@react-three/drei'))
-    assert.ok(p.includes('react-three/drei'))
-    assert.ok(/JSON strict/i.test(p))
-  })
-})

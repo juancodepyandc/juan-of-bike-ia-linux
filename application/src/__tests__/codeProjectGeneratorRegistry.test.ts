@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyCodeIntent, buildCodeSystemPromptFromIntent } from '../services/codeIntent.ts'
+import { classifyCodeIntent } from '../services/codeIntent.ts'
 import {
   buildProjectGeneratorPromptBlock,
   getProjectGeneratorForType,
@@ -33,12 +33,14 @@ describe('codeProjectGeneratorRegistry', () => {
 
   test('injecte le generateur specialise dans le prompt systeme', () => {
     const intent = classifyCodeIntent('cree un compilateur avec lexer parser AST et tests')
+    // L assertion passait par `buildCodeSystemPromptFromIntent`, supprime car
+    // orphelin. Le bloc generateur est reellement consomme par la phase de
+    // planification, donc c est lui qu on verrouille.
     const block = buildProjectGeneratorPromptBlock(intent)
-    const prompt = buildCodeSystemPromptFromIntent(intent)
 
     assert.equal(intent.projectType, 'compiler')
     assert.match(block, /Generateur specialise WS6/)
-    assert.match(prompt, /src\/lexer\.rs/)
-    assert.match(prompt, /tests\/language\.rs/)
+    assert.match(block, /src\/lexer\.rs/)
+    assert.match(block, /tests\/language\.rs/)
   })
 })

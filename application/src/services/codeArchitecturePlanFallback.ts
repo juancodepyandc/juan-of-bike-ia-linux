@@ -142,7 +142,7 @@ export function buildFallbackArchitecturePlan(intent: CodeIntent, prompt: string
     execution.preview = files[0]?.path ?? 'index.html'
   }
 
-  const title = String(intent.title || prompt.slice(0, 80) || 'projet')
+  const title = prompt.trim().slice(0, 80) || 'projet'
   const plan = {
     schemaVersion: CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION,
     projectType,

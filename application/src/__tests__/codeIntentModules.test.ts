@@ -9,9 +9,6 @@ import { estimateFileCount, isWholeProductRequest, minimumFileCountForIntent } f
 import { classifyGameKind, detectKnownGame } from '../services/codeIntentGameCatalog.ts'
 import { detectPromptLanguage } from '../services/codeIntentLanguage.ts'
 import { looksLikeDesktopAppRequest, looksLikeMobileAppRequest } from '../services/codeIntentPlatformHeuristics.ts'
-import { appendAssetPromptSections } from '../services/codeIntentPromptAssets.ts'
-import { appendGamePrompt } from '../services/codeIntentPromptGame.ts'
-import { appendProjectPromptSections } from '../services/codeIntentPromptProject.ts'
 import { FRAMEWORK_SIGNALS, GAME_SIGNALS } from '../services/codeIntentSignals.ts'
 import { containsAnySignal, containsSignal, normalizeSignalText } from '../services/codeIntentSignalUtils.ts'
 import { detectSubject } from '../services/codeIntentSubject.ts'
@@ -90,20 +87,4 @@ describe('codeIntent modules — platform and prompt appenders', () => {
     assert.equal(looksLikeDesktopAppRequest('application de bureau Tauri'), true)
   })
 
-  test('ajoute les sections de prompt extraites', () => {
-    const gameIntent = classifyCodeIntent('Crée le jeu Tetris en canvas HTML5 avec score')
-    const gameLines: string[] = []
-    appendGamePrompt(gameLines, gameIntent)
-    assert.ok(gameLines.join('\n').includes('Clone fidele de Tetris'))
-
-    const projectIntent = classifyCodeIntent('application web complete dashboard CRM avec routing')
-    const projectLines: string[] = []
-    appendProjectPromptSections(projectLines, projectIntent)
-    assert.ok(projectLines.join('\n').includes('Instructions dev server'))
-
-    const assetIntent = classifyCodeIntent('landing page Nike premium avec images')
-    const assetLines: string[] = []
-    appendAssetPromptSections(assetLines, assetIntent)
-    assert.ok(assetLines.join('\n').includes('FIDELITE AU SUJET'))
-  })
 })

@@ -6,8 +6,6 @@ import assert from 'node:assert/strict'
 import {
   isVisualProject,
   detectDesignArchetype,
-  buildDesignDirectives,
-  describeDesignArchetype,
 } from '../services/codeDesignDirectives.ts'
 import { classifyCodeIntent } from '../services/codeIntent.ts'
 
@@ -138,74 +136,4 @@ describe('detectDesignArchetype', () => {
   })
 })
 
-describe('buildDesignDirectives', () => {
-  test('projet non-visuel → ""', () => {
-    const intent = classifyCodeIntent('script python ligne commande')
-    const r = buildDesignDirectives('script python', intent)
-    assert.equal(r, '')
-  })
 
-  test('projet visuel → directives non vides', () => {
-    const intent = classifyCodeIntent('landing page premium')
-    const r = buildDesignDirectives('landing page premium', intent)
-    assert.ok(r.length > 100)
-    assert.ok(r.includes('ARCHETYPE'))
-  })
-
-  test('directives mentionnent archetype retenu', () => {
-    // Utilise un prompt qui classifie clairement en static_web
-    const intent = classifyCodeIntent('page HTML CSS landing avec hero')
-    const r = buildDesignDirectives('page landing apple style avec exploded view', intent)
-    assert.ok(r.includes('ARCHETYPE'))
-  })
-
-  test('directives ont du contenu substantiel pour projet visuel', () => {
-    const intent = classifyCodeIntent('page HTML CSS site moderne')
-    const r = buildDesignDirectives('site moderne avec animations', intent)
-    assert.ok(r.length > 500)
-  })
-
-  test('mobile natif ne reçoit pas le contrat CSS web générique', () => {
-    const intent = classifyCodeIntent('react native expo mobile app premium')
-    const r = buildDesignDirectives('react native expo mobile app premium', intent)
-    assert.match(r, /pas de contrat CSS web generique/i)
-    assert.doesNotMatch(r, /Type system editorial/)
-  })
-
-  test('jeu canvas ne reçoit pas le baseline landing CSS web', () => {
-    const intent = classifyCodeIntent('jeu pong arcade canvas')
-    const r = buildDesignDirectives('jeu pong arcade canvas', intent)
-    assert.match(r, /game canvas|jeu canvas|pas de landing page/i)
-    assert.doesNotMatch(r, /Layout — grille editoriale density/)
-  })
-})
-
-describe('describeDesignArchetype', () => {
-  test('apple_product → label dédié', () => {
-    assert.ok(describeDesignArchetype('apple_product').toLowerCase().includes('apple'))
-  })
-
-  test('dashboard_dataviz → mentions dashboard', () => {
-    assert.ok(describeDesignArchetype('dashboard_dataviz').toLowerCase().includes('dashboard'))
-  })
-
-  test('portfolio_immersive → mention portfolio', () => {
-    assert.ok(describeDesignArchetype('portfolio_immersive').toLowerCase().includes('portfolio'))
-  })
-
-  test('default_premium → "Default premium"', () => {
-    assert.equal(describeDesignArchetype('default_premium'), 'Default premium')
-  })
-
-  test('chaque archetype a un label > 5 chars', () => {
-    const archetypes = [
-      'apple_product', 'narrative_landing', 'dashboard_dataviz', 'portfolio_immersive',
-      'ecommerce_premium', 'saas_marketing', 'editorial_story', 'scroll_3d_journey',
-      'microsite_event', 'minimal_brutalist', 'mobile_native_premium', 'desktop_native_app',
-      'game_visual_premium', 'data_dense_enterprise', 'ide_code_editor', 'os_shell', 'default_premium',
-    ] as const
-    for (const a of archetypes) {
-      assert.ok(describeDesignArchetype(a).length > 5)
-    }
-  })
-})

@@ -24,7 +24,7 @@
 
 import type { CodeIntent } from './codeIntent'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
-import { archetypeBlock } from './codeDesignDirectiveBlocks.ts'
+import { archetypeBlock, autoDepsBlock, depthDirectivesBlock } from './codeDesignDirectiveBlocks.ts'
 import { requiredEntryFilesForProject } from './codeArchitecturePlanEntryContract.ts'
 import { buildSubjectLockBlock } from './codeSubjectPromptContract.ts'
 import { isVisualProject } from './codeSystemPromptContracts.ts'
@@ -188,8 +188,15 @@ export function buildExecutorQualityContract(args: {
     if (archetypeLines.length > 0) {
       sections.push([`## ARCHETYPE RETENU: ${archetype}`, ...archetypeLines].join('\n'))
     }
+    // Profondeur et dependances CDN: ces directives n etaient atteignables que
+    // par `buildDesignDirectives`, orphelin — donc jamais transmises. Elles
+    // portent les regles three.js concretes (renderer, lumieres, materiaux,
+    // nettoyage, perf) qui separent une scene 3D credible d un cube qui tourne.
+    const depth = depthDirectivesBlock(intent)
+    if (depth.length > 0) sections.push(depth.join('\n'))
     if (SCRIPT_FILE_RE.test(target.path) || MARKUP_FILE_RE.test(target.path)) {
       sections.push(buildInteractivityContract())
+      sections.push(autoDepsBlock().join('\n'))
     }
   }
 

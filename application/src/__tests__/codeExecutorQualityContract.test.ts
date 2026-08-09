@@ -122,7 +122,7 @@ describe('WS3 executor — le contrat qualite atteint reellement le prompt syste
     exports: [],
     notes: [],
   }
-  const queue = { source: 'architecture_plan', items: [queueItem], requiredCount: 1, optionalCount: 0 } as never
+  const queue = { source: 'architecture_plan', items: [queueItem], requiredCount: 1, optionalCount: 0, omittedOrderPaths: [] } as never
 
   test('le prompt systeme porte le contrat quand l intent est fourni', () => {
     const intent = classifyCodeIntent(BRAND_PROMPT)

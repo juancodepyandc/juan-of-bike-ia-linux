@@ -5,9 +5,10 @@ import { buildExecutorQualityContract } from './codeExecutorQualityContract.ts'
 import type {
   CodeGenerationActionProducer,
 } from './codeGenerationExecutor.ts'
-import type {
-  CodeGenerationQueue,
-  CodeGenerationQueueItem,
+import {
+  formatGenerationQueueForPrompt,
+  type CodeGenerationQueue,
+  type CodeGenerationQueueItem,
 } from './codeGenerationQueue.ts'
 import {
   buildCodeGenerationActionInstructions,
@@ -126,6 +127,9 @@ export function buildCodeGenerationActionMessages(args: {
       args.prompt,
       '',
       args.architecturePlan ? `## PLAN ARCHITECTE JSON\n${cap(args.architecturePlan, 8_000)}` : '',
+      '',
+      '## MANIFESTE COMPLET DU PROJET',
+      formatGenerationQueueForPrompt(args.queue),
       '',
       '## FENETRE DE QUEUE',
       formatQueueWindow(args.queue, args.item),

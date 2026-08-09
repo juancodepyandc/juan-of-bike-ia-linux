@@ -4476,3 +4476,97 @@ charge utile livree plus tot reste comme filet. Reste assume : le plafond est
 uniforme (16 000) et non adapte a la taille attendue du fichier ; un budget par
 fichier serait plus fin, mais demanderait une estimation fiable de la taille
 cible.
+
+## 2026-08-09 — Tri des orphelins: cabler ou supprimer, pas de statu quo
+
+### Reprise et diagnostic
+
+Le scan anti-orphelin listait 19 symboles exportes sans aucun appelant de
+production. Chacun devait recevoir une decision, pas un commentaire.
+
+Deux d entre eux etaient des bugs deguises en code mort, et ont ete traites dans
+les increments precedents (`CODE_EXPERT_OUTPUT_TOKENS`,
+`STREAM_GENERATION_TOTAL_TIMEOUT_MS`). Les autres se repartissaient en deux
+familles: des capacites reelles jamais branchees, et des constructeurs de prompt
+rendus caducs par le passage a WS3.
+
+### Modifications realisees
+
+**Cables (capacite reelle rendue au pipeline)**
+
+- `depthDirectivesBlock` + `autoDepsBlock` -> contrat qualite de l executor.
+  Ce sont les regles three.js concretes (renderer, lumieres, materiaux,
+  `dispose()`, `pixelRatio`, pause sur `visibilitychange`) qui separent une
+  scene 3D credible d un cube qui tourne. Elles n etaient atteignables que par
+  `buildDesignDirectives`, orphelin, donc jamais transmises.
+- `formatGenerationQueueForPrompt` -> message utilisateur de l executor. Le
+  modele ne voyait qu une fenetre de +/-3 fichiers autour de sa cible; il recoit
+  desormais le manifeste complet du projet et sait a quoi son fichier se
+  raccorde.
+
+**Supprimes (physiquement, avec leurs tests)**
+
+- `buildCodeurSystemPrompt`, `getSystemPromptForRole`,
+  `buildCodeSystemPromptFromIntent`, `buildDesignDirectives`,
+  `describeDesignArchetype`, `buildCommonPremiumBaseline`.
+- Quatre modules devenus integralement injoignables:
+  `codeIntentSystemPrompt.ts`, `codeIntentPromptAssets.ts`,
+  `codeIntentPromptGame.ts`, `codeIntentPromptProject.ts`.
+
+Leur role est couvert par ce qui est reellement cable: `codeSubjectPromptContract`
+pour le verrouillage marque et les images, `buildDesignContractBlock` pour la
+barre design, les blocs d archetype pour le jeu et le projet, et
+`codeExecutorQualityContract` pour la synthese envoyee au codeur.
+
+**Robustesse au passage**
+
+- `formatGenerationQueueForPrompt` ne suppose plus `omittedOrderPaths` present.
+- Une note de methode: le premier decoupage automatique des fonctions a coupe au
+  milieu d un corps et laisse un token orphelin (`e`). Les fichiers ont ete
+  restaures depuis HEAD et l outil corrige pour apparier vraiment les accolades
+  en ignorant chaines, gabarits et commentaires. Aucune suppression n a ete
+  conservee tant que la suite n etait pas verte.
+
+### Avant-apres mesurable
+
+| Mesure | Avant | Apres |
+|---|---|---|
+| Modules de service Code | 162 | **158** |
+| Modules orphelins | 4 | **1** |
+| Symboles orphelins | 19 | **13** |
+| Suite Code | 813 verts | 782 verts (les tests des fonctions supprimees partent avec elles) |
+| Suite COMPLETE du depot | — | **4 642 tests, 4 639 verts, 0 echec** |
+| Typecheck perimetre Code | 0 diagnostic | **0 diagnostic** |
+
+### Demonstration reproductible
+
+```bash
+cd application
+node scripts/code_harness/orphan_scan.mjs --json output/code/audit_v91/orphan_scan_after.json
+node --experimental-strip-types --test 'src/__tests__/*.test.ts' | tail -5
+npx tsc --noEmit 2>&1 | grep -E "error TS" | sed -E 's/\(.*//' | sort | uniq -c
+```
+
+### Etat de satisfaction chantier
+
+13 symboles orphelins subsistent, tous documentes dans
+`output/code/audit_v91/orphan_scan_after.json`. Ils se repartissent ainsi, et
+aucun n est laisse sans raison:
+
+- **Superseded par le conteneur** — `checkRuntimeAvailable`, `autoInstallRuntime`,
+  `getExecutableRuntimeSpec`, `getRuntimeSpec`: installer un runtime sur l HOTE
+  n a plus de sens depuis que le sandbox WS7 s execute dans une image par
+  langage. A supprimer quand le chemin hote sera officiellement retire.
+- **Moities de protocole** — `parseCodeStreamEventLine` (le producteur
+  `serializeCodeStreamEvent` est cable): utile a tout consommateur TS futur du
+  flux NDJSON.
+- **Capacites reelles non encore branchees** — `detectDeadCode`,
+  `resolveToolPackageVersion`, `executeCodeGenerationToolSequence`,
+  `projectTreeToCodeFiles`, `roundTripProjectTreeOnFs`,
+  `listTreeSitterSupportedLanguages`, `isVagueClarification`,
+  `buildAuditeurDiagnosticPrompt`. Chacune demande sa propre integration
+  raisonnee, pas un appel decoratif pour faire baisser un compteur.
+
+`codeStarterTemplates.ts` reste le seul module orphelin: il produit des projets
+de demarrage complets, capacite reelle mais concurrente de la generation par
+plan. Le trancher demande un choix produit, pas une correction technique.

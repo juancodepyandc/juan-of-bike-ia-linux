@@ -177,7 +177,7 @@ export function formatGenerationQueueForPrompt(queue: CodeGenerationQueue): stri
   if (queue.items.length > 80) {
     lines.push(`... ${queue.items.length - 80} fichier(s) supplementaire(s) dans le plan complet.`)
   }
-  if (queue.omittedOrderPaths.length > 0) {
+  if ((queue.omittedOrderPaths?.length ?? 0) > 0) {
     lines.push(`Chemins generationOrder ignores car absents de files[]: ${queue.omittedOrderPaths.slice(0, 10).join(', ')}`)
   }
 

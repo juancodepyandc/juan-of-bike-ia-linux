@@ -7,16 +7,6 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent, CodeProjectType } from './codeIntent'
-import {
-  archetypeBlock,
-  autoDepsBlock,
-  buildCommonPremiumBaseline,
-  depthDirectivesBlock,
-} from './codeDesignDirectiveBlocks.ts'
-import {
-  buildCodeDesignSpec,
-  formatCodeDesignSpecPrompt,
-} from './codeDesignSpec.ts'
 
 export type DesignArchetype =
   | 'apple_product'         // produit physique, hotspots, exploded view, scrub 3D
@@ -205,56 +195,3 @@ export function detectDesignArchetype(prompt: string, intent: CodeIntent): Desig
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-export function buildDesignDirectives(prompt: string, intent: CodeIntent): string {
-  if (!isVisualProject(intent)) return ''
-
-  const archetype = detectDesignArchetype(prompt, intent)
-  const spec = buildCodeDesignSpec(prompt, intent, archetype)
-  const usesGenericWebCssContract = !['mobile_native', 'game_canvas'].includes(spec.platform)
-  const lines = [
-    formatCodeDesignSpecPrompt(spec),
-    '',
-    ...(usesGenericWebCssContract
-      ? buildCommonPremiumBaseline()
-      : [
-          '## STANDARD VISUEL SPECIFIQUE A LA PLATEFORME',
-          '- Ne pas appliquer le contrat CSS web generique a cette plateforme.',
-          '- Respecte la design-spec JSON ci-dessus comme source de verite.',
-        ]),
-    '',
-    ...archetypeBlock(archetype, intent),
-    '',
-    ...(usesGenericWebCssContract ? depthDirectivesBlock(intent) : []),
-    '',
-    ...(usesGenericWebCssContract ? autoDepsBlock() : []),
-    '',
-    `## ARCHETYPE RETENU: ${archetype}`,
-    '- Reste fidele aux sections et aux effets listes ci-dessus.',
-    '- Tu peux DEPASSER ces standards (plus de sections, plus d effets) mais jamais les sous-dimensionner.',
-  ]
-  return lines.filter((line) => line !== undefined).join('\n')
-}
-
-/** Short label for telemetry / debug surfaces. */
-export function describeDesignArchetype(archetype: DesignArchetype): string {
-  switch (archetype) {
-    case 'apple_product': return 'Apple-style product page (anatomy + scroll narrative)'
-    case 'narrative_landing': return 'Premium narrative landing'
-    case 'dashboard_dataviz': return 'Dashboard / dataviz'
-    case 'portfolio_immersive': return 'Immersive portfolio'
-    case 'ecommerce_premium': return 'Ecommerce premium'
-    case 'saas_marketing': return 'SaaS marketing page'
-    case 'editorial_story': return 'Editorial long-form story'
-    case 'scroll_3d_journey': return 'Pinned 3D scroll journey'
-    case 'microsite_event': return 'Event microsite'
-    case 'minimal_brutalist': return 'Minimal brutalist'
-    case 'mobile_native_premium': return 'Mobile native premium'
-    case 'desktop_native_app': return 'Desktop native app'
-    case 'game_visual_premium': return 'Game web premium juice'
-    case 'data_dense_enterprise': return 'Data-dense enterprise interface'
-    case 'ide_code_editor': return 'IDE / code editor workspace'
-    case 'os_shell': return 'OS shell / boot console'
-    default: return 'Default premium'
-  }
-}

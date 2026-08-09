@@ -5,8 +5,10 @@ import {
   CODE_EXPERT_CONTEXT_TOKENS,
   CODE_EXPERT_OUTPUT_TOKENS,
   GENERATION_FIRST_BYTE_TIMEOUT_MS,
+  STREAM_GENERATION_TOTAL_TIMEOUT_MS,
   selectModel,
 } from './codePipelineRuntime.ts'
+import { withTimeout } from './llmTimebox.ts'
 import { serializeProjectTreeEmission } from './codeProjectEmission.ts'
 import { buildGenerationQueueWithFallback } from './codeGenerationQueue.ts'
 import { executeCodeGenerationQueue } from './codeGenerationExecutor.ts'
@@ -98,7 +100,11 @@ export async function runAgenticGenerationPhase({
   })
 
   try {
-    const result = await executeCodeGenerationQueue({
+    // Plafond TOTAL de la generation. Seul un delai de premier octet etait
+    // applique: un modele qui streame lentement sans jamais finir bloquait le
+    // pipeline indefiniment, VRAM occupee. La constante existait, elle n etait
+    // branchee nulle part.
+    const result = await withTimeout(executeCodeGenerationQueue({
       queue,
       initialFiles: existingFiles,
       produceActions: producer,
@@ -108,7 +114,7 @@ export async function runAgenticGenerationPhase({
         setPhase(`Executor agentique WS3: ${item.path} ecrit.`, Math.min(78, 35 + item.order))
         onFilesUpdate?.(files, `Generation agentique WS3 en cours: ${item.order}/${queue.items.length}`)
       },
-    })
+    }), { label: 'Generation agentique WS3', timeoutMs: STREAM_GENERATION_TOTAL_TIMEOUT_MS })
 
     if (!result.ok) {
       return {

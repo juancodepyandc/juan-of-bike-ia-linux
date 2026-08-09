@@ -6,7 +6,6 @@
 export { buildArchitecturePlanningPrompt } from './codeIntentArchitecturePrompt.ts'
 export { classifyCodeIntent } from './codeIntentClassification.ts'
 export { classifyPivotKindHeuristic, hasExplicitStackMention } from './codeIntentFollowup.ts'
-export { buildCodeSystemPromptFromIntent } from './codeIntentSystemPrompt.ts'
 export type {
   BrandProfile,
   CodeAssetPlan,
