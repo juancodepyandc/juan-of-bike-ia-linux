@@ -262,11 +262,47 @@ export function depthDirectivesBlock(intent: CodeIntent): string[] {
 }
 
 export function autoDepsBlock(): string[] {
+  // Les URL sont donnees TELLES QUELLES parce que le modele en invente sinon.
+  // Cas reel: il a ecrit `lenis@1.0.48/dist/lenis.min.js` — un 404 — puis
+  // appele `new Lenis(...)`, donc la page cassait au chargement avec
+  // `Lenis is not defined`. Le bloc nommait la librairie sans jamais donner son
+  // adresse: nommer ne suffit pas, il faut fournir.
   return [
-    '## DEPENDANCES — declaration ET livraison automatique',
-    '- Si tu utilises GSAP / ScrollTrigger / Lenis / SplitType / Three.js / Lottie: ajoute le <script> CDN dans index.html (ou la ressource dans package.json si la stack est SPA bundler).',
+    '## DEPENDANCES — URL EXACTES, AUCUNE INVENTION',
+    '',
+    'INTERDIT d inventer une URL de CDN. Si tu utilises une de ces librairies, copie l URL EXACTEMENT telle qu ecrite ici (elles sont verifiees et pointent sur une plage de version majeure stable):',
+    `- Three.js (module ESM): ${CDN_LIBS.three}`,
+    `- OrbitControls: ${CDN_LIBS.threeOrbit}`,
+    `- GLTFLoader: ${CDN_LIBS.threeGLTF}`,
+    `- GSAP: ${CDN_LIBS.gsap}`,
+    `- ScrollTrigger: ${CDN_LIBS.scrollTrigger}`,
+    `- Lenis (scroll fluide): ${CDN_LIBS.lenis}`,
+    `- SplitType: ${CDN_LIBS.splitText}`,
+    `- Lottie: ${CDN_LIBS.lottie}`,
+    `- Chart.js: ${CDN_LIBS.chartjs}`,
+    `- D3: ${CDN_LIBS.d3}`,
+    `- Motion One: ${CDN_LIBS.motionone}`,
+    '',
+    'REGLE DURE: tout identifiant global que tu appelles (`new Lenis`, `gsap`, `THREE`, `Chart`) DOIT avoir sa balise <script> correspondante dans le <head>, prise dans la liste ci-dessus. Si la librairie n est pas dans cette liste, NE L UTILISE PAS: ecris l effet en CSS/JS natif.',
+    'Une page qui reference une librairie non chargee casse au premier rendu — c est un echec de livraison, pas un detail.',
     `- Pour SPA bundler: resous les versions stables via le registre. Matrice 3D testee par le viewer: ${CODE_REACT_THREE_COMPATIBILITY}.`,
-    '- Verifie systematiquement que chaque lib utilisee dans ton code est bien declaree (import OK + dependance presente) — sinon le sandbox echouera.',
     '- Si une lib est lourde et qu une alternative CSS pure existe, prefere la version CSS (transition + @keyframes) pour un loading instantane.',
+  ]
+}
+
+/**
+ * Contrat typographique MESURABLE, aligne sur le juge de rendu.
+ *
+ * Le juge verifie sur le rendu reel: >= 40 px pour la typo d affichage et >= 4
+ * tailles distinctes. La directive doit donc exiger la meme chose en clair,
+ * sinon on note un seuil qu on n a jamais demande.
+ */
+export function typographyContractBlock(): string[] {
+  return [
+    '## TYPOGRAPHIE — SEUILS VERIFIES SUR LE RENDU',
+    '- Le titre principal (hero h1) DOIT etre rendu a 48 px MINIMUM en desktop. Utilise `font-size: clamp(48px, 7vw, 96px)`. Un hero dont le plus gros texte fait 18 px est un ECHEC mesure, pas une question de gout.',
+    '- Au moins QUATRE tailles de police distinctes doivent exister dans la page (echelle 12/14/16/20/28/40/56/72/96).',
+    '- La police choisie doit REELLEMENT charger: ajoute la balise `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=...&display=swap">` dans le <head>. Un `font-family` declare sans chargement retombe sur Georgia/Helvetica — exactement le rendu par defaut interdit.',
+    '- Ne compte JAMAIS sur les tailles par defaut du navigateur: un framework CSS peut les reinitialiser. Declare explicitement la taille de chaque niveau de titre.',
   ]
 }

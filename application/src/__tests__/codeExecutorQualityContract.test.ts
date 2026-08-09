@@ -155,3 +155,42 @@ describe('WS3 executor — le contrat qualite atteint reellement le prompt syste
     assert.doesNotMatch(system.content, /CONTRAT DE LIVRAISON/)
   })
 })
+
+// --- Cas de regression Mercedes (2026-08-10) -------------------------------
+// Une landing Mercedes livree par le pipeline complet cassait au chargement
+// (`Lenis is not defined`, URL CDN inventee en 404) et sortait son titre en
+// 18 px. Trois contrats manquaient au codeur: les URL exactes, un seuil
+// typographique mesurable, et l obligation de charger reellement la police.
+describe('contrat qualite — regression Mercedes', () => {
+  const PROMPT = 'landing page premium pour la marque Mercedes-Benz, hero anime, section specs'
+
+  test('livre des URL CDN EXACTES au lieu de laisser le modele en inventer', () => {
+    const intent = classifyCodeIntent(PROMPT)
+    const c = buildExecutorQualityContract({ intent, prompt: PROMPT, target: { path: 'index.html' } })
+    assert.match(c, /lenis@1\/dist\/lenis\.min\.js/, 'l URL Lenis exacte doit etre fournie')
+    assert.match(c, /AUCUNE INVENTION/)
+    assert.match(c, /gsap/i)
+  })
+
+  test('impose un seuil typographique mesurable, aligne sur le juge de rendu', () => {
+    const intent = classifyCodeIntent(PROMPT)
+    for (const target of ['index.html', 'css/styles.css']) {
+      const c = buildExecutorQualityContract({ intent, prompt: PROMPT, target: { path: target } })
+      assert.match(c, /clamp\(48px, 7vw, 96px\)/, `${target}: seuil hero absent`)
+      assert.match(c, /QUATRE tailles/, `${target}: exigence d echelle absente`)
+    }
+  })
+
+  test('exige le chargement REEL de la police (sinon fallback Georgia/Helvetica)', () => {
+    const intent = classifyCodeIntent(PROMPT)
+    const c = buildExecutorQualityContract({ intent, prompt: PROMPT, target: { path: 'index.html' } })
+    assert.match(c, /fonts\.googleapis\.com/)
+    assert.match(c, /Georgia\/Helvetica/)
+  })
+
+  test('avertit que les tailles par defaut peuvent etre reinitialisees', () => {
+    const intent = classifyCodeIntent(PROMPT)
+    const c = buildExecutorQualityContract({ intent, prompt: PROMPT, target: { path: 'css/styles.css' } })
+    assert.match(c, /reinitialiser/i)
+  })
+})

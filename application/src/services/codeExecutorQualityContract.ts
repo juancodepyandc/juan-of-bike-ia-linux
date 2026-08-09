@@ -24,7 +24,7 @@
 
 import type { CodeIntent } from './codeIntent'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
-import { archetypeBlock, autoDepsBlock, depthDirectivesBlock } from './codeDesignDirectiveBlocks.ts'
+import { archetypeBlock, autoDepsBlock, depthDirectivesBlock, typographyContractBlock } from './codeDesignDirectiveBlocks.ts'
 import { requiredEntryFilesForProject } from './codeArchitecturePlanEntryContract.ts'
 import { buildSubjectLockBlock } from './codeSubjectPromptContract.ts'
 import { isVisualProject } from './codeSystemPromptContracts.ts'
@@ -43,7 +43,7 @@ import { isVisualProject } from './codeSystemPromptContracts.ts'
  *    faire d une palette de marque, et lui envoyer 1 600 tokens par appel est
  *    du contexte brule.
  */
-export const EXECUTOR_QUALITY_CONTRACT_MAX_CHARS = 12_000
+export const EXECUTOR_QUALITY_CONTRACT_MAX_CHARS = 16_000
 export const EXECUTOR_QUALITY_CONTRACT_CONFIG_MAX_CHARS = 1_200
 
 /** Coupe sur une frontiere de ligne: tronquer au milieu d une regle la rend fausse. */
@@ -182,6 +182,13 @@ export function buildExecutorQualityContract(args: {
 
   // 3+4. Esthetique: uniquement sur un fichier reellement visuel.
   if (visualTarget) {
+    // Le contrat typographique passe en tete des blocs esthetiques: le juge de
+    // rendu MESURE ces seuils (>= 48 px pour le hero, >= 4 tailles, police
+    // reellement chargee). Le laisser en fin de liste le faisait tronquer par
+    // le budget, donc noter un seuil jamais demande.
+    if (MARKUP_FILE_RE.test(target.path) || STYLE_FILE_RE.test(target.path)) {
+      sections.push(typographyContractBlock().join('\n'))
+    }
     sections.push(buildVisualBar(target))
     const archetype = detectDesignArchetype(prompt, intent)
     const archetypeLines = archetypeBlock(archetype, intent)

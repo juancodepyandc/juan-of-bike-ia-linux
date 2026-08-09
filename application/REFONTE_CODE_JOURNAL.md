@@ -4970,3 +4970,112 @@ repasse esthetique existe desormais hors UI Tauri. Reste ouvert et assume :
 - le juge mesure la FORME (typo, profondeur, densite, erreurs) et non le GOUT:
   il ne dira pas qu une palette est laide, seulement qu elle est plate ou
   par defaut.
+
+## 2026-08-10 — Aurora ecrasait son propre design
+
+### Reprise et diagnostic
+
+Le juge etait repare (87 -> 18), mais la page restait ratee: on avait soigne le
+thermometre, pas la fievre. Retour a la cause sur le run Mercedes, en lisant le
+code REELLEMENT livre.
+
+**Premiere surprise: le modele avait raison.** Son CSS contient
+`--font-display: clamp(40px, 5vw, 96px)` et `h1 { font-size: var(--font-display) }`.
+Le titre AURAIT du sortir entre 40 et 96 px.
+
+**La coupable est Aurora.** `codeProjectSupportFiles.ts` injecte dans chaque page
+HTML un bloc de theme suivi de `<script src="https://cdn.tailwindcss.com">`. Le
+**Preflight** de Tailwind remet `h1 { font-size: inherit }` — et comme il est
+injecte au runtime, il gagne la cascade sur la feuille de l auteur.
+
+Le declencheur? Une regex qui matchait `class="container"`. Le commentaire du
+fichier admettait deja le probleme (« the utility-class heuristic below
+false-positives on plain class names like "container" ») mais ne l avait
+neutralise que pour `game_web`.
+
+**Preuve par la mesure.** Meme page, bloc injecte retire, re-rendue:
+
+| Mesure | Avec injection Aurora | Sans |
+|---|---|---|
+| Echelle typographique | `[13, 16, 18]` | **`[13, 16, 18, 19, 24, 72]`** |
+| `display_typography` | echec | **passe** |
+| `type_scale` | echec | **passe** |
+| Score de rendu | 18/100 | **46/100** |
+
+**Deuxieme cause: une URL de CDN inventee.** Le modele a ecrit
+`lenis@1.0.48/dist/lenis.min.js` — verifie: **404** — puis appele `new Lenis(...)`.
+Le bloc `autoDepsBlock` NOMMAIT Lenis sans jamais donner son adresse. Le registre
+`CODE_DESIGN_CDN_LIBS` contient pourtant l URL correcte (`lenis@1/dist/...`,
+verifiee 200), elle n etait simplement pas transmise. Nommer ne suffit pas: il
+faut fournir.
+
+**Troisieme point, verifie et NON confirme comme bug.** L accent cyan semblait
+hors charte. Verification du profil de marque: `Mercedes-Benz` a bien
+`primaryColor: '#00ADEF'`. Le verrouillage de marque a donc fonctionne
+correctement — le cyan EST la couleur declaree. Il paraissait faux parce qu il
+etait pose en accent vif sur une page par ailleurs non stylee, pas parce que la
+palette avait ete manquee. Aucune correction apportee: il n y avait rien a
+corriger.
+
+### Modifications realisees
+
+- `src/services/codeProjectSupportFiles.ts` —
+  - `corePlugins:{preflight:false}` dans la config injectee: Tailwind ne
+    reinitialise plus la typographie de l auteur;
+  - declencheur resserre sur du vocabulaire SANS ambiguite (tokens numeriques,
+    prefixes responsives, vocabulaire Aurora). `flex`, `grid`, `hidden` et
+    `container` ne declenchent plus rien;
+  - une page qui apporte deja sa propre feuille de style n est plus touchee.
+- `src/services/codeDesignDirectiveBlocks.ts` — `autoDepsBlock` livre les **URL
+  exactes** des 11 librairies du registre + regle dure « tout global appele DOIT
+  avoir sa balise script prise dans cette liste ». Nouveau
+  `typographyContractBlock` avec des seuils MESURABLES.
+- `src/services/codeExecutorQualityContract.ts` — contrat typographique cable et
+  place en tete des blocs esthetiques (il etait tronque par le budget), budget
+  visuel porte a 16 000 caracteres.
+- `src/__tests__/codeTailwindInjectionGuard.test.ts` (nouveau) — 5 tests.
+- `src/__tests__/codeExecutorQualityContract.test.ts` — 4 tests de regression.
+
+**Alignement juge/directive**: le juge mesure « hero >= 40 px, >= 4 tailles,
+police non-fallback »; la directive exige desormais `clamp(48px, 7vw, 96px)`,
+quatre tailles minimum et une balise `<link>` Google Fonts. Les deux bouclent sur
+le meme seuil, au lieu de noter une regle jamais demandee.
+
+### Avant-apres mesurable
+
+| Contrat livre au codeur | Avant | Apres |
+|---|---|---|
+| URL Lenis exacte | absente (modele inventait un 404) | **fournie et verifiee 200** |
+| Seuil hero `clamp(48px…)` | absent | **present** (markup + style) |
+| Chargement reel de police | absent | **exige** |
+| Verrouillage marque | present | present (inchange) |
+
+Tests : **805 -> 814 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeTailwindInjectionGuard.test.ts'
+
+# la preuve du mecanisme: meme page, bloc injecte retire
+node scripts/code_harness/aesthetic_capture.mjs output/code/audit_v92/mercedes_nopreflight \
+  --out output/code/audit_v92/mercedes_nopreflight/_shots \
+  --json output/code/audit_v92/mercedes_nopreflight/_shots/report.json
+jq '.viewports.desktop.fontSizeScale, .verdict.score' \
+  output/code/audit_v92/mercedes_nopreflight/_shots/report.json   # [13,16,18,19,24,72] / 46
+jq '.viewports.desktop.fontSizeScale, .verdict.score' \
+  output/code/audit_v92/mercedes_full/_shots/report.json          # [13,16,18] / 18
+
+# les URL du registre sont joignables
+curl -o /dev/null -w '%{http_code}\n' https://cdn.jsdelivr.net/npm/lenis@1/dist/lenis.min.js       # 200
+curl -o /dev/null -w '%{http_code}\n' https://cdn.jsdelivr.net/npm/lenis@1.0.48/dist/lenis.min.js  # 404
+```
+
+### Etat de satisfaction chantier
+
+Les trois leviers pipeline sont epuises: le framework n ecrase plus le design,
+les dependances sont fournies au lieu d etre devinees, et le seuil typographique
+est exige dans les memes termes qu il est mesure. Reste ouvert et assume: ces
+corrections agissent sur la PROCHAINE generation; la page deja livree sert de
+cas de regression, elle n est pas retro-corrigee.

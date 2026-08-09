@@ -158,7 +158,15 @@ function ensureTailwindCDN(files: CodeFile[], projectType?: string, intent?: Cod
   // class names like "container", injecting a ~2 KB marketing theme + an external
   // CDN script as dead weight. Skip it for games entirely.
   if (projectType === 'game_web') return files
-  const TW_UTIL = /class="[^"]*\b(flex|grid|hidden|container|mx-auto|justify-\w+|items-\w+|text-(xs|sm|base|lg|xl|\dxl|center|fg|accent)|bg-[a-z]+(-\d{2,3})?|[pmgw][xytblr]?-\d|gap-\d|rounded(-\w+)?|shadow(-\w+)?|font-(bold|semibold|medium)|grid-cols-\d)\b/
+  // v92: `flex`, `grid`, `hidden` et `container` sont des noms de classe
+  // SEMANTIQUES parfaitement courants dans du CSS ecrit a la main. Les garder
+  // dans le declencheur faisait injecter Tailwind dans des pages entierement
+  // auto-stylees — et le Preflight de Tailwind remet alors `h1` a
+  // `font-size: inherit`, ecrasant le `clamp(40px, 5vw, 96px)` du modele. C est
+  // exactement ce qui a produit une landing Mercedes dont le titre sortait en
+  // 18 px. On ne declenche donc plus que sur du vocabulaire SANS ambiguite:
+  // tokens numeriques Tailwind, prefixes responsives, ou vocabulaire Aurora.
+  const TW_UTIL = /class="[^"]*\b(mx-auto|justify-\w+|items-\w+|text-(xs|sm|base|lg|xl|\dxl|fg|accent)|bg-(surface|card|line|fg|accent)(-\w+)?|[pm][xytblr]?-\d|gap-\d|rounded-\w+|shadow-\w+|font-(bold|semibold|medium)|grid-cols-\d|(sm|md|lg|xl):[a-z-]+)\b/
   const HAS_TW = /cdn\.tailwindcss\.com|@tailwind\b/
   // v85g : local models spray SEMANTIC Tailwind tokens (bg-surface, text-fg,
   // text-fg-dim, bg-accent, shadow-2…) that need a config to be defined —
@@ -175,7 +183,7 @@ function ensureTailwindCDN(files: CodeFile[], projectType?: string, intent?: Cod
     'body{background:rgb(var(--c-surface));color:rgb(var(--c-fg));transition:background .3s ease,color .3s ease}',
     '</style>',
     '<script src="https://cdn.tailwindcss.com"></script>',
-    '<script>tailwind.config={darkMode:["selector",\'[data-theme="dark"]\'],theme:{extend:{colors:{'
+    '<script>tailwind.config={corePlugins:{preflight:false},darkMode:["selector",\'[data-theme="dark"]\'],theme:{extend:{colors:{'
     + 'surface:{DEFAULT:"rgb(var(--c-surface) / <alpha-value>)",elevated:"rgb(var(--c-surface-elevated) / <alpha-value>)"},'
     + 'card:"rgb(var(--c-card) / <alpha-value>)",line:"rgb(var(--c-line) / <alpha-value>)",'
     + 'fg:{DEFAULT:"rgb(var(--c-fg) / <alpha-value>)",dim:"rgb(var(--c-fg-dim) / <alpha-value>)",mute:"rgb(var(--c-fg-mute) / <alpha-value>)"},'
@@ -186,6 +194,9 @@ function ensureTailwindCDN(files: CodeFile[], projectType?: string, intent?: Cod
     if (!/\.html?$/i.test(f.name)) return f
     const c = f.content
     if (!TW_UTIL.test(c) || HAS_TW.test(c)) return f
+    // La page apporte deja sa propre feuille de style: elle est auto-stylee, on
+    // n a rien a lui imposer. Injecter ici revient a ecraser son design.
+    if (/<link[^>]+rel=["']?stylesheet/i.test(c) && !/\b(bg-surface|text-fg|bg-accent|shadow-2)\b/.test(c)) return f
     let next = c
     if (/<\/head>/i.test(next)) next = next.replace(/<\/head>/i, `${inject}\n</head>`)
     else if (/<head[^>]*>/i.test(next)) next = next.replace(/<head[^>]*>/i, (m) => `${m}\n${inject}`)
