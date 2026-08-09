@@ -4570,3 +4570,63 @@ aucun n est laisse sans raison:
 `codeStarterTemplates.ts` reste le seul module orphelin: il produit des projets
 de demarrage complets, capacite reelle mais concurrente de la generation par
 plan. Le trancher demande un choix produit, pas une correction technique.
+
+## 2026-08-09 — Le tunnel savait creer un projet, pas le poursuivre
+
+### Reprise et diagnostic
+
+Passe de parite systematique apres l unification du moteur. Les trois canaux
+partagent bien `orchestrateCodeGeneration`, mais ils ne lui donnent pas le meme
+contexte. Le runner NDJSON codait en dur :
+
+```js
+conversationHistory: [],
+existingFiles: [],
+```
+
+Consequence: une relance par le tunnel (« ajoute une section tarifs »,
+« corrige le formulaire ») repartait de ZERO, alors que l UI poursuit le projet
+en cours. Le pipeline sait pourtant faire un vrai suivi — analyse de pivot
+(`analyzeFollowUpIntent`), portee de patch incremental WS5 — mais il ne peut
+rien faire sans contexte.
+
+La route bridge ne transmettait pas non plus ces champs: elle ne construisait le
+payload qu avec `prompt`, `model`, `planningModel`, `ollamaUrl`, `runId`.
+
+### Modifications realisees
+
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — `conversationHistory`,
+  `existingFiles` et `contextImages` acceptes et normalises defensivement (le
+  payload vient du reseau): roles filtres, 8 derniers tours, fichiers exigeant
+  un `content` et un chemin.
+- `bridge_server.py` — la route transmet les deux champs quand ils sont
+  fournis, bornes (8 tours, 200 fichiers). Optionnels: un appel one-shot reste
+  strictement inchange.
+- `scripts/code_harness/verify_bridge_parity.py` — 4 controles ajoutes, dont un
+  qui echoue si le contexte de suivi redevient code en dur a vide.
+
+### Avant-apres mesurable
+
+| Capacite via le tunnel | Avant | Apres |
+|---|---|---|
+| Creer un projet | oui | oui |
+| Poursuivre un projet existant | **non** (repart de zero) | oui |
+| Analyse de pivot de suivi | jamais declenchee | declenchee si historique fourni |
+| Patch incremental WS5 | jamais (aucun fichier existant) | possible |
+
+Controle de parite: **15/15 verts** (11 avant cet increment), code de sortie 0.
+
+### Demonstration reproductible
+
+```bash
+cd application
+python3 scripts/code_harness/verify_bridge_parity.py
+jq '{ok, checks: [.checks[] | select(.check | test("followup|forwards|hardcode")) | {check, ok}]}' \
+  output/code/audit_v91/bridge_parity_report.json
+```
+
+### Etat de satisfaction chantier
+
+Le tunnel peut desormais poursuivre un projet. Reste assume : `_aurora_code()`,
+le connecteur cowork one-shot, n expose pas encore ces champs a ses appelants —
+il faudrait qu il tienne une session. La route, elle, les accepte.

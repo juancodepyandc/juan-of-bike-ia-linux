@@ -12719,6 +12719,14 @@ def code_generate_stream():
         "ollamaUrl": OLLAMA_URL,
         "runId": run_id,
     }
+    # Parite de SUIVI: sans ces deux champs, toute relance par le tunnel repart
+    # de zero alors que l'UI poursuit le projet en cours. Le pipeline sait faire
+    # un vrai follow-up (analyse de pivot, patch incremental), a condition de
+    # recevoir le contexte. Optionnels: un appel one-shot reste inchange.
+    if isinstance(data.get("conversationHistory"), list):
+        payload["conversationHistory"] = data["conversationHistory"][-8:]
+    if isinstance(data.get("existingFiles"), list):
+        payload["existingFiles"] = data["existingFiles"][:200]
     try:
         proc = subprocess.Popen(
             [node_bin, str(script)],

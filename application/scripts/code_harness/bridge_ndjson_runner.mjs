@@ -107,6 +107,24 @@ useAppStore.setState({
 const configuredCodeModel = String(payload.model || useAppStore.getState().codeModel || 'qwen3-coder:30b').trim()
 const visionModel = useAppStore.getState().visionModel || models.DEFAULT_VISION_MODEL
 
+// Contexte de suivi, normalise defensivement: le payload vient du reseau.
+const normalizedHistory = (Array.isArray(payload.conversationHistory) ? payload.conversationHistory : [])
+  .filter((m) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
+  .slice(-8)
+  .map((m) => ({ role: m.role, content: m.content }))
+
+const normalizedExistingFiles = (Array.isArray(payload.existingFiles) ? payload.existingFiles : [])
+  .filter((f) => f && typeof f.content === 'string' && typeof (f.name ?? f.path) === 'string')
+  .map((f) => ({
+    name: String(f.name ?? f.path),
+    language: String(f.language || 'text'),
+    content: f.content,
+  }))
+
+if (normalizedHistory.length > 0 || normalizedExistingFiles.length > 0) {
+  log(`[bridge-runner] suivi: ${normalizedHistory.length} tour(s), ${normalizedExistingFiles.length} fichier(s) existant(s)`)
+}
+
 // ---------------------------------------------------------------------------
 // 3. NDJSON emitter.
 // ---------------------------------------------------------------------------
@@ -135,9 +153,13 @@ try {
   result = await orchestrateCodeGeneration({
     prompt,
     enrichedPrompt: prompt,
-    conversationHistory: [],
-    existingFiles: [],
-    contextImages: [],
+    // Parite de SUIVI: sans historique ni fichiers existants, toute relance par
+    // le tunnel repartait de zero alors que l UI poursuit le projet en cours.
+    // Le pipeline sait faire un vrai follow-up (analyse de pivot, patch
+    // incremental WS5) — encore faut-il lui donner le contexte.
+    conversationHistory: normalizedHistory,
+    existingFiles: normalizedExistingFiles,
+    contextImages: Array.isArray(payload.contextImages) ? payload.contextImages.filter((i) => typeof i === 'string') : [],
     userFileDataUrls: {},
     configuredCodeModel,
     visionModel,

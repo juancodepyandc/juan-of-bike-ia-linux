@@ -118,6 +118,31 @@ if node_bin and RUNNER.is_file():
         "aucune ligne de log ne doit atterrir sur stdout",
     )
 
+# 5. Parite de SUIVI: le tunnel doit pouvoir poursuivre un projet, pas seulement
+#    en demarrer un. Sans ces champs, toute relance repartait de zero alors que
+#    l'UI continue le projet en cours.
+check(
+    "route_forwards_conversation_history",
+    '"conversationHistory"' in route_body,
+    "la route doit transmettre l'historique de conversation",
+)
+check(
+    "route_forwards_existing_files",
+    '"existingFiles"' in route_body,
+    "la route doit transmettre les fichiers existants",
+)
+runner_src = RUNNER.read_text(encoding="utf-8", errors="replace") if RUNNER.is_file() else ""
+check(
+    "runner_consumes_followup_context",
+    "normalizedHistory" in runner_src and "normalizedExistingFiles" in runner_src,
+    "le runner doit consommer le contexte de suivi",
+)
+check(
+    "runner_does_not_hardcode_empty_context",
+    "conversationHistory: []" not in runner_src and "existingFiles: []" not in runner_src,
+    "le contexte de suivi ne doit plus etre code en dur a vide",
+)
+
 ok = all(c["ok"] for c in checks)
 report = {
     "schemaVersion": "aurora.code.bridge-parity/1",
