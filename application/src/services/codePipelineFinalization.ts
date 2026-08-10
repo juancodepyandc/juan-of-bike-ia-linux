@@ -8,6 +8,7 @@ import {
   evaluateVisualFidelity,
   type VisualFidelityReport,
 } from './codeVisualFidelity.ts'
+import { checkDesignTokens } from './codeDesignTokenGate.ts'
 import {
   summarizeAssetBundle,
   upsertAssetManifestFile,
@@ -20,6 +21,7 @@ export type CodePipelineDelivery = {
   score: number
   designReport: DesignPolishReport | null
   visualFidelity: VisualFidelityReport | null
+  designTokens: ReturnType<typeof checkDesignTokens>
 }
 
 /**
@@ -78,6 +80,17 @@ export function finalizeCodePipelineDelivery({
     adjustedScore = blendVisualFidelityIntoScore(adjustedScore, visualFidelity)
   }
 
+  // Porte des tokens de design: une variable CSS utilisee sans definition
+  // ATTEIGNABLE fait jeter la declaration entiere par le navigateur. Un projet
+  // livre a sorti un rendu totalement plat pour cette seule raison — sa feuille
+  // de tokens existait mais n etait importee nulle part.
+  const tokenReport = checkDesignTokens(finalFiles.map((f) => ({ name: f.name, content: f.content })))
+  if (!tokenReport.ok) {
+    // Meme semantique que les autres portes: un livrable dont l habillage ne
+    // charge pas ne peut pas etre annonce comme excellent.
+    adjustedScore = Math.min(adjustedScore, 70)
+  }
+
   const fidelityNotes = brandFidelity.retryHint
     ? `${notes}\n\n## FIDELITE SUJET\n${brandFidelity.retryHint}`
     : notes
@@ -90,11 +103,14 @@ export function finalizeCodePipelineDelivery({
     ? `\n\n## QUALITE VISUELLE (${visualFidelity.score}/100, seuil ${visualFidelity.floor})\n${buildVisualFidelityCritique(visualFidelity)}`
     : ''
 
+  const tokenNotes = tokenReport.ok ? '' : `\n\n${tokenReport.critique}`
+
   return {
     files: finalFiles,
-    notes: fidelityNotes + assetNotes + visualNotes,
+    notes: fidelityNotes + assetNotes + visualNotes + tokenNotes,
     score: adjustedScore,
     designReport: isVisualProjectType(intent.projectType) ? computeDesignPolishReport(finalFiles) : null,
     visualFidelity,
+    designTokens: tokenReport,
   }
 }

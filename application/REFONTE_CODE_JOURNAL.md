@@ -5591,3 +5591,126 @@ utilises sont reellement definis et charges**. Une porte deterministe — toute
 variable `var(--x)` employee doit avoir une definition dans le CSS effectivement
 charge, et un projet a bundler doit importer sa feuille globale — aurait attrape
 ce cas ET le cas Mercedes. C est le prochain chantier, non fait ici.
+
+## 2026-08-10 — Une variable CSS non chargee jetait tout l'habillage
+
+### Reprise et diagnostic
+
+Dernier obstacle identifie au tour precedent, traite ici. Le SaaS analytics Vue
+livre par `runId=940` buildait, ne produisait aucune erreur runtime, et sortait
+pourtant **entierement plat**: Times New Roman, un seul fond, une seule couleur
+de texte, zero ombre.
+
+Cause exacte: le CSS employait `var(--accent)`, `var(--bg)`, `var(--card-bg)`…
+et le bundle ne contenait **aucune definition** de ces variables. Le modele
+avait bien ecrit `src/assets/styles/variables.css` avec tous les tokens — mais
+`main.ts` n importait **aucun** CSS. La feuille existait sur le disque et n etait
+jamais chargee. Or le navigateur JETTE silencieusement toute declaration dont la
+variable est inconnue: le CSS parait correct a la lecture, et ne peint rien.
+
+**Verification de l hypothese partagee sur le cas Mercedes: elle est FAUSSE.**
+Passe a la meme porte, le projet Mercedes (`audit_v92/mercedes_full`) ressort
+`ok: true` — ses 16 variables utilisees sont toutes definies dans la feuille
+reellement liee. Sa platitude venait du Preflight Tailwind (corrige au tour 4),
+pas d une resolution de tokens. Les deux cas ne partagent donc PAS le meme
+mecanisme, et la porte ne doit pas se voir crediter d un cas qu elle n attrape
+pas.
+
+### Recherches et choix
+
+La porte raisonne sur le **graphe de chargement**, pas sur la presence des
+fichiers — c est tout l objet: *une definition presente sur disque mais jamais
+importee compte comme absente*.
+
+- HTML statique: `<link rel=stylesheet>` + `<style>` de la page, `@import`
+  suivis transitivement.
+- Projet a bundler: CSS importe par le point d entree JS, suivi transitivement
+  a travers les modules intermediaires.
+- Composants monofichiers (`.vue`, `.svelte`): leur bloc `<style>` est compile
+  avec le composant, donc toujours charge — il compte.
+- Cas limite traite: un token pose en JS (`setProperty('--x', …)`) compte comme
+  defini, sinon un theme applique dynamiquement serait signale a tort.
+- Cas limite assume: un nom de variable **calcule** a l execution est
+  indetectable statiquement. La porte ne le voit pas et ne pretend pas le voir.
+
+### Modifications realisees
+
+- `src/services/codeDesignTokenGate.ts` (nouveau) — `collectLoadedCss`,
+  `checkDesignTokens`, critique nommant les variables orphelines ET la feuille
+  a importer, avec le chemin du point d entree.
+- `src/services/codePipelineFinalization.ts` — porte cablee: un livrable dont
+  l habillage ne charge pas est **plafonne a 70** et emporte la consigne de
+  correction, comme les portes de marque et de rendu.
+- `src/__tests__/codeDesignTokenGate.test.ts` (nouveau) — 11 tests, dont les
+  trois demandes: defini+importe = passe, defini mais non importe = echoue,
+  jamais defini = echoue.
+
+### Avant-apres mesurable — sur les DEUX cas reels
+
+Porte appliquee aux projets tels qu ils ont ete livres:
+
+| Projet | Verdict | Tokens orphelins | Feuille non chargee |
+|---|---|---|---|
+| SaaS Vue (`audit_v94`) | **echec** | **37** | `src/assets/styles/variables.css` |
+| Mercedes (`audit_v92`) | passe | 0 | aucune |
+
+Puis application du correctif EXACT que la porte prescrit (ajouter l import de
+la feuille de tokens dans `main.ts`), rebuild, re-capture:
+
+| Mesure du rendu | Avant | Apres |
+|---|---|---|
+| Police reellement resolue | **Times New Roman** | **Inter** |
+| Fonds distincts | 1 | **4** |
+| Rayons distincts | 1 | **5** |
+| Ombres distinctes | 0 | **1** |
+| Couleurs de texte | 1 | 2 |
+| Hauteur de page | 3 099 px | **5 263 px** |
+| Verdict du juge de rendu | 80/100 | **100/100, 0 echec** |
+| Erreurs runtime | 0 | 0 |
+
+Build: `vite build` -> exit 0, CSS de 25,3 Ko -> **28,7 Ko** (les tokens entrent
+enfin dans le bundle).
+
+### Jugement visuel, capture regardee
+
+Transformation reelle, verifiee a l oeil sur
+`output/code/audit_v94/shots_after/desktop.png`: la navigation est espacee
+(« Home  Dashboard » au lieu de « HomeDashboard »), les titres de section
+portent l accent indigo de la marque, les fonctionnalites sont de VRAIES cartes
+(fond, bordure, rayon, ombre) sur une grille 3 colonnes, les tarifs sont trois
+cartes dont « Professional » est mise en avant par une bordure d accent avec un
+CTA plein, le tableau comparatif est cadre proprement, le temoignage est une
+carte avec portrait, la FAQ est un accordeon borde, et le pied de page tient sur
+4 colonnes.
+
+**Ce n est pourtant pas encore « fini ».** Trois defauts subsistent, visibles:
+le hero reste un grand vide et ses deux libelles se CHEVAUCHENT (« Get Started »
+et « Scroll to explore » se superposent); les icones sont des EMOJI, signature
+du prototype; le tableau comparatif n affiche que des tirets, sans donnees.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeDesignTokenGate.test.ts'
+
+# la porte sur les deux projets reels
+node scripts/code_harness/orphan_scan.mjs >/dev/null   # env headless
+cd output/code/audit_v94/project && npx vite build && cd -
+node scripts/code_harness/aesthetic_capture.mjs output/code/audit_v94/project/dist \
+  --out output/code/audit_v94/shots_after --json output/code/audit_v94/shots_after/report.json
+jq '.verdict | {score, passed, failedChecks}' output/code/audit_v94/shots_after/report.json
+```
+
+Captures avant/apres: `output/code/audit_v94/shots/desktop.png` (plat, serif) et
+`output/code/audit_v94/shots_after/desktop.png` (habille, Inter).
+
+### Etat de satisfaction chantier
+
+La porte ferme le mecanisme identifie: un habillage qui ne charge pas ne peut
+plus etre livre en silence. Reste precisement, et c est different de ce qui
+precedait: le CONTENU du hero (vide + chevauchement de deux libelles), les
+icones emoji, et un tableau comparatif sans donnees. Ce ne sont plus des
+mecanismes caches — ce sont des defauts de composition que le juge de rendu ne
+mesure pas encore (il compte les tailles, les fonds et les ombres, pas les
+collisions ni la vacuite d une section).
