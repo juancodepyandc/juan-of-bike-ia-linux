@@ -153,27 +153,18 @@ function resolveThemeAccent(intent?: CodeIntent): { accent: string; soft: string
 }
 
 function ensureTailwindCDN(files: CodeFile[], projectType?: string, intent?: CodeIntent): CodeFile[] {
-  // A canvas game is self-styled (inline <style> + canvas draw calls) and never
-  // needs Tailwind. The utility-class heuristic below false-positives on plain
-  // class names like "container", injecting a ~2 KB marketing theme + an external
-  // CDN script as dead weight. Skip it for games entirely.
+  // Un jeu canvas est auto-style: Tailwind n y sert a rien.
   if (projectType === 'game_web') return files
-  // v92: `flex`, `grid`, `hidden` et `container` sont des noms de classe
-  // SEMANTIQUES parfaitement courants dans du CSS ecrit a la main. Les garder
-  // dans le declencheur faisait injecter Tailwind dans des pages entierement
-  // auto-stylees — et le Preflight de Tailwind remet alors `h1` a
-  // `font-size: inherit`, ecrasant le `clamp(40px, 5vw, 96px)` du modele. C est
-  // exactement ce qui a produit une landing Mercedes dont le titre sortait en
-  // 18 px. On ne declenche donc plus que sur du vocabulaire SANS ambiguite:
-  // tokens numeriques Tailwind, prefixes responsives, ou vocabulaire Aurora.
+  // v92: `flex`, `grid`, `hidden`, `container` sont des noms de classe
+  // SEMANTIQUES courants. Les garder dans le declencheur faisait injecter
+  // Tailwind dans des pages auto-stylees, et son Preflight remettait `h1` a
+  // `font-size: inherit` — la landing Mercedes sortait son titre en 18 px.
+  // On ne declenche donc que sur du vocabulaire sans ambiguite.
   const TW_UTIL = /class="[^"]*\b(mx-auto|justify-\w+|items-\w+|text-(xs|sm|base|lg|xl|\dxl|fg|accent)|bg-(surface|card|line|fg|accent)(-\w+)?|[pm][xytblr]?-\d|gap-\d|rounded-\w+|shadow-\w+|font-(bold|semibold|medium)|grid-cols-\d|(sm|md|lg|xl):[a-z-]+)\b/
   const HAS_TW = /cdn\.tailwindcss\.com|@tailwind\b/
-  // v85g : local models spray SEMANTIC Tailwind tokens (bg-surface, text-fg,
-  // text-fg-dim, bg-accent, shadow-2…) that need a config to be defined —
-  // without it the classes resolve to NOTHING → unstyled/black page. We inject
-  // the Play CDN + a CSS-variable theme + a Tailwind config that defines that
-  // exact vocabulary, with light/dark wired to [data-theme="dark"]/.dark AND
-  // prefers-color-scheme, so the page renders styled and the dark toggle works.
+  // v85g : les modeles locaux emploient des tokens Tailwind SEMANTIQUES
+  // (bg-surface, text-fg, bg-accent…) qui n existent que si une config les
+  // definit. On injecte donc le CDN + un theme en variables CSS + cette config.
   const { accent, soft, accentDark, softDark } = resolveThemeAccent(intent)
   const inject = [
     '<style data-aurora-theme>',
@@ -265,6 +256,15 @@ function ensureSpaViteConfig(files: CodeFile[], intent: CodeIntent): CodeFile[] 
   const normalizedNames = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
   if (normalizedNames.some((name) => /^vite\.config\.(?:ts|js|mjs|mts)$/.test(name))) return files
 
+  // Le plugin DOIT suivre le framework: on injectait React pour TOUT `spa_*`,
+  // rendant tout projet Vue/Svelte inconstruisible alors que son package.json
+  // etait correct.
+  const PLUGIN: Partial<Record<string, [string, string]>> = {
+    spa_react: ['react', '@vitejs/plugin-react'],
+    spa_vue: ['vue', '@vitejs/plugin-vue'],
+    spa_svelte: ['svelte', '@sveltejs/vite-plugin-svelte'],
+  }
+  const plugin = PLUGIN[intent.projectType]
   return [
     ...files,
     {
@@ -272,10 +272,10 @@ function ensureSpaViteConfig(files: CodeFile[], intent: CodeIntent): CodeFile[] 
       language: 'typescript',
       content: [
         "import { defineConfig } from 'vite'",
-        "import react from '@vitejs/plugin-react'",
+        ...(plugin ? [`import ${plugin[0]} from '${plugin[1]}'`] : []),
         '',
         'export default defineConfig({',
-        '  plugins: [react()],',
+        `  plugins: [${plugin ? `${plugin[0]}()` : ''}],`,
         '  server: {',
         "    host: '127.0.0.1',",
         '    port: 5173,',

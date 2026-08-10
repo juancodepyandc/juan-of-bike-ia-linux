@@ -37,7 +37,12 @@ function serve(dir) {
   const server = createServer((req, res) => {
     let rel = decodeURIComponent((req.url || '/').split('?')[0]).replace(/^\//, '')
     if (rel === '' || rel.endsWith('/')) rel += 'index.html'
-    const hit = files.get(rel.toLowerCase())
+    let hit = files.get(rel.toLowerCase())
+    // Repli SPA: en history mode, seules les routes applicatives existent. Un
+    // chemin inconnu SANS extension doit rendre index.html, sinon le routeur ne
+    // matche rien et la page reste vide — ce qui ferait juger « page vide » une
+    // application parfaitement fonctionnelle.
+    if (!hit && !path.extname(rel)) hit = files.get('index.html')
     if (!hit) { res.writeHead(404); res.end('not found'); return }
     res.writeHead(200, { 'content-type': MIME[path.extname(rel).toLowerCase()] || 'application/octet-stream' })
     res.end(readFileSync(hit))
@@ -104,7 +109,7 @@ try {
     const page = await browser.newPage({ viewport: vp, deviceScaleFactor: 1 })
     page.on('pageerror', (e) => report.consoleErrors.push(`${name}: ${String(e).slice(0, 160)}`))
     page.on('console', (m) => { if (m.type() === 'error') report.consoleErrors.push(`${name}: ${m.text().slice(0, 160)}`) })
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'networkidle', timeout: 30_000 })
+    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle', timeout: 30_000 })
     await page.waitForTimeout(1200) // laisse les animations d entree se jouer
     const shot = path.join(outDir, `${name}.png`)
     await page.screenshot({ path: shot, fullPage: name === 'desktop' })

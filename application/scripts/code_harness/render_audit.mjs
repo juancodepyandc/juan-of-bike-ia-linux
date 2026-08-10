@@ -24,7 +24,8 @@ function serveFiles(files) {
   const server = createServer((req, res) => {
     let rel = decodeURIComponent((req.url || '/').split('?')[0]).replace(/^\//, '')
     if (rel === '' || rel.endsWith('/')) rel += 'index.html'
-    const hit = byPath.get(rel.toLowerCase())
+    let hit = byPath.get(rel.toLowerCase())
+    if (hit === undefined && !path.extname(rel)) hit = byPath.get('index.html')
     if (hit === undefined) { res.writeHead(404); res.end('not found'); return }
     res.writeHead(200, { 'content-type': MIME[path.extname(rel).toLowerCase()] || 'text/plain; charset=utf-8' })
     res.end(hit)
@@ -98,7 +99,7 @@ export async function renderAndScoreAesthetics(files, options = {}) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
     page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 160)))
     page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 160)) })
-    await page.goto(`http://127.0.0.1:${served.port}/index.html`, { waitUntil: 'networkidle', timeout: 30_000 })
+    await page.goto(`http://127.0.0.1:${served.port}/`, { waitUntil: 'networkidle', timeout: 30_000 })
     await page.waitForTimeout(1000)
     const desktop = await measure(page)
     if (options.screenshot) await page.screenshot({ path: options.screenshot, fullPage: true })

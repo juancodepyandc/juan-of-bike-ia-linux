@@ -53,3 +53,42 @@ describe('injection Tailwind — ne jamais ecraser une page auto-stylee', () => 
     assert.equal((out.match(/cdn\.tailwindcss\.com/g) || []).length, 1)
   })
 })
+
+// --- Config Vite par framework (2026-08-10) --------------------------------
+// `ensureSpaViteConfig` injectait un plugin REACT pour TOUT projet `spa_*`.
+// Sur le SaaS Vue livre par le run runId=940, le build echouait donc avec
+// « Install @vitejs/plugin-vue to handle .vue files » — alors que le modele
+// avait, lui, correctement declare plugin-vue dans package.json. Aurora rendait
+// inconstruisible un livrable correct.
+describe('config Vite injectee — le plugin doit suivre le framework', () => {
+  const vite = (projectType: string) => {
+    const intent = { ...classifyCodeIntent('app'), projectType } as never
+    const out = upsertProjectSupportFilesForTest([
+      { name: 'src/main.ts', language: 'typescript', content: 'export {}' },
+    ], intent, 'prompt', null)
+    return out.find((f) => f.name === 'vite.config.ts')?.content ?? ''
+  }
+
+  test('un projet Vue recoit plugin-vue, jamais plugin-react', () => {
+    const cfg = vite('spa_vue')
+    assert.match(cfg, /@vitejs\/plugin-vue/)
+    assert.match(cfg, /vue\(\)/)
+    assert.doesNotMatch(cfg, /plugin-react/, 'un projet Vue ne doit jamais recevoir le plugin React')
+  })
+
+  test('un projet React garde plugin-react', () => {
+    const cfg = vite('spa_react')
+    assert.match(cfg, /@vitejs\/plugin-react/)
+    assert.match(cfg, /react\(\)/)
+  })
+
+  test('un projet Svelte recoit le plugin Svelte', () => {
+    assert.match(vite('spa_svelte'), /vite-plugin-svelte/)
+  })
+
+  test('un framework inconnu ne recoit aucun plugin plutot qu un faux', () => {
+    const cfg = vite('spa_angular')
+    assert.doesNotMatch(cfg, /plugin-react|plugin-vue/)
+    assert.match(cfg, /plugins: \[\]/)
+  })
+})

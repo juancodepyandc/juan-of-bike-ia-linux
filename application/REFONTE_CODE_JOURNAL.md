@@ -5471,3 +5471,123 @@ Le sandbox ne ment plus sur la cause de son indisponibilite, et il fonctionne
 desormais pour les projets JS/TS sur cet hote. Reste assume: chaque langage
 demande son image pre-telechargee; les autres (rust, go, java, gcc) echoueront
 tant qu elles ne le sont pas — mais elles le DIRONT desormais clairement.
+
+## 2026-08-10 — Le build echouait a cause d'Aurora, le rendu a cause du modele
+
+### Reprise et diagnostic
+
+Le projet livre par `runId=940` (SaaS analytics Vue, 32 fichiers) a ete
+reellement installe, builde, servi et REGARDE.
+
+**1. `npm install` -> OK. `vite build` -> ECHEC.**
+
+```
+[vite:build-import-analysis] src/app.vue (5:8): Failed to parse source for
+import analysis... Install @vitejs/plugin-vue to handle .vue files.
+```
+
+Cause: `vite.config.ts` importait **`@vitejs/plugin-react`** et appelait
+`react()` — dans un projet **Vue**, dont le `package.json` declarait pourtant
+correctement `@vitejs/plugin-vue`. Le fichier venait d Aurora:
+`ensureSpaViteConfig` injectait une config REACT pour TOUT projet `spa_*`.
+**Aurora rendait donc inconstruisible un livrable correct** — meme famille que
+l injection Tailwind corrigee plus tot.
+
+Preuve: en remplacant la seule config par son equivalent Vue,
+`vite build` -> **exit 0**, `dist/index.html` + 283 Ko de JS + 25 Ko de CSS en
+954 ms. Rien d autre n a ete touche.
+
+**2. Mon propre outil de capture jugeait une page vide.**
+
+Premier rendu du build: en-tete seul, corps vide, 52/100. L application utilise
+`createWebHistory`; la capture ouvrait `/index.html`, qui ne correspond a AUCUNE
+route — le `<router-view>` restait donc vide. Ce n etait pas l application qui
+etait vide, c etait la facon de la servir. Corrige: repli SPA (tout chemin sans
+extension rend `index.html`) et navigation sur la RACINE.
+
+Apres correction, la meme page mesure:
+`[13,14,16,18,20,24,28,32,40,48,96]` px de typo, 7 sections, 30 images,
+40 controles, 3 099 px de haut, **80/100, aucune erreur runtime**.
+
+**3. Le rendu reste plat — et cette fois c est le MODELE.**
+
+Le CSS embarque utilise `var(--accent)`, `var(--bg)`, `var(--card-bg)`,
+`var(--border)`… et le bundle ne contient **aucune definition** de ces
+variables. Verification: `main.ts` n importe **aucun** CSS, alors que le modele
+a bien ecrit une feuille de tokens dans `src/assets/styles/`. Jamais importee ->
+chaque `var()` est invalide -> la declaration est jetee -> fond unique, une
+seule couleur de texte, zero ombre, police serif par defaut.
+
+Contrairement aux points 1 et 2, ce defaut n est pas d Aurora: le modele a
+oublie l import global.
+
+### Modifications realisees
+
+- `src/services/codeProjectSupportFiles.ts` — la config Vite injectee suit le
+  framework: `spa_react` -> plugin-react, `spa_vue` -> plugin-vue,
+  `spa_svelte` -> plugin-svelte, sinon aucun plugin plutot qu un faux.
+- `scripts/code_harness/aesthetic_capture.mjs` et `render_audit.mjs` — repli SPA
+  et navigation racine, sinon toute application en history mode est jugee vide.
+- `src/__tests__/codeTailwindInjectionGuard.test.ts` — 4 tests.
+
+### Avant-apres mesurable
+
+| Etape | Avant | Apres |
+|---|---|---|
+| `vite build` du projet Vue livre | **echec** (plugin React) | **exit 0**, 283 Ko JS + 25 Ko CSS en 954 ms |
+| Rendu mesure par la capture | 52/100, corps vide | **80/100**, 7 sections, 30 images, 40 controles |
+| Typo maximale rendue | 24 px | **96 px** |
+| Erreurs runtime | 0 | 0 |
+
+### Jugement esthetique honnete
+
+**Structurellement complet**: en-tete + navigation + bascule de theme, hero avec
+accroche et deux CTA, 6 cartes de fonctionnalites, 3 paliers tarifaires
+($29/$79/$199) avec listes et CTA, tableau comparatif, temoignage avec portrait,
+FAQ en accordeon (5 questions), pied de page a 4 colonnes avec inscription
+newsletter. La demande (1) du brief est reellement honoree.
+
+**Mais ce n est PAS premium.** En directeur artistique: tout est centre dans une
+colonne etroite sans grille; les « cartes » n en sont pas (ni fond, ni bordure,
+ni ombre); les icones sont des EMOJI, signature du prototype et non du produit;
+les boutons sont ceux du navigateur; « HomeDashboard » colle faute d espacement;
+le tableau comparatif n affiche que des tirets; de grands vides verticaux
+subsistent; et toute la page tombe en Times New Roman.
+
+L essentiel de ces defauts decoule d une seule cause: **les tokens de design ne
+sont jamais charges**. Le squelette est bon, l habillage n arrive pas.
+
+### Performance complete de `runId=940`
+
+| Mesure | Valeur |
+|---|---|
+| Temps au premier fichier | 206 s |
+| Generation des 25 fichiers | 875 s |
+| Total jusqu a livraison | **1 013 s (16,9 min)** |
+| `npm install` + `vite build` | ~35 s |
+| **Total bout en bout** | **~17,5 min** |
+| Pic VRAM | 15 172 MiB / 16 303 |
+| Pic RAM | 11 899 MiB / 30 720 |
+| Passes de correction gaspillees | **0** (contre 7-8 au run precedent) |
+
+### Demonstration reproductible
+
+```bash
+cd application/output/code/audit_v94/project
+npm install --no-audit --no-fund && npx vite build   # exit 0 avec la config Vue
+cd /home/juan/AuroraIA/application
+node scripts/code_harness/aesthetic_capture.mjs output/code/audit_v94/project/dist \
+  --out output/code/audit_v94/shots --json output/code/audit_v94/shots/report.json
+jq '.verdict | {score, passed, failedChecks}' output/code/audit_v94/shots/report.json
+```
+
+Captures: `output/code/audit_v94/shots/desktop.png` et `mobile.png`.
+
+### Etat de satisfaction chantier
+
+Les deux causes cote OUTILLAGE sont corrigees et testees. Reste le dernier
+obstacle, precis et identifie: **rien ne verifie que les tokens de design
+utilises sont reellement definis et charges**. Une porte deterministe — toute
+variable `var(--x)` employee doit avoir une definition dans le CSS effectivement
+charge, et un projet a bundler doit importer sa feuille globale — aurait attrape
+ce cas ET le cas Mercedes. C est le prochain chantier, non fait ici.
