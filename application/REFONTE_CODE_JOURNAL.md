@@ -5381,3 +5381,93 @@ des capacites reelles non encore branchees (`detectDeadCode`,
 `resolveToolPackageVersion`, `executeCodeGenerationToolSequence`, le writer
 disque) ou des moities de protocole (`parseCodeStreamEventLine`). Les brancher
 demande une integration raisonnee, pas un appel decoratif.
+
+## 2026-08-10 — Le sandbox accusait le quota disque pour une image absente
+
+### Reprise et diagnostic
+
+Le run complexe `runId=940` (25 fichiers planifies, 32 livres) s est termine sur:
+
+```
+## VALIDATION INDISPONIBLE
+La validation sandbox n a pas pu s executer: Quota disque total WS7
+indisponible pour le workspace conteneurise.
+Ce n est PAS un defaut du code livre.
+```
+
+**Premier constat, positif**: le garde d infrastructure livre a l increment
+precedent a FONCTIONNE. La boucle de correction s est arretee immediatement
+(« livraison sans passe de correction ») au lieu de bruler sept a huit passes
+comme le run precedent sur la meme famille de panne. Le comportement corrige se
+verifie donc en conditions reelles.
+
+**Second constat**: le message etait FAUX, et il m a envoye chercher au mauvais
+endroit. Verification directe:
+
+```
+podman volume create --ignore --label ... aurora-diag-1   -> exitCode 0   (le volume passe)
+podman run --pull=never node:22-bookworm-slim echo ok     -> "image not known"
+podman images -> python:3.12-slim, alpine  (pas de node)
+```
+
+La creation du volume reussit. C est l ETAPE D INIT qui echoue, parce que le
+projet est un SPA Vue -> langage `node` -> image `node:22-bookworm-slim`, jamais
+telechargee sur cet hote, et `--pull=never` interdit de la recuperer pendant une
+generation.
+
+`prepareSandboxWorkspaceVolume` renvoyait un `ok:false` nu; l appelant
+retombait sur un libelle code en dur mentionnant le quota disque — quelle que
+soit la cause reelle. **Le sandbox WS7 etait donc silencieusement indisponible
+pour TOUT projet JS/TS sur cet hote, en accusant le disque.**
+
+### Modifications realisees
+
+- `src/services/codeSandboxWorkspace.ts` — le resultat porte desormais
+  `failedStage` (`volume` | `init`) et un `reason` actionnable. L image absente
+  est reconnue (`image not known`) et nommee, avec la consigne
+  (`podman pull` hors generation, puisque `--pull=never` est deliberé).
+- `src/services/codeSandbox.ts` — relaie le vrai diagnostic au lieu du libelle
+  quota code en dur.
+- `src/services/codeInfrastructureFailure.ts` — le classifieur suit le nouveau
+  libelle, sinon la boucle recommencerait a bruler des passes.
+- `src/__tests__/codeInfrastructureFailure.test.ts` — 2 tests.
+- Image `node:22-bookworm-slim` telechargee sur l hote; verifiee:
+  `podman run --pull=never node:22-bookworm-slim` -> `WS7_NODE_OK`.
+
+### Avant-apres mesurable
+
+| Situation | Avant | Apres |
+|---|---|---|
+| Image langage absente | « Quota disque total WS7 indisponible » (faux) | « Sandbox WS7 indisponible (init): image conteneur absente pour "node" — lancez podman pull » |
+| Volume refuse | meme message | « (volume): creation du volume refusee » |
+| Projet JS/TS sur cet hote | sandbox muette, cause introuvable | image presente, `WS7_NODE_OK` verifie |
+| Boucle de correction sur cette panne | 7-8 passes brulees (run precedent) | **0 passe** (verifie sur ce run) |
+
+Tests : **827 -> 829 verts, 0 echec.**
+
+### Performance mesuree sur `runId=940`
+
+| Mesure | Valeur |
+|---|---|
+| Fichiers planifies / livres | 25 / **32** |
+| Temps au premier fichier | **206 s** |
+| Generation des 25 fichiers | **875 s** |
+| Total jusqu a livraison | **1 013 s (16,9 min)** |
+| Pic VRAM | **15 172 MiB / 16 303** |
+| Pic RAM | 11 899 MiB / 30 720 |
+| Passes de correction gaspillees | **0** (contre 7-8 au run precedent) |
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeInfrastructureFailure.test.ts'
+podman run --rm --pull=never --network=none docker.io/library/node:22-bookworm-slim node -e "console.log('WS7_NODE_OK')"
+```
+
+### Etat de satisfaction chantier
+
+Le sandbox ne ment plus sur la cause de son indisponibilite, et il fonctionne
+desormais pour les projets JS/TS sur cet hote. Reste assume: chaque langage
+demande son image pre-telechargee; les autres (rust, go, java, gcc) echoueront
+tant qu elles ne le sont pas — mais elles le DIRONT desormais clairement.

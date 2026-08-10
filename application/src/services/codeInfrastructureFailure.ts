@@ -42,6 +42,8 @@ const INFRASTRUCTURE_PATTERNS: RegExp[] = [
   // de categorie que le reseau, signature differente — un run reel a brule sept
   // passes sur « Quota disque total WS7 indisponible » avant qu on la couvre.
   /quota disque total ws7 indisponible/i,
+  /sandbox ws7 indisponible/i,
+  /image conteneur absente/i,
   /isolation sandbox indisponible/i,
   /podman (?:rootless )?(?:est )?indisponible/i,
   /workspace conteneurise/i,

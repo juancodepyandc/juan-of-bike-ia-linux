@@ -163,7 +163,7 @@ export async function runCodeSandboxValidation({
       return {
         ok: false,
         rootPath: sandboxRoot,
-        summary: 'Quota disque total WS7 indisponible pour le workspace conteneurise.',
+        summary: `Sandbox WS7 indisponible (${workspaceVolume.failedStage ?? 'preparation'}): ${workspaceVolume.reason ?? 'cause inconnue'}.`,
         question: null,
         steps,
         detectedLanguage: lang,

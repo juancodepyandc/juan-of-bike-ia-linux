@@ -17,6 +17,10 @@ export type SandboxWorkspaceResult = {
   created: boolean
   volumeName: string
   steps: CodeSandboxStepResult[]
+  /** Etape reellement fautive, pour ne pas accuser le quota a tort. */
+  failedStage?: 'volume' | 'init'
+  /** Diagnostic actionnable (image absente, etc.). */
+  reason?: string
 }
 
 function commandLine(executable: string, args: string[]) {
@@ -83,12 +87,24 @@ export async function prepareSandboxWorkspaceVolume(
         ].join('\n')
       : create.output,
   })
-  if (!create.ok) return { ok: false, created: false, volumeName, steps }
+  if (!create.ok) return { ok: false, created: false, volumeName, steps, failedStage: 'volume', reason: 'creation du volume refusee' }
 
   const initArgs = buildPodmanSandboxWorkspaceInitArgs(lang, sandboxRoot, DEFAULT_SANDBOX_QUOTAS, options)
   const init = await runner('podman', initArgs, sandboxRoot, 60_000)
   steps.push(resultStep('Initialisation workspace quota WS7', 'podman', initArgs, init))
-  if (!init.ok) return { ok: false, created: true, volumeName, steps }
+  if (!init.ok) {
+    // `--pull=never` interdit de telecharger: si l image du langage n est pas
+    // deja locale, l init echoue avec « image not known ». Le dire, plutot que
+    // de laisser l appelant accuser le quota disque — un message trompeur
+    // envoie chercher le probleme au mauvais endroit (c est arrive).
+    const missingImage = /image not known|no such image|unable to find image/i.test(init.output || '')
+    return {
+      ok: false, created: true, volumeName, steps, failedStage: 'init',
+      reason: missingImage
+        ? `image conteneur absente en local pour "${lang}" — lancez "podman pull" pour ce langage (--pull=never interdit le telechargement pendant une generation)`
+        : `initialisation du workspace echouee: ${(init.output || '').slice(0, 160)}`,
+    }
+  }
 
   return { ok: true, created: true, volumeName, steps }
 }

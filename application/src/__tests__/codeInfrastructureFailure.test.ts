@@ -153,3 +153,24 @@ describe('pannes de PROVISIONNEMENT du sandbox', () => {
     )
   })
 })
+
+// Le diagnostic du sandbox a ete rendu PRECIS (il accusait le quota disque
+// alors que la vraie cause etait une image conteneur absente, `--pull=never`
+// interdisant le telechargement). Le classifieur doit suivre le nouveau libelle,
+// sinon la boucle de correction recommencerait a bruler des passes.
+describe('diagnostic sandbox precis', () => {
+  test('le nouveau libelle reste classe comme infrastructure', () => {
+    assert.equal(
+      isSandboxInfrastructureFailure({
+        ok: false,
+        summary: 'Sandbox WS7 indisponible (init): image conteneur absente en local pour "node".',
+        steps: [{ ok: false, output: 'Error: image not known' }],
+      }),
+      true,
+    )
+  })
+
+  test('l image absente est reconnue comme cause d environnement', () => {
+    assert.equal(isInfrastructureFailureMessage('image conteneur absente en local pour "node"'), true)
+  })
+})
