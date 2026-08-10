@@ -73,6 +73,22 @@ export async function renderAndScoreAesthetics(files, options = {}) {
   if (!files.some((f) => /\.html?$/i.test(f.name || ''))) {
     return { applicable: false, reason: 'aucun HTML a rendre' }
   }
+  // Un projet a bundler (Vue/React/Svelte) ne peut PAS etre juge en le servant
+  // tel quel: son index.html pointe un module source (`/src/main.ts`) que seul
+  // un build resout. Le servir statiquement donne une page blanche, donc un
+  // score proche de 0 qui ne dit rien du design et declenche une repasse
+  // esthetique inutile. Mesure: un run SaaS Vue a ete note 10/100 ainsi.
+  const entry = files.find((f) => /(^|\/)index\.html?$/i.test(f.name || ''))
+  const entryHtml = entry?.content ?? ''
+  const needsBundler = /<script[^>]+src=["'][^"']*\/src\/[^"']+\.(ts|tsx|jsx|vue|svelte)["']/i.test(entryHtml)
+    || files.some((f) => /\.(vue|svelte)$/i.test(f.name || ''))
+  if (needsBundler) {
+    return {
+      applicable: false,
+      reason: 'projet a bundler (Vue/React/Svelte): un build est requis avant tout jugement de rendu',
+      needsBuild: true,
+    }
+  }
   let browser = null; let server = null
   try {
     const { chromium } = await import('playwright')

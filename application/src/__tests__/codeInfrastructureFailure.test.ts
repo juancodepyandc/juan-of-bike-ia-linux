@@ -120,3 +120,36 @@ describe('buildInfrastructureFailureNote', () => {
     assert.match(note, /fetch failed/)
   })
 })
+
+// --- Provisionnement du sandbox (2026-08-10) -------------------------------
+// Deuxieme run reel: 7 passes de correction, scores plats (40/25/33/33/33/33/33),
+// toutes sur « Quota disque total WS7 indisponible pour le workspace
+// conteneurise ». Meme erreur de categorie que `fetch failed` — le juge n a pas
+// pu etre CONSTRUIT — mais une signature que le classifieur ne couvrait pas.
+describe('pannes de PROVISIONNEMENT du sandbox', () => {
+  test('le quota WS7 indisponible est une panne d infrastructure', () => {
+    assert.equal(
+      isSandboxInfrastructureFailure({
+        ok: false,
+        summary: 'Quota disque total WS7 indisponible pour le workspace conteneurise.',
+        steps: [{ ok: false, output: '' }],
+      }),
+      true,
+    )
+  })
+
+  test('isolation podman indisponible aussi', () => {
+    assert.equal(isInfrastructureFailureMessage('Isolation sandbox indisponible sur cet hote'), true)
+  })
+
+  test('une vraie erreur de build reste un echec de code', () => {
+    assert.equal(
+      isSandboxInfrastructureFailure({
+        ok: false,
+        summary: 'Build echoue',
+        steps: [{ ok: false, output: 'vite build: Could not resolve ./missing.vue' }],
+      }),
+      false,
+    )
+  })
+})

@@ -5136,3 +5136,100 @@ node --experimental-strip-types --test 'src/__tests__/codeAutoCorrection.test.ts
 L escalade suit la trajectoire. Reste assume: le seuil de « progression » vient
 de `isCorrectionScoreClimbing` (3 passes, +5 points minimum); un run qui
 progresse tres lentement est encore traite comme un run qui patine.
+
+## 2026-08-10 — Run complexe reel: trois defauts que seul le reel revele
+
+### Reprise et diagnostic
+
+Run de bout en bout sur un brief volontairement lourd (plateforme SaaS
+analytics: accueil marketing + tableau de bord avec graphiques reels + nav
+responsive + theme sombre + interaction animee + formulaire). Le pipeline a
+planifie **25 fichiers**.
+
+**Daemonisation** — le blocage des tours precedents est resolu. `tmux` et
+`screen` sont absents de l hote; la forme qui survit est:
+
+```bash
+setsid nohup node scripts/code_harness/bridge_ndjson_runner.mjs \
+  > output/code/audit_v93/stream.ndjson 2> output/code/audit_v93/run.log \
+  < output/code/audit_v93/payload.json & disown
+echo $! > output/code/audit_v93/run.pid
+```
+
+Piege coute un run: mettre `< /dev/null` APRES la redirection d entree ecrase
+celle-ci (la derniere gagne) — le runner recevait un prompt vide et sortait
+aussitot. L ordre des redirections compte.
+
+### Ce que le run a prouve
+
+- **Le garde-fou semantique tient sur un brief different.** Le modele a de
+  nouveau classe la demande en `ide` — quatrieme reproduction — et le garde l a
+  ecarte: `Classification semantique ecartee (ide non corrobore) -> spa_vue`.
+  C est exactement la degradation « IDE au lieu du produit demande », desormais
+  empechee en conditions reelles.
+- **Le plan respecte le type et la porte d entree**: 25 fichiers, `index.html`
+  genere en premier.
+- **La porte visuelle de rendu s execute sur le canal tunnel** (evenement
+  `visual.score`, `source: render_audit`).
+
+### Trois defauts trouves, que seule une vraie execution revele
+
+**1. Le repli de quota WS7 etait inerte.** Mesure directe sur le bridge:
+
+```
+podman volume create --opt o=size=768m …  -> exitCode 125, output ""
+podman volume create (sans --opt)          -> exitCode 0
+```
+
+`/api/command/run` ne renvoie PAS stderr. Mon repli testait
+`isVolumeQuotaUnsupportedError(create.output)` — sur une chaine vide, il ne
+matchait jamais. Le run a donc brule **sept passes de correction** sur
+« Quota disque total WS7 indisponible », scores plats (40/25/33/33/33/33/33).
+Le quota disque est une garantie SOUPLE: on reessaie desormais sans lui **quelle
+que soit la raison** de l echec, sans dependre d un message absent.
+
+**2. Le classifieur d infrastructure ne couvrait que le reseau.** Meme erreur de
+categorie que `fetch failed` — le juge n a pas pu etre CONSTRUIT — mais une
+signature differente. Les pannes de provisionnement du sandbox sont ajoutees.
+
+**3. Mon propre juge de rendu notait ce qu il ne pouvait pas juger.** Le projet
+etant un SPA Vue, son `index.html` pointe `/src/main.ts`, que seul un build
+resout. Servi tel quel, il donne une page blanche: le juge a rendu **10/100** et
+declenche une repasse esthetique inutile. Un score de 10 ne disait rien du
+design, seulement qu il manquait un build. Le juge repond desormais
+`applicable:false` sur un projet a bundler au lieu de fabriquer un verdict.
+
+### Avant-apres mesurable
+
+| Situation | Avant | Apres |
+|---|---|---|
+| `volume create --opt` refuse, stderr vide | repli inerte -> 7 passes brulees | repli inconditionnel, isolation conservee |
+| Panne de provisionnement sandbox | traitee comme defaut de code | classee infrastructure, boucle arretee |
+| Projet a bundler passe au juge de rendu | note 10/100 + repasse inutile | `applicable:false`, aucune repasse |
+
+Tests : **815 -> 819 verts, 0 echec.**
+
+### Performance mesuree sur ce run
+
+- 25 fichiers planifies, **~28 s par fichier** en generation.
+- Pic **VRAM 15 171 MiB / 16 303**, pic **RAM 12 205 MiB / 30 Go**.
+- GPU a 22-24 % d utilisation: le modele de 18,6 Go ne tient pas dans 16 Go de
+  VRAM, il deborde en RAM — le facteur limitant est materiel, pas logiciel.
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeSandboxWorkspace.test.ts'
+node --experimental-strip-types --test 'src/__tests__/codeInfrastructureFailure.test.ts'
+
+# la mesure qui a revele le repli inerte
+curl -s -X POST http://127.0.0.1:3001/api/command/run -H 'Content-Type: application/json' \
+  -d '{"executable":"podman","args":["volume","create","--opt","o=size=768m","t1"],"cwd":"/tmp"}'
+```
+
+### Etat de satisfaction chantier
+
+Les trois defauts sont corriges et testes. Reste ouvert et assume: juger
+l esthetique d un projet a bundler demande un `npm install && build` reel avant
+capture — non fait ici.

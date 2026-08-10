@@ -38,6 +38,13 @@ const INFRASTRUCTURE_PATTERNS: RegExp[] = [
   /network (?:error|request failed)/i,
   /bridge (?:injoignable|unreachable|non joignable)/i,
   /failed to fetch/i,
+  // Provisionnement du sandbox: le juge n a pas pu etre CONSTRUIT. Meme erreur
+  // de categorie que le reseau, signature differente — un run reel a brule sept
+  // passes sur « Quota disque total WS7 indisponible » avant qu on la couvre.
+  /quota disque total ws7 indisponible/i,
+  /isolation sandbox indisponible/i,
+  /podman (?:rootless )?(?:est )?indisponible/i,
+  /workspace conteneurise/i,
 ]
 
 /**

@@ -6,7 +6,6 @@ import {
   buildPodmanSandboxVolumeRemoveArgs,
   buildPodmanSandboxWorkspaceInitArgs,
   DEFAULT_SANDBOX_QUOTAS,
-  isVolumeQuotaUnsupportedError,
   sandboxWorkspaceVolumeName,
   type PodmanSandboxOptions,
 } from './codeSandboxIsolation.ts'
@@ -55,9 +54,19 @@ export async function prepareSandboxWorkspaceVolume(
   // S il est refuse, on ne sacrifie pas les autres (reseau coupe, racine en
   // lecture seule, plafond de PID, memoire, CPU): on cree le volume sans lui et
   // on l ecrit noir sur blanc dans l etape.
-  if (!create.ok && isVolumeQuotaUnsupportedError(create.output)) {
+  // Le repli ne peut PAS dependre du message d erreur: `/api/command/run` du
+  // bridge renvoie `output: ""` sur echec (exitCode 125 seul). Mesure directe:
+  // `podman volume create --opt o=size=768m` -> exitCode 125, output vide;
+  // la meme commande sans `--opt` -> exitCode 0. Tester le libelle laissait donc
+  // la degradation inerte, et un run reel a brule SEPT passes de correction sur
+  // « Quota disque total WS7 indisponible » — une panne d environnement que
+  // corriger le code ne repare jamais.
+  // Le quota disque est une garantie SOUPLE: si sa creation echoue, quelle que
+  // soit la raison, on reessaie sans lui plutot que de perdre toute l isolation.
+  if (!create.ok) {
     effectiveArgs = buildPodmanSandboxVolumeCreateArgsWithoutQuota(sandboxRoot)
     create = await runner('podman', effectiveArgs, sandboxRoot, 30_000)
+    quotaEnforced = false
   }
 
   steps.push({

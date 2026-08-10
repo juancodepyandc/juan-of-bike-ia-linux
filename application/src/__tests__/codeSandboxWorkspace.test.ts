@@ -26,22 +26,38 @@ describe('codeSandboxWorkspace', () => {
     assert.ok(calls[1]?.args.includes('aurora-code-ws-tmp-aurora-ws:/workspace:rw,z'))
   })
 
-  test('prepareSandboxWorkspaceVolume echoue avant init si le quota volume est refuse', async () => {
-    let calls = 0
+  // Le quota disque est une garantie SOUPLE. Mesure sur un run reel: le bridge
+  // renvoie `output: ""` quand `podman volume create --opt o=size=...` echoue
+  // (exitCode 125 seul), donc tester le libelle laissait la degradation inerte
+  // et le run brulait SEPT passes de correction sur « Quota disque total WS7
+  // indisponible » — une panne d environnement qu aucune correction de code ne
+  // repare. On reessaie donc SANS quota quelle que soit la raison de l echec.
+  test('quota refuse SANS message exploitable: on reessaie sans quota', async () => {
+    const argsSeen: string[][] = []
     const result = await prepareSandboxWorkspaceVolume('/tmp/aurora/ws', 'node', {}, async (_executable, args) => {
-      calls += 1
+      argsSeen.push(args)
+      const isQuotaAttempt = args.includes('o=size=768m')
       return {
-        ok: false,
-        exitCode: 1,
-        output: `quota unsupported: ${args.join(' ')}`,
+        ok: !isQuotaAttempt,           // la tentative AVEC quota echoue
+        exitCode: isQuotaAttempt ? 125 : 0,
+        output: '',                     // exactement ce que renvoie le bridge
         command: `podman ${args.join(' ')}`,
       }
     })
 
+    assert.ok(argsSeen.length >= 2, 'un second essai sans quota doit avoir lieu')
+    assert.ok(argsSeen[0].includes('o=size=768m'), 'le premier essai porte le quota')
+    assert.ok(!argsSeen[1].includes('o=size=768m'), 'le second essai est sans quota')
+    assert.equal(result.steps[0]?.label, 'Quota disque workspace WS7')
+    assert.match(result.steps[0]?.output ?? '', /NON APPLIQUE/, 'la degradation doit etre declaree')
+  })
+
+  test('si meme la creation sans quota echoue, on abandonne (vraie panne)', async () => {
+    const result = await prepareSandboxWorkspaceVolume('/tmp/aurora/ws', 'node', {}, async () => ({
+      ok: false, exitCode: 125, output: '', command: 'podman volume create',
+    }))
     assert.equal(result.ok, false)
     assert.equal(result.created, false)
-    assert.equal(calls, 1)
-    assert.equal(result.steps[0]?.label, 'Quota disque workspace WS7')
   })
 
   test('prepareSandboxWorkspaceVolume marque le volume cree si seule l init echoue', async () => {
