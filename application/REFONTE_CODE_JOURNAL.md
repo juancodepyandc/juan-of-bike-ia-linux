@@ -5233,3 +5233,85 @@ curl -s -X POST http://127.0.0.1:3001/api/command/run -H 'Content-Type: applicat
 Les trois defauts sont corriges et testes. Reste ouvert et assume: juger
 l esthetique d un projet a bundler demande un `npm install && build` reel avant
 capture — non fait ici.
+
+## 2026-08-10 — Un patch introuvable detruisait 46 minutes de travail
+
+### Reprise et diagnostic
+
+Le run complexe precedent est mort ainsi, apres **36 fichiers emis et 46
+minutes**:
+
+```
+[CodeOrchestrator] Pipeline fatal error: agentic_retry_failed:patch_search_not_found
+```
+
+Deux defauts distincts s additionnaient.
+
+**1. La recherche etait litterale.** `apply_patch` exigeait
+`file.content.includes(action.search)`. Or le modele reconstitue le bloc a
+chercher de MEMOIRE: une indentation de 2 au lieu de 4 espaces, une tabulation
+convertie, un espace en fin de ligne, et la recherche echoue alors que le texte
+est present a l identique aux blancs pres.
+
+**2. L echec etait disproportionne.** Un seul patch rate sur un fichier
+`required` faisait remonter `ok:false` -> `agentic_retry_failed` -> erreur
+fatale. Le fichier existait pourtant, ecrit et valide. On perdait tout le run
+pour une recherche de texte.
+
+### Recherches et choix
+
+- **Egalite stricte d abord**, puis repli INSENSIBLE AUX BLANCS. Le repli
+  parcourt le contenu avec deux curseurs qui sautent les blancs des deux cotes,
+  et rend les indices REELS du fichier d origine — le remplacement ne touche
+  donc ni l indentation voisine ni les fins de ligne.
+- `all: true` reste sur correspondance stricte uniquement: repeter une
+  recherche floue sur un fichier entier ferait plus de degats que de bien.
+- **Degradation proportionnee**: un `patch_search_not_found` sur un fichier deja
+  ecrit et non vide est trace (`patch_ignore:`) et la file continue. La boucle de
+  correction re-jugera le livrable. On n abandonne plus 46 minutes de travail
+  pour un bloc de texte introuvable.
+
+### Modifications realisees
+
+- `src/services/codePatchMatching.ts` (nouveau) — `findPatchTarget` et
+  `applyPatchToContent`.
+- `src/services/codeGenerationTools.ts` — `apply_patch` passe par le matcher
+  tolerant.
+- `src/services/codeGenerationExecutor.ts` — echec de patch non fatal quand la
+  cible existe deja.
+- `src/__tests__/codePatchMatching.test.ts` (nouveau) — 11 tests.
+
+### Avant-apres mesurable
+
+| Recherche du modele | Avant | Apres |
+|---|---|---|
+| Bloc exact | trouve | trouve (strategie `exact`, prioritaire) |
+| Sur-indentation (8 espaces vs 4) | **echec fatal** | trouve |
+| Tabulation au lieu d espaces | **echec fatal** | trouve |
+| Espace en fin de ligne | **echec fatal** | trouve |
+| Bloc multi-lignes mal re-indente | **echec fatal** | trouve |
+| Texte reellement absent | echec | echec (inchange, verrouille par test) |
+| Identifiant proche (`messages` vs `message`) | — | **non confondu** |
+
+| Consequence d un patch introuvable | Avant | Apres |
+|---|---|---|
+| Fichier cible deja ecrit | **run entier perdu** | trace, file poursuivie |
+
+Tests : **819 -> 830 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codePatchMatching.test.ts'
+```
+
+Trace de la panne d origine: `output/code/audit_v93/run.log` (derniere ligne).
+
+### Etat de satisfaction chantier
+
+Le mode d echec qui a coute le run le plus long de la session est traite des
+deux cotes: la recherche pardonne les blancs, et son echec ne condamne plus la
+livraison. Reste assume: le repli ignore les blancs, pas les differences
+reelles de code — un bloc que le modele a paraphrase reste introuvable, et c est
+voulu (patcher approximativement serait pire).

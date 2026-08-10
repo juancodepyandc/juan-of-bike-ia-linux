@@ -1,3 +1,4 @@
+import { applyPatchToContent } from './codePatchMatching.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import { normalizeProjectPath } from './codeProjectTree.ts'
 
@@ -99,15 +100,16 @@ export async function executeCodeGenerationTool(
   const file = findFile(files, path)
   if (!file) return { ok: false, kind: action.kind, files, path, error: 'file_not_found' }
   if (!action.search) return { ok: false, kind: action.kind, files, path, error: 'patch_search_empty' }
-  if (!file.content.includes(action.search)) {
+  // Le modele reconstitue le bloc a chercher de MEMOIRE: une indentation
+  // differente ou un espace de fin suffisait a faire echouer la recherche alors
+  // que le texte est bien present. On tolere donc les blancs apres avoir essaye
+  // l egalite stricte.
+  const patched = applyPatchToContent(file.content, action.search, action.replace, action.all)
+  if (!patched.ok) {
     return { ok: false, kind: action.kind, files, path, error: 'patch_search_not_found' }
   }
-
-  const content = action.all
-    ? file.content.split(action.search).join(action.replace)
-    : file.content.replace(action.search, action.replace)
-  const next = { ...file, content }
-  return { ok: true, kind: action.kind, files: replaceFile(files, next), path, content }
+  const next = { ...file, content: patched.content }
+  return { ok: true, kind: action.kind, files: replaceFile(files, next), path, content: patched.content }
 }
 
 export async function executeCodeGenerationToolSequence(

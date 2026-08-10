@@ -123,6 +123,23 @@ export async function executeCodeGenerationQueue(
       toolResults.push({ item, result })
 
       if (!result.ok) {
+        // Un patch qui ne retrouve pas sa cible sur un fichier DEJA ecrit et
+        // non vide n est pas une raison de perdre tout le run. Mesure reelle:
+        // apres 36 fichiers et 46 minutes, un seul `patch_search_not_found`
+        // faisait remonter `agentic_retry_failed` jusqu a l erreur fatale. Le
+        // fichier existe et reste valide: on trace et on continue, la boucle de
+        // correction re-jugera le livrable.
+        const targetExists = result.path
+          ? (files.find((f) => f.name === result.path)?.content ?? '').trim().length > 0
+          : false
+        if (result.error === 'patch_search_not_found' && targetExists) {
+          emit(buildCodeStreamErrorEvent({
+            ...options.nextMeta(),
+            message: `patch_ignore:${result.error}:${item.path}`,
+            recoverable: true,
+          }))
+          continue
+        }
         if (item.required || options.stopOnOptionalFailure) {
           emit(buildCodeStreamErrorEvent({
             ...options.nextMeta(),
