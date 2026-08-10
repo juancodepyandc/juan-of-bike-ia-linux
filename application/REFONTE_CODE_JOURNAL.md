@@ -5315,3 +5315,69 @@ deux cotes: la recherche pardonne les blancs, et son echec ne condamne plus la
 livraison. Reste assume: le repli ignore les blancs, pas les differences
 reelles de code — un bloc que le modele a paraphrase reste introuvable, et c est
 voulu (patcher approximativement serait pire).
+
+## 2026-08-10 — Orphelins: le chemin d'installation sur l'HOTE est mort
+
+### Reprise et diagnostic
+
+Quatre des treize symboles orphelins formaient une famille coherente:
+`checkRuntimeAvailable`, `autoInstallRuntime`, `getExecutableRuntimeSpec` et
+`getRuntimeSpec`. Tous servaient a detecter puis INSTALLER un runtime sur la
+machine hote (winget, brew, apt) avant d executer le code genere.
+
+Depuis que WS7 s execute reellement dans un conteneur Podman avec une image par
+langage (`python:3.12-slim`, `node:22-bookworm-slim`...), le runtime est fourni
+par l image: installer quoi que ce soit sur l hote n a plus de sens, et ne
+devrait plus jamais arriver pendant une generation.
+
+Verification avant suppression: `codeSandboxRuntime.ts` n etait importe que pour
+`isWindows` et `nodeExecutable`; les trois autres exports n avaient **aucun**
+consommateur. `getRuntimeSpec` etait re-exporte par `codeSandboxCommands.ts`
+sans que personne ne le consomme — une chaine de re-export morte.
+
+### Note de methode
+
+Le decoupeur automatique de fonctions a de nouveau echoue, differemment: il
+prenait l accolade de `Promise<{ ok: boolean; output: string }>` pour celle du
+CORPS, et coupait au mauvais endroit. Les fichiers ont ete restaures depuis HEAD
+et la suppression refaite par plages de lignes explicites, verifiee par un
+chargement reel du module (`import()` + liste des exports) avant de lancer la
+suite. Lecon: sur du TypeScript, apparier les accolades sans tenir compte des
+types generiques ne suffit pas.
+
+### Modifications realisees
+
+- `src/services/codeSandboxRuntime.ts` — 151 -> 17 lignes; ne garde que
+  `isWindows` et `nodeExecutable`, seuls exports reellement consommes. Imports
+  devenus inutiles retires.
+- `src/services/codeSandboxLaunchRuntime.ts` — `getRuntimeSpec` supprime,
+  import `AutoInstallSpec` retire.
+- `src/services/codeSandboxCommands.ts` — re-export mort nettoye.
+- `src/__tests__/codeSandboxModules.test.ts` — les 3 tests des fonctions
+  supprimees partent avec elles.
+
+### Avant-apres mesurable
+
+| Mesure | Avant | Apres |
+|---|---|---|
+| Symboles orphelins | 13 | **9** |
+| `codeSandboxRuntime.ts` | 151 lignes | **17 lignes** |
+| Typecheck perimetre Code | 0 diagnostic | **0 diagnostic** |
+| Suite Code | 830 verts | 827 verts (les tests des fonctions supprimees partent avec elles) |
+
+### Demonstration reproductible
+
+```bash
+cd application
+node scripts/code_harness/orphan_scan.mjs --json output/code/audit_v94/orphan_scan.json
+node --experimental-strip-types -e "import('./src/services/codeSandboxRuntime.ts').then(m=>console.log(Object.keys(m)))"
+```
+
+### Etat de satisfaction chantier
+
+Neuf symboles orphelins restent, chacun avec sa raison documentee. Aucun n est
+un vestige d architecture comme l etait le chemin d installation hote: ce sont
+des capacites reelles non encore branchees (`detectDeadCode`,
+`resolveToolPackageVersion`, `executeCodeGenerationToolSequence`, le writer
+disque) ou des moities de protocole (`parseCodeStreamEventLine`). Les brancher
+demande une integration raisonnee, pas un appel decoratif.

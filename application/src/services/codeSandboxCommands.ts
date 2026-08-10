@@ -3,7 +3,7 @@ import { isWindows, nodeExecutable } from './codeSandboxRuntime.ts'
 import { detectPackageManager, findFile, hasExtension, hasPythonTests, parseJsonSafely } from './codeSandboxFiles.ts'
 import { AURORA_PYTHON_ENV_DIR, auroraPythonExecutable } from './codePythonEnvironment.ts'
 
-export { generateLaunchSh, getRuntimeSpec } from './codeSandboxLaunchRuntime.ts'
+export { generateLaunchSh } from './codeSandboxLaunchRuntime.ts'
 
 // ---------------------------------------------------------------------------
 // Language-specific command builders

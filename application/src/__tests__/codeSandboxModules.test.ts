@@ -12,11 +12,8 @@ import {
   buildCommandsForLanguage,
   detectDominantLanguage,
   generateLaunchSh,
-  getRuntimeSpec,
 } from '../services/codeSandboxCommands.ts'
 import {
-  autoInstallRuntime,
-  getExecutableRuntimeSpec,
   isWindows,
   nodeExecutable,
 } from '../services/codeSandboxRuntime.ts'
@@ -109,10 +106,6 @@ describe('codeSandboxCommands', () => {
     ])
   })
 
-  test('getRuntimeSpec expose les runtimes sans commande de generation', () => {
-    assert.equal(getRuntimeSpec('python')?.cmd, 'python')
-    assert.equal(getRuntimeSpec('unknown'), null)
-  })
 
   test('buildCommandsForLanguage cree un environnement Python Aurora sans chemin interdit', () => {
     const commands = buildCommandsForLanguage('python', [
@@ -180,22 +173,7 @@ describe('codeSandboxRuntime', () => {
     assert.equal(nodeExecutable('npm'), 'npm')
   })
 
-  test('getExecutableRuntimeSpec ignore les chemins locaux et normalise npm.cmd', () => {
-    assert.equal(getExecutableRuntimeSpec('./node_modules/.bin/vite'), null)
-    assert.equal(getExecutableRuntimeSpec('npm.cmd')?.cmd, 'node')
-  })
 
-  test('autoInstallRuntime bloque les installs systeme Linux sans lancer de commande privilegiee', async () => {
-    setUserAgent('Linux x86_64')
-    const result = await autoInstallRuntime({
-      apt: 'nodejs npm',
-      message: 'Node.js requis.',
-    }, '/tmp/aurora-sandbox-test')
-
-    assert.equal(result.ok, false)
-    assert.match(result.output, /Installation systeme automatique desactivee/)
-    assert.doesNotMatch(result.output, /sudo|apt-get/)
-  })
 })
 
 describe('codeSandboxRegistryRepair', () => {
