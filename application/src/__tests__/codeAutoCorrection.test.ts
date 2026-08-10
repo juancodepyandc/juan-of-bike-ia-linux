@@ -240,14 +240,34 @@ describe('buildCorrectionStrategy — stagnation', () => {
     assert.ok(s.escalation >= 3)
   })
 
-  test('progression normale → escalation = ceil(attempt/2)', () => {
+  // Asymetrie #5 corrigee: l escalade suit desormais la TRAJECTOIRE et non le
+  // numero de passe. Ce log (10 -> 50 -> 80) grimpe nettement: la progression
+  // paie, donc on ne change PAS de modele. Chaque changement recharge un gros
+  // modele et c est la premiere cause de swap VRAM sur cette machine.
+  test('progression qui grimpe → escalade freinee (on garde le modele)', () => {
     const log: CorrectionPass[] = [
       { attempt: 1, score: 10, errors: ['e'], strategy: 'initial', modelUsed: 'm', resolved: false },
       { attempt: 2, score: 50, errors: ['e'], strategy: 'quick_fix', modelUsed: 'm', resolved: false },
       { attempt: 3, score: 80, errors: ['e'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
     ]
     const s = buildCorrectionStrategy(['unknown'], 3, log)
-    assert.equal(s.escalation, 2) // ceil(3/2)
+    assert.equal(s.escalation, 1, 'un run qui progresse ne doit pas escalader comme un run qui patine')
+  })
+
+  test('a numero de passe EGAL, un run qui patine escalade plus qu un run qui grimbe', () => {
+    const climbing: CorrectionPass[] = [
+      { attempt: 1, score: 10, errors: ['e'], strategy: 'initial', modelUsed: 'm', resolved: false },
+      { attempt: 2, score: 50, errors: ['e'], strategy: 'quick_fix', modelUsed: 'm', resolved: false },
+      { attempt: 3, score: 80, errors: ['e'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+    ]
+    const flat: CorrectionPass[] = [
+      { attempt: 1, score: 40, errors: ['e'], strategy: 'initial', modelUsed: 'm', resolved: false },
+      { attempt: 2, score: 41, errors: ['e'], strategy: 'quick_fix', modelUsed: 'm', resolved: false },
+      { attempt: 3, score: 42, errors: ['e'], strategy: 'targeted_repair', modelUsed: 'm', resolved: false },
+    ]
+    const a = buildCorrectionStrategy(['unknown'], 3, climbing).escalation
+    const b = buildCorrectionStrategy(['unknown'], 3, flat).escalation
+    assert.ok(b > a, `patine=${b} devrait depasser grimpe=${a} a passe egale`)
   })
 })
 

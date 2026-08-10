@@ -5079,3 +5079,60 @@ les dependances sont fournies au lieu d etre devinees, et le seuil typographique
 est exige dans les memes termes qu il est mesure. Reste ouvert et assume: ces
 corrections agissent sur la PROCHAINE generation; la page deja livree sert de
 cas de regression, elle n est pas retro-corrigee.
+
+## 2026-08-10 — Asymetrie #5: l'escalade suivait le compteur, pas la trajectoire
+
+### Reprise et diagnostic
+
+Dette documentee depuis juillet. Lecture de `buildCorrectionStrategy`:
+
+```ts
+if (isStagnating) escalation = Math.min(5, attempt)
+else              escalation = Math.min(5, Math.ceil(attempt / 2))
+```
+
+La stagnation etait bien prise en compte, mais la branche NORMALE restait
+indexee sur le numero de passe. Consequence: un run dont le score **monte**
+franchement (10 -> 50 -> 80) changeait quand meme de modele toutes les deux
+passes. Or chaque changement d escalade recharge un gros modele, et c est la
+premiere cause de swap VRAM sur cette machine (18,6 Go de modele sur 16 Go de
+GPU). On payait donc un risque de gel pour punir un run qui progressait.
+
+`isCorrectionScoreClimbing` existait deja et servait a PROLONGER la boucle — mais
+pas a decider du changement de modele.
+
+### Modifications realisees
+
+- `src/services/codeAutoCorrection.ts` — trois regimes explicites: stagnation ->
+  escalade rapide, progression -> escalade freinee (`min(2, ceil(attempt/3))`,
+  on garde le modele), sinon comportement historique. Deux blocs d import
+  compactes pour rester sous 400 lignes.
+- `src/__tests__/codeAutoCorrection.test.ts` — le test encodait l ANCIEN
+  comportement sur un log qui grimpe; il exprime desormais l intention, et un
+  test compare les deux trajectoires a numero de passe EGAL.
+
+### Avant-apres mesurable
+
+| Trajectoire (passe 3) | Escalade avant | Apres |
+|---|---|---|
+| Score 10 -> 50 -> 80 (grimpe) | 2 | **1** |
+| Score 40 -> 41 -> 42 (patine) | 2 | **2** |
+| Stagnation detectee | 3 | 3 (inchange) |
+
+A numero de passe egal, un run qui patine escalade desormais STRICTEMENT plus
+qu un run qui progresse — ce qui n etait pas le cas avant.
+
+Tests : **814 -> 815 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeAutoCorrection.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+L escalade suit la trajectoire. Reste assume: le seuil de « progression » vient
+de `isCorrectionScoreClimbing` (3 passes, +5 points minimum); un run qui
+progresse tres lentement est encore traite comme un run qui patine.

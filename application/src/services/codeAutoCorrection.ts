@@ -2,11 +2,7 @@
 
 import type { CodeSandboxResult } from './codeSandbox'
 import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
-import {
-  buildPartialRewriteInstructions,
-  buildQuickFixInstructions,
-  buildTargetedRepairInstructions,
-} from './codeCorrectionInstructions.ts'
+import { buildPartialRewriteInstructions, buildQuickFixInstructions, buildTargetedRepairInstructions } from './codeCorrectionInstructions.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -195,10 +191,17 @@ export function buildCorrectionStrategy(
   // Calculate escalation level based on attempt and progress
   const isStagnating = diagnosis.history.stagnating
 
+  // Asymetrie #5: l escalade suivait le NUMERO de passe. Un run qui PROGRESSE
+  // changeait quand meme de modele toutes les 2 passes — chaque changement
+  // recharge un gros modele, premiere cause de swap VRAM ici. On suit donc la
+  // TRAJECTOIRE: qui progresse garde son modele, qui stagne escalade.
+  const isClimbing = isCorrectionScoreClimbing(correctionLog)
   let escalation: number
   if (isStagnating) {
-    // Jump escalation when stagnating
     escalation = Math.min(5, attempt)
+  } else if (isClimbing) {
+    // La progression paie: on ne touche a rien.
+    escalation = Math.min(2, Math.ceil(attempt / 3))
   } else {
     escalation = Math.min(5, Math.ceil(attempt / 2))
   }
@@ -207,10 +210,9 @@ export function buildCorrectionStrategy(
     escalation = Math.max(escalation, 4)
   }
 
-  // Past attempt 5 we stay at escalation 5 ("strategy_change") while rotating
-  // the diagnostic angle. Every variation must preserve the requested feature
-  // set: no MVP shrink, no test deletion, no stack swap unless the cause proves
-  // a local incompatibility that can be fixed without reducing scope.
+  // Au-dela de la passe 5 on reste a l escalade 5 en faisant tourner l angle de
+  // diagnostic. Chaque variation preserve le perimetre demande: pas de MVP
+  // reduit, pas de test supprime, pas de changement de stack.
   let rotationInstructions: string | null = null
   if (attempt > 5) {
     const rotationIndex = (attempt - 6) % 4
