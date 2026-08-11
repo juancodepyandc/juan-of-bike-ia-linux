@@ -56,6 +56,8 @@ function file(name: string, content: string, language = 'typescript') {
 }
 
 const WEB_INTENT = { projectType: 'spa_react' } as unknown as CodeIntent
+// Barre VITRINE: ces deux tests mesurent la richesse editoriale, pas un outil.
+const SHOWCASE_BRIEF = 'site vitrine pour promouvoir notre marque de cafe'
 
 describe('capstone Brulerie Nomade — AST reel sur les canaux headless', () => {
   test('le shim headless ne tue plus web-tree-sitter (cause racine)', () => {
@@ -244,7 +246,7 @@ describe('capstone Brulerie Nomade — la porte visuelle regarde le vrai markup'
 
   test('un SPA React n est plus juge sur sa coquille Vite de 223 octets', () => {
     const files = [file('index.html', VITE_SHELL, 'html'), file('src/pages/HomePage.tsx', PAGE)]
-    const report = evaluateVisualFidelity(files, WEB_INTENT)
+    const report = evaluateVisualFidelity(files, WEB_INTENT, null, SHOWCASE_BRIEF)
     // Les 6 <section> vivent dans le .tsx: avant, la porte en comptait 0.
     assert.equal(report.failedChecks.includes('min_sections'), false)
     assert.match(report.checks.find((check) => check.id === 'min_sections')!.label, /trouve: 6/)
@@ -257,7 +259,7 @@ describe('capstone Brulerie Nomade — la porte visuelle regarde le vrai markup'
 
   test('un projet static_web sans composants garde le comportement d avant', () => {
     const files = [file('index.html', VITE_SHELL, 'html')]
-    const report = evaluateVisualFidelity(files, { projectType: 'static_web' } as unknown as CodeIntent)
+    const report = evaluateVisualFidelity(files, { projectType: 'static_web' } as unknown as CodeIntent, null, SHOWCASE_BRIEF)
     assert.equal(report.failedChecks.includes('min_sections'), true)
     assert.match(report.checks.find((check) => check.id === 'min_sections')!.label, /trouve: 0/)
     assert.equal(report.failedChecks.includes('html_size'), true)

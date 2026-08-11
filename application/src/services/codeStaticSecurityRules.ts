@@ -199,11 +199,21 @@ export const SECURITY_RULES: StaticRule[] = [
     appliesTo: (f) => isTsLike(f.language) || isPyLike(f.language),
   },
   {
-    // http:// sur endpoint sensible
-    pattern: /\bhttp:\/\/[^\s'"]*(?:login|signup|auth|admin|password|token|api[\/_-])/i,
+    // http:// sur endpoint sensible — SAUF en boucle locale.
+    //
+    // Mesure reelle (run 971): un convertisseur de temperature parfaitement
+    // correct a ete declare en echec parce que le manifest ecrit par AURORA
+    // ELLE-MEME (`assets/aurora-asset-bundle.json`) reference son propre pont
+    // local en `http://127.0.0.1:3001/api/code/assets/...`. Le motif matchait
+    // sur `api/`, la note de securite tombait a 0, la critique statique
+    // devenait bloquante, et le run entier partait en erreur.
+    // Une URL de boucle locale ne traverse aucun reseau: exiger TLS dessus
+    // n est pas une exigence de securite, c est un faux positif — et ici il
+    // coutait la livraison.
+    pattern: /\bhttp:\/\/(?!localhost[:/\s]|localhost$|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|host\.docker\.internal|[a-z0-9-]+\.local[:/\s])[^\s'"]*(?:login|signup|auth|admin|password|token|api[\/_-])/i,
     message: 'URL http:// (non-TLS) sur endpoint sensible',
     severity: 'error',
-    suggestion: 'Forcer https://.',
+    suggestion: 'Forcer https:// (les adresses de boucle locale sont tolerees).',
     appliesTo: () => true,
   },
   // --- Python-specific anti-patterns -------------------------------------

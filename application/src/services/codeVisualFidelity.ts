@@ -10,6 +10,12 @@ import {
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
 import {
+  AMBITION_BAR,
+  AMBITION_EXCLUDED_CHECKS,
+  resolveVisualAmbition,
+  type VisualAmbition,
+} from './codeVisualFidelityProfiles.ts'
+import {
   PREMIUM_FONTS,
   SCOLAIRE_TITLES,
   FLAT_BG_COLORS,
@@ -31,6 +37,11 @@ import {
   HAS_TRANSFORM_3D,
   HAS_PARALLAX,
   HAS_MULTI_GRADIENTS,
+  countFlatColoredCards,
+  countImages,
+  countSections,
+  hasFlatColoredCardCluster,
+  htmlSize,
 } from './codeVisualFidelityDetectors.ts'
 
 export { buildVisualFidelityCritique } from './codeVisualFidelityCritique.ts'
@@ -52,6 +63,8 @@ export type VisualFidelityReport = {
   summary: string
   source?: 'source_static' | 'render_audit'
   viewports?: string[]
+  /** Genre de projet effectivement juge (vitrine / application / outil). */
+  ambition?: VisualAmbition
 }
 
 type CodeFile = { name: string; language: string; content: string }
@@ -92,57 +105,6 @@ function aggregateAll(files: CodeFile[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Section counter — counts <section> + obvious semantic wrappers
-// ---------------------------------------------------------------------------
-
-function countSections(html: string): number {
-  const sections = (html.match(/<section\b/gi) || []).length
-  // Count semantic <article> too if there are no sections
-  if (sections === 0) {
-    const articles = (html.match(/<article\b/gi) || []).length
-    if (articles > 0) return articles
-  }
-  return sections
-}
-
-function countImages(html: string): number {
-  // Includes <img>, srcset, AND background-image url() inside <style>.
-  const imgTags = (html.match(/<img\b/gi) || []).length
-  const bgImgs = (html.match(/background(-image)?\s*:[^;]*url\(/gi) || []).length
-  return imgTags + bgImgs
-}
-
-/** Count "card-like" elements that are JUST flat colored boxes with text —
- *  the scolaire pattern the user keeps complaining about. */
-function countFlatColoredCards(html: string): number {
-  // Look for repeated <div> blocks that have a solid background color but
-  // NO <img>, NO svg path inside, NO gradient, NO transform.
-  const divRegex = /<div[^>]*style="[^"]*background[^"]*"[^>]*>([\s\S]{0,300})<\/div>/gi
-  let count = 0
-  let m: RegExpExecArray | null
-  while ((m = divRegex.exec(html)) !== null) {
-    const content = m[1]
-    if (/<(img|svg|canvas|video)\b/i.test(content)) continue
-    if (/linear-gradient|radial-gradient/i.test(m[0])) continue
-    count += 1
-  }
-  return count
-}
-
-/** Detect the typical "trois cartes rouges plates" pattern that the user
- *  flagged twice — multiple sibling divs with the same solid background
- *  color and no images inside. */
-function hasFlatColoredCardCluster(html: string): boolean {
-  // Look for 2+ consecutive elements with the same flat background, no images.
-  const flatPattern = /<div[^>]*background[^>]*>\s*<[^>]+>[^<]{1,80}<\/[^>]+>\s*<\/div>\s*<div[^>]*background/i
-  return flatPattern.test(html)
-}
-
-function htmlSize(html: string): number {
-  return html.length
-}
-
-// ---------------------------------------------------------------------------
 // Build the report
 // ---------------------------------------------------------------------------
 
@@ -160,6 +122,8 @@ export function evaluateVisualFidelity(
   files: CodeFile[],
   intent: CodeIntent,
   renderAudit?: CodeVisualRenderAudit | null,
+  /** Brief original: sert a reconnaitre le GENRE du projet (vitrine / application / outil). */
+  prompt = '',
 ): VisualFidelityReport {
   const documentHtml = findHtml(files)
   const componentMarkup = findComponentMarkup(files)
@@ -374,20 +338,27 @@ export function evaluateVisualFidelity(
     evidence: hasCardCluster ? 'Cluster de >=2 divs colores plats sans <img>/<svg> a l interieur' : (flatCardCount >= 2 ? `${flatCardCount} cartes plates detectees` : undefined),
   })
 
-  const totalWeight = checks.reduce((sum, c) => sum + c.weight, 0)
-  const earned = checks.filter((c) => c.passed).reduce((sum, c) => sum + c.weight, 0)
+  // La barre ne bouge pas; ce qui compte pour l atteindre depend du GENRE. Un
+  // outil a une page n a pas a fournir un hero, une galerie et une rotation 3D
+  // au scroll — les exiger degrade le produit au lieu de l ameliorer.
+  const ambition = resolveVisualAmbition(prompt, intent, files)
+  const excluded = new Set(AMBITION_EXCLUDED_CHECKS[ambition])
+  const scored = checks.filter((check) => !excluded.has(check.id))
+
+  const totalWeight = scored.reduce((sum, c) => sum + c.weight, 0) || 1
+  const earned = scored.filter((c) => c.passed).reduce((sum, c) => sum + c.weight, 0)
   const score = Math.round((earned / totalWeight) * 100)
 
   // Floor: 70 by default (raise from 65). Visual projects must clear it.
   const floor = 70
 
-  const failedChecks = checks.filter((c) => !c.passed).map((c) => c.id)
+  const failedChecks = scored.filter((c) => !c.passed).map((c) => c.id)
   const blockingFailures = ['no_scolaire_title', 'no_flat_card_cluster']
   const passed = score >= floor && !blockingFailures.some((id) => failedChecks.includes(id))
 
   const summary = passed
-    ? `Rendu visuel acceptable (${score}/100).`
-    : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle.`
+    ? `Rendu visuel acceptable (${score}/100, barre ${AMBITION_BAR[ambition]}).`
+    : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle. Barre appliquee — ${AMBITION_BAR[ambition]}.`
 
-  return { score, passed, floor, checks, failedChecks, summary, source: 'source_static' }
+  return { score, passed, floor, checks: scored, failedChecks, summary, source: 'source_static', ambition }
 }

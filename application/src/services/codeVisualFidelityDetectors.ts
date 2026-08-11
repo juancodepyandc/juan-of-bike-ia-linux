@@ -33,3 +33,55 @@ export const HAS_TRANSFORM_3D = /transform\s*:[^;]*(?:rotate3d|rotateX|rotateY|r
 export const HAS_PARALLAX = /scroll-driven|sticky|IntersectionObserver|ScrollTrigger|--p\s*\)/i
 export const HAS_MULTI_GRADIENTS = /linear-gradient[\s\S]*linear-gradient|radial-gradient[\s\S]*radial-gradient/i
 
+
+// ---------------------------------------------------------------------------
+// Section counter — counts <section> + obvious semantic wrappers
+// ---------------------------------------------------------------------------
+
+export function countSections(html: string): number {
+  const sections = (html.match(/<section\b/gi) || []).length
+  // Count semantic <article> too if there are no sections
+  if (sections === 0) {
+    const articles = (html.match(/<article\b/gi) || []).length
+    if (articles > 0) return articles
+  }
+  return sections
+}
+
+export function countImages(html: string): number {
+  // Includes <img>, srcset, AND background-image url() inside <style>.
+  const imgTags = (html.match(/<img\b/gi) || []).length
+  const bgImgs = (html.match(/background(-image)?\s*:[^;]*url\(/gi) || []).length
+  return imgTags + bgImgs
+}
+
+/** Count "card-like" elements that are JUST flat colored boxes with text —
+ *  the scolaire pattern the user keeps complaining about. */
+export function countFlatColoredCards(html: string): number {
+  // Look for repeated <div> blocks that have a solid background color but
+  // NO <img>, NO svg path inside, NO gradient, NO transform.
+  const divRegex = /<div[^>]*style="[^"]*background[^"]*"[^>]*>([\s\S]{0,300})<\/div>/gi
+  let count = 0
+  let m: RegExpExecArray | null
+  while ((m = divRegex.exec(html)) !== null) {
+    const content = m[1]
+    if (/<(img|svg|canvas|video)\b/i.test(content)) continue
+    if (/linear-gradient|radial-gradient/i.test(m[0])) continue
+    count += 1
+  }
+  return count
+}
+
+/** Detect the typical "trois cartes rouges plates" pattern that the user
+ *  flagged twice — multiple sibling divs with the same solid background
+ *  color and no images inside. */
+export function hasFlatColoredCardCluster(html: string): boolean {
+  // Look for 2+ consecutive elements with the same flat background, no images.
+  const flatPattern = /<div[^>]*background[^>]*>\s*<[^>]+>[^<]{1,80}<\/[^>]+>\s*<\/div>\s*<div[^>]*background/i
+  return flatPattern.test(html)
+}
+
+export function htmlSize(html: string): number {
+  return html.length
+}
+

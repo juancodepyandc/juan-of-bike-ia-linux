@@ -45,6 +45,26 @@ export function computeSandboxScore(
   return Math.min(99, baseScore + bonus)
 }
 
+/**
+ * Portes de STYLE: elles pesent sur le score et portent une consigne, mais
+ * elles ne disent rien sur le fait que le livrable TOURNE.
+ *
+ * Mesure reelle (run 971): un convertisseur correct, sandbox vert, acceptation
+ * comportementale 2/2, score 100, boucle arretee sur « livraison validee a
+ * 100% » — et pourtant `phase: 'error'`, parce qu un ecart de design-spec avait
+ * bascule `ok` a false. Un ecart d habillage ne transforme pas une livraison
+ * qui marche en echec.
+ */
+export const ADVISORY_GATE_COMMANDS = new Set(['design-spec-gate'])
+
+/** Le livrable tourne-t-il ? (les ecarts de style ne comptent pas ici) */
+export function isDeliveryRunnable(sandboxResult: CodeSandboxResult | null): boolean {
+  if (!sandboxResult) return false
+  if (sandboxResult.ok) return true
+  if (sandboxResult.steps.length === 0) return false
+  return !sandboxResult.steps.some((step) => !step.ok && !ADVISORY_GATE_COMMANDS.has(step.command))
+}
+
 export function isStaticCritiqueBlocking(report: CritiqueReport): boolean {
   if (report.hasBlocker) return true
   if (report.issues.some((issue) => issue.severity === 'error')) return true

@@ -76,7 +76,7 @@ export function finalizeCodePipelineDelivery({
   // evaluation-la ne demande ni navigateur ni serveur de dev, elle inspecte le
   // HTML/CSS/JS livre — elle donne donc la meme note aux trois canaux, et se
   // laisse enrichir par l audit rendu quand celui-ci est disponible.
-  const visualFidelity = evaluateVisualFidelity(finalFiles, intent)
+  const visualFidelity = evaluateVisualFidelity(finalFiles, intent, null, enrichedPrompt)
   if (visualFidelity.checks.length > 0) {
     adjustedScore = blendVisualFidelityIntoScore(adjustedScore, visualFidelity)
   }

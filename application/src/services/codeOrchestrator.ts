@@ -13,6 +13,7 @@ export { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGenerate
 export { normalizeGeneratedCodeFilesForTest } from './codeGeneratedFileSanitizer.ts'
 import { buildEmptyGenerationDiagnostic } from './codeGenerationDiagnostics.ts'
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
+import { isDeliveryRunnable } from './codeValidationScoring.ts'
 import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
 export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
 import { selectModel, type CodeModelRoutingContext } from './codePipelineRuntime.ts'
@@ -383,9 +384,10 @@ async function runFullPipeline({
     intent,
     preflightReport,
     correctionLog: validationResult.correctionLog,
-    // Expert delivery contract: files are not enough. A project is done only
-    // when the sandbox and deterministic quality gates agree it is runnable.
-    phase: validationResult.sandboxResult?.ok ? 'done' : 'error',
+    // Contrat de livraison: un projet n est `done` que si le sandbox et les
+    // portes deterministes le disent EXECUTABLE. Les portes de STYLE pesent sur
+    // le score, jamais sur ce verdict (cf. isDeliveryRunnable).
+    phase: isDeliveryRunnable(validationResult.sandboxResult) ? 'done' : 'error',
     architecturePlan,
     totalAttempts: validationResult.totalAttempts,
     finalScore: delivery.score,
