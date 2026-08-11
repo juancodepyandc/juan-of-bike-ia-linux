@@ -103,6 +103,21 @@ export async function executeCodeGenerationQueue(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const code = `action_producer_failed:${message}`
+      // Un fichier SECONDAIRE illisible ne vaut pas la perte du projet entier.
+      // Le producteur a deja retente plusieurs fois avec des consignes
+      // differentes; s il echoue encore sur un fichier non requis, on le note
+      // et on continue. Un fichier requis, lui, reste bloquant: sans point
+      // d entree il n y a pas de livrable.
+      if (!item.required) {
+        emit(buildCodeStreamErrorEvent({ ...options.nextMeta(), message: `${code}:${item.path}`, recoverable: true }))
+        emit(buildCodeStreamPhaseEvent({
+          ...options.nextMeta(),
+          phase: 'generation',
+          message: `Executor WS3: ${item.path} illisible apres plusieurs tentatives — fichier saute, generation poursuivie.`,
+          progress: progressForItem(itemIndex, options.queue.items.length),
+        }))
+        continue
+      }
       emit(buildCodeStreamErrorEvent({ ...options.nextMeta(), message: code, recoverable: item.required }))
       return { ok: false, files, events, toolResults, completedItems, error: code, failedItem: item }
     }

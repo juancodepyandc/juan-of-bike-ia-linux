@@ -117,3 +117,105 @@ describe('codeGenerationActionProducer', () => {
     assert.match((actions[0] as { content: string }).content, /Cafe Brume/)
   })
 })
+
+describe('codeGenerationActionProducer — une reponse illisible se REDEMANDE', () => {
+  // Mesure reelle (run 981): la 1ere etape de l executor a recu une reponse dont
+  // il ne restait RIEN (`protocol_marker_missing`, repli code-brut a sec). Un
+  // seul echec a tue le run entier. Aucune tolerance d ANALYSE ne peut extraire
+  // du contenu du vide — il faut redemander.
+
+  test('une reponse vide puis une reponse correcte: le run continue', async () => {
+    const sent: string[] = []
+    let call = 0
+    const producer = createCodeGenerationLLMActionProducer({
+      prompt: 'Cree la page',
+      model: 'qwen3-coder:30b',
+      chatClient: async (_model, messages) => {
+        call += 1
+        sent.push(messages[messages.length - 1].content)
+        if (call === 1) return { message: { role: 'assistant', content: '' } }
+        return {
+          message: {
+            role: 'assistant',
+            content: `${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{"kind":"write_file","path":"index.html","content":"<h1>ok</h1>"}]`,
+          },
+        }
+      },
+    })
+
+    const actions = await producer({ item: item('index.html', 1), itemIndex: 0, queue: queue(), files: [] })
+    assert.equal(call, 2, 'le producteur doit redemander')
+    assert.equal(actions.length, 1)
+    assert.match(sent[1], /uniquement avec le tableau JSON d actions/)
+  })
+
+  test('derniere tentative: on abandonne le protocole et on demande le fichier nu', async () => {
+    const sent: string[] = []
+    let call = 0
+    const producer = createCodeGenerationLLMActionProducer({
+      prompt: 'Cree la page',
+      model: 'qwen3-coder:30b',
+      chatClient: async (_model, messages) => {
+        call += 1
+        sent.push(messages[messages.length - 1].content)
+        if (call < 3) return { message: { role: 'assistant', content: '' } }
+        return { message: { role: 'assistant', content: '```html\n<!doctype html><html><body><h1>Convertisseur</h1></body></html>\n```' } }
+      },
+    })
+
+    const actions = await producer({ item: item('index.html', 1), itemIndex: 0, queue: queue(), files: [] })
+    assert.equal(call, 3)
+    assert.match(sent[2], /Oublie le protocole d actions/)
+    assert.equal(actions[0].kind, 'write_file')
+    assert.match((actions[0] as { content: string }).content, /Convertisseur/)
+  })
+
+  test('trois reponses vides: on echoue, mais seulement apres avoir insiste', async () => {
+    let call = 0
+    const producer = createCodeGenerationLLMActionProducer({
+      prompt: 'Cree la page',
+      model: 'qwen3-coder:30b',
+      chatClient: async () => { call += 1; return { message: { role: 'assistant', content: '' } } },
+    })
+    await assert.rejects(
+      () => producer({ item: item('index.html', 1), itemIndex: 0, queue: queue(), files: [] }),
+      /action_protocol_invalid/,
+    )
+    assert.equal(call, 3)
+  })
+
+  test('un fichier NON requis illisible ne tue pas la generation', async () => {
+    const producer = createCodeGenerationLLMActionProducer({
+      prompt: 'Cree le projet',
+      model: 'qwen3-coder:30b',
+      chatClient: async (_model, messages) => {
+        const body = messages.map((m) => m.content).join('\n')
+        // Seul src/App.tsx (non requis dans cette file) reste muet.
+        if (/Fichier cible de cette etape: src\/App\.tsx/.test(body)) {
+          return { message: { role: 'assistant', content: '' } }
+        }
+        return {
+          message: {
+            role: 'assistant',
+            content: `${CODE_GENERATION_ACTION_PROTOCOL_VERSION}\n[{"kind":"write_file","path":"package.json","content":"{}"}]`,
+          },
+        }
+      },
+    })
+
+    const result = await executeCodeGenerationQueue({
+      queue: {
+        ...queue(),
+        items: [
+          { ...item('package.json', 1), required: true },
+          { ...item('src/App.tsx', 2), required: false },
+        ],
+      },
+      nextMeta: meta(),
+      produceActions: producer,
+    })
+
+    assert.equal(result.ok, true, `la generation doit survivre: ${result.error ?? ''}`)
+    assert.deepEqual(result.files.map((file) => file.name), ['package.json'])
+  })
+})

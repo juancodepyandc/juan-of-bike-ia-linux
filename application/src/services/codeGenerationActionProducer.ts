@@ -213,6 +213,43 @@ function extractRawFileContent(raw: string): string | null {
   return looksLikeCode ? text : null
 }
 
+/**
+ * Une reponse illisible n est pas une fatalite, c est une reponse a REDEMANDER.
+ *
+ * Mesure reelle (run 981): la toute premiere etape de l executor a recu une
+ * reponse dont il ne restait RIEN d exploitable (`protocol_marker_missing`, et
+ * le repli code-brut n avait pas 20 caracteres a se mettre sous la dent). Une
+ * seule reponse ratee a tue un run entier — la boucle de correction sait
+ * reparer du code, elle ne sait pas ressusciter un projet qui n a jamais ete
+ * genere. Aucune tolerance d ANALYSE ne peut extraire du contenu du vide: la
+ * seule reponse correcte est de redemander, autrement.
+ */
+const PRODUCER_MAX_ATTEMPTS = 3
+
+function buildProducerRetryNudge(attempt: number, item: CodeGenerationQueueItem): OllamaMessage {
+  if (attempt === 2) {
+    return {
+      role: 'user',
+      content: [
+        'Ta reponse precedente etait inexploitable (aucun contenu lisible).',
+        `Reponds MAINTENANT uniquement avec le tableau JSON d actions pour \`${item.path}\`.`,
+        'Pas de phrase avant, pas de phrase apres, pas de raisonnement: le JSON seul.',
+      ].join('\n'),
+    }
+  }
+  // Dernier recours: on abandonne le protocole et on demande le fichier nu.
+  // `extractRawFileContent` sait le recuperer, et un fichier imparfait se
+  // corrige — un run mort, non.
+  return {
+    role: 'user',
+    content: [
+      'Oublie le protocole d actions.',
+      `Ecris simplement le contenu COMPLET du fichier \`${item.path}\`, dans un seul bloc \`\`\`.`,
+      'Rien d autre: pas d explication, pas de JSON, pas de raisonnement.',
+    ].join('\n'),
+  }
+}
+
 export function createCodeGenerationLLMActionProducer(
   options: CodeGenerationActionProducerOptions,
 ): CodeGenerationActionProducer {
@@ -233,25 +270,39 @@ export function createCodeGenerationLLMActionProducer(
     // codeur (transition agent -> codeur). Un seul gros modele resident.
     const { ensureExclusiveCodeModel } = await import('./codeModelResidency.ts')
     await ensureExclusiveCodeModel(options.model)
-    const response = await chatClient(options.model, messages, {
-      signal: options.signal,
-      num_ctx: options.numCtx,
-      num_predict: options.numPredict,
-      firstByteTimeoutMs: options.firstByteTimeoutMs,
-    })
-    const raw = extractAssistantContent(response)
-    options.onRawResponse?.({ item, raw })
-    const parsed = parseCodeGenerationActions(raw)
-    if (!parsed.ok) {
-      // Repli tolerant: le modele a rendu du code brut sans le protocole d actions.
-      // On l ecrit dans le fichier cible de l etape plutot que d echouer tout le run.
+
+    let lastErrors = 'aucune reponse exploitable'
+    for (let attempt = 1; attempt <= PRODUCER_MAX_ATTEMPTS; attempt += 1) {
+      const attemptMessages = attempt === 1
+        ? messages
+        : [...messages, buildProducerRetryNudge(attempt, item)]
+      const response = await chatClient(options.model, attemptMessages, {
+        signal: options.signal,
+        num_ctx: options.numCtx,
+        num_predict: options.numPredict,
+        firstByteTimeoutMs: options.firstByteTimeoutMs,
+      })
+      const raw = extractAssistantContent(response)
+      options.onRawResponse?.({ item, raw })
+
+      const parsed = parseCodeGenerationActions(raw)
+      if (parsed.ok) return parsed.actions
+
+      // Repli tolerant: le modele a rendu du code brut sans le protocole
+      // d actions. On l ecrit dans le fichier cible de l etape.
       const rawContent = extractRawFileContent(raw)
       if (rawContent) {
         options.onRawResponse?.({ item, raw: `[repli code-brut -> write_file ${item.path}]` })
         return [{ kind: 'write_file', path: item.path, language: item.language ?? undefined, content: rawContent }]
       }
-      throw new Error(`action_protocol_invalid:${parsed.errors.join(',')}`)
+
+      lastErrors = parsed.errors.join(',') || lastErrors
+      options.onRawResponse?.({
+        item,
+        raw: `[tentative ${attempt}/${PRODUCER_MAX_ATTEMPTS} inexploitable: ${lastErrors} — ${raw.trim().length} caractere(s) recus]`,
+      })
     }
-    return parsed.actions
+
+    throw new Error(`action_protocol_invalid:${lastErrors}`)
   }
 }
