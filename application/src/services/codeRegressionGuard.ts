@@ -11,6 +11,8 @@ export type CodeCapabilitySnapshot = {
   packageScripts: Record<string, string>
   exportsByFile: Record<string, string[]>
   endpointsByFile: Record<string, string[]>
+  /** Fichiers .html qui sont de VRAIS documents (doctype ou balise <html>). */
+  htmlDocuments: string[]
   sourceFileCount: number
   sourceBytes: number
 }
@@ -24,6 +26,7 @@ export type CodeRegressionViolationKind =
   | 'removed_endpoint'
   | 'source_file_drop'
   | 'source_size_drop'
+  | 'broken_html_document'
 
 export type CodeRegressionViolation = {
   kind: CodeRegressionViolationKind
@@ -55,6 +58,21 @@ function isSourceFile(path: string): boolean {
 
 function isTestFile(path: string): boolean {
   return TEST_FILE_RE.test(path) || TEST_NAME_RE.test(path)
+}
+
+/**
+ * Un `.html` qui cesse d etre un DOCUMENT.
+ *
+ * Mesure reelle (run 960): pendant une passe de correction, l `index.html` d un
+ * projet Vite est passe de 569 octets de document a 223 octets contenant un
+ * simple fragment JSX `<img className=... />`. Le point d entree du site etait
+ * detruit; le garde n a rien vu, parce que `.html` n est ni un fichier source
+ * (SOURCE_FILE_RE), ni un test, ni un fichier vide. Perdre le doctype/`<html>`
+ * n est pas une question de taille: c est une capacite qui disparait.
+ */
+function isHtmlDocument(file: CodeFile): boolean {
+  if (!/\.html?$/i.test(file.name)) return false
+  return /<!doctype\s+html|<html[\s>]/i.test(file.content)
 }
 
 function parseJsonObject(content: string): Record<string, unknown> | null {
@@ -186,6 +204,9 @@ export function snapshotCodeCapabilities(files: CodeFile[]): CodeCapabilitySnaps
     testFiles: normalizedFiles
       .filter((file) => isTestFile(file.normalizedName))
       .map((file) => file.normalizedName),
+    htmlDocuments: normalizedFiles
+      .filter((file) => isHtmlDocument(file))
+      .map((file) => file.normalizedName),
     fileSizes,
     packageScripts,
     exportsByFile,
@@ -234,6 +255,13 @@ export function compareCodeCapabilities(
   }
   for (const path of missingFrom(before.testFiles, after.testFiles)) {
     violations.push({ kind: 'removed_test', detail: path })
+  }
+  // Un point d entree HTML qui cesse d etre un document est une capacite
+  // perdue, pas un detail de mise en forme: la page ne s ouvre plus.
+  for (const path of missingFrom(before.htmlDocuments, after.htmlDocuments)) {
+    if (after.files.includes(path)) {
+      violations.push({ kind: 'broken_html_document', detail: path })
+    }
   }
 
   pushMissingMapEntries(violations, 'removed_script', before.packageScripts, after.packageScripts)

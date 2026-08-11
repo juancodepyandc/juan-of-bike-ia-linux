@@ -1,6 +1,7 @@
 import { startDevServer, type DevServerState } from '../services/codeDevServer'
 import { blendRenderedVisualIntoFinalScore, runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
 import { MAX_VISUAL_CORRECTION_PASSES, decideVisualCorrection } from '../services/codeVisualCorrectionDecision'
+import { pickBestDelivery } from '../services/codeBestDeliverySelection'
 import type { CodeFile, CodeOrchestrationResult } from '../services/codeOrchestrator'
 import { getErrorMessage } from '../utils/errors'
 
@@ -43,6 +44,15 @@ export async function runVisualCorrectionLoop(
     return { result, effectiveFinalScore, visualAuditSummary }
   }
 
+  // Le MEILLEUR etat mesure, distinct de l etat courant. Avant, une passe
+  // esthetique remplacait le livrable sans condition (`result = regen`) et la
+  // mesure suivante n avait plus de point de comparaison: un run reel a livre
+  // moins bien que ce qu il avait deja. On explore avec `result`, on livre
+  // `best`.
+  let best = result
+  let bestVisualScore: number | null = null
+  let bestEffectiveScore = effectiveFinalScore
+
   let previousVisualScore: number | null = null
   for (let visualPass = 0; visualPass <= MAX_VISUAL_CORRECTION_PASSES; visualPass++) {
     const rootPath = result.sandboxResult?.rootPath
@@ -75,6 +85,21 @@ export async function runVisualCorrectionLoop(
       const blended = blendRenderedVisualIntoFinalScore(result.finalScore, auditReport)
       effectiveFinalScore = blended.score
       deps.setFinalScore(blended.score)
+
+      // L etat courant vient d etre MESURE: on ne garde que s il bat le meilleur.
+      const selection = best === result
+        ? { adopt: true, reason: 'premier etat mesure' }
+        : pickBestDelivery(
+          { files: best.files, visualScore: bestVisualScore, compositionOk: null, pipelineFailed: best.phase === 'error' },
+          { files: result.files, visualScore: auditReport.score, compositionOk: null, pipelineFailed: result.phase === 'error' },
+        )
+      if (selection.adopt) {
+        best = result
+        bestVisualScore = auditReport.score
+        bestEffectiveScore = blended.score
+      } else {
+        visualAuditSummary = `${auditReport.summary} Passe esthetique ecartee: ${selection.reason}.`
+      }
     } catch (auditError) {
       visualAuditSummary = `Audit visuel rendu indisponible: ${getErrorMessage(auditError, 'erreur inconnue')}`
       break
@@ -104,5 +129,12 @@ export async function runVisualCorrectionLoop(
     }
   }
 
-  return { result, effectiveFinalScore, visualAuditSummary }
+  // On livre le MEILLEUR etat mesure, pas le dernier essaye. Si la vue affiche
+  // deja un etat plus faible (une passe esthetique a ete appliquee puis
+  // ecartee), on la ramene sur le meilleur.
+  if (best !== result) {
+    deps.applyRegenResult(best)
+    deps.setFinalScore(bestEffectiveScore)
+  }
+  return { result: best, effectiveFinalScore: bestEffectiveScore, visualAuditSummary }
 }

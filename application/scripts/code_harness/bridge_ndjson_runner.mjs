@@ -83,6 +83,7 @@ const { orchestrateCodeGeneration } = await import(resolveSrc('src/services/code
 const { useAppStore } = await import(resolveSrc('src/stores/appStore.ts'))
 const models = await import(resolveSrc('src/config/models.ts'))
 const events = await import(resolveSrc('src/services/codeStreamEvents.ts'))
+const { pickBestDelivery } = await import(resolveSrc('src/services/codeBestDeliverySelection.ts'))
 
 const {
   buildCodeStreamPhaseEvent,
@@ -288,9 +289,12 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
           onToken: () => {}, onFilesUpdate: () => {},
           onValidationUpdate: () => {}, onCorrectionLogUpdate: () => {},
         })
+        // La passe esthetique PROPOSE, elle ne dispose pas. Avant, `files` etait
+        // remplace inconditionnellement puis re-mesure — la mesure d apres etait
+        // journalisee et jetee. Un run reel (960) a ainsi livre plus pauvre que
+        // ce qu il avait deja produit. On ne remplace plus que sur preuve.
         if (regen?.files?.length) {
-          files = regen.files
-          const after = await renderAndScoreAesthetics(files)
+          const after = await renderAndScoreAesthetics(regen.files)
           if (after.applicable && after.verdict) {
             log(`[bridge-runner] rendu apres passe esthetique: ${after.verdict.score}/100`)
             emit(buildCodeStreamVisualScoreEvent({
@@ -298,6 +302,30 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
               summary: `Rendu reel apres passe esthetique ${after.verdict.score}/100`,
               source: 'render_audit', failedChecks: after.verdict.failedChecks,
             }))
+          }
+          const selection = pickBestDelivery(
+            {
+              files,
+              visualScore: audit.verdict.score,
+              compositionOk: audit.compositionVerdict ? audit.compositionVerdict.ok : null,
+              pipelineFailed: result?.phase === 'error',
+            },
+            {
+              files: regen.files,
+              visualScore: after.applicable && after.verdict ? after.verdict.score : null,
+              compositionOk: after.compositionVerdict ? after.compositionVerdict.ok : null,
+              pipelineFailed: regen.phase === 'error',
+            },
+          )
+          log(`[bridge-runner] passe esthetique: ${selection.reason}`)
+          emit(buildCodeStreamPhaseEvent({
+            ...nextMeta(),
+            message: `Passe esthetique — ${selection.reason}`,
+            progress: 97,
+          }))
+          if (selection.adopt) {
+            files = regen.files
+            result = regen
           }
         }
       }
