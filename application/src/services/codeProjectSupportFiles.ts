@@ -378,11 +378,13 @@ export function upsertProjectSupportFiles(
   )
   const supportedFiles = ensureTailwindTooling(baseFiles)
 
-  const nextFiles = [...supportedFiles, generateProjectReadme(supportedFiles, intent, prompt, architecturePlan)]
+  // start.sh doit exister AVANT le README pour que la section "Raccourci Linux/macOS"
+  // ne soit ecrite QUE quand le script est reellement livre (elle mentait la moitie du temps).
+  const filesWithLaunch = [...supportedFiles]
   const launchScript = generateLinuxLaunchScript(supportedFiles, intent)
-  if (launchScript) nextFiles.push(launchScript)
-
-  return nextFiles
+  if (launchScript) filesWithLaunch.push(launchScript)
+  const readme = generateProjectReadme(filesWithLaunch, intent, prompt, architecturePlan)
+  return [...filesWithLaunch, readme]
 }
 
 export function upsertProjectSupportFilesForTest(
