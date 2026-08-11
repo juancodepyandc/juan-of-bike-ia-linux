@@ -335,6 +335,36 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
   }
 }
 
+// Lien VIEWER direct — pendant Code du viewer 3D autonome.
+// L utilisateur veut cliquer un lien et voir le resultat en grand, pas ouvrir
+// l application et chercher le bon projet. On materialise un viewer autonome
+// (arborescence + rendu + source, zero dependance) sous output/code_assets, que
+// la route GET /api/code/assets/file/<path> sert deja — donc joignable par le
+// tunnel sans toucher au serveur bridge.
+try {
+  const { buildCodeViewerHtml } = await import(resolveSrc('src/services/codeViewerHtml.ts'))
+  const { buildLivePreviewHtml } = await import(resolveSrc('src/components/codeProjectPreviewHtml.ts'))
+  const fs = await import('node:fs')
+  const viewerDir = path.resolve('output/code_assets/viewers', `run-${runId}`)
+  fs.mkdirSync(viewerDir, { recursive: true })
+  const viewerHtml = buildCodeViewerHtml({
+    files,
+    title: String(payload.title || prompt).slice(0, 70),
+    subtitle: `run ${runId}`,
+    previewHtml: buildLivePreviewHtml(files),
+  })
+  fs.writeFileSync(path.join(viewerDir, 'index.html'), viewerHtml, 'utf8')
+  const viewerPath = `/api/code/assets/file/viewers/run-${runId}/index.html`
+  log(`[bridge-runner] viewer: ${viewerPath} (${Math.round(viewerHtml.length / 1024)} Ko)`)
+  emit(buildCodeStreamPhaseEvent({
+    ...nextMeta(),
+    message: `Viewer du projet disponible: ${viewerPath}`,
+    progress: 99,
+  }))
+} catch (err) {
+  log(`[bridge-runner] viewer indisponible: ${String(err?.message ?? err).slice(0, 160)}`)
+}
+
 // WS9 sur le canal tunnel: la porte visuelle source-statique est evaluee par le
 // pipeline pour les trois canaux, donc son verdict doit aussi etre OBSERVABLE
 // ici, pas seulement dans l UI Tauri.
