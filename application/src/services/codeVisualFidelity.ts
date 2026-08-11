@@ -9,6 +9,29 @@ import {
   scoreRenderedVisualAudit,
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
+import {
+  PREMIUM_FONTS,
+  SCOLAIRE_TITLES,
+  FLAT_BG_COLORS,
+  PLAIN_LIST,
+  HAS_GRADIENT,
+  HAS_MESH_BLUR,
+  HAS_KEYFRAMES,
+  HAS_TRANSITION,
+  HAS_INTERSECTION_OBSERVER,
+  HAS_RAF,
+  HAS_INLINE_SVG,
+  HAS_FLEX_OR_GRID,
+  HAS_BACKDROP_FILTER,
+  HAS_BORDER_RADIUS_LARGE,
+  HAS_CSS_VARS,
+  HAS_CLAMP,
+  HAS_HOVER,
+  HAS_FONT_LINK_PRECONNECT,
+  HAS_TRANSFORM_3D,
+  HAS_PARALLAX,
+  HAS_MULTI_GRADIENTS,
+} from './codeVisualFidelityDetectors.ts'
 
 export { buildVisualFidelityCritique } from './codeVisualFidelityCritique.ts'
 
@@ -40,6 +63,24 @@ type CodeFile = { name: string; language: string; content: string }
 function findHtml(files: CodeFile[]): string {
   return files.filter((f) => /\.(html|htm)$/i.test(f.name)).map((f) => f.content).join('\n')
 }
+
+/**
+ * Surface de MARKUP a juger.
+ *
+ * Mesure reelle (run 960): un site React+Vite de 33 fichiers a ete note
+ * « 0 section trouvee, 0 ko de HTML, 50/100 » — parce que cette porte ne lisait
+ * que les `.html`, et que dans un projet a composants l `index.html` de Vite est
+ * une coquille de 223 octets autour de `<div id="root">`. Le markup vit dans les
+ * `.tsx` / `.vue` / `.svelte`. Juger la coquille revenait a juger le carton d un
+ * livre. Sur un `static_web` la liste des composants est vide: comportement
+ * strictement inchange.
+ */
+function findComponentMarkup(files: CodeFile[]): string {
+  return files
+    .filter((f) => /\.(jsx|tsx|vue|svelte|astro)$/i.test(f.name))
+    .map((f) => f.content)
+    .join('\n')
+}
 function findCss(files: CodeFile[]): string {
   return files.filter((f) => /\.(css|scss|less)$/i.test(f.name)).map((f) => f.content).join('\n')
 }
@@ -49,32 +90,6 @@ function findJs(files: CodeFile[]): string {
 function aggregateAll(files: CodeFile[]): string {
   return files.map((f) => f.content).join('\n')
 }
-
-// ---------------------------------------------------------------------------
-// Detector helpers
-// ---------------------------------------------------------------------------
-
-const PREMIUM_FONTS = /Inter|Manrope|Satoshi|DM\s*Sans|Space\s*Grotesk|Plus\s*Jakarta|Poppins|Outfit|Sora|Bungee/i
-const SCOLAIRE_TITLES = /<h1[^>]*>\s*Bienvenue\b|<h1[^>]*>\s*Welcome\b/i
-const FLAT_BG_COLORS = /background\s*:\s*(red|blue|green|yellow|orange|purple|pink|#[0-9a-f]{3,6})\s*[;}"]|background-color\s*:\s*(red|blue|green|yellow|orange|purple|pink)\b/i
-const PLAIN_LIST = /<ul[^>]*>(?:\s*<li[^>]*>[^<]{0,80}<\/li>\s*){2,8}\s*<\/ul>/i
-const HAS_GRADIENT = /linear-gradient|radial-gradient|conic-gradient/i
-const HAS_MESH_BLUR = /filter\s*:\s*blur\(\s*[8-9]\d|filter\s*:\s*blur\(\s*1\d{2,}/i
-const HAS_KEYFRAMES = /@keyframes/i
-const HAS_TRANSITION = /transition\s*:|transition:/i
-const HAS_INTERSECTION_OBSERVER = /IntersectionObserver/i
-const HAS_RAF = /requestAnimationFrame/i
-const HAS_INLINE_SVG = /<svg\b[^>]*>[\s\S]{120,}?<\/svg>/i
-const HAS_FLEX_OR_GRID = /display\s*:\s*(flex|grid|inline-flex|inline-grid)/i
-const HAS_BACKDROP_FILTER = /backdrop-filter\s*:|-webkit-backdrop-filter\s*:/i
-const HAS_BORDER_RADIUS_LARGE = /border-radius\s*:\s*([1-9]\d|1\.|2\.|3\.)/i
-const HAS_CSS_VARS = /var\(\s*--/i
-const HAS_CLAMP = /clamp\s*\(/i
-const HAS_HOVER = /:hover/i
-const HAS_FONT_LINK_PRECONNECT = /fonts\.googleapis\.com|fonts\.gstatic\.com/i
-const HAS_TRANSFORM_3D = /transform\s*:[^;]*(?:rotate3d|rotateX|rotateY|rotateZ|perspective|translate3d|preserve-3d)/i
-const HAS_PARALLAX = /scroll-driven|sticky|IntersectionObserver|ScrollTrigger|--p\s*\)/i
-const HAS_MULTI_GRADIENTS = /linear-gradient[\s\S]*linear-gradient|radial-gradient[\s\S]*radial-gradient/i
 
 // ---------------------------------------------------------------------------
 // Section counter — counts <section> + obvious semantic wrappers
@@ -146,7 +161,11 @@ export function evaluateVisualFidelity(
   intent: CodeIntent,
   renderAudit?: CodeVisualRenderAudit | null,
 ): VisualFidelityReport {
-  const html = findHtml(files)
+  const documentHtml = findHtml(files)
+  const componentMarkup = findComponentMarkup(files)
+  // Le markup juge = document + composants. Sur un projet sans composants,
+  // c est exactement l ancien comportement.
+  const html = componentMarkup ? `${documentHtml}\n${componentMarkup}` : documentHtml
   const css = findCss(files)
   const js = findJs(files)
   const all = aggregateAll(files)
