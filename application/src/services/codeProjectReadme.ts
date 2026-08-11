@@ -83,8 +83,20 @@ function resolveProjectTitle(files: CodeFile[], intent: CodeIntent, prompt: stri
   const quoted = prompt.match(/[«"“]([\p{L}\p{N}][\p{L}\p{N}\s'’&·.-]{1,60}?)[»"”]/u)?.[1]?.trim()
   if (quoted && looksLikeProperName(quoted)) return quoted
 
-  // 5) Fall back to the raw package name even if generic, then the project type.
+  // 5) Fall back to the raw package name even if generic.
   if (rawName) return humanizePackageName(rawName)
+
+  // 6) Le <title> du document livre. Un projet statique n a pas de package.json,
+  //    et « Static Web » ne nomme rien: le modele a deja choisi un titre, il est
+  //    dans la page. Mesure reelle (run 971): « Static Web » -> « Convertisseur
+  //    de Temperature ».
+  const html = files.find((f) => /(^|\/)index\.html?$/i.test(f.name.replace(/\\/g, '/')))
+    ?? files.find((f) => /\.html?$/i.test(f.name))
+  const documentTitle = html?.content.match(/<title[^>]*>([^<]{2,80})<\/title>/i)?.[1]?.trim()
+  if (documentTitle && !/^(document|untitled|sans titre|vite|react app)$/i.test(documentTitle)) {
+    return documentTitle
+  }
+
   return intent.projectType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 

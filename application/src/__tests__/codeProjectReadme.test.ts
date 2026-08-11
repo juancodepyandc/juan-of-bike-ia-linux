@@ -44,6 +44,18 @@ const CoffeeCard: React.FC<CoffeeCardProps> = ({ name, origin, price }) => <div>
 export default CoffeeCard
 `
 
+const staticIntent = (): CodeIntent => ({
+  ...reactIntent(),
+  // Pas de marque: c est justement le cas ou le titre manquait.
+  assetPlan: { ...reactIntent().assetPlan, subject: undefined },
+  projectType: 'static_web',
+  frameworks: [],
+  needsDevServer: false,
+  needsBundling: false,
+  devCommand: '',
+  buildCommand: '',
+})
+
 const reactIntent = (): CodeIntent => ({
   projectType: 'spa_react',
   complexity: 'moderate',
@@ -208,5 +220,30 @@ describe('codeProjectReadme through the support pipeline', () => {
     const readme = files.find((f) => f.name === 'README.md')!
     assert.match(readme.content, /## Raccourci Linux\/macOS/)
     assert.ok(readme.content.startsWith('# Brûlerie Nomade'))
+  })
+})
+
+describe('codeProjectReadme — titre d un projet statique', () => {
+  // Mesure reelle (run 971): sans package.json ni marque, le README s intitulait
+  // « Static Web » — le TYPE, pas le projet. Le modele avait pourtant deja choisi
+  // un nom: il est dans le <title> de la page livree.
+  const CONVERTER = [
+    {
+      name: 'index.html',
+      language: 'html',
+      content: '<!DOCTYPE html><html lang="fr"><head><title>Convertisseur de Température</title></head><body><h1>x</h1></body></html>',
+    },
+    { name: 'script.js', language: 'javascript', content: 'console.log(1)' },
+  ]
+
+  test('le <title> du document sert de nom quand il n y a rien d autre', () => {
+    const readme = generateProjectReadme(CONVERTER, staticIntent(), 'une page pour convertir des temperatures', null)
+    assert.ok(readme.content.startsWith('# Convertisseur de Température'), readme.content.slice(0, 60))
+  })
+
+  test('un <title> de gabarit ne devient pas un nom de projet', () => {
+    const templated = [{ ...CONVERTER[0], content: '<!DOCTYPE html><html><head><title>Vite</title></head><body></body></html>' }]
+    const readme = generateProjectReadme(templated, staticIntent(), 'une page', null)
+    assert.equal(readme.content.startsWith('# Vite'), false)
   })
 })
