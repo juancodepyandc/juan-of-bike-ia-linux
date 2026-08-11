@@ -5794,3 +5794,82 @@ sont desormais mesures, nommes et corriges en consigne. Reste assume: le juge
 mesure la GEOMETRIE (superposition, remplissage, nature des icones), pas
 l harmonie — il ne dira pas qu une palette est laide, seulement qu une zone est
 vide ou qu un texte en recouvre un autre.
+
+## 2026-08-11 — Test capstone: « marche sur mobile » livrait une appli native
+
+### Reprise et diagnostic
+
+Test capstone: un brief ecrit comme un vrai humain l ecrirait (2 820
+caracteres, verbatim, non structure) — un artisan torrefacteur lyonnais qui
+veut un site pour sa marque, avec une mini page interne pour suivre les
+commandes.
+
+Le pipeline a commence a livrer... une **application React Native**:
+`babel.config.js`, `App.tsx`, `src/navigation/AppNavigator.tsx`,
+`src/theme/ThemeContext.tsx`.
+
+Or le brief dit « un vrai **site** » (trois fois), « une **page d accueil** »,
+« on vend **en ligne** », et sa seule mention de mobile est:
+« Doit marcher nickel sur **mobile** parce que 80% des gens qui nous trouvent
+c est sur leur telephone » — c est-a-dire RESPONSIVE, pas natif.
+
+Diagnostic mesure sur le prompt reel:
+
+```
+projectType classifie : mobile_rn
+looksLikeMobileApp    : true
+   application  false      <- la regle implicite ne peut PAS avoir declenche
+   telephone    true
+   mobile       true
+   site         true
+```
+
+`looksLikeMobileAppRequest` a donc declenche sur la LISTE EXPLICITE, car
+`MOBILE_SIGNALS` contient le mot **nu** « mobile ». Par contraste,
+`DESKTOP_SIGNALS` n emploie que des locutions (« application de bureau »,
+« desktop app ») — jamais « bureau » seul. L asymetrie etait la.
+
+Un garde web existait pourtant (v89b), et son commentaire nomme exactement ce
+bug. Mais ses motifs ne couvrent que la formulation TECHNIQUE: `site web`,
+`page web`, `responsive`, `navigateur`. Un humain ecrit « un vrai site », « page
+d accueil », « en ligne » — aucun ne matchait.
+
+**Le defaut n est donc pas que le garde manquait: c est qu il ne parlait que la
+langue d un developpeur.**
+
+### Modifications realisees
+
+- `src/services/codeIntentClassification.ts` — le garde web couvre la
+  formulation humaine: `site` nu (avec exclusion de « sur site », qui signifie
+  « sur place »), « page d accueil », « nos pages / une page ».
+- `src/__tests__/codeIntentModules.test.ts` — 4 tests.
+
+### Avant-apres mesurable
+
+| Brief | Avant | Apres |
+|---|---|---|
+| « un vrai site […] doit marcher sur mobile » (cas reel) | **mobile_rn** | **static_web** |
+| « application mobile React Native android et ios » | mobile_rn | mobile_rn (inchange) |
+| « une appli pour telephone, sur le play store » | mobile_rn | mobile_rn (inchange) |
+| « site vitrine pour mon restaurant » | static_web | static_web (inchange) |
+| « dashboard responsive mobile et desktop » | spa_react | spa_react (inchange) |
+| « interventions **sur site** de nos techniciens » | — | non-mobile (« sur site » = sur place) |
+
+Aucune demande d application native reellement exprimee n est affectee.
+
+Tests : **857 -> 861 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeIntentModules.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+La classification comprend desormais la langue ordinaire, pas seulement le
+vocabulaire technique. Reste assume: la liste `MOBILE_SIGNALS` garde le mot nu
+« mobile »; c est le GARDE web qui le neutralise quand le contexte est un site.
+Retirer le mot de la liste serait plus propre, mais toucherait aussi
+`codeIntentFollowup`, ou « mobile » seul reste un signal legitime de pivot.

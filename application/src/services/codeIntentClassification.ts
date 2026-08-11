@@ -142,6 +142,15 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
     || /\bresponsive\b/i.test(lower)
     || /\bmobile[\s/–—-]*(?:first|desktop)\b/i.test(lower)
     || /\bmobile\s+(?:et|ou|\/|,)\s*(?:desktop|ordinateur|pc)\b/i.test(lower)
+    // v95: le garde v89b ne couvrait que la formulation TECHNIQUE ("site web",
+    // "responsive", "navigateur"). Un vrai humain ecrit « je veux un vrai site »,
+    // « une page d accueil », « on vend en ligne » — et son « doit marcher sur
+    // mobile » (= responsive) suffisait alors a le router vers React Native.
+    // Cas reel: brief d une torrefaction artisanale, livre en application mobile.
+    // `sur site` est exclu: il signifie « sur place », pas « site web ».
+    || (/\bsites?\b/i.test(lower) && !/\bsur\s+sites?\b/i.test(lower))
+    || /\bpage\s+d['’ ]accueil\b/i.test(lower)
+    || /\bnos?\s+pages?\b|\bune\s+page\b/i.test(lower)
 
   // v89b: an explicit single-page / no-build request must NOT be upgraded to a
   // React SPA (which needs a bundler and can't be "directement ouvrable dans un

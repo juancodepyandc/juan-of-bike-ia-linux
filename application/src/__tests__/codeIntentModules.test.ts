@@ -88,3 +88,42 @@ describe('codeIntent modules — platform and prompt appenders', () => {
   })
 
 })
+
+// --- Formulation HUMAINE vs application native (2026-08-11) ----------------
+// Cas reel: un artisan torrefacteur ecrit « je me lance dans un vrai site […]
+// Doit marcher nickel sur mobile parce que 80% des gens qui nous trouvent c est
+// sur leur telephone ». Le pipeline a livre une application REACT NATIVE
+// (babel.config.js, App.tsx, AppNavigator.tsx) au lieu d un site.
+//
+// Cause: `MOBILE_SIGNALS` contient le mot NU « mobile » — alors que
+// `DESKTOP_SIGNALS`, lui, n emploie que des locutions ("application de bureau").
+// Un garde web existait (v89b) mais ne couvrait que la formulation TECHNIQUE
+// ("site web", "responsive", "navigateur"), jamais « un vrai site » ni « page
+// d accueil ».
+describe('classification — « marche sur mobile » ne fait pas une appli native', () => {
+  test('un site dont on dit qu il doit marcher sur mobile reste du WEB', () => {
+    const intent = classifyCodeIntent(
+      "je veux un vrai site pour ma marque de cafe, une page d accueil qui donne envie. "
+      + "Doit marcher nickel sur mobile parce que 80% des gens sont sur leur telephone",
+    )
+    assert.ok(!intent.projectType.startsWith('mobile_'), `attendu du web, obtenu ${intent.projectType}`)
+  })
+
+  test('une VRAIE demande d appli native reste native', () => {
+    for (const p of [
+      'cree une application mobile React Native pour android et ios avec navigation',
+      'je veux une appli pour telephone, publiee sur le play store',
+    ]) {
+      assert.ok(classifyCodeIntent(p).projectType.startsWith('mobile_'), p)
+    }
+  })
+
+  test('« sur site » signifie sur place, pas site web', () => {
+    const intent = classifyCodeIntent('un outil pour gerer les interventions sur site de nos techniciens')
+    assert.ok(!intent.projectType.startsWith('mobile_'))
+  })
+
+  test('un site vitrine ordinaire reste du web', () => {
+    assert.ok(!classifyCodeIntent('un site vitrine pour mon restaurant avec la carte').projectType.startsWith('mobile_'))
+  })
+})
