@@ -6252,3 +6252,98 @@ de mise en page du SHELL de l application (pas du module Code) — « JOURNAL DU
 JOUR » chevauche le libelle « GALERIE », et l onglet « CANVAS » est rogne au
 bord droit de la barre basse. C est hors du perimetre de ce chantier, mais
 c est vu et note plutot que passe sous silence.
+
+## 2026-08-12 — Une reponse illisible tuait le run, et le viewer devient un lien
+
+### Reprise et diagnostic
+
+Le run 981 (convertisseur de temperature, rejoue apres la calibration) a montre
+deux choses opposees.
+
+**Ce qui a tenu.** Le garde anti-gaspillage du tour precedent a fonctionne sur
+un run REEL:
+
+```
+[bridge-runner] rendu: 58/100 (seuil 70) -> passe esthetique ciblee
+[bridge-runner] rendu apres passe esthetique: 82/100
+[bridge-runner] passe esthetique: rendu 82/100 contre 58/100 avant — regeneration adoptee
+```
+
+La passe est mesuree AVANT et APRES, et la decision suit la mesure.
+
+**Ce qui a casse.** Le run s est quand meme termine en
+`FAILED phase=error files=10`, sur une cause encore jamais vue:
+
+```
+Echec de l executor agentique WS3:
+  action_producer_failed:action_protocol_invalid:protocol_marker_missing
+```
+
+La TOUTE PREMIERE etape de l executor a recu une reponse dont il ne restait
+rien d exploitable, et le run entier est mort avant d avoir ecrit un fichier.
+
+Le repli tolerant de juillet existe et il est correct — il rattrape le cas « le
+modele a rendu du CODE BRUT sans le marqueur ». Il ne pouvait rien ici: il n y
+avait pas de code brut a rattraper, il n y avait RIEN (moins de 20 caracteres
+exploitables apres nettoyage). **Aucune tolerance d ANALYSE ne peut extraire du
+contenu du vide.** La seule reponse correcte est de redemander, autrement — ce
+que le producteur ne faisait jamais: un appel, une chance, et le run mourait.
+
+### Modifications realisees
+
+- `src/services/codeGenerationActionProducer.ts` — trois tentatives, avec des
+  consignes qui se durcissent: (1) normale, (2) « le JSON seul, pas de phrase,
+  pas de raisonnement », (3) « oublie le protocole, ecris le fichier nu dans un
+  bloc ``` » — recupere par le repli code-brut existant.
+- `src/services/codeGenerationExecutor.ts` — un fichier SECONDAIRE encore
+  illisible apres ces trois tentatives est saute, la generation continue. Un
+  fichier requis reste bloquant: sans point d entree, pas de livrable.
+- `src/services/codeViewerHtml.ts` (nouveau) — viewer AUTONOME en un fichier.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — chaque run materialise son
+  viewer et journalise son lien.
+
+### Avant-apres mesurable
+
+| | avant | apres |
+|---|---|---|
+| reponse vide a l etape 1 | run mort, 0 fichier | 3 tentatives, puis fichier nu |
+| fichier secondaire illisible | run mort | fichier saute, run poursuivi |
+
+**Le lien viewer, verifie a travers le tunnel public** (pas en local):
+
+```
+GET https://<tunnel>/api/code/assets/file/viewers/run-971/index.html
+  HTTP 200 · text/html · 22 829 octets
+  arborescence : 6 lignes avec tailles
+  rendu        : h1 « Convertisseur de Température » + 2 champs
+  saisie 37 dans le champ Celsius -> 98.6°F affiche
+  clic script.js -> « script.js · javascript », source affichee
+  erreurs JS   : aucune, en desktop 1440 ET en mobile iPhone 13
+```
+
+Aucune route n a ete ajoutee au serveur bridge: `bridge_server.py` porte 445
+lignes de travail NON COMMITE de l utilisateur. La route GET
+`/api/code/assets/file/<path>` sert deja les fichiers materialises — le viewer
+passe par elle, sans toucher un fichier qui ne m appartient pas.
+
+Tests : **929 -> 935 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeGenerationActionProducer.test.ts' \
+  'src/__tests__/codeViewerHtml.test.ts'
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n" \
+  "https://<tunnel>/api/code/assets/file/viewers/run-971/index.html"
+```
+
+### Etat de satisfaction chantier
+
+Le viewer est un lien, et je l ai ouvert moi-meme dans un navigateur avant de
+le dire. Reste assume: le viewer est materialise par le RUNNER (canal CLI et
+tunnel). Une generation lancee depuis l UI Tauri ne produit pas encore son
+lien — le meme appel doit y etre branche. Et la passe esthetique continue de
+repartir d une page blanche: sur ce run elle a ecrit un `game.js` pour un
+convertisseur. Le garde empeche desormais cette derive d ecraser le bon
+travail; il ne l empeche pas de se produire.
