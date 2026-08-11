@@ -304,5 +304,13 @@ export function typographyContractBlock(): string[] {
     '- Au moins QUATRE tailles de police distinctes doivent exister dans la page (echelle 12/14/16/20/28/40/56/72/96).',
     '- La police choisie doit REELLEMENT charger: ajoute la balise `<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=...&display=swap">` dans le <head>. Un `font-family` declare sans chargement retombe sur Georgia/Helvetica — exactement le rendu par defaut interdit.',
     '- Ne compte JAMAIS sur les tailles par defaut du navigateur: un framework CSS peut les reinitialiser. Declare explicitement la taille de chaque niveau de titre.',
+    '',
+    '## ICONOGRAPHIE — AUCUN EMOJI',
+    '- Les icones de fonctionnalites, de services ou de navigation sont des SVG INLINE, jamais des emoji. Un emoji en guise d icone est la signature d un prototype et sera rejete.',
+    '- Les SVG partagent la meme grille (24x24), la meme epaisseur de trait (1.5-2), le meme style (outline OU solid, pas les deux melanges) et heritent de `currentColor`.',
+    '',
+    '## COMPOSITION — CE QUI SE VOIT A L ECRAN',
+    '- AUCUN chevauchement: deux elements ne doivent jamais se superposer. Utilise `display:flex` avec `gap` plutot qu un positionnement absolu qui sort du flux.',
+    '- AUCUNE grande section quasi vide: si une section fait plus de 400px de haut, elle doit etre REMPLIE (visuel, accroche, indicateurs, CTA). Un `min-height:100vh` sur deux lignes de texte produit un vide blanc.',
   ]
 }

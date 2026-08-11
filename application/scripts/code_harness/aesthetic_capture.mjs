@@ -51,6 +51,72 @@ function serve(dir) {
 }
 
 /** Metriques relevees sur le rendu REEL, pas sur la source. */
+/** Mesures de COMPOSITION: chevauchements reels et remplissage des sections. */
+async function measureComposition(page) {
+  return page.evaluate(() => {
+    const vis = (el) => {
+      const r = el.getBoundingClientRect()
+      const cs = getComputedStyle(el)
+      return r.width > 4 && r.height > 4 && cs.visibility !== 'hidden' && cs.display !== 'none'
+        && parseFloat(cs.opacity || '1') > 0.05
+    }
+    const label = (el) => {
+      const t = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30)
+      return t || el.tagName.toLowerCase()
+    }
+    const leaves = Array.from(document.querySelectorAll('body *')).filter((el) => {
+      if (!vis(el)) return false
+      if (el.children.length > 0) return false
+      const t = (el.innerText || '').trim()
+      return t.length > 0 || /^(BUTTON|A|INPUT|IMG|SVG)$/.test(el.tagName)
+    }).slice(0, 400)
+
+    const overlaps = []
+    for (let i = 0; i < leaves.length; i++) {
+      for (let j = i + 1; j < leaves.length; j++) {
+        const a = leaves[i], b = leaves[j]
+        if (a.contains(b) || b.contains(a)) continue
+        const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect()
+        const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left)
+        const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top)
+        if (w <= 2 || h <= 2) continue
+        const area = w * h
+        const minArea = Math.min(ra.width * ra.height, rb.width * rb.height)
+        if (area < minArea * 0.25) continue
+        overlaps.push({ a: label(a), b: label(b), area })
+      }
+    }
+
+    const sections = Array.from(document.querySelectorAll('section, header, footer, main > div')).filter(vis)
+      .slice(0, 40).map((sec) => {
+        const r = sec.getBoundingClientRect()
+        let covered = 0
+        for (const child of Array.from(sec.querySelectorAll('*'))) {
+          if (!vis(child) || child.children.length > 0) continue
+          const cr = child.getBoundingClientRect()
+          covered += cr.width * cr.height
+        }
+        const area = Math.max(1, r.width * r.height)
+        return { label: label(sec).slice(0, 24), height: r.height, fill: Math.min(1, covered / area) }
+      })
+
+    // Emoji EN POSITION D ICONE, mesures sur le rendu: la source peut les
+    // tenir dans un tableau de donnees (`{{ feature.icon }}`), invisible a une
+    // analyse statique du markup. A l ecran, ils sautent aux yeux.
+    const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}]/gu
+    const emojiIcons = []
+    for (const el of leaves) {
+      const t = (el.innerText || '').trim()
+      if (!t) continue
+      const stripped = t.replace(EMOJI, '').trim()
+      if (stripped.length <= 2 && EMOJI.test(t)) {
+        for (const e of t.match(EMOJI) || []) if (!emojiIcons.includes(e)) emojiIcons.push(e)
+      }
+    }
+    return { overlaps: overlaps.slice(0, 20), sections, emojiIcons, viewportWidth: window.innerWidth }
+  })
+}
+
 async function measure(page) {
   return page.evaluate(() => {
     const els = Array.from(document.querySelectorAll('body *')).slice(0, 4000)
@@ -114,6 +180,7 @@ try {
     const shot = path.join(outDir, `${name}.png`)
     await page.screenshot({ path: shot, fullPage: name === 'desktop' })
     report.viewports[name] = { screenshot: shot, ...(await measure(page)) }
+    if (name === 'desktop') report.composition = await measureComposition(page)
     await page.close()
   }
 } finally {
@@ -129,6 +196,17 @@ try {
   const { scoreRenderedAesthetics } = await import(
     pathToFileURL(path.resolve('src/services/codeRenderedAestheticScore.ts')).href
   )
+  const { checkComposition, detectEmojiIcons } = await import(
+    pathToFileURL(path.resolve('src/services/codeCompositionGate.ts')).href
+  )
+  const srcFiles = walk(path.resolve(dir)).map((f) => ({ name: f.rel, content: readFileSync(f.full, 'utf8') }))
+  report.compositionVerdict = checkComposition({
+    overlaps: report.composition?.overlaps ?? [],
+    sections: report.composition?.sections ?? [],
+    // Rendu prioritaire, source en repli.
+    emojiIcons: (report.composition?.emojiIcons?.length ? report.composition.emojiIcons : detectEmojiIcons(srcFiles)),
+    viewportWidth: report.composition?.viewportWidth ?? 1440,
+  })
   report.verdict = scoreRenderedAesthetics({
     desktop: report.viewports.desktop,
     mobile: report.viewports.mobile ?? null,

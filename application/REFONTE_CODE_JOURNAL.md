@@ -5714,3 +5714,83 @@ icones emoji, et un tableau comparatif sans donnees. Ce ne sont plus des
 mecanismes caches — ce sont des defauts de composition que le juge de rendu ne
 mesure pas encore (il compte les tailles, les fonds et les ombres, pas les
 collisions ni la vacuite d une section).
+
+## 2026-08-11 — Trois juges de composition: chevauchement, vide, emoji
+
+### Reprise et diagnostic
+
+Le juge de rendu notait **100/100** la page SaaS du tour precedent. En la
+regardant, trois defauts sautaient aux yeux qu aucune de ses metriques ne
+mesurait: « View Demo » et « Scroll to explore » se SUPERPOSAIENT dans le hero,
+la section FAQ etait un grand vide, et les six icones de fonctionnalites etaient
+des EMOJI. Il comptait les tailles de police, les fonds et les ombres — jamais
+la COMPOSITION.
+
+### Recherches et choix
+
+Les trois mesures viennent du NAVIGATEUR (rectangles reels apres mise en page);
+la regle de notation est un module TS pur, donc testable sans navigateur.
+
+- **Chevauchement**: on ne compare que les FEUILLES porteuses de texte ou de
+  controles (ce que l oeil lit), en excluant les paires parent/enfant. Un simple
+  frolement ne compte pas: l intersection doit couvrir au moins 25 % du plus
+  petit des deux elements, sinon toute ombre ou bordure declencherait.
+- **Vide**: pour chaque section, part de sa surface reellement couverte par du
+  contenu. Seules les sections de plus de 400 px sont jugees — une petite
+  section a le droit de respirer. Seuil a 15 %: le cas reel mesure 12 % sur
+  658 px, il fallait donc passer au-dessus pour l attraper.
+- **Emoji**: detecte d abord sur le RENDU. La detection a la source manquait le
+  cas reel, parce que les emoji vivaient dans un tableau de donnees
+  (`{{ feature.icon }}`) et non dans le markup — invisibles a une analyse
+  statique, evidents a l ecran. La detection source reste en repli.
+
+**Directive alignee sur la mesure**: le contrat design exige desormais des SVG
+inline (meme grille 24x24, meme epaisseur, `currentColor`), interdit les emoji,
+et interdit explicitement les chevauchements et les grandes sections vides. On
+ne note pas un critere qu on n a jamais demande.
+
+### Modifications realisees
+
+- `src/services/codeCompositionGate.ts` (nouveau) — `checkComposition`,
+  `findEmptySections`, `detectEmojiIcons`, critique nommant le defaut constate.
+- `scripts/code_harness/aesthetic_capture.mjs` et `render_audit.mjs` —
+  `measureComposition()` en navigateur (chevauchements, remplissage, emoji).
+- `src/services/codePipelineFinalization.ts` — un livrable a icones emoji est
+  plafonne a 80 et emporte la consigne de remplacement.
+- `src/services/codeDesignDirectiveBlocks.ts` — contrat iconographie +
+  composition.
+- `src/__tests__/codeCompositionGate.test.ts` (nouveau) — 13 tests.
+
+### Avant-apres mesurable — sur la page reelle
+
+Les trois juges appliques a `output/code/audit_v94/project/dist`, la page que le
+juge de style notait 100/100:
+
+```
+FAIL no_overlap        "View Demo" x "Scroll to explore" (2914px2)
+FAIL no_empty_section  Frequently Asked Questio: 658px remplie a 12%
+FAIL real_iconography  6 emoji en position d icone: 📊 🎨 🔌 🔒 👥 🤖
+```
+
+Les trois correspondent exactement a ce que j avais releve a l oeil au tour
+precedent. Le juge de style disait 100/100; la composition dit 0/3.
+
+Tests : **844 -> 857 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeCompositionGate.test.ts'
+node scripts/code_harness/aesthetic_capture.mjs output/code/audit_v94/project/dist \
+  --out output/code/audit_v94/shots_after --json output/code/audit_v94/shots_after/report.json
+jq '.compositionVerdict | {ok, failedChecks}' output/code/audit_v94/shots_after/report.json
+```
+
+### Etat de satisfaction chantier
+
+Les trois defauts de composition que je voyais et que la machine ne voyait pas
+sont desormais mesures, nommes et corriges en consigne. Reste assume: le juge
+mesure la GEOMETRIE (superposition, remplissage, nature des icones), pas
+l harmonie — il ne dira pas qu une palette est laide, seulement qu une zone est
+vide ou qu un texte en recouvre un autre.

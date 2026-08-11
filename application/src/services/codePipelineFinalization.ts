@@ -9,6 +9,7 @@ import {
   type VisualFidelityReport,
 } from './codeVisualFidelity.ts'
 import { checkDesignTokens } from './codeDesignTokenGate.ts'
+import { detectEmojiIcons } from './codeCompositionGate.ts'
 import {
   summarizeAssetBundle,
   upsertAssetManifestFile,
@@ -91,6 +92,12 @@ export function finalizeCodePipelineDelivery({
     adjustedScore = Math.min(adjustedScore, 70)
   }
 
+  // Iconographie: un emoji en position d icone est la signature d un prototype.
+  // Les chevauchements et les sections vides se mesurent au RENDU (navigateur),
+  // donc dans le juge de rendu; ici on tient la part detectable a la source.
+  const emojiIcons = detectEmojiIcons(finalFiles.map((f) => ({ name: f.name, content: f.content })))
+  if (emojiIcons.length > 0) adjustedScore = Math.min(adjustedScore, 80)
+
   const fidelityNotes = brandFidelity.retryHint
     ? `${notes}\n\n## FIDELITE SUJET\n${brandFidelity.retryHint}`
     : notes
@@ -104,10 +111,17 @@ export function finalizeCodePipelineDelivery({
     : ''
 
   const tokenNotes = tokenReport.ok ? '' : `\n\n${tokenReport.critique}`
+  const iconNotes = emojiIcons.length === 0 ? '' : [
+    '',
+    '',
+    '## ICONOGRAPHIE — EMOJI INTERDITS',
+    `${emojiIcons.length} emoji sont employes comme icones: ${emojiIcons.slice(0, 8).join(' ')}.`,
+    'Remplace-les par des SVG inline coherents (meme grille, meme epaisseur de trait). Un emoji est la signature d un prototype, jamais d un produit fini.',
+  ].join('\n')
 
   return {
     files: finalFiles,
-    notes: fidelityNotes + assetNotes + visualNotes + tokenNotes,
+    notes: fidelityNotes + assetNotes + visualNotes + tokenNotes + iconNotes,
     score: adjustedScore,
     designReport: isVisualProjectType(intent.projectType) ? computeDesignPolishReport(finalFiles) : null,
     visualFidelity,
