@@ -3,7 +3,7 @@ import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import { bracketBalanceIgnoringLiterals } from './codeLexicalAnalysis.ts'
 import { isHtmlLike, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
-import { isTreeSitterLanguageSupported, parseCodeWithTreeSitter } from './codeTreeSitterAst.ts'
+import { parseCodeWithTreeSitter, resolveTreeSitterLanguage } from './codeTreeSitterAst.ts'
 
 // --- 1. Syntax sanity critic -----------------------------------------------
 // WS8: validite syntaxique par AST REEL (tree-sitter) pour les langages
@@ -22,22 +22,36 @@ function bracketBalance(content: string): { ok: boolean; diff: number; kind: str
  * - { handled:false }             -> AST indisponible (langage non couvert ou
  *   WASM non charge): l appelant retombe sur l analyse lexicale.
  */
-async function astSyntaxOutcome(file: CodeFile): Promise<{ handled: boolean; error: boolean }> {
-  const lang = (file.language || '').toLowerCase()
-  if (!isTreeSitterLanguageSupported(lang)) return { handled: false, error: false }
+async function astSyntaxOutcome(file: CodeFile): Promise<{ handled: boolean; error: boolean; grammar: string }> {
+  const lang = resolveTreeSitterLanguage(file.name, file.language)
+  if (!lang) return { handled: false, error: false, grammar: '' }
   const parsed = await parseCodeWithTreeSitter(file.content, lang)
-  if (!parsed.ok) return { handled: false, error: false }
-  return { handled: true, error: parsed.hasError }
+  if (!parsed.ok) return { handled: false, error: false, grammar: lang }
+  return { handled: true, error: parsed.hasError, grammar: lang }
+}
+
+// Le JSX n est pas du JavaScript pour un compteur de blocs: dans un texte JSX,
+// `'` `"` `{` `(` sont des CARACTERES. Un compteur lexical ne peut pas etre sur
+// sur du JSX — mesure reelle: 5 composants React valides declares "parens non
+// equilibres" a cause d apostrophes francaises (« Rue de l'Atelier »), 9 passes
+// de correction perdues a chasser un bug inexistant. Quand l AST manque sur un
+// fichier JSX, on SIGNALE sans BLOQUER: une heuristique qui ne sait pas lire la
+// langue du fichier n a pas le droit de mettre la note de compilation a zero.
+function isJsxLikeFile(file: CodeFile): boolean {
+  return /\.[jt]sx$/i.test(file.name) || /^(tsx|jsx)$/i.test(file.language || '')
 }
 
 function lexicalBracketIssues(file: CodeFile): CritiqueIssue[] {
   if (!isTsLike(file.language) && !isHtmlLike(file.language)) return []
   const bal = bracketBalance(file.content)
   if (bal.ok) return []
+  const jsx = isJsxLikeFile(file)
   return [{
     axis: 'compile',
-    severity: 'block',
-    message: `${file.name}: ${bal.kind} non équilibrés (diff ${bal.diff})`,
+    severity: jsx ? 'warn' : 'block',
+    message: jsx
+      ? `${file.name}: ${bal.kind} possiblement non équilibrés (diff ${bal.diff}, analyse lexicale sans AST — non bloquant sur du JSX)`
+      : `${file.name}: ${bal.kind} non équilibrés (diff ${bal.diff})`,
     location: { file: file.name },
     suggestion: 'Vérifie les blocs ouverts/fermés.',
   }]
@@ -94,7 +108,7 @@ export const syntaxCritic: CriticFn = async (project: CodeProject, _intent: Code
         issues.push({
           axis: 'compile',
           severity: 'block',
-          message: `${file.name}: erreur de syntaxe (analyse AST tree-sitter ${(file.language || '').toLowerCase()})`,
+          message: `${file.name}: erreur de syntaxe (analyse AST tree-sitter ${ast.grammar})`,
           location: { file: file.name },
           suggestion: 'Le fichier ne parse pas comme du code valide — corrige la syntaxe.',
         })

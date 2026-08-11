@@ -54,6 +54,24 @@ const GRAMMAR_WASM_BY_LANGUAGE: Record<string, string> = {
   typescript: new URL('../../node_modules/tree-sitter-wasms/out/tree-sitter-typescript.wasm', import.meta.url).href,
 }
 
+// L EXTENSION prime sur le libelle de langage. `detectLanguage()` etiquette un
+// `.tsx` en "typescript" (libelle d affichage correct pour la coloration), mais
+// la grammaire `typescript` REFUSE le JSX: tout composant React valide etait
+// alors declare "erreur de syntaxe". La grammaire se choisit donc sur le nom de
+// fichier, et le libelle ne sert plus que de repli.
+const GRAMMAR_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  cjs: 'javascript', cts: 'typescript', js: 'javascript', jsx: 'jsx',
+  mjs: 'javascript', mts: 'typescript', ts: 'ts', tsx: 'tsx',
+}
+
+export function resolveTreeSitterLanguage(fileName: string, declaredLanguage?: string): string | null {
+  const extension = fileName.replace(/\\/g, '/').split('/').pop()?.split('.').pop()?.toLowerCase() ?? ''
+  const byExtension = GRAMMAR_LANGUAGE_BY_EXTENSION[extension] ?? extension
+  if (byExtension && isTreeSitterLanguageSupported(byExtension)) return byExtension
+  const declared = normalizeLang(declaredLanguage ?? '')
+  return declared && isTreeSitterLanguageSupported(declared) ? declared : null
+}
+
 let parserInitPromise: Promise<void> | null = null
 // Cache des grammaires chargees (par chemin WASM): ce parser tourne dans la
 // boucle de validation, on evite de recharger une grammaire par fichier.

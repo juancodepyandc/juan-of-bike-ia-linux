@@ -11,9 +11,31 @@ export type BracketBalanceResult = {
 type LexState = 'code' | 'line-comment' | 'block-comment' | 'single' | 'double' | 'template' | 'regex'
 
 const REGEX_PREFIX_TAIL_RE = /\b(?:return|throw|case|delete|typeof|void|yield|await|in|of)\s*$/
+// Seuls ces mots-cles peuvent coller un guillemet a un caractere de mot en JS
+// (`import x from'./y'`, `return'ok'`). Partout ailleurs, un guillemet colle a
+// une lettre est du TEXTE, pas un delimiteur.
+const QUOTE_PREFIX_TAIL_RE = /\b(?:from|return|throw|case|typeof|void|yield|await|in|of|new|instanceof|delete)$/
 
 function maskedChar(ch: string): string {
   return ch === '\n' || ch === '\r' ? ch : ' '
+}
+
+/**
+ * Une apostrophe collee a un caractere de mot n ouvre PAS une chaine.
+ *
+ * Le francais en met partout dans le texte JSX — « Rue de l'Atelier »,
+ * « page d'accueil », « pas l'an dernier ». Traitees comme delimiteurs, elles
+ * masquaient la moitie du fichier et faisaient compter faux les parentheses:
+ * cinq composants React parfaitement valides declares casses, et neuf passes de
+ * correction depensees a reparer un bug qui n existait pas.
+ *
+ * Le backtick reste inconditionnel: un template balise (`css`...``) suit
+ * legitimement un identifiant.
+ */
+function canStartQuotedLiteral(lastSignificant: string, codeTail: string): boolean {
+  if (!lastSignificant) return true
+  if (!/[\w$]/.test(lastSignificant)) return true
+  return QUOTE_PREFIX_TAIL_RE.test(codeTail)
 }
 
 function canStartRegexLiteral(lastSignificant: string, codeTail: string): boolean {
@@ -118,15 +140,16 @@ export function maskCodeLiterals(content: string): string {
       state = 'block-comment'
       continue
     }
-    if (ch === "'") {
+    if (ch === "'" || ch === '"') {
+      if (!canStartQuotedLiteral(lastSignificant, codeTail)) {
+        // Apostrophe/guillemet de TEXTE (JSX, prose francaise): masque comme du
+        // contenu, sans ouvrir d etat chaine et sans devenir le dernier
+        // caractere significatif — sinon l apostrophe suivante s ouvrirait.
+        out += ' '
+        continue
+      }
       out += ' '
-      state = 'single'
-      escaped = false
-      continue
-    }
-    if (ch === '"') {
-      out += ' '
-      state = 'double'
+      state = ch === "'" ? 'single' : 'double'
       escaped = false
       continue
     }

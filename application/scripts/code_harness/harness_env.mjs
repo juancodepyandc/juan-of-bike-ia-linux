@@ -29,20 +29,30 @@ export function installHeadlessCodeEnv() {
   }
   const noop = () => {}
   globalThis.localStorage = localStorageShim
-  globalThis.window = {
-    location: { hostname: 'localhost', href: 'http://localhost/', origin: 'http://localhost' },
-    localStorage: localStorageShim,
-    addEventListener: noop,
-    removeEventListener: noop,
-    matchMedia: () => ({ matches: false, addEventListener: noop, removeEventListener: noop }),
-  }
-  globalThis.document = {
+  // `currentScript` n est pas cosmetique. Les modules compiles par Emscripten
+  // (web-tree-sitter) commencent par:
+  //     document = "object" == typeof window ? {currentScript: window.document.currentScript} : null
+  // Un `window` sans `document` faisait donc LEVER ce module a l import, et
+  // `parseCodeWithTreeSitter` retombait en silence sur l analyse lexicale: sur
+  // les canaux CLI/tunnel, l AST reel etait mort depuis le premier jour du
+  // harnais. Le shim declare donc `window.document` et `currentScript: null`.
+  const documentShim = {
+    currentScript: null,
     documentElement: { setAttribute: noop, classList: { add: noop, remove: noop, toggle: noop } },
     body: { setAttribute: noop },
     addEventListener: noop,
     createElement: () => ({ setAttribute: noop, style: {}, appendChild: noop }),
     querySelector: () => null,
   }
+  globalThis.window = {
+    location: { hostname: 'localhost', href: 'http://localhost/', origin: 'http://localhost' },
+    localStorage: localStorageShim,
+    document: documentShim,
+    addEventListener: noop,
+    removeEventListener: noop,
+    matchMedia: () => ({ matches: false, addEventListener: noop, removeEventListener: noop }),
+  }
+  globalThis.document = documentShim
 
   register('./hooks.mjs', import.meta.url)
 }
