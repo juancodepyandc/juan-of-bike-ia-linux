@@ -167,6 +167,50 @@ MODIFIER_RULES: List[Tuple[re.Pattern, ModifierEffect]] = [
 ]
 
 
+# ---------------------------------------------------------------------------
+#  SUBJECT-CONSTRAINED PRESET RESOLUTION
+# ---------------------------------------------------------------------------
+# The verb table alone is subject-BLIND: "le loup marche" matched
+# character.walk_cycle, a bipedal preset whose primitives target `legs`
+# (DEF-thigh/shin/foot) and `arms` (hand_ik.*). rigify_autorig.py, meanwhile,
+# builds a WOLF metarig for a quadruped/creature subject — a rig that has no
+# hand_ik and no upper_arm at all, and whose front limbs are front_thigh_fk /
+# front_shin_fk. The animal therefore walked on its hind legs with its front
+# legs frozen, and nothing reported an error.
+#
+# The invariant enforced here: THE PRESET FAMILY MUST MATCH THE METARIG FAMILY.
+# We reuse the exact same predicate rigify_autorig is driven by
+# (aurora_3d_pipeline: metarig_family = "quadruped" if kind in
+# ("quadruped", "creature") else "human") so the preset and the skeleton can
+# never disagree again.
+#
+# Only presets with a real quadruped counterpart are remapped. A gesture with
+# no four-legged equivalent (punch, wave, ...) is left untouched rather than
+# invented — MIRROR of kinematicsLibrary.ts QUADRUPED_PRESET_FOR.
+
+QUADRUPED_PRESET_FOR: Dict[str, str] = {
+    "character.walk_cycle": "creature.quadruped_walk",
+    "character.run_cycle": "creature.quadruped_run",
+    "character.idle": "creature.quadruped_idle",
+    "character.jump": "creature.quadruped_jump",
+}
+
+_QUADRUPED_KINDS = frozenset({"quadruped", "creature"})
+
+
+def is_quadruped_subject(subject_kind: Optional[str]) -> bool:
+    """True when this subject will be rigged on the quadruped (wolf) metarig."""
+    return str(subject_kind or "").strip().lower() in _QUADRUPED_KINDS
+
+
+def resolve_preset_for_subject(preset_id: Optional[str],
+                               subject_kind: Optional[str]) -> Optional[str]:
+    """Constrain a verb-matched preset by the subject's morphology."""
+    if not preset_id or not is_quadruped_subject(subject_kind):
+        return preset_id
+    return QUADRUPED_PRESET_FOR.get(preset_id, preset_id)
+
+
 SEQUENCE_SEPARATOR_RX = re.compile(
     r"\s+(?:puis|then|et\s+ensuite|et\s+apres|et\s+apr[eè]s|after\s+that|next|ensuite|et\s+puis|and\s+then)\s+",
     re.I,
@@ -219,7 +263,8 @@ def extract_segment_modifiers(segment: str) -> Dict[str, Any]:
     return out
 
 
-def parse_custom_motion_prompt(prompt: str) -> Optional[Dict[str, Any]]:
+def parse_custom_motion_prompt(prompt: str,
+                               subject_kind: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Mirror of parseCustomMotionPrompt — returns a JSON-shaped dict or None.
 
     The output structure matches MotionDescriptor enough for diagnostic
@@ -248,6 +293,8 @@ def parse_custom_motion_prompt(prompt: str) -> Optional[Dict[str, Any]]:
             if rx.search(segment):
                 matched_preset = preset_id
                 break
+        # the subject's morphology overrides the verb's default family
+        matched_preset = resolve_preset_for_subject(matched_preset, subject_kind)
         sequenced.append({"presetId": matched_preset, "segment": segment})
 
     has_any = any(s["presetId"] is not None for s in sequenced)
@@ -440,7 +487,7 @@ def _parity_test(fixtures_path: str) -> int:
     for f in data.get("fixtures", []):
         name = f.get("name", "<unnamed>")
         prompt = f.get("prompt", "")
-        result = parse_custom_motion_prompt(prompt)
+        result = parse_custom_motion_prompt(prompt, f.get("subject_kind"))
 
         if f.get("expected_null"):
             if result is not None:
@@ -549,6 +596,9 @@ def _parity_test(fixtures_path: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", help="parse this prompt and print the result as JSON")
+    ap.add_argument("--subject-kind", default=None, dest="subject_kind",
+                    help="subject morphology (quadruped/creature/human/...); "
+                         "constrains preset choice so it matches the metarig")
     ap.add_argument("--self-test", action="store_true", help="run smoke fixtures")
     ap.add_argument("--parity-test", help="path to motion_parser_fixtures.json")
     args = ap.parse_args()
@@ -558,7 +608,7 @@ def main() -> int:
     if args.parity_test:
         return _parity_test(args.parity_test)
     if args.prompt:
-        result = parse_custom_motion_prompt(args.prompt)
+        result = parse_custom_motion_prompt(args.prompt, args.subject_kind)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 

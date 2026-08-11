@@ -39,12 +39,15 @@ type Fixture = {
   expected_distanceMul?: number
   expected_direction?: string | null
   expected_emotion?: string | null
+  // subject morphology: constrains preset choice so it matches the metarig
+  // (quadruped/creature -> four-legged presets). Absent = legacy biped default.
+  subject_kind?: string | null
 }
 
 describe('motionParserParity — TS parser matches shared fixture expectations', () => {
   for (const f of data.fixtures as Fixture[]) {
     test(f.name, () => {
-      const m = parseCustomMotionPrompt(f.prompt)
+      const m = parseCustomMotionPrompt(f.prompt, f.subject_kind)
       if (f.expected_null) {
         assert.equal(m, null, `${f.name}: expected null result`)
         return

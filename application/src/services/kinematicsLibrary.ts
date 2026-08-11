@@ -1019,7 +1019,50 @@ function applyModifiersToPrimitive(p: KinematicPrimitive, mods: SegmentModifiers
   return out
 }
 
-export function parseCustomMotionPrompt(rawPrompt: string): MotionDescriptor | null {
+// ---------------------------------------------------------------------------
+//  SUBJECT-CONSTRAINED PRESET RESOLUTION
+// ---------------------------------------------------------------------------
+// The verb table is subject-BLIND: "le loup marche" matched
+// character.walk_cycle, a bipedal preset targeting `legs` (DEF-thigh/shin/foot)
+// and `arms` (hand_ik.*). rigify_autorig.py builds a WOLF metarig for a
+// quadruped/creature subject — no hand_ik, no upper_arm, front limbs named
+// front_thigh_fk / front_shin_fk. The animal walked on its hind legs with its
+// front legs frozen, silently.
+//
+// Invariant: THE PRESET FAMILY MUST MATCH THE METARIG FAMILY. The predicate
+// below is the same one that drives metarig selection in aurora_3d_pipeline
+// ("quadruped" | "creature" -> quadruped rig), so preset and skeleton cannot
+// disagree. Only presets with a genuine four-legged counterpart are remapped;
+// a gesture with no equivalent (punch, wave...) is left alone rather than
+// invented. MIRROR of motion_parser.py QUADRUPED_PRESET_FOR.
+
+export const QUADRUPED_PRESET_FOR: Record<string, string> = {
+  'character.walk_cycle': 'creature.quadruped_walk',
+  'character.run_cycle': 'creature.quadruped_run',
+  'character.idle': 'creature.quadruped_idle',
+  'character.jump': 'creature.quadruped_jump',
+}
+
+const QUADRUPED_KINDS = new Set(['quadruped', 'creature'])
+
+/** True when this subject will be rigged on the quadruped (wolf) metarig. */
+export function isQuadrupedSubject(subjectKind?: string | null): boolean {
+  return QUADRUPED_KINDS.has(String(subjectKind ?? '').trim().toLowerCase())
+}
+
+/** Constrain a verb-matched preset by the subject's morphology. */
+export function resolvePresetForSubject(
+  presetId: string | null,
+  subjectKind?: string | null,
+): string | null {
+  if (!presetId || !isQuadrupedSubject(subjectKind)) return presetId
+  return QUADRUPED_PRESET_FOR[presetId] ?? presetId
+}
+
+export function parseCustomMotionPrompt(
+  rawPrompt: string,
+  subjectKind?: string | null,
+): MotionDescriptor | null {
   if (!rawPrompt || typeof rawPrompt !== 'string') return null
   const cleaned = rawPrompt.trim().replace(/\s+/g, ' ')
   if (cleaned.length < 3) return null
@@ -1037,6 +1080,8 @@ export function parseCustomMotionPrompt(rawPrompt: string): MotionDescriptor | n
         break
       }
     }
+    // the subject's morphology overrides the verb's default family
+    matchedPreset = resolvePresetForSubject(matchedPreset, subjectKind)
     sequenced.push({ presetId: matchedPreset, segment })
   }
 

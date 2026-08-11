@@ -451,6 +451,80 @@
       "expected_matched_tags": [],
       "expected_speedMul": 1.0,
       "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "quadruped subject remaps walk to four-legged gait",
+      "prompt": "le loup marche",
+      "subject_kind": "quadruped",
+      "expected_preset_ids": [
+        "creature.quadruped_walk"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "quadruped subject remaps run to gallop",
+      "prompt": "le loup court",
+      "subject_kind": "quadruped",
+      "expected_preset_ids": [
+        "creature.quadruped_run"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "creature subject remaps jump",
+      "prompt": "il saute",
+      "subject_kind": "creature",
+      "expected_preset_ids": [
+        "creature.quadruped_jump"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "human subject keeps the biped walk",
+      "prompt": "un homme marche",
+      "subject_kind": "human",
+      "expected_preset_ids": [
+        "character.walk_cycle"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "no subject kind keeps legacy biped default",
+      "prompt": "le loup marche",
+      "expected_preset_ids": [
+        "character.walk_cycle"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "quadruped gesture without four-legged equivalent is untouched",
+      "prompt": "il donne un coup de poing",
+      "subject_kind": "quadruped",
+      "expected_preset_ids": [
+        "character.punch"
+      ],
+      "expected_matched_tags": [],
+      "expected_speedMul": 1.0,
+      "expected_amplitudeMul": 1.0
+    },
+    {
+      "name": "quadruped sequence remaps only what has an equivalent",
+      "prompt": "le loup marche puis il rugit",
+      "subject_kind": "quadruped",
+      "expected_preset_ids": [
+        "creature.quadruped_walk",
+        "creature.roar"
+      ]
     }
   ]
 }
