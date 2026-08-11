@@ -5873,3 +5873,294 @@ vocabulaire technique. Reste assume: la liste `MOBILE_SIGNALS` garde le mot nu
 « mobile »; c est le GARDE web qui le neutralise quand le contexte est un site.
 Retirer le mot de la liste serait plus propre, mais toucherait aussi
 `codeIntentFollowup`, ou « mobile » seul reste un signal legitime de pivot.
+
+## 2026-08-11 — Capstone Brulerie Nomade: neuf passes contre un bug inexistant
+
+### Reprise et diagnostic
+
+Le run 960 (brief humain non nettoye de 2 820 caracteres: une torrefactrice
+lyonnaise qui veut un site + une mini page admin interne) a echoue apres ~2 h.
+Symptomes rapportes: 9 passes de correction sur la meme erreur de parentheses,
+rejets anti-regression en boucle, puis un repli qui livre 50/100 avec
+« 0 section trouvee, 0 ko de HTML » alors que le run avait DEJA produit du
+contenu substantiel.
+
+J ai extrait les 33 fichiers reellement livres depuis le flux
+(`output/code/audit_v96/stream.ndjson`, evenements `file.written` avec contenu,
+sequences 209 a 241) et je les ai passes aux portes du pipeline. La chaine
+complete est **cinq defauts distincts**, pas un.
+
+**1. L AST reel etait mort sur les canaux CLI et tunnel.** Le harnais headless
+declare `globalThis.window` pour les modules a saveur UI. Or web-tree-sitter
+(Emscripten) commence par:
+
+```js
+document = "object" == typeof window ? {currentScript: window.document.currentScript} : null
+```
+
+Un `window` sans `document` fait donc LEVER le module a l import. Mesure:
+
+```
+WITH harness_env shims -> {"ok":false,"reason":"Cannot read properties of undefined (reading 'currentScript')"}
+```
+
+`parseCodeWithTreeSitter` retournait `ok:false`, et `syntaxCritic` retombait
+**en silence** sur son compteur de blocs lexical. Le juge de syntaxe annonce
+donc « analyse AST tree-sitter » dans ses messages et n en faisait jamais.
+
+**2. Le compteur lexical ne sait pas lire du JSX.** Dans un texte JSX, `'` est
+un CARACTERE. Le francais en met partout: « 123 Rue de l'Atelier », « pas l'an
+dernier », « page d'accueil ». Chaque apostrophe ouvrait une chaine et masquait
+la moitie du fichier. Sur les fichiers reels du run:
+
+```
+Footer.tsx           lexical= parens diff 1   | AST: hasError=false
+StorySection.tsx     lexical= parens diff 1   | AST: hasError=false
+SubscriptionForm.tsx lexical= parens diff 2   | AST: hasError=false
+ContactForm.tsx      lexical= braces diff 3   | AST: hasError=false
+MarketCalendar.tsx   lexical= parens diff -1  | AST: hasError=TRUE
+ContactPage.tsx      lexical= parens diff 1   | AST: hasError=TRUE
+```
+
+Cinq blocages sur six etaient FAUX. `Footer.tsx` est un composant parfaitement
+valide dont le seul tort est de contenir l adresse de l atelier. Le modele a
+donc recu neuf fois de suite l ordre de reparer un fichier sain — il ne pouvait
+que renvoyer le meme fichier, d ou le plateau a 53 et la boucle.
+
+**3. La grammaire suivait le LIBELLE, pas l extension.** `detectLanguage()`
+mappe `tsx -> 'typescript'`. La grammaire `typescript` REFUSE le JSX. Verifie:
+
+```
+Footer.tsx  grammaire tsx        -> hasError=false
+Footer.tsx  grammaire typescript -> hasError=true
+```
+
+Rallumer l AST sans corriger ce point aurait remplace un faux positif par un
+autre, sur TOUS les fichiers React.
+
+**4. Le refus anti-regression ne parlait jamais au correcteur.**
+`buildCorrectionMessages` ne recoit que la sortie du sandbox. Le verdict du
+garde etait ecrit dans `pass.errors` (journal de l UI) et s arretait la. Cinq
+refus consecutifs, cinq fois le meme prompt, cinq fois le meme patch. Ce n est
+PAS un defaut d escalade — l escalade fonctionne (`targeted_repair` ->
+`partial_rewrite` -> `strategy_change` + 4 rotations d angle, visibles dans le
+flux). C est que la diversification change d angle **sans jamais apprendre du
+garde**.
+
+**5. La passe esthetique jetait le meilleur etat.** Une fois la boucle arretee,
+le livrable est audite au rendu reel: 44/100. Le runner relance alors une
+generation complete et fait:
+
+```js
+if (regen?.files?.length) {
+  files = regen.files                                  // adoption inconditionnelle
+  const after = await renderAndScoreAesthetics(files)  // mesure... jetee
+```
+
+Le score d apres etait calcule, journalise, et jamais compare. La boucle de
+l UI avait le meme defaut, avec un commentaire qui disait le contraire
+(« regen infructueuse -> on garde le meilleur etat »). La relance repartait en
+`fresh_start` et perdait meme le sujet: a la sequence 265 elle cherchait
+« Google brand colors hex codes » pour un site de cafe.
+
+**6. La porte visuelle jugeait un SPA sur sa coquille Vite.**
+`evaluateVisualFidelity` n agrege que les `.html`. Dans un projet React,
+`index.html` est une coquille autour de `<div id="root">` — d ou le
+« 0 section, 0 ko » du verdict final sur un projet de 71 ko de markup. Second
+aveuglement du meme genre: le pipeline INJECTE Tailwind lui-meme, puis cherchait
+le degrade dans `linear-gradient` et le flex dans `display: flex`, la ou un
+projet Tailwind n ecrit jamais rien.
+
+Enfin, l avertissement « URL http:// sur endpoint sensible sur index.html:2 »
+n etait pas un faux positif du critique: `index.html` etait passe de 569 octets
+de document a 223 octets contenant **un fragment JSX**
+(`<img src="http://127.0.0.1:3001/..." className=... />`). Le point d entree du
+site avait ete detruit par une passe de correction, et le garde n avait rien vu
+— `.html` n est ni un fichier source, ni un test, ni un fichier vide.
+
+### Modifications realisees
+
+- `scripts/code_harness/harness_env.mjs` — le shim expose `window.document` et
+  `currentScript: null`; Emscripten reprend sa branche Node et l AST revit.
+- `src/services/codeTreeSitterAst.ts` — `resolveTreeSitterLanguage()`: la
+  grammaire se choisit sur l EXTENSION, le libelle n est qu un repli.
+- `src/services/codeStaticSyntax.ts` — utilise la grammaire resolue, nomme la
+  grammaire reellement employee, et ne BLOQUE plus sur du JSX quand l AST
+  manque (une heuristique qui ne sait pas lire le fichier n a pas le droit de
+  mettre la note de compilation a zero).
+- `src/services/codeLexicalAnalysis.ts` — une apostrophe collee a un caractere
+  de mot n ouvre plus de chaine (le backtick reste inconditionnel: un template
+  balise suit legitimement un identifiant).
+- `src/services/codeCorrectionRegressionFeedback.ts` (nouveau) — le verdict du
+  garde devient une consigne; au 2e refus consecutif la portee est resserree
+  aux seuls fichiers nommes par les erreurs.
+- `src/services/codeCorrectionContextGathering.ts` (nouveau) — extraction
+  (recherche, outillage, cause racine) pour tenir sous 400 lignes.
+- `src/services/codeValidationCorrectionLoop.ts`, `codeCorrectionMessages.ts` —
+  cablage du retour de garde; 2 libelles mojibakes corriges.
+- `src/services/codeBestDeliverySelection.ts` (nouveau) — `pickBestDelivery`:
+  on ne remplace un livrable que sur preuve (score strictement meilleur, aucune
+  capacite perdue, pipeline non en erreur). Cable sur les DEUX canaux.
+- `src/services/codeRegressionGuard.ts` — un `.html` qui perd son doctype est
+  une regression nommee (`broken_html_document`).
+- `src/services/codeVisualFidelity.ts` + `codeVisualFidelityDetectors.ts` — le
+  markup juge = document + composants; detecteurs conscients de Tailwind.
+
+### Avant-apres mesurable — sur les 33 fichiers reels du run 960
+
+Critique statique, dans les conditions exactes du run (harnais headless,
+`.tsx` etiquetes « typescript »):
+
+| | avant | apres |
+|---|---|---|
+| fichiers bloques | 7 | **2** |
+| dont faux positifs | 5 | **0** |
+| message | « parens non equilibres (diff 1) » | « erreur de syntaxe (analyse AST tree-sitter tsx) » |
+
+Porte visuelle source-statique sur le meme projet:
+
+| | avant | apres |
+|---|---|---|
+| score | 50/100 | **70/100** |
+| echecs | 10 | **5** |
+| dont faux | « 0 section », « 0 ko de HTML », « 1 image » | aucun |
+
+Les 5 echecs restants sont VRAIS du projet (4 sections, pas de blur, pas de
+keyframes, pas de 3D, un seul degrade). Un `static_web` sans composants garde
+un comportement strictement identique.
+
+Tests : **861 -> 907 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeCapstoneBrulerie.test.ts'
+
+# la cause racine, isolee: l AST sous le harnais headless
+node --experimental-strip-types --input-type=module --eval "
+const { installHeadlessCodeEnv } = await import('./scripts/code_harness/harness_env.mjs')
+installHeadlessCodeEnv()
+const m = await import('./src/services/codeTreeSitterAst.ts')
+console.log(await m.parseCodeWithTreeSitter('const a = (1 + 2)', 'tsx'))"
+```
+
+### Etat de satisfaction chantier
+
+Les cinq mecanismes sont fermes et chacun est mesure sur les fichiers reels du
+run qui a echoue. Reste assume, et c est different de ce qui precedait: le
+compteur lexical reste faux sur du JSX (il n est plus bloquant, mais il n est
+pas juste — 3 desaccords subsistent avec l AST sur les 9 fichiers testes); il
+ne sert que de repli quand aucune grammaire n existe. Et la porte visuelle
+mesure toujours des TRAITS (degrade, profondeur, sections), jamais le gout.
+
+## 2026-08-12 — L excellence ne tenait pas sur le simple: un seul gabarit pour tout
+
+### Reprise et diagnostic
+
+Test volontairement au BAS du spectre (run 971): « Salut, j'aurais besoin d'un
+petit truc tout simple : une page web unique pour convertir des temperatures
+[...] pour ma fille qui apprend les conversions au college. Rien d'autre, pas
+de compte, pas de base de donnees, juste la page. »
+
+Le pipeline a livre **exactement** ce qui etait demande — je l ai lu ligne a
+ligne: HTML semantique, conversion a la frappe dans les deux sens, aucun bouton
+valider, Inter, variables CSS en oklch, `clamp()` pour le rythme, ombre douce.
+Puis il l a declare **en echec**. Trois causes, toutes fausses:
+
+**1. Aurora echouait sur son propre fichier.** Mesure:
+
+```
+scores = {... "security":0 ...}   BLOQUANT = true
+[error] assets/aurora-asset-bundle.json:16 — URL http:// (non-TLS) sur endpoint sensible
+[error] assets/aurora-asset-bundle.json:18 — URL http:// (non-TLS) sur endpoint sensible
+   ... 10 occurrences
+```
+
+Le manifest d assets ecrit par AURORA reference AURORA: `http://127.0.0.1:3001/
+api/code/assets/...`. Le motif matchait sur `api/`, la note de securite tombait
+a 0, la critique statique devenait bloquante, le run entier partait en erreur.
+C est aussi la reponse a la question laissee ouverte au tour precedent sur
+l avertissement « http:// sur index.html:2 »: **faux positif**, et il coutait la
+livraison. Une adresse de boucle locale ne traverse aucun reseau.
+
+**2. Un seul gabarit pour tout.** Le verdict reclamait au convertisseur:
+
+```
+- Au moins 6 sections (trouve: 0)      - Transformations 3D (rotateY/X, perspective)
+- Au moins 2 images (trouve: 0)        - Animation pilotee par scroll
+- SVG inline travaille                 - Au moins 2 gradients layered
+- HTML > 6 ko (trouve: 1 ko)           - hero / galerie / specs / KPIs / testimonials
+```
+
+C est le gabarit d une landing marketing premium, applique tel quel a un outil
+a une page. **Les satisfaire aurait activement degrade le produit**: un
+convertisseur avec un hero, une galerie et une rotation 3D au scroll est un
+convertisseur moins bon. Un seuil universel ne mesure pas la qualite, il mesure
+la ressemblance a UN genre.
+
+**3. Un ecart d habillage tuait une livraison qui marche.** Le sandbox etait
+vert, l acceptation comportementale a 2/2, le score a 100, la boucle s arretait
+meme sur « livraison validee a 100% » — et `phase` valait `'error'`, parce que
+la porte design-spec avait bascule `ok` a false.
+
+### Recherches et choix
+
+La barre ne bouge pas (70). Ce qui change, c est la LISTE des criteres qui
+comptent, par genre — et le genre se lit dans ce qu on a deja: le brief, le
+sujet de marque resolu par l intent, et la taille reelle du livrable.
+
+- **vitrine** — on vend quelque chose, l apparence EST le produit. Rubrique
+  complete, strictement inchangee.
+- **application** — un poste de travail n est pas une page qui se scrolle: pas
+  de sections narratives, pas de parallaxe, pas de photos d ambiance imposees.
+- **outil** — une tache, un ecran, zero ceremonie: clarte, typographie,
+  finition (rayons, ombres, survol), interface vivante. Ni hero, ni galerie,
+  ni parallaxe.
+
+Un projet muet et minuscule (3 fichiers, 5 ko) n est pas une vitrine, quoi
+qu en dise un classifieur: c est le livrable qui tranche.
+
+### Modifications realisees
+
+- `src/services/codeVisualFidelityProfiles.ts` (nouveau) —
+  `resolveVisualAmbition`, la table des criteres exclus par genre, et la
+  definition en clair de la barre de chaque genre.
+- `src/services/codeVisualFidelity.ts` — la note se calcule sur les criteres
+  APPLICABLES; le resume nomme la barre appliquee; le brief est transmis.
+- `src/services/codeStaticSecurityRules.ts` — la regle http:// exempte la
+  boucle locale (localhost, 127.x, ::1, 0.0.0.0, *.local, host.docker.internal).
+- `src/services/codeValidationScoring.ts` — `isDeliveryRunnable`: les portes de
+  STYLE pesent sur le score, jamais sur le verdict d executabilite.
+- `src/services/codeOrchestrator.ts` — `phase` derive de `isDeliveryRunnable`.
+- `src/services/codePipelineFinalization.ts` — passe le brief a la porte.
+- `src/__tests__/codeSimpleProjectCalibration.test.ts` (nouveau) — 14 tests.
+
+### Avant-apres mesurable — les deux extremes reels
+
+| Projet reel | Avant | Apres |
+|---|---|---|
+| Convertisseur (run 971, 3 fichiers) | **53/100 REFUSE** | **89/100 ACCEPTE** (barre outil) |
+| Site Brulerie Nomade (run 960, 33 fichiers) | 70/100 accepte | **70/100 accepte** (barre vitrine, intacte) |
+
+Les 2 echecs restants sur le convertisseur sont VRAIS et pertinents pour un
+outil: `border-radius` a 8 px (< 10) et aucun etat `:hover`. Sur la vitrine,
+sections, profondeur, mouvement et 3D restent exiges — rien n a ete relache.
+
+Tests : **907 -> 921 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeSimpleProjectCalibration.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+« Excellent » a maintenant une definition ecrite par categorie, au lieu d un
+seuil unique qui confondait qualite et ressemblance a une landing. Reste
+assume: la detection du genre repose sur du vocabulaire et sur la taille du
+livrable — un brief ambigu (« une page pour mon club ») tombera dans le repli
+vitrine, qui est le plus exigeant. Se tromper vers le PLUS exigeant est le bon
+sens de l erreur, mais c est bien une heuristique, pas une certitude.
