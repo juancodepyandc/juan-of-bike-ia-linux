@@ -4,7 +4,6 @@ import { buildCorrectionStrategy, classifyErrors, shouldContinueLoop, type Corre
 import type { CodeSandboxResult } from './codeSandbox.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
-import { withTimeout } from './llmTimebox.ts'
 import { extractNotes, parseCodeFiles } from './codeGeneratedFileParser.ts'
 import { detectEnvironmentBlocker } from './codeGenerationDiagnostics.ts'
 import { buildCorrectionMessages } from './codeCorrectionMessages.ts'
@@ -12,8 +11,13 @@ import { mergeExistingWithUpdates } from './codeSubjectAssets.ts'
 import { attemptLocalFileRepair, validateOutputMatchesIntent } from './codeProjectValidation.ts'
 import { formatCodeRegressionGuardReport, inspectCodePatchRegression } from './codeRegressionGuard.ts'
 import {
+  buildRegressionFeedbackBlock,
+  filesImplicatedByFailures,
+} from './codeCorrectionRegressionFeedback.ts'
+import { gatherCorrectionContext } from './codeCorrectionContextGathering.ts'
+import {
   CODE_EXPERT_CONTEXT_TOKENS, CORRECTION_FIRST_BYTE_TIMEOUT_MS, CORRECTION_TIMEOUT_MS,
-  RESEARCH_PHASE_TIMEOUT_MS, getModelShortName, selectModel, type CodeModelRoutingContext,
+  getModelShortName, selectModel, type CodeModelRoutingContext,
 } from './codePipelineRuntime.ts'
 import { computeSandboxScore } from './codeValidationScoring.ts'
 import { handleSandboxInfrastructureFailure } from './codeInfrastructureFailure.ts'
@@ -87,6 +91,10 @@ export async function runValidationAndCorrectionLoop(
   let functionalGreenPasses = 0
   let rescueRegenerationUsed = false
   let toolingEvaluationUsed = false
+  // Le garde anti-regression parlait a l UI, jamais au correcteur: cinq refus
+  // consecutifs sur le meme patch, et le prompt suivant etait identique.
+  let guardRejectionStreak = 0
+  let lastGuardReport: string | null = null
 
   while (true) {
     attempt += 1
@@ -178,6 +186,8 @@ export async function runValidationAndCorrectionLoop(
       const regressionReport = inspectCodePatchRegression(currentFiles, localRepair.files)
       if (!regressionReport.ok) {
         const reportText = formatCodeRegressionGuardReport(regressionReport)
+        guardRejectionStreak += 1
+        lastGuardReport = reportText
         pass.errors = [`[Auto-reparation locale refusee]\n${reportText}`, ...pass.errors]
         onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
         setPhase(`Passe ${attempt} - auto-reparation refusee par anti-regression.`, Math.min(93, 71 + attempt * 3))
@@ -186,6 +196,8 @@ export async function runValidationAndCorrectionLoop(
       }
 
       currentFiles = localRepair.files
+      guardRejectionStreak = 0
+      lastGuardReport = null
       currentNotes = `${currentNotes ? `${currentNotes}\n\n` : ''}Auto-reparation locale: ${localRepair.reason}`
       onFilesUpdate(currentFiles, currentNotes)
       setPhase(`Passe ${attempt} - auto-reparation locale appliquee.`, Math.min(93, 71 + attempt * 3))
@@ -214,70 +226,25 @@ export async function runValidationAndCorrectionLoop(
     const modelShort = getModelShortName(correctionModel)
     setPhase(`Passe ${attempt} — ${strategyLabel} via ${modelShort}...`, Math.min(92, 70 + attempt * 3))
 
-    let researchContext = ''
-    if (strategy!.searchWeb) {
-      setPhase(`Passe ${attempt} — recherche de solutions en ligne...`, Math.min(93, 72 + attempt * 3))
-      const failingErrors = collectFailingStepOutputs(sandboxResult).join('\n')
-      try {
-        const { searchForSolution } = await import('./codeResearch.ts')
-        researchContext = await withTimeout(searchForSolution(failingErrors, intent, configuredCodeModel), {
-          label: 'Code correction research',
-          timeoutMs: RESEARCH_PHASE_TIMEOUT_MS,
-        })
-      } catch {
-        researchContext = ''
-      }
-    }
-
-    let toolingContext = ''
-    if (isFlatlining && !toolingEvaluationUsed) {
-      toolingEvaluationUsed = true
-      setPhase(`Passe ${attempt} — auto-outillage WS14 en venv isole...`, Math.min(93, 73 + attempt * 3))
-      try {
-        const {
-          evaluateAutoToolingForCorrection,
-          formatToolingReportForCorrection,
-        } = await import('./codeToolingLoop.ts')
-        const toolingReport = await evaluateAutoToolingForCorrection({
-          correctionLog,
-          errorCategories,
-          failingOutputs: collectFailingStepOutputs(sandboxResult),
-          intent,
-          signal,
-        })
-        if (toolingReport) {
-          toolingContext = formatToolingReportForCorrection(toolingReport)
-          pass.errors = [`[Auto-outillage WS14]\n${toolingContext}`, ...pass.errors]
-          onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
-        }
-      } catch {
-        toolingContext = ''
-      }
-    }
-
-    let reasoningContext = ''
-    if (attempt >= 2 || isFlatlining) {
-      setPhase(`Passe ${attempt} — analyse de la cause racine...`, Math.min(93, 73 + attempt * 3))
-      const currentErrors = collectFailingStepOutputs(sandboxResult)
-      const {
-        analyzeStuckCorrection,
-        buildReasoningInstructions,
-      } = await import('./codeReasoningEngine.ts')
-      const reasoning = await analyzeStuckCorrection(
-        prompt,
-        correctionLog,
-        intent,
-        currentErrors,
-        configuredCodeModel,
-      )
-      if (reasoning) {
-        reasoningContext = buildReasoningInstructions(reasoning)
-        setPhase(`Passe ${attempt} — cause identifiee: ${reasoning.rootCause.slice(0, 80)}...`, Math.min(93, 74 + attempt * 3))
-      }
-    }
-    if (toolingContext) {
-      reasoningContext = [toolingContext, reasoningContext].filter(Boolean).join('\n\n')
-    }
+    const gathered = await gatherCorrectionContext({
+      prompt,
+      attempt,
+      strategy: strategy!,
+      intent,
+      configuredCodeModel,
+      correctionLog,
+      errorCategories,
+      failingOutputs: collectFailingStepOutputs(sandboxResult),
+      isFlatlining,
+      toolingEvaluationUsed,
+      pass,
+      currentScore,
+      setPhase,
+      onCorrectionLogUpdate,
+      signal,
+    })
+    const { researchContext, reasoningContext } = gathered
+    toolingEvaluationUsed = gathered.toolingEvaluationUsed
 
     const rescueEligible = (strategy!.level === 'rewrite' || strategy!.level === 'strategy_change')
       && (!rescueRegenerationUsed || attempt % 4 === 0)
@@ -295,7 +262,7 @@ export async function runValidationAndCorrectionLoop(
         reasoningContext,
       })
 
-      setPhase(`Passe ${attempt} â€” regeneration de secours complete...`, Math.min(94, 75 + attempt * 3))
+      setPhase(`Passe ${attempt} — regeneration de secours complete...`, Math.min(94, 75 + attempt * 3))
       const { resilientOllamaGenerate } = await import('./ollamaResilience.ts')
       const rescueResponse = await resilientOllamaGenerate(correctionModel, rescuePrompt, {
         timeoutMs: CORRECTION_TIMEOUT_MS,
@@ -304,7 +271,7 @@ export async function runValidationAndCorrectionLoop(
         num_ctx: CODE_EXPERT_CONTEXT_TOKENS,
         neverMemorySkip: true,
         onRecoveryAttempt: (ev) => {
-          setPhase(`Passe ${attempt} â€” sauvetage Ollama: ${ev.action}...`, Math.min(94, 76 + attempt * 3))
+          setPhase(`Passe ${attempt} — sauvetage Ollama: ${ev.action}...`, Math.min(94, 76 + attempt * 3))
         },
       })
 
@@ -314,6 +281,8 @@ export async function runValidationAndCorrectionLoop(
         const regressionReport = inspectCodePatchRegression(currentFiles, rescueFiles)
         if (regressionReport.ok) {
           currentFiles = rescueFiles
+          guardRejectionStreak = 0
+          lastGuardReport = null
           currentNotes = extractNotes(rescueContent)
           onFilesUpdate(currentFiles, currentNotes)
           lastScore = currentScore
@@ -321,6 +290,8 @@ export async function runValidationAndCorrectionLoop(
         }
 
         const reportText = formatCodeRegressionGuardReport(regressionReport)
+        guardRejectionStreak += 1
+        lastGuardReport = reportText
         pass.errors = [`[Regeneration de secours refusee]\n${reportText}`, ...pass.errors]
         onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
         setPhase(`Passe ${attempt} — regeneration refusee par anti-regression.`, Math.min(94, 76 + attempt * 3))
@@ -329,6 +300,17 @@ export async function runValidationAndCorrectionLoop(
 
     const { serializeCodeMissionDossier } = await import('./codeMissionControl.ts')
     const { serializeCodePreflightReport } = await import('./codePreflight.ts')
+    const regressionFeedback = buildRegressionFeedbackBlock({
+      guardReport: lastGuardReport,
+      consecutiveRejections: guardRejectionStreak,
+      implicatedFiles: filesImplicatedByFailures(currentFiles, collectFailingStepOutputs(sandboxResult)),
+    })
+    if (regressionFeedback) {
+      setPhase(
+        `Passe ${attempt} — ${guardRejectionStreak} refus anti-regression: portee resserree sur les fichiers fautifs...`,
+        Math.min(94, 74 + attempt * 3),
+      )
+    }
     const correctionMessages = buildCorrectionMessages({
       prompt,
       files: currentFiles,
@@ -340,6 +322,7 @@ export async function runValidationAndCorrectionLoop(
       architecturePlan,
       preflightReportText: preflightReport ? serializeCodePreflightReport(preflightReport) : null,
       intent,
+      regressionFeedback,
     })
 
     setPhase(`Passe ${attempt} — ${modelShort} corrige le code...`, Math.min(94, 74 + attempt * 3))
@@ -372,14 +355,18 @@ export async function runValidationAndCorrectionLoop(
     const regressionReport = inspectCodePatchRegression(currentFiles, mergedCandidate)
     if (!regressionReport.ok) {
       const reportText = formatCodeRegressionGuardReport(regressionReport)
+      guardRejectionStreak += 1
+      lastGuardReport = reportText
       pass.errors = [`[Correction refusee]\n${reportText}`, ...pass.errors]
       onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
-      setPhase(`Passe ${attempt} — correction refusee par anti-regression, rollback automatique.`, Math.min(94, 76 + attempt * 3))
+      setPhase(`Passe ${attempt} — correction refusee par anti-regression (${guardRejectionStreak}e refus), rollback automatique.`, Math.min(94, 76 + attempt * 3))
       lastScore = currentScore
       continue
     }
 
     currentFiles = mergedCandidate
+    guardRejectionStreak = 0
+    lastGuardReport = null
     currentNotes = extractNotes(repairedContent)
     onFilesUpdate(currentFiles, currentNotes)
     lastScore = currentScore

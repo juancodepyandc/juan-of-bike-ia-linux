@@ -24,6 +24,7 @@ export function buildCorrectionMessages({
   architecturePlan,
   preflightReportText,
   intent,
+  regressionFeedback,
 }: {
   prompt: string
   files: CodeFile[]
@@ -35,6 +36,9 @@ export function buildCorrectionMessages({
   architecturePlan: string | null
   preflightReportText: string | null
   intent: CodeIntent
+  /** Verdict du harnais anti-regression sur la passe precedente. Sans lui, un
+   *  patch refuse etait repropose a l identique passe apres passe. */
+  regressionFeedback?: string
 }): OllamaMessage[] {
   const failingSteps = validationResult.steps
     .filter((step) => !step.ok)
@@ -83,6 +87,14 @@ export function buildCorrectionMessages({
     )
   }
 
+  if (regressionFeedback) {
+    systemLines.push(
+      '',
+      'TA DERNIERE PROPOSITION A ETE ANNULEE PAR LE HARNAIS ANTI-REGRESSION.',
+      'Le detail du refus est dans le message utilisateur: lis-le avant d ecrire une ligne.',
+    )
+  }
+
   if (strategy.level === 'rewrite' || strategy.level === 'strategy_change') {
     systemLines.push(
       '',
@@ -108,6 +120,10 @@ export function buildCorrectionMessages({
 
   if (reasoningContext) {
     userLines.push(`\n${reasoningContext}`)
+  }
+
+  if (regressionFeedback) {
+    userLines.push('', regressionFeedback)
   }
 
   const isVisual = files.length > 0 && files.some((file) => /\.(html?|css|s?css|tsx?|jsx?|vue|svelte)$/i.test(file.name))
