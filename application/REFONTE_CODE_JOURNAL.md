@@ -6164,3 +6164,91 @@ assume: la detection du genre repose sur du vocabulaire et sur la taille du
 livrable — un brief ambigu (« une page pour mon club ») tombera dans le repli
 vitrine, qui est le plus exigeant. Se tromper vers le PLUS exigeant est le bon
 sens de l erreur, mais c est bien une heuristique, pas une certitude.
+
+## 2026-08-12 — Viewer en conditions reelles, et l acces web verifie
+
+### Reprise et diagnostic
+
+Deux demandes restaient a prouver pour de vrai, pas en test unitaire: le viewer
+plein ecran avec arborescence, et « que ca fonctionne partout » — c est-a-dire
+depuis le lien web, y compris sur telephone.
+
+### Modifications realisees
+
+- `src/services/codeProjectReadme.ts` — le titre d un projet statique tombait
+  sur le TYPE (`# Static Web`). Le modele avait deja choisi un nom: il est dans
+  le `<title>` de la page livree. On le lit, en refusant les titres de gabarit
+  (Vite, React App, Document, Sans titre).
+- `src/__tests__/codeCorrectionMessages.test.ts` — garde ANTI-ORPHELIN: le
+  verdict du harnais anti-regression doit arriver dans les messages envoyes au
+  modele. Le module pouvait exister et etre calcule sans jamais etre lu — c est
+  le pattern que ce module paie depuis le debut.
+
+### Avant-apres mesurable
+
+**Viewer, en conditions reelles.** Le composant reel monte dans un navigateur
+(Chromium headless, vite dev), nourri par les 5 fichiers du convertisseur
+reellement genere. La preuve n est pas une capture decorative: j ai TAPE dans
+la page a travers le viewer.
+
+```
+dans le rendu: {"title":"Convertisseur de Température","h1":"Convertisseur de Température","inputs":2}
+conversion live 100C -> 212.0°F
+erreurs JS: aucune
+```
+
+Capture regardee: `proof/v971-3-conversion-live.png` — arborescence a gauche
+(« 5 FICHIERS · 12,7 KO », assets/, index.html, README.md, script.js,
+style.css avec leurs tailles), rendu a droite, `100` saisi dans le champ
+Celsius et `212.0°F` affiche. Le viewer montre la structure ET fait tourner le
+produit.
+
+**Acces web.** Tunnel Cloudflare deja en place (`cloudflared tunnel --url
+http://localhost:3001`, actif depuis 4 j 17 h), URL inchangee apres le
+redemarrage du pont:
+
+```
+https://exotic-sage-liabilities-information.trycloudflare.com
+  /                             HTTP 200  (l application complete, pas seulement l API)
+  /api/health                   HTTP 200
+  /api/code/generate/stream     HTTP 400 en POST  -> la route EXISTE et repond
+```
+
+Rendu reel a travers le tunnel, deux formats:
+
+| | viewport | debordement horizontal | erreurs JS |
+|---|---|---|---|
+| desktop | 1440 | non | aucune |
+| mobile (iPhone 13) | 390 | non | aucune |
+
+Le mobile n est pas un desktop comprime: c est une mise en page dediee
+(navigation radiale, barre d onglets basse, banniere d installation PWA).
+
+**README, aux deux extremes** — verifie fichier par fichier contre le livrable:
+
+| | titre | contenu |
+|---|---|---|
+| complexe (33 fichiers) | `# Brulerie Nomade` | 4 scripts npm reels, 6 routes dont `/admin`, Node >= 20 deduit de `vite ^8` |
+| simple (5 fichiers) | `# Convertisseur de Température` | aucun script npm, aucune URL, aucun `start.sh` — « un navigateur suffit » |
+
+Les 4 scripts, les 6 routes et la version de Vite correspondent exactement au
+`package.json` et a `AppRoutes.tsx` livres.
+
+Tests : **921 -> 925 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+curl -s -o /dev/null -w "%{http_code}\n" https://exotic-sage-liabilities-information.trycloudflare.com/api/health
+node --experimental-strip-types --test 'src/__tests__/codeProjectReadme.test.ts' 'src/__tests__/codeCorrectionMessages.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+Le viewer fait ce qui etait demande et je l ai verifie en m en servant, pas en
+lisant un score. Reste assume, vu a l oeil sur la capture mobile: deux defauts
+de mise en page du SHELL de l application (pas du module Code) — « JOURNAL DU
+JOUR » chevauche le libelle « GALERIE », et l onglet « CANVAS » est rogne au
+bord droit de la barre basse. C est hors du perimetre de ce chantier, mais
+c est vu et note plutot que passe sous silence.
