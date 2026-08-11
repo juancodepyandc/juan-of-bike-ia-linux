@@ -170,10 +170,26 @@ export async function renderAndScoreAesthetics(files, options = {}) {
     const desktop = await measure(page)
     if (options.screenshot) await page.screenshot({ path: options.screenshot, fullPage: true })
 
+    // Composition mesuree au rendu: chevauchements, sections vides, emoji.
+    // Sans cela le canal tunnel noterait le style sans jamais voir qu un texte
+    // en recouvre un autre.
+    const composition = await measureComposition(page)
     const { scoreRenderedAesthetics } = await import(
       pathToFileURL(path.resolve('src/services/codeRenderedAestheticScore.ts')).href
     )
-    return { applicable: true, metrics: desktop, consoleErrors, verdict: scoreRenderedAesthetics({ desktop, consoleErrors }) }
+    const { checkComposition } = await import(
+      pathToFileURL(path.resolve('src/services/codeCompositionGate.ts')).href
+    )
+    const compositionVerdict = checkComposition({
+      overlaps: composition.overlaps ?? [],
+      sections: composition.sections ?? [],
+      emojiIcons: composition.emojiIcons ?? [],
+      viewportWidth: composition.viewportWidth ?? 1440,
+    })
+    return {
+      applicable: true, metrics: desktop, consoleErrors, composition, compositionVerdict,
+      verdict: scoreRenderedAesthetics({ desktop, consoleErrors }),
+    }
   } catch (err) {
     return { applicable: false, reason: String(err?.message ?? err).slice(0, 200) }
   } finally {

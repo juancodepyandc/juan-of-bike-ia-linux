@@ -270,12 +270,16 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
         summary: `Rendu reel ${audit.verdict.score}/100`, source: 'render_audit',
         failedChecks: audit.verdict.failedChecks,
       }))
-      if (!audit.verdict.passed) {
+      const compoKo = audit.compositionVerdict && !audit.compositionVerdict.ok
+      if (compoKo) {
+        log(`[bridge-runner] composition: ${audit.compositionVerdict.failedChecks.join(',')}`)
+      }
+      if (!audit.verdict.passed || compoKo) {
         log('[bridge-runner] rendu sous le seuil -> passe esthetique ciblee')
         emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: 'Rendu reel sous le seuil - passe esthetique ciblee...', progress: 96 }))
         const regen = await orchestrateCodeGeneration({
           prompt,
-          enrichedPrompt: `${prompt}\n\n${audit.verdict.critique}`,
+          enrichedPrompt: `${prompt}\n\n${audit.verdict.critique}\n\n${audit.compositionVerdict?.critique ?? ''}`.trim(),
           conversationHistory: normalizedHistory,
           existingFiles: files,
           contextImages: [], userFileDataUrls: {},
