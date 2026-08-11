@@ -5,29 +5,21 @@ import { LIVE_PREVIEW_TOTAL_CAP_BYTES, shouldPauseLivePreviewDuringGeneration } 
 import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent'
 import type { CodeFile } from '../services/codeOrchestrator'
 import { isHeavyWebGLProject } from './codeViewPreviewHeuristics'
+import { CodeFullscreenViewer } from './codeViewFullscreenViewer'
+import { PreviewStage, type BigViewport } from './codeViewPreviewStage'
 
 // ---------------------------------------------------------------------------
 // Big live preview frame — dedicated to the large right panel. Watches the
 // live stream from the orchestrator and refreshes the iframe as HTML/CSS/JS
 // arrive, so the page visually evolves from blank → styled → interactive.
+//
+// Deux modes, UNE seule scene (`PreviewStage`) et UN seul iframe:
+//  - compact: barre d'outils + scene, exactement comme avant.
+//  - plein ecran: `CodeFullscreenViewer` ajoute l'arborescence du projet a
+//    gauche, redimensionnable et repliable.
 // ---------------------------------------------------------------------------
 
-export type BigViewport = 'desktop' | 'tablet' | 'mobile'
-
-// Physical device proportions used to size the chrome realistically.
-// Width × height are the OUTER frame size. Padding carves the inner "screen" area.
-const BIG_VIEWPORT_SPEC: Record<BigViewport, {
-  width: number   // outer frame width in px
-  height: number  // outer frame height in px
-  pad: number     // frame bezel thickness
-  radius: number  // outer corner radius
-  notch: boolean
-  chrome: 'none' | 'browser'
-}> = {
-  desktop: { width: 1440, height: 900, pad: 0,  radius: 14, notch: false, chrome: 'browser' },
-  tablet:  { width: 760,  height: 1024, pad: 20, radius: 36, notch: false, chrome: 'none' },
-  mobile:  { width: 360,  height: 720,  pad: 12, radius: 40, notch: true,  chrome: 'none' },
-}
+export type { BigViewport } from './codeViewPreviewStage'
 
 // Total bytes cap: beyond this, the preview recompute on every token is too
 // expensive (split + regex + blob + iframe reload). We freeze the preview
@@ -116,6 +108,13 @@ export function BigLivePreviewFrame({
   const lastGoodHtmlRef = useRef<string | null>(null)
   if (html) lastGoodHtmlRef.current = html
 
+  // Plein ecran: le simulateur compact est illisible (le cadre 1440x900 scale a
+  // ~0.35 dans le panneau etroit). Le mode plein ecran donne tout le viewport au
+  // rendu ET pose l'arborescence du projet a cote -> l'utilisateur voit VRAIMENT
+  // la page a une taille utilisable et peut naviguer dans les fichiers livres.
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const lastPayloadRef = useRef<string>('')
+
   useEffect(() => {
     if (!iframeRef.current) return
     const fallbackIdle = '<!DOCTYPE html><html><body style="margin:0;background:#0d1117;color:#8b949e;font-family:system-ui;display:grid;place-items:center;height:100vh"><div>Lance une generation pour voir la page se construire ici.</div></body></html>'
@@ -144,21 +143,10 @@ export function BigLivePreviewFrame({
     iframeRef.current.srcdoc = payload
     iframeRef.current.removeAttribute('src')
     lastPayloadRef.current = payload
-  }, [html, isGenerating, iframeRef, shouldSkipLivePreview])
-
-  const spec = BIG_VIEWPORT_SPEC[viewport]
-
-  // Plein ecran: le simulateur compact est illisible (le cadre 1440x900 scale a
-  // ~0.35 dans le panneau etroit). Le mode plein ecran donne tout le viewport au
-  // rendu -> l utilisateur voit VRAIMENT la page a une taille utilisable.
-  const [isFullscreen, setIsFullscreen] = useState(false)
-  const lastPayloadRef = useRef<string>('')
-  useEffect(() => {
-    if (!isFullscreen) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false) }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [isFullscreen])
+    // `isFullscreen` EST une dependance reelle: basculer de mode remonte l iframe
+    // (elle change de parent dans l arbre React). Sans ce re-declenchement, la
+    // nouvelle iframe resterait BLANCHE — le srcdoc est pose imperativement.
+  }, [html, isGenerating, iframeRef, shouldSkipLivePreview, isFullscreen])
 
   const openInNewTab = () => {
     const payload = lastPayloadRef.current
@@ -167,166 +155,71 @@ export function BigLivePreviewFrame({
     if (win) { win.document.open(); win.document.write(payload); win.document.close() }
   }
 
-  // Ensures every viewport (including desktop at 1440×900) auto-scales to fit
-  // the visible area. The iframe still sees the real `spec.width × spec.height`
-  // resolution so media queries trigger correctly.
-  const frameWrapRef = useRef<HTMLDivElement>(null)
-  const [frameScale, setFrameScale] = useState(1)
-
-  useEffect(() => {
-    const wrap = frameWrapRef.current
-    if (!wrap) return
-    const compute = () => {
-      const availW = wrap.clientWidth - 32
-      const availH = wrap.clientHeight - 32
-      if (availW <= 0 || availH <= 0) return
-      const s = Math.min(availW / spec.width, availH / spec.height, 1)
-      setFrameScale(s < 0.2 ? 0.2 : s)
-    }
-    compute()
-    const ro = new ResizeObserver(compute)
-    ro.observe(wrap)
-    window.addEventListener('resize', compute)
-    return () => { ro.disconnect(); window.removeEventListener('resize', compute) }
-  }, [viewport, spec.width, spec.height, isFullscreen])
-
-  return (
-    <div
-      className={
-        isFullscreen
-          ? 'fixed inset-0 z-[120] flex flex-col bg-[#0d1117]'
-          : 'flex flex-col h-full min-h-[36rem] bg-[#0d1117]'
-      }
-    >
-      <div className="flex items-center justify-between gap-1 border-b border-black/5 bg-[#0a0f14] px-2 py-1.5">
-        <div className="flex items-center gap-1">
-          {(['desktop', 'tablet', 'mobile'] as const).map((mode) => {
-            const Icon = mode === 'desktop' ? Monitor : mode === 'tablet' ? Tablet : Smartphone
-            const label = mode === 'desktop' ? 'Desktop' : mode === 'tablet' ? 'Tablet' : 'Mobile'
-            return (
-              <button
-                key={mode}
-                onClick={() => onViewportChange(mode)}
-                title={label}
-                className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
-                  viewport === mode
-                    ? 'bg-aurora-accent/20 text-aurora-accent-light'
-                    : 'text-aurora-text-dim hover:text-aurora-text'
-                }`}
-              >
-                <Icon size={11} />
-                <span>{label}</span>
-              </button>
-            )
-          })}
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={openInNewTab}
-            title="Ouvrir le rendu dans un nouvel onglet (taille reelle)"
-            className="flex h-6 items-center gap-1 rounded-md px-2 text-[10px] text-aurora-text-dim transition-colors hover:bg-white/5 hover:text-aurora-text"
-          >
-            <ExternalLink size={11} />
-            <span>Onglet</span>
-          </button>
-          <button
-            onClick={() => setIsFullscreen((v) => !v)}
-            title={isFullscreen ? 'Quitter le plein ecran (Echap)' : 'Agrandir le viewer en plein ecran'}
-            className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
-              isFullscreen
-                ? 'bg-aurora-accent/20 text-aurora-accent-light'
-                : 'text-aurora-text-dim hover:bg-white/5 hover:text-aurora-text'
-            }`}
-          >
-            {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
-            <span>{isFullscreen ? 'Reduire' : 'Agrandir'}</span>
-          </button>
-        </div>
+  const toolbar = (
+    <div className="flex items-center justify-between gap-1 border-b border-black/5 bg-[#0a0f14] px-2 py-1.5">
+      <div className="flex items-center gap-1">
+        {(['desktop', 'tablet', 'mobile'] as const).map((mode) => {
+          const Icon = mode === 'desktop' ? Monitor : mode === 'tablet' ? Tablet : Smartphone
+          const label = mode === 'desktop' ? 'Desktop' : mode === 'tablet' ? 'Tablet' : 'Mobile'
+          return (
+            <button
+              key={mode}
+              onClick={() => onViewportChange(mode)}
+              title={label}
+              className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
+                viewport === mode
+                  ? 'bg-aurora-accent/20 text-aurora-accent-light'
+                  : 'text-aurora-text-dim hover:text-aurora-text'
+              }`}
+            >
+              <Icon size={11} />
+              <span>{label}</span>
+            </button>
+          )
+        })}
       </div>
-      <div
-        ref={frameWrapRef}
-        className="flex-1 flex items-center justify-center overflow-hidden min-h-[32rem]"
-        style={{ background: 'var(--v4code-stage-bg, radial-gradient(circle at center, #1a1d22, #07080a))' }}
-      >
-        <div
-          className="relative shrink-0 transition-[transform] duration-200 ease-out"
-          style={{
-            width: `${spec.width}px`,
-            height: `${spec.height}px`,
-            padding: `${spec.pad}px`,
-            borderRadius: `${spec.radius}px`,
-            background: spec.chrome === 'browser'
-              ? 'linear-gradient(180deg,#2c2e33 0 44px,#fafafa 44px)'
-              : 'linear-gradient(135deg,#1a1c22,#0a0b0e)',
-            boxShadow: '0 30px 80px rgba(0,0,0,.55), inset 0 0 0 2px rgba(255,255,255,.05)',
-            transform: `scale(${frameScale})`,
-            transformOrigin: 'center center',
-          }}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={openInNewTab}
+          title="Ouvrir le rendu dans un nouvel onglet (taille reelle)"
+          className="flex h-6 items-center gap-1 rounded-md px-2 text-[10px] text-aurora-text-dim transition-colors hover:bg-white/5 hover:text-aurora-text"
         >
-          {spec.chrome === 'browser' && <BrowserChromeBar />}
-          {spec.notch && (
-            <div
-              className="absolute left-1/2 -translate-x-1/2 z-10"
-              style={{
-                top: `${Math.round(spec.pad * 0.85)}px`,
-                width: '110px',
-                height: '26px',
-                borderRadius: '18px',
-                background: '#000',
-                pointerEvents: 'none',
-              }}
-            />
-          )}
-          <iframe
-            ref={iframeRef}
-            title="Rendu live de la page"
-            sandbox="allow-scripts allow-same-origin"
-            className="block w-full h-full bg-white border-0"
-            style={{
-              borderRadius: spec.chrome === 'browser'
-                ? '0 0 8px 8px'
-                : `${Math.max(0, spec.radius - spec.pad * 0.5)}px`,
-              marginTop: spec.chrome === 'browser' ? '44px' : 0,
-              height: spec.chrome === 'browser' ? `calc(100% - 44px)` : '100%',
-            }}
-          />
-        </div>
+          <ExternalLink size={11} />
+          <span>Onglet</span>
+        </button>
+        <button
+          onClick={() => setIsFullscreen((v) => !v)}
+          title={isFullscreen ? 'Quitter le plein ecran (Echap)' : 'Agrandir le viewer en plein ecran (arborescence + rendu)'}
+          className={`flex h-6 items-center gap-1 rounded-md px-2 text-[10px] transition-colors ${
+            isFullscreen
+              ? 'bg-aurora-accent/20 text-aurora-accent-light'
+              : 'text-aurora-text-dim hover:bg-white/5 hover:text-aurora-text'
+          }`}
+        >
+          {isFullscreen ? <Minimize2 size={11} /> : <Maximize2 size={11} />}
+          <span>{isFullscreen ? 'Reduire' : 'Agrandir'}</span>
+        </button>
       </div>
     </div>
   )
-}
 
-function BrowserChromeBar() {
+  const stage = <PreviewStage viewport={viewport} iframeRef={iframeRef} />
+
+  if (isFullscreen) {
+    return (
+      <CodeFullscreenViewer
+        files={effectiveFiles}
+        toolbar={toolbar}
+        stage={stage}
+        onExit={() => setIsFullscreen(false)}
+      />
+    )
+  }
+
   return (
-    <div
-      className="absolute top-0 left-0 right-0 flex items-center gap-2 px-3"
-      style={{
-        height: '44px',
-        borderRadius: '14px 14px 0 0',
-        background: 'linear-gradient(180deg,#34363b,#26282d)',
-        borderBottom: '1px solid rgba(0,0,0,.35)',
-        pointerEvents: 'none',
-      }}
-    >
-      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#ff5f56' }} />
-      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#ffbd2e' }} />
-      <span style={{ display: 'inline-block', width: 12, height: 12, borderRadius: '50%', background: '#27c93f' }} />
-      <div
-        className="ml-3 flex-1 flex items-center"
-        style={{
-          height: '26px',
-          background: 'rgba(255,255,255,.08)',
-          borderRadius: '999px',
-          padding: '0 14px',
-          fontSize: '11px',
-          color: '#b6b8be',
-          fontFamily: 'system-ui, sans-serif',
-          letterSpacing: '.02em',
-        }}
-      >
-        <span style={{ opacity: .55, marginRight: 6 }}>●</span>
-        aurora-preview.local
-      </div>
+    <div className="flex flex-col h-full min-h-[36rem] bg-[#0d1117]">
+      {toolbar}
+      {stage}
     </div>
   )
 }

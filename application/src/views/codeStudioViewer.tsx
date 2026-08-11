@@ -7,6 +7,7 @@ import type { CodeIntent } from '../services/codeIntent'
 import type { CodeSandboxResult } from '../services/codeSandbox'
 import type { DevServerState } from '../services/codeDevServer'
 import CodeMirrorViewer from '../components/CodeMirrorViewer'
+import CodeFileTree from '../components/CodeFileTree'
 import { BigLivePreviewFrame, type BigViewport } from './codeViewPreviewPanel'
 
 // ---------------------------------------------------------------------------
@@ -107,18 +108,15 @@ export function CodeStudioViewer({
         {/* Arborescence projet */}
         <aside style={{ borderRight: `1px solid ${c}`, overflow: 'auto', background: '#0c1017' }}>
           <div style={sectionLabel}><FileCode2 size={12} /> Arborescence ({files.length})</div>
-          {files.length === 0 && <div style={{ padding: 14, fontSize: 11.5, color: '#6b7688' }}>Lance une génération : les fichiers du projet apparaîtront ici.</div>}
-          {files.map((f, i) => (
-            <button key={f.name + i} onClick={() => setActiveFile(i)} style={{
-              display: 'flex', alignItems: 'center', gap: 7, width: '100%', textAlign: 'left', padding: '7px 14px',
-              background: i === activeFile ? 'rgba(59,130,246,0.16)' : 'transparent', border: 'none', cursor: 'pointer',
-              color: i === activeFile ? '#dbeafe' : '#aeb9c9', fontSize: 12, borderLeft: `2px solid ${i === activeFile ? '#3b82f6' : 'transparent'}`,
-            }}>
-              <FileCode2 size={13} style={{ opacity: .7, flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
-              <span style={{ marginLeft: 'auto', fontSize: 9.5, color: '#5b6675' }}>{(f.content.length / 1000).toFixed(1)}k</span>
-            </button>
-          ))}
+          {files.length === 0 ? (
+            <div style={{ padding: 14, fontSize: 11.5, color: '#6b7688' }}>Lance une génération : les fichiers du projet apparaîtront ici.</div>
+          ) : (
+            // Meme composant que le panneau de livraison et le viewer plein ecran:
+            // une seule arborescence dans tout le module, avec vrais dossiers.
+            <div style={{ padding: '0 6px 10px' }}>
+              <CodeFileTree files={files} activeFile={activeFile} onSelectFile={setActiveFile} showSize />
+            </div>
+          )}
         </aside>
 
         {/* Zone principale */}
