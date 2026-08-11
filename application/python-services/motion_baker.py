@@ -35,8 +35,36 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from typing import Any, Dict, List, Optional
+
+# ---------------------------------------------------------------------------
+#  KINEMATICS CATALOG (generated from kinematicsLibrary.ts — TS is the truth)
+# ---------------------------------------------------------------------------
+# _compile_preset_ref() used to hard-code 3 presets and drop the other 42 into
+# _compile_custom_pose(), i.e. one no-op marker keyframe. Every creature,
+# mechanism and vehicle preset therefore produced an "animated" GLB with zero
+# motion while the pipeline gates still reported success. The catalog below is
+# emitted by application/scripts/export-kinematics-catalog.mts so the primitive
+# sequences live in exactly one place.
+
+_CATALOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "kinematics_catalog.json")
+_CATALOG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def load_preset_catalog() -> Dict[str, Any]:
+    """Lazily read the generated catalog. Missing/corrupt file -> {} so the
+    baker degrades to the hand-tuned presets instead of crashing a whole run."""
+    global _CATALOG_CACHE
+    if _CATALOG_CACHE is None:
+        try:
+            with open(_CATALOG_PATH, "r", encoding="utf-8") as fp:
+                _CATALOG_CACHE = dict(json.load(fp).get("presets") or {})
+        except Exception:  # noqa: BLE001 - absent catalog must not kill a bake
+            _CATALOG_CACHE = {}
+    return _CATALOG_CACHE
 
 # ---------------------------------------------------------------------------
 #  TARGET -> BONE NAME RESOLUTION (Rigify default human metarig naming)
@@ -89,16 +117,32 @@ TARGET_TO_BONES: Dict[str, List[str]] = {
     # v77zt: quadruped (Rigify basic_quadruped metarig). Front legs reuse
     # the upper_arm/forearm/hand chain (anatomically the front leg of a
     # quadruped is the equivalent of an arm); hind legs use thigh/shin/foot.
-    "front_legs": ["upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R"],
+    # rigify_autorig.py calls armature_wolf_metarig_add() FIRST and only falls
+    # back to basic_quadruped. The wolf rig names its front limbs
+    # front_thigh_fk / front_shin_fk / front_foot_fk — there is no upper_arm or
+    # forearm bone on it at all (verified by dumping the 823 bones of a real
+    # exported rig). Listing only the basic_quadruped names meant every
+    # quadruped gait animated the HIND legs and left the front legs frozen.
+    # Both namings are listed; apply_compiled_motion() skips absent bones.
+    "front_legs": [
+        "front_thigh_fk.L", "front_thigh_fk.R", "front_shin_fk.L", "front_shin_fk.R",
+        "upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R",
+    ],
     "hind_legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R"],
     "back_legs": ["thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R"],
     "all_four_legs": [
         "thigh_fk.L", "thigh_fk.R", "shin_fk.L", "shin_fk.R",
+        "front_thigh_fk.L", "front_thigh_fk.R", "front_shin_fk.L", "front_shin_fk.R",
         "upper_arm_fk.L", "upper_arm_fk.R", "forearm_fk.L", "forearm_fk.R",
     ],
-    "tail": ["tail_fk", "tail_fk.001", "tail_fk.002", "tail_fk.003", "tail_fk.004"],
+    "tail": ["tail_fk", "tail_fk.001", "tail_fk.002", "tail_fk.003", "tail_fk.004",
+             "tail", "tail.001", "tail.002", "tail.003", "tail.004",
+             "DEF-tail", "DEF-tail.001", "DEF-tail.002"],
     "ears": ["ear.L", "ear.R", "ear_fk.L", "ear_fk.R"],
     "snout": ["face_snout", "snout"],
+    # creature.roar / character.talk drive the jaw. Without this entry the
+    # primitive resolved to [] and the roar silently lost its mouth opening.
+    "jaw": ["jaw_master", "jaw", "DEF-jaw", "teeth.B"],
     "head": ["head_fk", "head"],
     "neck": ["neck_fk", "neck"],
 
@@ -309,9 +353,11 @@ def _compile_oscillate(p: Dict[str, Any], fps: int, frame_count: int) -> List[Di
     pelvis vertical bounce. Translation if amplitude < 1 (meters), else
     treated as degrees rotation.
     """
-    bones = _resolve_target(p.get("target"))
-    if not bones:
-        return []
+    # Mechanism targets ("leaf", "rod", "crank"...) map to [] on purpose: they
+    # animate the OBJECT ROOT, not a bone. _compile_rotate already handled that;
+    # oscillate returned [] instead, which is why mechanism.hinge_swing baked
+    # nothing at all.
+    bones = _resolve_target(p.get("target")) or ["__object_root__"]
     amplitude = float(p.get("amplitude") or 5)
     freq_hz = float(p.get("frequency_hz") or 1.0)
     axis_idx = _axis_to_index(p.get("axis"))
@@ -722,9 +768,61 @@ def _compile_preset_ref(p: Dict[str, Any], fps: int, frame_count: int) -> List[D
             }, fps, frame_count)
         )
 
+    # Every OTHER preset (42 of 45) comes from the generated catalog. Before
+    # this, they all fell through to the no-op marker below.
+    expanded = _expand_catalog_preset(preset_id, modifiers, fps, frame_count)
+    if expanded:
+        return expanded
+
     return _compile_custom_pose({
         "description": preset_id or str(p.get("source_target") or "preset_ref"),
     }, fps, frame_count)
+
+
+def _expand_catalog_preset(preset_id: str, modifiers: Dict[str, Any],
+                           fps: int, frame_count: int) -> List[Dict[str, Any]]:
+    """Expand a catalog preset's primitive sequence through the real compilers.
+
+    Modifier semantics mirror the parser's: speedMul scales frequency,
+    amplitudeMul scales angular amplitude, heightMul scales linear amplitude.
+    _compile_oscillate() classifies amplitude < 1.0 as a translation in metres
+    and >= 1.0 as degrees, so scaling must never push a translation across 1.0
+    — that would silently turn a 4 cm hip bob into a 57 degree rotation.
+    """
+    entry = load_preset_catalog().get(preset_id)
+    if not entry:
+        return []
+
+    speed_mul = float(modifiers.get("speedMul") or 1.0)
+    amp_mul = float(modifiers.get("amplitudeMul") or 1.0)
+    height_mul = float(modifiers.get("heightMul") or 1.0)
+
+    out: List[Dict[str, Any]] = []
+    for raw in entry.get("primitives") or []:
+        prim = dict(raw)
+        kind = prim.get("kind")
+        compiler = _COMPILER_DISPATCH.get(kind)
+        if compiler is None or kind == "preset_ref":
+            continue  # unknown kind: skip rather than emit a fake marker
+
+        if prim.get("frequency_hz") is not None:
+            prim["frequency_hz"] = float(prim["frequency_hz"]) * speed_mul
+
+        amp = prim.get("amplitude")
+        if amp is not None:
+            amp = float(amp)
+            linear = abs(amp) < 1.0 or kind in ("jump", "translate")
+            if linear:
+                amp *= height_mul
+                # keep the translation classification intact for oscillate
+                if kind not in ("jump", "translate") and abs(amp) >= 1.0:
+                    amp = math.copysign(0.999, amp)
+            else:
+                amp *= amp_mul
+            prim["amplitude"] = amp
+
+        out.extend(compiler(prim, fps, frame_count))
+    return out
 
 
 _COMPILER_DISPATCH = {
@@ -746,6 +844,42 @@ _COMPILER_DISPATCH = {
 }
 
 
+def _segment_windows(motion: Dict[str, Any], primitives: List[Dict[str, Any]],
+                     frame_count: int) -> List[tuple]:
+    """Allocate a [start_frame, length] window to each top-level primitive.
+
+    Only a parsed multi-segment prompt is sequenced. A single preset descriptor
+    (motion["id"] == "creature.roar") has primitives that are LAYERS of one
+    motion and must all span the full timeline — windowing those would tear the
+    preset apart. Windows are weighted by each segment's own preset duration so
+    "marche (1 s) puis rugit (2 s)" does not split 50/50.
+    """
+    n = len(primitives)
+    if n <= 1 or str(motion.get("id") or "") != "custom.parsed":
+        return [(1, frame_count)] * n
+
+    catalog = load_preset_catalog()
+    weights: List[float] = []
+    for prim in primitives:
+        entry = catalog.get(str(prim.get("source_target") or ""))
+        dur = float(entry.get("duration_seconds") or 1.5) if entry else 1.5
+        speed = float((prim.get("modifiers") or {}).get("speedMul") or 1.0)
+        weights.append(max(0.05, dur / max(0.1, speed)))
+
+    total = sum(weights) or float(n)
+    windows: List[tuple] = []
+    cursor = 1
+    for i, w in enumerate(weights):
+        if i == n - 1:
+            length = max(1, frame_count - cursor + 1)
+        else:
+            length = max(1, int(round(frame_count * w / total)))
+            length = min(length, max(1, frame_count - cursor - (n - i - 2)))
+        windows.append((cursor, length))
+        cursor += length
+    return windows
+
+
 def compile_motion_payload(motion: Dict[str, Any]) -> Dict[str, Any]:
     """Pure entry point: takes a parsed aurora.motion.v1 dict, returns a
     compiled payload {"id", "loop", "fps", "frame_count", "instructions"}.
@@ -758,8 +892,18 @@ def compile_motion_payload(motion: Dict[str, Any]) -> Dict[str, Any]:
     if frame_count < 1:
         frame_count = 1
 
+    primitives = list(motion.get("primitives", []))
+
+    # SEQUENCING. In a parsed prompt ("il marche puis il rugit") each top-level
+    # primitive IS one segment, and the segments are meant to play one after the
+    # other. Every primitive used to be compiled over the FULL frame_count, so
+    # "walk then roar" played walk and roar simultaneously across the whole
+    # timeline instead of in sequence. Sub-primitives inside one preset (roar =
+    # chest + head + jaw) still share their segment's window, which is correct.
+    windows = _segment_windows(motion, primitives, frame_count)
+
     instructions: List[Dict[str, Any]] = []
-    for primitive in motion.get("primitives", []):
+    for primitive, (win_start, win_len) in zip(primitives, windows):
         kind = primitive.get("kind")
         compiler = _COMPILER_DISPATCH.get(kind)
         if compiler is None:
@@ -773,7 +917,13 @@ def compile_motion_payload(motion: Dict[str, Any]) -> Dict[str, Any]:
                 "source_target": str(primitive.get("target") or ""),
             })
             continue
-        instructions.extend(compiler(primitive, fps, frame_count))
+        produced = compiler(primitive, fps, win_len)
+        if win_start > 1:
+            offset = win_start - 1
+            for ins in produced:
+                ins["samples"] = [(f + offset, v) for (f, v) in ins["samples"]]
+                ins["segment_start"] = win_start
+        instructions.extend(produced)
 
     return {
         "id": motion.get("id"),

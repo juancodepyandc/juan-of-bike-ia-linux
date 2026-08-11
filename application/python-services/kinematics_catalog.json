@@ -1,0 +1,920 @@
+{
+  "schema": "aurora.kinematics.catalog.v1",
+  "generated_from": "application/src/services/kinematicsLibrary.ts",
+  "regenerate_with": "node --experimental-strip-types application/scripts/export-kinematics-catalog.mts",
+  "preset_count": 45,
+  "presets": {
+    "character.idle": {
+      "label": "Idle (respiration)",
+      "duration_seconds": 4,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "breathe",
+          "frequency_hz": 0.25,
+          "amplitude": 0.02,
+          "target": "chest"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 1.5,
+          "frequency_hz": 0.15,
+          "target": "hips",
+          "description": "micro hip sway"
+        }
+      ]
+    },
+    "character.walk_cycle": {
+      "label": "Marcher (cycle complet)",
+      "duration_seconds": 1,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 1,
+          "amplitude": 30,
+          "target": "legs",
+          "description": "heel-strike → swing → push-off"
+        },
+        {
+          "kind": "gait",
+          "frequency_hz": 1,
+          "amplitude": 25,
+          "target": "arms",
+          "description": "opposite arm swing"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.04,
+          "frequency_hz": 2,
+          "target": "pelvis",
+          "description": "vertical bounce"
+        }
+      ]
+    },
+    "character.run_cycle": {
+      "label": "Courir",
+      "duration_seconds": 0.8,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 2.5,
+          "amplitude": 60,
+          "target": "legs",
+          "description": "high-knee airborne suspension"
+        },
+        {
+          "kind": "gait",
+          "frequency_hz": 2.5,
+          "amplitude": 50,
+          "target": "arms",
+          "description": "arms bent ~90 degrees"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.12,
+          "frequency_hz": 5,
+          "target": "pelvis"
+        }
+      ]
+    },
+    "character.dance_default": {
+      "label": "Danser",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 12,
+          "frequency_hz": 1.5,
+          "target": "hips"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.08,
+          "frequency_hz": 1.5,
+          "target": "pelvis",
+          "description": "knee bounce"
+        },
+        {
+          "kind": "gesture",
+          "amplitude": 30,
+          "frequency_hz": 0.75,
+          "target": "arms",
+          "description": "rythmic arm sway"
+        }
+      ]
+    },
+    "character.wave": {
+      "label": "Saluer (wave)",
+      "duration_seconds": 1.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "z",
+          "amplitude": 30,
+          "frequency_hz": 1.5,
+          "target": "right_arm_raised"
+        }
+      ]
+    },
+    "character.applaud": {
+      "label": "Applaudir",
+      "duration_seconds": 1.2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 0.18,
+          "frequency_hz": 2.5,
+          "target": "hands",
+          "description": "palm-to-palm rebound"
+        }
+      ]
+    },
+    "character.salute": {
+      "label": "Salut militaire",
+      "duration_seconds": 1,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "gesture",
+          "amplitude": 90,
+          "target": "right_arm",
+          "description": "arm to forehead, hand flat"
+        }
+      ]
+    },
+    "character.bow": {
+      "label": "S incliner",
+      "duration_seconds": 1.5,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 30,
+          "target": "torso",
+          "description": "torso forward bend"
+        }
+      ]
+    },
+    "character.jump": {
+      "label": "Saut (apex)",
+      "duration_seconds": 1.4,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 40,
+          "target": "legs",
+          "description": "pre-jump squat"
+        },
+        {
+          "kind": "jump",
+          "amplitude": 1.2,
+          "axis": "y",
+          "description": "parabolic trajectory"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 50,
+          "target": "legs",
+          "description": "landing absorption"
+        }
+      ]
+    },
+    "character.kick": {
+      "label": "Coup de pied",
+      "duration_seconds": 0.8,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 90,
+          "target": "right_leg",
+          "description": "knee chamber + extension"
+        }
+      ]
+    },
+    "character.punch": {
+      "label": "Coup de poing",
+      "duration_seconds": 0.5,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 0.5,
+          "target": "right_arm",
+          "description": "cross with hip drive"
+        }
+      ]
+    },
+    "character.sit": {
+      "label": "Assis",
+      "duration_seconds": 0,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 90,
+          "target": "hips_knees",
+          "description": "seated 90deg flexion"
+        }
+      ]
+    },
+    "character.kneel": {
+      "label": "Agenouille",
+      "duration_seconds": 0,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 90,
+          "target": "right_knee",
+          "description": "one knee down"
+        }
+      ]
+    },
+    "character.crawl": {
+      "label": "Ramper",
+      "duration_seconds": 1.2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 0.8,
+          "amplitude": 20,
+          "target": "arms_legs",
+          "description": "diagonal four-point gait"
+        }
+      ]
+    },
+    "character.swim": {
+      "label": "Nager",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 1.2,
+          "amplitude": 180,
+          "target": "arms",
+          "description": "crawl arm rotation"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 15,
+          "frequency_hz": 4,
+          "target": "legs",
+          "description": "flutter kick"
+        }
+      ]
+    },
+    "character.cartwheel": {
+      "label": "Roue (cartwheel)",
+      "duration_seconds": 1.2,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "target": "body",
+          "description": "lateral handspring rotation"
+        }
+      ]
+    },
+    "character.fall": {
+      "label": "Chute libre",
+      "duration_seconds": 1,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "jump",
+          "amplitude": -2,
+          "axis": "y",
+          "description": "gravity descent"
+        }
+      ]
+    },
+    "character.throw": {
+      "label": "Lancer",
+      "duration_seconds": 1,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 1,
+          "target": "right_arm",
+          "description": "wind-up + release + follow-through"
+        }
+      ]
+    },
+    "character.block": {
+      "label": "Parer (block)",
+      "duration_seconds": 0.8,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "gesture",
+          "amplitude": 60,
+          "target": "arms",
+          "description": "arms raised crossed in front"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 15,
+          "target": "legs",
+          "description": "slight defensive crouch"
+        }
+      ]
+    },
+    "character.parry": {
+      "label": "Parade (parry)",
+      "duration_seconds": 0.6,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 90,
+          "target": "right_arm",
+          "description": "sweeping arc to deflect"
+        }
+      ]
+    },
+    "character.dodge": {
+      "label": "Esquiver (dodge)",
+      "duration_seconds": 0.5,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "translate",
+          "axis": "x",
+          "amplitude": 1.2,
+          "target": "body",
+          "description": "lateral side-step"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 25,
+          "target": "legs",
+          "description": "low evasion"
+        }
+      ]
+    },
+    "character.combat_roll": {
+      "label": "Roulade (combat roll)",
+      "duration_seconds": 0.9,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "rotate",
+          "axis": "x",
+          "amplitude": 360,
+          "target": "body",
+          "description": "forward shoulder roll"
+        },
+        {
+          "kind": "translate",
+          "axis": "z",
+          "amplitude": 1.5,
+          "target": "body",
+          "description": "forward momentum"
+        }
+      ]
+    },
+    "character.push": {
+      "label": "Pousser",
+      "duration_seconds": 1.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 0.4,
+          "target": "arms",
+          "description": "extend forward against resistance"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 20,
+          "target": "legs",
+          "description": "push from the legs"
+        }
+      ]
+    },
+    "character.pull": {
+      "label": "Tirer",
+      "duration_seconds": 1.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "lunge",
+          "amplitude": 0.4,
+          "target": "arms",
+          "description": "pull toward chest"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 20,
+          "target": "legs",
+          "description": "lean back for leverage"
+        }
+      ]
+    },
+    "character.grab": {
+      "label": "Saisir",
+      "duration_seconds": 0.7,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "gesture",
+          "amplitude": 45,
+          "target": "right_arm",
+          "description": "reach + grasp"
+        }
+      ]
+    },
+    "character.lift": {
+      "label": "Soulever",
+      "duration_seconds": 1.8,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 70,
+          "target": "legs",
+          "description": "squat to grip"
+        },
+        {
+          "kind": "gesture",
+          "amplitude": 0.5,
+          "target": "arms",
+          "description": "lift to torso"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 0,
+          "target": "legs",
+          "description": "stand back up"
+        }
+      ]
+    },
+    "character.climb": {
+      "label": "Grimper / escalader",
+      "duration_seconds": 1.7,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 0.6,
+          "amplitude": 60,
+          "target": "arms",
+          "description": "alternating reach + grip overhead"
+        },
+        {
+          "kind": "gait",
+          "frequency_hz": 0.6,
+          "amplitude": 50,
+          "target": "legs",
+          "description": "opposite knee drive into wall"
+        },
+        {
+          "kind": "translate",
+          "axis": "y",
+          "amplitude": 0.4,
+          "frequency_hz": 0.6,
+          "target": "body",
+          "description": "vertical ascent step per cycle"
+        }
+      ]
+    },
+    "character.spin": {
+      "label": "Tourner sur soi (pirouette)",
+      "duration_seconds": 1,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "rotate",
+          "axis": "y",
+          "amplitude": 360,
+          "frequency_hz": 1,
+          "target": "body",
+          "description": "continuous body spin around vertical axis"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 25,
+          "frequency_hz": 1,
+          "target": "arms",
+          "description": "arms extended for momentum"
+        }
+      ]
+    },
+    "creature.flap_fly": {
+      "label": "Voler (battement)",
+      "duration_seconds": 0.33,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "flap",
+          "frequency_hz": 3,
+          "amplitude": 60,
+          "target": "wings"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.05,
+          "frequency_hz": 3,
+          "target": "body",
+          "description": "lift bob"
+        }
+      ]
+    },
+    "creature.slither": {
+      "label": "Ramper (serpent)",
+      "duration_seconds": 1,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 30,
+          "frequency_hz": 1,
+          "target": "body",
+          "description": "sinusoidal lateral wave"
+        }
+      ]
+    },
+    "creature.prowl": {
+      "label": "Rodeur (felidae)",
+      "duration_seconds": 1.6,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 0.6,
+          "amplitude": 15,
+          "target": "all_four_legs",
+          "description": "low predator quadruped gait"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 5,
+          "frequency_hz": 0.6,
+          "target": "tail",
+          "description": "tail counter-balance"
+        }
+      ]
+    },
+    "creature.quadruped_walk": {
+      "label": "Marche (quadrupede)",
+      "duration_seconds": 0.83,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 1.2,
+          "amplitude": 25,
+          "target": "all_four_legs",
+          "description": "diagonal trot — front_L+hind_R sync"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 10,
+          "frequency_hz": 1.2,
+          "target": "tail",
+          "description": "tail follows gait"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.03,
+          "frequency_hz": 2.4,
+          "target": "pelvis",
+          "description": "subtle vertical bounce"
+        }
+      ]
+    },
+    "creature.quadruped_run": {
+      "label": "Galop (quadrupede)",
+      "duration_seconds": 0.4,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "gait",
+          "frequency_hz": 2.5,
+          "amplitude": 50,
+          "target": "all_four_legs",
+          "description": "gallop — bound or rotary"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.15,
+          "frequency_hz": 2.5,
+          "target": "pelvis",
+          "description": "powerful vertical impulse"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 20,
+          "frequency_hz": 2.5,
+          "target": "tail",
+          "description": "tail extended for momentum"
+        }
+      ]
+    },
+    "creature.quadruped_idle": {
+      "label": "Idle (quadrupede)",
+      "duration_seconds": 4,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "breathe",
+          "frequency_hz": 0.3,
+          "amplitude": 0.025,
+          "target": "chest"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 8,
+          "frequency_hz": 0.4,
+          "target": "tail",
+          "description": "lazy tail wag"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "z",
+          "amplitude": 3,
+          "frequency_hz": 0.2,
+          "target": "head",
+          "description": "micro head shift"
+        }
+      ]
+    },
+    "creature.quadruped_jump": {
+      "label": "Saut (quadrupede)",
+      "duration_seconds": 1.2,
+      "loop": false,
+      "primitives": [
+        {
+          "kind": "crouch",
+          "amplitude": 50,
+          "target": "all_four_legs",
+          "description": "pre-jump coil"
+        },
+        {
+          "kind": "jump",
+          "amplitude": 1.5,
+          "axis": "y",
+          "description": "ballistic leap"
+        },
+        {
+          "kind": "crouch",
+          "amplitude": 60,
+          "target": "all_four_legs",
+          "description": "landing absorption"
+        }
+      ]
+    },
+    "creature.tail_wag": {
+      "label": "Remue-queue",
+      "duration_seconds": 1.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 30,
+          "frequency_hz": 3.5,
+          "target": "tail",
+          "description": "enthusiastic tail wag"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.02,
+          "frequency_hz": 1.5,
+          "target": "pelvis",
+          "description": "hip wiggle from wag"
+        }
+      ]
+    },
+    "creature.roar": {
+      "label": "Rugir",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "breathe",
+          "frequency_hz": 0.5,
+          "amplitude": 0.18,
+          "target": "chest",
+          "description": "deep chest expansion"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 35,
+          "frequency_hz": 0.5,
+          "target": "head",
+          "description": "head tilt up + back"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 40,
+          "frequency_hz": 0.5,
+          "target": "jaw",
+          "description": "jaw fully open"
+        }
+      ]
+    },
+    "mechanism.gear_mesh_rotate": {
+      "label": "Engrenage (mesh)",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "frequency_hz": 0.5,
+          "target": "drive_gear",
+          "description": "driver continuous rotation"
+        },
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "frequency_hz": 0.5,
+          "target": "driven_gear",
+          "description": "follows ratio = teeth_drive / teeth_driven, opposite sign"
+        }
+      ]
+    },
+    "mechanism.belt_loop": {
+      "label": "Courroie en boucle",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "loop_path",
+          "frequency_hz": 0.5,
+          "target": "belt",
+          "description": "closed continuous loop"
+        },
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "frequency_hz": 0.5,
+          "target": "drive_pulley"
+        },
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "frequency_hz": 0.5,
+          "target": "driven_pulley",
+          "description": "same direction as drive_pulley"
+        }
+      ]
+    },
+    "mechanism.piston_stroke": {
+      "label": "Verin (course)",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "extend",
+          "axis": "auto",
+          "amplitude": 0.3,
+          "frequency_hz": 0.5,
+          "target": "rod",
+          "description": "extend → retract cycle"
+        }
+      ]
+    },
+    "mechanism.hinge_swing": {
+      "label": "Charniere (battement)",
+      "duration_seconds": 2.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "swing",
+          "axis": "auto",
+          "amplitude": 90,
+          "frequency_hz": 0.4,
+          "target": "leaf",
+          "description": "0deg → 90deg → 0deg"
+        }
+      ]
+    },
+    "mechanism.linkage_cycle": {
+      "label": "Tringlerie (cycle)",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "rotate",
+          "axis": "z",
+          "amplitude": 360,
+          "frequency_hz": 0.5,
+          "target": "crank",
+          "description": "crank rotation drives the cycle"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "auto",
+          "amplitude": 1,
+          "frequency_hz": 0.5,
+          "target": "rocker",
+          "description": "rocker follows the four-bar coupling"
+        }
+      ]
+    },
+    "mechanism.vibrate": {
+      "label": "Vibrer",
+      "duration_seconds": 1.5,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "x",
+          "amplitude": 0.005,
+          "frequency_hz": 30,
+          "target": "body",
+          "description": "high-frequency lateral buzz"
+        },
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.003,
+          "frequency_hz": 28,
+          "target": "body",
+          "description": "slightly off-phase vertical"
+        }
+      ]
+    },
+    "vehicle.roll_forward": {
+      "label": "Rouler",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "translate",
+          "axis": "z",
+          "amplitude": 5,
+          "frequency_hz": 0.5,
+          "target": "body",
+          "description": "forward travel"
+        },
+        {
+          "kind": "rotate",
+          "axis": "x",
+          "amplitude": 360,
+          "frequency_hz": 4,
+          "target": "wheels"
+        }
+      ]
+    },
+    "vehicle.hover": {
+      "label": "Vol stationnaire",
+      "duration_seconds": 2,
+      "loop": true,
+      "primitives": [
+        {
+          "kind": "oscillate",
+          "axis": "y",
+          "amplitude": 0.05,
+          "frequency_hz": 1,
+          "target": "body",
+          "description": "hover bob"
+        },
+        {
+          "kind": "rotate",
+          "axis": "y",
+          "amplitude": 360,
+          "frequency_hz": 30,
+          "target": "rotors"
+        }
+      ]
+    }
+  }
+}
