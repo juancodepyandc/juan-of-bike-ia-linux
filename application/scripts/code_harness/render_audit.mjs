@@ -207,6 +207,51 @@ async function measureAccessibility(page) {
   })
 }
 
+// Performance mesuree DANS le navigateur: peinture, stabilite, poids reel.
+// Aucune de ces valeurs ne se devine a la lecture du source.
+async function measurePerformance(page) {
+  return page.evaluate(() => new Promise((resolve) => {
+    let layoutShift = 0
+    let longTasks = 0
+    try {
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          if (!entry.hadRecentInput) layoutShift += entry.value
+        }
+      }).observe({ type: 'layout-shift', buffered: true })
+    } catch { /* navigateur sans layout-shift */ }
+    try {
+      new PerformanceObserver((list) => { longTasks += list.getEntries().length })
+        .observe({ type: 'longtask', buffered: true })
+    } catch { /* longtask non supporte */ }
+
+    setTimeout(() => {
+      const nav = performance.getEntriesByType('navigation')[0]
+      const fcp = performance.getEntriesByName('first-contentful-paint')[0]
+      const resources = performance.getEntriesByType('resource')
+      const transferred = resources.reduce((sum, r) => sum + (r.transferSize || r.encodedBodySize || 0), 0)
+        + (nav?.transferSize || nav?.encodedBodySize || 0)
+      let imagesWithoutDimensions = 0
+      for (const img of document.querySelectorAll('img')) {
+        const styled = getComputedStyle(img)
+        const sized = (img.getAttribute('width') && img.getAttribute('height'))
+          || styled.aspectRatio !== 'auto'
+          || (styled.height !== 'auto' && styled.height !== '0px')
+        if (!sized) imagesWithoutDimensions += 1
+      }
+      resolve({
+        firstContentfulPaint: fcp ? Math.round(fcp.startTime) : 0,
+        domInteractive: nav ? Math.round(nav.domInteractive) : 0,
+        layoutShift,
+        domNodes: document.getElementsByTagName('*').length,
+        transferredBytes: Math.round(transferred),
+        longTasks,
+        imagesWithoutDimensions,
+      })
+    }, 900)
+  }))
+}
+
 async function measure(page) {
   return page.evaluate(() => {
     const els = Array.from(document.querySelectorAll('body *')).slice(0, 4000)
@@ -312,9 +357,15 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     )
     const accessibility = await measureAccessibility(page)
     const accessibilityVerdict = scoreAccessibility(accessibility)
+    const { scorePerformance } = await import(
+      pathToFileURL(path.resolve('src/services/codePerformanceGate.ts')).href
+    )
+    const performanceMetrics = await measurePerformance(page)
+    const performanceVerdict = scorePerformance(performanceMetrics)
     return {
       applicable: true, metrics: desktop, consoleErrors, composition, compositionVerdict,
       accessibility, accessibilityVerdict,
+      performanceMetrics, performanceVerdict,
       verdict: scoreRenderedAesthetics({ desktop, consoleErrors }),
     }
   } catch (err) {
