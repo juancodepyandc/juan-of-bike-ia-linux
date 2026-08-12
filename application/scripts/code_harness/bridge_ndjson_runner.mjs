@@ -430,6 +430,23 @@ if (pipelineFailed) {
   process.exit(1)
 }
 
+// Une INTERRUPTION n est ni une reussite ni un echec de code: le travail existe
+// mais n a pas ete valide jusqu au bout. L annoncer `done` serait le meme
+// mensonge que d annoncer `done` sur une erreur — et l annoncer `error`
+// detruirait la raison meme d avoir preserve les fichiers.
+if (result?.phase === 'interrupted') {
+  emit(
+    buildCodeStreamErrorEvent({
+      ...nextMeta(),
+      message: String(result?.notes ?? 'pipeline interrompu').slice(0, 2000),
+      recoverable: true,
+    }),
+  )
+  log(`[bridge-runner] INTERROMPU files=${files.length} — travail preserve, validation incomplete`)
+  log('[bridge-runner] cause: voir les notes ci-dessus. Ce n est PAS un verdict de qualite.')
+  process.exit(2)
+}
+
 emit(
   buildCodeStreamDoneEvent({
     ...nextMeta(),
