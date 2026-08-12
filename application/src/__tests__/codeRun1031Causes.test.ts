@@ -5,6 +5,7 @@ import { describe, test } from 'node:test'
 import { evaluateVisualFidelity } from '../services/codeVisualFidelity.ts'
 import { usesTailwind } from '../services/codeTailwindSignals.ts'
 import { computeDesignPolishReport } from '../services/codeDesignPolishGate.ts'
+import { countImages } from '../services/codeVisualFidelityDetectors.ts'
 import { hasServerSide, secretRemediation } from '../services/codeSecretRemediation.ts'
 import { isMachineCriticalJson, validateStructuredFiles } from '../services/codeProjectValidation.ts'
 import type { CodeIntent } from '../services/codeIntent.ts'
@@ -130,5 +131,19 @@ describe('run 1031 — cause 1ter: la porte de finition avait la meme cecite', (
       <h1>Brulerie</h1>${'<p>Paragraphe sans la moindre finition visuelle.</p>'.repeat(8)}</div>)` }]
     const report = computeDesignPolishReport(poor)
     assert.ok(report.missing.length >= 5, `attendu: des manques reels, obtenu ${report.missing.length}`)
+  })
+})
+
+describe('run 1031 — un critere inatteignable est un piege, pas une exigence', () => {
+  test('une illustration SVG dessinee compte comme element visuel', () => {
+    assert.equal(countImages('<img src="a.avif"><svg viewBox="0 0 10 10"><path d="M0 0L10 10"/></svg>'), 2)
+  })
+
+  test('un <svg> VIDE ne compte pas: pas de laissez-passer par icone creuse', () => {
+    assert.equal(countImages('<img src="a.avif"><svg viewBox="0 0 10 10"></svg>'), 1)
+  })
+
+  test('une page sans aucun visuel reste a zero', () => {
+    assert.equal(countImages('<section><h1>Brulerie</h1><p>texte</p></section>'), 0)
   })
 })

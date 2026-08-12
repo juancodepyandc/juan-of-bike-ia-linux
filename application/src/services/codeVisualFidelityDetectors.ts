@@ -49,10 +49,24 @@ export function countSections(html: string): number {
 }
 
 export function countImages(html: string): number {
-  // Includes <img>, srcset, AND background-image url() inside <style>.
+  // Compte les ELEMENTS VISUELS, pas seulement les fichiers raster.
+  //
+  // Mesure reelle (run 1031): la porte exigeait « au moins 2 images » alors que
+  // le pipeline d assets ne commande QU UNE seule image par run (une seule
+  // route `kind: 'image'` vers /api/code/assets/generate). Le critere etait donc
+  // structurellement inatteignable — le meme piege que le « mets-le dans .env »
+  // corrige juste avant: une exigence qu aucune execution correcte ne peut
+  // satisfaire ne mesure pas la qualite, elle bloque.
+  //
+  // Une illustration SVG inline est un vrai element visuel, elle ne coute aucun
+  // GPU, et sur une marque artisanale elle vaut souvent mieux qu une photo
+  // generique. Elle compte donc — mais seulement si elle est DESSINEE (au moins
+  // un tracé), pour ne pas transformer une icone vide en laissez-passer.
   const imgTags = (html.match(/<img\b/gi) || []).length
   const bgImgs = (html.match(/background(-image)?\s*:[^;]*url\(/gi) || []).length
-  return imgTags + bgImgs
+  const svgIllustrations = (html.match(/<svg\b[^>]*>[\s\S]*?<\/svg>/gi) || [])
+    .filter((svg) => /<(?:path|circle|rect|polygon|ellipse|line|polyline)\b/i.test(svg)).length
+  return imgTags + bgImgs + svgIllustrations
 }
 
 /** Count "card-like" elements that are JUST flat colored boxes with text —
