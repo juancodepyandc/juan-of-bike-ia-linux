@@ -1,4 +1,5 @@
 import type { CodeFile } from './codeOrchestrator.ts'
+import { TW_GRADIENT, TW_HOVER, usesTailwind } from './codeTailwindSignals.ts'
 
 export type DesignPolishReport = {
   score: number
@@ -27,22 +28,28 @@ export function computeDesignPolishReport(files: CodeFile[]): DesignPolishReport
 
   let score = 0
   const missing: string[] = []
-  const checks: Array<{ label: string; pattern: RegExp; points: number }> = [
-    { label: 'CSS variables / design tokens (--color-*, --space-*, etc.)', pattern: /--[a-z-]+:\s*/i, points: 12 },
+  // Meme cecite que la porte visuelle (run 1031): ces motifs sont tous du CSS
+  // ecrit a la main. Un projet Tailwind exprime les memes intentions en classes
+  // utilitaires et perdait jusqu a ~90 points sur du travail correct — pire, ce
+  // rapport alimente les MESSAGES DE CORRECTION: on demandait donc au modele
+  // d ajouter du CSS qu un projet Tailwind ne doit precisement pas ecrire.
+  const tw = usesTailwind(files)
+  const checks: Array<{ label: string; pattern: RegExp; points: number; tw?: RegExp }> = [
+    { label: 'CSS variables / design tokens (--color-*, --space-*, etc.)', pattern: /--[a-z-]+:\s*/i, points: 12, tw: /theme\s*:\s*\{[\s\S]*extend|colors\s*:\s*\{/ },
     { label: 'police premium Google Fonts (Inter / Manrope / Satoshi / DM Sans / Space Grotesk / Plus Jakarta)', pattern: /inter|manrope|satoshi|dm sans|space grotesk|plus jakarta|bricolage|bangers/i, points: 10 },
-    { label: 'gradients (linear-gradient / radial-gradient / conic-gradient)', pattern: /(linear|radial|conic)-gradient/i, points: 12 },
-    { label: 'transitions explicites (transition: ... 250ms cubic-bezier)', pattern: /transition:\s*[^;]+\d+ms/i, points: 8 },
-    { label: '@keyframes (animations CSS)', pattern: /@keyframes\s+\w+/i, points: 10 },
-    { label: 'backdrop-filter blur (glassmorphism)', pattern: /backdrop-filter\s*:\s*blur/i, points: 10 },
-    { label: 'clamp() pour les tailles responsive', pattern: /clamp\s*\(/i, points: 8 },
-    { label: 'box-shadow multi-layer composite', pattern: /box-shadow\s*:[^;]*,[^;]*\d/i, points: 8 },
-    { label: 'utilisation de var(--*) (variables CSS appliquees)', pattern: /var\(--[a-z]/i, points: 6 },
-    { label: 'layout moderne grid ou flex', pattern: /display\s*:\s*(grid|flex)/i, points: 6 },
-    { label: 'hover states (:hover {)', pattern: /:hover\s*\{/i, points: 5 },
+    { label: 'gradients (linear-gradient / radial-gradient / conic-gradient)', pattern: /(linear|radial|conic)-gradient/i, points: 12, tw: TW_GRADIENT },
+    { label: 'transitions explicites (transition: ... 250ms cubic-bezier)', pattern: /transition:\s*[^;]+\d+ms/i, points: 8, tw: /\btransition(?:-[a-z]+)?\b[\s\S]{0,40}\bduration-\d+/ },
+    { label: '@keyframes (animations CSS)', pattern: /@keyframes\s+\w+/i, points: 10, tw: /\banimate-[a-z0-9-]+\b/ },
+    { label: 'backdrop-filter blur (glassmorphism)', pattern: /backdrop-filter\s*:\s*blur/i, points: 10, tw: /\bbackdrop-blur(?:-[a-z]+)?\b/ },
+    { label: 'clamp() pour les tailles responsive', pattern: /clamp\s*\(/i, points: 8, tw: /\b(?:text|w|h|p|m)-\[clamp\(|\b(?:sm|md|lg|xl|2xl):[a-z-]+/ },
+    { label: 'box-shadow multi-layer composite', pattern: /box-shadow\s*:[^;]*,[^;]*\d/i, points: 8, tw: /\bshadow-(?:md|lg|xl|2xl)\b/ },
+    { label: 'utilisation de var(--*) (variables CSS appliquees)', pattern: /var\(--[a-z]/i, points: 6, tw: /\b(?:bg|text|border)-[a-z]+-\d{2,3}\b/ },
+    { label: 'layout moderne grid ou flex', pattern: /display\s*:\s*(grid|flex)/i, points: 6, tw: /\b(?:grid|flex)\b[\s\S]{0,30}\b(?:grid-cols-\d|gap-\d|items-|justify-)/ },
+    { label: 'hover states (:hover {)', pattern: /:hover\s*\{/i, points: 5, tw: TW_HOVER },
   ]
 
-  for (const { label, pattern, points } of checks) {
-    if (pattern.test(visualBlob)) score += points
+  for (const { label, pattern, points, tw: twPattern } of checks) {
+    if (pattern.test(visualBlob) || (tw && twPattern && twPattern.test(visualBlob))) score += points
     else missing.push(`${label} (${points} pts manquants)`)
   }
 

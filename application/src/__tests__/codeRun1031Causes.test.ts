@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { evaluateVisualFidelity } from '../services/codeVisualFidelity.ts'
 import { usesTailwind } from '../services/codeTailwindSignals.ts'
+import { computeDesignPolishReport } from '../services/codeDesignPolishGate.ts'
 import { hasServerSide, secretRemediation } from '../services/codeSecretRemediation.ts'
 import { isMachineCriticalJson, validateStructuredFiles } from '../services/codeProjectValidation.ts'
 import type { CodeIntent } from '../services/codeIntent.ts'
@@ -18,7 +19,7 @@ const TW_FILES = [
   { name: 'index.html', language: 'html', content: '<!doctype html><html><body><div id="root"></div></body></html>' },
   ...['Home', 'About', 'CoffeeList', 'Contact', 'Admin', 'Header', 'Footer'].map((n) => ({
     name: `src/components/${n}.tsx`, language: 'typescript',
-    content: `export const ${n} = () => (<section className="rounded-lg shadow-md hover:bg-amber-100 transition">
+    content: `export const ${n} = () => (<section className="rounded-lg shadow-md hover:bg-amber-100 transition duration-300 grid grid-cols-3 gap-4 backdrop-blur-sm animate-fade">
       <h2 className="text-2xl">${n}</h2><p>Contenu editorial reel pour la section ${n}, avec du texte suffisant pour etre juge serieusement.</p>
       <img src="/${n}.avif" alt="${n}" width="400" height="300" /></section>)`,
   })),
@@ -106,5 +107,28 @@ describe('run 1031 — cause 3: un JSON annexe ne condamne pas la passe', () => 
       assert.equal(isMachineCriticalJson(name), true, name)
     }
     assert.equal(isMachineCriticalJson('src/data/cafes.json'), false)
+  })
+})
+
+describe('run 1031 — cause 1ter: la porte de finition avait la meme cecite', () => {
+  test('un projet Tailwind n est plus penalise sur du CSS qu il ne doit pas ecrire', () => {
+    const report = computeDesignPolishReport(TW_FILES)
+    const missing = report.missing.join(' ')
+    assert.doesNotMatch(missing, /box-shadow multi-layer/)
+    assert.doesNotMatch(missing, /hover states/)
+    assert.doesNotMatch(missing, /layout moderne/)
+  })
+
+  test('un projet CSS classique garde exactement son ancien barème', () => {
+    const plain = [{ name: 'index.html', language: 'html', content: '<style>.a{display:flex;box-shadow:0 1px 2px #000,0 2px 4px #111}.a:hover{color:red}</style>' }]
+    const report = computeDesignPolishReport(plain)
+    assert.doesNotMatch(report.missing.join(' '), /hover states|layout moderne|box-shadow multi-layer/)
+  })
+
+  test('un projet Tailwind reellement pauvre reste penalise', () => {
+    const poor = [PKG, { name: 'src/App.tsx', language: 'typescript', content: `export const App = () => (<div>
+      <h1>Brulerie</h1>${'<p>Paragraphe sans la moindre finition visuelle.</p>'.repeat(8)}</div>)` }]
+    const report = computeDesignPolishReport(poor)
+    assert.ok(report.missing.length >= 5, `attendu: des manques reels, obtenu ${report.missing.length}`)
   })
 })
