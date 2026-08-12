@@ -34,6 +34,14 @@ export function isSyntheticFallbackFile(name: string): boolean {
     || /^reponse\.(?:txt|text|md)$/.test(normalized)
 }
 
+// Les JSON dont depend la CHAINE DE BUILD: ceux-la, casses, condamnent
+// legitimement la passe. Un JSON de donnees invente par le modele, non.
+const MACHINE_CRITICAL_JSON = /(?:^|\/)(?:package\.json|package-lock\.json|tsconfig[^/]*\.json|jsconfig\.json|tauri\.conf\.json|manifest\.json|composer\.json|angular\.json|app\.json|now\.json|vercel\.json)$/
+
+export function isMachineCriticalJson(name: string): boolean {
+  return MACHINE_CRITICAL_JSON.test(name.replace(/\\/g, '/').toLowerCase())
+}
+
 export function validateStructuredFiles(files: CodeFile[]): string | null {
   for (const file of files) {
     const normalized = file.name.replace(/\\/g, '/').toLowerCase()
@@ -41,6 +49,12 @@ export function validateStructuredFiles(files: CodeFile[]): string | null {
 
     const parsed = tryParseJson(stripFormattingArtifacts(file.content))
     if (!parsed) {
+      // Mesure reelle (run 1031): `main.json`, un fichier de donnees invente par
+      // le modele, a fait JETER DEUX PASSES DE CORRECTION ENTIERES — toutes les
+      // autres corrections valides de la passe avec lui. Une passe ne doit pas
+      // etre tout-ou-rien a cause d un fichier annexe: seuls les JSON dont
+      // depend le build condamnent la passe, les autres sont mis de cote.
+      if (!isMachineCriticalJson(normalized)) continue
       return `${file.name} n est pas un JSON valide. Les fichiers machine comme package.json doivent etre du JSON pur, sans backticks markdown ni texte parasite.`
     }
 

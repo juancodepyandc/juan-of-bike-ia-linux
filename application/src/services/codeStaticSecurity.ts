@@ -3,6 +3,7 @@ import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import { isHtmlLike, isPyLike, isTsLike } from './codeStaticCriticShared.ts'
 import { SECURITY_RULES } from './codeStaticSecurityRules.ts'
+import { secretRemediation } from './codeSecretRemediation.ts'
 
 type TaintSink = {
   name: string
@@ -120,7 +121,7 @@ function detectTaintIssues(file: CodeFile): CritiqueIssue[] {
   return issues
 }
 
-function fileSecurityIssues(file: CodeFile): CritiqueIssue[] {
+function fileSecurityIssues(file: CodeFile, secretAdvice: string): CritiqueIssue[] {
   const issues: CritiqueIssue[] = detectTaintIssues(file)
   for (const rule of SECURITY_RULES) {
     if (!rule.appliesTo(file)) continue
@@ -136,7 +137,9 @@ function fileSecurityIssues(file: CodeFile): CritiqueIssue[] {
         severity: rule.severity,
         message: `${file.name}:${lineNum} — ${rule.message}`,
         location: { file: file.name, line: lineNum },
-        suggestion: rule.suggestion,
+        // Le conseil sur les secrets depend de l architecture: sans backend,
+        // « mets-le dans .env » est irrealisable et fait boucler le modele.
+        suggestion: rule.message.includes('Secret en dur') ? secretAdvice : rule.suggestion,
       })
       if (m[0].length === 0) re.lastIndex += 1
     }
@@ -145,7 +148,8 @@ function fileSecurityIssues(file: CodeFile): CritiqueIssue[] {
 }
 
 export const securityCritic: CriticFn = async (project: CodeProject, _intent: CodeIntent): Promise<CritiqueReport> => {
-  const issues = project.files.flatMap(fileSecurityIssues)
+  const secretAdvice = secretRemediation(project.files)
+  const issues = project.files.flatMap((file) => fileSecurityIssues(file, secretAdvice))
   const blockers = issues.filter((i) => i.severity === 'block').length
   const errors = issues.filter((i) => i.severity === 'error').length
   const warns = issues.filter((i) => i.severity === 'warn').length

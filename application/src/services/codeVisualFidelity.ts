@@ -4,11 +4,15 @@
 // avec une critique precise (au lieu de livrer une page Coca-Cola scolaire).
 // ---------------------------------------------------------------------------
 
+import { aggregateAll, findComponentMarkup, findCss, findHtml, findJs } from './codeVisualSurfaces.ts'
 import type { CodeIntent } from './codeIntent'
 import {
   scoreRenderedVisualAudit,
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
+import {
+  TW_CLAMP, TW_DEPTH, TW_GRADIENT, TW_HOVER, TW_RADIUS, usesTailwind,
+} from './codeTailwindSignals.ts'
 import {
   GADGET_CHECK_IDS,
   RESTRAINT_REINFORCED_IDS,
@@ -72,6 +76,8 @@ export type VisualFidelityReport = {
   viewports?: string[]
   /** Genre de projet effectivement juge (vitrine / application / outil). */
   ambition?: VisualAmbition
+  /** Vrai quand la porte n a rien pu observer: ce n est PAS un succes. */
+  notMeasured?: boolean
   /** Contraintes de style lues dans le brief, quand il en exprime. */
   styleConstraints?: { restraint: boolean; evidence: string[] }
 }
@@ -82,36 +88,6 @@ type CodeFile = { name: string; language: string; content: string }
 // HTML / CSS / JS aggregation
 // ---------------------------------------------------------------------------
 
-function findHtml(files: CodeFile[]): string {
-  return files.filter((f) => /\.(html|htm)$/i.test(f.name)).map((f) => f.content).join('\n')
-}
-
-/**
- * Surface de MARKUP a juger.
- *
- * Mesure reelle (run 960): un site React+Vite de 33 fichiers a ete note
- * « 0 section trouvee, 0 ko de HTML, 50/100 » — parce que cette porte ne lisait
- * que les `.html`, et que dans un projet a composants l `index.html` de Vite est
- * une coquille de 223 octets autour de `<div id="root">`. Le markup vit dans les
- * `.tsx` / `.vue` / `.svelte`. Juger la coquille revenait a juger le carton d un
- * livre. Sur un `static_web` la liste des composants est vide: comportement
- * strictement inchange.
- */
-function findComponentMarkup(files: CodeFile[]): string {
-  return files
-    .filter((f) => /\.(jsx|tsx|vue|svelte|astro)$/i.test(f.name))
-    .map((f) => f.content)
-    .join('\n')
-}
-function findCss(files: CodeFile[]): string {
-  return files.filter((f) => /\.(css|scss|less)$/i.test(f.name)).map((f) => f.content).join('\n')
-}
-function findJs(files: CodeFile[]): string {
-  return files.filter((f) => /\.(js|mjs|jsx|tsx|ts)$/i.test(f.name)).map((f) => f.content).join('\n')
-}
-function aggregateAll(files: CodeFile[]): string {
-  return files.map((f) => f.content).join('\n')
-}
 
 // ---------------------------------------------------------------------------
 // Build the report
@@ -134,6 +110,10 @@ export function evaluateVisualFidelity(
   /** Brief original: sert a reconnaitre le GENRE du projet (vitrine / application / outil). */
   prompt = '',
 ): VisualFidelityReport {
+  // Tailwind n ecrit pas `border-radius:` — il ecrit `rounded-lg`. Sans cette
+  // lecture, toute SPA moderne echoue sur des criteres qu elle remplit.
+  const tw = usesTailwind(files)
+  const twSurface = tw ? files.filter((f) => /\.(jsx|tsx|vue|svelte|astro|html)$/i.test(f.name)).map((f) => f.content).join('\n') : ''
   const documentHtml = findHtml(files)
   const componentMarkup = findComponentMarkup(files)
   // Le markup juge = document + composants. Sur un projet sans composants,
@@ -196,7 +176,12 @@ export function evaluateVisualFidelity(
   })
 
   // 4. Au moins 6 sections
-  const secCount = countSections(html)
+  // Dans un projet a composants, chaque composant de page EST une section:
+  // le run 1031 comptait « 2 sections » sur 14 composants (About, CoffeeList,
+  // Contact, Admin...). On prend le maximum des deux lectures.
+  const componentSections = files.filter((f) => /\.(jsx|tsx|vue|svelte|astro)$/i.test(f.name)
+    && !/\b(?:main|index|app|router|store|types?|utils?|hooks?|lib)\b/i.test(f.name.split('/').pop() || '')).length
+  const secCount = Math.max(countSections(html), componentSections)
   checks.push({
     id: 'min_sections',
     label: `Au moins 6 sections (trouve: ${secCount})`,
@@ -216,7 +201,7 @@ export function evaluateVisualFidelity(
   checks.push({
     id: 'has_gradient',
     label: 'Au moins un linear/radial-gradient',
-    passed: HAS_GRADIENT.test(html) || HAS_GRADIENT.test(css),
+    passed: HAS_GRADIENT.test(html) || HAS_GRADIENT.test(css) || (tw && TW_GRADIENT.test(twSurface)),
     weight: 8,
   })
 
@@ -224,7 +209,7 @@ export function evaluateVisualFidelity(
   checks.push({
     id: 'has_depth',
     label: 'Effet de profondeur (blur / backdrop-filter)',
-    passed: HAS_MESH_BLUR.test(html) || HAS_MESH_BLUR.test(css) || HAS_BACKDROP_FILTER.test(html) || HAS_BACKDROP_FILTER.test(css),
+    passed: HAS_MESH_BLUR.test(html) || HAS_MESH_BLUR.test(css) || HAS_BACKDROP_FILTER.test(html) || HAS_BACKDROP_FILTER.test(css) || (tw && TW_DEPTH.test(twSurface)),
     weight: 8,
   })
 
@@ -258,7 +243,7 @@ export function evaluateVisualFidelity(
   checks.push({
     id: 'has_radius',
     label: 'border-radius >= 10px present',
-    passed: HAS_BORDER_RADIUS_LARGE.test(html) || HAS_BORDER_RADIUS_LARGE.test(css),
+    passed: HAS_BORDER_RADIUS_LARGE.test(html) || HAS_BORDER_RADIUS_LARGE.test(css) || (tw && TW_RADIUS.test(twSurface)),
     weight: 4,
   })
 
@@ -274,7 +259,7 @@ export function evaluateVisualFidelity(
   checks.push({
     id: 'has_clamp',
     label: 'Typographie responsive (clamp())',
-    passed: HAS_CLAMP.test(html) || HAS_CLAMP.test(css),
+    passed: HAS_CLAMP.test(html) || HAS_CLAMP.test(css) || (tw && TW_CLAMP.test(twSurface)),
     weight: 4,
   })
 
@@ -291,7 +276,7 @@ export function evaluateVisualFidelity(
   checks.push({
     id: 'has_hover',
     label: 'Etats :hover definis',
-    passed: HAS_HOVER.test(html) || HAS_HOVER.test(css),
+    passed: HAS_HOVER.test(html) || HAS_HOVER.test(css) || (tw && TW_HOVER.test(twSurface)),
     weight: 4,
   })
 
@@ -350,6 +335,23 @@ export function evaluateVisualFidelity(
   // La barre ne bouge pas; ce qui compte pour l atteindre depend du GENRE. Un
   // outil a une page n a pas a fournir un hero, une galerie et une rotation 3D
   // au scroll — les exiger degrade le produit au lieu de l ameliorer.
+  // REGLE STRUCTURELLE: une porte ne condamne jamais ce qu elle n a pas vu.
+  // Sur un projet a bundler, si le rendu construit n est pas disponible ET que
+  // la surface lisible se reduit a la coquille Vite (`<div id="root">`), il n y
+  // a rien a juger. Rendre 64/100 dans ce cas n est pas une mesure severe,
+  // c est une condamnation sans piece au dossier — le defaut deja corrige au
+  // tour precedent, qui revenait ici par un autre chemin.
+  const needsBuild = files.some((f) => /(^|\/)package\.json$/i.test(f.name))
+    && files.some((f) => /\.(jsx|tsx|vue|svelte|astro)$/i.test(f.name))
+  const markupVisible = componentMarkup.trim().length > 400 || documentHtml.replace(/<[^>]*>/g, '').trim().length > 400
+  if (!renderAudit && needsBuild && !markupVisible) {
+    return {
+      score: 0, passed: true, floor: 0, checks: [], failedChecks: [],
+      notMeasured: true,
+      source: 'source_static',
+      summary: 'Rendu NON MESURE: projet a bundler, rendu construit indisponible et markup source illisible (coquille de bundler). Aucun verdict rendu — une porte ne condamne pas ce qu elle n a pas vu.',
+    }
+  }
   const ambition = resolveVisualAmbition(prompt, intent, files)
   const excluded = new Set<string>(AMBITION_EXCLUDED_CHECKS[ambition])
   // Contraintes EXPLICITES du brief. Exiger une rotation 3D d une cliente qui
