@@ -6648,3 +6648,54 @@ Reste assume: `tsc` complet (erreurs de TYPE, pas seulement de syntaxe) tourne
 dans le harnais, pas encore dans la boucle. Et les APK natifs Java/Kotlin sont
 prouves au niveau CHAINE — le pipeline sait desormais les compiler, mais aucun
 run n a encore genere un projet Kotlin de bout en bout.
+
+## 2026-08-12 — La quatrieme porte: la performance
+
+### Reprise et diagnostic
+
+Le module jugeait deja trois choses A L ECRAN — style, composition,
+accessibilite. La performance manquait, et c est celle qui separe « joli » de
+« professionnel ». Une page magnifique qui met deux secondes a peindre, qui
+saute pendant le chargement ou qui empile 4 800 noeuds est un mauvais livrable,
+quel que soit son score esthetique.
+
+### Modifications realisees
+
+- `src/services/codePerformanceGate.ts` (nouveau) — sept criteres notes par un
+  module pur: premiere peinture, DOM interactif, saut de page (CLS), images non
+  dimensionnees, poids du DOM, octets transferes, taches longues.
+- `scripts/code_harness/render_audit.mjs` — `measurePerformance()` dans le
+  navigateur (PerformanceObserver layout-shift et longtask, navigation timing,
+  poids reel des ressources).
+- `src/services/codeSandboxToolchains.ts` (nouveau) — montage des chaines
+  Kotlin/Swift dans le bac isole.
+
+### Avant-apres mesurable
+
+| Page reelle | Verdict |
+|---|---|
+| convertisseur livre (run 971) | **100/100** — FCP 244 ms, CLS 0, 22 noeuds, 7,3 Ko |
+| page de 1 200 lignes | **88/100** — « Moins de 2500 noeuds DOM — mesure: 4810 » |
+
+Les budgets sont plus severes que les reperes publics de Web Vitals parce qu on
+mesure en LOCAL: ni reseau ni latence serveur, donc 1200 ms de premiere peinture
+et pas 1800. Un detail qui compte pour l honnetete: un FCP a 0 signifie « non
+mesure », pas « instantane » — il compte comme un echec, jamais comme une
+reussite gratuite.
+
+Tests : **1006 -> 1018 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codePerformanceGate.test.ts' \
+  'src/__tests__/codeSandboxToolchains.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+Les quatre portes de rendu sont en place et chacune est prouvee dans les DEUX
+sens — une porte qui ne fait que passer ne vaut rien. Reste assume: ces mesures
+ne concernent que le web. Un APK natif n a pas encore d equivalent (temps de
+demarrage, fluidite) — l emulateur existe, la mesure reste a ecrire.
