@@ -149,6 +149,7 @@ emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: 'Demarrage du pipeline 
 // 4. Run the production orchestrator.
 // ---------------------------------------------------------------------------
 let lastFiles = []
+let renderAuditRan = false
 let result
 try {
   result = await orchestrateCodeGeneration({
@@ -264,6 +265,7 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
   try {
     const { renderAndScoreAesthetics } = await import('./render_audit.mjs')
     let audit = await renderAndScoreAesthetics(files)
+    renderAuditRan = Boolean(audit.applicable && audit.verdict)
     if (audit.applicable && audit.verdict) {
       log(`[bridge-runner] rendu: ${audit.verdict.score}/100 (seuil ${audit.verdict.floor}) echecs=${audit.verdict.failedChecks.join(',') || 'aucun'}`)
       emit(buildCodeStreamVisualScoreEvent({
@@ -342,27 +344,30 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
 // la route GET /api/code/assets/file/<path> sert deja — donc joignable par le
 // tunnel sans toucher au serveur bridge.
 try {
-  const { buildCodeViewerHtml } = await import(resolveSrc('src/services/codeViewerHtml.ts'))
-  const { buildLivePreviewHtml } = await import(resolveSrc('src/components/codeProjectPreviewHtml.ts'))
-  const fs = await import('node:fs')
-  const viewerDir = path.resolve('output/code_assets/viewers', `run-${runId}`)
-  fs.mkdirSync(viewerDir, { recursive: true })
-  const viewerHtml = buildCodeViewerHtml({
-    files,
+  const { publishCodeViewerProject, rebuildCodeViewerIndex } = await import('./viewer_publish.mjs')
+  const meta = await publishCodeViewerProject({
+    id: `run-${runId}`,
     title: String(payload.title || prompt).slice(0, 70),
-    subtitle: `run ${runId}`,
-    previewHtml: buildLivePreviewHtml(files),
+    brief: prompt,
+    files,
+    projectType: result?.intent?.projectType,
+    score: Number(result?.finalScore) || null,
+    // Plateformes REELLEMENT eprouvees pendant ce run, pas declarees d avance.
+    platforms: renderAuditRan
+      ? [{ family: 'web', label: 'Web', status: 'executed', realExecution: true }]
+      : [],
   })
-  fs.writeFileSync(path.join(viewerDir, 'index.html'), viewerHtml, 'utf8')
-  const viewerPath = `/api/code/assets/file/viewers/run-${runId}/index.html`
-  log(`[bridge-runner] viewer: ${viewerPath} (${Math.round(viewerHtml.length / 1024)} Ko)`)
+  const index = await rebuildCodeViewerIndex()
+  const viewerPath = `/api/code/assets/file/viewers/${meta.id}/index.html`
+  log(`[bridge-runner] viewer: ${viewerPath}`)
+  log(`[bridge-runner] hub: /api/code/assets/file/viewers/index.html (${index.projects.length} projets)`)
   emit(buildCodeStreamPhaseEvent({
     ...nextMeta(),
-    message: `Viewer du projet disponible: ${viewerPath}`,
+    message: `Viewer du projet: ${viewerPath} — hub: /api/code/assets/file/viewers/index.html`,
     progress: 99,
   }))
 } catch (err) {
-  log(`[bridge-runner] viewer indisponible: ${String(err?.message ?? err).slice(0, 160)}`)
+  log(`[bridge-runner] viewer indisponible: ${String(err?.message ?? err).slice(0, 200)}`)
 }
 
 // WS9 sur le canal tunnel: la porte visuelle source-statique est evaluee par le
