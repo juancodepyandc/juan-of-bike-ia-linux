@@ -34,6 +34,8 @@ export type CodeViewerIndexEntry = {
   score?: number | null
   brief?: string
   platforms?: CodeViewerPlatform[]
+  /** APK signe reellement construit pour ce projet, quand il y en a un. */
+  apk?: { file: string; bytes: number }
 }
 
 export type CodeViewerIndex = {
@@ -103,6 +105,8 @@ const HUB_EXTRA_STYLE = `
 .tag{font-size:10px;padding:.1rem .45rem;border-radius:999px;border:1px solid #30363d;color:#8b949e}
 .tag.real{border-color:#2ea04366;color:#7ee787;background:#2ea04314}
 .tag.deg{border-color:#d2992255;color:#e3b341;background:#d2992214}
+.apk{font-size:10px;padding:.1rem .5rem;border-radius:999px;border:1px solid #1f6feb;color:#cae2ff;background:#1f6feb1f;text-decoration:none}
+.apk:hover{background:#1f6feb33}
 select{font:inherit;font-size:11px;background:#1c2128;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:.25rem .5rem;max-width:16rem}
 #hubEmpty{padding:2.5rem;color:#7d8590;text-align:center}
 `
@@ -145,6 +149,16 @@ function renderList() {
       t.textContent = pf.label + (pf.realExecution ? ' \\u2713' : '')
       t.title = pf.family + ' \\u00b7 ' + pf.status
       tags.append(t)
+    }
+    if (p.apk) {
+      const dl = document.createElement('a')
+      dl.className = 'apk'
+      dl.href = './' + p.id + '/' + p.apk.file
+      dl.download = p.id + '.apk'
+      dl.textContent = '\u2b07 APK signe (' + Math.round(p.apk.bytes / 1024) + ' Ko)'
+      dl.title = 'Telecharger, puis sur le telephone: autoriser les sources inconnues, ouvrir le fichier, installer. Ou: adb install ' + p.id + '.apk'
+      dl.onclick = (e) => e.stopPropagation()
+      tags.append(dl)
     }
     card.append(h, meta, brief, tags)
     card.onclick = () => open(p.id)

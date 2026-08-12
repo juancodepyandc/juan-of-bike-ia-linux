@@ -11,6 +11,7 @@
 import path from 'node:path'
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
 
 export const VIEWERS_ROOT = path.resolve('output/code_assets/viewers')
 const resolveSrc = (rel) => pathToFileURL(path.resolve(rel)).href
@@ -26,7 +27,7 @@ async function services() {
  * Ecrit un projet: page autonome (lien direct, hors ligne) + charge utile JSON
  * (chargee a la demande par le hub) + metadonnees.
  */
-export async function publishCodeViewerProject({ id, title, brief, files, projectType, score, platforms, createdAt }) {
+export async function publishCodeViewerProject({ id, title, brief, files, projectType, score, platforms, createdAt, withApk = false }) {
   const { buildCodeViewerHtml, buildCodeViewerProjectPayload, buildLivePreviewHtml } = await services()
   const dir = path.join(VIEWERS_ROOT, id)
   fs.mkdirSync(dir, { recursive: true })
@@ -72,8 +73,53 @@ export async function publishCodeViewerProject({ id, title, brief, files, projec
     JSON.stringify({ ...buildCodeViewerProjectPayload({ files, previewHtml }), notice }),
     'utf8',
   )
+  if (withApk) {
+    const apk = buildProjectApk({ id, files, label: meta.title, needsBuild })
+    if (apk) {
+      meta.apk = apk
+      meta.platforms = [
+        ...meta.platforms.filter((p) => p.family !== 'mobile_real'),
+        { family: 'mobile_real', label: 'Mobile', status: 'executed', realExecution: true, detail: 'APK signe' },
+      ]
+    }
+  }
   fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8')
   return meta
+}
+
+/**
+ * Empaquette le projet dans un VRAI APK signe, quand c est possible.
+ *
+ * Possible = un projet web deja servable (index.html + assets) ET le SDK
+ * Android present. Un projet a bundler ou une demande React Native sortent du
+ * cadre: on ne fabrique pas un APK qui ne contiendrait pas l application.
+ * Retourne null sans bruit quand le cas ne s y prete pas — un APK absent est
+ * un fait, pas une erreur.
+ */
+export function buildProjectApk({ id, files, label, needsBuild }) {
+  if (needsBuild) return null
+  if (!files.some((f) => /(^|\/)index\.html?$/i.test(f.name || ''))) return null
+
+  const dir = path.join(VIEWERS_ROOT, id)
+  const projectDir = path.join(dir, 'project')
+  fs.rmSync(projectDir, { recursive: true, force: true })
+  for (const file of files) {
+    const dest = path.join(projectDir, file.name)
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
+    fs.writeFileSync(dest, file.content ?? '', 'utf8')
+  }
+
+  const script = path.resolve('python-services/aurora_code/code_apk_package.py')
+  const buildDir = path.join(dir, 'apk-build')
+  const proc = spawnSync('python3', [script, projectDir, buildDir, label || 'Aurora App'], {
+    encoding: 'utf8', timeout: 300_000,
+  })
+  const produced = path.join(buildDir, 'aurora-app.apk')
+  if (proc.status !== 0 || !fs.existsSync(produced)) return null
+
+  const apkPath = path.join(dir, 'app.apk')
+  fs.copyFileSync(produced, apkPath)
+  return { file: 'app.apk', bytes: fs.statSync(apkPath).size }
 }
 
 /** Reconstruit le hub a partir des `meta.json` presents sur disque. */
@@ -160,7 +206,7 @@ export function readRunFromStream(streamPath) {
   return { runId, score, createdAt, files: [...files.values()], platforms: platformsFromStream(events) }
 }
 
-async function importPastRuns() {
+async function importPastRuns(withApk = false) {
   const auditRoot = path.resolve('output/code')
   if (!fs.existsSync(auditRoot)) return []
   const imported = []
@@ -189,6 +235,7 @@ async function importPastRuns() {
       files: run.files,
       score: run.score,
       platforms: run.platforms,
+      withApk,
       createdAt: run.createdAt ?? fs.statSync(streamPath).mtimeMs,
     })
     imported.push(meta)
@@ -199,7 +246,7 @@ async function importPastRuns() {
 if (process.argv.includes('--import')) {
   const { installHeadlessCodeEnv } = await import('./harness_env.mjs')
   installHeadlessCodeEnv()
-  const imported = await importPastRuns()
+  const imported = await importPastRuns(process.argv.includes('--apk'))
   const index = await rebuildCodeViewerIndex()
   process.stdout.write(`${imported.length} run(s) importe(s), ${index.projects.length} projet(s) au hub\n`)
   for (const meta of index.projects) {
