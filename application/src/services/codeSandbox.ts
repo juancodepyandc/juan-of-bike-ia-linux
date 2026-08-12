@@ -39,6 +39,12 @@ function acceptanceFailureResult(
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/** Dossier utilisateur cote hote: sert a monter les chaines Kotlin/Swift. */
+function sandboxHomeDir(): string {
+  const proc = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+  return proc?.env?.HOME || proc?.env?.USERPROFILE || '~'
+}
+
 export async function runCodeSandboxValidation({
   files,
   prompt,
@@ -206,7 +212,7 @@ export async function runCodeSandboxValidation({
 
     for (let index = 0; index < commands.length; index += 1) {
       const command = commands[index]
-      const runnableCommand = wrapCommandForPodman(command, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi' })
+      const runnableCommand = wrapCommandForPodman(command, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi', homeDir: sandboxHomeDir() })
       const progress = Math.min(96, 90 + Math.round(((index + 1) / commands.length) * 6))
       setProgress?.(`${command.label} dans le sandbox...`)
       setPhase?.(`${command.label} dans le sandbox...`, progress)
@@ -218,9 +224,9 @@ export async function runCodeSandboxValidation({
             executable: 'npm',
             args: ['view', packageName, 'versions', '--json'],
             timeoutMs: 120_000,
-          }, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi' }),
+          }, lang, sandboxRoot, { gpu: gpuStatus.mode === 'podman-cdi', homeDir: sandboxHomeDir() }),
           afterWrite: async () => {
-            const sync = await prepareSandboxWorkspaceVolume(sandboxRoot, lang, { gpu: gpuStatus.mode === 'podman-cdi' })
+            const sync = await prepareSandboxWorkspaceVolume(sandboxRoot, lang, { gpu: gpuStatus.mode === 'podman-cdi', homeDir: sandboxHomeDir() })
             if (!sync.ok) {
               throw new Error('Resynchronisation du workspace quota WS7 impossible apres correction npm.')
             }

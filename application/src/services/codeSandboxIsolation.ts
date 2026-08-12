@@ -22,6 +22,8 @@ export type SandboxQuotaProfile = {
 
 export type PodmanSandboxOptions = {
   gpu?: boolean
+  /** Racine du dossier utilisateur, pour retrouver les chaines Kotlin/Swift. */
+  homeDir?: string
 }
 
 export const DEFAULT_SANDBOX_QUOTAS: SandboxQuotaProfile = {
@@ -35,6 +37,12 @@ export const DEFAULT_SANDBOX_QUOTAS: SandboxQuotaProfile = {
 
 const CONTAINER_WORKSPACE_PATH = '/workspace'
 const CONTAINER_INPUT_PATH = '/aurora-input'
+
+import {
+  imageOverrideForToolchain,
+  toolchainMountForLanguage,
+  toolchainPodmanArgs,
+} from './codeSandboxToolchains.ts'
 
 const LANGUAGE_IMAGES: Partial<Record<DetectedLanguage, string>> = {
   node: 'docker.io/library/node:22-bookworm-slim',
@@ -311,14 +319,18 @@ export function buildPodmanSandboxArgs(
   options: PodmanSandboxOptions = {},
 ): string[] {
   const networkPolicy = buildSandboxNetworkPolicy(command)
+  // Kotlin et Swift n ont pas d image dediee: on monte en lecture seule la
+  // chaine installee dans le dossier prive d Aurora et on l ajoute au PATH.
+  const mount = toolchainMountForLanguage(lang, options.homeDir ?? '~')
   return [
     'run',
     ...commonPodmanRunArgs(sandboxRoot, networkPolicy, quotas, options),
+    ...toolchainPodmanArgs(mount),
     '--volume',
     `${sandboxWorkspaceVolumeName(sandboxRoot)}:${CONTAINER_WORKSPACE_PATH}:rw,z`,
     '--workdir',
     CONTAINER_WORKSPACE_PATH,
-    imageForLanguage(lang),
+    imageOverrideForToolchain(lang) ?? imageForLanguage(lang),
     containerExecutable(command.executable),
     ...command.args,
   ]
