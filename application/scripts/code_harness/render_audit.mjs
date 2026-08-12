@@ -101,6 +101,112 @@ async function measureComposition(page) {
   })
 }
 
+// Accessibilite mesuree DANS le navigateur: contraste calcule, noms
+// accessibles resolus, ordre des titres reel. Une regex sur la source ne peut
+// voir aucun des quatre.
+async function measureAccessibility(page) {
+  return page.evaluate(() => {
+    const visible = (el) => {
+      const r = el.getBoundingClientRect()
+      const st = getComputedStyle(el)
+      return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'
+    }
+    const describe = (el) => {
+      const id = el.id ? `#${el.id}` : ''
+      const cls = typeof el.className === 'string' && el.className ? `.${el.className.trim().split(/\s+/)[0]}` : ''
+      return `${el.tagName.toLowerCase()}${id}${cls}`
+    }
+    const accessibleName = (el) => (
+      el.getAttribute('aria-label')
+      || el.getAttribute('title')
+      || (el.getAttribute('aria-labelledby') ? document.getElementById(el.getAttribute('aria-labelledby'))?.textContent : '')
+      || el.textContent
+      || ''
+    ).trim()
+
+    const parse = (color) => {
+      const m = String(color).match(/rgba?\(([^)]+)\)/)
+      if (!m) return null
+      const [r, g, b, a] = m[1].split(',').map((v) => parseFloat(v))
+      return { r, g, b, a: a === undefined ? 1 : a }
+    }
+    const lum = ({ r, g, b }) => {
+      const f = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4 }
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+    }
+    const bgOf = (el) => {
+      let node = el
+      while (node && node !== document.documentElement) {
+        const c = parse(getComputedStyle(node).backgroundColor)
+        if (c && c.a > 0.1) return c
+        node = node.parentElement
+      }
+      return { r: 255, g: 255, b: 255, a: 1 }
+    }
+
+    const imagesWithoutName = []
+    for (const img of document.querySelectorAll('img')) {
+      if (!visible(img)) continue
+      const alt = img.getAttribute('alt')
+      // alt="" est un choix VALIDE pour une image decorative: on ne le punit pas.
+      if (alt === null) imagesWithoutName.push(describe(img))
+    }
+
+    const controlsWithoutName = []
+    const unreachableByKeyboard = []
+    for (const el of document.querySelectorAll('button, a[href], [role="button"], summary')) {
+      if (!visible(el)) continue
+      if (!accessibleName(el)) controlsWithoutName.push(describe(el))
+      if (Number(el.getAttribute('tabindex')) < 0) unreachableByKeyboard.push(describe(el))
+    }
+    for (const el of document.querySelectorAll('[onclick]')) {
+      if (!visible(el)) continue
+      if (!el.matches('button, a[href], input, select, textarea, [role="button"], [tabindex]')) {
+        unreachableByKeyboard.push(describe(el))
+      }
+    }
+
+    const fieldsWithoutLabel = []
+    for (const field of document.querySelectorAll('input:not([type=hidden]), select, textarea')) {
+      if (!visible(field)) continue
+      const labelled = field.getAttribute('aria-label')
+        || field.getAttribute('aria-labelledby')
+        || (field.id && document.querySelector(`label[for="${CSS.escape(field.id)}"]`))
+        || field.closest('label')
+      if (!labelled) fieldsWithoutLabel.push(describe(field))
+    }
+
+    const headingLevels = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+      .filter(visible)
+      .map((h) => Number(h.tagName[1]))
+
+    const lowContrastSamples = []
+    for (const el of document.querySelectorAll('p, span, li, a, h1, h2, h3, h4, label, button, td')) {
+      if (lowContrastSamples.length >= 8 || !visible(el)) continue
+      const text = (el.textContent || '').trim()
+      if (text.length < 4) continue
+      if ([...el.children].some((child) => (child.textContent || '').trim().length > 0)) continue
+      const st = getComputedStyle(el)
+      const fg = parse(st.color)
+      if (!fg) continue
+      const bg = bgOf(el)
+      const l1 = lum(fg); const l2 = lum(bg)
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)
+      // Le gros texte a droit a 3:1; on ne juge que le texte normal.
+      const size = parseFloat(st.fontSize) || 16
+      const bold = Number(st.fontWeight) >= 700
+      const threshold = size >= 24 || (size >= 18.66 && bold) ? 3 : 4.5
+      if (ratio < threshold) lowContrastSamples.push({ text: text.slice(0, 60), ratio })
+    }
+
+    return {
+      documentLang: document.documentElement.getAttribute('lang') || '',
+      imagesWithoutName, controlsWithoutName, fieldsWithoutLabel,
+      headingLevels, lowContrastSamples, unreachableByKeyboard,
+    }
+  })
+}
+
 async function measure(page) {
   return page.evaluate(() => {
     const els = Array.from(document.querySelectorAll('body *')).slice(0, 4000)
@@ -199,8 +305,16 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
       emojiIcons: composition.emojiIcons ?? [],
       viewportWidth: composition.viewportWidth ?? 1440,
     })
+    // Accessibilite: mesuree au rendu comme la composition, notee par un
+    // module pur (donc testable sans navigateur).
+    const { scoreAccessibility } = await import(
+      pathToFileURL(path.resolve('src/services/codeAccessibilityGate.ts')).href
+    )
+    const accessibility = await measureAccessibility(page)
+    const accessibilityVerdict = scoreAccessibility(accessibility)
     return {
       applicable: true, metrics: desktop, consoleErrors, composition, compositionVerdict,
+      accessibility, accessibilityVerdict,
       verdict: scoreRenderedAesthetics({ desktop, consoleErrors }),
     }
   } catch (err) {
