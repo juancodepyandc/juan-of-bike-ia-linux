@@ -9,6 +9,7 @@ import {
   getLegacyReactThreeDependencySpec,
 } from './codeGeneratedDependencyPolicy.ts'
 import { repairGeneratedTypeScriptContent } from './codeGeneratedTypeScriptRepair.ts'
+import { isApostropheRepairable, repairFrenchApostrophes } from './codeApostropheRepair.ts'
 import {
   parseSpecVersion,
   readManifestDependencySpec,
@@ -192,7 +193,10 @@ export function sanitizeGeneratedFileContent(filename: string, content: string) 
     return cleaned
   }
 
-  return repairGeneratedTypeScriptContent(filename, cleaned)
+  // Run 1051: 9 passes sur la meme apostrophe francaise, puis abandon. Cas
+  // deterministe -> corrige ici, jamais confie a une passe probabiliste.
+  const fixed = isApostropheRepairable(normalized) ? repairFrenchApostrophes(cleaned).code : cleaned
+  return repairGeneratedTypeScriptContent(filename, fixed)
 }
 
 function upsertPackageDependency(
