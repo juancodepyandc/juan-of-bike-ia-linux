@@ -6561,3 +6561,90 @@ encore dans la boucle de correction elle-meme. Les erreurs du compilateur sont
 donc visibles apres coup, mais elles ne nourrissent pas encore les passes de
 correction — c est le branchement qui rendrait le gain complet, et c est le
 prochain vrai chantier.
+
+## 2026-08-12 — Le parser dit OU, et la matrice de capacite est mesuree
+
+### Reprise et diagnostic
+
+**Le compilateur comme source de verite dans la boucle.** Le run 1011 a depense
+quatre passes sur « AboutPage.tsx: erreur de syntaxe ». Vrai, et inexploitable:
+le modele devait relire 200 lignes pour deviner quoi corriger. Le parser
+connaissait pourtant la position exacte depuis le debut — personne ne la lisait.
+
+Sur les fichiers REELS du run 991:
+
+```
+avant  src/__tests__/MarketCalendar.test.tsx: erreur de syntaxe
+apres  src/__tests__/MarketCalendar.test.tsx:15:23 — jeton inattendu
+       pres de: location: 'Presqu'île',
+```
+
+L apostrophe non echappee dans une chaine a guillemets simples: la cause exacte,
+nommee. C est le meme diagnostic que `error TS1002: Unterminated string literal`
+— obtenu sans npm, dans CHAQUE passe, sur les trois canaux.
+
+Deux raffinements imposes par les fichiers reels: on garde le noeud fautif le
+plus PRECIS (un ERROR racine couvre tout le fichier, « 1:1 » n aide personne),
+et quand l erreur part de l octet 0 on pointe la FRONTIERE d analyse. Footer.tsx
+passe ainsi de « 1:1 » a « 34: », exactement la ligne que tsc designe.
+
+### La matrice de capacite, mesuree
+
+L utilisateur demande jusqu ou le module peut aller. Une estimation ne vaut
+rien: chaque case est un artefact compile sur cet hote.
+
+| Plateforme | Etat | Preuve |
+|---|---|---|
+| Android natif (Java) | **PROUVE** | APK signe 8 605 o, `CN=Aurora Natif`, vraie Activity |
+| Android natif (Kotlin) | **PROUVE** | APK signe 610 717 o, `CN=Aurora Kotlin` |
+| Apple / iOS (Swift) | **PARTIEL** | swiftc 5.10.1 compile ET execute; `.ipa` impossible hors macOS |
+| Embarque (Rust) | **PROUVE** | binaire natif execute, marqueur observe |
+| OS / bas niveau (C) | **PROUVE** | objet freestanding, QEMU disponible |
+| WebAssembly | **PROUVE** | module wasm valide (magic `0asm`) |
+
+Trois verrous ont ete LEVES plutot que rapportes: le compilateur Kotlin, la
+cible `wasm32` et la chaine Swift Linux manquaient — installes dans le dossier
+prive d Aurora, puis prouves par un artefact. Swift a coute 605 Mo pour pouvoir
+dire « ce code Swift est valide » au lieu de « je ne sais pas ».
+
+Sur Apple, la matrice separe deux questions qu on confond toujours: le code
+est-il VALIDE (verifiable ici) et peut-on produire un `.ipa` INSTALLABLE (non,
+jamais, hors macOS — limite de plateforme, pas d outillage).
+
+**L ecart que seule la mesure revele:** l HOTE compilait du Kotlin, le SANDBOX
+non. Aucune image n etait declaree pour kotlin ni swift, ils retombaient sur
+`debian:bookworm-slim` ou `kotlinc` n existe pas — un projet Kotlin genere
+echouait sur « command not found », pas sur son code. Les chaines sont
+desormais montees en LECTURE SEULE depuis le dossier prive d Aurora, avec
+l image temurin pour Kotlin qui a besoin d une JVM.
+
+### Avant-apres mesurable
+
+| | avant | apres |
+|---|---|---|
+| erreur de syntaxe rapportee | « fichier: erreur de syntaxe » | « fichier:15:23 — pres de `location: 'Presqu'île',` » |
+| plateformes prouvees | 1 (web) | **5 prouvees + 1 partielle** |
+| Kotlin dans le sandbox | `command not found` | chaine montee, image JVM |
+
+Tests : **998 -> 1006 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types scripts/code_harness/capability_probe.mjs --publish
+curl -s -o /dev/null -w "%{http_code}\n" "https://<tunnel>/api/code/assets/file/viewers/capacites.html"
+```
+
+La matrice est publiee et lisible: `/api/code/assets/file/viewers/capacites.html`.
+
+### Etat de satisfaction chantier
+
+La position exacte des erreurs de syntaxe ferme la cause qui brulait le plus de
+passes. La matrice ne repose plus sur une impression: cinq plateformes portent
+un artefact, la sixieme porte une raison.
+
+Reste assume: `tsc` complet (erreurs de TYPE, pas seulement de syntaxe) tourne
+dans le harnais, pas encore dans la boucle. Et les APK natifs Java/Kotlin sont
+prouves au niveau CHAINE — le pipeline sait desormais les compiler, mais aucun
+run n a encore genere un projet Kotlin de bout en bout.

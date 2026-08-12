@@ -328,4 +328,43 @@ for (const { id, platform, fn } of probes) {
   results.push({ id, platform, ...result })
 }
 
-process.stdout.write(`${JSON.stringify({ schema: 'aurora.code.capability-matrix/1', measuredAt: Date.now(), results }, null, 2)}\n`)
+const matrix = { schema: 'aurora.code.capability-matrix/1', measuredAt: Date.now(), results }
+process.stdout.write(`${JSON.stringify(matrix, null, 2)}\n`)
+
+// Publication: la matrice n a de valeur que si on peut la LIRE. Elle part donc
+// a cote du hub, servie par la meme route que les viewers.
+if (process.argv.includes('--publish')) {
+  const outDir = path.resolve('output/code_assets/viewers')
+  fs.mkdirSync(outDir, { recursive: true })
+  fs.writeFileSync(path.join(outDir, 'capacites.json'), JSON.stringify(matrix), 'utf8')
+  const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const badge = { prouve: '#2ea043', partiel: '#d29922', echec: '#f85149', impossible: '#6e7681' }
+  const rows = results.map((r) => `<tr>
+    <td><b>${esc(r.platform)}</b></td>
+    <td><span style="color:${badge[r.status] ?? '#8b949e'};font-weight:600">${esc(r.status.toUpperCase())}</span></td>
+    <td>${esc(r.detail)}</td>
+    <td class="mono">${r.artifact ? esc(r.artifact) : '—'}</td>
+  </tr>`).join('\n')
+  fs.writeFileSync(path.join(outDir, 'capacites.html'), `<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Capacites reelles — Module Code</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0d1117;color:#c9d1d9;font:14px/1.6 ui-sans-serif,system-ui,sans-serif;padding:1.5rem}
+h1{font-size:18px;color:#e6edf3;margin:0 0 .3rem}
+p.sub{color:#7d8590;font-size:12px;margin:0 0 1.2rem}
+table{border-collapse:collapse;width:100%;max-width:1100px}
+th,td{text-align:left;padding:.6rem .7rem;border-bottom:1px solid #1c2128;vertical-align:top;font-size:13px}
+th{color:#7d8590;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.mono{font-family:ui-monospace,monospace;font-size:11px;color:#6e7681;word-break:break-all}
+footer{margin-top:1.4rem;color:#6e7681;font-size:11px;max-width:1100px}
+</style></head><body>
+<h1>Capacites reelles du module Code</h1>
+<p class="sub">Chaque ligne est un artefact REELLEMENT compile sur cet hote, ou une raison precise de ne pas pouvoir. Mesure du ${new Date(matrix.measuredAt).toLocaleString('fr-FR')}.</p>
+<table><thead><tr><th>Plateforme</th><th>Etat</th><th>Preuve / raison</th><th>Artefact</th></tr></thead>
+<tbody>${rows}</tbody></table>
+<footer>PROUVE = artefact produit et verifie. PARTIEL = une partie seulement est verifiable sur cet hote. IMPOSSIBLE = limite de plateforme, la raison est donnee.</footer>
+</body></html>
+`, 'utf8')
+  process.stderr.write(`  publie: output/code_assets/viewers/capacites.html\n`)
+}
