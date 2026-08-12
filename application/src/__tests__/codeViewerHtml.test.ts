@@ -79,3 +79,51 @@ describe('codeViewerHtml — page autonome', () => {
     assert.match(hostile, /&lt;img src=x onerror/)
   })
 })
+
+describe('codeViewerHtml — robustesse sur les cas que personne ne teste', () => {
+  const build = (files: Array<{ name: string; language: string; content: string }>) =>
+    buildCodeViewerHtml({ files, title: 'Stress', previewHtml: null })
+
+  const scriptOf = (html: string) => html.match(/<script>([\s\S]*?)<\/script>/)![1]
+
+  test('un projet vide produit une page valide, pas une page cassee', () => {
+    const html = build([])
+    assert.doesNotThrow(() => new Function(scriptOf(html)))
+    assert.match(html, /0 fichiers/)
+  })
+
+  test('un contenu binaire ne casse ni le script ni la charge utile', () => {
+    const binary = `\u0089PNG\u0000\u001a\n\u00ff\u00fe binaire`
+    const html = build([
+      { name: 'logo.png', language: 'png', content: binary },
+      { name: 'index.html', language: 'html', content: '<h1>ok</h1>' },
+    ])
+    assert.doesNotThrow(() => new Function(scriptOf(html)))
+  })
+
+  test('un nom de fichier hostile ne peut pas injecter de balise', () => {
+    const html = build([{ name: '<script>alert(1)</script>.ts', language: 'ts', content: 'export const a = 1' }])
+    // Le nom part dans la charge utile JSON (echappee) et est pose via
+    // textContent: il ne peut pas devenir du markup.
+    assert.equal(html.includes('<script>alert(1)</script>.ts'), false)
+    assert.doesNotThrow(() => new Function(scriptOf(html)))
+  })
+
+  test('les separateurs de ligne Unicode ne cassent pas le JSON embarque', () => {
+    // U+2028 et U+2029 sont valides en JSON mais illegaux dans un litteral JS.
+    const html = build([{ name: 'x.js', language: 'javascript', content: `const a = 1\u2028const b = 2\u2029` }])
+    assert.doesNotThrow(() => new Function(scriptOf(html)))
+  })
+
+  test('500 fichiers restent navigables', () => {
+    const files = Array.from({ length: 500 }, (_, index) => ({
+      name: `src/mod${String(index).padStart(3, '0')}/index.ts`,
+      language: 'ts',
+      content: `export const v${index} = ${index}\n`,
+    }))
+    const html = build(files)
+    assert.doesNotThrow(() => new Function(scriptOf(html)))
+    const rows = JSON.parse(html.match(/id="aurora-rows">([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, '<'))
+    assert.equal(rows.filter((row: { kind: string }) => row.kind === 'file').length, 500)
+  })
+})
