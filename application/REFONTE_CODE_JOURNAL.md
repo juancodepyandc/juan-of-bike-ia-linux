@@ -6347,3 +6347,111 @@ lien — le meme appel doit y etre branche. Et la passe esthetique continue de
 repartir d une page blanche: sur ce run elle a ecrit un `game.js` pour un
 convertisseur. Le garde empeche desormais cette derive d ecraser le bon
 travail; il ne l empeche pas de se produire.
+
+## 2026-08-12 — Hub de tous les projets, et un vrai APK signe
+
+### Reprise et diagnostic
+
+Trois chantiers, plus deux verdicts de runs reels.
+
+**Le run SIMPLE aboutit proprement.** Rejoue avec le correctif de protocole:
+
+```
+[bridge-runner] acceptation comportementale 2/2
+[bridge-runner] rendu: 70/100 (seuil 70)
+[bridge-runner] done files=5 score=99 attempts=1
+```
+
+Une seule passe de correction, aucune boucle, livraison `done`. C est le succes
+complet demande, sur le bas du spectre.
+
+**Le run COMPLEXE a revele une cause encore jamais vue.** Verdict:
+
+```
+FAIL runtime-no-error: Failed to load module script: Expected a
+     JavaScript-or-Wasm module script but the server responded with a MIME type
+     of "text/plain". Strict MIME type checking is enforced.
+FAIL renders-content: 0 caracteres, 0 controles, 0 surfaces.
+```
+
+Le livrable de 43 fichiers a ete declare casse et la boucle a brule NEUF passes
+a corriger une application qui n avait jamais ete CONSTRUITE. Le harnais sert
+les sources telles quelles; l `index.html` d un projet Vite pointe
+`/src/main.tsx`, que seul un build resout. Le juge de RENDU tenait deja cette
+garde (`needsBundler`); l acceptation comportementale ne l avait jamais eue.
+
+**Le lien par run ne suffisait pas.** Une adresse jetable par generation oblige
+a retrouver la bonne. Il fallait une adresse STABLE listant tout.
+
+**Et l APK: l evaluation de faisabilite s est inversee en cours de route.**
+Premier verdict, honnete mais faux: `adb`, `aapt2`, `apksigner` absents du PATH,
+`ANDROID_HOME` vide — donc impossible. En cherchant ou WS12 prenait ses outils,
+le SDK est apparu: 3,2 Go sous `~/.local/share/auroraia/tools/android-sdk`,
+build-tools 36, plateforme android-36, DEUX AVD (phone et tablet), JDK 21. Il
+n est pas sur le PATH, c est `_android_env()` qui l y met. La faisabilite
+n etait pas une question d outillage, mais de savoir ou il etait range.
+
+### Modifications realisees
+
+- `scripts/code_harness/acceptance_behaviour.mjs` — la garde `needsBundler`,
+  plus `.ts/.tsx/.jsx` dans les tables MIME des deux harnais.
+- `src/services/codeViewerIndex.ts` (nouveau) — le HUB: liste, pastilles de
+  plateforme, selecteur de projet, lien APK.
+- `src/services/codeViewerAssets.ts` (nouveau) — habillage partage.
+- `scripts/code_harness/viewer_publish.mjs` (nouveau) — publication disque,
+  reconstruction de l index, import des runs passes, empaquetage APK.
+- `python-services/aurora_code/code_apk_package.py` (nouveau) — APK signe qui
+  EMBARQUE le projet (`aapt2 link -A assets/`, WebView sur
+  `file:///android_asset/www/index.html`). Ne touche pas a WS12.
+
+### Avant-apres mesurable
+
+| | avant | apres |
+|---|---|---|
+| SPA jugee sans build | « 0 caractere », run condamne, 9 passes | `applicable:false, needsBuild:true` |
+| acces aux projets | 1 lien jetable par run | 1 hub stable, 7 projets importes |
+| changer de projet | recharger une autre page | selecteur, meme page |
+| projet mobile | rien | APK signe telechargeable (4 projets sur 7) |
+
+**Preuve, pilotee a travers le tunnel public:**
+
+```
+hub                     HTTP 200 · 7 cartes · pastilles « Web ✓ | Mobile ✓ »
+ouverture du complexe   53 lignes d arborescence
+bascule au selecteur    6 lignes, MEME page (pas de rechargement)
+retour a la liste       7 cartes · erreurs JS: aucune
+APK par le tunnel       HTTP 200 · 12 998 o · application/vnd.android.package-archive
+APK telecharge          apksigner: CN=Aurora Code, O=AuroraIA, C=FR
+contenu de l APK        assets/www/index.html = <title>Convertisseur de Température</title>
+```
+
+Tests : **935 -> 943 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types scripts/code_harness/viewer_publish.mjs --import --apk
+curl -s -o /dev/null -w "%{http_code} %{content_type}\n" \
+  "https://<tunnel>/api/code/assets/file/viewers/run-1001/app.apk"
+~/.local/share/auroraia/tools/android-sdk/build-tools/36.0.0/apksigner verify --print-certs \
+  output/code_assets/viewers/run-1001/app.apk
+```
+
+### Etat de satisfaction chantier
+
+Le hub existe, je l ai pilote moi-meme au bout du tunnel, et l APK telecharge
+par ce meme tunnel est signe et contient bien l application.
+
+Reste assume, mesure, non contourne:
+- un projet a bundler n a ni rendu ni APK — il affiche desormais la RAISON
+  (« npm install && npm run build ») au lieu d un cadre blanc. C est honnete,
+  mais ce n est pas resolu: construire les SPA generees reste le prochain vrai
+  chantier, et c est lui qui debloquerait a la fois le rendu, l acceptation et
+  l APK des projets complexes;
+- React Native reste hors cadre (chaine Gradle et node_modules absents);
+- l apercu de l emulateur en direct dans le navigateur n est pas livre: il
+  demanderait un etage de streaming disproportionne ici. Les deux AVD existent,
+  donc `adb install` reste la voie courte;
+- le hub est alimente par le RUNNER: une generation lancee depuis l UI Tauri n y
+  apparait pas encore.
