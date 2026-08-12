@@ -6791,3 +6791,72 @@ La derniere cause de refus injustifie du brief Brulerie est fermee, et elle
 l est de la seule maniere qui vaille: en faisant lire au juge ce qui a ete
 demande, sans lui retirer sa severite. Le run complet qui doit le confirmer de
 bout en bout est lance (runId 1031).
+
+## 2026-08-12 (suite) — Run 1031: trois causes, dont un juge aveugle a Tailwind
+
+Le run 1031 a echoue a 64/100. Le correctif de retenue stylistique, lui,
+fonctionne en reel: le juge ecrit « Retenue demandee par le brief: criteres
+spectaculaires retires ». Les rotations 3D ne sont plus exigees. Restaient
+trois verrous mecaniques, tous mesures sur les fichiers reels du run.
+
+### Cause 1 — le juge etait aveugle a Tailwind
+
+Il reprochait au projet l absence d arrondis, de survols et de degrades. Le
+projet en a. Compte dans ses fichiers:
+
+```
+rounded-lg x21 · rounded-md x3 · rounded-full x1
+hover:text-olive x3 · hover:bg-amber-* x3 · hover:bg-olive x1
+```
+
+La porte cherchait `border-radius:` et `:hover` dans du CSS. **Tailwind
+n ecrit jamais ces proprietes** — il les genere au build depuis les classes
+utilitaires, et son `index.css` ne contient que trois directives `@tailwind`.
+Aucune SPA Tailwind ne pouvait donc passer ces criteres. Meme defaut que le
+reste de cette refonte: juger la FORME de la reponse au lieu de sa substance.
+
+Idem pour les sections: 14 composants de page (About, CoffeeList, Contact,
+Admin...) comptaient pour « 2 sections », faute de balise `<section>`.
+
+| sur les fichiers reels du run 1031 | avant | apres |
+|---|---|---|
+| fidelite visuelle | **64/100 REFUSE** | **85/100 ACCEPTE** |
+| finition (polish gate) | **43/100** | **80/100** |
+
+Les manques restants — degrades, SVG inline, images — sont reels.
+
+**La meme cecite frappait la porte de finition, en pire:** son rapport alimente
+`codeCorrectionMessages`. On ne se contentait pas de mal noter un projet
+Tailwind, on lui envoyait la liste de ce qui « manque » — donc on demandait au
+modele d ajouter du CSS qu un projet Tailwind ne doit pas ecrire.
+
+### Cause 2 — un conseil irrealisable fait boucler le modele
+
+Les passes 5 a 8 etaient bloquees sur « Secret en dur dans src/lib/auth.ts ».
+Ce n est pas un faux positif: `brulerie2024` est bien en dur. Mais le conseil
+donne — « deplacer vers .env » — est **faux sur ce projet**: 0 fichier serveur
+sur 31, et dans un bundle front une variable `VITE_*` est inline au build, donc
+tout aussi publique. Le modele appliquait le conseil, le probleme restait, la
+regle se redeclenchait: **quatre passes perdues dans une boucle sans sortie,
+parce que la sortie proposee n existait pas.**
+
+Un conseil irrealisable est pire qu un silence: il transforme une porte de
+qualite en piege. La remediation depend desormais de l architecture reelle.
+
+### Cause 3 — un JSON annexe condamnait toute la passe
+
+`main.json` invalide a fait jeter deux passes de correction entieres, avec
+toutes les corrections valides qu elles contenaient. Seuls les JSON dont depend
+le build (package.json, tsconfig, tauri.conf, manifest) condamnent encore.
+
+### Regle structurelle
+
+Celle posee au tour precedent, contournee ici par un autre chemin: **une porte
+ne condamne jamais ce qu elle n a pas vu.** Sur un projet a bundler dont le
+markup source se reduit a la coquille `<div id="root">`, sans rendu construit,
+le verdict est « NON MESURE » — pas 64/100.
+
+Aucun laissez-passer: projet Tailwind reellement pauvre = toujours refuse,
+package.json casse = toujours condamne, « non mesure » n est pas une reussite.
+
+Tests : **1029 -> 1044 verts, 0 echec.**
