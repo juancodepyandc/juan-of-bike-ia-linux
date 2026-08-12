@@ -13,6 +13,7 @@ import {
   platformsFromSimulationStages,
   CODE_VIEWER_INDEX_SCHEMA,
 } from '../services/codeViewerIndex.ts'
+import { buildCodeViewerHtml } from '../services/codeViewerHtml.ts'
 
 const entry = (id: string, createdAt: number, extra = {}) => ({
   id, createdAt, title: `Projet ${id}`, fileCount: 3, bytes: 1200, ...extra,
@@ -81,5 +82,41 @@ describe('codeViewerIndex — page du hub', () => {
   test('charge chaque projet a la demande, sans changer de page', () => {
     assert.match(html, /fetch\('\.\/' \+ id \+ '\/project\.json'/)
     assert.match(html, /history\.replaceState/)
+  })
+})
+
+describe('codeViewerIndex — la page doit REELLEMENT s executer', () => {
+  // Bug vecu: `join('\n')` ecrit dans un template literal TS devient un vrai
+  // retour a la ligne dans le script emis -> « Invalid or unexpected token »,
+  // page morte, zero carte. Les tests de contenu passaient tous: seul un parse
+  // du script emis l aurait vu. Ce garde vaut pour les deux pages viewer.
+  function inlineScriptOf(html: string): string {
+    return html.match(/<script>([\s\S]*?)<\/script>/)![1]
+  }
+
+  test('le script du hub est du JavaScript valide', () => {
+    const html = buildCodeViewerIndexHtml(buildCodeViewerIndex([
+      entry('run-1', 1, { buildOk: false, buildErrors: ['a.tsx(1,2): error TS1002'] }),
+    ]))
+    assert.doesNotThrow(() => new Function(inlineScriptOf(html)))
+  })
+
+  test('le script de la page autonome est du JavaScript valide', () => {
+    const html = buildCodeViewerHtml({
+      files: [{ name: 'index.html', language: 'html', content: '<h1>x</h1>' }],
+      title: 'x',
+      previewHtml: '<h1>x</h1>',
+    })
+    assert.doesNotThrow(() => new Function(inlineScriptOf(html)))
+  })
+
+  test('aucun retour a la ligne brut ne casse une chaine du script', () => {
+    const html = buildCodeViewerIndexHtml(buildCodeViewerIndex([entry('run-1', 1)]))
+    const script = inlineScriptOf(html)
+    // Une chaine ouverte et jamais fermee sur la meme ligne = escape avalee.
+    for (const [index, line] of script.split('\n').entries()) {
+      const singles = (line.match(/(?<!\\)'/g) ?? []).length
+      assert.equal(singles % 2, 0, `ligne ${index + 1} du script: quote non fermee -> ${line.trim().slice(0, 70)}`)
+    }
   })
 })

@@ -36,6 +36,9 @@ export type CodeViewerIndexEntry = {
   platforms?: CodeViewerPlatform[]
   /** APK signe reellement construit pour ce projet, quand il y en a un. */
   apk?: { file: string; bytes: number }
+  /** `false` = le projet ne compile pas; `null` = pas de build necessaire. */
+  buildOk?: boolean | null
+  buildErrors?: string[]
 }
 
 export type CodeViewerIndex = {
@@ -109,6 +112,13 @@ const HUB_EXTRA_STYLE = `
 .apk:hover{background:#1f6feb33}
 select{font:inherit;font-size:11px;background:#1c2128;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:.25rem .5rem;max-width:16rem}
 #hubEmpty{padding:2.5rem;color:#7d8590;text-align:center}
+#tools{display:flex;gap:.5rem;align-items:center;padding:.5rem .9rem;border-bottom:1px solid #1c2128;background:#0a0f14}
+#q{flex:1;max-width:22rem;font:inherit;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:.3rem .6rem}
+#q::placeholder{color:#6e7681}
+#count{font-size:11px;color:#7d8590;margin-left:auto}
+.state{font-size:10px;padding:.1rem .45rem;border-radius:999px;border:1px solid #30363d}
+.state.ko{border-color:#f8514966;color:#ff7b72;background:#f8514914}
+.state.ok{border-color:#2ea04366;color:#7ee787;background:#2ea04314}
 `
 
 const HUB_SCRIPT = `
@@ -116,6 +126,10 @@ const index = JSON.parse(document.getElementById('aurora-index').textContent)
 const listEl = document.getElementById('list')
 const mainEl = document.getElementById('viewer')
 const picker = document.getElementById('picker')
+const toolsEl = document.getElementById('tools')
+const qEl = document.getElementById('q')
+const sortEl = document.getElementById('sort')
+const countEl = document.getElementById('count')
 const backList = document.getElementById('backList')
 const title = document.getElementById('hubTitle')
 const sub = document.getElementById('hubSub')
@@ -129,20 +143,51 @@ const collapsed = new Set()
 
 function fmtDate(ms) { try { return new Date(ms).toLocaleString('fr-FR') } catch { return '' } }
 
+function matches(p, needle) {
+  if (!needle) return true
+  const hay = [p.title, p.brief, p.projectType, p.id].filter(Boolean).join(' ').toLowerCase()
+  return needle.split(/\s+/).every((word) => hay.includes(word))
+}
+
+function sorted(list) {
+  const mode = sortEl.value
+  const copy = [...list]
+  if (mode === 'size') return copy.sort((a, b) => (b.bytes || 0) - (a.bytes || 0))
+  if (mode === 'score') return copy.sort((a, b) => (b.score ?? -1) - (a.score ?? -1))
+  if (mode === 'name') return copy.sort((a, b) => String(a.title).localeCompare(String(b.title), 'fr'))
+  return copy.sort((a, b) => b.createdAt - a.createdAt)
+}
+
 function renderList() {
   mainEl.classList.add('hidden'); listEl.classList.remove('hidden')
   backList.classList.add('hidden'); picker.classList.add('hidden'); backBtn.classList.add('hidden')
+  toolsEl.classList.toggle('hidden', index.projects.length === 0)
   title.textContent = 'Projets generes'
   sub.textContent = index.projects.length + ' projet(s)'
   if (index.projects.length === 0) { listEl.innerHTML = '<div id="hubEmpty">Aucun projet genere pour l instant.</div>'; return }
+  const visible = sorted(index.projects.filter((p) => matches(p, qEl.value.trim().toLowerCase())))
+  countEl.textContent = visible.length + ' / ' + index.projects.length
+  if (visible.length === 0) { listEl.innerHTML = '<div id="hubEmpty">Aucun projet ne correspond a ce filtre.</div>'; return }
   const grid = document.createElement('div'); grid.className = 'grid'
-  for (const p of index.projects) {
+  for (const p of visible) {
     const card = document.createElement('div'); card.className = 'card'
     const h = document.createElement('h3'); h.textContent = p.title; h.title = p.title
     const meta = document.createElement('div'); meta.className = 'meta'
     meta.textContent = [fmtDate(p.createdAt), p.fileCount + ' fichiers', Math.round(p.bytes / 1024) + ' Ko', p.projectType || '', (p.score || p.score === 0) ? p.score + '/100' : ''].filter(Boolean).join(' \\u00b7 ')
     const brief = document.createElement('div'); brief.className = 'brief'; brief.textContent = p.brief || ''
     const tags = document.createElement('div'); tags.className = 'tags'
+    // Etat de construction lisible d un coup d oeil: un projet qui ne compile
+    // pas doit se voir SANS l ouvrir.
+    if (p.buildOk === false) {
+      const st = document.createElement('span'); st.className = 'state ko'
+      st.textContent = 'Ne compile pas'
+      st.title = (p.buildErrors || []).slice(0, 3).join(' · ') || 'build en echec'
+      tags.append(st)
+    } else if (p.buildOk === true) {
+      const st = document.createElement('span'); st.className = 'state ok'
+      st.textContent = 'Construit'
+      tags.append(st)
+    }
     for (const pf of (p.platforms || [])) {
       const t = document.createElement('span')
       t.className = 'tag' + (pf.realExecution ? ' real' : (pf.status === 'degraded' ? ' deg' : ''))
@@ -236,6 +281,8 @@ async function open(id) {
   history.replaceState(null, '', '#' + id)
 }
 
+qEl.oninput = renderList
+sortEl.onchange = renderList
 picker.onchange = () => open(picker.value)
 backList.onclick = () => { history.replaceState(null, '', '#'); renderList() }
 backBtn.onclick = showRender
@@ -269,6 +316,11 @@ export function buildCodeViewerIndexHtml(index: CodeViewerIndex): string {
     '<button id="back" class="hidden">Retour au rendu</button>',
     '<button id="backList" class="hidden">Tous les projets</button>',
     '</header>',
+    '<div id="tools" class="hidden">',
+    '<input id="q" type="search" placeholder="Filtrer par nom, techno ou brief…" aria-label="Filtrer les projets">',
+    '<select id="sort" aria-label="Trier"><option value="date">Plus recents</option><option value="size">Plus gros</option><option value="score">Meilleur score</option><option value="name">Nom</option></select>',
+    '<span id="count"></span>',
+    '</div>',
     '<div id="list"></div>',
     '<main id="viewer" class="hidden"><div id="tree"></div><div id="stage">',
     '<div id="bar"><span id="label">Rendu du projet</span></div>',
