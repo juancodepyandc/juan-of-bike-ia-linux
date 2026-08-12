@@ -18,9 +18,15 @@ function norm(model: string): string {
   return (model || '').trim().replace(/:latest$/i, '').toLowerCase()
 }
 
+// La liste de prefixes supposait que « vision qwen3-vl » etait un modele leger.
+// Mesure reelle (run 1041): qwen3-vl:30b est un 30B — il pese autant qu un gros
+// modele code. La machine etait a 0 octet de RAM libre quand Ollama a rendu
+// `fetch failed`. Un modele se juge donc a sa TAILLE, pas a sa famille.
+const HEAVY_SIZE_TAG = /[:\-](?:2[4-9]|[3-9]\d|\d{3,})\s*b\b/i
+
 function isHeavyCodeModel(name: string): boolean {
   const n = norm(name)
-  return HEAVY_CODE_MODEL_PREFIXES.some((p) => n.startsWith(p))
+  return HEAVY_CODE_MODEL_PREFIXES.some((p) => n.startsWith(p)) || HEAVY_SIZE_TAG.test(n)
 }
 
 let lastEnsured: string | null = null
@@ -52,6 +58,20 @@ export async function ensureExclusiveCodeModel(model: string): Promise<void> {
   } catch {
     // Ollama injoignable ou schema inattendu: on ne bloque pas la generation.
   }
+}
+
+/**
+ * A appeler des qu un AUTRE module a pu charger un modele (phase d assets
+ * inter-modules, audit visuel...). Sans cela, `lastEnsured` fait croire que la
+ * residence est deja garantie et la garde ne decharge jamais l intrus.
+ *
+ * Mesure reelle (run 1041): la garde etait posee pendant la planification, PUIS
+ * la phase d assets chargeait un modele image, PUIS la generation reprenait avec
+ * la garde en cache — donc sans jamais rien decharger. Les deux modeles ont
+ * cohabite pendant toute la generation.
+ */
+export function invalidateModelResidencyCache(): void {
+  lastEnsured = null
 }
 
 /** Pour les tests: reset du cache de residence. */

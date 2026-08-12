@@ -23,6 +23,11 @@ export type CodeOrchestrationPhase =
   | 'research'
   | 'dev_server'
   | 'done'
+  // Le travail EXISTE mais le pipeline n a pas pu aller au bout a cause d une
+  // panne d infrastructure (modele injoignable, reseau coupe). Ce n est ni une
+  // reussite ni un echec de code: c est une interruption, et les fichiers deja
+  // produits sont livres tels quels.
+  | 'interrupted'
   | 'error'
 
 export type CodeOrchestrationResult = {

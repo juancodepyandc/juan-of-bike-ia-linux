@@ -29,12 +29,32 @@ describe('codeModelResidency', () => {
     } finally { globalThis.fetch = orig }
 
     const unloads = calls.filter((c) => c.url.endsWith('/api/generate'))
-    // devstral (gros modele code) doit etre decharge (keep_alive:0)...
-    assert.equal(unloads.length, 1)
-    assert.equal((unloads[0].body as { model: string }).model, 'devstral:latest')
+    const unloaded = unloads.map((u) => (u.body as { model: string }).model)
+
+    // devstral (gros modele code) doit etre decharge (keep_alive:0).
+    assert.ok(unloaded.includes('devstral:latest'))
     assert.equal((unloads[0].body as { keep_alive: number }).keep_alive, 0)
-    // ...mais PAS la vision ni les embeddings (partages, legers, coexistent).
-    assert.ok(!unloads.some((u) => /qwen3-vl|nomic/.test((u.body as { model: string }).model)))
+
+    // qwen3-vl:30b AUSSI. Ce test affirmait l inverse — « vision, legere,
+    // coexiste » — et cette hypothese a ete dementie par la mesure: un 30B pese
+    // autant qu un gros modele code, et le run 1041 est mort sur `fetch failed`
+    // avec 0 octet de RAM libre. Un modele se juge a sa TAILLE, pas a sa
+    // famille. Quand la vision est elle-meme la cible (generation avec images),
+    // elle n est evidemment pas dechargee: le test suivant le couvre.
+    assert.ok(unloaded.includes('qwen3-vl:30b'))
+
+    // Les embeddings, eux, sont reellement legers et continuent de coexister.
+    assert.ok(!unloaded.some((m) => /nomic/.test(m)))
+  })
+
+  test('ne decharge jamais le modele cible, meme quand c est la vision', async () => {
+    const { fn, calls } = mockFetch(['qwen3-vl:30b', 'nomic-embed-text:latest'])
+    const orig = globalThis.fetch
+    globalThis.fetch = fn
+    try {
+      await ensureExclusiveCodeModel('qwen3-vl:30b')
+    } finally { globalThis.fetch = orig }
+    assert.equal(calls.filter((c) => c.url.endsWith('/api/generate')).length, 0)
   })
 
   test('ne decharge rien si seul le modele cible est charge (idempotent)', async () => {

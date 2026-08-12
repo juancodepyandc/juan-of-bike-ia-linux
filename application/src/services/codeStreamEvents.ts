@@ -95,6 +95,7 @@ const CODE_STREAM_PHASES = new Set<CodeOrchestrationPhase>([
   'research',
   'dev_server',
   'done',
+  'interrupted',
   'error',
 ])
 

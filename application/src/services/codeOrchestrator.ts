@@ -8,14 +8,11 @@ import type { CorrectionPass } from './codeAutoCorrection'
 import type { CodeSandboxResult } from './codeSandbox'
 import type { CodePreflightReport } from './codePreflight'
 import { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
-export { isLLMRefusal } from './codeLLMRefusal.ts'
-export { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
-export { normalizeGeneratedCodeFilesForTest } from './codeGeneratedFileSanitizer.ts'
+export * from './codeOrchestratorReexports.ts'
 import { buildEmptyGenerationDiagnostic } from './codeGenerationDiagnostics.ts'
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
 import { isDeliveryRunnable } from './codeValidationScoring.ts'
 import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
-export { upsertProjectSupportFilesForTest } from './codeProjectSupportFiles.ts'
 import { selectModel, type CodeModelRoutingContext } from './codePipelineRuntime.ts'
 import {
   isArchitecturePlanUsable,
@@ -42,34 +39,16 @@ import {
   computeDesignPolishReportPublic,
   type DesignPolishReport,
 } from './codeQualityGates.ts'
-export {
-  buildDesignRetryHint, checkGamePlayability, checkInteractive3DFidelity,
-  checkWebPageIntegrity, computeDesignPolishReportPublic,
-} from './codeQualityGates.ts'
-export type { DesignPolishReport } from './codeQualityGates.ts'
 import {
   analyzeFollowUpIntent,
   type FollowUpAnalysis,
   type FollowUpKind,
 } from './codeFollowUpAnalysis.ts'
-export {
-  analyzeFollowUpIntent,
-  classifyClarificationSeverity,
-  isVagueClarification,
-} from './codeFollowUpAnalysis.ts'
-export type {
-  ClarificationSeverity,
-  FollowUpAnalysis,
-  FollowUpKind,
-} from './codeFollowUpAnalysis.ts'
+import { invalidateModelResidencyCache } from './codeModelResidency.ts'
+import { createFileStateCapture } from './codeFileStateCapture.ts'
+import { buildInterruptedDelivery, buildInterruptedResult } from './codeInterruptedDelivery.ts'
 import type {
   CodeFile,
-  CodeOrchestrationResult,
-  PhaseCallback,
-} from './codeOrchestratorTypes.ts'
-export type {
-  CodeFile,
-  CodeOrchestrationPhase,
   CodeOrchestrationResult,
   PhaseCallback,
 } from './codeOrchestratorTypes.ts'
@@ -126,6 +105,9 @@ export async function orchestrateCodeGeneration({
   modelRouting?: CodeModelRoutingContext
 }): Promise<CodeOrchestrationResult> {
   const generationModel = contextImages.length > 0 ? visionModel : configuredCodeModel
+  // Run 1041: 32 fichiers detruits par un `fetch failed`. On garde le dernier
+  // etat connu pour pouvoir le livrer si le pipeline meurt en route.
+  const fileState = createFileStateCapture(existingFiles, onFilesUpdate)
   const recoveryEvents: RecoveryEvent[] = []
   const trackRecovery = (ev: RecoveryEvent) => {
     recoveryEvents.push(ev)
@@ -145,7 +127,7 @@ export async function orchestrateCodeGeneration({
       generationModel,
       setPhase,
       onToken,
-      onFilesUpdate,
+      onFilesUpdate: fileState.capture,
       onValidationUpdate,
       onCorrectionLogUpdate,
       onFollowUpAnalysis,
@@ -158,6 +140,20 @@ export async function orchestrateCodeGeneration({
     // Absolute last resort — return error state instead of crashing
     const msg = fatalError instanceof Error ? fatalError.message : String(fatalError)
     console.error('[CodeOrchestrator] Pipeline fatal error (app NOT crashed):', msg)
+
+    // REGLE, symetrique de celle des portes de qualite: un juge qui ne peut pas
+    // mesurer ne condamne pas — un generateur qui perd son modele ne detruit
+    // pas ses fichiers. Une panne d infrastructure ne dit RIEN sur la valeur du
+    // travail deja produit; le jeter est une erreur de categorie, et c est la
+    // plus chere de toutes (run 1041: 32 fichiers perdus sur un `fetch failed`).
+    const { files: lastKnownFiles, notes: lastKnownNotes } = fileState.snapshot()
+    if (lastKnownFiles.length > 0) {
+      const delivery = buildInterruptedDelivery(msg, lastKnownFiles, lastKnownNotes)
+      console.warn(`[CodeOrchestrator] ${lastKnownFiles.length} fichier(s) preserves malgre la ${delivery.cause}.`)
+      setPhase(delivery.phaseMessage, 0)
+      return buildInterruptedResult(delivery, lastKnownFiles, classifyCodeIntent(enrichedPrompt), recoveryEvents)
+    }
+
     setPhase(`Erreur pipeline: ${msg.slice(0, 100)}`, 0)
     return {
       files: [],
@@ -282,6 +278,8 @@ async function runFullPipeline({
     setPhase,
     signal,
   })
+  // La phase d assets a pu charger le modele d un autre module.
+  invalidateModelResidencyCache()
   effectiveExistingFiles = assetPhase.files
   const interModuleAssetBundle: CodeAssetBundle | null = assetPhase.bundle
 

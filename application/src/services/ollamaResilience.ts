@@ -65,8 +65,12 @@ type MemoryErrorSignal = {
 // SINGLE-MODEL: Backoff reduit — on ne change plus de modele, donc inutile de
 // boucler 6 fois avec 25s de delay. 3 tentatives rapides suffisent.
 // Si le modele echoue 3 fois, c'est un vrai probleme (OOM, service down).
+import { TRANSPORT_BACKOFF_MS, isTransportFailure } from './codeTransportBackoff.ts'
+
 const BACKOFF_DELAYS_MS = [800, 2_000, 4_000] as const
 const MAX_ATTEMPTS = BACKOFF_DELAYS_MS.length
+const MAX_TRANSPORT_ATTEMPTS = TRANSPORT_BACKOFF_MS.length
+
 const MODEL_MEMORY_FLOORS_GIB = new Map<string, number>()
 
 function normalizeModelName(model: string) {
@@ -359,7 +363,10 @@ async function withResilience<T>(
   let executionAttempt = 0
   let lastError: unknown
 
-  while (executionAttempt < MAX_ATTEMPTS) {
+  // Le plafond s adapte: un service injoignable merite d etre attendu, un
+  // modele qui refuse le travail ne merite pas d etre relance dix fois.
+  let attemptCap: number = MAX_ATTEMPTS
+  while (executionAttempt < attemptCap) {
     if (opts?.signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
     }
@@ -549,15 +556,19 @@ async function withResilience<T>(
         })
       }
 
+      const transport = isTransportFailure(errMsg)
+      if (transport) attemptCap = MAX_TRANSPORT_ATTEMPTS
+
       emitRecovery(opts, {
         attempt: executionAttempt,
-        maxAttempts: MAX_ATTEMPTS,
+        maxAttempts: attemptCap,
         action: 'retry',
         model: models[Math.min(currentModelIndex, models.length - 1)] || model,
         error: errMsg,
       })
 
-      await sleep(BACKOFF_DELAYS_MS[Math.min(executionAttempt - 1, BACKOFF_DELAYS_MS.length - 1)], opts?.signal)
+      const schedule = transport ? TRANSPORT_BACKOFF_MS : BACKOFF_DELAYS_MS
+      await sleep(schedule[Math.min(executionAttempt - 1, schedule.length - 1)], opts?.signal)
     }
   }
 
@@ -566,7 +577,7 @@ async function withResilience<T>(
 
   emitRecovery(opts, {
     attempt: Math.max(executionAttempt, 1),
-    maxAttempts: MAX_ATTEMPTS,
+    maxAttempts: attemptCap,
     action: 'exhausted',
     model: finalModel,
     error: finalMsg,
