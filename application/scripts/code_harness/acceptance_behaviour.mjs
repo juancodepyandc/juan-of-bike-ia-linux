@@ -24,6 +24,9 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.ts': 'text/javascript; charset=utf-8',
+  '.tsx': 'text/javascript; charset=utf-8',
+  '.jsx': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -134,6 +137,32 @@ const CALC_CASES = [
 export async function runBehaviourAcceptance(files, prompt, options = {}) {
   const hasHtml = files.some((f) => /\.html?$/i.test(f.name || ''))
   if (!hasHtml) return { applicable: false, reason: 'aucun HTML a executer', criteria: [] }
+
+  // Un projet a bundler ne peut PAS etre juge en le servant tel quel: son
+  // index.html pointe un module source (`/src/main.tsx`) que seul un build
+  // resout. Servi brut, le navigateur refuse le module ("MIME text/plain",
+  // strict MIME checking) et la page reste vide.
+  //
+  // Mesure reelle (run 991, site Brulerie Nomade, 43 fichiers): l acceptation a
+  // conclu « runtime-no-error FAIL » et « renders-content: 0 caracteres », le
+  // livrable a ete declare casse, et la boucle a brule NEUF passes a corriger
+  // une application qui n avait simplement jamais ete construite.
+  //
+  // Le juge de RENDU tient deja cette garde (`needsBundler`); l acceptation
+  // comportementale ne l avait pas. Un juge qui ne peut pas mesurer doit dire
+  // qu il n a pas mesure — jamais condamner.
+  const entry = files.find((f) => /(^|\/)index\.html?$/i.test(f.name || ''))
+  const entryHtml = entry?.content ?? ''
+  const needsBundler = /<script[^>]+src=["'][^"']*\/?src\/[^"']+\.(ts|tsx|jsx|vue|svelte)["']/i.test(entryHtml)
+    || files.some((f) => /\.(vue|svelte)$/i.test(f.name || ''))
+  if (needsBundler) {
+    return {
+      applicable: false,
+      needsBuild: true,
+      reason: 'projet a bundler: un build est requis avant tout jugement comportemental',
+      criteria: [],
+    }
+  }
 
   const { chromium } = await import('playwright')
   const { server, port } = await serveFiles(files)
