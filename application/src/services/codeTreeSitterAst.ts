@@ -6,6 +6,8 @@ export type TreeSitterParseOk = {
   grammarWasmPath: string
   rootType: string
   hasError: boolean
+  /** Position EXACTE du premier noeud fautif, 1-indexee. */
+  errorLocation: { line: number; column: number; kind: 'ERROR' | 'MISSING'; snippet: string } | null
   namedNodeCount: number
   sexp: string
 }
@@ -109,6 +111,59 @@ function normalizeWasmLocation(location: string): string {
   return decodeURIComponent(new URL(location).pathname)
 }
 
+/**
+ * Localise le PREMIER noeud fautif.
+ *
+ * Sans lui, le critic annoncait « AboutPage.tsx: erreur de syntaxe » — vrai,
+ * mais inexploitable: le modele devait relire 200 lignes pour trouver quoi. Le
+ * parser connait pourtant la position exacte, il suffisait de la lire.
+ * Mesure reelle (run 1011): quatre passes de correction sur ce seul manque.
+ */
+function findFirstError(root: TreeSitterNode, source: string): TreeSitterParseOk['errorLocation'] {
+  const stack: TreeSitterNode[] = [root]
+  let best: { node: TreeSitterNode; kind: 'ERROR' | 'MISSING' } | null = null
+  while (stack.length > 0) {
+    const node = stack.pop()!
+    const isMissing = typeof node.isMissing === 'function' ? node.isMissing() : Boolean((node as unknown as { isMissing?: boolean }).isMissing)
+    if (node.type === 'ERROR' || isMissing) {
+      const kind = isMissing ? 'MISSING' : 'ERROR'
+      // On garde le noeud le plus PRECIS, pas le plus tot: quand un fichier ne
+      // parse plus des la premiere ligne, l ERROR racine couvre tout le fichier
+      // et pointer « 1:1 » n aide personne. Le noeud le plus court est celui qui
+      // cerne vraiment le jeton fautif (mesure: « 1:1 » -> « 15:23, pres de
+      // location: 'Presqu'île' » — l apostrophe non echappee, la vraie cause).
+      const span = node.endIndex - node.startIndex
+      const bestSpan = best ? best.node.endIndex - best.node.startIndex : Number.MAX_SAFE_INTEGER
+      if (!best || span < bestSpan || (span === bestSpan && node.startIndex < best.node.startIndex)) {
+        best = { node, kind }
+      }
+      // On DESCEND quand meme: un ERROR racine couvre tout le fichier et
+      // contient presque toujours un noeud fautif plus precis.
+      for (const child of node.children) stack.push(child)
+      continue
+    }
+    if (!nodeHasError(node)) continue
+    for (const child of node.children) stack.push(child)
+  }
+  if (!best) return null
+  const { node, kind } = best
+  // Un ERROR qui part de l octet 0 couvre tout le fichier (cas d une chaine non
+  // terminee qui avale la suite): « 1:1 » n apprend rien. On pointe alors la
+  // FRONTIERE d analyse — la fin du dernier fragment correctement parse, c est
+  // la que le parser a decroche.
+  let offset = node.startIndex
+  if (offset === 0 && node.children.length > 0) {
+    const parsed = node.children.filter((child) => child.type !== 'ERROR')
+    const frontier = parsed.length > 0 ? parsed[parsed.length - 1].endIndex : 0
+    if (frontier > 0) offset = frontier
+  }
+  const lines = source.slice(0, offset).split('\n')
+  const line = lines.length
+  const column = (lines[lines.length - 1]?.length ?? 0) + 1
+  const snippet = source.split('\n')[line - 1]?.trim().slice(0, 120) ?? ''
+  return { line, column, kind, snippet }
+}
+
 function countNamedNodes(root: TreeSitterNode): number {
   let count = 0
   const stack: TreeSitterNode[] = [root]
@@ -165,6 +220,7 @@ export async function parseCodeWithTreeSitter(
       grammarWasmPath,
       rootType: root.type,
       hasError: nodeHasError(root),
+      errorLocation: nodeHasError(root) ? findFirstError(root, content) : null,
       namedNodeCount: countNamedNodes(root),
       sexp: sexp.slice(0, options.maxSexpLength ?? 4000),
     }

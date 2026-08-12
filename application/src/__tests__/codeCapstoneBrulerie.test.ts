@@ -265,3 +265,42 @@ describe('capstone Brulerie Nomade — la porte visuelle regarde le vrai markup'
     assert.equal(report.failedChecks.includes('html_size'), true)
   })
 })
+
+describe('capstone — le parser dit OU, pas seulement QUE', () => {
+  // Mesure reelle (run 1011): « AboutPage.tsx: erreur de syntaxe » a coute
+  // quatre passes de correction. Le parser connaissait la position exacte
+  // depuis le debut — il suffisait de la lire.
+  test('une apostrophe non echappee est localisee a la ligne et au jeton', async () => {
+    const source = [
+      'const markets = [',
+      '  { id: 1, day: "samedi" },',
+      "  { id: 2, location: 'Presqu'ile' },",
+      ']',
+    ].join('\n')
+    const report = await syntaxCritic(
+      { generationId: 't', files: [file('src/data/markets.ts', source, 'ts')] },
+      WEB_INTENT,
+    )
+    const blocker = report.issues.find((issue) => issue.severity === 'block')
+    assert.ok(blocker, 'le fichier casse doit bloquer')
+    assert.match(blocker!.message, /markets\.ts:3:/)
+    assert.match(blocker!.message, /Presqu/)
+  })
+
+  test('un fichier sain ne porte aucune position', async () => {
+    const report = await syntaxCritic(
+      { generationId: 't', files: [file('src/ok.ts', 'export const a = 1\n', 'ts')] },
+      WEB_INTENT,
+    )
+    assert.deepEqual(report.issues.filter((issue) => issue.severity === 'block'), [])
+  })
+
+  test('la suggestion invite a corriger A la position donnee', async () => {
+    const report = await syntaxCritic(
+      { generationId: 't', files: [file('src/bad.ts', 'const a = (1 + \n', 'ts')] },
+      WEB_INTENT,
+    )
+    const blocker = report.issues.find((issue) => issue.severity === 'block')
+    assert.match(blocker!.suggestion ?? '', /CETTE position/)
+  })
+})

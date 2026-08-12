@@ -22,12 +22,23 @@ function bracketBalance(content: string): { ok: boolean; diff: number; kind: str
  * - { handled:false }             -> AST indisponible (langage non couvert ou
  *   WASM non charge): l appelant retombe sur l analyse lexicale.
  */
-async function astSyntaxOutcome(file: CodeFile): Promise<{ handled: boolean; error: boolean; grammar: string }> {
+async function astSyntaxOutcome(file: CodeFile): Promise<{
+  handled: boolean
+  error: boolean
+  grammar: string
+  where: string
+}> {
   const lang = resolveTreeSitterLanguage(file.name, file.language)
-  if (!lang) return { handled: false, error: false, grammar: '' }
+  if (!lang) return { handled: false, error: false, grammar: '', where: '' }
   const parsed = await parseCodeWithTreeSitter(file.content, lang)
-  if (!parsed.ok) return { handled: false, error: false, grammar: lang }
-  return { handled: true, error: parsed.hasError, grammar: lang }
+  if (!parsed.ok) return { handled: false, error: false, grammar: lang, where: '' }
+  // La position exacte change tout: « erreur de syntaxe » faisait relire 200
+  // lignes au modele, « ligne 34 colonne 25, pres de <tel texte> » se corrige.
+  const at = parsed.errorLocation
+  const where = at
+    ? `:${at.line}:${at.column} — ${at.kind === 'MISSING' ? 'element manquant' : 'jeton inattendu'}${at.snippet ? ` pres de: ${at.snippet}` : ''}`
+    : ''
+  return { handled: true, error: parsed.hasError, grammar: lang, where }
 }
 
 // Le JSX n est pas du JavaScript pour un compteur de blocs: dans un texte JSX,
@@ -108,9 +119,11 @@ export const syntaxCritic: CriticFn = async (project: CodeProject, _intent: Code
         issues.push({
           axis: 'compile',
           severity: 'block',
-          message: `${file.name}: erreur de syntaxe (analyse AST tree-sitter ${ast.grammar})`,
+          message: `${file.name}${ast.where} — erreur de syntaxe (analyse AST tree-sitter ${ast.grammar})`,
           location: { file: file.name },
-          suggestion: 'Le fichier ne parse pas comme du code valide — corrige la syntaxe.',
+          suggestion: ast.where
+            ? 'Corrige a CETTE position: la ligne et la colonne viennent du parser, elles sont exactes.'
+            : 'Le fichier ne parse pas comme du code valide — corrige la syntaxe.',
         })
       }
     } else {
