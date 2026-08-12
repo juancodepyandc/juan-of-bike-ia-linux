@@ -7,6 +7,7 @@ import type { CodeFile } from './codeOrchestrator.ts'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
 import { sanitizeGeneratedFileContent, stripFormattingArtifacts } from './codeGeneratedFileSanitizer.ts'
 import { isStructuredProjectEmission, parseProjectTreeEmission, type StructuredEmissionIssue } from './codeProjectEmission.ts'
+import { salvageProtocolLeaks, type ProtocolLeakReport } from './codeProtocolLeakGuard.ts'
 
 /**
  * Parse la sortie generee en fichiers ET remonte les anomalies structurees
@@ -14,7 +15,11 @@ import { isStructuredProjectEmission, parseProjectTreeEmission, type StructuredE
  * invalides). Le chemin actif DOIT consulter `issues` pour ne pas laisser
  * tomber un fichier en silence — historique d echecs silencieux du module.
  */
-export function parseCodeFilesWithReport(content: string): { files: CodeFile[]; issues: StructuredEmissionIssue[] } {
+export function parseCodeFilesWithReport(content: string): {
+  files: CodeFile[]
+  issues: StructuredEmissionIssue[]
+  protocolLeaks: ProtocolLeakReport[]
+} {
   if (isStructuredProjectEmission(content)) {
     const parsed = parseProjectTreeEmission(content)
     return {
@@ -24,9 +29,19 @@ export function parseCodeFilesWithReport(content: string): { files: CodeFile[]; 
         content: file.content,
       })),
       issues: parsed.issues,
+      protocolLeaks: [],
     }
   }
-  return { files: parseLegacyCodeFiles(content), issues: [] }
+  // Garde de derniere ligne: le chemin heritier nomme les blocs par
+  // reniflage de contenu. Un conteneur de protocole non reconnu y ressort en
+  // `main.js` — 15 Ko de marqueurs presentes comme du JavaScript (run 1061).
+  const salvage = salvageProtocolLeaks(parseLegacyCodeFiles(content))
+  if (salvage.leaks.length > 0) {
+    for (const leak of salvage.leaks) {
+      console.warn(`[CodeParser] ${leak.message}`)
+    }
+  }
+  return { files: salvage.files, issues: [], protocolLeaks: salvage.leaks }
 }
 
 export function parseCodeFiles(content: string): CodeFile[] {

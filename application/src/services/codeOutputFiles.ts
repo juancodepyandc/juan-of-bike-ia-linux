@@ -19,6 +19,7 @@
  */
 
 import { isStructuredProjectEmission, parseProjectTreeEmission } from './codeProjectEmission.ts'
+import { salvageProtocolLeaks } from './codeProtocolLeakGuard.ts'
 
 export interface ParsedFile {
   path: string
@@ -193,13 +194,18 @@ export function extractGeneratedFiles(stream: string): ParsedFile[] {
     // No fences at all : sniff the whole stream so the file gets a real
     // name (index.html, script.py, App.tsx) instead of "output.txt".
     const sniffedPath = sniffPathFromContent(stream, '')
-    return [{
+    files.push({
       path: sniffedPath,
       content: stream.trim(),
       language: langForPath(sniffedPath),
-    }]
+    })
   }
-  return files
+  // Meme garde que dans codeGeneratedFileParser: le reniflage de contenu ne doit
+  // jamais baptiser `.js` (ou `.tsx`) un conteneur de protocole non deballe.
+  const salvage = salvageProtocolLeaks(files.map((f) => ({ name: f.path, language: f.language, content: f.content })))
+  if (salvage.leaks.length === 0) return files
+  for (const leak of salvage.leaks) console.warn(`[codeOutputFiles] ${leak.message}`)
+  return salvage.files.map((f) => ({ path: f.name, content: f.content, language: langForPath(f.name, f.language) }))
 }
 
 /**

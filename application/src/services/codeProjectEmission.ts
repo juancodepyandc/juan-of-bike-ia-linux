@@ -16,6 +16,88 @@ export const STRUCTURED_PROJECT_EMISSION_VERSION = 'AURORA_CODE_VFS/1'
 const FILE_PREFIX = '<<<AURORA_FILE '
 const TAG_CLOSE = '>>>'
 const END_MARKER = '<<<AURORA_END>>>'
+const END_TAG = 'AURORA_END'
+/** En-tete de version tel qu il est desormais SERIALISE et DEMANDE au modele. */
+export const STRUCTURED_PROJECT_EMISSION_HEADER = `<<<${STRUCTURED_PROJECT_EMISSION_VERSION}>>>`
+
+// Run 1061, mesure sur le flux reel: le modele a emis les 14 fichiers du projet
+// avec `AURORA_FILE {...}` NU (sans `<<<`/`>>>`), tout en encadrant la ligne de
+// version et le marqueur de fin. Il n a pas desobei au hasard: la consigne
+// donnait un en-tete de version NU et deux marqueurs ENCADRES — il a uniformise
+// la seule maniere possible sans perdre d information. Le parseur, lui, exigeait
+// la forme encadree au caractere pres: aucun fichier reconnu, et les 15 534
+// octets du conteneur ont ete livres tels quels dans un fichier « main.js ».
+//
+// Deux corrections, pas une: la consigne devient symetrique (les trois marqueurs
+// s ecrivent pareil) ET le parseur accepte les deux formes. Un protocole dont la
+// seule forme valide est celle que le modele n ecrit pas n est pas un protocole,
+// c est un piege.
+//
+// Forme nue: uniquement en debut de ligne, pour qu un `AURORA_FILE` cite dans du
+// contenu ne puisse pas couper un fichier. Forme encadree: partout, comme avant.
+const FILE_HEADER_RE = /(?:^[ \t]*AURORA_FILE[ \t]+|<<<AURORA_FILE[ \t]+)(?=\{)/gm
+const END_MARKER_RE = /^[ \t]*(?:<<<AURORA_END>>>|AURORA_END)[ \t]*$/gm
+
+type FileHeaderMatch = {
+  /** Offset du debut de l en-tete (pour les diagnostics). */
+  start: number
+  /** Offset du premier caractere des metadonnees JSON. */
+  metadataStart: number
+  /** Offset de fin des metadonnees (exclu). */
+  metadataEnd: number
+  /** Offset du premier caractere du contenu du fichier. */
+  contentStart: number
+  /** L en-tete etait-il ferme par `>>>` ? (sinon: termine par la fin de ligne) */
+  bracketed: boolean
+}
+
+/** Prochain en-tete de fichier, quelle que soit sa forme. */
+function findFileHeader(stream: string, from: number): FileHeaderMatch | null {
+  FILE_HEADER_RE.lastIndex = Math.max(0, from)
+  const match = FILE_HEADER_RE.exec(stream)
+  if (!match) return null
+
+  const bracketed = match[0].includes('<<<')
+  const metadataStart = match.index + match[0].length
+  if (bracketed) {
+    const metadataEnd = stream.indexOf(TAG_CLOSE, metadataStart)
+    if (metadataEnd < 0) return { start: match.index, metadataStart, metadataEnd: -1, contentStart: -1, bracketed }
+    return {
+      start: match.index,
+      metadataStart,
+      metadataEnd,
+      contentStart: skipLineBreak(stream, metadataEnd + TAG_CLOSE.length),
+      bracketed,
+    }
+  }
+
+  const lineEnd = stream.indexOf('\n', metadataStart)
+  const metadataEnd = lineEnd < 0 ? stream.length : lineEnd
+  return {
+    start: match.index,
+    metadataStart,
+    metadataEnd,
+    // `metadataEnd` pointe sur le `\n`; le `\r` eventuel est retire par le trim
+    // des metadonnees. Le contenu commence apres ce saut de ligne.
+    contentStart: skipLineBreak(stream, metadataEnd),
+    bracketed,
+  }
+}
+
+/** Offset du prochain en-tete de fichier, ou -1. */
+function nextFileHeaderOffset(stream: string, from: number): number {
+  return findFileHeader(stream, from)?.start ?? -1
+}
+
+/** Marqueur de fin (encadre ou nu) a cet offset exact, ou null. */
+function matchEndMarkerAt(stream: string, offset: number): number | null {
+  if (stream.startsWith(END_MARKER, offset)) return offset + END_MARKER.length
+  if (stream.startsWith(END_TAG, offset)) {
+    const after = stream[offset + END_TAG.length]
+    if (after === undefined || after === '\n' || after === '\r') return offset + END_TAG.length
+  }
+  return null
+}
 
 export type StructuredEmissionIssueType =
   | 'malformed_header'
@@ -64,7 +146,10 @@ function serializeMetadata(file: ProjectTree['files'][number]) {
 
 export function serializeProjectTreeEmission(input: ProjectTree | ProjectTreeInputFile[]) {
   const tree = isProjectTree(input) ? input : buildProjectTree(input)
-  const chunks = [STRUCTURED_PROJECT_EMISSION_VERSION]
+  // Les TROIS marqueurs s ecrivent desormais pareil (`<<<...>>>`). C est ce que
+  // le modele ecrit spontanement, et c est ce qui l empeche d « uniformiser » un
+  // protocole asymetrique dans la mauvaise direction.
+  const chunks = [STRUCTURED_PROJECT_EMISSION_HEADER]
 
   for (const file of tree.files) {
     chunks.push([
@@ -131,16 +216,14 @@ function skipLineBreak(stream: string, offset: number) {
 }
 
 function consumeEndMarker(stream: string, offset: number) {
-  let cursor = offset
-  if (stream.startsWith('\r\n', cursor) && stream.startsWith(END_MARKER, cursor + 2)) {
-    cursor += 2
-  } else if (stream[cursor] === '\n' && stream.startsWith(END_MARKER, cursor + 1)) {
-    cursor += 1
+  let end = matchEndMarkerAt(stream, offset)
+  if (end === null) {
+    // Le serialiseur insere un saut de ligne entre le contenu et le marqueur.
+    const afterBreak = skipLineBreak(stream, offset)
+    if (afterBreak !== offset) end = matchEndMarkerAt(stream, afterBreak)
   }
-
-  if (!stream.startsWith(END_MARKER, cursor)) return null
-  cursor += END_MARKER.length
-  return skipLineBreak(stream, cursor)
+  if (end === null) return null
+  return skipLineBreak(stream, end)
 }
 
 /**
@@ -152,9 +235,12 @@ function consumeEndMarker(stream: string, offset: number) {
  * autre en-tete de fichier s intercale — on ne veut pas avaler le fichier suivant).
  */
 function recoverFileToEndMarker(stream: string, contentStart: number) {
-  const markerIndex = stream.indexOf(END_MARKER, contentStart)
-  if (markerIndex < 0) return null
-  const nextHeader = stream.indexOf(FILE_PREFIX, contentStart)
+  END_MARKER_RE.lastIndex = contentStart
+  const endMatch = END_MARKER_RE.exec(stream)
+  if (!endMatch) return null
+  const markerIndex = endMatch.index
+  const markerLength = endMatch[0].length
+  const nextHeader = nextFileHeaderOffset(stream, contentStart)
   if (nextHeader >= 0 && nextHeader < markerIndex) return null
 
   // Le serialiseur insere exactement un saut de ligne entre le contenu et le
@@ -166,12 +252,12 @@ function recoverFileToEndMarker(stream: string, contentStart: number) {
   }
   return {
     content: stream.slice(contentStart, contentEnd),
-    nextCursor: skipLineBreak(stream, markerIndex + END_MARKER.length),
+    nextCursor: skipLineBreak(stream, markerIndex + markerLength),
   }
 }
 
 export function isStructuredProjectEmission(stream: string) {
-  return stream.includes(FILE_PREFIX) && stream.includes(STRUCTURED_PROJECT_EMISSION_VERSION)
+  return stream.includes(STRUCTURED_PROJECT_EMISSION_VERSION) && findFileHeader(stream, 0) !== null
 }
 
 export function parseProjectTreeEmission(stream: string): StructuredEmissionParseResult {
@@ -180,18 +266,16 @@ export function parseProjectTreeEmission(stream: string): StructuredEmissionPars
   let cursor = 0
 
   while (cursor < stream.length) {
-    const fileStart = stream.indexOf(FILE_PREFIX, cursor)
-    if (fileStart < 0) break
+    const header = findFileHeader(stream, cursor)
+    if (!header) break
 
-    const metadataStart = fileStart + FILE_PREFIX.length
-    const metadataEnd = stream.indexOf(TAG_CLOSE, metadataStart)
+    const { start: fileStart, metadataStart, metadataEnd, contentStart } = header
     if (metadataEnd < 0) {
       pushIssue(issues, 'malformed_header', fileStart, 'Balise de fichier non fermee.')
       break
     }
 
     const metadata = parseMetadata(stream.slice(metadataStart, metadataEnd).trim(), metadataStart, issues)
-    const contentStart = skipLineBreak(stream, metadataEnd + TAG_CLOSE.length)
     if (!metadata) {
       cursor = contentStart
       continue
@@ -258,13 +342,27 @@ export function parseProjectTreeEmission(stream: string): StructuredEmissionPars
 }
 
 export function buildStructuredEmissionInstructions() {
+  // Consigne SYMETRIQUE: les trois marqueurs s ecrivent `<<<...>>>`. L ancienne
+  // version melait un en-tete nu et deux marqueurs encadres; le run 1061 a montre
+  // qu un modele uniformise ce genre d incoherence — et qu il le fait dans le
+  // sens que le parseur ne lisait pas. Un exemple complet vaut mieux qu une
+  // description: il ne laisse aucune place a l interpretation.
+  const example = 'const A = 1\n'
   return [
     'FORMAT STRUCTURE OBLIGATOIRE:',
-    `Commence par ${STRUCTURED_PROJECT_EMISSION_VERSION}.`,
+    `Commence par ${STRUCTURED_PROJECT_EMISSION_HEADER}`,
     `Pour chaque fichier: ${FILE_PREFIX}{"path":"src/App.tsx","length":123,"encoding":"utf8","language":"tsx"}${TAG_CLOSE}`,
     'Ecris ensuite exactement length caracteres de contenu, puis le marqueur de fin.',
     `Marqueur de fin: ${END_MARKER}`,
+    'Les TROIS marqueurs sont encadres par <<< et >>>. N en ecris aucun sans ses chevrons.',
+    '`length` est le nombre de caracteres du contenu REEL du fichier, jamais celui de l exemple.',
     'N utilise pas de fences markdown pour delimiter les fichiers.',
     'Les fichiers binaires doivent etre emis en base64 avec encoding="base64".',
+    '',
+    'EXEMPLE COMPLET (a reproduire au caractere pres):',
+    STRUCTURED_PROJECT_EMISSION_HEADER,
+    `${FILE_PREFIX}{"path":"src/a.ts","length":${example.length},"encoding":"utf8","language":"typescript"}${TAG_CLOSE}`,
+    example.trimEnd(),
+    END_MARKER,
   ].join('\n')
 }
