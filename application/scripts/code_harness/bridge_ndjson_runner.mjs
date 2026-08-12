@@ -277,12 +277,34 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
       if (compoKo) {
         log(`[bridge-runner] composition: ${audit.compositionVerdict.failedChecks.join(',')}`)
       }
-      if (!audit.verdict.passed || compoKo) {
-        log('[bridge-runner] rendu sous le seuil -> passe esthetique ciblee')
+      // Accessibilite et performance etaient MESUREES et jamais lues: exactement
+      // le « mesurer sans decider » deja corrige sur la passe esthetique. Les
+      // quatre portes comptent, et chacune est observable dans le flux.
+      const a11y = audit.accessibilityVerdict
+      const perf = audit.performanceVerdict
+      for (const [name, verdict] of [['accessibilite', a11y], ['performance', perf]]) {
+        if (!verdict) continue
+        log(`[bridge-runner] ${name}: ${verdict.score}/100 (seuil ${verdict.floor}) echecs=${verdict.failedChecks.join(',') || 'aucun'}`)
+        emit(buildCodeStreamVisualScoreEvent({
+          ...nextMeta(), score: verdict.score, viewport: name,
+          summary: `${name} ${verdict.score}/100`, source: 'render_audit',
+          failedChecks: verdict.failedChecks,
+        }))
+      }
+      const a11yKo = a11y && !a11y.ok
+      const perfKo = perf && !perf.ok
+      if (!audit.verdict.passed || compoKo || a11yKo || perfKo) {
+        log(`[bridge-runner] sous le seuil (${[!audit.verdict.passed && 'style', compoKo && 'composition', a11yKo && 'accessibilite', perfKo && 'performance'].filter(Boolean).join(', ')}) -> passe ciblee`)
         emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: 'Rendu reel sous le seuil - passe esthetique ciblee...', progress: 96 }))
         const regen = await orchestrateCodeGeneration({
           prompt,
-          enrichedPrompt: `${prompt}\n\n${audit.verdict.critique}\n\n${audit.compositionVerdict?.critique ?? ''}`.trim(),
+          enrichedPrompt: [
+            prompt,
+            audit.verdict.passed ? '' : audit.verdict.critique,
+            compoKo ? audit.compositionVerdict.critique : '',
+            a11yKo ? a11y.critique : '',
+            perfKo ? perf.critique : '',
+          ].filter(Boolean).join('\n\n').trim(),
           conversationHistory: normalizedHistory,
           existingFiles: files,
           contextImages: [], userFileDataUrls: {},
