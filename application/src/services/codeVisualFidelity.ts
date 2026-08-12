@@ -10,6 +10,13 @@ import {
   type CodeVisualRenderAudit,
 } from './codeVisualRenderAudit.ts'
 import {
+  GADGET_CHECK_IDS,
+  RESTRAINT_REINFORCED_IDS,
+  RESTRAINT_WEIGHT_BONUS,
+  describeStyleConstraints,
+  resolveStyleConstraints,
+} from './codeStyleConstraints.ts'
+import {
   AMBITION_BAR,
   AMBITION_EXCLUDED_CHECKS,
   resolveVisualAmbition,
@@ -65,6 +72,8 @@ export type VisualFidelityReport = {
   viewports?: string[]
   /** Genre de projet effectivement juge (vitrine / application / outil). */
   ambition?: VisualAmbition
+  /** Contraintes de style lues dans le brief, quand il en exprime. */
+  styleConstraints?: { restraint: boolean; evidence: string[] }
 }
 
 type CodeFile = { name: string; language: string; content: string }
@@ -342,8 +351,18 @@ export function evaluateVisualFidelity(
   // outil a une page n a pas a fournir un hero, une galerie et une rotation 3D
   // au scroll — les exiger degrade le produit au lieu de l ameliorer.
   const ambition = resolveVisualAmbition(prompt, intent, files)
-  const excluded = new Set(AMBITION_EXCLUDED_CHECKS[ambition])
-  const scored = checks.filter((check) => !excluded.has(check.id))
+  const excluded = new Set<string>(AMBITION_EXCLUDED_CHECKS[ambition])
+  // Contraintes EXPLICITES du brief. Exiger une rotation 3D d une cliente qui
+  // ecrit « je veux pas que ca fasse gadget » est un contresens: on retire ces
+  // criteres, et on note plus severement la finition qui, elle, est demandee.
+  const style = resolveStyleConstraints(prompt)
+  if (style.restraint) for (const id of GADGET_CHECK_IDS) excluded.add(id)
+  const reinforced = new Set<string>(RESTRAINT_REINFORCED_IDS)
+  const scored = checks
+    .filter((check) => !excluded.has(check.id))
+    .map((check) => (style.restraint && reinforced.has(check.id)
+      ? { ...check, weight: check.weight + RESTRAINT_WEIGHT_BONUS }
+      : check))
 
   const totalWeight = scored.reduce((sum, c) => sum + c.weight, 0) || 1
   const earned = scored.filter((c) => c.passed).reduce((sum, c) => sum + c.weight, 0)
@@ -356,9 +375,14 @@ export function evaluateVisualFidelity(
   const blockingFailures = ['no_scolaire_title', 'no_flat_card_cluster']
   const passed = score >= floor && !blockingFailures.some((id) => failedChecks.includes(id))
 
+  const restraintNote = style.restraint ? ' Retenue demandee par le brief: criteres spectaculaires retires, finition notee plus severement.' : ''
   const summary = passed
-    ? `Rendu visuel acceptable (${score}/100, barre ${AMBITION_BAR[ambition]}).`
-    : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle. Barre appliquee — ${AMBITION_BAR[ambition]}.`
+    ? `Rendu visuel acceptable (${score}/100, barre ${AMBITION_BAR[ambition]}).${restraintNote}`
+    : `Rendu visuel insuffisant (${score}/100, seuil ${floor}). ${failedChecks.length} echec(s) de controle. Barre appliquee — ${AMBITION_BAR[ambition]}.${restraintNote}`
 
-  return { score, passed, floor, checks: scored, failedChecks, summary, source: 'source_static', ambition }
+  return {
+    score, passed, floor, checks: scored, failedChecks, summary,
+    source: 'source_static', ambition,
+    styleConstraints: style.restraint ? style : undefined,
+  }
 }

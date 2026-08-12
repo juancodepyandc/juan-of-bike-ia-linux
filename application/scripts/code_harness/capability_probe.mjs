@@ -13,7 +13,11 @@ import path from 'node:path'
 const TOOLS = path.join(os.homedir(), '.local/share/auroraia/tools')
 const SDK = path.join(TOOLS, 'android-sdk')
 const JDK = path.join(TOOLS, 'jdk-21.0.11')
-const ROOT = path.join(os.tmpdir(), 'aurora-capability-probe')
+// Regle du projet: aucun resultat verifiable ne vit dans un dossier
+// temporaire. /tmp est purge au redemarrage — une matrice qui reference des
+// artefacts disparus n est pas inutile, elle MENT en silence. Les artefacts
+// vivent donc dans l arborescence, avec leur chemin complet cite.
+const ROOT = path.resolve('output/code/capacites')
 
 function run(cmd, args, cwd, env = {}, timeout = 240_000) {
   const proc = spawnSync(cmd, args, {
@@ -343,7 +347,7 @@ if (process.argv.includes('--publish')) {
     <td><b>${esc(r.platform)}</b></td>
     <td><span style="color:${badge[r.status] ?? '#8b949e'};font-weight:600">${esc(r.status.toUpperCase())}</span></td>
     <td>${esc(r.detail)}</td>
-    <td class="mono">${r.artifact ? esc(r.artifact) : '—'}</td>
+    <td class="mono">${r.artifact ? esc(path.relative(path.resolve('..'), r.artifact)) : '—'}</td>
   </tr>`).join('\n')
   fs.writeFileSync(path.join(outDir, 'capacites.html'), `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

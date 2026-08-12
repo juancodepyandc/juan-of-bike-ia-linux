@@ -1,7 +1,13 @@
+import { describeStyleConstraints } from './codeStyleConstraints.ts'
 import type { VisualFidelityReport } from './codeVisualFidelity.ts'
 import { buildRenderedVisualAuditCritique } from './codeVisualRenderAudit.ts'
 
 export function buildVisualFidelityCritique(report: VisualFidelityReport): string {
+  // Quand la barre change parce que le BRIEF l a demande, la critique doit le
+  // dire: sinon le modele recoit un verdict qu il ne peut pas interpreter.
+  const styleNote = report.styleConstraints?.restraint
+    ? `\n\n${describeStyleConstraints(report.styleConstraints)}`
+    : ''
   if (report.passed) return ''
   if (report.source === 'render_audit') return buildRenderedVisualAuditCritique(report)
 
@@ -36,5 +42,5 @@ export function buildVisualFidelityCritique(report: VisualFidelityReport): strin
     '',
     'Reprends le STARTER TEMPLATE fourni et remplace UNIQUEMENT les {{slots}} par du contenu adapte. NE simplifie PAS le squelette.',
     'AUCUN DIV avec `background: <couleur unie>` SANS image/svg/canvas a l interieur. Aucune exception.',
-  ].filter(Boolean).join('\n')
+  ].filter(Boolean).join('\n') + styleNote
 }
