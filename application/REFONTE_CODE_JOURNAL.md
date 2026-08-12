@@ -6916,3 +6916,66 @@ machine, dont les gels historiques sont d origine memoire.
   cible EST la vision (test dedie).
 
 Tests : **1047 -> 1056 verts, 0 echec.**
+
+## 2026-08-13 — Run 1051: 97/100 au juge, bloque par une apostrophe
+
+Percee: **le juge visuel accepte a 97/100** (barre vitrine, retenue du brief
+appliquee). Trajectoire mesuree sur le meme brief: **50 -> 64 -> 65 -> 97**. La
+cecite Tailwind et la lecture des contraintes de style tiennent en conditions
+reelles sur un run frais, et la memoire est restee saine (1280 MiB de VRAM en
+fin de run contre 14 800 auparavant).
+
+Restait le dernier verrou: `boucle infinie detectee sur la meme erreur apres
+9 passes`, `FAILED phase=error files=38`.
+
+### Le diagnostic etait bon — c est la reparation qui manquait
+
+```
+Passe 2  MarketCalendar.tsx : syntaxe invalide
+Passe 3  MarketCalendar.tsx : syntaxe invalide
+Passe 4  MarketCalendar.tsx : erreur de syntaxe
+Passe 5  MarketCalendar.tsx : syntaxe invalide
+Passe 8  chaine contenant une apostrophe non echappee
+```
+
+Neuf fois le bon diagnostic, a la bonne position. La cause, deux fois dans le
+fichier (lignes 24 et 45):
+
+```js
+location: 'Presqu'île',
+```
+
+Le modele echoue parce qu a chaque passe **il reecrit le meme texte francais et
+reproduit la meme rupture**. C est un piege systematique, pas une inattention:
+une dixieme passe n aurait rien change. Verifie dans le flux — une seule
+version du fichier a ete ecrite sur tout le run, le modele n a jamais pose de
+correction.
+
+### Deterministe, donc pas delegue
+
+Une apostrophe encadree par DEUX LETTRES a l interieur d un litteral simple est
+du contenu, jamais un terminateur. Ligne directrice du module: **quand une
+correction est deterministe, on ne la delegue pas a un modele probabiliste.**
+Elle est appliquee a l assainissement, avant la validation.
+
+Mesure sur le projet reel, avec le vrai compilateur (esbuild):
+
+| | fichiers qui refusent de compiler |
+|---|---|
+| avant | **3** — mockData.ts, MarketCalendar.tsx, SubscriptionForm.tsx |
+| apres | **0** |
+
+Le piege n etait donc pas isole a MarketCalendar: il frappait partout ou du
+contenu francais rencontrait un litteral simple.
+
+### La prudence porte sur la portee, pas sur la certitude
+
+Un scanner d etats (code / simple / double / gabarit / commentaires) remplace
+toute heuristique de regex. Le correcteur ne touche qu au cas « lettre ' lettre ».
+Sept cas verrouillent qu il ne modifie RIEN, octet pour octet: code valide,
+concatenation, guillemets doubles, gabarits, echappement deja present,
+commentaires, et litteral non ferme — dans ce dernier cas le fichier est casse
+autrement, on rend la main plutot que de deviner. Les .md, .json et .css ne sont
+jamais examines.
+
+Tests : **1056 -> 1066 verts, 0 echec.**
