@@ -38,17 +38,37 @@ export async function publishCodeViewerProject({ id, title, brief, files, projec
   const entry = files.find((f) => /(^|\/)index\.html?$/i.test(f.name || ''))
   const needsBuild = /<script[^>]+src=["'][^"']*\/?src\/[^"']+\.(ts|tsx|jsx|vue|svelte)["']/i.test(entry?.content ?? '')
     || files.some((f) => /\.(vue|svelte)$/i.test(f.name || ''))
+  // Un projet a bundler est CONSTRUIT pour de vrai avant d etre montre: c est
+  // le seul moyen d en voir le rendu, et c est la commande que le README
+  // promet. Le code source reste celui qu on affiche a gauche; seul le rendu
+  // vient du dist/.
+  let previewFiles = files
+  let notice = null
+  let buildErrors = []
+  if (needsBuild) {
+    const { buildGeneratedProject } = await import('./project_build.mjs')
+    const build = buildGeneratedProject(files)
+    if (build.built) {
+      previewFiles = build.files.filter((f) => f.content)
+    } else {
+      buildErrors = build.errors ?? []
+      notice = [
+        `Ce projet ne se construit pas en l etat (${build.reason}).`,
+        '',
+        ...buildErrors.slice(0, 8).map((line) => `  ${line}`),
+        '',
+        'Le code reste consultable fichier par fichier a gauche.',
+      ].join('\n')
+    }
+  }
   let previewHtml = null
-  if (!needsBuild) {
+  if (!notice) {
     try {
-      previewHtml = buildLivePreviewHtml(files)
+      previewHtml = buildLivePreviewHtml(previewFiles)
     } catch {
       previewHtml = null
     }
   }
-  const notice = needsBuild
-    ? 'Projet a construire avant tout rendu : `npm install && npm run build`. Le code reste consultable fichier par fichier.'
-    : null
 
   const meta = {
     id,
@@ -61,6 +81,8 @@ export async function publishCodeViewerProject({ id, title, brief, files, projec
     score: typeof score === 'number' ? score : null,
     platforms: Array.isArray(platforms) ? platforms : [],
     needsBuild,
+    buildOk: needsBuild ? buildErrors.length === 0 : null,
+    buildErrors: buildErrors.slice(0, 8),
   }
 
   fs.writeFileSync(
@@ -74,7 +96,12 @@ export async function publishCodeViewerProject({ id, title, brief, files, projec
     'utf8',
   )
   if (withApk) {
-    const apk = buildProjectApk({ id, files, label: meta.title, needsBuild })
+    const apk = buildProjectApk({
+      id,
+      files: needsBuild ? previewFiles : files,
+      label: meta.title,
+      needsBuild: needsBuild && Boolean(notice),
+    })
     if (apk) {
       meta.apk = apk
       meta.platforms = [

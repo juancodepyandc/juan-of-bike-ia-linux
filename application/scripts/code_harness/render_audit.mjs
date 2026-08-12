@@ -138,7 +138,9 @@ async function measure(page) {
  * `applicable:false` quand il n y a pas de page a ouvrir.
  * Ne leve jamais: une panne de navigateur ne doit pas empecher une livraison.
  */
-export async function renderAndScoreAesthetics(files, options = {}) {
+export async function renderAndScoreAesthetics(inputFiles, options = {}) {
+  let files = inputFiles
+  // `files` est reassigne quand un build produit un dist/ a servir.
   if (!files.some((f) => /\.html?$/i.test(f.name || ''))) {
     return { applicable: false, reason: 'aucun HTML a rendre' }
   }
@@ -152,11 +154,20 @@ export async function renderAndScoreAesthetics(files, options = {}) {
   const needsBundler = /<script[^>]+src=["'][^"']*\/src\/[^"']+\.(ts|tsx|jsx|vue|svelte)["']/i.test(entryHtml)
     || files.some((f) => /\.(vue|svelte)$/i.test(f.name || ''))
   if (needsBundler) {
-    return {
-      applicable: false,
-      reason: 'projet a bundler (Vue/React/Svelte): un build est requis avant tout jugement de rendu',
-      needsBuild: true,
+    // On ne se contente plus de dire « non applicable »: on CONSTRUIT, avec la
+    // commande que le README promet. Le build est la verite terrain.
+    const { buildGeneratedProject } = await import('./project_build.mjs')
+    const build = buildGeneratedProject(files)
+    if (!build.built) {
+      return {
+        applicable: false,
+        needsBuild: true,
+        buildFailed: true,
+        buildErrors: build.errors ?? [],
+        reason: `build impossible (${build.reason}): ${(build.errors ?? []).slice(0, 3).join(' | ') || 'voir journal'}`,
+      }
     }
+    files = build.files
   }
   let browser = null; let server = null
   try {

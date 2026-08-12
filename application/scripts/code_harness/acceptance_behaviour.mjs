@@ -134,7 +134,8 @@ const CALC_CASES = [
  * Execute le livrable et retourne des criteres COMPORTEMENTAUX.
  * Retourne `applicable:false` quand le livrable n est pas une page pilotable.
  */
-export async function runBehaviourAcceptance(files, prompt, options = {}) {
+export async function runBehaviourAcceptance(inputFiles, prompt, options = {}) {
+  let files = inputFiles
   const hasHtml = files.some((f) => /\.html?$/i.test(f.name || ''))
   if (!hasHtml) return { applicable: false, reason: 'aucun HTML a executer', criteria: [] }
 
@@ -156,12 +157,21 @@ export async function runBehaviourAcceptance(files, prompt, options = {}) {
   const needsBundler = /<script[^>]+src=["'][^"']*\/?src\/[^"']+\.(ts|tsx|jsx|vue|svelte)["']/i.test(entryHtml)
     || files.some((f) => /\.(vue|svelte)$/i.test(f.name || ''))
   if (needsBundler) {
-    return {
-      applicable: false,
-      needsBuild: true,
-      reason: 'projet a bundler: un build est requis avant tout jugement comportemental',
-      criteria: [],
+    // On ne se contente plus de dire « non applicable »: on CONSTRUIT, avec la
+    // commande que le README promet. Le build est la verite terrain.
+    const { buildGeneratedProject } = await import('./project_build.mjs')
+    const build = buildGeneratedProject(files)
+    if (!build.built) {
+      return {
+        applicable: false,
+        needsBuild: true,
+        buildFailed: true,
+        buildErrors: build.errors ?? [],
+        reason: `build impossible (${build.reason}): ${(build.errors ?? []).slice(0, 3).join(' | ') || 'voir journal'}`,
+        criteria: [],
+      }
     }
+    files = build.files
   }
 
   const { chromium } = await import('playwright')
