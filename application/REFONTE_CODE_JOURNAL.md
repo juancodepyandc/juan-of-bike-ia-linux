@@ -6699,3 +6699,95 @@ Les quatre portes de rendu sont en place et chacune est prouvee dans les DEUX
 sens — une porte qui ne fait que passer ne vaut rien. Reste assume: ces mesures
 ne concernent que le web. Un APK natif n a pas encore d equivalent (temps de
 demarrage, fluidite) — l emulateur existe, la mesure reste a ecrire.
+
+## 2026-08-12 — Le juge reclamait le gadget que la cliente avait refuse
+
+### Reprise et diagnostic
+
+Run 1021, brulerie artisanale lyonnaise: livraison refusee a **65/100** pour un
+seuil de 70 (contre 50 avant les correctifs precedents — le progres est reel,
+l echec aussi). Les criteres qui manquaient:
+
+```
+- Transformations 3D (rotateY/X, perspective, preserve-3d)
+- Animation pilotee par scroll (sticky/IntersectionObserver)
+- Au moins 2 images · border-radius >= 10px · etats :hover
+```
+
+Or le brief de la cliente dit, textuellement:
+
+> « Des animations discretes c est cool (un peu de mouvement au scroll, les
+> cafes qui apparaissent progressivement) mais **je veux pas que ca fasse
+> gadget**, faut que ca reste elegant. »
+
+**Le juge reclamait exactement le gadget qu elle avait refuse** — des rotations
+3D sur une brulerie artisanale. C est le motif de TOUS les defauts corriges
+depuis le debut de cette refonte: une porte qui juge selon un gabarit interne
+au lieu de juger selon ce qui a ete demande. Le profil « vitrine » du tour
+precedent distingue bien outil / application / vitrine, mais il restait sourd
+aux contraintes exprimees DANS le brief.
+
+Verification faite avant de coder: l information n existait nulle part en amont.
+`codeDesignDirectives` porte du vocabulaire d ARCHETYPE (brutaliste, immersif),
+pas de contrainte de retenue. Il fallait donc l extraire.
+
+### Modifications realisees
+
+- `src/services/codeStyleConstraints.ts` (nouveau) — lecture des contraintes
+  explicites du brief, la liste des criteres « gadget » a retirer et celle des
+  criteres a renforcer, plus une explication citant le brief.
+- `src/services/codeVisualFidelity.ts` — sous retenue, les criteres
+  spectaculaires sortent de la notation et la finition pese plus lourd.
+- `src/services/codeVisualFidelityCritique.ts` — la critique DIT que la barre a
+  change et pourquoi.
+- `scripts/code_harness/bridge_ndjson_runner.mjs` — les quatre portes decident.
+- `scripts/code_harness/capability_probe.mjs` — artefacts hors de /tmp.
+
+### Avant-apres mesurable — sur les fichiers reels du run 1021
+
+| | avant | apres |
+|---|---|---|
+| score visuel | **65/100 REFUSE** | **88/100 ACCEPTE** |
+| criteres exiges | 3D, parallaxe, degrades empiles | retires (contredisent le brief) |
+| echecs restants | gadgets manquants | fond plat, pas de SVG inline, rayons < 10 px |
+
+Les trois echecs restants sont de VRAIS defauts de finition — exactement ce que
+la cliente demande quand elle dit « elegant ».
+
+**Le risque etait d ouvrir une porte de sortie universelle.** Quatre tests le
+verrouillent: « elegant » seul n active rien (presque tous les briefs le
+disent); une page pauvre reste refusee meme avec un brief sobre; un brief
+neutre garde exactement le comportement d avant; et la finition est notee plus
+severement sous retenue (poids compares).
+
+### Deux recoins fermes dans la foulee
+
+**Regle du projet violee par moi au tour precedent:** les artefacts de la
+matrice de capacite vivaient dans `/tmp`. C est purge au redemarrage — une
+matrice qui reference des artefacts disparus ne devient pas inutile, elle MENT
+en silence. Ils vivent desormais sous
+`application/output/code/capacites/<plateforme>/`, chemins cites dans la page.
+
+**Deux portes mesuraient dans le vide:** le canal tunnel lisait le style et la
+composition, et ignorait accessibilite et performance — calculees a chaque
+audit, puis jetees. Mot pour mot le « mesurer sans decider » deja corrige sur la
+passe esthetique: un defaut se reintroduit toujours par la porte qu on vient
+d ouvrir. Les quatre verdicts sont maintenant journalises, emis dans le flux, et
+declenchent la passe ciblee. Verifie sur le convertisseur: style 70 OK,
+composition 100 OK, accessibilite 100 OK, performance 100 OK.
+
+Tests : **1018 -> 1029 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeStyleConstraints.test.ts'
+```
+
+### Etat de satisfaction chantier
+
+La derniere cause de refus injustifie du brief Brulerie est fermee, et elle
+l est de la seule maniere qui vaille: en faisant lire au juge ce qui a ete
+demande, sans lui retirer sa severite. Le run complet qui doit le confirmer de
+bout en bout est lance (runId 1031).
