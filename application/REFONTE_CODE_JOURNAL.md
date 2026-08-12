@@ -6860,3 +6860,59 @@ Aucun laissez-passer: projet Tailwind reellement pauvre = toujours refuse,
 package.json casse = toujours condamne, « non mesure » n est pas une reussite.
 
 Tests : **1029 -> 1044 verts, 0 echec.**
+
+## 2026-08-12 (suite) — Run 1041: une panne reseau detruisait 32 fichiers
+
+Le run 1041 n a pas echoue sur la qualite: il est mort avant d etre juge.
+
+```
+[CodeOrchestrator] Pipeline fatal error: Ollama: toutes les tentatives
+epuisees (3). Modeles testes: qwen3-coder:30b x3. Derniere erreur: fetch failed
+```
+
+Aucun `visual.score` emis. 32 fichiers produits, **tous jetes** — le
+gestionnaire fatal renvoyait `files: []`. Contexte machine au moment de la
+panne: 30 Go de RAM, **0 libre**, 14,7 Go de VRAM occupes.
+
+C est la regle des portes de qualite prise dans l autre sens. Un juge qui ne
+peut pas mesurer ne condamne pas ; donc **un generateur qui perd son modele ne
+detruit pas ses fichiers**. Une panne reseau ne dit rien sur la valeur du
+travail deja produit.
+
+### 1. Le travail est preserve
+
+Le dernier etat non vide des fichiers est capture en continu et livre si le
+pipeline meurt, sous une phase dediee `interrupted` — ni `done` ni `error`. Les
+notes disent explicitement que **l interruption n est pas un verdict de
+qualite**, pour qu aucune lecture ulterieure ne confonde « pas fini » et
+« mauvais ». Le runner sort sur son propre chemin (code 2): sans cela, un
+travail non valide aurait ete annonce `done` aux consommateurs — le mensonge
+exact que ce fichier denonce dix lignes plus haut pour le cas `error`.
+
+### 2. On attend un service qui revient
+
+Le bareme (800 ms, 2 s, 4 s) totalise **~7 secondes**. Sous pression memoire, un
+rechargement de modele prend des dizaines de secondes: on abandonnait un run de
+32 fichiers pendant que le service etait en train de revenir.
+
+Quand l erreur decrit un TRANSPORT casse (`fetch failed`, `ECONNREFUSED`,
+`socket hang up`...), le bareme passe a **6 tentatives sur ~132 s**. Un modele
+qui REFUSE le travail garde ses 3 tentatives rapides: s acharner sur une erreur
+deterministe serait le gaspillage inverse, deja corrige ailleurs. Attendre ne
+consomme ni RAM ni VRAM — seule forme de resilience acceptable sur cette
+machine, dont les gels historiques sont d origine memoire.
+
+### 3. La garde de residence etait aveugle deux fois
+
+- **Son cache la neutralisait.** `lastEnsured` etait pose pendant la
+  planification, PUIS la phase d assets chargeait le modele d un autre module,
+  PUIS la generation reprenait avec la garde en cache — donc sans jamais rien
+  decharger. Les deux modeles ont cohabite pendant toute la generation.
+- **Elle croyait la vision legere.** Le commentaire disait « vision qwen3-vl,
+  legere, peut coexister ». `qwen3-vl:30b` est un 30B: il pese autant qu un gros
+  modele code. **Un modele se juge a sa taille, pas a sa famille.** Le test qui
+  affirmait l inverse encodait l hypothese que la mesure a dementie; il est
+  corrige et documente. La cible n est jamais dechargee, y compris quand la
+  cible EST la vision (test dedie).
+
+Tests : **1047 -> 1056 verts, 0 echec.**
