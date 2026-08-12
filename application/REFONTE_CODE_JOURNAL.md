@@ -6455,3 +6455,109 @@ Reste assume, mesure, non contourne:
   donc `adb install` reste la voie courte;
 - le hub est alimente par le RUNNER: une generation lancee depuis l UI Tauri n y
   apparait pas encore.
+
+## 2026-08-12 — Construire les SPA, et durcir les recoins
+
+### Reprise et diagnostic
+
+Le verrou que j avais nomme au tour precedent: un projet a bundler ne peut pas
+etre juge en servant ses sources. Les deux juges se declaraient « non
+applicables », donc tout le haut du spectre restait NON MESURE — ni rendu, ni
+acceptation, ni APK.
+
+La reponse n est pas une heuristique de plus: c est de CONSTRUIRE, avec la
+commande que le README promet. Le build ne devine pas, il compile.
+
+Premier essai sur le projet reel du run 991, et il donne immediatement ce
+qu aucune heuristique n avait su nommer:
+
+```
+src/__tests__/MarketCalendar.test.tsx(15,28): error TS1002: Unterminated string literal.
+src/components/Footer.tsx(5,6): error TS17008: JSX element 'footer' has no corresponding closing tag.
+```
+
+A comparer avec ce que le meme projet produisait avant: « renders-content:
+0 caracteres, 0 controles, 0 surfaces ». Meme verdict d echec, mais l un
+envoyait le modele chasser un fantome pendant neuf passes, l autre lui donne le
+fichier, la ligne et la colonne.
+
+Trois obstacles reels rencontres en chemin, chacun mesure et ferme:
+
+- `Cannot find package '@vitejs/plugin-react'` — le `vite.config` importait un
+  plugin que le manifeste ne declarait pas. On lit les imports du fichier de
+  config et on complete: c est verifiable, pas devine.
+- `ERR_PACKAGE_PATH_NOT_EXPORTED` — installer le dernier plugin a cote d un
+  vite 5 ne marche pas. La version suit desormais le vite DECLARE.
+- `Could not resolve dependency` — les projets generes melangent des versions
+  qui ne se parlent pas. Repli `--legacy-peer-deps`, exactement ce pour quoi il
+  existe.
+
+### Avant-apres mesurable
+
+| Sur un projet a bundler | Avant | Apres |
+|---|---|---|
+| acceptation comportementale | « non applicable » | **applicable, 2/2 verts** |
+| audit de rendu | « non applicable » | **applicable, 54/100** |
+| projet reellement casse | « 0 caractere » | **erreurs du compilateur, fichier:ligne:colonne** |
+
+### Les recoins durcis
+
+**Caviardage avant publication.** Le hub sert le code source integral par le
+tunnel PUBLIC. Rien de sensible n y figure aujourd hui — verifie sur les sept
+projets, zero occurrence — mais c est une propriete a TENIR. Les valeurs de
+secrets sont masquees; un `<input type="password">`, un `process.env.API_KEY` et
+un `your-api-key-here` restent intacts. Verifie de bout en bout: un projet
+portant `apiKey = "sk_live_..."` publie un `project.json` ou le secret est
+ABSENT et le champ de formulaire intact.
+
+**Traversee de chemin.** Quatre tentatives par le tunnel
+(`../../../etc/passwd`, encodages `%2e%2e`, remontee depuis `viewers/`):
+**HTTP 404 partout**.
+
+**Fichiers de reprise.** Aucun des sept projets n avait de `.gitignore`: le
+premier geste de son proprietaire aurait ete de commiter `node_modules/`. Trois
+fichiers desormais, tous derives du reel: `.gitignore` suit la pile detectee,
+`.env.example` ne liste que les variables que le code LIT, `.nvmrc` porte la
+version deduite. Aucune licence n est generee — choisir a la place de l auteur
+serait une faute.
+
+**Le hub a l echelle.** Filtre plein texte avec compteur, tri (date, taille,
+score, nom), et surtout un ETAT DE BUILD lisible sans ouvrir le projet:
+« Construit » / « Ne compile pas » avec les erreurs en infobulle. Sur les sept
+projets reels, trois sortent « Ne compile pas », et c est vrai.
+
+**Accessibilite mesuree a l ecran.** Sept criteres dans le navigateur, dont le
+contraste CALCULE. Prouve dans les deux sens: le convertisseur livre obtient
+100/100, une page volontairement fautive tombe a 0/100 avec les sept defauts
+nommes — dont « texte gris clair » a **1.66:1**, ce qu aucune regex ne peut
+trouver.
+
+**Un bug que je me suis inflige, et le garde qui en sort.** `join('\n')` dans un
+template literal TS devient un VRAI retour a la ligne dans le script emis:
+« Invalid or unexpected token », hub mort, zero carte. Tous les tests de contenu
+passaient — ils verifiaient la presence des balises, pas que la page VIT. Trois
+tests verrouillent desormais que les scripts des deux pages viewer PARSENT.
+
+Tests : **954 -> 990 verts, 0 echec.**
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/codeProjectBuild.test.ts' \
+  'src/__tests__/codeArtifactRedaction.test.ts' \
+  'src/__tests__/codeProjectScaffoldFiles.test.ts' \
+  'src/__tests__/codeAccessibilityGate.test.ts'
+curl -s -o /dev/null -w "%{http_code}\n" "https://<tunnel>/api/code/assets/file/../../../etc/passwd"
+```
+
+### Etat de satisfaction chantier
+
+Le verrou est leve: un projet a bundler est construit, donc mesure, donc
+corrigeable sur des erreurs de compilateur au lieu d heuristiques.
+
+Reste assume: le build tourne dans le HARNAIS (rendu, acceptation, viewer), pas
+encore dans la boucle de correction elle-meme. Les erreurs du compilateur sont
+donc visibles apres coup, mais elles ne nourrissent pas encore les passes de
+correction — c est le branchement qui rendrait le gain complet, et c est le
+prochain vrai chantier.
