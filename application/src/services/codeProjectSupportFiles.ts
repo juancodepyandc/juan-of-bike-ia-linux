@@ -9,6 +9,7 @@ import {
 import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
 import { isSyntheticFallbackFile } from './codeProjectValidation.ts'
 import { generateProjectReadme } from './codeProjectReadme.ts'
+import { upsertProjectScaffoldFiles } from './codeProjectScaffoldFiles.ts'
 
 function buildLinuxLaunchScriptLines(files: CodeFile[], intent: CodeIntent): string[] {
   const normalizedNames = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
@@ -376,7 +377,8 @@ export function upsertProjectSupportFiles(
     ensureSpaIndexHtml(stripSyntheticFallbackFiles(strippedFiles, intent), intent),
     intent,
   )
-  const supportedFiles = ensureTailwindTooling(baseFiles)
+  // Reprise (.gitignore, .env.example, .nvmrc) AVANT le README, qui inventorie.
+  const supportedFiles = upsertProjectScaffoldFiles(ensureTailwindTooling(baseFiles))
 
   // start.sh doit exister AVANT le README pour que la section "Raccourci Linux/macOS"
   // ne soit ecrite QUE quand le script est reellement livre (elle mentait la moitie du temps).

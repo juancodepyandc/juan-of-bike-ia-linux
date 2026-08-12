@@ -17,18 +17,21 @@ export const VIEWERS_ROOT = path.resolve('output/code_assets/viewers')
 const resolveSrc = (rel) => pathToFileURL(path.resolve(rel)).href
 
 async function services() {
+  const redaction = await import(resolveSrc('src/services/codeArtifactRedaction.ts'))
   const viewer = await import(resolveSrc('src/services/codeViewerHtml.ts'))
   const index = await import(resolveSrc('src/services/codeViewerIndex.ts'))
   const preview = await import(resolveSrc('src/components/codeProjectPreviewHtml.ts'))
-  return { ...viewer, ...index, buildLivePreviewHtml: preview.buildLivePreviewHtml }
+  return { ...viewer, ...index, ...redaction, buildLivePreviewHtml: preview.buildLivePreviewHtml }
 }
 
 /**
  * Ecrit un projet: page autonome (lien direct, hors ligne) + charge utile JSON
  * (chargee a la demande par le hub) + metadonnees.
  */
-export async function publishCodeViewerProject({ id, title, brief, files, projectType, score, platforms, createdAt, withApk = false }) {
-  const { buildCodeViewerHtml, buildCodeViewerProjectPayload, buildLivePreviewHtml } = await services()
+export async function publishCodeViewerProject({ id, title, brief, files: rawFiles, projectType, score, platforms, createdAt, withApk = false }) {
+  const { buildCodeViewerHtml, buildCodeViewerProjectPayload, buildLivePreviewHtml, redactSecretsForPublication } = await services()
+  // Le hub part sur une URL PUBLIQUE: aucune valeur de secret ne doit y monter.
+  const { files, hits: redactions } = redactSecretsForPublication(rawFiles)
   const dir = path.join(VIEWERS_ROOT, id)
   fs.mkdirSync(dir, { recursive: true })
 
@@ -83,6 +86,7 @@ export async function publishCodeViewerProject({ id, title, brief, files, projec
     needsBuild,
     buildOk: needsBuild ? buildErrors.length === 0 : null,
     buildErrors: buildErrors.slice(0, 8),
+    redactions: redactions.length,
   }
 
   fs.writeFileSync(
