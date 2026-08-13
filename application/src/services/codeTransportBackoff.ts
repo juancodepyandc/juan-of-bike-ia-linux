@@ -20,3 +20,19 @@ export const TRANSPORT_BACKOFF_MS = [1_000, 3_000, 8_000, 20_000, 40_000, 60_000
 export function isTransportFailure(message: string): boolean {
   return /\bfetch failed\b|\bECONNREFUSED\b|\bECONNRESET\b|\bsocket hang up\b|\bEAI_AGAIN\b|\bETIMEDOUT\b|network (?:error|request failed)/i.test(message)
 }
+
+/**
+ * Budget d horloge TOTAL pour recuperer UN appel de generation.
+ *
+ * Run 1131, mesure: la passe 8 est entree en recuperation a 15:13:40 et en est
+ * sortie a 16:13:09 — 59,5 minutes pour un seul appel, 24 cycles, rien qui
+ * avance et 0 Go de RAM libre. Le compte de tentatives avait ete choisi en
+ * supposant des echecs RAPIDES (`fetch failed` revient tout de suite), mais
+ * chaque tentative peut consommer le timeout complet de l appelant (20 min pour
+ * une correction): six tentatives x 20 min = deux heures de pire cas.
+ *
+ * Un compteur de tentatives ne borne donc AUCUNE duree. Seule une horloge
+ * borne. Passe ce budget, on rend la main et le pipeline livre le travail
+ * preserve en phase `interrupted`, avec la cause exacte.
+ */
+export const RECOVERY_TOTAL_BUDGET_MS = 10 * 60_000

@@ -36,6 +36,8 @@ export type RecoveryEvent = {
 
 export interface ResilienceOptions {
   onRecoveryAttempt?: (event: RecoveryEvent) => void
+  /** Budget d horloge TOTAL pour recuperer cet appel (defaut: 10 min). */
+  recoveryBudgetMs?: number
   signal?: AbortSignal
   timeoutMs?: number
   firstByteTimeoutMs?: number
@@ -65,11 +67,15 @@ type MemoryErrorSignal = {
 // SINGLE-MODEL: Backoff reduit — on ne change plus de modele, donc inutile de
 // boucler 6 fois avec 25s de delay. 3 tentatives rapides suffisent.
 // Si le modele echoue 3 fois, c'est un vrai probleme (OOM, service down).
-import { TRANSPORT_BACKOFF_MS, isTransportFailure } from './codeTransportBackoff.ts'
+import { RECOVERY_TOTAL_BUDGET_MS, TRANSPORT_BACKOFF_MS, isTransportFailure } from './codeTransportBackoff.ts'
+
+export { RECOVERY_TOTAL_BUDGET_MS }
 
 const BACKOFF_DELAYS_MS = [800, 2_000, 4_000] as const
 const MAX_ATTEMPTS = BACKOFF_DELAYS_MS.length
 const MAX_TRANSPORT_ATTEMPTS = TRANSPORT_BACKOFF_MS.length
+
+
 
 const MODEL_MEMORY_FLOORS_GIB = new Map<string, number>()
 
@@ -332,6 +338,56 @@ export async function isOllamaAlive(): Promise<boolean> {
   }
 }
 
+export type OllamaHealth = 'down' | 'degraded' | 'ok'
+
+/**
+ * Le service ECOUTE-t-il, ou peut-il SERVIR ?
+ *
+ * Run 1131: `/api/tags` repondait, donc la verification concluait « ca va » et
+ * on retentait — vingt-quatre fois, une heure durant, pendant que chaque
+ * generation echouait. C est le motif corrige onze fois ailleurs dans cette
+ * serie: **une porte qui declare ce qu elle n a jamais mesure**. Elle mesurait
+ * « le serveur ecoute » et en deduisait « le serveur peut generer ».
+ *
+ * On mesure donc la generation — mais SANS charger quoi que ce soit: on
+ * n interroge qu un modele DEJA resident, avec un unique jeton. Si rien n est
+ * resident, on ne devine pas: un echec de transport repete signe un service
+ * degrade, et forcer un chargement ici ajouterait de la pression memoire sur
+ * une machine dont les gels sont d origine memoire.
+ */
+export async function assessOllamaHealth(lastErrorMessage: string): Promise<OllamaHealth> {
+  if (!(await isOllamaAlive())) return 'down'
+  const resident = await residentOllamaModels()
+  if (resident.length === 0) {
+    return isTransportFailure(lastErrorMessage) ? 'degraded' : 'ok'
+  }
+  try {
+    await withTimeout(
+      ollamaGenerate(resident[0], 'ok', { firstByteTimeoutMs: 15_000 }),
+      { label: 'Ollama sonde de generation', timeoutMs: 20_000 },
+    )
+    return 'ok'
+  } catch {
+    return 'degraded'
+  }
+}
+
+/** Modeles DEJA charges: les sonder n ajoute aucune pression memoire. */
+async function residentOllamaModels(): Promise<string[]> {
+  try {
+    const response = await fetch('http://127.0.0.1:11434/api/ps', {
+      signal: AbortSignal.timeout(5_000),
+    })
+    if (!response.ok) return []
+    const body = await response.json() as { models?: Array<{ name?: string; model?: string }> }
+    return (body.models ?? [])
+      .map((entry) => String(entry.name ?? entry.model ?? '').trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
 export async function restartOllamaService(): Promise<void> {
   try {
     await runtimeReleaseService('ollama')
@@ -366,6 +422,10 @@ async function withResilience<T>(
   // Le plafond s adapte: un service injoignable merite d etre attendu, un
   // modele qui refuse le travail ne merite pas d etre relance dix fois.
   let attemptCap: number = MAX_ATTEMPTS
+  // Le compte de tentatives ne borne rien quand chaque tentative peut consommer
+  // le timeout complet de l appelant. Seule une horloge borne (run 1131).
+  const recoveryStartedAt = Date.now()
+  const recoveryBudgetMs = opts?.recoveryBudgetMs ?? RECOVERY_TOTAL_BUDGET_MS
   while (executionAttempt < attemptCap) {
     if (opts?.signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
@@ -385,6 +445,22 @@ async function withResilience<T>(
       models.push(installedCompact)
       catalog = await fetchModelCatalog()
       continue
+    }
+
+    if (Date.now() - recoveryStartedAt > recoveryBudgetMs) {
+      const spentMin = Math.round((Date.now() - recoveryStartedAt) / 60_000)
+      emitRecovery(opts, {
+        attempt: Math.max(executionAttempt, 1),
+        maxAttempts: attemptCap,
+        action: 'exhausted',
+        model: models[Math.min(currentModelIndex, models.length - 1)] || primaryModel,
+        error: `Budget de recuperation epuise (${spentMin} min): ${errorMessage(lastError)}`,
+      })
+      throw new Error(
+        `Ollama: budget de recuperation epuise apres ${spentMin} min. `
+        + 'Le travail deja produit est preserve; ce n est PAS un verdict de qualite. '
+        + `Derniere erreur: ${errorMessage(lastError)}`,
+      )
     }
 
     const model = models[currentModelIndex]
@@ -503,8 +579,11 @@ async function withResilience<T>(
         error: errMsg,
       })
 
-      const alive = await isOllamaAlive()
-      if (!alive) {
+      const health = await assessOllamaHealth(errMsg)
+      // « Le serveur ecoute » n est pas « le serveur peut generer ». Un service
+      // DEGRADE se redemarre — c est la seule action qui le repare; le relacher
+      // et retenter, c est le tourniquet d une heure du run 1131.
+      if (health !== 'ok') {
         emitRecovery(opts, {
           attempt: executionAttempt,
           maxAttempts: MAX_ATTEMPTS,
