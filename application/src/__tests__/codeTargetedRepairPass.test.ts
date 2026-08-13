@@ -161,6 +161,33 @@ describe('execution de la passe ciblee', () => {
     assert.equal(inspectCodePatchRegression(PROJECT, result.files).ok, true)
   })
 
+  // Les deux corrections se composent: le modele ecrit des en-tetes NUS
+  // (forme reellement observee au run 1061), le parseur les lit, et la fusion
+  // n applique que les cibles autorisees.
+  test('un patch aux en-tetes NUS (forme reelle du modele) est applique', async () => {
+    const patched = 'export default function Footer() {\n  return <footer><svg viewBox="0 0 24 24"><path d="M12 2v20" /></svg>Lyon</footer>\n}'
+    const result = await runTargetedRepairPass({
+      prompt: 'site de brulerie',
+      files: PROJECT,
+      failedChecks: ['real_iconography'],
+      critique: 'Remplace les emoji par des SVG inline.',
+      model: 'test',
+      generate: async () => [
+        '<<<AURORA_CODE_VFS/1>>>',
+        'AURORA_FILE {"path":"src/components/Footer/Footer.tsx","length":123,"encoding":"utf8","language":"tsx"}',
+        patched,
+        '<<<AURORA_END>>>',
+        '',
+      ].join('\n'),
+    })
+
+    assert.equal(result.changed, true)
+    assert.deepEqual(result.patched, ['src/components/Footer/Footer.tsx'])
+    assert.equal(result.files.find((f) => f.name === 'src/components/Footer/Footer.tsx')!.content, patched)
+    assert.equal(result.files.some((f) => f.name === 'main.js'), false)
+    assert.equal(inspectCodePatchRegression(PROJECT, result.files).ok, true)
+  })
+
   test('une reponse illisible laisse le livrable EXACTEMENT intact', async () => {
     const result = await runTargetedRepairPass({
       prompt: 'site de brulerie', files: PROJECT, failedChecks: ['real_iconography'],
