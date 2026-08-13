@@ -7479,3 +7479,68 @@ configuration et ses propres versions; le cout et le risque sont sans commune
 mesure avec le fait de ne pas choisir l outil. La porte reste ouverte.
 
 Tests : **1124 -> 1133 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1121: huit passes de typage pendant que des fichiers manquaient
+
+Le correctif codegen a tenu: plus aucune trace de `routeTree.gen`, et le run est
+alle bien plus loin — jusqu a la compilation TypeScript reelle. Elle a reporte
+**234 erreurs** sur l ensemble des passes:
+
+```
+TS2307: Cannot find module '../components/StorySection'
+TS2307: Cannot find module './Logo'
+TS2339: Property 'totalWeekly' does not exist on type 'OrdersState'
+TS7006: Parameter 'link' implicitly has an 'any' type
+```
+
+Mesure exacte sur les 37 fichiers reellement livres: **deux** imports locaux non
+resolus, et rien d autre.
+
+```
+src/components/Logo          <- src/components/Header.tsx
+src/components/StorySection  <- src/pages/AboutPage.tsx
+```
+
+Le modele a ecrit du code qui importe des composants **que la file de generation
+ne lui a jamais demande d ecrire**. La boucle a ensuite brule huit passes a
+discuter du typage de `OrdersState` alors que des fichiers entiers manquaient.
+
+### Un constat exact ne se delegue pas
+
+Resoudre des imports locaux est mecanique: extensions, `/index`, `..`, paquets
+npm exclus par construction. Aucune ambiguite, aucune heuristique — donc, ligne
+directrice constante de ce module, aucune raison de confier ce constat a un
+modele probabiliste.
+
+Et on ne se contente pas de le SIGNALER: **les modules absents sont ajoutes a la
+file et generes**. Un import est une intention explicite du modele; la file
+etait simplement incomplete par rapport a ce que le code reference. Les liaisons
+attendues (`import Logo from`, `import { helper } from`) sont relevees et
+transmises comme exports a produire, pour que le module ecrit corresponde a
+l usage qu en fait l importateur.
+
+Deux tours au plus: un module cree peut a son tour en importer un autre, et le
+budget VRAM est fini. Une completion qui echoue ne detruit rien.
+
+### Ordre causal, deuxieme application
+
+Un fichier qui importe un module absent **ne peut pas etre type correctement**.
+Ses `TS2339`/`TS7006` sont des consequences, pas des defauts. Les `TS2307`
+passent donc en tete, leurs consequences dans LES MEMES fichiers sont nommees
+comme telles, et la sortie d origine reste integralement disponible. Une erreur
+dans un AUTRE fichier n est jamais classee en consequence.
+
+C est la meme regle qu au run 1101 (six criteres visuels non concluants sur une
+page qui ne monte pas), appliquee cette fois au compilateur.
+
+| | avant | apres |
+|---|---|---|
+| modules importes absents | 2, jamais generes | **ajoutes a la file et generes** |
+| erreurs presentees au correcteur | 234 a plat | **cause structurelle en tete, consequences nommees** |
+
+Detail: un test a attrape un bug de mon propre extracteur avant le lancement —
+le motif de liaison franchissait l import PRECEDENT (`import React from
+'react'`) et capturait deux instructions d un coup, rendant toute liaison
+indetectable. Le test valait le run.
+
+Tests : **1133 -> 1143 verts, 0 echec.**
