@@ -7413,3 +7413,69 @@ preuve, plus une heuristique.
 | portee du patch | 8 fichiers de style | **1 fichier: `src/components/CoffeeCard.tsx`** |
 
 Tests : **1117 -> 1124 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1111: un diagnostic parfait, une reparation impossible
+
+Le run 1111 meurt dans la boucle de correction, avant meme les portes de
+qualite. Et cette fois le pipeline diagnostique JUSTE, a chaque passe:
+
+```
+Passe 5 — importation manquante du fichier ./routeTree.gen dans src/App.tsx
+Passe 6 — Le fichier routeTree.gen est requis par App.tsx mais n existe pas
+Passe 7 — import manquant du fichier ./routeTree.gen dans src/App.tsx
+Passe 8 — import manquant du fichier ./routeTree.gen dans src/App.tsx
+Arret de la boucle : boucle infinie detectee sur la meme erreur apres 9 passes.
+```
+
+Mesure sur les fichiers reels:
+
+```
+package.json : "@tanstack/react-router": "1.42.13"
+src/App.tsx  : import { routeTree } from './routeTree.gen'
+fichiers routeTree* livres : AUCUN
+```
+
+`routeTree.gen` est produit par le plugin de codegen de TanStack Router — un
+plugin qui **n etait meme pas dans les devDependencies**. Le modele ne pouvait
+donc ni l ecrire (il est genere), ni l obtenir (le generateur est absent).
+
+**Le diagnostic etait juste et aucune action disponible ne le resolvait.** Neuf
+passes perdues d avance. C est le troisieme membre d une meme famille:
+
+| run | conseil donne | pourquoi il est impossible |
+|---|---|---|
+| 1031 | « mets le secret dans `.env` » | aucun serveur dans le projet |
+| 1081 | « ecris ce JPEG » | modele de texte |
+| 1111 | « ajoute `routeTree.gen` » | fichier produit par un generateur absent |
+
+### La regle: on n interdit pas la bibliotheque, on interdit de la choisir sans son generateur
+
+- un **registre** des dependances a generateur, avec ce qu elles produisent et
+  par quoi les remplacer (TanStack Router -> `react-router-dom`, Prisma ->
+  `better-sqlite3`, Relay -> `@apollo/client`, graphql-codegen -> retire) ;
+- l interdiction est **nommee dans la consigne du planificateur**, remplacant
+  compris — pas un « evite les outils complexes » ;
+- la substitution est **DETERMINISTE a la lecture du plan**: quand une
+  correction n a qu une seule bonne reponse, on ne la delegue pas a un modele
+  probabiliste ;
+- les artefacts generes sont retires du plan, de la file **ET** du contrat — les
+  trois, sinon le contrat reclame ce que la file ne produit plus, exactement le
+  piege deja paye au run 1031 ;
+- le conseil « ajoute le fichier » devient « **REMPLACE tel paquet par tel
+  autre** ». Un conseil irrealisable transforme une porte en piege.
+
+Detail qui aurait coute un run: le predicat couvre le specificateur **sans
+extension** (`from './routeTree.gen'`), qui est la forme reellement ecrite dans
+le code. Un test l a attrape avant le lancement.
+
+Effet de bord voulu, releve par la coordination: la pile de routage cesse de
+changer d un run a l autre sur le meme brief, puisque la seule option restante
+est celle qui marchait deja aux runs precedents.
+
+Note d honnetete: la 2e voie proposee — executer reellement le codegen — n a pas
+ete prise. Installer et configurer un generateur par bibliotheque ouvrirait une
+famille entiere d outils, mais chaque generateur a sa propre CLI, sa propre
+configuration et ses propres versions; le cout et le risque sont sans commune
+mesure avec le fait de ne pas choisir l outil. La porte reste ouverte.
+
+Tests : **1124 -> 1133 verts, 0 echec.**
