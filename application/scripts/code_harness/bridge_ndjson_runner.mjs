@@ -85,6 +85,10 @@ const models = await import(resolveSrc('src/config/models.ts'))
 const events = await import(resolveSrc('src/services/codeStreamEvents.ts'))
 const { pickBestDelivery } = await import(resolveSrc('src/services/codeBestDeliverySelection.ts'))
 const { runTargetedRepairPass } = await import(resolveSrc('src/services/codeTargetedRepairPass.ts'))
+const {
+  RENDER_ROOT_FAILURE, buildRenderRootCauseCritique, splitRenderFailures,
+  extractSourcePathsFromErrors,
+} = await import(resolveSrc('src/services/codeRenderCausalOrder.ts'))
 
 const {
   buildCodeStreamPhaseEvent,
@@ -304,23 +308,39 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
         // de scripts et d exports. Le garde anti-regression la refusait, a
         // raison, et le defaut restait. Une reparation d iconographie est un
         // patch sur les fichiers qui portent des emoji, pas une reecriture.
-        const failedChecks = [
+        const allFailed = [
           ...(audit.verdict.passed ? [] : audit.verdict.failedChecks),
           ...(compoKo ? audit.compositionVerdict.failedChecks : []),
           ...(a11yKo ? a11y.failedChecks : []),
           ...(perfKo ? perf.failedChecks : []),
         ]
+        // Run 1101: la page crashait au montage et SEPT criteres etaient
+        // declares en echec. Six n etaient pas des defauts — sur une page qui ne
+        // monte pas, il n y a ni typographie ni profondeur A MESURER. La passe a
+        // repeint huit fichiers de style: 10/100 avant, 10/100 apres. On ne
+        // repare donc que la CAUSE, et on le dit au modele.
+        const { causes, symptoms } = splitRenderFailures(allFailed)
+        const crashed = causes.includes(RENDER_ROOT_FAILURE)
+        if (crashed) {
+          log(`[bridge-runner] cause racine: ${RENDER_ROOT_FAILURE} — ${symptoms.length} critere(s) non concluant(s) ignore(s): ${symptoms.join(',')}`)
+        }
+        const failedChecks = causes
         const repair = await runTargetedRepairPass({
           prompt,
           files,
           failedChecks,
-          critique: [
-            audit.verdict.passed ? '' : audit.verdict.critique,
-            compoKo ? audit.compositionVerdict.critique : '',
-            a11yKo ? a11y.critique : '',
-            perfKo ? perf.critique : '',
-          ].filter(Boolean).join('\n\n').trim(),
+          critique: crashed
+            ? buildRenderRootCauseCritique({ consoleErrors: audit.consoleErrors ?? [], symptoms })
+            : [
+              audit.verdict.passed ? '' : audit.verdict.critique,
+              compoKo ? audit.compositionVerdict.critique : '',
+              a11yKo ? a11y.critique : '',
+              perfKo ? perf.critique : '',
+            ].filter(Boolean).join('\n\n').trim(),
           model: configuredCodeModel,
+          // Le crash nomme lui-meme ses fichiers: la trace resolue devient la
+          // portee du patch, au lieu d une heuristique sur tout le markup.
+          evidencePaths: crashed ? extractSourcePathsFromErrors(audit.consoleErrors ?? []) : [],
           setPhase: (d, p) => emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: String(d ?? ''), progress: Number(p) || 96 })),
         })
         log(`[bridge-runner] passe ciblee (${failedChecks.join(',')}): ${repair.summary}`)

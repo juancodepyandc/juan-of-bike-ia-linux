@@ -98,9 +98,22 @@ export function buildTargetedRepairScope(args: {
   files: CodeFile[]
   failedChecks: string[]
   maxTargets?: number
+  /**
+   * Chemins DESIGNES par une preuve (typiquement une trace runtime resolue en
+   * position source). Ils priment sur toute heuristique: quand le crash nomme
+   * lui-meme son fichier, il n y a plus rien a deviner.
+   */
+  evidencePaths?: string[]
 }): TargetedRepairScope {
   const maxTargets = args.maxTargets ?? 8
   const reasonsByPath: Record<string, string[]> = {}
+  const evidence = new Set((args.evidencePaths ?? []).map(normalize))
+
+  for (const file of args.files) {
+    if (evidence.has(normalize(file.name))) {
+      (reasonsByPath[file.name] ??= []).push('trace runtime')
+    }
+  }
 
   for (const check of args.failedChecks) {
     const probe = PROBES[check] ?? FALLBACK_PROBE
@@ -110,9 +123,13 @@ export function buildTargetedRepairScope(args: {
     }
   }
 
-  // Un fichier retenu par PLUSIEURS criteres est celui ou la reparation paie le
-  // plus. A egalite, le plus gros porte le plus de markup.
+  // Un fichier DESIGNE par une trace passe devant tout le reste: c est une
+  // preuve, pas une heuristique. Ensuite seulement, un fichier retenu par
+  // PLUSIEURS criteres paie le plus. A egalite, le plus gros porte le plus de
+  // markup.
   const ranked = Object.keys(reasonsByPath).sort((a, b) => {
+    const byEvidence = Number(evidence.has(normalize(b))) - Number(evidence.has(normalize(a)))
+    if (byEvidence !== 0) return byEvidence
     const byReasons = reasonsByPath[b].length - reasonsByPath[a].length
     if (byReasons !== 0) return byReasons
     const fileA = args.files.find((f) => f.name === a)!

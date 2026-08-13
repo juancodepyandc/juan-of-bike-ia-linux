@@ -112,6 +112,8 @@ export async function runTargetedRepairPass(args: {
   failedChecks: string[]
   critique: string
   model: string
+  /** Chemins designes par une preuve (trace runtime resolue). */
+  evidencePaths?: string[]
   setPhase?: (detail: string, progress: number) => void
   signal?: AbortSignal
   maxAttempts?: number
@@ -119,7 +121,11 @@ export async function runTargetedRepairPass(args: {
   generate?: (messages: OllamaMessage[]) => Promise<string>
 }): Promise<TargetedRepairResult> {
   const maxAttempts = args.maxAttempts ?? MAX_TARGETED_REPAIR_ATTEMPTS
-  const scope = buildTargetedRepairScope({ files: args.files, failedChecks: args.failedChecks })
+  const scope = buildTargetedRepairScope({
+    files: args.files,
+    failedChecks: args.failedChecks,
+    evidencePaths: args.evidencePaths,
+  })
 
   if (scope.targets.length === 0) {
     return {

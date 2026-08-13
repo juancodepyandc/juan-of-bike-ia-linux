@@ -219,7 +219,23 @@ export function buildGeneratedProject(files, { timeoutMs = 240_000, specFor = ()
   }
 
   const dist = path.join(dir, manifest.aurora?.distDir || 'dist')
-  const distFiles = collectDist(dist)
+  let distFiles = collectDist(dist)
+
+  // Une trace runtime sans source map est illisible: `assets/index-C-nmfp7n.js:8:193411`
+  // ne nomme ni le fichier, ni la ligne, ni le composant (run 1101). C est le
+  // meme trou que « le parseur disait QU il y a une erreur, jamais OU », mais
+  // cote navigateur. On reconstruit donc le bundle AVEC ses cartes des qu il n
+  // en a pas, pour pouvoir renvoyer au correcteur une position source reelle.
+  if (build.ok && distFiles.length > 0
+    && !distFiles.some((f) => f.name.endsWith('.map'))
+    && /vite build/.test(String(buildScript))) {
+    const withMaps = run('npx', ['vite', 'build', '--sourcemap'], dir, timeoutMs)
+    if (withMaps.ok) {
+      const remapped = collectDist(dist)
+      if (remapped.some((f) => f.name.endsWith('.map'))) distFiles = remapped
+    }
+  }
+
   if (!build.ok || distFiles.length === 0) {
     return {
       built: false,

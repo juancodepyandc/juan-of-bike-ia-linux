@@ -327,8 +327,11 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     browser = await chromium.launch({ headless: true })
     const consoleErrors = []
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-    page.on('pageerror', (e) => consoleErrors.push(String(e).slice(0, 160)))
-    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 160)) })
+    // 160 caracteres coupaient la trace juste apres le message: le correcteur
+    // recevait « TypeError: … (reading 'map') » sans savoir OU. On garde de quoi
+    // porter les premieres frames, qui sont ensuite resolues en positions source.
+    page.on('pageerror', (e) => consoleErrors.push(String(e.stack || e).slice(0, 1200)))
+    page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text().slice(0, 1200)) })
     await page.goto(`http://127.0.0.1:${served.port}/`, { waitUntil: 'networkidle', timeout: 30_000 })
     await page.waitForTimeout(1000)
     const desktop = await measure(page)
@@ -362,11 +365,15 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     )
     const performanceMetrics = await measurePerformance(page)
     const performanceVerdict = scorePerformance(performanceMetrics)
+    // Les traces sont resolues vers les fichiers SOURCE avant d atteindre le
+    // correcteur: une position de bundle minifie ne designe rien de reparable.
+    const { resolveConsoleErrors } = await import('./stack_resolve.mjs')
+    const sourceErrors = await resolveConsoleErrors(consoleErrors, files)
     return {
-      applicable: true, metrics: desktop, consoleErrors, composition, compositionVerdict,
+      applicable: true, metrics: desktop, consoleErrors: sourceErrors, composition, compositionVerdict,
       accessibility, accessibilityVerdict,
       performanceMetrics, performanceVerdict,
-      verdict: scoreRenderedAesthetics({ desktop, consoleErrors }),
+      verdict: scoreRenderedAesthetics({ desktop, consoleErrors: sourceErrors }),
     }
   } catch (err) {
     return { applicable: false, reason: String(err?.message ?? err).slice(0, 200) }
