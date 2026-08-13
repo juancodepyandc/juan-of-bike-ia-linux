@@ -6979,3 +6979,199 @@ autrement, on rend la main plutot que de deviner. Les .md, .json et .css ne sont
 jamais examines.
 
 Tests : **1056 -> 1066 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1061: six causes, dont quatre rendaient `done` IMPOSSIBLE
+
+Le run 1061 est le meilleur de la serie et il finit quand meme en `error`:
+
+```
+acceptation comportementale  2/2         OK
+rendu REEL                   100/100     OK   (seuil 70, aucun echec)
+accessibilite                100/100     OK   (seuil 80)
+performance                  80/100      OK   (seuil 70)
+composition                  real_iconography  <- seul echec
+FAILED phase=error files=36
+```
+
+Toutes les portes de qualite franchies, et pourtant un echec. En descendant
+dans le flux reel, ce n etait pas une cause mais **six**, empilees. Quatre
+d entre elles rendaient `done` mecaniquement inatteignable, quel que soit le
+code produit — ce qui explique toute la serie de runs precedents.
+
+### Cause A — le protocole lisait une forme que le modele n ecrit pas
+
+Le fichier livre `main.js` faisait 15 534 octets et n etait pas du JavaScript:
+c etait le conteneur multi-fichiers brut, non deballe. Le critique statique
+lisait `<<<AURORA_CODE_VFS/1>>>` en tete et diagnostiquait « jeton inattendu
+pres de import ». **Il avait raison.** Neuf passes brulees a reparer une erreur
+de syntaxe qui n existait pas.
+
+Pourquoi le conteneur n a-t-il pas ete reconnu ? La consigne melait un en-tete
+de version **nu** et deux marqueurs **encadres**:
+
+```
+Commence par AURORA_CODE_VFS/1.          <- nu
+Pour chaque fichier: <<<AURORA_FILE {…}>>>   <- encadre
+Marqueur de fin: <<<AURORA_END>>>            <- encadre
+```
+
+Le modele a uniformise — dans l autre sens: il a encadre la version et **denude
+les en-tetes de fichier**. Le parseur, lui, exigeait `<<<AURORA_FILE ` au
+caractere pres. Zero fichier reconnu. Un protocole dont la seule forme valide
+est celle que le modele n ecrit pas n est pas un protocole, c est un piege.
+
+Traite aux trois niveaux: consigne symetrique (les trois marqueurs s ecrivent
+pareil, plus un exemple complet), parseur tolerant aux deux formes (forme nue
+ancree en debut de ligne, pour qu une citation dans du contenu ne coupe pas un
+fichier), et **garde de derniere ligne**: un fichier dont le contenu COMMENCE
+par un marqueur Aurora est deballe, ou ecarte — jamais livre.
+
+| sur le fichier reel du run 1061 | avant | apres |
+|---|---|---|
+| fichiers extraits | **1** (`main.js`, 15 534 o, non compilable) | **14** aux vrais chemins |
+| marqueurs de protocole residuels | 1 | **0** |
+
+### Cause B — la passe « ciblee » reecrivait le projet
+
+Un seul critere echouait (`real_iconography`). La passe appelait
+`orchestrateCodeGeneration` **en entier**: nouvelle intention, nouveau plan
+d architecture, nouvelle generation. Elle repartait d une page blanche et
+rendait un projet AUTRE, ampute (`removed_file, removed_script,
+removed_export`). Le garde anti-regression la refusait — a raison — et le
+defaut restait.
+
+Corriger des emoji, c est editer les fichiers qui portent des emoji. La portee
+est desormais DEDUITE d une preuve dans le contenu (pour l iconographie, le
+detecteur du juge lui-meme, fichier par fichier), bornee a 8 fichiers, et la
+fusion est **structurellement incapable de supprimer**: on remplace des chemins
+existants et autorises, on n en retire aucun. Un fichier neuf n est accepte que
+s il est reellement importe par un fichier patche.
+
+Second piege, dans l arbitre: le livrable etait a **100/100 en style** ET en
+echec de composition. Une passe qui repare exactement ce defaut ne peut pas
+faire monter un score deja au plafond — `pickBestDelivery` la condamnait donc
+quoi qu elle repare. Reparer la porte qui echouait EST le progres; le score
+sert alors a verifier qu on n a rien casse, pas a prouver une hausse.
+
+### Causes C a F — le bac a sable ne pouvait PAS reussir
+
+En regardant les verdicts sandbox du run 1061, une ligne saute aux yeux:
+
+```
+seq 128  ok=false score=86  Preuve isolation host-read
+seq 140  ok=false score=86  Preuve isolation host-read
+seq 152  ok=false score=86  Preuve isolation host-read
+```
+
+Aux passes 3, 4 et 5, **tout le reste etait vert**. Le seul echec etait une
+preuve d isolation — et elle bloque `isDeliveryRunnable`, donc `phase: 'error'`.
+Cette preuve echouait sur chaque run, pour chaque projet, depuis toujours.
+
+**C. Les preuves tournaient dans une image absente.** Construites avec le
+langage `'unknown'`, elles retombaient sur `debian:bookworm-slim`. Aurora ne
+provisionne que trois images (node, python, alpine) et `--pull=never` interdit
+de telecharger pendant une generation.
+
+```
+image debian:bookworm-slim  -> Error: image not known
+image node:22-bookworm-slim -> HOST-READ PROBE: PASS
+```
+
+Les preuves tournent desormais dans **l image qui va reellement executer le
+code**. Prouver qu un conteneur debian ne lit pas l hote ne dit rien du
+conteneur node dans lequel le projet tourne: c est plus juste, pas seulement
+plus pratique.
+
+**D. Deux probes sur quatre etaient du shell INVALIDE.** Les corps de boucle
+etaient joints par un espace: `i=$((i + 1)) dd …` devenait un prefixe
+d affectation a `dd` (jamais persiste) et `done` collait a la commande
+precedente.
+
+```
+$ sh -n -c '<script de la preuve quota disque>'
+sh: 1: Syntax error: end of file unexpected (expecting "done")
+```
+
+`dash` sort alors en **2** — exactement le statut que la preuve reservait a
+« confinement NON applique ». Une erreur de syntaxe etait rapportee comme une
+faille d isolation. Le test qui manquait est ajoute: **chaque script de probe
+doit passer `sh -n`**. Il a immediatement attrape deux fautes de ponctuation
+dans ma propre reecriture.
+
+La preuve de plafond PID avait le meme defaut de fond: le shell **meurt** sur
+« Cannot fork » avec le statut 2, le meme statut que « pas de plafond ». Les
+deux cas etaient indiscernables. La rafale est confinee dans un sous-shell et
+le verdict ne tient plus qu a un marqueur. Temoin negatif verifie: sans
+`--pids-limit`, la preuve echoue toujours.
+
+**E. On exigeait la preuve d un quota jamais demande.** Ce systeme de fichiers
+ne supporte pas le Project Quota (`volume options size and inodes not
+supported`), et Aurora cree **deliberement** le volume sans quota de taille.
+Exiger ensuite la preuve de ce quota, c est faire contredire par une porte une
+decision prise en amont. La preuve devient NON APPLICABLE — et n est pas
+declaree acquise pour autant.
+
+**F. Le HOME inscriptible n etait jamais declare, et le plafond de taille de
+fichier valait 1 Mio.** Deux reglages, un meme symptome: `npm install`
+impossible.
+
+- La racine est en lecture seule avec un tmpfs sur `/home/aurora`, mais
+  `--userns keep-id` donne `HOME=/home/node` dans l image node — un chemin de la
+  racine en lecture seule. Mesure: `npm error enoent … mkdir '/home/node/.npm'`.
+  Le bac a sable montait un HOME inscriptible **sans jamais le dire au
+  processus**. Un seul reglage repare npm, pip, cargo et go.
+- `fileSizeBlocks: '1048576'` encodait une hypothese fausse. Podman passe la
+  valeur telle quelle a `RLIMIT_FSIZE`, **qui est en octets** — c est `ulimit -f`
+  du shell qui compte en blocs de 512 o, pas l API. Le plafond reel etait donc
+  de 1 Mio. Mesure: un `dd` de 2 Mio s arrete a exactement 1 048 576 octets, et
+  `npm install` de react echoue en `EFBIG: file too large`.
+
+**Tous ces echecs arrivaient au pipeline avec une sortie VIDE**: le pont ne
+renvoie que stdout et podman ecrit sur stderr. Un echec sans message est
+indiagnosticable — c est ainsi qu une image absente a pu passer pendant des
+dizaines de runs pour une violation d isolation. Une etape en echec sans sortie
+est desormais nommee.
+
+### Avant-apres mesurable
+
+Validation isolee, projet React/Vite reel, meme machine, meme pipeline:
+
+| | avant | apres |
+|---|---|---|
+| verdict sandbox | **ok=false** | **ok=true** |
+| etapes atteintes | 4 | **13** |
+| preuves d isolation | **0/4** (1re en echec) | **7/7 vertes** |
+| `npm install` | EFBIG / ENOENT | **passe** |
+| `vite build` | jamais atteint | **passe** |
+| `phase` possible | `error`, toujours | **`done`** |
+
+### Demonstration reproductible
+
+```bash
+cd application
+node --experimental-strip-types --test 'src/__tests__/code*.test.ts'
+# 1099 tests, 0 echec
+
+# la preuve d isolation, a la main, dans les deux images
+podman run --rm --pull=never --network none docker.io/library/debian:bookworm-slim true
+#   -> Error: docker.io/library/debian:bookworm-slim: image not known
+podman run --rm --pull=never --network none docker.io/library/node:22-bookworm-slim true
+#   -> (rien: succes)
+
+# l unite reelle de --ulimit fsize
+podman run --rm --pull=never --ulimit fsize=1048576:1048576 --read-only \
+  --tmpfs /tmp:rw,size=256m docker.io/library/node:22-bookworm-slim \
+  sh -lc 'dd if=/dev/zero of=/tmp/x bs=1M count=2 status=none; ls -l /tmp/x'
+#   -> File size limit exceeded, 1048576 octets ecrits
+```
+
+### Etat de satisfaction chantier
+
+Six causes, et la lecon est la meme pour cinq d entre elles: **une porte qui ne
+peut pas mesurer ne doit pas condamner**. Une image absente, un script invalide,
+un quota jamais demande, un HOME jamais declare — aucun de ces quatre faits ne
+dit quoi que ce soit sur le code livre, et tous les quatre le condamnaient.
+
+La regle avait deja ete posee dans ce journal pour le juge visuel et pour les
+pannes reseau. Elle n avait jamais ete appliquee au bac a sable, qui est
+pourtant le seul juge dont le verdict decide de `done`.
