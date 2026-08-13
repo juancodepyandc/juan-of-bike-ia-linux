@@ -180,12 +180,23 @@ export async function runBehaviourAcceptance(inputFiles, prompt, options = {}) {
   const criteria = []
   const consoleErrors = []
   try {
+    // Run 1091: cette porte ouvrait `/index.html` et concluait « page vide ».
+    // Mesure sur les fichiers reels, memes fichiers, memes requetes (3 x 200),
+    // zero erreur:
+    //     GET /index.html -> 0 caractere,   15 elements
+    //     GET /           -> 1492 caracteres, 130 elements
+    // La SPA livree utilise react-router: aucune route ne correspond a
+    // `/index.html`, donc `<Routes>` ne rend rien. On jugeait une URL que
+    // l application ne sert pas, puis on l accusait d etre une coquille vide —
+    // et la boucle de correction a brule neuf passes a chercher un bug
+    // inexistant. Une application web s ouvre a sa RACINE, comme le fait
+    // deja l audit de rendu (qui, lui, notait 92/100 au meme instant).
     const page = await browser.newPage()
     page.on('pageerror', (err) => consoleErrors.push(String(err).slice(0, 200)))
     page.on('console', (msg) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text().slice(0, 200))
     })
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'networkidle', timeout: 20_000 })
+    await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle', timeout: 20_000 })
 
     // Critere universel: la page ne doit pas exploser au chargement.
     criteria.push({
@@ -226,7 +237,7 @@ export async function runBehaviourAcceptance(inputFiles, prompt, options = {}) {
           detail: res.ok ? `affiche "${res.shown}" (attendu ${c.expect})` : res.reason,
         })
         // Recharge entre deux operations pour repartir d un etat propre.
-        await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'networkidle', timeout: 20_000 })
+        await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'networkidle', timeout: 20_000 })
       }
     }
   } finally {

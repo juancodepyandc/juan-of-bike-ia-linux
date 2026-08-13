@@ -15,6 +15,7 @@ import {
   noSandboxGpuRequired,
 } from './codeSandboxGpu.ts'
 import { cleanupSandboxWorkspaceVolume, prepareSandboxWorkspaceVolume } from './codeSandboxWorkspace.ts'
+import { reclassifyEmptyTestSuiteStep } from './codeSandboxEmptyTestSuite.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -180,7 +181,10 @@ export async function runCodeSandboxValidation({
     // Les preuves tournent dans l image QUI VA EXECUTER LE CODE. Construites
     // avec `unknown`, elles retombaient sur une image debian jamais provisionnee
     // par Aurora: echec systematique, sur chaque run, avec une sortie vide.
-    const isolationProbes = await runSandboxIsolationProbes(sandboxRoot, lang)
+    const isolationProbes = await runSandboxIsolationProbes(sandboxRoot, {
+      lang,
+      workspaceQuotaEnforced: workspaceVolume.quotaEnforced,
+    })
     steps.push(...isolationProbes.steps)
     if (!isolationProbes.ok) {
       return {
@@ -258,14 +262,24 @@ export async function runCodeSandboxValidation({
       // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
       const rawOutput = result.output.trim()
       const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput
-      steps.push({
+      // Une suite de tests ABSENTE n est pas une suite en echec: le lanceur
+      // declare n avoir rien trouve, donc n avoir rien mesure du code livre.
+      // Sans cette requalification, tout projet qui declare un script `test`
+      // sans ecrire de test etait condamne a `phase: 'error'` (run 1091).
+      const emptySuite = reclassifyEmptyTestSuiteStep({
         label: command.label,
-        command: result.command,
         ok: result.ok,
         output: cappedOutput,
       })
+      const stepOk = result.ok || emptySuite.notApplicable
+      steps.push({
+        label: emptySuite.notApplicable ? `${command.label} (NON APPLICABLE)` : command.label,
+        command: result.command,
+        ok: stepOk,
+        output: emptySuite.output,
+      })
 
-      if (!result.ok && !command.optional) {
+      if (!stepOk && !command.optional) {
         const trimmedOutput = result.output.trim()
         const environmentFailure = /Failed to spawn command|program not found|command not found|is not recognized as an internal or external command/i.test(trimmedOutput)
         return {

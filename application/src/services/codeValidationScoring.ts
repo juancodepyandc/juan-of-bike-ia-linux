@@ -65,9 +65,31 @@ export function isDeliveryRunnable(sandboxResult: CodeSandboxResult | null): boo
   return !sandboxResult.steps.some((step) => !step.ok && !ADVISORY_GATE_COMMANDS.has(step.command))
 }
 
+/**
+ * Un defaut d APPARENCE mesure sur la SOURCE ne rend pas une livraison
+ * inexecutable.
+ *
+ * Run 1091: « Classes Tailwind detectees sans configuration Tailwind » — un
+ * `axis: 'preview'`, severite `error` — a bloque le verdict d executabilite
+ * pendant neuf passes. Au meme instant, le juge qui OUVRE la page dans un
+ * navigateur notait le rendu 92/100, la performance 100/100, et la page rendait
+ * 1 492 caracteres. Deux juges sur l apparence, et c est le juge aveugle (celui
+ * qui lit la source) qui condamnait celui qui regarde l ecran.
+ *
+ * Regle deja posee pour la design-spec, etendue ici a son jumeau: la mesure
+ * RENDUE fait autorite sur l apparence. Un defaut de l axe `preview` pese sur le
+ * score, jamais sur « est-ce que ca tourne ». Une severite `block` reste
+ * bloquante quel que soit l axe: un aperçu impossible a produire n est pas un
+ * defaut de gout.
+ */
+function isExecutionBlockingIssue(issue: CritiqueReport['issues'][number]): boolean {
+  if (issue.severity === 'block') return true
+  return issue.severity === 'error' && issue.axis !== 'preview'
+}
+
 export function isStaticCritiqueBlocking(report: CritiqueReport): boolean {
   if (report.hasBlocker) return true
-  if (report.issues.some((issue) => issue.severity === 'error')) return true
+  if (report.issues.some(isExecutionBlockingIssue)) return true
   if (report.scores.compile < 1) return true
   if (report.scores.security < 0.85) return true
   if (report.scores.lint < 0.65) return true
