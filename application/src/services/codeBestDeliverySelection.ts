@@ -72,6 +72,19 @@ export function pickBestDelivery(
   }
 
   if (incumbent.visualScore !== null && candidate.visualScore !== null) {
+    // Run 1061: le livrable etait note 100/100 en style et ECHOUAIT la
+    // composition (emoji en position d icone). Une passe qui repare exactement
+    // ce defaut ne peut pas faire monter un score deja au plafond — elle etait
+    // donc condamnee par la seule comparaison de score, quoi qu elle repare.
+    // Reparer la porte qui echouait EST le progres; le score sert alors a
+    // verifier qu on n a rien casse en chemin, pas a prouver une hausse.
+    if (incumbent.compositionOk === false && candidate.compositionOk === true
+      && candidate.visualScore >= incumbent.visualScore) {
+      return {
+        adopt: true,
+        reason: `composition reparee sans perte de rendu (${describeScore(candidate.visualScore)} contre ${describeScore(incumbent.visualScore)} avant) — regeneration adoptee`,
+      }
+    }
     if (candidate.visualScore <= incumbent.visualScore) {
       return {
         adopt: false,

@@ -84,6 +84,7 @@ const { useAppStore } = await import(resolveSrc('src/stores/appStore.ts'))
 const models = await import(resolveSrc('src/config/models.ts'))
 const events = await import(resolveSrc('src/services/codeStreamEvents.ts'))
 const { pickBestDelivery } = await import(resolveSrc('src/services/codeBestDeliverySelection.ts'))
+const { runTargetedRepairPass } = await import(resolveSrc('src/services/codeTargetedRepairPass.ts'))
 
 const {
   buildCodeStreamPhaseEvent,
@@ -296,23 +297,34 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
       if (!audit.verdict.passed || compoKo || a11yKo || perfKo) {
         log(`[bridge-runner] sous le seuil (${[!audit.verdict.passed && 'style', compoKo && 'composition', a11yKo && 'accessibilite', perfKo && 'performance'].filter(Boolean).join(', ')}) -> passe ciblee`)
         emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: 'Rendu reel sous le seuil - passe esthetique ciblee...', progress: 96 }))
-        const regen = await orchestrateCodeGeneration({
+        // Run 1061: cette passe appelait `orchestrateCodeGeneration` en entier
+        // pour corriger UN critere (des emoji en position d icone). Elle
+        // repartait donc d une page blanche — nouvelle intention, nouveau plan,
+        // nouvelle generation — et rendait un projet AUTRE, ampute de fichiers,
+        // de scripts et d exports. Le garde anti-regression la refusait, a
+        // raison, et le defaut restait. Une reparation d iconographie est un
+        // patch sur les fichiers qui portent des emoji, pas une reecriture.
+        const failedChecks = [
+          ...(audit.verdict.passed ? [] : audit.verdict.failedChecks),
+          ...(compoKo ? audit.compositionVerdict.failedChecks : []),
+          ...(a11yKo ? a11y.failedChecks : []),
+          ...(perfKo ? perf.failedChecks : []),
+        ]
+        const repair = await runTargetedRepairPass({
           prompt,
-          enrichedPrompt: [
-            prompt,
+          files,
+          failedChecks,
+          critique: [
             audit.verdict.passed ? '' : audit.verdict.critique,
             compoKo ? audit.compositionVerdict.critique : '',
             a11yKo ? a11y.critique : '',
             perfKo ? perf.critique : '',
           ].filter(Boolean).join('\n\n').trim(),
-          conversationHistory: normalizedHistory,
-          existingFiles: files,
-          contextImages: [], userFileDataUrls: {},
-          configuredCodeModel, visionModel,
+          model: configuredCodeModel,
           setPhase: (d, p) => emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: String(d ?? ''), progress: Number(p) || 96 })),
-          onToken: () => {}, onFilesUpdate: () => {},
-          onValidationUpdate: () => {}, onCorrectionLogUpdate: () => {},
         })
+        log(`[bridge-runner] passe ciblee (${failedChecks.join(',')}): ${repair.summary}`)
+        const regen = repair.changed ? { files: repair.files, phase: 'done' } : null
         // La passe esthetique PROPOSE, elle ne dispose pas. Avant, `files` etait
         // remplace inconditionnellement puis re-mesure — la mesure d apres etait
         // journalisee et jetee. Un run reel (960) a ainsi livre plus pauvre que
@@ -338,7 +350,9 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
               files: regen.files,
               visualScore: after.applicable && after.verdict ? after.verdict.score : null,
               compositionOk: after.compositionVerdict ? after.compositionVerdict.ok : null,
-              pipelineFailed: regen.phase === 'error',
+              // Un patch chirurgical s applique SUR la livraison en place: il
+              // herite de son etat de pipeline, il n en cree pas un nouveau.
+              pipelineFailed: result?.phase === 'error',
             },
           )
           log(`[bridge-runner] passe esthetique: ${selection.reason}`)
@@ -349,7 +363,11 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
           }))
           if (selection.adopt) {
             files = regen.files
-            result = regen
+            // On remplace les FICHIERS, jamais le resultat entier: notes, score,
+            // intention et verdict de sandbox appartiennent au pipeline qui les
+            // a mesures. Les ecraser par un objet de patch, c est perdre le peu
+            // qu on sait du livrable.
+            result = { ...result, files: regen.files }
           }
         }
       }
