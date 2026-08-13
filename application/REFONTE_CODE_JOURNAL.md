@@ -7544,3 +7544,63 @@ le motif de liaison franchissait l import PRECEDENT (`import React from
 indetectable. Le test valait le run.
 
 Tests : **1133 -> 1143 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1131: il ne meurt plus, mais il ne finit plus
+
+Le run 1131 ne detruit rien — il livre 31 fichiers en phase `interrupted`, avec
+la cause exacte. C est l inverse du run 1041 qui jetait 32 fichiers apres sept
+secondes. Mais il a tourne **111 minutes**, dont une heure sur place:
+
+```
+passe 8 entree en recuperation   15:13:40
+passe 8 sortie (epuisee)         16:13:09
+soit 59,5 min pour UN SEUL appel, 24 cycles, 0 Go de RAM libre
+```
+
+### Un compteur de tentatives ne borne aucune duree
+
+Le bareme de backoff totalise ~2 minutes, et les six tentatives avaient ete
+calibrees sur des echecs **rapides** — `fetch failed` revient tout de suite.
+Mais chaque tentative peut consommer le timeout complet de l appelant: **20
+minutes** pour une correction. Six tentatives x 20 min = **deux heures de pire
+cas**, pendant lesquelles rien n avance.
+
+C est une erreur de raisonnement, pas un mauvais reglage: **un nombre de
+tentatives ne dit rien d une duree**. Seule une horloge borne une duree.
+
+Budget d horloge TOTAL de 10 minutes par appel. Passe ce budget, on rend la
+main, et le pipeline livre le travail preserve en `interrupted` — chemin deja
+construit et teste au run 1041. Un `interrupted` honnete au bout de dix minutes
+vaut mieux qu une heure de tourniquet muet.
+
+### La verification de sante mentait
+
+Elle interrogeait `/api/tags`, concluait « le service ecoute », et en deduisait
+« le service peut generer » — alors que toutes les generations echouaient. D ou
+la sequence repetee vingt-quatre fois:
+
+```
+health_check -> release_models -> model_fallback -> retry
+```
+
+**Pour la douzieme fois dans cette serie, une porte declarait ce qu elle n avait
+jamais mesure.** Ici: elle mesurait que le serveur ecoute.
+
+On mesure desormais la GENERATION — sans rien charger: on ne sonde qu un modele
+**deja resident** (`/api/ps`), un seul jeton, 15 s de plafond. Si rien n est
+resident, on ne devine pas: un echec de transport repete signe un service
+degrade. Forcer un chargement ici aurait ajoute de la pression memoire sur une
+machine dont les gels sont d origine memoire — exclu par principe.
+
+Trois etats au lieu de deux (`down` / `degraded` / `ok`), et un service
+**degrade se redemarre**: c est la seule action qui le repare. Le relacher et
+retenter etait exactement le tourniquet.
+
+| | avant | apres |
+|---|---|---|
+| plafond de recuperation | 6 tentatives (duree non bornee) | **10 min d horloge** |
+| pire cas theorique | ~2 h | **10 min** |
+| sante « ok » | le serveur ecoute | **une generation a repondu** |
+| service qui ecoute mais ne sert pas | retry infini | **redemarrage** |
+
+Tests : **1143 -> 1146 verts, 0 echec.**
