@@ -4,6 +4,7 @@ import {
 } from './codeArchitecturePlan.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
+import { isGeneratedArtifactPath } from './codeCodegenDependencies.ts'
 
 export type CodeGenerationQueueItem = {
   path: string
@@ -65,7 +66,9 @@ export function buildGenerationQueueFromArchitecturePlan(
   // modele de texte d ecrire un binaire: c est une question sans reponse.
   const accept = (file: CodeArchitectureFile, normalized: string) => {
     emitted.add(normalized)
-    if (isBinaryAssetPath(file.path)) {
+    // Binaire ou artefact GENERE: dans les deux cas, aucun modele de texte ne
+    // peut produire ce fichier. On ne pose pas la question.
+    if (isBinaryAssetPath(file.path) || isGeneratedArtifactPath(file.path)) {
       binaryAssetPaths.push(file.path)
       return
     }
@@ -130,9 +133,10 @@ export function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string;
 
 export function buildFallbackGenerationQueue(intent: CodeIntent): CodeGenerationQueue {
   const defaults = defaultFilesForIntent(intent)
-  const binaryAssetPaths = defaults.filter((f) => isBinaryAssetPath(f.path)).map((f) => f.path)
+  const unwritable = (path: string) => isBinaryAssetPath(path) || isGeneratedArtifactPath(path)
+  const binaryAssetPaths = defaults.filter((f) => unwritable(f.path)).map((f) => f.path)
   const items: CodeGenerationQueueItem[] = defaults
-    .filter((f) => !isBinaryAssetPath(f.path))
+    .filter((f) => !unwritable(f.path))
     .map((f, i) => ({
       path: f.path,
       order: i + 1,

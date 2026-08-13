@@ -1,5 +1,11 @@
 import { repairJsonControlCharacters } from './codeGenerationActionSalvage.ts'
 
+import {
+  buildCodegenDependencyBan,
+  rejectGeneratedArtifactFiles,
+  substituteCodegenDependencies,
+} from './codeCodegenDependencies.ts'
+
 export const CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION = 'aurora.code.architecture-plan.v1'
 
 export type CodeArchitectureDependency = {
@@ -212,6 +218,7 @@ function findFirstJsonObject(raw: string) {
 export function normalizeArchitecturePlan(candidate: unknown): CodeArchitecturePlanParseResult {
   const record = asRecord(candidate)
   const errors: string[] = []
+  const codegenReplacements: string[] = []
   if (!record) return { ok: false, plan: null, serialized: null, errors: ['plan_not_object'] }
 
   const schemaVersion = cleanString(record.schemaVersion)
@@ -223,16 +230,24 @@ export function normalizeArchitecturePlan(candidate: unknown): CodeArchitectureP
 
   const stackRecord = asRecord(record.stack)
   if (!stackRecord) errors.push('stack_missing')
-  const dependencies = Array.isArray(stackRecord?.dependencies)
+  // Substitution DETERMINISTE des dependances a generateur — cf. codeCodegenDependencies.
+  const substituted = substituteCodegenDependencies(Array.isArray(stackRecord?.dependencies)
     ? stackRecord.dependencies.map(normalizeDependency).filter((item): item is CodeArchitectureDependency => Boolean(item))
-    : []
+    : [])
+  const dependencies = substituted.dependencies
+  codegenReplacements.push(...substituted.replacements)
+
   const scripts = Array.isArray(stackRecord?.scripts)
     ? stackRecord.scripts.map(normalizeScript).filter((item): item is CodeArchitectureScript => Boolean(item))
     : []
 
-  const files = Array.isArray(record.files)
+  // Un artefact genere n est ecrit par personne: le planifier revient a planifier
+  // un fichier que la file ne produira jamais et que le contrat reclamera.
+  const kept = rejectGeneratedArtifactFiles(Array.isArray(record.files)
     ? record.files.map(normalizeFile).filter((item): item is CodeArchitectureFile => Boolean(item))
-    : []
+    : [])
+  const files = kept.files
+  codegenReplacements.push(...kept.removed.map((path) => `${path} retire (artefact genere)`))
   if (files.length < 2) errors.push('files_min_2')
 
   const executionRecord = asRecord(record.execution)
@@ -331,57 +346,3 @@ export function formatArchitecturePlanDependenciesForMarkdown(raw: string | null
   const legacyMatch = raw?.match(/###\s*DEPENDANCES[^\n]*\n([\s\S]*?)(?=###|$)/i)
   return legacyMatch?.[1]?.trim() || ''
 }
-
-export function buildArchitecturePlanJsonInstructions() {
-  return [
-    '## FORMAT DE SORTIE OBLIGATOIRE — JSON SCHEMA',
-    '',
-    'Reponds UNIQUEMENT avec un objet JSON valide. Aucun markdown, aucun texte avant/apres, aucun bloc ```.',
-    'Le plan est un contrat machine: s il ne valide pas ce schema, il sera rejete et ignore par l executeur.',
-    '',
-    'Schema JSON attendu (champs requis):',
-    JSON.stringify(CODE_ARCHITECTURE_PLAN_SCHEMA, null, 2),
-    '',
-    'Template minimal a respecter exactement:',
-    JSON.stringify({
-      schemaVersion: CODE_ARCHITECTURE_PLAN_SCHEMA_VERSION,
-      projectType: '<type detecte>',
-      summary: '<20+ caracteres: intention et strategie de livraison>',
-      stack: {
-        runtime: '<node/python/rust/web/etc>',
-        packageManager: '<npm/pnpm/pip/cargo/aucun>',
-        languages: ['<langage>'],
-        frameworks: ['<framework ou aucun>'],
-        dependencies: [{ name: '<package>', version: '<version exacte si utile>', type: 'runtime', reason: '<pourquoi>' }],
-        scripts: [{ name: '<script>', command: '<commande exacte>', purpose: '<validation ou lancement>' }],
-      },
-      files: [{
-        path: '<chemin relatif sur POSIX>',
-        role: '<responsabilite concrete>',
-        language: '<langage>',
-        required: true,
-        imports: ['<imports locaux attendus>'],
-        exports: ['<exports attendus>'],
-        notes: ['<points d attention>'],
-      }],
-      dataFlow: ['<flux utilisateur/donnees/etat>'],
-      execution: {
-        install: ['<commande install ou aucune>'],
-        dev: ['<commande dev/lancement>'],
-        build: ['<commande build ou verification>'],
-        test: ['<commande test ou validation manuelle stricte>'],
-        preview: '<comment voir le resultat>',
-      },
-      generationOrder: ['<chemin fichier dans ordre de generation>'],
-      validation: ['<critere vert mesurable>', '<autre critere vert mesurable>'],
-      risks: [{ risk: '<risque>', mitigation: '<mitigation concrete>' }],
-      design: {
-        palette: ['<tokens/couleurs ou contrainte>'],
-        typography: ['<polices/echelle>'],
-        ux: ['<interactions et ergonomie>'],
-        responsive: ['<breakpoints et comportements>'],
-      },
-    }, null, 2),
-  ].join('\n')
-}
-

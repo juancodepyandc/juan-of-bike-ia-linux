@@ -3,6 +3,7 @@ import { buildReport } from './codeMultiPassCritique.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import { isCssLike, isHtmlLike, isTsLike, normalizedName } from './codeStaticCriticShared.ts'
 import { normalizedProjectPaths } from './codeStaticCompleteness.ts'
+import { describeGeneratedImportRemediation } from './codeCodegenDependencies.ts'
 
 // --- 6. Project integrity critic ------------------------------------------
 // Catches cross-file failures that a single-file syntax regex cannot see:
@@ -221,12 +222,21 @@ function projectIntegrityIssues(project: CodeProject, intent: CodeIntent): Criti
     if (!isTsLike(file.language) && !/\.[cm]?[jt]sx?$/i.test(file.name)) continue
     for (const specifier of collectLocalSpecifiers(file.content)) {
       if (!resolveProjectImport(paths, file.name, specifier)) {
+        // « Ajoute le fichier » est IMPOSSIBLE a suivre quand le fichier est un
+        // artefact genere: seul un generateur le produit, et ce pipeline n en
+        // execute aucun. Run 1111: neuf passes sur `./routeTree.gen`, diagnostic
+        // juste a chaque fois, aucune action disponible pour le resoudre. Un
+        // conseil irrealisable transforme une porte en piege.
+        const generated = describeGeneratedImportRemediation({
+          importPath: specifier,
+          dependencyNames: [...(readManifestDependencyNames(project) ?? [])],
+        })
         issues.push({
           axis: 'compile',
           severity: 'block',
           message: `${file.name}: import local introuvable (${specifier})`,
           location: { file: file.name },
-          suggestion: `Ajouter le fichier ${specifier} ou corriger le chemin d import.`,
+          suggestion: generated ?? `Ajouter le fichier ${specifier} ou corriger le chemin d import.`,
         })
       }
     }

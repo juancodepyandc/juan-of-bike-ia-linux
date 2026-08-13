@@ -6,7 +6,7 @@
 
 import type { CodeIntent } from './codeIntent.ts'
 import { buildAgentPromptSection } from './auroraAgents.ts'
-import { buildArchitecturePlanJsonInstructions } from './codeArchitecturePlan.ts'
+import { buildArchitecturePlanJsonInstructions } from './codeArchitecturePlanInstructions.ts'
 import {
   buildDeliveryContractBlock,
   buildDesignReferenceImport,

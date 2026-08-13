@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent } from './codeIntentTypes.ts'
-import { buildArchitecturePlanJsonInstructions } from './codeArchitecturePlan.ts'
+import { buildArchitecturePlanJsonInstructions } from './codeArchitecturePlanInstructions.ts'
 
 export function buildArchitecturePlanningPrompt(prompt: string, intent: CodeIntent): string {
   const isSimple = intent.complexity === 'simple'

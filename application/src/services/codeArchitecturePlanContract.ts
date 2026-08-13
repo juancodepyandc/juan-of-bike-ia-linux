@@ -1,6 +1,7 @@
 import type { CodeFile } from './codeOrchestrator.ts'
 import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
 import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
+import { isGeneratedArtifactPath } from './codeCodegenDependencies.ts'
 
 const DOCUMENTATION_PLAN_EXTENSIONS = new Set(['md', 'txt', 'rst', 'adoc'])
 
@@ -36,6 +37,9 @@ export function checkArchitecturePlanFileContract(
     // ecrire) declencherait une regeneration sans issue — le piege du
     // « conseil irrealisable » deja paye quatre passes au run 1031.
     .filter((path) => !isBinaryAssetPath(path))
+    // Idem pour un artefact genere: le reclamer declencherait une regeneration
+    // sans issue, puisque aucun modele ne peut l ecrire.
+    .filter((path) => !isGeneratedArtifactPath(path))
 
   const missingRequiredFiles = requiredFiles.filter((path) => !delivered.has(normalizePath(path)))
 
