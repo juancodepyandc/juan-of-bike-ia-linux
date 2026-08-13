@@ -12,6 +12,15 @@ import { withTimeout } from './llmTimebox.ts'
 import { serializeProjectTreeEmission } from './codeProjectEmission.ts'
 import { buildGenerationQueueWithFallback } from './codeGenerationQueue.ts'
 import { describeBinaryAssetSkip } from './codeBinaryAssetPaths.ts'
+import {
+  buildCompletionQueueItems,
+  describeMissingModules,
+  findUnresolvedLocalImports,
+} from './codeMissingModuleCompletion.ts'
+
+/** Deux tours: un module cree peut a son tour en importer un autre. Pas plus:
+ * chaque tour est un appel modele par fichier, et le budget VRAM est fini. */
+const MISSING_MODULE_ROUNDS = 2
 import { executeCodeGenerationQueue } from './codeGenerationExecutor.ts'
 import {
   createCodeGenerationLLMActionProducer,
@@ -130,9 +139,35 @@ export async function runAgenticGenerationPhase({
       }
     }
 
-    const content = serializeFiles(result.files)
+    // Un composant IMPORTE est un composant VOULU. Run 1121: le code livre
+    // importait `src/components/Logo` et `src/components/StorySection`, que la
+    // file ne demandait pas — d ou 234 erreurs TS2307 et huit passes a discuter
+    // de typage pendant que des fichiers entiers manquaient. Le constat est
+    // exact et mecanique, donc on ne le delegue pas: on complete la file.
+    let finalFiles = result.files
+    for (let round = 1; round <= MISSING_MODULE_ROUNDS; round += 1) {
+      const missing = findUnresolvedLocalImports(finalFiles)
+      if (missing.length === 0) break
+      setPhase(`Executor agentique WS3: ${describeMissingModules(missing)} — completion ${round}/${MISSING_MODULE_ROUNDS}...`, 78)
+      const completion = await withTimeout(executeCodeGenerationQueue({
+        queue: { ...queue, items: buildCompletionQueueItems(missing, queue.items.length + 1) },
+        initialFiles: finalFiles,
+        produceActions: producer,
+        nextMeta: createMetaFactory(),
+        runner: createCodeGenerationSandboxRunner(),
+        onFilesUpdate: (files, item) => {
+          setPhase(`Executor agentique WS3: ${item.path} ecrit (module manquant).`, 79)
+          onFilesUpdate?.(files, `Completion des modules manquants: ${item.path}`)
+        },
+      }), { label: 'Completion WS3 des modules manquants', timeoutMs: STREAM_GENERATION_TOTAL_TIMEOUT_MS })
+      // Une completion qui echoue ne detruit rien: on garde ce qu elle a ecrit.
+      if (completion.files.length > finalFiles.length) finalFiles = completion.files
+      else break
+    }
+
+    const content = serializeFiles(finalFiles)
     onToken(content)
-    return { ok: true, content, files: result.files }
+    return { ok: true, content, files: finalFiles }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     return { ok: false, content: '', files: existingFiles, error: message }

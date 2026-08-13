@@ -15,6 +15,7 @@ import {
   filesImplicatedByFailures,
 } from './codeCorrectionRegressionFeedback.ts'
 import { gatherCorrectionContext } from './codeCorrectionContextGathering.ts'
+import { prioritizeCompileErrors } from './codeMissingModuleCompletion.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS, CORRECTION_FIRST_BYTE_TIMEOUT_MS, CORRECTION_TIMEOUT_MS,
   getModelShortName, selectModel, type CodeModelRoutingContext,
@@ -47,7 +48,9 @@ export function collectFailingStepOutputs(sandboxResult: CodeSandboxResult): str
 }
 
 export function truncateCorrectionErrors(sandboxResult: CodeSandboxResult): string[] {
-  return collectFailingStepOutputs(sandboxResult).map((output) => output.length > 1500
+  // Ordre causal: un module introuvable rend tout typage du fichier impossible.
+  // Sans cela, la boucle traite des TS2339 pendant que des fichiers manquent.
+  return collectFailingStepOutputs(sandboxResult).map(prioritizeCompileErrors).map((output) => output.length > 1500
     ? `${output.slice(0, 1000)}\n...[tronque: ${output.length} chars total]...\n${output.slice(-400)}`
     : output)
 }
