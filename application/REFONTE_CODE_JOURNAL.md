@@ -7254,3 +7254,92 @@ detruit, non.
 | 30e fichier requis illisible | run entier perdu | **saute et signale** |
 
 Tests : **1101 -> 1109 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1091: la passe ciblee prouvee, et une page blanche qui n existait pas
+
+Le run 1091 valide en reel le correctif de la passe ciblee:
+
+```
+composition: real_iconography -> passe ciblee
+passe ciblee (real_iconography): 1 fichier(s) corrige(s): src/components/Testimonials.tsx
+passe esthetique: composition reparee sans perte de rendu (92/100 contre 92/100) — adoptee
+```
+
+**Un seul fichier touche, defaut repare, zero perte.** Au run 1061, la meme
+passe supprimait fichiers, scripts et exports et se faisait rejeter en bloc.
+Scores: rendu 92/100, performance **100/100**, accessibilite 86/100.
+
+Restait `acceptation comportementale 1/2` — `FAIL renders-content: 0 caracteres,
+0 controles, 0 surfaces` — et neuf passes de correction a chercher un bug de
+montage React avec des diagnostics de plus en plus vagues (« incoherence dans
+les dependances », « configuration incorrecte de React », « configuration
+incomplete de Tailwind »). Le modele devinait.
+
+### La page blanche n existait pas
+
+Mesure sur les fichiers reels du run, memes fichiers, memes trois requetes
+(3 x HTTP 200), zero erreur navigateur:
+
+```
+GET /index.html  ->    0 caractere,   15 elements
+GET /            -> 1492 caracteres, 130 elements
+```
+
+La SPA livree utilise `react-router-dom` avec les routes `/`, `/about`,
+`/markets`… **Aucune route ne correspond a `/index.html`**, donc `<Routes>` ne
+rend rien. La porte d acceptation ouvrait une URL que l application ne sert pas,
+puis l accusait d etre une coquille vide.
+
+L audit de rendu, lui, ouvrait deja la RACINE — d ou 92/100 au meme instant, sur
+la meme livraison. **Ce sont les deux portes qui divergeaient, pas le code.**
+Une application web s ouvre a sa racine, comme le fait un utilisateur.
+
+| sur les fichiers reels du run 1091 | avant | apres |
+|---|---|---|
+| acceptation comportementale | **1/2** | **2/2** |
+| renders-content | 0 car., 0 ctrl., 0 surf. | **1492 car., 1 ctrl., 4 surf.** |
+
+Note: la consigne de depart etait de capturer les erreurs console et de les
+injecter dans la boucle. La capture existait deja des deux cotes — et elle
+disait la verite: **zero erreur**. C est en la croyant, au lieu de chercher un
+bug plus profond, qu on trouve la vraie cause. Il n y avait rien a reparer dans
+le livrable.
+
+### Deux autres verrous du meme run, tous deux du meme genre
+
+**Une suite de tests ABSENTE traitee comme une suite en echec.** Mesure dans le
+conteneur reel:
+
+```
+$ npm run test     # "test": "vitest"
+No test files found, exiting with code 1
+```
+
+Le code 1 faisait echouer « Verifier test », donc `isDeliveryRunnable` renvoyait
+false, donc `phase: 'error'` — pour TOUT projet qui declare un script `test`
+sans en ecrire. Et la boucle ne pouvait rien y faire: ecrire une suite que le
+brief n a jamais demandee n est pas une correction. Un lanceur qui ne trouve
+aucun test **n a rien mesure du code livre**. L etape devient NON APPLICABLE, la
+sortie d origine conservee. Un test qui EXISTE et echoue reste bloquant.
+
+**Le juge aveugle condamnait celui qui voit.** « Classes Tailwind detectees sans
+configuration Tailwind » porte `axis: 'preview'` et severite `error`: un defaut
+d APPARENCE lu dans la SOURCE bloquait le verdict d executabilite — pendant que
+le navigateur mesurait 92/100 de rendu, 100/100 de performance et 1492
+caracteres affiches. Deux juges sur l apparence, et c est l aveugle qui gagnait.
+
+La regle posee pour la design-spec est etendue a son jumeau: **l axe `preview`
+pese sur le score, jamais sur « est-ce que ca tourne »**. Une severite `block`
+reste bloquante quel que soit l axe.
+
+### La constante de cette serie
+
+Six causes au run 1061, une au 1081, trois au 1091. Sur ces dix, **huit sont des
+portes qui condamnaient ce qu elles n avaient pas mesure**: une image absente,
+un script shell invalide, un quota jamais demande, un HOME jamais declare, une
+suite de tests inexistante, une URL que l application ne sert pas, un defaut
+d apparence juge sur la source, un binaire demande a un modele de texte.
+
+Aucune ne disait quoi que ce soit sur le code livre. Toutes le condamnaient.
+
+Tests : **1109 -> 1117 verts, 0 echec.**
