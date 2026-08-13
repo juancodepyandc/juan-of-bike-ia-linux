@@ -7175,3 +7175,82 @@ dit quoi que ce soit sur le code livre, et tous les quatre le condamnaient.
 La regle avait deja ete posee dans ce journal pour le juge visuel et pour les
 pannes reseau. Elle n avait jamais ete appliquee au bac a sable, qui est
 pourtant le seul juge dont le verdict decide de `done`.
+
+## 2026-08-13 (suite) — Run 1081: on demandait a un modele de texte d ecrire des JPEG
+
+Le run 1081 rejoue le brief Brulerie avec les six correctifs precedents. Il meurt
+a **29/30 fichiers**, apres pres d une heure:
+
+```
+[CodeOrchestrator] Pipeline fatal error: Echec de l executor agentique WS3:
+  action_producer_failed:action_protocol_invalid:protocol_marker_missing
+[warn] 30 fichier(s) preserves malgre la erreur du pipeline.
+[bridge-runner] INTERROMPU files=30 — travail preserve, validation incomplete
+```
+
+### Ce qui a marche
+
+La garde de preservation a tire et la phase `interrupted` s affiche comme prevu,
+avec la mention explicite que ce n est **pas** un verdict de qualite. Avant les
+correctifs des tours precedents, ces 30 fichiers auraient ete detruits et le run
+classe `error`. Le comportement est correct.
+
+### Les deux fausses pistes, ecartees par la mesure
+
+1. **Regression du protocole VFS ?** Non. `buildStructuredEmissionInstructions()`
+   n apparait que dans le prompt de l AUDITEUR (boucle de correction), jamais
+   dans celui de l executor WS3, qui utilise `buildCodeGenerationActionInstructions`
+   et `buildExecutorQualityContract`. Les deux protocoles ne se croisent nulle
+   part. Verifie par lecture des quatre sites d appel.
+2. **Defaut de tolerance du parseur ?** Non plus. `parseCodeGenerationActions`
+   accepte deja un marqueur absent: il cherche la premiere valeur JSON dans tout
+   le texte. `protocol_marker_missing` ne signifie pas « marqueur absent » mais
+   « rien d exploitable nulle part ». Le repli en 3 tentatives existe et a bien
+   tourne trois fois.
+
+### La cause, lisible dans les fichiers preserves
+
+La file de generation WS3 contenait des **images binaires**. On demandait a
+qwen3-coder d en ecrire le contenu:
+
+```
+public/team-photo.jpg    42 297 o de base64 tape a la main
+public/coffee-hero.jpg      388 o — un JPEG tronque des l en-tete
+```
+
+Le second n est meme pas une image valide. Le premier a coute des dizaines de
+milliers de jetons pour produire un fichier tout aussi mort. Puis le 30e et
+dernier element a rendu une reponse dont il ne restait rien.
+
+**Aucune consigne, aucune relance, aucun repli ne fera ecrire un JPEG valide a un
+modele de texte.** La bonne reponse n est pas de mieux redemander: c est de ne
+pas poser la question. Aurora a deja une phase d assets inter-modules qui appelle
+le module Image — elle avait d ailleurs tourne dans ce run.
+
+`.svg` reste dans la file: c est du XML, et le run 1081 a produit un
+`public/logo.svg` valide. **Le critere est « binaire », pas « ressource ».**
+
+Le meme predicat filtre le contrat de plan. Sans cette symetrie, le contrat
+reclamerait un fichier que la file ne produit plus, declencherait une
+regeneration, et celle-ci echouerait a nouveau: c est exactement le piege du
+conseil irrealisable paye quatre passes au run 1031.
+
+### « Requis » ne veut pas dire « sans lui rien ne tourne »
+
+Le 30e fichier etait marque `required` par l architecte. Son illisibilite a donc
+fait jeter les **29 fichiers deja ecrits**. Un plan qui declare tout requis
+transforme n importe quel accident sur le dernier composant en perte totale.
+
+Ne bloquent desormais que les fichiers **porteurs de la livraison** — point
+d entree, coquille HTML, manifeste de dependances, config de build — et seulement
+tant qu il n y a pas deja de quoi livrer. Un composant de page manquant se voit,
+se signale et se rattrape par la boucle de correction; un run de 29 fichiers
+detruit, non.
+
+| | avant | apres |
+|---|---|---|
+| images dans la file WS3 | 2 (42 685 o de base64 mort) | **0** |
+| contrat de plan reclamant un binaire | oui | **non** |
+| 30e fichier requis illisible | run entier perdu | **saute et signale** |
+
+Tests : **1101 -> 1109 verts, 0 echec.**
