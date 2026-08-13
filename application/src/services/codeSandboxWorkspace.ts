@@ -21,6 +21,14 @@ export type SandboxWorkspaceResult = {
   failedStage?: 'volume' | 'init'
   /** Diagnostic actionnable (image absente, etc.). */
   reason?: string
+  /**
+   * Le volume a-t-il RECU un quota de taille ? Sur un systeme de fichiers sans
+   * Project Quota, Aurora cree deliberement le volume sans lui. Exiger ensuite
+   * la preuve de ce quota reviendrait a faire contredire par une porte une
+   * decision deja prise en amont — et a condamner la livraison pour une
+   * propriete que personne n a demandee.
+   */
+  quotaEnforced: boolean
 }
 
 function commandLine(executable: string, args: string[]) {
@@ -87,7 +95,7 @@ export async function prepareSandboxWorkspaceVolume(
         ].join('\n')
       : create.output,
   })
-  if (!create.ok) return { ok: false, created: false, volumeName, steps, failedStage: 'volume', reason: 'creation du volume refusee' }
+  if (!create.ok) return { ok: false, created: false, volumeName, steps, quotaEnforced, failedStage: 'volume', reason: 'creation du volume refusee' }
 
   const initArgs = buildPodmanSandboxWorkspaceInitArgs(lang, sandboxRoot, DEFAULT_SANDBOX_QUOTAS, options)
   const init = await runner('podman', initArgs, sandboxRoot, 60_000)
@@ -99,14 +107,14 @@ export async function prepareSandboxWorkspaceVolume(
     // envoie chercher le probleme au mauvais endroit (c est arrive).
     const missingImage = /image not known|no such image|unable to find image/i.test(init.output || '')
     return {
-      ok: false, created: true, volumeName, steps, failedStage: 'init',
+      ok: false, created: true, volumeName, steps, quotaEnforced, failedStage: 'init',
       reason: missingImage
         ? `image conteneur absente en local pour "${lang}" — lancez "podman pull" pour ce langage (--pull=never interdit le telechargement pendant une generation)`
         : `initialisation du workspace echouee: ${(init.output || '').slice(0, 160)}`,
     }
   }
 
-  return { ok: true, created: true, volumeName, steps }
+  return { ok: true, created: true, volumeName, steps, quotaEnforced }
 }
 
 export async function cleanupSandboxWorkspaceVolume(

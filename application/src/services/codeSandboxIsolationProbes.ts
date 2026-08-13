@@ -66,6 +66,16 @@ export function sandboxHostSentinelPath(sandboxRoot: string): string {
   return `${parent}/${sandboxHostSentinelName(root)}`
 }
 
+/**
+ * Boucle `while` correctement ponctuee. Ecrire un corps de boucle en assemblant
+ * des morceaux a la main est precisement ce qui a produit deux scripts
+ * invalides: `do` ne se suffixe pas d un « ; », le corps si, et `done` doit etre
+ * precede d un separateur. Une seule fonction, une seule ponctuation possible.
+ */
+function shellLoop(condition: string, body: string[]): string {
+  return `while ${condition}; do ${body.join('; ')}; done`
+}
+
 function probeCommand(label: string, script: string): ValidationCommand {
   return {
     label,
@@ -75,9 +85,24 @@ function probeCommand(label: string, script: string): ValidationCommand {
   }
 }
 
+export type SandboxIsolationProbeOptions = {
+  lang?: DetectedLanguage
+  /**
+   * Le volume de travail a-t-il RECU un quota de taille ? Sur un systeme de
+   * fichiers sans Project Quota, Aurora cree deliberement le volume sans lui
+   * (decision tracee a l etape « Quota disque workspace WS7 »). Exiger ensuite
+   * la preuve de ce quota ferait contredire par une porte une decision deja
+   * prise: la preuve devient NON APPLICABLE, elle ne devient pas un echec.
+   */
+  workspaceQuotaEnforced?: boolean
+  runner?: CommandRunner
+  fs?: ProbeFs
+}
+
 export function buildSandboxIsolationProbeCommands(
   sandboxRoot: string,
   lang: DetectedLanguage = 'unknown',
+  workspaceQuotaEnforced = true,
 ): ValidationCommand[] {
   const sentinelName = sandboxHostSentinelName(sandboxRoot)
   const hostReadProbe = probeCommand(
@@ -89,21 +114,24 @@ export function buildSandboxIsolationProbeCommands(
     ].join(' && '),
   )
 
+  // Le shell MEURT quand le plafond de PID est atteint: `dash` avorte sur
+  // « Cannot fork » avec le statut 2 — exactement le statut que cette preuve
+  // reservait a « plafond NON applique ». Les deux cas etaient donc
+  // indiscernables. On confine la rafale dans un sous-shell et on ne conclut que
+  // sur un MARQUEUR: s il sort, les 400 forks ont abouti, donc aucun plafond.
+  // Mesure (image node, meme machine): avec `--pids-limit` -> exit 0 (applique);
+  // sans plafond -> exit 2 (non applique). Le temoin negatif tient.
   const forkProbe = probeCommand(
     'Preuve quota pids',
     [
       'trap \'for p in $(jobs -p); do kill "$p" 2>/dev/null; done\' EXIT',
-      'started=0',
-      'last_pid=',
-      [
-        'while [ "$started" -lt 400 ]; do',
-        '(sleep 30) 2>/dev/null & pid=$!',
-        'if [ -z "$pid" ] || [ "$pid" = "$last_pid" ] || ! kill -0 "$pid" 2>/dev/null; then exit 0; fi',
-        'last_pid=$pid',
-        'started=$((started + 1))',
-        'done',
-      ].join(' '),
-      'exit 2',
+      // `&` termine deja la commande: y ajouter un « ; » est une erreur de
+      // syntaxe. Le lancement en tache de fond et l increment tiennent donc dans
+      // UN element de corps.
+      `burst=$( (started=0; ${shellLoop('[ "$started" -lt 400 ]', ['(sleep 10) & started=$((started + 1))'])}; `
+        + 'echo AURORA_PIDS_UNCAPPED) 2>/dev/null )',
+      'case "$burst" in *AURORA_PIDS_UNCAPPED*) exit 2 ;; esac',
+      'exit 0',
     ].join('; '),
   )
 
@@ -124,26 +152,34 @@ export function buildSandboxIsolationProbeCommands(
       'trap "rm -rf $probe_dir" EXIT',
       'mkdir -p "$probe_dir"',
       'i=0',
-      [
-        'while [ "$i" -lt 384 ]; do',
+      // Corps de boucle separe par « ; ». Avec un simple espace,
+      // `i=$((i + 1)) dd` devenait un PREFIXE D AFFECTATION a `dd` (donc jamais
+      // persiste) et le `done` collait a `exit 0`: le script etait
+      // syntaxiquement INVALIDE. `dash` sortait alors en 2 — le statut reserve a
+      // « quota non applique ». Une erreur de syntaxe etait ainsi rapportee
+      // comme une faille d isolation, sur chaque run.
+      shellLoop('[ "$i" -lt 384 ]', [
         'i=$((i + 1))',
         'dd if=/dev/zero of="$probe_dir/chunk-$i.bin" bs=3M count=1 status=none || exit 0',
-        'done',
-      ].join(' '),
+      ]),
       'exit 2',
     ].join('; '),
   )
 
-  return [hostReadProbe, forkProbe, fileSizeProbe, workspaceQuotaProbe]
-    .map((command) => wrapCommandForPodman(command, lang, sandboxRoot))
+  const probes = workspaceQuotaEnforced
+    ? [hostReadProbe, forkProbe, fileSizeProbe, workspaceQuotaProbe]
+    : [hostReadProbe, forkProbe, fileSizeProbe]
+  return probes.map((command) => wrapCommandForPodman(command, lang, sandboxRoot))
 }
 
 export async function runSandboxIsolationProbes(
   sandboxRoot: string,
-  lang: DetectedLanguage = 'unknown',
-  runner: CommandRunner = runWorkspaceCommand,
-  fs: ProbeFs = DEFAULT_PROBE_FS,
+  options: SandboxIsolationProbeOptions = {},
 ): Promise<SandboxIsolationProbeResult> {
+  const lang = options.lang ?? 'unknown'
+  const workspaceQuotaEnforced = options.workspaceQuotaEnforced ?? true
+  const runner = options.runner ?? runWorkspaceCommand
+  const fs = options.fs ?? DEFAULT_PROBE_FS
   const steps: CodeSandboxStepResult[] = []
   const sentinelPath = sandboxHostSentinelPath(sandboxRoot)
 
@@ -183,7 +219,20 @@ export async function runSandboxIsolationProbes(
       return { ok: false, steps }
     }
 
-    for (const command of buildSandboxIsolationProbeCommands(sandboxRoot, lang)) {
+    if (!workspaceQuotaEnforced) {
+      steps.push({
+        label: 'Preuve quota disque workspace (NON APPLICABLE)',
+        command: 'internal:workspace-quota-not-requested',
+        ok: true,
+        output: 'Le systeme de fichiers ne supporte pas le Project Quota: Aurora a cree le volume '
+          + 'SANS quota de taille (decision tracee a l etape « Quota disque workspace WS7 »). '
+          + 'On ne prouve pas un confinement qui n a pas ete demande — et on ne le declare pas acquis '
+          + 'non plus. Les autres confinements (reseau, racine en lecture seule, PID, memoire, CPU, '
+          + 'taille de fichier) restent verifies ci-dessous.',
+      })
+    }
+
+    for (const command of buildSandboxIsolationProbeCommands(sandboxRoot, lang, workspaceQuotaEnforced)) {
       const result = await runner(command.executable, command.args, sandboxRoot, command.timeoutMs).catch((error) => ({
         ok: false,
         exitCode: 1,

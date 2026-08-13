@@ -15,7 +15,16 @@ export type SandboxQuotaProfile = {
   memory: string
   cpus: string
   pidsLimit: string
-  fileSizeBlocks: string
+  /**
+   * Plafond de taille d UN fichier, en OCTETS. Podman passe cette valeur telle
+   * quelle a RLIMIT_FSIZE, qui est en octets — contrairement a `ulimit -f` du
+   * shell, qui compte en blocs de 512 o. Le champ s appelait `fileSizeBlocks` et
+   * valait 1048576: le plafond reel etait donc de 1 Mio, pas de 512 Mio. Mesure:
+   * un `dd` de 2 Mio s arretait a exactement 1 048 576 octets, et `npm install`
+   * de react echouait en EFBIG « file too large » — avec une sortie vide cote
+   * pipeline, donc sans diagnostic possible.
+   */
+  fileSizeBytes: string
   tmpfsSize: string
   workspaceSize: string
 }
@@ -30,13 +39,18 @@ export const DEFAULT_SANDBOX_QUOTAS: SandboxQuotaProfile = {
   memory: '2g',
   cpus: '2',
   pidsLimit: '256',
-  fileSizeBlocks: '1048576',
+  fileSizeBytes: '536870912',
   tmpfsSize: '256m',
   workspaceSize: '768m',
 }
 
 const CONTAINER_WORKSPACE_PATH = '/workspace'
 const CONTAINER_INPUT_PATH = '/aurora-input'
+/**
+ * Seul dossier personnel inscriptible du conteneur (tmpfs). La racine est en
+ * lecture seule: tout outil qui ecrit dans « son » HOME doit ecrire ICI.
+ */
+export const CONTAINER_HOME_PATH = '/home/aurora'
 
 import {
   imageOverrideForToolchain,
@@ -177,7 +191,7 @@ export function buildSandboxIsolationStep(status: SandboxIsolationStatus): CodeS
       `rootless=${status.rootless ? 'oui' : 'non'}`,
       `cgroup=${status.cgroupVersion ?? 'inconnu'}`,
       status.reason,
-      `quotas=memory:${DEFAULT_SANDBOX_QUOTAS.memory},cpus:${DEFAULT_SANDBOX_QUOTAS.cpus},pids:${DEFAULT_SANDBOX_QUOTAS.pidsLimit},fsize:${DEFAULT_SANDBOX_QUOTAS.fileSizeBlocks},tmpfs:${DEFAULT_SANDBOX_QUOTAS.tmpfsSize},workspace:${DEFAULT_SANDBOX_QUOTAS.workspaceSize}`,
+      `quotas=memory:${DEFAULT_SANDBOX_QUOTAS.memory},cpus:${DEFAULT_SANDBOX_QUOTAS.cpus},pids:${DEFAULT_SANDBOX_QUOTAS.pidsLimit},fsize:${DEFAULT_SANDBOX_QUOTAS.fileSizeBytes}o,tmpfs:${DEFAULT_SANDBOX_QUOTAS.tmpfsSize},workspace:${DEFAULT_SANDBOX_QUOTAS.workspaceSize}`,
       'egress=none sauf commandes de registre reconnues; host_loopback=false',
     ].join('\n'),
   }
@@ -245,12 +259,24 @@ function commonPodmanRunArgs(
     '--cpus',
     quotas.cpus,
     '--ulimit',
-    `fsize=${quotas.fileSizeBlocks}:${quotas.fileSizeBlocks}`,
+    `fsize=${quotas.fileSizeBytes}:${quotas.fileSizeBytes}`,
     '--read-only',
     '--tmpfs',
     `/tmp:rw,nosuid,nodev,size=${quotas.tmpfsSize}`,
     '--tmpfs',
-    `/home/aurora:rw,nosuid,nodev,size=${quotas.tmpfsSize}`,
+    `${CONTAINER_HOME_PATH}:rw,nosuid,nodev,size=${quotas.tmpfsSize}`,
+    // Le sandbox montait un HOME inscriptible... sans jamais le DIRE au
+    // processus. Avec `--userns keep-id`, l UID 1000 est `node` dans l image
+    // node (HOME=/home/node) — un chemin de la racine en LECTURE SEULE. Mesure
+    // directe: `npm install` -> ENOENT mkdir '/home/node/.npm', echec avec une
+    // sortie vide cote pipeline. Avec HOME pose ici: « added 1 package ».
+    // Un seul reglage repare npm, pip, cargo et go: tous ecrivent sous $HOME.
+    '--env',
+    `HOME=${CONTAINER_HOME_PATH}`,
+    '--env',
+    `NPM_CONFIG_CACHE=${CONTAINER_HOME_PATH}/.npm`,
+    '--env',
+    `XDG_CACHE_HOME=${CONTAINER_HOME_PATH}/.cache`,
   ]
 }
 

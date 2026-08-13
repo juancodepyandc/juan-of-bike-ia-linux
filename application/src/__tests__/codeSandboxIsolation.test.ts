@@ -58,8 +58,15 @@ describe('codeSandboxIsolation', () => {
     assert.match(joined, /--security-opt no-new-privileges/)
     assert.match(joined, /--cap-drop ALL/)
     assert.match(joined, /--read-only/)
-    assert.match(joined, /fsize=1048576:1048576/)
+    // RLIMIT_FSIZE est en OCTETS (podman passe la valeur telle quelle), pas en
+    // blocs de 512 o comme `ulimit -f`. A 1048576 le plafond reel etait de
+    // 1 Mio: `npm install` de react echouait en EFBIG, avec une sortie vide.
+    assert.match(joined, /fsize=536870912:536870912/)
     assert.match(joined, /\/tmp:rw,nosuid,nodev,size=256m/)
+    // La racine est en lecture seule: le HOME inscriptible doit etre DECLARE,
+    // sinon npm/pip/cargo ecrivent dans le HOME de l image et echouent (ENOENT).
+    assert.match(joined, /--env HOME=\/home\/aurora/)
+    assert.match(joined, /--env NPM_CONFIG_CACHE=\/home\/aurora\/\.npm/)
     assert.match(joined, /aurora-code-ws-tmp-aurora-ws:\/workspace:rw/)
     assert.deepEqual(args.slice(-4), ['docker.io/library/node:22-bookworm-slim', 'npm', 'run', 'build'])
   })
