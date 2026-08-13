@@ -3,6 +3,7 @@ import {
   type CodeArchitectureFile,
 } from './codeArchitecturePlan.ts'
 import type { CodeIntent } from './codeIntent.ts'
+import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
 
 export type CodeGenerationQueueItem = {
   path: string
@@ -21,6 +22,11 @@ export type CodeGenerationQueue = {
   requiredCount: number
   optionalCount: number
   omittedOrderPaths: string[]
+  /**
+   * Ressources binaires retirees de la file: un modele de texte ne peut pas les
+   * ecrire. Conservees pour que le saut soit OBSERVABLE et non silencieux.
+   */
+  binaryAssetPaths: string[]
 }
 
 function normalizePath(path: string) {
@@ -50,6 +56,21 @@ export function buildGenerationQueueFromArchitecturePlan(
   const emitted = new Set<string>()
   const items: CodeGenerationQueueItem[] = []
   const omittedOrderPaths: string[] = []
+  const binaryAssetPaths: string[] = []
+
+  // Run 1081: le plan a mis `public/team-photo.jpg` et `public/coffee-hero.jpg`
+  // dans la file. Le modele a tape 42 297 octets de base64 pour l un et un JPEG
+  // tronque de 388 octets pour l autre, puis le dernier element a rendu une
+  // reponse vide et a tue le run a 29/30 fichiers. On ne demande plus a un
+  // modele de texte d ecrire un binaire: c est une question sans reponse.
+  const accept = (file: CodeArchitectureFile, normalized: string) => {
+    emitted.add(normalized)
+    if (isBinaryAssetPath(file.path)) {
+      binaryAssetPaths.push(file.path)
+      return
+    }
+    items.push(toQueueItem(file, items.length + 1))
+  }
 
   for (const orderPath of parsed.plan.generationOrder) {
     const normalized = normalizePath(orderPath)
@@ -58,15 +79,13 @@ export function buildGenerationQueueFromArchitecturePlan(
       if (!file) omittedOrderPaths.push(orderPath)
       continue
     }
-    emitted.add(normalized)
-    items.push(toQueueItem(file, items.length + 1))
+    accept(file, normalized)
   }
 
   for (const file of parsed.plan.files) {
     const normalized = normalizePath(file.path)
     if (emitted.has(normalized)) continue
-    emitted.add(normalized)
-    items.push(toQueueItem(file, items.length + 1))
+    accept(file, normalized)
   }
 
   const requiredCount = items.filter((item) => item.required).length
@@ -76,6 +95,7 @@ export function buildGenerationQueueFromArchitecturePlan(
     requiredCount,
     optionalCount: items.length - requiredCount,
     omittedOrderPaths,
+    binaryAssetPaths,
   }
 }
 
@@ -109,22 +129,27 @@ export function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string;
 }
 
 export function buildFallbackGenerationQueue(intent: CodeIntent): CodeGenerationQueue {
-  const items: CodeGenerationQueueItem[] = defaultFilesForIntent(intent).map((f, i) => ({
-    path: f.path,
-    order: i + 1,
-    required: true,
-    role: f.role,
-    language: f.language,
-    imports: [],
-    exports: [],
-    notes: [],
-  }))
+  const defaults = defaultFilesForIntent(intent)
+  const binaryAssetPaths = defaults.filter((f) => isBinaryAssetPath(f.path)).map((f) => f.path)
+  const items: CodeGenerationQueueItem[] = defaults
+    .filter((f) => !isBinaryAssetPath(f.path))
+    .map((f, i) => ({
+      path: f.path,
+      order: i + 1,
+      required: true,
+      role: f.role,
+      language: f.language,
+      imports: [],
+      exports: [],
+      notes: [],
+    }))
   return {
     source: 'architecture_plan',
     items,
     requiredCount: items.length,
     optionalCount: 0,
     omittedOrderPaths: [],
+    binaryAssetPaths,
   }
 }
 

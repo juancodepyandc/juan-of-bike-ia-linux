@@ -1,5 +1,6 @@
 import type { CodeFile } from './codeOrchestrator.ts'
 import { parseArchitecturePlanJson } from './codeArchitecturePlan.ts'
+import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
 
 const DOCUMENTATION_PLAN_EXTENSIONS = new Set(['md', 'txt', 'rst', 'adoc'])
 
@@ -30,6 +31,11 @@ export function checkArchitecturePlanFileContract(
     .filter((file) => file.required !== false)
     .map((file) => file.path)
     .filter((path) => !isDocumentationPlanPath(path))
+    // Meme predicat que la file de generation, obligatoirement: reclamer un
+    // binaire que la file ne produit plus (et qu aucun modele de texte ne peut
+    // ecrire) declencherait une regeneration sans issue — le piege du
+    // « conseil irrealisable » deja paye quatre passes au run 1031.
+    .filter((path) => !isBinaryAssetPath(path))
 
   const missingRequiredFiles = requiredFiles.filter((path) => !delivered.has(normalizePath(path)))
 

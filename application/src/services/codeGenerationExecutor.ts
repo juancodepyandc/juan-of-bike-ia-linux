@@ -68,6 +68,27 @@ function progressForItem(itemIndex: number, total: number) {
   return Math.max(35, Math.min(75, 35 + Math.round(((itemIndex + 1) / total) * 40)))
 }
 
+/**
+ * Ce fichier porte-t-il la livraison ? Point d entree, coquille HTML, manifeste
+ * de dependances, config de build: sans eux, rien ne demarre et aucune porte de
+ * qualite ne peut meme s executer. Le reste — une page, un composant, un module
+ * de donnees — manque, se voit, et se rattrape.
+ */
+export function isLoadBearingItem(item: CodeGenerationQueueItem): boolean {
+  const path = normalizeComparablePath(item.path)
+  if (!path) return false
+  const base = path.split('/').pop() ?? path
+  if (/^(package\.json|index\.html|cargo\.toml|go\.mod|pyproject\.toml|requirements\.txt|pubspec\.yaml|tauri\.conf\.json|manifest\.json)$/.test(base)) return true
+  if (/^vite\.config\.[jt]s$|^next\.config\.[jm]?[jt]s$|^tsconfig\.json$|^webpack\.config\.[jt]s$/.test(base)) return true
+  if (/^(main|index|app|server)\.(tsx?|jsx?|py|rs|go|java|rb|php)$/.test(base)) return true
+  return false
+}
+
+/** A-t-on deja de quoi livrer quelque chose d executable ? */
+function hasDeliverableSoFar(files: CodeFile[]): boolean {
+  return files.filter((file) => file.content.trim().length > 0).length >= 3
+}
+
 export async function executeCodeGenerationQueue(
   options: CodeGenerationExecutorOptions,
 ): Promise<CodeGenerationExecutorResult> {
@@ -108,7 +129,15 @@ export async function executeCodeGenerationQueue(
       // differentes; s il echoue encore sur un fichier non requis, on le note
       // et on continue. Un fichier requis, lui, reste bloquant: sans point
       // d entree il n y a pas de livrable.
-      if (!item.required) {
+      //
+      // Run 1081: le 30e et DERNIER fichier d une file de 30 a rendu une
+      // reponse vide. Il etait marque `required` par l architecte, donc les 29
+      // fichiers deja ecrits ont ete jetes apres pres d une heure. « Requis »
+      // dans un plan ne veut pas dire « sans lui rien ne tourne »: le point
+      // d entree et la config de build, oui; le 30e composant d une page, non.
+      // On ne condamne donc que ce qui empeche VRAIMENT de livrer, et
+      // uniquement tant qu on n a pas deja de quoi livrer.
+      if (!item.required || (!isLoadBearingItem(item) && hasDeliverableSoFar(files))) {
         emit(buildCodeStreamErrorEvent({ ...options.nextMeta(), message: `${code}:${item.path}`, recoverable: true }))
         emit(buildCodeStreamPhaseEvent({
           ...options.nextMeta(),

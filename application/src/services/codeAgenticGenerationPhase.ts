@@ -11,6 +11,7 @@ import {
 import { withTimeout } from './llmTimebox.ts'
 import { serializeProjectTreeEmission } from './codeProjectEmission.ts'
 import { buildGenerationQueueWithFallback } from './codeGenerationQueue.ts'
+import { describeBinaryAssetSkip } from './codeBinaryAssetPaths.ts'
 import { executeCodeGenerationQueue } from './codeGenerationExecutor.ts'
 import {
   createCodeGenerationLLMActionProducer,
@@ -81,6 +82,10 @@ export async function runAgenticGenerationPhase({
       : `Executor agentique WS3: ${queue.items.length} fichier(s) a produire...`,
     35,
   )
+  // Un saut silencieux serait un echec silencieux de plus: on nomme ce que la
+  // file ne demandera PAS au modele, et pourquoi.
+  const binarySkip = describeBinaryAssetSkip(queue.binaryAssetPaths)
+  if (binarySkip) setPhase(`Executor agentique WS3: ${binarySkip}`, 35)
   const producer = createCodeGenerationLLMActionProducer({
     prompt,
     model,
