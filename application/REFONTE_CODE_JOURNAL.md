@@ -7343,3 +7343,73 @@ d apparence juge sur la source, un binaire demande a un modele de texte.
 Aucune ne disait quoi que ce soit sur le code livre. Toutes le condamnaient.
 
 Tests : **1109 -> 1117 verts, 0 echec.**
+
+## 2026-08-13 (suite) — Run 1101: une trace en langage de bundle, et six symptomes soignes
+
+Le run 1101 attrape une VRAIE panne — la capture d erreurs, qui disait « zero
+erreur » au run precedent et avait raison, rapporte cette fois un crash reel:
+
+```
+TypeError: Cannot read properties of undefined (reading 'map')
+    at hd (http://127.0.0.1:34141/assets/index-C-nmfp7n.js:8:193411)
+rendu: 10/100  echecs=runtime_clean,display_typography,type_scale,
+                      real_typeface,visual_content,depth,interactivity
+```
+
+Deux defauts distincts empechaient la boucle de le reparer.
+
+### 1. La trace disait OU — en langage de bundle
+
+`assets/index-C-nmfp7n.js:8:193411` ne nomme ni fichier, ni ligne, ni composant.
+C est exactement le trou deja bouche cote compilateur (« il disait QU il y a une
+erreur, jamais OU »), mais cote navigateur. Le modele ne pouvait que deviner, et
+il a devine.
+
+- le bundle est reconstruit avec ses cartes des qu il n en a pas
+  (`vite build --sourcemap`) ;
+- les traces sont resolues en positions SOURCE avant d atteindre le correcteur ;
+- la capture passe de **160 a 1200 caracteres** — 160 coupait juste apres le
+  message, donc avant la moindre frame ;
+- une position de bundle non resolue est **signalee comme telle**, pour qu aucun
+  correcteur ne devine un fichier au hasard.
+
+| sur le projet reel du run 1101 | avant | apres |
+|---|---|---|
+| position transmise | `assets/index-C-nmfp7n.js:8:193411` | **`src/components/CoffeeCard.tsx:35:19`** |
+
+Verification a la ligne 35 du fichier livre:
+
+```jsx
+{notes.map((note, index) => (
+```
+
+La carte dit vrai.
+
+### 2. On soignait six symptomes
+
+La porte declarait sept echecs, et la passe ciblee a corrige **huit fichiers de
+style** (`App.css`, `Header.css`, `animations.css`, `variables.css`...).
+Resultat: 10/100 avant, 10/100 apres, livrable precedent conserve.
+
+Or **six de ces sept echecs n etaient pas des defauts**. Quand la page ne monte
+pas, il n y a ni typographie, ni profondeur, ni interactivite A MESURER. On
+notait l absence de rendu comme un defaut de gout, puis on envoyait le modele
+repeindre une page qui ne s affiche pas.
+
+C est la regle constante de ce module poussee d un cran: *un juge qui ne peut pas
+mesurer ne condamne pas* — et **un juge dont la page n a jamais monte n a rien
+mesure du tout**. Tant que le crash n est pas repare, les criteres en aval ne
+sont pas « echoues », ils sont NON CONCLUANTS.
+
+La passe ne recoit plus que la cause, avec une consigne qui interdit
+explicitement de toucher aux styles et qui exige de reparer a la SOURCE de la
+donnee (import, export par defaut, valeur initiale, props) plutot que de poser
+un `?.` sur le symptome. Et sa portee est le fichier que la trace NOMME — une
+preuve, plus une heuristique.
+
+| memes fichiers | avant | apres |
+|---|---|---|
+| echecs envoyes au correcteur | 7 | **1 cause + 6 non concluants** |
+| portee du patch | 8 fichiers de style | **1 fichier: `src/components/CoffeeCard.tsx`** |
+
+Tests : **1117 -> 1124 verts, 0 echec.**
