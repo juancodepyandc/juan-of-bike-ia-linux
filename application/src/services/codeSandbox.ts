@@ -177,7 +177,10 @@ export async function runCodeSandboxValidation({
       } satisfies CodeSandboxResult
     }
 
-    const isolationProbes = await runSandboxIsolationProbes(sandboxRoot)
+    // Les preuves tournent dans l image QUI VA EXECUTER LE CODE. Construites
+    // avec `unknown`, elles retombaient sur une image debian jamais provisionnee
+    // par Aurora: echec systematique, sur chaque run, avec une sortie vide.
+    const isolationProbes = await runSandboxIsolationProbes(sandboxRoot, lang)
     steps.push(...isolationProbes.steps)
     if (!isolationProbes.ok) {
       return {

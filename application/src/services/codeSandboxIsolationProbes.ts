@@ -1,6 +1,31 @@
+// ---------------------------------------------------------------------------
+// Preuves d isolation du bac a sable.
+//
+// Cause racine mesuree (runs 1041 a 1061, et toute la serie avant): ces preuves
+// etaient construites avec le langage `'unknown'`, qui retombe sur l image
+// `debian:bookworm-slim`. Aurora ne provisionne JAMAIS cette image, et
+// `--pull=never` interdit de la telecharger pendant une generation. Chaque
+// preuve echouait donc, sur chaque run, pour chaque projet — et l echec
+// bloquait `isDeliveryRunnable`, donc `phase: 'error'`.
+//
+// L echec etait invisible: podman ecrit « image not known » sur STDERR, et le
+// pont ne transmet que stdout. Le pipeline recevait une etape en echec avec une
+// sortie VIDE, impossible a diagnostiquer.
+//
+// Correction de fond: on prouve l isolation DANS L IMAGE QUI VA REELLEMENT
+// EXECUTER LE CODE. Prouver qu un conteneur debian ne lit pas l hote ne dit
+// rien du conteneur node dans lequel le projet tourne. Mesure sur cette
+// machine: probe identique, image `debian` -> echec (image absente); image
+// `node:22-bookworm-slim` -> PASS.
+// ---------------------------------------------------------------------------
+
 import { fsRemoveDirAll, fsWriteText, runWorkspaceCommand } from '../hooks/useTauri.ts'
-import type { CodeSandboxStepResult, ValidationCommand } from './codeSandboxTypes.ts'
-import { wrapCommandForPodman } from './codeSandboxIsolation.ts'
+import type { CodeSandboxStepResult, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
+import {
+  buildPodmanImageExistsArgs,
+  sandboxImageForLanguage,
+  wrapCommandForPodman,
+} from './codeSandboxIsolation.ts'
 
 export type SandboxIsolationProbeResult = {
   ok: boolean
@@ -50,7 +75,10 @@ function probeCommand(label: string, script: string): ValidationCommand {
   }
 }
 
-export function buildSandboxIsolationProbeCommands(sandboxRoot: string): ValidationCommand[] {
+export function buildSandboxIsolationProbeCommands(
+  sandboxRoot: string,
+  lang: DetectedLanguage = 'unknown',
+): ValidationCommand[] {
   const sentinelName = sandboxHostSentinelName(sandboxRoot)
   const hostReadProbe = probeCommand(
     'Preuve isolation host-read',
@@ -107,16 +135,19 @@ export function buildSandboxIsolationProbeCommands(sandboxRoot: string): Validat
   )
 
   return [hostReadProbe, forkProbe, fileSizeProbe, workspaceQuotaProbe]
-    .map((command) => wrapCommandForPodman(command, 'unknown', sandboxRoot))
+    .map((command) => wrapCommandForPodman(command, lang, sandboxRoot))
 }
 
 export async function runSandboxIsolationProbes(
   sandboxRoot: string,
+  lang: DetectedLanguage = 'unknown',
   runner: CommandRunner = runWorkspaceCommand,
   fs: ProbeFs = DEFAULT_PROBE_FS,
 ): Promise<SandboxIsolationProbeResult> {
   const steps: CodeSandboxStepResult[] = []
   const sentinelPath = sandboxHostSentinelPath(sandboxRoot)
+
+  const image = sandboxImageForLanguage(lang)
 
   try {
     await fs.writeText(sentinelPath, `Aurora host isolation sentinel for ${sandboxRoot}\n`)
@@ -133,7 +164,26 @@ export async function runSandboxIsolationProbes(
   }
 
   try {
-    for (const command of buildSandboxIsolationProbeCommands(sandboxRoot)) {
+    // Verdict par CODE DE SORTIE: podman ecrit ses erreurs sur stderr, que le
+    // pont ne transmet pas. Sans ce controle, une image absente ressortait en
+    // « preuve d isolation en echec » avec une sortie VIDE — indiagnosticable,
+    // et le verdict accusait le code livre d une panne d installation.
+    const imageArgs = buildPodmanImageExistsArgs(lang)
+    const imagePresent = await runner('podman', imageArgs, sandboxRoot, PROBE_TIMEOUT_MS)
+      .catch(() => ({ ok: false, exitCode: 1, output: '', command: `podman ${imageArgs.join(' ')}` }))
+    if (!imagePresent.ok) {
+      steps.push({
+        label: 'Preuve isolation image conteneur',
+        command: `podman ${imageArgs.join(' ')}`,
+        ok: false,
+        output: `image conteneur absente en local: ${image} (langage "${lang}"). `
+          + 'Les preuves d isolation ne peuvent pas s executer: ce n est PAS un defaut du code livre. '
+          + `Lancez "podman pull ${image}" (--pull=never interdit le telechargement pendant une generation).`,
+      })
+      return { ok: false, steps }
+    }
+
+    for (const command of buildSandboxIsolationProbeCommands(sandboxRoot, lang)) {
       const result = await runner(command.executable, command.args, sandboxRoot, command.timeoutMs).catch((error) => ({
         ok: false,
         exitCode: 1,
@@ -144,7 +194,13 @@ export async function runSandboxIsolationProbes(
         label: command.label,
         command: result.command || `${command.executable} ${command.args.join(' ')}`,
         ok: result.ok,
-        output: result.output,
+        // Une etape en echec SANS message est indiagnosticable. Le pont ne
+        // transmet pas stderr: on le dit, au lieu de rendre une chaine vide.
+        output: result.output
+          || (result.ok
+            ? ''
+            : `echec sans sortie (code ${result.exitCode}); image ${image}. `
+              + 'podman ecrit ses erreurs sur stderr, que le pont ne transmet pas.'),
       })
       if (!result.ok) return { ok: false, steps }
     }

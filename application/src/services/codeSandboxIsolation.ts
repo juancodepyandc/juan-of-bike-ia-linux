@@ -187,6 +187,22 @@ function imageForLanguage(lang: DetectedLanguage): string {
   return LANGUAGE_IMAGES[lang] ?? 'docker.io/library/debian:bookworm-slim'
 }
 
+/** L image EXACTE dans laquelle une commande de ce langage va s executer. */
+export function sandboxImageForLanguage(lang: DetectedLanguage): string {
+  return imageOverrideForToolchain(lang) ?? imageForLanguage(lang)
+}
+
+/**
+ * `podman image exists` — verdict par CODE DE SORTIE, sans rien ecrire sur la
+ * sortie standard. C est ce qui le rend utilisable ici: le pont ne transmet que
+ * stdout, donc une erreur podman (ecrite sur stderr) arrive VIDE cote pipeline.
+ * Un echec sans message est un echec qu on ne peut pas diagnostiquer — c est
+ * ainsi qu une image absente a pu passer pour une violation d isolation.
+ */
+export function buildPodmanImageExistsArgs(lang: DetectedLanguage): string[] {
+  return ['image', 'exists', sandboxImageForLanguage(lang)]
+}
+
 function safeContainerName(sandboxRoot: string): string {
   const suffix = sandboxRoot.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(-48)
   return `aurora-code-${suffix || Date.now()}`

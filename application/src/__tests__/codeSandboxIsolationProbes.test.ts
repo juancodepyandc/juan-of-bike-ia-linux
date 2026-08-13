@@ -55,7 +55,11 @@ describe('codeSandboxIsolationProbes', () => {
     const removals: string[] = []
     const result = await runSandboxIsolationProbes(
       '/tmp/aurora/ws',
+      'node',
       async (_executable, args) => {
+        if (args[0] === 'image' && args[1] === 'exists') {
+          return { ok: true, exitCode: 0, output: '', command: args.join(' ') }
+        }
         const label = args.some((arg) => arg.includes('AURORA_HOST_SENTINEL')) ? 'host' : 'next'
         seen.push(label)
         return {
@@ -82,6 +86,7 @@ describe('codeSandboxIsolationProbes', () => {
     let commandRuns = 0
     const result = await runSandboxIsolationProbes(
       '/tmp/aurora/ws',
+      'node',
       async () => {
         commandRuns += 1
         return { ok: true, exitCode: 0, output: '', command: 'unexpected' }
@@ -96,5 +101,54 @@ describe('codeSandboxIsolationProbes', () => {
     assert.equal(commandRuns, 0)
     assert.equal(result.steps[0]?.label, 'Preuve isolation host-read sentinel')
     assert.match(result.steps[0]?.output ?? '', /disk denied/)
+  })
+
+  // Cause racine de la serie de runs qui n atteignaient jamais `done`: les
+  // preuves etaient bati es avec `unknown` -> image `debian:bookworm-slim`, que
+  // Aurora ne provisionne pas. Echec systematique, sortie VIDE (podman ecrit sur
+  // stderr, que le pont ne transmet pas), et `isDeliveryRunnable` a false.
+  test('les preuves tournent dans l image qui execute REELLEMENT le code', () => {
+    const node = buildSandboxIsolationProbeCommands('/tmp/aurora/ws', 'node')
+    const python = buildSandboxIsolationProbeCommands('/tmp/aurora/ws', 'python')
+    assert.ok(node.every((c) => c.args.includes('docker.io/library/node:22-bookworm-slim')))
+    assert.ok(python.every((c) => c.args.includes('docker.io/library/python:3.12-slim')))
+    assert.equal(node.some((c) => c.args.some((a) => a.includes('debian'))), false)
+  })
+
+  test('image absente = panne d INSTALLATION nommee, jamais un verdict sur le code', async () => {
+    const result = await runSandboxIsolationProbes(
+      '/tmp/aurora/ws',
+      'node',
+      async (_executable, args) => {
+        if (args[0] === 'image' && args[1] === 'exists') {
+          // `podman image exists` n ecrit rien: le verdict est le code de sortie.
+          return { ok: false, exitCode: 1, output: '', command: args.join(' ') }
+        }
+        throw new Error('aucune preuve ne doit tourner sans image')
+      },
+      { writeText: async () => undefined, removeDirAll: async () => undefined },
+    )
+
+    assert.equal(result.ok, false)
+    assert.equal(result.steps.length, 1)
+    assert.match(result.steps[0].output, /image conteneur absente en local/)
+    assert.match(result.steps[0].output, /node:22-bookworm-slim/)
+    assert.match(result.steps[0].output, /PAS un defaut du code livre/)
+  })
+
+  test('un echec sans sortie est NOMME au lieu d etre rendu vide', async () => {
+    const result = await runSandboxIsolationProbes(
+      '/tmp/aurora/ws',
+      'node',
+      async (_executable, args) => (args[0] === 'image' && args[1] === 'exists'
+        ? { ok: true, exitCode: 0, output: '', command: args.join(' ') }
+        : { ok: false, exitCode: 125, output: '', command: args.join(' ') }),
+      { writeText: async () => undefined, removeDirAll: async () => undefined },
+    )
+
+    assert.equal(result.ok, false)
+    assert.notEqual(result.steps[0].output.trim(), '')
+    assert.match(result.steps[0].output, /echec sans sortie \(code 125\)/)
+    assert.match(result.steps[0].output, /stderr/)
   })
 })
