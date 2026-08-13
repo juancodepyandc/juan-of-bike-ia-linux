@@ -125,6 +125,23 @@ export function buildCompositionCritique(failed: CompositionCheck[]): string {
  * icones de produit.
  */
 const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}]/gu
+/** Meme jeu de plages, SANS le drapeau global: `.test()` sur un regex global
+ * avance `lastIndex` et rend le resultat dependant de l appel precedent. */
+const EMOJI_ANYWHERE_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}]/u
+
+/**
+ * Le texte contient-il un pictogramme, OU QUE CE SOIT ?
+ *
+ * `detectEmojiIcons` ne voit que les emoji ecrits entre deux balises
+ * (`<span>☕</span>`). Le juge, lui, mesure le DOM RENDU. Mesure sur le run 1061:
+ * la porte `real_iconography` echouait sur des etoiles produites par
+ * `{'★'.repeat(rating)}` — une expression JavaScript. Le navigateur les voyait,
+ * l analyse de source non. Une reparation ciblee doit chercher les emoji la ou
+ * ils VIVENT dans le code, pas seulement la ou ils sont ecrits litteralement.
+ */
+export function containsPictographicEmoji(text: string): boolean {
+  return EMOJI_ANYWHERE_RE.test(text)
+}
 
 /** Le texte a-t-il un emoji ET rien d autre de substantiel ? */
 function isIconLikeText(text: string): boolean {

@@ -50,6 +50,32 @@ describe('portee de la passe ciblee — la ou le defaut est OBSERVABLE', () => {
     assert.ok(scope.protectedPaths.includes('src/pages/AdminPage.tsx'))
   })
 
+  // Cas REEL du run 1061: la porte `real_iconography` echouait sur des etoiles
+  // produites par `{'★'.repeat(rating)}`. Le juge mesure le DOM rendu; l analyse
+  // de source ne voyait rien entre deux balises. Portee mesuree sur les 36
+  // fichiers reellement livres: 0 cible avant, 2 apres.
+  test('un emoji dans une EXPRESSION JS est vu, pas seulement entre deux balises', () => {
+    const stars: CodeFile = {
+      name: 'src/components/Testimonials.tsx',
+      language: 'tsx',
+      content: "export default function T({ rating }: { rating: number }) {\n"
+        + "  return <div className=\"stars\">{'★'.repeat(rating)}{'☆'.repeat(5 - rating)}</div>\n}",
+    }
+    const data: CodeFile = {
+      name: 'src/utils/constants.ts',
+      language: 'typescript',
+      content: "export const FEATURES = [{ icon: '🌍', label: 'Origines' }]\n",
+    }
+    const clean: CodeFile = { name: 'src/utils/theme.ts', language: 'typescript', content: 'export const olive = "#6b705c"\n' }
+
+    const scope = buildTargetedRepairScope({ files: [stars, data, clean], failedChecks: ['real_iconography'] })
+    assert.deepEqual(
+      scope.targets.map((f) => f.name).sort(),
+      ['src/components/Testimonials.tsx', 'src/utils/constants.ts'],
+    )
+    assert.deepEqual(scope.protectedPaths, ['src/utils/theme.ts'])
+  })
+
   test('la portee est bornee: un patch n embarque jamais tout le projet', () => {
     const wide = Array.from({ length: 30 }, (_, i) => ({
       name: `src/pages/P${i}.tsx`, language: 'tsx', content: '<img src="a.png" />',

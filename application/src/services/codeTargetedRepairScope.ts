@@ -16,7 +16,7 @@
 // ce soit: on remplace des chemins existants, on n en retire aucun.
 // ---------------------------------------------------------------------------
 
-import { detectEmojiIcons } from './codeCompositionGate.ts'
+import { containsPictographicEmoji, detectEmojiIcons } from './codeCompositionGate.ts'
 import type { CodeFile } from './codeOrchestratorTypes.ts'
 
 export type TargetedRepairScope = {
@@ -30,6 +30,8 @@ export type TargetedRepairScope = {
 
 const MARKUP_RE = /\.(html?|vue|svelte|[jt]sx)$/i
 const STYLE_RE = /\.(css|scss|sass|less)$/i
+/** Markup + modules source: un emoji peut vivre dans un tableau de donnees. */
+const SOURCE_RE = /\.(html?|vue|svelte|[jt]sx?|mjs)$/i
 
 type Probe = (file: CodeFile) => boolean
 
@@ -45,8 +47,14 @@ const either = (a: Probe, b: Probe): Probe => (f) => a(f) || b(f)
  * projet: c est exactement le defaut qu on corrige ici.
  */
 const PROBES: Record<string, Probe> = {
-  // Composition — le detecteur du juge lui-meme, fichier par fichier.
-  real_iconography: (f) => detectEmojiIcons([{ name: f.name, content: f.content }]).length > 0,
+  // Composition. Le juge mesure le DOM RENDU, pas la source: au run 1061 le
+  // defaut venait de `{'★'.repeat(rating)}`, une expression JavaScript que
+  // `detectEmojiIcons` (qui ne lit que `>…<`) ne voit pas. On cherche donc le
+  // pictogramme la ou il VIT — y compris dans un tableau de donnees — sinon la
+  // portee sort vide et la passe ciblee ne repare rien.
+  real_iconography: (f) => SOURCE_RE.test(f.name)
+    && (containsPictographicEmoji(f.content)
+      || detectEmojiIcons([{ name: f.name, content: f.content }]).length > 0),
   no_overlap: either(isStyle, both(isMarkup, has(/position\s*:\s*(absolute|fixed)|absolute |fixed /i))),
   no_empty_section: either(isStyle, both(isMarkup, has(/<section|min-h|100vh|py-\d|padding/i))),
 
