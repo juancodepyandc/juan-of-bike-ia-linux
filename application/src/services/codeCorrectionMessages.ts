@@ -7,6 +7,12 @@ import { buildAuditeurSystemPrompt } from './codeSystemPrompts.ts'
 import { evaluateBrandFidelity } from './codeFidelityGate.ts'
 import { serializeCodeFiles } from './codeGeneratedFileParser.ts'
 import {
+  correctionFileBudgetChars,
+  describeOmittedFiles,
+  selectFilesForCorrectionPrompt,
+} from './codeCorrectionPromptBudget.ts'
+import { CODE_EXPERT_CONTEXT_TOKENS } from './codePipelineRuntime.ts'
+import {
   buildDesignRetryHint,
   computeDesignPolishReport,
 } from './codeQualityGates.ts'
@@ -155,14 +161,31 @@ export function buildCorrectionMessages({
     }
   }
 
-  userLines.push(
+  // Le contexte se PARTAGE. Mesure run 1141: tout le projet injecte donnait un
+  // prompt de 24 542 jetons dans une fenetre de 24 576 — 34 jetons pour ecrire
+  // la reponse. On reserve donc la sortie d abord, puis on remplit en
+  // commencant par les fichiers que les erreurs designent.
+  const systemContent = systemLines.join('\n')
+  const headContent = userLines.filter(Boolean).join('\n\n')
+  const selection = selectFilesForCorrectionPrompt({
+    files,
+    failingOutputs: validationResult.steps.filter((step) => !step.ok).map((step) => step.output),
+    budgetChars: correctionFileBudgetChars({
+      contextTokens: CODE_EXPERT_CONTEXT_TOKENS,
+      otherPromptChars: systemContent.length + headContent.length,
+    }),
+  })
+
+  const userContent = [
+    headContent,
     '',
-    'Corrige le projet complet. Modifie seulement ce qui est necessaire.',
-    `\nFichiers actuels:\n${serializeCodeFiles(files)}`,
-  )
+    'Corrige le projet. Modifie seulement ce qui est necessaire.',
+    `\nFichiers actuels:\n${serializeCodeFiles(selection.included)}`,
+    describeOmittedFiles(selection.omitted),
+  ].filter(Boolean).join('\n\n')
 
   return [
-    { role: 'system', content: systemLines.join('\n') },
-    { role: 'user', content: userLines.filter(Boolean).join('\n\n') },
+    { role: 'system', content: systemContent },
+    { role: 'user', content: userContent },
   ]
 }

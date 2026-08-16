@@ -16,6 +16,7 @@ import {
 } from './codeCorrectionRegressionFeedback.ts'
 import { gatherCorrectionContext } from './codeCorrectionContextGathering.ts'
 import { prioritizeCompileErrors } from './codeMissingModuleCompletion.ts'
+import { RESERVED_OUTPUT_TOKENS } from './codeCorrectionPromptBudget.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS, CORRECTION_FIRST_BYTE_TIMEOUT_MS, CORRECTION_TIMEOUT_MS,
   getModelShortName, selectModel, type CodeModelRoutingContext,
@@ -335,6 +336,10 @@ export async function runValidationAndCorrectionLoop(
       firstByteTimeoutMs: CORRECTION_FIRST_BYTE_TIMEOUT_MS,
       signal,
       num_ctx: CODE_EXPERT_CONTEXT_TOKENS,
+      // Aucun plafond de sortie n etait pose ici, contrairement a la generation.
+      // Un modele sans plafond, dans une fenetre deja pleine, genere jusqu a
+      // epuiser le temps: 20 min pour la passe 4 du run 1141.
+      num_predict: RESERVED_OUTPUT_TOKENS,
       neverMemorySkip: true,
       onRecoveryAttempt: (ev) => {
         setPhase(`Passe ${attempt} — auto-reparation Ollama: ${ev.action}...`, Math.min(94, 75 + attempt * 3))
