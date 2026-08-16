@@ -7604,3 +7604,61 @@ retenter etait exactement le tourniquet.
 | service qui ecoute mais ne sert pas | retry infini | **redemarrage** |
 
 Tests : **1143 -> 1146 verts, 0 echec.**
+
+## 2026-08-17 — Runs 1151/1161: les portes tombent, l arbitre reste
+
+Deux runs consecutifs qui atteignent enfin les portes de qualite, et les
+franchissent.
+
+```
+run 1151   acceptation 2/2 · rendu 100/100 · a11y 86 · perf 80   21,3 min
+run 1161   acceptation 2/2 · rendu  80/100 · a11y 100 · perf 100  16,1 min
+           « Arret de la boucle : livraison validee a 100% »  <- la SANDBOX valide
+```
+
+Cinq correctifs jusque-la non valides en conditions reelles le sont: budget de
+prompt (les appels sans fin ont disparu — 58+ min -> 16), URL racine de
+l acceptation, ordre causal du rendu, passe ciblee chirurgicale, budget de
+recuperation.
+
+### Trois verrous levés au run 1151
+
+1. **Un branchement manquant.** Le bridge est devenu injoignable en cours de
+   validation. Le classifieur l a reconnu, a arrete les passes et a ecrit « Ce
+   n est PAS un defaut du code livre » — puis le run est sorti `error`. La phase
+   `interrupted`, construite pour ce cas exact et deja utilisee sur le chemin
+   Ollama, n etait pas branchee sur le chemin sandbox. Trois issues, pas deux.
+
+2. **Une note qui affirmait une cause non mesuree** (« bridge arrete ou reseau
+   coupe »). Verification: le bridge etait vivant, health 200. Affirmer une
+   cause qu on n a pas mesuree envoie chercher au mauvais endroit. La note dit
+   maintenant ce qu on sait, et liste des pistes sans en designer une.
+
+3. **La passe ciblee ne verifiait pas son propre patch.** Elle a « corrige »
+   `Footer.tsx` pour `real_iconography` et l emoji y etait toujours — mesure sur
+   les fichiers livres. Elle mesure desormais son resultat avant de le proposer,
+   sur ce qui est verifiable sans navigateur.
+
+### Le dernier verrou: l arbitre jugeait sur le mauvais critere
+
+Au run 1161 la passe reparait `no_empty_section` — de la COMPOSITION. L arbitre
+l a jugee sur le score de RENDU: 80/100 avant, 80/100 apres. Inchange, ce qui
+est normal — elle n avait aucune raison de le changer. Donc rejetee.
+
+C est le piege du run 1091 revenu par une autre porte. Je l avais corrige **en
+cas particulier** pour la composition; il revenait des qu une autre porte etait
+concernee. La regle est generale:
+
+> **Une passe se juge sur le critere qu elle repare, jamais sur un score voisin
+> qu elle n avait aucune raison de changer.**
+
+L arbitre recoit desormais toutes les portes mesurees. Toute porte qui etait en
+echec et qui passe, sans perte de rendu, vaut adoption. Une porte CASSEE au
+passage est verifiee AVANT — echanger un defaut contre un autre n est pas un
+progres, et un test a attrape que mes controles etaient dans le mauvais ordre.
+
+Honnetete: au run 1161 la passe n avait de toute facon pas repare la
+composition. Ce correctif seul n aurait pas suffi a CE run — il supprime la
+condamnation structurelle qui rendait toute passe non-rendu ininteressante.
+
+Tests : **1157 -> 1162 verts, 0 echec.**
