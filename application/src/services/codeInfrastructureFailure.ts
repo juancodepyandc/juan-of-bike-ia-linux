@@ -87,10 +87,16 @@ export function buildInfrastructureFailureNote(summary: string | null | undefine
   return [
     '## VALIDATION INDISPONIBLE',
     `La validation sandbox n a pas pu s executer: ${summary || 'infrastructure injoignable'}.`,
-    'Ce n est PAS un defaut du code livre: le juge lui-meme etait injoignable (bridge arrete ou reseau coupe).',
+    'Ce n est PAS un defaut du code livre: le juge lui-meme n a pas repondu.',
     'Les passes de correction sont donc arretees — corriger du code ne repare pas une panne d infrastructure,',
     'et les passes precedentes degradaient le livrable en cherchant une faute inexistante.',
-    'Relance la validation une fois le bridge redemarre pour obtenir un verdict reel.',
+    // On NOMMAIT une cause qu on n avait pas mesuree (« bridge arrete ou reseau
+    // coupe »). Verification au run 1151: le bridge etait vivant, health 200.
+    // Une note qui affirme une cause non mesuree envoie chercher au mauvais
+    // endroit — exactement le travers que ce module corrige partout ailleurs.
+    'Cause exacte non mesuree ici: le pont a refuse ou n a pas repondu a un appel de validation.',
+    'Pistes, par ordre de cout: contention pendant que le modele occupe la machine, delai depasse',
+    'sur un appel long, ou service indisponible. Relance la validation pour obtenir un verdict reel.',
   ].join('\n')
 }
 

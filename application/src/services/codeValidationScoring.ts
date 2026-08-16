@@ -87,6 +87,24 @@ function isExecutionBlockingIssue(issue: CritiqueReport['issues'][number]): bool
   return issue.severity === 'error' && issue.axis !== 'preview'
 }
 
+/**
+ * Phase de livraison. Trois issues, pas deux.
+ *
+ * Run 1151: le bridge est devenu injoignable en cours de validation. Le pipeline
+ * l a correctement reconnu — « Ce n est PAS un defaut du code livre » — puis a
+ * livre `error` quand meme, parce que le sandbox portait une etape en echec.
+ * Meme erreur de categorie que partout ailleurs dans cette serie: condamner sur
+ * une mesure qui n a pas pu etre prise. Le travail existe et n a pas ete valide
+ * jusqu au bout: c est `interrupted`, ni reussite ni echec de qualite.
+ */
+export function deliveryPhase(result: {
+  infrastructureFailure: boolean
+  sandboxResult: CodeSandboxResult | null
+}): 'done' | 'error' | 'interrupted' {
+  if (result.infrastructureFailure) return 'interrupted'
+  return isDeliveryRunnable(result.sandboxResult) ? 'done' : 'error'
+}
+
 export function isStaticCritiqueBlocking(report: CritiqueReport): boolean {
   if (report.hasBlocker) return true
   if (report.issues.some(isExecutionBlockingIssue)) return true

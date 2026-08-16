@@ -32,6 +32,11 @@ type ValidationCorrectionLoopResult = {
   correctionLog: CorrectionPass[]
   totalAttempts: number
   finalScore: number
+  /**
+   * La validation a-t-elle ete EMPECHEE (bridge arrete, reseau coupe) ?
+   * Distinct d un echec de validation: ici le juge n a rien mesure.
+   */
+  infrastructureFailure: boolean
 }
 
 export function normalizedFilesChanged(currentFiles: CodeFile[], normalizedFiles?: CodeFile[]): boolean {
@@ -93,6 +98,7 @@ export async function runValidationAndCorrectionLoop(
   let attempt = 0
   let lastScore = 0
   let functionalGreenPasses = 0
+  let infrastructureFailure = false
   let rescueRegenerationUsed = false
   let toolingEvaluationUsed = false
   // Le garde anti-regression parlait a l UI, jamais au correcteur: cinq refus
@@ -125,6 +131,7 @@ export async function runValidationAndCorrectionLoop(
       score: 0, onValidationUpdate, onFilesUpdate, setPhase,
     })
     if (infraFailure) {
+      infrastructureFailure = true
       currentNotes = infraFailure.notes
       lastScore = computeSandboxScore(sandboxResult, currentFiles, intent)
       break
@@ -387,5 +394,6 @@ export async function runValidationAndCorrectionLoop(
     correctionLog,
     totalAttempts: attempt,
     finalScore: lastScore,
+    infrastructureFailure,
   }
 }

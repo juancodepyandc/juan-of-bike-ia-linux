@@ -17,6 +17,7 @@
 import type { OllamaMessage } from '../types/app.ts'
 import { parseCodeFiles } from './codeGeneratedFileParser.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
+import { containsPictographicEmoji } from './codeCompositionGate.ts'
 import {
   applyTargetedRepair,
   buildTargetedRepairScope,
@@ -89,6 +90,29 @@ export function buildTargetedRepairMessages(args: {
     { role: 'system', content: system },
     { role: 'user', content: user },
   ]
+}
+
+/**
+ * Le patch a-t-il REELLEMENT retire le defaut qu on lui demandait de retirer ?
+ *
+ * Run 1151: la passe a « corrige » `src/components/Footer.tsx` pour
+ * `real_iconography`, et l emoji 📷 y etait toujours. Le patch n a donc pas ete
+ * adopte (composition toujours en echec), et la passe a ete perdue.
+ *
+ * On ne verifie que ce qui est verifiable ICI, sans navigateur: l iconographie
+ * est un test exact sur la source. Les criteres qui exigent une mise en page
+ * rendue (chevauchement, vides) ne sont pas jugeables a ce stade — on ne
+ * prononce donc rien a leur sujet, on ne les invente pas non plus.
+ */
+function unresolvedAfterPatch(files: CodeFile[], failedChecks: string[]): string | null {
+  if (!failedChecks.includes('real_iconography')) return null
+  const leftovers = files
+    .filter((file) => /\.(html?|vue|svelte|[jt]sx?|mjs)$/i.test(file.name) && containsPictographicEmoji(file.content))
+    .map((file) => file.name)
+  if (leftovers.length === 0) return null
+  return `Des emoji sont TOUJOURS presents dans: ${leftovers.slice(0, 5).join(', ')}. `
+    + 'Remplace CHAQUE pictogramme par un `<svg>` inline, y compris ceux ecrits dans une chaine '
+    + 'JavaScript ou un tableau de donnees. Ne rends que ces fichiers, corriges.'
 }
 
 function describe(application: TargetedRepairApplication): string {
@@ -166,6 +190,15 @@ export async function runTargetedRepairPass(args: {
     if (application.patched.length === 0 && application.added.length === 0) {
       previousRejection = `Rien n a pu etre applique: ${summary}. Rends UNIQUEMENT les chemins autorises, a l identique.`
       lastSummary = summary
+      continue
+    }
+
+    // Mesurer le patch avant de le proposer: un patch qui n a pas retire le
+    // defaut sera de toute facon refuse par l arbitre, et la passe sera perdue.
+    const unresolved = unresolvedAfterPatch(application.files, args.failedChecks)
+    if (unresolved && attempt < maxAttempts) {
+      previousRejection = unresolved
+      lastSummary = `${summary} — defaut non retire`
       continue
     }
 

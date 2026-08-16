@@ -277,3 +277,48 @@ describe('arbitrage — reparer la porte qui echouait EST le progres', () => {
     assert.match(selection.reason, /perd des capacites/)
   })
 })
+
+describe('la passe verifie son propre patch avant de le proposer', () => {
+  const withEmoji: CodeFile[] = [
+    { name: 'src/components/Footer.tsx', language: 'tsx', content: 'export default function Footer(){ return <footer><span>📷</span>Instagram</footer> }' },
+    { name: 'src/assets/styles/index.css', language: 'css', content: '.footer{display:flex}' },
+  ]
+
+  // Run 1151: la passe a « corrige » Footer.tsx et l emoji 📷 y etait toujours.
+  // Le patch a donc ete refuse par l arbitre et la passe perdue.
+  test('un patch qui laisse l emoji est renvoye au modele, avec le fichier nomme', async () => {
+    const prompts: string[] = []
+    const result = await runTargetedRepairPass({
+      prompt: 'site brulerie', files: withEmoji, failedChecks: ['real_iconography'],
+      critique: 'emoji', model: 'test',
+      generate: async (messages) => {
+        prompts.push(messages[1].content)
+        return prompts.length === 1
+          // 1re tentative: touche le fichier mais garde l emoji.
+          ? serializeProjectTreeEmission([{ path: 'src/components/Footer.tsx', content: 'export default function Footer(){ return <footer><span>📷</span>Insta</footer> }' }])
+          // 2e: vraie iconographie.
+          : serializeProjectTreeEmission([{ path: 'src/components/Footer.tsx', content: 'export default function Footer(){ return <footer><svg viewBox="0 0 24 24"><rect width="18" height="14" /></svg>Insta</footer> }' }])
+      },
+    })
+
+    assert.equal(prompts.length, 2)
+    assert.match(prompts[1], /emoji sont TOUJOURS presents/)
+    assert.match(prompts[1], /src\/components\/Footer\.tsx/)
+    assert.equal(result.changed, true)
+    assert.equal(/📷/u.test(result.files.find((f) => f.name === 'src/components/Footer.tsx')!.content), false)
+  })
+
+  test('un patch qui retire vraiment le defaut passe du premier coup', async () => {
+    let calls = 0
+    const result = await runTargetedRepairPass({
+      prompt: 'site brulerie', files: withEmoji, failedChecks: ['real_iconography'],
+      critique: 'emoji', model: 'test',
+      generate: async () => {
+        calls += 1
+        return serializeProjectTreeEmission([{ path: 'src/components/Footer.tsx', content: 'export default function Footer(){ return <footer><svg viewBox="0 0 24 24" /></footer> }' }])
+      },
+    })
+    assert.equal(calls, 1)
+    assert.equal(result.changed, true)
+  })
+})

@@ -11,7 +11,7 @@ import { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGenerate
 export * from './codeOrchestratorReexports.ts'
 import { buildEmptyGenerationDiagnostic } from './codeGenerationDiagnostics.ts'
 import { runValidationAndCorrectionLoop } from './codeValidationCorrectionLoop.ts'
-import { isDeliveryRunnable } from './codeValidationScoring.ts'
+import { deliveryPhase } from './codeValidationScoring.ts'
 import { upsertProjectSupportFiles } from './codeProjectSupportFiles.ts'
 import { selectModel, type CodeModelRoutingContext } from './codePipelineRuntime.ts'
 import {
@@ -385,7 +385,9 @@ async function runFullPipeline({
     // Contrat de livraison: un projet n est `done` que si le sandbox et les
     // portes deterministes le disent EXECUTABLE. Les portes de STYLE pesent sur
     // le score, jamais sur ce verdict (cf. isDeliveryRunnable).
-    phase: isDeliveryRunnable(validationResult.sandboxResult) ? 'done' : 'error',
+    // Validation EMPECHEE = pas un verdict de qualite (run 1151, cf.
+    // codeInfrastructureFailure). Travail existant, non valide: `interrupted`.
+    phase: deliveryPhase(validationResult),
     architecturePlan,
     totalAttempts: validationResult.totalAttempts,
     finalScore: delivery.score,

@@ -4,7 +4,7 @@ import {
   isEmptyTestSuiteOutput,
   reclassifyEmptyTestSuiteStep,
 } from '../services/codeSandboxEmptyTestSuite.ts'
-import { isDeliveryRunnable, isStaticCritiqueBlocking } from '../services/codeValidationScoring.ts'
+import { deliveryPhase, isDeliveryRunnable, isStaticCritiqueBlocking } from '../services/codeValidationScoring.ts'
 import type { CritiqueReport } from '../services/codeMultiPassCritique.ts'
 
 describe('suite de tests absente — une absence n est pas un echec', () => {
@@ -99,5 +99,28 @@ describe('verdict d executabilite — le juge aveugle ne condamne pas celui qui 
         { label: 'Design-spec', command: 'design-spec-gate', ok: false, output: 'ecart palette' },
       ],
     } as Parameters<typeof isDeliveryRunnable>[0]), true)
+  })
+})
+
+describe('phase de livraison — trois issues, pas deux', () => {
+  const runnable = {
+    ok: true,
+    steps: [{ label: 'Verifier build', command: 'npm run build', ok: true, output: '' }],
+  } as Parameters<typeof isDeliveryRunnable>[0]
+  const broken = {
+    ok: false,
+    steps: [{ label: 'Verifier build', command: 'npm run build', ok: false, output: 'erreur' }],
+  } as Parameters<typeof isDeliveryRunnable>[0]
+
+  // Run 1151: les quatre portes passaient (rendu 100/100, acceptation 2/2), le
+  // pipeline disait « PAS un defaut du code livre » — et sortait `error`.
+  test('une validation EMPECHEE donne `interrupted`, jamais `error`', () => {
+    assert.equal(deliveryPhase({ infrastructureFailure: true, sandboxResult: broken }), 'interrupted')
+    assert.equal(deliveryPhase({ infrastructureFailure: true, sandboxResult: null }), 'interrupted')
+  })
+
+  test('sans panne d infrastructure, le verdict reste celui du sandbox', () => {
+    assert.equal(deliveryPhase({ infrastructureFailure: false, sandboxResult: runnable }), 'done')
+    assert.equal(deliveryPhase({ infrastructureFailure: false, sandboxResult: broken }), 'error')
   })
 })
