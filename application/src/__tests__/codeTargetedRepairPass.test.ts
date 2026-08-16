@@ -322,3 +322,54 @@ describe('la passe verifie son propre patch avant de le proposer', () => {
     assert.equal(result.changed, true)
   })
 })
+
+describe('arbitre — une passe est jugee sur le critere qu elle REPARE', () => {
+  const base = { files: PROJECT, visualScore: 80, pipelineFailed: false }
+
+  // Run 1161: la passe reparait `no_empty_section` (composition). Le rendu
+  // valait 80/100 avant et apres — elle n avait aucune raison de le changer —
+  // et l arbitre la rejetait sur ce seul score. Meme piege qu au run 1091,
+  // revenu par une autre porte.
+  test('composition reparee a rendu constant: adoptee', () => {
+    const selection = pickBestDelivery(
+      { ...base, compositionOk: false },
+      { ...base, compositionOk: true },
+    )
+    assert.equal(selection.adopt, true)
+    assert.match(selection.reason, /composition repare/)
+  })
+
+  test('accessibilite ou performance reparee a rendu constant: adoptee', () => {
+    const selection = pickBestDelivery(
+      { ...base, compositionOk: true, gates: { accessibilite: false, performance: true } },
+      { ...base, compositionOk: true, gates: { accessibilite: true, performance: true } },
+    )
+    assert.equal(selection.adopt, true)
+    assert.match(selection.reason, /accessibilite repare/)
+  })
+
+  test('une porte CASSEE au passage interdit l adoption', () => {
+    const selection = pickBestDelivery(
+      { ...base, compositionOk: false, gates: { performance: true } },
+      { ...base, compositionOk: true, gates: { performance: false } },
+    )
+    assert.equal(selection.adopt, false)
+    assert.match(selection.reason, /casse performance/)
+  })
+
+  test('rien de repare et rendu identique: livrable precedent conserve', () => {
+    const selection = pickBestDelivery(
+      { ...base, compositionOk: false },
+      { ...base, compositionOk: false },
+    )
+    assert.equal(selection.adopt, false)
+  })
+
+  test('une porte reparee ne rachete pas une perte de rendu', () => {
+    const selection = pickBestDelivery(
+      { ...base, compositionOk: false },
+      { ...base, visualScore: 62, compositionOk: true },
+    )
+    assert.equal(selection.adopt, false)
+  })
+})

@@ -18,6 +18,12 @@ export type DeliveryCandidate = {
   visualScore: number | null
   /** Verdict de composition (chevauchements, vides, emoji), ou null. */
   compositionOk: boolean | null
+  /**
+   * Verdicts des autres portes MESUREES (accessibilite, performance...).
+   * Une passe doit etre jugee sur le critere qu elle REPARE, pas sur un score
+   * voisin qu elle n avait aucune raison de changer.
+   */
+  gates?: Record<string, boolean | null>
   /** Le pipeline qui a produit cet etat s est-il termine en erreur ? */
   pipelineFailed: boolean
 }
@@ -25,6 +31,26 @@ export type DeliveryCandidate = {
 export type DeliverySelection = {
   adopt: boolean
   reason: string
+}
+
+/** Portes qui ETAIENT en echec et qui passent desormais. */
+function repairedGates(incumbent: DeliveryCandidate, candidate: DeliveryCandidate): string[] {
+  const names: string[] = []
+  if (incumbent.compositionOk === false && candidate.compositionOk === true) names.push('composition')
+  for (const [name, before] of Object.entries(incumbent.gates ?? {})) {
+    if (before === false && candidate.gates?.[name] === true) names.push(name)
+  }
+  return names
+}
+
+/** Portes qui PASSAIENT et qui echouent desormais: jamais une amelioration. */
+function brokenGates(incumbent: DeliveryCandidate, candidate: DeliveryCandidate): string[] {
+  const names: string[] = []
+  if (incumbent.compositionOk === true && candidate.compositionOk === false) names.push('composition')
+  for (const [name, before] of Object.entries(incumbent.gates ?? {})) {
+    if (before === true && candidate.gates?.[name] === false) names.push(name)
+  }
+  return names
 }
 
 function describeScore(score: number | null): string {
@@ -78,11 +104,24 @@ export function pickBestDelivery(
     // donc condamnee par la seule comparaison de score, quoi qu elle repare.
     // Reparer la porte qui echouait EST le progres; le score sert alors a
     // verifier qu on n a rien casse en chemin, pas a prouver une hausse.
-    if (incumbent.compositionOk === false && candidate.compositionOk === true
-      && candidate.visualScore >= incumbent.visualScore) {
+    // Run 1161: la passe reparait `no_empty_section` (composition) et l arbitre
+    // la jugeait sur le score de RENDU — inchange, donc rejetee. Le meme piege
+    // qu au run 1091 revenait par une autre porte. Generalise: toute porte qui
+    // ETAIT en echec et qui passe, sans regression ailleurs, vaut adoption.
+    // Une porte CASSEE se verifie AVANT une porte reparee: echanger un defaut
+    // contre un autre n est pas un progres, quel que soit le score.
+    const broken = brokenGates(incumbent, candidate)
+    if (broken.length > 0) {
+      return {
+        adopt: false,
+        reason: `la regeneration casse ${broken.join(', ')} — livrable precedent conserve`,
+      }
+    }
+    const repaired = repairedGates(incumbent, candidate)
+    if (repaired.length > 0 && candidate.visualScore >= incumbent.visualScore) {
       return {
         adopt: true,
-        reason: `composition reparee sans perte de rendu (${describeScore(candidate.visualScore)} contre ${describeScore(incumbent.visualScore)} avant) — regeneration adoptee`,
+        reason: `${repaired.join(', ')} reparee${repaired.length > 1 ? 's' : ''} sans perte de rendu (${describeScore(candidate.visualScore)} contre ${describeScore(incumbent.visualScore)} avant) — regeneration adoptee`,
       }
     }
     if (candidate.visualScore <= incumbent.visualScore) {

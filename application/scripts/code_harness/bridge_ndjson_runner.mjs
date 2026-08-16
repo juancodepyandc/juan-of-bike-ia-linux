@@ -352,7 +352,9 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
         if (regen?.files?.length) {
           const after = await renderAndScoreAesthetics(regen.files)
           if (after.applicable && after.verdict) {
-            log(`[bridge-runner] rendu apres passe esthetique: ${after.verdict.score}/100`)
+            log(`[bridge-runner] rendu apres passe esthetique: ${after.verdict.score}/100`
+              + ` | composition ${audit.compositionVerdict?.ok ? 'OK' : 'KO'} -> ${after.compositionVerdict?.ok ? 'OK' : 'KO'}`
+              + ` (${after.compositionVerdict?.failedChecks?.join(',') || 'aucun echec'})`)
             emit(buildCodeStreamVisualScoreEvent({
               ...nextMeta(), score: after.verdict.score, viewport: 'desktop-1440',
               summary: `Rendu reel apres passe esthetique ${after.verdict.score}/100`,
@@ -364,12 +366,20 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
               files,
               visualScore: audit.verdict.score,
               compositionOk: audit.compositionVerdict ? audit.compositionVerdict.ok : null,
+              gates: {
+                accessibilite: a11y ? a11y.ok : null,
+                performance: perf ? perf.ok : null,
+              },
               pipelineFailed: result?.phase === 'error',
             },
             {
               files: regen.files,
               visualScore: after.applicable && after.verdict ? after.verdict.score : null,
               compositionOk: after.compositionVerdict ? after.compositionVerdict.ok : null,
+              gates: {
+                accessibilite: after.accessibilityVerdict ? after.accessibilityVerdict.ok : null,
+                performance: after.performanceVerdict ? after.performanceVerdict.ok : null,
+              },
               // Un patch chirurgical s applique SUR la livraison en place: il
               // herite de son etat de pipeline, il n en cree pas un nouveau.
               pipelineFailed: result?.phase === 'error',
