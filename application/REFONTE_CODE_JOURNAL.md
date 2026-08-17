@@ -7816,3 +7816,91 @@ une brulerie de cafe en archetype `ide_code_editor` (palette sombre violette)
 — la porte est consultative, mais la classification est fausse. Et l image du
 hero est materialisee en URL absolue vers le bridge local
 (`http://127.0.0.1:3001/...`), ce qui casserait le site hors de cette machine.
+
+## 2026-08-17 (suite) — Troisieme porte: le mot « idee » contient « ide »
+
+Pendant que le run 1171 tournait, j ai repris la derniere anomalie du run 1161
+que j avais signalee sans la traiter: la design-spec classait une brulerie de
+cafe lyonnaise en archetype `ide_code_editor`, et signalait « Ecart design-spec
+(palette) » a chaque passe. C est la meme faute, une troisieme fois.
+
+### Reprise et diagnostic
+
+**1. Recherche par sous-chaine.** `detectDesignArchetype` testait
+`text.includes(hint)`. L indice `'ide'` est tombe dans le mot francais « idee »,
+present deux fois dans le brief:
+
+```
+« …un slogan […] ou un truc dans le genre, trouve mieux si t'as une IDEe),
+  et direct en dessous nos 3-4 cafes du moment… »
+```
+
+Mesure directe sur le brief reel: une seule occurrence suffisait.
+
+**2. Aveuglement a la negation.** La cliente ecrit, textuellement:
+
+```
+« on n'est PAS un truc minimaliste blanc scandinave comme tout le monde fait
+  pour le cafe en ce moment, j'en ai marre de voir ca partout »
+```
+
+`minimaliste` et `scandinave` etaient extraits comme **indices de style
+demandes**. Ils partaient donc dans l archetype ET dans les requetes de
+recherche de references: on allait chercher en ligne des exemples de ce que la
+cliente venait de rejeter. C est le run 1021 (« le juge reclamait le gadget que
+la cliente avait refuse »), revenu par une autre porte.
+
+**3. Palette codee en dur.** `paletteFor` exigeait, en `required: true` et pour
+**tout** projet web, un fond `oklch(0.13 0.012 252)` — un noir bleute — plus
+l accent `#7c3aed` herite de l archetype IDE. Le brief demande:
+
+```
+« des couleurs chaudes, terracotta, marron torrefie, un peu de vert olive »
+```
+
+La porte mesurait donc un ecart contre une valeur que **personne n avait
+demandee**, et poussait le modele a s eloigner du brief pendant deux passes.
+
+### Modifications realisees
+
+`codePromptHints.ts` (neuf) — un indice ne compte que comme **mot entier** et
+**non nie**. La portee de la negation s arrete a la ponctuation: « pas de
+tableau de bord, juste un blog » demande bien un blog.
+
+> Piege paye pendant l ecriture, et je le note parce qu il illustre la regle:
+> ma premiere version acceptait les pluriels en ajoutant `es`. Or `ide` + `es`
+> = `idees` — j avais rouvert exactement le trou que je fermais. La mesure l a
+> attrape tout de suite. Les suffixes `es` sont desormais reserves aux indices
+> d au moins cinq lettres.
+
+`codeBriefPalette.ts` (neuf) — les couleurs nommees dans le brief font autorite.
+Distinction qui porte tout le module: ce qui est seulement **nomme**
+(« terracotta ») est **propose**, jamais exige — une famille de couleur n est pas
+un hex. Un hex ecrit dans le brief, lui, fait loi. Et un fond que le brief
+contredit ne peut pas etre `required`.
+
+`codeIntentAssets.ts` — un style refuse ne remonte plus dans `styleHints`, donc
+plus dans la recherche de references.
+
+### Avant-apres mesurable
+
+Sur le brief REEL (`output/code/audit_v117/designspec_after.json`):
+
+| | avant | apres |
+|---|---|---|
+| archetype | `ide_code_editor` | `dashboard_dataviz` |
+| styleHints | …`minimaliste`, `scandinave`… | `elegant, pro, stylé, animations` |
+| background | `oklch(0.13 0.012 252)` **required** | `#faf6f0`, **non requis** |
+| foreground | `oklch(0.96 0.004 252)` **required** | `#2b2119`, **non requis** |
+| accent | `#7c3aed` (violet d IDE) | `#5b3a26` (marron torrefie) |
+| support | `#0f172a` | `#6b7a3a` (vert olive) |
+
+### Etat de satisfaction
+
+Tests : **1192 -> 1215 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+
+Ce que je ne maquille pas: `dashboard_dataviz` vient du mot « /admin », que le
+brief demande reellement — mais le livrable dominant reste une vitrine de
+marque. Un archetype UNIQUE pour un brief qui porte deux produits est une limite
+de la taxonomie, pas un defaut de mesure. Je la signale plutot que de la
+recouvrir d une heuristique de plus.
