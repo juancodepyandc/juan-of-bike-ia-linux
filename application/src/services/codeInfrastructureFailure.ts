@@ -95,8 +95,23 @@ export type SandboxLike = {
  * On ne PRETEND pas connaitre la cause. On refuse seulement de transformer une
  * absence de mesure en condamnation du code.
  */
+/**
+ * Prefixe d une etape qui a echoue SANS RIEN DIRE, et dont on a releve le
+ * contexte machine a l instant exact de l echec (code de sortie, memoire
+ * disponible, pression memoire).
+ *
+ * Ces lignes decrivent la MACHINE, jamais le code livre: une etape marquee
+ * ainsi reste non diagnostique — on ne peut toujours pas en tirer une
+ * correction. Elles servent a l humain et au journal, pas au correcteur.
+ */
+export const SILENT_STEP_MARKER = '[SORTIE VIDE]'
+
 export function isNonDiagnosticFailure(output: string | null | undefined): boolean {
-  return !output || output.trim().length === 0
+  if (!output || output.trim().length === 0) return true
+  // Une sortie vide RESTE une sortie vide une fois annotee du contexte machine.
+  // Sans cette ligne, instrumenter l echec silencieux le reclasserait en defaut
+  // de code — on aurait paye la mesure pour perdre la conclusion.
+  return output.trim().startsWith(SILENT_STEP_MARKER)
 }
 
 export function isSandboxInfrastructureFailure(result: SandboxLike | null | undefined): boolean {

@@ -16,6 +16,8 @@ import {
 } from './codeSandboxGpu.ts'
 import { cleanupSandboxWorkspaceVolume, prepareSandboxWorkspaceVolume } from './codeSandboxWorkspace.ts'
 import { reclassifyEmptyTestSuiteStep } from './codeSandboxEmptyTestSuite.ts'
+import { describeCommand, withMergedStderr } from './codeCommandStderr.ts'
+import { annotateStepOutput } from './codeSandboxSilentStep.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -258,9 +260,23 @@ export async function runCodeSandboxValidation({
         continue
       }
 
-      const result = await runWorkspaceCommand(runnableCommand.executable, runnableCommand.args, sandboxRoot, command.timeoutMs)
+      // stderr fusionne dans stdout: le pont ne transmet QUE stdout, or npm,
+      // podman, tsc et vite ecrivent leurs erreurs sur stderr. Sans cette
+      // fusion, toute etape en echec arrivait ici avec zero octet.
+      const transported = withMergedStderr(runnableCommand)
+      const result = await runWorkspaceCommand(transported.executable, transported.args, sandboxRoot, command.timeoutMs)
+      // Si elle se tait ENCORE, on releve le code de sortie et l etat memoire a
+      // l instant exact — la seule trace qui reste quand un processus est tue.
+      const instrumented = await annotateStepOutput({
+        label: command.label,
+        output: result.output,
+        ok: result.ok,
+        exitCode: result.exitCode,
+        cwd: sandboxRoot,
+        runner: runWorkspaceCommand,
+      })
       // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
-      const rawOutput = result.output.trim()
+      const rawOutput = instrumented.trim()
       const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput
       // Une suite de tests ABSENTE n est pas une suite en echec: le lanceur
       // declare n avoir rien trouve, donc n avoir rien mesure du code livre.
@@ -274,13 +290,16 @@ export async function runCodeSandboxValidation({
       const stepOk = result.ok || emptySuite.notApplicable
       steps.push({
         label: emptySuite.notApplicable ? `${command.label} (NON APPLICABLE)` : command.label,
-        command: result.command,
+        // La commande d ORIGINE, pas l enveloppe de transport: un `sh -c 'exec
+        // podman run ...'` de 900 caracteres masquerait ce qui a reellement
+        // tourne, pour l humain comme pour le correcteur.
+        command: describeCommand(runnableCommand),
         ok: stepOk,
         output: emptySuite.output,
       })
 
       if (!stepOk && !command.optional) {
-        const trimmedOutput = result.output.trim()
+        const trimmedOutput = rawOutput
         const environmentFailure = /Failed to spawn command|program not found|command not found|is not recognized as an internal or external command/i.test(trimmedOutput)
         return {
           ok: false,

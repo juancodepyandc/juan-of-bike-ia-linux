@@ -7,6 +7,8 @@ import {
   writeSandboxFiles,
   type NodePackageManifest,
 } from './codeSandboxFiles.ts'
+import { describeCommand, withMergedStderr } from './codeCommandStderr.ts'
+import { annotateStepOutput } from './codeSandboxSilentStep.ts'
 
 type RegistryTarget = {
   packageName: string
@@ -274,20 +276,36 @@ export async function runNodeInstallWithAutoRepair(
   const runner = options.runCommand ?? runWorkspaceCommand
   const writer = options.writeFiles ?? writeSandboxFiles
 
+  // `npm install` ecrit TOUT son diagnostic sur stderr, et le pont ne transmet
+  // que stdout. Mesure sur npm reel: un install en echec = 0 octet de stdout,
+  // 318 octets de stderr contenant « No matching version found for
+  // react@^99.0.0 ». `parseNpmTargetError` lisait donc une chaine vide: cette
+  // reparation automatique du registre ne pouvait JAMAIS se declencher en
+  // production. La fusion la rend atteignable.
+  const transported = withMergedStderr(command)
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const result = await runner(command.executable, command.args, cwd, command.timeoutMs)
+    const result = await runner(transported.executable, transported.args, cwd, command.timeoutMs)
+    const output = await annotateStepOutput({
+      label: command.label,
+      output: result.output,
+      ok: result.ok,
+      exitCode: (result as { exitCode?: number }).exitCode,
+      cwd,
+      runner,
+    })
     steps.push({
       label: attempt === 1 ? command.label : `${command.label} (retry ${attempt})`,
-      command: `${command.executable} ${command.args.join(' ')}`.trim(),
+      command: describeCommand(command),
       ok: result.ok,
-      output: result.output,
+      output,
     })
 
     if (result.ok) {
       return { ok: true, files: workingFiles, steps }
     }
 
-    const target = parseNpmTargetError(result.output)
+    const target = parseNpmTargetError(output)
     if (!target) {
       return { ok: false, files: workingFiles, steps }
     }
