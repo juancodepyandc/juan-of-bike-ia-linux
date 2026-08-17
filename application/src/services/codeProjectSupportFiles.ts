@@ -11,6 +11,7 @@ import { isSyntheticFallbackFile } from './codeProjectValidation.ts'
 import { generateProjectReadme } from './codeProjectReadme.ts'
 import { upsertProjectScaffoldFiles } from './codeProjectScaffoldFiles.ts'
 import { repairDanglingIconLinks } from './codeDanglingBinaryAssets.ts'
+import { repairMissingRouterProvider } from './codeMissingRouterProvider.ts'
 
 function buildLinuxLaunchScriptLines(files: CodeFile[], intent: CodeIntent): string[] {
   const normalizedNames = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
@@ -379,7 +380,9 @@ export function upsertProjectSupportFiles(
   // le gabarit Vite que tout modele recopie ecrit `href="/favicon.ico"`, et ce
   // pipeline n ecrira jamais de `.ico`. Une correction mecanique ne se delegue
   // pas a un modele probabiliste (run 1161).
-  return repairDanglingIconLinks([...filesWithLaunch, readme])
+  // Des routes montees hors de tout routeur ne montent RIEN (run 1181: page
+  // vide, acceptation 0/2). Envelopper l arbre est mecanique.
+  return repairMissingRouterProvider(repairDanglingIconLinks([...filesWithLaunch, readme])).files
 }
 
 export function upsertProjectSupportFilesForTest(
