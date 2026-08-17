@@ -20,6 +20,7 @@ import {
   structureCritic,
   syntaxCritic,
 } from '../services/codeStaticCritics.ts'
+import { isStaticCritiqueBlocking } from '../services/codeValidationScoring.ts'
 import type { CodeProject } from '../services/codeMultiPassCritique.ts'
 import { classifyCodeIntent, type CodeIntent } from '../services/codeIntent.ts'
 
@@ -472,6 +473,45 @@ export default function App() {
     ])
     const r = await projectIntegrityCritic(good, intent)
     assert.ok(!r.issues.some((i) => /Tailwind/i.test(i.message)), JSON.stringify(r.issues))
+  })
+
+  // Run 1161: `<link rel="icon" href="/favicon.ico" />` — la ligne de gabarit
+  // que tout modele recopie — a fait sortir en `phase: error` un run dont la
+  // sandbox venait de valider la livraison a 100 %. Un `.ico` est hors de la
+  // file de generation depuis le run 1081: la porte reclamait ce que le
+  // pipeline a cesse de produire, avec un conseil inachevable.
+  test('un binaire lie et absent ne bloque pas, et son conseil est realisable', async () => {
+    const intent = classifyCodeIntent('site vitrine React pour une brulerie de cafe')
+    const withFavicon = project([
+      { name: 'package.json', language: 'json', content: '{"dependencies":{"react":"latest","react-dom":"latest"},"devDependencies":{"vite":"latest"}}' },
+      { name: 'index.html', language: 'html', content: '<!doctype html><html><head><link rel="icon" href="/favicon.ico" /><link rel="stylesheet" href="/src/styles/index.css" /></head><body><div id="root"></div></body></html>' },
+      { name: 'src/styles/index.css', language: 'css', content: 'body { margin: 0; }' },
+    ])
+    const r = await projectIntegrityCritic(withFavicon, intent)
+    const issue = r.issues.find((i) => /favicon\.ico/.test(i.message))
+    assert.ok(issue, JSON.stringify(r.issues))
+    assert.equal(issue!.severity, 'warn')
+    assert.equal(issue!.axis, 'preview')
+    assert.doesNotMatch(issue!.suggestion ?? '', /livrer le fichier/i)
+    assert.match(issue!.suggestion ?? '', /SVG inline|data URL/i)
+    assert.equal(r.hasBlocker, false)
+    assert.equal(isStaticCritiqueBlocking(r), false)
+  })
+
+  // La symetrie de la regle: un fichier TEXTE absent reste un vrai defaut,
+  // parce que l ecrire est a la portee du pipeline.
+  test('une feuille de style absente reste bloquante — elle, on peut l ecrire', async () => {
+    const intent = classifyCodeIntent('site vitrine React pour une brulerie de cafe')
+    const withMissingCss = project([
+      { name: 'package.json', language: 'json', content: '{"dependencies":{"react":"latest","react-dom":"latest"},"devDependencies":{"vite":"latest"}}' },
+      { name: 'index.html', language: 'html', content: '<!doctype html><html><head><link rel="stylesheet" href="/src/styles/index.css" /></head><body><div id="root"></div></body></html>' },
+    ])
+    const r = await projectIntegrityCritic(withMissingCss, intent)
+    const issue = r.issues.find((i) => /index\.css/.test(i.message))
+    assert.ok(issue, JSON.stringify(r.issues))
+    assert.equal(issue!.severity, 'error')
+    assert.equal(issue!.axis, 'runtime')
+    assert.equal(isStaticCritiqueBlocking(r), true)
   })
 })
 

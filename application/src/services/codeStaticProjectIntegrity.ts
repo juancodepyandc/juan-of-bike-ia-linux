@@ -4,6 +4,8 @@ import type { CodeIntent } from './codeIntent.ts'
 import { isCssLike, isHtmlLike, isTsLike, normalizedName } from './codeStaticCriticShared.ts'
 import { normalizedProjectPaths } from './codeStaticCompleteness.ts'
 import { describeGeneratedImportRemediation } from './codeCodegenDependencies.ts'
+import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
+import { describeMissingBinaryAssetRemediation } from './codeDanglingBinaryAssets.ts'
 
 // --- 6. Project integrity critic ------------------------------------------
 // Catches cross-file failures that a single-file syntax regex cannot see:
@@ -200,15 +202,34 @@ function linkedLocalAssetsMissing(project: CodeProject, paths: Set<string>): Cri
       if (!rawUrl || /^(?:https?:)?\/\//i.test(rawUrl) || /^(?:data:|mailto:|tel:|#)/i.test(rawUrl)) continue
       const cleanUrl = rawUrl.split(/[?#]/)[0]
       if (!localAsset.test(cleanUrl)) continue
-      if (!resolveProjectImport(paths, file.name, cleanUrl)) {
+      if (resolveProjectImport(paths, file.name, cleanUrl)) continue
+
+      // Un BINAIRE absent n est pas reparable par ecriture: depuis le run 1081
+      // il est volontairement hors de la file de generation, parce qu aucun
+      // modele de texte n ecrit un `.ico` ou un `.jpg` valide. Reclamer « livre
+      // le fichier reference » condamnait donc le run pour l absence de ce que
+      // la file a cesse de produire — le conseil irrealisable, troisieme
+      // recidive (runs 1031, 1081, 1111). Le defaut reste dit, il pese sur le
+      // score visuel, et son conseil est faisable; il ne bloque plus
+      // l executabilite d une livraison qui tourne.
+      if (isBinaryAssetPath(cleanUrl)) {
         issues.push({
-          axis: 'runtime',
-          severity: 'error',
-          message: `${file.name}: ressource locale referencee mais absente (${rawUrl})`,
+          axis: 'preview',
+          severity: 'warn',
+          message: `${file.name}: ressource binaire referencee mais absente (${rawUrl})`,
           location: { file: file.name },
-          suggestion: 'Livrer le fichier reference ou remplacer par un SVG/data URL inline verifie.',
+          suggestion: describeMissingBinaryAssetRemediation(rawUrl),
         })
+        continue
       }
+
+      issues.push({
+        axis: 'runtime',
+        severity: 'error',
+        message: `${file.name}: ressource locale referencee mais absente (${rawUrl})`,
+        location: { file: file.name },
+        suggestion: 'Livrer le fichier reference ou remplacer par un SVG/data URL inline verifie.',
+      })
     }
   }
   return issues

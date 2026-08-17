@@ -10,6 +10,7 @@ import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.
 import { isSyntheticFallbackFile } from './codeProjectValidation.ts'
 import { generateProjectReadme } from './codeProjectReadme.ts'
 import { upsertProjectScaffoldFiles } from './codeProjectScaffoldFiles.ts'
+import { repairDanglingIconLinks } from './codeDanglingBinaryAssets.ts'
 
 function buildLinuxLaunchScriptLines(files: CodeFile[], intent: CodeIntent): string[] {
   const normalizedNames = files.map((file) => file.name.replace(/\\/g, '/').toLowerCase())
@@ -204,22 +205,10 @@ function ensureSpaIndexHtml(files: CodeFile[], intent: CodeIntent): CodeFile[] {
   if (normalizedNames.includes('index.html')) return files
 
   const entry = [
-    'src/main.tsx',
-    'src/main.jsx',
-    'src/main.ts',
-    'src/main.js',
-    'src/index.tsx',
-    'src/index.jsx',
-    'src/index.ts',
-    'src/index.js',
-    'main.tsx',
-    'main.jsx',
-    'main.ts',
-    'main.js',
-    'index.tsx',
-    'index.jsx',
-    'index.ts',
-    'index.js',
+    'src/main.tsx', 'src/main.jsx', 'src/main.ts', 'src/main.js',
+    'src/index.tsx', 'src/index.jsx', 'src/index.ts', 'src/index.js',
+    'main.tsx', 'main.jsx', 'main.ts', 'main.js',
+    'index.tsx', 'index.jsx', 'index.ts', 'index.js',
   ].find((candidate) => normalizedNames.includes(candidate))
 
   if (!entry) return files
@@ -386,7 +375,11 @@ export function upsertProjectSupportFiles(
   const launchScript = generateLinuxLaunchScript(supportedFiles, intent)
   if (launchScript) filesWithLaunch.push(launchScript)
   const readme = generateProjectReadme(filesWithLaunch, intent, prompt, architecturePlan)
-  return [...filesWithLaunch, readme]
+  // Reparation DETERMINISTE d une icone de page qui pointe un binaire absent:
+  // le gabarit Vite que tout modele recopie ecrit `href="/favicon.ico"`, et ce
+  // pipeline n ecrira jamais de `.ico`. Une correction mecanique ne se delegue
+  // pas a un modele probabiliste (run 1161).
+  return repairDanglingIconLinks([...filesWithLaunch, readme])
 }
 
 export function upsertProjectSupportFilesForTest(
