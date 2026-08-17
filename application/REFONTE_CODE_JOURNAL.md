@@ -7985,3 +7985,70 @@ cote** d une erreur lisible ne blanchit rien: le test le verrouille.
    lancement. A remesurer sur un run parti sans ce handicap.
 
 Tests : **1215 -> 1219 verts, 0 echec.**
+
+## 2026-08-17 (suite) — L oscillation nommee: neuf passes autour d un import
+
+Le coordinateur a eu raison de me renvoyer a la matiere: le run 1171 est
+archive, ses 27 fichiers sont dans le flux, et les erreurs sont comptees. J ai
+donc mesure hors ligne, exactement comme pour l apostrophe et les modules
+manquants — sans relancer un run.
+
+### Le cycle, nomme
+
+```
+passe 3  AdminPage.tsx TS2339 Property 'clearOrders' does not exist on
+                              type 'OrderState'            score 68
+passe 4  — absente
+passe 5  AdminPage.tsx TS2304 Cannot find name 'Order'     score 68
+```
+
+Le modele alignait l usage sur le type, puis le type sur l usage. Le score
+global montait (20 -> 65 -> 68 -> 72 -> 73), donc **ni la stagnation ni le
+detecteur de boucle infinie** — qui exige la MEME erreur six fois de suite — ne
+pouvaient le voir. Le run est alle au plafond dur en payant quatre passes.
+
+### La cause, mesuree
+
+`src/pages/AdminPage.tsx` ecrit `Order['status']` a la ligne 146 et n importe que
+`useOrderStore` depuis `../store/orderStore` — **module qui exporte `Order`**.
+Et le projet declare `Order` **deux fois**, dans `src/types/index.ts` ET dans
+`src/store/orderStore.ts`. C est cette ambiguite qui nourrissait l aller-retour.
+
+### Deux correctifs
+
+**1. Un import manquant se recolle sans modele.** Le symbole manque, un module
+du projet l exporte, le fichier importe deja ce module: il n y a rien a deviner.
+Branche dans `attemptLocalFileRepair`, qui tourne deja dans la boucle.
+
+L ambiguite n est **jamais** tranchee: sans import prealable vers l un des
+modules qui exportent le nom, on ne touche a rien. Une interface arrive en
+`import type`, une classe en import de valeur.
+
+Mesure `tsc` reelle sur le livrable (`output/code/audit_v119/`):
+
+| | avant | apres |
+|---|---|---|
+| erreurs `tsc` | 10 | **9** |
+| `TS2304` | 1 | **0** |
+
+```
+import { useOrderStore, type Order } from '../store/orderStore';
+```
+
+Les neuf restantes sont les `FieldError` de react-hook-form rendus en
+`ReactNode`. C est un vrai defaut, et il reste au modele — je ne le maquille pas.
+
+**2. Revenir n est pas stagner.** Un defaut qui disparait puis revient sans que
+le score ait progresse depuis sa derniere apparition est un **cycle**. La
+signature ignore les numeros de ligne, qui bougent a chaque reecriture. Un
+defaut qui persiste sans trou reste de la stagnation; un defaut revenu apres un
+VRAI gain de score n est pas un cycle. Les deux sont verrouilles par un test.
+
+### Ce qui reste ouvert
+
+Le cycle detecte **arrete** la boucle, il ne change pas encore la **nature** de
+la strategie. La vraie reponse — donner au correcteur la fermeture transitive du
+contrat de types, definition et tous ses consommateurs en une seule unite — n est
+pas faite. Je le dis plutot que de laisser croire que le sujet est clos.
+
+Tests : **1219 -> 1230 verts, 0 echec.**
