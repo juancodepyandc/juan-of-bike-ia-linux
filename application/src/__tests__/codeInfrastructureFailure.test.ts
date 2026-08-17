@@ -13,6 +13,7 @@ import {
   buildInfrastructureFailureNote,
   handleSandboxInfrastructureFailure,
   isInfrastructureFailureMessage,
+  isNonDiagnosticFailure,
   isSandboxInfrastructureFailure,
 } from '../services/codeInfrastructureFailure.ts'
 
@@ -172,5 +173,60 @@ describe('diagnostic sandbox precis', () => {
 
   test('l image absente est reconnue comme cause d environnement', () => {
     assert.equal(isInfrastructureFailureMessage('image conteneur absente en local pour "node"'), true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Run 1171 — condamner sur une etape qui n a rien dit.
+//
+// Derniere etape en echec: « Installer les dependances », sortie de ZERO octet.
+// Verifie sur le livrable reel (output/code/audit_v119/): npm install passe sur
+// l hote (exit 0, 153 paquets, 5 s) ET sous les memes drapeaux podman (exit 0).
+// Le pipeline sortait pourtant `phase: error` — un verdict de QUALITE — sur une
+// etape dont il ne restait aucune trace.
+// ---------------------------------------------------------------------------
+describe('une etape qui echoue sans rien dire n a rien mesure', () => {
+  test('sortie vide = validation empechee, pas defaut de code', () => {
+    assert.equal(isNonDiagnosticFailure(''), true)
+    assert.equal(isNonDiagnosticFailure('   \n '), true)
+    assert.equal(isNonDiagnosticFailure(undefined), true)
+    assert.equal(isNonDiagnosticFailure('error TS2322: Type X is not assignable'), false)
+  })
+
+  test('le cas reel du run 1171 devient `interrupted`, pas `error`', () => {
+    const sandbox = {
+      ok: false,
+      summary: 'Installer les dependances a echoue dans le sandbox.',
+      steps: [
+        { ok: true, label: 'Isolation sandbox WS7', output: 'ok' },
+        { ok: true, label: 'Preuve quota pids', output: 'ok' },
+        { ok: false, label: 'Installer les dependances', output: '' },
+      ],
+    }
+    assert.equal(isSandboxInfrastructureFailure(sandbox), true)
+  })
+
+  test('une VRAIE erreur de build reste un defaut de code', () => {
+    const sandbox = {
+      ok: false,
+      summary: 'Verifier build a echoue dans le sandbox.',
+      steps: [
+        { ok: true, label: 'Installer les dependances', output: 'added 153 packages' },
+        { ok: false, label: 'Verifier build', output: "src/pages/AdminPage.tsx(20,9): error TS2353: Object literal may only specify known properties" },
+      ],
+    }
+    assert.equal(isSandboxInfrastructureFailure(sandbox), false)
+  })
+
+  test('une etape muette a cote d une erreur lisible ne blanchit pas le code', () => {
+    const sandbox = {
+      ok: false,
+      summary: 'echecs multiples',
+      steps: [
+        { ok: false, label: 'Installer les dependances', output: '' },
+        { ok: false, label: 'Verifier build', output: 'error TS2339: Property x does not exist' },
+      ],
+    }
+    assert.equal(isSandboxInfrastructureFailure(sandbox), false)
   })
 })

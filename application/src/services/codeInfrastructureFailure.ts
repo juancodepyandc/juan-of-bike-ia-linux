@@ -71,6 +71,34 @@ export type SandboxLike = {
  * reussi a juger le code: si des etapes sont passees, le verdict porte bien sur
  * le livrable et la boucle de correction a du sens.
  */
+/**
+ * Une etape qui echoue SANS RIEN DIRE n a rien mesure.
+ *
+ * Run 1171: la derniere etape en echec etait « Installer les dependances », et
+ * sa sortie faisait ZERO octet. Verifications faites sur le livrable reel:
+ *
+ *   npm install sur l hote                       -> exit 0, 153 paquets, 5 s
+ *   npm install sous les memes drapeaux podman   -> exit 0
+ *   (reseau slirp4netns, keep-id, read-only, tmpfs 256m, memory 2g,
+ *    pids 256, fsize 512 Mio, volume nomme)
+ *
+ * Le projet s installe. Le pipeline a pourtant livre `phase: error`, donc un
+ * verdict de QUALITE, sur une etape dont il ne reste aucune trace.
+ *
+ * Une sortie vide ne decrit aucun defaut, ne se donne a aucun correcteur, et ne
+ * se repare pas: c est la definition meme, dans ce module, d une validation qui
+ * n a pas pu s executer. Le precedent est ecrit noir sur blanc dans
+ * codeSandboxIsolation.ts: un plafond RLIMIT_FSIZE mal converti faisait echouer
+ * `npm install` en EFBIG « avec une sortie vide cote pipeline, donc sans
+ * diagnostic possible ».
+ *
+ * On ne PRETEND pas connaitre la cause. On refuse seulement de transformer une
+ * absence de mesure en condamnation du code.
+ */
+export function isNonDiagnosticFailure(output: string | null | undefined): boolean {
+  return !output || output.trim().length === 0
+}
+
 export function isSandboxInfrastructureFailure(result: SandboxLike | null | undefined): boolean {
   if (!result || result.ok) return false
   if (isInfrastructureFailureMessage(result.summary)) return true
@@ -78,8 +106,9 @@ export function isSandboxInfrastructureFailure(result: SandboxLike | null | unde
   if (steps.length === 0) return false
   const failing = steps.filter((step) => !step.ok)
   if (failing.length === 0) return false
-  // Toutes les etapes en echec pointent une panne reseau/bridge.
-  return failing.every((step) => isInfrastructureFailureMessage(step.output))
+  // Toutes les etapes en echec pointent une panne reseau/bridge, ou n ont rien
+  // produit du tout — dans les deux cas, rien n a ete mesure sur le code.
+  return failing.every((step) => isInfrastructureFailureMessage(step.output) || isNonDiagnosticFailure(step.output))
 }
 
 /** Note livree a l utilisateur: la degradation ne doit jamais etre silencieuse. */
@@ -94,7 +123,8 @@ export function buildInfrastructureFailureNote(summary: string | null | undefine
     // coupe »). Verification au run 1151: le bridge etait vivant, health 200.
     // Une note qui affirme une cause non mesuree envoie chercher au mauvais
     // endroit — exactement le travers que ce module corrige partout ailleurs.
-    'Cause exacte non mesuree ici: le pont a refuse ou n a pas repondu a un appel de validation.',
+    'Cause exacte non mesuree ici: un appel de validation n a pas abouti, ou une etape a echoue',
+    'sans produire la moindre sortie — dans les deux cas il ne reste rien a diagnostiquer.',
     'Pistes, par ordre de cout: contention pendant que le modele occupe la machine, delai depasse',
     'sur un appel long, ou service indisponible. Relance la validation pour obtenir un verdict reel.',
   ].join('\n')
