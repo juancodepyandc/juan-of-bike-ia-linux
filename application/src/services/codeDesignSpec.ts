@@ -2,6 +2,11 @@ import type { CodeIntent } from './codeIntent.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import type { DesignArchetype } from './codeDesignDirectives.ts'
 import { hasPerceptualColorMatch } from './codeColorMetrics.ts'
+import {
+  WARM_LIGHT_BACKGROUND,
+  briefContradictsDarkBackground,
+  resolveBriefPalette,
+} from './codeBriefPalette.ts'
 
 export const CODE_DESIGN_SPEC_SCHEMA = 'aurora.code.design-spec/1'
 
@@ -51,21 +56,54 @@ function inferPlatform(intent: CodeIntent): CodeDesignPlatform {
   return 'non_visual'
 }
 
-function paletteFor(intent: CodeIntent, archetype: DesignArchetype) {
+/**
+ * Palette du contrat. Ce que faisait la version precedente, et pourquoi elle a
+ * produit un faux (run 1161): le fond `oklch(0.13 0.012 252)` — un noir bleute —
+ * etait code en dur en `required: true` pour TOUT projet web, et l accent
+ * `#7c3aed` venait de l archetype. Sur un brief qui demande textuellement
+ * « des couleurs chaudes, terracotta, marron torrefie, un peu de vert olive »,
+ * la porte a donc signale « Ecart design-spec (palette) » a chaque passe contre
+ * une valeur que personne n avait demandee.
+ *
+ * Ordre d autorite: le brief, puis la marque, puis l archetype. Et ce qui est
+ * seulement NOMME (« terracotta ») est propose, jamais exige: une famille de
+ * couleur n est pas un hex.
+ */
+function paletteFor(intent: CodeIntent, archetype: DesignArchetype, prompt: string) {
   const subject = intent.assetPlan?.subject
   const brandProfile = subject?.source === 'brand' || subject?.source === 'inferred_brand'
     ? subject.brandProfile
     : null
-  const accent = brandProfile?.primaryColor
+  const brief = resolveBriefPalette(prompt)
+  const briefAccent = brief.colors[0] ?? null
+  const briefSupport = brief.colors[1] ?? null
+
+  const accent = briefAccent?.hex
+    ?? brandProfile?.primaryColor
     ?? (archetype === 'data_dense_enterprise' ? '#3b82f6'
       : archetype === 'game_visual_premium' ? '#22d3ee'
         : archetype === 'minimal_brutalist' ? '#ff0000'
           : '#7c3aed')
-  const secondary = brandProfile?.secondaryColor ?? '#0f172a'
+  const secondary = briefSupport?.hex ?? brandProfile?.secondaryColor ?? '#0f172a'
+  // Un hex ecrit dans le brief, ou une couleur de marque mesuree, peut etre
+  // exige. Un nom de couleur ne le peut pas.
+  const accentRequired = briefAccent
+    ? briefAccent.source === 'hex'
+    : Boolean(brandProfile?.primaryColor)
+
+  const light = briefContradictsDarkBackground(brief)
   return [
-    { role: 'background', value: 'oklch(0.13 0.012 252)', required: true },
-    { role: 'foreground', value: 'oklch(0.96 0.004 252)', required: true },
-    { role: 'accent', value: accent, required: true },
+    {
+      role: 'background',
+      value: light ? WARM_LIGHT_BACKGROUND : 'oklch(0.13 0.012 252)',
+      required: !light,
+    },
+    {
+      role: 'foreground',
+      value: light ? '#2b2119' : 'oklch(0.96 0.004 252)',
+      required: !light,
+    },
+    { role: 'accent', value: accent, required: accentRequired },
     { role: 'support', value: secondary, required: false },
   ]
 }
@@ -121,7 +159,7 @@ export function buildCodeDesignSpec(prompt: string, intent: CodeIntent, archetyp
     schemaVersion: CODE_DESIGN_SPEC_SCHEMA,
     platform,
     archetype,
-    palette: paletteFor(intent, archetype),
+    palette: paletteFor(intent, archetype, prompt),
     typography: [
       { role: 'display', token: '--font-display', minPx: 40, maxPx: 96 },
       { role: 'body', token: '--font-body', minPx: 14, maxPx: 18 },

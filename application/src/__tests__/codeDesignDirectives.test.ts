@@ -136,4 +136,44 @@ describe('detectDesignArchetype', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// Run 1161 — l archetype se decidait sur des mots qui n etaient pas la.
+//
+// Extraits TEXTUELS du brief reel (output/code/audit_v118/payload.json).
+// ---------------------------------------------------------------------------
+describe('archetype: lire le brief, pas ce qui y ressemble', () => {
+  const BRIEF_BRULERIE = [
+    'Salut ! Je me lance dans un vrai site pour ma marque de cafe en grains,',
+    "ca s'appelle \"Brulerie Nomade\". Une page d'accueil avec un slogan (genre",
+    "\"Torrefie cette semaine, pas l'an dernier\" ou un truc dans le genre, trouve",
+    "mieux si t'as une idee), et direct en dessous nos 3-4 cafes du moment.",
+    "On a besoin aussi d'une mini page interne juste pour nous deux (genre /admin)",
+    'ou on voit la liste des commandes. Sur le style : on est PAS un truc',
+    'minimaliste blanc scandinave comme tout le monde fait pour le cafe en ce',
+    "moment, j'en ai marre de voir ca partout. On veut plutot des couleurs",
+    'chaudes, terracotta, marron torrefie, un peu de vert olive.',
+  ].join(' ')
 
+  test('« une idee » ne fait pas de cette brulerie un editeur de code', () => {
+    const intent = classifyCodeIntent(BRIEF_BRULERIE)
+    assert.notEqual(detectDesignArchetype(BRIEF_BRULERIE, intent), 'ide_code_editor')
+  })
+
+  test('« PAS un truc minimaliste » ne demande pas du brutalisme', () => {
+    const intent = classifyCodeIntent(BRIEF_BRULERIE)
+    assert.notEqual(detectDesignArchetype(BRIEF_BRULERIE, intent), 'minimal_brutalist')
+  })
+
+  test('un style REFUSE ne remonte pas dans les indices de style', () => {
+    const intent = classifyCodeIntent(BRIEF_BRULERIE)
+    const hints = intent.assetPlan?.styleHints ?? []
+    assert.equal(hints.includes('minimaliste'), false, JSON.stringify(hints))
+    assert.equal(hints.includes('scandinave'), false, JSON.stringify(hints))
+  })
+
+  test('un vrai IDE reste un IDE', () => {
+    const prompt = 'un editeur de code dans le navigateur avec monaco, file tree et terminal'
+    const intent = classifyCodeIntent(prompt)
+    assert.equal(detectDesignArchetype(prompt, intent), 'ide_code_editor')
+  })
+})

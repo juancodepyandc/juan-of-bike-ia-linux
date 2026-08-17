@@ -18,10 +18,18 @@ import {
 import { detectPromptLanguage } from './codeIntentLanguage.ts'
 import { detectSubject } from './codeIntentSubject.ts'
 import { normalizeSignalText } from './codeIntentSignalUtils.ts'
+import { matchesHint, normalizeHintText } from './codePromptHints.ts'
 
 export function classifyCodeAssetPlan(prompt: string): CodeAssetPlan {
   const lower = normalizeSignalText(prompt)
+  // Un style REFUSE n est pas un style demande. Le brief de la Brulerie ecrit
+  // « on n'est PAS un truc minimaliste blanc scandinave [...] j'en ai marre de
+  // voir ca partout » — et `minimaliste` comme `scandinave` finissaient dans les
+  // indices de style, donc dans l archetype ET dans les requetes de recherche de
+  // references. On allait chercher des exemples de ce que la cliente rejette.
+  const hintText = normalizeHintText(prompt)
   const styleHints = extractMentions(lower, PREMIUM_LOOK_TOKENS)
+    .filter((hint) => matchesHint(hintText, hint))
   const objectMentions = extractObjectMentions(prompt)
   const effectMentions = extractMentions(lower, EFFECT_TOKENS)
   const wantsImages = extractMentions(lower, IMAGE_TOKENS).length > 0 || objectMentions.length > 0

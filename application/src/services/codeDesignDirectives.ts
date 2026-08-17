@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import type { CodeIntent, CodeProjectType } from './codeIntent'
+import { matchesAnyHint, normalizeHintText } from './codePromptHints.ts'
 
 export type DesignArchetype =
   | 'apple_product'         // produit physique, hotspots, exploded view, scrub 3D
@@ -127,21 +128,27 @@ const NUMBERS_DEPTH_HINTS = [
   'depth', 'profondeur', 'layer', 'couches', 'isometric',
 ]
 
-function lower(text: string): string {
-  // Strip combining diacritics so "écouteur" matches "ecouteur" tokens. Using
-  // the explicit ̀-ͯ range avoids encoding ambiguity in the source.
-  return text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-}
-
+/**
+ * Un indice compte s il est un MOT ENTIER et qu il n est pas NIE.
+ *
+ * Run 1161, brief reel d une brulerie de cafe lyonnaise. L ancien test etait
+ * `text.includes(hint)`, et l indice `'ide'` est tombe dans le mot « idee »:
+ *
+ *   « …trouve mieux si t'as une IDEe), et direct en dessous nos cafes… »
+ *
+ * -> archetype `ide_code_editor`, et la design-spec a exige de cette brulerie la
+ * palette violet sombre d un editeur de code.
+ *
+ * Meme brief, seconde faute: « on n'est PAS un truc minimaliste blanc
+ * scandinave » contient « minimaliste » — comme REFUS. Compter l occurrence,
+ * c est lire un refus comme une commande (motif du run 1021).
+ */
 function hasAny(text: string, hints: string[]): boolean {
-  for (const hint of hints) {
-    if (text.includes(hint)) return true
-  }
-  return false
+  return matchesAnyHint(text, hints)
 }
 
 export function detectDesignArchetype(prompt: string, intent: CodeIntent): DesignArchetype {
-  const text = lower(prompt)
+  const text = normalizeHintText(prompt)
   const ap = intent.assetPlan
 
   // Mobile / desktop / game / API-only get their own dedicated archetypes.
