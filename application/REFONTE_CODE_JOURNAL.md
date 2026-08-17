@@ -8298,3 +8298,66 @@ sandbox et detruit avec lui.
 > ne garde pas.
 
 Tests : **1266 -> 1269 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+
+## 2026-08-18 (suite) — Balayage: la fermeture transitive, enfin faite
+
+Changement de methode demande par l utilisateur: « rends le module vraiment
+maximal au lieu de faire un par un ». On cesse d attendre qu un run revele la
+cause suivante.
+
+### Le chantier structurel connu, identifie deux fois, jamais fait
+
+Le meme defaut portait deux noms:
+
+```
+run 1171   contrat de types reparti — `Order` declare DEUX fois, le modele
+           alignait l usage sur le type puis le type sur l usage (9 passes)
+run 1181   arbre de montage — la trace nommait AppRoutes.tsx, la cause
+           vivait dans main.tsx (aucun routeur monte)
+```
+
+Dans les deux cas la passe recevait **un** fichier et devait decider pour
+**plusieurs**. Ce n est pas un manque d essais, c est une information absente.
+
+`codeTransitiveClosure.ts` (neuf) — graphe de modules **lu** (imports et exports
+se lisent, ils ne se devinent pas), puis trois anneaux par ordre de certitude:
+fichiers fautifs, modules qui **declarent** un symbole cite par le compilateur,
+modules qui le **consomment**. Portee bornee: au-dela, on ne repare plus, on
+regenere.
+
+### Mesure sur le livrable REEL du run 1191
+
+Fait notable: le defaut a ete revele par le run 1171, et il se reproduit tel
+quel sur le livrable d un **autre** run. Il est donc structurel, pas accidentel.
+
+```
+src/components/AdminDashboard.tsx   fichier fautif nomme par l erreur
+src/stores/orderStore.ts            declare 'Order' — AMBIGUE (2 modules)
+src/types/index.ts                  declare 'Order' — AMBIGUE (2 modules)
+src/components/OrderItem.tsx        consomme orderStore
+src/components/OrderList.tsx        consomme orderStore
+src/components/StatsPanel.tsx       consomme orderStore
+```
+
+Et le graphe relie bien `main.tsx -> App.tsx -> routes/index.tsx`: le chemin qui
+manquait a la passe ciblee du run 1181 est desormais traversable.
+
+### Le cycle change la NATURE de la strategie
+
+Le cycle etait detecte et **arretait** la boucle. Mieux que payer quatre passes
+d aller-retour, mais le run se terminait sur le defaut qu il venait de nommer.
+Desormais: **une** passe de plus, dont la consigne interdit explicitement le
+va-et-vient et impose de choisir une declaration faisant autorite. Grace bornee
+a 1 — si le cycle tient encore, la fermeture n a pas suffi et s obstiner ne
+paiera pas.
+
+### Balayage des conseils irrealisables
+
+Passe en revue de tous les messages de correction des services `code*`. Aucun
+conseil irrealisable par son destinataire n a ete trouve. Les seules occurrences
+d « installer » sont des **libelles d etapes** ou un message adresse a
+l **humain** (podman absent), deja classe comme infrastructure. Je le note comme
+balaye-propre, pas comme corrige: il n y avait rien a corriger.
+
+Tests : **1269 -> 1277 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+`codeAutoCorrection.ts` repasse sous 400 lignes (424 -> 396).
