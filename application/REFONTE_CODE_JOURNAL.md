@@ -8136,3 +8136,165 @@ et il est desormais nomme avec sa position source exacte.
    la passe ne change toujours pas de nature quand un cycle est vu.
 
 Tests : **1230 -> 1237 verts, 0 echec.**
+
+## 2026-08-18 — Le pas muet parlait: personne n ecoutait stderr
+
+### Reprise et diagnostic
+
+Le « npm install muet » etait ouvert depuis le run 1171 et decrit comme non
+reproductible: ni a froid sur l hote, ni sous podman nu, ni via le pont. Il
+n apparaissait que pendant qu un modele occupait la machine.
+
+Cette description etait fausse, et elle envoyait chercher au mauvais endroit.
+Mesure sur le pont VIVANT, aucune supposition:
+
+```
+POST /api/command/run  sh -c 'echo OUT; echo ERR 1>&2; exit 3'
+  -> { exitCode: 3, output: "OUT\n" }              stderr jamais transmis
+
+POST /api/command/run  podman run --pull=never <image absente> true
+  -> { exitCode: 125, output: "" }                 ZERO octet
+```
+
+Le pont renvoie `result.stdout` et rien d autre. Or npm, podman, tsc et vite
+ecrivent leurs erreurs sur **stderr**. Mesure sur npm reel:
+
+```
+npm install (react@^99.0.0)   stdout 0 octet · stderr 318 octets · exit 1
+```
+
+La panne n est donc pas liee a la charge, elle est liee a l **echec**: un
+install qui REUSSIT ecrit son resume sur stdout, donc parle; un install qui
+ECHOUE ecrit tout sur stderr, donc se tait. A froid l install reussissait — d ou
+la « non-reproductibilite ». Reproduite ici a froid dans le sandbox podman reel:
+exit 1, zero octet.
+
+Le mecanisme etait deja ecrit **deux fois** dans le module, sans avoir jamais
+ete relie a cette panne: `buildPodmanImageExistsArgs` (« le pont ne transmet que
+stdout, donc une erreur podman arrive VIDE ») et le `RLIMIT_FSIZE` mal converti
+(« echec EFBIG avec une sortie vide cote pipeline »). Troisieme occurrence.
+
+### Modifications realisees
+
+`codeCommandStderr.ts` (neuf) — fusion cote appelant, `sh -c 'exec ... 2>&1'`,
+le pont appartenant a l utilisateur. Portee **etroite**: seules les commandes
+dont la sortie est du texte libre. Jamais `podman info --format json` ni
+`npm view --json`, qu un avertissement sur stderr casserait — un correctif qui
+casse ailleurs n en est pas un.
+
+`codeSandboxSilentStep.ts` (neuf) — si une etape se tait ENCORE une fois stderr
+fusionne, on releve le code de sortie (137 nomme comme SIGKILL) et l etat
+memoire hote a l instant exact. Une etape ainsi instrumentee reste **non
+diagnostique**: on mesure la machine, on ne condamne pas le code.
+
+### Avant-apres mesurable
+
+Sur la commande sandbox REELLE (`npm install`, podman, memes drapeaux):
+
+| | avant | apres |
+|---|---|---|
+| sortie transmise | **0 octet** | `npm error notarget No matching version found for react@^99.0.0` |
+| code de sortie | jete | releve |
+
+Consequence collaterale mesuree: `parseNpmTargetError` cherchait « No matching
+version found » dans stdout, ou npm n ecrit jamais. **La reparation automatique
+du registre npm ne pouvait pas se declencher en production.** Elle le peut.
+
+Tests : **1237 -> 1253 verts, 0 echec.**
+
+## 2026-08-18 (suite) — Run 1191: trois portes, et une quatrieme sous elles
+
+Le run 1191 (39 fichiers, ~50 min) a fini `FAILED phase=error`, boucle infinie
+apres 9 passes. Trois causes distinctes, mesurees sur le livrable reel
+(`output/code/audit_v124/`).
+
+### 1. Le bruit npm pris pour une erreur — effet de bord de mon propre correctif
+
+npm ecrit ses AVERTISSEMENTS sur stderr autant que ses erreurs. Rendus au
+pipeline, `npm warn deprecated inflight@1.0.6 / glob@7.2.3` sont arrives au
+correcteur, qui a diagnostique **trois passes de suite** « l erreur provient
+d une dependance obsolete ». Rendre stderr etait juste; le **code de sortie**
+fait foi, pas la presence de texte.
+
+### 2. Sous le bruit, la vraie cause etait lisible depuis la passe 2
+
+```
+npm error code ENOSPC — no space left on device
+```
+
+renvoyee **neuf fois** au modele. Aucune reecriture de composant React ne libere
+un octet. ENOSPC rejoint les signatures d infrastructure: la boucle s arrete au
+lieu de condamner le code.
+
+### 3. L outillage de test absent
+
+La file a emis `src/tests/*.test.tsx` et declare `jest`, mais pas ses types:
+`TS2582 describe` / `TS2304 expect`, que `tsc --noEmit` remonte comme des
+defauts du code. tsc nomme lui-meme le correctif. Et `"test": "jest --watchAll"`
+**ne rend jamais la main** dans un sandbox non interactif. Famille deja fermee
+deux fois (binaires, codegen): la file emet un fichier dont le contrat n est pas
+satisfait. Completion mecanique, sans jamais choisir de lanceur a la place du
+modele.
+
+### 4. L apostrophe, troisieme occurrence — et ce n etait PAS le detecteur
+
+Verifie sur les trois formes reelles: le reparateur deterministe les corrige
+toutes, et ne touche pas les fichiers deja valides (0 modification sur les 39
+fichiers du run). Il n etait branche que sur **un des deux chemins d ecriture**:
+le chemin STRUCTURE rendait le contenu brut. La generation initiale etait donc
+assainie, mais **chaque reecriture de passe de correction ne l etait pas** —
+`'fleur d'oranger'` et `'Presqu'île'` revenaient a chaque passe. Assainissement
+deplace a la **frontiere d analyse**. Idempotence verifiee sur les 39 fichiers:
+0 fichier instable a la seconde passe.
+
+> Piege paye sur mon propre test, et je le note: ma premiere fixture inventait
+> des marqueurs (`AURORA_PROJECT_TREE`) qu aucun code n emet. Elle retombait donc
+> sur le chemin heritier — celui qui assainissait deja — et **passait pour la
+> mauvaise raison**, en laissant le vrai trou ouvert. Elle utilise desormais
+> l emetteur reel, plus un test de garde qui verifie le chemin emprunte.
+
+Tests : **1253 -> 1266 verts, 0 echec.**
+
+## 2026-08-18 (suite) — Le cache des paquets tenait dans la RAM, mal
+
+### La cause de l ENOSPC, reproduite a froid
+
+Machine au repos, aucun modele resident — donc jamais « sous charge »:
+
+```
+tmpfs           256M  256M   80K 100% /home/aurora   <- PLEIN
+tmpfs           256M  2.6M  254M   1% /tmp
+/dev/nvme0n1p2  915G  855G   14G  99% /workspace     <- 14 Go libres
+```
+
+Le disque hote n a **jamais** ete en cause. `NPM_CONFIG_CACHE` pointait sous
+`/home/aurora`, le tmpfs de 256 Mio monte pour donner a npm un HOME
+inscriptible. Personne n avait mesure ce que npm y depose: pour le livrable reel
+du run 1191, le cache pese **284 Mio**. La limite ne pouvait pas tenir.
+
+Une limite posee sans mesurer ce qu elle devait contenir — le motif habituel,
+applique cette fois a un **montage** et non a une porte.
+
+### Avant-apres mesurable
+
+Meme `package.json`, memes drapeaux:
+
+| | resultat |
+|---|---|
+| cache sur tmpfs 256 Mio | **ENOSPC, exit 1, 0 paquet** |
+| cache sur volume disque | **« added 403 packages in 16s »** |
+
+Verifie ensuite de bout en bout avec les arguments **generes par le code de
+production** (volume workspace, volume cache, init, install, nettoyage): exit 0
+a chaque etape.
+
+Agrandir le tmpfs aurait ete le mauvais correctif: il est adosse a la RAM et
+compte dans le plafond `--memory 2g`. Un cache va sur un volume, propre a chaque
+sandbox et detruit avec lui.
+
+> Deuxieme piege paye: un premier essai a rendu « up to date in 122ms » et
+> exit 0. Faux succes — le volume de workspace etait vide. Un exit 0 sur une
+> installation qui ne s est pas produite est exactement le genre de preuve qu on
+> ne garde pas.
+
+Tests : **1266 -> 1269 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
