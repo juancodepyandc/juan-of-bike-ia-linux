@@ -9,6 +9,7 @@ import {
 } from './codeSandboxFiles.ts'
 import { describeCommand, withMergedStderr } from './codeCommandStderr.ts'
 import { annotateStepOutput } from './codeSandboxSilentStep.ts'
+import { normalizeNpmStepOutput } from './codeNpmDiagnostics.ts'
 
 type RegistryTarget = {
   packageName: string
@@ -294,18 +295,22 @@ export async function runNodeInstallWithAutoRepair(
       cwd,
       runner,
     })
+    // Le bruit npm (`npm warn deprecated`, `npm notice`) ne decrit aucun echec:
+    // il ne doit pas atteindre le correcteur. Une panne de ressource, elle, est
+    // nommee pour que la porte d infrastructure arrete la boucle.
+    const stepOutput = normalizeNpmStepOutput({ output, ok: result.ok })
     steps.push({
       label: attempt === 1 ? command.label : `${command.label} (retry ${attempt})`,
       command: describeCommand(command),
       ok: result.ok,
-      output,
+      output: stepOutput,
     })
 
     if (result.ok) {
       return { ok: true, files: workingFiles, steps }
     }
 
-    const target = parseNpmTargetError(output)
+    const target = parseNpmTargetError(stepOutput)
     if (!target) {
       return { ok: false, files: workingFiles, steps }
     }

@@ -47,6 +47,16 @@ const INFRASTRUCTURE_PATTERNS: RegExp[] = [
   /isolation sandbox indisponible/i,
   /podman (?:rootless )?(?:est )?indisponible/i,
   /workspace conteneurise/i,
+  // Ressource de l HOTE epuisee. Run 1191: `npm error code ENOSPC / no space
+  // left on device` renvoye NEUF fois au modele comme s il s agissait d un
+  // defaut du code. Mesure a l analyse: disque hote a 99 %, et le volume de
+  // workspace podman cree SANS quota (le systeme de fichiers ne supporte pas
+  // le Project Quota) — le sandbox n avait donc aucune reserve propre.
+  // Aucune reecriture de composant React ne libere un octet.
+  /ressource hote epuisee/i,
+  /\bENOSPC\b/,
+  /no space left on device/i,
+  /insufficient space on your system/i,
 ]
 
 /**

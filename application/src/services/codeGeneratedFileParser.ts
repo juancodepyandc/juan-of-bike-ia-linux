@@ -5,7 +5,7 @@
 
 import type { CodeFile } from './codeOrchestrator.ts'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
-import { sanitizeGeneratedFileContent, stripFormattingArtifacts } from './codeGeneratedFileSanitizer.ts'
+import { sanitizeGeneratedFileContent, sanitizeGeneratedFiles, stripFormattingArtifacts } from './codeGeneratedFileSanitizer.ts'
 import { isStructuredProjectEmission, parseProjectTreeEmission, type StructuredEmissionIssue } from './codeProjectEmission.ts'
 import { salvageProtocolLeaks, type ProtocolLeakReport } from './codeProtocolLeakGuard.ts'
 
@@ -23,11 +23,27 @@ export function parseCodeFilesWithReport(content: string): {
   if (isStructuredProjectEmission(content)) {
     const parsed = parseProjectTreeEmission(content)
     return {
-      files: parsed.tree.files.map((file) => ({
+      // Le chemin STRUCTURE rendait le contenu brut, alors que le chemin
+      // heritier passait par `sanitizeGeneratedFileContent`. Consequence
+      // mesuree au run 1191: la generation initiale etait assainie (via
+      // codeProjectValidation), mais CHAQUE reecriture de passe de correction
+      // ne l etait pas — l apostrophe francaise revenait donc a chaque passe.
+      //
+      //   TS1002 Unterminated string literal
+      //   src/components/FeaturedCoffees.tsx(22)  -> 'fleur d'oranger'
+      //   src/components/MarketSchedule.tsx(22)   -> 'Presqu'île'
+      //
+      // Le reparateur deterministe etait CORRECT (verifie sur les trois formes
+      // reelles, et 0 modification sur les fichiers deja valides): il n etait
+      // branche que sur un seul des deux chemins d ecriture. On assainit donc
+      // a la FRONTIERE d analyse, la ou toute sortie de modele devient des
+      // fichiers — quel que soit le chemin. Idempotence verifiee sur les 39
+      // fichiers reels du run: 0 fichier instable a la seconde passe.
+      files: sanitizeGeneratedFiles(parsed.tree.files.map((file) => ({
         name: file.path,
         language: file.language,
         content: file.content,
-      })),
+      }))),
       issues: parsed.issues,
       protocolLeaks: [],
     }

@@ -18,6 +18,7 @@ import { cleanupSandboxWorkspaceVolume, prepareSandboxWorkspaceVolume } from './
 import { reclassifyEmptyTestSuiteStep } from './codeSandboxEmptyTestSuite.ts'
 import { describeCommand, withMergedStderr } from './codeCommandStderr.ts'
 import { annotateStepOutput } from './codeSandboxSilentStep.ts'
+import { normalizeNpmStepOutput } from './codeNpmDiagnostics.ts'
 
 export type { CodeFile, CodeSandboxResult, CodeSandboxStepResult } from './codeSandboxTypes.ts'
 
@@ -275,8 +276,12 @@ export async function runCodeSandboxValidation({
         cwd: sandboxRoot,
         runner: runWorkspaceCommand,
       })
+      // Le code de sortie fait foi, pas la presence de texte: `npm warn
+      // deprecated` ne fait echouer aucune installation, et le modele a brule
+      // trois passes du run 1191 a vouloir le corriger.
+      const denoised = normalizeNpmStepOutput({ output: instrumented, ok: result.ok })
       // MEMORY-SAFE: Truncate step output to prevent accumulating megabytes of logs in RAM
-      const rawOutput = instrumented.trim()
+      const rawOutput = denoised.trim()
       const cappedOutput = rawOutput.length > 8000 ? `${rawOutput.slice(0, 4000)}\n...[tronque: ${rawOutput.length} chars]...\n${rawOutput.slice(-3000)}` : rawOutput
       // Une suite de tests ABSENTE n est pas une suite en echec: le lanceur
       // declare n avoir rien trouve, donc n avoir rien mesure du code livre.

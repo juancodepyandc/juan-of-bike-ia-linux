@@ -15,6 +15,7 @@ import {
   tryParseJson,
 } from './codeGeneratedFileSanitizer.ts'
 import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
+import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -130,6 +131,34 @@ function repairLocalTypeScriptCompatibility(files: CodeFile[], failingOutput: st
   }
 }
 
+/**
+ * Complete le contrat d outillage de test du manifeste. Deterministe: on
+ * n ajoute que ce que le lanceur DEJA declare exige, on ne choisit jamais de
+ * lanceur a la place du modele.
+ */
+function repairTestToolchain(files: CodeFile[]): { files: CodeFile[]; reason: string } | null {
+  const index = files.findIndex((file) => file.name.replace(/\\/g, '/').toLowerCase() === 'package.json')
+  if (index < 0) return null
+
+  let manifest: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(files[index].content) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    manifest = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const fix = planTestToolchainFix(files, manifest)
+  if (!fix) return null
+
+  const next = applyTestToolchainFix(manifest, fix)
+  const nextFiles = files.map((file, position) => (
+    position === index ? { ...file, content: `${JSON.stringify(next, null, 2)}\n` } : file
+  ))
+  return { files: nextFiles, reason: `outillage de test complete — ${fix.notes.join(' ; ')}` }
+}
+
 export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSandboxResult) {
   const failingOutput = sandboxResult.steps
     .filter((step) => !step.ok)
@@ -150,6 +179,13 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
       }
     }
   }
+
+  // La file a emis des tests: elle doit emettre de quoi les COMPILER et les
+  // TERMINER. Run 1191: `describe`/`test`/`expect` inconnus de tsc faute de
+  // `@types/jest`, et `jest --watchAll` qui ne rend jamais la main dans un
+  // sandbox. tsc nomme lui-meme le correctif — rien a confier a un modele.
+  const toolchainRepair = repairTestToolchain(sanitizedFiles)
+  if (toolchainRepair) return toolchainRepair
 
   // Un type utilise mais jamais importe, alors que le fichier importe DEJA le
   // module qui l exporte: rien a deviner, tout a recoller. Run 1171: neuf passes
