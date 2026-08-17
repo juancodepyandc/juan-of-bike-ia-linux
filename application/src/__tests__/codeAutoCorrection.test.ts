@@ -447,7 +447,35 @@ describe('detection de cycle — revenir n est pas stagner', () => {
       pass(68, [ORDER_STATE]),
     ]
     assert.ok(detectCorrectionCycle(log))
-    assert.equal(shouldContinueLoop(log, 5, [], 27), false)
+    // Un cycle detecte CHANGE la strategie au lieu de simplement arreter: on
+    // accorde UNE passe de plus, qui recoit la fermeture du contrat et doit
+    // trancher. S arreter net laissait le contrat incoherent.
+    assert.equal(shouldContinueLoop(log, 5, [], 27), true)
+
+    // …et la grace est bornee: le cycle toujours present a la passe suivante
+    // signifie que la fermeture n a pas suffi. On arrete.
+    // Score inchange depuis la derniere apparition de CE defaut (65): le
+    // cycle tient toujours, la fermeture n a donc rien tranche.
+    const apres = [...log, pass(65, [ORDER_MISSING])]
+    assert.ok(detectCorrectionCycle(apres))
+    assert.equal(shouldContinueLoop(apres, 6, [], 27), false)
+  })
+
+  test('la consigne de la passe de grace INTERDIT le va-et-vient', () => {
+    const log = [
+      pass(20, [ORDER_STATE]),
+      pass(65, [ORDER_MISSING]),
+      pass(68, [ORDER_STATE]),
+      pass(72, ['src/x.tsx(1,1): error TS2322: Type A is not assignable to B']),
+      pass(68, [ORDER_STATE]),
+    ]
+    const strategy = buildCorrectionStrategy(['type_error'], 5, log)
+    assert.match(strategy.instructions, /CYCLE MESURE/)
+    assert.match(strategy.instructions, /NE REPETE PAS/)
+    assert.match(strategy.instructions, /UNE SEULE unite/)
+    // Sans cycle, aucune consigne de ce type ne pollue la passe.
+    const propre = buildCorrectionStrategy(['type_error'], 1, [pass(20, [ORDER_STATE])])
+    assert.doesNotMatch(propre.instructions, /CYCLE MESURE/)
   })
 
   test('un defaut qui persiste sans trou n est pas un cycle (c est de la stagnation)', () => {

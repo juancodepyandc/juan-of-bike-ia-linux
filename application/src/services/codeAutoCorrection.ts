@@ -3,7 +3,7 @@
 import type { CodeSandboxResult } from './codeSandbox'
 import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
 import { buildPartialRewriteInstructions, buildQuickFixInstructions, buildTargetedRepairInstructions } from './codeCorrectionInstructions.ts'
-import { detectCorrectionCycle } from './codeCorrectionCycle.ts'
+import { cycleGraceRemaining, detectCorrectionCycle, withCycleDirective } from './codeCorrectionCycle.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -244,7 +244,7 @@ export function buildCorrectionStrategy(
   }
 
   if (errorCategories.includes('runtime_unavailable')) {
-    return withDiagnosis({
+    return withCycleDirective(withDiagnosis({
       level: 'targeted_repair',
       escalation: 1,
       instructions: [
@@ -256,47 +256,47 @@ export function buildCorrectionStrategy(
       ].join('\n'),
       switchModel: false,
       searchWeb: true,
-    }, diagnosis)
+    }, diagnosis), correctionLog)
   }
 
   // Level 1: Quick fix — simple syntax/import errors
   // TOUJOURS rechercher en ligne — meme les erreurs simples peuvent cacher
   // des incompatibilites de version ou des bugs connus
   if (escalation <= 1 && errorCategories.every((c) => c === 'syntax' || c === 'import_missing' || c === 'type_error')) {
-    return withDiagnosis({
+    return withCycleDirective(withDiagnosis({
       level: 'quick_fix',
       escalation,
       instructions: buildQuickFixInstructions(errorCategories),
       switchModel: false,
       searchWeb: true,
-    }, diagnosis)
+    }, diagnosis), correctionLog)
   }
 
   // Level 2: Targeted repair — dependency/config issues
   if (escalation <= 2) {
-    return withDiagnosis({
+    return withCycleDirective(withDiagnosis({
       level: 'targeted_repair',
       escalation,
       instructions: buildTargetedRepairInstructions(errorCategories),
       switchModel: escalation >= 2,
       searchWeb: true,
-    }, diagnosis)
+    }, diagnosis), correctionLog)
   }
 
   // Level 3: Partial rewrite — runtime/build errors with web search
   if (escalation <= 3) {
-    return withDiagnosis({
+    return withCycleDirective(withDiagnosis({
       level: 'partial_rewrite',
       escalation,
       instructions: buildPartialRewriteInstructions(errorCategories),
       switchModel: true,
       searchWeb: true,
-    }, diagnosis)
+    }, diagnosis), correctionLog)
   }
 
   // Level 4: Full rewrite
   if (escalation <= 4) {
-    return withDiagnosis({
+    return withCycleDirective(withDiagnosis({
       level: 'rewrite',
       escalation,
       instructions: [
@@ -308,7 +308,7 @@ export function buildCorrectionStrategy(
       ].join('\n'),
       switchModel: false,  // Pas de swap VRAM — cause #1 de crash PC
       searchWeb: true,
-    }, diagnosis)
+    }, diagnosis), correctionLog)
   }
 
   // Level 5: Strategy change — completely different approach
@@ -321,7 +321,7 @@ export function buildCorrectionStrategy(
     '- Ne change de librairie que si une incompatibilite locale est prouvee par l erreur',
     '- Si les tests echouent, traite-les comme contrat d acceptation et corrige le code',
   ].join('\n')
-  return withDiagnosis({
+  return withCycleDirective(withDiagnosis({
     level: 'strategy_change',
     escalation,
     instructions: rotationInstructions
@@ -332,7 +332,7 @@ export function buildCorrectionStrategy(
     // (Memory Guard documente). On reste sur le code model pour tout.
     switchModel: false,
     searchWeb: true,
-  }, diagnosis)
+  }, diagnosis), correctionLog)
 }
 
 // ---------------------------------------------------------------------------
@@ -376,8 +376,12 @@ export function shouldContinueLoop(
   if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog, fileCount) && !isCorrectionScoreClimbing(correctionLog)) return false
 
   // Cycle: un defaut revenu apres avoir disparu, sans terrain gagne entre-temps.
-  // Retenter le meme traitement redonnera le meme aller-retour (run 1171).
-  if (detectCorrectionCycle(correctionLog)) return false
+  // Retenter le MEME traitement redonnerait le meme aller-retour (run 1171) —
+  // mais s arreter net laisse le contrat incoherent. On accorde donc UNE passe
+  // de plus, qui ne repete pas le traitement precedent: elle recoit la
+  // fermeture transitive du contrat (codeTransitiveClosure) et doit trancher.
+  // Grace epuisee = la fermeture n a pas suffi, s obstiner ne paiera pas.
+  if (detectCorrectionCycle(correctionLog) && !cycleGraceRemaining(correctionLog)) return false
 
   // Boucle infinie reelle : meme erreur exacte qui revient 6+ fois consecutives.
   if (correctionLog.length >= 6) {
