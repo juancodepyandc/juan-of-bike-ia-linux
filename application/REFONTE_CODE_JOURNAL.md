@@ -7904,3 +7904,84 @@ brief demande reellement — mais le livrable dominant reste une vitrine de
 marque. Un archetype UNIQUE pour un brief qui porte deux produits est une limite
 de la taxonomie, pas un defaut de mesure. Je la signale plutot que de la
 recouvrir d une heuristique de plus.
+
+## 2026-08-17 (suite) — Run 1171: deux portes tombent, une quatrieme se revele
+
+### Verdict brut
+
+```
+run 1171   acceptation 2/2 · a11y 100/100 · perf 80/100 · rendu 62/100
+           composition — AUCUNE ligne (donc OK)
+           FAILED phase=error files=27      30,7 min, 9 passes
+```
+
+### Ce qui est prouve en reel
+
+Les deux blocages vises sont fermes, sur le meme brief et le meme pipeline:
+
+| | run 1161 | run 1171 |
+|---|---|---|
+| favicon / critique statique | `[error]` **bloquant** | absent |
+| composition | `no_empty_section` **KO** | **OK** |
+
+Pour le favicon, la seule occurrence du mot dans tout le flux du run 1171 est la
+note de saut du contrat de plan (« Un modele de texte ne peut pas ecrire un
+binaire valide »). L erreur bloquante a disparu.
+
+Pour la composition, le runner n ecrit sa ligne que lorsque le verdict est KO.
+Au run 1161, ligne 5: `composition: no_empty_section`. Au run 1171: aucune
+ligne, et la passe ciblee rapporte `composition OK -> OK (aucun echec)`.
+
+### La quatrieme porte
+
+Le dernier sandbox du run 1171 passe **10 etapes sur 11**, score 91. La seule en
+echec: « Installer les dependances » — **sortie de zero octet**.
+
+J ai rejoue l installation sur le livrable reel:
+
+```
+npm install sur l hote                       exit 0 · 153 paquets · 5 s
+npm install sous les MEMES drapeaux podman   exit 0
+  (slirp4netns sans loopback, keep-id, read-only, tmpfs 256m, memory 2g,
+   pids 256, fsize 512 Mio, volume nomme, registre npm joignable)
+```
+
+**Le projet s installe.** Le pipeline a rendu un verdict de QUALITE sur une
+etape dont il ne reste aucune trace.
+
+`isSandboxInfrastructureFailure` exigeait une SIGNATURE reconnue dans la sortie.
+Une sortie vide ne correspond a aucun motif, donc elle tombait dans « defaut du
+code ». Or une sortie vide ne decrit aucun defaut, ne se donne a aucun
+correcteur, et ne se repare pas. Le precedent etait deja ecrit dans
+`codeSandboxIsolation.ts`: un `RLIMIT_FSIZE` mal converti faisait echouer
+`npm install` en EFBIG « avec une sortie vide cote pipeline, donc sans
+diagnostic possible ».
+
+Une etape en echec qui n a **rien produit** vaut desormais `interrupted` —
+travail preserve, validation incomplete — et non `error`. Une etape muette **a
+cote** d une erreur lisible ne blanchit rien: le test le verrouille.
+
+### Ce qui reste ouvert, sans arrondi
+
+1. **La cause exacte de l echec silencieux de `npm install` dans le sandbox
+   n est pas trouvee.** Elle n est reproductible ni sur l hote, ni en podman nu
+   avec les memes drapeaux, ni via le pont. Je corrige la CONSEQUENCE (ne plus
+   condamner sans mesure), pas la cause. Le prochain run dira `interrupted` au
+   lieu de `error` sur ce chemin — c est plus honnete, ce n est pas un `done`.
+
+2. **Oscillation de la boucle de correction.** Neuf passes, score 20 -> 65 -> 68
+   -> 72 -> 73, sans convergence. Les erreurs tournent en rond sur un contrat de
+   types reparti entre plusieurs fichiers (`Order` / `OrderState`, le store,
+   `AdminPage.tsx`, les formulaires react-hook-form): le modele aligne l usage
+   sur le type, puis a la passe suivante aligne le type sur l usage. Ce n est PAS
+   un conseil irrealisable — il peut le reparer, il ne le fait jamais des deux
+   cotes a la fois. La reparation demande de traiter le type et TOUS ses
+   consommateurs comme une seule unite, et de detecter le cycle (le score bouge,
+   donc le detecteur de stagnation actuel ne le voit pas).
+
+3. **Le rendu a 62/100** (contre 80 au run 1161) n est pas interpretable en
+   l etat: ce run reclamait encore `editor pane`, `terminal panel` et un accent
+   violet a une torrefactrice, le correctif d archetype ayant ete livre APRES son
+   lancement. A remesurer sur un run parti sans ce handicap.
+
+Tests : **1215 -> 1219 verts, 0 echec.**
