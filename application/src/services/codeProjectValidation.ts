@@ -3,6 +3,10 @@ import type { CodeFile } from './codeOrchestrator.ts'
 import type { CodeSandboxResult } from './codeSandbox.ts'
 import { isLLMRefusal } from './codeLLMRefusal.ts'
 import {
+  describeMissingTypeImportFixes,
+  repairMissingTypeImports,
+} from './codeMissingTypeImport.ts'
+import {
   isVersionBelow,
   type LocalNodeManifest,
   readManifestDependencySpec,
@@ -144,6 +148,18 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
         files: sanitizedFiles,
         reason: 'normalisation locale des fichiers machine et dependances declarees',
       }
+    }
+  }
+
+  // Un type utilise mais jamais importe, alors que le fichier importe DEJA le
+  // module qui l exporte: rien a deviner, tout a recoller. Run 1171: neuf passes
+  // de modele ont oscille autour de `Order` entre le store et `AdminPage.tsx`
+  // sans jamais poser l import. Mesure sur le livrable reel: TS2304 1 -> 0.
+  const importRepair = repairMissingTypeImports(sanitizedFiles, failingOutput)
+  if (importRepair.fixes.length > 0) {
+    return {
+      files: importRepair.files,
+      reason: `import(s) de type manquant(s) reconnectes sans modele — ${describeMissingTypeImportFixes(importRepair.fixes)}`,
     }
   }
 

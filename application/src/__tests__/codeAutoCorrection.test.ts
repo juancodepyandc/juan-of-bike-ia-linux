@@ -13,6 +13,7 @@ import {
   MAX_CORRECTION_PASSES,
   type CorrectionPass,
 } from '../services/codeAutoCorrection.ts'
+import { detectCorrectionCycle } from '../services/codeCorrectionCycle.ts'
 import type { CodeSandboxResult } from '../services/codeSandbox.ts'
 
 function sandboxResult(failedOutputs: string[]): CodeSandboxResult {
@@ -422,5 +423,49 @@ describe('computeAdaptiveCorrectionBudget — proportionnel a la taille', () => 
 
   test('le plancher de 4 passes reste garanti', () => {
     assert.ok(computeAdaptiveCorrectionBudget([] as never, [], 1) >= 4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Run 1171 — la boucle tournait en rond et rien ne le voyait.
+//
+// Neuf passes, score 20 -> 65 -> 68 -> 72 -> 73. Le detecteur de boucle infinie
+// cherche la MEME erreur six fois de suite; ici elle ALTERNAIT, et comme le
+// score global montait la stagnation ne se declenchait pas non plus.
+// ---------------------------------------------------------------------------
+describe('detection de cycle — revenir n est pas stagner', () => {
+  const pass = (score: number, errors: string[]) => ({ attempt: 0, score, errors, strategy: 'quick_fix', resolved: false } as never)
+  const ORDER_STATE = "src/pages/AdminPage.tsx(6,48): error TS2339: Property 'clearOrders' does not exist on type 'OrderState'."
+  const ORDER_MISSING = "src/pages/AdminPage.tsx(146,86): error TS2304: Cannot find name 'Order'."
+
+  test('le cas reel: un defaut revient apres avoir disparu, a score egal', () => {
+    const log = [
+      pass(20, [ORDER_STATE]),
+      pass(65, [ORDER_MISSING]),
+      pass(68, [ORDER_STATE]),
+      pass(72, ['src/x.tsx(1,1): error TS2322: Type A is not assignable to B']),
+      pass(68, [ORDER_STATE]),
+    ]
+    assert.ok(detectCorrectionCycle(log))
+    assert.equal(shouldContinueLoop(log, 5, [], 27), false)
+  })
+
+  test('un defaut qui persiste sans trou n est pas un cycle (c est de la stagnation)', () => {
+    const log = [pass(20, [ORDER_STATE]), pass(30, [ORDER_STATE]), pass(40, [ORDER_STATE]), pass(50, [ORDER_STATE])]
+    assert.equal(detectCorrectionCycle(log), null)
+  })
+
+  test('un defaut revenu APRES un vrai gain de score n est pas un cycle', () => {
+    const log = [
+      pass(20, [ORDER_STATE]),
+      pass(40, ['src/y.tsx(1,1): error TS2322: Type A is not assignable to B']),
+      pass(50, ['src/y.tsx(1,1): error TS2322: Type A is not assignable to B']),
+      pass(90, [ORDER_STATE]),
+    ]
+    assert.equal(detectCorrectionCycle(log), null)
+  })
+
+  test('trop tot pour conclure: moins de quatre passes', () => {
+    assert.equal(detectCorrectionCycle([pass(20, [ORDER_STATE]), pass(30, [ORDER_MISSING]), pass(20, [ORDER_STATE])]), null)
   })
 })

@@ -3,6 +3,7 @@
 import type { CodeSandboxResult } from './codeSandbox'
 import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
 import { buildPartialRewriteInstructions, buildQuickFixInstructions, buildTargetedRepairInstructions } from './codeCorrectionInstructions.ts'
+import { detectCorrectionCycle } from './codeCorrectionCycle.ts'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,7 +66,6 @@ export type CorrectionPass = {
   resolved: boolean
 }
 
-
 export function classifyErrors(sandboxResult: CodeSandboxResult): ErrorCategory[] {
   const categories: ErrorCategory[] = []
   const allOutput = sandboxResult.steps
@@ -122,18 +122,9 @@ function detectCorrectionLocality(categories: ErrorCategory[]): CorrectionLocali
 
 function selectDominantCause(categories: ErrorCategory[]): ErrorCategory {
   const priority: ErrorCategory[] = [
-    'runtime_unavailable',
-    'config_error',
-    'dependency_missing',
-    'build_failure',
-    'runtime_crash',
-    'test_failure',
-    'type_error',
-    'import_missing',
-    'syntax',
-    'timeout',
-    'permission_error',
-    'unknown',
+    'runtime_unavailable', 'config_error', 'dependency_missing', 'build_failure',
+    'runtime_crash', 'test_failure', 'type_error', 'import_missing',
+    'syntax', 'timeout', 'permission_error', 'unknown',
   ]
   return priority.find((category) => categories.includes(category)) ?? categories[0] ?? 'unknown'
 }
@@ -150,8 +141,7 @@ export function computeAdaptiveCorrectionBudget(
 
   if (categories.length >= 2) budget += 1
   const HEAVY: ErrorCategory[] = [
-    'config_error', 'dependency_missing', 'test_failure',
-    'runtime_crash', 'build_failure', 'timeout', 'unknown',
+    'config_error', 'dependency_missing', 'test_failure', 'runtime_crash', 'build_failure', 'timeout', 'unknown',
   ]
   if (categories.some((category) => HEAVY.includes(category))) budget += 2
 
@@ -345,7 +335,6 @@ export function buildCorrectionStrategy(
   }, diagnosis)
 }
 
-
 // ---------------------------------------------------------------------------
 // Loop continuation logic — plateau detection
 // ---------------------------------------------------------------------------
@@ -385,6 +374,10 @@ export function shouldContinueLoop(
   if (correctionLog.length >= MAX_CORRECTION_PASSES) return false // plafond dur machine, jamais depasser
   // Au budget adaptatif on ne coupe que si la progression ne paie plus (un run qui grimpe encore va jusqu'au plafond dur).
   if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog, fileCount) && !isCorrectionScoreClimbing(correctionLog)) return false
+
+  // Cycle: un defaut revenu apres avoir disparu, sans terrain gagne entre-temps.
+  // Retenter le meme traitement redonnera le meme aller-retour (run 1171).
+  if (detectCorrectionCycle(correctionLog)) return false
 
   // Boucle infinie reelle : meme erreur exacte qui revient 6+ fois consecutives.
   if (correctionLog.length >= 6) {
