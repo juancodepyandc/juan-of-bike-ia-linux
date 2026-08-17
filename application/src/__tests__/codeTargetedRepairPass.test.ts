@@ -91,6 +91,27 @@ describe('portee de la passe ciblee — la ou le defaut est OBSERVABLE', () => {
     assert.equal(scope.targets.some((f) => f.name === 'src/styles/global.css'), true)
   })
 
+  // Run 1161: la sonde `no_empty_section` cherchait `<section` dans la source.
+  // Le composant fautif ecrivait `<motion.section>` — il n etait donc meme pas
+  // candidat, et la passe a reecrit cinq pages sans jamais l ouvrir.
+  test('une section de composant (`<motion.section>`) est un candidat', () => {
+    const hero = { name: 'src/components/HeroSection.tsx', language: 'tsx', content: '<motion.section className="hero-section"><h1>Torréfié</h1></motion.section>' }
+    const scope = buildTargetedRepairScope({ files: [hero], failedChecks: ['no_empty_section'] })
+    assert.equal(scope.targets.some((f) => f.name === hero.name), true)
+  })
+
+  // Et quand la mesure NOMME le fichier, elle prime sur toute heuristique.
+  test('un fichier designe par la mesure passe devant les pages retenues au flair', () => {
+    const hero = { name: 'src/components/HeroSection.tsx', language: 'tsx', content: '<motion.section className="hero-section"><h1>Torréfié</h1></motion.section>' }
+    const scope = buildTargetedRepairScope({
+      files: [...PROJECT, hero],
+      failedChecks: ['no_empty_section'],
+      evidencePaths: [hero.name],
+      maxTargets: 1,
+    })
+    assert.deepEqual(scope.targets.map((f) => f.name), [hero.name])
+  })
+
   test('la consigne nomme les cibles ET les intouchables', () => {
     const scope = buildTargetedRepairScope({ files: PROJECT, failedChecks: ['real_iconography'] })
     const messages = buildTargetedRepairMessages({ prompt: 'site de brulerie', critique: 'emoji', scope })

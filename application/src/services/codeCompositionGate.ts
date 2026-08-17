@@ -11,6 +11,13 @@
 //
 // Les mesures viennent du navigateur (rectangles reels apres mise en page); la
 // regle de notation vit ici, donc elle se teste sans navigateur.
+//
+// CORRECTION (run 1161) — le juge de VIDE, lui, mesurait faux. Il sommait
+// l aire des elements du DOM sans enfant element, ce qui jetait tout titre
+// contenant un `<br>` ou un `<span>`. Rejoue et photographie, le cas qui avait
+// calibre son seuil (audit_v94, « FAQ 658 px remplie a 12 % ») est une FAQ
+// COMPLETE a cinq cartes. Cette porte n a jamais attrape un vrai positif: elle
+// en fabriquait. Voir `computeSectionFill` et `EMPTY_SECTION_FILL`.
 // ---------------------------------------------------------------------------
 
 export type OverlapPair = {
@@ -23,8 +30,24 @@ export type OverlapPair = {
 export type SectionFill = {
   label: string
   height: number
-  /** Part de la hauteur reellement occupee par du contenu, 0..1. */
-  fill: number
+  /**
+   * Part de la hauteur reellement occupee par du contenu, 0..1.
+   *
+   * Heritage: cette valeur venait d une SOMME d aires de feuilles du DOM, et
+   * elle etait fausse (cf. `computeSectionFill`). Elle n est plus qu un repli
+   * pour les appelants qui ne fournissent pas de bandes.
+   */
+  fill?: number
+  /**
+   * Intervalles verticaux [haut, bas], en px relatifs au haut de la section, ou
+   * du contenu est REELLEMENT peint: texte (mesure au Range, donc independant
+   * de l imbrication DOM), medias, et fonds image.
+   */
+  bands?: Array<[number, number]>
+  /** Selecteur CSS de la section — la nommer sans ambiguite. */
+  selector?: string
+  /** Fichier source qui porte cette section, quand il a pu etre attribue. */
+  sourceFile?: string
 }
 
 export type CompositionMetrics = {
@@ -47,16 +70,88 @@ export type CompositionReport = {
   checks: CompositionCheck[]
   failedChecks: string[]
   critique: string
+  /**
+   * Fichiers DESIGNES par la mesure comme portant un defaut. Une passe ciblee
+   * qui ignore cette liste doit deviner: au run 1161 elle a reecrit cinq pages
+   * sans jamais ouvrir celle qui portait la section incriminee.
+   */
+  evidencePaths: string[]
 }
 
-/** Sous ce taux, une section haute est un vide a l ecran. Le cas reel mesure
- * 12 % sur 658 px: le seuil doit donc etre au-dessus pour l attraper. */
+/**
+ * Sous ce taux d occupation VERTICALE, une section haute est un vide a l ecran.
+ *
+ * Correction d honnetete (run 1161). Le commentaire precedent disait: « le cas
+ * reel mesure 12 % sur 658 px ». Ce cas a ete rejoue et photographie
+ * (output/code/audit_v117/v94_faq.png): c est une FAQ COMPLETE — titre,
+ * sous-titre, cinq cartes en accordeon. Elle n a jamais ete vide. Le seuil avait
+ * donc ete cale sur un artefact de mesure, pas sur un defaut. Rejouee avec la
+ * mesure d occupation reelle, la meme section sort a 85,4 %.
+ *
+ * Aucun vrai positif historique n existe pour calibrer ce seuil: 0,15 est donc
+ * volontairement CONSERVATEUR — une section de 900 px dont le contenu tient sur
+ * 110 px est signalee, le doute profite au livrable.
+ */
 export const EMPTY_SECTION_FILL = 0.15
 /** Une section courte peut legitimement respirer: on ne juge que le grand vide. */
 export const EMPTY_SECTION_MIN_HEIGHT = 400
+/**
+ * Un blanc de respiration entre deux blocs n est pas un vide. En dessous de
+ * cette part de la hauteur de section, l intervalle est recolle: c est du
+ * `padding`, pas un trou.
+ */
+export const SECTION_GAP_TOLERANCE = 0.12
+
+/**
+ * Part de la hauteur d une section reellement occupee par du contenu.
+ *
+ * Ce que faisait la mesure precedente, et pourquoi elle etait fausse (run 1161,
+ * mesure element par element sur le livrable reel): elle SOMMAIT l aire des
+ * elements du DOM n ayant AUCUN enfant element. Un titre contenant un `<br>`
+ * — donc un enfant — etait integralement jete. Sur le hero de la Brulerie:
+ *
+ *     h1.hero-title  1440x298 px   JETE (contient un <br>)
+ *     div.hero-content 1440x704    JETE (conteneur)
+ *     compte: p 700x37 + img 330x289 + a 128x17   ->  fill = 9 %
+ *
+ * Le hero occupait 704 px sur 944, et la porte l a declare « quasi vide a 9 % ».
+ * Pire, la mesure n avait aucune dynamique: une grille de quatre produits
+ * entierement remplie sortait a 18,7 %, pour un seuil a 15 %. La porte
+ * condamnait une chose qu elle n avait jamais mesuree.
+ *
+ * On mesure donc l OCCUPATION VERTICALE reelle: l union des bandes ou du
+ * contenu est peint, les respirations courtes recollees. Un hero plein sort
+ * au-dessus de 60 %, une section de 658 px qui ne porte que deux lignes reste
+ * a 12 % — le cas d origine qui a calibre le seuil est preserve.
+ */
+export function computeSectionFill(section: SectionFill): number {
+  if (!Array.isArray(section.bands)) {
+    // Rien de mesure: on ne prononce rien. Un defaut non mesure n est pas un
+    // defaut constate — c est la regle de tout ce module.
+    return typeof section.fill === 'number' ? section.fill : 1
+  }
+  const height = section.height
+  if (!(height > 0)) return 1
+
+  const spans = section.bands
+    .map(([a, b]) => [Math.max(0, Math.min(a, b)), Math.min(height, Math.max(a, b))] as [number, number])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0])
+  if (spans.length === 0) return 0
+
+  const tolerance = height * SECTION_GAP_TOLERANCE
+  const merged: Array<[number, number]> = [[spans[0][0], spans[0][1]]]
+  for (const [a, b] of spans.slice(1)) {
+    const last = merged[merged.length - 1]
+    if (a - last[1] <= tolerance) last[1] = Math.max(last[1], b)
+    else merged.push([a, b])
+  }
+  const covered = merged.reduce((sum, [a, b]) => sum + (b - a), 0)
+  return Math.max(0, Math.min(1, covered / height))
+}
 
 export function findEmptySections(sections: SectionFill[]): SectionFill[] {
-  return sections.filter((s) => s.height >= EMPTY_SECTION_MIN_HEIGHT && s.fill < EMPTY_SECTION_FILL)
+  return sections.filter((s) => s.height >= EMPTY_SECTION_MIN_HEIGHT && computeSectionFill(s) < EMPTY_SECTION_FILL)
 }
 
 /**
@@ -80,7 +175,7 @@ export function checkComposition(metrics: CompositionMetrics): CompositionReport
       passed: emptySections.length === 0,
       evidence: emptySections.length === 0
         ? 'toutes les sections sont remplies'
-        : emptySections.slice(0, 3).map((s) => `${s.label}: ${Math.round(s.height)}px remplie a ${Math.round(s.fill * 100)}%`).join(' | '),
+        : emptySections.slice(0, 3).map(describeEmptySection).join(' | '),
     },
     {
       id: 'real_iconography',
@@ -97,7 +192,20 @@ export function checkComposition(metrics: CompositionMetrics): CompositionReport
     checks,
     failedChecks: failed.map((c) => c.id),
     critique: buildCompositionCritique(failed),
+    evidencePaths: [...new Set(emptySections.map((s) => s.sourceFile).filter((p): p is string => Boolean(p)))],
   }
+}
+
+/**
+ * Nomme la section incriminee: son texte, son SELECTEUR et le FICHIER qui la
+ * porte. Sans cela le correcteur recoit « section: 944px remplie a 9% » sur un
+ * projet de 31 fichiers, et ne peut que deviner — au run 1161 il a reecrit cinq
+ * pages sans jamais ouvrir `HeroSection.tsx`, qui portait la section visee.
+ */
+function describeEmptySection(s: SectionFill): string {
+  const where = [s.selector, s.sourceFile].filter(Boolean).join(' dans ')
+  const fill = Math.round(computeSectionFill(s) * 100)
+  return `${where ? `${where} — ` : ''}"${s.label}": ${Math.round(s.height)}px occupee a ${fill}%`
 }
 
 /** Consigne de correction ciblee, nommant le defaut constate a l ecran. */

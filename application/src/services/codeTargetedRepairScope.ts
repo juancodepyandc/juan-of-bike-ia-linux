@@ -56,7 +56,11 @@ const PROBES: Record<string, Probe> = {
     && (containsPictographicEmoji(f.content)
       || detectEmojiIcons([{ name: f.name, content: f.content }]).length > 0),
   no_overlap: either(isStyle, both(isMarkup, has(/position\s*:\s*(absolute|fixed)|absolute |fixed /i))),
-  no_empty_section: either(isStyle, both(isMarkup, has(/<section|min-h|100vh|py-\d|padding/i))),
+  // `<section` seul manquait `<motion.section>` et `<StyledSection>`: au run
+  // 1161 le composant qui portait la section incriminee n etait meme pas
+  // candidat. La preuve d attribution prime desormais (evidencePaths), mais le
+  // repli ne doit plus etre aveugle a une balise de composant.
+  no_empty_section: either(isStyle, both(isMarkup, has(/<(?:[a-z][\w-]*\.)?section\b|<[A-Z][A-Za-z]*Section\b|min-h|100vh|py-\d|padding/i))),
 
   // Accessibilite.
   document_lang: has(/<html/i),

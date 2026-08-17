@@ -71,17 +71,55 @@ async function measureComposition(page) {
       }
     }
 
+    // Occupation VERTICALE reelle d une section: les bandes ou du contenu est
+    // peint. La mesure precedente sommait l aire des elements SANS enfant
+    // element — elle jetait donc tout titre contenant un `<br>` ou un `<span>`,
+    // c est-a-dire la quasi-totalite des titres reels (run 1161: un `h1` de
+    // 298 px ignore, hero declare « vide a 9 % »). Un Range mesure le texte la
+    // ou il est PEINT, quelle que soit l imbrication.
     const sections = Array.from(document.querySelectorAll('section, header, footer, main > div')).filter(vis)
       .slice(0, 40).map((sec) => {
         const r = sec.getBoundingClientRect()
-        let covered = 0
-        for (const child of Array.from(sec.querySelectorAll('*'))) {
-          if (!vis(child) || child.children.length > 0) continue
-          const cr = child.getBoundingClientRect()
-          covered += cr.width * cr.height
+        const seen = new Set()
+        const bands = []
+        const push = (rect) => {
+          if (!rect || rect.width <= 1 || rect.height <= 1) return
+          const top = Math.max(0, Math.round(rect.top - r.top))
+          const bottom = Math.min(Math.round(r.height), Math.round(rect.bottom - r.top))
+          if (bottom <= top) return
+          const key = `${top}:${bottom}`
+          if (seen.has(key)) return
+          seen.add(key)
+          bands.push([top, bottom])
         }
-        const area = Math.max(1, r.width * r.height)
-        return { label: label(sec).slice(0, 24), height: r.height, fill: Math.min(1, covered / area) }
+
+        const walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT)
+        let node
+        while ((node = walker.nextNode()) && bands.length < 400) {
+          if (!node.nodeValue || !node.nodeValue.trim()) continue
+          const parent = node.parentElement
+          if (!parent || getComputedStyle(parent).visibility === 'hidden') continue
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          for (const rect of Array.from(range.getClientRects())) push(rect)
+        }
+        for (const el of Array.from(sec.querySelectorAll('img,svg,canvas,video,iframe,picture,object,input,button,select,textarea'))) {
+          if (vis(el)) push(el.getBoundingClientRect())
+        }
+        // Un fond IMAGE remplit reellement la section; un degrade est une
+        // decoration — c est justement le `min-height:100vh` degrade a deux
+        // lignes que cette porte doit continuer d attraper.
+        for (const el of [sec, ...Array.from(sec.querySelectorAll('*'))]) {
+          if (!vis(el)) continue
+          if (/url\(/i.test(getComputedStyle(el).backgroundImage || '')) push(el.getBoundingClientRect())
+        }
+
+        const classes = (typeof sec.className === 'string' ? sec.className : '')
+          .trim().split(/\s+/).filter(Boolean).slice(0, 3)
+        const selector = sec.tagName.toLowerCase()
+          + (sec.id ? `#${sec.id}` : '')
+          + classes.map((c) => `.${c}`).join('')
+        return { label: label(sec).slice(0, 24), height: r.height, bands: bands.slice(0, 400), selector }
       })
 
     // Emoji EN POSITION D ICONE, mesures sur le rendu: la source peut les
@@ -347,9 +385,16 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     const { checkComposition } = await import(
       pathToFileURL(path.resolve('src/services/codeCompositionGate.ts')).href
     )
+    // Attribution des sections aux fichiers SOURCE (`inputFiles`, jamais le
+    // bundle: une position dans un `dist/` minifie ne designe rien de
+    // reparable). Sans ce nom, la passe ciblee ne peut que deviner.
+    const { attributeSections } = await import(
+      pathToFileURL(path.resolve('src/services/codeCompositionAttribution.ts')).href
+    )
+    const attributedSections = attributeSections(composition.sections ?? [], inputFiles)
     const compositionVerdict = checkComposition({
       overlaps: composition.overlaps ?? [],
-      sections: composition.sections ?? [],
+      sections: attributedSections,
       emojiIcons: composition.emojiIcons ?? [],
       viewportWidth: composition.viewportWidth ?? 1440,
     })
@@ -370,7 +415,8 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     const { resolveConsoleErrors } = await import('./stack_resolve.mjs')
     const sourceErrors = await resolveConsoleErrors(consoleErrors, files)
     return {
-      applicable: true, metrics: desktop, consoleErrors: sourceErrors, composition, compositionVerdict,
+      applicable: true, metrics: desktop, consoleErrors: sourceErrors,
+      composition: { ...composition, sections: attributedSections }, compositionVerdict,
       accessibility, accessibilityVerdict,
       performanceMetrics, performanceVerdict,
       verdict: scoreRenderedAesthetics({ desktop, consoleErrors: sourceErrors }),

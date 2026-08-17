@@ -338,9 +338,14 @@ if (process.env.AURORA_CODE_RENDER_AUDIT !== '0') {
               perfKo ? perf.critique : '',
             ].filter(Boolean).join('\n\n').trim(),
           model: configuredCodeModel,
-          // Le crash nomme lui-meme ses fichiers: la trace resolue devient la
-          // portee du patch, au lieu d une heuristique sur tout le markup.
-          evidencePaths: crashed ? extractSourcePathsFromErrors(audit.consoleErrors ?? []) : [],
+          // Le defaut nomme lui-meme ses fichiers, et cette preuve prime sur
+          // toute heuristique de portee: une trace resolue pour un crash, une
+          // section attribuee a sa source pour la composition. Run 1161: sans
+          // cela, la passe a reecrit cinq pages sans jamais ouvrir le composant
+          // qui portait la section incriminee.
+          evidencePaths: crashed
+            ? extractSourcePathsFromErrors(audit.consoleErrors ?? [])
+            : (compoKo ? (audit.compositionVerdict.evidencePaths ?? []) : []),
           setPhase: (d, p) => emit(buildCodeStreamPhaseEvent({ ...nextMeta(), message: String(d ?? ''), progress: Number(p) || 96 })),
         })
         log(`[bridge-runner] passe ciblee (${failedChecks.join(',')}): ${repair.summary}`)
