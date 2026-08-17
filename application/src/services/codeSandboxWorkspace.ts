@@ -9,6 +9,10 @@ import {
   sandboxWorkspaceVolumeName,
   type PodmanSandboxOptions,
 } from './codeSandboxIsolation.ts'
+import {
+  buildPodmanCacheVolumeCreateArgs,
+  buildPodmanCacheVolumeRemoveArgs,
+} from './codeSandboxCacheVolume.ts'
 
 type CommandRunner = typeof runWorkspaceCommand
 
@@ -97,6 +101,18 @@ export async function prepareSandboxWorkspaceVolume(
   })
   if (!create.ok) return { ok: false, created: false, volumeName, steps, quotaEnforced, failedStage: 'volume', reason: 'creation du volume refusee' }
 
+  // Le volume de CACHE doit exister avant tout conteneur, y compris celui
+  // d initialisation: `commonPodmanRunArgs` le monte sur chaque `podman run`.
+  const cacheArgs = buildPodmanCacheVolumeCreateArgs(sandboxRoot)
+  const cache = await runner('podman', cacheArgs, sandboxRoot, 30_000)
+  steps.push(resultStep('Cache paquets WS7 (volume disque)', 'podman', cacheArgs, cache))
+  if (!cache.ok) {
+    return {
+      ok: false, created: true, volumeName, steps, quotaEnforced, failedStage: 'volume',
+      reason: 'creation du volume de cache refusee',
+    }
+  }
+
   const initArgs = buildPodmanSandboxWorkspaceInitArgs(lang, sandboxRoot, DEFAULT_SANDBOX_QUOTAS, options)
   const init = await runner('podman', initArgs, sandboxRoot, 60_000)
   steps.push(resultStep('Initialisation workspace quota WS7', 'podman', initArgs, init))
@@ -121,7 +137,9 @@ export async function cleanupSandboxWorkspaceVolume(
   sandboxRoot: string,
   runner: CommandRunner = runWorkspaceCommand,
 ): Promise<CodeSandboxStepResult> {
+  const cacheArgs = buildPodmanCacheVolumeRemoveArgs(sandboxRoot)
+  await runner('podman', cacheArgs, sandboxRoot, 30_000).catch(() => null)
   const removeArgs = buildPodmanSandboxVolumeRemoveArgs(sandboxRoot)
   const result = await runner('podman', removeArgs, sandboxRoot, 30_000)
-  return resultStep('Nettoyage volume workspace WS7', 'podman', removeArgs, result)
+  return resultStep('Nettoyage volumes WS7 (workspace + cache)', 'podman', removeArgs, result)
 }

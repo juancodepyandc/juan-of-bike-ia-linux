@@ -18,12 +18,16 @@ describe('codeSandboxWorkspace', () => {
     assert.equal(result.ok, true)
     assert.equal(result.created, true)
     assert.equal(result.volumeName, 'aurora-code-ws-tmp-aurora-ws')
-    assert.equal(result.steps.length, 2)
+    // 3 etapes: volume workspace, volume de CACHE, puis initialisation.
+    assert.equal(result.steps.length, 3)
     assert.deepEqual(calls[0]?.args.slice(0, 2), ['volume', 'create'])
     assert.ok(calls[0]?.args.includes('o=size=768m'))
-    assert.equal(calls[1]?.args[0], 'run')
-    assert.ok(calls[1]?.args.includes('/tmp/aurora/ws:/aurora-input:ro,Z'))
-    assert.ok(calls[1]?.args.includes('aurora-code-ws-tmp-aurora-ws:/workspace:rw,z'))
+    // Le cache est cree AVANT tout conteneur: chaque `podman run` le monte.
+    assert.deepEqual(calls[1]?.args.slice(0, 2), ['volume', 'create'])
+    assert.ok(calls[1]?.args.includes('aurora.role=code-sandbox-cache'))
+    assert.equal(calls[2]?.args[0], 'run')
+    assert.ok(calls[2]?.args.includes('/tmp/aurora/ws:/aurora-input:ro,Z'))
+    assert.ok(calls[2]?.args.includes('aurora-code-ws-tmp-aurora-ws:/workspace:rw,z'))
   })
 
   // Le quota disque est une garantie SOUPLE. Mesure sur un run reel: le bridge
@@ -74,8 +78,9 @@ describe('codeSandboxWorkspace', () => {
 
     assert.equal(result.ok, false)
     assert.equal(result.created, true)
+    // Une etape de plus: le volume de CACHE, cree avant tout conteneur.
     assert.equal(calls, 2)
-    assert.equal(result.steps[1]?.label, 'Initialisation workspace quota WS7')
+    assert.equal(result.steps[1]?.label, 'Cache paquets WS7 (volume disque)')
   })
 
   test('cleanupSandboxWorkspaceVolume supprime le volume quote', async () => {
@@ -88,5 +93,6 @@ describe('codeSandboxWorkspace', () => {
 
     assert.equal(step.ok, true)
     assert.match(step.command, /podman volume rm -f aurora-code-ws-tmp-aurora-ws/)
+    assert.match(step.label, /workspace \+ cache/)
   })
 })

@@ -17,6 +17,14 @@ import {
 } from '../services/codeTestToolchainContract.ts'
 import { parseCodeFiles } from '../services/codeGeneratedFileParser.ts'
 import { isStructuredProjectEmission, serializeProjectTreeEmission } from '../services/codeProjectEmission.ts'
+import {
+  buildPodmanCacheVolumeArgs,
+  buildPodmanCacheVolumeCreateArgs,
+  buildPodmanCacheVolumeRemoveArgs,
+  CONTAINER_CACHE_PATH,
+  sandboxCacheVolumeName,
+} from '../services/codeSandboxCacheVolume.ts'
+import { buildPodmanSandboxArgs } from '../services/codeSandboxIsolation.ts'
 
 // Sortie npm REELLE du run 1191 (passe 3), recopiee du flux NDJSON.
 const NPM_WARN_ONLY = [
@@ -182,5 +190,45 @@ describe('run 1191 — l apostrophe assainie sur TOUS les chemins d ecriture', (
     const files = parseCodeFiles(structuredEmission('src/x.ts', propre))
     assert.equal(files.length, 1)
     assert.equal(files[0].content.trim(), propre.trim())
+  })
+})
+
+describe('run 1191 — le cache des paquets appartient au disque, pas a la RAM', () => {
+  const ROOT = '/w/output/code-sandbox/1787000000000'
+
+  test('le cache est monte sur un volume, et toutes les variables y pointent', () => {
+    const args = buildPodmanCacheVolumeArgs(ROOT)
+    const line = args.join(' ')
+    assert.match(line, new RegExp(`${sandboxCacheVolumeName(ROOT)}:${CONTAINER_CACHE_PATH}:rw,U`))
+    // `U` donne le volume a l utilisateur du conteneur: sans lui, et avec
+    // `--userns keep-id`, npm ne peut pas ecrire dans un volume neuf.
+    assert.match(line, /:rw,U/)
+    for (const variable of ['NPM_CONFIG_CACHE', 'YARN_CACHE_FOLDER', 'XDG_CACHE_HOME', 'PIP_CACHE_DIR', 'CARGO_HOME', 'GOMODCACHE', 'GOCACHE']) {
+      const declared = args.find((value) => value.startsWith(`${variable}=`))
+      assert.ok(declared, `${variable} doit etre declaree`)
+      assert.ok(declared.startsWith(`${variable}=${CONTAINER_CACHE_PATH}/`), `${variable} doit pointer sur le volume`)
+    }
+  })
+
+  test('AUCUN cache ne retombe sur le tmpfs du HOME', () => {
+    // Cause racine exacte du run 1191: NPM_CONFIG_CACHE=/home/aurora/.npm sur
+    // un tmpfs de 256 Mio, alors que le cache reel du livrable pese 284 Mio.
+    const line = buildPodmanSandboxArgs(
+      { label: 'Installer les dependances', executable: 'npm', args: ['install'] },
+      'node', ROOT,
+    ).join(' ')
+    assert.doesNotMatch(line, /NPM_CONFIG_CACHE=\/home\//)
+    assert.doesNotMatch(line, /XDG_CACHE_HOME=\/home\//)
+    assert.match(line, new RegExp(`NPM_CONFIG_CACHE=${CONTAINER_CACHE_PATH}/npm`))
+    // Le HOME inscriptible reste monte: npm y ecrit autre chose que son cache.
+    assert.match(line, /HOME=\/home\/aurora/)
+  })
+
+  test('le volume de cache porte un nom propre au sandbox et se nettoie', () => {
+    const other = sandboxCacheVolumeName('/w/output/code-sandbox/1787000000001')
+    assert.notEqual(sandboxCacheVolumeName(ROOT), other)
+    assert.match(sandboxCacheVolumeName(ROOT), /^aurora-code-cache-/)
+    assert.deepEqual(buildPodmanCacheVolumeRemoveArgs(ROOT), ['volume', 'rm', '-f', sandboxCacheVolumeName(ROOT)])
+    assert.ok(buildPodmanCacheVolumeCreateArgs(ROOT).includes('aurora.role=code-sandbox-cache'))
   })
 })

@@ -2,6 +2,7 @@ import { runWorkspaceCommand } from '../hooks/useTauri.ts'
 import type { CodeSandboxStepResult, DetectedLanguage, ValidationCommand } from './codeSandboxTypes.ts'
 import { buildPodmanGpuArgs } from './codeSandboxGpu.ts'
 import { buildSandboxNetworkPolicy, podmanEnvArgs } from './codeSandboxNetworkPolicy.ts'
+import { buildPodmanCacheVolumeArgs } from './codeSandboxCacheVolume.ts'
 
 export type SandboxIsolationStatus = {
   ok: boolean
@@ -273,10 +274,11 @@ function commonPodmanRunArgs(
     // Un seul reglage repare npm, pip, cargo et go: tous ecrivent sous $HOME.
     '--env',
     `HOME=${CONTAINER_HOME_PATH}`,
-    '--env',
-    `NPM_CONFIG_CACHE=${CONTAINER_HOME_PATH}/.npm`,
-    '--env',
-    `XDG_CACHE_HOME=${CONTAINER_HOME_PATH}/.cache`,
+    // Les CACHES partaient sous ce HOME, qui est un tmpfs de 256 Mio adosse a
+    // la RAM. Mesure: le cache npm du livrable reel du run 1191 pese 284 Mio —
+    // ENOSPC garanti, quel que soit l etat de la machine. Ils vont desormais
+    // sur un volume disque (codeSandboxCacheVolume).
+    ...buildPodmanCacheVolumeArgs(sandboxRoot),
   ]
 }
 

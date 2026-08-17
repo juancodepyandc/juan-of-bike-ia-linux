@@ -66,7 +66,10 @@ describe('codeSandboxIsolation', () => {
     // La racine est en lecture seule: le HOME inscriptible doit etre DECLARE,
     // sinon npm/pip/cargo ecrivent dans le HOME de l image et echouent (ENOENT).
     assert.match(joined, /--env HOME=\/home\/aurora/)
-    assert.match(joined, /--env NPM_CONFIG_CACHE=\/home\/aurora\/\.npm/)
+    // Le cache ne vit PLUS sous /home/aurora: ce tmpfs de 256 Mio provoquait
+    // ENOSPC (cache npm reel du run 1191: 284 Mio). Il est sur un volume disque.
+    assert.match(joined, /--env NPM_CONFIG_CACHE=\/aurora-cache\/npm/)
+    assert.doesNotMatch(joined, /NPM_CONFIG_CACHE=\/home\//)
     assert.match(joined, /aurora-code-ws-tmp-aurora-ws:\/workspace:rw/)
     assert.deepEqual(args.slice(-4), ['docker.io/library/node:22-bookworm-slim', 'npm', 'run', 'build'])
   })
