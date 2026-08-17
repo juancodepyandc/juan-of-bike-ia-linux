@@ -8052,3 +8052,87 @@ contrat de types, definition et tous ses consommateurs en une seule unite — n 
 pas faite. Je le dis plutot que de laisser croire que le sujet est clos.
 
 Tests : **1219 -> 1230 verts, 0 echec.**
+
+## 2026-08-17 (suite) — Run 1181: l ordre causal tient, et le routeur manquait
+
+### Verdict brut
+
+```
+run 1181   acceptation 0/2 · rendu 10/100 · a11y 86/100 · perf 78/100
+           composition OK -> OK
+           INTERROMPU files=36 — travail preserve, validation incomplete
+           12,3 min
+```
+
+### Ce que ce run prouve
+
+**1. `interrupted` au lieu de `error`.** Le pas muet d installation est revenu,
+et il est desormais classe pour ce qu il est: une validation empechee. Les 36
+fichiers sont preserves et le run ne porte plus un faux verdict de qualite.
+
+**2. L ordre causal fonctionne en reel, pour la premiere fois de facon visible.**
+
+```
+cause racine: runtime_clean — 6 critere(s) non concluant(s) ignore(s):
+  display_typography, type_scale, real_typeface, visual_content, depth, interactivity
+passe ciblee (runtime_clean): 1 fichier(s) corrige(s)
+```
+
+Une seule cause envoyee au correcteur, six symptomes ecartes explicitement, **un
+seul fichier touche** — contre huit fichiers de style repeints pour rien au run
+1101.
+
+**3. La composition reste OK.** Deuxieme run consecutif sans faux positif.
+
+### La cause, mesuree fichier par fichier
+
+```
+src/main.tsx          rend <App /> — aucun routeur
+src/App.tsx           rend <Navigation /> et <AppRoutes /> — aucun routeur
+src/routes/AppRoutes  utilise <Routes>, <Route>, <Navigate>
+AUCUN des 36 fichiers ne contient BrowserRouter, HashRouter, MemoryRouter,
+RouterProvider ni createBrowserRouter.
+```
+
+Le fournisseur n etait pas mal place: il etait **absent**. Et la passe ciblee a
+corrige `AppRoutes.tsx` — le fichier NOMME par la trace — sans effet, parce que
+la cause vit dans le **point d entree**. C est le pendant runtime de la fermeture
+transitive deja identifiee pour les types: le fichier qui plante n est pas le
+fichier a reparer.
+
+Envelopper l arbre monte est mecanique — un seul endroit possible, une seule
+forme possible — donc ce n est pas un travail de modele.
+
+> Piege paye en l ecrivant, et je le note parce que c est le meme que la variante
+> `es` du module d indices: le gabarit reel s ecrit
+> `createRoot(document.getElementById('root')!).render(`, et une parenthese
+> imbriquee suffit a faire echouer un `[^)]*`. La mesure l a attrape
+> immediatement. On reconnait desormais le FICHIER, puis on apparie les
+> parentheses.
+
+### Avant-apres mesurable, au rendu reel
+
+`output/code/audit_v121/router_before_after.json`:
+
+| | erreur au montage |
+|---|---|
+| avant | `Cannot destructure property 'basename' of useContext` |
+| apres | `Cannot read properties of undefined (reading 'startsWith') at src/utils/auth.ts:10:18` |
+
+**L erreur de routeur a disparu**: le correctif fait exactement ce qu il vise.
+
+Le score reste a **10/100**, et je ne le maquille pas: la page ne monte toujours
+pas, a cause d un **second defaut independant** — `isAdminRoute(pathname)` est
+appele sans argument. Celui-la est un vrai defaut de code, il revient au modele,
+et il est desormais nomme avec sa position source exacte.
+
+### Ce qui reste ouvert
+
+1. **Le `npm install` muet est revenu.** Sous charge, comme suppose. Sa cause
+   reste introuvee; seule sa consequence est traitee.
+2. **`isAdminRoute` sans argument** — au modele, pas au deterministe.
+3. **La fermeture transitive** (types et arbre de montage) reste le vrai sujet:
+   le cycle est detecte et la reparation d import est posee, mais la STRATEGIE de
+   la passe ne change toujours pas de nature quand un cycle est vu.
+
+Tests : **1230 -> 1237 verts, 0 echec.**
