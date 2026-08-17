@@ -7662,3 +7662,157 @@ composition. Ce correctif seul n aurait pas suffi a CE run — il supprime la
 condamnation structurelle qui rendait toute passe non-rendu ininteressante.
 
 Tests : **1157 -> 1162 verts, 0 echec.**
+
+## 2026-08-17 (suite) — Run 1171: deux portes qui reclamaient l impossible
+
+### Reprise et diagnostic
+
+Le run 1161 franchissait tout: sandbox « livraison validee a 100% », acceptation
+comportementale 2/2, accessibilite 100/100, performance 100/100, rendu 80/100
+(seuil 70), en 16,1 min contre 58+ auparavant. Et il sortait `FAILED phase=error`.
+
+J ai repris les deux blocages par la mesure, sur les fichiers REELS du run
+(`output/code_assets/viewers/run-1161/project.json`, 31 fichiers), jamais sur
+des fixtures.
+
+**Premier blocage — une seule ligne de gabarit.** `index.html` livre contenait
+
+```html
+<link rel="icon" href="/favicon.ico" />
+```
+
+la ligne que tout modele recopie d un projet Vite. La critique statique a
+repondu, en `severity: error` sur l axe `runtime` — donc bloquante:
+
+```
+[error] index.html - ressource locale referencee mais absente (/favicon.ico).
+        Suggestion: Livrer le fichier reference.
+```
+
+« Livrer le fichier » est **inachevable**. Depuis le run 1081 les binaires sont
+volontairement hors de la file de generation, parce qu aucun modele de texte
+n ecrit un `.ico` valide — la preuve avait coute 42 297 octets de base64 tape a
+la main et un JPEG tronque a 388 octets. Une porte reclamait donc exactement ce
+que la file a cesse de produire. Quatrieme membre d une famille deja fermee
+trois fois: le secret sans backend au run 1031, le JPEG au 1081, le fichier de
+codegen au 1111.
+
+**Deuxieme blocage — la porte du vide.** Elle declarait `no_empty_section`, la
+passe ciblee reecrivait six fichiers, et le defaut restait. J ai remesure le
+livrable element par element (`output/code/audit_v117/fill_probe.json`):
+
+```
+section.hero-section 1440x944  ->  fill 9 %  « quasi vide »
+  h1.hero-title      1440x298   JETE (contient un <br>)
+  div.hero-content   1440x704   JETE (conteneur)
+  compte: p 700x37 + img 330x289 + a 128x17
+```
+
+La mesure **sommait l aire des elements du DOM sans enfant element**. Un titre
+contenant un `<br>` — donc la quasi-totalite des titres reels — n etait jamais
+compte. Le hero occupait 704 px sur 944 et la porte le declarait vide a 9 %.
+
+Elle n avait meme aucune dynamique utile: une grille de quatre produits
+entierement remplie sortait a 18,7 %, pour un seuil a 15 %.
+
+**Et le cas qui avait CALIBRE ce seuil etait lui aussi un faux positif.** Le
+commentaire disait « le cas reel mesure 12 % sur 658 px ». J ai reconstruit ce
+projet (`output/code/audit_v94/project/dist`), remesure et **photographie**:
+`output/code/audit_v117/v94_faq.png` montre une FAQ complete — titre,
+sous-titre, cinq cartes en accordeon. Elle n a jamais ete vide.
+
+> **Cette porte n a jamais attrape un vrai positif. Elle en fabriquait**, et
+> chaque tir coutait une passe de modele.
+
+Troisieme couche, du meme ordre: la preuve ne nommait **aucun fichier**. Le
+correcteur recevait « Torréfié cette semaine, : 944px remplie a 9% » sur un
+projet de 31 fichiers. Il a reecrit AdminPage, ContactPage, HomePage,
+MarketCalendarPage, SubscriptionPage et `index.css` — et jamais
+`src/components/HeroSection.tsx`, seul fichier a contenir cette section. Il ne
+pouvait pas: la sonde de portee cherche `<section` dans la source, et le
+composant ecrit `<motion.section>`.
+
+### Modifications realisees
+
+**Binaire lie et absent — reparer, puis ne plus condamner.**
+
+1. `codeDanglingBinaryAssets.ts` (neuf). La reparation est **mecanique**: une
+   icone se fabrique en SVG, qui est du texte. `repairDanglingIconLinks`
+   remplace le lien pendant par un SVG inline en data URL, monogramme tire du
+   `<title>` livre. Une correction deterministe ne se delegue pas a un modele
+   probabiliste. `apple-touch-icon` et `mask-icon`, qui ne savent pas lire un
+   SVG, sont retires plutot que mentis.
+2. `codeStaticProjectIntegrity.ts`. Un binaire absent devient `warn` / axe
+   `preview`: il pese sur le score, il porte un conseil **realisable** (SVG
+   inline, data URL, ou retirer la reference), il ne fait plus echouer une
+   livraison qui tourne. Symetrie tenue: un fichier **texte** absent reste
+   bloquant — celui-la, le pipeline peut l ecrire.
+3. Le predicat `isBinaryAssetPath` filtrait deja le contrat de plan (run 1081);
+   la file et le contrat restent donc d accord avec la porte.
+
+**Porte du vide — mesurer le contenu, et nommer le fichier.**
+
+4. `codeCompositionGate.ts`. `computeSectionFill` mesure l **occupation
+   verticale reelle**: l union des bandes ou du contenu est peint, les
+   respirations courtes recollees (`SECTION_GAP_TOLERANCE`).
+5. `render_audit.mjs`. Le texte est mesure au `Range` — donc **independant de
+   l imbrication DOM** — plus les medias et les fonds image. Pas les degrades:
+   c est justement le `min-height:100vh` degrade a deux lignes que cette porte
+   doit continuer d attraper.
+6. `codeCompositionAttribution.ts` (neuf). Attribution deterministe d une
+   section rendue a son fichier source, par la classe et par le texte. La
+   critique nomme desormais selecteur ET fichier, et cette liste alimente
+   `evidencePaths` — la preuve prime deja sur toute heuristique de portee.
+7. `codeTargetedRepairScope.ts`. La sonde ne rate plus `<motion.section>` ni
+   `<HeroSection>`.
+
+### Avant-apres mesurable
+
+Fichiers reels du run 1161, mesures rejouees:
+
+| | avant | apres |
+|---|---|---|
+| `<link rel="icon">` | `/favicon.ico`, absent | SVG inline en data URL |
+| critique statique bloquante | **oui** | **non** |
+| hero `section.hero-section` 944 px | 9,1 % « vide » | **72,0 %** |
+| grille cafes 652 px | 18,7 % | **62,2 %** |
+| temoignages 465 px | 17,9 % | **25,0 %** |
+| composition | KO `no_empty_section` | **OK** |
+| section attribuee | — | `src/components/HeroSection.tsx` |
+
+Cas de calibration `audit_v94`, rejoue:
+
+| section | ancien | nouveau |
+|---|---|---|
+| `section.hero-section` 900 px | 14,8 % → **declaree vide** | 46,2 % |
+| `section.faq-section` 658 px | 11,8 % → **declaree vide** | **85,4 %** |
+| `footer.footer` 478 px | 13,8 % → **declaree vide** | 63,7 % |
+| sections declarees vides | **3** | **0** |
+
+### Demonstration reproductible
+
+```
+node --experimental-strip-types --test 'src/__tests__/code*.test.ts'
+```
+
+Artefacts de mesure, tous sous `application/output/code/audit_v117/`:
+`fill_probe.json` (detail element par element du hero), `compo_before.json` /
+`compo_after.json` (composition du run 1161 avant/apres),
+`compo_v94_calibration.json` (les deux mesures cote a cote sur le cas de
+calibration), `static_before_after.json` (critique statique), et
+`v94_faq.png` — la photo qui prouve que la FAQ « vide » etait pleine.
+
+### Etat de satisfaction
+
+Tests : **1162 -> 1192 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+
+Les deux causes sont fermees a la racine et la meme faute revient une fois de
+plus sous les deux: **une porte qui condamne quelque chose qu elle n a jamais
+mesure.** L une reclamait un fichier que la file ne produit plus; l autre
+comptait tout sauf le titre.
+
+Ce qui reste ouvert et que je ne cache pas: la design-spec du run 1161 classait
+une brulerie de cafe en archetype `ide_code_editor` (palette sombre violette)
+— la porte est consultative, mais la classification est fausse. Et l image du
+hero est materialisee en URL absolue vers le bridge local
+(`http://127.0.0.1:3001/...`), ce qui casserait le site hors de cette machine.
