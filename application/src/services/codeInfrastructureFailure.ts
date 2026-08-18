@@ -57,7 +57,37 @@ const INFRASTRUCTURE_PATTERNS: RegExp[] = [
   /\bENOSPC\b/,
   /no space left on device/i,
   /insufficient space on your system/i,
+  // Delai depasse sur un appel modele. Run v125: 39 minutes, 41 fichiers, tues
+  // par « This operation was aborted » — un chien de garde de premier octet qui
+  // coupait SANS raison nommee, et que ce classifieur ne reconnaissait donc pas.
+  // Le run etait alors livre comme « erreur du pipeline », c est-a-dire comme un
+  // verdict sur le CODE, alors qu aucun octet n avait ete recu du modele. Meme
+  // erreur de categorie que `fetch failed`, autre signature.
+  /premier octet absent/i,
+  /\bdelai depasse\b/i,
+  /aborted due to timeout/i,
+  /\bTimeoutError\b/,
+  // Flux coupe par le relais en cours de route (mesure: undici rend
+  // `TypeError: terminated` avec `cause: SocketError: other side closed`).
+  /\bother side closed\b/i,
 ]
+
+/**
+ * Signatures d une ANNULATION demandee (bouton Stop). Ce n est ni une panne, ni
+ * un verdict sur le code: c est une decision de l utilisateur. La nommer
+ * « panne d infrastructure » enverrait chercher un probleme machine qui n existe
+ * pas; la nommer « erreur du pipeline » accuserait le livrable.
+ */
+const CANCELLATION_PATTERNS: RegExp[] = [
+  /annulation demandee par l appelant/i,
+  /\bThis operation was aborted\b/i,
+  /^Aborted$/i,
+]
+
+export function isCancellationMessage(message: string | null | undefined): boolean {
+  if (!message) return false
+  return CANCELLATION_PATTERNS.some((pattern) => pattern.test(message.trim()))
+}
 
 /**
  * L erreur empeche-t-elle le jugement lui-meme, plutot que de decrire un defaut

@@ -18,6 +18,7 @@ import {
   toBrowserFileUrl,
 } from '../utils/runtime.ts'
 import { getErrorMessage, safeParseJson } from '../utils/errors.ts'
+import { createFirstByteWatchdog, isCallerCancellation } from '../services/ollamaFirstByteWatchdog.ts'
 
 // ---------------------------------------------------------------------------
 // Cloud mode helpers
@@ -322,24 +323,22 @@ async function ollamaGenerateStreamAsNonStream(
   // v77zap/v90: same first-byte budget as ollamaChatStream. Heavy local code
   // models can override it; the default still protects tunnel calls.
   // v120: increased to 480_000 for heavy SWAP workloads (up to 70GB SWAP allowed).
+  // v126: meme correction que ollamaChatStream — budget REARME par tentative et
+  // abandon porteur d une raison nommee. Voir ollamaFirstByteWatchdog.ts.
   const HARD_TIMEOUT_MS = firstByteTimeoutMs ?? 480_000
-  const internalAbort = new AbortController()
-  const timeoutId = setTimeout(() => internalAbort.abort(), HARD_TIMEOUT_MS)
-  if (signal) {
-    if (signal.aborted) internalAbort.abort()
-    else signal.addEventListener('abort', () => internalAbort.abort(), { once: true })
-  }
+  const watchdog = createFirstByteWatchdog({ model, budgetMs: HARD_TIMEOUT_MS, callerSignal: signal })
 
   let response: Response | null = null
   let lastError: unknown = null
   try {
     for (const endpoint of endpoints) {
+      watchdog.arm(endpoint)
       try {
         response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: internalAbort.signal,
+          signal: watchdog.signal,
         })
         const ct = response.headers.get('content-type') || ''
         const fatal = ct.includes('text/html') || response.status >= 500
@@ -350,11 +349,12 @@ async function ollamaGenerateStreamAsNonStream(
         break
       } catch (err) {
         lastError = err
+        if (isCallerCancellation(err)) throw err
         if (endpoints.indexOf(endpoint) >= endpoints.length - 1) throw err
       }
     }
   } finally {
-    clearTimeout(timeoutId)
+    watchdog.disarm()
   }
   if (!response) throw lastError ?? new Error('Ollama generate indisponible.')
   if (!response.ok || !response.body) {
@@ -544,25 +544,33 @@ export async function ollamaChatStream(
   // The timer is cleared as soon as the response headers arrive, so this only
   // bounds time-to-first-byte (TTFB), not the streaming duration.
   // v120: increased to 480_000 for heavy SWAP workloads (up to 70GB SWAP allowed).
+  // v126: le budget est REARME a chaque point d entree. Mesure (run v125): le
+  // bridge relaie Ollama avec `requests(timeout=180)`, donc deux points d entree
+  // condamnes pouvaient bruler 360 s des 480 s avant que l appel direct — le seul
+  // capable d aboutir — soit tente; le chien de garde coupait alors en pleine
+  // generation avec un `abort()` NU, d ou le « This operation was aborted »
+  // anonyme qui a tue un run de 39 minutes et 41 fichiers. Voir
+  // ollamaFirstByteWatchdog.ts pour les trois mesures qui excluent les autres
+  // pistes.
   const HARD_TIMEOUT_MS = options?.firstByteTimeoutMs ?? 480_000
-  const internalAbort = new AbortController()
-  const timeoutId = setTimeout(() => internalAbort.abort(), HARD_TIMEOUT_MS)
-  if (options?.signal) {
-    if (options.signal.aborted) internalAbort.abort()
-    else options.signal.addEventListener('abort', () => internalAbort.abort(), { once: true })
-  }
+  const watchdog = createFirstByteWatchdog({
+    model,
+    budgetMs: HARD_TIMEOUT_MS,
+    callerSignal: options?.signal,
+  })
 
   let response: Response | null = null
   let lastError: unknown = null
 
   try {
     for (const endpoint of chatEndpoints) {
+      watchdog.arm(endpoint)
       try {
         response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-          signal: internalAbort.signal,
+          signal: watchdog.signal,
         })
         // v77zap: a 5xx response from Cloudflare or the bridge often comes
         // with text/html error pages. Treat them as fatal for THIS endpoint
@@ -580,13 +588,17 @@ export async function ollamaChatStream(
         break
       } catch (err) {
         lastError = err
+        // Une annulation demandee par l appelant traverse la cascade sans etre
+        // reessayee: reessayer un arret explicite sur le point d entree suivant
+        // n a aucun sens et masquait la demande de l utilisateur.
+        if (isCallerCancellation(err)) throw err
         if (chatEndpoints.indexOf(endpoint) >= chatEndpoints.length - 1) throw err
       }
     }
   } finally {
-    // Will be cleared earlier on success path inside while-loop, but safe to
-    // clear here too so the timer never leaks if we throw before reading.
-    clearTimeout(timeoutId)
+    // Desarme des les en-tetes recues: le budget borne le PREMIER OCTET, jamais
+    // la duree du flux. Le rearmement, lui, a lieu au debut de chaque tentative.
+    watchdog.disarm()
   }
 
   if (!response) {
@@ -1090,6 +1102,10 @@ export interface RunPythonOptions {
    * user comes back to a refreshed tab.
    */
   resumeKey?: string
+  /** Plafond absolu du suivi. Les rendus video premium peuvent durer une nuit. */
+  maxWaitMs?: number
+  /** Delai sans aucun evenement PROGRESS avant de considerer le job fige. */
+  stalledTimeoutMs?: number
 }
 
 /** Probe whether a previously-launched job under `resumeKey` is still live on
@@ -1209,8 +1225,8 @@ export async function runPythonScript(scriptPath: string, args: string[], option
     if (!result && jobId) {
       const pollIntervalMs = 2500
       const startedAt = Date.now()
-      const hardCapMs = 120 * 60 * 1000
-      const stalledThresholdMs = 12 * 60 * 1000
+      const hardCapMs = options.maxWaitMs ?? 120 * 60 * 1000
+      const stalledThresholdMs = options.stalledTimeoutMs ?? 12 * 60 * 1000
       let lastProgressAt = Date.now()
       let lastProgressCursor = 0
       let transientFetchFails = 0
@@ -1261,6 +1277,9 @@ export async function runPythonScript(scriptPath: string, args: string[], option
               if (data.status === 'done') {
                 result = { output: data.output ?? '', error: data.error ?? '', exitCode: data.exitCode ?? -1 }
                 break
+              }
+              if (data.status === 'cancelled') {
+                throw new Error(data.error || 'Job annulé.')
               }
             }
           }
@@ -1591,7 +1610,11 @@ export async function onPythonProgress(callback: (progress: string) => void) {
     return _startCloudProgressPolling(callback)
   }
 
-  return () => { }
+  // 31/07 (audit): en navigateur local (ni Tauri ni cloud), on rendait un
+  // no-op — le pipeline posait alors ses questions de validation dans le
+  // vide et bouclait « validation attendue » jusqu'au timeout. Le bridge est
+  // joignable sur 127.0.0.1:3001: on branche le meme polling que le cloud.
+  return _startCloudProgressPolling(callback)
 }
 
 export async function onRuntimeProgress(callback: (payload: RuntimeProgressEvent) => void) {

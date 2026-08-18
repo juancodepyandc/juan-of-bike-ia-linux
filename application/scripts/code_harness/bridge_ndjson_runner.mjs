@@ -23,6 +23,27 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { installHeadlessCodeEnv, routeConsoleToStderr } from './harness_env.mjs'
+import { acquireRunnerLock, buildBusyMessage } from './runner_single_instance.mjs'
+
+// Un seul run a la fois. Deux runs simultanes ecrasent leurs propres traces et
+// s affament mutuellement sur Ollama — voir runner_single_instance.mjs pour la
+// mesure (audit_v125). On refuse AVANT de lire stdin, donc avant tout travail.
+const runnerLock = acquireRunnerLock()
+if (!runnerLock.ok) {
+  process.stderr.write(`[bridge-runner] REFUS: ${buildBusyMessage(runnerLock.holder)}\n`)
+  process.stdout.write(
+    `${JSON.stringify({
+      schema: 'aurora.code.stream/1',
+      kind: 'error',
+      runId: 0,
+      sequence: 0,
+      timestamp: Date.now(),
+      message: buildBusyMessage(runnerLock.holder),
+      recoverable: false,
+    })}\n`,
+  )
+  process.exit(2)
+}
 
 // Order matters: shims + resolve hook first, console rerouted before any
 // pipeline module can log a single line onto stdout.
