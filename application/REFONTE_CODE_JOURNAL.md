@@ -8842,3 +8842,86 @@ sont pas conserves par le harnais — seul le lot final porte le contenu.
 Je ne peux donc pas prouver sur archive que la reparation aurait tire; je peux
 seulement montrer qu elle traite la forme exacte du defaut (test sur la paire
 minimale). **Limite reelle du corpus, dite comme telle.**
+
+## 2026-08-18 (suite) — Le vide satisfaisait les portes, et le plafond n etait pas graphique
+
+L utilisateur demande si le module produit enfin du BEAU. Le rendu etait le
+seul critere n ayant jamais tenu au-dessus de son seuil. Balayage du corpus des
+verdicts de rendu (33 runs) plutot qu un nouveau run.
+
+### Le plafond de style n a jamais ete un probleme de style
+
+```
+runtime_clean EN ECHEC :  4 runs, score moyen 22/100
+runtime_clean OK       : 10 runs, score moyen 78/100
+v106, v115, v126       : 100/100, aucun echec
+```
+
+Les trois runs a 10/100 (v93, v110, v120) echouent EXACTEMENT les memes sept
+criteres — tous. Ce n est pas une page laide, c est une page qui n a pas rendu:
+le DOM etant vide, `maxFont` vaut 0, aucune police ne charge, aucune image
+n existe. Six criteres de STYLE se declaraient en echec sans avoir rien mesure
+et retiraient 68 points a un livrable dont personne n avait vu le style.
+
+Cout double: le score racontait « laid » quand il fallait lire « cassé », et la
+passe ciblee partait corriger la typographie au lieu de l erreur d execution —
+exactement le run v129, 8 fichiers modifies pour 0 point gagne.
+
+### La meme faute, generalisee: le vide satisfaisait les portes
+
+Sonde: on presente une page ENTIEREMENT vide a chaque porte.
+
+```
+AVANT                          APRES
+accessibilite  76/100          0/100     (seuil 80 — a 4 points de passer !)
+performance    62/100          0/100
+composition    OK, aucun echec non mesuree
+```
+
+Treize criteres passaient sur du vide: `images_have_name`,
+`controls_have_name`, `fields_have_label`, `text_contrast`,
+`keyboard_reachable`, `layout_stability`, `image_dimensions`, `dom_weight`,
+`payload_weight`, `main_thread`, `no_overlap`, `no_empty_section`,
+`real_iconography` — plus `content_density` deja trouve.
+
+Sans image, aucune image ne manque d alternative. Sans controle, aucun n est
+inatteignable. Sans section, rien ne se chevauche. Ces portes ne mesuraient pas
+la qualite: elles constataient n avoir rien trouve a redire. **Une absence de
+violation comptait comme une presence de qualite.**
+
+C est la forme la plus profonde du motif recurrent, et elle explique un fait
+gênant du run v129: « composition OK -> OK (aucun echec) » sur une page qui
+echouait `runtime_clean`.
+
+Un critere sans matiere sort desormais du numerateur ET du denominateur. Les
+portes ne sont pas affaiblies, et c est teste: page lente -> 4 echecs et score
+< 50; icone emoji -> refusee; alternative manquante -> nommee.
+
+### Fin du balayage: les trois familles de typage vivantes
+
+```
+TS7006 (12, toutes identiques)  parametres de rappel non annotes
+TS2367 (6)                      union declaree en ANGLAIS, comparee a des
+                                libelles FRANCAIS ('"sent"' vs '"envoyé"')
+TS2339 + TS2322 (25)            la donnee et le type declare divergent
+```
+
+Les trois se PREVIENNENT a la generation. Choix assume: aucune ne recoit de
+reparation deterministe. Annoter un parametre demande de connaitre son type;
+trancher entre l anglais et le francais demande de choisir; reconcilier une
+donnee et son interface demande de savoir laquelle fait autorite. Ce sont des
+decisions, pas des recollages.
+
+### Lacune de mesure comblee
+
+Le flux n emettait le contenu des fichiers qu a la livraison. Les 60 TS2614 du
+run v129 sont donc introuvables dans son livrable final — le pipeline les avait
+resolus en 10 passes. Un balayage sans etats intermediaires plafonne a ce que
+le livrable final laisse voir, c est-a-dire aux defauts que le pipeline n a PAS
+su corriger: les moins frequents.
+
+Desormais, a chaque validation en echec, le contenu des SEULS fichiers que la
+sortie d erreur NOMME est archive (`pass.snapshot`, 12 fichiers max, 20 000
+caracteres, uniquement sur echec).
+
+Tests : **1336 -> 1346 verts, 0 echec.**
