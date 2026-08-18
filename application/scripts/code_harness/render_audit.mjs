@@ -364,7 +364,22 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     const served = await serveFiles(files); server = served.server
     browser = await chromium.launch({ headless: true })
     const consoleErrors = []
+    // Le message console d une ressource manquante ne porte PAS son URL:
+    // « Failed to load resource: the server responded with a status of 404 ».
+    // Mesure sur le run v129: la porte a condamne le rendu (60/100, echec
+    // runtime_clean), la passe ciblee a corrige 8 fichiers a l aveugle, et le
+    // score n a pas bouge (60 -> 60). Une porte qui condamne sans dire ce
+    // qu elle a mesure — et un correcteur a qui on demande l impossible.
+    // On ecoute donc les REQUETES, qui portent l URL.
+    const failedResources = []
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+    page.on('response', (r) => {
+      const status = r.status()
+      if (status >= 400) failedResources.push({ status, url: r.url() })
+    })
+    page.on('requestfailed', (r) => {
+      failedResources.push({ status: 0, url: r.url(), detail: r.failure()?.errorText || 'requete echouee' })
+    })
     // 160 caracteres coupaient la trace juste apres le message: le correcteur
     // recevait « TypeError: … (reading 'map') » sans savoir OU. On garde de quoi
     // porter les premieres frames, qui sont ensuite resolues en positions source.
@@ -413,7 +428,14 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     // Les traces sont resolues vers les fichiers SOURCE avant d atteindre le
     // correcteur: une position de bundle minifie ne designe rien de reparable.
     const { resolveConsoleErrors } = await import('./stack_resolve.mjs')
-    const sourceErrors = await resolveConsoleErrors(consoleErrors, files)
+    // Nommer la ressource, et dire si elle est ABSENTE du livrable: le
+    // correcteur peut alors soit l emettre, soit retirer la reference. Sans
+    // cela il ne pouvait rien faire d actionnable.
+    const served404 = describeFailedResources(failedResources, files)
+    const sourceErrors = [
+      ...(await resolveConsoleErrors(consoleErrors, files)).filter((e) => !/Failed to load resource/i.test(e)),
+      ...served404,
+    ]
     return {
       applicable: true, metrics: desktop, consoleErrors: sourceErrors,
       composition: { ...composition, sections: attributedSections }, compositionVerdict,
@@ -427,4 +449,39 @@ export async function renderAndScoreAesthetics(inputFiles, options = {}) {
     await browser?.close().catch(() => {})
     server?.close()
   }
+}
+
+/**
+ * Transforme des requetes en echec en diagnostics NOMMES et actionnables.
+ *
+ * Le message du navigateur (« Failed to load resource ... 404 ») ne dit ni
+ * quelle ressource, ni si le projet aurait du la livrer. On ajoute les deux.
+ */
+export function describeFailedResources(failedResources, files) {
+  if (!failedResources || failedResources.length === 0) return []
+  const delivered = new Set((files || []).map((f) => String(f.name).replace(/\\/g, '/').replace(/^\.?\//, '')))
+  const seen = new Set()
+  const out = []
+  for (const entry of failedResources) {
+    let pathname
+    try { pathname = new URL(entry.url).pathname } catch { pathname = String(entry.url || '') }
+    const relative = pathname.replace(/^\//, '')
+    if (!relative || seen.has(relative)) continue
+    seen.add(relative)
+    const isDelivered = delivered.has(relative)
+      || [...delivered].some((name) => name.endsWith(`/${relative}`) || relative.endsWith(name))
+    const label = entry.status ? `HTTP ${entry.status}` : (entry.detail || 'requete echouee')
+    // Un chemin SANS extension n est pas un fichier a livrer mais un appel
+    // reseau (API, route). Lui repondre « emets ce fichier » serait un conseil
+    // irrealisable — precisement la famille que ce module ferme partout.
+    const looksLikeFile = /\.[a-z0-9]{2,5}$/i.test(relative)
+    if (isDelivered) {
+      out.push(`Ressource ${label} a l execution: /${relative} — le fichier EST livre; verifier le chemin ou la base d URL.`)
+    } else if (looksLikeFile) {
+      out.push(`Ressource ${label} a l execution: /${relative} — ce fichier n est PAS livre. Emets-le, ou retire la reference qui le demande.`)
+    } else {
+      out.push(`Appel reseau ${label} a l execution: /${relative} — aucun serveur ne repond a cette route dans un apercu statique. Fournis des donnees locales de repli, ou retire l appel du chemin de rendu initial.`)
+    }
+  }
+  return out
 }
