@@ -63,6 +63,18 @@ export type CompositionCheck = {
   label: string
   passed: boolean
   evidence: string
+  /**
+   * Le critere avait-il quelque chose a MESURER ?
+   *
+   * MESURE: une page entierement vide passait les TROIS criteres de
+   * composition — aucun chevauchement, aucune section vide, aucune icone
+   * emoji — et ressortait « OK, aucun echec ». Ces criteres comptent une
+   * ABSENCE DE VIOLATION comme une PRESENCE DE QUALITE; sur une page sans
+   * rien, il n y a rien a violer.
+   *
+   * Un critere sans matiere n est ni passe ni echoue: il n a pas mesure.
+   */
+  conclusive?: boolean
 }
 
 export type CompositionReport = {
@@ -164,6 +176,9 @@ export function checkComposition(metrics: CompositionMetrics): CompositionReport
     {
       id: 'no_overlap',
       label: 'Aucun element ne se chevauche',
+      // Sans aucune section rendue, rien ne peut se chevaucher: on n a pas
+      // mesure l absence de chevauchement, on a mesure l absence de page.
+      conclusive: metrics.sections.length > 0,
       passed: metrics.overlaps.length === 0,
       evidence: metrics.overlaps.length === 0
         ? 'aucun chevauchement'
@@ -172,6 +187,7 @@ export function checkComposition(metrics: CompositionMetrics): CompositionReport
     {
       id: 'no_empty_section',
       label: 'Aucune grande section quasi vide',
+      conclusive: metrics.sections.length > 0,
       passed: emptySections.length === 0,
       evidence: emptySections.length === 0
         ? 'toutes les sections sont remplies'
@@ -180,15 +196,21 @@ export function checkComposition(metrics: CompositionMetrics): CompositionReport
     {
       id: 'real_iconography',
       label: 'Les icones ne sont pas des emoji',
+      conclusive: metrics.sections.length > 0,
       passed: metrics.emojiIcons.length === 0,
       evidence: metrics.emojiIcons.length === 0
         ? 'aucune icone emoji'
         : `${metrics.emojiIcons.length} emoji en position d icone: ${metrics.emojiIcons.slice(0, 8).join(' ')}`,
     },
   ]
-  const failed = checks.filter((c) => !c.passed)
+  // Un critere non concluant ne compte ni en succes ni en echec.
+  const conclusive = checks.filter((c) => c.conclusive !== false)
+  const failed = conclusive.filter((c) => !c.passed)
   return {
-    ok: failed.length === 0,
+    // Une page qui n a RIEN rendu n est pas une composition reussie: elle n a
+    // simplement pas ete mesuree. `ok` exige donc qu au moins un critere ait eu
+    // de la matiere.
+    ok: failed.length === 0 && conclusive.length > 0,
     checks,
     failedChecks: failed.map((c) => c.id),
     critique: buildCompositionCritique(failed),

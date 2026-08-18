@@ -33,6 +33,16 @@ export type AccessibilityCheck = {
   passed: boolean
   weight: number
   evidence?: string
+  /**
+   * Le critere avait-il quelque chose a MESURER ?
+   *
+   * MESURE: une page entierement vide obtenait 76/100 en accessibilite et
+   * 62/100 en performance. Ces criteres comptent une ABSENCE DE VIOLATION
+   * comme une PRESENCE DE QUALITE — sans image, aucune image ne manque
+   * d alternative; sans controle, aucun n est inatteignable. Un critere sans
+   * matiere n a pas mesure: il sort du score.
+   */
+  conclusive?: boolean
 }
 
 export type AccessibilityVerdict = {
@@ -70,6 +80,15 @@ export function findHeadingOrderIssues(levels: readonly number[]): string[] {
 }
 
 export function scoreAccessibility(metrics: AccessibilityMetrics): AccessibilityVerdict {
+  // Y a-t-il eu une page a auditer ? Sans aucun titre, image, controle, champ
+  // ni echantillon de texte, l audit ne mesure rien — il constate un vide.
+  const hasContent = metrics.headingLevels.length > 0
+    || metrics.imagesWithoutName.length > 0
+    || metrics.controlsWithoutName.length > 0
+    || metrics.fieldsWithoutLabel.length > 0
+    || metrics.lowContrastSamples.length > 0
+    || metrics.unreachableByKeyboard.length > 0
+    || Boolean(metrics.documentLang)
   const headingIssues = findHeadingOrderIssues(metrics.headingLevels)
   const worstContrast = metrics.lowContrastSamples
     .slice()
@@ -85,6 +104,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'images_have_name',
+      conclusive: metrics.imagesWithoutName.length > 0 || hasContent,
       label: `Images avec texte alternatif (${metrics.imagesWithoutName.length} sans)`,
       passed: metrics.imagesWithoutName.length === 0,
       weight: 18,
@@ -92,6 +112,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'controls_have_name',
+      conclusive: metrics.controlsWithoutName.length > 0 || hasContent,
       label: `Controles avec nom accessible (${metrics.controlsWithoutName.length} sans)`,
       passed: metrics.controlsWithoutName.length === 0,
       weight: 20,
@@ -99,6 +120,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'fields_have_label',
+      conclusive: metrics.fieldsWithoutLabel.length > 0 || hasContent,
       label: `Champs avec etiquette (${metrics.fieldsWithoutLabel.length} sans)`,
       passed: metrics.fieldsWithoutLabel.length === 0,
       weight: 16,
@@ -106,6 +128,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'heading_order',
+      conclusive: metrics.headingLevels.length > 0,
       label: 'Hierarchie de titres coherente',
       passed: headingIssues.length === 0,
       weight: 14,
@@ -113,6 +136,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'text_contrast',
+      conclusive: metrics.lowContrastSamples.length > 0 || hasContent,
       label: `Contraste du texte >= ${CONTRAST_AA}:1 (${metrics.lowContrastSamples.length} sous le seuil)`,
       passed: metrics.lowContrastSamples.length === 0,
       weight: 14,
@@ -120,6 +144,7 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
     {
       id: 'keyboard_reachable',
+      conclusive: metrics.unreachableByKeyboard.length > 0 || hasContent,
       label: `Interactifs atteignables au clavier (${metrics.unreachableByKeyboard.length} hors parcours)`,
       passed: metrics.unreachableByKeyboard.length === 0,
       weight: 8,
@@ -127,10 +152,13 @@ export function scoreAccessibility(metrics: AccessibilityMetrics): Accessibility
     },
   ]
 
-  const total = checks.reduce((sum, check) => sum + check.weight, 0)
-  const earned = checks.filter((check) => check.passed).reduce((sum, check) => sum + check.weight, 0)
-  const score = Math.round((earned / total) * 100)
-  const failedChecks = checks.filter((check) => !check.passed).map((check) => check.id)
+  // Un critere non concluant sort du numerateur ET du denominateur: il n a rien
+  // constate, il ne peut donc ni recompenser ni condamner.
+  const conclusive = checks.filter((check) => check.conclusive !== false)
+  const total = conclusive.reduce((sum, check) => sum + check.weight, 0)
+  const earned = conclusive.filter((check) => check.passed).reduce((sum, check) => sum + check.weight, 0)
+  const score = total > 0 ? Math.round((earned / total) * 100) : 0
+  const failedChecks = conclusive.filter((check) => !check.passed).map((check) => check.id)
 
   const critique = failedChecks.length === 0
     ? `Accessibilite mesuree au rendu: ${score}/100, rien a signaler.`

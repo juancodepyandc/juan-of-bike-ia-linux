@@ -33,6 +33,16 @@ export type PerformanceCheck = {
   passed: boolean
   weight: number
   evidence?: string
+  /**
+   * Le critere avait-il quelque chose a MESURER ?
+   *
+   * MESURE: une page entierement vide obtenait 76/100 en accessibilite et
+   * 62/100 en performance. Ces criteres comptent une ABSENCE DE VIOLATION
+   * comme une PRESENCE DE QUALITE — sans image, aucune image ne manque
+   * d alternative; sans controle, aucun n est inatteignable. Un critere sans
+   * matiere n a pas mesure: il sort du score.
+   */
+  conclusive?: boolean
 }
 
 export type PerformanceVerdict = {
@@ -62,6 +72,9 @@ function ko(value: number, unit: string): string {
 }
 
 export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdict {
+  // Une page qui n a jamais peint ne se mesure pas: rien ne bouge, rien ne
+  // pese, rien n occupe le thread principal. Ce n est pas de la performance.
+  const rendered = metrics.domNodes > 0 && metrics.firstContentfulPaint > 0
   const checks: PerformanceCheck[] = [
     {
       id: 'first_paint',
@@ -81,6 +94,7 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
     {
       id: 'layout_stability',
+      conclusive: rendered,
       label: `Pas de saut de page (CLS <= ${BUDGETS.layoutShift})`,
       passed: metrics.layoutShift <= BUDGETS.layoutShift,
       weight: 20,
@@ -88,6 +102,7 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
     {
       id: 'image_dimensions',
+      conclusive: rendered,
       label: `Images dimensionnees (${metrics.imagesWithoutDimensions} sans)`,
       passed: metrics.imagesWithoutDimensions === 0,
       weight: 12,
@@ -97,6 +112,7 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
     {
       id: 'dom_weight',
+      conclusive: rendered,
       label: `Moins de ${BUDGETS.domNodes} noeuds DOM`,
       passed: metrics.domNodes <= BUDGETS.domNodes,
       weight: 12,
@@ -104,6 +120,7 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
     {
       id: 'payload_weight',
+      conclusive: rendered,
       label: `Poids transfere < ${Math.round(BUDGETS.transferredBytes / 1024)} Ko`,
       passed: metrics.transferredBytes <= BUDGETS.transferredBytes,
       weight: 10,
@@ -111,6 +128,7 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
     {
       id: 'main_thread',
+      conclusive: rendered,
       label: `Au plus ${BUDGETS.longTasks} tache(s) longue(s) au chargement`,
       passed: metrics.longTasks <= BUDGETS.longTasks,
       weight: 8,
@@ -118,10 +136,13 @@ export function scorePerformance(metrics: PerformanceMetrics): PerformanceVerdic
     },
   ]
 
-  const total = checks.reduce((sum, check) => sum + check.weight, 0)
-  const earned = checks.filter((check) => check.passed).reduce((sum, check) => sum + check.weight, 0)
-  const score = Math.round((earned / total) * 100)
-  const failedChecks = checks.filter((check) => !check.passed).map((check) => check.id)
+  // Un critere non concluant sort du numerateur ET du denominateur: il n a rien
+  // constate, il ne peut donc ni recompenser ni condamner.
+  const conclusive = checks.filter((check) => check.conclusive !== false)
+  const total = conclusive.reduce((sum, check) => sum + check.weight, 0)
+  const earned = conclusive.filter((check) => check.passed).reduce((sum, check) => sum + check.weight, 0)
+  const score = total > 0 ? Math.round((earned / total) * 100) : 0
+  const failedChecks = conclusive.filter((check) => !check.passed).map((check) => check.id)
 
   const critique = failedChecks.length === 0
     ? `Performance mesuree au rendu: ${score}/100, dans les budgets.`
