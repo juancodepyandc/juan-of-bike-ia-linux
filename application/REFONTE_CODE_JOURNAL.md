@@ -8361,3 +8361,261 @@ balaye-propre, pas comme corrige: il n y avait rien a corriger.
 
 Tests : **1269 -> 1277 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
 `codeAutoCorrection.ts` repasse sous 400 lignes (424 -> 396).
+
+## 2026-08-18 (suite) — Le chien de garde coupait sans dire quoi, ni ce qu il mesurait
+
+### Reprise et diagnostic
+
+Le run v125 est mort ainsi, apres 39 minutes, 41 fichiers produits, bridge sain
+tout du long et modele en pleine production:
+
+```
+[CodeOrchestrator] Pipeline fatal error (app NOT crashed): This operation was aborted
+```
+
+La piste transmise designait `codeInterModuleAssets.combineSignals` (un
+`AbortSignal.timeout` cree trop tot et propage vers une phase plus longue).
+Trois mesures, faites AVANT de toucher une ligne, l ecartent:
+
+```
+1. Node v24.18, mesure directe:
+     AbortSignal.timeout()          -> TimeoutError | The operation was aborted due to timeout
+     AbortSignal.any([s, timeout])  -> TimeoutError | The operation was aborted due to timeout
+     controller.abort()             -> AbortError   | This operation was aborted
+   Le message du run est celui d un abort() NU. combineSignals ne peut pas le
+   produire. Piste fausse, ecartee par la mesure et non par l opinion.
+
+2. Flux tronque par un relais (le cas d un proxy qui lache en cours de route):
+     fetch + body tronque           -> TypeError    | terminated (cause: other side closed)
+   Ecarte aussi.
+
+3. Fermeture transitive des imports depuis codeOrchestrator.ts: 195 modules.
+   Un SEUL `new AbortController()` suivi d un `.abort()` nu y vit — le chien de
+   garde de premier octet de useTauri.ts. Par elimination exhaustive, c est lui.
+```
+
+Le journal Ollama du meme creneau donne la verite terrain:
+
+```
+02:01:43  « aborting completion request due to client closing the connection »
+          -> 500, 3m0s,  POST /api/chat
+02:02:39  « client connection closed before llama-server finished loading »
+          -> 499, 3m30s, POST /api/generate
+```
+
+Le bridge relaie Ollama avec `requests(..., timeout=180)`. Le budget de premier
+octet, lui, valait 480 s **pour la cascade entiere de trois points d entree**.
+Deux points d entree condamnes d avance pouvaient donc consommer 360 s des
+480 s avant que le seul appel capable d aboutir soit meme tente.
+
+Seizieme instance du motif: **une porte qui condamne quelque chose qu elle n a
+jamais mesure**. Elle se nomme et se documente comme un budget « premier
+octet » d UN appel; elle chronometre en realite le temps passe sur des appels
+deja morts. Puis elle coupe sans raison — l erreur ne nomme ni le modele, ni le
+point d entree, ni le budget, ni meme le fait qu il s agissait d un delai. C est
+pour cela que ~35 runs ne l ont pas identifiee.
+
+### Un fait genant decouvert en route: la preuve s ecrasait elle-meme
+
+`audit_v125/run.log`, 698 octets, contient DEUX verdicts contradictoires:
+
+```
+[bridge-runner] FAILED phase=error files=35 (fichiers partiels emis)
+s/run-1181/index.html                       <- fragment orphelin
+[bridge-runner] INTERROMPU files=41 — travail preserve, validation incomplete
+```
+
+`s/run-1181/index.html` est la QUEUE d une ligne d un PREMIER run, restee
+visible parce qu un SECOND run a reecrit le debut du fichier par-dessus avec
+son propre decalage. `stream.ndjson` porte la meme blessure: 4 lignes sur 287
+illisibles, dont un evenement ecrit AU MILIEU d un autre. Deux runs partageaient
+le repertoire d audit — et se disputaient aussi Ollama, ce qui explique les cinq
+`POST /api/generate` simultanes du journal.
+
+Un audit dont les traces se recouvrent ne prouve rien.
+
+### Modifications realisees
+
+```
+ollamaFirstByteWatchdog.ts (neuf)  budget REARME par tentative; abandon porteur
+                                   d une raison nommee (point d entree, modele,
+                                   budget); annulation appelant distincte du delai
+useTauri.ts                        les deux appels Ollama passent par le chien
+                                   de garde; une annulation demandee ne se
+                                   reessaie plus sur le point d entree suivant
+ollamaResilience.ts                signal PAR TENTATIVE jusqu a l appel modele;
+                                   le budget expire ANNULE vraiment l appel
+codeInfrastructureFailure.ts       delais + annulations classes; 3 causes fatales
+                                   reelles cessent d accuser le code
+codeInterruptedDelivery.ts         trois causes, pas deux (annulation demandee)
+codeStaticProjectIntegrity.ts      Tailwind: configure / absent / ILLISIBLE;
+                                   package.json invalide enfin nomme
+codeInterModuleAssets.ts           un Stop n est plus avale par la phase d assets
+runner_single_instance.mjs (neuf)  un seul run a la fois, verrou a pid vivant
+```
+
+### Avant-apres mesurable
+
+`withTimeout` est un `Promise.race`: quand le budget gagne, l appel perdant
+**continue**. Le pipeline enchainait la tentative suivante pendant que la
+precedente occupait encore le modele. Ce n est pas theorique — le budget a
+reellement expire en production (run v114, `timed out after 1200000ms`, deux
+fois). Un test l observe desormais au lieu de l affirmer.
+
+Balayage des causes fatales REELLES, relevees sur tous les `run.log` conserves.
+Cinq causes distinctes ont tue un run; **trois** etaient des pannes de modele
+rangees en « erreur du pipeline », c est-a-dire livrees comme un verdict sur le
+CODE:
+
+```
+AVANT                                                            APRES
+budget de recuperation epuise / timed out after 1200000ms   code  -> infrastructure
+toutes les tentatives epuisees ... Ollama error: 500        code  -> infrastructure
+This operation was aborted                                  code  -> annulation
+fetch failed                                          infrastructure  (inchange)
+action_protocol_invalid                                     code    (inchange, juste)
+patch_search_not_found                                      code    (inchange, juste)
+```
+
+Balayage des portes, meme grille que celle des messages de correction. Une
+seule instance trouvee, et elle cumulait les deux familles de defaut du module:
+`hasTailwindSetup` rendait `false` sur un `package.json` non parsable — donc
+« pas de Tailwind » — et la porte accusait. Elle n avait rien mesure: elle
+n avait pas pu lire. Le conseil joint (« ajouter tailwindcss + config/postcss »)
+etait de surcroit irrealisable, puisque npm ne peut pas ouvrir un manifeste
+invalide. Et le vrai defaut n etait signale nulle part.
+
+Balaye sans rien trouver, et la distinction compte: tous les autres `catch` des
+services `code*` rendent `null` ou `[]` — la forme « je ne sais pas » — jamais
+un verdict. Un seul rendait `false`; c etait celui-la.
+
+Tests : **1277 -> 1294 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+
+### Demonstration reproductible
+
+```
+node -e "const ac=new AbortController();ac.abort();console.log(ac.signal.reason.message)"
+  -> This operation was aborted
+node -e "const t=AbortSignal.timeout(1);setTimeout(()=>console.log(t.reason.message),50)"
+  -> The operation was aborted due to timeout
+
+journalctl -u ollama --since '2026-08-18 01:58' --until '2026-08-18 02:03' \
+  | grep -iE 'client clos|Load failed'
+
+cd application && node --experimental-strip-types --test 'src/__tests__/code*.test.ts'
+```
+
+## 2026-08-18 (suite) — Sept passes contre une syntaxe juste: c etait l extension
+
+### Reprise et diagnostic
+
+Le run v126 a produit le meilleur resultat de portes de toute la serie:
+
+```
+acceptation comportementale  2/2
+rendu                        100/100 (seuil 70)  echecs=aucun
+accessibilite                 86/100 (seuil 80)  echecs=text_contrast
+performance                   80/100 (seuil 70)  echecs=layout_stability
+```
+
+Et il est mort quand meme: `FAILED phase=error files=31`, « boucle infinie
+detectee apres 7 passes ». Deux verrous mecaniques, tous deux deterministes.
+
+#### Verrou 1 — l extension ne suivait pas la grammaire du contenu
+
+```
+24x  TS1110: Type expected.
+     TS1161: Unterminated regular expression literal
+     -> src/vitest.setup.ts(35,84)
+```
+
+Ligne 35 du fichier reellement emis:
+
+```tsx
+AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+```
+
+Du JSX dans un `.ts`. TypeScript refuse le JSX hors `.tsx`: il lit `<>` comme
+une assertion de type, puis la suite comme une expression reguliere non
+terminee. **La syntaxe est juste — c est l extension qui est fausse.** Sept
+passes de modele ont cherche un defaut qui n existait pas dans le contenu.
+
+Preuve, meme contenu, meme compilateur, seule l extension change:
+
+```
+probe.ts   -> probe.ts(3,70): error TS1110: Type expected.
+              probe.ts(3,82): error TS1161: Unterminated regular expression literal.
+probe.tsx  -> les deux disparaissent
+```
+
+Ce sont exactement les deux codes que le run a emis 24 fois.
+
+C est le miroir d un defaut deja ferme (« la grammaire suivait le libelle:
+`.tsx` -> grammaire typescript qui refuse le JSX »). On traite donc la
+**famille**, dans les deux sens: extension, libelle de langage et contenu
+doivent s accorder.
+
+#### Verrou 2 — douze reproches, zero fichier
+
+```
+12x  [error] projet - Classes Tailwind detectees sans configuration Tailwind
+             (8 utilities, ex: container...)
+```
+
+Meme famille que l outillage de test deja ferme: si la file emet des classes
+Tailwind, elle doit emettre de quoi les compiler. Un reproche repete douze fois
+sans le correctif est un conseil inachevable de plus.
+
+### Modifications realisees
+
+```
+codeFileExtensionCoherence.ts (neuf)   detection JSX etroite; renommage
+                                       .ts->.tsx / .js->.jsx; recollage des
+                                       references portant l extension;
+                                       libelle de langage accorde
+codeTailwindUsage.ts (neuf)            detecteur et seuil PARTAGES entre la
+                                       porte qui accuse et la reparation
+codeTailwindToolchainContract.ts(neuf) plan + application: config, postcss,
+                                       directives, devDependencies
+codeStaticProjectIntegrity.ts          consomme le detecteur partage (348->300 l.)
+codeProjectValidation.ts               les deux reparations branchees AVANT
+                                       toute passe de modele
+```
+
+### Avant-apres mesurable, sur le livrable REEL du run v126 (31 fichiers)
+
+```
+AVANT                                        APRES
+src/vitest.setup.ts (JSX)                    src/vitest.setup.tsx
+tailwind utilities        8                  8
+tailwind setup            absent             configured
+directives @tailwind      false              true
+fichiers                  31                 33
+JSX hors extension JSX    1                  0
+plan Tailwind rejoue      -                  null (idempotent)
+```
+
+La detection ne se declenche pas sur les formes voisines: generique flechee
+`<T,>(x: T)`, assertion `<number>value`, comparaisons `a < b && c > d`, JSX en
+chaine, en gabarit, en commentaire, generiques imbriques. Un renommage qui
+ecraserait un fichier existant est refuse — mieux vaut ne rien faire que perdre
+du contenu.
+
+Prudences conservees cote Tailwind: rien si CDN, rien si deja declare, rien
+sous le seuil, et **rien si le manifeste est illisible** — c est lui le defaut,
+et il est signale ailleurs depuis le balayage des portes.
+
+Tests : **1294 -> 1307 verts, 0 echec.** `tsc` : 0 erreur dans le perimetre Code.
+
+### Demonstration reproductible
+
+```
+cd application && node --experimental-strip-types --test \
+  src/__tests__/codeDeterministicToolchainRepairs.test.ts
+
+# la preuve compilateur, hors du module:
+printf 'export const s = { A: ({c}: {c: any}) => <>{c}</> }\n' > /tmp/p.ts
+cp /tmp/p.ts /tmp/p.tsx
+node_modules/.bin/tsc --noEmit --jsx react-jsx --skipLibCheck /tmp/p.ts   # TS1110/TS1161
+node_modules/.bin/tsc --noEmit --jsx react-jsx --skipLibCheck /tmp/p.tsx  # silence
+```
