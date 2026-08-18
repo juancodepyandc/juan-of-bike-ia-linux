@@ -6,6 +6,10 @@ import { normalizedProjectPaths } from './codeStaticCompleteness.ts'
 import { describeGeneratedImportRemediation } from './codeCodegenDependencies.ts'
 import { isBinaryAssetPath } from './codeBinaryAssetPaths.ts'
 import { describeMissingBinaryAssetRemediation } from './codeDanglingBinaryAssets.ts'
+// Source unique de verite: la porte qui ACCUSE et la reparation qui LIVRE
+// partagent le meme detecteur et le meme seuil. Sinon elles derivent, et on
+// retombe sur douze reproches sans un seul correctif.
+import { detectTailwindSetup, extractClassTokens, isLikelyTailwindUtility } from './codeTailwindUsage.ts'
 
 // --- 6. Project integrity critic ------------------------------------------
 // Catches cross-file failures that a single-file syntax regex cannot see:
@@ -153,39 +157,6 @@ function missingPackageDependencyIssues(project: CodeProject): CritiqueIssue[] {
 }
 
 /**
- * Trois reponses, pas deux: configure, non configure, ou ILLISIBLE.
- *
- * Avant, un `package.json` non parsable rendait `false` — donc « pas de
- * Tailwind » — et la porte accusait « Classes Tailwind detectees sans
- * configuration Tailwind ». Elle n avait pourtant rien mesure: elle n avait pas
- * pu lire. Pire, le conseil joint (« ajouter tailwindcss + config/postcss »)
- * est irrealisable tant que le manifeste est invalide, puisque `npm install`
- * ne peut meme pas l ouvrir. Les deux familles de defaut de ce module dans une
- * seule porte.
- */
-function tailwindSetupState(project: CodeProject): 'configured' | 'absent' | 'unreadable' {
-  const paths = normalizedProjectPaths(project)
-  if (paths.some((p) => /(^|\/)(tailwind\.config\.(?:js|cjs|mjs|ts)|postcss\.config\.(?:js|cjs|mjs|ts))$/.test(p))) {
-    return 'configured'
-  }
-  const all = project.files.map((f) => f.content).join('\n')
-  if (/cdn\.tailwindcss\.com/i.test(all)) {
-    return 'configured'
-  }
-  const packageFile = project.files.find((f) => normalizedName(f.name) === 'package.json')
-  if (!packageFile) return 'absent'
-  try {
-    const manifest = JSON.parse(packageFile.content) as {
-      dependencies?: Record<string, unknown>
-      devDependencies?: Record<string, unknown>
-    }
-    return manifest.dependencies?.tailwindcss || manifest.devDependencies?.tailwindcss ? 'configured' : 'absent'
-  } catch {
-    return 'unreadable'
-  }
-}
-
-/**
  * Un `package.json` invalide n etait signale NULLE PART. Il rendait pourtant
  * muettes les portes qui le lisent (dependances declarees, Tailwind) et bloque
  * `npm install` entierement. On nomme donc le vrai defaut, avec l erreur de
@@ -207,21 +178,6 @@ function manifestParseIssues(project: CodeProject): CritiqueIssue[] {
       suggestion: 'Corriger la syntaxe JSON du manifeste (virgule finale, guillemets, accolade non fermee). Tant qu il est invalide, npm ne peut rien installer et les controles de dependances ne mesurent rien.',
     }]
   }
-}
-
-function extractClassTokens(content: string): string[] {
-  const tokens: string[] = []
-  const classAttr = /\bclass(?:Name)?\s*=\s*["']([^"']+)["']/g
-  let match: RegExpExecArray | null
-  while ((match = classAttr.exec(content)) !== null) {
-    tokens.push(...match[1].split(/\s+/).filter(Boolean))
-  }
-  return tokens
-}
-
-function isLikelyTailwindUtility(token: string): boolean {
-  const normalized = token.replace(/^(?:sm|md|lg|xl|2xl|dark|hover|focus|active|disabled|group-hover|motion-safe|motion-reduce):/g, '')
-  return /^(?:container|sr-only|flex|inline-flex|grid|hidden|block|relative|absolute|fixed|sticky|inset-|top-|right-|bottom-|left-|z-\d+|min-h-|max-w-|w-(?:\d|full|screen)|h-(?:\d|full|screen)|p[trblxy]?-\d+|m[trblxy]?-\d+|mx-auto|gap-\d+|space-[xy]-\d+|items-|justify-|content-|rounded(?:-|$)|border(?:-|$)|shadow(?:-|$)|bg-|text-|font-|leading-|tracking-|opacity-|transition|duration-|ease-|overflow-|object-|aspect-|scale-|translate-|rotate-|transform|from-|via-|to-|backdrop-|dark:bg-|dark:text-|dark:border-)/.test(normalized)
 }
 
 function linkedLocalAssetsMissing(project: CodeProject, paths: Set<string>): CritiqueIssue[] {
@@ -310,7 +266,7 @@ function projectIntegrityIssues(project: CodeProject, intent: CodeIntent): Criti
   issues.push(...manifestParseIssues(project))
 
   // « absent » se condamne; « unreadable » ne se condamne pas — on ne sait pas.
-  if (visualProject && tailwindSetupState(project) === 'absent') {
+  if (visualProject && detectTailwindSetup(project.files) === 'absent') {
     let utilityCount = 0
     const examples = new Set<string>()
     for (const file of project.files) {

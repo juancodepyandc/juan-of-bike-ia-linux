@@ -16,6 +16,8 @@ import {
 } from './codeGeneratedFileSanitizer.ts'
 import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
 import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
+import { applyTailwindToolchainFix, planTailwindToolchainFix } from './codeTailwindToolchainContract.ts'
+import { alignLanguageLabels, applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -180,12 +182,46 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
     }
   }
 
+  // L extension doit correspondre a la grammaire que le contenu exige. Run
+  // v126: `src/vitest.setup.ts` contenait du JSX; TS1110/TS1161 x24, puis sept
+  // passes de modele a reparer une syntaxe JUSTE, puis « boucle infinie
+  // detectee ». Le correctif n etait pas dans le contenu mais dans le nom du
+  // fichier. Renommer et recoller les references est deterministe.
+  const extensionFixes = planExtensionFixes(sanitizedFiles)
+  if (extensionFixes.length > 0) {
+    return {
+      files: applyExtensionFixes(sanitizedFiles, extensionFixes),
+      reason: `extension accordee au contenu sans modele — ${extensionFixes.map((fix) => `${fix.from} -> ${fix.to}`).join(' ; ')}`,
+    }
+  }
+
+  // Autre sens de la meme famille: un `.tsx` etiquete `typescript` recevait une
+  // grammaire qui refuse le JSX.
+  const labelAlignment = alignLanguageLabels(sanitizedFiles)
+  if (labelAlignment.changed.length > 0) {
+    return {
+      files: labelAlignment.files,
+      reason: `libelle de langage accorde a l extension — ${labelAlignment.changed.join(' ; ')}`,
+    }
+  }
+
   // La file a emis des tests: elle doit emettre de quoi les COMPILER et les
   // TERMINER. Run 1191: `describe`/`test`/`expect` inconnus de tsc faute de
   // `@types/jest`, et `jest --watchAll` qui ne rend jamais la main dans un
   // sandbox. tsc nomme lui-meme le correctif — rien a confier a un modele.
   const toolchainRepair = repairTestToolchain(sanitizedFiles)
   if (toolchainRepair) return toolchainRepair
+
+  // La file a emis des classes Tailwind: elle emet leur outillage. Run v126:
+  // douze fois « Classes Tailwind detectees sans configuration Tailwind », zero
+  // fois le fichier manquant. Les quatre fichiers sont connus d avance.
+  const tailwindFix = planTailwindToolchainFix(sanitizedFiles)
+  if (tailwindFix) {
+    return {
+      files: applyTailwindToolchainFix(sanitizedFiles, tailwindFix),
+      reason: `outillage Tailwind complete — ${tailwindFix.notes.join(' ; ')}`,
+    }
+  }
 
   // Un type utilise mais jamais importe, alors que le fichier importe DEJA le
   // module qui l exporte: rien a deviner, tout a recoller. Run 1171: neuf passes
