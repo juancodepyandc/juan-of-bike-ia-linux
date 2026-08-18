@@ -18,6 +18,7 @@ import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.
 import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
 import { applyTailwindToolchainFix, planTailwindToolchainFix } from './codeTailwindToolchainContract.ts'
 import { applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
+import { applyImportShapeFixes, describeImportShapeFixes, planImportShapeFixes } from './codeImportExportShape.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -203,6 +204,18 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
   // de correction pour une difference cosmetique reviendrait a agir sur ce qu on
   // n a pas mesure comme un defaut — exactement ce que ce module reproche a ses
   // portes. La fonction reste disponible comme normaliseur.
+
+  // L import doit correspondre a ce que la cible exporte VRAIMENT. Balayage de
+  // corpus (42 runs): 100 TS2307 + 92 TS2613/2614, presque tous sur des modules
+  // LOCAUX du projet. Sur les livrables finaux, 19 desaccords de forme
+  // subsistent — le graphe se LIT, donc ils ne se confient pas a un modele.
+  const shapeFixes = planImportShapeFixes(sanitizedFiles)
+  if (shapeFixes.length > 0) {
+    return {
+      files: applyImportShapeFixes(sanitizedFiles, shapeFixes),
+      reason: `forme d import accordee aux exports reels sans modele — ${describeImportShapeFixes(shapeFixes)}`,
+    }
+  }
 
   // La file a emis des tests: elle doit emettre de quoi les COMPILER et les
   // TERMINER. Run 1191: `describe`/`test`/`expect` inconnus de tsc faute de
