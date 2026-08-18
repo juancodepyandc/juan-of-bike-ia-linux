@@ -53,6 +53,14 @@ export type RenderedAestheticCheck = {
   weight: number
   passed: boolean
   evidence: string
+  /**
+   * Le critere a-t-il pu MESURER quelque chose ?
+   *
+   * Un critere non concluant ne compte ni dans le score ni dans les echecs: il
+   * n a rien constate. Voir `scoreRenderedAesthetics` pour la mesure qui a
+   * impose cette distinction.
+   */
+  conclusive?: boolean
 }
 
 export type RenderedAestheticVerdict = {
@@ -62,6 +70,8 @@ export type RenderedAestheticVerdict = {
   checks: RenderedAestheticCheck[]
   failedChecks: string[]
   critique: string
+  /** Le style a-t-il pu etre mesure, ou la page n a-t-elle rien rendu ? */
+  styleMeasured: boolean
 }
 
 function usesOnlyFallbackFonts(families: string[]): boolean {
@@ -134,7 +144,11 @@ export function scoreRenderedAesthetics(args: {
       id: 'content_density',
       label: 'La page n est pas un grand vide (contenu proportionne a sa hauteur)',
       weight: 10,
-      passed: d.documentHeight <= 900 || (d.sections + d.interactive + d.images) >= Math.floor(d.documentHeight / 350),
+      // Une page BLANCHE passait ce critere: `documentHeight <= 900` est vrai
+      // quand il n y a rien du tout. Un critere qui dit « ce n est pas un grand
+      // vide » ne peut pas etre satisfait PAR le vide.
+      passed: (d.sections + d.interactive + d.images) > 0
+        && (d.documentHeight <= 900 || (d.sections + d.interactive + d.images) >= Math.floor(d.documentHeight / 350)),
       evidence: `${d.documentHeight}px de haut pour ${d.sections} section(s), ${d.interactive} controle(s), ${d.images} image(s)`,
     },
     {
@@ -146,11 +160,44 @@ export function scoreRenderedAesthetics(args: {
     },
   ]
 
-  const total = checks.reduce((sum, c) => sum + c.weight, 0)
-  const gained = checks.filter((c) => c.passed).reduce((sum, c) => sum + c.weight, 0)
-  const score = Math.round((gained / total) * 100)
+  // MESURE (corpus des 33 runs archives, verdicts de rendu):
+  //
+  //   runtime_clean EN ECHEC :  4 runs, score moyen 22/100
+  //   runtime_clean OK       : 10 runs, score moyen 78/100
+  //
+  // Les trois runs a 10/100 (v93, v110, v120) echouent EXACTEMENT les memes
+  // sept criteres — tous. Ce n est pas une page laide: c est une page qui n a
+  // pas rendu. Le DOM etant vide, `maxFont` vaut 0, aucune police ne charge,
+  // aucune image n existe — donc six criteres de STYLE se declarent en echec
+  // alors qu ils n ont rien mesure, et retirent 68 points a un livrable dont
+  // personne n a vu le style.
+  //
+  // C est le motif recurrent de ce module applique a la note de rendu: une
+  // porte qui condamne ce qu elle n a jamais mesure. Le cout est double —
+  // le score raconte « laid » quand il fallait lire « cassé », et la passe
+  // ciblee part corriger la typographie au lieu de l erreur d execution.
+  //
+  // Un critere non concluant sort donc du numerateur ET du denominateur.
+  const nothingRendered = d.fontSizeScale.length === 0
+    && d.fontFamilies.length === 0
+    && d.images === 0
+    && (d.canvases ?? 0) === 0
+    && d.interactive === 0
+    && d.sections === 0
+  const STYLE_CHECKS = new Set([
+    'display_typography', 'type_scale', 'real_typeface',
+    'visual_content', 'depth', 'content_density', 'interactivity',
+  ])
+  for (const check of checks) {
+    check.conclusive = !(nothingRendered && STYLE_CHECKS.has(check.id))
+  }
+
+  const conclusive = checks.filter((c) => c.conclusive !== false)
+  const total = conclusive.reduce((sum, c) => sum + c.weight, 0)
+  const gained = conclusive.filter((c) => c.passed).reduce((sum, c) => sum + c.weight, 0)
+  const score = total > 0 ? Math.round((gained / total) * 100) : 0
   const floor = args.floor ?? 70
-  const failed = checks.filter((c) => !c.passed)
+  const failed = conclusive.filter((c) => !c.passed)
 
   return {
     score,
@@ -160,6 +207,7 @@ export function scoreRenderedAesthetics(args: {
     checks,
     failedChecks: failed.map((c) => c.id),
     critique: buildRenderedAestheticCritique(failed, score, floor),
+    styleMeasured: !nothingRendered,
   }
 }
 
