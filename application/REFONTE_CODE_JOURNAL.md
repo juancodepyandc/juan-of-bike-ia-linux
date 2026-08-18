@@ -8619,3 +8619,35 @@ cp /tmp/p.ts /tmp/p.tsx
 node_modules/.bin/tsc --noEmit --jsx react-jsx --skipLibCheck /tmp/p.ts   # TS1110/TS1161
 node_modules/.bin/tsc --noEmit --jsx react-jsx --skipLibCheck /tmp/p.tsx  # silence
 ```
+
+### Portee reelle du verrou 1: ce n etait pas un accident du run v126
+
+Balayage de tout le corpus d audit conserve (runs v110 a v127), en croisant les
+references d erreur de SYNTAXE avec le contenu des fichiers reellement emis:
+
+```
+references d erreur de syntaxe localisees              725
+expliquees par du JSX dans une extension non-JSX       458   (63 %)
+
+  410x  audit_v110 :: main.ts        <- un arbre React Router complet
+   48x  audit_v126 :: src/vitest.setup.ts
+```
+
+Codes concernes: TS1005 (372), TS1128 (104), TS1109 (92), TS1136 (70),
+TS1161 (69), TS1110 (29), TS1002 (20), TS1003 (8). Ce ne sont pas huit defauts
+distincts: c est **la cascade d un seul analyseur qui lit du JSX avec la
+mauvaise grammaire**.
+
+`main.ts` du run v110, tel qu emis:
+
+```tsx
+L18:  <ScrollToTop />
+L20:  <Header />
+L24:  <Route path="/" element={<Home />} />
+```
+
+Presque les deux tiers de toutes les erreurs de syntaxe de la serie viennent de
+ce seul defaut. Il est reste invisible parce que le compilateur decrit toujours
+le CONTENU (« Type expected », « Unterminated regular expression literal ») et
+jamais le nom du fichier — donc chaque passe de correction cherchait au bon
+endroit d apres la trace, et au mauvais endroit d apres la cause.
