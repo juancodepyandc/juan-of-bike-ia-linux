@@ -152,25 +152,60 @@ function missingPackageDependencyIssues(project: CodeProject): CritiqueIssue[] {
   return issues
 }
 
-function hasTailwindSetup(project: CodeProject): boolean {
+/**
+ * Trois reponses, pas deux: configure, non configure, ou ILLISIBLE.
+ *
+ * Avant, un `package.json` non parsable rendait `false` — donc « pas de
+ * Tailwind » — et la porte accusait « Classes Tailwind detectees sans
+ * configuration Tailwind ». Elle n avait pourtant rien mesure: elle n avait pas
+ * pu lire. Pire, le conseil joint (« ajouter tailwindcss + config/postcss »)
+ * est irrealisable tant que le manifeste est invalide, puisque `npm install`
+ * ne peut meme pas l ouvrir. Les deux familles de defaut de ce module dans une
+ * seule porte.
+ */
+function tailwindSetupState(project: CodeProject): 'configured' | 'absent' | 'unreadable' {
   const paths = normalizedProjectPaths(project)
   if (paths.some((p) => /(^|\/)(tailwind\.config\.(?:js|cjs|mjs|ts)|postcss\.config\.(?:js|cjs|mjs|ts))$/.test(p))) {
-    return true
+    return 'configured'
   }
   const all = project.files.map((f) => f.content).join('\n')
   if (/cdn\.tailwindcss\.com/i.test(all)) {
-    return true
+    return 'configured'
   }
   const packageFile = project.files.find((f) => normalizedName(f.name) === 'package.json')
-  if (!packageFile) return false
+  if (!packageFile) return 'absent'
   try {
     const manifest = JSON.parse(packageFile.content) as {
       dependencies?: Record<string, unknown>
       devDependencies?: Record<string, unknown>
     }
-    return Boolean(manifest.dependencies?.tailwindcss || manifest.devDependencies?.tailwindcss)
+    return manifest.dependencies?.tailwindcss || manifest.devDependencies?.tailwindcss ? 'configured' : 'absent'
   } catch {
-    return false
+    return 'unreadable'
+  }
+}
+
+/**
+ * Un `package.json` invalide n etait signale NULLE PART. Il rendait pourtant
+ * muettes les portes qui le lisent (dependances declarees, Tailwind) et bloque
+ * `npm install` entierement. On nomme donc le vrai defaut, avec l erreur de
+ * l analyseur — c est reparable, contrairement au conseil qu il declenchait.
+ */
+function manifestParseIssues(project: CodeProject): CritiqueIssue[] {
+  const packageFile = project.files.find((f) => normalizedName(f.name) === 'package.json')
+  if (!packageFile) return []
+  try {
+    JSON.parse(packageFile.content)
+    return []
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    return [{
+      axis: 'compile',
+      severity: 'block',
+      message: `${packageFile.name}: JSON invalide — ${detail}`,
+      location: { file: packageFile.name },
+      suggestion: 'Corriger la syntaxe JSON du manifeste (virgule finale, guillemets, accolade non fermee). Tant qu il est invalide, npm ne peut rien installer et les controles de dependances ne mesurent rien.',
+    }]
   }
 }
 
@@ -272,7 +307,10 @@ function projectIntegrityIssues(project: CodeProject, intent: CodeIntent): Criti
     || projectType.startsWith('ssr_')
     || projectType.startsWith('fullstack_')
     || projectType === 'game_web'
-  if (visualProject && !hasTailwindSetup(project)) {
+  issues.push(...manifestParseIssues(project))
+
+  // « absent » se condamne; « unreadable » ne se condamne pas — on ne sait pas.
+  if (visualProject && tailwindSetupState(project) === 'absent') {
     let utilityCount = 0
     const examples = new Set<string>()
     for (const file of project.files) {

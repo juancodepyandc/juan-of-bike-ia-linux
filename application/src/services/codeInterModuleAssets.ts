@@ -1,6 +1,7 @@
 import { getBridgeUrl } from '../utils/runtime.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import { detectSubject } from './codeIntentSubject.ts'
+import { isCancellationMessage } from './codeInfrastructureFailure.ts'
 
 /**
  * #7: construit un prompt IMAGE dedie au SUJET exact (produit) plutot que le
@@ -173,6 +174,11 @@ export async function runInterModuleAssetPhase({
     return { bundle, files: upsertAssetManifestFile(existingFiles, bundle, bridgeUrl) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    // Un arret demande par l utilisateur n est pas une degradation a absorber:
+    // ce `catch` avalait TOUT, donc appuyer sur Stop pendant la phase d assets
+    // laissait le pipeline repartir comme si de rien n etait. Une panne d asset
+    // se degrade; une decision de l utilisateur se respecte.
+    if (signal?.aborted || isCancellationMessage(message)) throw error
     console.warn('[CodeInterModuleAssets] Echec de la generation:', message)
     setPhase(`Assets inter-modules indisponibles (${message})...`, 32)
     return { bundle: null, files: existingFiles }
