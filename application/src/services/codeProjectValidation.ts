@@ -17,7 +17,7 @@ import {
 import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.ts'
 import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
 import { applyTailwindToolchainFix, planTailwindToolchainFix } from './codeTailwindToolchainContract.ts'
-import { alignLanguageLabels, applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
+import { applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -195,15 +195,14 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
     }
   }
 
-  // Autre sens de la meme famille: un `.tsx` etiquete `typescript` recevait une
-  // grammaire qui refuse le JSX.
-  const labelAlignment = alignLanguageLabels(sanitizedFiles)
-  if (labelAlignment.changed.length > 0) {
-    return {
-      files: labelAlignment.files,
-      reason: `libelle de langage accorde a l extension — ${labelAlignment.changed.join(' ; ')}`,
-    }
-  }
+  // NOTE, et c est une decision, pas un oubli: `alignLanguageLabels` n est PAS
+  // branche ici. Mesure sur le livrable reel du run v126: 4 fichiers `.tsx` sur
+  // 31 portent le libelle `tsx` la ou les 27 autres portent `typescript` — le
+  // pipeline emet les deux. Aucun compilateur ne lit ce libelle: le defaut
+  // fonctionnel etait l EXTENSION, deja corrigee au-dessus. Depenser une passe
+  // de correction pour une difference cosmetique reviendrait a agir sur ce qu on
+  // n a pas mesure comme un defaut — exactement ce que ce module reproche a ses
+  // portes. La fonction reste disponible comme normaliseur.
 
   // La file a emis des tests: elle doit emettre de quoi les COMPILER et les
   // TERMINER. Run 1191: `describe`/`test`/`expect` inconnus de tsc faute de

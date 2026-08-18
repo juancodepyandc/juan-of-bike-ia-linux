@@ -60,7 +60,7 @@ describe('extension vs contenu: la correction est deterministe, pas probabiliste
 
     const next = applyExtensionFixes(files, fixes)
     assert.equal(next[0].name, 'src/vitest.setup.tsx')
-    assert.equal(next[0].language, 'tsx', 'le libelle de langage suit l extension')
+    assert.equal(next[0].language, 'typescript', 'libelle selon la table du PROJET')
   })
 
   test('un .js porteur de JSX est renomme en .jsx', () => {
@@ -92,12 +92,21 @@ describe('extension vs contenu: la correction est deterministe, pas probabiliste
     assert.deepEqual(planExtensionFixes(files), [], 'mieux vaut ne rien faire que perdre du contenu')
   })
 
-  test('autre sens de la famille: le libelle suit l extension', () => {
-    // Defaut deja ferme dans l autre sens: un `.tsx` etiquete `typescript`
-    // recevait une grammaire qui refuse le JSX.
-    const { files, changed } = alignLanguageLabels([{ name: 'src/App.tsx', language: 'typescript', content: 'x' }])
-    assert.equal(files[0].language, 'tsx')
-    assert.deepEqual(changed, ['src/App.tsx: typescript -> tsx'])
+  test('autre sens de la famille: le libelle suit la table du PROJET', () => {
+    // Une premiere version imposait `tsx` comme libelle: mesure sur le
+    // livrable reel du run v126, 7 fichiers sur 31 auraient ete « realignes »
+    // a chaque passe, puis re-etiquetes par l analyseur du projet. Une
+    // reparation qui oscille contre son propre analyseur.
+    const conventional = [
+      { name: 'src/App.tsx', language: 'typescript', content: 'x' },
+      { name: 'src/util.jsx', language: 'javascript', content: 'x' },
+    ]
+    assert.deepEqual(alignLanguageLabels(conventional).changed, [], 'la convention du projet ne bouge pas')
+
+    // Un libelle reellement incoherent est corrige.
+    const wrong = alignLanguageLabels([{ name: 'src/App.tsx', language: 'python', content: 'x' }])
+    assert.equal(wrong.files[0].language, 'typescript')
+    assert.deepEqual(wrong.changed, ['src/App.tsx: python -> typescript'])
   })
 })
 

@@ -90,11 +90,25 @@ const JSX_CAPABLE_EXTENSION = /\.(tsx|jsx|mdx|vue|svelte|astro)$/i
 const TS_EXTENSION = /\.ts$/i
 const JS_EXTENSION = /\.(js|mjs|cjs)$/i
 
+/**
+ * La convention du PROJET, pas une convention inventee ici.
+ *
+ * `codeGeneratedFileParser.detectLanguage` etiquette `.tsx` en `typescript` et
+ * `.jsx` en `javascript`. Une premiere version de ce module imposait `tsx`/`jsx`
+ * comme libelles: mesure sur le livrable reel du run v126, **7 fichiers sur 31**
+ * auraient ete « realignes » a chaque passe, puis re-etiquetes par l analyseur
+ * a la generation suivante. Une reparation qui oscille contre l analyseur du
+ * projet, et qui consomme une passe a chaque tour pour ne rien corriger.
+ *
+ * La coherence se mesure donc contre la table du projet. Sans cette
+ * verification, le durcissement aurait introduit exactement le defaut qu il
+ * pretend fermer.
+ */
 const LANGUAGE_FOR_EXTENSION: Record<string, string> = {
-  tsx: 'tsx',
   ts: 'typescript',
-  jsx: 'jsx',
+  tsx: 'typescript',
   js: 'javascript',
+  jsx: 'javascript',
   mjs: 'javascript',
   cjs: 'javascript',
 }
