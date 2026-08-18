@@ -8710,3 +8710,32 @@ illimitees — une reparation qui oscillerait tournerait sans fin.
 Tests : **1294 -> 1314 verts, 0 echec.** Tous les fichiers de production Code
 repassent sous 400 lignes (`codeAutoCorrection` 420 -> 398,
 `codeValidationCorrectionLoop` 402 -> 398, via `codeCorrectionBudget.ts`).
+
+### Balayage a blanc des reparations sur TOUS les livrables conserves
+
+Une reparation qui se declenche a tort abime un projet sain. Verification sur
+les 13 livrables reels conserves (pas des fixtures), en rejouant la chaine
+complete: renommage, outillage Tailwind, puis harnais anti-regression.
+
+```
+audit_v110   40 fichiers  renommages=1  tailwind=non  garde=ok  converge=oui   main.ts -> main.tsx
+audit_v111   34           0             non           ok        oui
+audit_v112   37           0             oui           ok        oui
+audit_v113   30           0             non           ok        oui
+audit_v114   35           0             non           ok        oui
+audit_v115   27           0             oui           ok        oui
+audit_v116   31           0             oui           ok        oui
+audit_v118   27           0             non           ok        oui
+audit_v120   36           0             non           ok        oui
+audit_v123   38           0             non           ok        oui
+audit_v124   39           0             oui           ok        oui
+audit_v125   35           0             oui           ok        oui
+audit_v126   31           1             oui           ok        oui   src/vitest.setup.ts -> .tsx
+```
+
+Le renommage se declenche exactement deux fois, sur les deux fichiers dont on a
+mesure qu ils cassaient la compilation (410 references d erreur pour `main.ts`,
+48 pour `vitest.setup.ts`) — **zero faux positif sur les onze autres**.
+L outillage Tailwind manquait dans 6 livrables sur 13. Le harnais accepte les
+13 chaines. Et les 13 convergent en une passe: rejouee, la chaine n a plus rien
+a faire.
