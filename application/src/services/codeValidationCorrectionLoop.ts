@@ -1,6 +1,7 @@
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeMissionDossier } from './codeMissionControl.ts'
 import { buildCorrectionStrategy, classifyErrors, shouldContinueLoop, type CorrectionPass } from './codeAutoCorrection.ts'
+import { countModelPasses } from './codeCorrectionBudget.ts' // escalade = passes modele
 import type { CodeSandboxResult } from './codeSandbox.ts'
 import type { CodePreflightReport } from './codePreflight.ts'
 import type { CodeFile, PhaseCallback } from './codeOrchestrator.ts'
@@ -99,8 +100,7 @@ export async function runValidationAndCorrectionLoop(
   let infrastructureFailure = false
   let rescueRegenerationUsed = false
   let toolingEvaluationUsed = false
-  // Le garde anti-regression parlait a l UI, jamais au correcteur (5 refus
-  // consecutifs sur le meme patch -> prompt suivant identique).
+  // Garde anti-regression: parlait a l UI, jamais au correcteur.
   let guardRejectionStreak = 0
   let lastGuardReport: string | null = null
 
@@ -153,9 +153,10 @@ export async function runValidationAndCorrectionLoop(
 
     const currentScore = computeSandboxScore(sandboxResult, currentFiles, intent)
     const errorCategories = sandboxResult.ok ? [] : classifyErrors(sandboxResult)
+    // Escalade comptee en PASSES MODELE, pas en numero de passe (mesure v129).
     const strategy = sandboxResult.ok
       ? null
-      : buildCorrectionStrategy(errorCategories, attempt, correctionLog)
+      : buildCorrectionStrategy(errorCategories, countModelPasses(correctionLog) + 1, correctionLog)
 
     const pass: CorrectionPass = {
       attempt,
