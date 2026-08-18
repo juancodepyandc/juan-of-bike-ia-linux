@@ -48,9 +48,7 @@ export function normalizedFilesChanged(currentFiles: CodeFile[], normalizedFiles
 }
 
 export function collectFailingStepOutputs(sandboxResult: CodeSandboxResult): string[] {
-  return sandboxResult.steps
-    .filter((step) => !step.ok)
-    .map((step) => step.output)
+  return sandboxResult.steps.filter((step) => !step.ok).map((step) => step.output)
 }
 
 export function truncateCorrectionErrors(sandboxResult: CodeSandboxResult): string[] {
@@ -101,8 +99,8 @@ export async function runValidationAndCorrectionLoop(
   let infrastructureFailure = false
   let rescueRegenerationUsed = false
   let toolingEvaluationUsed = false
-  // Le garde anti-regression parlait a l UI, jamais au correcteur: cinq refus
-  // consecutifs sur le meme patch, et le prompt suivant etait identique.
+  // Le garde anti-regression parlait a l UI, jamais au correcteur (5 refus
+  // consecutifs sur le meme patch -> prompt suivant identique).
   let guardRejectionStreak = 0
   let lastGuardReport: string | null = null
 
@@ -207,6 +205,7 @@ export async function runValidationAndCorrectionLoop(
       }
 
       currentFiles = localRepair.files
+      pass.localRepairOnly = true // aucun modele charge: hors budget (codeCorrectionBudget)
       guardRejectionStreak = 0
       lastGuardReport = null
       currentNotes = `${currentNotes ? `${currentNotes}\n\n` : ''}Auto-reparation locale: ${localRepair.reason}`

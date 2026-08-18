@@ -2,6 +2,8 @@
 
 import type { CodeSandboxResult } from './codeSandbox'
 import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
+import { MAX_CORRECTION_PASSES, MAX_LOCAL_REPAIR_PASSES, computeAdaptiveCorrectionBudget, countModelPasses } from './codeCorrectionBudget.ts'
+export { MAX_CORRECTION_PASSES, MAX_LOCAL_REPAIR_PASSES, computeAdaptiveCorrectionBudget }
 import { buildPartialRewriteInstructions, buildQuickFixInstructions, buildTargetedRepairInstructions } from './codeCorrectionInstructions.ts'
 import { cycleGraceRemaining, detectCorrectionCycle, withCycleDirective } from './codeCorrectionCycle.ts'
 
@@ -64,6 +66,17 @@ export type CorrectionPass = {
   strategy: CorrectionLevel | 'initial'
   modelUsed: string
   resolved: boolean
+  /**
+   * Passe resolue SANS modele (reparation locale deterministe).
+   *
+   * Le budget de correction existe pour borner les CHARGEMENTS DE MODELE — la
+   * VRAM et la RAM sont la ressource rare, pas les passes. Une reparation
+   * locale n en charge aucun. La compter revenait a mesurer autre chose que ce
+   * que le plafond protege: mesure sur les runs v124/v125/v126, une passe
+   * gratuite sur sept etait deja prelevee sur le budget du modele, et le
+   * balayage des reparations deterministes en ajoute d autres.
+   */
+  localRepairOnly?: boolean
 }
 
 export function classifyErrors(sandboxResult: CodeSandboxResult): ErrorCategory[] {
@@ -129,24 +142,6 @@ function selectDominantCause(categories: ErrorCategory[]): ErrorCategory {
   return priority.find((category) => categories.includes(category)) ?? categories[0] ?? 'unknown'
 }
 
-// Budget proportionnel a la taille du projet: un livrable de 30 fichiers
-// recevait le meme budget qu un de 3. Le PLAFOND ne bouge pas — on repartit.
-export function computeAdaptiveCorrectionBudget(
-  errorCategories: ErrorCategory[],
-  _correctionLog: CorrectionPass[] = [],
-  fileCount = 0,
-): number {
-  const categories = errorCategories.length > 0 ? errorCategories : ['unknown' as ErrorCategory]
-  let budget = fileCount > 0 && fileCount <= 3 ? 5 : fileCount > 10 ? 7 : 6
-
-  if (categories.length >= 2) budget += 1
-  const HEAVY: ErrorCategory[] = [
-    'config_error', 'dependency_missing', 'test_failure', 'runtime_crash', 'build_failure', 'timeout', 'unknown',
-  ]
-  if (categories.some((category) => HEAVY.includes(category))) budget += 2
-
-  return Math.max(4, Math.min(MAX_CORRECTION_PASSES, budget))
-}
 
 export function buildCorrectionDiagnosis(
   errorCategories: ErrorCategory[],
@@ -357,7 +352,7 @@ export function buildCorrectionStrategy(
  * Le cap n est PAS un "plateau fixe a 45%" : il est atteint apres avoir
  * reellement tente 4 variations de strategie + recherche web + rescue.
  */
-export const MAX_CORRECTION_PASSES = 10
+
 
 export function shouldContinueLoop(
   correctionLog: CorrectionPass[],
@@ -371,9 +366,16 @@ export function shouldContinueLoop(
   // Score parfait → succes
   if (latestScore >= 100) return false
 
-  if (correctionLog.length >= MAX_CORRECTION_PASSES) return false // plafond dur machine, jamais depasser
+  // Seules les passes qui ont CHARGE UN MODELE sont prelevees sur le budget.
+  const modelPasses = countModelPasses(correctionLog)
+  const localRepairs = correctionLog.length - modelPasses
+  // Les reparations locales restent bornees, sinon une reparation qui oscille
+  // tournerait indefiniment — gratuitement, mais indefiniment.
+  if (localRepairs >= MAX_LOCAL_REPAIR_PASSES) return false
+
+  if (modelPasses >= MAX_CORRECTION_PASSES) return false // plafond dur machine, jamais depasser
   // Au budget adaptatif on ne coupe que si la progression ne paie plus (un run qui grimpe encore va jusqu'au plafond dur).
-  if (correctionLog.length >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog, fileCount) && !isCorrectionScoreClimbing(correctionLog)) return false
+  if (modelPasses >= computeAdaptiveCorrectionBudget(_errorCategories, correctionLog, fileCount) && !isCorrectionScoreClimbing(correctionLog)) return false
 
   // Cycle: un defaut revenu apres avoir disparu, sans terrain gagne entre-temps.
   // Retenter le MEME traitement redonnerait le meme aller-retour (run 1171) —

@@ -12,6 +12,7 @@ import {
   planTailwindToolchainFix,
 } from '../services/codeTailwindToolchainContract.ts'
 import { inspectCodePatchRegression } from '../services/codeRegressionGuard.ts'
+import { MAX_CORRECTION_PASSES, MAX_LOCAL_REPAIR_PASSES, shouldContinueLoop, type CorrectionPass } from '../services/codeAutoCorrection.ts'
 import {
   countTailwindUtilities,
   detectTailwindSetup,
@@ -195,5 +196,37 @@ describe('la file emet des classes Tailwind, elle emet leur outillage', () => {
   test('sous le seuil, on ne fabrique pas un projet Tailwind qui n existe pas', () => {
     const light = { name: 'src/App.tsx', language: 'tsx', content: '<div className="flex">x</div>' }
     assert.equal(planTailwindToolchainFix([light, manifest, sheet]), null)
+  })
+})
+
+describe('budget de correction: une reparation gratuite ne se preleve pas sur le modele', () => {
+  const pass = (attempt: number, score: number, localRepairOnly = false): CorrectionPass => ({
+    attempt, score, errors: ['boom'], strategy: 'quick_fix', modelUsed: 'qwen3-coder:30b', resolved: false, localRepairOnly,
+  })
+
+  test('le plafond dur ne compte que les passes qui chargent un modele', () => {
+    // Le plafond protege la VRAM/RAM, donc les CHARGEMENTS DE MODELE. Mesure
+    // sur v124/v125/v126: une passe gratuite sur sept etait deja prelevee au
+    // modele, et le balayage des reparations deterministes en ajoute.
+    // 7 reparations gratuites + 2 passes modele: 9 entrees au journal, mais
+    // seulement 2 chargements de modele. Avant, ces 9 entrees consommaient le
+    // plafond et le budget adaptatif.
+    const mixed = [
+      ...Array.from({ length: 7 }, (_, i) => pass(i + 1, 50, true)),
+      pass(8, 55), pass(9, 60),
+    ]
+    assert.equal(shouldContinueLoop(mixed, 9), true, 'deux modeles charges seulement: le budget reste ouvert')
+
+    const allModel = Array.from({ length: MAX_CORRECTION_PASSES }, (_, i) => pass(i + 1, 50))
+    assert.equal(shouldContinueLoop(allModel, MAX_CORRECTION_PASSES), false, 'le plafond dur tient')
+  })
+
+  test('les reparations locales restent bornees: gratuites, pas illimitees', () => {
+    const looping = Array.from({ length: MAX_LOCAL_REPAIR_PASSES }, (_, i) => pass(i + 1, 50, true))
+    assert.equal(shouldContinueLoop(looping, MAX_LOCAL_REPAIR_PASSES), false, 'une reparation qui oscille doit s arreter')
+  })
+
+  test('un score parfait arrete la boucle quoi qu il arrive', () => {
+    assert.equal(shouldContinueLoop([pass(1, 100, true)], 1), false)
   })
 })
