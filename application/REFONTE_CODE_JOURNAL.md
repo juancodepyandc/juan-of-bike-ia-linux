@@ -8739,3 +8739,106 @@ mesure qu ils cassaient la compilation (410 references d erreur pour `main.ts`,
 L outillage Tailwind manquait dans 6 livrables sur 13. Le harnais accepte les
 13 chaines. Et les 13 convergent en une passe: rejouee, la chaine n a plus rien
 a faire.
+
+## 2026-08-18 (suite) — Le corpus comme gisement: carte des 1187 erreurs
+
+Changement de methode demande par l utilisateur, et il a raison: « tout doit
+pouvoir etre conforme [...] c est pour ca que je t avais dit de tout revoir
+avant de tester ». On cesse d attendre qu un run revele la cause suivante.
+
+Extraction: **42 runs archives, 1187 erreurs TypeScript localisees**
+(`output/code/corpus/errors.json`).
+
+### Premiere lecture: la recence change tout
+
+```
+                   v113+    <v113    verdict
+TS1005               72      277
+TS2614               66        0
+TS1110 + TS1161      48       40
+TS1128               16       60
+TS2322               15       36
+TS7006               12       52
+TS2339               10       76
+TS1109                8       80
+TS2307                8       64
+TS2367                6       72
+TS1136                0       70    ETEINT
+TS2613                0       26    ETEINT
+--------------------------------------------
+total               318      869
+```
+
+**869 des 1187 erreurs sont anciennes.** Balayer le corpus sans filtrer la
+recence aurait fait construire des reparations pour des defauts qui ne se
+produisent plus. C est le premier resultat de la methode, et il est negatif —
+donc precieux.
+
+### Carte: famille -> cause commune -> decision -> effet
+
+```
+FAMILLE                   VOL.  CAUSE COMMUNE                          DECISION
+syntaxe TS1110/1161/1005   438  JSX dans une extension non-JSX         CORRIGE (deterministe)
+                                (438/695 de la famille syntaxique)
+TS2613/2614 + TS2307 loc.  180  forme d import != exports reels        CORRIGE (deterministe)
+TS1005/TS1002 apostrophe    ~   apostrophe francaise dans un litteral  DEJA FERME avant moi
+                                a guillemets simples                   (codeApostropheRepair.ts)
+TS2307 cible absente        61  modules jamais emis                    DEJA FERME avant moi
+TS1136                      70  —                                      ETEINT (0 depuis v113)
+TS2339/TS2322/TS2367        35  pas reduites a une cause commune        NON TRAITE, non revendique
+   (en v113+ seulement)
+TS7006                      12  consigne de generation, pas reparation  NON TRAITE
+```
+
+### Concentration, pas cas par cas
+
+```
+famille syntaxique: 695 occurrences sur 26 fichiers
+  les 8 premiers fichiers = 88 % de la famille
+  370x  audit_v110 :: main.ts        (un arbre React Router dans un .ts)
+   80x  audit_v110 :: module-9.ts
+   48x  audit_v125 :: OrderList.tsx
+   24x  audit_v126 :: vitest.setup.ts
+```
+
+Et les deux runs les plus recents sont chacun domines par UNE seule famille:
+
+```
+v126   48 erreurs = 24 TS1110 + 24 TS1161     -> 100 % extension/JSX
+v129   72 erreurs = 60 TS2614 + 8 + 4         ->  83 % forme d import
+```
+
+### Deux familles ETEINTES: verifie avant de construire
+
+`codeMissingModuleCompletion` n etant branche que dans la phase de generation,
+j allais cabler une reparation pour les 61 modules absents. Mesure par run
+AVANT de coder:
+
+```
+imports locaux non resolus, par run:
+  v99..v112 : 5, 2, 4, 6, 18, 13, 10, 1, 2
+  v113..v129: 0 partout
+```
+
+**Zero depuis v113.** La famille est deja fermee. J ai failli construire une
+reparation pour un defaut qui ne se produit plus — exactement ce que la
+methode par run fait faire, et exactement ce que le balayage de corpus evite.
+
+Meme chose pour l apostrophe francaise (`'Presqu\'île'` fermant le litteral):
+la cause est reelle et visible en v123/v124, TS1005 s eteint apres v125, et
+`codeApostropheRepair.ts` existait deja. Balaye, trouve ferme, rien a faire.
+
+### Ce que je ne peux PAS prouver, et pourquoi
+
+Les 60 TS2614 du run v129 portent sur six composants
+(`OrderList`, `OrderSummary`, `ContactForm`, `SubscriptionForm`,
+`StoryContent`, `TeamPhotoSection`), chacun repete ~10 fois — une fois par
+passe. C est exactement le motif que `codeImportExportShape` repare.
+
+Mais rejoue sur le livrable FINAL de v129, mon correctif trouve **0** cas: le
+pipeline avait fini par les resoudre en 10 passes. Les etats INTERMEDIAIRES ne
+sont pas conserves par le harnais — seul le lot final porte le contenu.
+
+Je ne peux donc pas prouver sur archive que la reparation aurait tire; je peux
+seulement montrer qu elle traite la forme exacte du defaut (test sur la paire
+minimale). **Limite reelle du corpus, dite comme telle.**
