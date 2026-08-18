@@ -11,6 +11,7 @@ import {
   applyTailwindToolchainFix,
   planTailwindToolchainFix,
 } from '../services/codeTailwindToolchainContract.ts'
+import { inspectCodePatchRegression } from '../services/codeRegressionGuard.ts'
 import {
   countTailwindUtilities,
   detectTailwindSetup,
@@ -96,6 +97,41 @@ describe('extension vs contenu: la correction est deterministe, pas probabiliste
     const { files, changed } = alignLanguageLabels([{ name: 'src/App.tsx', language: 'typescript', content: 'x' }])
     assert.equal(files[0].language, 'tsx')
     assert.deepEqual(changed, ['src/App.tsx: typescript -> tsx'])
+  })
+})
+
+describe('anti-regression: un fichier RENOMME n est pas un fichier perdu', () => {
+  // Sans ceci, la reparation deterministe ci-dessus ne serait JAMAIS appliquee:
+  // mesure sur le livrable reel du run v126, le harnais refusait le renommage
+  // avec `removed_file: src/vitest.setup.ts`. Le contenu etait pourtant intact
+  // sous un autre nom. Une porte de plus qui regarde des chemins et affirme des
+  // capacites.
+  const before = [
+    { name: 'src/vitest.setup.ts', language: 'typescript', content: VITEST_SETUP_V126 },
+    { name: 'src/App.tsx', language: 'tsx', content: 'export const App = () => <div>hi</div>' },
+  ]
+
+  test('le renommage produit par la reparation passe le harnais', () => {
+    const after = applyExtensionFixes(before, planExtensionFixes(before))
+    assert.equal(inspectCodePatchRegression(before, after).ok, true)
+  })
+
+  test('une VRAIE suppression reste refusee — la garde n est pas affaiblie', () => {
+    const report = inspectCodePatchRegression(before, before.slice(1))
+    assert.equal(report.ok, false)
+    assert.deepEqual(report.violations, [{ kind: 'removed_file', detail: 'src/vitest.setup.ts' }])
+  })
+
+  test('un test renomme reste un test, et ses exports ne sont pas amputes', () => {
+    const beforeTests = [{ name: 'src/App.test.ts', language: 'typescript', content: "export const helper = () => <div />\ntest('x', () => {})" }]
+    const after = applyExtensionFixes(beforeTests, planExtensionFixes(beforeTests))
+    const report = inspectCodePatchRegression(beforeTests, after)
+    assert.equal(report.ok, true, `violations: ${report.violations.map((v) => v.kind).join(',')}`)
+  })
+
+  test('un fichier vide de son contenu reste une regression', () => {
+    const emptied = [{ ...before[0], content: '' }, before[1]]
+    assert.equal(inspectCodePatchRegression(before, emptied).ok, false)
   })
 })
 

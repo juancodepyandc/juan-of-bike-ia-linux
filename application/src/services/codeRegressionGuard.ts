@@ -6,6 +6,11 @@ export type CodeCapabilitySnapshot = {
   schemaVersion: typeof CODE_REGRESSION_SNAPSHOT_SCHEMA
   files: string[]
   nonEmptyFiles: string[]
+  /**
+   * Empreinte du contenu par chemin. Sans elle, le harnais ne peut pas
+   * distinguer un fichier PERDU d un fichier RENOMME — voir renamedPaths().
+   */
+  contentFingerprints: Record<string, string>
   testFiles: string[]
   fileSizes: Record<string, number>
   packageScripts: Record<string, string>
@@ -179,12 +184,14 @@ export function snapshotCodeCapabilities(files: CodeFile[]): CodeCapabilitySnaps
   })).sort((a, b) => a.normalizedName.localeCompare(b.normalizedName))
 
   const fileSizes: Record<string, number> = {}
+  const contentFingerprints: Record<string, string> = {}
   const packageScripts: Record<string, string> = {}
   const exportsByFile: Record<string, string[]> = {}
   const endpointsByFile: Record<string, string[]> = {}
 
   for (const file of normalizedFiles) {
     fileSizes[file.normalizedName] = file.content.trim().length
+    contentFingerprints[file.normalizedName] = fingerprint(file.content)
     Object.assign(packageScripts, extractPackageScripts(file))
 
     const fileExports = extractExports(file.content)
@@ -208,12 +215,73 @@ export function snapshotCodeCapabilities(files: CodeFile[]): CodeCapabilitySnaps
       .filter((file) => isHtmlDocument(file))
       .map((file) => file.normalizedName),
     fileSizes,
+    contentFingerprints,
     packageScripts,
     exportsByFile,
     endpointsByFile,
     sourceFileCount: sourceFiles.length,
     sourceBytes: sourceFiles.reduce((sum, file) => sum + file.content.trim().length, 0),
   }
+}
+
+/** Empreinte stable et bon marche du contenu normalise. */
+function fingerprint(content: string): string {
+  const text = content.replace(/\r\n/g, '\n').trim()
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ code, 0x01000193)
+    h2 = Math.imul(h2 + code, 0x85ebca6b) ^ (h2 >>> 13)
+  }
+  return `${(h1 >>> 0).toString(36)}.${(h2 >>> 0).toString(36)}.${text.length}`
+}
+
+const stemOf = (path: string) => path.replace(/\.[^./]+$/, '')
+
+/**
+ * Un fichier RENOMME n est pas un fichier perdu.
+ *
+ * Le harnais mesurait « ce chemin a disparu » et concluait « une capacite a
+ * disparu ». Mesure sur le livrable reel du run v126: la reparation
+ * deterministe `src/vitest.setup.ts -> src/vitest.setup.tsx` — celle qui
+ * debloque un run mort sur sept passes inutiles — etait REFUSEE par le harnais
+ * avec `removed_file: src/vitest.setup.ts`. Le contenu etait pourtant intact,
+ * a un octet pres, sous un autre nom.
+ *
+ * Une fois de plus, une porte qui condamne quelque chose qu elle n a jamais
+ * mesure: elle regarde des chemins, elle affirme des capacites.
+ *
+ * Deux preuves acceptees, l une ou l autre suffit:
+ *   - le contenu reapparait a l identique sous un chemin neuf;
+ *   - le meme radical (chemin sans extension) reapparait sous un chemin neuf.
+ */
+function renamedPaths(before: CodeCapabilitySnapshot, after: CodeCapabilitySnapshot): Map<string, string> {
+  const renamed = new Map<string, string>()
+  const newPaths = after.files.filter((path) => !before.files.includes(path))
+  if (newPaths.length === 0) return renamed
+  const byFingerprint = new Map<string, string>()
+  const byStem = new Map<string, string>()
+  for (const path of newPaths) {
+    const print = after.contentFingerprints[path]
+    if (print && !byFingerprint.has(print)) byFingerprint.set(print, path)
+    const stem = stemOf(path)
+    if (!byStem.has(stem)) byStem.set(stem, path)
+  }
+  for (const path of before.files) {
+    if (after.files.includes(path)) continue
+    const target = byFingerprint.get(before.contentFingerprints[path] ?? '\u0000') ?? byStem.get(stemOf(path))
+    if (target) renamed.set(path, target)
+  }
+  return renamed
+}
+
+/** Reindexe une carte chemin -> capacites en suivant les renommages. */
+function reindexByRename<T>(source: Record<string, T>, renamed: Map<string, string>): Record<string, T> {
+  if (renamed.size === 0) return source
+  const out: Record<string, T> = {}
+  for (const [path, value] of Object.entries(source)) out[renamed.get(path) ?? path] = value
+  return out
 }
 
 function missingFrom(before: string[], after: string[]): string[] {
@@ -244,8 +312,10 @@ export function compareCodeCapabilities(
   after: CodeCapabilitySnapshot,
 ): CodeRegressionGuardReport {
   const violations: CodeRegressionViolation[] = []
+  const renamed = renamedPaths(before, after)
 
   for (const path of missingFrom(before.nonEmptyFiles, after.files)) {
+    if (renamed.has(path)) continue
     violations.push({ kind: 'removed_file', detail: path })
   }
   for (const path of before.nonEmptyFiles) {
@@ -254,6 +324,9 @@ export function compareCodeCapabilities(
     }
   }
   for (const path of missingFrom(before.testFiles, after.testFiles)) {
+    // Un test renomme reste un test: le harnais compare des chemins, la
+    // capacite tient au contenu.
+    if (renamed.has(path)) continue
     violations.push({ kind: 'removed_test', detail: path })
   }
   // Un point d entree HTML qui cesse d etre un document est une capacite
@@ -265,8 +338,11 @@ export function compareCodeCapabilities(
   }
 
   pushMissingMapEntries(violations, 'removed_script', before.packageScripts, after.packageScripts)
-  pushMissingMapEntries(violations, 'removed_export', before.exportsByFile, after.exportsByFile)
-  pushMissingMapEntries(violations, 'removed_endpoint', before.endpointsByFile, after.endpointsByFile)
+  // Les exports et les points d entree sont indexes PAR CHEMIN: un renommage
+  // les deplacerait tous sans qu aucun ne disparaisse. On reindexe donc avant
+  // de comparer, sinon un simple renommage se lit comme une amputation.
+  pushMissingMapEntries(violations, 'removed_export', reindexByRename(before.exportsByFile, renamed), after.exportsByFile)
+  pushMissingMapEntries(violations, 'removed_endpoint', reindexByRename(before.endpointsByFile, renamed), after.endpointsByFile)
 
   if (before.sourceFileCount >= 3 && after.sourceFileCount < Math.ceil(before.sourceFileCount * 0.7)) {
     violations.push({
