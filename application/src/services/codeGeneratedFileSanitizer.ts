@@ -3,6 +3,7 @@
 // Extracted from codeOrchestrator.ts during WS1 modularisation.
 // ---------------------------------------------------------------------------
 
+import { repairEscapedNewlines } from './codeEscapedNewlines.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import {
   getGeneratedNodeDependencySpec,
@@ -175,7 +176,7 @@ function repairGeneratedTsConfig(config: Record<string, unknown>) {
 
 export function sanitizeGeneratedFileContent(filename: string, content: string) {
   const normalized = filename.replace(/\\/g, '/').toLowerCase()
-  const cleaned = stripFormattingArtifacts(content)
+  const cleaned = stripFormattingArtifacts(repairEscapedNewlines(filename, content).content)
 
   if (normalized.endsWith('.json')) {
     const parsed = tryParseJson(cleaned)
