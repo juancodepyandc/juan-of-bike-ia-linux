@@ -18,7 +18,7 @@ import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.
 import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
 import { applyTailwindToolchainFix, planTailwindToolchainFix } from './codeTailwindToolchainContract.ts'
 import { applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
-import { applyImportShapeFixes, describeImportShapeFixes, planImportShapeFixes } from './codeImportExportShape.ts'
+import { applyDirectoryModuleIndexes, applyImportShapeFixes, describeImportShapeFixes, planDirectoryModuleIndexes, planImportShapeFixes } from './codeImportExportShape.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
 const WEB_CODE_EXTENSIONS = new Set(['html', 'htm', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'])
@@ -204,6 +204,19 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
   // de correction pour une difference cosmetique reviendrait a agir sur ce qu on
   // n a pas mesure comme un defaut — exactement ce que ce module reproche a ses
   // portes. La fonction reste disponible comme normaliseur.
+
+  // Le module-REPERTOIRE sans index. Mesure (run v129): 20 occurrences de
+  // TS2307 sur UN seul import — `../components/AdminDashboard` alors que le
+  // fichier livre est `AdminDashboard/AdminDashboard.tsx`. On cree l index
+  // manquant plutot que de reecrire les importateurs: un fichier repare tout
+  // le repertoire d un coup, et personne ne voit son code modifie.
+  const indexFixes = planDirectoryModuleIndexes(sanitizedFiles)
+  if (indexFixes.length > 0) {
+    return {
+      files: applyDirectoryModuleIndexes(sanitizedFiles, indexFixes),
+      reason: `index de module cree sans modele — ${indexFixes.map((f) => f.path).join(' ; ')}`,
+    }
+  }
 
   // L import doit correspondre a ce que la cible exporte VRAIMENT. Balayage de
   // corpus (42 runs): 100 TS2307 + 92 TS2613/2614, presque tous sur des modules

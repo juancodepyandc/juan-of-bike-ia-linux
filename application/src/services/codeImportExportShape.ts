@@ -173,3 +173,82 @@ export function applyImportShapeFixes(files: CodeFile[], fixes: ImportShapeFix[]
 export function describeImportShapeFixes(fixes: ImportShapeFix[]): string {
   return fixes.map((fix) => `${fix.file}: ${fix.reason}`).join(' ; ')
 }
+
+export type DirectoryIndexFix = {
+  /** Chemin de l index a creer, ex. `src/components/AdminDashboard/index.ts`. */
+  path: string
+  /** Module reexporte, ex. `./AdminDashboard`. */
+  target: string
+  hasDefault: boolean
+  named: string[]
+}
+
+/**
+ * Le module-REPERTOIRE sans index.
+ *
+ * MESURE (run v129, 20 occurrences sur un seul import):
+ *   AppRoutes.tsx : import AdminDashboard from '../components/AdminDashboard'
+ *   livre         : src/components/AdminDashboard/AdminDashboard.tsx
+ *
+ * Le modele ecrit `components/Foo/Foo.tsx` puis importe `components/Foo`. Sans
+ * `index`, rien ne resout — et le compilateur repete TS2307 a chaque passe.
+ *
+ * On ne reecrit PAS l importateur: on cree l index manquant. Un seul fichier
+ * repare tous les importateurs du repertoire d un coup, et personne ne voit son
+ * code modifie. Deterministe: la cible est choisie sans ambiguite ou pas du
+ * tout — fichier homonyme du repertoire, sinon fichier source unique.
+ */
+export function planDirectoryModuleIndexes(files: CodeFile[]): DirectoryIndexFix[] {
+  const paths = files.map((file) => normalize(file.name))
+  const existing = new Set(paths)
+  const fixes = new Map<string, DirectoryIndexFix>()
+
+  for (const file of files) {
+    if (!SOURCE_FILE.test(file.name)) continue
+    for (const parsed of readImports(file.content)) {
+      if (!parsed.specifier.startsWith('.')) continue
+      if (resolveLocalImport(files, file.name, parsed.specifier)) continue
+
+      const segments = normalize(file.name).split('/').slice(0, -1)
+      for (const part of parsed.specifier.split('/')) {
+        if (part === '.' || part === '') continue
+        if (part === '..') segments.pop()
+        else segments.push(part)
+      }
+      const dir = segments.join('/')
+      if (!dir || fixes.has(dir)) continue
+      // Le specifier designe-t-il un REPERTOIRE reellement livre ?
+      const inside = paths.filter((p) => p.startsWith(`${dir}/`) && SOURCE_FILE.test(p))
+      if (inside.length === 0) continue
+      if (existing.has(`${dir}/index.ts`) || existing.has(`${dir}/index.tsx`)) continue
+
+      const base = dir.split('/').pop() ?? ''
+      const homonym = inside.find((p) => p.split('/').pop()?.replace(/\.[^.]+$/, '') === base)
+      const target = homonym ?? (inside.length === 1 ? inside[0] : null)
+      if (!target) continue
+
+      const source = files.find((f) => normalize(f.name) === target)?.content ?? ''
+      const exports = readModuleExports(source)
+      fixes.set(dir, {
+        path: `${dir}/index.ts`,
+        target: `./${target.split('/').pop()?.replace(/\.[^.]+$/, '')}`,
+        hasDefault: exports.hasDefault,
+        named: [...exports.named],
+      })
+    }
+  }
+  return [...fixes.values()]
+}
+
+/** Cree les index manquants. Fonction pure — aucun fichier existant modifie. */
+export function applyDirectoryModuleIndexes(files: CodeFile[], fixes: DirectoryIndexFix[]): CodeFile[] {
+  if (fixes.length === 0) return files
+  const created = fixes.map((fix) => {
+    const lines: string[] = []
+    if (fix.hasDefault) lines.push(`export { default } from '${fix.target}'`)
+    if (fix.named.length > 0) lines.push(`export { ${fix.named.join(', ')} } from '${fix.target}'`)
+    if (lines.length === 0) lines.push(`export * from '${fix.target}'`)
+    return { name: fix.path, language: 'typescript', content: `${lines.join('\n')}\n` }
+  })
+  return [...files, ...created]
+}

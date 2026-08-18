@@ -6,6 +6,8 @@ import {
   planImportShapeFixes,
   readImports,
   readModuleExports,
+  applyDirectoryModuleIndexes,
+  planDirectoryModuleIndexes,
   resolveLocalImport,
 } from '../services/codeImportExportShape.ts'
 
@@ -110,5 +112,61 @@ describe('reconciliation de forme: cas reels du corpus', () => {
     ]
     const next = applyImportShapeFixes(files, planImportShapeFixes(files))
     assert.deepEqual(planImportShapeFixes(next), [])
+  })
+})
+
+describe('module-repertoire sans index: on cree l index, on ne reecrit personne', () => {
+  // MESURE (run v129): 20 occurrences de TS2307 sur UN seul import.
+  //   AppRoutes.tsx : import AdminDashboard from '../components/AdminDashboard'
+  //   livre         : src/components/AdminDashboard/AdminDashboard.tsx
+  const project = [
+    f('src/routes/AppRoutes.tsx', "import AdminDashboard from '../components/AdminDashboard'"),
+    f('src/components/AdminDashboard/AdminDashboard.tsx', 'const AdminDashboard = () => null\nexport default AdminDashboard'),
+  ]
+
+  test('l index manquant est cree, et l import resout', () => {
+    const fixes = planDirectoryModuleIndexes(project)
+    assert.equal(fixes.length, 1)
+    assert.equal(fixes[0].path, 'src/components/AdminDashboard/index.ts')
+    const next = applyDirectoryModuleIndexes(project, fixes)
+    assert.equal(resolveLocalImport(next, 'src/routes/AppRoutes.tsx', '../components/AdminDashboard'), 'src/components/AdminDashboard/index.ts')
+    assert.match(next.at(-1)!.content, /export \{ default \} from '\.\/AdminDashboard'/)
+  })
+
+  test('aucun fichier existant n est modifie', () => {
+    const next = applyDirectoryModuleIndexes(project, planDirectoryModuleIndexes(project))
+    assert.equal(next[0].content, project[0].content)
+    assert.equal(next[1].content, project[1].content)
+  })
+
+  test('les exports nommes sont reexportes aussi', () => {
+    const named = [
+      f('src/App.tsx', "import { Header } from './components/Header'"),
+      f('src/components/Header/Header.tsx', 'export const Header = () => null'),
+    ]
+    const next = applyDirectoryModuleIndexes(named, planDirectoryModuleIndexes(named))
+    assert.match(next.at(-1)!.content, /export \{ Header \} from '\.\/Header'/)
+  })
+
+  test('AMBIGU: plusieurs fichiers, aucun homonyme -> on ne choisit pas', () => {
+    const ambiguous = [
+      f('src/App.tsx', "import X from './components/Widgets'"),
+      f('src/components/Widgets/Alpha.tsx', 'export default 1'),
+      f('src/components/Widgets/Beta.tsx', 'export default 2'),
+    ]
+    assert.deepEqual(planDirectoryModuleIndexes(ambiguous), [])
+  })
+
+  test('un index deja present n est jamais ecrase', () => {
+    const withIndex = [
+      f('src/App.tsx', "import X from './components/Foo'"),
+      f('src/components/Foo/Foo.tsx', 'export default 1'),
+      f('src/components/Foo/index.ts', "export { default } from './Foo'"),
+    ]
+    assert.deepEqual(planDirectoryModuleIndexes(withIndex), [])
+  })
+
+  test('un repertoire inexistant n invente rien', () => {
+    assert.deepEqual(planDirectoryModuleIndexes([f('src/App.tsx', "import X from './nowhere'")]), [])
   })
 })
