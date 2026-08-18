@@ -213,6 +213,33 @@ try {
     onValidationUpdate: (sandboxResult) => {
       if (!sandboxResult) return
       emit(buildCodeStreamTestResultEvent(sandboxResult, nextMeta()))
+      // LACUNE DE MESURE, comblee ici: le flux ne conservait que l etat FINAL.
+      // Les erreurs d une passe portent donc sur des fichiers qu on ne peut
+      // plus lire — impossible d attribuer une erreur a sa cause, ni de
+      // prouver qu une reparation aurait servi. Mesure: les 60 TS2614 du run
+      // v129 sont introuvables dans son livrable final, le pipeline les ayant
+      // resolus en 10 passes.
+      // On archive donc, a chaque validation en echec, le contenu des SEULS
+      // fichiers que la sortie d erreur nomme. Borne par construction.
+      try {
+        const failing = (sandboxResult.steps || []).filter((s) => !s.ok).map((s) => s.output || '').join('\n')
+        if (!failing) return
+        const cited = new Set()
+        for (const m of failing.matchAll(/([\w@./-]+\.(?:tsx?|jsx?|mjs|cjs|json|css|html))[(:]/g)) cited.add(m[1].replace(/^\.\//, ''))
+        const snapshot = (lastFiles || []).filter((f) => {
+          const name = String(f.name).replace(/\\/g, '/')
+          return [...cited].some((c) => name === c || name.endsWith(`/${c}`) || c.endsWith(name))
+        })
+        if (snapshot.length === 0) return
+        emit({
+          schema: 'aurora.code.stream/1',
+          kind: 'pass.snapshot',
+          ...nextMeta(),
+          files: snapshot.slice(0, 12).map((f) => ({
+            path: String(f.name), language: f.language, content: String(f.content).slice(0, 20_000),
+          })),
+        })
+      } catch { /* l archivage ne doit jamais tuer un run */ }
     },
     onCorrectionLogUpdate: (logArr, attempt, score) => {
       const pass = Array.isArray(logArr) && logArr.length ? logArr[logArr.length - 1] : null
