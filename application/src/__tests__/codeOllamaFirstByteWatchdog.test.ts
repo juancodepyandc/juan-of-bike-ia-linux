@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { describe, test } from 'node:test'
+
+import { withTimeout } from '../services/llmTimebox.ts'
 
 import {
   CALLER_CANCEL_MARK,
@@ -120,6 +123,48 @@ describe('ollamaFirstByteWatchdog — le budget mesure ce qu il pretend', () => 
   })
 })
 
+describe('un budget qui abandonne doit ARRETER ce qu il abandonne', () => {
+  test('withTimeout seul n annule rien: la mesure qui justifie le signal par tentative', async () => {
+    // Mesure du mecanisme, pas une opinion. `withTimeout` est un
+    // `Promise.race`: quand le budget gagne, l operation perdante CONTINUE.
+    // Applique a un appel Ollama, cela veut dire que le modele reste occupe
+    // pendant que la tentative suivante en charge un autre — exactement la
+    // contention relevee dans le journal Ollama du run v125 (cinq POST
+    // /api/generate simultanes, chargement de modele avorte a 3m30s).
+    let stillRunning = false
+    let finished = false
+    const operation = (async () => {
+      stillRunning = true
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      finished = true
+    })()
+
+    await assert.rejects(withTimeout(operation, { label: 'sonde', timeoutMs: 1 }), /timed out after 1ms/)
+    assert.equal(stillRunning, true)
+    assert.equal(finished, false, 'l operation n est pas terminee — et surtout, elle n est pas arretee')
+
+    await operation
+    assert.equal(finished, true, 'elle s est terminee toute seule APRES l abandon: rien ne l avait stoppee')
+  })
+
+  test('le budget d une tentative se propage bien en signal jusqu a l appel modele', () => {
+    // Garde de source, dans l esprit de codeModuleStructure.test.ts: les
+    // closures passees a `withResilience` doivent transmettre le signal DE LA
+    // TENTATIVE, jamais celui de l appelant. Sinon l annulation declenchee par
+    // l expiration du budget n atteint pas l appel et le modele reste occupe.
+    const source = readFileSync('src/services/ollamaResilience.ts', 'utf8')
+    const closureBodies = source.slice(source.indexOf('async function withResilience'))
+    assert.doesNotMatch(
+      closureBodies,
+      /signal: opts\?\.signal,/,
+      'une closure transmet encore le signal de l appelant au lieu de celui de la tentative',
+    )
+    assert.match(source, /execute: \(model: string, attemptSignal: AbortSignal \| undefined\) => Promise<T>/)
+    assert.match(source, /if \(isLlmTimeboxError\(err\)\) \{/)
+    assert.match(source, /opts\?\.signal\?\.removeEventListener\('abort', relayCallerAbort\)/)
+  })
+})
+
 describe('classification: un delai n est pas un verdict sur le code', () => {
   test('le delai de premier octet est reconnu comme panne d infrastructure', () => {
     const message = `Ollama: ${FIRST_BYTE_TIMEOUT_MARK} apres 480s sur http://x (modele m) — delai depasse, aucun octet recu`
@@ -157,5 +202,30 @@ describe('classification: un delai n est pas un verdict sur le code', () => {
 
   test('un flux coupe par le relais est une panne, pas un defaut du code', () => {
     assert.ok(isInfrastructureFailureMessage('TypeError: terminated — SocketError: other side closed'))
+  })
+
+  test('BALAYAGE: les causes fatales REELLEMENT observees sont classees correctement', () => {
+    // Chaines relevees telles quelles dans les `run.log` d audit conserves.
+    // Trois des cinq causes distinctes etaient rangees en « erreur du pipeline ».
+    const observedInfrastructure = [
+      'Ollama: budget de recuperation epuise apres 20 min. Le travail deja produit est preserve; ce n est PAS un verdict de qualite. Derniere erreur: Ollama qwen3-coder:30b timed out after 1200000ms',
+      'Ollama: toutes les tentatives epuisees (6). Modeles testes: qwen3-coder:30b, qwen3-coder:30b. Derniere erreur: fetch failed',
+      'Ollama: toutes les tentatives epuisees (3). Modeles testes: qwen3-coder:30b. Derniere erreur: Ollama error: 500',
+    ]
+    for (const message of observedInfrastructure) {
+      assert.ok(isInfrastructureFailureMessage(message), `doit etre une panne: ${message.slice(0, 60)}`)
+      assert.equal(buildInterruptedDelivery(message, [{ name: 'a.ts', language: 'ts', content: 'x' }], '').cause, 'panne d infrastructure')
+    }
+
+    // Ces deux-la sont de VRAIES erreurs de pipeline et doivent le rester: le
+    // classifieur doit rester etroit, sinon il absout tout.
+    const observedPipelineErrors = [
+      'Echec de l executor agentique WS3: action_producer_failed:action_protocol_invalid:protocol_marker_missing',
+      'agentic_retry_failed:patch_search_not_found',
+    ]
+    for (const message of observedPipelineErrors) {
+      assert.ok(!isInfrastructureFailureMessage(message), `doit rester une erreur de pipeline: ${message.slice(0, 60)}`)
+      assert.equal(buildInterruptedDelivery(message, [{ name: 'a.ts', language: 'ts', content: 'x' }], '').cause, 'erreur du pipeline')
+    }
   })
 })

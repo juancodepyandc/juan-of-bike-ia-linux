@@ -14,7 +14,7 @@ import {
   CODE_SINGLE_MODEL,
 } from '../config/models'
 import { useAppStore } from '../stores/appStore'
-import { withTimeout } from './llmTimebox'
+import { isLlmTimeboxError, withTimeout } from './llmTimebox'
 
 export type RecoveryEvent = {
   attempt: number
@@ -409,7 +409,9 @@ export async function restartOllamaService(): Promise<void> {
 async function withResilience<T>(
   primaryModel: string,
   opts: ResilienceOptions | undefined,
-  execute: (model: string) => Promise<T>,
+  // Le signal est passe a l appel: un budget qui expire doit pouvoir ARRETER ce
+  // qu il abandonne (voir le try/catch d execution plus bas).
+  execute: (model: string, attemptSignal: AbortSignal | undefined) => Promise<T>,
 ): Promise<T> {
   let catalog = await fetchModelCatalog()
   const models = buildFallbackList(primaryModel, catalog)
@@ -482,9 +484,28 @@ async function withResilience<T>(
       continue
     }
 
+    // Un budget qui ABANDONNE sans ARRETER laisse l appel occuper le modele
+    // pendant que la tentative suivante en charge un autre.
+    //
+    // Mesure (journal Ollama du run v125, meme creneau que l abandon fatal):
+    //   cinq POST /api/generate simultanes, puis un chargement de modele qui
+    //   n aboutit pas — « client connection closed before llama-server finished
+    //   loading », 499 apres 3m30s. C est la contention que la regle « un seul
+    //   modele par pipeline » existe pour eviter, et `withTimeout` la fabriquait
+    //   lui-meme: `Promise.race` rend la main sans rien annuler.
+    //
+    // Mesure de frequence: le budget a REELLEMENT expire en production —
+    // run v114, « Ollama qwen3-coder:30b timed out after 1200000ms », deux fois.
+    // Ce n est pas un cas theorique.
+    const attemptAbort = new AbortController()
+    const relayCallerAbort = () => attemptAbort.abort(opts?.signal?.reason)
+    if (opts?.signal) {
+      if (opts.signal.aborted) relayCallerAbort()
+      else opts.signal.addEventListener('abort', relayCallerAbort, { once: true })
+    }
     try {
       testedModels.push(model)
-      const execution = execute(model)
+      const execution = execute(model, attemptAbort.signal)
       return opts?.timeoutMs
         ? await withTimeout(execution, {
             label: `Ollama ${model}`,
@@ -492,6 +513,15 @@ async function withResilience<T>(
           })
         : await execution
     } catch (err) {
+      // Le budget a expire: on arrete VRAIMENT l appel avant de reessayer.
+      if (isLlmTimeboxError(err)) {
+        attemptAbort.abort(
+          new DOMException(
+            `Ollama ${model}: budget de ${err.timeoutMs}ms depasse — appel annule pour liberer le modele`,
+            'TimeoutError',
+          ),
+        )
+      }
       lastError = err
 
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -648,6 +678,10 @@ async function withResilience<T>(
 
       const schedule = transport ? TRANSPORT_BACKOFF_MS : BACKOFF_DELAYS_MS
       await sleep(schedule[Math.min(executionAttempt - 1, schedule.length - 1)], opts?.signal)
+    } finally {
+      // Sans ce retrait, chaque tentative laisse un ecouteur sur le signal de
+      // l appelant: six tentatives = six ecouteurs qui survivent a l appel.
+      opts?.signal?.removeEventListener('abort', relayCallerAbort)
     }
   }
 
@@ -722,17 +756,17 @@ export async function resilientOllamaChat(
     if (ctx === undefined) return opts.num_predict
     return Math.min(opts.num_predict, Math.max(512, Math.floor(ctx * 0.6)))
   }
-  const chatOnce = (selectedModel: string, ctx?: number) =>
+  const chatOnce = (selectedModel: string, ctx: number | undefined, attemptSignal: AbortSignal | undefined) =>
     opts?.num_predict !== undefined
       ? chatAccumulatingStream(selectedModel, messages, temperature, {
           num_ctx: ctx,
           num_predict: predictFor(ctx),
-          signal: opts?.signal,
+          signal: attemptSignal,
           firstByteTimeoutMs: opts?.firstByteTimeoutMs,
         })
       : ollamaChat(selectedModel, messages, temperature, {
           num_ctx: ctx,
-          signal: opts?.signal,
+          signal: attemptSignal,
           firstByteTimeoutMs: opts?.firstByteTimeoutMs,
         })
   const ctxLevels = [opts?.num_ctx, 4096, 2048].filter(
@@ -744,7 +778,7 @@ export async function resilientOllamaChat(
   for (let i = 0; i < uniqueCtxLevels.length; i++) {
     const ctx = uniqueCtxLevels[i]
     try {
-      return await withResilience(model, opts, (selectedModel) => chatOnce(selectedModel, ctx))
+      return await withResilience(model, opts, (selectedModel, attemptSignal) => chatOnce(selectedModel, ctx, attemptSignal))
     } catch (err) {
       const msg = errorMessage(err)
       const isMemoryRelated = /memory|memoire|OOM|out of memory|CUDA|VRAM|insufficient/i.test(msg)
@@ -753,7 +787,7 @@ export async function resilientOllamaChat(
     }
   }
 
-  return withResilience(model, opts, (selectedModel) => chatOnce(selectedModel, 2048))
+  return withResilience(model, opts, (selectedModel, attemptSignal) => chatOnce(selectedModel, 2048, attemptSignal))
 }
 
 export async function resilientOllamaChatStream(
@@ -796,14 +830,14 @@ export async function resilientOllamaChatStream(
   for (let i = 0; i < uniqueCtxLevels.length; i++) {
     const ctx = uniqueCtxLevels[i]
     try {
-      return await withResilience(model, opts, (selectedModel) =>
+      return await withResilience(model, opts, (selectedModel, attemptSignal) =>
         ollamaChatStream(selectedModel, messages, onToken, onDone, {
           temperature: opts?.temperature,
           top_p: opts?.top_p,
           top_k: opts?.top_k,
           min_p: opts?.min_p,
           repeat_penalty: opts?.repeat_penalty,
-          signal: opts?.signal,
+          signal: attemptSignal,
           num_ctx: ctx,
           num_predict: predictFor(ctx),
           firstByteTimeoutMs: opts?.firstByteTimeoutMs,
@@ -817,14 +851,14 @@ export async function resilientOllamaChatStream(
     }
   }
 
-  return withResilience(model, opts, (selectedModel) =>
+  return withResilience(model, opts, (selectedModel, attemptSignal) =>
     ollamaChatStream(selectedModel, messages, onToken, onDone, {
       temperature: opts?.temperature,
       top_p: opts?.top_p,
       top_k: opts?.top_k,
       min_p: opts?.min_p,
       repeat_penalty: opts?.repeat_penalty,
-      signal: opts?.signal,
+      signal: attemptSignal,
       num_ctx: 2048,
       num_predict: predictFor(2048),
       firstByteTimeoutMs: opts?.firstByteTimeoutMs,
@@ -854,10 +888,10 @@ export async function resilientOllamaGenerate(
   for (let i = 0; i < uniqueCtxLevels.length; i++) {
     const ctx = uniqueCtxLevels[i]
     try {
-      return await withResilience(model, opts, (selectedModel) =>
+      return await withResilience(model, opts, (selectedModel, attemptSignal) =>
         ollamaGenerate(selectedModel, prompt, {
           num_ctx: ctx,
-          signal: opts?.signal,
+          signal: attemptSignal,
           firstByteTimeoutMs: opts?.firstByteTimeoutMs,
         }),
       )
@@ -884,10 +918,10 @@ export async function resilientOllamaGenerate(
   }
 
   // Fallback ultime — ne devrait jamais arriver, mais pour la surete
-  return withResilience(model, opts, (selectedModel) =>
+  return withResilience(model, opts, (selectedModel, attemptSignal) =>
     ollamaGenerate(selectedModel, prompt, {
       num_ctx: 2048,
-      signal: opts?.signal,
+      signal: attemptSignal,
       firstByteTimeoutMs: opts?.firstByteTimeoutMs,
     }),
   )

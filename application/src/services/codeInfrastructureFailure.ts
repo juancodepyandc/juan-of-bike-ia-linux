@@ -67,6 +67,26 @@ const INFRASTRUCTURE_PATTERNS: RegExp[] = [
   /\bdelai depasse\b/i,
   /aborted due to timeout/i,
   /\bTimeoutError\b/,
+  // BALAYAGE des causes fatales REELLES. Relevé sur tous les `run.log` d audit
+  // conserves: cinq causes distinctes ont tue un run, et TROIS etaient des
+  // pannes de modele que ce classifieur rangeait en « erreur du pipeline »,
+  // c est-a-dire en verdict sur le CODE livre:
+  //
+  //   v114 (x2)  budget de recuperation epuise apres 20 min ... timed out
+  //              after 1200000ms
+  //   (x2)       toutes les tentatives epuisees (3) ... Derniere erreur:
+  //              Ollama error: 500
+  //   v125       This operation was aborted
+  //
+  // Seul « fetch failed » etait reconnu. Les deux causes restantes
+  // (action_protocol_invalid, patch_search_not_found) sont de vraies erreurs de
+  // pipeline et doivent le rester — d ou des motifs etroits, ancres sur les
+  // chaines exactes emises par ollamaResilience.ts et useTauri.ts.
+  /budget de recuperation epuise/i,
+  /timed out after \d+\s*ms/i,
+  /toutes les tentatives epuisees/i,
+  /Ollama error:\s*5\d\d/i,
+  /Ollama (?:non joignable|generate indisponible)/i,
   // Flux coupe par le relais en cours de route (mesure: undici rend
   // `TypeError: terminated` avec `cause: SocketError: other side closed`).
   /\bother side closed\b/i,
