@@ -8651,3 +8651,62 @@ ce seul defaut. Il est reste invisible parce que le compilateur decrit toujours
 le CONTENU (« Type expected », « Unterminated regular expression literal ») et
 jamais le nom du fichier — donc chaque passe de correction cherchait au bon
 endroit d apres la trace, et au mauvais endroit d apres la cause.
+
+## 2026-08-18 (suite) — Deux gardes qui empechaient la correction deterministe
+
+Verification avant de croire le correctif precedent — et bien lui en a pris.
+
+### Le harnais anti-regression refusait le renommage
+
+La reparation `src/vitest.setup.ts -> src/vitest.setup.tsx`, celle qui debloque
+un run mort sur sept passes inutiles, etait REFUSEE:
+
+```
+Regression refusee par le harnais anti-regression:
+- removed_file: src/vitest.setup.ts
+```
+
+Le contenu etait intact, sous un autre nom. Sans cette verification, le
+correctif aurait ete livre, teste vert, et **n aurait jamais tourne en
+production** — un correctif annonce qui ne s applique pas. C est exactement ce
+que la methode interdit: ne jamais croire un score, regarder le resultat reel.
+
+Le harnais mesurait des CHEMINS et affirmait des CAPACITES. Deux preuves
+suffisent desormais a etablir un renommage: le contenu reapparait a l identique
+sous un chemin neuf (empreinte), ou le meme radical reapparait sous un chemin
+neuf. Les cartes exports/points d entree, indexees par chemin, sont reindexees
+en suivant les renommages — sinon un simple renommage se lisait comme une
+amputation de toutes leurs entrees.
+
+La garde n est pas affaiblie, et c est teste:
+
+```
+renommage                -> accepte
+outillage Tailwind       -> accepte
+chaine complete          -> accepte
+VRAIE suppression        -> refusee (removed_file)
+fichier vide de contenu  -> refusee (emptied_file)
+```
+
+### Le budget des modeles etait preleve par des reparations gratuites
+
+Le plafond de correction existe pour borner les CHARGEMENTS DE MODELE: la VRAM
+et la RAM sont la ressource rare, pas les passes. Une reparation locale
+deterministe n en charge aucun, et se prelevait pourtant sur le meme budget.
+
+```
+run v124   passe 1 et passe 8 = reparations locales    (2 passes modele perdues)
+run v125   passe 1            = reparation locale      (1)
+run v126   passe 1            = reparation locale      (1), arret a 7 passes
+```
+
+Le balayage des reparations deterministes en ajoute jusqu a trois. Sans cette
+correction, le durcissement se serait paye en passes de modele — on aurait
+rendu le module plus juste et moins capable.
+
+Les reparations locales gardent leur propre plafond (8): gratuites, pas
+illimitees — une reparation qui oscillerait tournerait sans fin.
+
+Tests : **1294 -> 1314 verts, 0 echec.** Tous les fichiers de production Code
+repassent sous 400 lignes (`codeAutoCorrection` 420 -> 398,
+`codeValidationCorrectionLoop` 402 -> 398, via `codeCorrectionBudget.ts`).
