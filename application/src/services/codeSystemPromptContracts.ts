@@ -201,6 +201,22 @@ export function buildExpertEngineeringContractBlock(intent: CodeIntent): string 
     '- Ajoute un chemin de verification local: test, smoke script, build command ou instructions README executables.',
     '- Gere les erreurs comme un produit reel: empty states, loading states, permissions/refus, donnees invalides, echec reseau, restart/retry quand utile.',
     '- Securite par defaut: pas de eval/new Function, pas de secrets en dur, pas de HTML utilisateur injecte sans sanitization, validation cote client ET cote serveur quand serveur il y a.',
+    // BALAYAGE DE CORPUS. Les deux familles de TYPAGE encore vivantes (v113+)
+    // ont chacune une cause commune, et toutes deux se PREVIENNENT a la
+    // generation — les reparer apres coup coute une passe de modele.
+    //
+    // TS7006 (12 occurrences, toutes identiques: « Parameter 'order'
+    // implicitly has an 'any' type ») — parametres de rappel non annotes.
+    '- Types explicites sur TOUT parametre de fonction et de rappel, y compris dans .map/.filter/.reduce/.sort et les gestionnaires d evenements. Aucun parametre implicitement `any`.',
+    // TS2367 (6 occurrences) — « types "pending" | "preparing" | "sent" et
+    // "envoyé" n ont aucun recouvrement »: l union est declaree en anglais et
+    // comparee a des libelles francais. Le modele type dans une langue et
+    // compare dans l autre.
+    '- Une union de statuts/etats se declare UNE fois et se compare TOUJOURS avec ses propres valeurs. Ne compare jamais un statut a un libelle d affichage: garde les valeurs techniques dans un seul vocabulaire et fais correspondre les libelles utilisateur par une table de traduction separee.',
+    // TS2339 + TS2322 (25 occurrences) — la donnee et le type declare pour
+    // elle divergent: `data.map(...)` sur un objet qui CONTIENT le tableau,
+    // litteral qui ne satisfait pas son interface.
+    '- La donnee d exemple doit satisfaire le type qui la declare: si le module exporte un objet, n itere pas dessus comme sur un tableau, et verifie que chaque litteral porte tous les champs requis de son interface.',
   ]
 
   if (isComplex) {

@@ -4,6 +4,7 @@ import { describe, test } from 'node:test'
 import { scoreAccessibility } from '../services/codeAccessibilityGate.ts'
 import { scorePerformance } from '../services/codePerformanceGate.ts'
 import { checkComposition } from '../services/codeCompositionGate.ts'
+import { buildExpertEngineeringContractBlock } from '../services/codeSystemPromptContracts.ts'
 
 // FAMILLE: une ABSENCE DE VIOLATION comptait comme une PRESENCE DE QUALITE.
 //
@@ -66,5 +67,30 @@ describe('portes: une page REELLE reste jugee, sans complaisance', () => {
   test('composition saine reste OK', () => {
     const report = checkComposition({ overlaps: [], sections: [{ name: 'hero', fill: 0.6 }, { name: 'about', fill: 0.5 }], emojiIcons: [], viewportWidth: 1440 })
     assert.equal(report.ok, true)
+  })
+})
+
+describe('contrat de generation: prevenir les familles de typage vivantes', () => {
+  // BALAYAGE (runs v113+): TS7006 (12), TS2367 (6), TS2339+TS2322 (25).
+  // Chacune a une cause commune, et chacune se PREVIENT a la generation —
+  // la reparer apres coup coute une passe de modele.
+  const contract = buildExpertEngineeringContractBlock({
+    projectType: 'spa_react', complexity: 'complex', features: [], assetPlan: null,
+  } as never)
+
+  test('TS7006: les parametres de rappel doivent etre annotes', () => {
+    assert.match(contract, /Aucun parametre implicitement `any`/)
+    assert.match(contract, /\.map\/\.filter\/\.reduce/)
+  })
+
+  test('TS2367: un statut ne se compare pas a un libelle d affichage', () => {
+    // Mesure: union '"pending" | "preparing" | "sent"' comparee a '"envoyé"'.
+    assert.match(contract, /union de statuts/i)
+    assert.match(contract, /table de traduction separee/)
+  })
+
+  test('TS2339/TS2322: la donnee doit satisfaire le type qui la declare', () => {
+    assert.match(contract, /n itere pas dessus comme sur un tableau/)
+    assert.match(contract, /tous les champs requis de son interface/)
   })
 })
