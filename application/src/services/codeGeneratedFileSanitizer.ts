@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { repairEscapedNewlines } from './codeEscapedNewlines.ts'
+import { repairGeneratedTsConfig } from './codeTsConfigPolicy.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import {
   getGeneratedNodeDependencySpec,
@@ -158,20 +159,6 @@ function repairKnownManifestDependencyNames(manifest: Record<string, unknown>) {
   return next
 }
 
-function repairGeneratedTsConfig(config: Record<string, unknown>) {
-  const compilerOptions =
-    config.compilerOptions && typeof config.compilerOptions === 'object' && !Array.isArray(config.compilerOptions)
-      ? { ...(config.compilerOptions as Record<string, unknown>) }
-      : {}
-
-  compilerOptions.noUnusedLocals = false
-  compilerOptions.noUnusedParameters = false
-
-  return {
-    ...config,
-    compilerOptions,
-  }
-}
 
 
 export function sanitizeGeneratedFileContent(filename: string, content: string) {
