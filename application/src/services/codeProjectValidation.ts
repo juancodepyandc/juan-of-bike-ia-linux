@@ -18,6 +18,7 @@ import { getGeneratedNodeDependencySpec } from './codeGeneratedDependencyPolicy.
 import { applyTestToolchainFix, planTestToolchainFix } from './codeTestToolchainContract.ts'
 import { applyTailwindToolchainFix, planTailwindToolchainFix } from './codeTailwindToolchainContract.ts'
 import { applyExtensionFixes, planExtensionFixes } from './codeFileExtensionCoherence.ts'
+import { applyArrayContainerFixes, describeArrayContainerFixes, planArrayContainerFixes } from './codeArrayContainerAccess.ts'
 import { applyDirectoryModuleIndexes, applyImportShapeFixes, describeImportShapeFixes, planDirectoryModuleIndexes, planImportShapeFixes } from './codeImportExportShape.ts'
 
 const DOCUMENTATION_EXTENSIONS = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
@@ -196,14 +197,19 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
     }
   }
 
-  // NOTE, et c est une decision, pas un oubli: `alignLanguageLabels` n est PAS
-  // branche ici. Mesure sur le livrable reel du run v126: 4 fichiers `.tsx` sur
-  // 31 portent le libelle `tsx` la ou les 27 autres portent `typescript` — le
-  // pipeline emet les deux. Aucun compilateur ne lit ce libelle: le defaut
-  // fonctionnel etait l EXTENSION, deja corrigee au-dessus. Depenser une passe
-  // de correction pour une difference cosmetique reviendrait a agir sur ce qu on
-  // n a pas mesure comme un defaut — exactement ce que ce module reproche a ses
-  // portes. La fonction reste disponible comme normaliseur.
+  // DECISION, pas oubli: `alignLanguageLabels` n est PAS branche ici. v126: 4
+  // `.tsx` sur 31 portent `tsx` la ou 27 portent `typescript`. Aucun
+  // compilateur ne lit ce libelle; le defaut fonctionnel etait l EXTENSION.
+
+  // Destructuration oubliee: `.map()` sur l objet d etat au lieu de son tableau
+  // (v131, 8 occurrences). Le type imprime par tsc donne la cible. Cf. module.
+  const containerFixes = planArrayContainerFixes(sanitizedFiles, failingOutput)
+  if (containerFixes.length > 0) {
+    return {
+      files: applyArrayContainerFixes(sanitizedFiles, containerFixes),
+      reason: `acces tableau recolle sans modele — ${describeArrayContainerFixes(containerFixes)}`,
+    }
+  }
 
   // Le module-REPERTOIRE sans index. Mesure (run v129): 20 occurrences de
   // TS2307 sur UN seul import — `../components/AdminDashboard` alors que le
@@ -218,10 +224,8 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
     }
   }
 
-  // L import doit correspondre a ce que la cible exporte VRAIMENT. Balayage de
-  // corpus (42 runs): 100 TS2307 + 92 TS2613/2614, presque tous sur des modules
-  // LOCAUX du projet. Sur les livrables finaux, 19 desaccords de forme
-  // subsistent — le graphe se LIT, donc ils ne se confient pas a un modele.
+  // L import doit correspondre a ce que la cible exporte VRAIMENT (corpus 42
+  // runs: 100 TS2307 + 92 TS2613/2614, presque tous des modules LOCAUX).
   const shapeFixes = planImportShapeFixes(sanitizedFiles)
   if (shapeFixes.length > 0) {
     return {
