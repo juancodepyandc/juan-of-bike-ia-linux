@@ -277,4 +277,17 @@ describe('Pipeline parseBrief → buildPrompt', () => {
     assert.equal(built.upscalePlan.kind, 'realesrgan-x4')
     assert.equal(built.width, 768)
   })
+
+  test('village et décor (Magnolia, Springfield) appliquent la perspective linéaire et évitent les personnages géants/déformés', () => {
+    const builtMagnolia = buildPrompt({ subject: 'village de Magnolia (village fairy tail)', style: 'anime-clean' })
+    assert.match(builtMagnolia.positive, /accurate linear depth perspective/i)
+    assert.match(builtMagnolia.positive, /scale down smoothly towards the horizon vanishing point/i)
+    assert.match(builtMagnolia.negative, /giant background people/i)
+    assert.match(builtMagnolia.negative, /messy unrecognizable faces on banners/i)
+
+    const builtSpringfield = buildPrompt({ subject: 'village de Springfield', style: 'flat-illustration' })
+    assert.match(builtSpringfield.positive, /accurate linear depth perspective/i)
+    assert.match(builtSpringfield.negative, /out-of-scale figures/i)
+    assert.match(builtSpringfield.negative, /blurry humanoid blobs/i)
+  })
 })

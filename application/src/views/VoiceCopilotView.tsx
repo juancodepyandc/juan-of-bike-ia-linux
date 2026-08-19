@@ -1,11 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, Camera, CameraOff, Check, ClipboardCheck, Copy, Download, Eye, FileText, Maximize2, Mic, MicOff, Minimize2, RefreshCw, Sparkles, Trash2, Volume2, UserCircle, Loader2 } from 'lucide-react'
+import { ArrowLeft, Camera, CameraOff, Check, ClipboardCheck, Copy, Download, Eye, FileText, Maximize2, Mic, MicOff, Minimize2, Music, RefreshCw, Sparkles, Trash2, Volume2, UserCircle, Loader2 } from 'lucide-react'
 import AuroraAvatar from '../components/AuroraAvatar'
 import AuroraMascot from '../components/generationFx/mascots'
 import V4VoiceCharacter from '../components/generationFx/voiceCharacter'
 import AvatarSelectorModal from '../components/AvatarSelectorModal'
 import VoiceStage from '../components/voice/VoiceStage'
+import MusicStudio from '../components/voice/MusicStudio'
+import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio'
 import type { LyraViseme } from '../components/voice/LyraCharacter'
 import CharacterForgeOverlay from './CharacterForgeOverlay'
 import { useVoiceLive, type VoiceLivePhase } from '../hooks/useVoiceLive'
@@ -477,6 +479,8 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
   const [webSearchSources, setWebSearchSources] = useState<string[]>([])
   const [webSearching, setWebSearching] = useState(false)
   const [cameraFullscreen, setCameraFullscreen] = useState(false)
+  const [musicStudioOpen, setMusicStudioOpen] = useState(false)
+  const [voiceStudioOpen, setVoiceStudioOpen] = useState(false)
   const [examPanelOpen, setExamPanelOpen] = useState(false)
   const [examFiles, setExamFiles] = useState<File[]>([])
   const [examDocuments, setExamDocuments] = useState<VoiceExamDocument[]>([])
@@ -1290,7 +1294,7 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
 
   const { phase, error, volumeLevel, speakingAmplitude, toggleListening, speakText, stopSpeaking, stopAll, isContinuous, formantsRef, audioRef, phonemeCuesRef } = useVoiceLive({
     onTranscript: handleTranscript,
-    autoStart: !examArmed && !examActive && !examCountdown,
+    autoStart: !examArmed && !examActive && !examCountdown && !voiceStudioOpen && !musicStudioOpen,
     language: lang,
     // Stop sur silence pour tout SAUF le monologue continu pur (un seul blob).
     // En phase présentation d'un mixte, on découpe sur les pauses mais Aurora
@@ -1311,6 +1315,16 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
   phaseRefForExam.current = phase
   toggleListeningRef.current = toggleListening
   stopAllRef.current = stopAll
+
+  // Isolation stricte : quand le studio vocal ou musical est actif, désactiver et libérer immédiatement le micro et la synthèse vocale du copilote
+  useEffect(() => {
+    if (voiceStudioOpen || musicStudioOpen) {
+      stopAll()
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
+    }
+  }, [voiceStudioOpen, musicStudioOpen, stopAll])
 
   // Quand la parole s arrete, on revient a l avatar idle (ou l original si pas d idle)
   useEffect(() => {
@@ -1954,6 +1968,14 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
   const isAuroraV4Skin = typeof document !== 'undefined'
     && document.documentElement.getAttribute('data-ui-skin') === 'aurora_v4'
 
+  if (voiceStudioOpen) {
+    return <VoiceReplicationStudio onClose={() => setVoiceStudioOpen(false)} />
+  }
+
+  if (musicStudioOpen) {
+    return <MusicStudio onClose={() => setMusicStudioOpen(false)} />
+  }
+
   if (stageMode && !isAuroraV4Skin) {
     return (
       <div
@@ -1989,6 +2011,39 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
           modelInfo={mainModel}
         >
           {examPanel}
+          <div style={{ position: 'absolute', top: 18, left: 18, zIndex: 6, display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setVoiceStudioOpen(true)}
+              title="Ouvrir le studio de réplication de voix par échantillon"
+              style={{
+                padding: '8px 14px', borderRadius: 99,
+                fontFamily: 'var(--font-mono, ui-monospace)', fontSize: 11,
+                background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.7), rgba(192, 38, 211, 0.7))',
+                border: '1px solid rgba(192, 38, 211, 0.5)',
+                color: '#ffffff', cursor: 'pointer',
+                letterSpacing: '0.08em', fontWeight: 600,
+                boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
+              }}
+            >
+              🎙️ studio réplication
+            </button>
+            <button
+              type="button"
+              onClick={() => setMusicStudioOpen(true)}
+              title="Ouvrir le studio musique"
+              style={{
+                padding: '8px 14px', borderRadius: 99,
+                fontFamily: 'var(--font-mono, ui-monospace)', fontSize: 11,
+                background: 'var(--v4voice-chip-bg, rgba(0,0,0,0.45))',
+                border: '1px solid var(--v4voice-chip-line, rgba(255,255,255,0.18))',
+                color: 'var(--v4voice-chip-fg, rgba(255,255,255,0.85))', cursor: 'pointer',
+                letterSpacing: '0.08em',
+              }}
+            >
+              ♫ studio musique
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => setStageMode(false)}
@@ -2112,6 +2167,24 @@ export default function VoiceCopilotView({ onClose, onMessage }: VoiceCopilotVie
         </button>
         <span className="text-[11px] font-medium text-white/40 hidden sm:inline">Chat Vocal Live</span>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setVoiceStudioOpen(true)}
+            title="Studio de réplication de voix par échantillon"
+            className="flex items-center gap-1 rounded-lg border border-violet-400/40 bg-gradient-to-r from-violet-600/30 to-fuchsia-600/30 px-2.5 py-1.5 text-[11px] font-semibold text-violet-100 hover:opacity-90 shadow-sm"
+          >
+            <Mic size={13} className="text-violet-300" />
+            <span className="hidden sm:inline">Studio Voix</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMusicStudioOpen(true)}
+            title="Créer un morceau et gérer les voix de référence"
+            className="flex items-center gap-1 rounded-lg border border-fuchsia-400/30 bg-fuchsia-500/10 px-2.5 py-1.5 text-[11px] font-medium text-fuchsia-100 hover:bg-fuchsia-500/20"
+          >
+            <Music size={13} />
+            <span className="hidden sm:inline">Musique</span>
+          </button>
           {!isAuroraV4Skin && (
             <button
               type="button"

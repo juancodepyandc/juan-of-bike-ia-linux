@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "verified_at": "2026-07-26",
+  "profile": "personal_quality_first",
+  "selection_policy": {
+    "quality_first": true,
+    "time_is_not_a_selection_limit": true,
+    "license_is_metadata_not_quality_filter": true,
+    "license_selection_blocking": false,
+    "final_render_minimum_precision": "Q8_0 or FP8-scaled",
+    "allow_q4_q5_for_final": false,
+    "requires_measured_ab_before_promotion": true,
+    "requires_real_16gb_validation": true
+  },
+  "active": {
+    "generator": "wan2.2-ti2v-5b",
+    "generator_fallback": "ltx-video-legacy",
+    "voice_clone": "cosyvoice3-0.5b-2512",
+    "voice_fallbacks": [
+      "xtts-v2",
+      "f5-tts",
+      "kokoro-generic"
+    ],
+    "reason": "Wan2.2 TI2V-5B est le socle vidéo installé et validé en T2V puis I2V réel sur la RTX 5070 Ti 16 Go; l'A/B a montré que l'ancrage Wan conservait mieux identité et action que le repli LTX-Video. CosyVoice3 est installé dans son venv isolé et validé par deux synthèses françaises réelles."
+  },
+  "candidates": [
+    {
+      "id": "wan2.2-ti2v-5b",
+      "role": "video_generation",
+      "status": "installed_validated_primary",
+      "official_model": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
+      "quality_use": "Socle 720p/24 fps réellement installable sur la machine 16 Go avec offload.",
+      "hardware_truth": "E2E Linux validé en I2V premium: 832x480 natif, 65 images à 24 fps, 60 étapes, 227.1 s pour le worker, pic VRAM observé 94.1% (~14.2 Go) sur RTX 5070 Ti 16 Go; sortie finale 1280x720 H.264/AAC intègre.",
+      "hardware_ceiling_measured": {
+        "measured_2026_08_08": "Sur 5 films multi-plans réels enchaînés (Kaito v1-v4), l'i2v-primary à 1280x704 échoue systématiquement en cohabitation cinema (ComfyUI 500MB idle + juge vision qwen3-vl 7GB résident + reste du worker Wan précédent non complètement rendu). Résolutions effectivement rendues par chain de fallback: shot 1 (t2v, VRAM propre) 1280x704, shots 2+ (i2v, après juge) 640x480 ou 832x448 selon si eviction inter-plans marche. Après le patch eviction ollama+comfyui inter-plans (2026-08-08), plafond réaliste I2V observé: 832x448 via wan5b-i2v-repli2 (0.66× de 1280x704). PLAFOND HONNETE POUR I2V PREMIUM COHABITATION: `wan5b-i2v-repli1` à ~1050x576 quand tout va bien, `repli2` à 832x448 pour un pipeline sous stress. Pour tenir 1280x704 en i2v, il faudrait dédier la carte à Wan seul (pas de ComfyUI, pas d'Ollama vision) ou passer à Wan A14B GGUF Q8 (non testé sur cette machine)."
+      },
+      "license": "Apache-2.0",
+      "license_selection_blocking": false,
+      "source": "https://github.com/Wan-Video/Wan2.2"
+    },
+    {
+      "id": "wan2.2-a14b-q8",
+      "role": "video_generation",
+      "status": "ab_after_cold_storage",
+      "official_model": "Wan-AI/Wan2.2-I2V-A14B",
+      "quality_use": "Candidat final 720p haute fidélité, Q8_0/FP8 uniquement.",
+      "hardware_truth": "Configs locales seulement; poids absents. Block-swap à mesurer sur 16 Go VRAM/30 Go RAM.",
+      "license": "Apache-2.0",
+      "license_selection_blocking": false,
+      "source": "https://github.com/Wan-Video/Wan2.2"
+    },
+    {
+      "id": "refalign-14b",
+      "role": "identity_preserving_reference_to_video",
+      "status": "research_ab_candidate",
+      "official_model": "gudaochangsheng/RefAlign-14B",
+      "quality_use": "Candidat identité open-weight prioritaire : références mono/multi-sujets avec alignement sémantique explicite et métriques OpenS2V publiées.",
+      "hardware_truth": "Base Wan2.1 14B et poids non installés; offload/Q8 ou FP8 sur 16 Go à construire puis mesurer.",
+      "license": "MIT",
+      "license_selection_blocking": false,
+      "source": "https://huggingface.co/gudaochangsheng/RefAlign-14B"
+    },
+    {
+      "id": "stable-video-infinity-2-wan22",
+      "role": "long_video_generation",
+      "status": "research_ab_candidate",
+      "official_model": "vita-video-gen/svi-model",
+      "quality_use": "Challenger continuation et films longs; branche officielle Wan2.2 et workflow ComfyUI disponibles.",
+      "hardware_truth": "LoRA SVI plus base Wan 14B; poids non installés et continuité/qualité 16 Go non mesurées.",
+      "license": "MIT repository; base-model metadata retained separately",
+      "license_selection_blocking": false,
+      "source": "https://github.com/vita-epfl/Stable-Video-Infinity"
+    },
+    {
+      "id": "longcat-video-13.6b",
+      "role": "long_video_generation",
+      "status": "research_ab_candidate",
+      "official_model": "meituan-longcat/LongCat-Video",
+      "quality_use": "Challenger officiel T2V/I2V/continuation et génération longue, à opposer à SVI sur les mêmes scènes.",
+      "hardware_truth": "13.6B dense, poids non installés; chemin INT8/offload Blackwell 16 Go à prouver.",
+      "license": "MIT",
+      "license_selection_blocking": false,
+      "source": "https://github.com/meituan-longcat/LongCat-Video"
+    },
+    {
+      "id": "ltx-video-legacy",
+      "role": "video_generation",
+      "status": "installed_fallback",
+      "official_model": "Lightricks/LTX-Video",
+      "quality_use": "Filet de repli présent sur disque, sans promotion implicite.",
+      "hardware_truth": "Poids complets présents; ancien par rapport à LTX-2.3.",
+      "license": "LTX-Video community license",
+      "license_selection_blocking": false,
+      "source": "https://huggingface.co/Lightricks/LTX-Video"
+    },
+    {
+      "id": "ltx-2.3-fp8-dev",
+      "role": "synchronized_audio_video_generation",
+      "status": "research_ab_candidate",
+      "official_model": "Lightricks/LTX-2.3-fp8",
+      "quality_use": "Candidat audio+vidéo synchrone à comparer en version dev FP8 non distillée.",
+      "hardware_truth": "Checkpoint officiel FP8 dev d'environ 29 Go; l'intégration officielle annonce 32 Go+ VRAM. Sur 16 Go, offload expérimental à prouver avant toute promotion.",
+      "license": "LTX-2 community license",
+      "license_selection_blocking": false,
+      "source": "https://huggingface.co/Lightricks/LTX-2.3-fp8/tree/main"
+    },
+    {
+      "id": "longcat-video-avatar-1.5-int8",
+      "role": "talking_character",
+      "status": "research_ab_candidate",
+      "official_model": "LongCat-Video-Avatar-1.5",
+      "quality_use": "Candidat personnages parlants, stylisés, anime, animaux et multi-audio.",
+      "hardware_truth": "Chemin INT8/offload à valider sur 16 Go; poids non installés.",
+      "license": "Repository/model license metadata only",
+      "license_selection_blocking": false,
+      "source": "https://github.com/meituan-longcat/LongCat-Video"
+    },
+    {
+      "id": "anytalker-14b",
+      "role": "multi_person_talking_video",
+      "status": "research_ab_candidate",
+      "official_model": "HKUST-C4G/AnyTalker 14B",
+      "quality_use": "Challenger dialogue multi-personnes avec structure multi-flux et score d'interactivité dédié.",
+      "hardware_truth": "Checkpoint 14B annoncé publié en avril 2026; poids non installés, FlashAttention/offload 16 Go à valider.",
+      "license": "Apache-2.0",
+      "license_selection_blocking": false,
+      "source": "https://github.com/HKUST-C4G/AnyTalker"
+    },
+    {
+      "id": "cosyvoice3-0.5b-2512",
+      "role": "voice_clone",
+      "status": "installed_validated_primary",
+      "official_model": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+      "quality_use": "Priorité voix française et multilingue, clonage zero-shot avec transcription exacte de la référence.",
+      "hardware_truth": "Venv isolé, snapshot officiel complet et runtime CUDA 12.8 présents. Deux synthèses françaises zero-shot réelles validées à 24 kHz, dont une via le routeur voice_clone.py sans fallback.",
+      "license": "Apache-2.0",
+      "license_selection_blocking": false,
+      "source": "https://github.com/QwenAudio/CosyVoice"
+    },
+    {
+      "id": "infinite-talk",
+      "role": "video_lipsync",
+      "status": "research_ab_candidate",
+      "official_model": "MeiGen-AI/InfiniteTalk",
+      "quality_use": "Candidat V2V/parole longue avant finition labiale.",
+      "hardware_truth": "Non installé; offload 16 Go à mesurer.",
+      "license": "Repository/model license metadata only",
+      "license_selection_blocking": false,
+      "source": "https://github.com/MeiGen-AI/InfiniteTalk"
+    },
+    {
+      "id": "latentsync-1.6",
+      "role": "lip_refinement",
+      "status": "research_ab_candidate",
+      "official_model": "ByteDance/LatentSync",
+      "quality_use": "Finition labiale seulement si elle améliore réellement identité et temporalité.",
+      "hardware_truth": "Le dépôt officiel annonce 18 Go minimum pour l'inférence; 16 Go nécessite un chemin offload non encore prouvé.",
+      "license": "Repository/model license metadata only",
+      "license_selection_blocking": false,
+      "source": "https://github.com/bytedance/LatentSync"
+    },
+    {
+      "id": "hunyuanvideo-1.5",
+      "role": "video_generation_quality_benchmark",
+      "status": "research_ab_candidate",
+      "official_model": "tencent/HunyuanVideo-1.5",
+      "quality_use": "Benchmark physique/détail et super-résolution; non écarté comme candidat qualité pour le profil personnel.",
+      "hardware_truth": "Poids vidéo non installés; exécution 16 Go à mesurer.",
+      "license": "Tencent HunyuanVideo 1.5 Community License; texte officiel exclut notamment UE, Royaume-Uni et Corée du Sud.",
+      "license_selection_blocking": false,
+      "source": "https://github.com/Tencent-Hunyuan/HunyuanVideo-1.5/blob/main/LICENSE"
+    }
+  ],
+  "watchlist": [
+    {
+      "id": "wan2.7",
+      "status": "unverified_no_official_weights_found",
+      "decision": "Ne jamais substituer ce nom à Wan2.2 tant qu'un dépôt ou des poids officiels Wan-AI ne sont pas publiés.",
+      "official_sources_checked": [
+        "https://github.com/Wan-Video/Wan2.2",
+        "https://huggingface.co/Wan-AI",
+        "https://docs.comfy.org/tutorials/video/wan/wan2_2"
+      ]
+    },
+    {
+      "id": "stand-in-wan2.2",
+      "status": "official_repository_contradictory",
+      "decision": "Le dépôt annonce une version Wan2.2 active mais conserve sa publication dans la TODO. Ne promouvoir qu'après résolution exacte du checkpoint et A/B face à RefAlign.",
+      "official_sources_checked": [
+        "https://github.com/WeChatCV/Stand-In"
+      ]
+    },
+    {
+      "id": "avatar-v",
+      "status": "paper_only_no_official_open_weights_found",
+      "decision": "Résultats 1080p longue durée prometteurs, mais aucun chemin local open-weight prouvé au 2026-07-26.",
+      "official_sources_checked": [
+        "https://arxiv.org/abs/2606.13872"
+      ]
+    },
+    {
+      "id": "faithfulfaces",
+      "status": "paper_only_no_official_open_weights_found",
+      "decision": "Surveiller pour les grandes variations de pose faciale; ne pas l'afficher comme moteur disponible.",
+      "official_sources_checked": [
+        "https://arxiv.org/abs/2605.04702"
+      ]
+    }
+  ]
+}

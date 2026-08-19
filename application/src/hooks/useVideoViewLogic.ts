@@ -20,14 +20,22 @@ import {
   cinemaGenerateStoryboard,
   cinemaGenerateRun,
   cinemaJobStatus,
+  cinemaCancelJob,
   cinemaPreviewKeyframes,
   cinemaSelftest,
+  cinemaSelftestResultFromJob,
+  cinemaBenchmark,
+  auroraStorageStatus,
+  videoGallery,
   localFileToBridgeUrl,
   type Storyboard,
   type StoryboardResponse,
   type CinemaJobStatus,
   type CinemaPreviewKeyframesResponse,
   type CinemaSelftestResponse,
+  type CinemaBenchmarkResult,
+  type AuroraStorageStatus,
+  type VideoGalleryResponse,
 } from '../services/cinemaApi'
 import { RANDOM_VIDEO_PROMPTS, RANDOM_VIDEO_STYLES, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts'
 import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory'
@@ -70,7 +78,7 @@ export interface UseVideoViewLogic {
   jobStatus: CinemaJobStatus | null
   videoUrl: string | null
   runRender: () => Promise<void>
-  cancelRender: () => void
+  cancelRender: () => Promise<void>
   // v82lj : preview keyframes (FLUX-only, fast, before Wan2.2 long render)
   previewing: boolean
   previewResult: CinemaPreviewKeyframesResponse | null
@@ -79,6 +87,13 @@ export interface UseVideoViewLogic {
   selftesting: boolean
   selftestResult: CinemaSelftestResponse | null
   runSelftest: () => Promise<void>
+  benchmarking: boolean
+  benchmarkResult: CinemaBenchmarkResult | null
+  runBenchmark: () => Promise<void>
+  storageStatus: AuroraStorageStatus | null
+  refreshStorageStatus: () => Promise<void>
+  gallery: VideoGalleryResponse | null
+  refreshGallery: () => Promise<void>
 }
 
 const LENGTH_HINTS: Record<VideoLength, string> = {
@@ -139,9 +154,15 @@ export function useVideoViewLogic(): UseVideoViewLogic {
         cine.style,
         cine.tempo,
       ].filter(Boolean)
+      // 2026-08-07 : profil actif `personal_quality_first` (cf.
+      // `config/video_model_strategy.json`) — la livraison finale vise 1080p
+      // via l'étage upscale (`video_upscale_chain.py`). Envoyer 720p en indice
+      // au storyboard bridait toute la chaîne à HD, sous le profil actif.
+      // La génération native reste dans la fenêtre native du modèle vidéo
+      // (720×1280 / 832×480 pour Wan) — c'est l'upscale qui monte à 1080p.
       const resp: StoryboardResponse = await cinemaGenerateStoryboard(text, {
         aspect,
-        resolution: '720p',
+        resolution: '1080p',
         lengthHint: LENGTH_HINTS[length],
         style,
         ...(cineDirectives.length > 0 ? { cinematography: cineDirectives.join('; ') } : {}),
@@ -187,14 +208,26 @@ export function useVideoViewLogic(): UseVideoViewLogic {
   // v82lm : self-test state
   const [selftesting, setSelftesting] = useState(false)
   const [selftestResult, setSelftestResult] = useState<CinemaSelftestResponse | null>(null)
+  const [benchmarking, setBenchmarking] = useState(false)
+  const [benchmarkResult, setBenchmarkResult] = useState<CinemaBenchmarkResult | null>(null)
+  const [storageStatus, setStorageStatus] = useState<AuroraStorageStatus | null>(null)
+  const [gallery, setGallery] = useState<VideoGalleryResponse | null>(null)
   useGenerationFxEmitter(
     'video',
-    generating || rendering || previewing,
-    jobStatus?.status === 'running' ? 'Rendu cinéma en cours' : undefined,
+    generating || rendering || previewing || benchmarking,
+    benchmarking
+      ? 'Comparaison qualité Wan / LTX'
+      : jobStatus?.status === 'running' ? 'Rendu cinéma en cours' : undefined,
   )
   useGenerationFxResult('video', rendering, videoUrl, 'video')
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const cancelledRef = useRef(false)
+  const previewCancelledRef = useRef(false)
+  const previewJobIdRef = useRef<string | null>(null)
+  const selftestCancelledRef = useRef(false)
+  const selftestJobIdRef = useRef<string | null>(null)
+  const benchmarkCancelledRef = useRef(false)
+  const benchmarkJobIdRef = useRef<string | null>(null)
 
   const stopPolling = useCallback(() => {
     if (pollIntervalRef.current) {
@@ -203,43 +236,189 @@ export function useVideoViewLogic(): UseVideoViewLogic {
     }
   }, [])
 
+  const refreshStorageStatus = useCallback(async () => {
+    try {
+      setStorageStatus(await auroraStorageStatus())
+    } catch {
+      setStorageStatus(null)
+    }
+  }, [])
+
+  const refreshGallery = useCallback(async () => {
+    try {
+      setGallery(await videoGallery())
+    } catch {
+      setGallery(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshStorageStatus()
+    void refreshGallery()
+  }, [refreshStorageStatus, refreshGallery])
+
   useEffect(() => () => stopPolling(), [stopPolling])
 
-  const cancelRender = useCallback(() => {
+  const cancelRender = useCallback(async () => {
     cancelledRef.current = true
     stopPolling()
     setRendering(false)
-  }, [stopPolling])
+    const activeJobId = jobStatus?.jobId
+    if (!activeJobId || !['queued', 'running'].includes(jobStatus.status)) return
+    try {
+      await cinemaCancelJob(activeJobId)
+      setJobStatus((current) => current
+        ? { ...current, status: 'cancelled', error: 'Rendu annulé.' }
+        : current)
+    } catch (e) {
+      setError(`Annulation impossible : ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }, [jobStatus, stopPolling])
 
-  // v82lm : selftest pipeline (vérifie ComfyUI / Ollama / Wan2 / voice / ffmpeg).
+  // Vrai micro-rendu asynchrone : FLUX -> video -> voix -> mux -> ffprobe.
   const runSelftest = useCallback(async () => {
     if (selftesting) return
+    selftestCancelledRef.current = false
     setSelftesting(true)
     setSelftestResult(null)
     try {
-      const r = await cinemaSelftest()
-      setSelftestResult(r)
+      const spawn = await cinemaSelftest()
+      if (!spawn.jobId) {
+        setSelftestResult(spawn)
+        return
+      }
+      selftestJobIdRef.current = spawn.jobId
+      setSelftestResult(spawn)
+      while (!selftestCancelledRef.current) {
+        const job = await cinemaJobStatus(spawn.jobId)
+        if (job.status === 'done') {
+          setSelftestResult(cinemaSelftestResultFromJob(job))
+          return
+        }
+        if (job.status === 'cancelled') {
+          setSelftestResult({
+            ok: false,
+            jobId: spawn.jobId,
+            status: 'cancelled',
+            overall_ok: false,
+            stages: {},
+            summary: 'Micro-rendu annulé.',
+          })
+          return
+        }
+        if (job.status === 'unknown') {
+          throw new Error(job.error || 'Le micro-rendu est introuvable.')
+        }
+        if (job.status === 'failed') {
+          throw new Error(job.error || 'Le micro-rendu a échoué.')
+        }
+        setSelftestResult((current) => current
+          ? {
+              ...current,
+              // The other terminal states are handled above; this branch is
+              // necessarily one of the two states accepted by self-test UI.
+              status: job.status === 'queued' ? 'queued' : 'running',
+              summary: job.status === 'queued'
+                ? 'Micro-rendu en file GPU…'
+                : 'Micro-rendu réel en cours…',
+            }
+          : current)
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
     } catch (e) {
       setSelftestResult({
         ok: false, overall_ok: false, stages: {},
         summary: e instanceof Error ? e.message : String(e),
       })
     } finally {
+      selftestJobIdRef.current = null
       setSelftesting(false)
     }
   }, [selftesting])
 
+  const runBenchmark = useCallback(async () => {
+    if (!storyboard || benchmarking) return
+    benchmarkCancelledRef.current = false
+    setBenchmarking(true)
+    setBenchmarkResult(null)
+    try {
+      const spawn = await cinemaBenchmark(storyboard)
+      benchmarkJobIdRef.current = spawn.jobId
+      while (!benchmarkCancelledRef.current) {
+        const job = await cinemaJobStatus(spawn.jobId)
+        if (job.status === 'done') {
+          const result = job.result
+          if (result?.kind !== 'video_ab_benchmark') {
+            throw new Error(job.error || 'Benchmark terminé sans rapport A/B exploitable.')
+          }
+          setBenchmarkResult(result as CinemaBenchmarkResult)
+          void refreshGallery()
+          return
+        }
+        if (job.status === 'cancelled') {
+          setBenchmarkResult({
+            ok: false,
+            kind: 'video_ab_benchmark',
+            winner: null,
+            selection_graded: false,
+            variants: [],
+            error: 'Benchmark annulé.',
+          })
+          return
+        }
+        if (job.status === 'unknown') {
+          throw new Error(job.error || 'Benchmark A/B introuvable.')
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
+    } catch (e) {
+      setBenchmarkResult({
+        ok: false,
+        kind: 'video_ab_benchmark',
+        winner: null,
+        selection_graded: false,
+        variants: [],
+        error: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      benchmarkJobIdRef.current = null
+      setBenchmarking(false)
+    }
+  }, [storyboard, benchmarking, refreshGallery])
+
   // v82lj : preview character keyframes via FLUX before committing Wan2.2.
   const previewKeyframes = useCallback(async () => {
     if (!storyboard || previewing) return
+    previewCancelledRef.current = false
     setPreviewing(true)
     setPreviewResult(null)
     try {
-      const r = await cinemaPreviewKeyframes(storyboard)
-      setPreviewResult(r)
+      const spawn = await cinemaPreviewKeyframes(storyboard)
+      previewJobIdRef.current = spawn.jobId
+      while (!previewCancelledRef.current) {
+        const status = await cinemaJobStatus(spawn.jobId)
+        if (status.status === 'done') {
+          const result = status.result as CinemaPreviewKeyframesResponse | undefined
+          setPreviewResult(result ?? {
+            ok: false,
+            error: status.error || 'Aperçu terminé sans résultat exploitable.',
+          })
+          break
+        }
+        if (status.status === 'cancelled') {
+          setPreviewResult({ ok: false, error: 'Aperçu annulé.' })
+          break
+        }
+        if (status.status === 'unknown') {
+          setPreviewResult({ ok: false, error: status.error || 'Job aperçu introuvable.' })
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      }
     } catch (e) {
       setPreviewResult({ ok: false, error: e instanceof Error ? e.message : String(e) })
     } finally {
+      previewJobIdRef.current = null
       setPreviewing(false)
     }
   }, [storyboard, previewing])
@@ -268,9 +447,15 @@ export function useVideoViewLogic(): UseVideoViewLogic {
           if (st.status === 'done') {
             stopPolling()
             setRendering(false)
+            void refreshStorageStatus()
+            void refreshGallery()
             const file = st.result?.video || st.outputPath
             if (file) setVideoUrl(localFileToBridgeUrl(file))
             if (st.result?.error || st.error) setError(st.result?.error || st.error || null)
+          } else if (st.status === 'cancelled') {
+            stopPolling()
+            setRendering(false)
+            setError('Rendu annulé.')
           } else if (st.status === 'unknown' && st.error) {
             stopPolling()
             setRendering(false)
@@ -286,10 +471,22 @@ export function useVideoViewLogic(): UseVideoViewLogic {
       setRendering(false)
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [storyboard, rendering, stopPolling, subtitlesEnabled])
+  }, [storyboard, rendering, stopPolling, subtitlesEnabled, refreshStorageStatus, refreshGallery])
 
   const reset = useCallback(() => {
-    cancelRender()
+    void cancelRender()
+    previewCancelledRef.current = true
+    if (previewJobIdRef.current) {
+      void cinemaCancelJob(previewJobIdRef.current).catch(() => undefined)
+    }
+    selftestCancelledRef.current = true
+    if (selftestJobIdRef.current) {
+      void cinemaCancelJob(selftestJobIdRef.current).catch(() => undefined)
+    }
+    benchmarkCancelledRef.current = true
+    if (benchmarkJobIdRef.current) {
+      void cinemaCancelJob(benchmarkJobIdRef.current).catch(() => undefined)
+    }
     setPrompt('')
     setStoryboard(null)
     setClarification(null)
@@ -331,5 +528,12 @@ export function useVideoViewLogic(): UseVideoViewLogic {
     selftesting,
     selftestResult,
     runSelftest,
+    benchmarking,
+    benchmarkResult,
+    runBenchmark,
+    storageStatus,
+    refreshStorageStatus,
+    gallery,
+    refreshGallery,
   }
 }

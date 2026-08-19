@@ -136,14 +136,14 @@ function trimSceneName(raw: string): string {
 }
 
 function trimRelationContext(raw: string): string {
-  const stop = raw.search(/\s+(?:de\s+fa[cç]on|afin\b|pour\b|qui\b|avec\b|sans\b|sur\b|épaule\b|epaule\b|posant\b|tenant\b|assis\b|debout\b|a\s+c[oô]t[ée]\b|en\s+gardant|tout\s+en|while\b|keeping\b|posing\b|holding\b|on\b|shoulder\b|next\s+to\b|with\b)/iu)
+  const stop = raw.search(/\s+(?:de\s+fa[cç]on|afin\b|pour\b|qui\b|avec\b|sans\b|sur\b|dans\b|sous\b|épaule\b|epaule\b|posant\b|tenant\b|assis\b|debout\b|a\s+c[oô]t[ée]\b|en\s+posture\b|en\s+train\b|mangeant\b|combattant\b|faisant\b|marchant\b|portant\b|en\s+gardant|tout\s+en|while\b|keeping\b|posing\b|holding\b|on\b|in\b|shoulder\b|next\s+to\b|with\b)/iu)
   const cut = stop > 0 ? raw.slice(0, stop) : raw
   return clean(cut).split(/\s+/).slice(0, 8).join(' ').replace(/[,.;:!?]+$/u, '').trim()
 }
 
 function splitNamedSubject(named: string): { subject: string; context: string } {
   const value = clean(named)
-  const match = value.match(/^(.+?)\s+(?:de|du|of|from)\s+(.+)$/iu)
+  const match = value.match(/^(.+?)\s+(?:de|du|des|dans|in|of|from)\s+(.+)$/iu)
   if (!match?.[1] || !match?.[2]) return { subject: value, context: '' }
 
   const subject = clean(match[1]).replace(/[,.;:!?]+$/u, '')
@@ -160,7 +160,7 @@ function extractFranchiseContext(prompt: string, subject: string): string {
   const cleanSubject = clean(subject)
   if (!cleanSubject) return ''
   const subjectPattern = escapeRegExp(cleanSubject)
-  const re = new RegExp(`${subjectPattern}\\s+(?:de\\s+la\\s+|de\\s+l['’]?|des\\s+|du\\s+|de\\s+|of\\s+the\\s+|of\\s+|from\\s+the\\s+|from\\s+)([^,.;!?\\n]+)`, 'iu')
+  const re = new RegExp(`${subjectPattern}\\s+(?:de\\s+la\\s+|de\\s+l['’]?|des\\s+|du\\s+|de\\s+|dans\\s+la\\s+|dans\\s+l['’]?|dans\\s+le\\s+|dans\\s+les\\s+|dans\\s+|d['’]|in\\s+the\\s+|in\\s+|of\\s+the\\s+|of\\s+|from\\s+the\\s+|from\\s+)([^,.;!?\\n]+)`, 'iu')
   const match = prompt.match(re)
   if (!match?.[1]) return ''
   return trimRelationContext(match[1])
@@ -177,6 +177,7 @@ function buildSearchLabel(subject: string, context: string): string | undefined 
 function looksSpecific(label: string): boolean {
   const l = clean(label)
   if (l.length < 3) return false
+  if (/^(?:I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII)$/i.test(l)) return false
   // un nom propre (majuscule interne/acronyme) ou un multi-mot un peu long = spécifique
   if (/[A-Z]/.test(l.replace(/^./, ''))) return true
   if (/\b[A-Z]{2,}\b/.test(l)) return true
@@ -195,7 +196,42 @@ const COMMON_CAP_STOP = new Set([
   'Le', 'La', 'Les', 'Un', 'Une', 'Des', 'Du', 'De', 'The', 'A', 'An',
   'Mon', 'Ma', 'Mes', 'Ce', 'Cette', 'Ces', 'Il', 'Elle', 'Je', 'Tu', 'On',
   'Photo', 'Image', 'Illustration', 'Dessin', 'Portrait', 'Scene', 'Style',
+  'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII',
 ])
+
+const KNOWN_GAZETTEER_ICONS: Array<[RegExp, string]> = [
+  [/\b(?:natsu\s+dragneel|natsu)\b/i, 'Natsu Dragneel'],
+  [/\b(?:lucy\s+heartfilia|lucy)\b/i, 'Lucy Heartfilia'],
+  [/\b(?:erza\s+scarlet|erza)\b/i, 'Erza Scarlet'],
+  [/\b(?:gray\s+fullbuster|gray)\b/i, 'Gray Fullbuster'],
+  [/\b(?:happy)\b/i, 'Happy'],
+  [/\b(?:pikachu)\b/i, 'Pikachu'],
+  [/\b(?:charizard|dracaufeu)\b/i, 'Charizard'],
+  [/\b(?:homer\s+simpson|homer)\b/i, 'Homer Simpson'],
+  [/\b(?:bart\s+simpson|bart)\b/i, 'Bart Simpson'],
+  [/\b(?:marge\s+simpson|marge)\b/i, 'Marge Simpson'],
+  [/\b(?:lisa\s+simpson|lisa)\b/i, 'Lisa Simpson'],
+  [/\b(?:goldorak|grendizer|goldrake)\b/i, 'Goldorak'],
+  [/\b(?:son\s+goku|sangoku|goku)\b/i, 'Goku'],
+  [/\b(?:vegeta)\b/i, 'Vegeta'],
+  [/\b(?:monkey\s+d\.?\s+luffy|luffy)\b/i, 'Luffy'],
+  [/\b(?:naruto\s+uzumaki|naruto)\b/i, 'Naruto'],
+  [/\b(?:sasuke\s+uchiha|sasuke)\b/i, 'Sasuke'],
+  [/\b(?:mario)\b/i, 'Mario'],
+  [/\b(?:luigi)\b/i, 'Luigi'],
+  [/\b(?:sonic)\b/i, 'Sonic'],
+  [/\b(?:batman)\b/i, 'Batman'],
+  [/\b(?:superman)\b/i, 'Superman'],
+  [/\b(?:spiderman|spider-man)\b/i, 'Spider-Man'],
+  [/\b(?:ironman|iron\s+man)\b/i, 'Iron Man'],
+]
+
+function findGazetteerMatch(text: string): string | null {
+  for (const [re, canonical] of KNOWN_GAZETTEER_ICONS) {
+    if (re.test(text)) return canonical
+  }
+  return null
+}
 
 /**
  * Détecte un sujet NOMMÉ par nom propre, même SANS mot-clé « personnage »
@@ -206,6 +242,8 @@ const COMMON_CAP_STOP = new Set([
 function detectProperNounAddTarget(prompt: string): string | null {
   const verb = ADD_VERB_LOOSE.exec(prompt)
   if (!verb) return null
+  const gaz = findGazetteerMatch(prompt.slice(verb.index))
+  if (gaz) return gaz
   let rest = prompt.slice(verb.index + verb[0].length).replace(/^\s+/, '')
   rest = rest.replace(/^(?:un|une|le|la|les|des|du|de|d['’]|my|the|a|an)\s+/i, '')
   const m = rest.match(/^([A-ZÀ-Ÿ][\p{L}'’-]+(?:\s+[A-ZÀ-Ÿ][\p{L}'’-]+){0,2})/u)
@@ -219,6 +257,8 @@ function detectProperNounAddTarget(prompt: string): string | null {
 /** Premier nom propre rencontré N'IMPORTE OÙ dans un fragment (cible d'un
  * « remplace X par le chat bleu Happy de Fairy Tail » → "Happy"). */
 function findProperNounIn(s: string): string | null {
+  const gaz = findGazetteerMatch(s)
+  if (gaz) return gaz
   const t = clean(s)
   const re = /(?<![\p{L}\p{N}])([A-ZÀ-Ÿ][\p{L}'’-]+(?:\s+[A-ZÀ-Ÿ][\p{L}'’-]+){0,2})/gu
   let m: RegExpExecArray | null
@@ -233,12 +273,15 @@ function findProperNounIn(s: string): string | null {
 
 const NAMED_PHRASE_RE = /\b(?:nomm[ée]e?s?|nommer|appel[ée]e?s?|named|called)\s+([^,.;!?\n]+)/iu
 
+const REPLICATION_PREFIX_RE = /^\s*(?:(?:fais[-\s]moi\s+une\s+|fais\s+une\s+)(?:r[eé]plication|reproduction|copie)\s*(?:fid[eè]le\s+)?(?:de\s+|d['’]|of\s+)?|(?:r[eé]plication|reproduction|copie)\s+(?:fid[eè]le\s+)?(?:de\s+|d['’]|of\s+)|(?:r[eé]pliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|reprodui(?:re|s|t|sez|sent|sant)|recr[eé](?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|dupliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|copi(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|imit(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es))\s+(?:fid[eè]lement\s+)?(?:de\s+|d['’]|of\s+|le\s+|la\s+|les\s+|un\s+|une\s+)?)/iu
 const CREATION_PREFIX_RE = /^\s*(?:(?:photo|image|illustration|dessin|render|rendu|portrait|scene|sc[eè]ne|visuel)\s+(?:photo(?:r[eé]aliste|realiste)|r[eé]aliste|realiste|anime|manga|cinematic|cin[eé]matique|style\s+\w+)?\s*(?:de\s+|d['’]|of\s+)?)?/iu
 const CREATION_RELATION_STOP_RE = /\s+(?:devant|face\s+a|face\s+au|face\s+aux|a\s+cote|a\s+cot[eé]|pres\s+de|pr[eè]s\s+de|dans|sur|sous|avec|contre|inside|in\s+front\s+of|next\s+to|beside|near|with|on|under|style|au\s+style|en\s+style|,|;|\.|!|\?)/iu
 const CREATION_OBJECT_CUE_RE = /\b(?:voiture|car|moto|motorcycle|telephone|phone|iphone|smartphone|ordinateur|computer|laptop|console|camera|cam[eé]ra|casque|headset|shoe|sneaker|chaussure|product|produit|objet|logo|marque|brand|model|modele|mod[eè]le|tesla|gpu|cpu|motherboard|carte\s+mere|carte\s+m[eè]re)\b/iu
 const CREATION_PLACE_CUE_RE = /\b(?:tour|tower|ville|city|pays|country|mont|mount|mountain|parc|park|palais|palace|chateau|ch[aâ]teau|eglise|[eé]glise|cathedrale|cath[eé]drale|temple|plage|beach|foret|for[eê]t|rue|street)\b/iu
 
 function properNameCandidateFromFragment(fragment: string): string | null {
+  const gaz = findGazetteerMatch(fragment)
+  if (gaz) return gaz
   const trimmed = clean(fragment)
   if (!trimmed) return null
   const stop = trimmed.search(CREATION_RELATION_STOP_RE)
@@ -253,24 +296,27 @@ function properNameCandidateFromFragment(fragment: string): string | null {
 }
 
 function detectPrimaryCreationSubject(prompt: string, intent: ParsedImageIntent | null | undefined): SubjectToResearch | null {
-  if (intent?.isEditIntent) return null
+  if (intent?.isEditIntent && intent.editMode !== 'replicate') return null
   const text = clean(prompt)
-  if (!text || ADD_VERB_LOOSE.test(text)) return null
+  if (!text || (ADD_VERB_LOOSE.test(text) && intent?.editMode !== 'replicate')) return null
 
-  const withoutPrefix = text.replace(CREATION_PREFIX_RE, '')
+  const isExplicitPlaceCreation = /^\s*(?:(?:photo|image|illustration|dessin|render|rendu|visuel|creation|cr[eé]ation)\s+(?:photo(?:r[eé]aliste|realiste)|r[eé]aliste|realiste|anime|manga|cinematic|cin[eé]matique)?\s*(?:du|de\s+la|des|de|d['’]|of\s+)?)?(?:ville|village|royaume|paysage|d[eé]cor|environnement|quartier|monde|lieu)\s+(?:de\s+|d['’]|du\s+|of\s+)/iu.test(text)
+
+  const withoutPrefix = text.replace(REPLICATION_PREFIX_RE, '').replace(CREATION_PREFIX_RE, '')
   const proper = properNameCandidateFromFragment(withoutPrefix) || findProperNounIn(withoutPrefix)
   if (!proper) return null
 
   const split = splitNamedSubject(proper)
   const subject = split.subject || proper
   const context = split.context || extractFranchiseContext(text, subject)
-  const subjectContext = `${subject} ${text}`
-  const placeLike = CREATION_PLACE_CUE_RE.test(subject)
+  const placeLike = isExplicitPlaceCreation
+    || CREATION_PLACE_CUE_RE.test(subject)
+    || /\b(?:ville|village|royaume|paysage|lieu|cite|cité|quartier|monde)\s+(?:de|du|d'|of)\s+/iu.test(subject)
 
   return {
     subject,
     searchLabel: buildSearchLabel(subject, context),
-    kind: placeLike ? 'place' : CREATION_OBJECT_CUE_RE.test(subjectContext) ? 'object' : 'character',
+    kind: placeLike ? 'place' : CREATION_OBJECT_CUE_RE.test(subject) ? 'object' : 'character',
     role: placeLike ? 'become_scene' : 'primary_subject',
   }
 }
@@ -407,6 +453,20 @@ export function detectSubjectToResearch(
     }
   }
 
+  // 3) Entité / personnage connu présent n'importe où dans le prompt
+  const gaz = findGazetteerMatch(text)
+  if (gaz) {
+    const split = splitNamedSubject(gaz)
+    const subject = split.subject || gaz
+    const context = split.context || extractFranchiseContext(text, subject)
+    return {
+      subject,
+      searchLabel: buildSearchLabel(subject, context),
+      kind: 'character',
+      role: 'primary_subject',
+    }
+  }
+
   return null
 }
 
@@ -485,12 +545,11 @@ function cleanDescription(text: string): string {
 
 function mergeReferenceDescriptions(descriptions: string[]): string {
   const cleaned = descriptions.map(cleanDescription).filter(Boolean)
-  if (cleaned.length <= 1) return cleaned[0] || ''
-  const merged = [
-    `Primary reference: ${cleaned[0]}`,
-    ...cleaned.slice(1, 3).map((description, index) => `Cross-check ${index + 1}: ${description}`),
-  ].join(' ')
-  return merged.length > 820 ? `${merged.slice(0, 817)}...` : merged
+  if (cleaned.length === 0) return ''
+  // Use the top consensus-ranked description directly.
+  // We avoid meta-prefixes like "Primary reference:" or "Cross-check 1:" because diffusion models
+  // misinterpret them as instructions to render multiple tiled panes/mosaics.
+  return cleaned[0]
 }
 
 function descriptionTokens(description: string): Set<string> {
@@ -679,8 +738,8 @@ export async function resolveSubjectReference(
 export function buildAppearanceClause(target: SubjectToResearch, description: string): string {
   const desc = clean(description)
   if (!desc) return ''
-  if (target.role === 'become_scene') {
-    return `The new environment / background must look exactly like this: ${desc}`
+  if (target.role === 'become_scene' || target.kind === 'environment' || target.kind === 'place') {
+    return `The environment and background (${clean(target.subject)}) must match this exact visual appearance: ${desc}. Accurate linear perspective and spatial depth, with clean architectural scenery, no deformed humanoid blobs or messy unrecognizable characters on banners, and no giant out-of-scale background figures.`
   }
   if (target.role === 'primary_subject') {
     const noun = target.kind === 'character' ? 'main character' : 'main subject'

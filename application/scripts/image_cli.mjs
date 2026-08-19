@@ -14,7 +14,8 @@ import {
   resolveKontextModel,
   shouldUseStagedKontextEditPlan,
 } from '../src/utils/fluxKontextWorkflow.ts'
-import { translateEditInstructionToEnglish } from '../src/utils/kontextInstructionTranslator.ts'
+import { looksFrench, applyEditLexicon, translateEditInstructionToEnglish } from '../src/utils/kontextInstructionTranslator.ts'
+import { buildPrompt, parseBrief } from '../src/services/imagePromptBuilder.ts'
 import {
   detectSubjectToResearch,
   resolveSubjectReference,
@@ -102,7 +103,7 @@ async function comfy(base, path, opts) {
   return r
 }
 
-async function queueAndWait(comfyUrl, workflow, timeoutMs = 12 * 60 * 1000) {
+async function queueAndWait(comfyUrl, workflow, timeoutMs = 30 * 60 * 1000) {
   const queued = await (await comfy(comfyUrl, '/prompt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -165,13 +166,32 @@ async function ollamaGenerate(ollamaUrl, model, p) {
   return r.json()
 }
 
+async function unloadAllOllamaModels(ollamaUrl) {
+  try {
+    const ps = await fetch(`${ollamaUrl}/api/ps`).then((r) => r.json()).catch(() => null)
+    if (Array.isArray(ps?.models)) {
+      for (const m of ps.models) {
+        const modelName = m?.name || m?.model
+        if (modelName) {
+          await fetch(`${ollamaUrl}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: modelName, messages: [], keep_alive: 0 }),
+          }).catch(() => {})
+          await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: modelName, prompt: '', stream: false, keep_alive: 0 }),
+          }).catch(() => {})
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 1200))
+  } catch {}
+}
+
 async function unloadOllamaModel(ollamaUrl, model) {
-  if (!model) return
-  await fetch(`${ollamaUrl}/api/generate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, prompt: '', stream: false, keep_alive: 0 }),
-  }).catch(() => {})
+  await unloadAllOllamaModels(ollamaUrl)
 }
 
 function extractJsonLoose(text) {
@@ -182,9 +202,14 @@ function extractJsonLoose(text) {
 
 // Backend de recherche d'images de reference (meme script que l'UI) : DuckDuckGo
 // + crawl4ai, sans cle API. Echoue silencieusement -> renvoie {ok:true,candidates:[]}.
+function getPythonBin() {
+  if (process.env.PYTHON) return process.env.PYTHON
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
 function runRefSearchPy(args) {
   try {
-    const out = execFileSync(process.env.PYTHON || 'python', [REF_SEARCH_PY, ...args], {
+    const out = execFileSync(getPythonBin(), [REF_SEARCH_PY, ...args], {
       encoding: 'utf-8', timeout: 90000, maxBuffer: 48 * 1024 * 1024,
     })
     const line = (out || '').trim().split('\n').filter(Boolean).pop() || '{}'
@@ -192,6 +217,34 @@ function runRefSearchPy(args) {
   } catch {
     return null
   }
+}
+
+async function resolveOllamaTextModel(ollamaUrl, userSpecified) {
+  if (userSpecified) return userSpecified
+  try {
+    const tags = await fetch(`${ollamaUrl}/api/tags`).then((r) => r.json())
+    const names = (tags?.models || []).map((m) => m.name)
+    const priority = ['qwen3.6:27b', 'qwen3:30b-a3b-instruct-2507-q4_K_M', 'qwen3:14b', 'qwen3-coder:30b', 'devstral:latest']
+    for (const p of priority) {
+      if (names.includes(p)) return p
+    }
+    if (names.length > 0) return names[0]
+  } catch {}
+  return 'qwen3.6:27b'
+}
+
+async function resolveOllamaVisionModel(ollamaUrl, userSpecified) {
+  if (userSpecified) return userSpecified
+  try {
+    const tags = await fetch(`${ollamaUrl}/api/tags`).then((r) => r.json())
+    const names = (tags?.models || []).map((m) => m.name)
+    const priority = ['qwen3-vl:8b', 'qwen3-vl:30b']
+    for (const p of priority) {
+      if (names.includes(p)) return p
+    }
+    if (names.length > 0) return names[0]
+  } catch {}
+  return 'qwen3-vl:8b'
 }
 
 async function downloadRefBytes(url) {
@@ -422,8 +475,7 @@ async function main() {
 
   const comfyUrl = args.comfy || DEFAULT_COMFY
   const ollamaUrl = args.ollama || DEFAULT_OLLAMA
-  const outDir = resolve(args.out || 'output/image-cli')
-  const tag = (args.tag || `cli_${Date.now()}`).replace(/[^a-z0-9_.-]+/gi, '_')
+  const outDir = resolve(args.out || (process.cwd().endsWith('application') ? join('output', 'image', 'cli') : join('application', 'output', 'image', 'cli')))
   const width = numberOpt(args.width, 1024)
   const height = numberOpt(args.height, 1024)
   const steps = numberOpt(args.steps, 28)
@@ -445,6 +497,15 @@ async function main() {
   })
 
   const intent = parseImageIntent(prompt, { hasReference: Boolean(refPath) })
+  const modeSlug = (intent?.editMode || 'creation').toLowerCase().replace(/[^a-z0-9]+/g, '_')
+  const promptSlug = prompt
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 32) || 'image'
+  const tag = (args.tag || `${modeSlug}_${promptSlug}_${Date.now()}`).replace(/[^a-z0-9_.-]+/gi, '_')
   let workflow
   let stagedReplacementPlan = null
   let stagedReferenceFilename = null
@@ -465,8 +526,8 @@ async function main() {
     const kontextModel = wantsKontext ? await detectKontext(comfyUrl).catch(() => null) : null
 
     if (kontextModel && wantsKontext) {
-      const helperModel = args['translate-model'] || process.env.TRANSLATE_MODEL || 'qwen3:14b'
-      const visionModel = args['vision-model'] || process.env.VISION_MODEL || 'qwen3-vl:8b'
+      const helperModel = await resolveOllamaTextModel(ollamaUrl, args['translate-model'] || process.env.TRANSLATE_MODEL)
+      const visionModel = await resolveOllamaVisionModel(ollamaUrl, args['vision-model'] || process.env.VISION_MODEL)
       helperModelUsed = helperModel
 
       // Libere la VRAM ComfyUI avant les passes Ollama (traduction + vision) pour
@@ -582,9 +643,10 @@ async function main() {
         height,
       })
     } else {
-      const denoise = intent.isEditIntent ? resolveReferenceDenoise(intent, refDenoise, style) : refDenoise
+      const englishPrompt = looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt
+      const denoise = refDenoise ?? (intent.isEditIntent ? resolveReferenceDenoise(intent, 0.58, style) : 0.58)
       workflow = createFluxWorkflow({
-        prompt: intent.cleanedPrompt,
+        prompt: [englishPrompt || intent.cleanedPrompt, entityClause].filter(Boolean).join('\n\n'),
         negativePrompt: buildNegativePrompt(negative, intent.removals),
         style,
         width,
@@ -604,8 +666,8 @@ async function main() {
       entityDescription = forced
       entityReferenceCount = 0
     } else if (targetToResearch && !args['no-research']) {
-      const helperModel = args['translate-model'] || process.env.TRANSLATE_MODEL || 'qwen3:14b'
-      const visionModel = args['vision-model'] || process.env.VISION_MODEL || 'qwen3-vl:8b'
+      const helperModel = await resolveOllamaTextModel(ollamaUrl, args['translate-model'] || process.env.TRANSLATE_MODEL)
+      const visionModel = await resolveOllamaVisionModel(ollamaUrl, args['vision-model'] || process.env.VISION_MODEL)
       helperModelUsed = helperModel
       visionModelUsed = visionModel
       await freeComfyVram(comfyUrl)
@@ -620,9 +682,19 @@ async function main() {
       entityReferenceCount = resolved.referenceCount
     }
 
+    const englishPrompt = looksFrench(intent.cleanedPrompt) ? applyEditLexicon(intent.cleanedPrompt) : intent.cleanedPrompt
+
+    const brief = parseBrief(englishPrompt || intent.cleanedPrompt)
+    const builtPrompt = buildPrompt({
+      ...brief,
+      subject: englishPrompt || intent.cleanedPrompt,
+      context: entityClause || brief.context,
+      negativeHints: [negative, ...intent.removals].filter(Boolean),
+    })
+
     workflow = createFluxWorkflow({
-      prompt: [intent.cleanedPrompt, entityClause].filter(Boolean).join('\n\n'),
-      negativePrompt: buildNegativePrompt(negative, intent.removals),
+      prompt: [builtPrompt.positive, entityClause].filter(Boolean).join('\n\n'),
+      negativePrompt: builtPrompt.negative,
       style,
       width,
       height,
@@ -653,6 +725,11 @@ async function main() {
     helperModel: helperModelUsed || undefined,
     visionModel: visionModelUsed || undefined,
   }, null, 2))
+
+  await unloadAllOllamaModels(ollamaUrl)
+  await freeComfyVram(comfyUrl)
+  await new Promise((r) => setTimeout(r, 2500))
+  await freeComfyVram(comfyUrl)
 
   try {
     let imageBuffer
@@ -690,12 +767,46 @@ async function main() {
       imageBuffer = Buffer.from(await fetch(`${comfyUrl}/view?filename=${encodeURIComponent(filename)}&type=output`).then((r) => r.arrayBuffer()))
     }
     if (!imageBuffer) throw new Error('Aucune image produite par ComfyUI')
-    if (pngLooksBlack(imageBuffer)) {
-      throw new Error('Rendu noir detecte: ComfyUI a termine sans erreur mais le PNG est inutilisable. La VRAM a ete liberee; relance avec moins de batch/steps ou verifie les logs Comfy.')
+    const targetSubdir = join(outDir, tag)
+    mkdirSync(targetSubdir, { recursive: true })
+    const destImage = join(targetSubdir, 'image.png')
+    const destPrompt = join(targetSubdir, 'prompt.txt')
+    const destMeta = join(targetSubdir, 'metadata.json')
+
+    writeFileSync(destImage, imageBuffer)
+    
+    const promptTextContent = [
+      `PROMPT: ${prompt}`,
+      `INTENTION: ${intent.editMode}`,
+      `STYLE: ${style}`,
+      `STEPS: ${steps}`,
+      `SEED: ${seed}`,
+      `ENGINE: ${engine}`,
+      `REFERENCE_BASE: ${refPath || 'aucune'}`,
+      `REFERENCE_SOURCE: ${ref2Path || 'aucune'}`,
+      `ENTITE_DETECTEE: ${entityTarget || 'aucune'}`,
+      `DESCRIPTION_ENTITE: ${entityDescription || 'aucune'}`,
+      `DATE: ${new Date().toISOString()}`,
+    ].join('\n')
+    writeFileSync(destPrompt, promptTextContent)
+
+    const metaContent = {
+      prompt,
+      mode: intent.editMode,
+      engine,
+      style,
+      steps,
+      seed,
+      ref: refPath,
+      ref2: ref2Path || undefined,
+      entity: entityTarget,
+      entityDescription: entityDescription || undefined,
+      timestamp: new Date().toISOString(),
     }
-    const dest = join(outDir, `${tag}.png`)
-    writeFileSync(dest, imageBuffer)
-    console.log(`saved ${dest}`)
+    writeFileSync(destMeta, JSON.stringify(metaContent, null, 2))
+
+    console.log(`saved ${destImage}`)
+    console.log(`saved ${destPrompt}`)
   } finally {
     await freeComfyVram(comfyUrl)
     if (helperModelUsed) await unloadOllamaModel(ollamaUrl, helperModelUsed)

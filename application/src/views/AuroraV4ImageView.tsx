@@ -334,11 +334,11 @@ export default function AuroraV4ImageView() {
     if (I.current?.seed === null || I.current?.seed === undefined) return
     await copyText(String(I.current.seed))
   }
-  const downloadImage = (img: GeneratedCard) => {
-    const a = document.createElement('a')
-    a.href = img.url
-    a.download = `fairy-tail-${img.style}-${img.id}.png`
-    document.body.appendChild(a); a.click(); a.remove()
+  const downloadImage = async (img: GeneratedCard) => {
+    const { downloadImageUniversal } = await import('../utils/imageDownload')
+    await downloadImageUniversal(img, {
+      filename: `fairy-tail-${img.style}-${img.id}.png`,
+    })
   }
   const recallWithSeed = (img: GeneratedCard, offset: number) => {
     I.setPrompt(img.prompt)

@@ -816,82 +816,17 @@ export default function ImageView() {
     }
   }, [activeOllamaModel, contextFiles, diagnostics.blockingReason, executeWithRuntime, fixedSeed, getRecentMessages, height, isGenerating, preparePack, prompt, pushMessage, runtimeServices.comfyui.path, seed, selectedStyle, steps, visionModel, width])
 
-  const downloadImage = useCallback((image: GeneratedImage, format: 'png' | 'jpeg' | 'webp' = 'png') => {
+  const downloadImage = useCallback(async (image: GeneratedImage, format: 'png' | 'jpeg' | 'webp' = 'png') => {
     const ext = format === 'jpeg' ? 'jpg' : format
     const filename = `juan-bike-${image.style}-${image.timestamp}.${ext}`
-    const applyFormatConversion = async (sourceUrl: string) => {
-      try {
-        const response = await fetch(sourceUrl)
-        const blob = await response.blob()
-        if (format === 'png' && blob.type === 'image/png') {
-          return blob
-        }
-        const bitmap = await createImageBitmap(blob)
-        const canvas = document.createElement('canvas')
-        canvas.width = bitmap.width
-        canvas.height = bitmap.height
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return blob
-        if (format !== 'png') {
-          ctx.fillStyle = '#091116'
-          ctx.fillRect(0, 0, canvas.width, canvas.height)
-        }
-        ctx.drawImage(bitmap, 0, 0)
-        const mime = format === 'jpeg' ? 'image/jpeg' : format === 'webp' ? 'image/webp' : 'image/png'
-        const converted: Blob | null = await new Promise((resolve) =>
-          canvas.toBlob((value) => resolve(value), mime, format === 'png' ? undefined : 0.93),
-        )
-        return converted ?? blob
-      } catch {
-        return null
-      }
-    }
-
-    void (async () => {
-      const blob = await applyFormatConversion(image.url)
-      if (!blob) {
-        window.open(image.url, '_blank')
-        return
-      }
-      const blobUrl = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = blobUrl
-      anchor.download = filename
-      anchor.click()
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
-    })()
+    const { downloadImageUniversal } = await import('../utils/imageDownload')
+    await downloadImageUniversal(image, { filename, format })
   }, [])
 
   const downloadAllAsZip = useCallback(async () => {
     if (imagesRef.current.length === 0) return
-    const { default: JSZip } = await import('jszip')
-    const zip = new JSZip()
-    const entries = imagesRef.current
-    await Promise.all(entries.map(async (image, index) => {
-      try {
-        const response = await fetch(image.url)
-        const blob = await response.blob()
-        const ext = blob.type === 'image/png' ? 'png' : blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'
-        const rank = String(index + 1).padStart(2, '0')
-        const slug = promptSlug(image.prompt, 40)
-        zip.file(`${rank}_${slug}_${image.timestamp}.${ext}`, blob)
-      } catch {
-      }
-    }))
-    const metadata = entries.map((image) => ({
-      id: image.id,
-      prompt: image.prompt,
-      style: image.style,
-      timestamp: image.timestamp,
-    }))
-    zip.file('metadata.json', JSON.stringify(metadata, null, 2))
-    const blob = await zip.generateAsync({ type: 'blob' })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `aurora-image-gallery-${Date.now()}.zip`
-    anchor.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1500)
+    const { downloadImagesAsZip } = await import('../utils/imageDownload')
+    await downloadImagesAsZip(imagesRef.current, `aurora-image-gallery-${Date.now()}.zip`)
   }, [])
 
   const copyImageToClipboard = useCallback(async (image: GeneratedImage) => {

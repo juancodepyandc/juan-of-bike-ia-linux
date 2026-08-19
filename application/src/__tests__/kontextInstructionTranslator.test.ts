@@ -153,4 +153,37 @@ describe('buildKontextInstruction — chemin englishCore', () => {
     const instr = buildKontextInstruction('ajoute un chapeau rouge', intent)
     assert.match(instr, /Add .*chapeau rouge/i)
   })
+
+  test('ajout cape noire + flammes bleues préserve la tenue originale et le visage', () => {
+    const prompt = 'ajout d une cape noir et donc flamme bleu en plus'
+    const intent = parseImageIntent(prompt, { hasReference: true })
+    const lex = applyEditLexicon(prompt)
+    assert.match(lex, /black cape/i)
+    assert.match(lex, /blue flames/i)
+
+    const instr = buildKontextInstruction(prompt, intent, {
+      englishCore: 'add a black cape and additional blue flames',
+    })
+    assert.match(instr, /add a black cape and additional blue flames/i)
+    assert.match(instr, /worn over the character's body/i)
+    assert.match(instr, /clothing keep their original colors.*unchanged/i)
+    assert.match(instr, /flames.*appear around the character alongside existing elements/i)
+    assert.match(instr, /same face, same hair/i)
+  })
+
+  test('demande nuit étoilée applique un background_change sans foule ni altération de personnage', () => {
+    const prompt = 'demande nuit étoilée'
+    const intent = parseImageIntent(prompt, { hasReference: true })
+    assert.equal(intent.editMode, 'background_change')
+
+    const lex = applyEditLexicon(prompt)
+    assert.match(lex, /starry night sky/i)
+
+    const instr = buildKontextInstruction(prompt, intent, {
+      englishCore: 'change the background into a starry night sky with glowing stars',
+    })
+    assert.match(instr, /Change only the background and sky/i)
+    assert.match(instr, /Preserve the foreground character's exact face, facial features, hair style, hair color/i)
+    assert.match(instr, /Do not add any random bystanders, extra crowd/i)
+  })
 })

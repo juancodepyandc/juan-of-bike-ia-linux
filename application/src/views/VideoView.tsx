@@ -30,8 +30,6 @@ import { getErrorMessage } from '../utils/errors'
 import { prepareContextFiles } from '../utils/multimodalContext'
 import { pickPrimaryPreparedImage } from '../utils/referenceMedia'
 
-const VIDEO_TIMEOUT_MS = 20 * 60 * 1000
-
 type VideoProfile = {
   width: number
   height: number
@@ -74,9 +72,9 @@ const MOTION_PRESETS: MotionPreset[] = [
 function buildVideoProfiles(width: number, height: number, numFrames: number): VideoProfile[] {
   const candidates: VideoProfile[] = [
     { width, height, numFrames, label: 'profil principal' },
-    { width: Math.min(width, 768), height: Math.min(height, 512), numFrames: Math.min(numFrames, 49), label: 'profil stable' },
-    { width: Math.min(width, 640), height: Math.min(height, 384), numFrames: Math.min(numFrames, 33), label: 'profil secours' },
-    { width: Math.min(width, 512), height: Math.min(height, 320), numFrames: Math.min(numFrames, 25), label: 'profil minimal' },
+    { width: Math.min(width, 768), height: Math.min(height, 512), numFrames, label: 'profil stable' },
+    { width: Math.min(width, 640), height: Math.min(height, 384), numFrames, label: 'profil secours' },
+    { width: Math.min(width, 512), height: Math.min(height, 320), numFrames, label: 'profil minimal' },
   ]
 
   return candidates.filter((candidate, index, array) => (
@@ -108,7 +106,7 @@ function isRecoverableVideoFailure(error: unknown) {
 
 const FPS = 24
 const MIN_FRAMES = 25
-const MAX_FRAMES = 97
+const MAX_FRAMES = 97 * 5
 const secondsToFrames = (seconds: number) =>
   Math.max(MIN_FRAMES, Math.min(MAX_FRAMES, Math.round(seconds * FPS)))
 
@@ -551,37 +549,55 @@ export default function VideoView() {
               60,
             )
 
+            // 2026-08-07 : seed déterministe dérivée du prompt final.
+            // Mesure banc isolation Wan2.2 : sur 3 seeds au même prompt, amp
+            // de mouvement varie de 165 % (0,00128 à 0,00887) — un plan
+            // « quasi fixe » vs « qui bouge » relève du hasard tant que
+            // rien ne fixe la seed. Ne pas passer `--seed` = loterie à
+            // chaque relance sans changement d'intention utilisateur.
+            // Hash FNV-1a 32 bits du prompt : deterministe, distribué,
+            // même prompt → même vidéo (relance = idem), prompts
+            // différents → seeds différentes.
+            const promptSeed = (() => {
+              let h = 0x811c9dc5
+              for (let i = 0; i < finalGenerationPrompt.length; i += 1) {
+                h ^= finalGenerationPrompt.charCodeAt(i)
+                h = Math.imul(h, 0x01000193) >>> 0
+              }
+              return h % 2147483647
+            })()
+
             try {
-              output = await new Promise<string>((resolve, reject) => {
-                const timer = setTimeout(() => reject(new Error('Timeout: generation video trop longue (>20 min).')), VIDEO_TIMEOUT_MS)
-                runPythonScript(scriptPath, [
-                  '--prompt',
-                  finalGenerationPrompt,
-                  '--output',
-                  outputPath,
-                  ...(primaryPreparedImage?.stagedPath ? ['--image', primaryPreparedImage.stagedPath] : []),
-                  '--width',
-                  String(profile.width),
-                  '--height',
-                  String(profile.height),
-                  '--num_frames',
-                  String(Math.min(profile.numFrames, 97)),
-                  '--thumbnail',
-                  thumbnailPath,
-                  '--vram_gb',
-                  String(hardware?.vram_gb ?? 0),
-                  '--model_mode',
-                  videoMode,
-                  '--quality_mode',
-                  qualityMode,
-                  '--motion_interp',
-                  // Auto + premium = 60 fps silky interpolation; balanced
-                  // stays at 48 fps for faster export.
-                  qualityMode === 'balanced' ? '1' : '2',
-                ], { resumeKey: 'video' }).then(
-                  (result) => { clearTimeout(timer); resolve(result) },
-                  (error) => { clearTimeout(timer); reject(error) },
-                )
+              output = await runPythonScript(scriptPath, [
+                '--prompt',
+                finalGenerationPrompt,
+                '--output',
+                outputPath,
+                ...(primaryPreparedImage?.stagedPath ? ['--image', primaryPreparedImage.stagedPath] : []),
+                '--width',
+                String(profile.width),
+                '--height',
+                String(profile.height),
+                '--num_frames',
+                String(profile.numFrames),
+                '--thumbnail',
+                thumbnailPath,
+                '--vram_gb',
+                String(hardware?.vram_gb ?? 0),
+                '--model_mode',
+                videoMode,
+                '--quality_mode',
+                qualityMode,
+                '--seed',
+                String(promptSeed),
+                '--motion_interp',
+                // Auto + premium = 60 fps silky interpolation; balanced
+                // stays at 48 fps for faster export.
+                qualityMode === 'balanced' ? '1' : '2',
+              ], {
+                resumeKey: 'video',
+                maxWaitMs: 8 * 60 * 60 * 1000,
+                stalledTimeoutMs: 45 * 60 * 1000,
               })
               break
             } catch (pipelineError) {

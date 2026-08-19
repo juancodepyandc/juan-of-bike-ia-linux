@@ -17,6 +17,7 @@ import { Camera, MicOff, Settings, Sparkles, X } from 'lucide-react'
 import AuroraSphereV1 from '../components/AuroraSphereV1'
 import LyraCharacter from '../components/voice/LyraCharacter'
 import VoiceLandscape from '../components/voice/VoiceLandscape'
+import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
 
@@ -81,9 +82,10 @@ function VoiceSphere({ pulse }: { pulse: number }) {
 
 export default function AuroraV1VoiceView({ onClose }: AuroraV1VoiceViewProps = {}) {
   const [live, setLive] = useState(false)
+  const [studioOpen, setStudioOpen] = useState(false)
   const [pulse, setPulse] = useState(0)
   useEffect(() => {
-    if (live) return
+    if (live || studioOpen) return
     let raf = 0
     const loop = () => {
       setPulse(Math.abs(Math.sin(performance.now() / 800)))
@@ -91,7 +93,11 @@ export default function AuroraV1VoiceView({ onClose }: AuroraV1VoiceViewProps = 
     }
     raf = requestAnimationFrame(loop)
     return () => cancelAnimationFrame(raf)
-  }, [live])
+  }, [live, studioOpen])
+
+  if (studioOpen) {
+    return <VoiceReplicationStudio onClose={() => setStudioOpen(false)} />
+  }
 
   if (live) {
     return (
@@ -202,6 +208,9 @@ export default function AuroraV1VoiceView({ onClose }: AuroraV1VoiceViewProps = 
         }}>
           whisper.cpp · qwen3-coder · ollama TTS · prêt
         </span>
+        <Btn variant="ghost" onClick={() => setStudioOpen(true)} style={{ background: 'linear-gradient(135deg, rgba(124,58,237,0.3), rgba(192,38,211,0.3))', borderColor: 'rgba(192,38,211,0.5)', color: '#fff' }}>
+          <Sparkles size={14} /> Studio Réplication
+        </Btn>
         <Btn variant="primary" size="lg" onClick={() => setLive(true)}>
           <Sparkles size={14} /> Démarrer session
         </Btn>

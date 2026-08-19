@@ -10,6 +10,31 @@ const FX_PREF_KEY = 'aurora-fx-enabled'
 
 export type FxRef = { url: string; role: string }
 export type FxCounters = { photosValidees?: number; photosRejetees?: number; meshTentatives?: number }
+
+// Question posee PAR l'ecran de generation lui-meme. Lecon payee deux fois:
+// empiler une modale translucide PAR-DESSUS l'ecran anime est illisible, et
+// les clics traversent vers l'interface en dessous (un clic aveugle a ouvert
+// un selecteur de fichiers). La question doit etre une PARTIE de l'ecran —
+// une seule surface, opaque — et l'ecran bloque tout clic vers le dessous
+// tant qu'une reponse est attendue.
+export type FxAsk = {
+  id: string
+  // question       -> texte + options
+  // confirm_images -> accepter / refuser (+ peut-etre si allowMaybe)
+  // pick_image     -> galerie: cliquer UNE image puis valider
+  kind: 'question' | 'confirm_images' | 'pick_image'
+  question: string
+  categoryLabel?: string
+  options?: string[]
+  images?: string[]
+  allowText?: boolean
+  allowMaybe?: boolean
+  /** lot: tri image par image (clic = garder/jeter); l'index 0 (reference) est fixe */
+  allowPickEach?: boolean
+  /** la question attend une PHOTO en reponse (2e vue reelle) */
+  allowPhoto?: boolean
+}
+
 export type FxPatch = {
   active: boolean
   phase?: string
@@ -20,6 +45,36 @@ export type FxPatch = {
   logLine?: string
   meshUrl?: string
   meshInfo?: string
+  ask?: FxAsk | null
+}
+
+// Registre des reponses en attente + presence du host. Si le host n'est pas
+// monte (FX desactive), fxAsk rend null et l'appelant retombe sur sa modale
+// classique — jamais une promesse qui ne se resout pas.
+const askResolvers = new Map<string, (value: unknown) => void>()
+let fxHostMounted = 0
+
+export function markFxHostMounted(on: boolean): void {
+  fxHostMounted += on ? 1 : -1
+}
+
+export function isFxHostAlive(): boolean {
+  return fxHostMounted > 0 && generationFxEnabled()
+}
+
+export function fxAsk<T>(module: FxModule, ask: FxAsk): Promise<T> | null {
+  if (!isFxHostAlive()) return null
+  return new Promise<T>((resolve) => {
+    askResolvers.set(ask.id, resolve as (value: unknown) => void)
+    emitGenerationFx(module, { active: true, ask })
+  })
+}
+
+export function fxAnswer(module: FxModule, id: string, value: unknown): void {
+  const r = askResolvers.get(id)
+  askResolvers.delete(id)
+  emitGenerationFx(module, { active: true, ask: null })
+  r?.(value)
 }
 
 export function generationFxEnabled(): boolean {

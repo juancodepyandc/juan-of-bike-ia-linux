@@ -1,5 +1,6 @@
 export type ImageEditMode =
   | 'create'
+  | 'replicate'
   | 'preserve_refine'
   | 'add_element'
   | 'remove_element'
@@ -75,9 +76,12 @@ const PRESERVATION_PATTERNS: RegExp[] = [
   /\b(?:modifie|change|edit)\s+(?:juste|seulement|only|just)\b/iu,
   /\b(?:exactement\s+(?:la|le|l')?\s*(?:m\u00eame|meme)|exactly\s+(?:the\s+)?same|same\s+(?:image|photo|composition|framing|camera))\b/iu,
   /\b(?:reprends?|reuse|r\u00e9utilise|reutilise)\s+(?:la|the|l')?\s*(?:image|photo)\b/iu,
+  /\b(?:r[eé]pliqu|replicate|reprodui|reproduce|recr[eé]|recreate|dupliqu|copi|imit|fais\s+pareil|identique)\b/iu,
   /\bsans\s+(?:changer|modifier|toucher|alt[e\u00e9]rer|d[e\u00e9]former|ab[i\u00ee]mer|perdre|effacer)\b/iu,
   /\bwithout\s+(?:changing|modifying|touching|altering|deforming|damaging|losing|erasing)\b/iu,
 ]
+
+const REPLICATION_PATTERN = /\b(r[eé]pliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|r[eé]plication|replicate|replicating|reproduction|reprodui(?:re|s|t|sez|sent|sant)|recr[eé](?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|recreate|recreating|dupliqu(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|duplication|duplicate|duplicating|copi(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|copy|copying|imit(?:er|ez|e|ent|ait|ant|es|\u00e9|\u00e9e|\u00e9s|\u00e9es)|imitation|mimic|mimicking|fais\s+pareil|clone|cloner|clonage|remix)\b/i
 
 const CONNECTOR_SPLIT = /\s+(?:et|and|ou|or|ni|nor)\s+/iu
 const LEADING_REMOVAL_VERB = /^(?:sans|without|no|pas\s+de)\s+(?:(?:de la|des|les|une|du|le|la|un|de|d'|l'|the|a|an|any)\s+)?/iu
@@ -88,7 +92,7 @@ const LEADING_INTENSITY_MODIFIER = /^(?:compl[e\u00e8]tement|completement|compl[
 const TEXT_EDIT_PATTERN = /\b(pancarte|panneau|affiche|inscription|slogan|logo texte|texte|ecrire|ecris|ecrit|mot|phrase|message|label|etiquette|sign|billboard|write|text saying|message saying)\b/i
 const NEGATED_TEXT_PATTERN = /\b(?:sans|aucun|aucune|pas\s+de|no|without)\s+(?:texte|inscription|slogan|message|label|etiquette|sign|text|logo)\b/i
 const EXPLICIT_TEXT_COMMAND_PATTERN = /\b(?:ecrire|ecris|ecrit|write|text saying|message saying)\b/i
-const BACKGROUND_PATTERN = /\b(fond|arri[e\u00e8]re.?plan|background|decor|d[e\u00e9]cor|environnement)\b/i
+const BACKGROUND_PATTERN = /\b(fond|arri[e\u00e8]re.?plan|background|decor|d[e\u00e9]cor|environnement|nuit\s+[eé]toil[eé]e|ciel\s+[eé]toil[eé]|ciel\s+de\s+nuit|en\s+pleine\s+nuit|coucher\s+de\s+soleil|soleil\s+couchant|soleil\s+levant|lever\s+de\s+soleil|aurore\s+bor[eé]ale|clair\s+de\s+lune|pleine\s+lune|sous\s+la\s+pluie|sous\s+la\s+neige|starry\s+night|night\s+sky|starry\s+sky|sunset|sunrise|moonlight|twilight)\b/i
 const BACKGROUND_PRESERVE_PATTERN = /\b(?:garde|garder|keep|preserve|conserve|conserver)\b.{0,140}\b(?:fond|arriere.?plan|background|decor|environnement)\b/i
 const SCENE_PATTERN = /\b(nouvelle scene|new scene|autre endroit|another place|transporte|teleporte|t[e\u00e9]l[e\u00e9]porte|change le decor|change de decor|nouvel endroit|nouveau lieu|change pose|change clothes|change outfit|autre action)\b/i
 const RESTYLE_PATTERN = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|isometrique|isometric|flat illustration|concept art|croquis|sketch|style)\b/i
@@ -97,11 +101,12 @@ const REPAIR_PATTERN = /\b(corrige|corriger|nettoie|nettoyer|r[e\u00e9]pare|r[e\
 const UPSCALE_PATTERN = /\b(upscale|haute resolution|haute definition|high resolution|hi.?res|4k|8k|plus net|plus detaille|plus pr[e\u00e9]cis|sharp|sharpen)\b/i
 const MOVE_PATTERN = /\b(d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift)\b/i
 const POSE_PATTERN = /\b(pose|sourire|smile|expression|regard|yeux|main|bras|jambe|tourne|rotation|recadre|crop|zoom|cadre|composition)\b/i
-const GENERIC_EDIT_PATTERN = /\b(modifie|modifier|change|changer|edite|edit|retouche|retoucher|transforme|transformer|transform|fais|faire|rends|rendre|ameliore|ameliorer|enhance|improve|d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift)\b/i
+const GENERIC_EDIT_PATTERN = /\b(modifie|modifier|change|changer|edite|edit|retouche|retoucher|transforme|transformer|transform|fais|faire|rends|rendre|ameliore|ameliorer|enhance|improve|d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift|r[eé]plique|r[eé]pliquer|replicate|reproduis|reproduire|reproduce|recr[eé]e|recr[eé]er|recreate|duplique|dupliquer|duplicate|copie|copier|copy|imite|imiter|imitate|clone|cloner)\b/i
 const ADD_COMMAND_PATTERN = /\b(ajoute|ajouter|rajoute|rajouter|mets|met|mettre|place|placer|add|insert|put)\b/i
 const HUMAN_REMOVAL_TARGET_RE = /\b(?:personne|personnage|humain|humaine|homme|femme|garcon|fille|gars|mec|meuf|individu|sujet|ami|amie|copain|copine|person|character|human|man|woman|boy|girl|guy|dude|male|female|subject|friend)\b/i
-const CLOTHING_OR_ACCESSORY_TARGET_RE = /^(?:uniquement|seulement|only|just)?\s*(?:(?:le|la|les|un|une|des|du|de|d'|l'|the|a|an)\s+)?(?:t\s?-?\s?shirt|tee\s?shirt|chemise|shirt|pull|sweat|hoodie|veste|jacket|manteau|coat|pantalon|pants|short|shorts|robe|dress|jupe|skirt|tenue|outfit|vetement|vetements|clothing|chaussure|chaussures|shoe|shoes|botte|bottes|boots|chapeau|hat|casquette|cap|lunettes|glasses|accessoire|accessory)\b/i
-const NON_ACTIONABLE_REMOVAL_TARGET_RE = /^(?:nudite|nudity|contenu explicite|explicit content|explicite|explicit|nsfw|sexe|sexual|sexuel|sexuelle|obscene|obscene content|doublon|doublons|duplicate|duplicates)$/i
+const CLOTHING_OR_ACCESSORY_TARGET_RE = /^(?:uniquement|seulement|only|just)?\s*(?:(?:le|la|les|un|une|des|du|de|d'|l'|the|a|an)\s+)?(?:t\s?-?\s?shirt|tee\s?shirt|chemise|shirt|pull|sweat|hoodie|veste|jacket|manteau|coat|cape|cloak|pantalon|pants|short|shorts|robe|dress|jupe|skirt|tenue|outfit|vetement|vetements|clothing|chaussure|chaussures|shoe|shoes|botte|bottes|boots|chapeau|hat|casquette|cap|lunettes|glasses|accessoire|accessory)\b/i
+const NON_ACTIONABLE_REMOVAL_TARGET_RE = /^(?:nudite|nudity|contenu explicite|explicit content|explicite|explicit|nsfw|sexe|sexual|sexuel|sexuelle|obscene|obscene content|doublon|doublons|duplicate|duplicates|monde|foule|gens|personne|personnes|passant|passants|personnages?|bystanders?|crowd|extra\s+people|random\s+people|ajouter\s+de\s+monde|ajouter\s+de\s+la\s+foule|ajouter\s+du\s+monde|ajouter\s+des\s+personnages?|mettre\s+du\s+monde)$/i
+const META_REFERENCE_TARGET_RE = /^(?:(?:plusieurs|quelques|mes|les|la|le|cette|ces|deux|2|3|mon|ma)\s+)?(?:r[eé]f[eé]rences?|references?|images?|photos?|illustrations?|visuels?|fichiers?|rendus?|source|sources?|modele|mod[eè]les?|prompt|prompts?)(?:\s+(?:fournies?|transmises?|jointes?|disponibles?|existantes?|actuelles?|ci-dessus|ci-dessous|humain|soign[eé]))?$/i
 
 function stripAccents(text: string): string {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -123,8 +128,8 @@ export function hasHumanRemovalTarget(targets: string[]): boolean {
 
 function cleanTarget(value: string): string {
   return value
-    .replace(/\s+sans\s+(?:changer|modifier|toucher|alt[e\u00e9]rer|d[e\u00e9]former|ab[i\u00ee]mer|perdre|effacer)\b.*$/iu, '')
-    .replace(/\s+without\s+(?:changing|modifying|touching|altering|deforming|damaging|losing|erasing)\b.*$/iu, '')
+    .replace(/\s+sans\s+(?:changer|modifier|toucher|alt[e\u00e9]rer|d[e\u00e9]former|ab[i\u00ee]mer|perdre|effacer|ajouter|mettre)\b.*$/iu, '')
+    .replace(/\s+without\s+(?:changing|modifying|touching|altering|deforming|damaging|losing|erasing|adding)\b.*$/iu, '')
     .replace(LEADING_REMOVAL_VERB, '')
     .replace(LEADING_INTENSITY_MODIFIER, '')
     .replace(LEADING_ARTICLE_ONLY, '')
@@ -148,6 +153,7 @@ function dedupeAndClean(values: string[]): string[] {
       if (!value || value.length < 2) continue
       const key = normalizeForIntent(value)
       if (NON_ACTIONABLE_REMOVAL_TARGET_RE.test(key)) continue
+      if (META_REFERENCE_TARGET_RE.test(key)) continue
       if (seen.has(key)) continue
       seen.add(key)
       out.push(value)
@@ -188,19 +194,30 @@ function collectReplacements(prompt: string): ImageReplacement[] {
   return values
 }
 
+const STYLE_PRESERVE_PATTERN = /\b(?:garde|garder|gardant|preserve|conserve|conserver|sans\s+changer|sans\s+modifier|m[eê]me)\b.{0,40}\bstyle\b/iu
+const EXPLICIT_RESTYLE_GENRE = /\b(pixel art|pixel-art|sprite|anime|manga|aquarelle|watercolor|peinture a l'huile|oil painting|comic|bd|low poly|isometrique|isometric|flat illustration|concept art|croquis|sketch)\b/i
+const EXPLICIT_REMOVE_COMMAND_PATTERN = /\b(?:enl[eè]ve|enl[eè]ver|retire|retirer|supprime|supprimer|efface|effacer|virer|vire|remove|delete|erase|drop)\b/i
+
 function detectMode(prompt: string, removals: string[], additions: string[], replacements: ImageReplacement[], options: ParseImageIntentOptions): ImageEditMode {
   const normalized = normalizeForIntent(prompt)
-  const isBackgroundEdit = BACKGROUND_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
+  const isBackgroundEdit = (BACKGROUND_PATTERN.test(normalized) && (GENERIC_EDIT_PATTERN.test(normalized) || options.hasReference || /\b(en|vers|dans|au|sous|ciel|nuit|fond)\b/i.test(normalized))) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
+  const isRestyleEdit = (EXPLICIT_RESTYLE_GENRE.test(normalized) || (/\bstyle\b/i.test(normalized) && /\b(?:change|changer|nouveau|autre|en\s+style|passe\s+en|transforme\s+en)\b/i.test(normalized))) && !STYLE_PRESERVE_PATTERN.test(normalized)
   const hasPreservationCue = PRESERVATION_PATTERNS.some((pattern) => pattern.test(prompt))
+  const hasReplicationCue = REPLICATION_PATTERN.test(normalized)
   const hasAddCommand = ADD_COMMAND_PATTERN.test(normalized)
 
   if (removals.length > 0) return 'remove_element'
-  if (isBackgroundEdit) return 'background_change'
+  if (isBackgroundEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'background_change'
   if (replacements.length > 0) return 'replace_element'
   if (TEXT_EDIT_PATTERN.test(normalized) && !NEGATED_TEXT_PATTERN.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))) return 'text_edit'
   if (SCENE_PATTERN.test(normalized)) return 'scene_transform'
+  if (hasReplicationCue && (options.hasReference || removals.length === 0)) {
+    if (isRestyleEdit && EXPLICIT_RESTYLE_GENRE.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
+    if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
+    return 'replicate'
+  }
   if (additions.length > 0 && (hasAddCommand || options.hasReference)) return 'add_element'
-  if (RESTYLE_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'restyle'
+  if (isRestyleEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
   if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
   if (REPAIR_PATTERN.test(normalized)) return 'repair_cleanup'
   if (UPSCALE_PATTERN.test(normalized)) return 'upscale_detail'
@@ -238,6 +255,23 @@ function buildEditContract(mode: ImageEditMode, removals: string[], additions: s
       negativeLines: [],
       preserveLines: [],
     },
+    replicate: {
+      label: 'replication fidele',
+      denoise: 0.28,
+      stepsBoost: 8,
+      promptLines: [
+        'reproduire fidelement le sujet, l identite, les traits et la composition de la reference',
+        'conserver l allure generale, la perspective et les proportions sans deformation',
+      ],
+      negativeLines: [
+        'identite perdue',
+        'morphologie deformee',
+        'composition alteree',
+        'nouveau sujet invente',
+        'traits incoherents',
+      ],
+      preserveLines: commonPreserve,
+    },
     preserve_refine: {
       label: 'amelioration douce',
       denoise: 0.18,
@@ -250,8 +284,23 @@ function buildEditContract(mode: ImageEditMode, removals: string[], additions: s
       label: 'ajout cible',
       denoise: 0.48,
       stepsBoost: 10,
-      promptLines: [`integrer naturellement les nouveaux elements demandes${additions.length ? `: ${additions.join(', ')}` : ''}`, 'ajouter des ombres de contact, reflets et perspective coherents'],
-      negativeLines: ['objet flottant', 'collage visible', 'ombres incoherentes', 'doublons inutiles'],
+      promptLines: [
+        `integrer naturellement les nouveaux elements demandes${additions.length ? `: ${additions.join(', ')}` : ''}`,
+        'si l ajout concerne une cape, un vetement ou un accessoire, le porter par-dessus sans recolorer ni modifier la tenue existante',
+        'preserver scrupuleusement le visage, la tete, la coiffure, la couleur de cheveux et l identite du personnage',
+        'ajouter des ombres de contact, reflets et perspective coherents',
+      ],
+      negativeLines: [
+        'vetement existant recolore',
+        'tenue modifiee',
+        'visage altere',
+        'coiffure modifiee',
+        'identite perdue',
+        'objet flottant',
+        'collage visible',
+        'ombres incoherentes',
+        'doublons inutiles',
+      ],
       preserveLines: commonPreserve,
     },
     remove_element: {
@@ -299,10 +348,25 @@ function buildEditContract(mode: ImageEditMode, removals: string[], additions: s
     },
     background_change: {
       label: 'changement de fond',
-      denoise: 0.56,
+      denoise: 0.52,
       stepsBoost: 10,
-      promptLines: ['changer le fond ou le decor demande', 'garder le sujet principal net, coherent et bien integre au nouvel environnement'],
-      negativeLines: ['sujet remplace', 'mauvais detourage', 'ombres incoherentes', 'fond collage'],
+      promptLines: [
+        'changer uniquement le fond, le ciel ou l ambiance du decor demande',
+        'garder le sujet principal 100% identique: preserver exactement le visage, les traits, la coiffure, la couleur de cheveux, les yeux, la morphologie et les vetements d origine',
+        'aucun personnage secondaire ajoute, aucune foule en arriere-plan, aucun passant non demande',
+      ],
+      negativeLines: [
+        'sujet modifie',
+        'visage altere',
+        'coiffure modifiee',
+        'couleur de cheveux changee',
+        'personnages secondaires inventes',
+        'foule aleatoire',
+        'passants non demandes',
+        'mauvais detourage',
+        'ombres incoherentes',
+        'fond collage',
+      ],
       preserveLines: commonPreserve,
     },
     color_lighting: {
@@ -339,10 +403,22 @@ function buildEditContract(mode: ImageEditMode, removals: string[], additions: s
     },
     scene_transform: {
       label: 'transformation de scene',
-      denoise: 0.70,
+      denoise: 0.65,
       stepsBoost: 12,
-      promptLines: ['transformer la scene selon la demande tout en conservant les ancres importantes de la reference'],
-      negativeLines: ['identite perdue', 'sujet duplique', 'collage incoherent', 'perspective impossible'],
+      promptLines: [
+        'transformer la scene selon la demande tout en conservant l identite, le visage, la coiffure et les vetements principaux du sujet',
+        'perspective spatiale lineaire et echelle coherente, aucun personnage geant au loin, aucun passant difforme',
+      ],
+      negativeLines: [
+        'identite perdue',
+        'visage altere',
+        'coiffure modifiee',
+        'personnages geants au loin',
+        'foule difforme',
+        'perspective impossible',
+        'sujet duplique',
+        'collage incoherent',
+      ],
       preserveLines: commonPreserve,
     },
     text_edit: {
@@ -421,6 +497,10 @@ export function resolveReferenceDenoise(intent: ParsedImageIntent, userDenoise: 
 
   const pixelRestyle = style === 'pixel_art' && intent.editMode !== 'preserve_refine' && intent.editMode !== 'upscale_detail'
   const desired = pixelRestyle ? Math.max(target, 0.68) : target
+
+  if (intent.editMode === 'replicate') {
+    return clamp(Math.min(userDenoise, desired), 0.12, 0.40)
+  }
 
   if (intent.editMode === 'preserve_refine' || intent.editMode === 'repair_cleanup' || intent.editMode === 'upscale_detail') {
     return clamp(Math.min(userDenoise, desired), 0.08, 0.35)

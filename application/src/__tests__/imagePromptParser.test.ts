@@ -208,6 +208,42 @@ describe('resolveReferenceDenoise', () => {
   })
 })
 
+describe('parseImageIntent - replication et prompts humains', () => {
+  test('detecte une replication directe', () => {
+    const result = parseImageIntent('replique cette image')
+
+    assert.equal(result.editMode, 'replicate')
+    assert.equal(result.isEditIntent, true)
+    assert.deepEqual(result.removals, [])
+    assert.deepEqual(result.additions, [])
+  })
+
+  test('detecte une demande de reproduction avec plusieurs references sans polluer les additions', () => {
+    const result = parseImageIntent('fais une replication de cette image avec plusieurs references et un prompt soigne', { hasReference: true })
+
+    assert.equal(result.editMode, 'replicate')
+    assert.equal(result.isEditIntent, true)
+    assert.deepEqual(result.additions, [])
+    assert.deepEqual(result.removals, [])
+  })
+
+  test('detecte une demande humaine de recreation fidele', () => {
+    const result = parseImageIntent('reproduis fidelement ce personnage en gardant son identite et son style')
+
+    assert.equal(result.editMode, 'replicate')
+    assert.equal(result.isEditIntent, true)
+    assert.ok(result.editContract.denoise !== null && result.editContract.denoise <= 0.35)
+  })
+
+  test('replicate denoise reste controle', () => {
+    const result = parseImageIntent('fais-moi une replication fidele')
+    const denoise = resolveReferenceDenoise(result, 0.75)
+
+    assert.ok(denoise <= 0.35)
+    assert.ok(denoise >= 0.15)
+  })
+})
+
 describe('buildNegativePrompt', () => {
   test('fusionne negative utilisateur et suppressions parsees', () => {
     const result = buildNegativePrompt('blurry, low quality', ['chat', 'pingouin'])
@@ -225,3 +261,5 @@ describe('buildNegativePrompt', () => {
     assert.equal(occurrences, 1)
   })
 })
+
+

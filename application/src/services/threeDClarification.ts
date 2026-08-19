@@ -128,6 +128,13 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
   const { prompt } = ctx
   if (!prompt || prompt.trim().length < 3) return null
 
+  // UNE IMAGE REPOND DEJA (30/07). Quand l'utilisateur joint une photo, la
+  // morphologie, la pose, le genre, la tenue et le style SONT DANS L'IMAGE:
+  // les lui redemander, c'est lui faire decrire ce que le systeme peut voir.
+  // L'analyse vision du pipeline s'en charge. On ne questionne plus rien de
+  // ce que l'image montre.
+  if (ctx.hasImageReference) return null
+
   // 1. Real-person reproduction — highest stakes (likeness). Do not auto-fill.
   if (
     (ctx.purpose === 'character' || ctx.subjectKind === 'character')
@@ -152,6 +159,28 @@ export function detectThreeDClarification(ctx: ClarificationContext): ThreeDClar
     && !POSE_HINTS.test(prompt)
     && FICTIONAL_CHARACTER_HINTS.test(prompt)
   ) {
+    // GRAMMAIRE: l'article francais donne deja le genre ("UN guerrier" =
+    // masculin, "UNE guerriere" = feminin). Redemander le genre alors que
+    // l'utilisateur l'a ecrit est incoherent — on ne questionne que ce qui
+    // manque vraiment (morphologie / pose).
+    // NE PAS CONFONDRE GENRE GRAMMATICAL ET SEXE DU SUJET (30/07): « le
+    // personnage », « un personnage » sont masculins EN GRAMMAIRE et ne
+    // disent rien du sujet — annoncer « Personnage masculin deduit de votre
+    // formulation » etait faux et deroutant. On n'infere le sexe que si un
+    // mot le PORTE reellement (guerriere, femme, homme, roi, sorciere...).
+    const MOTS_MASC = /\b(homme|garcon|gar\u00e7on|monsieur|roi|prince|guerrier|chevalier|soldat|heros|h\u00e9ros|mage|sorcier|moine|pere|p\u00e8re|fils|barbu)\b/iu
+    const MOTS_FEM = /\b(femme|fille|dame|reine|princesse|guerriere|guerri\u00e8re|chevaliere|heroine|h\u00e9ro\u00efne|magicienne|sorciere|sorci\u00e8re|nonne|mere|m\u00e8re|soeur|s\u0153ur)\b/iu
+    const masculin = MOTS_MASC.test(prompt) && !MOTS_FEM.test(prompt)
+    const feminin = MOTS_FEM.test(prompt) && !MOTS_MASC.test(prompt)
+    if (masculin || feminin) {
+      return {
+        category: 'character_anatomy',
+        question: `Personnage ${masculin ? 'masculin' : 'feminin'} (vous l'avez ecrit): quelle morphologie et quelle pose ?`,
+        options: masculin
+          ? ['Athletique, T-pose neutre', 'Trapu/massif, T-pose', 'Mince, A-pose', 'Pose dynamique (action/combat) — sera plus dur a riger']
+          : ['Svelte, A-pose neutre', 'Athletique, T-pose', 'Ronde, T-pose', 'Pose dynamique (action/combat) — sera plus dur a riger'],
+      }
+    }
     return {
       category: 'character_anatomy',
       question: 'Personnage fictif: precise le genre, la morphologie et la pose. Sans reponse je genererai une T-pose neutre androgyne.',

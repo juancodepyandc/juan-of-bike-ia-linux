@@ -412,14 +412,12 @@ export default function MangaImageView() {
 
   const onStop = () => abortRef.current?.abort()
 
-  const downloadCurrent = () => {
+  const downloadCurrent = async () => {
     if (!current) return
-    const a = document.createElement('a')
-    a.href = current.url
-    a.download = `fairy-tail-${current.style}-${current.id}.png`
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    const { downloadImageUniversal } = await import('../utils/imageDownload')
+    await downloadImageUniversal(current, {
+      filename: `fairy-tail-${current.style}-${current.id}.png`,
+    })
   }
 
   const coreStyles = useMemo(() => styles.slice(0, 8), [styles])

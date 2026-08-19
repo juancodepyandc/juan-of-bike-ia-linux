@@ -2,12 +2,14 @@ import { lazy, Suspense, useState, type CSSProperties, type ReactNode } from 're
 import AuroraMascot from '../components/generationFx/mascots'
 import FavoriteButton from '../components/FavoriteButton'
 import VoicePushToTalk from '../components/VoicePushToTalk'
+import VideoVoiceLibraryPanel from '../components/VideoVoiceLibraryPanel'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useModuleStreak } from '../hooks/useModuleStreak'
 import { useVideoViewLogic, type VideoAspect, type VideoLength } from '../hooks/useVideoViewLogic'
 import { analyzeVideoPrompt } from '../services/videoPromptComposer'
 import { getDailyTip } from '../utils/dailyTip'
 import { RANDOM_VIDEO_STYLES } from '../utils/randomCreativePrompts'
+import { cinemaAssetUrl } from '../services/cinemaApi'
 
 const QuickClipView = lazy(() => import('./VideoView'))
 
@@ -27,6 +29,7 @@ const STATUS_FR: Record<string, string> = {
   queued: 'En file d’attente',
   running: 'Rendu en cours',
   done: 'Terminé',
+  cancelled: 'Annulé',
   unknown: 'État inconnu',
 }
 
@@ -34,6 +37,7 @@ const STATUS_DOT: Record<string, string> = {
   queued: '#8B93A7',
   running: ACCENT,
   done: '#34D399',
+  cancelled: '#F87171',
   unknown: '#F87171',
 }
 
@@ -238,9 +242,7 @@ function Tag({ children, color }: { children: ReactNode; color?: string }) {
 }
 
 function keyframeUrl(raw: string): string {
-  if (raw.startsWith('http')) return raw
-  if (raw.startsWith('/files')) return raw
-  return `/files?path=${encodeURIComponent(raw)}`
+  return cinemaAssetUrl(raw)
 }
 
 function fmtSec(s: number): string {
@@ -250,7 +252,8 @@ function fmtSec(s: number): string {
   return m > 0 ? `${m} min ${String(r).padStart(2, '0')} s` : `${r} s`
 }
 
-function scoreColor(s: number): string {
+function scoreColor(s: number | null): string {
+  if (s === null) return '#F87171'
   return s >= 8 ? '#34D399' : s >= 6 ? '#FBBF24' : '#F87171'
 }
 
@@ -452,6 +455,10 @@ export default function AuroraV4VideoView() {
           {v.selftesting ? <Spin /> : <Ic d={IC.pulse} />}
           {v.selftesting ? 'Diagnostic en cours' : 'Self-test pipeline'}
         </button>
+        <button type="button" className="v4v-gho" style={ghoBtn} onClick={() => void v.runBenchmark()} disabled={!v.storyboard || v.benchmarking}>
+          {v.benchmarking ? <Spin /> : <Ic d={IC.pulse} />}
+          {v.benchmarking ? 'A/B en file GPU' : 'Comparer Wan / LTX'}
+        </button>
         <button type="button" className="v4v-gho" style={ghoBtn} onClick={v.reset}>
           <Ic d={IC.reset} /> Réinitialiser
         </button>
@@ -460,6 +467,132 @@ export default function AuroraV4VideoView() {
       <div aria-hidden style={{ height: 2, borderRadius: 999, marginBottom: 18, position: 'relative', overflow: 'hidden', background: `linear-gradient(90deg, ${ACCENT}, ${ACCENT}55 24%, rgba(255,255,255,.07) 55%, transparent 82%)` }}>
         <span className="v4v-bandlight" style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: '58%', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.65) 50%, transparent)' }} />
       </div>
+
+      {v.storageStatus && (
+        <Glass style={{
+          padding: '10px 14px',
+          marginBottom: 14,
+          border: `1px solid ${v.storageStatus.key_mounted ? 'rgba(52,211,153,.3)' : 'rgba(251,191,36,.35)'}`,
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          fontFamily: MONO,
+          fontSize: 10.5,
+          color: '#AEB8CC',
+        }}>
+          <span style={{ color: v.storageStatus.key_mounted ? '#34D399' : '#FBBF24', fontWeight: 700 }}>
+            {v.storageStatus.key_mounted ? '● stockage froid monté' : '● stockage froid hors ligne'}
+          </span>
+          <span>NVMe libre {v.storageStatus.tiers.internal.free_gb} Go</span>
+          <span>sorties {v.storageStatus.outputs_tier === 'cold' ? 'support froid' : 'NVMe temporaire'}</span>
+          <span>plancher {v.storageStatus.floor_gb} Go</span>
+          {v.storageStatus.model_strategy?.active.generator && (
+            <span title={v.storageStatus.model_strategy.active.reason}>
+              moteur {v.storageStatus.model_strategy.active.generator}
+            </span>
+          )}
+          {v.storageStatus.model_strategy?.active.voice_clone && (
+            <span>
+              voix {v.storageStatus.model_strategy.active.voice_clone}
+              {v.storageStatus.model_strategy.runtime?.voice_clone_ready ? ' · prête' : ' · à provisionner'}
+            </span>
+          )}
+          <button type="button" className="v4v-gho" style={{ ...ghoBtn, marginLeft: 'auto', padding: '5px 9px' }} onClick={() => void v.refreshStorageStatus()}>
+            Actualiser
+          </button>
+        </Glass>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <VideoVoiceLibraryPanel
+          accent={ACCENT}
+          engineName={v.storageStatus?.model_strategy?.active.voice_clone}
+          engineReady={v.storageStatus?.model_strategy?.runtime?.voice_clone_ready === true}
+        />
+      </div>
+
+      {v.gallery && v.gallery.files.length > 0 && (
+        <Glass style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 10,
+            fontFamily: MONO,
+            fontSize: 10.5,
+            color: '#AEB8CC',
+          }}>
+            <span>Galerie persistante · {v.gallery.files.length} rendu(s)</span>
+            <button type="button" className="v4v-gho" style={{ ...ghoBtn, padding: '5px 9px' }} onClick={() => void v.refreshGallery()}>
+              Actualiser
+            </button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 10 }}>
+            {v.gallery.files.slice(0, 6).map((file) => (
+              <a key={`${file.tier}:${file.path}`} href={cinemaAssetUrl(file.asset_url)} target="_blank" rel="noreferrer" style={{
+                color: '#AEB8CC',
+                textDecoration: 'none',
+                minWidth: 0,
+              }}>
+                <video src={cinemaAssetUrl(file.asset_url)} preload="metadata" muted style={{
+                  display: 'block',
+                  width: '100%',
+                  aspectRatio: '16 / 9',
+                  borderRadius: 10,
+                  objectFit: 'cover',
+                  background: '#05070D',
+                  border: '1px solid rgba(255,255,255,.09)',
+                }} />
+                <div title={file.name} style={{
+                  marginTop: 5,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  fontFamily: MONO,
+                  fontSize: 9.5,
+                }}>
+                  {file.name} · {file.tier === 'cold' ? 'support froid' : 'NVMe'}
+                </div>
+              </a>
+            ))}
+          </div>
+        </Glass>
+      )}
+
+      {v.benchmarkResult && (
+        <Glass style={{
+          padding: 14,
+          marginBottom: 14,
+          border: `1px solid ${v.benchmarkResult.selection_graded ? 'rgba(52,211,153,.35)' : 'rgba(251,191,36,.35)'}`,
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: v.benchmarkResult.selection_graded ? '#34D399' : '#FBBF24' }}>
+            A/B qualité · {v.benchmarkResult.winner
+              ? `${v.benchmarkResult.selection_graded ? 'gagnant' : 'gagnant provisoire'} : ${v.benchmarkResult.winner}`
+              : 'aucun gagnant mesuré'}
+          </div>
+          <div style={{ display: 'grid', gap: 6, marginTop: 9 }}>
+            {v.benchmarkResult.variants.map((item) => (
+              <div key={item.variant} style={{ display: 'flex', gap: 12, alignItems: 'center', fontFamily: MONO, fontSize: 10.5, color: '#AEB8CC' }}>
+                <span style={{ minWidth: 64 }}>{item.variant}</span>
+                <span>{item.score_pct == null ? 'N/A' : `${item.score_pct}%`}</span>
+                <span>QA {item.coverage_pct}%</span>
+                <span style={{ color: '#5A6377' }}>{item.render.strategy || item.render.model || 'échec moteur'}</span>
+                {item.render.ok && (
+                  <a href={cinemaAssetUrl(item.output)} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', color: ACCENT }}>
+                    Visionner
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+          {(v.benchmarkResult.warning || v.benchmarkResult.error) && (
+            <div style={{ marginTop: 8, fontSize: 10.5, color: '#FBBF24' }}>
+              {v.benchmarkResult.warning || v.benchmarkResult.error}
+            </div>
+          )}
+        </Glass>
+      )}
 
       {v.selftestResult && (
         <Glass style={{
@@ -839,10 +972,11 @@ export default function AuroraV4VideoView() {
                     </div>
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontFamily: MONO, fontSize: 10.5, color: '#8B93A7' }}>
                       <span>plans {grade.breakdown.shot_pct}%</span>
-                      <span>personnages {grade.breakdown.char_pct}%</span>
-                      <span>audio {grade.breakdown.audio_pct}%</span>
-                      <span>temporel {grade.breakdown.temporal_pct}%</span>
+                      <span>personnages {grade.breakdown.char_pct == null ? 'N/A' : `${grade.breakdown.char_pct}%`}</span>
+                      <span>audio {grade.breakdown.audio_pct == null ? 'N/A' : `${grade.breakdown.audio_pct}%`}</span>
+                      <span>temporel {grade.breakdown.temporal_pct == null ? 'N/A' : `${grade.breakdown.temporal_pct}%`}</span>
                       <span>intégrité {grade.breakdown.integrity_pct}%</span>
+                      <span>QA mesurée {grade.coverage?.overall_pct ?? 0}%</span>
                     </div>
                     {grade.weak_shots.length > 0 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
@@ -944,12 +1078,13 @@ export default function AuroraV4VideoView() {
                   <TechLabel>Cohérence temporelle · cuts internes</TechLabel>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
                     {temporalQuality.map((t) => {
-                      const color = t.ok ? '#34D399' : t.cuts_count >= 3 ? '#F87171' : '#FBBF24'
+                      const color = t.ok == null ? '#5A6377' : t.ok ? '#34D399' : t.cuts_count >= 3 ? '#F87171' : '#FBBF24'
                       return (
                         <div key={t.shot_id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontFamily: MONO, fontSize: 11 }}>
                           <span style={{ minWidth: 56, color: '#5A6377' }}>plan {String(t.shot_id).padStart(2, '0')}</span>
                           <span style={{ flex: 1, minWidth: 0, color }}>
-                            {t.cuts_count === 0 ? 'continu, aucun cut'
+                            {t.ok == null ? `non mesuré${t.error ? ` · ${t.error}` : ''}`
+                              : t.cuts_count === 0 ? 'continu, aucun cut'
                               : t.cuts_count === 1 ? '1 cut détecté (acceptable)'
                               : `${t.cuts_count} cuts internes — jump cut / téléportation`}
                             {t.cuts && t.cuts.length > 0 && (
@@ -969,7 +1104,8 @@ export default function AuroraV4VideoView() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
                     {audioQuality.map((a) => {
                       const ratio = a.silence_ratio ?? 0
-                      const color = !a.ok ? '#F87171'
+                      const color = a.ok == null ? '#5A6377'
+                        : !a.ok ? '#F87171'
                         : !a.has_audio ? '#5A6377'
                         : ratio < 0.2 ? '#34D399'
                         : ratio < 0.4 ? '#FBBF24'
@@ -978,7 +1114,9 @@ export default function AuroraV4VideoView() {
                         <div key={a.shot_id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', fontFamily: MONO, fontSize: 11 }}>
                           <span style={{ minWidth: 56, color: '#5A6377' }}>plan {String(a.shot_id).padStart(2, '0')}</span>
                           <span style={{ flex: 1, minWidth: 0, color }}>
-                            {!a.has_audio
+                            {a.ok == null
+                              ? `non mesuré${a.error ? ` · ${a.error}` : ''}`
+                              : !a.has_audio
                               ? 'piste audio absente'
                               : `silence ${(ratio * 100).toFixed(0)}%${a.expected_dialogue ? ' · dialogue attendu' : ''}`}
                           </span>
@@ -1075,7 +1213,7 @@ export default function AuroraV4VideoView() {
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 8 }}>
                         <span style={{ fontSize: 12.5, fontWeight: 700 }}>{name}</span>
-                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: scoreColor(q.score) }}>{q.score}/10</span>
+                        <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: scoreColor(q.score) }}>{q.score === null ? 'Non notée' : `${q.score}/10`}</span>
                       </div>
                       <div style={{ marginTop: 4, fontSize: 11, lineHeight: 1.45, color: '#8B93A7' }}>{q.reason}</div>
                     </div>

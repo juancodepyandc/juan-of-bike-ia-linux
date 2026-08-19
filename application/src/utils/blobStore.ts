@@ -75,12 +75,22 @@ export async function saveBlob(id: string, blob: Blob, tag?: string): Promise<st
   return URL.createObjectURL(blob)
 }
 
+/** Load a saved blob directly from IndexedDB. */
+export async function loadBlob(id: string): Promise<Blob | null> {
+  try {
+    const entry = await tx<Entry | undefined>('readonly', (s) => s.get(id))
+    return entry?.blob ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Load a saved blob and return a fresh object URL for it. */
 export async function loadBlobUrl(id: string): Promise<string | null> {
   try {
-    const entry = await tx<Entry | undefined>('readonly', (s) => s.get(id))
-    if (!entry?.blob) return null
-    return URL.createObjectURL(entry.blob)
+    const blob = await loadBlob(id)
+    if (!blob) return null
+    return URL.createObjectURL(blob)
   } catch {
     return null
   }

@@ -272,15 +272,22 @@ export type BuiltPrompt = {
   }
 }
 
+const ENVIRONMENT_CUE_RE = /\b(village|ville|town|city|cityscape|landscape|paysage|decor|d[eé]cor|environment|environnement|street|rue|ruelle|alley|architecture|building|b[aâ]timent|monastery|palace|ch[aâ]teau|castle|temple|ruins|ruines|canal|square|district|quartier|springfield|magnolia|plage|beach|falaise|falaises|cliff|cliffs|montagne|montagnes|mountain|mountains|sommet|peak|peaks|foret|for[êe]t|forest|jungle|desert|d[eé]sert|ocean|[ooc]c[eé]an|mer|sea|canyon|vallee|vall[eé]e|valley)\b/i
+
 export function buildPrompt(brief: ImageBrief): BuiltPrompt {
   const style = brief.style
   const profile = style ? STYLE_PROFILES[style] : undefined
   const parts: string[] = []
   const subject = brief.subject.trim()
+  const fullSubjectText = `${subject} ${brief.context || ''}`
+  const isEnvironment = ENVIRONMENT_CUE_RE.test(stripAccents(fullSubjectText))
 
   if (subject) parts.push(subject)
   if (brief.context) parts.push(brief.context.trim())
   parts.push(...buildConstraintPositiveParts(brief))
+  if (isEnvironment) {
+    parts.push('accurate linear depth perspective, distant elements scale down smoothly towards the horizon vanishing point, clean unpopulated scenic architecture, crisp sharp legible signage, no random deformed background crowd')
+  }
   if (brief.composition) parts.push(COMPOSITION_QUALIFIERS[brief.composition])
   if (brief.lighting) parts.push(LIGHTING_QUALIFIERS[brief.lighting])
   if (brief.mood) parts.push(MOOD_QUALIFIERS[brief.mood])
@@ -346,6 +353,26 @@ export function buildPromptContractBlock(brief: ImageBrief): string {
 
 function buildNegative(style?: ImageStyle, brief: ImageBrief = { subject: '' }): string {
   const styleNegative = style ? [...STYLE_PROFILES[style].negative] : []
+  const fullText = `${brief.subject} ${(brief.backgroundHints || []).join(' ')}`
+  const isEnvironment = ENVIRONMENT_CUE_RE.test(stripAccents(fullText))
+  const environmentAvoid = isEnvironment
+    ? [
+        'giant background people',
+        'out-of-scale figures',
+        'deformed distant humans',
+        'messy unrecognizable faces on banners',
+        'distorted crowd',
+        'blurry humanoid blobs',
+        'perspective distortion',
+        'unwanted background crowd',
+        'random pedestrians',
+        'deformed bystanders',
+        'misspelled text on signs',
+        'missing letters in writing',
+        'gibberish lettering',
+        'corrupted words on banners',
+      ]
+    : []
   const allowsText = Boolean(
     (brief.exactText && brief.exactText.length > 0)
     || style === 'technical-schema'
@@ -355,8 +382,8 @@ function buildNegative(style?: ImageStyle, brief: ImageBrief = { subject: '' }):
     ? ['random extra text', 'misspelled text', 'illegible typography', 'unrequested logo']
     : ['text', 'logo']
   const generic = style === 'pixel-art'
-    ? ['jpeg artifacts', 'duplicate', 'text', 'logo', 'watermark', 'muddy silhouette']
-    : ['lowres', 'jpeg artifacts', 'duplicate', ...genericText, 'watermark']
+    ? ['jpeg artifacts', 'duplicate', 'text', 'logo', 'watermark', 'muddy silhouette', ...environmentAvoid]
+    : ['lowres', 'jpeg artifacts', 'duplicate', ...genericText, 'watermark', ...environmentAvoid]
   const exactTextAvoid = (brief.exactText ?? []).length > 0
     ? ['wrong spelling', 'extra letters', 'garbled letters', 'text outside requested location']
     : []
@@ -475,7 +502,7 @@ const STYLE_PATTERNS: Array<{ pattern: RegExp; style: ImageStyle }> = [
 ]
 
 const LIGHTING_PATTERNS: Array<{ pattern: RegExp; lighting: Lighting }> = [
-  { pattern: /\b(golden hour|coucher de soleil)\b/i, lighting: 'golden-hour' },
+  { pattern: /\b(golden hour|coucher de soleil|soleil couchant|soleil levant|lever de soleil|crepuscule|cr[eé]puscule|aube)\b/i, lighting: 'golden-hour' },
   { pattern: /\b(blue hour|heure bleue)\b/i, lighting: 'blue-hour' },
   { pattern: /\b(nuageux|overcast)\b/i, lighting: 'overcast-soft' },
   { pattern: /\b(midi|noon|harsh)\b/i, lighting: 'harsh-noon' },

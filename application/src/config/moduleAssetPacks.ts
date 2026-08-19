@@ -16,54 +16,63 @@ import {
   VOICE_TTS_MODEL,
 } from './models'
 
-const FLUX_UNET_REPO = 'Comfy-Org/flux1-dev'
-const FLUX_TEXT_ENCODERS_REPO = 'comfyanonymous/flux_text_encoders'
-const FLUX_AE_REPO = 'Comfy-Org/Lumina_Image_2.0_Repackaged'
-const FLUX_AE_FILENAME = 'split_files/vae/ae.safetensors'
+// FLUX.2 partout. Ces constantes pointaient encore sur la pile FLUX.1
+// (Comfy-Org/flux1-dev, t5xxl, CLIP-L, l'AE de Lumina) alors que les noms de
+// fichiers cibles sont ceux de FLUX.2: le telechargeur allait chercher un
+// fichier FLUX.2 dans un depot FLUX.1. Il aurait aussi fait revenir la pile
+// FLUX.1 apres sa suppression. FLUX.2 n'a QU'UN encodeur de texte (Mistral 3
+// Small) — plus de CLIP-L, plus de T5.
+const FLUX_GGUF_REPO = 'city96/FLUX.2-dev-gguf'
+const FLUX2_REPO = 'Comfy-Org/flux2-dev'
 
 function buildFluxAssets(comfyuiPath: string | null): ModuleAssetDefinition[] {
-  return [
+  const assets: ModuleAssetDefinition[] = [
     {
       id: 'flux-unet',
-      label: 'FLUX UNet FP8',
+      label: 'FLUX.2 UNet (GGUF Q4_K_M)',
       kind: 'hf_file',
       target: IMAGE_UNET_MODEL,
       detail: 'UNet principal ComfyUI pour Image, Drawing et reference 3D.',
-      repoId: FLUX_UNET_REPO,
+      repoId: FLUX_GGUF_REPO,
       filename: IMAGE_UNET_MODEL,
       destination: `models/unet/${IMAGE_UNET_MODEL}`,
     },
     {
       id: 'flux-t5',
-      label: 'T5 XXL FP8',
+      label: 'Encodeur texte Mistral 3 Small (FP8)',
       kind: 'hf_file',
       target: IMAGE_T5_MODEL,
-      detail: 'Encodeur texte haute precision charge cote CPU.',
-      repoId: FLUX_TEXT_ENCODERS_REPO,
-      filename: IMAGE_T5_MODEL,
-      destination: `models/clip/${IMAGE_T5_MODEL}`,
-    },
-    {
-      id: 'flux-clip',
-      label: 'CLIP-L',
-      kind: 'hf_file',
-      target: IMAGE_CLIP_MODEL,
-      detail: 'Encodeur CLIP local pour renforcer la fidelite visuelle.',
-      repoId: FLUX_TEXT_ENCODERS_REPO,
-      filename: IMAGE_CLIP_MODEL,
-      destination: `models/clip/${IMAGE_CLIP_MODEL}`,
+      detail: 'Encodeur texte unique de FLUX.2, charge cote CPU (offload).',
+      repoId: FLUX2_REPO,
+      filename: `split_files/text_encoders/${IMAGE_T5_MODEL}`,
+      destination: `models/text_encoders/${IMAGE_T5_MODEL}`,
     },
     {
       id: 'flux-ae',
-      label: 'Autoencoder FLUX',
+      label: 'VAE FLUX.2',
       kind: 'hf_file',
       target: IMAGE_VAE_MODEL,
-      detail: 'AE/VAE local pour le rendu final du pipeline FLUX.',
-      repoId: FLUX_AE_REPO,
-      filename: FLUX_AE_FILENAME,
+      detail: 'VAE local pour le rendu final du pipeline FLUX.2.',
+      repoId: FLUX2_REPO,
+      filename: `split_files/vae/${IMAGE_VAE_MODEL}`,
       destination: `models/vae/${IMAGE_VAE_MODEL}`,
     },
   ]
+  // FLUX.2 n'utilise pas de 2e encodeur: on n'ajoute l'entree que si un jour
+  // la configuration en declare un (IMAGE_CLIP_MODEL vaut '' aujourd'hui).
+  if (IMAGE_CLIP_MODEL) {
+    assets.splice(2, 0, {
+      id: 'flux-clip',
+      label: 'Encodeur secondaire',
+      kind: 'hf_file',
+      target: IMAGE_CLIP_MODEL,
+      detail: 'Second encodeur texte (non utilise par FLUX.2).',
+      repoId: FLUX2_REPO,
+      filename: `split_files/text_encoders/${IMAGE_CLIP_MODEL}`,
+      destination: `models/text_encoders/${IMAGE_CLIP_MODEL}`,
+    })
+  }
+  return assets
 }
 
 function buildPythonRuntimeAsset(id: string, label: string, detail: string, prepareMode: string): ModuleAssetDefinition {

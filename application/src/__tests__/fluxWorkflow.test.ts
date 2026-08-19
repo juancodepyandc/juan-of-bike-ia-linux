@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { createFluxWorkflow } from '../utils/fluxWorkflow.ts'
+import { createFluxWorkflow, createFlux2Workflow } from '../utils/fluxWorkflow.ts'
+import { IMAGE_T5_MODEL, IMAGE_UNET_MODEL, IMAGE_VAE_MODEL } from '../config/models.ts'
 import { parseImageIntent } from '../utils/imagePromptParser.ts'
 
 function findT5(workflow: Record<string, unknown>): string {
@@ -299,19 +300,34 @@ describe('createFluxWorkflow - edition referencee', () => {
 })
 
 describe('createFluxWorkflow - forme du graphe', () => {
-  test('DualCLIPLoader suit l ordre du workflow officiel: t5 puis clip_l', () => {
-    const workflow = createFluxWorkflow({
-      prompt: 'test',
-      width: 512,
-      height: 512,
-      steps: 20,
-      filenamePrefix: 'aurora_test',
-    })
-
-    const loader = findDualClipLoader(workflow)
-
-    assert.equal(loader?.clip_name1, 't5xxl_fp8_e4m3fn.safetensors')
-    assert.equal(loader?.clip_name2, 'clip_l.safetensors')
+  test('les graphes chargent les modeles de la CONFIGURATION (jamais de nom fige)', () => {
+    // L'ancien test verifiait l'architecture FLUX.1 (DualCLIPLoader
+    // t5+clip_l), morte depuis FLUX.2. Un test qui fige des noms de fichiers
+    // devient un mensonge des que la config bouge — c'est un graphe fige
+    // ('flux2_dev_fp8mixed' via UNETLoader) qui a produit le 400
+    // value_not_in_list et tue une generation sans reference. On verifie
+    // desormais que CHAQUE graphe suit la config, quelle qu'elle soit.
+    for (const build of [createFluxWorkflow, createFlux2Workflow]) {
+      const workflow = build({
+        prompt: 'test',
+        width: 512,
+        height: 512,
+        steps: 20,
+        filenamePrefix: 'aurora_test',
+      }) as Record<string, { class_type: string; inputs: Record<string, unknown> }>
+      const nodes = Object.values(workflow)
+      const clip = nodes.find((n) => n.class_type === 'CLIPLoader')
+      assert.equal(clip?.inputs.clip_name, IMAGE_T5_MODEL)
+      assert.equal(clip?.inputs.device, 'cpu')
+      const unet = nodes.find((n) => n.class_type === 'UnetLoaderGGUF' || n.class_type === 'UNETLoader')
+      assert.ok(unet, 'un chargeur UNet doit exister')
+      assert.equal(unet?.inputs.unet_name, IMAGE_UNET_MODEL)
+      if (IMAGE_UNET_MODEL.toLowerCase().endsWith('.gguf')) {
+        assert.equal(unet?.class_type, 'UnetLoaderGGUF', 'un .gguf exige UnetLoaderGGUF (UNETLoader ne le liste pas)')
+      }
+      const vae = nodes.find((n) => n.class_type === 'VAELoader')
+      assert.equal(vae?.inputs.vae_name, IMAGE_VAE_MODEL)
+    }
   })
 
   test('ModelSamplingFlux nourrit scheduler et guider', () => {

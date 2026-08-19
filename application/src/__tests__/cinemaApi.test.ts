@@ -5,9 +5,16 @@ import { test, describe, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   localFileToBridgeUrl,
+  cinemaAssetUrl,
   cinemaGenerateStoryboard,
   cinemaGenerateRun,
+  cinemaPreviewKeyframes,
+  cinemaCancelJob,
   cinemaSelftest,
+  cinemaSelftestResultFromJob,
+  cinemaBenchmark,
+  auroraStorageStatus,
+  videoGallery,
   cinemaJobStatus,
   voiceLibraryList,
   voiceLibraryDelete,
@@ -79,6 +86,12 @@ describe('localFileToBridgeUrl', () => {
     const url = localFileToBridgeUrl('/dir/file with space.mp4')
     assert.ok(url.includes('%20') || url.includes('+'))
   })
+
+  test('URL /api/asset existante non ré-encodée', () => {
+    const url = cinemaAssetUrl('/api/asset/temp/cinema/preview/key.png')
+    assert.ok(url.endsWith('/api/asset/temp/cinema/preview/key.png'))
+    assert.ok(!url.includes('/api/asset/%2Fapi%2Fasset'))
+  })
 })
 
 describe('cinemaGenerateStoryboard', () => {
@@ -132,6 +145,26 @@ describe('cinemaGenerateRun', () => {
   })
 })
 
+describe('cinemaPreviewKeyframes', () => {
+  test('retourne un job async au lieu de bloquer la requête', async () => {
+    pushOk({ ok: true, jobId: 'preview-1', previewId: 'preview-1', status: 'queued' })
+    const r = await cinemaPreviewKeyframes({} as any)
+    assert.equal(r.jobId, 'preview-1')
+    assert.equal(r.status, 'queued')
+    assert.ok(fetchCalls[0].url.includes('/api/cinema/preview-keyframes'))
+  })
+})
+
+describe('cinemaCancelJob', () => {
+  test('appelle le endpoint qui termine le groupe de processus', async () => {
+    pushOk({ ok: true, jobId: 'job-1', status: 'cancelled', signalSent: true })
+    const r = await cinemaCancelJob('job-1')
+    assert.equal(r.status, 'cancelled')
+    assert.ok(fetchCalls[0].url.includes('/api/cinema/cancel/job-1'))
+    assert.equal(fetchCalls[0].init?.method, 'POST')
+  })
+})
+
 describe('cinemaSelftest', () => {
   test('renvoie statut runtime', async () => {
     pushOk({ ok: true, status: 'ok', python: '3.11' })
@@ -143,6 +176,117 @@ describe('cinemaSelftest', () => {
     pushOk({ ok: true })
     await cinemaSelftest()
     assert.ok(fetchCalls[0].url.includes('/api/cinema/selftest'))
+  })
+
+  test('un vrai job complet devient un self-test validé', () => {
+    const r = cinemaSelftestResultFromJob({
+      jobId: 'smoke-1',
+      status: 'done',
+      result: {
+        ok: true,
+        actual_time_s: 12,
+        integrity: {
+          ok: true,
+          duration_s: 2,
+          has_video: true,
+          has_audio: true,
+          video_codec: 'h264',
+          audio_codec: 'aac',
+          errors: [],
+        },
+        dialogue_quality: [{
+          shot: 1, voice_ok: true, lipsync_required: false, lipsync_ok: null,
+        }],
+        audio_quality: [{ shot_id: 1, ok: true, has_audio: true }],
+        quality_grade: {
+          grade: 'A',
+          overall_pct: 92,
+          breakdown: {
+            shot_pct: 90, char_pct: 90, audio_pct: 100,
+            temporal_pct: 100, integrity_pct: 100,
+          },
+          coverage: {
+            overall_pct: 100, measured: 8, expected: 8,
+            shot: { measured: 4, expected: 4 },
+            character: { measured: 1, expected: 1 },
+            audio: { measured: 1, expected: 1 },
+            temporal: { measured: 1, expected: 1 },
+          },
+          weak_shots: [],
+          exportable: true,
+        },
+      },
+    })
+    assert.equal(r.overall_ok, true)
+    assert.equal(r.stages.video_render.ok, true)
+    assert.equal(r.stages.voice_synth.ok, true)
+    assert.equal(r.stages.ffprobe.ok, true)
+  })
+
+  test('une QA non mesurée reste explicitement en échec', () => {
+    const r = cinemaSelftestResultFromJob({
+      jobId: 'smoke-2',
+      status: 'done',
+      result: {
+        ok: true,
+        integrity: {
+          ok: true,
+          duration_s: 2,
+          has_video: true,
+          has_audio: true,
+          video_codec: 'h264',
+          audio_codec: 'aac',
+          errors: [],
+        },
+        dialogue_quality: [{
+          shot: 1, voice_ok: true, lipsync_required: false, lipsync_ok: null,
+        }],
+        audio_quality: [{ shot_id: 1, ok: true, has_audio: true }],
+        quality_grade: {
+          grade: 'D',
+          overall_pct: 10,
+          breakdown: {
+            shot_pct: 0, char_pct: null, audio_pct: 100,
+            temporal_pct: null, integrity_pct: 100,
+          },
+          coverage: {
+            overall_pct: 20, measured: 1, expected: 5,
+            shot: { measured: 0, expected: 4 },
+            character: { measured: 0, expected: 1 },
+            audio: { measured: 0, expected: 0 },
+            temporal: { measured: 0, expected: 0 },
+          },
+          weak_shots: [],
+          exportable: false,
+        },
+      },
+    })
+    assert.equal(r.overall_ok, false)
+    assert.equal(r.stages.vision_check.ok, false)
+  })
+})
+
+describe('cinemaBenchmark', () => {
+  test('envoie le storyboard au harnais A/B asynchrone', async () => {
+    pushOk({
+      ok: true,
+      jobId: 'ab-1',
+      status: 'queued',
+      reportPath: '/tmp/report.json',
+      variants: ['wan5b', 'ltx'],
+    })
+    const result = await cinemaBenchmark({
+      title: 'A/B',
+      summary: '',
+      style: 'cinematic',
+      aspect: '16:9',
+      resolution: '720p',
+      characters: [],
+      shots: [{ id: 1, scene: 'A robot walks.', duration_s: 2 }],
+    } as any)
+    assert.equal(result.jobId, 'ab-1')
+    assert.ok(fetchCalls[0].url.includes('/api/cinema/benchmark'))
+    assert.match(String(fetchCalls[0].init?.body), /A robot walks/)
   })
 })
 
@@ -158,6 +302,45 @@ describe('cinemaJobStatus', () => {
     await cinemaJobStatus('job/with slash')
     // Doit être encodé
     assert.ok(fetchCalls[0].url.includes('job%2F') || fetchCalls[0].url.includes('job/'))
+  })
+})
+
+describe('storage truth and persistent gallery', () => {
+  test('status expose explicitement un support froid hors ligne', async () => {
+    pushOk({
+      ok: true,
+      key_mounted: false,
+      mount_path: '/mnt/aurora_models',
+      tiers: { internal: { total_gb: 915, used_gb: 784, free_gb: 131 }, key: null },
+      models: [],
+      outputs_tier: 'hot',
+      outputs_path: '/workspace/output/videos',
+      floor_gb: 20,
+      warnings: [{ code: 'cold_storage_offline', message: 'offline' }],
+    })
+    const status = await auroraStorageStatus()
+    assert.equal(status.key_mounted, false)
+    assert.equal(status.outputs_tier, 'hot')
+    assert.ok(fetchCalls[0].url.includes('/api/storage/status'))
+  })
+
+  test('gallery conserve le tier et son URL asset', async () => {
+    pushOk({
+      ok: true,
+      key_mounted: true,
+      files: [{
+        name: 'film.mp4',
+        path: '/mnt/aurora_models/outputs/videos/film.mp4',
+        asset_url: '/api/asset/aurora-models/outputs/videos/film.mp4',
+        tier: 'cold',
+        size_bytes: 123,
+        modified: 1,
+      }],
+    })
+    const gallery = await videoGallery()
+    assert.equal(gallery.files[0].tier, 'cold')
+    assert.ok(gallery.files[0].asset_url.startsWith('/api/asset/'))
+    assert.ok(fetchCalls[0].url.includes('/api/video/gallery'))
   })
 })
 
@@ -184,17 +367,17 @@ describe('voiceLibraryDelete', () => {
 })
 
 describe('voiceSynthesize', () => {
-  test('passe text + voice slug dans body', async () => {
+  test('passe text + personnage dans body', async () => {
     pushOk({ ok: true, audio_url: '/api/asset/x.wav' })
-    await voiceSynthesize({ text: 'Bonjour', voice_slug: 'aurora-soft', lang: 'fr' })
+    await voiceSynthesize({ text: 'Bonjour', character: 'aurora-soft', lang: 'fr' })
     const body = JSON.parse(fetchCalls[0].init.body)
     assert.equal(body.text, 'Bonjour')
-    assert.equal(body.voice_slug, 'aurora-soft')
+    assert.equal(body.character, 'aurora-soft')
   })
 
   test('endpoint /api/voice/synthesize', async () => {
     pushOk({ ok: true })
-    await voiceSynthesize({ text: 'hi', voice_slug: 'v', lang: 'fr' })
+    await voiceSynthesize({ text: 'hi', character: 'v', lang: 'fr' })
     assert.ok(fetchCalls[0].url.includes('/api/voice/synthesize'))
   })
 })

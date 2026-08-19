@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test'
+import { IMAGE_CLIP_MODEL, IMAGE_T5_MODEL } from '../config/models.ts'
 import assert from 'node:assert/strict'
 import {
   FLUX_KONTEXT_UNET_CANDIDATES,
@@ -80,10 +81,19 @@ describe('createFluxKontextWorkflow - graphe officiel', () => {
     assert.equal(load?.inputs?.image, 'aurora_current_123.png')
   })
 
-  test('DualCLIPLoader suit l ordre du workflow officiel: t5 puis clip_l', () => {
-    const loader = findNode(workflow, 'DualCLIPLoader')
-    assert.equal(loader?.inputs?.clip_name1, 't5xxl_fp8_e4m3fn.safetensors')
-    assert.equal(loader?.inputs?.clip_name2, 'clip_l.safetensors')
+  test('le chargeur de texte suit la CONFIGURATION (un ou deux encodeurs)', () => {
+    // L'ancien test figeait les noms FLUX.1 (t5xxl+clip_l). La config fait
+    // foi: 2e encodeur configure -> DualCLIPLoader; sinon CLIPLoader simple
+    // (FLUX.2, un seul encodeur, sur CPU).
+    if (IMAGE_CLIP_MODEL) {
+      const loader = findNode(workflow, 'DualCLIPLoader')
+      assert.equal(loader?.inputs?.clip_name1, IMAGE_T5_MODEL)
+      assert.equal(loader?.inputs?.clip_name2, IMAGE_CLIP_MODEL)
+    } else {
+      const loader = findNode(workflow, 'CLIPLoader')
+      assert.equal(loader?.inputs?.clip_name, IMAGE_T5_MODEL)
+      assert.equal(loader?.inputs?.device, 'cpu')
+    }
   })
 
   test('ReferenceLatent relie conditioning texte et latent VAE', () => {

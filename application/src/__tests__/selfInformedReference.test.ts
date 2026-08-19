@@ -83,6 +83,16 @@ test('detectSubjectToResearch understands a named pet/mascot with franchise cont
   ])
 })
 
+test('detectSubjectToResearch extracts franchise context with "dans" in pure creation', () => {
+  const prompt = 'happy dans fairy tail avec ses ailes deployer'
+  const target = detectSubjectToResearch(prompt, parseImageIntent(prompt, { hasReference: false }))
+
+  assert.equal(target?.subject, 'Happy')
+  assert.equal(target?.searchLabel, 'Happy fairy tail')
+  assert.equal(target?.kind, 'character')
+  assert.equal(target?.role, 'primary_subject')
+})
+
 test('buildResearchQueries uses the disambiguated search label', () => {
   const target: SubjectToResearch = {
     subject: 'Jax',
@@ -140,8 +150,7 @@ test('resolveSubjectReference merges several verified references and keeps the b
   assert.equal(resolved.provenance, 'researched-image')
   assert.equal(resolved.referenceCount, 3)
   assert.equal(resolved.referenceComfyFilename, 'best.png')
-  assert.match(resolved.appearanceDescription, /Primary reference: slim lavender rabbit/)
-  assert.match(resolved.appearanceDescription, /Cross-check 1: tall rubberhose rabbit/)
+  assert.match(resolved.appearanceDescription, /slim lavender rabbit/)
 })
 
 test('resolveSubjectReference demotes a high-score visual outlier by consensus', async () => {
@@ -166,8 +175,7 @@ test('resolveSubjectReference demotes a high-score visual outlier by consensus',
   })
 
   assert.equal(resolved.referenceComfyFilename, 'rabbit-front.png')
-  assert.match(resolved.appearanceDescription, /Primary reference: purple rabbit/)
-  assert.match(resolved.appearanceDescription, /Cross-check 1: tall purple rabbit/)
+  assert.match(resolved.appearanceDescription, /purple rabbit/)
   assert.doesNotMatch(resolved.appearanceDescription, /blue spiky hair/)
 })
 

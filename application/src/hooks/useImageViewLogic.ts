@@ -607,26 +607,35 @@ export function useImageViewLogic() {
         }
       }
 
-      if (!groundedReference && !intent.isEditIntent && !targetToResearch) {
+      if (!groundedReference && (intent.editMode === 'replicate' || (!intent.isEditIntent && !targetToResearch))) {
         try {
-          setProgress('Recherche de reference visuelle (Aurora Connect)...')
-          const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
-          const refResult = await searchReferenceImages(cleanedText, { limit: 1, signal: ac.signal })
-          if (refResult.ok && refResult.data.length > 0) {
-            const ref = refResult.data[0]
-            try {
-              const response = await fetch(ref.url, { signal: ac.signal })
-              if (response.ok) {
-                const blob = await response.blob()
-                const file = new File([blob], `aurora_extref_${Date.now()}.png`, { type: blob.type || 'image/png' })
-                const uploaded = await comfyuiUploadImage(file)
-                if (uploaded?.name) groundedReference = { filename: uploaded.name, denoise: 0.40 }
-              }
-            } catch {
+          setProgress('Recherche de reference visuelle...')
+          let foundBlob: Blob | null = null
+          try {
+            const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
+            const refResult = await searchReferenceImages(cleanedText, { limit: 1, signal: ac.signal })
+            if (refResult.ok && refResult.data.length > 0) {
+              const response = await fetch(refResult.data[0].url, { signal: ac.signal })
+              if (response.ok) foundBlob = await response.blob()
             }
+          } catch {}
+
+          if (!foundBlob) {
+            const { findBestReferenceVisual } = await import('../services/referenceVisualResearch')
+            const selection = await findBestReferenceVisual({
+              prompt: cleanedText,
+              model: VISION_LIVE_MODEL,
+              queries: [cleanedText],
+            })
+            if (selection?.blob) foundBlob = selection.blob
           }
-        } catch {
-        }
+
+          if (foundBlob) {
+            const file = new File([foundBlob], `aurora_ref_${Date.now()}.png`, { type: foundBlob.type || 'image/png' })
+            const uploaded = await comfyuiUploadImage(file)
+            if (uploaded?.name) groundedReference = { filename: uploaded.name, denoise: intent.editMode === 'replicate' ? 0.30 : 0.40 }
+          }
+        } catch {}
       }
 
       const parsedSeed = seed.trim() ? Number(seed.trim()) : null
@@ -800,7 +809,9 @@ export function useImageViewLogic() {
 
       for (let k = 0; k < batch; k++) {
         if (ac.signal.aborted) break
-        const runSeed = baseSeed !== null ? baseSeed + k : null
+        const runSeed = baseSeed !== null
+          ? (baseSeed + k * 10007) % 1_000_000_000_000_000
+          : Math.floor(Math.random() * 900_000_000_000_000) + 100_000_000_000_000 + k * 10007
         setProgress(batch > 1 ? `Construction ${k + 1}/${batch}…` : 'Construction du workflow FLUX…')
         const dim = DIMENSIONS[dimensions]
         let blob: Blob | null = null
@@ -1005,13 +1016,13 @@ export function useImageViewLogic() {
     void comfyuiInterrupt()
   }
 
-  const downloadCurrent = () => {
+  const downloadCurrent = useCallback(async () => {
     if (!current) return
-    const a = document.createElement('a')
-    a.href = current.url
-    a.download = `fairy-tail-${current.style}-${current.id}.png`
-    document.body.appendChild(a); a.click(); a.remove()
-  }
+    const { downloadImageUniversal } = await import('../utils/imageDownload')
+    await downloadImageUniversal(current, {
+      filename: `fairy-tail-${current.style}-${current.id}.png`,
+    })
+  }, [current])
 
   const previewIntent: ParsedImageIntent = useMemo(
     () => parseImageIntent(prompt, { hasReference: Boolean(refFilename || current) }),

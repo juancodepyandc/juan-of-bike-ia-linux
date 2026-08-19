@@ -34,17 +34,60 @@ export interface TranslateEditOptions {
  * expression composee gagne sur ses fragments).
  */
 const PHRASE_LEXICON: Array<[RegExp, string]> = [
+  [/\b(?:fais[-\s]moi\s+une\s+|fais\s+une\s+)?r[eé]plication\s+(?:fid[eè]le\s+)?(?:de\s+l['\u2019]?image|de\s+la\s+photo|de\s+cette\s+image|de\s+la\s+r[eé]f[eé]rence|de\s+ce\s+visuel)\b/giu, 'faithfully replicate the reference image'],
+  [/\b(?:fais[-\s]moi\s+une\s+|fais\s+une\s+)?r[eé]plication\s+de\b/giu, 'replicate '],
+  [/\br[eé]plication\s+fid[eè]le\b/giu, 'faithful replication'],
+  [/\breproduction\s+fid[eè]le\b/giu, 'faithful reproduction'],
+  [/\breprodui[st]?\s+fid[eè]lement\b/giu, 'faithfully reproduce'],
+  [/\br[eé]pliqu[ez]?\s+fid[eè]lement\b/giu, 'faithfully replicate'],
+  [/\bavec\s+(?:plusieurs|mes|les|ces|des)\s+r[eé]f[eé]rences\b/giu, 'using the visual references'],
+  [/\ben\s+gardant\s+(?:exactement\s+)?(?:le\s+m[eê]me\s+|la\s+m[eê]me\s+)?style\b/giu, 'preserving the exact visual style'],
+  [/\ben\s+gardant\s+(?:exactement\s+)?(?:le\s+m[eê]me\s+|la\s+m[eê]me\s+)?sujet\b/giu, 'preserving the main subject identity'],
+  [/\ben\s+gardant\s+(?:exactement\s+)?(?:la\s+m[eê]me\s+)?pose\b/giu, 'preserving the exact pose'],
+  [/\bsans\s+(?:changer|modifier)\s+(?:sa|la|les|son)\s+(?:tenue|v[eê]tements|habits)\s+ni\s+(?:son|sa|ses|le|la|les)\s+(?:visage|t[eê]te)\b/giu, 'without changing the clothes or face'],
+  [/\bsans\s+(?:changer|modifier)\s+(?:sa|la|les|son)\s+(?:tenue|v[eê]tements|habits)\b/giu, 'without changing the clothes'],
+  [/\bsans\s+(?:changer|modifier)\s+(?:son|le|sa|de)\s+(?:visage|t[eê]te)\b/giu, 'without changing the face or head'],
+  [/\bsans\s+(?:changer|modifier)\s+(?:les|la|sa|son)\s+(?:cheveux|coiffure)\b/giu, 'without changing the hair'],
+  [/\bni\s+(?:son|sa|ses|le|la|les)\s+(?:visage|t[eê]te)\b/giu, 'or face'],
+  [/\bni\s+(?:son|sa|ses|le|la|les)\s+(?:tenue|v[eê]tements|habits)\b/giu, 'or clothes'],
   [/\bsuppression\s+(?:compl[e\u00e8]te?|complete|totale?|total|enti[e\u00e8]re?|entire|full)?\s*(?:de\s+l['\u2019]?|de\s+la\s+|des\s+|du\s+|de\s+)/giu, 'remove the '],
   [/\b(?:ajout|insertion|int[e\u00e9]gration)\s+(?:d['\u2019]un\s+|d['\u2019]une\s+|de\s+l['\u2019]?|de\s+la\s+|des\s+|du\s+|de\s+)/giu, 'add a '],
   [/\bhomme\s+m[e\u00e9]tis\b/giu, 'mixed-race man'],
+  [/\bsur\s+(?:ses|les|son)\s+[e\u00e9]paules?\b/giu, 'on the shoulders'],
   [/\b[e\u00e9]paules?\s+droites?\s+(?:assis|assise)\b/giu, 'sitting on the right shoulder'],
   [/\b[e\u00e9]paules?\s+gauches?\s+(?:assis|assise)\b/giu, 'sitting on the left shoulder'],
   [/\b[e\u00e9]paules?\s+droites?\b/giu, 'right shoulder'],
   [/\b[e\u00e9]paules?\s+gauches?\b/giu, 'left shoulder'],
   [/\b(?:assis|assise)\s+sur\b/giu, 'sitting on'],
+  [/\b(?:le\s+)?chat\s+(?:bleu\s+)?happy(?:\s+de\s+fairy\s+tail)?\b/giu, 'Happy, the cat from Fairy Tail'],
   [/\bchat\s+de\s+fairy\s+tail\s+(?:nomm[e\u00e9]e?s?|nommer|appel[e\u00e9]e?s?|named|called)\s+happy\b/giu, 'Happy, the cat from Fairy Tail'],
   [/\bcouleur\s+(?:de\s+la|des|de|du)\s+cheveux\b/giu, 'hair color'],
   [/\bcouleur\s+(?:de\s+la|des|de|du)\s+yeux\b/giu, 'eye color'],
+  [/\bcapes?\s+(?:de\s+couleur\s+)?noirs?e?s?\b/giu, 'black cape'],
+  [/\bcapes?\s+(?:de\s+couleur\s+)?bleus?e?s?\b/giu, 'blue cape'],
+  [/\bcapes?\s+(?:de\s+couleur\s+)?rouges?e?s?\b/giu, 'red cape'],
+  [/\bcapes?\s+(?:de\s+couleur\s+)?blan[cs]he?s?\b/giu, 'white cape'],
+  [/\bcapes?\s+[aà]\s+capuche\b/giu, 'hooded cape'],
+  [/\bcapes?\s+avec\s+capuche\b/giu, 'hooded cape'],
+  [/\bflammes?\s+bleus?e?s?\s+en\s+plus\s+(?:des?\s+rouges?|des?\s+flammes?\s+rouges?)\b/giu, 'blue flames in addition to the red flames'],
+  [/\bflammes?\s+bleus?e?s?\s+en\s+plus\b/giu, 'additional blue flames'],
+  [/\bflammes?\s+bleus?e?s?\b/giu, 'blue flames'],
+  [/\bflammes?\s+rouges?\b/giu, 'red flames'],
+  [/\bflammes?\s+violettes?\b/giu, 'purple flames'],
+  [/\bflammes?\s+(?:d['’]or|dor[eé]es?)\b/giu, 'golden flames'],
+  [/\ben\s+plus\s+(?:de|des|du|d['’])\b/giu, 'along with '],
+  [/\ben\s+plus\b/giu, 'in addition'],
+  [/\ben\s+suppl[eé]ment\b/giu, 'additionally'],
+  [/\bnuits?\s+[eé]toil[eé]es?\b/giu, 'starry night sky with glowing stars'],
+  [/\bciels?\s+[eé]toil[eé]s?\b/giu, 'starry sky with stars'],
+  [/\bciels?\s+de\s+nuit\s+[eé]toil[eé]s?\b/giu, 'starry night sky'],
+  [/\ben\s+pleine\s+nuit\b/giu, 'at night'],
+  [/\bciels?\s+nocturnes?\b/giu, 'night sky'],
+  [/\baurores?\s+bor[eé]ales?\b/giu, 'aurora borealis northern lights'],
+  [/\bclairs?\s+de\s+lune\b/giu, 'moonlight'],
+  [/\bpleines?\s+lunes?\b/giu, 'full moon'],
+  [/\bsous\s+la\s+pluie\b/giu, 'in the rain'],
+  [/\bsous\s+la\s+neige\b/giu, 'in the snow'],
   [/\bn(?:œ|oe)uds?\s+papillons?\b/giu, 'bow tie'],
   [/\blunettes?\s+de\s+soleil\b/giu, 'sunglasses'],
   [/\bqueue\s+de\s+cheval\b/giu, 'ponytail'],
@@ -59,6 +102,12 @@ const PHRASE_LEXICON: Array<[RegExp, string]> = [
 
 /** Verbes d'edition. */
 const VERB_LEXICON: Array<[RegExp, string]> = [
+  [/\b(?:r[eé]pliqu[erz]?|r[eé]plique)\b/giu, 'replicate'],
+  [/\b(?:reprodui[st]?|reproduire)\b/giu, 'reproduce'],
+  [/\b(?:recr[eé]e[rz]?|recr[eé]er)\b/giu, 'recreate'],
+  [/\b(?:dupliqu[erz]?|duplique)\b/giu, 'duplicate'],
+  [/\b(?:copi[erz]?|copie)\b/giu, 'copy'],
+  [/\b(?:imit[erz]?|imite)\b/giu, 'imitate'],
   [/\b(?:ajoute[rz]?|rajoute[rz]?)\b/giu, 'add'],
   [/\b(?:enl[eè]ve[rz]?|enlever|retire[rz]?|retirer|supprime[rz]?|supprimer|efface[rz]?|effacer|vire[rz]?)\b/giu, 'remove'],
   [/\b(?:remplace[rz]?|remplacer)\b/giu, 'replace'],
@@ -126,6 +175,28 @@ const NOUN_LEXICON: Array<[RegExp, string]> = [
   [/\b[e\u00e9]paules?\b/giu, 'shoulder'],
   [/\b(?:assis|assise)\b/giu, 'sitting'],
   [/\b(?:nomm[e\u00e9]e?s?|nommer|appel[e\u00e9]e?s?)\b/giu, 'named'],
+  [/\bcapes?\b/giu, 'cape'],
+  [/\bp[eè]lerines?\b/giu, 'cloak'],
+  [/\bflammes?\b/giu, 'flames'],
+  [/\bfeux?\b/giu, 'fire'],
+  [/\bauras?\b/giu, 'aura'],
+  [/\b[eé]clairs?\b/giu, 'lightning'],
+  [/\bfoudres?\b/giu, 'lightning'],
+  [/\b[eé]toiles?\b/giu, 'stars'],
+  [/\bnuits?\b/giu, 'night'],
+  [/\blunes?\b/giu, 'moon'],
+  [/\bbanderoles?\b/giu, 'banner'],
+  [/\bbanni[eè]res?\b/giu, 'banner'],
+  [/\bvillages?\b/giu, 'village'],
+  [/\bvilles?\b/giu, 'town'],
+  [/\bb[aâ]timents?\b/giu, 'buildings'],
+  [/\brues?\b/giu, 'streets'],
+  [/\ball[eé]es?\b/giu, 'alleys'],
+  [/\bfoules?\b/giu, 'crowd'],
+  [/\bpassants?\b/giu, 'passersby'],
+  [/\btenues?\b/giu, 'outfit'],
+  [/\bv[eê]tements?\b/giu, 'clothes'],
+  [/\bhabits?\b/giu, 'clothes'],
   [/\blunettes?\b/giu, 'glasses'],
   [/\bchapeaux?\b/giu, 'hat'],
   [/\bcasquettes?\b/giu, 'cap'],
@@ -137,6 +208,7 @@ const NOUN_LEXICON: Array<[RegExp, string]> = [
   [/\bmoustaches?\b/giu, 'moustache'],
   [/\bcheveux\b/giu, 'hair'],
   [/\bvisages?\b/giu, 'face'],
+  [/\bt[eê]tes?\b/giu, 'head'],
   [/\byeux\b/giu, 'eyes'],
   [/\bbouche\b/giu, 'mouth'],
   [/\bsourires?\b/giu, 'smile'],
@@ -209,7 +281,7 @@ const LEXICONS_BEFORE_HAIR = [PHRASE_LEXICON, VERB_LEXICON]
 const LEXICONS_AFTER_HAIR = [NOUN_LEXICON, COLOR_LEXICON, GRAMMAR_LEXICON]
 
 /** Marqueurs de francais "de contenu" (hors articles que le lexique gere deja). */
-const FRENCH_CONTENT_MARKERS = /[\u00e0-\u00ff]|\b(?:ajout|suppression|ajoute|enleve|retire|supprime|remplace|mets|mettre|change|transforme|avec|sans|cheveux|visage|corps|homme|m[e\u00e9]tis|chat|personnage|nomm[e\u00e9]|assis|[e\u00e9]paule|fond|decor|arriere)\b/i
+const FRENCH_CONTENT_MARKERS = /[\u00e0-\u00ff]|\b(?:ajout|suppression|ajoute|enleve|retire|supprime|remplace|mets|mettre|change|transforme|avec|sans|cheveux|visage|t[eê]te|corps|homme|m[e\u00e9]tis|chat|personnage|nomm[e\u00e9]|assis|[e\u00e9]paule|fond|decor|arriere|cape|flamme|[eé]toile|nuit|lune|banderole|banni[eè]re|tenue|v[eê]tement|habits|village|ville)\b/i
 
 /** Vrai si le texte d'origine contient du francais (sinon : ne pas toucher). */
 export function looksFrench(text: string): boolean {
@@ -250,7 +322,7 @@ export function applyEditLexicon(text: string): string {
 /** Vrai s'il reste du francais de contenu apres passage du lexique. */
 function hasResidualFrench(text: string): boolean {
   // Apres lexique : on ignore les accents resolus, on cherche des marqueurs FR restants.
-  return /[\u00e0-\u00ff]|\b(?:le|la|les|une?|des|du|avec|sans|dans|sur|pour|sous|entre|cheveux|visage|corps|homme|m[e\u00e9]tis|chat|personnage|nomm[e\u00e9]|assis|[e\u00e9]paule|fond)\b/i.test(text)
+  return /[\u00e0-\u00ff]|\b(?:le|la|les|une?|des|du|avec|sans|dans|sur|pour|sous|entre|cheveux|visage|t[eê]te|corps|homme|m[e\u00e9]tis|chat|personnage|nomm[e\u00e9]|assis|[e\u00e9]paule|fond|cape|flamme|[eé]toile|nuit|tenue|v[eê]tement|village)\b/i.test(text)
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
@@ -265,11 +337,16 @@ You convert a user's IMAGE EDIT request into ONE short English instruction for a
 
 Rules:
 - Output ONLY the instruction. No quotes, no explanation, no preamble.
-- Imperative and direct, maximum 25 words.
+- Imperative and direct, maximum 30 words.
 - Keep the SAME action (add / remove / replace / change / recolor) and the SAME target. Do NOT invent extra changes, styles or quality words.
+- When adding wearable items (e.g. cape, cloak, jacket, hat, scarf), specify it is worn over the body without recoloring the existing clothes and without altering the head/face/hair.
+- When adding magic energy or flames (e.g. blue flames), specify they appear around the character alongside existing elements without replacing them.
+- When changing the background/sky (e.g. starry night, sunset, rain), specify to change only the background and keep the foreground subject identical with NO unrequested crowd or extra bystanders.
 - Resolve French idioms to their REAL English meaning, never literally:
   "noeud papillon" = "bow tie" (NOT butterfly), "queue de cheval" = "ponytail",
-  "lunettes de soleil" = "sunglasses", "tache de rousseur" = "freckle".
+  "lunettes de soleil" = "sunglasses", "tache de rousseur" = "freckle",
+  "cape noire" = "black cape", "nuit étoilée" = "starry night sky",
+  "flammes bleues en plus" = "blue flames in addition to the existing flames".
 - If the request only changes color/lighting, say so without adding objects.
 
 French request: ${raw}

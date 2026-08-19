@@ -11,6 +11,17 @@ import VoicePushToTalk from '../components/VoicePushToTalk'
 import { useFileDrop } from '../hooks/useFileDrop'
 import { useCyberViewLogic } from '../hooks/useCyberViewLogic'
 
+const WarRoomToolBench = lazy(() => import('./cyber/WarRoomLab'))
+const AutonomousInvestigatorToolBench = lazy(() => import('./cyber/AutonomousInvestigatorLab'))
+const DynamicZeroDayToolBench = lazy(() => import('./cyber/DynamicZeroDayLab'))
+const SymbolicExecutionToolBench = lazy(() => import('./cyber/SymbolicExecutionLab'))
+const BinaryDisassemblyToolBench = lazy(() => import('./cyber/BinaryDisassemblyLab'))
+const EbpfKernelToolBench = lazy(() => import('./cyber/EbpfKernelLab'))
+const SoarPlaybookToolBench = lazy(() => import('./cyber/SoarPlaybookLab'))
+const ZeroDayToolBench = lazy(() => import('./cyber/ZeroDayLab'))
+const AttackGraphToolBench = lazy(() => import('./cyber/AttackGraphLab'))
+const DeepReasoningToolBench = lazy(() => import('./cyber/DeepReasoningLab'))
+const WebAuditorToolBench = lazy(() => import('./cyber/WebAuditorLab'))
 const NetworkToolBench = lazy(() => import('./cyber/NetworkLab'))
 const ForensicsToolBench = lazy(() => import('./cyber/ForensicsLab'))
 const WebSecToolBench = lazy(() => import('./cyber/WebSecLab'))
@@ -61,41 +72,57 @@ const pillMeta: CSSProperties = {
 
 const CYBER_REQUEST_PRESETS = [
   {
+    label: 'War Room Red/Blue',
+    stance: 'defense' as const,
+    text: "Engage une simulation War Room autonome : confrontation Red Team vs Blue Team, telemetrie temps reel, generation de regles Sigma/YARA, isolation eBPF et containment.",
+  },
+  {
+    label: 'Entraînement 0-Day & Fuzz',
+    stance: 'offense' as const,
+    text: "Simule la decouverte et la remediation d'une faille 0-day (UAF / Heap BOF / Deserialization) avec fuzzing mutatif, dissection de memoire et validation de correctif.",
+  },
+  {
+    label: 'Graphe Attaque & Pivots',
+    stance: 'offense' as const,
+    text: "Analyse le graphe d'attaque systemique : cartographie des dependances reseau, modelisation des chemins de pivot vers les actifs critiques et calcul du blast radius.",
+  },
+  {
+    label: 'Raisonnement IA Poussé',
+    stance: 'defense' as const,
+    text: "Effectue une dissection cognitive approfondie : modelisation de menace, analyse dialectique attaque/defense, cause racine et playbook de remediation definitive.",
+  },
+  {
     label: 'Audit web autorise',
     stance: 'offense' as const,
     text: "Prepare un audit web autorise sur mon application : perimetre, recon read-only, surface d'attaque, hypotheses OWASP, outils a verifier, preuves a collecter et correctifs.",
   },
   {
-    label: 'Incident blue-team',
+    label: 'Incident forensic',
     stance: 'defense' as const,
-    text: "Analyse ces logs comme un incident blue-team : timeline, IOC, hypothese d'attaque, detection Sigma/YARA, containment et plan de durcissement.",
-  },
-  {
-    label: 'Lab red/blue',
-    stance: 'offense' as const,
-    text: "Forge un lab red/blue realiste : recon, exploitation sandbox, preuve, logs serveur, detection et patch final.",
-  },
-  {
-    label: 'Recon reseau',
-    stance: 'offense' as const,
-    text: "Prepare une reconnaissance reseau autorisee : cible, ports/services, versions, priorisation des risques, commandes nmap/httpx/whatweb et verification defensive.",
-  },
-  {
-    label: 'Forensic',
-    stance: 'defense' as const,
-    text: "Construis une mission forensic avec artefacts, bruit dans les logs, extraction d'indicateurs et rapport d'incident.",
+    text: "Analyse ces logs et artefacts comme un incident forensic : timeline, extraction d'indicateurs IOCs, hypotheses d'attaque et rapport d'incident.",
   },
 ]
 
 const CYBER_TOOL_GROUPS = [
-  { name: 'Recon', tools: 'DNS, TLS, WHOIS, headers HTTP, scan local/RFC1918, PCAP demo', bench: 'network' as const },
-  { name: 'Web', tools: 'OWASP, SSRF/JWT/XSS/SQLi en lab, headers, remediations', bench: 'web' as const },
-  { name: 'Blue team', tools: 'MITRE, CVE, OSINT, Sigma/YARA attendus dans la strategie', bench: 'intel' as const },
-  { name: 'Forensic', tools: 'magic, hash fichier, strings, EXIF, entropy, memory scan, hex', bench: 'forensics' as const },
-  { name: 'Auto-config', tools: 'nmap/httpx/nuclei/trivy/osquery/etc. proposes selon mission', bench: 'strategy' as const },
+  { name: 'War Room IA', tools: 'Attaque vs Defense autonome, telemetrie live, confinement eBPF, regles Sigma/YARA', bench: 'warroom' as const, highlight: true },
+  { name: 'Enquêteur IA', tools: 'Investigation autonome multi-sources, Threat Intel CVE/EPSS, deduction de causes racines', bench: 'investigator' as const, highlight: true },
+  { name: '0-Day Dynamique', tools: 'Deduction heuristique de failles inedites sans catalogue, invariants de securite', bench: 'dynamic0day' as const, highlight: true },
+  { name: 'Solveur SMT', tools: 'Verification formelle Z3, exploration symbolique, preuves de crash mathématiques', bench: 'symbolic' as const, highlight: true },
+  { name: 'Désassembleur', tools: 'x86_64/ARM64, blocs CFG, ROP Gadgets, analyse d\'entropie des sections', bench: 'binary' as const, highlight: true },
+  { name: 'Noyau eBPF / LSM', tools: 'Sondes Ring 0, hooks de securite LSM anti-shell, filtrage réseau XDP', bench: 'ebpf' as const, highlight: true },
+  { name: 'Riposte SOAR', tools: 'Playbooks automatisés, enrichissement IOC, mitigation active & post-mortem', bench: 'soar' as const, highlight: true },
+  { name: 'Lab 0-Day & Fuzz', tools: 'Fuzzing mutatif, dissection memoire, UAF, Heap/Stack ROP, mitigations ASLR/Canary', bench: 'zeroday' as const, highlight: true },
+  { name: 'Graphe Attaque', tools: 'Cartographie des flux, chemins de pivot, calcul Blast Radius, chokepoints', bench: 'attackgraph' as const, highlight: true },
+  { name: 'Raisonnement IA', tools: 'Analyse dialectique, cause racine, modelisation de menaces & playbooks', bench: 'deepreasoning' as const, highlight: true },
+  { name: 'Audit Web & DoS', tools: 'Audit endpoint passif, analyse en-tetes HTTP, resilience DoS, export output/cyber', bench: 'webaudit' as const, highlight: true },
+  { name: 'Recon Reseau', tools: 'DNS, TLS, WHOIS, headers HTTP, scan local/RFC1918, PCAP demo', bench: 'network' as const },
+  { name: 'Web Security', tools: 'OWASP, SSRF/JWT/XSS/SQLi en lab, headers, remediations', bench: 'web' as const },
+  { name: 'Threat Intel', tools: 'MITRE ATT&CK, CVE/CWE, OSINT, parseur d\'IOCs temps reel', bench: 'intel' as const },
+  { name: 'Forensic', tools: 'Magic bytes, hash fichier, strings, EXIF, entropy, scan memoire, hex', bench: 'forensics' as const },
+  { name: 'Auto-Config', tools: 'nmap/httpx/nuclei/trivy/osquery/etc. proposes selon mission', bench: 'strategy' as const },
 ]
 
-type ToolBenchId = 'network' | 'forensics' | 'web' | 'intel'
+type ToolBenchId = 'warroom' | 'investigator' | 'dynamic0day' | 'symbolic' | 'binary' | 'ebpf' | 'soar' | 'zeroday' | 'attackgraph' | 'deepreasoning' | 'webaudit' | 'network' | 'forensics' | 'web' | 'intel'
 
 function toneColor(t?: string): string {
   if (t === 'xp' || t === 'ok') return OK
@@ -255,7 +282,18 @@ export default function AuroraV4CyberView() {
     [C.epreuveRunsForActive],
   )
   const ActiveToolBench =
-    activeToolBench === 'network' ? NetworkToolBench
+    activeToolBench === 'warroom' ? WarRoomToolBench
+    : activeToolBench === 'investigator' ? AutonomousInvestigatorToolBench
+    : activeToolBench === 'dynamic0day' ? DynamicZeroDayToolBench
+    : activeToolBench === 'symbolic' ? SymbolicExecutionToolBench
+    : activeToolBench === 'binary' ? BinaryDisassemblyToolBench
+    : activeToolBench === 'ebpf' ? EbpfKernelToolBench
+    : activeToolBench === 'soar' ? SoarPlaybookToolBench
+    : activeToolBench === 'zeroday' ? ZeroDayToolBench
+    : activeToolBench === 'attackgraph' ? AttackGraphToolBench
+    : activeToolBench === 'deepreasoning' ? DeepReasoningToolBench
+    : activeToolBench === 'webaudit' ? WebAuditorToolBench
+    : activeToolBench === 'network' ? NetworkToolBench
     : activeToolBench === 'forensics' ? ForensicsToolBench
     : activeToolBench === 'web' ? WebSecToolBench
     : activeToolBench === 'intel' ? ThreatIntelToolBench
@@ -660,12 +698,15 @@ export default function AuroraV4CyberView() {
                     else setActiveToolBench(group.bench)
                   }}
                   style={{
-                  display: 'grid', gridTemplateColumns: '78px 1fr', gap: 8, alignItems: 'start',
-                  padding: '8px 9px', borderRadius: 10, border: '1px solid rgba(255,255,255,.08)',
-                  background: activeToolBench === group.bench ? `${ACCENT}18` : 'rgba(255,255,255,.025)',
+                  display: 'grid', gridTemplateColumns: '96px 1fr', gap: 8, alignItems: 'start',
+                  padding: '8px 9px', borderRadius: 10,
+                  border: activeToolBench === group.bench ? `1px solid ${ACCENT}` : group.highlight ? `1px solid ${ACCENT}33` : '1px solid rgba(255,255,255,.08)',
+                  background: activeToolBench === group.bench ? `${ACCENT}22` : group.highlight ? 'rgba(244,63,94,.05)' : 'rgba(255,255,255,.025)',
                   cursor: 'pointer', textAlign: 'left', color: FG,
                 }}>
-                  <span style={{ ...mono, fontSize: 10, color: FG, fontWeight: 800 }}>{group.name}</span>
+                  <span style={{ ...mono, fontSize: 10, color: group.highlight ? ACCENT : FG, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    {group.highlight && <Dot color={ACCENT} />} {group.name}
+                  </span>
                   <span style={{ ...mono, fontSize: 10.5, color: DIM, lineHeight: 1.45 }}>{group.tools}</span>
                 </button>
               ))}

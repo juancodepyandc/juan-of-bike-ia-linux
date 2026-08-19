@@ -80,8 +80,8 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     promptSuffix: ', rich brushstrokes, gallery quality, fine art finish',
     guidance: 4.0,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.6,
   },
   watercolor: {
@@ -105,10 +105,10 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
   concept_art: {
     promptPrefix: 'professional concept art,',
     promptSuffix: ', cinematic composition, strong lighting, production ready polish',
-    guidance: 3.5,
+    guidance: 3.8,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.58,
   },
   minimalist: {
@@ -132,10 +132,10 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
   cinematic: {
     promptPrefix: 'cinematic still frame, movie scene,',
     promptSuffix: ', dramatic lighting, cinematic composition, film grade finish',
-    guidance: 3.5,
+    guidance: 3.8,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.6,
   },
   comic: {
@@ -152,8 +152,8 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     promptSuffix: ', neon atmosphere, futuristic materials, controlled density',
     guidance: 3.8,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.64,
   },
   fantasy: {
@@ -161,8 +161,8 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
     promptSuffix: ', epic atmosphere, magical lighting, polished world building',
     guidance: 3.8,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.6,
   },
   retro: {
@@ -177,10 +177,10 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
   none: {
     promptPrefix: '',
     promptSuffix: '',
-    guidance: 3.5,
+    guidance: 3.8,
     steps: null,
-    sampler: 'dpmpp_2m',
-    scheduler: 'normal',
+    sampler: 'euler',
+    scheduler: 'simple',
     editDenoise: 0.34,
   },
 }
@@ -758,32 +758,64 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   const conditioningNode = String(nextNodeId)
   nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
-    class_type: 'BasicGuider',
-    inputs: { model: ['4', 0], conditioning: [conditioningNode, 0] },
-  }
-  const guiderNode = String(nextNodeId)
-  nextNodeId += 1
+  let latentOutputNode: string
 
-  workflow[String(nextNodeId)] = {
-    class_type: 'KSamplerSelect',
-    inputs: { sampler_name: styleConfig.sampler },
-  }
-  const samplerNode = String(nextNodeId)
-  nextNodeId += 1
+  if (referenceImage) {
+    workflow[String(nextNodeId)] = {
+      class_type: 'CLIPTextEncode',
+      inputs: {
+        clip: ['1', 0],
+        text: negativePrompt || '',
+      },
+    }
+    const negativeTextNode = String(nextNodeId)
+    nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
-    class_type: 'SamplerCustomAdvanced',
-    inputs: {
-      noise: [noiseNode, 0],
-      guider: [guiderNode, 0],
-      sampler: [samplerNode, 0],
-      sigmas: [sigmaNode, 0],
-      latent_image: latentNode,
-    },
+    workflow[String(nextNodeId)] = {
+      class_type: 'KSampler',
+      inputs: {
+        model: ['4', 0],
+        seed,
+        steps: effectiveSteps,
+        cfg: 1.0,
+        sampler_name: styleConfig.sampler,
+        scheduler: styleConfig.scheduler === 'simple' || styleConfig.scheduler === 'normal' || styleConfig.scheduler === 'ddim_uniform' || styleConfig.scheduler === 'sgm_uniform' ? styleConfig.scheduler : 'simple',
+        positive: [conditioningNode, 0],
+        negative: [negativeTextNode, 0],
+        latent_image: latentNode,
+        denoise: referenceDenoise,
+      },
+    }
+    latentOutputNode = String(nextNodeId)
+    nextNodeId += 1
+  } else {
+    workflow[String(nextNodeId)] = {
+      class_type: 'BasicGuider',
+      inputs: { model: ['4', 0], conditioning: [conditioningNode, 0] },
+    }
+    const guiderNode = String(nextNodeId)
+    nextNodeId += 1
+
+    workflow[String(nextNodeId)] = {
+      class_type: 'KSamplerSelect',
+      inputs: { sampler_name: styleConfig.sampler },
+    }
+    const samplerNode = String(nextNodeId)
+    nextNodeId += 1
+
+    workflow[String(nextNodeId)] = {
+      class_type: 'SamplerCustomAdvanced',
+      inputs: {
+        noise: [noiseNode, 0],
+        guider: [guiderNode, 0],
+        sampler: [samplerNode, 0],
+        sigmas: [sigmaNode, 0],
+        latent_image: latentNode,
+      },
+    }
+    latentOutputNode = String(nextNodeId)
+    nextNodeId += 1
   }
-  const latentOutputNode = String(nextNodeId)
-  nextNodeId += 1
 
   workflow[String(nextNodeId)] = {
     class_type: 'VAEDecode',
@@ -825,9 +857,16 @@ export function createFlux2Workflow(options: Flux2WorkflowOptions): Record<strin
   } = options
   const seed = seedOpt ?? Math.floor(Math.random() * 2 ** 32)
   return {
-    '11': { class_type: 'CLIPLoader', inputs: { clip_name: 'mistral_3_small_flux2_fp8.safetensors', type: 'flux2' } },
-    '12': { class_type: 'UNETLoader', inputs: { unet_name: 'flux2_dev_fp8mixed.safetensors', weight_dtype: 'default' } },
-    '10': { class_type: 'VAELoader', inputs: { vae_name: 'flux2-vae.safetensors' } },
+    // Modeles depuis la configuration — JAMAIS de nom en dur: ce graphe
+    // demandait encore 'flux2_dev_fp8mixed' (le fichier tronque supprime) via
+    // UNETLoader, alors que le poids reel est un .gguf que seul
+    // UnetLoaderGGUF sait charger -> 400 "value_not_in_list" et generation
+    // morte sans reference. Miroir exact du graphe Python (flux_reference_synth).
+    '11': { class_type: 'CLIPLoader', inputs: { clip_name: IMAGE_T5_MODEL, type: 'flux2', device: 'cpu' } },
+    '12': IMAGE_UNET_MODEL.toLowerCase().endsWith('.gguf')
+      ? { class_type: 'UnetLoaderGGUF', inputs: { unet_name: IMAGE_UNET_MODEL } }
+      : { class_type: 'UNETLoader', inputs: { unet_name: IMAGE_UNET_MODEL, weight_dtype: 'default' } },
+    '10': { class_type: 'VAELoader', inputs: { vae_name: IMAGE_VAE_MODEL } },
     '6': { class_type: 'CLIPTextEncode', inputs: { clip: ['11', 0], text: prompt } },
     '33': { class_type: 'CLIPTextEncode', inputs: { clip: ['11', 0], text: negativePrompt } },
     '27': { class_type: 'EmptyFlux2LatentImage', inputs: { width, height, batch_size: 1 } },

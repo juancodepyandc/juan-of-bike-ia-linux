@@ -23,6 +23,8 @@ import { useFileDrop } from '../hooks/useFileDrop'
 import FavoriteButton from '../components/FavoriteButton'
 import { getDailyTip } from '../utils/dailyTip'
 import VoicePushToTalk from '../components/VoicePushToTalk'
+import VideoVoiceLibraryPanel from '../components/VideoVoiceLibraryPanel'
+import { cinemaAssetUrl } from '../services/cinemaApi'
 
 const VIOLET = 'oklch(0.68 0.13 260)'
 
@@ -257,6 +259,22 @@ export default function AuroraV1VideoView() {
                       }}>
                       {video.selftesting ? '⏳ Test...' : '🩺 Self-test pipeline'}
                     </button>
+                    <button type="button"
+                      onClick={() => void video.runBenchmark()}
+                      disabled={video.benchmarking}
+                      style={{
+                        padding: '10px 16px',
+                        background: 'oklch(0.68 0.13 260 / 0.10)',
+                        color: VIOLET,
+                        border: '1px solid oklch(0.68 0.13 260 / 0.5)',
+                        fontWeight: 600,
+                        cursor: video.benchmarking ? 'wait' : 'pointer',
+                        borderRadius: 99,
+                        opacity: video.benchmarking ? 0.5 : 1,
+                        fontSize: 11,
+                      }}>
+                      {video.benchmarking ? '⏳ A/B en file…' : '⚖ Comparer Wan / LTX'}
+                    </button>
                     {/* v82lx : sample render (1 shot balanced 720p, ~5-7 min)
                         — confirme prompt/render alignement avant commit full. */}
                     <button type="button"
@@ -378,6 +396,151 @@ export default function AuroraV1VideoView() {
                 )}
               </div>
 
+              {video.storageStatus && (
+                <div style={{
+                  padding: '8px 10px',
+                  borderRadius: 6,
+                  border: `1px solid ${video.storageStatus.key_mounted
+                    ? 'oklch(0.65 0.13 145 / 0.4)'
+                    : 'oklch(0.78 0.16 90 / 0.45)'}`,
+                  fontFamily: 'var(--font-mono, monospace)',
+                  fontSize: 10,
+                  color: 'var(--fg-dim, #aaa)',
+                  display: 'flex',
+                  gap: 12,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}>
+                  <span style={{ color: video.storageStatus.key_mounted
+                    ? 'oklch(0.78 0.16 145)'
+                    : 'oklch(0.78 0.16 90)' }}>
+                    {video.storageStatus.key_mounted ? '● froid monté' : '● froid hors ligne'}
+                  </span>
+                  <span>NVMe {video.storageStatus.tiers.internal.free_gb} Go libres</span>
+                  <span>sorties : {video.storageStatus.outputs_tier}</span>
+                  {video.storageStatus.model_strategy?.active.generator && (
+                    <span title={video.storageStatus.model_strategy.active.reason}>
+                      moteur : {video.storageStatus.model_strategy.active.generator}
+                    </span>
+                  )}
+                  {video.storageStatus.model_strategy?.active.voice_clone && (
+                    <span>
+                      voix cible : {video.storageStatus.model_strategy.active.voice_clone}
+                      {video.storageStatus.model_strategy.runtime?.voice_clone_ready ? ' · prête' : ' · à provisionner'}
+                    </span>
+                  )}
+                  <button type="button" onClick={() => void video.refreshStorageStatus()} style={{
+                    marginLeft: 'auto',
+                    border: '1px solid var(--line, rgba(255,255,255,.15))',
+                    background: 'transparent',
+                    color: 'inherit',
+                    borderRadius: 99,
+                    padding: '3px 8px',
+                    cursor: 'pointer',
+                  }}>actualiser</button>
+                </div>
+              )}
+
+              <div>
+                <VideoVoiceLibraryPanel
+                  accent={VIOLET}
+                  engineName={video.storageStatus?.model_strategy?.active.voice_clone}
+                  engineReady={video.storageStatus?.model_strategy?.runtime?.voice_clone_ready === true}
+                />
+              </div>
+
+              {video.gallery && video.gallery.files.length > 0 && (
+                <div style={{
+                  padding: 10,
+                  borderRadius: 6,
+                  border: '1px solid var(--line, rgba(255,255,255,.12))',
+                  background: 'var(--bg-card, rgba(255,255,255,.025))',
+                }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                    fontSize: 10,
+                    fontFamily: 'var(--font-mono, monospace)',
+                    color: 'var(--fg-dim, #aaa)',
+                  }}>
+                    <span>Galerie persistante · {video.gallery.files.length} rendu(s)</span>
+                    <button type="button" onClick={() => void video.refreshGallery()} style={{
+                      border: 0,
+                      background: 'transparent',
+                      color: 'inherit',
+                      cursor: 'pointer',
+                    }}>actualiser</button>
+                  </div>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                    gap: 8,
+                  }}>
+                    {video.gallery.files.slice(0, 4).map((file) => (
+                      <a key={`${file.tier}:${file.path}`} href={cinemaAssetUrl(file.asset_url)} target="_blank" rel="noreferrer" style={{
+                        color: 'inherit',
+                        textDecoration: 'none',
+                        minWidth: 0,
+                      }}>
+                        <video src={cinemaAssetUrl(file.asset_url)} preload="metadata" muted style={{
+                          display: 'block',
+                          width: '100%',
+                          aspectRatio: '16 / 9',
+                          objectFit: 'cover',
+                          borderRadius: 4,
+                          background: '#050608',
+                        }} />
+                        <div title={file.name} style={{
+                          marginTop: 4,
+                          fontSize: 9,
+                          fontFamily: 'var(--font-mono, monospace)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>{file.name} · {file.tier}</div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {video.benchmarkResult && (
+                <div style={{
+                  padding: 10,
+                  borderRadius: 6,
+                  border: `1px solid ${video.benchmarkResult.selection_graded
+                    ? 'oklch(0.65 0.13 145 / 0.4)'
+                    : 'oklch(0.78 0.16 90 / 0.45)'}`,
+                  fontFamily: 'var(--font-mono, monospace)',
+                  fontSize: 10,
+                }}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                    A/B qualité · {video.benchmarkResult.winner
+                      ? `${video.benchmarkResult.selection_graded ? 'gagnant' : 'gagnant provisoire'} : ${video.benchmarkResult.winner}`
+                      : 'aucun gagnant mesuré'}
+                  </div>
+                  {video.benchmarkResult.variants.map((item) => (
+                    <div key={item.variant} style={{ display: 'flex', gap: 8 }}>
+                      <span>{item.variant}</span>
+                      <span>{item.score_pct == null ? 'N/A' : `${item.score_pct}%`}</span>
+                      <span>couverture {item.coverage_pct}%</span>
+                      {item.render.ok && (
+                        <a href={cinemaAssetUrl(item.output)} target="_blank" rel="noreferrer" style={{ color: VIOLET }}>
+                          voir
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                  {(video.benchmarkResult.warning || video.benchmarkResult.error) && (
+                    <div style={{ marginTop: 5, color: 'oklch(0.78 0.16 90)' }}>
+                      {video.benchmarkResult.warning || video.benchmarkResult.error}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* v82lm : Selftest result — état des briques pipeline */}
               {video.selftestResult && (
                 <div style={{
@@ -456,10 +619,11 @@ export default function AuroraV1VideoView() {
                         display: 'flex', gap: 12, flexWrap: 'wrap',
                       }}>
                         <span>shot {qg.breakdown.shot_pct}%</span>
-                        <span>char {qg.breakdown.char_pct}%</span>
-                        <span>audio {qg.breakdown.audio_pct}%</span>
-                        <span>temporal {qg.breakdown.temporal_pct}%</span>
+                        <span>char {qg.breakdown.char_pct == null ? 'N/A' : `${qg.breakdown.char_pct}%`}</span>
+                        <span>audio {qg.breakdown.audio_pct == null ? 'N/A' : `${qg.breakdown.audio_pct}%`}</span>
+                        <span>temporal {qg.breakdown.temporal_pct == null ? 'N/A' : `${qg.breakdown.temporal_pct}%`}</span>
                         <span>integrity {qg.breakdown.integrity_pct}%</span>
+                        <span>QA mesurée {qg.coverage?.overall_pct ?? 0}%</span>
                       </div>
                       {qg.weak_shots.length > 0 && (
                         <div style={{ marginTop: 6, fontSize: 11, color: 'oklch(0.78 0.16 25)' }}>
@@ -512,12 +676,10 @@ export default function AuroraV1VideoView() {
                     gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
                   }}>
                     {Object.entries(video.previewResult.char_quality).map(([name, q]) => {
-                      const scoreColor = q.score >= 8 ? 'oklch(0.78 0.16 145)'
-                        : q.score >= 6 ? 'oklch(0.78 0.16 80)'
+                      const scoreColor = q.score !== null && q.score >= 8 ? 'oklch(0.78 0.16 145)'
+                        : q.score !== null && q.score >= 6 ? 'oklch(0.78 0.16 80)'
                         : 'oklch(0.78 0.16 25)'
-                      const url = q.keyframe_url.startsWith('http')
-                        ? q.keyframe_url
-                        : (q.keyframe_url.startsWith('/files') ? q.keyframe_url : `/files?path=${encodeURIComponent(q.keyframe_url)}`)
+                      const url = cinemaAssetUrl(q.keyframe_url)
                       return (
                         <div key={name} style={{
                           display: 'flex', flexDirection: 'column', gap: 6,
@@ -539,7 +701,7 @@ export default function AuroraV1VideoView() {
                             <span style={{
                               fontFamily: 'var(--font-mono, monospace)',
                               color: scoreColor, fontWeight: 700, fontSize: 13,
-                            }}>{q.score}/10</span>
+                            }}>{q.score === null ? 'Non notée' : `${q.score}/10`}</span>
                           </div>
                           <div style={{
                             fontSize: 11, color: 'var(--fg-dim, #aaa)',
@@ -708,7 +870,9 @@ export default function AuroraV1VideoView() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     {video.jobStatus.result.temporal_quality.map((t) => {
                       const ok = t.ok
-                      const color = ok
+                      const color = ok == null
+                        ? 'var(--fg-mute, #888)'
+                        : ok
                         ? 'oklch(0.78 0.16 145)'
                         : t.cuts_count >= 3 ? 'oklch(0.78 0.16 25)'
                         : 'oklch(0.78 0.16 80)'
@@ -721,10 +885,11 @@ export default function AuroraV1VideoView() {
                             shot {String(t.shot_id).padStart(2, '0')}
                           </span>
                           <span style={{ color, fontWeight: 700, minWidth: 22 }}>
-                            {ok ? '🎬' : '⚠'}
+                            {ok == null ? 'N/A' : ok ? '🎬' : '⚠'}
                           </span>
                           <span style={{ color: 'var(--fg-dim, #aaa)', flex: 1 }}>
-                            {t.cuts_count === 0 ? 'continu, pas de cut'
+                            {ok == null ? `non mesuré${t.error ? ` · ${t.error}` : ''}`
+                              : t.cuts_count === 0 ? 'continu, pas de cut'
                               : t.cuts_count === 1 ? '1 cut détecté (acceptable)'
                               : `${t.cuts_count} cuts internes — téléportation/jump cut`}
                             {t.cuts && t.cuts.length > 0 && (
@@ -757,7 +922,8 @@ export default function AuroraV1VideoView() {
                       const ok = a.ok
                       const hasAudio = a.has_audio
                       const ratio = a.silence_ratio || 0
-                      const color = !ok ? 'oklch(0.78 0.16 25)'
+                      const color = ok == null ? 'var(--fg-mute, #888)'
+                        : !ok ? 'oklch(0.78 0.16 25)'
                         : !hasAudio ? 'var(--fg-mute, #888)'
                         : ratio < 0.2 ? 'oklch(0.78 0.16 145)'
                         : ratio < 0.4 ? 'oklch(0.78 0.16 80)'
@@ -771,10 +937,12 @@ export default function AuroraV1VideoView() {
                             shot {String(a.shot_id).padStart(2, '0')}
                           </span>
                           <span style={{ color, fontWeight: 700, minWidth: 22 }}>
-                            {!hasAudio ? '🔇' : ok ? '🔊' : '⚠'}
+                            {ok == null ? 'N/A' : !hasAudio ? '🔇' : ok ? '🔊' : '⚠'}
                           </span>
                           <span style={{ color: 'var(--fg-dim, #aaa)', flex: 1 }}>
-                            {!hasAudio
+                            {ok == null
+                              ? `non mesuré${a.error ? ` · ${a.error}` : ''}`
+                              : !hasAudio
                               ? 'no audio track'
                               : `silence ${(ratio * 100).toFixed(0)}%${a.expected_dialogue ? ' · dialogue attendu' : ''}`}
                           </span>

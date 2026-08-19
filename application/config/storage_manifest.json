@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "mount_path": "/mnt/aurora_models",
+  "entries": [
+    {
+      "id": "ollama-library",
+      "kind": "llm",
+      "hot_path": "/usr/share/ollama/.ollama/models",
+      "cold_path": "/mnt/aurora_models/ollama/models",
+      "size_gb": 107.0,
+      "tier": "hot",
+      "pin": true,
+      "last_access": 0
+    },
+    {
+      "id": "wan2.2-ti2v-5b",
+      "kind": "video",
+      "hot_path": "/home/juan/.cache/huggingface/hub/models--Wan-AI--Wan2.2-TI2V-5B-Diffusers",
+      "cold_path": "/mnt/aurora_models/hf/hub/models--Wan-AI--Wan2.2-TI2V-5B-Diffusers",
+      "size_gb": 32.0,
+      "tier": "hot",
+      "pin": false,
+      "last_access": 0
+    },
+    {
+      "id": "ltx-video",
+      "kind": "video",
+      "hot_path": "/home/juan/.cache/huggingface/hub/models--Lightricks--LTX-Video",
+      "cold_path": "/mnt/aurora_models/hf/hub/models--Lightricks--LTX-Video",
+      "size_gb": 33.0,
+      "tier": "hot",
+      "pin": false,
+      "last_access": 0
+    },
+    {
+      "id": "chatterbox-candidate",
+      "kind": "orphan",
+      "hot_path": "/home/juan/.cache/huggingface/hub/models--ResembleAI--chatterbox",
+      "cold_path": "/mnt/aurora_models/hf/hub/models--ResembleAI--chatterbox",
+      "size_gb": 13.0,
+      "tier": "hot",
+      "pin": false,
+      "last_access": 0
+    },
+    {
+      "id": "video-outputs",
+      "kind": "output",
+      "hot_path": "/home/juan/AuroraIA/application/output/video",
+      "cold_path": "/mnt/aurora_models/outputs/video",
+      "size_gb": 0.0,
+      "tier": "hot",
+      "pin": true,
+      "last_access": 0
+    },
+    {
+      "id": "voice-outputs",
+      "kind": "output",
+      "hot_path": "/home/juan/AuroraIA/application/output/voix",
+      "cold_path": "/mnt/aurora_models/outputs/voix",
+      "size_gb": 0.0,
+      "tier": "hot",
+      "pin": true,
+      "last_access": 0
+    }
+  ]
+}

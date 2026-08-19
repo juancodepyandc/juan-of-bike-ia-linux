@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useCodeStreamStore } from '../../stores/codeStreamStore'
 import type { ModuleId } from '../../types/app'
-import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxCounters, type FxModule, type FxPatch, type FxRef } from './fxBus'
+import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus'
 import { watchComfyProgress } from './comfyProgress'
 import AuroraMascot, { FX_AGENTS } from './mascots'
 import { FX_SCENES, type SceneDraw } from './scenes'
@@ -19,6 +19,7 @@ type FxEntry = {
   counters?: FxCounters
   meshUrl?: string
   meshInfo?: string
+  ask?: FxAsk | null
 }
 
 function updateCounters(prev: FxCounters | undefined, line: string): FxCounters | undefined {
@@ -224,7 +225,11 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
           {[
             { lab: 'photos ✓', val: c.photosValidees ?? 0, col: '#4ADE80' },
             { lab: 'photos ✗', val: c.photosRejetees ?? 0, col: '#F87171' },
-            { lab: 'mesh', val: c.meshTentatives ?? 0, col: accent },
+            // "1 mesh" laissait croire qu'un GLB existait alors que ce compteur
+            // ne compte que les ESSAIS (deduit des lignes de log). Le GLB n'est
+            // affiche que quand le fichier est reellement apparu sur le disque.
+            { lab: 'essai mesh', val: c.meshTentatives ?? 0, col: accent },
+            { lab: 'GLB', val: entry.meshUrl ? 1 : 0, col: entry.meshUrl ? '#4ADE80' : '#8B93A7' },
           ].map((k) => (
             <span key={k.lab} style={{
               fontSize: 10, padding: '4px 10px', borderRadius: 999,
@@ -298,7 +303,10 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
       style={{
         position: 'fixed', inset: 0,
         width: '100%', height: '100%',
-        zIndex: 118, pointerEvents: 'none',
+        // Une question ouverte VERROUILLE l'ecran: sans cela un clic
+        // traversait vers l'interface en dessous (constate: un clic aveugle a
+        // ouvert un selecteur de fichiers pendant une clarification).
+        zIndex: 118, pointerEvents: entry.ask ? 'auto' : 'none',
         overflow: 'hidden',
         background: 'rgba(4,6,11,.97)',
         backdropFilter: 'blur(14px)',
@@ -306,6 +314,23 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         animation: 'aurora-fx-in .5s cubic-bezier(.22,1,.36,1)',
       }}
     >
+      {/* 31/07 (retour Juan): le bouton d'arret etait SOUS cet ecran opaque —
+          invisible des que la generation tourne. Il vit desormais ICI, sur la
+          couche du dessus, toujours cliquable. */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))}
+        style={{
+          position: 'absolute', top: 14, right: 16, zIndex: 5,
+          pointerEvents: 'auto', cursor: 'pointer',
+          padding: '7px 14px', borderRadius: 999,
+          border: '1px solid rgba(248,113,113,.5)', background: 'rgba(127,29,29,.35)',
+          color: '#fecaca', fontSize: 12, fontWeight: 650,
+          fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+        }}
+      >
+        ■ Arreter la generation
+      </button>
       <FxCanvas module={module} entry={entry} />
       {!entry.reveal && entry.refs && entry.refs.length > 0 && (
         <RefsPanel refs={entry.refs} accent={agent.accent} />
@@ -326,6 +351,9 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
             boxShadow: `0 0 24px ${agent.accent}33`, pointerEvents: 'auto',
           }}
         >{page === 'scene' ? '❯' : '❮'}</button>
+      )}
+      {!entry.reveal && entry.ask && (
+        <FxAskPanel module={module} ask={entry.ask} accent={agent.accent} />
       )}
       {entry.reveal && (
         <div style={{
@@ -432,15 +460,213 @@ function MiniPill({ module, entry, onClick }: { module: FxModule; entry: FxEntry
     >
       <AuroraMascot module={module} size={30} state="working" />
       <span style={{ fontSize: 12, fontWeight: 650 }}>{agent.name}</span>
-      <span style={{ fontSize: 11, fontFamily: "'Cascadia Code',Consolas,monospace", color: agent.accent }}>
-        {Math.floor(simProg * 100)}%
-      </span>
+      {entry.ask ? (
+        // 31/07 (audit): une question du pipeline restait INVISIBLE quand
+        // l'utilisateur etait sur un autre module — la pastille affichait un
+        // % serein pendant que tout attendait une reponse (jusqu'a 2 h).
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#ffb44d',
+                       animation: 'pulse 1.2s ease-in-out infinite' }}>
+          QUESTION EN ATTENTE — cliquer
+        </span>
+      ) : (
+        <span style={{ fontSize: 11, fontFamily: "'Cascadia Code',Consolas,monospace", color: agent.accent }}>
+          {Math.floor(simProg * 100)}%
+        </span>
+      )}
     </button>
+  )
+}
+
+
+// La question est une PARTIE de l'ecran de generation — pas une modale
+// empilee par-dessus. Fond PLEIN (aucune transparence sous le texte),
+// lisibilite d'abord; la generation reste visible autour, en pause implicite.
+function FxAskPanel({ module, ask, accent }: { module: FxModule; ask: FxAsk; accent: string }) {
+  const [text, setText] = useState('')
+  const [choix, setChoix] = useState<number | null>(null)
+  // 31/07 (demande Juan): sur un LOT, pouvoir trier IMAGE PAR IMAGE (garder /
+  // jeter) au lieu du tout-ou-rien oui/non.
+  const [jetees, setJetees] = useState<Set<number>>(new Set())
+  const confirm = ask.kind === 'confirm_images'
+  const pick = ask.kind === 'pick_image'
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 3, display: 'grid',
+      placeItems: 'center', pointerEvents: 'auto',
+      background: 'rgba(4,6,11,.95)',
+    }}>
+      <div style={{
+        width: 'min(820px, 94vw)', maxHeight: '88vh', overflowY: 'auto',
+        background: '#0B0F16', borderRadius: 20, padding: '26px 30px',
+        border: `1px solid ${accent}66`,
+        boxShadow: `0 30px 90px rgba(0,0,0,.65), 0 0 40px ${accent}22`,
+      }}>
+        <div style={{
+          fontSize: 11, letterSpacing: '.3em', color: accent, fontWeight: 700,
+          fontFamily: "'Cascadia Code',Consolas,monospace", marginBottom: 12,
+        }}>
+          {ask.categoryLabel?.toUpperCase() ?? (confirm ? 'VALIDATION — VOTRE AVIS EST ATTENDU' : 'QUESTION — LA GÉNÉRATION ATTEND VOTRE RÉPONSE')}
+        </div>
+        <div style={{ fontSize: 20, lineHeight: 1.5, color: '#EEF2FB', fontWeight: 600 }}>
+          {ask.question}
+        </div>
+        {(confirm || pick) && ask.images && ask.images.length > 0 && (
+          <div style={{
+            marginTop: 18, display: 'grid', gap: 12,
+            gridTemplateColumns: ask.images.length > 1 ? 'repeat(auto-fit, minmax(180px, 1fr))' : '1fr',
+          }}>
+            {ask.images.map((u, i) => (
+              <div key={i} style={{ position: 'relative' }}>
+                <img src={u} alt={`Proposition ${i + 1}`}
+                  onClick={pick ? () => setChoix(i)
+                    : confirm && ask.allowPickEach && i > 0
+                      ? () => setJetees((prev) => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n })
+                      : undefined}
+                  style={{
+                    width: '100%', maxHeight: '38vh', objectFit: 'contain',
+                    borderRadius: 12, background: '#091116',
+                    cursor: pick || (confirm && ask.allowPickEach && i > 0) ? 'pointer' : 'default',
+                    opacity: jetees.has(i) ? 0.35 : 1,
+                    border: pick && choix === i
+                      ? `3px solid ${accent}`
+                      : jetees.has(i)
+                        ? '3px solid rgba(248,113,113,.8)'
+                        : '1px solid rgba(255,255,255,.08)',
+                    boxShadow: pick && choix === i ? `0 0 24px ${accent}55` : 'none',
+                  }} />
+                {confirm && ask.allowPickEach && i > 0 && (
+                  <span style={{ position: 'absolute', top: 6, left: 8, fontSize: 11, fontWeight: 700,
+                                 color: jetees.has(i) ? '#FCA5A5' : '#86EFAC' }}>
+                    {jetees.has(i) ? '✕ jetee — cliquer pour garder' : '✓ gardee — cliquer pour jeter'}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {!confirm && ask.options && ask.options.length > 0 && (
+          <div style={{ marginTop: 18, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {ask.options.map((opt) => (
+              <button key={opt} type="button"
+                onClick={() => fxAnswer(module, ask.id, opt)}
+                style={{
+                  padding: '12px 18px', borderRadius: 12, cursor: 'pointer',
+                  border: `1px solid ${accent}55`, background: `${accent}14`,
+                  color: '#EDF2FC', fontSize: 15, fontWeight: 600,
+                }}>{opt}</button>
+            ))}
+          </div>
+        )}
+        {confirm && ask.allowPhoto && (
+          <label style={{
+            marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            gap: 8, padding: '12px', borderRadius: 12, cursor: 'pointer',
+            border: `1px dashed ${accent}66`, background: `${accent}0d`,
+            color: '#BFDBFE', fontSize: 14, fontWeight: 600,
+          }}>
+            Joindre la 2e photo (vraie vue sous un autre angle)
+            <input type="file" accept="image/*,.png,.jpg,.jpeg,.webp,.avif,.heic,.heif" style={{ display: 'none' }}
+              onChange={async (e) => {
+                const f = e.target.files?.[0]
+                if (!f) return
+                const fd = new FormData()
+                fd.append('file', f, f.name)
+                try {
+                  const base = window.location.port === '1420' ? 'http://127.0.0.1:3001' : ''
+                  const r = await fetch(`${base}/api/upload`, { method: 'POST', body: fd })
+                  const d = await r.json()
+                  if (d?.path) fxAnswer(module, ask.id, { accepted: true, verdict: 'photo', photo: d.path, reason: '' })
+                } catch { /* l'utilisateur peut cliquer Accepter pour mono-vue */ }
+                e.currentTarget.value = ''
+              }} />
+          </label>
+        )}
+        {(confirm || ask.allowText) && (
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
+            placeholder={confirm ? 'Optionnel (si vous refusez) : ce qui ne va pas' : 'Votre réponse...'}
+            style={{
+              marginTop: 16, width: '100%', borderRadius: 12, padding: 12,
+              background: '#101623', color: '#EDF2FC', fontSize: 15,
+              border: '1px solid rgba(255,255,255,.14)', resize: 'vertical',
+            }} />
+        )}
+        <div style={{ marginTop: 18, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+          {pick ? (
+            <button type="button" disabled={choix === null}
+              onClick={() => choix !== null && fxAnswer(module, ask.id, { choix })}
+              style={{
+                padding: '12px 26px', borderRadius: 12,
+                cursor: choix === null ? 'not-allowed' : 'pointer',
+                opacity: choix === null ? 0.45 : 1,
+                border: `1px solid ${accent}88`, background: `${accent}22`,
+                color: '#EDF2FC', fontSize: 15, fontWeight: 700,
+              }}>Valider la proposition {choix !== null ? choix + 1 : ''}</button>
+          ) : confirm ? (
+            <>
+              <button type="button"
+                onClick={() => fxAnswer(module, ask.id, { accepted: false, reason: text.trim(), verdict: 'non' })}
+                style={{
+                  padding: '12px 20px', borderRadius: 12, cursor: 'pointer',
+                  border: '1px solid rgba(248,113,113,.6)', background: 'rgba(248,113,113,.14)',
+                  color: '#FCA5A5', fontSize: 15, fontWeight: 700,
+                }}>✕ Non — supprimer</button>
+              {ask.allowMaybe && (
+                <button type="button"
+                  onClick={() => fxAnswer(module, ask.id, { accepted: false, reason: text.trim(), verdict: 'peutetre' })}
+                  style={{
+                    padding: '12px 20px', borderRadius: 12, cursor: 'pointer',
+                    border: '1px solid rgba(251,191,36,.55)', background: 'rgba(251,191,36,.12)',
+                    color: '#FCD34D', fontSize: 15, fontWeight: 700,
+                  }}>~ Peut-être — garder et proposer autre chose</button>
+              )}
+              {ask.allowPickEach && jetees.size > 0 && (
+                <button type="button"
+                  onClick={() => fxAnswer(module, ask.id, { accepted: true, reason: text.trim(), verdict: 'selection', jetees: Array.from(jetees) })}
+                  style={{
+                    padding: '12px 20px', borderRadius: 12, cursor: 'pointer',
+                    border: '1px solid rgba(96,165,250,.6)', background: 'rgba(96,165,250,.14)',
+                    color: '#93C5FD', fontSize: 15, fontWeight: 700,
+                  }}>Garder ma selection ({(ask.images?.length || 1) - 1 - jetees.size} vue(s))</button>
+              )}
+              <button type="button"
+                onClick={() => fxAnswer(module, ask.id, { accepted: true, reason: '', verdict: 'oui' })}
+                style={{
+                  padding: '12px 24px', borderRadius: 12, cursor: 'pointer',
+                  border: '1px solid rgba(74,222,128,.6)', background: 'rgba(74,222,128,.16)',
+                  color: '#86EFAC', fontSize: 15, fontWeight: 700,
+                }}>✓ Accepter</button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={() => fxAnswer(module, ask.id, null)}
+                style={{
+                  padding: '12px 18px', borderRadius: 12, cursor: 'pointer',
+                  border: '1px solid rgba(255,255,255,.18)', background: 'transparent',
+                  color: '#9AA3B8', fontSize: 14,
+                }}>Passer</button>
+              {ask.allowText && (
+                <button type="button"
+                  onClick={() => fxAnswer(module, ask.id, text.trim() || null)}
+                  style={{
+                    padding: '12px 24px', borderRadius: 12, cursor: 'pointer',
+                    border: `1px solid ${accent}88`, background: `${accent}22`,
+                    color: '#EDF2FC', fontSize: 15, fontWeight: 700,
+                  }}>Envoyer</button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
 export default function GenerationFxHost() {
   const [entries, setEntries] = useState<Partial<Record<FxModule, FxEntry>>>({})
+  useEffect(() => {
+    markFxHostMounted(true)
+    return () => markFxHostMounted(false)
+  }, [])
   const [enabled, setEnabled] = useState(generationFxEnabled)
   const activeModule = useAppStore((s) => s.activeModule)
   const setActiveModule = useAppStore((s) => s.setActiveModule)
@@ -483,6 +709,8 @@ export default function GenerationFxHost() {
         counters: patch.logLine ? updateCounters(cur?.counters, patch.logLine) : cur?.counters,
         meshUrl: patch.meshUrl ?? cur?.meshUrl,
         meshInfo: patch.meshInfo ?? cur?.meshInfo,
+        // undefined = inchange; null = question retiree (repondue)
+        ask: patch.ask === undefined ? cur?.ask : patch.ask,
       }
       return next
     })

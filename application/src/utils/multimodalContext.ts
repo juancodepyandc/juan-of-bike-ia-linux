@@ -22,7 +22,10 @@ function inferKind(file: File): PreparedContextFile['kind'] {
   const extension = extensionOf(file)
   const mime = file.type.toLowerCase()
 
-  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'].includes(extension)) {
+  // Liste ALIGNEE sur estImage (ModelView) — la divergence classait un .heic
+  // ou .avif au MIME vide comme document et l'envoyait a l'extracteur de
+  // texte. Une seule definition d'« image » pour toute la chaine.
+  if (mime.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'tif', 'tiff', 'heic', 'heif', 'jfif', 'svg'].includes(extension)) {
     return 'image'
   }
   if (mime.includes('pdf') || extension === 'pdf') {
@@ -114,8 +117,15 @@ export async function prepareContextFiles(files: File[]) {
 
     if (kind === 'image') {
       item.imageBase64 = stripDataUrlPrefix(await fileToDataUrl(file))
-      if (isTauriRuntime()) {
+      // 30/07 (audit): le staging etait garde par isTauriRuntime() alors que
+      // fsWriteBinary a un repli bridge (/api/fs/write-binary) — en tunnel la
+      // photo n'avait JAMAIS de stagedPath et le flux photo-seule mourait
+      // avec « Votre photo n'a pas pu etre preparee ». Meme chemin partout.
+      try {
         item.stagedPath = await stageFile(file)
+      } catch {
+        // sans staging la generation refusera avec le nom du fichier — mieux
+        // qu'un echec silencieux plus loin.
       }
       return item
     }

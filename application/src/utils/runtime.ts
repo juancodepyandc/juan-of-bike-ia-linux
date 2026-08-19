@@ -76,7 +76,11 @@ export function getCloudBridgeUrl(): string {
  * - Browser local : 'http://127.0.0.1:3001' (accès direct au bridge)
  */
 export function getBridgeUrl(): string {
-  if (isTauriRuntime()) return ''
+  // 31/07: en Tauri on renvoyait '' — toute URL construite avec getBridgeUrl()
+  // ('' + '/api/...') partait en RELATIF depuis tauri://localhost et mourait
+  // en silence: bouton « Isoler le sujet » inerte, viewer noir, recuperation
+  // tunnel impossible. Le bridge est un serveur HTTP local: on parle en
+  // absolu. Seul le mode cloud garde le relatif (proxy Vite -> 3001).
   if (isCloudRuntime()) return ''
   return import.meta.env?.VITE_BRIDGE_URL || 'http://127.0.0.1:3001'
 }

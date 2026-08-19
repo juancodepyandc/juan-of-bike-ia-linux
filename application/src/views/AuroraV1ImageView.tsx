@@ -149,7 +149,7 @@ export default function AuroraV1ImageView() {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
         <Eyebrow dot={PINK}>Image · FLUX dev</Eyebrow>
         <span style={{ flex: 1 }} />
-        <Tag accent={PINK}>flux1-dev-fp8</Tag>
+        <Tag accent={PINK}>FLUX.2 (GGUF)</Tag>
         <Tag>{dim.w}×{dim.h} · 28 steps</Tag>
         <Tag>seed {I.seed || 'random'}</Tag>
         {I.generating && <Tag accent="#ff6a3d">live</Tag>}
@@ -418,10 +418,9 @@ export default function AuroraV1ImageView() {
                       }} style={thumbMenuBtn}>
                         ⎘ Copier le prompt
                       </button>
-                      <button type="button" onClick={() => {
-                        const a = document.createElement('a')
-                        a.href = img.url; a.download = `aurora-image-${img.id}.png`
-                        a.click()
+                      <button type="button" onClick={async () => {
+                        const { downloadImageUniversal } = await import('../utils/imageDownload')
+                        await downloadImageUniversal(img, { filename: `aurora-image-${img.id}.png` })
                         close()
                       }} style={thumbMenuBtn}>
                         💾 Télécharger PNG

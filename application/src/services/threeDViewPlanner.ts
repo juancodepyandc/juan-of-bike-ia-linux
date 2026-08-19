@@ -122,10 +122,13 @@ export function normalizeNameTokens(name: string) {
 
 export function detectReferenceViewTag(name: string): ThreeDViewTag | null {
   const normalized = normalizeNameTokens(name)
-  if (normalized.includes('front') || normalized.includes('avant')) return 'front'
-  if (normalized.includes('back') || normalized.includes('rear') || normalized.includes('arriere')) return 'back'
+  // 31/07: l'utilisateur nomme naturellement ses fichiers « face » et
+  // « dos » — ces mots n'etaient PAS reconnus, sa vraie vue de dos etait
+  // ignoree et MV-Adapter re-inventait un dos par-dessus.
+  if (normalized.includes('front') || normalized.includes('avant') || normalized.includes('face')) return 'front'
+  if (normalized.includes('back') || normalized.includes('rear') || normalized.includes('arriere') || normalized.includes('dos')) return 'back'
   if (normalized.includes('left') || normalized.includes('gauche')) return 'left'
-  if (normalized.includes('right') || normalized.includes('droite')) return 'right'
+  if (normalized.includes('right') || normalized.includes('droite') || normalized.includes('profil')) return 'right'
   return null
 }
 
@@ -1017,7 +1020,19 @@ export async function prepareThreeDViewPlan({
   }
 
   // 2. Use external reference from support as front if no user front
-  if (!assignments.has('front') && referenceSupport.externalReference) {
+  // — mais JAMAIS quand l'utilisateur a fourni une photo (30/07: son chat
+  // ailé a ete remplace par un portrait trouve sur le web). S'il a donne une
+  // image sans vue front, sa PREMIERE image devient la face.
+  if (!assignments.has('front') && provided.assignments.length > 0) {
+    const premiere = provided.assignments[0]
+    assignments.set('front', {
+      view: 'front',
+      sourceKind: 'user',
+      file: premiere.file,
+      notes: ['photo utilisateur promue en face (aucune vue front taguee)'],
+    })
+  }
+  if (!assignments.has('front') && referenceSupport.externalReference && provided.assignments.length === 0) {
     assignments.set('front', {
       view: 'front',
       sourceKind: 'external',
@@ -1049,7 +1064,11 @@ export async function prepareThreeDViewPlan({
     const isOptional = strategy.optionalViews.includes(view)
     // Search required views always. Search optional views when multiview is active
     // or when user provided a reference (we want complementary angles).
-    const shouldSearch = isRequired || (isOptional && (strategy.needsMultiview || hasUserProvidedImage))
+    // 30/07 (audit): la presence d'une photo utilisateur DECLENCHAIT des
+    // recherches web de vues complementaires — images d'un AUTRE sujet
+    // melangees a la photo dans references/. Photo presente = zero recherche
+    // web; les vues complementaires viennent de MV-Adapter (image -> vues).
+    const shouldSearch = !hasUserProvidedImage && (isRequired || (isOptional && strategy.needsMultiview))
     if (!shouldSearch) continue
 
     const externalReference = await findBestReferenceVisual({

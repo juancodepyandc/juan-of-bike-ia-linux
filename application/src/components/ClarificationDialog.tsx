@@ -17,6 +17,13 @@ export interface ClarificationRequest {
   categoryLabel?: string
   /** Callback with user response — null if dismissed */
   onRespond: (response: string | null) => void
+  /**
+   * 30/07: quand la question reclame une IMAGE (« pouvez-vous fournir la
+   * photo ? »), l'utilisateur n'avait AUCUN bouton pour la donner — l'option
+   * choisie ne menait donc a rien. Si ce callback est fourni, le dialogue
+   * affiche un bouton « Joindre une image » qui remonte le fichier.
+   */
+  onAttachImage?: (file: File) => void
 }
 
 interface Props {
@@ -54,7 +61,12 @@ export default function ClarificationDialog({ request }: Props) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          // z-[220]: l'ecran de generation (GenerationFxHost) est un plein-ecran
+          // opaque a z-118. A z-50 cette question etait peinte DESSOUS: la
+          // generation attendait une reponse que l'utilisateur ne pouvait pas
+          // voir — aucun dossier cree, aucun processus, symptome "rien ne se
+          // passe". Meme piege deja paye par la fenetre de validation.
+          className="fixed inset-0 z-[220] flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) handleDismiss() }}
         >
           <motion.div
@@ -130,6 +142,25 @@ export default function ClarificationDialog({ request }: Props) {
               </button>
             </div>
 
+            {request.onAttachImage && (
+              <label className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-aurora-cyan/40 bg-aurora-cyan/[0.06] px-4 py-2.5 text-xs text-aurora-cyan transition-colors hover:border-aurora-cyan/60">
+                <span>Joindre une image en reponse</span>
+                <input
+                  type="file"
+                  accept="image/*,.png,.jpg,.jpeg,.webp,.avif,.bmp,.gif,.tif,.tiff,.heic,.heif,.jfif,.svg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f && request.onAttachImage) {
+                      request.onAttachImage(f)
+                      setResponse('')
+                      request.onRespond(`__image_jointe__:${f.name}`)
+                    }
+                    e.currentTarget.value = ''
+                  }}
+                />
+              </label>
+            )}
             <button
               onClick={handleDismiss}
               className="mt-3 w-full px-4 py-2 rounded-xl text-xs text-white/30 hover:text-white/50 transition-colors"

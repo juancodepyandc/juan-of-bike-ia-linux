@@ -123,17 +123,28 @@ export async function cinemaGenerateRun(storyboard: Storyboard): Promise<CinemaJ
 export type CinemaPreviewKeyframesResponse = {
   ok: boolean
   char_quality?: Record<string, {
-    score: number
+    score: number | null
     reason: string
     ok: boolean
+    graded?: boolean
+    keyframe_path?: string
     keyframe_url: string
   }>
   previewId?: string
+  qa_coverage?: { graded: number; total: number }
+  warnings?: CinemaWarning[]
   error?: string
 }
 
-export async function cinemaPreviewKeyframes(storyboard: Storyboard): Promise<CinemaPreviewKeyframesResponse> {
-  return bridgeJson<CinemaPreviewKeyframesResponse>('/api/cinema/preview-keyframes', {
+export type CinemaPreviewKeyframesSpawn = {
+  ok: true
+  jobId: string
+  previewId: string
+  status: 'queued'
+}
+
+export async function cinemaPreviewKeyframes(storyboard: Storyboard): Promise<CinemaPreviewKeyframesSpawn> {
+  return bridgeJson<CinemaPreviewKeyframesSpawn>('/api/cinema/preview-keyframes', {
     method: 'POST',
     body: JSON.stringify({ storyboard }),
   })
@@ -149,6 +160,8 @@ export type CinemaSelftestStage = {
 
 export type CinemaSelftestResponse = {
   ok: boolean
+  jobId?: string
+  status?: 'queued' | 'running' | 'done' | 'cancelled'
   stages: Record<string, CinemaSelftestStage>
   overall_ok: boolean
   summary: string
@@ -158,6 +171,47 @@ export async function cinemaSelftest(): Promise<CinemaSelftestResponse> {
   return bridgeJson<CinemaSelftestResponse>('/api/cinema/selftest', {
     method: 'POST',
     body: '{}',
+  })
+}
+
+export type CinemaBenchmarkVariant = {
+  variant: string
+  exit_code: number
+  elapsed_s: number
+  output: string
+  score_pct: number | null
+  coverage_pct: number
+  render: {
+    ok?: boolean
+    error?: string
+    model?: string
+    strategy?: string
+    render_truth?: Record<string, unknown>
+  }
+}
+
+export type CinemaBenchmarkResult = {
+  ok: boolean
+  kind: 'video_ab_benchmark'
+  winner: string | null
+  selection_graded: boolean
+  variants: CinemaBenchmarkVariant[]
+  ranking?: Array<{ variant: string; score_pct: number }>
+  warning?: string
+  report?: string
+  error?: string
+}
+
+export async function cinemaBenchmark(storyboard: Storyboard): Promise<{
+  ok: true
+  jobId: string
+  status: 'queued'
+  reportPath: string
+  variants: string[]
+}> {
+  return bridgeJson('/api/cinema/benchmark', {
+    method: 'POST',
+    body: JSON.stringify({ storyboard }),
   })
 }
 
@@ -239,7 +293,8 @@ export type CinemaShotQuality = {
 // Audio silence detection per shot.
 export type CinemaAudioQuality = {
   shot_id: number
-  ok: boolean
+  ok: boolean | null
+  graded?: boolean
   has_audio: boolean
   total_silence_s?: number
   silence_ratio?: number
@@ -262,7 +317,8 @@ export type CinemaDialogueQuality = {
 // Temporal coherence quality: detect scene cuts inside a shot.
 export type CinemaTemporalQuality = {
   shot_id: number
-  ok: boolean
+  ok: boolean | null
+  graded?: boolean
   cuts_count: number
   cuts?: { t: number }[]
   duration_s?: number
@@ -275,18 +331,35 @@ export type CinemaQualityGrade = {
   overall_pct: number
   breakdown: {
     shot_pct: number
-    char_pct: number
-    audio_pct: number
-    temporal_pct: number
+    char_pct: number | null
+    audio_pct: number | null
+    temporal_pct: number | null
     integrity_pct: number
+  }
+  coverage: {
+    overall_pct: number
+    measured: number
+    expected: number
+    shot: { measured: number; expected: number }
+    character: { measured: number; expected: number }
+    audio: { measured: number; expected: number }
+    temporal: { measured: number; expected: number }
   }
   weak_shots: { shot_id: number; avg_score: number }[]
   exportable: boolean
 }
 
+export type CinemaWarning = {
+  code: string
+  message: string
+  impact?: string
+  character?: string
+  shot_id?: number
+}
+
 export type CinemaJobStatus = {
   jobId: string
-  status: 'queued' | 'running' | 'done' | 'unknown'
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled' | 'unknown'
   output?: string
   error?: string
   exitCode?: number
@@ -304,6 +377,38 @@ export type CinemaJobStatus = {
     dialogue_quality?: CinemaDialogueQuality[]  // per-shot voice/lipsync contract
     temporal_quality?: CinemaTemporalQuality[]  // per-shot scene-cut detection
     quality_grade?: CinemaQualityGrade  // aggregate quality grade (A/B/C/D)
+    warnings?: CinemaWarning[]
+    kind?: string
+    winner?: string | null
+    selection_graded?: boolean
+    variants?: CinemaBenchmarkVariant[]
+    ranking?: Array<{ variant: string; score_pct: number }>
+    warning?: string
+    report?: string
+    render_truth?: {
+      native_width: number
+      native_height: number
+      native_fps: number
+      delivered_fps: number
+      native_frames: number
+      delivered_width?: number
+      delivered_height?: number
+      delivered_frames?: number
+      native_shots?: Array<{
+        shot_id: number
+        segment: number
+        model?: string | null
+        strategy?: string | null
+        native_width?: number
+        native_height?: number
+        native_fps?: number
+        native_frames?: number
+        delivered_fps?: number
+        postprocess_chain?: string[]
+      }>
+      postprocess_chain: string[]
+      is_upscaled: boolean
+    }
   }
   outputPath?: string
 }
@@ -314,6 +419,135 @@ export async function cinemaJobStatus(jobId: string): Promise<CinemaJobStatus> {
     throw new Error(`/api/cinema/job/${jobId}: HTTP ${resp.status}`)
   }
   return resp.json() as Promise<CinemaJobStatus>
+}
+
+export function cinemaSelftestResultFromJob(job: CinemaJobStatus): CinemaSelftestResponse {
+  const result = job.result
+  const elapsedMs = Math.max(0, Math.round((result?.actual_time_s ?? 0) * 1000))
+  const integrityOk = result?.integrity?.ok === true
+  const renderOk = result?.ok === true && result?.integrity?.has_video === true
+  const voices = result?.dialogue_quality ?? []
+  const voiceOk = voices.length > 0 && voices.every((item) => item.voice_ok === true)
+  const audio = result?.audio_quality ?? []
+  const audioOk = audio.length > 0 && audio.every((item) => item.ok === true)
+  const coverage = result?.quality_grade?.coverage
+  const visionExpected = (coverage?.shot.expected ?? 0) + (coverage?.character.expected ?? 0)
+  const visionMeasured = (coverage?.shot.measured ?? 0) + (coverage?.character.measured ?? 0)
+  const visionOk = visionExpected > 0 && visionMeasured === visionExpected
+  const runtimeError = result?.error || job.error
+  const charExpected = coverage?.character.expected ?? 0
+  const charMeasured = coverage?.character.measured ?? 0
+  const stages: Record<string, CinemaSelftestStage> = {
+    flux_keyframe: {
+      ok: charExpected > 0 && charMeasured === charExpected,
+      ms: elapsedMs,
+      measured: charMeasured,
+      expected: charExpected,
+      error: runtimeError,
+    },
+    vision_check: { ok: visionOk, ms: elapsedMs, measured: visionMeasured, expected: visionExpected },
+    video_render: { ok: renderOk, ms: elapsedMs, render_truth: result?.render_truth, error: runtimeError },
+    voice_synth: { ok: voiceOk, ms: elapsedMs, error: voiceOk ? undefined : runtimeError || 'voix absente' },
+    audio_mux: { ok: audioOk, ms: elapsedMs, error: audioOk ? undefined : runtimeError || 'audio non valide' },
+    ffprobe: { ok: integrityOk, ms: elapsedMs, ...result?.integrity },
+  }
+  const overallOk = Object.values(stages).every((stage) => stage.ok)
+  return {
+    ok: job.status === 'done',
+    jobId: job.jobId,
+    status: job.status === 'cancelled' ? 'cancelled' : 'done',
+    stages,
+    overall_ok: overallOk,
+    summary: overallOk
+      ? 'Micro-rendu réel validé de bout en bout.'
+      : `Micro-rendu terminé avec échec ou mesure manquante${runtimeError ? ` : ${runtimeError}` : '.'}`,
+  }
+}
+
+export async function cinemaCancelJob(jobId: string): Promise<{
+  ok: boolean
+  jobId: string
+  status: 'cancelled' | 'done'
+  signalSent?: boolean
+  wasQueued?: boolean
+  wasActive?: boolean
+}> {
+  return bridgeJson(`/api/cinema/cancel/${encodeURIComponent(jobId)}`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Storage truth + persistent video gallery
+// ---------------------------------------------------------------------------
+
+export type AuroraStorageStatus = {
+  ok: boolean
+  key_mounted: boolean
+  mount_path: string
+  tiers: {
+    internal: { total_gb: number; used_gb: number; free_gb: number }
+    key: { total_gb: number; used_gb: number; free_gb: number } | null
+  }
+  models: Array<{
+    id: string
+    kind: string
+    tier: 'hot' | 'cold' | 'staged'
+    size_gb: number
+    path: string
+    available: boolean
+    pin?: boolean
+    last_access?: number
+  }>
+  outputs_tier: 'hot' | 'cold'
+  outputs_path: string
+  floor_gb: number
+  warnings: CinemaWarning[]
+  model_strategy?: {
+    version: number
+    verified_at?: string
+    profile: string
+    active: {
+      generator?: string
+      generator_fallback?: string
+      voice_clone?: string
+      voice_fallbacks?: string[]
+      reason?: string
+    }
+    selection_policy?: {
+      quality_first?: boolean
+      license_is_metadata_not_quality_filter?: boolean
+      license_selection_blocking?: boolean
+    }
+    runtime?: {
+      generator_available: boolean
+      voice_clone_ready: boolean
+      voice_clone_model_path: string
+    }
+    error?: string
+  }
+}
+
+export type VideoGalleryResponse = {
+  ok: boolean
+  key_mounted: boolean
+  files: Array<{
+    name: string
+    path: string
+    asset_url: string
+    tier: 'hot' | 'cold'
+    size_bytes: number
+    modified: number
+  }>
+}
+
+export async function auroraStorageStatus(): Promise<AuroraStorageStatus> {
+  return bridgeJson<AuroraStorageStatus>('/api/storage/status')
+}
+
+export async function videoGallery(): Promise<VideoGalleryResponse> {
+  return bridgeJson<VideoGalleryResponse>('/api/video/gallery')
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +561,21 @@ export type VoiceLibraryEntry = {
   source: string | null
   duration_s: number | null
   quality_score: number | null
+  reference_quality_score?: number | null
+  reference_audio?: {
+    ok: boolean
+    sample_rate?: number
+    channels?: number
+    duration_s?: number
+    clipping_ratio?: number
+    silence_ratio?: number
+    estimated_snr_db?: number
+    quality_score?: number
+    failures?: string[]
+    warnings?: string[]
+  }
   extracted_at: number | null
+  has_transcript?: boolean
 }
 
 export async function voiceLibraryList(): Promise<VoiceLibraryEntry[]> {
@@ -352,9 +600,17 @@ export async function voiceRegister(args: {
   character: string
   lang?: string
   source?: string
+  transcript?: string
   filePath?: string
   wavBase64?: string
-}): Promise<{ ok: boolean; slug: string; path?: string; error?: string }> {
+}): Promise<{
+  ok: boolean
+  slug: string
+  jobId?: string
+  status?: 'queued' | 'done'
+  path?: string
+  error?: string
+}> {
   return bridgeJson('/api/voice/register', {
     method: 'POST',
     body: JSON.stringify(args),
@@ -375,6 +631,7 @@ export async function voiceExtractRun(args: {
   targetDuration?: number
   minConfidence?: number
   maxVideos?: number
+  transcript?: string
 }): Promise<VoiceExtractSpawn> {
   return bridgeJson<VoiceExtractSpawn>('/api/voice/extract', {
     method: 'POST',
@@ -391,6 +648,8 @@ export async function voiceSynthesize(args: {
   text: string
   lang?: string
   sync?: boolean
+  promptText?: string
+  instruction?: string
 }): Promise<{ ok: boolean; jobId?: string; wavPath?: string; outputPath?: string; error?: string }> {
   return bridgeJson('/api/voice/synthesize', {
     method: 'POST',
@@ -412,4 +671,11 @@ export function localFileToBridgeUrl(absolutePath: string): string {
   const subpath = idx >= 0 ? cleaned.slice(idx + '/application/'.length) : cleaned
   const encoded = subpath.split('/').map(encodeURIComponent).join('/')
   return `${bridgeBase()}/api/asset/${encoded}`
+}
+
+export function cinemaAssetUrl(pathOrUrl: string): string {
+  const value = (pathOrUrl || '').trim()
+  if (/^https?:\/\//i.test(value)) return value
+  if (value.startsWith('/api/asset/')) return `${bridgeBase()}${value}`
+  return localFileToBridgeUrl(value)
 }

@@ -248,6 +248,10 @@ describe('extract_structured — live bridge integration', () => {
       signal: AbortSignal.timeout(85_000),
     })
     const latencyMs = Date.now() - t0
+    if (r.status === 502 || r.status === 503) {
+      t.skip(`bridge returned ${r.status} (Ollama / backend model offline)`)
+      return
+    }
     assert.equal(r.ok, true, `bridge returned ${r.status}`)
     const data = await r.json() as {
       ok?: boolean

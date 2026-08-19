@@ -51,6 +51,9 @@ export interface BuildKontextInstructionOptions {
 
 const SHOULDER_PLACEMENT_RE = /\b(?:shoulder|epaule|epaule|[e\u00e9]paule)\b/i
 const STANDALONE_ADDITION_RE = /\b(?:personnage|personne|humain|humaine|homme|femme|garcon|fille|adulte|enfant|jardinier|jardiniere|animal|chien|chat|robot|mascotte|character|person|human|man|woman|boy|girl|adult|child|gardener|animal|dog|cat|robot|mascot)\b/i
+const KNOWN_ICON_RE = /\b(?:pikachu|charizard|natsu|happy|lucy|erza|gray|homer|bart|marge|lisa|goldorak|goku|vegeta|luffy|naruto|sasuke|mario|luigi|sonic|batman|superman|spiderman|ironman)\b/i
+const WEARABLE_ADDITION_RE = /\b(?:cape|capes|cloak|cloaks|manteau|manteaux|veste|vestes|jacket|jackets|chapeau|chapeaux|hat|hats|casquette|casquettes|cap|caps|echarpe|[eé]charpe|[eé]charpes|scarf|scarves|armure|armures|armor|gants|gloves|accessoire|accessoires|accessory)\b/i
+const MAGIC_EFFECT_ADDITION_RE = /\b(?:flamme|flammes|flame|flames|feu|fire|aura|auras|eclair|eclairs|[eé]clair|[eé]clairs|lightning|etincelle|etincelles|[eé]tincelle|[eé]tincelles|sparks|magic|energie|[eé]nergie|energy)\b/i
 const RELOCATION_RE = /\b(d[e\u00e9]place|d[e\u00e9]placer|repositionne|repositionner|d[e\u00e9]cale|d[e\u00e9]caler|move|reposition|shift)\b/i
 const REQUESTED_CONTACT_RE = /\b(?:touche|toucher|tient|tenir|attrape|attraper|saisit|saisir|main\s+sur|mains\s+sur|bras\s+sur|bras\s+autour|epaule|[e\u00e9]paule|contact|grip|grab|hold|holding|touch|hand\s+on|hands\s+on|arm\s+around|arms\s+around|shoulder)\b/i
 
@@ -61,7 +64,7 @@ function additionMentionsShoulder(intent: ParsedImageIntent): boolean {
 function additionsIntroduceStandaloneSubject(additions: string[]): boolean {
   return additions.some((addition) => {
     const trimmed = addition.replace(/\s+/g, ' ').trim()
-    return STANDALONE_ADDITION_RE.test(trimmed) || /^[A-ZÀ-Ÿ0-9]/u.test(trimmed)
+    return STANDALONE_ADDITION_RE.test(trimmed) || /^[A-ZÀ-Ÿ0-9]/u.test(trimmed) || KNOWN_ICON_RE.test(trimmed)
   })
 }
 
@@ -101,6 +104,15 @@ export function buildKontextInstruction(
       } else if (targetFree) {
         parts.push('Integrate the requested new element naturally with matching perspective, scale and lighting')
       }
+      {
+        const promptFull = [rawPrompt, englishCore || '', ...(intent.additions || [])].join(' ')
+        if (WEARABLE_ADDITION_RE.test(promptFull)) {
+          parts.push('The added cape, garment or accessory is worn over the character\'s body; the character\'s existing outfit and clothing keep their original colors, patterns and design completely unchanged without being recolored')
+        }
+        if (MAGIC_EFFECT_ADDITION_RE.test(promptFull)) {
+          parts.push('The added flames or magic effects appear around the character alongside existing elements without replacing them, and without altering the character\'s face, head, hair or body')
+        }
+      }
       if (additionsIntroduceStandaloneSubject(intent.additions)) {
         const allowsContact = requestAllowsContact(rawPrompt, intent.additions)
         parts.push('The requested addition must appear as a new separate visible subject, not as a modification of any existing person or object')
@@ -124,11 +136,16 @@ export function buildKontextInstruction(
       // d'un dessin au trait notamment). Formule positive-safe (pas de token corps).
       parts.push('Change strictly the targeted element only; every other area, object and background keeps its original colors and appearance')
       break
+    case 'replicate':
+      parts.push('Faithfully replicate the visual identity, structure, key features and composition of the reference image')
+      break
     case 'restyle':
       parts.push('Convert the visual style as requested while keeping the exact same composition, subjects and layout')
       break
     case 'background_change':
-      parts.push('Change only the background, keep the foreground subject identical with matching light and contact shadows')
+      parts.push('Change only the background and sky into the requested setting, keep the foreground subject identical with matching light and contact shadows')
+      parts.push('Preserve the foreground character\'s exact face, facial features, hair style, hair color, head, and clothing unchanged')
+      parts.push('Do not add any random bystanders, extra crowd, or unrequested characters in the background; the scene must contain only the existing foreground character')
       break
     case 'color_lighting':
       parts.push('Adjust only colors and lighting, do not change shapes, content or composition')
@@ -150,14 +167,15 @@ export function buildKontextInstruction(
       parts.push('Increase sharpness and readable detail without changing identity, pose or layout')
       break
     case 'scene_transform':
-      parts.push('Transform the scene as requested but keep the main subject recognizable')
+      parts.push('Transform the scene environment as requested but keep the main subject recognizable with the exact same face, hair style, hair color, and identity')
+      parts.push('Correct spatial depth perspective, no giant or out-of-scale background people, no blurry crowd')
       break
     default:
       break
   }
 
-  if (intent.editMode !== 'scene_transform' && intent.editMode !== 'restyle') {
-    parts.push('Keep everything else unchanged: same identity, same composition, same camera angle, same style')
+  if (intent.editMode !== 'restyle') {
+    parts.push('Keep everything else unchanged: same identity, same face, same hair, same composition, same camera angle, same style')
   }
 
   appendSecondaryOperationClauses(parts, intent, targetFree)
@@ -406,7 +424,7 @@ export function buildStagedReplacementPlan(input: StagedReplacementInput): Stage
 
   const addCore = (input.addEnglishCore || `Add ${to}`).replace(/\s+/g, ' ').trim()
   const addParts = [addCore]
-  const clause = input.entityClause?.replace(/\s+/g, ' ').trim()
+  const clause = (input.entityClause || '').replace(/\s+/g, ' ').trim()
   if (clause) addParts.push(clause)
   addParts.push(
     'If the added subject is a cartoon / anime / animated character, render it in its ORIGINAL flat 2D cel-shaded cartoon style with clean outlines, NOT as a realistic photographic creature.',
@@ -506,6 +524,7 @@ function stagedOperationFlags(input: StagedKontextEditPlanInput) {
     hasReplacement,
     hasAddition,
     hasBackground,
+    hasNewSubjectAddition,
     hasStyle,
     hasPoseExpression,
     hasText,
@@ -919,22 +938,34 @@ export function createFluxKontextWorkflow(options: FluxKontextWorkflowOptions): 
   const scaleSource: [string, number] = secondImageName ? ['20', 0] : ['5', 0]
 
   const graph: Record<string, unknown> = {
-    '1': {
-      class_type: 'DualCLIPLoader',
-      inputs: {
-        clip_name1: IMAGE_T5_MODEL,
-        clip_name2: IMAGE_CLIP_MODEL,
-        type: 'flux',
-        device: 'default',
-      },
-    },
-    '2': {
-      class_type: 'UNETLoader',
-      inputs: {
-        unet_name: unetName,
-        weight_dtype: inferKontextWeightDtype(unetName),
-      },
-    },
+    // SUIVRE LA CONFIG, comme partout: FLUX.2 n'a qu'UN encodeur
+    // (IMAGE_CLIP_MODEL vide -> CLIPLoader simple, type flux2, CPU); le
+    // DualCLIPLoader ne sert que si un 2e encodeur est configure. Et un
+    // .gguf exige UnetLoaderGGUF — un nom fige dans UNETLoader a deja tue
+    // une generation (400 value_not_in_list).
+    '1': IMAGE_CLIP_MODEL
+      ? {
+          class_type: 'DualCLIPLoader',
+          inputs: {
+            clip_name1: IMAGE_T5_MODEL,
+            clip_name2: IMAGE_CLIP_MODEL,
+            type: 'flux',
+            device: 'default',
+          },
+        }
+      : {
+          class_type: 'CLIPLoader',
+          inputs: { clip_name: IMAGE_T5_MODEL, type: 'flux2', device: 'cpu' },
+        },
+    '2': unetName.toLowerCase().endsWith('.gguf')
+      ? { class_type: 'UnetLoaderGGUF', inputs: { unet_name: unetName } }
+      : {
+          class_type: 'UNETLoader',
+          inputs: {
+            unet_name: unetName,
+            weight_dtype: inferKontextWeightDtype(unetName),
+          },
+        },
     '3': {
       class_type: 'ModelSamplingFlux',
       inputs: {

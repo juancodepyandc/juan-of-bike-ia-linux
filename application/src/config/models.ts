@@ -124,12 +124,12 @@ export const VIDEO_I2V_GGUF_MODEL = 'QuantStack/Wan2.2-I2V-A14B-GGUF'
 export const VIDEO_FALLBACK_MODEL = 'Lightricks/LTX-Video'
 export const VIDEO_MODEL_PACK_LABEL = 'Wan 2.2 T2V/I2V + UMT5 XXL + Wan VAE'
 
-export const THREE_D_SHAPE_MODEL = 'tencent/Hunyuan3D-2.1'
+export const THREE_D_SHAPE_MODEL = 'microsoft/TRELLIS.2-4B'
 export const THREE_D_SHAPE_SUBFOLDER = 'hunyuan3d-dit-v2-1'
-export const THREE_D_MULTIVIEW_MODEL = 'tencent/Hunyuan3D-2mv'
+export const THREE_D_MULTIVIEW_MODEL = 'huanngzh/mv-adapter'
 export const THREE_D_MULTIVIEW_SUBFOLDER = 'hunyuan3d-dit-v2-mv'
-export const THREE_D_TEXTURE_MODEL = 'tencent/Hunyuan3D-2'
-export const THREE_D_MODEL_PACK_LABEL = 'Linux 3D: TRELLIS.2-4B natif (voie principale, MIT) + Hunyuan3D repli + materiaux par zones'
+export const THREE_D_TEXTURE_MODEL = 'microsoft/TRELLIS.2-4B'
+export const THREE_D_MODEL_PACK_LABEL = 'Linux 3D: TRELLIS.2-4B natif (MIT) + materiaux par zones'
 
 export const THREE_D_TRELLIS2_REPO = 'https://github.com/microsoft/TRELLIS.2'
 export const THREE_D_TRELLIS2_MODEL = 'microsoft/TRELLIS.2-4B'
@@ -355,7 +355,7 @@ export const CLOUD_MODEL_TIERS = {
     vision: 'qwen3:14b',
     image: 'flux1-dev-fp8.safetensors',
     video: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
-    threeD: 'tencent/Hunyuan3D-2.1',
+    threeD: 'microsoft/TRELLIS.2-4B',
     stt: 'mistralai/Voxtral-Small-24B-2507',
     tts: 'hexgrad/Kokoro-82M',
   },
@@ -366,7 +366,7 @@ export const CLOUD_MODEL_TIERS = {
     vision: 'qwen3:14b',
     image: 'flux1-dev-fp8.safetensors',
     video: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
-    threeD: 'tencent/Hunyuan3D-2.1',
+    threeD: 'microsoft/TRELLIS.2-4B',
     stt: 'mistralai/Voxtral-Small-24B-2507',
     tts: 'hexgrad/Kokoro-82M',
   },
@@ -377,7 +377,7 @@ export const CLOUD_MODEL_TIERS = {
     vision: 'qwen3-vl:8b',
     image: 'flux1-schnell-fp8.safetensors',
     video: 'Lightricks/LTX-Video',
-    threeD: 'tencent/Hunyuan3D-2.1',
+    threeD: 'microsoft/TRELLIS.2-4B',
     stt: 'openai/whisper-large-v3-turbo',
     tts: 'hexgrad/Kokoro-82M',
   },

@@ -12,7 +12,7 @@ import {
 } from './kinematicsLibrary'
 
 export type ThreeDPipeline =
-  | 'ai_generation'       // Hunyuan3D / DreamGaussian — creative or reference-based
+  | 'ai_generation'       // TRELLIS.2 / DreamGaussian — creative or reference-based
   | 'photogrammetry'      // Meshroom/AliceVision — faithful reproduction from multi-view photos
   | 'procedural'          // Blender Python — mechanisms, cables, kinematics
   | 'hybrid'              // Combination: e.g. procedural skeleton + AI texture
@@ -1573,9 +1573,9 @@ function routePipeline(
   }
 
   // iter25: motherboards / brand SKUs → procedural motherboard_layout.
-  // Hunyuan3D AI-gen on motherboards consistently produces "mixed up" meshes
-  // even with FLUX prompt enrichment, because the diffusion model can't keep
-  // 100+ components in correct topology. Procedural template gives a clean
+  // Single-image AI reconstruction on motherboards consistently produces
+  // "mixed up" meshes even with FLUX prompt enrichment, because the model
+  // can't keep 100+ components in correct topology. Procedural template gives a clean
   // recognisable PCB + components layout (AM5 socket, DIMMs, M.2, OLED face,
   // ROG RGB) and crucially keeps the OLED screen as a SEPARATE face plane
   // with aurora.oled-atlas.v1 extras so it animates as a real screen at
@@ -1610,7 +1610,7 @@ function routePipeline(
   if (wantsHistoricalPublicFigure) {
     justifications.push(
       { point: 'Personnage historique public-domain reconnu', risk: 'low', mitigation: 'Template procedural dedie avec visage long, barbe chin-curtain, costume et animation articulee' },
-      { point: 'Evite le mode image->Hunyuan qui peut produire une plaque plate ou un crash GPU sur reference unique', risk: 'low', mitigation: 'Generation Blender locale legere + gate final texture/mouvement/fidelite humaine' },
+      { point: 'Evite le mode image->IA qui peut produire une plaque plate ou un crash GPU sur reference unique', risk: 'low', mitigation: 'Generation Blender locale legere + gate final texture/mouvement/fidelite humaine' },
     )
     validationChecks.push('historical_identity_cues', 'human_face_detail', 'separate_fingers', 'non_root_limb_animation')
     postProcessing.push('blender_historical_person_performer', 'export_glb_animated')
@@ -1673,12 +1673,13 @@ function routePipeline(
   }
 
   // ── AI GENERATION: default for characters, creatures, products, visual previews ──
-  // DreamGaussian preferred for EU compliance (MIT license)
-  // Hunyuan3D as performance fallback (license warning for EU)
+  // TRELLIS.2 est toujours tente en premier (aurora_3d_pipeline). dreamgaussianPreferred
+  // decide seulement si DreamGaussian (MIT, EU-safe) est tente en secours quand TRELLIS.2
+  // echoue et que trellisOnly est desactive — sinon aucun second moteur n'est tente.
   const isStylized = hasPositiveStylizedSignal(prompt)
   // Stylized material descriptors (Cat 1 PC boitier "quartz fumé / lotus or rose / obsidienne / acajou nordique"
-  // and similar luxury treatments) benefit from DreamGaussian's better silhouette retention vs. Hunyuan3D's
-  // weaker handling of architectural / hard-edge surfaces with rich material storytelling.
+  // and similar luxury treatments) benefit from DreamGaussian's silhouette retention on
+  // architectural / hard-edge surfaces with rich material storytelling.
   const hasLuxuryMaterials = /\b(quartz fum[eé]|fum[eé] translucide|obsidienne|obsidian|acajou nordique|mahogany|or rose|rose gold|nacre|mother of pearl|onyx|jade noir|marbre|marble|opalescent|dichro[iï]que|dichroic|liquid metal|chrome bross[eé]|brushed chrome)\b/i.test(normalized)
   const dreamgaussianPreferred = isStylized
     || hasLuxuryMaterials
@@ -1687,7 +1688,7 @@ function routePipeline(
     || purpose === 'game_asset'
 
   justifications.push(
-    { point: `Generation IA ${dreamgaussianPreferred ? '(DreamGaussian prioritaire, MIT)' : '(Hunyuan3D)'}`, risk: dreamgaussianPreferred ? 'low' : 'medium', mitigation: dreamgaussianPreferred ? 'Licence MIT compatible UE' : 'Verifier licence Hunyuan3D pour usage en UE' },
+    { point: `Generation IA (TRELLIS.2${dreamgaussianPreferred ? ', secours DreamGaussian MIT si echec' : ''})`, risk: 'low', mitigation: 'Licence MIT compatible UE' },
   )
 
   if (purpose === 'character' || subjectKind === 'character' || subjectKind === 'creature') {
@@ -1738,8 +1739,8 @@ function buildFallbackIntent(prompt: string, files: PreparedContextFile[]): Thre
   const hasTechnicalContext = files.some((file) => file.kind !== 'image')
   const requiresDimensionalPrecision = purpose === 'printable_prototype' || purpose === 'mechanical_part'
   const wantsNeutralPose = purpose === 'character' || purpose === 'body_part' || purpose === 'printable_prototype' || motionReadiness === 'rig_candidate'
-  // v77zi: characters / creatures / body_parts also want bilateral symmetry
-  // by default — Meshy enforces it and Hunyuan3D drifts subtly off-axis.
+  // characters / creatures / body_parts also want bilateral symmetry by
+  // default — single-image reconstruction drifts subtly off-axis otherwise.
   // Opt out via "asymmetric" / "asymetrique" / "lopsided" in the prompt.
   const explicitlyAsymmetric = /\b(asym[eé]trique|asymmetric|asymmetrical|lopsided|uneven|biased to one side)\b/i.test(prompt)
   const wantsSymmetry = !explicitlyAsymmetric && (
@@ -1772,7 +1773,7 @@ function buildFallbackIntent(prompt: string, files: PreparedContextFile[]): Thre
     hasMaterialHint: hasTechnicalContext,
   })
   const missingPrecisionContext = requiresDimensionalPrecision && !needsResearch && !hasDimensionalSignal(prompt) && !hasImageReference && !hasTechnicalContext
-  const clarificationQuestion = targetedClarification?.question
+  let clarificationQuestion = targetedClarification?.question
     ?? (missingPrecisionContext
       ? 'Si tu vises une piece mecanique ou imprimable fidele, ajoute dimensions, vues orthographiques ou contraintes d assemblage. Sans reponse, je genererai un prototype visuel propre mais non dimensionnel.'
       : null)
@@ -1792,6 +1793,9 @@ function buildFallbackIntent(prompt: string, files: PreparedContextFile[]): Thre
     wantsNeutralPose,
     wantsSymmetry,
     needsResearch,
+    ...(hasImageReference && clarificationQuestion && /photo|image|r[ée]f[ée]rence|source/i.test(clarificationQuestion)
+      ? (clarificationQuestion = null, {})
+      : {}),
     needsClarification: Boolean(clarificationQuestion),
     clarificationQuestion,
     clarificationCategory: targetedClarification?.category ?? (missingPrecisionContext ? 'dimensional_precision' : null),
@@ -1967,7 +1971,7 @@ CRITICAL RULES:
 - NEVER describe a generic version — describe the SPECIFIC product/character/object named
 - Include: solid black studio background, single isolated subject, THREE-QUARTER front view (not flat front-on), clean edge separation
 - CRITICAL FOR 3D RECONSTRUCTION: the image MUST show DEPTH and VOLUME — show the object at a slight angle so 3 faces are visible (front + one side + top or bottom)
-- NEVER generate a flat front-on view — Hunyuan3D needs depth cues to reconstruct proper 3D geometry
+- NEVER generate a flat front-on view — TRELLIS.2 needs depth cues to reconstruct proper 3D geometry
 - The object MUST look like a real physical 3D product photograph, not a flat icon or diagram
 - Ensure strong lighting contrast to reveal surface depth, edges, bevels, recesses, and protruding features
 - Do NOT use primitive block-in shapes, cubes, spheres, cylinders or toy placeholders unless the user explicitly asked for a primitive. The reference must contain the real silhouette and real part structure of the requested subject.
@@ -2134,6 +2138,12 @@ export async function analyzeThreeDIntent({
           'Return only valid JSON with this exact shape:',
           '{"purpose":"visual_preview|printable_prototype|mechanical_part|character|body_part|product|game_asset","subjectKind":"object|mechanical_part|assembly|character|creature|body_part|product|vehicle|architecture|tool|electrical_system","systemClass":"generic|belt_drive|gear_train|cylinder_actuator|hinge_joint|linkage|cable_routing|pc_cabling|electrical_harness","representationGoal":"static_shape|kinematic_readability|routing_readability|rig_readability","referenceFraming":"isolated_subject|host_context|scene_context","motionReadiness":"static_only|poseable|articulated|rig_candidate","requiresDimensionalPrecision":false,"wantsNeutralPose":false,"wantsSymmetry":false,"needsResearch":false,"needsClarification":false,"clarificationQuestion":null,"referencePromptAdditions":["..."],"meshConstraints":["..."],"motionGuidance":["..."],"motionRisks":["..."],"movingPartsFocus":["..."],"anchoredPartsFocus":["..."],"researchQueries":["..."],"summary":"..."}',
           'Interpret the real production goal, not just style words.',
+          'clarificationQuestion, when set, MUST be written in FRENCH (the user is French-speaking).',
+          files.some((f) => f.kind === 'image')
+            ? 'THE USER HAS ATTACHED A REFERENCE IMAGE. Never ask for a source image, a photo, or what the subject looks like — read it from the image. Set needsClarification=false unless something is truly absent from BOTH the prompt and the image.'
+            : '',
+          "If the prompt references a NAMED move/dance/trend (e.g. \"fait le X\"), do NOT ask what it means — the pipeline researches named moves itself; set needsClarification=false for that reason.",
+          'Never ask about gender when the French article already gives it (\"un guerrier\" = masculine, \"une guerriere\" = feminine).',
           'If the user wants 3D print, mechanics, CAD-like part or assembly fidelity, requiresDimensionalPrecision=true.',
           'If the user wants a character or figurine, prefer neutral full-body readable pose.',
           'If the user wants a body part or anatomy, isolate the anatomical subject and preserve coherence.',
@@ -2255,12 +2265,14 @@ export type MeshCorrectionStrategy = {
  * This drives the auto-correction loop: each retry gets a progressively stronger prompt.
  */
 /**
- * v77zk: humanoid proportion metrics emitted by the Python validator
- * (validate_humanoid_proportions in hunyuan3d_run.py). When provided,
- * the correction strategy can issue targeted "make the body taller, the
- * head smaller, the hips wider" prompts instead of the generic
- * "fix proportions" fallback. Type lives in ./humanoidAnatomy.ts
- * (pure module) so node --test can exercise consumers.
+ * Humanoid proportion metrics (aspect ratio, head/body fractions) that let the
+ * correction strategy issue targeted "make the body taller, the head smaller,
+ * the hips wider" prompts instead of the generic "fix proportions" fallback.
+ * Type lives in ./humanoidAnatomy.ts (pure module) so node --test can exercise
+ * consumers. Currently unpopulated: no Python stage emits these fields since
+ * the mesh-proportion validator was removed with hunyuan3d_run.py; the
+ * correction strategy falls back to its generic path until a mesh-geometry
+ * script (independent of which generator produced the GLB) computes them.
  */
 export type { HumanoidProportionMetrics } from './humanoidAnatomy'
 
@@ -2446,7 +2458,7 @@ export function buildMeshCorrectionStrategy({
       }
       if (lower.includes('chibi') && /\b(realiste|realistic|adult|adulte)\b/i.test(prompt)) {
         shouldRetryReference = true
-        referenceCorrections.push('Prompt asked for realistic, but Hunyuan output was chibi — push reference toward adult proportions.')
+        referenceCorrections.push('Prompt asked for realistic, but the mesh output was chibi — push reference toward adult proportions.')
       }
     }
   }

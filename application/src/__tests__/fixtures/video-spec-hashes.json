@@ -1,0 +1,182 @@
+{
+  "count": 8,
+  "entries": [
+    {
+      "expected_spec_hash": "42412f0a43047dd977c4fa8bf0d1fc35aad1a6ef17079d2c4f7a2fe339ceb85a",
+      "intent": {
+        "aspect": "16:9",
+        "duration_s": 3.0,
+        "prompt": "a red bike rolling down a hill",
+        "quality_mode": "balanced"
+      },
+      "resolved": {
+        "delivered_height": 1080,
+        "delivered_width": 1920,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 480,
+        "num_frames": 65,
+        "num_inference_steps": 40,
+        "prompt_composed": "a red bike rolling down a hill",
+        "seed": 1122230888,
+        "width": 832
+      }
+    },
+    {
+      "expected_spec_hash": "6085bce00dc1da36b56c4eab4d39b9282fe9e7ef022b22549fdb7ca3c0576b27",
+      "intent": {
+        "aspect": "9:16",
+        "duration_s": 2.5,
+        "prompt": "the young boy turns his head, gentle wind",
+        "quality_mode": "premium"
+      },
+      "resolved": {
+        "delivered_height": 3840,
+        "delivered_width": 2160,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 1280,
+        "num_frames": 57,
+        "num_inference_steps": 60,
+        "prompt_composed": "the young boy turns his head, gentle wind",
+        "seed": 627561594,
+        "width": 704
+      }
+    },
+    {
+      "expected_spec_hash": "a599b64fcb26f991cb7d32ce6663d9d9a7ca5907378eb04fd5e2b3894bc16e94",
+      "intent": {
+        "aspect": "1:1",
+        "duration_s": 1.5,
+        "prompt": "a cat sits still",
+        "quality_mode": "auto",
+        "seed": 1031
+      },
+      "resolved": {
+        "delivered_height": 1080,
+        "delivered_width": 1080,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 704,
+        "num_frames": 33,
+        "num_inference_steps": 50,
+        "prompt_composed": "a cat sits still",
+        "seed": 1031,
+        "width": 704
+      }
+    },
+    {
+      "expected_spec_hash": "3dfea178dc58f6796950e1a3b68c002b19e982169d8868ad8ad04b6ddfbab515",
+      "intent": {
+        "aspect": "16:9",
+        "motion_suffix": "soft parallax pan",
+        "num_frames": 41,
+        "prompt": "fireflies drift",
+        "quality_mode": "premium"
+      },
+      "resolved": {
+        "delivered_height": 2160,
+        "delivered_width": 3840,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 704,
+        "num_frames": 41,
+        "num_inference_steps": 60,
+        "prompt_composed": "fireflies drift\n\nMotion directive: soft parallax pan",
+        "seed": 1281489553,
+        "width": 1280
+      }
+    },
+    {
+      "expected_spec_hash": "d8edcd301d8297d999d548cec5184d60ad14301dc70291693169d4514e6f5d62",
+      "intent": {
+        "aspect": "4:3",
+        "duration_s": 2.0,
+        "image_path": "/tmp/anchor.png",
+        "negative_prompt": "blurry, watermark",
+        "prompt": "a lantern swings in wind",
+        "quality_mode": "premium"
+      },
+      "resolved": {
+        "delivered_height": 2160,
+        "delivered_width": 2880,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 768,
+        "num_frames": 41,
+        "num_inference_steps": 60,
+        "prompt_composed": "a lantern swings in wind",
+        "seed": 1622383116,
+        "width": 1024
+      }
+    },
+    {
+      "expected_spec_hash": "ae258f1d31c735f13048ddca2ea22a890b286d639049cec9b4846ef17282d30b",
+      "intent": {
+        "aspect": "16:9",
+        "cinematography": "wide shot",
+        "duration_s": 4.0,
+        "prompt": "a wide cinematic shot of an ancient library at dusk, dust motes drifting through shafts of golden light, gentle camera glide from left to right, real physics",
+        "quality_mode": "premium",
+        "style_suffix": "cinematic realism"
+      },
+      "resolved": {
+        "delivered_height": 2160,
+        "delivered_width": 3840,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 704,
+        "num_frames": 89,
+        "num_inference_steps": 60,
+        "prompt_composed": "a wide cinematic shot of an ancient library at dusk, dust motes drifting through shafts of golden light, gentle camera glide from left to right, real physics\n\nwide shot\n\ncinematic realism",
+        "seed": 75918524,
+        "width": 1280
+      }
+    },
+    {
+      "expected_spec_hash": "707f80bac7adda936be12757606584269a146b1b07aaabd5b02d7eaa40fc9f22",
+      "intent": {
+        "aspect": "16:9",
+        "duration_s": 3.0,
+        "motion_suffix": "handheld micro-parallax",
+        "prompt": "wind in tall grass",
+        "quality_mode": "balanced"
+      },
+      "resolved": {
+        "delivered_height": 1080,
+        "delivered_width": 1920,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 480,
+        "num_frames": 65,
+        "num_inference_steps": 40,
+        "prompt_composed": "wind in tall grass\n\nMotion directive: handheld micro-parallax",
+        "seed": 1128232408,
+        "width": 832
+      }
+    },
+    {
+      "expected_spec_hash": "6f48f12b13d34321d12d4588b344e7ebec2f1608f0e22d5090efe3bdca1163bf",
+      "intent": {
+        "aspect": "16:9",
+        "duration_s": 3.0,
+        "motion_suffix": "locked static camera",
+        "prompt": "wind in tall grass",
+        "quality_mode": "balanced"
+      },
+      "resolved": {
+        "delivered_height": 1080,
+        "delivered_width": 1920,
+        "fps": 24,
+        "guidance_scale": 4.5,
+        "height": 480,
+        "num_frames": 65,
+        "num_inference_steps": 40,
+        "prompt_composed": "wind in tall grass\n\nMotion directive: locked static camera",
+        "seed": 437423225,
+        "width": 832
+      }
+    }
+  ],
+  "spec_version": 1
+}
