@@ -20,16 +20,32 @@ for o in meshes:
 center = (mn+mx)/2
 size = (mx-mn); radius = max(size)/2 or 1.0
 
-# monde gris clair (pour voir les couleurs sans fond noir)
+# monde gris neutre doux
 world = bpy.data.worlds.new("W"); bpy.context.scene.world = world
 world.use_nodes = True
-world.node_tree.nodes["Background"].inputs[0].default_value = (0.85,0.85,0.85,1)
-world.node_tree.nodes["Background"].inputs[1].default_value = 1.0
+world.node_tree.nodes["Background"].inputs[0].default_value = (0.90, 0.90, 0.90, 1)
+world.node_tree.nodes["Background"].inputs[1].default_value = 0.8
 
-# soleil
-sun_d = bpy.data.lights.new("Sun", 'SUN'); sun_d.energy = 3.0
-sun = bpy.data.objects.new("Sun", sun_d); bpy.context.collection.objects.link(sun)
-sun.rotation_euler = (math.radians(55), 0, math.radians(35))
+# eclairage studio 3 points doux
+key_d = bpy.data.lights.new("KeyLight", 'SUN')
+key_d.energy = 1.4
+key_d.angle = math.radians(25)
+key = bpy.data.objects.new("KeyLight", key_d)
+bpy.context.collection.objects.link(key)
+key.rotation_euler = (math.radians(45), math.radians(15), math.radians(40))
+
+fill_d = bpy.data.lights.new("FillLight", 'SUN')
+fill_d.energy = 0.7
+fill_d.angle = math.radians(35)
+fill = bpy.data.objects.new("FillLight", fill_d)
+bpy.context.collection.objects.link(fill)
+fill.rotation_euler = (math.radians(30), math.radians(-20), math.radians(-130))
+
+rim_d = bpy.data.lights.new("RimLight", 'SUN')
+rim_d.energy = 0.5
+rim = bpy.data.objects.new("RimLight", rim_d)
+bpy.context.collection.objects.link(rim)
+rim.rotation_euler = (math.radians(-40), 0, math.radians(160))
 
 # camera
 cam_d = bpy.data.cameras.new("Cam"); cam = bpy.data.objects.new("Cam", cam_d)

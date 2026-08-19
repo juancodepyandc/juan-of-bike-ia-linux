@@ -22,6 +22,8 @@ import json
 import os
 import sys
 import traceback
+import cv2
+import numpy as np
 from pathlib import Path
 from typing import Any
 
@@ -101,9 +103,10 @@ def _open_rgb(path):
     return None
 
 
-def _compose_metallic_roughness(metallic_png, roughness_png):
+def _compose_metallic_roughness(metallic_png, roughness_png, roughness_floor: float = 0.88):
     """glTF metallicRoughnessTexture: R=occlusion(unused→255), G=roughness, B=metallic."""
     from PIL import Image
+    import numpy as np
     m = _open_rgb(metallic_png)
     r = _open_rgb(roughness_png)
     if m is None and r is None:
@@ -111,7 +114,13 @@ def _compose_metallic_roughness(metallic_png, roughness_png):
     ref = m if m is not None else r
     size = ref.size
     m_l = (m.convert("L") if m is not None else Image.new("L", size, 0))
-    r_l = (r.convert("L") if r is not None else Image.new("L", size, 200))
+    min_byte = int(roughness_floor * 255)
+    if r is not None:
+        r_arr = np.asarray(r.convert("L"), dtype=np.uint8)
+        r_clamped = np.clip(r_arr, min_byte, 255)
+        r_l = Image.fromarray(r_clamped)
+    else:
+        r_l = Image.new("L", size, min_byte)
     if m_l.size != size:
         m_l = m_l.resize(size)
     if r_l.size != size:
@@ -137,6 +146,7 @@ def paint_pbr_v21(
     max_num_view: int = 4,
     resolution: int = 512,
     log=print,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     """Run the hy3dpaint PBR pipeline. Returns {ok, glb, has_mr, has_normal, has_albedo, faces} or {ok:False, error}."""
     try:
@@ -147,11 +157,28 @@ def paint_pbr_v21(
 
     os.makedirs(work_dir, exist_ok=True)
 
-    # Normalise the reference -> PIL RGB (the pipeline also accepts a path or PIL image).
+    # Normalise the reference -> PIL RGB with anti-halo edge dilation.
     if isinstance(ref_image, str):
-        img = Image.open(ref_image).convert("RGB")
+        raw_img = Image.open(ref_image)
     elif isinstance(ref_image, Image.Image):
-        img = ref_image.convert("RGB")
+        raw_img = ref_image
+    else:
+        raw_img = None
+
+    if raw_img is not None:
+        if raw_img.mode == "RGBA":
+            arr = np.array(raw_img)
+            alpha = arr[..., 3]
+            if (alpha == 0).any() and (alpha > 0).any():
+                rgb = arr[..., :3].copy()
+                mask = (alpha == 0).astype(np.uint8) * 255
+                # Dilate edge colors into transparent region to eliminate white halo/speckles on seams
+                dilated_rgb = cv2.inpaint(rgb, mask, 7, cv2.INPAINT_TELEA)
+                img = Image.fromarray(dilated_rgb)
+            else:
+                img = raw_img.convert("RGB")
+        else:
+            img = raw_img.convert("RGB")
     else:
         img = ref_image
 
@@ -192,7 +219,7 @@ def paint_pbr_v21(
             except Exception:
                 pass
             log(f"PROGRESS:texture_run:hy3dpaint PBR 2.1 — diffusion multivue (res={res}, vues={max_num_view})...")
-            pipe(mesh_path=src, image_path=img, output_mesh_path=out_obj, use_remesh=True, save_glb=False)
+            pipe(mesh_path=src, image_path=img, output_mesh_path=out_obj, use_remesh=True, save_glb=False, prompt=prompt)
             used_res = res
             break
         except RuntimeError as exc:

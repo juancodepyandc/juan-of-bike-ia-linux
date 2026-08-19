@@ -1267,10 +1267,9 @@ class MeshRender:
             v_z = v_proj[:, 2]
 
             sampled_w = cos_image.reshape(-1)[indices]
-            depth_thres = 3e-3
-
-            # valid_idx = torch.where((torch.abs(v_z - sampled_z) < depth_thres) * (sampled_m*sampled_w>0))[0]
-            valid_idx = torch.where((torch.abs(v_z - sampled_z) < depth_thres) & (sampled_m * sampled_w > 0))[0]
+            depth_thres = 1.5e-2
+            # Proper depth tolerance and gentle grazing angle filter to capture all valid surface geometry
+            valid_idx = torch.where((torch.abs(v_z - sampled_z) < depth_thres) & (sampled_m > 0) & (sampled_w > 0.08))[0]
 
             intersection_mask = torch.isin(valid_idx, inner_valid_idx)
             valid_idx = valid_idx[intersection_mask].to(inner_valid_idx)
@@ -1408,7 +1407,12 @@ class MeshRender:
             texture_np, mask = meshVerticeInpaint(texture_np, mask, vtx_pos, vtx_uv, pos_idx, uv_idx)
 
         if method == "NS":
-            texture_np = cv2.inpaint((texture_np * 255).astype(np.uint8), 255 - mask, 3, cv2.INPAINT_NS)
+            img_u8 = (np.clip(texture_np, 0.0, 1.0) * 255).astype(np.uint8)
+            inpaint_mask = (mask == 0).astype(np.uint8) * 255
+            if inpaint_mask.any():
+                # Complete inpainting across all unmapped UV islands (zero unpainted pixels)
+                img_u8 = cv2.inpaint(img_u8, inpaint_mask, 3, cv2.INPAINT_TELEA)
+            texture_np = img_u8
             assert return_float == False
 
         return texture_np

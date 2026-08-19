@@ -15,17 +15,23 @@ scipy>=1.11.0
 
 # Video generation
 diffusers>=0.30.0
-transformers>=4.45.0
+# TRELLIS.2/BiRefNet uses the Transformers 4.x custom-model API. Transformers
+# 5.x unconditionally expects model_type/all_tied_weights_keys on legacy
+# BiRefNet helper modules and aborts while loading the checkpoint.
+transformers==4.57.6
 ftfy>=6.3.1
 accelerate>=0.30.0
 sentencepiece>=0.1.99
 imageio[ffmpeg]>=2.34.0
+# TRELLIS.2 HDRI (.exr) loading: installed OpenCV wheels have no OpenEXR
+# codec compiled in (cv2.imread silently fails). This reads real float32 HDR.
+OpenEXR>=3.4.0
 safetensors>=0.4.3
 Pillow>=10.3.0
 numpy>=1.26.0
 
 # HuggingFace model hub
-huggingface_hub>=0.23.0
+huggingface_hub>=0.23.0,<1.0
 
 # Web search / scraping
 crawl4ai>=0.3.0

@@ -37,9 +37,14 @@ from subject_kind_extractor import extract_kind  # noqa: E402
 # Keys: ("current_pipeline", "primary_failure"). The orchestrator reads the
 # value to decide what to retry with. None = stop, accept the mesh.
 RETRY_GRAPH: dict[tuple[str, str], str | None] = {
-    ("hunyuan3d", "color_richness"):    "dreamgaussian",
-    ("hunyuan3d", "silhouette_aspect"): "dreamgaussian",
-    ("hunyuan3d", "manifold_health"):   "mesh_postprocess",
+    # TRELLIS.2 est la seule voie de reconstruction: pas de second generateur
+    # vers lequel basculer. Un echec de couleur/silhouette remonte tel quel
+    # (le pipeline aurora_3d_pipeline.py gere deja sa propre boucle de
+    # re-essai TRELLIS avec ancrage renforce); seul un defaut de manifold
+    # beneficie encore d'un post-traitement local.
+    ("trellis2", "color_richness"):    None,
+    ("trellis2", "silhouette_aspect"): None,
+    ("trellis2", "manifold_health"):   "mesh_postprocess",
     ("dreamgaussian", "color_richness"): "procedural_or_multiview",
     ("dreamgaussian", "silhouette_aspect"): "procedural_or_multiview",
     ("dreamgaussian", "manifold_health"): "mesh_postprocess",
@@ -76,7 +81,7 @@ def recommend_next_pipeline(current: str, failed_axes: list[str]) -> dict:
     }
 
 
-def auto_validate(mesh_path: str | Path, prompt: str, current_pipeline: str = "hunyuan3d") -> dict:
+def auto_validate(mesh_path: str | Path, prompt: str, current_pipeline: str = "trellis2") -> dict:
     extraction = extract_kind(prompt)
     kind = extraction["kind"]
     score = score_mesh(mesh_path, kind)
@@ -143,8 +148,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Aurora autonomous mesh validator")
     parser.add_argument("--mesh", required=True, help="GLB path (relative or absolute)")
     parser.add_argument("--prompt", required=True, help="Original 3D prompt")
-    parser.add_argument("--pipeline", default="hunyuan3d",
-                        choices=("hunyuan3d", "dreamgaussian", "procedural", "mesh_postprocess"),
+    parser.add_argument("--pipeline", default="trellis2",
+                        choices=("trellis2", "dreamgaussian", "procedural", "mesh_postprocess"),
                         help="Which pipeline produced the mesh")
     parser.add_argument("--pretty", action="store_true",
                         help="Human-readable output instead of JSON")

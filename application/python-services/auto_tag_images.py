@@ -66,10 +66,41 @@ def tag_images(image_paths: list[str]) -> dict:
             
     return {"ok": True, "tags": results}
 
+def similarite(reference: str, vues: list) -> dict:
+    """Cosinus des embeddings image CLIP entre la reference et chaque vue.
+
+    Etape 8 (01/08): porte de coherence CHIFFREE avant TRELLIS — une vue
+    dont l'embedding s'ecarte trop de la reference (autre sujet, delire)
+    est jetee sans attendre le juge VLM. Local, deja installe.
+    """
+    import torch
+    from PIL import Image
+    try:
+        from transformers import CLIPProcessor, CLIPModel
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+        proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        ims = [Image.open(reference).convert("RGB")] +               [Image.open(v).convert("RGB") for v in vues]
+        with torch.no_grad():
+            inp = proc(images=ims, return_tensors="pt").to(device)
+            emb = model.get_image_features(**inp)
+            emb = emb / emb.norm(dim=-1, keepdim=True)
+        ref = emb[0]
+        return {"ok": True,
+                "cosinus": [float((ref @ e).item()) for e in emb[1:]]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": repr(e)}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--images", nargs="+", required=True)
+    parser.add_argument("--similarity-ref", default=None,
+                        help="mode similarite: reference vs --images")
     args = parser.parse_args()
+    if args.similarity_ref:
+        print(json.dumps(similarite(args.similarity_ref, args.images)))
+        return
     
     result = tag_images(args.images)
     print(json.dumps(result))

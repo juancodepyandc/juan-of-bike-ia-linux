@@ -90,7 +90,7 @@ class Hunyuan3DPaintPipeline:
         print("Models Loaded.")
 
     @torch.no_grad()
-    def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):
+    def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True, prompt=None):
         """Generate texture for 3D mesh using multiview diffusion"""
         # Ensure image_prompt is a list
         if isinstance(image_path, str):
@@ -133,7 +133,7 @@ class Hunyuan3DPaintPipeline:
         position_maps = self.view_processor.render_position_multiview(selected_camera_elevs, selected_camera_azims)
 
         ##########  Style  ###########
-        image_caption = "high quality"
+        image_caption = prompt if prompt else "high quality, detailed textures, masterwork"
         image_style = []
         for image in image_prompt:
             image = image.resize((512, 512))

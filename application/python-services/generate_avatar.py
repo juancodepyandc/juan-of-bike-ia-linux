@@ -376,73 +376,27 @@ def generate_image_fallback(prompt: str, output_path: str) -> bool:
 
 
 def run_hunyuan3d(image_path: str, output_glb: str) -> tuple[bool, str]:
-    """Lance Hunyuan3D sur GPU. Retourne (success, error_detail)."""
-    emit(55, "Lancement Hunyuan3D sur GPU...")
+    """Lance TRELLIS.2 sur GPU. Retourne (success, error_detail)."""
+    emit(55, "Lancement TRELLIS.2 sur GPU...")
 
-    run_id = f"avatar_{int(time.time())}"
-    out_dir = os.path.join(WORKSPACE, "temp", "avatar_gen")
-    os.makedirs(out_dir, exist_ok=True)
-
-    script = os.path.join(WORKSPACE, "python-services", "hunyuan3d_run.py")
-    if not os.path.exists(script):
-        return False, f"Script introuvable: {script}"
-
-    cmd = [
-        sys.executable, script,
-        "--image", image_path,
-        "--output-dir", out_dir,
-        "--run-id", run_id,
-        "--format", "glb",
-        "--intent-purpose", "character_head",
-        "--motion-readiness", "static_only",
-    ]
-
+    aurora_hunyuan_dir = os.path.join(WORKSPACE, "python-services", "aurora_hunyuan")
+    if aurora_hunyuan_dir not in sys.path:
+        sys.path.insert(0, aurora_hunyuan_dir)
     try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, cwd=WORKSPACE, bufsize=1,
-        )
+        import aurora_trellis_wrapper as _tw
     except Exception as e:
-        return False, f"Impossible de lancer Hunyuan3D: {e}"
+        return False, f"aurora_trellis_wrapper indisponible: {e}"
 
-    last_detail = ""
-    step = 0
-    for line in proc.stdout:
-        line = line.strip()
-        if line.startswith("PROGRESS:"):
-            parts = line.split(":", 2)
-            if len(parts) >= 3:
-                detail = parts[2][:100]
-                last_detail = detail
-                step += 1
-                pct = min(55 + step * 2, 92)
-                emit(pct, detail)
-        elif line.startswith("SAVED:"):
-            emit(95, "Mesh 3D genere !")
-        elif "error" in line.lower() or "exception" in line.lower():
-            last_detail = line[:150]
+    if not _tw.is_available():
+        return False, f"TRELLIS.2 indisponible: {_tw.import_error()}"
 
-    proc.wait()
-
-    if proc.returncode != 0:
-        return False, last_detail or f"Hunyuan3D exit code {proc.returncode}"
-
-    # Trouver le GLB
-    for f in os.listdir(out_dir):
-        if f.endswith(".glb") and run_id in f:
-            os.makedirs(os.path.dirname(output_glb) or ".", exist_ok=True)
-            shutil.copy2(os.path.join(out_dir, f), output_glb)
-            size_mb = os.path.getsize(output_glb) / 1e6
-            emit(98, f"GLB: {size_mb:.1f} MB")
-            return True, ""
-
-    for f in os.listdir(out_dir):
-        if f.endswith(".glb"):
-            os.makedirs(os.path.dirname(output_glb) or ".", exist_ok=True)
-            shutil.copy2(os.path.join(out_dir, f), output_glb)
-            return True, ""
-
-    return False, "Aucun fichier GLB genere"
+    emit(60, "Reconstruction 3D (TRELLIS.2)...")
+    r = _tw.generate_glb(image_path, output_glb)
+    if not r.get("ok"):
+        return False, r.get("error") or "echec TRELLIS.2"
+    size_mb = os.path.getsize(output_glb) / 1e6 if os.path.isfile(output_glb) else 0.0
+    emit(98, f"GLB: {size_mb:.1f} MB")
+    return True, ""
 
 
 def run_character_research(user_prompt: str, lang: str = "fr") -> dict:

@@ -36,6 +36,12 @@ def main() -> int:
     ap.add_argument("--output", default="output.png")
     ap.add_argument("--num_inference_steps", type=int, default=50)
     ap.add_argument("--seed", type=int, default=-1)
+    # 31/07 (recherche): ref_scale renforce l'IMAGE sans renforcer le texte
+    # (la branche inconditionnelle a la reference a zero) — c'est LE levier
+    # anti-derive d'identite. Exposes pour la porte corrective du pipeline.
+    ap.add_argument("--guidance_scale", type=float, default=3.0)
+    ap.add_argument("--reference_conditioning_scale", type=float, default=1.0)
+    ap.add_argument("--negative_prompt", default="watermark, ugly, deformed, disfigured, wrong anatomy, different person")
     ap.add_argument("--azimuth_deg", type=int, nargs="+",
                     default=[0, 45, 90, 180, 270, 315])
     args = ap.parse_args()
@@ -113,7 +119,14 @@ def main() -> int:
         if "A" not in _src.getbands():
             try:
                 from rembg import remove as _rembg
-                _src = _rembg(_src.convert("RGB"))
+                # matting: les cheveux/meches survivent au detourage (31/07)
+                try:
+                    _src = _rembg(_src.convert("RGB"), alpha_matting=True,
+                                  alpha_matting_foreground_threshold=240,
+                                  alpha_matting_background_threshold=15,
+                                  alpha_matting_erode_size=5)
+                except Exception:  # noqa: BLE001 - PYMATTING PLANTE: masque simple
+                    _src = _rembg(_src.convert("RGB"))
                 print("[offload] alpha cree (rembg) pour le pretraitement vendor",
                       flush=True)
             except Exception as _re:  # noqa: BLE001
@@ -139,11 +152,13 @@ def main() -> int:
         height=768,
         width=768,
         num_inference_steps=args.num_inference_steps,
-        guidance_scale=3.0,
+        guidance_scale=args.guidance_scale,
         seed=args.seed,
         remove_bg_fn=None,
         device="cuda",
         azimuth_deg=args.azimuth_deg,
+        reference_conditioning_scale=args.reference_conditioning_scale,
+        negative_prompt=args.negative_prompt,
     )
     vendor.make_image_grid(images, rows=1).save(args.output)
     print("[offload] strip ecrite: %s" % args.output, flush=True)

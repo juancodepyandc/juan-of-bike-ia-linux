@@ -39,10 +39,21 @@ Usage :
 """
 
 import argparse
+import gc
 import json
 import os
 import shutil
 import subprocess
+
+# 2026-08-08 : même discipline VRAM qu'ailleurs — la fragmentation du cache
+# PyTorch entre le worker vidéo (Wan 5B, 14 GiB peak) et cette chaîne de
+# finition (RealESRGAN, ~2 GiB + tuiles) provoque un OOM sur une allocation
+# de <2 GiB alors qu'il « reste » plus que ça. `expandable_segments:True`
+# coalesce les blocs libres et évite ce mode de défaillance. Constaté sur
+# film_2026-08-08_natsu-bench : `finition_echouee` — trace au niveau
+# `video_upscale_chain.py:565` sur un tenseur ESRGAN qui ne tenait plus
+# après un rendu Wan pourtant terminé et libéré côté processus.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import sys
 import time
 
@@ -123,6 +134,37 @@ def run(cmd, timeout=None):
     return proc
 
 
+# 2026-08-08 : heartbeat pour ne PAS se faire tuer par le timeout inactivité
+# du bridge (1200 s sans ligne stdout). Contexte : la chaîne de finition a
+# de longs silences (SeedVR2 CLI opaque, RealESRGAN per-frame lent, ffmpeg
+# assemble d'un master 10 bits). Le timeout wall-clock a été remplacé plus
+# tôt par ce timeout inactivité — l'ancien mode de défaillance revenait donc
+# par la porte de derrière. Solution : émettre `PROGRESS:heartbeat:...` à
+# intervalles réguliers depuis un thread daemon pendant les stages longs.
+import threading as _threading
+
+
+def _make_heartbeat(stage_name: str, period_s: float = 30.0):
+    """Retourne (stop_event, thread) — spawn un thread qui émet un heartbeat
+    toutes les `period_s` secondes tant que stop_event n'est pas set.
+    Usage :
+        stop, th = _make_heartbeat("seedvr2", 30.0)
+        try: work()
+        finally: stop.set(); th.join(timeout=1)
+    """
+    stop = _threading.Event()
+    t0 = time.time()
+
+    def _beat():
+        while not stop.wait(timeout=period_s):
+            elapsed = int(time.time() - t0)
+            print(f"PROGRESS:heartbeat:{stage_name} vivant depuis {elapsed}s", flush=True)
+
+    th = _threading.Thread(target=_beat, daemon=True)
+    th.start()
+    return stop, th
+
+
 # ---------------------------------------------------------------- etage 1 + 2
 def extract_frames(src, frames_dir, deflicker):
     os.makedirs(frames_dir, exist_ok=True)
@@ -135,7 +177,14 @@ def extract_frames(src, frames_dir, deflicker):
     if vf:
         cmd += ["-vf", ",".join(vf)]
     cmd += ["-start_number", "0", os.path.join(frames_dir, "f_%06d.png")]
-    run(cmd, timeout=3600)
+    # Heartbeat pendant l'extraction — ffmpeg deflicker sur ~220 frames peut
+    # prendre plusieurs minutes en silence.
+    _hb_stop_ex, _hb_thread_ex = _make_heartbeat("ffmpeg_extract", period_s=30.0)
+    try:
+        run(cmd, timeout=3600)
+    finally:
+        _hb_stop_ex.set()
+        _hb_thread_ex.join(timeout=1)
     return sorted(f for f in os.listdir(frames_dir) if f.endswith(".png"))
 
 
@@ -194,8 +243,15 @@ def upscale_seedvr2(src, dst, target_short, batch_size, blocks_to_swap, seed):
     ]
     emit("seedvr2", f"7B sharp fp16, cible {target_short}p, batch {batch_size}, "
                     f"block-swap {blocks_to_swap}")
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=86400,
-                          cwd=os.path.dirname(SEEDVR2_CLI))
+    # Heartbeat pendant que le CLI SeedVR2 tourne (opaque, aucun PROGRESS
+    # émis par lui-même — le bridge kill à 20 min sans stdout sinon).
+    _hb_stop, _hb_thread = _make_heartbeat("seedvr2", period_s=30.0)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=86400,
+                              cwd=os.path.dirname(SEEDVR2_CLI))
+    finally:
+        _hb_stop.set()
+        _hb_thread.join(timeout=1)
     if proc.returncode != 0 or not os.path.exists(dst):
         raise RuntimeError(
             "SeedVR2 a echoue : " + (proc.stderr or proc.stdout or "")[-1500:])
@@ -318,14 +374,38 @@ def upscale_frames(frames_dir, up_dir, names, target_short, resume):
             ) / 255.0
 
         Image.fromarray((np.clip(big, 0, 1) * 255).astype(np.uint8)).save(dst)
-        if (i + 1) % 5 == 0 or i + 1 == total:
-            el = time.time() - t0
+        # 2026-08-08 : cadence d'emit basée à la fois sur le compteur ET sur
+        # le temps. À 5 frames/emit ça peut faire 30 s à 5 min entre lignes
+        # selon la charge — au-delà du seuil inactivité 1200 s ça reste OK,
+        # mais un tick chaque 30 s garantit que le bridge voit le job vivant
+        # même sur les frames particulièrement lentes.
+        el = time.time() - t0
+        _emit_by_count = (i + 1) % 5 == 0 or i + 1 == total
+        _emit_by_time = (el - getattr(upscale_frames, "_last_emit_s", 0.0)) >= 30.0
+        if _emit_by_count or _emit_by_time:
             emit("upscale", f"{i + 1}/{total} frames ({el:.0f}s)")
+            upscale_frames._last_emit_s = el
         if device == "cuda":
             torch.cuda.empty_cache()
 
     if done_at_start:
         emit("resume", f"{done_at_start} frames deja presentes, reprises")
+
+    # 2026-08-08 : libère explicitement le modèle avant l'étape suivante
+    # (assemble/audio/grain qui n'a pas besoin du GPU). Sans ça, ~2 GiB de
+    # RealESRGAN restent alloués pendant tout l'assemblage — inutile.
+    try:
+        del model
+    except Exception:
+        pass
+    gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
     return device
 
 
@@ -361,7 +441,12 @@ def assemble(up_dir, src_audio, out_path, fps, out_fps, grain, codec):
     if src_audio:
         cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
     cmd += [out_path]
-    run(cmd, timeout=7200)
+    _hb_stop_ff, _hb_thread_ff = _make_heartbeat("ffmpeg_master", period_s=30.0)
+    try:
+        run(cmd, timeout=7200)
+    finally:
+        _hb_stop_ff.set()
+        _hb_thread_ff.join(timeout=1)
     return depth
 
 
@@ -433,6 +518,7 @@ def main():
     chosen = args.upscaler
     if chosen == "auto":
         chosen = "seedvr2" if seedvr2_available() else "realesrgan"
+    seedvr2_ok = False
     if not args.no_upscale and chosen == "seedvr2":
         if not seedvr2_available():
             print(json.dumps({"ok": False,
@@ -440,8 +526,24 @@ def main():
             return 1
         tmp_out = os.path.join(workdir, "seedvr2_out.mp4")
         os.makedirs(workdir, exist_ok=True)
-        upscale_seedvr2(src, tmp_out, target_short, args.batch_size,
-                        args.blocks_to_swap, args.seed)
+        # 2026-08-08 : SeedVR2 OOMe régulièrement à 2.49 GiB sur 16 GiB
+        # cohabitation post-Wan (causal_inflation_lib.py forward, batch-size
+        # indépendant). Repli propre vers RealESRGAN — moins bien
+        # (per-frame, peut scintiller) mais tient dans le budget. Meilleur
+        # qu'un master sans reconstruction du tout.
+        try:
+            upscale_seedvr2(src, tmp_out, target_short, args.batch_size,
+                            args.blocks_to_swap, args.seed)
+            seedvr2_ok = True
+        except RuntimeError as _seed_exc:
+            _msg = str(_seed_exc)
+            if "OutOfMemoryError" in _msg or "out of memory" in _msg.lower() or "OOM" in _msg:
+                emit("upscaler_fallback",
+                     f"SeedVR2 OOM ({_msg[-200:]}) → repli RealESRGAN par-frame")
+                chosen = "realesrgan"
+            else:
+                raise
+    if seedvr2_ok:
         up_info = probe(tmp_out)
         stages.append({"stage": "reconstruction",
                        "model": "SeedVR2 v2.5 7B sharp fp16",
@@ -473,7 +575,17 @@ def main():
         if audio:
             cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
         cmd += [os.path.abspath(args.output)]
-        run(cmd, timeout=7200)
+        # 2026-08-08 : bug de scoping corrigé — le heartbeat + le
+        # try/finally étaient sortis du bloc `if seedvr2_ok:` par une
+        # replace_all précédente, causant UnboundLocalError sur le repli
+        # RealESRGAN (cmd et _hb_stop_ff non définis dans cette branche).
+        # Ré-indenté proprement DANS le bloc SeedVR2-only.
+        _hb_stop_ff, _hb_thread_ff = _make_heartbeat("ffmpeg_master", period_s=30.0)
+        try:
+            run(cmd, timeout=7200)
+        finally:
+            _hb_stop_ff.set()
+            _hb_thread_ff.join(timeout=1)
         final = probe(os.path.abspath(args.output))
         stages.append({"stage": "master",
                        "resolution": f"{final['width']}x{final['height']}",

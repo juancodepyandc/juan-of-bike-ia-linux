@@ -1,5 +1,5 @@
 """
-juan of bike IA - Service vocal (STT + TTS)
+Service vocal (STT + TTS)
 
 Usage:
   python voice_service.py --mode stt --audio <path>

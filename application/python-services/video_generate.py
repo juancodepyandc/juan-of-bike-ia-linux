@@ -1872,6 +1872,29 @@ def run_worker(worker_config):
         # Older diffusers took only two positional args.
         export_to_video(video, output_path)
 
+    # 2026-08-07 : dump la vraie dernière frame tenseur AVANT toute
+    # interpolation ou reencodage — c'est l'ancre de continuité la plus
+    # fidèle possible pour un plan suivant en i2v. Une frame réextraite
+    # par ffmpeg depuis la mp4 h264 subit :
+    #   1. l'encodage h264 (perte + chroma 4:2:0),
+    #   2. l'interpolation temporelle si motion_interp≥1 (frames
+    #      synthétisées qui n'existent pas dans la sortie modèle),
+    #   3. un offset temporel (ffmpeg -ss ne tombe pas à l'image près).
+    # Le tenseur pipeline est la vérité brute du modèle. Sur le banc
+    # d'isolation Wan2.2, un plan B ancré sur video[-1] du plan A a
+    # donné seam 0,0076 (6× mieux qu'un ancrage sur la référence
+    # d'origine à 0,0454) — mais la comparaison directe naive_end vs
+    # tenseur reste à confirmer à l'échelle production (voir journal).
+    try:
+        last_tensor_png = os.path.splitext(output_path)[0] + "_lastframe.png"
+        last = video[-1]
+        last_np = frame_to_uint8(last)
+        PILImage.fromarray(last_np).save(last_tensor_png)
+        print(f"LASTFRAME:{last_tensor_png}", flush=True)
+    except Exception as _lf_err:
+        # Ne bloque JAMAIS la sortie mp4 — c'est un bonus continuité.
+        print(f"LASTFRAME_ERROR:{_lf_err}", flush=True)
+
     # ── Motion-compensated frame interpolation via ffmpeg ──
     # The diffusion model outputs 24 fps; temporal artefacts (limbs snapping
     # between positions) become invisible once the frame rate is doubled and
@@ -2287,18 +2310,40 @@ def main():
     detected_vram = args.vram_gb if args.vram_gb > 0 else total_vram
     emit("vram", f"VRAM disponible: {free_vram:.1f}GB libre / {total_vram:.1f}GB total (tier base: {detected_vram:.1f}GB)")
 
-    # Pre-check VRAM: réduire la résolution si nécessaire, jamais la durée.
+    # 2026-08-08 : PRÉ-CHECK VRAM — cause racine mesurée d'un défaut trace
+    # jusqu'ici « silencieux » : sur film_2026-08-08_kaito v3 les shots 2 et
+    # 3 (i2v, spawn après shot 1) ont vu free_vram < 4.0 GiB à l'entrée du
+    # worker parce que la VRAM du shot 1 (Wan 5B ~14 GiB peak) n'était pas
+    # encore complètement rendue au OS + le juge vision Ollama qwen3-vl:8b
+    # (~7 GiB) restait résident. La branche `< 4.0` clampait alors à
+    # 640×480 sans que cinema_pipeline puisse le distinguer d'un rendu
+    # premium normal — la déclinaison finissait dans render_truth mais pas
+    # dans warnings[].
+    # Correctif : émission d'un événement DUR + `render_truth.vram_clamped`
+    # à True pour que cinema_pipeline surface l'alerte comme un premier
+    # niveau (ce que fait déjà le block downstep survivant côté cinema
+    # depuis le patch précédent — le ratio wh actuel/attendu attrape ce
+    # cas, mais on documente ici la cause exacte).
+    _vram_clamped = False
+    _vram_clamp_reason = None
     if total_vram > 0 and free_vram < 2.0:
+        _vram_clamped = True
+        _vram_clamp_reason = f"vram_free={free_vram:.2f}GiB<2.0 → clamp 480×320"
         emit(
-            "vram",
-            f"VRAM tres basse ({free_vram:.1f}GB libre). Reduction de resolution sans raccourcir le clip.",
+            "vram_clamp",
+            f"CLAMP DUR : VRAM tres basse ({free_vram:.1f}GB libre) → 480×320. "
+            f"CE PLAN NE SERA PAS À LA RÉSOLUTION NATIVE DEMANDÉE.",
         )
         width = min(width, 480)
         height = min(height, 320)
     elif total_vram > 0 and free_vram < 4.0:
+        _vram_clamped = True
+        _vram_clamp_reason = f"vram_free={free_vram:.2f}GiB<4.0 → clamp 640×480"
         emit(
-            "vram",
-            f"VRAM limitee ({free_vram:.1f}GB libre). Ajustement de resolution sans raccourcir le clip.",
+            "vram_clamp",
+            f"CLAMP DUR : VRAM limitee ({free_vram:.1f}GB libre) → 640×480. "
+            f"CE PLAN NE SERA PAS À LA RÉSOLUTION NATIVE DEMANDÉE. "
+            f"Cause probable : shot précédent Wan pas encore libéré ou Ollama vision judge résident.",
         )
         width = min(width, 640)
         height = min(height, 480)

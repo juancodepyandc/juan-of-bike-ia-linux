@@ -94,9 +94,9 @@ def _clean_bg_white(bgr):
         _amput = _retire_vif / max(float((_vif & _boite).sum()), 1.0)
         if _amput > 0.35:
             return bgr
-        rgb = rgba[:, :, :3].astype("float32")
-        out = rgb * alpha + 255.0 * (1.0 - alpha)
-        return cv2.cvtColor(out.astype("uint8"), cv2.COLOR_RGB2BGR)
+        # ETAPE 2b (01/08): l'ALPHA est conserve — le composite blanc jetait
+        # le matting et TRELLIS re-detourait a l'aveugle (silhouette fausse).
+        return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA)
     except Exception:  # noqa: BLE001
         return bgr
 
@@ -127,6 +127,7 @@ def _split_strip(strip_png: str, out_dir: str, stem: str, pick: list) -> list:
 
 
 def generate(front_png: str, out_dir: str, stem: str, text: str = "",
+             pose_desc: str = "", photo_reelle: bool = False,
              steps: int = 40, seed: int = 42,
              pick: list | None = None) -> dict:
     """Genere les vues coherentes et ecrit <stem>_v2.png, <stem>_v3.png, ...
@@ -166,15 +167,31 @@ def generate(front_png: str, out_dir: str, stem: str, text: str = "",
     # personnage (Sonic debout -> vues de dos EN BOULE, constate sur 3 lots) et
     # assombrit les couleurs. On ancre: meme pose que la reference, debout,
     # couleurs vives, fond uni.
-    _anchor = ("same character, exact same standing pose as the reference, "
-               "full body, bright vivid colors, even studio lighting, "
-               "plain white background")
+    # 31/07 (recherche): l'ancre FIGEE "standing pose" contredisait la photo
+    # (personne allongee) — a CFG 3.0 le texte gagne et i2mv fabrique une
+    # AUTRE personne debout. L'ancre decrit desormais la POSE REELLE (fournie
+    # par le VLM du pipeline), et les mots "bright vivid colors / studio
+    # lighting" ne s'appliquent qu'aux references synthetiques, jamais aux
+    # photos reelles.
+    _pose = pose_desc.strip() or "exact same pose as the reference"
+    _style = ("" if photo_reelle
+              else "bright vivid colors, even studio lighting, ")
+    _anchor = ("same person, same face, same clothing, %s, full body, %s"
+               "plain white background" % (_pose, _style))
     _text = ("%s, %s" % (text, _anchor)) if text else ("high quality, %s" % _anchor)
     cmd = [MV_PY, _script,
            "--image", os.path.abspath(front_png),
            "--text", _text,
            "--output", strip,
            "--num_inference_steps", str(steps), "--seed", str(seed)]
+    # leviers anti-derive (etape 4/8b): renforcement de la reference pilote
+    # par le pipeline via env, sans changer la signature partout.
+    _rs = os.environ.get("AURORA_MV_REF_SCALE")
+    if _rs:
+        cmd += ["--reference_conditioning_scale", _rs]
+    _gs = os.environ.get("AURORA_MV_GUIDANCE")
+    if _gs:
+        cmd += ["--guidance_scale", _gs]
     try:
         r = subprocess.run(cmd, cwd=MV_ROOT, env=env, capture_output=True,
                            text=True, timeout=1200)

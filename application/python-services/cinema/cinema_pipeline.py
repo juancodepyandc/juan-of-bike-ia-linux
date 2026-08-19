@@ -61,6 +61,16 @@ OUTPUT_DIR = WORKSPACE / "generated" / "videos"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 VISION_MODEL = os.environ.get("AURORA_VISION_MODEL", "qwen3-vl:8b")
 
+# 2026-08-08 : discipline VRAM héritée du banc d'isolation Wan2.2.
+# Mesure : la fragmentation du cache PyTorch entre 2 rendus consécutifs
+# (worker vidéo + chaîne de finition sur le même run) suffit à provoquer
+# un CUDA OOM sur une allocation de <2 GiB alors qu'il « reste » plus
+# que ça. `expandable_segments:True` coalesce les blocs libres et évite
+# ce mode de défaillance. Posé au module `cinema_pipeline` pour que tous
+# les sous-processus (worker vidéo, chaîne de finition, FLUX keyframes)
+# héritent la variable même si l'appelant du bridge ne l'avait pas définie.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 # v91 : plancher absolu de qualite. En dessous, un plan n'est jamais livre,
 # meme si l'appelant a desactive la porte stricte. Mesure a l'origine : des
 # plans notes 2.8/10 ("wheels are stationary") et 0.0/10 ont ete livres.
@@ -765,7 +775,25 @@ def extract_keyframes_triplet(video_path: str, work_dir: "Path", shot_id: int) -
       - clipping/phasing through objects (physics)
       - floating limbs / no-contact / gravity violations
       - pose discontinuity / teleportation
-    Returns { start, mid, end } paths or empty dict on failure.
+    Returns { start, mid, end, sharp_end } paths or empty dict on failure.
+
+    `sharp_end` — 2026-08-07, banc d'isolation Wan2.2 :
+    Le champ existe pour les consommateurs qui privilégient la NETTETÉ de
+    l'anchor (audits, keyframes de style, débogage) : c'est la frame la
+    plus nette de la dernière seconde, choisie par variance du Laplacien
+    (extract_sharp_tail_frame). Sur la baseline mp4 courte il était
+    9,9 % plus net que `end` ; à l'échelle production 65 f × 60 étapes
+    il l'est de 17,1 % (2585,6 vs 2207,7).
+
+    IL NE FAUT PAS l'utiliser pour l'ancrage inter-plans — testé au banc
+    prod (voir REFONTE_VIDEO_JOURNAL.md, entrée du 2026-08-07) : la
+    métrique de raccord = |lastFrame(A) - firstFrame(B)| ≈
+    |lastFrame(A) - anchor|. La frame la plus nette de la dernière
+    seconde peut se trouver jusqu'à ~1 s AVANT la vraie fin ; ancrer
+    B dessus donne un raccord temporellement décalé, mesuré seam
+    0,02732 vs 0,01777 pour `end` naïf sur la même expérience. L'ancrage
+    inter-plans utilise donc `end` (t ≈ duration - 0,15 s), qui est
+    quasi-terminal par construction.
     """
     try:
         ffprobe = "ffprobe.exe" if os.name == "nt" else "ffprobe"
@@ -806,6 +834,42 @@ def extract_keyframes_triplet(video_path: str, work_dir: "Path", shot_id: int) -
                 out[label] = str(png_path)
         except Exception:
             pass
+
+    # Ancrage inter-plans : ne PAS reprendre out["end"] (t = duration-0.15,
+    # potentiellement flou en fin de mouvement) — chercher la frame la plus
+    # NETTE dans la dernière seconde et la stocker à part.
+    sharp_png = work_dir / f"shot_{shot_id:02d}_sharp_end.png"
+    try:
+        if extract_sharp_tail_frame(video_path, str(sharp_png), samples=5):
+            out["sharp_end"] = str(sharp_png)
+    except Exception:
+        pass
+    # Repli : si l'extraction sharp échoue, on donne quand même sharp_end=end
+    # pour que le consommateur puisse écrire `sharp_end or end` sans se soucier
+    # de la présence du champ.
+    if "sharp_end" not in out and out.get("end"):
+        out["sharp_end"] = out["end"]
+
+    # 2026-08-07 : tenseur vrai-dernière-frame écrit par video_generate.py
+    # à côté de la mp4 (`<basename>_lastframe.png`, cf. commentaire dans
+    # run_worker). Quand présent, c'est l'ancre de continuité la plus fidèle :
+    #   - avant encodage h264 (pas de perte chroma 4:2:0),
+    #   - avant interpolation temporelle (frame réellement produite par le
+    #     modèle, pas une frame minterpolate synthétique),
+    #   - à la bonne image (pas d'offset ffmpeg -ss).
+    # À l'échelle prod, le naïf `end` extrait a mesuré seam 0,01777 (vs
+    # 0,02732 pour sharp_end, vs 0,02781 sans ancrage) ; la comparaison au
+    # tenseur vrai est la mesure encore ouverte. Fallback silencieux quand
+    # absent (mp4 générée par un ancien worker qui ne dumpait pas cette
+    # image, ou fichier supprimé après coup).
+    try:
+        video_path_stem = video_path[:-4] if video_path.lower().endswith(".mp4") else video_path
+        sibling_lastframe = video_path_stem + "_lastframe.png"
+        if Path(sibling_lastframe).exists():
+            out["tensor_lastframe"] = sibling_lastframe
+    except Exception:
+        pass
+
     return out
 
 
@@ -1198,6 +1262,16 @@ def render_shot_video(
     bascule en mode i2v (image-to-video) avec ce keyframe. Pour la cohérence
     de personnage entre shots, on passe la même keyframe FLUX pour tous les
     shots où le speaker est le même personnage.
+
+    WS-V-P (2026-08-07) : chaque plan produit désormais un `VideoJobSpec`
+    canonique (via `video_spec_builder.build_spec_from_intent`). Son
+    `spec_hash` est émis en trace ET remonté dans le résultat, ce qui rend
+    possible un audit chiffré « quels plans ont réellement tourné avec quels
+    paramètres » — le journal des jobs peut être comparé à un attendu.
+    Les valeurs du spec (dimensions, seed, frames) sont utilisées pour la
+    tentative principale ; la boucle de retry step-down historique reste
+    intacte pour la résilience OOM/ACCESS_VIOLATION (chaque tentative
+    ré-émet un spec_hash reflétant les nouvelles dimensions).
     """
     fps = 24
     num_frames = max(25, min(97, int(round(duration_s * fps))))
@@ -1205,6 +1279,45 @@ def render_shot_video(
     # v84 : valeur de plan (champ storyboard `camera`, jusqu'ici inutilise)
     # + queue qualite positive, dedupliquees contre le prompt existant.
     full_prompt += cinematography_for({"camera": camera or ""}, full_prompt)
+
+    # WS-V-P — construction et log du spec canonique du plan. Best-effort :
+    # une importation manquée ne DOIT pas faire échouer le rendu, seulement
+    # la traçabilité.
+    shot_spec_hash = None
+    try:
+        import sys as _sys
+        services_dir = str(SERVICES_DIR)
+        if services_dir not in _sys.path:
+            _sys.path.insert(0, services_dir)
+        import video_spec_builder as _vsb
+        # Aspect deviné depuis width×height.
+        _r = width / max(1, height)
+        if abs(_r - 16 / 9) < 0.05:
+            _aspect = "16:9"
+        elif abs(_r - 9 / 16) < 0.05:
+            _aspect = "9:16"
+        elif abs(_r - 1.0) < 0.05:
+            _aspect = "1:1"
+        elif abs(_r - 4 / 3) < 0.05:
+            _aspect = "4:3"
+        else:
+            _aspect = "16:9"
+        _shot_spec = _vsb.build_spec_from_intent(
+            prompt=full_prompt,
+            aspect=_aspect,
+            num_frames=num_frames,
+            quality_mode=quality_mode if quality_mode in ("auto", "balanced", "premium") else "auto",
+            seed=seed,
+            image_path=anchor_image,
+            motion_interp=int(motion_interp) if str(motion_interp).isdigit() else 1,
+            force_strategy=force_strategy if force_strategy in ("auto", "wan5b", "ltx") else "auto",
+            negative_prompt=negative_prompt,
+            cinematography=camera or "",
+        )
+        shot_spec_hash = _shot_spec.spec_hash()
+        emit("spec", f"spec_hash={shot_spec_hash[:16]} ({_aspect} {_shot_spec.width}x{_shot_spec.height} {_shot_spec.num_frames}f)")
+    except Exception as _spec_exc:
+        emit("spec_warn", f"canonical spec skipped: {str(_spec_exc)[:120]}")
 
     # v94 — UN SEUL MOTEUR POUR TOUT LE FILM.
     # Le moteur est fixe UNE FOIS au demarrage (`_MOTEUR_VIDEO`) et ne peut plus
@@ -1309,18 +1422,77 @@ def render_shot_video(
             actual_model = (worker_result or {}).get("model") or "moteur non déclaré"
             actual_strategy = (worker_result or {}).get("strategy") or "strategie non déclarée"
             emit("shot_backend", f"{actual_model} via {actual_strategy}")
+            # 2026-08-08 : DEUX chemins de downstep peuvent survivre en silence.
+            # (a) la boucle retry de render_shot_video (cinema_pipeline) qui
+            #     réduit cw/ch de 20 % par tentative sur crash natif.
+            # (b) la CHAINE DE STRATEGIES de video_generate.py qui essaie
+            #     `wan5b-<mode>-primary` puis `wan5b-<mode>-repli1` (0.82×)
+            #     puis `wan5b-<mode>-repli2` (0.66×) sur ANY échec — et
+            #     retourne « ok » dès que l'une passe. Mesuré film_2026-08-08_
+            #     kaito : shot 3 rendu à 832×480 avec strategy=`wan5b-i2v-repli2`
+            #     (0.66 × 1280 × 704 grid-aligned), alors que « premium » demandait
+            #     1280×720. Cinema recevait « ok » et livrait un premium sales.
+            #
+            # Correctif : les DEUX chemins émettent la même alerte forte, avec
+            # les infos qui permettent à la régie de décider quoi faire (accepter,
+            # re-rendre le plan seul, retirer la porte quality_mode premium).
+            downstep_warnings = list((worker_result or {}).get("warnings", []))
+            initial_w = int(width)
+            initial_h = int(height)
+            worker_strategy_id = str((worker_result or {}).get("strategy") or "")
+            worker_native = (worker_result or {}).get("render_truth") or {}
+            worker_native_w = int(worker_native.get("native_width") or cw)
+            worker_native_h = int(worker_native.get("native_height") or ch)
+            strategy_tier_repli = "repli" in worker_strategy_id.lower()
+            cw_repli_ratio = (worker_native_w * worker_native_h) / max(1, initial_w * initial_h)
+            resolution_effectively_downstepped = attempt > 0 or strategy_tier_repli or cw_repli_ratio < 0.95
+
+            if resolution_effectively_downstepped:
+                actual_pct = round(100.0 * (worker_native_w * worker_native_h) / max(1, initial_w * initial_h), 1)
+                cause_parts = []
+                if attempt > 0:
+                    cause_parts.append(f"{attempt} retry(s) natifs cinema")
+                if strategy_tier_repli:
+                    cause_parts.append(f"fallback strategy `{worker_strategy_id}`")
+                cause_txt = " + ".join(cause_parts) if cause_parts else "résolution effective inférieure au pin premium"
+                downstep_msg = (
+                    f"résolution native abaissée : {initial_w}x{initial_h} → "
+                    f"{worker_native_w}x{worker_native_h} ({actual_pct}% de la cible) — cause: {cause_txt}. "
+                    f"Le plan a été livré mais NON à la résolution premium demandée."
+                )
+                emit("shot_quality_downstep", downstep_msg)
+                downstep_warnings.append({
+                    "code": "resolution_downstep_survived",
+                    "message": downstep_msg,
+                    "requested_wh": [initial_w, initial_h],
+                    "delivered_wh": [worker_native_w, worker_native_h],
+                    "downsteps_cinema": attempt,
+                    "worker_strategy_id": worker_strategy_id,
+                    "quality_pct_of_target": actual_pct,
+                    "severity": "high",
+                })
             return {
                 "ok": True,
                 "mp4": output_mp4,
                 "frames": num_frames,
-                "gen_w": cw,
-                "gen_h": ch,
+                "gen_w": worker_native_w,
+                "gen_h": worker_native_h,
                 "downsteps": attempt,
+                "downstep_from": [initial_w, initial_h] if resolution_effectively_downstepped else None,
+                "downstep_reason": (
+                    "native_crash_retry+strategy_repli" if attempt > 0 and strategy_tier_repli
+                    else "strategy_repli" if strategy_tier_repli
+                    else "native_crash_retry" if attempt > 0
+                    else None
+                ),
                 "model": (worker_result or {}).get("model"),
-                "strategy": (worker_result or {}).get("strategy"),
+                "strategy": worker_strategy_id or (worker_result or {}).get("strategy"),
                 "render_truth": (worker_result or {}).get("render_truth"),
-                "warnings": (worker_result or {}).get("warnings", []),
+                "warnings": downstep_warnings,
                 "validation": (worker_result or {}).get("validation"),
+                # WS-V-P : trace le spec_hash canonique du plan pour audit
+                # (« quels plans ont réellement tourné avec quels params »).
+                "spec_hash": shot_spec_hash,
             }
 
         err_text = (stderr or stdout or "")
@@ -2746,11 +2918,48 @@ def pregenerate_character_keyframes(
             or meta.get("portrait_path")
         )
         if provided_keyframe and Path(str(provided_keyframe)).exists():
+            # 2026-08-08 : GARDE ANTI-CONTAMINATION.
+            # Un keyframe fourni par le storyboard est utilisé tel quel — mais
+            # sans vérification, deux films avec un personnage nommé pareil
+            # (ex : « Natsu » dans deux films différents) pointant vers le
+            # même nom de fichier réutilisent silencieusement une image qui ne
+            # décrit PAS ce personnage. Constaté : char_quality 2/10 sur un
+            # test où le boy « aux cheveux noirs, veste rouge » a hérité de
+            # l'image du Natsu de Fairy Tail (cheveux roses, cape blanche).
+            # Parade : sidecar `.desc.sha256` = sha256(nom||description). Au
+            # premier usage on l'écrit ; à toute réutilisation on compare et
+            # on remonte un warning DUR si la description en cours n'est pas
+            # celle enregistrée. Le film continue (pas de blocage — le
+            # storyboard peut être légitimement corrigé), mais il est
+            # impossible de le livrer en silence.
             try:
                 src = Path(str(provided_keyframe))
                 if src.resolve() != keyframe_path.resolve():
                     shutil.copy(src, keyframe_path)
                 keyframes[name] = str(keyframe_path)
+
+                import hashlib as _hash
+                desc_fingerprint = _hash.sha256(
+                    (str(name).strip().lower() + "||" + desc.strip().lower()).encode("utf-8")
+                ).hexdigest()
+                sidecar = src.with_suffix(src.suffix + ".desc.sha256")
+                try:
+                    if sidecar.exists():
+                        stored = sidecar.read_text(encoding="utf-8", errors="replace").strip()
+                        if stored and stored != desc_fingerprint:
+                            emit("char_warn_mismatch",
+                                 f"{name}: reference réutilisée mais description "
+                                 f"différente (sha256 stocké {stored[:12]} vs "
+                                 f"attendu {desc_fingerprint[:12]}) — probable "
+                                 f"contamination cross-film, vérifier char_quality")
+                            # Warning aussi capturé côté rapport via char_quality.
+                    else:
+                        # Premier usage — grave la description à côté.
+                        sidecar.write_text(desc_fingerprint, encoding="utf-8")
+                except Exception as _sc_err:
+                    emit("char_warn_sidecar",
+                         f"{name}: sidecar desc non lisible ({str(_sc_err)[:80]})")
+
                 emit("char_ok", f"{name} -> {keyframe_path.name} (reused storyboard keyframe)")
             except Exception as e:
                 keyframes[name] = str(provided_keyframe)
@@ -4481,6 +4690,48 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
 
         emit("shot_start", f"plan {idx}/{len(shots)}: {scene[:60]}")
 
+        # 2026-08-08 : ÉVICTION AGGRESSIVE ENTRE PLANS.
+        # Mesuré film_2026-08-08_kaito v3 : shot 1 (t2v) rendu à 1280×704 —
+        # correct ; shots 2+ (i2v) clampés à 640×480 par video_generate.py::
+        # pre-check VRAM parce que qwen3-vl:8b (~7 GiB) restait résident
+        # après l'évaluation vision du shot précédent. Le clamp fires SILENTLY
+        # à ce stade (le worker croit avoir demandé du 640×480). Fix aux deux
+        # niveaux : (a) surface le clamp dans video_generate (fait), (b) évite
+        # qu'il fires en premier lieu en libérant ollama+comfyui AVANT chaque
+        # spawn worker.
+        if idx > 1:
+            try:
+                import urllib.request as _ur
+                for _mdl in ("qwen3-vl:8b", "qwen3-vl:30b"):
+                    try:
+                        _ur.urlopen(
+                            _ur.Request(
+                                "http://127.0.0.1:11434/api/generate",
+                                data=json.dumps({"model": _mdl, "keep_alive": 0}).encode(),
+                                headers={"Content-Type": "application/json"},
+                                method="POST",
+                            ),
+                            timeout=5,
+                        ).read()
+                    except Exception:
+                        pass
+                # ComfyUI /free (idempotent — no-op si déjà libéré)
+                try:
+                    _ur.urlopen(
+                        _ur.Request(
+                            "http://127.0.0.1:8188/free",
+                            data=b'{"unload_models":true,"free_memory":true}',
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        ),
+                        timeout=10,
+                    ).read()
+                except Exception:
+                    pass
+                emit("vram_free", f"éviction ollama+comfyui avant plan {idx}")
+            except Exception as _evict_exc:
+                emit("vram_warn", f"éviction inter-plans échouée: {str(_evict_exc)[:80]}")
+
         # v90 : voix AVANT rendu. La durée réelle de la parole TTS pilote la
         # durée du plan — avant, le WAV était synthétisé après le rendu et
         # muxé en -shortest : tout dialogue plus long que le clip était coupé
@@ -4985,6 +5236,20 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
             key=lambda item: shot_quality_average(item[0]),
             reverse=True,
         )[0]
+        # 2026-08-08 : REMONTÉE des warnings par plan au niveau du film.
+        # Défaut mesuré (film Kaito v4) : `render_shot_video` renvoyait bien
+        # `warnings=[{code: "resolution_downstep_survived", severity: "high",
+        # ...}]` et l'événement `PROGRESS:shot_quality_downstep:...` était
+        # émis sur stdout, MAIS le rapport final ne contenait que
+        # `integrity_failed` et `finition_echouee`. Les downstep n'arrivaient
+        # jamais à `warnings[]` parce que `accepted_render` était consommé
+        # pour extraire `render_truth`/`strategy`/`model` sans jamais lire
+        # `warnings`. Correctif : chaque warning de plan est copié dans le
+        # tableau film avec `shot_id` en annotation pour l'audit.
+        for _shot_warning in list(accepted_render.get("warnings") or []):
+            _entry = dict(_shot_warning)
+            _entry.setdefault("shot_id", shot_id)
+            warnings.append(_entry)
         segment_metadata = list(accepted_render.get("segment_results") or [])
         if segment_metadata:
             for segment_index, segment in enumerate(segment_metadata, 1):
@@ -5382,13 +5647,24 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 emit("plan_abandonne",
                      f"plan {idx} refuse apres audio — le film continue sans lui")
                 continue
-            if "close" not in str(shot.get("camera") or "").lower() and triplet.get("end"):
-                scene_anchor = triplet.get("end")
+            # 2026-08-07 : ancrage inter-plans → priorité `tensor_lastframe`
+            # (frame tenseur avant encodage h264 et avant interpolation, dumped
+            # par video_generate.py à côté de la mp4), sinon repli sur `end`
+            # (frame quasi-dernière ffmpeg-extraite, t ≈ duration - 0.15s).
+            # Ordre justifié par le banc prod-scale : sharp_end perd sur seam
+            # à cause d'un décalage temporel jusqu'à ~1 s ; naive_end à
+            # duration-0.15 est déjà quasi-terminal et a mesuré seam 0,01777
+            # (36 % mieux que sans ancrage). tensor_lastframe est censément
+            # ENCORE plus proche du vrai dernier instant (0,0076 mesuré à
+            # 33 f isolation, à re-confirmer à l'échelle prod — voir journal).
+            end_for_anchor = triplet.get("tensor_lastframe") or triplet.get("end")
+            if "close" not in str(shot.get("camera") or "").lower() and end_for_anchor:
+                scene_anchor = end_for_anchor
                 scene_anchor_location = location
                 # v90 : mémorise aussi la dernière frame par lieu pour ancrer
                 # les futurs plans qui reviennent dans ce décor.
                 if location:
-                    location_anchors[location] = triplet.get("end")
+                    location_anchors[location] = end_for_anchor
         except Exception as _e:
             emit("shot_score_warn", f"plan {idx} validation failed: {str(_e)[:80]}")
             shot_quality.append({
@@ -5615,6 +5891,8 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     shot_quality = dedupe_shot_quality(shot_quality)
     quality_grade = _compute_quality_grade(
         shot_quality, audio_quality, temporal_quality, integrity, char_quality,
+        shots_requested=len(shots),
+        shots_delivered=len(shot_files),
     )
     for q in shot_quality:
         if not shot_quality_is_measured(q):
@@ -5680,6 +5958,40 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
     # avec un warning — on ne perd jamais des heures de rendu sur une finition.
     if os.environ.get("AURORA_SKIP_FINISH") != "1":
         try:
+            # 2026-08-08 : libération VRAM AVANT finition. SeedVR2 7B pèse
+            # ~16 Go fp16 même avec block-swap ; sans /free préalable un
+            # ComfyUI qui a repris pour un backdrop de scène (ou un shot
+            # keyframe FLUX intermédiaire) tient encore ses 500 MiB-4 GiB
+            # et déclenche un OOM à 2,5 GiB près, mesuré film_2026-08-08
+            # kaito-v3. Répliqué exactement l'appel qui existait avant le
+            # démarrage des shots Wan.
+            try:
+                import urllib.request as _ur
+                _free_req = _ur.Request(
+                    "http://127.0.0.1:8188/free",
+                    data=b'{"unload_models":true,"free_memory":true}',
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                _ur.urlopen(_free_req, timeout=10).read()
+                emit("vram_free", "ComfyUI unloaded avant finition — VRAM libérée pour SeedVR2")
+            except Exception as _free_exc:
+                emit("vram_warn", f"comfy /free pre-finition failed: {str(_free_exc)[:80]}")
+            # Éviction Ollama additionnelle : le juge vision a pu recharger
+            # le modèle qwen3-vl entre-temps pour évaluer les shots.
+            try:
+                for _mdl in ("qwen3-vl:8b", "qwen3-vl:30b"):
+                    _ur.urlopen(
+                        _ur.Request(
+                            "http://127.0.0.1:11434/api/generate",
+                            data=json.dumps({"model": _mdl, "keep_alive": 0}).encode(),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        ),
+                        timeout=5,
+                    ).read()
+            except Exception:
+                pass
             finish_src = str(output_mp4)
             finish_out = str(Path(output_mp4).with_name(
                 Path(output_mp4).stem + "_master.mov"))
@@ -5690,6 +6002,17 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                 "--input", finish_src, "--output", finish_out,
                 "--target", "1080p" if max(target_w, target_h) <= 1920 else "4k",
                 "--grain", "0.5", "--codec", "prores",
+                # 2026-08-08 : batch-size 17 (4n+1) au lieu de 33 par défaut.
+                # Mesure : SeedVR2 batch=33 OOMe sur 16 GiB avec 12,7 GiB
+                # déjà pris (kaito v3). Halver le batch halve la mémoire
+                # peak par batch, garde la cohérence temporelle 4n+1, coûte
+                # un peu de vitesse (env 30% plus long) — c'est une
+                # meilleure décision qu'un master flat qui n'a pas de
+                # reconstruction du tout.
+                "--batch-size", "17",
+                # 40 blocs offloadés (au lieu de 36) = ~700 Mo VRAM en moins
+                # sur le DiT. Marge de sécurité additionnelle.
+                "--blocks-to-swap", "40",
             ], timeout=21600)
             fin = None
             for line in reversed((out or "").strip().split("\n")):
@@ -5707,20 +6030,40 @@ def run_pipeline(storyboard: dict, output_mp4: str) -> dict:
                      f"{fin.get('master_resolution')} {fin.get('bit_depth')} "
                      f"en {fin.get('elapsed_s')}s -> {finish_out}")
             else:
+                # 2026-08-08 : `err[-200:]` et `err[:160]` masquaient l'exception
+                # (mesuré film_2026-08-08_kaito : « sys.exit(main()) » sans le
+                # type d'exception, on ne savait pas si OOM, ImportError ou
+                # timeout). `_erreur_utile()` cherche les lignes qui contiennent
+                # « CUDA/OutOfMemory/Error/Traceback/… » et rend celles-là
+                # même si elles sont noyées au milieu de tqdm/hf progress bars.
+                # Même correctif appliqué à la trace stdout complète (fin=None
+                # signifie que le JSON de fin n'a pas été trouvé — souvent
+                # symptôme d'un crash avant `print(json.dumps(...))`).
+                real_error = (fin or {}).get("error") or _erreur_utile(err or "", out or "", limite=600)
+                # Dump complet à disque pour diagnostic post-hoc (16 KB max)
+                try:
+                    diag_finition = Path(output_mp4).parent / f"{Path(output_mp4).stem}.finition_diag.txt"
+                    diag_finition.write_text(
+                        f"=== rc={rc} ===\n=== STDERR ===\n{(err or '')[-8192:]}\n\n=== STDOUT ===\n{(out or '')[-8192:]}",
+                        encoding="utf-8",
+                    )
+                    real_error = f"{real_error} — trace complète: {diag_finition.name}"
+                except Exception:
+                    pass
                 warnings.append({
                     "code": "finition_echouee",
-                    "message": (fin or {}).get("error") or (err or "")[-200:],
+                    "message": real_error,
                     "impact": "Le film est livre sans la chaine de finition "
                               "(pas de reconstruction, pas de grain, 8 bits).",
                 })
-                emit("finition_warn", str((fin or {}).get("error") or err)[:160])
+                emit("finition_warn", real_error[:400])
         except Exception as exc:
             warnings.append({
                 "code": "finition_echouee",
-                "message": str(exc)[:200],
+                "message": f"{type(exc).__name__}: {exc}",
                 "impact": "Le film est livre sans la chaine de finition.",
             })
-            emit("finition_warn", str(exc)[:160])
+            emit("finition_warn", f"{type(exc).__name__}: {exc}"[:400])
     if music_info and music_info.get("ok"):
         postprocess_chain.append("music_mix")
     if subtitle_info:
@@ -5840,6 +6183,8 @@ def _compute_quality_grade(
     temporal_quality: list,
     integrity: dict,
     char_quality: dict,
+    shots_requested: int = 0,
+    shots_delivered: int = 0,
 ) -> dict:
     """v82lt : Aggregate everything into a single grade A/B/C/D so user
     sees at-a-glance whether the render is broadcast-ready, acceptable,
@@ -5956,6 +6301,27 @@ def _compute_quality_grade(
     if blocking_dimension and grade in ("A", "B"):
         grade = "C"
 
+    # 2026-08-08 : le grade IGNORAIT les plans abandonnés. Un film 3-plans dont
+    # 1 shot est abandonné livrait 92,5%/A/exportable=true parce que
+    # `shot_items` compte uniquement les plans ACCEPTÉS. La régie voyait un
+    # « A exportable » alors qu'il manquait 33 % du contenu demandé.
+    # Correctif : le ratio livré/demandé plafonne le grade et bascule
+    # `exportable=false` sous 80 % de shots livrés — même seuil que la
+    # couverture QA. Un film transparent sur sa perte de contenu doit être
+    # ré-rendu (ou accepté explicitement par l'utilisateur), pas exporté
+    # comme si de rien n'était.
+    delivery_ratio = (
+        float(shots_delivered) / float(shots_requested)
+        if shots_requested and shots_requested > 0 else 1.0
+    )
+    delivery_pct = round(delivery_ratio * 100.0, 1)
+    if delivery_ratio < 0.80 and grade == "A":
+        grade = "B"
+    if delivery_ratio < 0.67 and grade in ("A", "B"):
+        grade = "C"
+    if delivery_ratio < 0.50:
+        grade = "D"
+
     return {
         "grade": grade,
         "overall_pct": round(overall, 1),
@@ -5975,8 +6341,18 @@ def _compute_quality_grade(
             "audio": {"measured": audio_measured, "expected": audio_expected},
             "temporal": {"measured": temporal_measured, "expected": temporal_expected},
         },
+        "delivery": {
+            "shots_requested": shots_requested,
+            "shots_delivered": shots_delivered,
+            "delivery_pct": delivery_pct,
+        },
         "weak_shots": weak_shots,
-        "exportable": grade in ("A", "B") and coverage_pct >= 80 and not blocking_dimension,
+        "exportable": (
+            grade in ("A", "B")
+            and coverage_pct >= 80
+            and delivery_ratio >= 0.80
+            and not blocking_dimension
+        ),
     }
 
 

@@ -192,6 +192,10 @@ def _ollama_chat(model: str, prompt: str, kind: str | None,
         "stream": False,
         "format": "json",
         "think": False,
+        # 30/07 (audit): sans keep_alive, gemma3:27b (~17 Go) restait
+        # resident 10 min apres CHAQUE appel — en plein TRELLIS. Decharge
+        # immediate: l'appel suivant recharge, la RAM des etapes lourdes prime.
+        "keep_alive": 0,
         "options": {"temperature": 0.1, "num_ctx": 4096},
     }
     req = urllib.request.Request(

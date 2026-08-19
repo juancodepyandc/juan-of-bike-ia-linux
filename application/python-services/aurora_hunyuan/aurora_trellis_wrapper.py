@@ -24,10 +24,16 @@ from pathlib import Path
 log = logging.getLogger("trellis2_wrapper")
 
 # TRELLIS.2 vit hors du package (repo external) — l'ajouter au path.
+# `~/.local/share/auroraia/external/TRELLIS.2` recoit les correctifs (BiRefNet
+# sans transformers AutoModel, DINOv3 compat, conditionnement multi-images) et
+# passe en premier : la copie repo-relative peut etre regeneree "propre" (donc
+# sans ces correctifs) par un script de bootstrap et ne doit jamais la masquer.
 _TRELLIS_CANDIDATES = [
     os.environ.get("AURORA_TRELLIS_ROOT"),
     "/home/juan/.local/share/auroraia/external/TRELLIS.2",
     os.path.expanduser("~/.local/share/auroraia/external/TRELLIS.2"),
+    # aurora_hunyuan/ -> python-services/ -> application/ -> repository root
+    str(Path(__file__).resolve().parents[3] / "external" / "TRELLIS.2"),
 ]
 TRELLIS_ROOT = next((Path(p) for p in _TRELLIS_CANDIDATES if p and Path(p).exists()), Path("/nonexistent"))
 if TRELLIS_ROOT.exists() and str(TRELLIS_ROOT) not in sys.path:
@@ -46,19 +52,23 @@ if _cuda_bin and _cuda_bin not in os.environ.get("PATH", ""):
 
 MODEL_ID = os.environ.get("AURORA_TRELLIS2_MODEL", "microsoft/TRELLIS.2-4B")
 
-# Spill GPU->RAM (memoire managee cudaMallocManaged) : permet a l'extraction du mesh 1536
-# de DEBORDER sur la RAM (30 Go) quand elle depasse les 16 Go de VRAM -> tient le VRAI 1536
-# (petits reliefs: fentes, resistances, cheveux au mm). Lent (page-faults PCIe) mais complet.
-# DOIT s'executer AVANT toute allocation CUDA du process. Opt-in via AURORA_TRELLIS2_MANAGED=1.
+# Managed CUDA allocator (opt-in via AURORA_TRELLIS2_MANAGED=1).
+# On CUDA 12.8 / RTX 5070 Ti (Blackwell sm_120) with PyTorch 2.5+, pluggable allocators
+# can cause exit -1 (SIGSEGV) if managed_alloc.so ABI mismatches.
+# Safe attempt with fallback to native PyTorch CUDA allocator.
 if os.environ.get("AURORA_TRELLIS2_MANAGED") == "1":
-    try:
-        import torch as _torch_boot
-        _SO = os.environ.get("AURORA_MANAGED_SO", str(TRELLIS_ROOT / "managed_alloc.so"))
-        _alloc = _torch_boot.cuda.memory.CUDAPluggableAllocator(_SO, "my_malloc", "my_free")
-        _torch_boot.cuda.memory.change_current_allocator(_alloc)  # avant toute alloc CUDA
-        log.warning("[trellis2] allocateur MANAGE actif (spill GPU->RAM, lent) : %s", _SO)
-    except Exception as _e:  # noqa: BLE001
-        log.error("[trellis2] echec allocateur manage: %r", _e)
+    _SO = os.environ.get("AURORA_MANAGED_SO", str(TRELLIS_ROOT / "managed_alloc.so"))
+    if os.path.isfile(_SO):
+        try:
+            import torch as _torch_boot
+            _alloc = _torch_boot.cuda.memory.CUDAPluggableAllocator(_SO, "my_malloc", "my_free")
+            _torch_boot.cuda.memory.change_current_allocator(_alloc)  # avant toute alloc CUDA
+            log.warning("[trellis2] allocateur MANAGE actif (spill GPU->RAM) : %s", _SO)
+        except Exception as _e:  # noqa: BLE001
+            log.warning("[trellis2] managed_alloc.so ignore (repli allocateur natif PyTorch CUDA): %r", _e)
+    else:
+        log.info("[trellis2] managed_alloc.so non trouve, utilisation allocateur natif PyTorch CUDA")
+
 
 
 def _try_import():
@@ -219,7 +229,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         # machine fige. Plafonner torch a ~92% force un vrai OOM CUDA que la
         # ladder to_glb attrape -> retombe a 4096 proprement. L'ecran garde ~1.2 Go.
         try:
-            _vf = float(os.environ.get("AURORA_VRAM_FRACTION", "0.92"))
+            _vf = float(os.environ.get("AURORA_VRAM_FRACTION", "0.98"))
             if 0.5 <= _vf < 1.0:
                 torch.cuda.set_per_process_memory_fraction(_vf, 0)
         except Exception:  # noqa: BLE001
@@ -231,13 +241,25 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         if texture_size is None:
             texture_size = int(os.environ.get("AURORA_TRELLIS2_TEXTURE", "8192"))
         pipe = _load_pipe()
-        image = Image.open(str(image_path)).convert("RGB")
+        def _ouvrir(pth):
+            # 31/07 (recherche, meme cause deja payee cote MV-Adapter): en
+            # convertissant en RGB on jetait l'alpha du matting amont — le
+            # preprocess vendor re-detourait A L'AVEUGLE (cheveux manges,
+            # silhouette fausse). Un alpha REEL (non uniforme) est conserve.
+            im = Image.open(str(pth))
+            if "A" in im.getbands():
+                _a = im.getchannel("A")
+                _mn, _mx = _a.getextrema()
+                if _mx - _mn > 8:
+                    return im.convert("RGBA")
+            return im.convert("RGB")
+        image = _ouvrir(image_path)
         run_input = image
         if extra_views:
             vs = []
             for _v in extra_views:
                 try:
-                    vs.append(Image.open(str(_v)).convert("RGB"))
+                    vs.append(_ouvrir(_v))
                 except Exception:
                     pass
             if vs:
@@ -279,35 +301,62 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         ptype = used_q
         mesh.simplify(16_777_216)  # limite nvdiffrast
 
-        # Export to_glb (remesh + bake texture) : peut OOM (CuMesh) sur un mesh complexe
-        # (ex. carte mere reelle detaillee). On descend texture/decimation plutot que de
-        # laisser tomber vers le Hunyuan mou. Garde TRELLIS meme en cas de VRAM serree.
+        # Offload pipeline models to CPU to release 6.5+ GB VRAM before to_glb rasterization/baking
+        try:
+            if hasattr(pipe, "models") and isinstance(pipe.models, dict):
+                for m_name, m_obj in pipe.models.items():
+                    if hasattr(m_obj, "to"):
+                        try:
+                            m_obj.to("cpu")
+                        except Exception:
+                            pass
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Export to_glb (remesh + bake texture) : CuMesh / nvdiffrast rasterization
         _glb_ladder = [(int(texture_size), int(decimation_target)),
-                       (4096, 1_000_000), (2048, 500_000)]
-        _glb_ladder = [(t, d) for (t, d) in _glb_ladder if t <= int(texture_size)]
+                       (4096, 1_000_000), (2048, 500_000), (1024, 250_000)]
+        _glb_ladder = [(t, d) for (t, d) in _glb_ladder if t <= max(1024, int(texture_size))]
         glb = None
         for _ts, _dt in _glb_ladder:
             try:
+                import gc
+                gc.collect()
                 torch.cuda.empty_cache()
                 glb = o_voxel.postprocess.to_glb(
                     vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
                     coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                     decimation_target=_dt, texture_size=_ts,
-                    # remesh_project=0 QUANTIFIAIT le maillage: on payait le 1536 et on
-                    # livrait du grossier. 0.9 = la valeur de la lib (reprojection
-                    # du detail sur le maillage remaille).
-                    remesh=True, remesh_band=1,
+                    remesh=(os.environ.get("AURORA_TRELLIS2_REMESH", "0") == "1"), remesh_band=1,
                     remesh_project=float(os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.9")),
                     verbose=False,
                 )
                 texture_size = _ts
                 break
             except Exception as _ge:  # noqa: BLE001
-                if "out of memory" in str(_ge).lower():
+                _err_str = str(_ge).lower()
+                if "out of memory" in _err_str or "oom" in _err_str or "cuda" in _err_str:
+                    import gc
+                    gc.collect()
                     torch.cuda.empty_cache()
                     continue
-                raise
+                # If remesh_project failed, retry with remesh=False fallback before giving up
+                try:
+                    glb = o_voxel.postprocess.to_glb(
+                        vertices=mesh.vertices, faces=mesh.faces, attr_volume=mesh.attrs,
+                        coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
+                        aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                        decimation_target=_dt, texture_size=_ts,
+                        remesh=False, verbose=False,
+                    )
+                    texture_size = _ts
+                    break
+                except Exception:
+                    pass
         if glb is None:
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         out_glb = str(out_glb)
@@ -334,7 +383,17 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 "texture_size": (16384 if up16 else int(texture_size)),
                 "auto_exposed": exposed}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:400]}"}
+        import traceback
+        tb = traceback.format_exc()
+        loc = ""
+        for line in reversed(tb.splitlines()):
+            s = line.strip()
+            if s.startswith("File ") and "aurora_trellis_wrapper.py" not in s:
+                loc = s
+                break
+        return {"ok": False,
+                "error": f"{type(e).__name__}: {str(e)[:400]}" + (f" @ {loc}" if loc else ""),
+                "traceback_tail": tb[-1200:]}
 
 
 def main(argv: list[str]) -> int:
@@ -345,8 +404,20 @@ def main(argv: list[str]) -> int:
         return 0
     image = argv[1]
     out = argv[2] if len(argv) > 2 else "trellis2_out.glb"
-    extras = [a for a in argv[3:] if os.path.isfile(a)]
-    r = generate_glb(image, out, extra_views=extras or None)
+    _seed = None
+    _rest = []
+    _it = iter(argv[3:])
+    for _a in _it:
+        if _a == "--seed":
+            try:
+                _seed = int(next(_it))
+            except (StopIteration, ValueError):
+                pass
+        elif os.path.isfile(_a):
+            _rest.append(_a)
+    extras = _rest
+    r = generate_glb(image, out, extra_views=extras or None,
+                     **({"seed": _seed} if _seed is not None else {}))
     # marqueur une-ligne pour parsing par le pipeline (subprocess)
     print("AURORA_TRELLIS_RESULT:" + json.dumps(r), flush=True)
     return 0 if r.get("ok") else 1

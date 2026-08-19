@@ -39,19 +39,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _compat  # noqa: F401
 
 WORKSPACE = Path(__file__).resolve().parents[2]
-LIBRARY_DIR = WORKSPACE / "voices" / "library"
-LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
-# Depot d'echantillons : tout fichier depose ici est enrole automatiquement au
-# premier dialogue du personnage correspondant. C'est le SEUL chemin par lequel
-# une vraie voix peut entrer dans le systeme — sans echantillon, aucun moteur au
-# monde ne « reproduit » une voix, il en invente une.
-DROPBOX_DIR = WORKSPACE / "voices" / "echantillons"
+VOIX_DIR = WORKSPACE / "output" / "voix"
+LIBRARY_DIR = VOIX_DIR / "profils"
+DROPBOX_DIR = VOIX_DIR / "echantillons"
+LEGACY_LIBRARY_DIR = WORKSPACE / "voices" / "library"
+LEGACY_DROPBOX_DIR = WORKSPACE / "voices" / "echantillons"
+
+for _d in (VOIX_DIR, LIBRARY_DIR, DROPBOX_DIR, VOIX_DIR / "generations", VOIX_DIR / "sessions"):
+    _d.mkdir(parents=True, exist_ok=True)
+
 CACHE_DIR = WORKSPACE / "temp" / "voice_clone"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 COSYVOICE3_ADAPTER = Path(__file__).resolve().parent / "cosyvoice3_adapter.py"
 
-# ffmpeg lit la piste audio de n'importe lequel de ces conteneurs : l'utilisateur
-# peut deposer un extrait video sans le convertir au prealable.
 SAMPLE_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".opus", ".aac", ".wma",
                ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".ts"}
 
@@ -242,14 +242,18 @@ def check_dependencies() -> dict:
 def list_library() -> dict:
     """Return all registered voices."""
     voices = []
-    if LIBRARY_DIR.exists():
-        for item in LIBRARY_DIR.iterdir():
-            if not item.is_dir():
+    seen = set()
+    for base_dir in (LIBRARY_DIR, LEGACY_LIBRARY_DIR):
+        if not base_dir.exists():
+            continue
+        for item in base_dir.iterdir():
+            if not item.is_dir() or item.name in seen:
                 continue
             meta_path = item / "metadata.json"
             ref = item / "reference.wav"
             if not ref.exists():
                 continue
+            seen.add(item.name)
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
             except Exception:
@@ -500,6 +504,9 @@ def register_voice(character: str, reference_wav: str, lang: str = "fr",
     except Exception as exc:
         emit("embed_warn", f"fingerprint skipped: {str(exc)[:120]}")
 
+    if not transcript.strip():
+        transcript = transcribe_reference_audio(str(target_ref), lang=lang)
+
     meta = {
         "character": character,
         "slug": slug,
@@ -512,12 +519,16 @@ def register_voice(character: str, reference_wav: str, lang: str = "fr",
         "duration_s": duration_s,
         "transcript": transcript.strip(),
     }
-    (voice_dir / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (voice_dir / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    if transcript.strip():
+        (voice_dir / "transcript.txt").write_text(transcript.strip(), encoding="utf-8")
+
     return {
         "ok": True,
         "slug": slug,
         "path": str(target_ref),
         "audio_quality": audio_quality,
+        "transcript": transcript.strip(),
     }
 
 
@@ -542,34 +553,29 @@ def _core_tokens(slug: str) -> list:
 
 
 def find_sample_file(character: str) -> Path | None:
-    """Cherche dans le depot un fichier qui corresponde au personnage.
-
-    Le fichier gagnant est le plus long : entre « natsu.mp3 » et
-    « natsu_dragneel_scene_complete.mkv », le second porte plus de parole donc
-    un meilleur clonage.
-    """
-    if not DROPBOX_DIR.is_dir():
-        return None
+    """Cherche dans les depots un fichier qui corresponde au personnage."""
     want = _core_tokens(character)
     if not want:
         return None
     best, best_size = None, -1
-    for path in sorted(DROPBOX_DIR.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in SAMPLE_EXTS:
+    for base_dir in (DROPBOX_DIR, LEGACY_DROPBOX_DIR):
+        if not base_dir.is_dir():
             continue
-        have = _core_tokens(path.stem)
-        if not have:
-            continue
-        # Correspondance par prefixe de jetons, dans un sens ou dans l'autre.
-        n = min(len(want), len(have))
-        if have[:n] != want[:n]:
-            continue
-        try:
-            size = path.stat().st_size
-        except OSError:
-            size = 0
-        if size > best_size:
-            best, best_size = path, size
+        for path in sorted(base_dir.iterdir()):
+            if not path.is_file() or path.suffix.lower() not in SAMPLE_EXTS:
+                continue
+            have = _core_tokens(path.stem)
+            if not have:
+                continue
+            n = min(len(want), len(have))
+            if have[:n] != want[:n]:
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+            if size > best_size:
+                best, best_size = path, size
     return best
 
 
@@ -577,7 +583,7 @@ def enroll_from_dropbox(character: str, lang: str = "fr") -> dict:
     """Enrole automatiquement un echantillon depose, s'il en existe un.
 
     Appele avant toute synthese : c'est ce qui fait qu'un fichier depose dans
-    voices/echantillons/ devient une vraie voix clonee sans aucune commande.
+    voices/echantillons/ ou output/voix/echantillons/ devient une vraie voix clonee.
     """
     sample = find_sample_file(character)
     if sample is None:
@@ -592,23 +598,13 @@ def enroll_from_dropbox(character: str, lang: str = "fr") -> dict:
 
 
 def is_real_voice(meta: dict) -> bool:
-    """Vrai echantillon (donc reproduction) plutot que voix amorcee par TTS.
-
-    Une voix amorcee via Kokoro est une voix de synthese recopiee : la cloner
-    reproduit fidelement... un robot. Elle ne doit jamais compter comme une
-    reference.
-    """
+    """Vrai echantillon (donc reproduction) plutot que voix amorcee par TTS."""
     source = str((meta or {}).get("source") or "")
     return bool(source) and not source.startswith("bootstrap_")
 
 
 def resolve_voice(character: str, lang: str = "fr") -> dict:
-    """Etat de la voix d'un personnage, apres tentative d'enrolement.
-
-    Renvoie toujours un verdict explicite. `cloned` distingue une VRAIE
-    reproduction d'une voix inventee : c'est ce champ que le pipeline trace,
-    pour qu'une voix de synthese ne puisse plus passer pour un clonage.
-    """
+    """Etat de la voix d'un personnage, apres tentative d'enrolement."""
     character = (character or "").strip()
     if not character:
         return {"ok": False, "cloned": False, "reason": "personnage sans nom"}
@@ -645,20 +641,24 @@ def resolve_voice(character: str, lang: str = "fr") -> dict:
 def find_voice(character: str) -> dict:
     """Look up a character in the library. Returns metadata + reference path or {ok: False}."""
     slug = slugify(character)
-    voice_dir = LIBRARY_DIR / slug
-    if not voice_dir.exists():
-        return {"ok": False}
-    ref = voice_dir / "reference.wav"
-    if not ref.exists():
-        return {"ok": False}
-    meta_path = voice_dir / "metadata.json"
-    meta = {}
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"ok": True, "slug": slug, "reference": str(ref), "metadata": meta}
+    for base_dir in (LIBRARY_DIR, LEGACY_LIBRARY_DIR):
+        if not base_dir.exists():
+            continue
+        voice_dir = base_dir / slug
+        if not voice_dir.exists():
+            continue
+        ref = voice_dir / "reference.wav"
+        if not ref.exists():
+            continue
+        meta_path = voice_dir / "metadata.json"
+        meta = {}
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {"ok": True, "slug": slug, "reference": str(ref), "metadata": meta}
+    return {"ok": False}
 
 
 # --------------------------------------------------------------------------
@@ -740,6 +740,88 @@ def synthesize_f5(text: str, reference_wav: str, output_wav: str, ref_text: str 
         return {"ok": False, "error": str(exc)[:200], "engine": "f5-tts"}
 
 
+def transcribe_reference_audio(wav_path: str | Path, lang: str = "fr") -> str:
+    """Extrait la transcription exacte de l'audio de référence avec Whisper pour alignement optimal."""
+    p = Path(wav_path)
+    if not p.is_file():
+        return ""
+    try:
+        from faster_whisper import WhisperModel
+        import torch
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        comp = "float16" if dev == "cuda" else "int8"
+        whisper = WhisperModel("large-v3", device=dev, compute_type=comp)
+        target_lang = lang[:2] if (lang and lang != "auto") else None
+        segments, _ = whisper.transcribe(str(p), language=target_lang, beam_size=5, vad_filter=True)
+        text = " ".join(s.text.strip() for s in segments if s.text.strip()).strip()
+        return text
+    except Exception as exc:
+        emit("transcribe_warn", f"transcription echouee: {exc}")
+        return ""
+
+
+def calibrate_profile(slug: str) -> dict:
+    """Calibre un profil vocal existant en extrayant sa transcription exacte."""
+    safe_slug = slugify(slug)
+    found_ref: Path | None = None
+    meta_path: Path | None = None
+    voice_dir: Path | None = None
+
+    for base_dir in (LIBRARY_DIR, LEGACY_LIBRARY_DIR):
+        d = base_dir / safe_slug
+        if d.is_dir() and (d / "reference.wav").is_file():
+            voice_dir = d
+            found_ref = d / "reference.wav"
+            meta_path = d / "metadata.json"
+            break
+
+    if not found_ref or not voice_dir:
+        return {"ok": False, "error": f"Profil vocal '{slug}' introuvable"}
+
+    meta = {}
+    if meta_path and meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+
+    existing_transcript = str(meta.get("transcript") or "").strip()
+    if not existing_transcript:
+        sidecar = voice_dir / "transcript.txt"
+        if sidecar.is_file():
+            existing_transcript = sidecar.read_text(encoding="utf-8").strip()
+
+    if not existing_transcript:
+        lang = meta.get("lang", "fr")
+        existing_transcript = transcribe_reference_audio(str(found_ref), lang=lang)
+
+    meta["transcript"] = existing_transcript
+    if meta_path:
+        meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    if existing_transcript:
+        (voice_dir / "transcript.txt").write_text(existing_transcript, encoding="utf-8")
+
+    return {
+        "ok": True,
+        "slug": safe_slug,
+        "character": meta.get("character", safe_slug),
+        "transcript": existing_transcript,
+        "reference": str(found_ref),
+    }
+
+
+def calibrate_all_library_profiles() -> dict:
+    """Parcourt et calibre tous les profils de voix enregistrés."""
+    results = {}
+    for base_dir in (LIBRARY_DIR, LEGACY_LIBRARY_DIR):
+        if not base_dir.is_dir():
+            continue
+        for item in base_dir.iterdir():
+            if item.is_dir() and (item / "reference.wav").is_file():
+                results[item.name] = calibrate_profile(item.name)
+    return {"ok": True, "calibrated": results}
+
+
 def _reference_prompt_text(reference_wav: str) -> str:
     reference = Path(reference_wav)
     metadata_path = reference.parent / "metadata.json"
@@ -759,6 +841,19 @@ def _reference_prompt_text(reference_wav: str) -> str:
                     return transcript
             except Exception:
                 pass
+
+    # Auto-calibration à la volée si manquant
+    extracted = transcribe_reference_audio(str(reference))
+    if extracted:
+        try:
+            (reference.parent / "transcript.txt").write_text(extracted, encoding="utf-8")
+            if metadata_path.is_file():
+                meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+                meta["transcript"] = extracted
+                metadata_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        return extracted
     return ""
 
 
@@ -769,6 +864,9 @@ def synthesize_cosyvoice3(
     lang: str,
     prompt_text: str = "",
     instruction: str = "",
+    source_wav: str = "",
+    mode: str = "zero_shot",
+    speed: float = 1.0,
 ) -> dict:
     """Run the official CosyVoice3 API through its isolated Python runtime."""
     status = cosyvoice3_status()
@@ -788,13 +886,17 @@ def synthesize_cosyvoice3(
         "--reference", reference_wav,
         "--lang", lang,
         "--output", output_wav,
+        "--mode", mode,
+        "--speed", str(speed),
     ]
+    if source_wav.strip():
+        cmd.extend(["--source-wav", source_wav.strip()])
     resolved_prompt = (prompt_text or _reference_prompt_text(reference_wav)).strip()
     if resolved_prompt:
         cmd.extend(["--prompt-text", resolved_prompt])
     if instruction.strip():
         cmd.extend(["--instruction", instruction.strip()])
-    emit("cosyvoice3_gen", f"synthese {lang}: {text[:60]}...")
+    emit("cosyvoice3_gen", f"synthese {lang} [{mode}]: {text[:60] if text else Path(source_wav).name}...")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except Exception as exc:
@@ -828,6 +930,9 @@ def synthesize(
     lang: str = "auto",
     prompt_text: str = "",
     instruction: str = "",
+    source_wav: str = "",
+    mode: str = "zero_shot",
+    speed: float = 1.0,
 ) -> dict:
     """Quality-first synthesis: CosyVoice3, then explicit legacy fallbacks."""
     if lang == "auto":
@@ -841,6 +946,9 @@ def synthesize(
         lang,
         prompt_text,
         instruction,
+        source_wav,
+        mode,
+        str(speed),
     ])
     key = hashlib.sha256(key_material.encode("utf-8")).hexdigest()[:20]
     cached = CACHE_DIR / f"{key}.wav"
@@ -876,6 +984,9 @@ def synthesize(
                 lang,
                 prompt_text=prompt_text,
                 instruction=instruction,
+                source_wav=source_wav,
+                mode=mode,
+                speed=speed,
             ),
         ),
     ]
@@ -931,6 +1042,9 @@ def synthesize(
             pass
     else:
         result["fallback_chain"] = attempts
+        primary_err = attempts[0].get("error") if attempts else ""
+        if primary_err and "No module named" in str(result.get("error")):
+            result["error"] = primary_err
 
     return result
 

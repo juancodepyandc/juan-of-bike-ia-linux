@@ -21,20 +21,42 @@ def remesh_mesh(mesh_path, remesh_path):
 
 
 def mesh_simplify_trimesh(inputpath, outputpath, target_count=150000):
-    # Aurora: 40000 -> 150000. Le remesh a 40k ecrasait les details fins (ailerons
-    # Goldorak en "planches", corps "mou"). 150k preserve la silhouette; sur 16 Go
-    # c'est sur car la VRAM est liberee avant le paint (voir _free_gpu_before_hunyuan).
-    # 先去除离散面
     ms = pymeshlab.MeshSet()
     if inputpath.endswith(".glb"):
         ms.load_new_mesh(inputpath, load_in_a_single_layer=True)
     else:
         ms.load_new_mesh(inputpath)
-    ms.save_current_mesh(outputpath.replace(".glb", ".obj"), save_textures=False)
-    # 调用减面函数
-    courent = trimesh.load(outputpath.replace(".glb", ".obj"), force="mesh")
-    face_num = courent.faces.shape[0]
+    
+    # 1. Taubin smoothing removes marching cubes octree stepping ("effet carre") without shrinking volume
+    try:
+        ms.apply_coord_taubin_smoothing(lambda_=0.5, mu=-0.53, steps=3)
+    except Exception:
+        try:
+            ms.apply_coord_laplacian_smoothing(steps=2)
+        except Exception:
+            pass
 
-    if face_num > target_count:
-        courent = courent.simplify_quadric_decimation(face_count=int(target_count))  # trimesh 4.x: 1st positional is `percent`, not `face_count`
+    # 2. Quadric edge collapse decimation preserving boundaries and normals
+    try:
+        if ms.current_mesh().face_number() > target_count:
+            ms.meshing_decimation_quadric_edge_collapse(
+                targetfacenum=int(target_count),
+                preserveboundary=True,
+                preservenormal=True
+            )
+    except Exception:
+        pass
+
+    # 3. Recompute smooth organic vertex normals
+    try:
+        ms.compute_normal_per_vertex()
+    except Exception:
+        pass
+
+    out_obj = outputpath.replace(".glb", ".obj")
+    ms.save_current_mesh(out_obj, save_textures=False)
+    if outputpath.endswith(".obj"):
+        return
+    # If output was requested as another extension, convert
+    courent = trimesh.load(out_obj, force="mesh", process=False)
     courent.export(outputpath)

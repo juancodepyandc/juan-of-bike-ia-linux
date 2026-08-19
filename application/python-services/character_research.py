@@ -255,29 +255,33 @@ def research_via_qwen3vl(summary: str, image_url: str | None, prompt: str, visio
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", required=True, help="Demande utilisateur (ex: 'Natsu Dragneel')")
+    parser.add_argument("--prompt", default="", help="Demande utilisateur (ex: 'Natsu Dragneel')")
+    parser.add_argument("--image-path", default=None, help="Chemin vers une photo locale a analyser")
     parser.add_argument("--lang", default="fr", help="Langue Wikipedia a consulter en priorite")
     args = parser.parse_args()
 
-    emit(0, f"Recherche sur: {args.prompt}")
+    prompt_text = args.prompt or (os.path.basename(args.image-path) if args.image_path else "unknown subject")
+    emit(0, f"Recherche sur: {prompt_text}")
 
-    # Etape 1: Wikipedia (fr + en + variantes)
-    emit(10, "Recherche Wikipedia...")
-    summary, image_url = fetch_wikipedia_summary(args.prompt, args.lang)
-    if not summary and args.lang != "en":
-        summary, image_url = fetch_wikipedia_summary(args.prompt, "en")
+    image_url = None
+    summary = ""
+    if args.image_path and os.path.exists(args.image_path):
+        import base64
+        emit(10, f"Lecture photo locale: {args.image_path}")
+        try:
+            with open(args.image_path, "rb") as img_f:
+                image_base64 = base64.b64encode(img_f.read()).decode("ascii")
+            image_url = f"data:image/png;base64,{image_base64}"
+        except Exception as e:
+            emit(10, f"Erreur lecture image locale: {e}")
 
-    # Si toujours rien, essayer des variantes (ex: "Caine The Amazing Digital Circus"
-    # ne donne rien mais "The Amazing Digital Circus" donne l article).
-    if not summary:
-        # Extrait les mots-cles "source" (ex: from X, dans X, of X, de X)
-        source_match = re.search(r"\b(?:from|dans|of|de|in)\s+(.{3,60})", args.prompt, re.IGNORECASE)
-        if source_match:
-            source = source_match.group(1).strip()
-            emit(15, f"Retry Wikipedia avec source: {source}")
-            summary, image_url = fetch_wikipedia_summary(source, "en")
-            if not summary and args.lang != "en":
-                summary, image_url = fetch_wikipedia_summary(source, args.lang)
+    if args.prompt:
+        emit(15, "Recherche Wikipedia...")
+        summary, wiki_img = fetch_wikipedia_summary(args.prompt, args.lang)
+        if not summary and args.lang != "en":
+            summary, wiki_img = fetch_wikipedia_summary(args.prompt, "en")
+        if not image_url and wiki_img:
+            image_url = wiki_img
 
     # Etape 2: Modele vision
     emit(25, "Detection modele vision...")
@@ -286,13 +290,13 @@ def main():
     # Etape 3: qwen3-vl si dispo, sinon heuristique seule
     research = {}
     if vision_model:
-        research = research_via_qwen3vl(summary, image_url, args.prompt, vision_model)
+        research = research_via_qwen3vl(summary, image_url, prompt_text, vision_model)
 
     # Fallback heuristique si qwen3-vl fail ou absent
     if not research:
-        legacy_mode = classify_animation_mode_heuristic(args.prompt, summary)
+        legacy_mode = classify_animation_mode_heuristic(prompt_text, summary)
         research = {
-            "brief": f"character based on the prompt: {args.prompt}",
+            "brief": f"character based on: {prompt_text}",
             "animation_mode": "stylized" if legacy_mode != "humanoid" else "humanoid",
             "face_complexity": "simple" if legacy_mode == "humanoid" else "stylized",
             "rendering_strategy": "overlay" if legacy_mode == "humanoid" else "global_effects",
@@ -307,7 +311,8 @@ def main():
     emit(100, f"Brief: {research.get('brief', '')[:60]} | strategy={research.get('rendering_strategy', '?')}")
     print(json.dumps({
         "ok": True,
-        "prompt": args.prompt,
+        "prompt": prompt_text,
+        "image_path": args.image_path,
         "brief": research.get("brief", ""),
         "animation_mode": research.get("animation_mode", "humanoid"),
         "face_complexity": research.get("face_complexity", "simple"),
@@ -319,10 +324,11 @@ def main():
         "speaking_motion": research.get("speaking_motion", ""),
         "warnings": research.get("warnings", ""),
         "wiki_summary": summary[:500] if summary else "",
-        "canonical_image": image_url,
+        "canonical_image": image_url if not args.image_path else None,
         "vision_model": vision_model,
     }))
 
 
 if __name__ == "__main__":
     main()
+

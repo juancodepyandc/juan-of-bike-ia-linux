@@ -365,6 +365,33 @@ def make_particle_emitter(center: Vector, size: float, kind: str, count: int, pa
     emitter.data.materials.append(mat)
 
 
+def add_volumetric_gas_domain(center: Vector, size: float, frames: int, density: float = 2.0, color: tuple[float, float, float, float] = (0.2, 0.5, 1.0, 1.0)) -> None:
+    """Create a Blender domain with Principled Volume shader for volumetric gas, smoke, plasma or aura."""
+    bpy.ops.mesh.primitive_cube_add(size=size * 2.5, location=(center.x, center.y, center.z + size * 0.2))
+    domain = bpy.context.active_object
+    domain.name = "GasVolumeDomain"
+    mat = bpy.data.materials.new("VolumetricGasMaterial")
+    mat.use_nodes = True
+    nt = mat.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    vol = nt.nodes.new("ShaderNodeVolumePrincipled")
+    vol.inputs["Density"].default_value = density
+    vol.inputs["Color"].default_value = color
+    vol.inputs["Emission Strength"].default_value = 1.2
+    vol.inputs["Emission Color"].default_value = color
+    nt.links.new(vol.outputs["Volume"], out.inputs["Volume"])
+    domain.data.materials.append(mat)
+
+    # Animate volume density fluctuation (sine wave)
+    for f in range(1, frames + 1, 4):
+        phase = (f - 1) / frames * 4 * math.pi
+        vol.inputs["Density"].default_value = max(0.2, density * (0.8 + 0.4 * math.sin(phase)))
+        vol.inputs["Density"].keyframe_insert("default_value", frame=f)
+
+
+
 def add_camera_orbit(cam: bpy.types.Object, target: Vector, frames: int, radius: float) -> None:
     bpy.ops.object.empty_add(type="PLAIN_AXES", location=tuple(target))
     pivot = bpy.context.active_object
@@ -541,6 +568,9 @@ def render_scene(obj: bpy.types.Object, profile: dict[str, Any], out_dir: str) -
                 elif atype == "emission_pulse":
                     animate_emission_pulse(obj_a, frames, fps, params.get("freq_hz", 0.3),
                                             params.get("min_strength", 0.4), params.get("max_strength", 3.5))
+                    meta["applied"].append(atype)
+                elif atype == "volumetric_gas" or atype == "gas_smoke" or atype == "aura_glow":
+                    add_volumetric_gas_domain(center, size_a, frames, params.get("density", 2.0))
                     meta["applied"].append(atype)
                 elif atype.startswith("particles_"):
                     kind = atype.split("_", 1)[1]

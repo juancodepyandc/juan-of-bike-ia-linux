@@ -58,7 +58,9 @@ _FACET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("decor", re.compile(
         r"\b(decor|d[ée]cor|sc[èe]ne|scene|environnement|environment|"
         r"background|arri[èe]re[\s-]?plan|paysage|landscape|cityscape|"
-        r"ruelle|all[ée]e|alley|rue|street|ville|city|cit[ée]|"
+        r"village|villages|town|ville|city|cit[ée]|magnolia|springfield|"
+        r"ruelle|all[ée]e|alley|rue|street|place\s+du\s+village|canal|canaux|"
+        r"banni[èe]res?|banderoles?|enseignes?|"
         r"n[ée]o[\s-]?tokyo|cyberpunk\s+city|rooftop|toit|"
         r"for[êe]t|forest|d[ée]sert|desert|jungle|"
         r"int[ée]rieur|interior|pi[èe]ce|room|chambre|atelier|workshop|"
@@ -158,12 +160,13 @@ _NAME_STOPWORDS = {
 # research), so it is a dictionary, not hardcoded data. Anything not here is
 # confirmed by the local LLM (general mechanism, no list needed).
 _KNOWN_ICONS = {
-    "goldorak", "grendizer", "natsu", "luffy", "naruto", "sasuke", "goku", "vegeta",
+    "goldorak", "grendizer", "natsu", "lucy", "happy", "erza", "gray", "luffy", "naruto", "sasuke", "goku", "vegeta",
     "pikachu", "mario", "luigi", "sonic", "link", "zelda", "kirby", "batman", "superman",
     "spiderman", "ironman", "hulk", "thor", "wolverine", "deadpool", "gandalf", "yoda",
     "mickey", "megaman", "ichigo", "saitama", "gojo", "tanjiro", "totoro", "charizard",
     "bulbasaur", "sangoku", "gundam", "mazinger", "voltron", "optimus", "bumblebee",
     "sonic", "shrek", "buzz", "woody", "elsa", "pikachu", "asuka", "eva", "goldrake",
+    "homer", "bart", "marge", "lisa", "springfield", "magnolia",
 }
 
 
@@ -191,7 +194,9 @@ def _confirm_named_via_llm(word: str) -> dict | None:
             return None
         d = _json.loads(out[a:b + 1])
         if d.get("is_named"):
-            return {"name": (str(d.get("canonical") or "").strip() or word), "basis": "named_identity"}
+            raw_canonical = str(d.get("canonical") or "").strip()
+            clean_name = re.split(r"[,;(\[]", raw_canonical)[0].strip() or word
+            return {"name": clean_name, "basis": "named_identity"}
     except Exception:  # noqa: BLE001
         pass
     return None
@@ -199,38 +204,54 @@ def _confirm_named_via_llm(word: str) -> dict | None:
 
 def _detect_identity(prompt: str) -> dict | None:
     """Return {name, basis} when a named real person / known character is
-    requested, else None. Never fabricates an appearance — it only flags that
-    the identity must be preserved, leaving the look to the diffusion model /
-    reference research."""
+    requested, else None. Preserves both character identity and franchise context."""
     fiction = bool(_FICTION_CONTEXT_RE.search(prompt))
-    name = None
+
+    # 1. Check for single-name known icons with optional franchise context
+    # (e.g. "Happy dans Fairy Tail", "Goldorak dans l'espace", "Luffy in One Piece")
+    tokens = list(re.finditer(r"\b([A-ZÀ-Ý][\wÀ-ÿ'’-]{2,})\b", prompt))
+    for m in tokens:
+        tok = m.group(1)
+        low = tok.lower()
+        if low in _NAME_STOPWORDS:
+            continue
+        if low in _KNOWN_ICONS:
+            rest = prompt[m.end():]
+            franchise_match = re.match(
+                r"^\s+(?:dans\s+la\s+|dans\s+l['’]?|dans\s+le\s+|dans\s+les\s+|dans\s+|de\s+la\s+|de\s+l['’]?|des\s+|du\s+|de\s+|d['’]|in\s+the\s+|in\s+|from\s+the\s+|from\s+|of\s+the\s+|of\s+)([A-ZÀ-Ý][\wÀ-ÿ'’._-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’._-]+)*)",
+                rest,
+                re.IGNORECASE,
+            )
+            if franchise_match:
+                raw_franchise = franchise_match.group(1).strip()
+                stop = re.search(r"\s+(?:avec|sans|sur|sous|qui|afin|pour|en|posant|debout|assis|portant|tenant|with|on|in|holding|posing)\b", raw_franchise, re.IGNORECASE)
+                franchise = raw_franchise[:stop.start()].strip(" ,.;:!?") if stop else raw_franchise.strip(" ,.;:!?")
+                franchise = " ".join(franchise.split()[:4])
+                return {
+                    "name": f"{tok} {franchise}",
+                    "character": tok,
+                    "franchise": franchise,
+                    "basis": "named_identity",
+                }
+            return {"name": tok, "basis": "named_identity"}
+
+    # 2. Check 2-token Proper Names (Keanu Reeves, Abraham Lincoln...)
     for m in _PROPER_NAME_RE.finditer(prompt):
         candidate = m.group(1).strip()
         first = candidate.split()[0].lower()
         if first in _NAME_STOPWORDS:
             continue
-        name = candidate
-        break
-    if name and (fiction or True):
-        # A two-token capitalized name in a 3D-character prompt is almost always
-        # an identity to preserve (celebrity, historical figure, named hero).
-        return {"name": name, "basis": "named_identity"}
-    # SINGLE-NAME icons (Goldorak, Natsu, Ironman, Pikachu...) — the two-token
-    # regex above misses them, which is why 'Goldorak' produced a hallucinated
-    # Mazinger (no identity -> no real-reference research). Detect a lone
-    # capitalized token, confirm via gazetteer then the local LLM.
-    _llm_tried = False
+        return {"name": candidate, "basis": "named_identity"}
+
+    # 3. LLM confirmation fallback for lone unknown proper nouns
     for tok in re.findall(r"\b([A-ZÀ-Ý][\wÀ-ÿ'’-]{3,})\b", prompt):
         low = tok.lower()
         if low in _NAME_STOPWORDS:
             continue
-        if low in _KNOWN_ICONS:
-            return {"name": tok, "basis": "named_identity"}
-        if not _llm_tried:
-            _llm_tried = True
-            conf = _confirm_named_via_llm(tok)
-            if conf:
-                return conf
+        conf = _confirm_named_via_llm(tok)
+        if conf:
+            return conf
+
     if fiction:
         return {"name": None, "basis": "fiction_context"}
     return None
@@ -296,7 +317,9 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
 #     steam hugging the figure). The mood is honored without breaking the rig.
 _FACET_INSTRUCTION_SCENE = {
     "decor": "the surrounding decor / environment ({snips}) must be present and "
-             "readable behind and around the subject, not replaced by a plain studio backdrop",
+             "readable behind and around the subject, not replaced by a plain studio backdrop; "
+             "accurate spatial depth and linear perspective with no giant or out-of-scale background people, "
+             "no deformed humanoid blobs or messy unrecognizable characters on banners, crisp sharp signage without gibberish lettering or missing letters, clean unpopulated architectural scenery",
     "mechanical": "the mechanical apparatus ({snips}) must be modeled as real "
                   "functional hard-surface geometry with visible parts, not hinted or omitted",
     "fluids": "the fluid / atmospheric elements ({snips}) must be visibly rendered "

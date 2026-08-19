@@ -169,6 +169,7 @@ def looks_like_real_image(url: str) -> bool:
         "200x200",
         "240x240",
         "thumbnail",
+        "wallpaper-thumb",
     ]):
         return False
     return True

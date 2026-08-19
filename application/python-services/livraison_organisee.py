@@ -166,8 +166,17 @@ def organiser(run_dir: str | Path, run_id: str, *,
     old_refs = run_dir / "references"
     if old_refs.is_dir():
         try:
+            # 30/07 (audit): on supprimait references/ EN BLOC — y compris la
+            # PHOTO fournie par l'utilisateur sur un run UI. Sa photo est le
+            # contexte de la conversation: elle part dans reference/, seules
+            # les vues abandonnees disparaissent.
+            for _f in old_refs.iterdir():
+                if _f.is_file() and _f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".avif"):
+                    if "synthetic" in _f.name or "_seed" in _f.name:
+                        continue
+                    shutil.copyfile(_f, d_ref / _f.name)
             shutil.rmtree(old_refs)
-            deplaces.append("references/ (vues abandonnees) -> supprime")
+            deplaces.append("references/ -> photos gardees dans reference/, vues abandonnees supprimees")
         except Exception:  # noqa: BLE001
             pass
 

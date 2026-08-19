@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Aurora 3D color preservation diagnostic — pinpoints where in the pipeline
-the colors collapse. Designed to fix the Cat 1 root cause (FLUX reference
-was correct, Hunyuan3D output was monochrome).
+the colors collapse (reference synthesis was correct, generated mesh came
+out monochrome).
 
 Compares:
     1. Reference image (PNG): unique colors + variance + dominant palette
@@ -9,7 +9,7 @@ Compares:
     3. (Optional) Post-processed mesh: same metrics
 
 Outputs a JSON verdict identifying the lossy stage:
-    "stage_lost": "hunyuan3d" | "post_process" | "none"
+    "stage_lost": "generation" | "post_process" | "none"
     "ref_color_count": <int>
     "mesh_color_count": <int>
     "color_loss_ratio": <float>  # 0.0 = perfect, 1.0 = total loss
@@ -152,7 +152,7 @@ def diagnose(reference: Path, mesh: Path, post_mesh: Path | None = None) -> dict
 
     stage_lost = "none"
     if color_loss_mesh > 0.7:
-        stage_lost = "hunyuan3d"
+        stage_lost = "generation"
     elif post_metrics and post_count is not None:
         post_loss = (
             round(1.0 - (post_count / max(1, mesh_count)), 4)
@@ -164,14 +164,14 @@ def diagnose(reference: Path, mesh: Path, post_mesh: Path | None = None) -> dict
     suggestions: list[str] = []
     if mesh_count <= 1 and ref_count > 50:
         suggestions.append(
-            "Hunyuan3D collapsed colors to monochrome — switch to "
-            "DreamGaussian (per v78j luxury-material routing) or run "
-            "Hunyuan3D with --bake-vertex-colors / --use-pbr-textures."
+            "Generation collapsed colors to monochrome — check the "
+            "TRELLIS.2 texture SLat output, or pivot to DreamGaussian "
+            "for stylized subjects (secondary pipeline)."
         )
     elif mesh_count < ref_count // 4 and ref_count > 50:
         suggestions.append(
             "Significant color loss in mesh — consider multi-view "
-            "reference (front + back + side) before Hunyuan3D, or pivot "
+            "reference (front + back + side) before generation, or pivot "
             "to DreamGaussian for stylized subjects."
         )
     if post_metrics and post_count is not None and post_count < mesh_count // 2:

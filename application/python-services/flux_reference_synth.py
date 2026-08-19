@@ -133,7 +133,15 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
         },
         "33": {
             "class_type": "CLIPTextEncode",
-            "inputs": {"clip": ["11", 0], "text": "cropped, cut off, out of frame, partial view, close-up, truncated body, missing limbs, blurry, low detail"},
+            "inputs": {"clip": ["11", 0], "text": (
+                "cropped, cut off, out of frame, partial view, close-up, truncated body, "
+                "missing limbs, deformed hands, extra fingers, malformed limbs, blurry, low quality, "
+                "unwanted background crowd, random pedestrians, deformed background bystanders, "
+                "out-of-scale giant figures, distorted crowd, blurry humanoid blobs, "
+                "random text, misspelled text, gibberish lettering, corrupted words, "
+                "watermark, signature, duplicate subject, split panels, multi-panel layout, "
+                "collage, cluttered background"
+            )},
         },
         "27": {
             "class_type": "EmptyFlux2LatentImage",
@@ -922,8 +930,7 @@ def synth_multiview(prompt: str, run_id: str, *,
     """Generate 4 views (front/back/left/right) of the same prompt with a
     shared seed so the subject identity is preserved across views.
     Output: <run_id>_reference.png (front, primary), plus
-            <run_id>_back.png, <run_id>_left.png, <run_id>_right.png.
-    Compatible with hunyuan3d_run.py --mv-front --mv-back --mv-left --mv-right."""
+            <run_id>_back.png, <run_id>_left.png, <run_id>_right.png."""
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():
