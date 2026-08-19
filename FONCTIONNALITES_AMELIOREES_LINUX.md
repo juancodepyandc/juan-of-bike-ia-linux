@@ -66,10 +66,11 @@ Demarrage local:
 ./start-aurora.sh
 ```
 
-Demarrage avec tunnel Cloudflare:
+Le tunnel Cloudflare et la synchronisation de `aurora-live/tunnel.txt` sont
+actifs par defaut. Pour lancer sans exposition publique:
 
 ```bash
-AURORA_START_TUNNEL=1 ./start-aurora.sh
+AURORA_START_TUNNEL=0 ./start-aurora.sh
 ```
 
 ## Ce qui n'est pas commite

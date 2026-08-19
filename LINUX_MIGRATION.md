@@ -53,10 +53,15 @@ bash scripts/linux/verify-linux-stack.sh
 ./start-aurora.sh
 ```
 
-With Cloudflare quick tunnel:
+`start-aurora.sh` démarre le tunnel Cloudflare par défaut, écrit son adresse
+courante dans le `tunnel.txt` local, puis la copie dans
+`../aurora-live/tunnel.txt` et met le README de ce dépôt public à jour. Seuls
+ces deux fichiers sont commités et poussés vers `aurora-live/main`.
+
+For a local-only launch:
 
 ```bash
-AURORA_START_TUNNEL=1 ./start-aurora.sh
+AURORA_START_TUNNEL=0 ./start-aurora.sh
 ```
 
 The repository intentionally excludes generated outputs, local secrets, ComfyUI installs, model weights and CUDA/tool caches. The Linux scripts recreate the runtime locally after cloning.

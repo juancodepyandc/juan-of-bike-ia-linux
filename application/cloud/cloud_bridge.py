@@ -617,9 +617,9 @@ async def web_image(request: dict):
     """Search for an image matching `query` and return it as a data URL.
 
     Strategy (best-effort):
-      1. Unsplash "source.unsplash.com" (no API key, returns a random relevant photo).
+      1. LoremFlickr (returns a random relevant photo).
       2. Fallback: pull the first direct image link that appears in a DuckDuckGo
-         image search HTML. Since those are brittle, Unsplash is tried first.
+         image search HTML. Since those are brittle, LoremFlickr is tried first.
 
     Always returns {"ok": bool, "dataUrl": "data:image/...;base64,...", "source": "..."}.
     The frontend stores the returned dataUrl directly as assets/images/<name>.txt and
@@ -635,11 +635,10 @@ async def web_image(request: dict):
     if cached:
         return cached
 
-    # Unsplash Source — returns a 403 on some edge regions, but generally works.
+    # LoremFlickr
     width = int(request.get("width") or 1200)
     height = int(request.get("height") or 800)
     candidates = [
-        f"https://source.unsplash.com/{width}x{height}/?{_urlparse.quote(query)}",
         f"https://loremflickr.com/{width}/{height}/{_urlparse.quote(query)}",
     ]
     for cand in candidates:
@@ -652,7 +651,7 @@ async def web_image(request: dict):
                 _IMAGE_CACHE.pop(next(iter(_IMAGE_CACHE)))
             return payload
 
-    return JSONResponse({"ok": False, "error": "no image found via Unsplash / LoremFlickr"}, status_code=502)
+    return JSONResponse({"ok": False, "error": "no image found via LoremFlickr"}, status_code=502)
 
 
 # ---------------------------------------------------------------------------

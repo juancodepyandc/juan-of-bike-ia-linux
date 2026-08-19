@@ -18,12 +18,21 @@ function readGitInfo(): { commit: string; branch: string; ts: string } {
 
 function readTunnelHost(): string | null {
   try {
-    const p = resolve(__dirname, '..', 'tunnel_url.txt')
-    statSync(p)
-    const raw = readFileSync(p, 'utf8').trim()
-    if (!raw) return null
-    const m = raw.match(/^https?:\/\/([^/\s]+)/i)
-    return m ? m[1] : null
+    // tunnel.txt is versioned and written by the Linux launcher. Keep the
+    // old local-only filename as a migration fallback for existing installs.
+    for (const filename of ['tunnel.txt', 'tunnel_url.txt']) {
+      const p = resolve(__dirname, '..', filename)
+      try {
+        statSync(p)
+        const raw = readFileSync(p, 'utf8').trim()
+        if (!raw) continue
+        const m = raw.match(/^https?:\/\/([^/\s]+)/i)
+        if (m) return m[1]
+      } catch {
+        // Try the legacy filename before considering the tunnel unavailable.
+      }
+    }
+    return null
   } catch {
     return null
   }

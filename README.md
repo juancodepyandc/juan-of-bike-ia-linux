@@ -2,22 +2,24 @@
 
 Copilote IA local · Tauri + React + Python · 100 % offline.
 
+AuroraIA-v2 est un poste de travail IA qui tourne entièrement en local (aucun appel à une API cloud pour l'inférence) : un shell desktop Tauri, une app React, et des modèles Ollama/ComfyUI/HuggingFace pilotés par un bridge Python. Neuf modules couvrent des usages différents mais partagent la même exigence : un résultat livré doit être vérifié (rendu réellement affiché, code réellement exécuté, mesh réellement mesuré), jamais seulement déclaré correct par le pipeline qui l'a produit.
+
 9 modules interactifs :
-- **Conversation** · chat Ollama streaming avec pièces jointes (texte + images via Qwen3-VL) et narration
-- **Academy** · cours / fiches BAC / exos / quiz générés par IA, exam blanc, grading, hints progressifs, révision Leitner, export PDF / Anki
-- **Image** · atelier FLUX avec wheel de styles
-- **Vidéo** · Wan2.2 T2V/I2V · projecteur cinéma
-- **Code** · modèle expert · collection de cartes, diff viewer
-- **Dessin** · sumi-e + sketch2img
-- **3D** · Hunyuan3D · DreamGaussian · Blender · Meshroom
-- **Voice** · copilote vocal continu avec caméra + vision + Character Forge
-- **Cyber** · dojo de katas · labs IA interactifs · grading + flag auto-validation
+- **Conversation** · chat Ollama en streaming, pièces jointes texte/image analysées par Qwen3-VL, narration vocale — le pipeline enchaîne analyse → plan → brouillon → vérification → raffinement → livraison plutôt qu'une réponse en un seul passage.
+- **Academy** · cours, fiches BAC, exercices et quiz générés par IA calibrés sur les vrais sujets STI2D/NSI/PC/SVT, examen blanc avec correction, indices progressifs, révision espacée (Leitner), export PDF/Anki.
+- **Image** · atelier de génération FLUX avec une roue de 15 styles, recherche de références visuelles, et un forge de personnages en plusieurs étapes.
+- **Vidéo** · Wan2.2 texte-vers-vidéo et image-vers-vidéo, cohérence d'un plan à l'autre par keyframe d'action, doublage/lipsync, montage automatique jusqu'à un film livré.
+- **Code** · génération multi-langages (22 langages en sandbox) avec classification d'intention, plan d'architecture, exécution isolée (conteneur Podman), auto-correction multi-passes, et une porte de qualité visuelle qui rejette un rendu réellement cassé plutôt que de se fier au score déclaré par le modèle.
+- **Dessin** · sketch sur canvas interprété par vision (Qwen3-VL) puis rendu par FLUX à fort denoise, du croquis au dessin fini.
+- **3D** · génération de mesh (Hunyuan3D, DreamGaussian, Blender procédural, photogrammétrie Meshroom), post-traitement (nettoyage, matériaux PBR), rig automatique et bibliothèque de mouvements (33 presets) avec un moteur cinématique dédié.
+- **Voice** · copilote vocal continu (Voxtral STT, Kokoro TTS, lipsync Rhubarb) avec caméra, vision et intégration au Character Forge.
+- **Cyber** · labs de sécurité pratiques (CTF, crypto, forensics, hash, réseau, mots de passe, stéganographie, threat intel, websec) en environnement Python sandboxé, avec correction et validation de flag automatiques.
 
 ## Stack
 
 - **Frontend** : Tauri v2 + React 19 + TypeScript + Vite + Tailwind v4
-- **Backend local** : Ollama, ComfyUI, bridge Python Flask
-- **Modèles** : qwen3-vl, SAM2, GroundingDINO, BiRefNet, LaMa, FLUX, Wan2.2, Hunyuan3D
+- **Backend local** : Ollama (LLMs), ComfyUI (pipelines image/3D), bridge Python Flask (port 3001, expose les capacités Python au frontend et au tunnel Cloudflare)
+- **Modèles** : qwen3-vl, SAM2, GroundingDINO, BiRefNet, LaMa, FLUX, Wan2.2, Hunyuan3D, TRELLIS.2, Voxtral, Kokoro
 
 ## Démarrage
 

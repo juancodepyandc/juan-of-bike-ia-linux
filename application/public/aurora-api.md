@@ -243,7 +243,7 @@ Pareil pour les générations 3D : log `{ ts, prompt, job_id, score, glbUrl, aud
 ## 7. Si le lien du tunnel change
 
 Le `Base URL` `*.trycloudflare.com` est régénéré si le tunnel est recréé. Stratégies pour ne pas hard‑coder :
-- lire le lien courant depuis le repo Aurora : `https://raw.githubusercontent.com/juancodepyandc/juan-of-bike-ia/main/tunnel_url.txt` (le propriétaire le commit) — fetch ce fichier au chargement, en fallback sur la valeur en dur ;
+- lire le lien courant depuis `https://raw.githubusercontent.com/juancodepyandc/aurora-live/main/tunnel.txt` (le lanceur Linux le met à jour au démarrage) — fetch ce fichier au chargement, en fallback sur la valeur en dur ;
 - ou stocker le lien dans une variable d'env Vercel que le propriétaire met à jour ;
 - le propriétaire vous prévient à chaque changement.
 

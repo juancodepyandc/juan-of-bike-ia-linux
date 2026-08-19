@@ -7,6 +7,24 @@ LOG_DIR="${TMPDIR:-/tmp}/auroraia"
 
 mkdir -p "$LOG_DIR"
 
+wait_for_http() {
+  local label="$1"
+  local url="$2"
+  local timeout_seconds="$3"
+  local attempt
+
+  for attempt in $(seq 1 "$timeout_seconds"); do
+    if curl -fsS -m 3 -o /dev/null "$url" 2>/dev/null; then
+      echo "      $label pret: $url"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "      ERREUR: $label ne repond pas apres ${timeout_seconds}s: $url" >&2
+  return 1
+}
+
 if [ "$(uname -s)" = "Linux" ] && [ "${AURORA_SKIP_FIRST_RUN:-0}" != "1" ]; then
   if [ ! -f "$APP_DIR/.aurora-linux-ready" ]; then
     echo "[0/5] First-run Linux initialization"
@@ -24,7 +42,12 @@ fi
 
 export OLLAMA_MAX_LOADED_MODELS="${OLLAMA_MAX_LOADED_MODELS:-1}"
 export OLLAMA_NUM_PARALLEL="${OLLAMA_NUM_PARALLEL:-1}"
-export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-10m}"
+# 31/07: 10m gardait CHAQUE modele (vision 19 Go incluse) resident pendant
+# que TRELLIS debordait en RAM — c'etait la cause du « Ollama n'a pas libere
+# les modeles avant le swap » observe 3 fois. 60s suffit au confort de la
+# conversation; les generations 3D/image font de toute facon leur eviction
+# explicite aux points chauds.
+export OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-60s}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
@@ -49,35 +72,126 @@ if [ -n "$COMFY_DIR" ]; then
   else
     COMFY_PY="python3"
   fi
-  (cd "$COMFY_DIR" && "$COMFY_PY" main.py --listen 127.0.0.1 --port 8188 >"$LOG_DIR/comfyui.log" 2>&1 &)
+  (
+    cd "$COMFY_DIR"
+    exec "$COMFY_PY" main.py --listen 127.0.0.1 --port 8188
+  ) >"$LOG_DIR/comfyui.log" 2>&1 &
 else
   echo "ComfyUI introuvable sous modele/comfyui; il sera lance a la demande si installe plus tard."
 fi
 
 echo "[3/5] Bridge Python"
-(cd "$APP_DIR" && "$APP_PY" bridge_server.py >"$LOG_DIR/bridge.log" 2>&1 &)
+(
+  cd "$APP_DIR"
+  exec "$APP_PY" bridge_server.py
+) >"$LOG_DIR/bridge.log" 2>&1 &
 
-echo "[4/5] Vite"
-(cd "$APP_DIR" && npm run dev:web >"$LOG_DIR/vite.log" 2>&1 &)
+echo "[4/5] Interface (build + Vite)"
+# 30/07: `npm` n'etait PAS dans le PATH de ce script (installe via nvm) ->
+# la ligne echouait EN SILENCE, Vite ne demarrait jamais et l'application
+# affichait le bundle `dist/` FIGE (celui du 26/07). Tout correctif d'UI
+# semblait donc ignore. On resout node/npm explicitement, et on
+# RECONSTRUIT l'interface a chaque lancement: UI, tunnel et CLI partagent
+# ainsi toujours le meme code.
+if ! command -v npm >/dev/null 2>&1; then
+  for _n in "$HOME"/.nvm/versions/node/*/bin /usr/local/bin /usr/bin /opt/node/bin; do
+    if [ -x "$_n/npm" ]; then PATH="$_n:$PATH"; export PATH; break; fi
+  done
+fi
+if command -v npm >/dev/null 2>&1; then
+  echo "      npm: $(command -v npm) ($(npm -v 2>/dev/null))"
+  (cd "$APP_DIR" && npm run build >"$LOG_DIR/vite-build.log" 2>&1 \
+    && echo "      interface reconstruite" \
+    || echo "      ATTENTION: build interface echoue, voir $LOG_DIR/vite-build.log")
+  (
+    cd "$APP_DIR"
+    exec npm run dev:web
+  ) >"$LOG_DIR/vite.log" 2>&1 &
+  # 30/07: l'app native est un binaire Tauri RELEASE — l'interface y est
+  # INCORPOREE a la compilation. Reconstruire dist/ ne suffit PAS: si le
+  # binaire est plus vieux que l'interface, on le recompile, sinon
+  # l'utilisateur voit une UI perimee (6 jours d'ecart mesures, aucune
+  # correction visible).
+  _BIN="$APP_DIR/src-tauri/target/release/juan-of-bike-ia"
+  # Ne jamais utiliser `find | head` ici : avec `pipefail`, find recoit
+  # SIGPIPE (141) des que head a lu le premier fichier et le script quitte
+  # AVANT le tunnel. `-print -quit` trouve le meme fichier sans pipeline.
+  if [ -x "$_BIN" ]; then
+    _NEWEST_DIST="$(find "$APP_DIR/dist" -type f -newer "$_BIN" -print -quit 2>/dev/null)"
+  else
+    _NEWEST_DIST="binaire-absent"
+  fi
+  if [ ! -x "$_BIN" ] || [ -n "$_NEWEST_DIST" ]; then
+    echo "      binaire natif perime — recompilation Tauri (quelques minutes)..."
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    (cd "$APP_DIR" && npx tauri build --no-bundle >"$LOG_DIR/tauri-build.log" 2>&1 \
+      && echo "      binaire natif reconstruit" \
+      || echo "      ATTENTION: recompilation echouee (voir $LOG_DIR/tauri-build.log) — l'app affichera l'ANCIENNE interface")
+  fi
+else
+  echo "      ATTENTION: npm introuvable — l'interface restera sur le dernier build."
+  echo "      (installez Node, ou ajoutez npm au PATH; sans lui aucun correctif d'UI n'apparait)"
+fi
+
+if ! wait_for_http "Bridge" "http://127.0.0.1:3001/api/health" 30; then
+  bash "$ROOT_DIR/scripts/publish-live-link.sh" closed || true
+  echo "Aurora reste locale, mais le tunnel n'est pas publie car le bridge est indisponible."
+  exit 1
+fi
+if ! wait_for_http "Interface" "http://127.0.0.1:1420/" 30; then
+  bash "$ROOT_DIR/scripts/publish-live-link.sh" closed || true
+  echo "Aurora reste locale, mais le tunnel n'est pas publie car Vite est indisponible."
+  exit 1
+fi
 
 echo "[5/5] Cloudflared"
-if [ "${AURORA_START_TUNNEL:-0}" = "1" ]; then
+# Linux est maintenant aligne sur le demarrage Aurora complet : le tunnel est
+# actif par defaut. AURORA_START_TUNNEL=0 permet un lancement strictement local.
+if [ "${AURORA_START_TUNNEL:-1}" = "1" ]; then
   if command -v cloudflared >/dev/null 2>&1; then
     pkill -f "cloudflared tunnel" 2>/dev/null || true
     : > "$LOG_DIR/cloudflared.log"
-    setsid cloudflared tunnel --url http://127.0.0.1:1420 >"$LOG_DIR/cloudflared.log" 2>&1 </dev/null &
+    # Le bridge proxyfie Vite et reste disponible pendant une reconstruction
+    # de l'interface, exactement comme le point d'entree Aurora attendu.
+    setsid cloudflared tunnel --url http://127.0.0.1:3001 >"$LOG_DIR/cloudflared.log" 2>&1 </dev/null &
     echo "  Tunnel demarre, recuperation de l'adresse publique..."
     TUN_URL=""
     for _i in $(seq 1 30); do
-      TUN_URL="$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" 2>/dev/null | head -1)"
+      TUN_URL="$(grep -am1 -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOG_DIR/cloudflared.log" 2>/dev/null || true)"
       [ -n "$TUN_URL" ] && break
       sleep 2
     done
     if [ -n "$TUN_URL" ]; then
-      echo "$TUN_URL" > "$ROOT_DIR/tunnel_url.txt"
-      echo "  Lien public: $TUN_URL"
-      # publie le lien sur GitHub (aurora-live) pour qu'il soit toujours a jour en ligne
-      bash "$ROOT_DIR/scripts/publish-live-link.sh" || echo "  (publication du lien ignoree)"
+      # Ne publie jamais une URL qui vient seulement d'etre annoncee par
+      # cloudflared mais ne route pas encore vers Aurora. La verification
+      # connait le DNS public Cloudflare, utile si la box filtre ce domaine.
+      if bash "$ROOT_DIR/scripts/verify-tunnel-url.sh" "$TUN_URL" 45; then
+        # tunnel.txt reste la source locale du bridge. Le script de publication
+        # le copie dans aurora-live/tunnel.txt et met aussi le README a jour.
+        printf '%s\n' "$TUN_URL" > "$ROOT_DIR/tunnel.txt"
+        # Compatibilite avec les anciens outils qui lisaient encore ce nom.
+        # Les deux fichiers locaux affichent donc toujours la MEME URL.
+        printf '%s\n' "$TUN_URL" > "$ROOT_DIR/tunnel_url.txt"
+        echo
+        echo "  ========================================"
+        echo "  URL TELEPHONE : $TUN_URL"
+        echo "  GitHub        : https://github.com/juancodepyandc/aurora-live"
+        echo "  URL brute     : https://raw.githubusercontent.com/juancodepyandc/aurora-live/main/tunnel.txt"
+        echo "  ========================================"
+        TUN_HOST="${TUN_URL#https://}"
+        TUN_HOST="${TUN_HOST%%/*}"
+        if ! getent ahostsv4 "$TUN_HOST" >/dev/null 2>&1; then
+          echo "  NOTE DNS : ta box ne resout pas ce domaine. L'URL est verifiee"
+          echo "  via DNS public; pour ce PC, utilise DNS 1.1.1.1 ou 8.8.8.8."
+        fi
+        bash "$ROOT_DIR/scripts/publish-live-link.sh" open \
+          || echo "  (tunnel.txt mis a jour localement, publication aurora-live echouee)"
+      else
+        : > "$ROOT_DIR/tunnel.txt"
+        : > "$ROOT_DIR/tunnel_url.txt"
+        bash "$ROOT_DIR/scripts/publish-live-link.sh" closed || true
+        echo "  Tunnel genere mais non joignable : non publie sur aurora-live."
+      fi
     else
       echo "  Adresse du tunnel non recuperee (voir $LOG_DIR/cloudflared.log)."
     fi
@@ -85,7 +199,7 @@ if [ "${AURORA_START_TUNNEL:-0}" = "1" ]; then
     echo "  cloudflared introuvable; lance scripts/linux/bootstrap-ubuntu2404.sh sur Linux."
   fi
 else
-  echo "  Tunnel non lance. Utilise AURORA_START_TUNNEL=1 ./start-aurora.sh si besoin."
+  echo "  Tunnel non lance (AURORA_START_TUNNEL=0)."
 fi
 
 # Surveillance de l'etat -> publie "ouvert/ferme" sur le repo aurora-live automatiquement

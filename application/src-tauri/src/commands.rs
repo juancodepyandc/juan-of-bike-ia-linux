@@ -1763,6 +1763,254 @@ pub fn restart_application_as_admin() -> Result<RuntimeActionResult, String> {
     }
 }
 
+/// WS-V-P (2026-08-07) : quand l'UI appelle `video_generate.py` directement,
+/// on la ré-achemine par `POST http://localhost:3001/api/video/render` du
+/// bridge Flask. Objectif : sortie de plan vidéo passe TOUJOURS par la file
+/// GPU, le prévol de stockage et le contrat `VideoJobSpec` canonique — même
+/// depuis Tauri, où le raccourci `run_python_script` shortcuit historique
+/// contournait tout ça (cf. PROMPT_REFONTE_MODULE_VIDEO §3.3).
+///
+/// Le contrat `run_python_script` avec le frontend reste inchangé : mêmes
+/// arguments, même événement `python-progress`, même chaîne de sortie
+/// retournée. Le reroutage est transparent.
+///
+/// Repli défensif : si le bridge n'est pas joignable (localhost 3001 down,
+/// timeout, HTTP != 2xx, etc.), on retombe SILENCIEUSEMENT sur le spawn
+/// direct historique — c'est un correctif, pas une régression.
+async fn try_route_video_through_bridge(
+    script_path: &str,
+    args: &[String],
+    app_handle: &tauri::AppHandle,
+) -> Option<Result<String, String>> {
+    let script_name = Path::new(script_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if script_name != "video_generate.py" {
+        return None; // pas concerné
+    }
+
+    // Extraction des flags les plus critiques. Absence = ne pas reroute.
+    // Un dict `flag -> value` ; les booléens ne sont pas utilisés ici.
+    let mut flags: HashMap<String, String> = HashMap::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a.starts_with("--") && i + 1 < args.len() && !args[i + 1].starts_with("--") {
+            flags.insert(a[2..].to_string(), args[i + 1].clone());
+            i += 2;
+        } else if a.starts_with("--") {
+            flags.insert(a[2..].to_string(), "true".to_string());
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    let prompt = flags.get("prompt").cloned();
+    if prompt.is_none() {
+        // Sans prompt on ne construit pas d'intention — laisse le worker direct
+        // retourner son erreur explicite au lieu de bricoler.
+        return None;
+    }
+
+    // Aspect deviné depuis width×height si les deux présents ; sinon 16:9.
+    let (w_opt, h_opt) = (
+        flags.get("width").and_then(|s| s.parse::<u32>().ok()),
+        flags.get("height").and_then(|s| s.parse::<u32>().ok()),
+    );
+    let aspect: &str = match (w_opt, h_opt) {
+        (Some(w), Some(h)) => {
+            let r = w as f32 / h as f32;
+            if (r - 16.0 / 9.0).abs() < 0.05 {
+                "16:9"
+            } else if (r - 9.0 / 16.0).abs() < 0.05 {
+                "9:16"
+            } else if (r - 1.0).abs() < 0.05 {
+                "1:1"
+            } else if (r - 4.0 / 3.0).abs() < 0.05 {
+                "4:3"
+            } else {
+                "16:9"
+            }
+        }
+        _ => "16:9",
+    };
+
+    // duration_s dérivée de num_frames si présent (fps=24 comme le worker),
+    // sinon on laisse le builder appliquer son défaut (65 f ≈ 2,7 s).
+    let duration_s: Option<f32> = flags
+        .get("num_frames")
+        .and_then(|s| s.parse::<u32>().ok())
+        .map(|n| n as f32 / 24.0);
+
+    let quality_mode = flags
+        .get("quality_mode")
+        .cloned()
+        .unwrap_or_else(|| "auto".to_string());
+    let seed = flags.get("seed").and_then(|s| s.parse::<i64>().ok());
+    let motion_interp = flags
+        .get("motion_interp")
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(1);
+
+    // Construit l'intent JSON à envoyer au bridge.
+    let mut intent = serde_json::Map::new();
+    intent.insert("prompt".into(), serde_json::Value::String(prompt.unwrap()));
+    intent.insert("aspect".into(), serde_json::Value::String(aspect.to_string()));
+    if let Some(ds) = duration_s {
+        intent.insert(
+            "duration_s".into(),
+            serde_json::Value::Number(
+                serde_json::Number::from_f64(ds as f64).unwrap_or(serde_json::Number::from(0)),
+            ),
+        );
+    }
+    intent.insert("quality_mode".into(), serde_json::Value::String(quality_mode));
+    if let Some(s) = seed {
+        intent.insert("seed".into(), serde_json::Value::Number(s.into()));
+    }
+    if let Some(img) = flags.get("image") {
+        intent.insert("image_path".into(), serde_json::Value::String(img.clone()));
+    }
+    if let Some(neg) = flags.get("negative_prompt") {
+        intent.insert(
+            "negative_prompt".into(),
+            serde_json::Value::String(neg.clone()),
+        );
+    }
+    intent.insert(
+        "motion_interp".into(),
+        serde_json::Value::Number((motion_interp as u64).into()),
+    );
+    if let Some(fs) = flags.get("force_strategy") {
+        intent.insert(
+            "force_strategy".into(),
+            serde_json::Value::String(fs.clone()),
+        );
+    }
+    let body = serde_json::json!({ "intent": serde_json::Value::Object(intent) });
+
+    // Spawn : timeout court pour dry-run/spec-résolution, ensuite polling du
+    // jobId sans timeout dur (les rendus vidéo durent des minutes).
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return None, // repli
+    };
+    let spawn_resp = match client
+        .post("http://localhost:3001/api/video/render")
+        .json(&body)
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return None, // bridge down → repli sur spawn direct
+    };
+    if !spawn_resp.status().is_success() {
+        return None; // spec invalide ou route absente → repli
+    }
+    let spawn_json: serde_json::Value = match spawn_resp.json().await {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let job_id = match spawn_json.get("jobId").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => return None,
+    };
+    let output_path = spawn_json
+        .get("outputPath")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // Reroutage annoncé (utile pour audit/debug).
+    let _ = app_handle.emit(
+        "python-progress",
+        format!("PROGRESS:route:bridge /api/video/render job={}", job_id),
+    );
+
+    // Polling long — chaque tour lit /api/python/job/<id> + emit progression.
+    let poll_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string());
+    let poll_client = match poll_client {
+        Ok(c) => c,
+        Err(_) => return None,
+    };
+    let mut last_emitted_len = 0usize;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        let job = match poll_client
+            .get(format!("http://localhost:3001/api/python/job/{}", job_id))
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !job.status().is_success() {
+            continue;
+        }
+        let job_data: serde_json::Value = match job.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let status = job_data
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("running");
+        let output_str = job_data
+            .get("output")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Emit progressif : nouvelles lignes PROGRESS: uniquement.
+        if output_str.len() > last_emitted_len {
+            let fresh = &output_str[last_emitted_len..];
+            for line in fresh.lines() {
+                if line.starts_with("PROGRESS:") {
+                    let _ = app_handle.emit("python-progress", line.to_string());
+                }
+            }
+            last_emitted_len = output_str.len();
+        }
+
+        if status == "done" {
+            let exit_code = job_data
+                .get("exitCode")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if exit_code == 0 {
+                let mut out = output_str.to_string();
+                // Le contrat historique VideoView cherche `SAVED:<path>` puis
+                // parcourt la stdout ; on lui rend la même forme, en ajoutant
+                // outputPath du bridge si le SAVED: n'y était pas.
+                if !out.contains("SAVED:") {
+                    if let Some(p) = output_path.as_ref() {
+                        out.push_str(&format!("\nSAVED:{}", p));
+                    }
+                }
+                return Some(Ok(out));
+            }
+            let err = job_data
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no error field)");
+            return Some(Err(format!(
+                "bridge job {} failed exitCode={} error={}",
+                job_id, exit_code, err
+            )));
+        }
+        if status == "cancelled" || status == "died" {
+            return Some(Err(format!("bridge job {} status={}", job_id, status)));
+        }
+        // sinon: running/queued → poll suivant
+    }
+}
+
 #[command]
 pub async fn run_python_script(
     script_path: String,
@@ -1772,6 +2020,16 @@ pub async fn run_python_script(
     let path = Path::new(&script_path);
     if !path.exists() {
         return Err(format!("Script not found: {}", script_path));
+    }
+
+    // 2026-08-07 : tentative de reroutage bridge pour video_generate.py.
+    // Si le bridge est joignable et la route accepte l'intent, on utilise
+    // la file GPU + le contrat canonique. Sinon on retombe sur le spawn
+    // direct historique (pas de régression).
+    if let Some(bridge_result) =
+        try_route_video_through_bridge(&script_path, &args, &app_handle).await
+    {
+        return bridge_result;
     }
 
     let python_exe = detect_preferred_python_path().unwrap_or_else(|| "python".to_string());
@@ -2432,18 +2690,23 @@ pub async fn runtime_prepare_ollama_model(
     .await;
 
     let _ = unload_ollama_models().await;
-    let unloaded = wait_for_ollama_models_unloaded(18_000).await?;
+    // 31/07: 18 s d'attente puis ERREUR FATALE — sous pression memoire, un
+    // modele de 19 Go met plus longtemps a se vider et CHAQUE generation
+    // echouait ici (« Ollama n a pas libere correctement les modeles
+    // precedents avant le swap », vu en boucle par l'utilisateur). Or
+    // OLLAMA_MAX_LOADED_MODELS=1: Ollama evince DE LUI-MEME l'ancien modele
+    // au chargement du nouveau. On attend plus longtemps, et un dechargement
+    // lent devient un simple avertissement — jamais un echec.
+    let unloaded = wait_for_ollama_models_unloaded(60_000).await?;
     if !unloaded {
-        let _ = set_active_ollama_model(&state, None);
         emit_runtime_progress(
             &app_handle,
             "ollama",
-            "error",
-            100,
-            "Les modeles precedents ne se sont pas decharges proprement.",
+            "warming",
+            55,
+            "Dechargement lent — Ollama evincera l'ancien modele au chargement du nouveau.",
         )
         .await;
-        return Err("Ollama n a pas libere correctement les modeles precedents avant le swap.".to_string());
     }
 
     emit_runtime_progress(
@@ -2460,17 +2723,52 @@ pub async fn runtime_prepare_ollama_model(
         .build()
         .map_err(|e| format!("Ollama client init failed: {}", e))?;
 
-    let response = client
-        .post("http://127.0.0.1:11434/api/generate")
-        .json(&serde_json::json!({
-            "model": model,
-            "prompt": "",
-            "stream": false,
-            "keep_alive": "8m"
-        }))
-        .send()
-        .await
-        .map_err(|e| format!("Ollama warmup failed: {}", e))?;
+    // 31/07: (1) keep_alive 8m re-parquait un gros modele pendant les etapes
+    // lourdes (politique globale: 60s); (2) une erreur de connexion pendant
+    // que le serveur Ollama (re)demarre faisait echouer TOUTE la preparation
+    // (« Ollama warmup failed: error sending request » vu par l'utilisateur).
+    // Le warmup est best-effort: 3 essais espacés, puis on continue sans lui.
+    let mut warm_result = None;
+    for attempt in 0..3u8 {
+        match client
+            .post("http://127.0.0.1:11434/api/generate")
+            .json(&serde_json::json!({
+                "model": model,
+                "prompt": "",
+                "stream": false,
+                "keep_alive": "60s"
+            }))
+            .send()
+            .await
+        {
+            Ok(resp) => { warm_result = Some(resp); break; }
+            Err(err) => {
+                emit_runtime_progress(
+                    &app_handle,
+                    "ollama",
+                    "warming",
+                    58,
+                    format!("Ollama pas encore joignable (essai {}/3): {}", attempt + 1, err),
+                )
+                .await;
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            }
+        }
+    }
+    let Some(response) = warm_result else {
+        emit_runtime_progress(
+            &app_handle,
+            "ollama",
+            "ready",
+            100,
+            "Warmup saute (Ollama indisponible) — le premier appel reel chargera le modele.".to_string(),
+        )
+        .await;
+        return Ok(RuntimeActionResult {
+            ok: true,
+            detail: format!("{} sera charge au premier appel (warmup saute).", model),
+        });
+    };
 
     // Le warmup est best-effort : si Ollama retourne une erreur (ex. 500 OOM, fichier
     // corrompu), on ne bloque pas le pipeline — le premier vrai appel generate/chat

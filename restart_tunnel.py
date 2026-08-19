@@ -3,7 +3,7 @@ restart_tunnel.py — kill cloudflared + relance + capture la nouvelle URL.
 
 Pourquoi : cloudflared --url génère une URL trycloudflare.com aléatoire à
 chaque démarrage. Si le tunnel a été redémarré (crash, reboot, kill manuel)
-sans que start-aurora.bat soit relancé, le `tunnel_url.txt` du repo
+sans que start-aurora.sh soit relancé, le `tunnel.txt` du repo
 contient une URL morte qui ne résout plus.
 
 update-aurora.bat appelle ce script pour :
@@ -11,7 +11,7 @@ update-aurora.bat appelle ce script pour :
   2. lancer un nouveau cloudflared --url http://localhost:3001 en arrière-plan
   3. sniffer son stdout pendant ~15s pour capturer la ligne contenant
      "https://*.trycloudflare.com"
-  4. écrire l'URL trouvée dans tunnel_url.txt + l'afficher en gros
+  4. écrire l'URL trouvée dans tunnel.txt + l'afficher en gros
 
 Le bridge_server.py reste sur :3001, le tunnel pointe dessus, Vite tourne
 en proxy via le bridge sur :1420.
@@ -37,7 +37,8 @@ if _IS_WINDOWS:
     CLOUDFLARED = str(REPO_ROOT / "tools" / "cloudflared.exe")
 else:
     CLOUDFLARED = _shutil.which("cloudflared") or str(REPO_ROOT / "tools" / "cloudflared")
-TUNNEL_URL_FILE = REPO_ROOT / "tunnel_url.txt"
+TUNNEL_URL_FILE = REPO_ROOT / "tunnel.txt"
+LEGACY_TUNNEL_URL_FILE = REPO_ROOT / "tunnel_url.txt"
 URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 WAIT_SECONDS = 20.0
 
@@ -87,14 +88,14 @@ def main() -> int:
     print(f"      {killed} process(es) terminé(s)", flush=True)
     time.sleep(1.0)
 
-    print(f"[2/3] start cloudflared tunnel --url http://localhost:3001", flush=True)
+    print(f"[2/3] start cloudflared tunnel --protocol http2 --url http://127.0.0.1:3001", flush=True)
+    log_path = Path(os.environ.get("TMPDIR", "/tmp")) / "cloudflared.log"
+    log_file = open(log_path, "w+", encoding="utf-8")
     proc = subprocess.Popen(
-        [str(CLOUDFLARED), "tunnel", "--url", "http://localhost:3001"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding='utf-8', errors='replace',
-        bufsize=1,
-        # CREATE_NEW_PROCESS_GROUP so the parent bat closing doesn't kill it
-        creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0),
+        [str(CLOUDFLARED), "tunnel", "--protocol", "http2", "--url", "http://127.0.0.1:3001"],
+        stdout=log_file, stderr=subprocess.STDOUT,
+        start_new_session=True if not _IS_WINDOWS else False,
+        creationflags=getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0) if _IS_WINDOWS else 0,
     )
 
     found_url: str | None = None
@@ -102,15 +103,17 @@ def main() -> int:
 
     print(f"[3/3] sniff stdout pendant {WAIT_SECONDS:.0f}s pour trouver l'URL...", flush=True)
 
-    def reader():
-        nonlocal found_url
+    read_pos = 0
+    while time.time() < deadline and not found_url:
+        time.sleep(0.4)
         try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
+            log_file.seek(read_pos)
+            lines = log_file.readlines()
+            read_pos = log_file.tell()
+            for line in lines:
                 line = line.rstrip()
                 if not line:
                     continue
-                # Print ALL cloudflared output so the user sees what's happening
                 print(f"  cf> {line}", flush=True)
                 m = URL_RE.search(line)
                 if m and not found_url:
@@ -118,18 +121,12 @@ def main() -> int:
         except Exception:
             pass
 
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-
-    while time.time() < deadline and not found_url:
-        time.sleep(0.3)
-
     if not found_url:
         print(f"[x] Aucune URL trycloudflare.com trouvée dans la sortie cloudflared en {WAIT_SECONDS:.0f}s", flush=True)
         print(f"    Le bridge :3001 tourne-t-il ? (start-aurora.bat lance Bridge avant Tunnel)", flush=True)
         return 2
 
-    # Read the previous URL to skip the auto-commit if nothing changed.
+    # Read the previous URL to skip the public-repository update if unchanged.
     previous = ""
     try:
         if TUNNEL_URL_FILE.exists():
@@ -139,39 +136,26 @@ def main() -> int:
 
     try:
         TUNNEL_URL_FILE.write_text(found_url + "\n", encoding='utf-8')
+        LEGACY_TUNNEL_URL_FILE.write_text(found_url + "\n", encoding='utf-8')
     except Exception as e:
-        print(f"[!] échec écriture tunnel_url.txt: {e}", flush=True)
+        print(f"[!] échec écriture tunnel.txt: {e}", flush=True)
 
-    # Auto-commit + push the URL change so any future Claude session sees
-    # the live URL via SessionStart hook (which reads tunnel_url.txt) and
-    # knows where to probe. Best-effort: a failed push doesn't fail the
-    # tunnel restart (already running locally).
+    # Publish the URL to the public aurora-live repository. The source file
+    # stays local to AuroraIA; publish-live-link.sh copies it into
+    # aurora-live/tunnel.txt and updates the landing README atomically.
     if previous != found_url:
-        print(f"[+] tunnel URL changée ({previous or '∅'} → {found_url}), push origin/main", flush=True)
+        print(f"[+] tunnel URL changée ({previous or '∅'} → {found_url}), publication aurora-live", flush=True)
         try:
-            subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "add", "tunnel_url.txt"],
-                capture_output=True, timeout=10,
+            p = subprocess.run(
+                ["bash", str(REPO_ROOT / "scripts" / "publish-live-link.sh"), "open"],
+                capture_output=True, text=True, timeout=45,
             )
-            commit_msg = f"tunnel: {found_url}"
-            r = subprocess.run(
-                ["git", "-C", str(REPO_ROOT), "commit", "-m", commit_msg],
-                capture_output=True, text=True, timeout=15,
-            )
-            if r.returncode == 0:
-                p = subprocess.run(
-                    ["git", "-C", str(REPO_ROOT), "push", "origin", "main"],
-                    capture_output=True, text=True, timeout=30,
-                )
-                if p.returncode == 0:
-                    print(f"  push OK", flush=True)
-                else:
-                    print(f"  push échec (best-effort): {p.stderr.strip()[:200]}", flush=True)
+            if p.returncode == 0:
+                print(f"  aurora-live mis à jour", flush=True)
             else:
-                # commit can fail if nothing staged or hook rejects — non-fatal
-                print(f"  commit non fait: {r.stderr.strip()[:200] or r.stdout.strip()[:200]}", flush=True)
+                print(f"  publication échec (best-effort): {p.stderr.strip()[:200] or p.stdout.strip()[:200]}", flush=True)
         except Exception as e:
-            print(f"  auto-push skipped (best-effort): {e}", flush=True)
+            print(f"  publication ignoree (best-effort): {e}", flush=True)
     else:
         print(f"[=] tunnel URL inchangée ({found_url}), pas de push", flush=True)
 
@@ -180,7 +164,7 @@ def main() -> int:
     print(f"  NOUVELLE URL TUNNEL :", flush=True)
     print(f"  {found_url}", flush=True)
     print("=" * 60, flush=True)
-    print(f"  Sauvegardée dans tunnel_url.txt + commitée sur main.", flush=True)
+    print(f"  Sauvegardée dans tunnel.txt + publiée dans aurora-live.", flush=True)
     print(f"  Le process cloudflared reste actif en arrière-plan.", flush=True)
     print(f"  Ouvre cette URL dans ton navigateur (Ctrl+F5 si onglet ancien).", flush=True)
     return 0
