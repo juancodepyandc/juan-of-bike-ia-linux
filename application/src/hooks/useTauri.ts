@@ -98,8 +98,21 @@ function _startCloudProgressPolling(callback: (progress: string) => void): () =>
  * pas reconfigurer `fetch`. Sous Node on passe donc par `node:http`, dont le
  * delai est explicite et se cale sur celui de la COMMANDE.
  */
-const isNodeRuntime = () => typeof window === 'undefined'
-  && Boolean((globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node)
+/**
+ * ATTENTION: ne PAS tester `typeof window === 'undefined'`.
+ *
+ * Le harnais headless SHIME `globalThis.window` (harness_env.mjs) pour que le
+ * code navigateur s importe sous Node. Ma premiere version de cette garde
+ * testait l absence de `window`: elle etait donc TOUJOURS fausse sous le
+ * harnais, le transport `node:http` n a jamais tourne, et le run v133 est mort
+ * exactement comme les deux precedents — 301 s, Headers Timeout Error.
+ *
+ * Un correctif qui ne s execute pas est indiscernable d un correctif absent.
+ * Seul `process.versions.node` distingue vraiment Node d un navigateur.
+ */
+const isNodeRuntime = () => Boolean(
+  (globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node,
+)
 
 type NodeHttpModule = { request: (options: Record<string, unknown>, cb: (res: unknown) => void) => NodeRequestLike }
 type NodeRequestLike = {
@@ -162,6 +175,13 @@ async function cloudInvoke<T>(endpoint: string, args?: Record<string, unknown>):
     try {
       return await nodeHttpPost<T>(url, JSON.stringify(args || {}), transportBudget)
     } catch (error) {
+      // `node:http` indisponible (navigateur reel, bundler): on retombe sur
+      // fetch plutot que d echouer — la degradation reste fonctionnelle.
+      if (error instanceof Error && /Cannot find module|ERR_MODULE_NOT_FOUND|not supported/i.test(error.message)) {
+        return safeParseJson<T>(await fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args || {}),
+        }), `Cloud bridge ${endpoint}`)
+      }
       const elapsed = Math.round((Date.now() - startedAt) / 1000)
       const detail = error instanceof Error ? error.message : String(error)
       throw new Error(`Bridge injoignable sur ${endpoint} apres ${elapsed}s: ${detail}`)
