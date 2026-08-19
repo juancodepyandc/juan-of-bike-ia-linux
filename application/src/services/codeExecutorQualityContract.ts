@@ -157,6 +157,39 @@ function buildInteractivityContract(): string {
  * Ordre de priorite si le budget sature (le verrouillage sujet passe en
  * premier: la fidelite de marque est une regle dure du module).
  */
+
+const TYPED_FILE_RE = /\.(tsx?|mtsx?)$/i
+
+/**
+ * Contrat de TYPAGE, livre par fichier.
+ *
+ * MESURE: ces regles existaient deja dans `buildExpertEngineeringContractBlock`
+ * — et n atteignaient JAMAIS l executor. WS3 appelle le modele une fois par
+ * fichier avec `buildExecutorQualityContract`; le contrat ingenieur, lui, ne
+ * transite que par `codeSystemPrompts`. Les consignes de typage etaient donc
+ * ecrites, versionnees, testees... et jamais delivrees a ce qui ecrit le code.
+ *
+ * Sans cette verification j aurais conclu que « le modele ignore la consigne »,
+ * en le blamant pour une regle qu il n avait jamais recue. Une regle non
+ * delivree ne peut pas etre suivie — meme famille que les portes qui
+ * condamnaient sans avoir mesure.
+ *
+ * Familles couvertes, mesurees sur les runs v130 a v132:
+ *   TS7006 (12)  parametres de rappel non annotes
+ *   TS2367 (6)   union declaree en anglais, comparee a des libelles francais
+ *   TS2741/2739  composant rendu SANS les props que son interface exige
+ *   TS2353       propriete passee en trop, absente de l interface
+ */
+function typeContractBlock(): string[] {
+  return [
+    '## CONTRAT DE TYPAGE (ce fichier)',
+    '- Annote TOUT parametre de fonction et de rappel, y compris dans .map/.filter/.reduce/.sort et les gestionnaires d evenements. Aucun parametre implicitement `any`.',
+    '- Rendre un composant, c est honorer son interface: passe EXACTEMENT les props qu elle declare — aucune requise omise, aucune non declaree ajoutee. Si la donnee existe deja dans ce fichier, passe-la; sinon rends la prop optionnelle a la declaration.',
+    '- Les donnees d exemple et l interface qui les type s ecrivent ENSEMBLE et au meme moment: tout champ present dans la donnee figure dans l interface, et reciproquement.',
+    '- Une union de statuts se compare toujours a ses propres valeurs, jamais a un libelle affiche. Garde les valeurs techniques dans une seule langue et traduis pour l affichage.',
+  ]
+}
+
 export function buildExecutorQualityContract(args: {
   intent: CodeIntent
   prompt: string
@@ -179,6 +212,10 @@ export function buildExecutorQualityContract(args: {
 
   // 2. Contrat de livraison — ce qui evite les regenerations pour entree absente.
   sections.push(buildDeliveryEssentials(intent))
+
+  // 2bis. Typage: place AVANT les blocs esthetiques pour ne pas etre tronque
+  // par le budget — c est ce qui arrivait aux seuils typographiques.
+  if (TYPED_FILE_RE.test(target.path)) sections.push(typeContractBlock().join('\n'))
 
   // 3+4. Esthetique: uniquement sur un fichier reellement visuel.
   if (visualTarget) {
