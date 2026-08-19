@@ -201,22 +201,21 @@ export function buildExpertEngineeringContractBlock(intent: CodeIntent): string 
     '- Ajoute un chemin de verification local: test, smoke script, build command ou instructions README executables.',
     '- Gere les erreurs comme un produit reel: empty states, loading states, permissions/refus, donnees invalides, echec reseau, restart/retry quand utile.',
     '- Securite par defaut: pas de eval/new Function, pas de secrets en dur, pas de HTML utilisateur injecte sans sanitization, validation cote client ET cote serveur quand serveur il y a.',
-    // BALAYAGE DE CORPUS. Les deux familles de TYPAGE encore vivantes (v113+)
-    // ont chacune une cause commune, et toutes deux se PREVIENNENT a la
-    // generation — les reparer apres coup coute une passe de modele.
-    //
-    // TS7006 (12 occurrences, toutes identiques: « Parameter 'order'
-    // implicitly has an 'any' type ») — parametres de rappel non annotes.
+    // BALAYAGE DE CORPUS: chaque famille de typage vivante a une cause commune,
+    // et toutes se PREVIENNENT ici — les reparer apres coup coute une passe.
+    // TS7006 (12, toutes identiques) — parametres de rappel non annotes.
     '- Types explicites sur TOUT parametre de fonction et de rappel, y compris dans .map/.filter/.reduce/.sort et les gestionnaires d evenements. Aucun parametre implicitement `any`.',
-    // TS2367 (6 occurrences) — « types "pending" | "preparing" | "sent" et
-    // "envoyé" n ont aucun recouvrement »: l union est declaree en anglais et
-    // comparee a des libelles francais. Le modele type dans une langue et
-    // compare dans l autre.
+    // TS2367 (6) — union declaree en anglais, comparee a des libelles francais.
     '- Une union de statuts/etats se declare UNE fois et se compare TOUJOURS avec ses propres valeurs. Ne compare jamais un statut a un libelle d affichage: garde les valeurs techniques dans un seul vocabulaire et fais correspondre les libelles utilisateur par une table de traduction separee.',
-    // TS2339 + TS2322 (25 occurrences) — la donnee et le type declare pour
-    // elle divergent: `data.map(...)` sur un objet qui CONTIENT le tableau,
-    // litteral qui ne satisfait pas son interface.
+    // TS2339 + TS2322 (25) — la donnee et le type declare pour elle divergent.
     '- La donnee d exemple doit satisfaire le type qui la declare: si le module exporte un objet, n itere pas dessus comme sur un tableau, et verifie que chaque litteral porte tous les champs requis de son interface.',
+    // v130, 43 erreurs (TS2741/TS2739/TS2322): appelant et composant ne
+    // s accordent pas sur le contrat de props.
+    '- Contrat de props: un composant rendu recoit EXACTEMENT les props que son interface declare — aucune requise omise, aucune non declaree ajoutee. Si tu passes une prop, declare-la dans l interface du composant; si tu declares une prop requise, fournis-la a chaque endroit ou le composant est rendu.',
+    // Accessibilite 72/100 au run v130 (seuil 80) — seule porte sous son seuil,
+    // et le score est desormais un vrai verdict (criteres non concluants exclus).
+    '- Un seul <h1> par page, puis une hierarchie de titres sans saut de niveau (h1 -> h2 -> h3), y compris quand les sections sont ecrites dans des composants separes.',
+    '- Contraste WCAG AA des l ecriture: texte normal >= 4.5:1 et texte large >= 3:1 contre son fond REEL. Ne pose pas de gris clair sur blanc ni de texte de couleur sur un fond de teinte proche.',
   ]
 
   if (isComplex) {

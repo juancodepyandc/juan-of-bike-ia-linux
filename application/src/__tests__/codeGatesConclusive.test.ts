@@ -94,3 +94,24 @@ describe('contrat de generation: prevenir les familles de typage vivantes', () =
     assert.match(contract, /tous les champs requis de son interface/)
   })
 })
+
+describe('contrat de generation: familles du run v130', () => {
+  const contract = buildExpertEngineeringContractBlock({
+    projectType: 'spa_react', complexity: 'complex', features: [], assetPlan: null,
+  } as never)
+
+  test('contrat de props: 43 erreurs TS2741/TS2739/TS2322 sur un seul desaccord', () => {
+    assert.match(contract, /Contrat de props/)
+    assert.match(contract, /aucune requise omise, aucune non declaree ajoutee/)
+  })
+
+  test('hierarchie de titres: heading_order, seule porte sous son seuil', () => {
+    assert.match(contract, /Un seul <h1> par page/)
+    assert.match(contract, /sans saut de niveau/)
+  })
+
+  test('contraste: text_contrast, exige des l ecriture', () => {
+    assert.match(contract, /4\.5:1/)
+    assert.match(contract, /3:1/)
+  })
+})
