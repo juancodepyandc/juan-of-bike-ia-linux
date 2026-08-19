@@ -162,6 +162,44 @@ def _tourner_buffers(glb: str, yaw_deg: float) -> bool:
     return True
 
 
+def tourner_buffers_z(glb: str, roll_deg: float) -> bool:
+    """Rotation dans le PLAN IMAGE (axe Z viewer), ecrite dans les buffers.
+
+    Etape 6 du plan toutes-poses (01/08): apres un redressement 2D de la
+    reference, le modele reconstruit est debout — cette rotation inverse le
+    remet dans la pose REELLE de la photo. UN seul ecrivain glTF (ici),
+    jamais un aller-retour Blender (piege des conventions verticales).
+    """
+    import numpy as np
+    from pygltflib import GLTF2
+    g = GLTF2().load(glb)
+    blob = bytearray(g.binary_blob())
+    th = np.radians(roll_deg)
+    Rm = np.array([[np.cos(th), -np.sin(th), 0], [np.sin(th), np.cos(th), 0],
+                   [0, 0, 1]], dtype=np.float64)
+    vus = set()
+    for mesh in g.meshes:
+        for prim in mesh.primitives:
+            for nom in ("POSITION", "NORMAL"):
+                idx = getattr(prim.attributes, nom)
+                if idx is None or idx in vus:
+                    continue
+                vus.add(idx)
+                acc = g.accessors[idx]
+                bv = g.bufferViews[acc.bufferView]
+                off = (bv.byteOffset or 0) + (acc.byteOffset or 0)
+                a = np.frombuffer(blob, dtype=np.float32, count=acc.count * 3,
+                                  offset=off).reshape(-1, 3).astype(np.float64)
+                a = a @ Rm.T
+                if nom == "POSITION":
+                    acc.min = [float(x) for x in a.min(0)]
+                    acc.max = [float(x) for x in a.max(0)]
+                blob[off:off + acc.count * 12] = a.astype(np.float32).tobytes()
+    g.set_binary_blob(bytes(blob))
+    g.save(glb)
+    return True
+
+
 def orienter_face_viewer(glb: str) -> dict:
     """Face vers +Z (la camera du viewer), jugee sur projections BRUTES."""
     sys.path.insert(0, str(PS))
@@ -186,6 +224,131 @@ def orienter_face_viewer(glb: str) -> dict:
         if yaw:
             _tourner_buffers(glb, float(yaw))
         return {"ok": True, "vue_face": iv, "yaw": yaw}
+
+
+# ---------------------------------------------------- coherence (anime) ----
+def verifier_coherence(glb: str) -> dict:
+    """Verification STRUCTURELLE d'un maillage ANIME, SANS comparaison a la
+    reference photo: une pose de marche/geste ne ressemble jamais a un
+    portrait immobile (deja paye ailleurs sous "bras fondus"/"penche" —
+    aurora_3d_pipeline separe le livrable statique du fichier anime pour
+    cette raison). Le VLM reste juge (seul un oeil detecte un rig qui
+    dechire/fusionne la geometrie), mais SEULEMENT sur des defauts
+    POSE-INDEPENDANTS (trous, sujet eclate/dechire, taches) — jamais
+    "morceaux_manquants" ni "conforme_demande", qui confondent une pose de
+    mouvement avec un defaut (mesure: bras replies en marchant = "manquant").
+    """
+    sys.path.insert(0, str(PS))
+    from vlm_judge import ask_vlm
+    with tempfile.TemporaryDirectory() as td:
+        r = subprocess.run([_blender(), "-b", "-P",
+                            str(PS / "orient_rendu_bpy.py"), "--", glb, td],
+                           capture_output=True, text=True, timeout=1200)
+        if "VUES4_OK" not in (r.stdout or ""):
+            return {"parfait": False, "score": 0,
+                    "defauts": ["rendu de controle impossible"]}
+        vues = [os.path.join(td, "az%03d.png" % a) for a in (270, 0, 90, 180)]
+        try:
+            import numpy as _np
+            from PIL import Image as _Im
+            _fracs = [float((_np.asarray(_Im.open(_v).convert("L")) > 28).mean())
+                     for _v in vues]
+            _fmax = max(_fracs)
+        except Exception:  # noqa: BLE001
+            return {"parfait": False, "score": 0,
+                    "defauts": ["lecture des rendus impossible"]}
+        if _fmax < 0.08:
+            return {"parfait": False, "score": 0,
+                    "defauts": ["rendu illisible (sujet %.1f%% du cadre: "
+                                "debris/eclats probables)" % (100 * _fmax)]}
+        votes = []
+        for _tour in range(3):
+            try:
+                v = ask_vlm(
+                    vues,
+                    "4 vues d'un modele 3D ANIME (une pose de MOUVEMENT, pas "
+                    "une pose debout figee — IGNORE la pose elle-meme, "
+                    "juge seulement l'integrite du maillage). Reponds "
+                    "STRICTEMENT en JSON par OUI/NON factuels:\n"
+                    "- trous: des perforations/manques DANS la surface du "
+                    "sujet (pas le fond) ?\n"
+                    "- eclate: le sujet est DECHIRE/EN LAMBEAUX — des bouts "
+                    "de surface qui se detachent, des pointes/lanieres "
+                    "qui ne devraient pas exister (PAS juste un membre "
+                    "replie ou cache par la pose) ?\n"
+                    "- taches: mouchetures ou taches sombres/noires "
+                    "parasites bien visibles sur la surface ?\n"
+                    'JSON strict: {"trous": true|false, "eclate": '
+                    'true|false, "taches": true|false}',
+                    schema_hint='{"trous": true|false, "eclate": true|false,'
+                               ' "taches": true|false}',
+                    timeout=180)
+                if isinstance(v, dict):
+                    votes.append(v)
+            except Exception:  # noqa: BLE001
+                continue
+        if len(votes) < 2:
+            return {"parfait": False, "score": 0,
+                    "defauts": ["juge indisponible (%d/3 votes)" % len(votes)]}
+
+        def _maj(cle):
+            return sum(1 for v in votes if v.get(cle)) * 2 > len(votes)
+
+        defauts = [d for d, actif in (
+            ("trous dans la surface (rig)", _maj("trous")),
+            ("sujet dechire/eclate (rig)", _maj("eclate")),
+            ("taches/mouchetures (rig)", _maj("taches")),
+        ) if actif]
+        return {"parfait": not defauts, "score": (0 if defauts else 100),
+                "defauts": defauts, "votes": len(votes)}
+
+
+def porte_structure(glb: str) -> dict:
+    """Porte pour le fichier ANIME (rigged): repare (trous, orientation,
+    gouttieres) puis verifie la coherence structurelle — jamais une
+    comparaison de pose a une photo fixe (methode invalide pour un mouvement,
+    cf. verifier_coherence)."""
+    reparations = []
+    print("PORTE: audit des trous (anime)...", flush=True)
+    t0 = audit_trous(glb)
+    if t0.get("bords_ouverts", 0) > 200:
+        if reboucher(glb).get("ok"):
+            t1 = audit_trous(glb)
+            reparations.append("trous: %s -> %s bords ouverts"
+                               % (t0.get("bords_ouverts"), t1.get("bords_ouverts")))
+    print("PORTE: orientation espace brut (anime)...", flush=True)
+    o = orienter_face_viewer(glb)
+    if o.get("ok") and o.get("yaw"):
+        reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
+    try:
+        from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
+        dsp = _dspk_atlas(glb, glb)
+        if dsp.get("ok") and dsp.get("islands_purged"):
+            reparations.append("%d ilot(s) parasite(s) relocalise(s) (%d px)"
+                               % (dsp["islands_purged"], dsp.get("px_changed", 0)))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from atlas_dilate import dilater
+        d = dilater(glb)
+        if d.get("ok"):
+            reparations.append("gouttieres atlas dilatees")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _run = Path(glb).parent
+        if _run.name in ("modele", "mouvement", "models", "travail"):
+            _run = _run.parent
+        verdict_preuves = preuves(glb, str(_run), Path(glb).stem[-40:])
+        reparations.append("preuves ecrites: journal/verifications (%s)"
+                           % json.dumps({k: verdict_preuves.get(k) for k in
+                                         ("faces", "ilots", "ombrage_lisse")}))
+    except Exception:  # noqa: BLE001
+        pass
+    print("PORTE: coherence structurelle (anime)...", flush=True)
+    verdict = verifier_coherence(glb)
+    verdict["reparations"] = reparations
+    return verdict
 
 
 # --------------------------------------------------------------- juge ------
@@ -340,6 +503,21 @@ def porte(glb: str, reference: str | None, contexte: str = "") -> dict:
     o = orienter_face_viewer(glb)
     if o.get("ok") and o.get("yaw"):
         reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
+    try:
+        # ILOTS PARASITES (mesure 06/08, Happy): sur un atlas a dizaines de
+        # milliers d'ilots, les charts degeneres (< 1 texel d'aire) sont
+        # ecrases par xatlas sur UN SEUL texel arbitraire — des milliers de
+        # patchs 3D sans rapport echantillonnent alors la MEME couleur au
+        # hasard (mouchetures). atlas_dilate ne corrige que les gouttieres
+        # NOIRES; ceci est un defaut different (deja peint, mais au hasard),
+        # deja outille (texture_despeckle_atlas.py) mais jamais branche ici.
+        from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
+        dsp = _dspk_atlas(glb, glb)
+        if dsp.get("ok") and dsp.get("islands_purged"):
+            reparations.append("%d ilot(s) parasite(s) relocalise(s) (%d px)"
+                               % (dsp["islands_purged"], dsp.get("px_changed", 0)))
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from atlas_dilate import dilater
         d = dilater(glb)

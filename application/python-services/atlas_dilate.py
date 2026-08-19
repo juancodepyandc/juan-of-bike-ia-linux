@@ -111,6 +111,21 @@ def dilater(glb_path: str, out_path: str | None = None) -> dict:
             rapport["images"].append({"image": i, "saut": True,
                                       "couverture": round(couverture, 3)})
             continue
+        # DESPECKLAGE. La dilatation ci-dessous ne traite QUE les texels
+        # NOIRS (gouttieres non peintes) — un texel deja peint mais d'une
+        # COULEUR ABERRANTE isolee (bake normal/AO/projection sur une
+        # geometrie a des dizaines de milliers de micro-ilots) n'est jamais
+        # touche (verifie: mouchetures noires ET colorees visibles sur les
+        # ailes d'un rendu 256 echantillons, donc PAS du bruit de rendu).
+        # Filtre median LOCAL, applique seulement aux texels qui s'ecartent
+        # fort de leur voisinage immediat DEJA VALIDE — un outlier ponctuel,
+        # jamais une grande zone de couleur legitime (bordee par construction).
+        _med = cv2.medianBlur(a, 5)
+        _ecart = np.abs(a.astype(np.int16) - _med.astype(np.int16)).max(axis=2)
+        _mouchetures = valide & (_ecart > 40)
+        if _mouchetures.any():
+            a = np.where(_mouchetures[..., None], _med, a).astype(np.uint8)
+            rapport.setdefault("despeckle", {})[i] = int(_mouchetures.sum())
         # pixel valide le plus proche pour chaque texel de gouttiere
         dist, labels = cv2.distanceTransformWithLabels(
             (~valide).astype(np.uint8), cv2.DIST_L2, 3,

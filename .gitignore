@@ -79,6 +79,9 @@ application/comfyui_stderr*.log
 application/*.stderr
 application/*.stdout
 application/bridge_test.log
+# Fichiers locaux du tunnel. Le lanceur synchronise la valeur courante vers
+# le fichier versionne aurora-live/tunnel.txt, sans polluer le repo AuroraIA.
+tunnel.txt
 tunnel_url.txt
 3D.txt
 10s
@@ -192,3 +195,11 @@ application/python-services/_hy3dpaint/**/*.so
 application/python-services/_hy3dpaint/**/*.egg-info/
 application/python-services/_hy3dpaint/**/build/
 application/python-services/_hy3dpaint/ckpt/*.pth
+
+# Depots vendor clones localement (TRELLIS.2, MV-Adapter...): des centaines de
+# Mo de code tiers qui vivent hors du depot applicatif — voir SETUP_TRELLIS2_LINUX.md
+external/
+
+# Sorties de travail et listings generes
+scratchpad/
+fichiers.txt

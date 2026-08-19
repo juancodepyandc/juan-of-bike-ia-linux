@@ -40,6 +40,101 @@ BLENDER_CANDIDATES = [
 ]
 
 
+def redresser_pca(glb_in: str, glb_out: str) -> dict:
+    """Mesure l'axe PRINCIPAL reel du sujet (PCA sur les positions, sans
+    Blender — ecriture directe des buffers glTF comme perfection_gate.
+    _tourner_buffers) et redresse le maillage si Y (hauteur glTF) sous-estime
+    nettement cet axe.
+
+    Le placement du metarig/l'auto-rig MIA supposent tous deux un sujet DEJA
+    debout. Faux pour un sujet reconstruit incline (creature ailee
+    photographiee en vol, volontairement NON redressee cote reconstruction
+    statique — cf. aurora_3d_pipeline "objet allonge: axe horizontal =
+    canonique, aucun redressement"). Sans mesure ici, les os se calent a
+    cote du vrai corps et le skinning dechire tout au moindre mouvement
+    (constate: Happy incline ~82 deg, rig en lambeaux). Sur un sujet deja
+    droit (cas courant), Y ~= l'axe principal: aucune correction (no-op).
+    """
+    import math
+    import numpy as np
+    from pygltflib import GLTF2
+    g = GLTF2().load(glb_in)
+    blob = bytearray(g.binary_blob())
+    pts, seen = [], set()
+    for mesh in g.meshes:
+        for prim in mesh.primitives:
+            idx = prim.attributes.POSITION
+            if idx is None or idx in seen:
+                continue
+            seen.add(idx)
+            acc = g.accessors[idx]
+            bv = g.bufferViews[acc.bufferView]
+            off = (bv.byteOffset or 0) + (acc.byteOffset or 0)
+            a = np.frombuffer(blob, dtype=np.float32, count=acc.count * 3,
+                              offset=off).reshape(-1, 3).astype(np.float64)
+            pts.append(a)
+    if not pts:
+        return {"ok": False, "error": "aucune position trouvee"}
+    pts_all = np.concatenate(pts, axis=0)
+    _sample = pts_all[::max(1, len(pts_all) // 20000)]
+    c = _sample.mean(axis=0)
+    cov = np.cov((_sample - c).T)
+    evals, evecs = np.linalg.eigh(cov)
+    main_axis = evecs[:, int(np.argmax(evals))]
+    proj = _sample @ main_axis
+    extent_main = float(proj.max() - proj.min())
+    extent_up = float(_sample[:, 1].max() - _sample[:, 1].min())  # glTF: Y = hauteur
+    if extent_main < 0.02 or extent_up >= 0.75 * extent_main:
+        return {"ok": True, "redresse": False,
+                "extent_main": extent_main, "extent_up": extent_up}
+    # POLE tete/queue mesure (pas suppose): l'extremite la plus LARGE
+    # (tete/epaules/ailes) doit finir en HAUT — jamais une rotation "minimale"
+    # qui reussirait la moitie du temps par hasard (signe de l'axe propre
+    # arbitraire).
+    lo_cut = float(np.percentile(proj, 20))
+    hi_cut = float(np.percentile(proj, 80))
+    perp = _sample - np.outer(proj, main_axis)
+    spread_lo = float(np.linalg.norm(perp[proj <= lo_cut], axis=1).mean())
+    spread_hi = float(np.linalg.norm(perp[proj >= hi_cut], axis=1).mean())
+    if spread_lo > spread_hi:
+        main_axis = -main_axis
+    up = np.array([0.0, 1.0, 0.0])
+    axis_rot = np.cross(main_axis, up)
+    sin_a = float(np.linalg.norm(axis_rot))
+    cos_a = float(np.dot(main_axis, up))
+    if sin_a <= 1e-6:
+        return {"ok": True, "redresse": False,
+                "extent_main": extent_main, "extent_up": extent_up}
+    axis_rot = axis_rot / sin_a
+    angle = math.atan2(sin_a, cos_a)
+    k = np.array([[0.0, -axis_rot[2], axis_rot[1]],
+                  [axis_rot[2], 0.0, -axis_rot[0]],
+                  [-axis_rot[1], axis_rot[0], 0.0]])
+    rot = np.eye(3) + math.sin(angle) * k + (1.0 - math.cos(angle)) * (k @ k)
+    vus = set()
+    for mesh in g.meshes:
+        for prim in mesh.primitives:
+            for nom in ("POSITION", "NORMAL"):
+                idx = getattr(prim.attributes, nom)
+                if idx is None or idx in vus:
+                    continue
+                vus.add(idx)
+                acc = g.accessors[idx]
+                bv = g.bufferViews[acc.bufferView]
+                off = (bv.byteOffset or 0) + (acc.byteOffset or 0)
+                a = np.frombuffer(blob, dtype=np.float32, count=acc.count * 3,
+                                  offset=off).reshape(-1, 3).astype(np.float64)
+                a = a @ rot.T
+                if nom == "POSITION":
+                    acc.min = [float(x) for x in a.min(0)]
+                    acc.max = [float(x) for x in a.max(0)]
+                blob[off:off + acc.count * 12] = a.astype(np.float32).tobytes()
+    g.set_binary_blob(bytes(blob))
+    g.save(glb_out)
+    return {"ok": True, "redresse": True, "angle_deg": math.degrees(angle),
+            "extent_main": extent_main, "extent_up": extent_up}
+
+
 def find_blender() -> str | None:
     # 0. portable Blender shipped under application/_blender/
     for portable in (WORKSPACE / "_blender").glob("blender-*-windows-x64"):
@@ -178,8 +273,71 @@ metarig = bpy.context.object
 metarig.name = "aurora_metarig"
 print("RIGIFY_INFO: metarig %s" % metarig_kind)
 
-# Compute mesh bounding box height, scale metarig to match
+# REDRESSEMENT PAR MESURE (jamais par supposition). Le placement du metarig
+# ci-dessous suppose Z=hauteur/Y=avant — vrai pour un sujet deja debout, FAUX
+# pour un sujet reconstruit incline (ex: creature ailee photographiee en vol,
+# volontairement NON redressee cote reconstruction statique — cf.
+# aurora_3d_pipeline "objet allonge: axe horizontal = canonique, aucun
+# redressement"). Sans mesure ici, le metarig se cale sur une hauteur Z
+# tronquee, ses os tombent a cote du vrai corps, et le skinning dechire tout
+# au moindre mouvement (constate: Happy incline ~82 deg, rig en lambeaux).
+# On mesure l'axe PRINCIPAL reel du sujet (PCA); si Z sous-estime nettement
+# cet axe, on redresse le maillage AVANT le calage du metarig. Sur un sujet
+# deja droit (le cas courant), Z ~= l'axe principal: aucune correction.
 import mathutils, math
+import numpy as np
+_pts_pca = []
+for mo in meshes:
+    _vs = mo.data.vertices
+    _co = np.empty(len(_vs) * 3, dtype=np.float64)
+    _vs.foreach_get("co", _co)
+    _co = _co.reshape(-1, 3)
+    if len(_co) > 20000:
+        _co = _co[::max(1, len(_co) // 20000)]
+    _mw = np.array(mo.matrix_world)
+    _pts_pca.append(_co @ _mw[:3, :3].T + _mw[:3, 3])
+_pts_pca = np.concatenate(_pts_pca, axis=0) if _pts_pca else np.zeros((0, 3))
+if len(_pts_pca) > 50:
+    _c_pca = _pts_pca.mean(axis=0)
+    _cov_pca = np.cov((_pts_pca - _c_pca).T)
+    _evals_pca, _evecs_pca = np.linalg.eigh(_cov_pca)
+    _main_axis = _evecs_pca[:, int(np.argmax(_evals_pca))]
+    _proj_main = _pts_pca @ _main_axis
+    _extent_main = float(_proj_main.max() - _proj_main.min())
+    _extent_z = float(_pts_pca[:, 2].max() - _pts_pca[:, 2].min())
+    if _extent_main > 0.02 and _extent_z < 0.75 * _extent_main:
+        # POLE tete/queue: le signe du vecteur propre est ARBITRAIRE (eigh ne
+        # sait pas ou est la tete). On mesure plutot: l'extremite la plus
+        # LARGE (tete/epaules/ailes) vs la plus ETROITE (queue/pieds) sur les
+        # 20% du corps aux deux bouts de l'axe principal — jamais un choix
+        # "rotation minimale" qui reussirait la moitie du temps par hasard.
+        _lo_cut = float(np.percentile(_proj_main, 20))
+        _hi_cut = float(np.percentile(_proj_main, 80))
+        _perp = _pts_pca - np.outer(_proj_main, _main_axis)
+        _perp_lo = _perp[_proj_main <= _lo_cut]
+        _perp_hi = _perp[_proj_main >= _hi_cut]
+        _spread_lo = float(np.linalg.norm(_perp_lo, axis=1).mean()) if len(_perp_lo) > 5 else 0.0
+        _spread_hi = float(np.linalg.norm(_perp_hi, axis=1).mean()) if len(_perp_hi) > 5 else 0.0
+        # la tete/epaules (large) doit finir en HAUT (+Z)
+        if _spread_lo > _spread_hi:
+            _main_axis = -_main_axis
+        _up_pca = np.array([0.0, 0.0, 1.0])
+        _axis_rot = np.cross(_main_axis, _up_pca)
+        _sin_a = float(np.linalg.norm(_axis_rot))
+        _cos_a = float(np.dot(_main_axis, _up_pca))
+        if _sin_a > 1e-6:
+            _axis_rot = _axis_rot / _sin_a
+            _angle_pca = math.atan2(_sin_a, _cos_a)
+            _rotm = mathutils.Matrix.Rotation(_angle_pca, 4, mathutils.Vector(_axis_rot))
+            for mo in meshes:
+                mo.matrix_world = _rotm @ mo.matrix_world
+            bpy.context.view_layer.update()
+            print("RIGIFY_INFO: sujet redresse pour le rig (%.0f deg autour de "
+                  "l'axe mesure — hauteur Z (%.2f) trop courte vs axe "
+                  "principal reel (%.2f))"
+                  % (math.degrees(_angle_pca), _extent_z, _extent_main))
+
+# Compute mesh bounding box height, scale metarig to match
 mesh = meshes[0]
 mn = mathutils.Vector((1e18,) * 3)
 mx = mathutils.Vector((-1e18,) * 3)
@@ -1408,6 +1566,29 @@ def main() -> int:
                       % _wr.get("error"), file=sys.stderr)
         except Exception as _we:  # noqa: BLE001
             print("RIGIFY_INFO: soudure amont echec (%r) -> entree brute" % _we,
+                  file=sys.stderr)
+
+    # REDRESSEMENT PAR MESURE, AVANT TOUTE VOIE DE RIG (MIA et Rigify
+    # supposent tous deux un sujet deja debout — cf. redresser_pca). La voie
+    # MIA importe args.input directement, sans jamais passer par le script
+    # Blender/Rigify plus bas: une correction qui ne vivrait que dans ce
+    # script-la serait du code mort pour --use-mia (constate).
+    if os.environ.get("AURORA_RIG_UPRIGHT", "1") == "1" and os.path.isfile(args.input):
+        try:
+            _upright_out = os.path.splitext(os.path.abspath(args.output))[0] + "_pre_upright.glb"
+            os.makedirs(os.path.dirname(_upright_out), exist_ok=True)
+            _ur = redresser_pca(os.path.abspath(args.input), _upright_out)
+            if _ur.get("ok") and _ur.get("redresse"):
+                print("RIGIFY_INFO: sujet redresse avant rig (%.0f deg — hauteur "
+                      "%.2f trop courte vs axe principal reel %.2f)"
+                      % (_ur.get("angle_deg", 0.0), _ur.get("extent_up", 0.0),
+                         _ur.get("extent_main", 0.0)), file=sys.stderr)
+                args.input = _upright_out
+            elif not _ur.get("ok"):
+                print("RIGIFY_INFO: redressement indispo (%s) -> entree telle quelle"
+                      % _ur.get("error"), file=sys.stderr)
+        except Exception as _ue:  # noqa: BLE001
+            print("RIGIFY_INFO: redressement echec (%r) -> entree telle quelle" % _ue,
                   file=sys.stderr)
 
     # --------- MIA path (opt-in via --use-mia) ---------

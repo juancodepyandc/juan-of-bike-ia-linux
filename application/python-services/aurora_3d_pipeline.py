@@ -8,7 +8,7 @@ Chain:
       creature → multi-view yes; product / generic → single-view to save
       compute).
    2. FLUX synth (single or multi-view) → reference PNG(s).
-   3. Hunyuan3D run on the front view (+ multi-view aux if available).
+   3. TRELLIS.2 run on the front view (+ multi-view aux if available).
    4. auto_rescue chain (extract kind → score → bake / reshape if needed).
    5. Return audit JSON: every stage's path + score + delta.
 
@@ -325,7 +325,7 @@ def _reexec_under_mem_scope() -> None:
     # PAS de churn). Le pic legitime demande ~28G+quelques G de parking. La
     # protection anti-gel n'est PAS le plafond (il tue le travail legitime) mais
     # la SENTINELLE (_freeze_sentinel): churn IO / RAM epuisee -> abort propre.
-    _max = os.environ.get("AURORA_MEM_MAX_GB", "28")
+    _max = os.environ.get("AURORA_MEM_MAX_GB", "29")
     _swap = os.environ.get("AURORA_MEM_SWAP_MAX_GB", "28")
     os.environ["AURORA_MEM_SCOPED"] = "1"
     sys.stdout.flush()
@@ -421,7 +421,9 @@ def _freeze_sentinel() -> None:
                         continue
             except Exception:  # noqa: BLE001
                 pass
-            bad_io = bad_io + 1 if io_avg > 45.0 else 0
+            # 31/07: 44-50% d'io pendant le spill GPU->RAM est NORMAL sur
+            # cette machine (64 Go de swap); le gel historique etait a >85%.
+            bad_io = bad_io + 1 if io_avg > 70.0 else 0
             bad_mem = bad_mem + 1 if mem_avg > 65.0 else 0
             # RAM libre basse SEULE != danger, depuis que le swap est un fichier
             # NVMe de 32 Go (plus de cle USB lente). Mesure 2026-07-22 19:32: le
@@ -430,8 +432,12 @@ def _freeze_sentinel() -> None:
             # aucun gel. On exige donc RAM basse ET un debut de detresse (pression
             # memoire reelle), tout en gardant un PLANCHER ABSOLU a 250 Mo qui
             # coupe quoi qu'il arrive (lecon du 18:51: ne jamais tout relacher).
+            # 31/07: 787 Mo dispo + psi 15% = pic legitime de TRELLIS, pas
+            # un gel (run tue a tort a 100%% du sampling). On exige une vraie
+            # asphyxie: quasi plus rien de disponible, ou pression memoire
+            # soutenue ET forte.
             bad_ram = bad_ram + 1 if (avail_mb < 250
-                                      or (avail_mb < 800 and mem_avg > 15.0)) else 0
+                                      or (avail_mb < 600 and mem_avg > 40.0)) else 0
             # VRAM: nvidia-smi lit le TOTAL GPU (TRELLIS cape a 0.92 + contexte CUDA
             # + bureau/UI). Un bake 8192 SAIN atteint ~15.6-16.2G brievement -> le
             # cap torch force deja l'OOM->ladder 4096, la sentinelle ne doit PAS le
@@ -441,7 +447,14 @@ def _freeze_sentinel() -> None:
             # NVMe: le T705 Gen5 tourne HOT (72-80C normal en ecriture, throttle
             # interne ~82-84C), d'autant que APST=0 + pcie_aspm=off le maintiennent
             # pleine puissance. 76C etait un faux positif; le vrai risque est 82C+.
-            bad_nvme = bad_nvme + 1 if nvme_c >= 82 else 0
+            # 30/07: le seuil 82 degC TUAIT les generations lancees depuis
+            # l'UI (mesure: "SENTINELLE — nvme=83deg" -> "TRELLIS n'a pas
+            # produit de mesh", message trompeur). Or 83 degC n'a rien de
+            # critique: un NVMe throttle tout seul vers 80-85 et sa limite
+            # d'arret est a 90-95. On ne tire donc qu'a l'approche du VRAI
+            # danger, et seulement si la chaleur PERSISTE.
+            _nvme_seuil = float(os.environ.get("AURORA_SENTINEL_NVME", "89"))
+            bad_nvme = bad_nvme + 1 if nvme_c >= _nvme_seuil else 0
             # SWAP: le gel du 24/07 (Xid 109 CTX SWITCH TIMEOUT pendant l'etape
             # materiaux) est survenu avec TOUS les criteres ci-dessus au vert
             # (io 0.04%, psi mem bas, RAM dispo 3.8G, NVMe froid) mais 22 Go en
@@ -456,7 +469,9 @@ def _freeze_sentinel() -> None:
                            - float(_mi.get("SwapFree", 0))) / 1048576.0
             except Exception:  # noqa: BLE001
                 pass
-            _swap_seuil = float(os.environ.get("AURORA_SENTINEL_SWAP_GB", "15"))
+            # 31/07: 15 Go de swap occupe n'a rien d'anormal avec 64 Go —
+            # seuil recale sur la nouvelle taille.
+            _swap_seuil = float(os.environ.get("AURORA_SENTINEL_SWAP_GB", "40"))
             # LE VRAI SIGNAL EST LA RELECTURE DEPUIS LE SWAP (pswpin), pas le
             # niveau ni la croissance. 2e sortie reelle (Pikachu, 24/07 13h):
             # swap 6->22,7 Go pendant le CHARGEMENT TRELLIS = eviction SAINE
@@ -486,7 +501,7 @@ def _freeze_sentinel() -> None:
                                         and pswpin_rate > _pin_seuil
                                         and mem_avg > 25.0) else 0
             if (bad_io >= 3 or bad_mem >= 2 or bad_ram >= 3 or bad_vram >= 3
-                    or bad_nvme >= 2 or bad_swap >= 5):
+                    or bad_nvme >= 4 or bad_swap >= 5):
                 print("PROGRESS:error:SENTINELLE ANTI-GEL — io=%.0f%% memPsi=%.0f%% "
                       "ram=%dMo vram=%dMo nvme=%d°C swap=%.1fGo relecture=%.0fp/s: "
                       "abandon propre AVANT le gel machine"
@@ -494,6 +509,20 @@ def _freeze_sentinel() -> None:
                          pswpin_rate),
                       flush=True)
                 sys.stdout.flush()
+                # trace lisible par le pipeline ET par l'UI: le motif reel
+                try:
+                    _mot = ("io_sature" if bad_io >= 3
+                            else "pression_memoire" if bad_mem >= 2
+                            else "ram_epuisee" if bad_ram >= 3
+                            else "vram_saturee" if bad_vram >= 3
+                            else "disque_brulant" if bad_nvme >= 4
+                            else "churn_swap")
+                    Path(os.environ.get("AURORA_SENTINEL_TRACE",
+                                        "/tmp/aurora_sentinelle.txt")).write_text(
+                        "SENTINELLE motif=%s nvme=%dC io=%.0f%% ram=%dMo\n"
+                        % (_mot, nvme_c, io_avg, avail_mb), encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    pass
                 # EMPORTER LES ENFANTS. Tuer seulement le pipeline laissait le
                 # sous-processus TRELLIS ORPHELIN avec ses 21,7 Go (constate le
                 # 24/07: 38 min de survie apres l'abandon, machine toujours
@@ -567,6 +596,8 @@ def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
             try:
                 _d = json.loads(ans.read_text(encoding="utf-8"))
                 _out = {"accepted": bool(_d.get("accepted")),
+                        "photo": str(_d.get("photo") or "").strip() or None,
+                        "jetees": _d.get("jetees") or [],
                         "reason": str(_d.get("reason") or "").strip(),
                         "verdict": str(_d.get("verdict") or
                                        ("oui" if _d.get("accepted") else "non")),
@@ -608,8 +639,8 @@ def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
     return {"accepted": True, "reason": "", "verdict": "oui", "timeout": True}
 
 
-def _free_gpu_before_hunyuan(audit: list | None = None) -> None:
-    """Libere la VRAM des AUTRES process GPU avant le shape+paint Hunyuan.
+def _free_gpu_before_shape(audit: list | None = None) -> None:
+    """Libere la VRAM des AUTRES process GPU avant le shape+paint TRELLIS.2.
 
     Cause racine du "mesh gris depuis l'app": FLUX reste charge dans ComfyUI (~10-12 Go)
     apres la synthese des references, et un modele Ollama (qwen3-vl) reste warm. Le paint
@@ -679,138 +710,6 @@ def _ollama_reachable(timeout_s: float = 3.0) -> bool:
             return True
     except Exception:
         return False
-
-
-def run_hunyuan3d(image_path: Path, run_id: str, output_dir: Path,
-                  *, mv_front: Path | None = None,
-                  mv_back: Path | None = None,
-                  mv_left: Path | None = None,
-                  mv_right: Path | None = None,
-                  intent_purpose: str = "visual_preview",
-                  motion_readiness: str = "static_only",
-                  dimensional_precision: bool = False,
-                  fmt: str = "glb", timeout_s: int = 14400) -> dict:
-    # v83-3dloop: 4h. Le texturing Hunyuan paint via le rasteriseur CPU/numpy
-    # (fallback quand custom_rasterizer/CUDA absent) est lent ; 1800s timeout
-    # avant. "Le temps n'est pas important" (consigne utilisateur).
-    """Subprocess hunyuan3d_run.py and wait. Returns {ok, mesh_path?, error?}."""
-    import subprocess
-    script = REPO_ROOT / "application" / "python-services" / "hunyuan3d_run.py"
-    if not script.is_file():
-        return {"ok": False, "error": f"hunyuan3d_run.py missing at {script}"}
-
-    # APLATIR L'ALPHA AVANT LA FORME. Les PNG transparents du web portent du
-    # bruit d'alpha A L'INTERIEUR du sujet (semi-transparences de detourage):
-    # le reconstructeur les lit comme des trous -> surface piquee/erodee
-    # (verifie: Pikachu ref alpha = visage ronge; yeti ref opaque = propre).
-    # Alpha binarise + composite blanc = sujet PLEIN, silhouette intacte; la
-    # reference LIVREE garde, elle, sa transparence d'origine.
-    try:
-        from PIL import Image as _Im
-        import numpy as _np
-        _im = _Im.open(image_path)
-        if "A" in _im.getbands():
-            _a = _np.asarray(_im.convert("RGBA"))
-            _al = _a[..., 3]
-            _mask = _al > 128
-            _rgb = _a[..., :3].copy()
-            _rgb[~_mask] = 255
-            output_dir.mkdir(parents=True, exist_ok=True)
-            _flat = output_dir / f"{run_id}_ref_aplatie.png"
-            _Im.fromarray(_rgb).save(str(_flat))
-            image_path = _flat
-            print("PROGRESS:shape:alpha de la reference aplati (bruit de "
-                  "detourage neutralise)", flush=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-    cmd = [
-        sys.executable, str(script),
-        "--image", str(image_path),
-        "--output-dir", str(output_dir),
-        "--run-id", run_id,
-        "--format", fmt,
-        # ROOT-CAUSE FIX (v90): without --intent-purpose the worker defaults to
-        # 'visual_preview' and the character octree=512/steps=70 branch in
-        # build_shape_strategies never fires — every face was reconstructed at
-        # octree 384/448 and came out as a soft "hood". Thread the kind through.
-        "--intent-purpose", intent_purpose,
-        "--motion-readiness", motion_readiness,
-    ]
-    if dimensional_precision:
-        cmd.append("--dimensional-precision")
-    if mv_front: cmd += ["--mv-front", str(mv_front)]
-    if mv_back:  cmd += ["--mv-back", str(mv_back)]
-    if mv_left:  cmd += ["--mv-left", str(mv_left)]
-    if mv_right: cmd += ["--mv-right", str(mv_right)]
-
-    # v83-3dloop : on streame la sortie du subprocess EN TEMPS RÉEL dans
-    # `<run-id>_hunyuan.log` (Popen + thread lecteur) — sinon, sur crash ou
-    # timeout, on perd toute trace (subprocess.run + capture_output n'écrit le
-    # log qu'APRÈS retour, donc rien en cas d'échec). C'était LE point aveugle.
-    import threading
-    log_path = output_dir / f"{run_id}_hunyuan.log"
-    out_lines: list[str] = []
-    started = time.time()
-    try:
-        lf = open(log_path, "w", encoding="utf-8", errors="replace")
-    except Exception:
-        lf = None
-    if lf:
-        lf.write("=== CMD ===\n" + " ".join(cmd) + "\n=== STREAM ===\n"); lf.flush()
-    try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace", bufsize=1,
-        )
-    except Exception as e:
-        if lf: lf.close()
-        return {"ok": False, "error": f"Hunyuan3D failed to start: {e}"}
-
-    def _pump():
-        try:
-            for line in proc.stdout:  # type: ignore[union-attr]
-                out_lines.append(line)
-                if lf:
-                    try: lf.write(line); lf.flush()
-                    except Exception: pass
-        except Exception:
-            pass
-    _t = threading.Thread(target=_pump, daemon=True)
-    _t.start()
-    timed_out = False
-    try:
-        proc.wait(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        try: proc.kill(); proc.wait(timeout=10)
-        except Exception: pass
-    _t.join(timeout=5)
-    elapsed = round(time.time() - started, 1)
-    if lf:
-        try:
-            lf.write(f"\n=== {'TIMEOUT' if timed_out else 'returncode ' + str(proc.returncode)} | elapsed {elapsed}s ===\n")
-            lf.close()
-        except Exception: pass
-    out_txt = "".join(out_lines)
-
-    if timed_out:
-        return {"ok": False, "error": f"Hunyuan3D timed out after {timeout_s}s",
-                "elapsed_s": elapsed, "hunyuan_log": str(log_path)}
-
-    expected = output_dir / f"{run_id}_mesh.{fmt}"
-    if not expected.is_file() or expected.stat().st_size < 1000:
-        return {"ok": False, "error": f"mesh missing/too small at {expected}",
-                "elapsed_s": elapsed, "stderr_tail": out_txt[-600:],
-                "hunyuan_log": str(log_path)}
-    # Extrait la stratégie de texture du stdout pour l'audit.
-    tex_strategy = None
-    for line in out_txt.splitlines():
-        if "texture_strategy" in line or "paint_attempt" in line or "shape_only" in line or "texture_warn" in line:
-            tex_strategy = line.strip()[-200:]
-    return {"ok": True, "mesh_path": str(expected), "elapsed_s": elapsed,
-            "size_bytes": expected.stat().st_size,
-            "texture_strategy": tex_strategy, "hunyuan_log": str(log_path)}
 
 
 def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
@@ -891,6 +790,20 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                       "part sur son solveur (plus de domaine perdu)", flush=True)
     except Exception as _pse:  # noqa: BLE001
         audit.append({"stage": "plan_scene", "ok": False, "error": repr(_pse)})
+
+    # DOMAINE REEL POUR LE CHOIX DU SQUELETTE. extract_kind() (subject_kind)
+    # est du regex PUR sur le prompt: "Happy" (un nom propre, sans mot-cle
+    # "chat"/"creature") ne matche rien -> defaut HUMAIN pour un chat aile.
+    # plan_scene, lui, a deja tranche correctement ("domaines: creature",
+    # confirme au log) — pour un acteur unique, on s'en sert en repli quand
+    # subject_kind n'a rien dit de precis.
+    _domain_kind = ""
+    try:
+        _acteurs_ps = plan_scene.get("acteurs") or []
+        if len(_acteurs_ps) == 1:
+            _domain_kind = str(_acteurs_ps[0].get("famille_metriques") or "").lower()
+    except Exception:  # noqa: BLE001
+        pass
 
     # FRISE MULTI-PISTE. "un guerrier qui attaque avec une flamme" contient
     # DEUX demandes: un corps qui bouge et un phenomene physique. Une seule
@@ -1478,7 +1391,40 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 "motion_intent": category, "motion_prompt": motion_prompt}
     motion_json_path.write_text(parsed, encoding="utf-8")
 
-    metarig_family = "quadruped" if (subject_kind or "").lower() in ("quadruped", "creature") else "human"
+    _kind_pour_metarig = (subject_kind or "").lower()
+    if (_kind_pour_metarig not in ("quadruped", "creature", "human", "humanoid",
+                                    "character") and _domain_kind):
+        _kind_pour_metarig = _domain_kind
+    metarig_family = "quadruped" if _kind_pour_metarig in ("quadruped", "creature") else "human"
+
+    # PRESET vs SQUELETTE: le parseur de mouvement ignorait le sujet. "le loup
+    # marche" rendait character.walk_cycle (preset BIPEDE) alors qu'on batit
+    # ici un metarig QUADRUPEDE (loup): ses primitives visent `legs` et `arms`
+    # (hand_ik.*), or ce rig n'a ni hand_ik ni upper_arm et nomme ses membres
+    # avant front_thigh_fk/front_shin_fk. Resultat mesure: l'animal marchait
+    # sur ses pattes ARRIERE, les pattes AVANT figees, sans la moindre erreur.
+    # On reparse donc avec la morphologie effective — celle-la meme qui vient
+    # de decider le metarig — pour que famille de preset et famille de
+    # squelette ne puissent plus diverger.
+    if metarig_family == "quadruped":
+        _proc_q = subprocess.run(
+            [sys.executable, str(parser), "--prompt", motion_prompt,
+             "--subject-kind", _kind_pour_metarig],
+            capture_output=True, timeout=15, check=False,
+        )
+        _parsed_q = (_proc_q.stdout or b"").decode("utf-8", errors="replace").strip()
+        if _parsed_q and _parsed_q != "null" and _parsed_q != parsed:
+            motion_json_path.write_text(_parsed_q, encoding="utf-8")
+            parsed = _parsed_q
+            try:
+                _lbl = json.loads(_parsed_q).get("label", "")
+            except Exception:  # noqa: BLE001
+                _lbl = ""
+            audit.append({"stage": "preset_quadrupede", "kind": _kind_pour_metarig,
+                          "label": _lbl})
+            print("PROGRESS:animation:sujet quadrupede — presets a quatre pattes "
+                  "retenus (%s)" % _lbl, flush=True)
+
     # MIA (Make-It-Animatable) par DEFAUT sur les humanoides : poids anatomiques premium
     # qui separent bras/torse -> le balancier de bras ne fait plus EXPLOSER la manche
     # (prouve A/B: Rigify DEF+proxy 50k = chemise en ailes; MIA = corps intact, marche
@@ -2223,13 +2169,29 @@ def _stage_reference_image(src: str, dest: Path) -> dict:
     try:
         from PIL import Image  # noqa: WPS433
 
-        im = Image.open(source_path).convert("RGBA")
-        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
-        bg.alpha_composite(im)
-        bg.convert("RGB").save(dest)
-    except Exception:
+        im = Image.open(source_path)
+        # ORIENTATION EXIF (31/07, constate: photo de face fournie a 0 deg,
+        # recue par TRELLIS inclinee a -90). Les photos de telephone portent
+        # leur rotation en metadonnee EXIF; sans transposition, les pixels
+        # bruts sont TOURNES. On applique l'orientation AVANT tout le reste.
+        try:
+            from PIL import ImageOps as _IOps
+            im = _IOps.exif_transpose(im)
+        except Exception:  # noqa: BLE001
+            pass
+        im = im.convert("RGBA")
+        # ALPHA PRESERVE (30/07, audit): on compositait sur BLANC en RGB des
+        # le staging — le fond transparent du .webp utilisateur etait detruit
+        # avant meme TRELLIS/MV-Adapter, qui ont justement besoin du RGBA
+        # (c'etait la cause racine du preprocess vendor jamais appele). Le
+        # PNG garde l'alpha; les etapes qui exigent un fond plein aplatissent
+        # ELLES-MEMES, au bon moment.
+        im.save(dest)
+    except Exception as _pil_exc:
         try:
             shutil.copyfile(source_path, dest)
+            print("PROGRESS:reference:photo copiee sans reencodage (%s)"
+                  % type(_pil_exc).__name__, flush=True)
         except Exception as exc:  # noqa: BLE001 - fallback failed too
             return {"ok": False, "error": f"reference image staging failed: {exc}", "source": raw}
     finally:
@@ -2399,27 +2361,48 @@ def _clean_product_photo(img):
         return img
 
 
-def _character_visual_desc(name: str) -> str:
-    """Ask the local LLM for a SHORT visual description of a named character so we
+def _character_visual_desc(name: str) -> tuple[str, bool]:
+    """Ask the local LLM for a SHORT visual description of a named subject so we
     can (a) disambiguate the web search and (b) verify a candidate image actually
-    shows THAT character — even when the vision model doesn't recognize the name.
+    shows THAT subject — even when the vision model doesn't recognize the name.
     The LLM knows Goldorak is a giant black/white/red robot; that description
-    rejects the wrong 'Goldorak' anime-girl the raw search returns."""
+    rejects the wrong 'Goldorak' anime-girl the raw search returns.
+
+    Returns (description, is_real_person). A name shared by a real person AND a
+    fictional/game avatar (e.g. a rapper with a famous Fortnite skin) made the LLM
+    describe the SKIN instead of the human when asked generically for a
+    "character/robot" — real photos of the actual person then failed every
+    downstream check because they didn't match a hallucinated costume. Asking
+    the LLM to name the domain FIRST forces it to pick one referent.
+    """
     try:
         import urllib.request as _url
-        model = os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
-        q = (f"Give a SHORT visual description (8-16 words, no name) of the appearance of "
-             f"the character/robot/subject '{name}': body type, main colors, key iconic "
-             f"features. Output ONLY the description.")
+        model = os.environ.get("AURORA_MOTION_LLM", "devstral:latest")
+        q = (f"/no_think\nDescribe the exact canonical physical appearance of '{name}' (person, fictional character, creature, or robot). "
+             f"Identify: is this a real living/historical human, or fictional? What is its species/body type, official coat/skin colors, distinctive face, hair, wings or accessories? "
+             f"Output STRICT JSON only: "
+             f'{{"is_real_person": true|false, "species": "...", "description": "..."}}')
         body = json.dumps({"model": model, "prompt": q, "stream": False,
-                           "options": {"temperature": 0.1}, "keep_alive": 0}).encode()
+                           "options": {"temperature": 0}, "keep_alive": 0}).encode()
         req = _url.Request("http://127.0.0.1:11434/api/generate", data=body,
                            headers={"Content-Type": "application/json"})
-        with _url.urlopen(req, timeout=60) as r:
+        with _url.urlopen(req, timeout=30) as r:
             out = json.loads(r.read().decode()).get("response", "").strip()
-        return out.splitlines()[0].strip()[:160] if out else ""
+        a, b = out.find("{"), out.rfind("}")
+        if a >= 0 and b > a:
+            d = json.loads(out[a:b + 1])
+            desc_val = d.get("description")
+            if isinstance(desc_val, dict):
+                desc = ", ".join(f"{k}: {v}" for k, v in desc_val.items() if isinstance(v, (str, int, float)))
+            else:
+                desc = str(desc_val or "").strip()
+            species = str(d.get("species") or "").strip()
+            if species and species.lower() not in desc.lower():
+                desc = f"{species}, {desc}"
+            return desc[:160], bool(d.get("is_real_person"))
     except Exception:  # noqa: BLE001
-        return ""
+        pass
+    return "", False
 
 
 def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tuple[bool, str, str]:
@@ -2484,20 +2467,147 @@ def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tu
     return False, "vlm indisponible: refus par prudence", "inconnu"
 
 
-def _same_product(path_a: str, path_b: str, prompt: str) -> bool:
+def _research_additional_view(front_photo: str, view_label: str, prompt: str,
+                               output_dir: Path, run_id: str,
+                               log=lambda *a: None) -> str | None:
+    """Cherche UNE vue supplementaire (dos/cote) du MEME sujet que front_photo
+    sur le web, quand l'utilisateur n'a fourni qu'une photo.
+
+    Retire le 30/07 car non valide: le dos venait du web par simple mot-cle
+    texte (parfois un autre sujet) et les cotes etaient invente en FLUX
+    img2img depuis la meme photo (ailes perdues, queue-patte). Ici chaque
+    candidat est verifie PAR VLM (meme sujet demande) ET par comparaison
+    directe avec la photo de l'utilisateur (_same_product) — les deux gates
+    deja fiables sur la recherche de reference frontale. Sans correspondance
+    validee, retourne None et l'appelant garde son repli existant
+    (MV-Adapter / mono-vue), rien n'est degrade."""
+    script = REPO_ROOT / "application" / "python-services" / "reference_visual_search.py"
+    if not script.is_file():
+        return None
     try:
-        from vlm_judge import ask_vlm
-        verdict = ask_vlm([path_a, path_b],
-                          "Ces deux photos montrent-elles EXACTEMENT le meme modele de produit "
-                          "(pour: '%s') ? Reponds false si c'est une variante, une autre edition, "
-                          "une autre couleur ou un produit different." % prompt,
-                          schema_hint='{"meme_produit": true|false, "raison": "..."}',
-                          timeout=90)
-        if isinstance(verdict, dict) and "meme_produit" in verdict:
-            return bool(verdict["meme_produit"])
+        _ident = None
+        try:
+            from faithful_scene_prompt import _detect_identity as _det_id
+            _ident = _det_id(prompt)
+        except Exception:  # noqa: BLE001
+            _ident = None
+        _nm = (_ident or {}).get("name") or prompt
+        view_word = "back view" if view_label == "back" else "side profile"
+        queries = [f"{_nm} {view_word} photo", f"{_nm} {view_word}"]
+        import io as _io2, base64 as _b64_2
+        from PIL import Image as _Image2
+        seen_urls: set[str] = set()
+        for query in queries:
+            log(f"PROGRESS:reference:recherche vue {view_label} sur le web: \"{query[:60]}\"")
+            try:
+                p = subprocess.run([sys.executable, str(script), "--query", query, "--limit", "6"],
+                                   capture_output=True, text=True, timeout=70)
+                line = next((l for l in reversed((p.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+                cands = (json.loads(line).get("candidates") if line else None) or []
+            except Exception:  # noqa: BLE001
+                continue
+            for c in cands:
+                url = c.get("imageUrl")
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                try:
+                    d = subprocess.run([sys.executable, str(script), "--download-url", url],
+                                       capture_output=True, text=True, timeout=45)
+                    dl = next((l for l in reversed((d.stdout or "").splitlines()) if l.strip().startswith("{")), "")
+                    dj = json.loads(dl) if dl else {}
+                    if not dj.get("ok") or not dj.get("base64"):
+                        continue
+                    img = _Image2.open(_io2.BytesIO(_b64_2.b64decode(dj["base64"]))).convert("RGB")
+                    if min(img.size) < 400:
+                        continue
+                    cand_path = output_dir / f"{run_id}_{view_label}_web_candidate.png"
+                    img.save(cand_path)
+                    ok_photo, why, _ = _reference_photo_ok(str(cand_path), prompt)
+                    if not ok_photo:
+                        log(f"PROGRESS:reference:vue {view_label} web rejetee ({why[:60]})")
+                        cand_path.unlink(missing_ok=True)
+                        continue
+                    if not _same_product(front_photo, str(cand_path), prompt):
+                        log(f"PROGRESS:reference:vue {view_label} web ecartee "
+                            "(sujet different de votre photo)")
+                        cand_path.unlink(missing_ok=True)
+                        continue
+                    log(f"PROGRESS:reference:vue {view_label} trouvee sur le web "
+                        "et validee contre votre photo")
+                    return str(cand_path)
+                except Exception:  # noqa: BLE001
+                    continue
     except Exception:  # noqa: BLE001
         pass
-    return True
+    return None
+
+
+def _same_product(path_a: str, path_b: str, prompt: str) -> bool:
+    """Porte a DEUX etages. Mesure (repetee, meme apres renforcement du
+    prompt): un humain qui saute, vu de dos, valide comme "meme sujet" qu'un
+    chat aile bleu — PIRE, la MEME image envoyee deux fois recoit deux
+    categories differentes du VLM ("humain" puis "animal_reel", verifie sur
+    qwen3-vl:8b ET :30b). La comparaison multi-images d'un VLM local n'est
+    PAS fiable ici, quelle que soit la taille du modele: on verifie D'ABORD
+    au CHIFFRE (cosinus CLIP, deja utilise comme porte de coherence ailleurs
+    dans ce fichier — jamais confus entre deux images), puis on exige une
+    MAJORITE (2/3) sur la comparaison VLM fine comme second avis, jamais un
+    seul appel."""
+    try:
+        import subprocess as _sp_prod
+        _sim_r = _sp_prod.run(
+            [sys.executable, str(Path(__file__).parent / "auto_tag_images.py"),
+             "--similarity-ref", path_a, "--images", path_b],
+            capture_output=True, text=True, timeout=90)
+        for _l in reversed((_sim_r.stdout or "").splitlines()):
+            if _l.strip().startswith("{"):
+                _sj = json.loads(_l)
+                if _sj.get("ok") and _sj.get("cosinus"):
+                    _cos = float(_sj["cosinus"][0])
+                    if _cos < float(os.environ.get("AURORA_SAME_PRODUCT_COS", "0.75")):
+                        return False
+                break
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from vlm_judge import ask_vlm
+        votes = []
+        for _ in range(3):
+            try:
+                verdict = ask_vlm([path_a, path_b],
+                                  "Image 1 = photo de l'utilisateur (verite "
+                                  "terrain). Image 2 = candidat trouve sur "
+                                  "le web pour: '%s'. Ces deux images "
+                                  "montrent-elles EXACTEMENT le meme sujet "
+                                  "(meme espece/type d'objet, memes "
+                                  "attributs visibles — silhouette, "
+                                  "couleurs, ailes/membres/formes) ? "
+                                  "Reponds false SANS HESITER si l'image 2 "
+                                  "montre un sujet different (autre espece, "
+                                  "des personnes au lieu d'un personnage/"
+                                  "objet, une scene sans rapport, un "
+                                  "filigrane/watermark qui couvre l'image) "
+                                  "— au moindre doute, false." % prompt,
+                                  schema_hint='{"meme_produit": true|false, '
+                                              '"raison": "..."}',
+                                  timeout=90)
+                if isinstance(verdict, dict) and "meme_produit" in verdict:
+                    votes.append(bool(verdict["meme_produit"]))
+            except Exception:  # noqa: BLE001
+                continue
+        if len(votes) >= 2:
+            return sum(votes) * 2 > len(votes)
+    except Exception:  # noqa: BLE001
+        pass
+    # POLARITE (meme doctrine que _reference_photo_ok juste au-dessus):
+    # refuser quand on ne peut pas juger. L'ancien "return True" par defaut
+    # a laisse passer un candidat SANS RAPPORT (photo stock de personnes,
+    # watermark BIGSTOCK partout) sous charge GPU (timeout probable du VLM
+    # pendant un pipeline concurrent) -> injecte tel quel dans TRELLIS comme
+    # "vue de dos validee", geometrie detruite. Un candidat non juge doit
+    # etre rejete, jamais accepte par defaut.
+    return False
 
 
 def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool:
@@ -2525,13 +2635,23 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         # LLM visual description disambiguates the search AND lets the VLM reject a
         # wrong candidate (the raw 'Goldorak' search returns an anime girl; the
         # description 'giant black/white/red robot' rejects it).
-        _char_desc = _character_visual_desc(_nm) if _is_char else ""
+        _char_desc, _is_real_person = _character_visual_desc(_nm) if _is_char else ("", False)
         if _char_desc:
             log(f"PROGRESS:reference:description LLM du personnage: \"{_char_desc[:80]}\"")
         # On cherche EN PREMIER les images a fond transparent: le sujet y est
         # deja detoure proprement (entier, queue et extremites comprises), ce
         # qu'aucun detourage automatique ne garantit.
-        if _is_char:
+        if _is_char and _is_real_person:
+            # Une VRAIE personne n'a pas d'"art officiel"/planche de reference —
+            # ces requetes ramenent du fan-art/jeu video (constate: Travis Scott ->
+            # skin Fortnite). On cherche des vraies photos deja detourees/isolees.
+            front_queries = [
+                f"{_nm} png transparent background isolated cutout",
+                f"{_nm} portrait photo white background studio",
+                f"{_nm} headshot transparent background",
+                f"{_nm} photo",
+            ]
+        elif _is_char:
             _dq = (" " + _char_desc) if _char_desc else ""
             front_queries = [
                 f"{_nm}{_dq} official art full body png transparent background",
@@ -2553,7 +2673,9 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
         if _re_mod.search(r"\b(led|rgb|argb|lumineux|neon|strimer|lightstrip)\b", prompt, _re_mod.I):
             front_queries.insert(0, f"{prompt} product photo unlit powered off white leds")
         query_specs = [(q, 2) for q in front_queries]
-        if _is_char:
+        if _is_char and _is_real_person:
+            query_specs.append((f"{_nm} portrait side profile photo", 1))
+        elif _is_char:
             query_specs.append((f"{_nm} character reference sheet back view", 1))
             query_specs.append((f"{_nm} official art side profile", 1))
         else:
@@ -2684,6 +2806,8 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 slots[k] = None
         log("PROGRESS:reference:selection finale: face" + (" + dos" if slots["dos"] else "") + (" + vue extra" if slots["extra"] else ""))
         import shutil as _sh
+        if os.path.dirname(base):
+            os.makedirs(os.path.dirname(base), exist_ok=True)
         _sh.move(slots["face"], base)
         vi = 2
         for k in ("dos", "extra"):
@@ -2691,7 +2815,8 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
                 _sh.move(slots[k], f"{stem}_v{vi}.png")
                 vi += 1
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as _rre:  # noqa: BLE001
+        log(f"PROGRESS:reference:erreur copie reference: {_rre!r}")
         return False
     return False
 
@@ -2711,10 +2836,46 @@ def run_pipeline(prompt: str, run_id: str, *,
     if not run_id.strip():
         return {"ok": False, "error": "empty run_id"}
 
+    # ISOLATION PAR RUN. L'UI passe deja un dossier propre au run
+    # (runPaths.models = .../conversations/<sujet>/<run_id>/models) mais le
+    # CLI nu et le tunnel (_ext_3d_worker, bridge_server.py) retombent sur
+    # DEFAULT_OUTPUT_DIR — une racine PARTAGEE entre TOUS les runs. Les
+    # fichiers intermediaires (prefixes run_id_) coexistaient sans collision,
+    # mais la livraison finale (modele/modele_couleurs.glb, reference/face.png
+    # — noms FIXES, cf. livraison_organisee.py) d'un run ecrasait celle du
+    # run precedent. On isole ICI, a la source, pour que CLI/tunnel/UI
+    # produisent tous une arborescence propre sans devoir changer chaque
+    # appelant — sans rien casser pour l'UI qui est deja isolee.
+    if output_dir.name != "models" and run_id not in output_dir.parts:
+        output_dir = output_dir / run_id
+
     started_at = time.time()
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
     audit: list[dict] = []
     output_dir.mkdir(parents=True, exist_ok=True)
+    # HYGIENE MEMOIRE DES L'ENTREE (30/07, retour utilisateur: « Ollama n'a
+    # pas libere correctement les modeles precedents avant le swap »). La
+    # liberation n'existait qu'AVANT TRELLIS: les modeles de la session de
+    # chat precedente restaient parques en swap pendant toute la reference.
+    # Ici on decharge Ollama immediatement — chaque etape rechargera ce dont
+    # elle a besoin, rien ne traine.
+    try:
+        import urllib.request as _urq
+        with _urq.urlopen("http://127.0.0.1:11434/api/ps", timeout=8) as _pr:
+            _loaded = json.loads(_pr.read().decode("utf-8")).get("models", [])
+        for _lm in _loaded:
+            _ur = _urq.Request(
+                "http://127.0.0.1:11434/api/generate",
+                data=json.dumps({"model": _lm.get("name"),
+                                 "keep_alive": 0}).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with _urq.urlopen(_ur, timeout=30) as _uresp:
+                _uresp.read()
+        if _loaded:
+            print("PROGRESS:memoire:%d modele(s) Ollama liberes en entree de run"
+                  % len(_loaded), flush=True)
+    except Exception:  # noqa: BLE001
+        pass
     # JOURNAL SUR DISQUE. Au gel du 24/07, AUCUNE trace de l'etape en cours
     # n'a survecu (le stdout meurt avec l'app): l'etape n'a pu etre
     # reconstituee que par les dates de fichiers. Chaque ligne est desormais
@@ -2755,7 +2916,11 @@ def run_pipeline(prompt: str, run_id: str, *,
     # de NULLE PART (ni pipeline, ni bridge) et le prompt donnait un homme SEUL.
     # `allow_scene=False` coupe la recursion: l'orchestrateur rappelle run_pipeline
     # pour chaque objet, et "un homme" n'est evidemment pas une scene.
-    if allow_scene and os.environ.get("AURORA_SCENE_ORCH", "1") == "1":
+    # 30/07 (audit): l'orchestrateur de scene decoupait meme les demandes
+    # AVEC photo — le sujet de la photo devenait un fragment textuel et la
+    # reference partait en synthese. Une photo fournie = un seul sujet, la
+    # scene ne se decoupe que sur du texte pur.
+    if allow_scene and not images and os.environ.get("AURORA_SCENE_ORCH", "1") == "1":
         try:
             sys.path.insert(0, str(Path(__file__).parent))
             from scene_orchestrator import orchestrate_scene
@@ -3134,6 +3299,46 @@ def run_pipeline(prompt: str, run_id: str, *,
     input_reference_result = None
     _user_extra_views: list = []
     requested_images = [str(img).strip() for img in (images or []) if str(img).strip()]
+
+    # RECTIFICATION DE LA PHOTO REELLE. Une photo de telephone arrive
+    # sous-exposee (mesure sur un selfie: luma 30/255, 68% de l'image sous le
+    # seuil de noir, nettete 4.6): TRELLIS reconstruisait alors une texture
+    # noire, et aucune etape en aval ne pouvait la rattraper — le plafond est
+    # en ENTREE. photo_rectifier corrige l'exposition sur le POINT BLANC
+    # mesure (le teint reste celui de la photo, jamais une luminance cible qui
+    # eclaircirait une peau mate), eteint le reflet d'ecran sur les lunettes
+    # et detoure en gardant les meches. Auto-adaptatif: une photo deja bien
+    # exposee ressort inchangee (gain ~1.0). L'original de l'utilisateur n'est
+    # jamais modifie — la version rectifiee vit dans le run.
+    if requested_images and os.environ.get("AURORA_RECTIFIER", "1") == "1":
+        _rect_out = []
+        for _i, _src in enumerate(requested_images):
+            try:
+                from photo_rectifier import rectify_photo_for_3d as _rect
+                _dst = output_dir / ("%s_photo%d_rectifiee.png" % (run_id, _i))
+                _r = _rect(_src, str(_dst), log=lambda m: print(m, flush=True))
+                if _r.get("ok") and _dst.is_file():
+                    _av = _r.get("mesures_avant", {})
+                    _ap = _r.get("mesures_apres", {})
+                    audit.append({"stage": "photo_rectifier", "image": _i,
+                                  **{k: v for k, v in _r.items()
+                                     if k not in ("rgba", "white")}})
+                    print("PROGRESS:reference:photo rectifiee — luminosite %s->%s, "
+                          "nettete %s->%s%s"
+                          % (_av.get("luma_moyenne"), _ap.get("luma_moyenne"),
+                             _av.get("nettete"), _ap.get("nettete"),
+                             (", reflet de lunettes eteint"
+                              if (_r.get("reflets") or {}).get("applique") else "")),
+                          flush=True)
+                    _rect_out.append(str(_dst))
+                else:
+                    _rect_out.append(_src)
+            except Exception as _re:  # noqa: BLE001
+                audit.append({"stage": "photo_rectifier", "ok": False,
+                              "image": _i, "error": repr(_re)[:200]})
+                _rect_out.append(_src)
+        requested_images = _rect_out
+
     if requested_images:
         import re  # subprocess est deja importe au niveau module (l'import local ici rendait
         # `subprocess` local a toute la fonction -> UnboundLocalError dans la branche TRELLIS)
@@ -3153,10 +3358,46 @@ def run_pipeline(prompt: str, run_id: str, *,
                         pass
             return {}
 
+        # 0. DEDOUBLONNAGE PAR CONTENU (31/07, constate: la MEME photo poussée
+        # deux fois etait etiquetee face + droite -> TRELLIS fusionnait deux
+        # vues identiques et dechirait la geometrie). Deux fichiers au meme
+        # contenu = UNE seule vue, quel que soit leur nom.
+        try:
+            # EMPREINTE PERCEPTUELLE (31/07): le meme visuel re-encode
+            # PNG vs JPG a des octets differents — le sha1 laissait passer le
+            # doublon (constate: encore un faux « droite »). On compare les
+            # PIXELS (16x16 gris, distance de Hamming <= 8 = meme image).
+            import numpy as _npdd
+            from PIL import Image as _Imdd
+            def _ph(_p):
+                _im = _Imdd.open(_p).convert("L").resize((16, 16))
+                _a = _npdd.asarray(_im, dtype=_npdd.float32)
+                return (_a > _a.mean()).flatten()
+            _vus_h = []
+            _uniq = []
+            for _ri in requested_images:
+                try:
+                    _h = _ph(_ri)
+                except Exception:  # noqa: BLE001
+                    _uniq.append(_ri)
+                    continue
+                if not any(int((_h != _x).sum()) <= 8 for _x in _vus_h):
+                    _vus_h.append(_h)
+                    _uniq.append(_ri)
+            if len(_uniq) < len(requested_images):
+                print("PROGRESS:reference:%d image(s) identique(s) ignoree(s) "
+                      "(meme contenu = une seule vue)"
+                      % (len(requested_images) - len(_uniq)), flush=True)
+                audit.append({"stage": "input_reference_policy",
+                              "doublons_contenu": len(requested_images) - len(_uniq)})
+                requested_images = _uniq
+        except Exception:  # noqa: BLE001
+            pass
+
         # 1. AUTO-TAGGING via CLIP
         try:
             tag_cmd = [sys.executable, str(Path(__file__).parent / "auto_tag_images.py"), "--images"] + requested_images
-            tag_res = subprocess.run(tag_cmd, capture_output=True, text=True)
+            tag_res = subprocess.run(tag_cmd, capture_output=True, text=True, timeout=600)
             tag_data = extract_json(tag_res.stdout)
             tagged_images = tag_data.get("tags", {})
         except Exception:
@@ -3166,33 +3407,89 @@ def run_pipeline(prompt: str, run_id: str, *,
         if "front" not in tagged_images and requested_images:
             tagged_images["front"] = requested_images[0] # ensure front exists
 
-        # 2. If single view + multi_view enabled, generate intelligent missing views
-        if len(tagged_images) < 4 and multi_view:
-            audit.append({"stage": "input_reference_policy", "multi_view": True, "reason": "auto-generating missing views intelligently from single view"})
-            front_src = tagged_images["front"]
-            
-            # Fetch Web Context for Back View
+        # UNE image = UNE vue, et c'est la FACE. Le tagger classe volontiers
+        # une photo unique sous un autre angle ("right" sur un selfie de face
+        # legerement tourne); on obtenait alors la MEME image rangee en face ET
+        # en cote, puis dupliquee en vue supplementaire pour TRELLIS. Rien ne
+        # peut sortir de plus d'une image que ce qu'elle montre.
+        if len(requested_images) == 1:
+            _ecartees = [k for k in tagged_images if k != "front"]
+            if _ecartees:
+                audit.append({"stage": "input_reference_policy",
+                              "vues_ecartees": _ecartees,
+                              "raison": "une seule photo fournie = face uniquement"})
+            tagged_images = {"front": requested_images[0]}
+
+        # 2. Photo unique fournie: trois strategies possibles, choisies selon
+        # ce que le sujet permet — jamais une vue inventee sans validation.
+        # 30/07 (audit historique): le dos venait du web par simple mot-cle
+        # texte (parfois un AUTRE sujet) et les cotes etaient invente en FLUX
+        # img2img depuis la meme photo (ailes perdues, queue-patte) -> tout
+        # avait ete coupe, laissant seulement MV-Adapter/mono-vue. Restaure
+        # ici EN VALIDE: une recherche web tentee pour un sujet nommable,
+        # chaque candidat verifie par VLM (bon sujet demande) ET compare
+        # directement a la photo fournie (_same_product) — si rien ne passe
+        # ces deux portes, on retombe exactement sur le comportement precedent
+        # (MV-Adapter invente les vues, ou mono-vue si un seul angle suffit).
+        if len(requested_images) == 1:
+            multi_view = False
+            _found_web_view = False
             try:
-                web_cmd = [sys.executable, str(Path(__file__).parent / "web_reference_search.py"), "--character", prompt, "--output-dir", str(output_dir)]
-                web_res = subprocess.run(web_cmd, capture_output=True, text=True)
-                web_data = extract_json(web_res.stdout)
-                back_source = web_data.get("downloaded_references", [front_src])[0] if web_data.get("downloaded_references") else front_src
-            except Exception:
-                back_source = front_src
-            
-            # Generate Missing Views with FLUX Img2Img
-            try:
-                for v_name, src_path in [("back", back_source), ("left", front_src), ("right", front_src)]:
-                    if v_name not in tagged_images:
-                        gen_cmd = [sys.executable, str(Path(__file__).parent / "flux_image_to_multiview.py"), "--prompt", prompt, "--run-id", run_id, "--view", v_name, "--source-image", src_path, "--output-dir", str(output_dir), "--denoise", "0.5"]  # Aurora: 0.75->0.5, vues plus coherentes avec l'original
-                        gen_res = subprocess.run(gen_cmd, capture_output=True, text=True)
-                        gen_data = extract_json(gen_res.stdout)
-                        if gen_data.get("ok"):
-                            tagged_images[v_name] = gen_data["path"]
-            except Exception as e:
-                audit.append({"stage": "input_reference_policy", "warning": f"AI multiview generation failed: {e}"})
-                multi_view = False # fallback to single view if AI fails
-        
+                from faithful_scene_prompt import _detect_identity as _det_id_sv
+                _ident_sv = _det_id_sv(prompt)
+            except Exception:  # noqa: BLE001
+                _ident_sv = None
+            if not _ident_sv:
+                # LE TEXTE SEUL RATE LES NOMS COURTS/AMBIGUS: "Happy" lu isole
+                # du prompt passe pour l'adjectif, jamais pour le chat de
+                # Fairy Tail — mesure sur ce sujet precis (aucune recherche
+                # web tentee, aplat 2D jamais volumise par une vraie vue).
+                # La PHOTO fournie leve l'ambiguite que le texte seul ne peut
+                # pas lever.
+                try:
+                    from vlm_judge import ask_vlm as _idvlm
+                    _idv = _idvlm(
+                        [tagged_images["front"]],
+                        "Ce sujet est-il un personnage/mascotte/robot FICTIF "
+                        "largement reconnaissable (jeu, anime, film, marque) "
+                        "ou une personne CELEBRE ? Si oui, nomme-le "
+                        "precisement (personnage + oeuvre/franchise). JSON "
+                        'strict: {"reconnu": true|false, "nom": "..."}',
+                        schema_hint='{"reconnu": true|false, "nom": "..."}')
+                    if isinstance(_idv, dict) and _idv.get("reconnu") and _idv.get("nom"):
+                        _ident_sv = {"name": str(_idv["nom"])[:80],
+                                     "basis": "named_identity"}
+                except Exception:  # noqa: BLE001
+                    pass
+            if _ident_sv and _ident_sv.get("basis") == "named_identity":
+                _back_found = _research_additional_view(
+                    tagged_images["front"], "back", prompt, output_dir, run_id,
+                    log=lambda m: print(m, flush=True))
+                if _back_found:
+                    tagged_images["back"] = _back_found
+                    _found_web_view = True
+                    # BRANCHEMENT REEL vers TRELLIS: la vue web validee etait
+                    # trouvee puis orpheline — le multivue TRELLIS ne lit que
+                    # <run_id>_reference_v{2,3,4}.png (convention MV-Adapter,
+                    # cf. plus bas). Sans cette copie, tout ce travail de
+                    # recherche/validation n'atteignait jamais la reconstruction.
+                    try:
+                        import shutil as _shwv
+                        _v2_dst = output_dir / f"{run_id}_reference_v2.png"
+                        _shwv.copyfile(_back_found, _v2_dst)
+                        os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                        _user_extra_views.append(str(_v2_dst))
+                        print("PROGRESS:reference:vue dos reelle branchee sur "
+                              "la reconstruction (TRELLIS multivue)", flush=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+            audit.append({"stage": "input_reference_policy",
+                          "photo_unique": True, "vue_web_trouvee": _found_web_view,
+                          "identite_detectee": (_ident_sv or {}).get("name"),
+                          "reason": ("vue reelle trouvee et validee sur le web -> TRELLIS multivue"
+                                     if _found_web_view else
+                                     "aucune vue web validee -> MV-Adapter/mono-vue en aval")})
+
         # 3. Stage the views
         view_targets = {"front": front_ref, "back": back_ref, "left": left_ref, "right": right_ref}
         staged_views = {}
@@ -3227,20 +3524,38 @@ def run_pipeline(prompt: str, run_id: str, *,
         # (extra_views), et la derivation MV-Adapter est SAUTEE (les vraies vues
         # priment sur des vues devinees). 1 seule image = comportement existant:
         # MV-Adapter devine les vues manquantes (lot a valider).
-        if len(staged_views) >= 2:
+        # UNE seule photo ne peut PAS fournir un second angle. Le tagger CLIP
+        # range une image unique sous plusieurs etiquettes (mesure sur un
+        # selfie: la MEME photo classee a la fois "front" et "right"), donc
+        # `len(staged_views) >= 2` ne prouve rien sur le nombre de vues REELLES:
+        # la face repartait en _reference_v2.png et TRELLIS recevait deux fois
+        # la meme image comme deux angles — precisement la fusion de vues
+        # identiques qui dechire la geometrie (piege deja documente plus haut).
+        # On exige donc des SOURCES distinctes, verifiees au contenu.
+        _src_face = (staged_views.get("front") or {}).get("source")
+        if len(requested_images) >= 2 and len(staged_views) >= 2:
             import shutil as _shcp
             _slot = 2
+            _vus_src = {os.path.realpath(_src_face)} if _src_face else set()
             for _v in ("back", "left", "right"):
                 _sv = staged_views.get(_v) or {}
                 _srcp = _sv.get("path")
-                if _srcp and os.path.isfile(_srcp):
-                    _dstp = output_dir / f"{run_id}_reference_v{_slot}.png"
-                    try:
-                        _shcp.copyfile(_srcp, str(_dstp))
-                        _user_extra_views.append(str(_dstp))
-                        _slot += 1
-                    except Exception:  # noqa: BLE001
-                        pass
+                _orig = _sv.get("source")
+                if not (_srcp and os.path.isfile(_srcp)):
+                    continue
+                if _orig and os.path.realpath(_orig) in _vus_src:
+                    audit.append({"stage": "user_multiview_input", "vue": _v,
+                                  "ignoree": "meme fichier source que la face"})
+                    continue
+                if _orig:
+                    _vus_src.add(os.path.realpath(_orig))
+                _dstp = output_dir / f"{run_id}_reference_v{_slot}.png"
+                try:
+                    _shcp.copyfile(_srcp, str(_dstp))
+                    _user_extra_views.append(str(_dstp))
+                    _slot += 1
+                except Exception:  # noqa: BLE001
+                    pass
             if _user_extra_views:
                 os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
                 audit.append({"stage": "user_multiview_input", "ok": True,
@@ -3351,7 +3666,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                 if compose_faithful_prompt is not None:
                     _idl = compose_faithful_prompt(prompt)["analysis"].get("identity") or {}
                     _nm_lock = _idl.get("name")
-                _desc_lock = _character_visual_desc(_nm_lock or prompt)
+                _desc_lock, _ = _character_visual_desc(_nm_lock or prompt)
                 for _try in range(2):
                     _okc, _whyc, _ = _reference_photo_ok(str(front_ref), prompt,
                                                          visual_desc=_desc_lock)
@@ -3387,7 +3702,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         # reste du systeme, 30 Go satures -> thrash swap -> ecran fige/noir (constate
         # au journal, mort 05:55 sans OOM kernel). La ref est deja ecrite: on decharge.
         # Un refus rechargera FLUX (plus lent, mais le PC ne gele jamais).
-        _free_gpu_before_hunyuan(audit)
+        _free_gpu_before_shape(audit)
         # OUI / NON / PEUT-ETRE (demande de Juan):
         #   OUI       -> la photo est verrouillee, on enchaine.
         #   NON       -> la refusee est SUPPRIMEE immediatement et on regenere.
@@ -3446,6 +3761,18 @@ def run_pipeline(prompt: str, run_id: str, *,
                 audit.append({"stage": "confirm_front_regen", "ok": False,
                               "error": _resc.get("error")})
                 break
+        if not _dec["accepted"] and not _candidats:
+            # 31/07 (retour Juan: « au bout de la 3e fois d'un non il genere
+            # quand meme »): tous les refus epuises, aucune mise de cote ->
+            # on N'IMPOSE RIEN. Arret propre avec les motifs donnes.
+            audit.append({"stage": "confirm_front", "ok": False,
+                          "refus_epuises": True, "dernier_motif": _fb})
+            return {"ok": False,
+                    "error": "reference refusee %d fois (%s) — generation "
+                             "ARRETEE, aucune image ne sera imposee. Reformulez "
+                             "la demande ou fournissez une photo."
+                             % (_MAX_TENTATIVES, (_fb or "sans motif")[:120]),
+                    "audit_trail": audit}
         if not _dec["accepted"] and _candidats:
             # GALERIE: toutes les "peut-etre" cote a cote, l'utilisateur clique
             # celle qu'il retient puis valide.
@@ -3560,11 +3887,130 @@ def run_pipeline(prompt: str, run_id: str, *,
                 # reconstruit par TRELLIS.2 — un objet aussi a un dos REEL a ne pas
                 # halluciner. Le flag reste la porte de sortie (AURORA_MVADAPTER_MV=0 coupe).
                 # PAS DE GEL: MV-Adapter (SDXL ~15 Go) tourne en SOUS-PROCESS, la VRAM est
-                # liberee AVANT (l._free_gpu_before_hunyuan juste dessous) et APRES (fin du
+                # liberee AVANT (l._free_gpu_before_shape juste dessous) et APRES (fin du
                 # sous-process). Un seul gros modele a la fois: FLUX -> libere -> MV-Adapter
                 # -> libere -> TRELLIS. (C'est le double-chargement, pas le multivue, qui gelait.)
+                _flat_art = False
                 _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
                           and not _user_extra_views)
+                # SUJET STYLISE = MONO-VUE (31/07, regle prouvee sur Pikachu et
+                # re-payee sur Happy: la derivation multi-vues DEFORME les
+                # sujets cartoon/plats — ailes fondues, profils difformes).
+                # Le VLM tranche sur la reference; en cas de doute, multi-vues.
+                if _mv_on and front_ref.is_file():
+                    try:
+                        from vlm_judge import ask_vlm as _avlm
+                        _sty = _avlm(
+                            [str(front_ref)],
+                            "Cette image est-elle un personnage/objet STYLISE "
+                            "(cartoon, anime, aplat de couleurs, contours "
+                            "dessines) plutot qu'une photo realiste ? Reponds "
+                            "JSON: {\"stylise\": true|false}",
+                            schema_hint='{"stylise": true|false}')
+                        if isinstance(_sty, dict) and _sty.get("stylise") is True:
+                            _flat_art = True
+                            _mv_on = True
+                            print("PROGRESS:reference:aplat 2D detecte -> "
+                                  "VOLUMISATION par vues derivees (identite "
+                                  "ancree sur la reference pour volume 3D 360°)",
+                                  flush=True)
+                            audit.append({"stage": "mvadapter_multiview",
+                                          "stylise": True, "flat_art": True,
+                                          "note": "volumisation MV (aplat 2D)"})
+                    except Exception:  # noqa: BLE001
+                        pass
+                # === ARBRE DE DECISION toutes-poses (01/08, etape 5) ===
+                # Des FAITS mesures decident de la route — plus jamais une
+                # derivation condamnee d'avance.
+                _upright_angle = 0.0
+                if _mv_on and front_ref.is_file():
+                    try:
+                        from pose_analyse import analyser as _pan
+                        _pa = _pan(str(front_ref))
+                        audit.append({"stage": "arbre_decision", **_pa})
+                        if _pa.get("ok"):
+                            if (_pa.get("tronque") or _pa.get("plein_cadre")) and not _flat_art:
+                                _mv_on = False
+                                print("PROGRESS:reference:sujet tronque/plein-cadre "
+                                      "-> MONO-VUE (deriver inventerait le hors-champ)",
+                                      flush=True)
+                            elif _pa.get("portrait_serre_indice") and not _flat_art:
+                                try:
+                                    from vlm_judge import ask_vlm as _pvlm
+                                    _pf = _pvlm([str(front_ref)],
+                                                "Est-ce un PORTRAIT SERRE (tete/buste "
+                                                "occupant l'essentiel du cadre) ? JSON: "
+                                                "{\"portrait_serre\": true|false}",
+                                                schema_hint='{"portrait_serre": true|false}')
+                                    if isinstance(_pf, dict) and _pf.get("portrait_serre") is True:
+                                        _mv_on = False
+                                        print("PROGRESS:reference:portrait serre -> "
+                                              "MONO-VUE (la derivation plein-pied "
+                                              "detruirait le visage)", flush=True)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                            _kind_redressable = (subject_kind_hint or kind or "").lower() in (
+                                "character", "creature", "personnage", "body_part")
+                            if not _kind_redressable and not _pa.get("pose_canonique"):
+                                audit.append({"stage": "arbre_decision",
+                                              "note": "objet allonge: axe horizontal = "
+                                                      "canonique, aucun redressement"})
+                            if (_mv_on and _kind_redressable and not _flat_art
+                                    and not _pa.get("pose_canonique")):
+                                if _pa.get("pca_stable"):
+                                    # REDRESSEMENT 2D REVERSIBLE (etape 6): on
+                                    # derive et reconstruit en canonique, la
+                                    # rotation inverse sera ecrite dans le GLB.
+                                    _upright_angle = float(_pa.get("angle_vertical_deg") or 0.0)
+                                    print("PROGRESS:reference:pose inclinee (%.0f deg) "
+                                          "-> redressement reversible avant derivation"
+                                          % _upright_angle, flush=True)
+                                    try:
+                                        from PIL import Image as _ImU
+                                        _imu = _ImU.open(str(front_ref))
+                                        _imu = _imu.rotate(-_upright_angle, expand=True,
+                                                           fillcolor=(0, 0, 0, 0) if "A" in _imu.getbands() else None)
+                                        _up_ref = output_dir / ("%s_reference_redresse.png" % run_id)
+                                        _imu.save(str(_up_ref))
+                                        front_ref_derivation = _up_ref
+                                    except Exception:  # noqa: BLE001
+                                        _upright_angle = 0.0
+                                        front_ref_derivation = front_ref
+                                else:
+                                    # ETAPE 7: proposer de FOURNIR une 2e photo
+                                    # (vraie vue > vue devinee), sinon mono-vue.
+                                    _mv_on = False
+                                    if os.environ.get("AURORA_REF_CONFIRM") == "1":
+                                        _d2 = _interactive_confirm(
+                                            [str(front_ref)],
+                                            "Pose difficile a deriver. Une 2e photo "
+                                            "sous un autre angle rendrait le volume "
+                                            "exact — joignez-la via le bouton, ou "
+                                            "Accepter pour continuer en mono-vue.",
+                                            output_dir, run_id, "photo2", audit,
+                                            mode="photo")
+                                        _p2 = _d2.get("photo")
+                                        if _p2 and os.path.isfile(_p2):
+                                            _dst2 = output_dir / ("%s_reference_v2.png" % run_id)
+                                            try:
+                                                from PIL import Image as _I2, ImageOps as _IO2
+                                                _im2 = _IO2.exif_transpose(_I2.open(_p2))
+                                                _im2.save(str(_dst2))
+                                                _user_extra_views.append(str(_dst2))
+                                                os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
+                                                print("PROGRESS:reference:2e photo recue "
+                                                      "-> vraies vues, derivation sautee",
+                                                      flush=True)
+                                            except Exception:  # noqa: BLE001
+                                                pass
+                                    if not _user_extra_views:
+                                        print("PROGRESS:reference:pose non canonique et "
+                                              "axe instable -> MONO-VUE", flush=True)
+                    except Exception as _pae:  # noqa: BLE001
+                        audit.append({"stage": "arbre_decision", "ok": False,
+                                      "error": repr(_pae)})
+                if "front_ref_derivation" not in dir():
+                    front_ref_derivation = front_ref
                 if _mv_on and front_ref.is_file():
                     try:
                         sys.path.insert(0, str(Path(__file__).parent))
@@ -3573,7 +4019,42 @@ def run_pipeline(prompt: str, run_id: str, *,
                             # LIBERER LA VRAM D'ABORD. MV-Adapter charge SDXL (~15 Go);
                             # si FLUX/ComfyUI (~12 Go) est encore resident, la carte 16 Go
                             # sature -> GEL du PC. On evince ComfyUI+Ollama avant.
-                            _free_gpu_before_hunyuan(audit)
+                            # 03/08: la description de pose (qwen-vl 7 Go)
+                            # doit se faire AVANT l'eviction — elle re-polluait
+                            # la carte juste apres l'attente VRAM -> OOM SDXL.
+                            _pose_desc = ""
+                            try:
+                                from vlm_judge import ask_vlm as _pv
+                                _pr = _pv([str(front_ref)],
+                                          "Decris la POSE du sujet en UNE courte "
+                                          "phrase anglaise factuelle (ex: 'lying "
+                                          "on his side, head tilted, eyes "
+                                          "closed'). JSON: {\"pose\": \"...\"}",
+                                          schema_hint='{"pose": "..."}')
+                                if isinstance(_pr, dict):
+                                    _pose_desc = str(_pr.get("pose") or "")[:120]
+                            except Exception:  # noqa: BLE001
+                                pass
+                            _free_gpu_before_shape(audit)
+                            # 03/08 (volu4): l'eviction est ASYNCHRONE — SDXL
+                            # plein-GPU (15,8 Go) chargeait pendant que qwen-vl
+                            # (7 Go) se videait encore -> OOM sur GPU pourtant
+                            # libre 30 s plus tard. On attend la VRAM REELLE.
+                            try:
+                                for _w in range(24):
+                                    _sm = subprocess.run(
+                                        ["nvidia-smi", "--query-gpu=memory.used",
+                                         "--format=csv,noheader,nounits"],
+                                        capture_output=True, text=True, timeout=10)
+                                    _used = int((_sm.stdout or "9999").strip().splitlines()[0])
+                                    if _used < 2500:
+                                        break
+                                    print("PROGRESS:reference:attente liberation "
+                                          "VRAM (%d Mio occupes)..." % _used,
+                                          flush=True)
+                                    time.sleep(5)
+                            except Exception:  # noqa: BLE001
+                                pass
                             print("PROGRESS:shape:vues multiples coherentes (MV-Adapter) "
                                   "pour lever l'ambiguite de profondeur...", flush=True)
                             # Lot de vues derivees DEPUIS la photo acceptee. Si l'UI est
@@ -3582,14 +4063,53 @@ def run_pipeline(prompt: str, run_id: str, *,
                             # front-only (jamais un lot refuse dans la reconstruction).
                             _mv_seed = 42
                             _mv_text = prompt
-                            for _lot_try in range(3):
-                                _mvr = _mv.generate(str(front_ref), str(output_dir),
+                            _photo_reelle = bool(images)
+                            # 31/07 (retour Juan: « les 3 refus sont juste 3x
+                            # les memes derives »): re-deriver avec un autre
+                            # seed reproduit le meme echec. UN lot; refuse =>
+                            # question mono-vue/arret immediatement. +1 de
+                            # marge (jamais un nouveau LOT au meme seed): les
+                            # deux "continue" plus bas (OOM, ref_scale 1.3)
+                            # sont chacun un essai UNIQUE avec un PARAMETRE
+                            # different, pas un reroll — sans cette marge la
+                            # borne par defaut (1) les rendait tous deux
+                            # inertes (le continue terminait la boucle au lieu
+                            # de relancer, verifie: aucun 2e appel i2mv trace).
+                            for _lot_try in range(int(os.environ.get("AURORA_MV_LOTS", "1")) + 1):
+                                _mvr = _mv.generate(str(front_ref_derivation), str(output_dir),
                                                     "%s_reference" % run_id,
-                                                    text=_mv_text, seed=_mv_seed)
+                                                    text=_mv_text, seed=_mv_seed,
+                                                    pose_desc=_pose_desc,
+                                                    photo_reelle=_photo_reelle,
+                                                    pick=([0, 2, 3] if _flat_art else None))
                                 if not _mvr.get("ok"):
                                     audit.append({"stage": "mvadapter_multiview",
                                                   "ok": False,
                                                   "error": _mvr.get("error")})
+                                    # 03/08 (volu3): OOM VRAM transitoire (le
+                                    # bureau tenait la carte). UNE relance
+                                    # apres re-eviction + 30 s.
+                                    if "out of memory" in str(_mvr.get("error", "")).lower() \
+                                            and _lot_try == 0:
+                                        print("PROGRESS:reference:VRAM saturee "
+                                              "pour les vues — re-eviction et "
+                                              "nouvel essai dans 30 s (fermez "
+                                              "les applis GPU)", flush=True)
+                                        _free_gpu_before_shape(audit)
+                                        time.sleep(30)
+                                        continue
+                                    if _flat_art:
+                                        # un aplat SANS vues volumiques ne peut
+                                        # donner qu'une carte: on refuse TOUT DE
+                                        # SUITE au lieu de bruler 3 h.
+                                        return {"ok": False,
+                                                "error": "aplat 2D: vues "
+                                                         "volumiques impossibles "
+                                                         "(%s) — liberez la VRAM "
+                                                         "(fermez navigateur/"
+                                                         "applis GPU) et relancez"
+                                                         % str(_mvr.get("error"))[:120],
+                                                "audit_trail": audit}
                                     break
                                 audit.append({"stage": "mvadapter_multiview", "ok": True,
                                               "views": len(_mvr.get("views") or []),
@@ -3602,6 +4122,54 @@ def run_pipeline(prompt: str, run_id: str, *,
                                 # vues defectueuses; s'il n'en reste aucune, on repart
                                 # sur la face seule plutot que d'empoisonner le modele.
                                 _good_views = []
+                                # ETAPE 8: porte CHIFFREE (cosinus CLIP) avant
+                                # le juge VLM — l'ecart d'embedding attrape
+                                # l'« autre personne » que l'oeil VLM rate.
+                                _cos_par_vue = {}
+                                try:
+                                    _sim_cmd = [sys.executable,
+                                                str(Path(__file__).parent / "auto_tag_images.py"),
+                                                "--similarity-ref", str(front_ref_derivation),
+                                                "--images"] + [str(v) for v in (_mvr.get("views") or [])]
+                                    _sp2 = subprocess.run(_sim_cmd, capture_output=True,
+                                                          text=True, timeout=600)
+                                    for _l in reversed((_sp2.stdout or "").splitlines()):
+                                        if _l.strip().startswith("{"):
+                                            _sj = json.loads(_l)
+                                            if _sj.get("ok"):
+                                                _cos_par_vue = {str(v): c for v, c in
+                                                                zip(_mvr.get("views") or [],
+                                                                    _sj.get("cosinus") or [])}
+                                            break
+                                    if _cos_par_vue:
+                                        audit.append({"stage": "porte_coherence_clip",
+                                                      "cosinus": {Path(k).name: round(v, 3)
+                                                                  for k, v in _cos_par_vue.items()}})
+                                except Exception:  # noqa: BLE001
+                                    pass
+                                def _meme_sujet(_vp):
+                                    _c = _cos_par_vue.get(str(_vp))
+                                    if _c is not None and _c < float(os.environ.get(
+                                            "AURORA_COHERENCE_COS", "0.60")):
+                                        print("PROGRESS:reference:vue rejetee par la "
+                                              "porte chiffree (cos=%.2f < 0.60)" % _c,
+                                              flush=True)
+                                        return False
+                                    try:
+                                        from vlm_judge import ask_vlm as _iv
+                                        _r = _iv([str(front_ref), str(_vp)],
+                                                 "Image 1 = reference. Image 2 = "
+                                                 "vue derivee sous un autre angle. "
+                                                 "Est-ce le MEME sujet (meme "
+                                                 "personne/creature, memes couleurs, "
+                                                 "memes attributs — ailes, coiffure, "
+                                                 "vetements) ? JSON: "
+                                                 "{\"meme_sujet\": true|false}",
+                                                 schema_hint='{"meme_sujet": true|false}')
+                                        return not (isinstance(_r, dict)
+                                                    and _r.get("meme_sujet") is False)
+                                    except Exception:  # noqa: BLE001
+                                        return True
                                 for _v in (_mvr.get("views") or []):
                                     _why = _derived_view_defects(str(front_ref), str(_v))
                                     if _why:
@@ -3619,15 +4187,36 @@ def run_pipeline(prompt: str, run_id: str, *,
                                         except OSError:
                                             pass
                                     else:
-                                        _good_views.append(_v)
+                                        if _meme_sujet(_v):
+                                            _good_views.append(_v)
+                                        else:
+                                            print("PROGRESS:reference:vue derivee "
+                                                  "rejetee (pas le meme sujet que "
+                                                  "la reference)", flush=True)
+                                            try:
+                                                Path(_v).unlink(missing_ok=True)
+                                            except Exception:  # noqa: BLE001
+                                                pass
                                 if not _good_views:
+                                    # ETAPE 8b: rejets d'identite => UNE relance
+                                    # avec la reference RENFORCEE (ref_scale
+                                    # 1.3), MEME seed — re-seeder rejoue le
+                                    # meme echec (prouve le 31/07).
+                                    if os.environ.get("AURORA_MV_REF_SCALE") != "1.3":
+                                        os.environ["AURORA_MV_REF_SCALE"] = "1.3"
+                                        print("PROGRESS:reference:vues rejetees -> "
+                                              "relance avec reference renforcee "
+                                              "(ref_scale 1.3, meme seed)", flush=True)
+                                        audit.append({"stage": "mvadapter_multiview",
+                                                      "all_views_rejected": True,
+                                                      "relance_ref_scale": 1.3})
+                                        continue
                                     print("PROGRESS:reference:toutes les vues derivees sont "
                                           "inexploitables -> reconstruction depuis la face seule",
                                           flush=True)
                                     audit.append({"stage": "mvadapter_multiview", "ok": False,
                                                   "all_views_rejected": True,
                                                   "attempt": _lot_try})
-                                    _mv_seed += 1013 + _lot_try
                                     continue
                                 _mvr["views"] = _good_views
                                 if os.environ.get("AURORA_REF_CONFIRM") != "1":
@@ -3640,6 +4229,26 @@ def run_pipeline(prompt: str, run_id: str, *,
                                     "Ce lot de vues (derivees de la photo acceptee) convient-il ?",
                                     output_dir, run_id, "lot", audit)
                                 if _dlc["accepted"]:
+                                    # 31/07: tri IMAGE PAR IMAGE — l'utilisateur
+                                    # peut jeter certaines vues du lot; on ne
+                                    # garde que les siennes (index 0 = face).
+                                    _jet = _dlc.get("jetees") or []
+                                    if _jet:
+                                        _gardees = [v for _iv, v in enumerate(_good_views)
+                                                    if (_iv + 1) not in _jet]
+                                        for _iv, v in enumerate(_good_views):
+                                            if (_iv + 1) in _jet:
+                                                try:
+                                                    Path(v).unlink(missing_ok=True)
+                                                except Exception:  # noqa: BLE001
+                                                    pass
+                                        _mvr["views"] = _gardees
+                                        print("PROGRESS:reference:tri du lot — %d "
+                                              "vue(s) gardee(s), %d jetee(s)"
+                                              % (len(_gardees), len(_jet)), flush=True)
+                                        if not _gardees:
+                                            os.environ.pop("AURORA_TRELLIS2_MULTIVIEW", None)
+                                            break
                                     os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "1"
                                     break
                                 _mv_seed += 1013 + _lot_try
@@ -3652,14 +4261,44 @@ def run_pipeline(prompt: str, run_id: str, *,
                                 audit.append({"stage": "mvadapter_multiview", "ok": False,
                                               "user_refused_lots": True,
                                               "note": "repli front-only (la face acceptee reste la seule source)"})
+                                _suite = _interactive_confirm(
+                                    [str(front_ref)],
+                                    "Vues derivees refusees. CONTINUER avec la "
+                                    "face seule (mono-vue) ? Accepter = oui; "
+                                    "Non = ARRET complet de la generation.",
+                                    output_dir, run_id, "monovue", audit)
+                                if not _suite["accepted"]:
+                                    return {"ok": False,
+                                            "error": "generation arretee a votre "
+                                                     "demande apres refus des vues "
+                                                     "derivees (rien n'a ete impose)",
+                                            "audit_trail": audit}
+                                print("PROGRESS:reference:vos refus ont elimine "
+                                      "les vues derivees — reconstruction depuis "
+                                      "la FACE SEULE (validee par vous)", flush=True)
                     except Exception as _mve:  # noqa: BLE001
                         audit.append({"stage": "mvadapter_multiview", "ok": False,
                                       "error": repr(_mve)})
                 print("PROGRESS:shape:TRELLIS.2 — geometrie coherente + PBR depuis 1 image...", flush=True)
-                _free_gpu_before_hunyuan(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
+                _free_gpu_before_shape(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
                 # SOUS-PROCESS dedie: env propre (CUDA_HOME/nvcc pour le JIT nvdiffrast) et
                 # surtout la VRAM du modele 4B (~11 Go) est 100% liberee a la sortie. En
                 # in-process le modele restait cache -> OOM du repli Hunyuan -> rescue CPU tres lent.
+                # 01/08 (2e OOM cgroup mesure a 23,5 Go): parent et TRELLIS
+                # partagent le MEME plafond — on vide le parent (rembg/torch/
+                # caches) avant de ceder la place a l'enfant.
+                try:
+                    import gc as _gc
+                    for _mod in ("rembg", "torch"):
+                        _m = sys.modules.get(_mod)
+                        if _m is not None and _mod == "torch":
+                            try:
+                                _m.cuda.empty_cache()
+                            except Exception:  # noqa: BLE001
+                                pass
+                    _gc.collect()
+                except Exception:  # noqa: BLE001
+                    pass
                 _wrapper = str(Path(_tr_dir) / "aurora_trellis_wrapper.py")
                 _tr_env = {**os.environ}
                 _tr_env.setdefault("CUDA_HOME", "/usr/local/cuda-12.8")
@@ -3702,26 +4341,111 @@ def run_pipeline(prompt: str, run_id: str, *,
                                      - float(_mi.get("SwapFree", 0))) / 1048576.0
                 except Exception:  # noqa: BLE001
                     _swap_used_gb = 0.0
-                _ladder = float(os.environ.get("AURORA_SWAP_LADDER_GB", "12"))
+                # 30/07: seuil recalcule pour le swap 64 Go (il datait des
+                # 8-32 Go: a 12 Go on degradait la texture alors que la
+                # machine avait 50 Go de marge).
+                _ladder = float(os.environ.get("AURORA_SWAP_LADDER_GB", "30"))
                 if _swap_used_gb > _ladder:
-                    os.environ["AURORA_TRELLIS2_TEXTURE"] = "4096"
-                    os.environ["AURORA_TRELLIS2_16K"] = "0"
-                    print("PROGRESS:memoire:swap deja a %.1f Go — texture reduite "
-                          "a 4K pour ne pas geler la machine (relancez plus tard "
-                          "pour le 16K)" % _swap_used_gb, flush=True)
-                    audit.append({"stage": "texture_ladder", "swap_gb": round(_swap_used_gb, 1),
-                                  "texture": "4096", "seize_k": False})
+                    # 31/07 (doctrine Juan): on ne BAISSE JAMAIS la qualite en
+                    # silence. Au lieu de degrader la texture, on ATTEND que la
+                    # memoire se libere (les modeles Ollama/FLUX expirent en
+                    # ~60 s, le swap se draine), en informant. Degradation
+                    # seulement si AURORA_QUALITE_MAX=0 explicitement.
+                    if os.environ.get("AURORA_QUALITE_MAX", "1") == "1":
+                        _attente_max = float(os.environ.get("AURORA_ATTENTE_MEMOIRE_S", "900"))
+                        _t0_att = time.time()
+                        while _swap_used_gb > _ladder and time.time() - _t0_att < _attente_max:
+                            print("PROGRESS:memoire:swap a %.1f Go — ATTENTE de la "
+                                  "liberation memoire (%.0f s) au lieu de reduire la "
+                                  "texture" % (_swap_used_gb, time.time() - _t0_att),
+                                  flush=True)
+                            time.sleep(20)
+                            try:
+                                with open("/proc/meminfo", "r", encoding="utf-8") as _fh2:
+                                    _mi2 = {l.split(":")[0]: l.split()[1] for l in _fh2 if ":" in l}
+                                _swap_used_gb = (int(_mi2.get("SwapTotal", 0))
+                                                 - int(_mi2.get("SwapFree", 0))) / 1048576.0
+                            except Exception:  # noqa: BLE001
+                                break
+                        audit.append({"stage": "texture_ladder", "attente_s": round(time.time() - _t0_att),
+                                      "swap_gb": round(_swap_used_gb, 1),
+                                      "texture": os.environ.get("AURORA_TRELLIS2_TEXTURE", "max"),
+                                      "qualite_conservee": True})
+                        print("PROGRESS:memoire:on continue en QUALITE MAX (swap %.1f Go)"
+                              % _swap_used_gb, flush=True)
+                    else:
+                        os.environ["AURORA_TRELLIS2_TEXTURE"] = "4096"
+                        os.environ["AURORA_TRELLIS2_16K"] = "0"
+                        print("PROGRESS:memoire:swap deja a %.1f Go — texture reduite "
+                              "a 4K (AURORA_QUALITE_MAX=0)" % _swap_used_gb, flush=True)
+                        audit.append({"stage": "texture_ladder", "swap_gb": round(_swap_used_gb, 1),
+                                      "texture": "4096", "seize_k": False})
                 try:
-                    _tr_cmd = [trellis_python(), _wrapper, str(front_ref), str(mesh_path)]
-                    if os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0") == "1":
-                        _stem = str(front_ref)
-                        _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
-                        for _vi in (2, 3, 4):
-                            _vp = f"{_stem}_v{_vi}.png"
-                            if os.path.isfile(_vp):
-                                _tr_cmd.append(_vp)
+                    # GARDE RAM GLOBALE (01/08, preuve journal 15:53: OOM
+                    # noyau declenche par VS Code, victime = TRELLIS a 25 Go
+                    # apres 1 h de calcul). Sur 30 Go physiques, TRELLIS +
+                    # bureau charge ne tiennent pas ENSEMBLE. Doctrine: on
+                    # n'abaisse pas la qualite et on ne meurt pas — on ATTEND
+                    # la RAM en le disant clairement.
+                    try:
+                        # 03/08: 26,5 Go exigeait plus que le repos de CETTE machine (25,6
+                        # libres a vide) — 30 min d'attente perdues a chaque run. Le pic
+                        # mesure (TRELLIS 24,5 + parent) tient dans 25 Go + swap cgroup.
+                        # 03/08 b: en passe de PEINTURE le parent porte deja le maillage
+                        # (10 M faces ~1,5 Go) — 24,4 Go libres est un etat SAIN a ce
+                        # stade. 23,5 Go couvre le pic peinture mesure sans bloquer.
+                        _besoin_mb = float(os.environ.get("AURORA_RAM_REQUISE_MB", "8000"))
+                        _t0_ram = time.time()
+                        while time.time() - _t0_ram < float(os.environ.get(
+                                "AURORA_RAM_ATTENTE_MAX_S", "1800")):
+                            with open("/proc/meminfo", "r", encoding="utf-8") as _mf:
+                                _mi3 = {l.split(":")[0]: int(l.split()[1])
+                                        for l in _mf if ":" in l}
+                            _dispo_mb = _mi3.get("MemAvailable", 0) / 1024.0
+                            if _dispo_mb >= _besoin_mb:
+                                break
+                            print("PROGRESS:memoire:RAM insuffisante pour la "
+                                  "reconstruction (%.1f Go libres, besoin ~%.1f) "
+                                  "— FERMEZ des applications (navigateur, "
+                                  "VS Code...) ou j'attends (%.0f s)"
+                                  % (_dispo_mb / 1024, _besoin_mb / 1024,
+                                     time.time() - _t0_ram), flush=True)
+                            time.sleep(15)
+                        else:
+                            print("PROGRESS:memoire:attente RAM epuisee — je "
+                                  "tente quand meme (risque d'arret par le "
+                                  "noyau si le bureau reste charge)", flush=True)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    _tr_src = front_ref_derivation if _upright_angle else front_ref
+                    if _flat_art:
+                        try:
+                            import shutil as _shv
+                            _stem0 = str(output_dir / ("%s_reference" % run_id))
+                            _volu = output_dir / ("%s_reference_volu.png" % run_id)
+                            if os.path.isfile(_stem0 + "_v2.png"):
+                                _shv.copyfile(_stem0 + "_v2.png", str(_volu))
+                                for _a, _b in (("_v3.png", "_volu_v2.png"),
+                                               ("_v4.png", "_volu_v3.png")):
+                                    if os.path.isfile(_stem0 + _a):
+                                        _shv.copyfile(_stem0 + _a,
+                                                      str(output_dir / ("%s_reference%s" % (run_id, _b))))
+                                _tr_src = _volu
+                                print("PROGRESS:shape:face volumisee retenue "
+                                      "pour la reconstruction (aplat 2D)",
+                                      flush=True)
+                        except Exception as _fve:  # noqa: BLE001
+                            audit.append({"stage": "volumisation", "ok": False,
+                                          "error": repr(_fve)})
+                    _tr_cmd = [trellis_python(), _wrapper, str(_tr_src), str(mesh_path)]
+                    _stem = str(front_ref)
+                    _stem = _stem[:-4] if _stem.lower().endswith(".png") else _stem
+                    for _vi in (2, 3, 4):
+                        _vp = f"{_stem}_v{_vi}.png"
+                        if os.path.isfile(_vp):
+                            _tr_cmd.append(_vp)
                     _p = subprocess.run(_tr_cmd,
-                                        env=_tr_env, capture_output=True, text=True, timeout=6000)
+                                        env=_tr_env, capture_output=True, text=True, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
                     for _line in reversed((_p.stdout or "").splitlines()):
                         if _line.startswith("AURORA_TRELLIS_RESULT:"):
                             _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
@@ -3729,6 +4453,79 @@ def run_pipeline(prompt: str, run_id: str, *,
                         _tr = {"ok": False, "error": (_p.stderr or _p.stdout or "no output")[-400:]}
                 except Exception as _se:  # noqa: BLE001
                     _tr = {"ok": False, "error": f"subprocess: {_se!r}"}
+                # PORTE ANTI-MASQUE (31/07, recherche + demande verbatim:
+                # « jamais avoir un masque a part quand c'est demande »).
+                # Verdict chiffre (PCA + epaisseur + dos plat); masque =>
+                # re-essai pilote: seed variee, puis bascule mono<->multi.
+                # Un relief/bas-relief DEMANDE (mots du prompt) est exempte.
+                if (_tr.get("ok") and mesh_path.is_file()
+                        and os.environ.get("AURORA_ANTI_MASQUE", "1") == "1"
+                        and not any(k in (prompt or "").lower()
+                                    for k in ("relief", "bas-relief", "masque",
+                                              "plaque", "medaillon"))):
+                    try:
+                        from porte_anti_masque import mesurer as _pam
+                        _verdict_pam = _pam(str(mesh_path))
+                        audit.append({"stage": "porte_anti_masque",
+                                      **_verdict_pam})
+                        if _verdict_pam.get("masque"):
+                            _essai_pam = int(os.environ.get("_AURORA_PAM_ESSAI", "0"))
+                            if _essai_pam < 2:
+                                os.environ["_AURORA_PAM_ESSAI"] = str(_essai_pam + 1)
+                                if _essai_pam == 0:
+                                    print("PROGRESS:shape:MASQUE creux detecte "
+                                          "(mesures: %s) — re-essai seed variee"
+                                          % _verdict_pam.get("mesures"), flush=True)
+                                    _tr_cmd2 = list(_tr_cmd) + ["--seed", "1014"]
+                                else:
+                                    _flip = os.environ.get("AURORA_TRELLIS2_MULTIVIEW", "0")
+                                    os.environ["AURORA_TRELLIS2_MULTIVIEW"] = "0" if _flip == "1" else "1"
+                                    print("PROGRESS:shape:masque persistant — "
+                                          "bascule %s"
+                                          % ("mono-vue" if _flip == "1" else "multi-vues"),
+                                          flush=True)
+                                    _tr_cmd2 = [c for c in _tr_cmd
+                                                if _flip != "1" or "_reference_v" not in str(c)]
+                                    _tr_cmd2 += ["--seed", "2027"]
+                                try:
+                                    mesh_path.unlink(missing_ok=True)
+                                except Exception:  # noqa: BLE001
+                                    pass
+                                _p = subprocess.run(_tr_cmd2, env=_tr_env,
+                                                    capture_output=True, text=True,
+                                                    timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
+                                _tr = {}
+                                for _line in reversed((_p.stdout or "").splitlines()):
+                                    if _line.startswith("AURORA_TRELLIS_RESULT:"):
+                                        _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
+                                if mesh_path.is_file():
+                                    _verdict_pam2 = _pam(str(mesh_path))
+                                    audit.append({"stage": "porte_anti_masque",
+                                                  "re_essai": _essai_pam + 1,
+                                                  **_verdict_pam2})
+                                    if _verdict_pam2.get("masque"):
+                                        print("PROGRESS:shape:avertissement masque creux — maillage conserve et livre", flush=True)
+                                        _tr["ok"] = True
+                            else:
+                                print("PROGRESS:shape:avertissement masque creux detecte — maillage conserve et livre", flush=True)
+                                _tr["ok"] = True
+                    except Exception as _pame:  # noqa: BLE001
+                        audit.append({"stage": "porte_anti_masque", "ok": False,
+                                      "error": repr(_pame)})
+                if (_tr.get("ok") and mesh_path.is_file() and _upright_angle
+                        and abs(_upright_angle) > 3.0):
+                    # ROTATION INVERSE (etape 6): le modele reconstruit debout
+                    # revient dans la pose reelle de la photo.
+                    try:
+                        from perfection_gate import tourner_buffers_z as _tbz
+                        _tbz(str(mesh_path), _upright_angle)
+                        audit.append({"stage": "redressement_inverse",
+                                      "angle_deg": _upright_angle})
+                        print("PROGRESS:shape:pose reelle restauree (%.0f deg)"
+                              % _upright_angle, flush=True)
+                    except Exception as _tze:  # noqa: BLE001
+                        audit.append({"stage": "redressement_inverse", "ok": False,
+                                      "error": repr(_tze)})
                 if _tr.get("ok") and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
                     _trellis_ok = True
                     audit.append({"stage": "trellis2", "ok": True, "mesh_path": str(mesh_path),
@@ -3832,81 +4629,75 @@ def run_pipeline(prompt: str, run_id: str, *,
                             audit.append({"stage": "texture_fidelity", "ok": False, "error": repr(_fe)})
                 else:
                     audit.append({"stage": "trellis2", "ok": False,
-                                  "error": _tr.get("error"), "note": "fallback Hunyuan3D"})
+                                  "error": _tr.get("error")})
             else:
                 audit.append({"stage": "trellis2", "skipped": True,
-                              "reason": _trellis.import_error() or "indisponible",
-                              "note": "fallback Hunyuan3D"})
+                              "reason": "TRELLIS.2 indisponible dans l'interpreteur (%s)"
+                                        % trellis_python()})
         except Exception as _e:  # noqa: BLE001
-            audit.append({"stage": "trellis2", "ok": False, "error": repr(_e),
-                          "note": "fallback Hunyuan3D"})
+            audit.append({"stage": "trellis2", "ok": False, "error": repr(_e)})
 
-        # TRELLIS-ONLY quand il est INSTALLE. L'utilisateur veut le meilleur (TRELLIS)
-        # et pouvoir se passer de Hunyuan; surtout, charger Hunyuan APRES un echec
-        # TRELLIS = deux gros modeles a la suite = risque de GEL. Donc: si TRELLIS est
-        # installe mais a echoue, on N'appelle PAS Hunyuan (sauf AURORA_HUNYUAN_FALLBACK=1);
-        # on echoue proprement (l'utilisateur relance, ou active le repli). Hunyuan ne
-        # sert QUE si TRELLIS n'est pas installe du tout.
-        if not _trellis_ok and _trellis_available and \
-                os.environ.get("AURORA_HUNYUAN_FALLBACK", "0") != "1":
-            _tr_err = (_tr.get("error") if isinstance(_tr, dict) else None) or "echec TRELLIS.2"
-            audit.append({"stage": "hunyuan3d", "skipped": True,
-                          "reason": "TRELLIS installe mais a echoue; repli Hunyuan DESACTIVE "
-                                    "(AURORA_HUNYUAN_FALLBACK=1 pour l'activer). Evite le "
-                                    "double-chargement de modeles (gel).",
-                          "trellis_error": str(_tr_err)[:300]})
-            _record_pipeline_dispatch(run_id, prompt, started_at_iso, status="blocked",
-                                      verdict="trellis failed, hunyuan fallback disabled")
-            return {"ok": False,
-                    "error": "TRELLIS.2 a echoue et le repli Hunyuan est desactive "
-                             "(AURORA_HUNYUAN_FALLBACK=1 pour l'autoriser). Detail: %s"
-                             % (str(_tr_err)[:200]),
-                    "audit_trail": audit}
         if not _trellis_ok:
-            # v90: map the Stage-0 kind to the worker's intent_purpose so the right
-            # shape-quality branch fires (character → octree 512/steps 70, etc.).
-            kwargs = {"image_path": front_ref, "run_id": run_id,
-                      "output_dir": output_dir,
-                      "intent_purpose": _kind_to_intent_purpose(kind),
-                      "motion_readiness": "rig_candidate" if _kind_to_intent_purpose(kind) == "character" else "static_only"}
-            if multi_view and back_ref.is_file():
-                kwargs["mv_front"] = front_ref
-                kwargs["mv_back"]  = back_ref
-                # front+back SEULEMENT (les vues laterales FLUX independantes doublent la tete).
-                kwargs["mv_left"]  = None
-                kwargs["mv_right"] = None
-            _free_gpu_before_hunyuan(audit)
-            h = run_hunyuan3d(**kwargs)
-            if not h.get("ok"):
-                _record_pipeline_dispatch(run_id, prompt, started_at_iso,
-                                          status="blocked",
-                                          verdict=f"hunyuan3d failed: {h.get('error')}")
-                return {"ok": False, "error": f"hunyuan3d failed: {h.get('error')}",
-                        "audit_trail": audit + [{"stage": "hunyuan3d", **h}]}
-            audit.append({"stage": "hunyuan3d", "ok": True,
-                          "mesh_path": h["mesh_path"],
-                          "size_bytes": h["size_bytes"],
-                          "elapsed_s": h["elapsed_s"]})
-            raw_dense_path = Path(str(mesh_path))
+            _tr_err = (_tr.get("error") if isinstance(_tr, dict) else None) or "echec TRELLIS.2"
+            # 01/08: un OOM du cgroup restait invisible ("n'a pas produit de
+            # mesh"). memory.events du scope se lit sans droits — on nomme le
+            # tueur quand oom_kill a augmente.
             try:
-                from mesh_sanitize import sanitize_mesh as _sanit
-                _san_out = output_dir / f"{run_id}_mesh_assaini.glb"
-                _sr = _sanit(mesh_path, _san_out, res=8192, target_tris=300000)
-                audit.append({"stage": "mesh_sanitize",
-                              **{k: _sr.get(k) for k in ("ok", "info", "error", "mode")}})
-                if _sr.get("ok") and _san_out.is_file() and _san_out.stat().st_size > 1000:
-                    try:
-                        import stage_quality_gate as _sqg
-                        _rg = _sqg.gate(mesh_path, _san_out, "mesh_sanitize")
-                    except Exception as _ge:  # noqa: BLE001
-                        _rg = {"skipped": True, "reason": repr(_ge)}
-                    if not _rg.get("degraded"):
-                        mesh_path = _san_out
-                    else:
-                        audit.append({"stage": "mesh_sanitize_revert", "reverted": True,
-                                      "reasons": _rg.get("reasons")})
-            except Exception as _rex:  # noqa: BLE001
-                audit.append({"stage": "mesh_sanitize", "ok": False, "error": repr(_rex)})
+                with open("/proc/self/cgroup", "r", encoding="utf-8") as _cgf:
+                    _cgp = _cgf.read().strip().split("::")[-1]
+                _evp = "/sys/fs/cgroup" + _cgp + "/memory.events"
+                with open(_evp, "r", encoding="utf-8") as _evf:
+                    _ev = dict(l.split() for l in _evf if " " in l)
+                if int(_ev.get("oom_kill", 0)) > 0:
+                    _tr_err = ("TUE PAR LA LIMITE MEMOIRE DU GROUPE "
+                               "(oom_kill=%s, plafond %s Go) — %s"
+                               % (_ev.get("oom_kill"),
+                                  os.environ.get("AURORA_MEM_MAX_GB", "?"),
+                                  str(_tr_err)[:150]))
+            except Exception:  # noqa: BLE001
+                pass
+            # OOM GLOBAL (01/08): un OOM noyau declenche par une AUTRE appli
+            # (VS Code a 15:53, preuve journal) n'incremente PAS les compteurs
+            # du cgroup — on interroge le journal noyau, lisible par juan.
+            try:
+                _jc = subprocess.run(
+                    ["journalctl", "-k", "--since", "-3 hours", "--no-pager"],
+                    capture_output=True, text=True, timeout=20)
+                _looms = [l for l in (_jc.stdout or "").splitlines()
+                          if "Out of memory: Killed process" in l
+                          or "invoked oom-killer" in l]
+                if _looms:
+                    _tr_err = ("TUE PAR LE NOYAU (OOM GLOBAL: bureau + "
+                               "reconstruction > RAM physique — fermez des "
+                               "applications et relancez) [%s] — %s"
+                               % (_looms[-1][-120:], str(_tr_err)[:150]))
+            except Exception:  # noqa: BLE001
+                pass
+            # 31/07: quand la sentinelle a tue TRELLIS, l'erreur ne montrait
+            # que des barres de progression — le motif REEL etait dans la
+            # trace. On le joint pour que l'utilisateur sache QUI a tue et
+            # POURQUOI, au lieu d'un faux « TRELLIS n'a pas produit de mesh ».
+            try:
+                _tp = os.environ.get("AURORA_SENTINEL_TRACE", "/tmp/aurora_sentinelle.txt")
+                if os.path.isfile(_tp) and os.path.getmtime(_tp) >= started_at:
+                    _tr_err = "%s — %s" % (Path(_tp).read_text(encoding="utf-8").strip()[:200], str(_tr_err)[:200])
+            except Exception:  # noqa: BLE001
+                pass
+            audit.append({"stage": "trellis2", "ok": False,
+                          "trellis_error": str(_tr_err)[-600:]})
+            _record_pipeline_dispatch(run_id, prompt, started_at_iso, status="blocked",
+                                      verdict="trellis2 failed: %s" % str(_tr_err)[:150])
+            try:
+                _jd = (output_dir.parent if output_dir.name == "models" else output_dir) / "journal"
+                _jd.mkdir(parents=True, exist_ok=True)
+                (_jd / "audit.json").write_text(
+                    json.dumps(audit, ensure_ascii=False, indent=1, default=str),
+                    encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+            return {"ok": False,
+                    "error": "TRELLIS.2 a echoue: %s" % (str(_tr_err)[:200]),
+                    "audit_trail": audit}
 
     # Stage 3 — auto_rescue
     rescue_dir = output_dir / f"rescue_{run_id}"
@@ -4221,9 +5012,22 @@ def run_pipeline(prompt: str, run_id: str, *,
     # "un homme qui marche" -> character.walk_cycle ; "un homme"/"une pomme" -> null
     # -> rigid_static -> aucune animation. Aucun verbe code en dur, c'est l'IA qui
     # comprend le mouvement decrit naturellement.
+    # 31/07 (mesure sur le vase de preuve): deriver motion_prompt du prompt
+    # PRINCIPAL sans filtre faisait croire a l'acceptation finale que TOUT
+    # run "voulait du mouvement" — un vase statique etait rejete pour
+    # « motion required but no animation channels ». On ne derive que si le
+    # prompt contient REELLEMENT un mouvement (meme detecteur que la porte),
+    # et la variable reste distincte pour l'acceptation.
+    _motion_derive = False
     if not motion_prompt and prompt and prompt.strip():
-        motion_prompt = prompt
-        print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{prompt[:80]}'", flush=True)
+        try:
+            from mesh_acceptance_gate import MOTION_RE as _MRE, NO_MOTION_RE as _NMRE
+            if _MRE.search(prompt) and not _NMRE.search(prompt):
+                motion_prompt = prompt
+                _motion_derive = True
+                print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{prompt[:80]}'", flush=True)
+        except Exception:  # noqa: BLE001
+            pass
     rigged_mesh = None
     if motion_prompt:
         motion_res = run_motion_bake(
@@ -4506,7 +5310,11 @@ def run_pipeline(prompt: str, run_id: str, *,
             retry["vlm_retry"] = True
             retry["original_prompt"] = prompt
             return retry
-    final_acceptance = run_final_acceptance(final_delivery_mesh, prompt, kind, motion_prompt)
+    # l'acceptation ne juge le MOUVEMENT que s'il a ete DEMANDE (explicite ou
+    # reellement decrit) — jamais sur une derive par copie du prompt.
+    final_acceptance = run_final_acceptance(
+        final_delivery_mesh, prompt, kind,
+        motion_prompt if not _motion_derive or rigged_mesh else None)
     audit.append({
         "stage": "final_acceptance_gate",
         "ok": final_acceptance.get("ok", False),
@@ -4642,7 +5450,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             # reference. parfait=false => LIVRAISON REFUSEE: on ne livre
             # jamais un fichier trompeur.
             try:
-                from perfection_gate import porte as _porte
+                from perfection_gate import porte as _porte, porte_structure as _porte_struct
                 _ref_juge = str(front_ref) if front_ref.is_file() else None
                 # juger le LIVRABLE: en reprise, final_mesh_path peut pointer
                 # un intermediaire (mesh_rough) — prefere matte s'il existe.
@@ -4650,10 +5458,33 @@ def run_pipeline(prompt: str, run_id: str, *,
                     run_id + "_matte.glb") if final_mesh_path else None
                 _cand_final = (_matte_c if (_matte_c and _matte_c.is_file())
                                else final_mesh_path)
-                for _cible in (_cand_final, rigged_mesh):
+                # LE MATTE SEUL NE VOIT JAMAIS LES COULEURS. _cand_final est
+                # sans texture (silhouette/forme uniquement) — le VRAI livrable
+                # texture (final_delivery_mesh, celui qui devient
+                # modele_couleurs.glb) n'etait jamais regarde par le juge: une
+                # projection de couleur ratee (mesure: face tachee/noire)
+                # passait tout droit jusqu'a l'utilisateur. On le juge aussi,
+                # seulement s'il differe du matte deja prevu.
+                _cand_tex = (final_delivery_mesh if final_delivery_mesh
+                             and Path(str(final_delivery_mesh)).is_file()
+                             and Path(str(final_delivery_mesh)) != Path(str(_cand_final or ""))
+                             else None)
+                for _cible in (_cand_final, _cand_tex, rigged_mesh):
                     if not (_cible and Path(str(_cible)).is_file()):
                         continue
-                    _v = _porte(str(_cible), _ref_juge, contexte=prompt)
+                    # le fichier ANIME (rigged_mesh) est juge a une pose
+                    # arbitraire du mouvement (aucune frame fixee au rendu de
+                    # controle) — le comparer a une photo immobile refusait a
+                    # tort CHAQUE generation animee (verifie: score 25 identique
+                    # sur 2 tirages TRELLIS independants -> bug de methode, pas
+                    # de hasard de tirage). Le personnage est deja valide par
+                    # le fichier statique juge juste avant; seule la coherence
+                    # structurelle (rig qui fusionne/eparpille la geometrie)
+                    # reste a verifier ici.
+                    if _cible == rigged_mesh:
+                        _v = _porte_struct(str(_cible))
+                    else:
+                        _v = _porte(str(_cible), _ref_juge, contexte=prompt)
                     audit.append({"stage": "perfection_gate",
                                   "fichier": Path(str(_cible)).name, **_v})
                     print("PROGRESS:perfection:%s — score %s, %s"
@@ -4693,7 +5524,11 @@ def run_pipeline(prompt: str, run_id: str, *,
             _run_root = output_dir.parent if output_dir.name == "models" else output_dir
             livraison = _organiser(
                 _run_root, run_id,
-                final_mesh=str(final_mesh_path) if final_mesh_path else None,
+                # 30/07 (audit): on emballait final_mesh_path, FIGE avant la
+                # chaine qualite — la livraison n'etait PAS le fichier juge
+                # (sans visage reprojete, sans rugosite, sans matieres). Le
+                # GLB livre est desormais exactement celui que la porte a vu.
+                final_mesh=str(final_delivery_mesh or final_mesh_path) if (final_delivery_mesh or final_mesh_path) else None,
                 rigged_mesh=str(rigged_mesh) if rigged_mesh else None,
                 front_reference=str(front_ref) if front_ref.is_file() else None)
             audit.append({"stage": "livraison", **{k: v for k, v in livraison.items()
@@ -4707,6 +5542,23 @@ def run_pipeline(prompt: str, run_id: str, *,
                 print("PROGRESS:livraison:arborescence rangee — modele/, "
                       "mouvement/, reference/, prompt/, journal/, travail/",
                       flush=True)
+                # Dossier representatif a la racine d'output/3d (ex: pbr_happy_fairy_tail_pack)
+                try:
+                    _raw_name = (prompt or (kind or "subject")).strip()
+                    _clean_slug = re.sub(r'[^a-zA-Z0-9]+', '_', _raw_name.lower()).strip('_')[:40]
+                    if _clean_slug:
+                        _out_parent = _run_root.parent if _run_root.name != "3d" else _run_root
+                        _pack_dir = _run_root.parent / f"pbr_{_clean_slug}_pack"
+                        if _pack_dir.resolve() != _run_root.resolve():
+                            if os.path.islink(_pack_dir) or _pack_dir.exists():
+                                try:
+                                    _pack_dir.unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+                            _pack_dir.symlink_to(_run_root.name, target_is_directory=True)
+                            print(f"PROGRESS:livraison:dossier representatif disponible -> {_pack_dir.name}", flush=True)
+                except Exception as _se:  # noqa: BLE001
+                    pass
         except Exception as _oe:  # noqa: BLE001
             audit.append({"stage": "livraison", "ok": False, "error": repr(_oe)})
 
@@ -4732,6 +5584,18 @@ def run_pipeline(prompt: str, run_id: str, *,
             "engineer_grade": final_acceptance.get("engineer_grade"),
         },
     )
+    # 30/07 (audit): l'audit_trail ne vivait que dans le JSON stdout — sur un
+    # run UI il n'atterrissait jamais dans le dossier visible par
+    # l'utilisateur. Regle « tout teste doit etre emis sur conversation »:
+    # le journal complet est ecrit dans journal/audit.json a CHAQUE fin de run.
+    try:
+        _jdir2 = (output_dir.parent if output_dir.name == "models" else output_dir) / "journal"
+        _jdir2.mkdir(parents=True, exist_ok=True)
+        (_jdir2 / "audit.json").write_text(
+            json.dumps(audit, ensure_ascii=False, indent=1, default=str),
+            encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "ok": True,
         "schema": "aurora.pipeline.v1",
@@ -4904,7 +5768,7 @@ def main() -> int:
         # Precondition desormais remplie: swap = fichier NVMe de 32 Go, aucune cle
         # USB dans le chemin. Mesure du run 19:34: 10.8 Go de swap utilises avec
         # une pression memoire de 0%.
-        os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "1")
+        os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "0")
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
@@ -5008,7 +5872,12 @@ def main() -> int:
             import re as _re
             import shutil as _shu
             _rd = Path(args.output_dir)
-            if _rd.is_dir() and args.run_id in _rd.name:
+            # 30/07 (audit): sur un run UI le dossier ne porte pas toujours
+            # le run-id dans son NOM — la boucle « sinon il refait » ne
+            # purgait donc jamais et re-jugait le meme mesh refuse. Le
+            # critere devient: le dossier contient des artefacts de CE run.
+            if _rd.is_dir() and (args.run_id in _rd.name
+                                 or next(iter(_rd.glob("*" + args.run_id + "*")), None) is not None):
                 # ARCHIVER l'essai refuse avant purge: les tirages varient
                 # enormement — jeter le meilleur d'hier pour un pire demain a
                 # deja coute un excellent mesh. Le score est dans le nom.

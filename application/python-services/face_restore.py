@@ -213,35 +213,43 @@ def detect_face_bbox(
     model = ensure_asset("face_detection_yunet_2023mar.onnx", allow_download)
     if model:
         best: Optional[FaceHit] = None
-        for up in (1, 2, 4):
+        best_score = -1.0
+        # Agrandir sert aux PETITS visages (100 px dans un plein-pied); REDUIRE
+        # sert aux gros plans, et manquait: sur un selfie ou la tete remplit le
+        # cadre, YuNet a l'echelle native rendait un visage decale (mesure:
+        # score 0.63, yeux places 180 px trop bas, sur le nez/la bouche) tandis
+        # que la meme image reduite donne 0.93 et des yeux justes. On garde donc
+        # l'echelle qui INSPIRE LE PLUS CONFIANCE, au lieu de s'arreter a la
+        # premiere qui detecte quelque chose.
+        for sc in (1.0, 0.5, 0.25, 2.0, 4.0):
             probe = bgr
-            if up > 1:
-                probe = cv2.resize(
-                    bgr, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC
-                )
+            if sc != 1.0:
+                interp = cv2.INTER_AREA if sc < 1.0 else cv2.INTER_CUBIC
+                probe = cv2.resize(bgr, None, fx=sc, fy=sc, interpolation=interp)
+            if min(probe.shape[:2]) < 64:
+                continue
             try:
                 hits = _yunet_detect(probe, conf, model)
             except cv2.error:
                 continue
+            # au sein d'une echelle, le sujet principal reste le plus GRAND
+            cand: Optional[FaceHit] = None
             for hit in hits:
-                if up > 1:  # ramene en coordonnees natives
-                    x, y, w, h = hit.bbox
-                    hit = FaceHit(
-                        bbox=(
-                            int(round(x / up)),
-                            int(round(y / up)),
-                            int(round(w / up)),
-                            int(round(h / up)),
-                        ),
-                        landmarks=[[p[0] / up, p[1] / up] for p in hit.landmarks],
-                        score=hit.score,
-                        method="yunet@x%d" % up,
-                    )
-                area = hit.bbox[2] * hit.bbox[3]
-                if best is None or area > best.bbox[2] * best.bbox[3]:
-                    best = hit
-            if best is not None:
-                break  # la plus petite echelle qui detecte est la plus fiable
+                if cand is None or hit.bbox[2] * hit.bbox[3] > cand.bbox[2] * cand.bbox[3]:
+                    cand = hit
+            if cand is None or cand.score <= best_score:
+                continue
+            x, y, w, h = cand.bbox
+            best = FaceHit(
+                bbox=(int(round(x / sc)), int(round(y / sc)),
+                      int(round(w / sc)), int(round(h / sc))),
+                landmarks=[[p[0] / sc, p[1] / sc] for p in cand.landmarks],
+                score=cand.score,
+                method="yunet@x%g" % sc,
+            )
+            best_score = cand.score
+            if best_score >= 0.90:  # detection franche: inutile de continuer
+                break
         if best is not None:
             return best
 
