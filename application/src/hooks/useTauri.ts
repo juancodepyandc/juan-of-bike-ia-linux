@@ -76,9 +76,97 @@ function _startCloudProgressPolling(callback: (progress: string) => void): () =>
   }
 }
 
+/**
+ * Le transport doit durer plus longtemps que la commande qu il porte.
+ *
+ * MESURE (runs v131 ET v132, meme cause, nommee des la premiere occurrence par
+ * le diagnostic ajoute au commit precedent):
+ *
+ *   Bridge injoignable sur /api/command/run apres 301s: fetch failed
+ *   (Headers Timeout Error). commande: sh -c exec 'podman' 'run' ...
+ *
+ * 301 s, c est le `headersTimeout` par defaut d undici: 300 000 ms. Le `fetch`
+ * de Node abandonne en attendant les EN-TETES pendant qu une commande de
+ * sandbox parfaitement legitime (podman + npm install + tsc + build) prend plus
+ * de cinq minutes. Le pont n est jamais tombe: health 200 avant et apres, et le
+ * processus vivant du debut a la fin des deux runs.
+ *
+ * Encore un plafond qui mesure autre chose que ce qu il nomme: il s appelle
+ * « delai de reponse HTTP » et il borne en realite la duree d un build.
+ *
+ * `undici` n est pas installable ici (ERR_MODULE_NOT_FOUND), donc on ne peut
+ * pas reconfigurer `fetch`. Sous Node on passe donc par `node:http`, dont le
+ * delai est explicite et se cale sur celui de la COMMANDE.
+ */
+const isNodeRuntime = () => typeof window === 'undefined'
+  && Boolean((globalThis as { process?: { versions?: { node?: string } } }).process?.versions?.node)
+
+type NodeHttpModule = { request: (options: Record<string, unknown>, cb: (res: unknown) => void) => NodeRequestLike }
+type NodeRequestLike = {
+  setTimeout: (ms: number, cb: () => void) => void
+  destroy: (error?: Error) => void
+  on: (event: string, cb: (value: unknown) => void) => void
+  end: (body: string) => void
+}
+type NodeResponseLike = {
+  statusCode?: number
+  setEncoding: (enc: string) => void
+  on: (event: string, cb: (chunk: string) => void) => void
+}
+
+async function nodeHttpPost<T>(url: string, payload: string, timeoutMs: number): Promise<T> {
+  const target = new URL(url)
+  // Specificateur calcule: le bundler navigateur ne doit pas tenter de resoudre
+  // un module Node, et TypeScript n exige alors pas @types/node.
+  const moduleName = target.protocol === 'https:' ? 'node:https' : 'node:http'
+  const mod = (await import(/* @vite-ignore */ moduleName)) as unknown as NodeHttpModule
+  const contentLength = new TextEncoder().encode(payload).length
+
+  return new Promise<T>((resolve, reject) => {
+    const req = mod.request(
+      {
+        hostname: target.hostname,
+        port: target.port || (target.protocol === 'https:' ? 443 : 80),
+        path: `${target.pathname}${target.search}`,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': contentLength },
+      },
+      (raw: unknown) => {
+        const res = raw as NodeResponseLike
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk: string) => { body += chunk })
+        res.on('end', () => {
+          if ((res.statusCode ?? 0) >= 400) {
+            reject(new Error(`Bridge HTTP ${res.statusCode} sur ${target.pathname}: ${body.slice(0, 300)}`))
+            return
+          }
+          try { resolve(JSON.parse(body) as T) } catch { reject(new Error(`Reponse illisible du bridge sur ${target.pathname}: ${body.slice(0, 200)}`)) }
+        })
+      },
+    )
+    // Le budget du transport DEPASSE celui de la commande: sans cette marge on
+    // recreerait exactement le defaut qu on corrige.
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error(`Aucune reponse du bridge apres ${Math.round(timeoutMs / 1000)}s`)) })
+    req.on('error', (error: unknown) => reject(error instanceof Error ? error : new Error(String(error))))
+    req.end(payload)
+  })
+}
+
 async function cloudInvoke<T>(endpoint: string, args?: Record<string, unknown>): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${getBridgeUrl()}${endpoint}`
   const startedAt = Date.now()
+  if (isNodeRuntime()) {
+    const commandBudget = typeof args?.timeoutMs === 'number' ? args.timeoutMs : 0
+    const transportBudget = Math.max(commandBudget + 120_000, 1_800_000)
+    try {
+      return await nodeHttpPost<T>(url, JSON.stringify(args || {}), transportBudget)
+    } catch (error) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000)
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Bridge injoignable sur ${endpoint} apres ${elapsed}s: ${detail}`)
+    }
+  }
   let response: Response
   try {
     response = await fetch(url, {
