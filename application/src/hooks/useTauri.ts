@@ -78,11 +78,34 @@ function _startCloudProgressPolling(callback: (progress: string) => void): () =>
 
 async function cloudInvoke<T>(endpoint: string, args?: Record<string, unknown>): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${getBridgeUrl()}${endpoint}`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(args || {}),
-  })
+  const startedAt = Date.now()
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args || {}),
+    })
+  } catch (error) {
+    // Un `fetch failed` NU ne nomme ni l appel, ni sa duree, ni sa cause.
+    //
+    // Mesure (run v131): la validation sandbox est morte sur « fetch failed »
+    // 302 s apres « Verifier test dans le sandbox », alors que le processus du
+    // bridge etait vivant du debut a la fin du run (demarre 02:29:19, run
+    // 02:43:54 -> 03:05:31). Impossible de trancher entre un test qui pend, une
+    // connexion fermee par le relais, ou une contention: le message ne portait
+    // rien. Deuxieme occurrence de cette panne, et toujours rien a diagnostiquer.
+    //
+    // On ne DEVINE pas la cause ici — on la rend mesurable a la prochaine.
+    const elapsed = Math.round((Date.now() - startedAt) / 1000)
+    const cause = (error as { cause?: unknown })?.cause
+    const causeText = cause instanceof Error ? ` (${cause.message})` : ''
+    const detail = error instanceof Error ? `${error.message}${causeText}` : String(error)
+    const command = typeof args?.executable === 'string'
+      ? ` commande: ${args.executable} ${Array.isArray(args.args) ? (args.args as unknown[]).slice(0, 4).join(' ') : ''}`.trimEnd()
+      : ''
+    throw new Error(`Bridge injoignable sur ${endpoint} apres ${elapsed}s: ${detail}.${command}`)
+  }
 
   return safeParseJson<T>(response, `Cloud bridge ${endpoint}`)
 }
