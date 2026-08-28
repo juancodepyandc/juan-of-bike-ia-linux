@@ -660,6 +660,18 @@ def _poser_le_personnage(entite: dict, projet: Path) -> dict:
             dire("materiau remis d'aplomb %s" % report["corriges"][0])
         rapport["materiau"] = report
         rapport["anime"] = ani["glb"]
+        # LE LIVRABLE DOIT PORTER L'ANIMATION. Elle n'existait que dans
+        # `mouvement/mouvement_couleurs.glb`, un sous-dossier: le fichier que
+        # l'on ouvre naturellement (<role>_matte.glb) sortait a 0 animation et
+        # le personnage paraissait fige (constate le 28/08). On depose donc le
+        # resultat anime a la racine de l'entite, sous un nom qui se voit.
+        try:
+            _dest = projet / entite["role"] / ("%s_ANIME.glb" % entite["role"])
+            shutil.copyfile(ani["glb"], _dest)
+            rapport["livrable_anime"] = str(_dest)
+            dire("livrable anime: %s" % _dest.name)
+        except Exception as _ce:  # noqa: BLE001
+            rapport["livrable_anime_erreur"] = repr(_ce)
     else:
         rapport["erreur"] = "animation impossible: %s" % ani.get("erreur")
     return rapport
@@ -741,8 +753,25 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         # rejette les 4 essais et brule quatre generations FLUX pour rien
         # (mesure le 27/08). La posture ne vient plus de la reference mais du
         # squelette, ce filtre n'a donc plus d'objet ici.
-        res = _generate_object(desc, o["role"], projet, rendre_le_detail=True,
-                               pose_a_venir=bool(pose))
+        # UN REFUS SE RETENTE. Le service ne reconstruit qu'a partir d'UNE
+        # image (verifie: son endpoint n'accepte que `image_url`), il INVENTE
+        # donc le dos — et la qualite de cette invention varie d'un tirage a
+        # l'autre: le meme personnage, meme chaine, a note 95/100 puis 25/100
+        # (plaques couleur peau sur le dos du t-shirt). Sans reprise, une
+        # entite refusee etait simplement ABSENTE de la scene, et tout ce qui
+        # reposait dessus tombait avec elle. On rejoue donc le tirage plutot
+        # que de livrer une scene trouee.
+        _essais = max(1, int(os.environ.get("AURORA_SCENE_ESSAIS", "3")))
+        res = None
+        for _essai in range(_essais):
+            res = _generate_object(desc, o["role"], projet, rendre_le_detail=True,
+                                   pose_a_venir=bool(pose))
+            if not (res or {}).get("refus"):
+                break
+            if _essai + 1 < _essais:
+                print("SCENE_ORCH: %r refuse (%s) — nouvel essai %d/%d"
+                      % (o["role"], str((res or {}).get("refus"))[:70],
+                         _essai + 2, _essais), file=sys.stderr)
         o["glb"] = (res or {}).get("glb")
         o["refus"] = (res or {}).get("refus")
         # Sans cet identifiant, le rig devrait re-televerser le maillage —

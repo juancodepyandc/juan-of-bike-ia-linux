@@ -110,6 +110,28 @@ def _reparation_texture_sure(glb: str, reparer, etiquette: str):
             pass
 
 
+def _fond_lisible(glb: str) -> str:
+    """Force du fond pour que le SUJET se detache au rendu de controle.
+
+    Un sujet noir sur fond gris sombre est illisible: le juge a condamne a
+    0/100 une chaise de bureau noire pourtant conforme, faute de la voir
+    (28/08). On mesure la luminance de la couleur livree et on prend le fond
+    inverse — sombre pour un sujet clair, clair pour un sujet sombre.
+    """
+    try:
+        sig = _signature_texture(glb)
+        if not sig:
+            return "3.0"
+        luma = float(sig.get("luma") or 0.0)
+        if luma < 60:      # sujet sombre -> fond clair
+            return "8.0"
+        if luma > 190:     # sujet tres clair -> fond assombri
+            return "1.2"
+        return "3.0"
+    except Exception:  # noqa: BLE001
+        return "3.0"
+
+
 def audit_trous(glb: str) -> dict:
     """Audit APRES SOUDURE virtuelle: sur un maillage a ilots UV, chaque
     couture compte comme bord ouvert (des millions de faux positifs — le
@@ -313,7 +335,8 @@ def verifier_coherence(glb: str) -> dict:
     from vlm_judge import ask_vlm
     with tempfile.TemporaryDirectory() as td:
         r = subprocess.run([_blender(), "-b", "-P",
-                            str(PS / "orient_rendu_bpy.py"), "--", glb, td],
+                            str(PS / "orient_rendu_bpy.py"), "--", glb, td,
+                            _fond_lisible(glb)],
                            capture_output=True, text=True, timeout=1200)
         if "VUES4_OK" not in (r.stdout or ""):
             return {"parfait": False, "score": 0,
@@ -431,7 +454,8 @@ def juger(glb: str, reference: str, contexte: str = "") -> dict:
     from vlm_judge import ask_vlm
     with tempfile.TemporaryDirectory() as td:
         r = subprocess.run([_blender(), "-b", "-P",
-                            str(PS / "orient_rendu_bpy.py"), "--", glb, td],
+                            str(PS / "orient_rendu_bpy.py"), "--", glb, td,
+                            _fond_lisible(glb)],
                            capture_output=True, text=True, timeout=1200)
         if "VUES4_OK" not in (r.stdout or ""):
             return {"parfait": False, "score": 0,
@@ -544,7 +568,8 @@ def preuves(glb: str, dossier_run: str, etiquette: str = "livrable") -> dict:
         mesures["erreur_mesure"] = repr(exc)
     with tempfile.TemporaryDirectory() as td:
         r = subprocess.run([_blender(), "-b", "-P",
-                            str(PS / "orient_rendu_bpy.py"), "--", glb, td],
+                            str(PS / "orient_rendu_bpy.py"), "--", glb, td,
+                            _fond_lisible(glb)],
                            capture_output=True, text=True, timeout=1800)
         if "VUES4_OK" in (r.stdout or ""):
             for az in (270, 0, 90, 180):

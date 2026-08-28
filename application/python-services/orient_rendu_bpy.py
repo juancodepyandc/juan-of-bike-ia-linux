@@ -10,6 +10,12 @@ from mathutils import Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 GLB, OUT = argv[0], argv[1]
+# FOND CONTRASTANT (optionnel, 3e argument). Un sujet NOIR rendu sur un fond
+# gris sombre est presque illisible: le juge a note 0/100 une chaise de bureau
+# noire parfaitement conforme, simplement parce qu'il ne la distinguait pas du
+# fond (mesure 28/08). On photographie un objet sombre sur fond clair et
+# l'inverse — l'appelant mesure la luminance du sujet et passe la valeur.
+FOND = float(argv[2]) if len(argv) > 2 else 3.0
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=GLB)
 sc = bpy.context.scene
@@ -59,7 +65,7 @@ w.use_nodes = True
 # alors que l'atlas mesure un jaune parfait ([218 185 35]). Un juge
 # sous-expose REFUSE tout a tort — deja paye en verdicts "trop sombre".
 # Ambiance forte + transformee STANDARD = on juge la matiere, pas le film.
-w.node_tree.nodes["Background"].inputs[1].default_value = 3.0
+w.node_tree.nodes["Background"].inputs[1].default_value = FOND
 sc.world = w
 try:
     sc.view_settings.view_transform = "Standard"
