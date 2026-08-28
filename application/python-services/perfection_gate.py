@@ -39,6 +39,77 @@ def _blender() -> str:
 
 
 # ---------------------------------------------------------------- trous ----
+def _signature_texture(glb: str):
+    """Signature de la couleur livree: luminance + rapport de striure.
+
+    Le rapport compare les ecarts VERTICAUX aux ecarts HORIZONTAUX. Une texture
+    saine est isotrope (~1.0); un remplissage qui bave le long des lignes le
+    fait exploser. C'est la mesure qui a permis de nommer le coupable quand la
+    texture du personnage VIZION est sortie en trainees (0.97 -> 8.95).
+    """
+    import io as _io
+    import numpy as _np
+    from PIL import Image as _Im
+    from pygltflib import GLTF2 as _G
+    g = _G().load(glb)
+    blob = g.binary_blob()
+    pbr = getattr(g.materials[0], "pbrMetallicRoughness", None) if g.materials else None
+    if pbr is None or pbr.baseColorTexture is None:
+        return None
+    src = g.textures[pbr.baseColorTexture.index].source
+    if src is None or g.images[src].bufferView is None:
+        return None
+    bv = g.bufferViews[g.images[src].bufferView]
+    a = _np.asarray(_Im.open(_io.BytesIO(
+        blob[bv.byteOffset:bv.byteOffset + bv.byteLength])).convert("RGB"),
+        dtype=_np.float32)
+    dv = float(_np.abs(_np.diff(a, axis=0)).mean())
+    dh = float(_np.abs(_np.diff(a, axis=1)).mean())
+    return {"luma": float(a.mean()), "striure": dv / max(dh, 1e-6)}
+
+
+def _reparation_texture_sure(glb: str, reparer, etiquette: str):
+    """Applique `reparer(entree, sortie)` seulement si elle PROUVE qu'elle n'a
+    pas abime la couleur livree.
+
+    Doctrine deja etablie ailleurs dans ce depot pour la geometrie: une etape
+    doit prouver qu'elle n'a rien detruit. Paye ici: le despeckle d'atlas,
+    ecrit pour des atlas TRELLIS degeneres (des milliers de micro-chartes
+    ecrasees sur UN texel), a ete applique tel quel a un atlas de service
+    legitimement fragmente — 276 927 ilots sur 567 523 (48%) declares
+    "parasites" puis relocalises, texture rendue en trainees horizontales et
+    logo VIZION efface. Rendu (ok, detail).
+    """
+    import shutil as _sh
+    import tempfile as _tf
+    avant = _signature_texture(glb)
+    if avant is None:                       # pas de couleur a proteger
+        return reparer(glb, glb), "sans texture a proteger"
+    tmp = _tf.mktemp(suffix=".glb")
+    try:
+        res = reparer(glb, tmp)
+        if not os.path.isfile(tmp) or os.path.getsize(tmp) < 1000:
+            return res, "sortie vide — ignoree"
+        apres = _signature_texture(tmp)
+        if apres is None:
+            return res, "texture perdue — ignoree"
+        # seuils larges: on ne veut attraper que la DESTRUCTION, pas un
+        # nettoyage legitime (qui laisse la striure autour de 1).
+        _seuil = max(1.8, 2.5 * float(avant["striure"]))
+        if apres["striure"] > _seuil:
+            return res, ("REFUSEE: striure %.2f -> %.2f (le remplissage bave, "
+                         "couleur d'origine conservee)"
+                         % (avant["striure"], apres["striure"]))
+        _sh.copyfile(tmp, glb)
+        return res, "appliquee (striure %.2f -> %.2f)" % (avant["striure"],
+                                                          apres["striure"])
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
 def audit_trous(glb: str) -> dict:
     """Audit APRES SOUDURE virtuelle: sur un maillage a ilots UV, chaque
     couture compte comme bord ouvert (des millions de faux positifs — le
@@ -322,10 +393,11 @@ def porte_structure(glb: str) -> dict:
         reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
     try:
         from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
-        dsp = _dspk_atlas(glb, glb)
+        dsp, _verdict = _reparation_texture_sure(
+            glb, lambda _e, _s: _dspk_atlas(_e, _s), "despeckle_atlas")
         if dsp.get("ok") and dsp.get("islands_purged"):
-            reparations.append("%d ilot(s) parasite(s) relocalise(s) (%d px)"
-                               % (dsp["islands_purged"], dsp.get("px_changed", 0)))
+            reparations.append("%d ilot(s) parasite(s) — %s"
+                               % (dsp["islands_purged"], _verdict))
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -512,10 +584,11 @@ def porte(glb: str, reference: str | None, contexte: str = "") -> dict:
         # NOIRES; ceci est un defaut different (deja peint, mais au hasard),
         # deja outille (texture_despeckle_atlas.py) mais jamais branche ici.
         from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
-        dsp = _dspk_atlas(glb, glb)
+        dsp, _verdict = _reparation_texture_sure(
+            glb, lambda _e, _s: _dspk_atlas(_e, _s), "despeckle_atlas")
         if dsp.get("ok") and dsp.get("islands_purged"):
-            reparations.append("%d ilot(s) parasite(s) relocalise(s) (%d px)"
-                               % (dsp["islands_purged"], dsp.get("px_changed", 0)))
+            reparations.append("%d ilot(s) parasite(s) — %s"
+                               % (dsp["islands_purged"], _verdict))
     except Exception:  # noqa: BLE001
         pass
     try:

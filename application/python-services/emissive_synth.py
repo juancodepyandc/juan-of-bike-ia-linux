@@ -89,7 +89,17 @@ def build_mask(rgb, sat_min, val_min, hues):
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
     n, labels, stats_cc, _ = cv2.connectedComponentsWithStats((mask > 0).astype(np.uint8), connectivity=8)
-    min_area = max(16, (h * w) // 100000)
+    # SEUIL PROPORTIONNEL A LA PLUS GROSSE SOURCE. Un plancher fixe (41 px sur
+    # un atlas 2048) laisse passer la poussiere de texture: mesure sur l'unite
+    # centrale VIZION — 149 composants, les ventilateurs pesant 10 000 a 32 000
+    # px, et 95 paillettes sous 600 px ne portant que 11% de l'aire. Rendues
+    # emissives, elles constellaient le flanc du boitier de confettis
+    # lumineux. Un vrai temoin lumineux garde un rapport raisonnable avec la
+    # source principale de l'objet; un artefact de compression, non.
+    _aires = stats_cc[1:, cv2.CC_STAT_AREA] if n > 1 else np.zeros(0)
+    _plus_grande = int(_aires.max()) if len(_aires) else 0
+    _ratio = int(os.environ.get("AURORA_EMISSIVE_RATIO_MIN", "80"))
+    min_area = max(16, (h * w) // 100000, _plus_grande // max(_ratio, 1))
     kept = 0
     for i in range(1, n):
         if stats_cc[i, cv2.CC_STAT_AREA] < min_area:

@@ -1,6 +1,5 @@
 /**
  * Tests barre expert v2 — fonctionnalités avancées :
- *   - video B-roll synthesizer
  *   - drawing auto-layout flowchart
  *   - 3d rig retarget
  *
@@ -9,11 +8,6 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import {
-  extractSubject,
-  synthesizeBrollPrompts,
-} from '../services/videoBrollSynthesizer.ts'
-import { planTimeline } from '../services/videoCompositionPlanner.ts'
 
 import {
   layoutFlowchart,
@@ -32,85 +26,6 @@ import {
   VRM_TO_AURORA,
 } from '../services/threeDRigRetarget.ts'
 import { humanoidMixamoRig, defaultRigForCategory } from '../services/threeDLodAndRig.ts'
-
-// =============================================================================
-// VIDEO — B-roll synthesizer
-// =============================================================================
-
-describe('B-roll synthesizer — barre expert', () => {
-  const baseScript = 'Bonjour. Voici un cours sur les vagues. Une vague se propage avec une vitesse appelée célérité. Les ondes acoustiques voyagent à 340 mètres par seconde dans l\'air. À la fin tu sauras calculer la longueur d\'onde.'
-  const timeline = planTimeline({
-    script: baseScript,
-    format: '16:9',
-    tone: 'tutoriel',
-    platform: 'classroom',
-    speakerName: 'Aurora',
-  })
-
-  test('produit un prompt par marker B-roll', () => {
-    const prompts = synthesizeBrollPrompts({
-      timeline, script: baseScript, wordsPerMinute: 160, tone: 'tutoriel',
-    })
-    assert.equal(prompts.length, timeline.brollMarkers.length)
-  })
-
-  test('chaque prompt non vide et inclut le sujet', () => {
-    const prompts = synthesizeBrollPrompts({
-      timeline, script: baseScript, wordsPerMinute: 160, tone: 'tutoriel',
-    })
-    for (const p of prompts) {
-      assert.ok(p.prompt.length > 10, `prompt court : "${p.prompt}"`)
-      assert.ok(p.scriptExcerpt.length > 0)
-    }
-  })
-
-  test('format 16:9 → aspectRatio 16:9 + width > height', () => {
-    const prompts = synthesizeBrollPrompts({
-      timeline, script: baseScript, wordsPerMinute: 160, tone: 'tutoriel',
-    })
-    for (const p of prompts) {
-      assert.equal(p.aspectRatio, '16:9')
-      assert.ok(p.width > p.height)
-    }
-  })
-
-  test('TikTok timeline → aspectRatio 9:16', () => {
-    const tk = planTimeline({
-      script: baseScript, format: '9:16', tone: 'pub', platform: 'tiktok',
-    })
-    const prompts = synthesizeBrollPrompts({ timeline: tk, script: baseScript, wordsPerMinute: 160, tone: 'pub' })
-    for (const p of prompts) {
-      assert.equal(p.aspectRatio, '9:16')
-      assert.ok(p.height > p.width)
-    }
-  })
-
-  test('extractSubject filtre les stopwords FR', () => {
-    const out = extractSubject('la propagation des ondes acoustiques dans l\'air')
-    const tokens = out.split(/\s+/)
-    assert.ok(!tokens.includes('la'))
-    assert.ok(!tokens.includes('des'))
-    assert.ok(!tokens.includes('dans'))
-    assert.ok(tokens.includes('propagation'))
-    assert.ok(tokens.includes('ondes') || tokens.includes('acoustiques'))
-  })
-
-  test('script vide → tableau vide', () => {
-    const empty = planTimeline({ script: '', format: '16:9', tone: 'tutoriel', platform: 'classroom' })
-    const prompts = synthesizeBrollPrompts({ timeline: empty, script: '', wordsPerMinute: 160, tone: 'tutoriel' })
-    // brollMarkers existent toujours, mais avec excerpt vide.
-    // Le test passe tant que ça ne crashe pas.
-    assert.ok(Array.isArray(prompts))
-  })
-
-  test('script court → markers utilisent le cue en fallback', () => {
-    const shortTl = planTimeline({ script: 'court', format: '16:9', tone: 'tutoriel', platform: 'classroom' })
-    const prompts = synthesizeBrollPrompts({ timeline: shortTl, script: 'court', wordsPerMinute: 160, tone: 'tutoriel' })
-    for (const p of prompts) {
-      assert.ok(p.prompt.length > 0)
-    }
-  })
-})
 
 // =============================================================================
 // DRAWING — auto-layout

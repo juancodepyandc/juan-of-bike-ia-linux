@@ -14,8 +14,8 @@
  * before the user enters.
  */
 import { lazy, Suspense, useState } from 'react'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 const MobileGrimoire = lazy(() => import('./MobileGrimoire'))
 const StudioRosterLazy = lazy(() => import('./studio/Roster'))
@@ -26,14 +26,13 @@ const FightCloudBadgeLazy = lazy(() => import('./studio/FightCloudBadge'))
 const ConversationViewV1 = lazy(() => import('../views/AuroraV1ChatView'))
 const ImageViewV1        = lazy(() => import('../views/AuroraV1ImageView'))
 const CodeViewV1         = lazy(() => import('../views/AuroraV1CodeView'))
-const VideoViewV1        = lazy(() => import('../views/AuroraV1VideoView'))
 const DrawingViewV1      = lazy(() => import('../views/AuroraV1DrawingView'))
 const ModelViewV1        = lazy(() => import('../views/AuroraV13DView'))
 const LearningViewV1     = lazy(() => import('../views/AuroraV1AcademyView'))
 const CyberViewV1        = lazy(() => import('../views/AuroraV1CyberView'))
 const V3_MODULE_VIEWS: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   conversation: ConversationViewV1,
-  image: ImageViewV1, code: CodeViewV1, video: VideoViewV1,
+  image: ImageViewV1, code: CodeViewV1,
   drawing: DrawingViewV1, '3d': ModelViewV1,
   learning: LearningViewV1, cyber: CyberViewV1,
 }

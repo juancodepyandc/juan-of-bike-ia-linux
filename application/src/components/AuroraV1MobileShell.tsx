@@ -12,8 +12,8 @@
  * The skin only re-styles the *cover/welcome* before the user enters.
  */
 import { lazy, Suspense, useState } from 'react'
-import AuroraSphereV1 from './AuroraSphereV1'
-import { useAppStore } from '../stores/appStore'
+import AuroraSphereV1 from './AuroraSphereV1.tsx'
+import { useAppStore } from '../stores/appStore.ts'
 
 const MobileGrimoire = lazy(() => import('./MobileGrimoire'))
 
@@ -24,7 +24,6 @@ const MobileGrimoire = lazy(() => import('./MobileGrimoire'))
 const ConversationViewLazy = lazy(() => import('../views/AuroraV1ChatView'))
 const ImageViewLazy        = lazy(() => import('../views/AuroraV1ImageView'))
 const CodeViewLazy         = lazy(() => import('../views/AuroraV1CodeView'))
-const VideoViewLazy        = lazy(() => import('../views/AuroraV1VideoView'))
 const DrawingViewLazy      = lazy(() => import('../views/AuroraV1DrawingView'))
 const ModelViewLazy        = lazy(() => import('../views/AuroraV13DView'))
 const LearningViewLazy     = lazy(() => import('../views/AuroraV1AcademyView'))
@@ -36,7 +35,6 @@ const MODULE_VIEWS: Record<string, React.LazyExoticComponent<React.ComponentType
   conversation: ConversationViewLazy,
   image: ImageViewLazy,
   code: CodeViewLazy,
-  video: VideoViewLazy,
   drawing: DrawingViewLazy,
   '3d': ModelViewLazy,
   learning: LearningViewLazy,

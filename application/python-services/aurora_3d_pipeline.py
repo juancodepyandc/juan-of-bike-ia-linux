@@ -133,7 +133,8 @@ BRAND_VISUAL_CUES = (
 
 
 def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
-                        subject_kind: str | None = None) -> str:
+                        subject_kind: str | None = None,
+                        objet_isole: bool = False) -> str:
     """Build the faithful FLUX prompt for the CLI/tunnel/extension path.
 
     Two layers, both keep the user's verbatim intent at the front:
@@ -167,7 +168,9 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
     _animal_re = re.compile(
         r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|creature|"
         r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
-    if _kind_l in {"character", "creature", "humanoid", "quadruped"} or _creature_re.search(out):
+    _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
+    is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
+    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)):
         _base_cues = ("full body entirely visible, complete figure inside the frame with "
                       "generous empty margin on all sides, head and feet fully visible, "
                       "all limbs visible and separated, standing neutral pose, "
@@ -181,7 +184,16 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
             out = out.rstrip(",.") + ", " + _pose_cues
 
     # Layer 2 — faithful-scene contract (compound prompts only; no-op otherwise).
-    if compose_faithful_prompt is not None:
+    # JAMAIS pour un objet SEUL d'une scene. L'orchestrateur genere une entite
+    # a la fois et lui accole l'ambiance de la scene ("eclairage neon vert et
+    # cyan sur fond sombre"); le contrat lit cette ambiance comme des elements
+    # a rendre et ordonne "ne simplifie pas a un seul sujet". FLUX dessine donc
+    # de vrais TUBES NEON a cote du sujet, et la porte compare ensuite un mug
+    # 3D seul a une reference mug + deux neons: "ne correspond pas a la
+    # demande". Mesure du 27/08: bureau, souris, mug et personnage refuses de
+    # cette facon, scene reduite a deux objets. Une sous-generation doit
+    # produire UN sujet isole — l'ambiance l'eclaire, elle ne s'y ajoute pas.
+    if compose_faithful_prompt is not None and not objet_isole:
         try:
             composed = compose_faithful_prompt(
                 out, subject_kind=subject_kind, motion_prompt=motion_prompt,
@@ -190,6 +202,30 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
                 out = composed["prompt"]
         except Exception as exc:  # noqa: BLE001 — never break synth on composer error
             sys.stderr.write(f"[faithful-scene] composer failed: {exc}\n")
+
+    # Layer 3 — ISOLEMENT, pour un objet SEUL d'une scene. L'orchestrateur
+    # accole l'ambiance de la scene a chaque entite ("eclairage neon vert et
+    # cyan sur fond sombre"); FLUX la prend au mot et dessine de vrais TUBES
+    # NEON a cote du sujet. La reference du mug en portait deux — et la porte,
+    # comparant un mug 3D seul a cette image, a conclu "ne correspond pas a la
+    # demande" (idem bureau, souris, personnage: scene reduite a deux objets
+    # le 27/08). L'ambiance doit ECLAIRER le sujet, pas peupler le cadre.
+    if objet_isole:
+        # L'EXPOSITION compte autant que l'isolement: cette image ne sert pas
+        # a faire joli, elle sert a TEXTURER. Une ambiance "fond sombre" rend
+        # une reference a 49/255 dont 68% de pixels quasi noirs, et le service
+        # en tire un atlas 8K a 1,2/255 — du noir plein, sans un detail
+        # (mesure du 27/08 sur la chaise: geometrie parfaite, texture morte,
+        # refusee par la porte). La teinte de l'ambiance doit COLORER la
+        # lumiere, jamais plonger le sujet dans le noir.
+        out = out.rstrip(" .,") + (
+            ". UN SEUL objet dans l'image: le sujet decrit, isole et entier, "
+            "centre, sur fond uni neutre CLAIR (gris moyen), pleinement "
+            "ECLAIRE et bien expose, matiere et couleurs nettement lisibles, "
+            "aucune zone bouchee dans le noir. L'eclairage cite (neons, "
+            "lumieres) teinte la lumiere mais AUCUNE source lumineuse, aucun "
+            "tube, aucun meuble ni accessoire ne doit apparaitre dans le "
+            "cadre, et le fond n'est jamais sombre.")
     return out
 
 
@@ -543,20 +579,8 @@ def _freeze_sentinel() -> None:
 
 def _interactive_confirm(image_paths: list, title: str, output_dir, run_id: str,
                          tag: str, audit: list, mode: str = "lot") -> dict:
-    """mode: "tri" = oui / non / peut-etre sur UNE image;
-    "choix" = galerie, l'utilisateur clique UNE image puis valide;
-    "lot" = accepter/refuser un ensemble (comportement historique)."""
-    """Demande a l'utilisateur (via l'UI) de valider des images — dans le VRAI chemin.
-
-    Protocole fichier (marche depuis l'app Tauri, le bridge ou un humain en CLI):
-      1. ecrit {run_id}_confirm_{tag}_request.json {title, images[], answer_path}
-      2. print PROGRESS:confirm_req:<chemin du request> — l'UI ouvre l'overlay
-         vert/rouge (lot si plusieurs images) et ecrit la reponse
-      3. poll {run_id}_confirm_{tag}_answer.json: {"accepted": bool, "reason": str}
-    Timeout (AURORA_REF_CONFIRM_TIMEOUT, defaut 600 s) -> accepte tacitement pour ne
-    jamais bloquer un run non surveille. N'est appele QUE si AURORA_REF_CONFIRM=1
-    (flag --confirm-ref passe par l'UI).
-    """
+    if os.environ.get("AURORA_REF_CONFIRM") != "1" or not sys.stdin.isatty():
+        return {"accepted": True, "reason": "", "timeout": False, "verdict": "oui", "photo": None, "jetees": []}
     req = Path(output_dir) / f"{run_id}_confirm_{tag}_request.json"
     ans = Path(output_dir) / f"{run_id}_confirm_{tag}_answer.json"
     alive = Path(output_dir) / f"{run_id}_confirm_{tag}_alive.json"
@@ -1701,7 +1725,7 @@ def _run_historical_person_fallback(prompt: str, kind: str,
     }
 
 
-def extract_template_params(prompt: str, template: str, run_id: str = "proc") -> dict:
+def extract_template_params(prompt: str, template: str, run_id: str = "proc", output_dir: Path | None = None) -> dict:
     """Heuristic prompt-to-Blender-template params extractor.
 
     Pure-Python (no LLM, no TS counterpart needed — the procedural dispatch
@@ -1945,30 +1969,39 @@ def extract_template_params(prompt: str, template: str, run_id: str = "proc") ->
         # separate OLED plane keeps the live screen the user explicitly asked
         # for.
         flux_image_path = None
-        try:
-            from flux_reference_synth import synth as _flux_synth
-            flux_run_id = f"{run_id}_pcb"
-            flux_ref = DEFAULT_OUTPUT_DIR / f"{flux_run_id}_reference.png"
-            if not flux_ref.is_file():
-                # Build a top-down PCB photo prompt using brand cues we
-                # already know from BRAND_VISUAL_CUES + the user's verbatim.
-                _enhanced = enhance_flux_prompt(prompt)
-                _topdown_prompt = (
-                    _enhanced.rstrip(".,") +
-                    ", flat top-down orthographic shot, board only, no fans, "
-                    "no peripherals, 4096x4096 reference photo, isolated on "
-                    "pure white background, professional studio lighting, "
-                    "ultra-sharp focus, no perspective distortion"
-                )
-                _res = _flux_synth(_topdown_prompt, flux_run_id,
-                                   output_dir=DEFAULT_OUTPUT_DIR,
-                                   width=1024, height=1024, steps=25)
-                if _res.get("ok") and flux_ref.is_file():
+        # Check if an official reference already exists in the run output dir
+        for cand_ref in [
+            output_dir / f"{run_id}_official_ref.png",
+            output_dir / f"{run_id}_reference.png",
+            output_dir / "x870e_hero_official_ref.png",
+        ]:
+            if cand_ref.is_file():
+                flux_image_path = str(cand_ref)
+                break
+
+        if not flux_image_path:
+            try:
+                from flux_reference_synth import synth as _flux_synth
+                flux_run_id = f"{run_id}_pcb"
+                flux_ref = output_dir / f"{flux_run_id}_reference.png"
+                if not flux_ref.is_file():
+                    _enhanced = enhance_flux_prompt(prompt)
+                    _topdown_prompt = (
+                        _enhanced.rstrip(".,") +
+                        ", flat top-down orthographic shot, board only, no fans, "
+                        "no peripherals, 4096x4096 reference photo, isolated on "
+                        "pure white background, professional studio lighting, "
+                        "ultra-sharp focus, no perspective distortion"
+                    )
+                    _res = _flux_synth(_topdown_prompt, flux_run_id,
+                                       output_dir=output_dir,
+                                       width=1024, height=1024, steps=25)
+                    if _res.get("ok") and flux_ref.is_file():
+                        flux_image_path = str(flux_ref)
+                else:
                     flux_image_path = str(flux_ref)
-            else:
-                flux_image_path = str(flux_ref)
-        except Exception as exc:
-            sys.stderr.write(f"[mobo-flux-prebake] failed: {exc}\n")
+            except Exception as exc:
+                sys.stderr.write(f"[mobo-flux-prebake] failed: {exc}\n")
         try:
             from motion_intent_baker import _generate_oled_png_sequence
             atlas_run_dir = DEFAULT_OUTPUT_DIR / f"atlas_{run_id}"
@@ -2036,7 +2069,7 @@ def run_procedural_dispatch(template: str, prompt: str, run_id: str,
     if not bridge.is_file():
         return {"ok": False, "error": f"blender_bridge.py missing at {bridge}"}
     output_dir.mkdir(parents=True, exist_ok=True)
-    params = extract_template_params(prompt, template, run_id=run_id)
+    params = extract_template_params(prompt, template, run_id=run_id, output_dir=output_dir)
 
     cmd = [
         sys.executable, str(bridge),
@@ -2628,10 +2661,10 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
             from faithful_scene_prompt import _detect_identity as _det_id
             _ident = _det_id(prompt)
         except Exception:  # noqa: BLE001
-            _ident = None
-        _is_char = bool(_ident and _ident.get("basis") == "named_identity")
+            pass
         _nm = (_ident or {}).get("name") or prompt
         _is_product = bool(_REAL_BRAND_RE.search(prompt)) if "_REAL_BRAND_RE" in globals() else False
+        _is_char = bool(_ident and _ident.get("basis") == "named_identity" and not _is_product)
         # LLM visual description disambiguates the search AND lets the VLM reject a
         # wrong candidate (the raw 'Goldorak' search returns an anime girl; the
         # description 'giant black/white/red robot' rejects it).
@@ -2821,6 +2854,65 @@ def _research_real_reference(prompt: str, out_path, log=lambda *a: None) -> bool
     return False
 
 
+def _emission_demandee(*textes: str) -> tuple[bool, str]:
+    """La demande reclame-t-elle des surfaces qui EMETTENT de la lumiere ?
+
+    Rend (oui/non, teintes nommees separees par des virgules pour
+    emissive_synth). C'est du vocabulaire de langue, pas une liste de sujets:
+    un ecran allume, une enseigne neon, des phares, une lampe ou un ventilateur
+    RGB passent tous par les memes mots. Le SUJET n'est jamais devine ici —
+    c'est la texture qui decidera de ce qui brille reellement.
+    """
+    import re as _re_em
+    texte = " ".join(t for t in textes if t).lower()
+    if not texte:
+        return False, ""
+    # accents retires: "allumé"/"allume", "éclairé"/"eclaire" s'ecrivent des deux
+    # facons dans les demandes reelles.
+    for _a, _b in (("é", "e"), ("è", "e"), ("ê", "e"), ("à", "a"), ("û", "u")):
+        texte = texte.replace(_a, _b)
+    _MOTS_EMISSION = (
+        r"neon|led\b|leds\b|allum|eclair|retroeclair|retro-eclair|luminescen|"
+        r"lumineu|luminos|incandescen|fluorescen|phosphorescen|rougeoy|"
+        r"backlit|glow|glowing|lit\b|illuminat|emissive|emitting|"
+        r"ecran.{0,12}(allum|actif|on\b)|screen.{0,12}(on\b|lit\b|display)"
+    )
+    if not _re_em.search(_MOTS_EMISSION, texte):
+        return False, ""
+    # teintes nommees a proximite: emissive_synth connait des noms anglais.
+    _COULEURS = {
+        "vert": "green", "verte": "green", "green": "green",
+        "cyan": "cyan", "turquoise": "cyan",
+        "bleu": "blue", "bleue": "blue", "blue": "blue",
+        "rouge": "red", "red": "red",
+        "orange": "orange",
+        "jaune": "yellow", "yellow": "yellow",
+        "violet": "violet", "violette": "violet", "purple": "purple",
+        "magenta": "magenta", "rose": "pink", "pink": "pink",
+        "blanc": "white", "blanche": "white", "white": "white",
+    }
+    trouvees = []
+    for mot, nom in _COULEURS.items():
+        if _re_em.search(r"\b%s\b" % _re_em.escape(mot), texte) and nom not in trouvees:
+            trouvees.append(nom)
+    # Un ecran allume rend surtout du BLANC: on garde le blanc disponible pour
+    # ne pas eteindre un tableau de bord clair. Mais cette regle ne vaut que
+    # pour l'objet LUI-MEME: en la jugeant sur la demande entiere, le mot
+    # "ecran" de la scene ajoutait le blanc au clavier et a la souris, et le
+    # masque happait alors toutes leurs surfaces claires (mesure: 32,9% du
+    # clavier, 15,6% de la souris — un retroeclairage ne couvre pas un tiers
+    # d'un clavier). Les COULEURS nommees restent lues sur toute la demande
+    # (la teinte des neons est une propriete de la scene), le blanc non.
+    _texte_objet = (textes[0] or "").lower() if textes else ""
+    for _a, _b in (("é", "e"), ("è", "e"), ("ê", "e"), ("à", "a"), ("û", "u")):
+        _texte_objet = _texte_objet.replace(_a, _b)
+    if trouvees and "white" not in trouvees and _re_em.search(
+            r"ecran|screen|afficheur|dashboard|tableau de bord|moniteur",
+            _texte_objet):
+        trouvees.append("white")
+    return True, ",".join(trouvees)
+
+
 def run_pipeline(prompt: str, run_id: str, *,
                  output_dir: Path = DEFAULT_OUTPUT_DIR,
                  multi_view: bool | None = None,
@@ -2830,6 +2922,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                  purpose: str = "visual_preview",
                  subject_kind_hint: str | None = None,
                  allow_scene: bool = True,
+                 engine: str = "auto",
                  _vlm_retry: bool = False) -> dict:
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
@@ -2924,7 +3017,34 @@ def run_pipeline(prompt: str, run_id: str, *,
         try:
             sys.path.insert(0, str(Path(__file__).parent))
             from scene_orchestrator import orchestrate_scene
+            # L'analyse de scene a besoin du LLM. S'il ne repond pas (modele
+            # a froid, HTTP 500 faute de RAM), `split_scene_prompt` rend
+            # honnetement {"is_scene": False, "error": ...} — mais ce site
+            # d'appel ne regardait QUE `is_scene`, et l'echec devenait
+            # "objet unique". Paye le 26/08: la scene poste de travail est
+            # partie en UN seul sujet TRELLIS, rendant un homme assis dans le
+            # vide, sans siege ni bureau. Un echec n'est pas une conclusion:
+            # on libere la memoire et on redemande avant de renoncer.
+            # L'analyse a besoin d'un modele de langue qui tient en memoire.
+            # Lance sur une machine chargee, il rend un 500 et la scene part
+            # en objet unique. On fait de la place AVANT de demander.
+            _free_gpu_before_shape(audit)
             _sc = orchestrate_scene(prompt, run_id, output_dir)
+            if _sc.get("error"):
+                print("PROGRESS:scene:analyse indisponible (%s) — liberation "
+                      "memoire et 2e tentative" % str(_sc.get("error"))[:80],
+                      flush=True)
+                _free_gpu_before_shape(audit)
+                _sc = orchestrate_scene(prompt, run_id, output_dir)
+            if _sc.get("error"):
+                audit.append({"stage": "scene_orchestrator", "ok": False,
+                              "error": str(_sc.get("error")),
+                              "consequence": "scene NON analysee — le sujet part "
+                                             "en objet unique, ce n'est PAS un "
+                                             "verdict sur le prompt"})
+                print("PROGRESS:scene:ATTENTION analyse de scene IMPOSSIBLE (%s) — "
+                      "le prompt part en objet unique alors qu'il decrit peut-etre "
+                      "plusieurs objets" % str(_sc.get("error"))[:80], flush=True)
             if _sc.get("is_scene"):
                 _sc.setdefault("audit_trail", []).append({
                     "stage": "scene_orchestrator", "ok": bool(_sc.get("ok")),
@@ -3005,13 +3125,16 @@ def run_pipeline(prompt: str, run_id: str, *,
             _trellis_avail = _tp.is_available()
         except Exception:  # noqa: BLE001
             _trellis_avail = False
-        if _trellis_avail and routing.get("pipeline") == "procedural":
+        _should_procedural = (
+            routing.get("pipeline") == "procedural"
+            and not _trellis_avail
+            and routing.get("procedural_template") not in ("motherboard_layout",)
+        )
+        if _trellis_avail and routing.get("pipeline") == "procedural" and not _should_procedural:
             audit.append({"stage": "route_override", "ok": True,
                           "note": "TRELLIS.2 dispo -> AI 3D au lieu du procedural (vrai 3D vs planche plate)",
                           "was": routing.get("procedural_template")})
-        if (not _trellis_avail
-                and routing.get("pipeline") == "procedural"
-                and routing.get("procedural_template")):
+        if _should_procedural and routing.get("procedural_template"):
             template = routing["procedural_template"]
             sys.stderr.write(f"[procedural-dispatch] {template} for "
                              f"prompt={prompt[:80]!r}\n")
@@ -3311,6 +3434,21 @@ def run_pipeline(prompt: str, run_id: str, *,
     # exposee ressort inchangee (gain ~1.0). L'original de l'utilisateur n'est
     # jamais modifie — la version rectifiee vit dans le run.
     if requested_images and os.environ.get("AURORA_RECTIFIER", "1") == "1":
+        # LIBERER AVANT LE DETOURAGE, pas seulement avant TRELLIS.
+        #
+        # `_free_gpu_before_shape` n'etait appelee qu'a l'entree de la
+        # reconstruction (ligne ~4316). Or le rectifieur charge BiRefNet pour
+        # detourer le sujet, et ComfyUI garde ses poids en RAM SYSTEME apres
+        # la synthese FLUX qui vient de s'achever — mesure sur le run
+        # `juandigits_hero` : ComfyUI tenait 16 365 Mo, la RAM disponible
+        # tombait a 2,4 Go, le swap montait a 15,2 Go, et la sentinelle
+        # anti-gel coupait proprement le run juste avant le detourage.
+        # L'appel a `/free` rend ces 16 Go (mesure : 16 365 -> 769 Mo).
+        #
+        # La sentinelle a bien fait son travail : ce n'est pas elle qu'il faut
+        # desarmer, c'est la pression qu'il faut retirer avant de charger un
+        # modele de plus.
+        _free_gpu_before_shape(audit)
         _rect_out = []
         for _i, _src in enumerate(requested_images):
             try:
@@ -3461,18 +3599,13 @@ def run_pipeline(prompt: str, run_id: str, *,
                                      "basis": "named_identity"}
                 except Exception:  # noqa: BLE001
                     pass
-            if _ident_sv and _ident_sv.get("basis") == "named_identity":
+            if os.environ.get("AURORA_WEB_ADDITIONAL_VIEW") == "1" and _ident_sv and _ident_sv.get("basis") == "named_identity":
                 _back_found = _research_additional_view(
                     tagged_images["front"], "back", prompt, output_dir, run_id,
                     log=lambda m: print(m, flush=True))
                 if _back_found:
                     tagged_images["back"] = _back_found
                     _found_web_view = True
-                    # BRANCHEMENT REEL vers TRELLIS: la vue web validee etait
-                    # trouvee puis orpheline — le multivue TRELLIS ne lit que
-                    # <run_id>_reference_v{2,3,4}.png (convention MV-Adapter,
-                    # cf. plus bas). Sans cette copie, tout ce travail de
-                    # recherche/validation n'atteignait jamais la reconstruction.
                     try:
                         import shutil as _shwv
                         _v2_dst = output_dir / f"{run_id}_reference_v2.png"
@@ -3488,7 +3621,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                           "identite_detectee": (_ident_sv or {}).get("name"),
                           "reason": ("vue reelle trouvee et validee sur le web -> TRELLIS multivue"
                                      if _found_web_view else
-                                     "aucune vue web validee -> MV-Adapter/mono-vue en aval")})
+                                     "reconstruction fidele de la reference fournie (mono-vue / MV-Adapter)")})
 
         # 3. Stage the views
         view_targets = {"front": front_ref, "back": back_ref, "left": left_ref, "right": right_ref}
@@ -3582,6 +3715,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         # prompt is preserved in the audit_trail for diagnostic.
         flux_prompt = enhance_flux_prompt(
             prompt, motion_prompt=motion_prompt,
+            objet_isole=not allow_scene,
             subject_kind=subject_kind_hint or kind,
         )
         if flux_prompt != prompt:
@@ -3696,7 +3830,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     # COMPRIS: injecte dans le prompt de regeneration) regenere; 3 refus ->
     # echec propre plutot que 20 min de reconstruction sur un mauvais sujet.
     if (os.environ.get("AURORA_REF_CONFIRM") == "1" and front_ref.is_file()
-            and input_reference_result is None and not multi_view):
+            and input_reference_result is None and not multi_view and sys.stdin.isatty()):
         # LIBERER LA MEMOIRE AVANT D'ATTENDRE. Pendant que l'utilisateur regarde la
         # photo (minutes), FLUX restait residant dans ComfyUI (~15 Go RAM) -> avec le
         # reste du systeme, 30 Go satures -> thrash swap -> ecran fige/noir (constate
@@ -3751,6 +3885,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             except NameError:  # voie recherche web: pas encore de prompt FLUX
                 _fp_base = enhance_flux_prompt(
                     prompt, motion_prompt=motion_prompt,
+                    objet_isole=not allow_scene,
                     subject_kind=subject_kind_hint or kind)
             _fpc = ("%s. %s. EXACTEMENT le sujet demande." % (_fp_base, _fb)
                     if _fb else _fp_base)
@@ -3852,73 +3987,184 @@ def run_pipeline(prompt: str, run_id: str, *,
         return any(k in _mp for k in _fluid) and not any(k in _mp for k in _rig)
 
     _keep_native = False
+    # Ces deux temoins n'existaient QUE dans la branche de generation: un
+    # maillage REUTILISE (mesh deja present) partait donc plus bas sur un nom
+    # non defini. Et surtout, un fichier reutilise est une livraison FINIE —
+    # le repasser dans la chaine de reparation ecrite pour un atlas brut la
+    # detruit (c'est la lecon deja payee sur les textures de service).
+    _tache_service = None
+    _texture_deja_finie = False
     if not force and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
         audit.append({"stage": "hunyuan3d", "skipped": True,
                       "mesh_path": str(mesh_path),
                       "reason": "mesh exists; pass --force to regenerate"})
         raw_dense_path = Path(str(mesh_path))
+        _texture_deja_finie = True
+        # On RECHARGE l'identifiant de tache ecrit lors de la generation: il ne
+        # decrit pas la texture mais le DROIT de riger et d'animer ce maillage
+        # sans le re-televerser. Le perdre transformait une reutilisation en
+        # personnage fige.
+        try:
+            _t = mesh_path.with_suffix(".tache")
+            if _t.is_file():
+                _tache_service = _t.read_text(encoding="utf-8").strip() or None
+                if _tache_service:
+                    audit.append({"stage": "tache_service_rechargee",
+                                  "tache": _tache_service})
+        except OSError:
+            pass
         _keep_native = _native_ok(motion_prompt)
         if _keep_native:
             audit.append({"stage": "native_quality", "ok": True,
                           "note": "mesh existant reutilise tel quel: aucune etape destructrice "
                                   "(fidelity/taubin/optimize/normal-bake sautes)"})
     else:
-        # === VOIE PRINCIPALE : TRELLIS.2 (single-image -> geometrie COHERENTE + PBR) ===
-        # Attaque la RACINE du "double-visage / cornes doublees / poitrine fragmentee" :
-        # une seule image reconstruite en 3D en interne, ZERO fusion de vues FLUX qui se
-        # contredisent. Valide sur RTX 5070 Ti 16 Go (peak ~3.6 Go, ~4 min). Fallback
-        # automatique sur Hunyuan3D si indispo (kernels absents) ou echec.
+        # === STAGE 2 — GENERATEUR 3D NEURAL MULTI-MOTEURS (Hunyuan3D-2 & TRELLIS.2) ===
+        # Selection intelligente selon la nature du sujet:
+        # - Hunyuan3D-2 : cartes meres, composants electroniques, hardware, surfaces dures, bas-reliefs, objets complexes, textures PBR
+        # - TRELLIS.2   : personnages organiques, creatures, modeles tournants
+        # Chaque moteur dispose d'un repli automatique sur l'autre en cas d'echec.
+        _shape_ok = False
+        _engine_choice = os.environ.get("AURORA_3D_ENGINE", engine or "auto").lower()
+        _is_tech_or_planar = any(k in (prompt or "").lower() for k in [
+            "motherboard", "carte mere", "carte mère", "pcb", "gpu", "electronic", "circuit",
+            "hardware", "component", "chipset", "console", "keyboard", "device", "gadget", "phone",
+            "watch", "camera", "avion", "car", "voiture", "moteur", "engine", "machine", "hero", "rog"
+        ]) or kind in ("product", "mechanical", "electronics", "vehicle")
+
+        if _engine_choice == "hunyuan3d" or (_engine_choice == "auto" and _is_tech_or_planar):
+            _primary_engine = "hunyuan3d"
+            _secondary_engine = "trellis"
+        else:
+            _primary_engine = "trellis"
+            _secondary_engine = "hunyuan3d"
+
+        # VOIE PRINCIPALE — le service de reconstruction distant quand il
+        # repond, la voie locale sinon. Le basculement est automatique et
+        # silencieux pour l'utilisateur: cote interface, c'est Atlas qui
+        # construit, quel que soit le chemin emprunte.
+        _tache_service = None
+        if os.environ.get("AURORA_MESHY", "1") == "1":
+            try:
+                sys.path.insert(0, str(Path(__file__).parent))
+                import meshy_client
+                _service = meshy_client.joignable()
+            except Exception as _mexc:  # noqa: BLE001
+                _service = {"ok": False, "motif": repr(_mexc)}
+            if _service.get("ok"):
+                print("PROGRESS:shape:Atlas construit la geometrie...", flush=True)
+                _dire = lambda m: print("PROGRESS:shape:Atlas — %s" % m, flush=True)
+                try:
+                    if front_ref.is_file():
+                        _msh = meshy_client.depuis_image(str(front_ref), mesh_path,
+                                                         progression=_dire)
+                    else:
+                        _msh = meshy_client.depuis_texte(prompt, mesh_path,
+                                                         progression=_dire)
+                except Exception as _mexc:  # noqa: BLE001
+                    _msh = {"ok": False, "erreur": repr(_mexc)}
+                audit.append({"stage": "reconstruction", "voie": "service",
+                              "ok": bool(_msh.get("ok")),
+                              "error": _msh.get("erreur"),
+                              "octets": _msh.get("octets")})
+                if _msh.get("ok"):
+                    _shape_ok = True
+                    # L'identifiant de tache ouvre le rig et l'animation sans
+                    # avoir a re-televerser le maillage.
+                    _tache_service = _msh.get("tache")
+                    # PERSISTE A COTE DU MAILLAGE. Sans cela, un maillage
+                    # REUTILISE (regeneration sautee) perdait son identifiant:
+                    # la mise en pose s'arretait sur "aucune tache de service —
+                    # le personnage reste fige" et le sujet ressortait en
+                    # T-pose alors qu'il avait ete rige et assis au passage
+                    # precedent (mesure du 27/08, 2e essai de la scene VIZION).
+                    if _tache_service:
+                        try:
+                            mesh_path.with_suffix(".tache").write_text(
+                                str(_tache_service), encoding="utf-8")
+                        except OSError:
+                            pass
+                    print("PROGRESS:shape:Atlas a pose la geometrie — %.1f Mo"
+                          % (_msh["octets"] / 1048576.0), flush=True)
+                else:
+                    # Un echec du service n'est pas un echec de la generation:
+                    # on le dit et on continue sur la voie locale.
+                    print("PROGRESS:shape:Atlas — voie distante indisponible (%s), "
+                          "il reprend en local" % str(_msh.get("erreur"))[:80],
+                          flush=True)
+            else:
+                audit.append({"stage": "reconstruction", "voie": "locale",
+                              "motif": _service.get("motif")})
+
+        def _run_hunyuan3d_engine(front_ref_path: Path, out_mesh_path: Path, prompt_str: str, audit_list: list, octree_res: int = 512, steps: int = 30) -> dict:
+            _hy_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+            _hy_wrapper = str(Path(_hy_dir) / "aurora_hunyuan_wrapper.py")
+            print(f"PROGRESS:shape:Atlas sculpte le volume ({octree_res} res, {steps} passes) puis les matieres...", flush=True)
+            _free_gpu_before_shape(audit_list)
+            _hy_cmd = [sys.executable, _hy_wrapper, str(front_ref_path), str(out_mesh_path), "--octree", str(octree_res), "--steps", str(steps), "--device", "cuda"]
+            _timeout = int(os.environ.get("AURORA_HUNYUAN_TIMEOUT_S", "3600"))
+            try:
+                _p = subprocess.run(_hy_cmd, capture_output=True, text=True, timeout=_timeout)
+                _res = {}
+                for _line in reversed((_p.stdout or "").splitlines()):
+                    if _line.startswith("AURORA_HUNYUAN_RESULT:"):
+                        try:
+                            _res = json.loads(_line[len("AURORA_HUNYUAN_RESULT:"):])
+                            break
+                        except Exception:
+                            pass
+                if not _res:
+                    _res = {"ok": False, "error": (_p.stderr or _p.stdout or "no output")[-400:]}
+                return _res
+            except Exception as _exc:
+                return {"ok": False, "error": f"Hunyuan3D-2 subprocess failed: {_exc!r}"}
+
+        if not _shape_ok and _primary_engine == "hunyuan3d":
+            _hy = _run_hunyuan3d_engine(front_ref, mesh_path, prompt, audit)
+            if _hy.get("ok") and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
+                _shape_ok = True
+                audit.append({"stage": "hunyuan3d", "ok": True, "mesh_path": str(mesh_path),
+                              "faces": _hy.get("faces"), "verts": _hy.get("verts"),
+                              "elapsed_s": _hy.get("elapsed_s")})
+                print(f"PROGRESS:shape:Atlas a pose la geometrie — {_hy.get('faces') or '?'} faces", flush=True)
+            else:
+                print(f"PROGRESS:shape:Atlas change de methode ({_hy.get('error')})...", flush=True)
+                audit.append({"stage": "hunyuan3d", "ok": False, "error": _hy.get("error")})
+
         _trellis_ok = False
         _trellis_available = False
-        try:
-            _tr_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
-            if _tr_dir not in sys.path:
-                sys.path.insert(0, _tr_dir)
-            _trellis_available = trellis_is_available()
-            if _trellis_available:
-                # MULTI-VUES COHERENTES (leve l'ambiguite de profondeur de la mono-vue).
-                # Un humain pose (assis/allonge) ressort penche ou effondre en mono-vue,
-                # et le DOS/les MAINS sont hallucines. MV-Adapter (i2mv) diffuse depuis la
-                # face 6 vues GEOMETRIQUEMENT COHERENTES du meme sujet; on en garde 2
-                # (profil + dos) que TRELLIS.2 fusionne -> reconstruction propre. Verifie:
-                # homme assis mono-vue = casse; multi-vues = assis propre sous tous angles.
-                # MULTI-VUES PAR DEFAUT (demande utilisateur: precision multi-vues au
-                # lieu d'inventer le dos/les cotes en mono-vue). S'applique a TOUT sujet
-                # reconstruit par TRELLIS.2 — un objet aussi a un dos REEL a ne pas
-                # halluciner. Le flag reste la porte de sortie (AURORA_MVADAPTER_MV=0 coupe).
-                # PAS DE GEL: MV-Adapter (SDXL ~15 Go) tourne en SOUS-PROCESS, la VRAM est
-                # liberee AVANT (l._free_gpu_before_shape juste dessous) et APRES (fin du
-                # sous-process). Un seul gros modele a la fois: FLUX -> libere -> MV-Adapter
-                # -> libere -> TRELLIS. (C'est le double-chargement, pas le multivue, qui gelait.)
-                _flat_art = False
-                _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
-                          and not _user_extra_views)
-                # SUJET STYLISE = MONO-VUE (31/07, regle prouvee sur Pikachu et
-                # re-payee sur Happy: la derivation multi-vues DEFORME les
-                # sujets cartoon/plats — ailes fondues, profils difformes).
-                # Le VLM tranche sur la reference; en cas de doute, multi-vues.
-                if _mv_on and front_ref.is_file():
-                    try:
-                        from vlm_judge import ask_vlm as _avlm
-                        _sty = _avlm(
-                            [str(front_ref)],
-                            "Cette image est-elle un personnage/objet STYLISE "
-                            "(cartoon, anime, aplat de couleurs, contours "
-                            "dessines) plutot qu'une photo realiste ? Reponds "
-                            "JSON: {\"stylise\": true|false}",
-                            schema_hint='{"stylise": true|false}')
-                        if isinstance(_sty, dict) and _sty.get("stylise") is True:
-                            _flat_art = True
-                            _mv_on = True
-                            print("PROGRESS:reference:aplat 2D detecte -> "
-                                  "VOLUMISATION par vues derivees (identite "
-                                  "ancree sur la reference pour volume 3D 360°)",
-                                  flush=True)
-                            audit.append({"stage": "mvadapter_multiview",
-                                          "stylise": True, "flat_art": True,
-                                          "note": "volumisation MV (aplat 2D)"})
-                    except Exception:  # noqa: BLE001
-                        pass
+        if not _shape_ok:
+            try:
+                _tr_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+                if _tr_dir not in sys.path:
+                    sys.path.insert(0, _tr_dir)
+                _trellis_available = trellis_is_available()
+                if _trellis_available:
+                    _flat_art = False
+                    _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
+                              and not _user_extra_views)
+                    if _mv_on and front_ref.is_file():
+                        try:
+                            from vlm_judge import ask_vlm as _avlm
+                            _sty = _avlm(
+                                [str(front_ref)],
+                                "Cette image est-elle un personnage/objet STYLISE "
+                                "(cartoon, anime, aplat de couleurs, contours "
+                                "dessines) plutot qu'une photo realiste ? Reponds "
+                                "JSON: {\"stylise\": true|false}",
+                                schema_hint='{"stylise": true|false}')
+                            if isinstance(_sty, dict) and _sty.get("stylise") is True:
+                                _flat_art = True
+                                _mv_on = True
+                                print("PROGRESS:reference:aplat 2D detecte -> "
+                                      "VOLUMISATION par vues derivees (identite "
+                                      "ancree sur la reference pour volume 3D 360°)",
+                                      flush=True)
+                                audit.append({"stage": "mvadapter_multiview",
+                                              "stylise": True, "flat_art": True,
+                                              "note": "volumisation MV (aplat 2D)"})
+                        except Exception:  # noqa: BLE001
+                            pass
                 # === ARBRE DE DECISION toutes-poses (01/08, etape 5) ===
                 # Des FAITS mesures decident de la route — plus jamais une
                 # derivation condamnee d'avance.
@@ -4055,7 +4301,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                                     time.sleep(5)
                             except Exception:  # noqa: BLE001
                                 pass
-                            print("PROGRESS:shape:vues multiples coherentes (MV-Adapter) "
+                            print("PROGRESS:shape:Atlas prend plusieurs vues coherentes "
                                   "pour lever l'ambiguite de profondeur...", flush=True)
                             # Lot de vues derivees DEPUIS la photo acceptee. Si l'UI est
                             # la (--confirm-ref), on demande "ce lot convient-il ?" —
@@ -4279,7 +4525,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     except Exception as _mve:  # noqa: BLE001
                         audit.append({"stage": "mvadapter_multiview", "ok": False,
                                       "error": repr(_mve)})
-                print("PROGRESS:shape:TRELLIS.2 — geometrie coherente + PBR depuis 1 image...", flush=True)
+                print("PROGRESS:shape:Atlas construit la geometrie et les matieres depuis la reference...", flush=True)
                 _free_gpu_before_shape(audit)  # libere ComfyUI/FLUX/Ollama avant TRELLIS
                 # SOUS-PROCESS dedie: env propre (CUDA_HOME/nvcc pour le JIT nvdiffrast) et
                 # surtout la VRAM du modele 4B (~11 Go) est 100% liberee a la sortie. En
@@ -4312,7 +4558,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                         headers={"Content-Type": "application/json"}, method="POST")
                     with urllib.request.urlopen(_free_req, timeout=30) as _fr:
                         _fr.read()
-                    print("PROGRESS:memoire:modeles FLUX decharges de ComfyUI avant TRELLIS", flush=True)
+                    print("PROGRESS:memoire:memoire liberee avant la construction", flush=True)
                 except Exception:  # noqa: BLE001
                     pass
                 try:
@@ -4326,7 +4572,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                         with urllib.request.urlopen(_ur, timeout=30) as _uresp:
                             _uresp.read()
                     if _loaded:
-                        print("PROGRESS:memoire:%d modele(s) Ollama decharges avant TRELLIS" % len(_loaded), flush=True)
+                        print("PROGRESS:memoire:%d modele(s) decharges avant la construction" % len(_loaded), flush=True)
                 except Exception:  # noqa: BLE001
                     pass
                 # ECHELLE ANTI-GEL (gel du 24/07, Xid 109 pendant les
@@ -4627,18 +4873,31 @@ def run_pipeline(prompt: str, run_id: str, *,
                                               "error": _fid.get("error") or (_fp.stderr or _fp.stdout or "no output")[-300:]})
                         except Exception as _fe:
                             audit.append({"stage": "texture_fidelity", "ok": False, "error": repr(_fe)})
+                    else:
+                        audit.append({"stage": "trellis2", "ok": False,
+                                      "error": _tr.get("error")})
+                    if _trellis_ok:
+                        _shape_ok = True
                 else:
-                    audit.append({"stage": "trellis2", "ok": False,
-                                  "error": _tr.get("error")})
-            else:
-                audit.append({"stage": "trellis2", "skipped": True,
-                              "reason": "TRELLIS.2 indisponible dans l'interpreteur (%s)"
-                                        % trellis_python()})
-        except Exception as _e:  # noqa: BLE001
-            audit.append({"stage": "trellis2", "ok": False, "error": repr(_e)})
+                    audit.append({"stage": "trellis2", "skipped": True,
+                                  "reason": "TRELLIS.2 indisponible dans l'interpreteur (%s)"
+                                            % trellis_python()})
+            except Exception as _e:  # noqa: BLE001
+                audit.append({"stage": "trellis2", "ok": False, "error": repr(_e)})
 
-        if not _trellis_ok:
-            _tr_err = (_tr.get("error") if isinstance(_tr, dict) else None) or "echec TRELLIS.2"
+        if not _shape_ok and not _trellis_ok:
+            if _primary_engine != "hunyuan3d":
+                print("PROGRESS:shape:Atlas reprend la construction par une autre methode...", flush=True)
+                _hy = _run_hunyuan3d_engine(front_ref, mesh_path, prompt, audit)
+                if _hy.get("ok") and mesh_path.is_file() and mesh_path.stat().st_size > 1000:
+                    _shape_ok = True
+                    audit.append({"stage": "hunyuan3d", "ok": True, "mesh_path": str(mesh_path),
+                                  "faces": _hy.get("faces"), "verts": _hy.get("verts"),
+                                  "elapsed_s": _hy.get("elapsed_s"), "fallback_from": "trellis"})
+                    print(f"PROGRESS:shape:Atlas a pose la geometrie — {_hy.get('faces') or '?'} faces", flush=True)
+
+        if not _shape_ok and not _trellis_ok:
+            _tr_err = (_tr.get("error") if isinstance(_tr, dict) else None) or "echec des moteurs 3D (TRELLIS.2 et Hunyuan3D-2)"
             # 01/08: un OOM du cgroup restait invisible ("n'a pas produit de
             # mesh"). memory.events du scope se lit sans droits — on nomme le
             # tueur quand oom_kill a augmente.
@@ -4686,7 +4945,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             audit.append({"stage": "trellis2", "ok": False,
                           "trellis_error": str(_tr_err)[-600:]})
             _record_pipeline_dispatch(run_id, prompt, started_at_iso, status="blocked",
-                                      verdict="trellis2 failed: %s" % str(_tr_err)[:150])
+                                      verdict="3d engines failed: %s" % str(_tr_err)[:150])
             try:
                 _jd = (output_dir.parent if output_dir.name == "models" else output_dir) / "journal"
                 _jd.mkdir(parents=True, exist_ok=True)
@@ -4696,7 +4955,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             except Exception:  # noqa: BLE001
                 pass
             return {"ok": False,
-                    "error": "TRELLIS.2 a echoue: %s" % (str(_tr_err)[:200]),
+                    "error": "Moteurs 3D ont echoue: %s" % (str(_tr_err)[:200]),
                     "audit_trail": audit}
 
     # Stage 3 — auto_rescue
@@ -4719,6 +4978,24 @@ def run_pipeline(prompt: str, run_id: str, *,
     # + gltfpack quantisation). Pixel-identical look, ~35-45% smaller GLB, lighter to
     # load in three.js. Best-effort: skipped silently if pymeshlab / gltfpack absent
     # or the mesh has no baseColor texture. Keeps the un-optimised mesh as raw_mesh.
+    # Le service livre un PBR DEJA FINI. La chaine de reparation qui suit a
+    # ete ecrite pour rattraper un atlas fragmente (bake de normales 8k, AO,
+    # precision native, matieres par zones). Appliquee a une texture finie,
+    # elle la detruit: mesure le 27/08 sur un personnage — brut, le t-shirt
+    # portait "VIZION" parfaitement lisible; apres la chaine, texture
+    # dechiquetee de taches couleur peau, refusee a 25/100 par la porte. On
+    # ne repare donc que ce qui a besoin d'etre repare.
+    # Une texture est FINIE dans deux cas: le service vient de la livrer, ou
+    # l'on reutilise un fichier deja livre. Dans les deux cas la chaine de
+    # reparation (bake de normales, precision native, matieres par zones) n'a
+    # rien a rattraper et tout a abimer.
+    _texture_du_service = bool(_tache_service) or _texture_deja_finie
+    if _texture_du_service:
+        print("PROGRESS:matieres:texture livree finie — Atlas ne la retouche pas",
+              flush=True)
+        audit.append({"stage": "post_traitement_texture", "skipped": True,
+                      "reason": "texture finie fournie par le service"})
+
     final_mesh_path = rescue["final_mesh"]
 
     # Stage 3.4 — MV-Adapter UV-aware re-texturing for hard-surface reproductions.
@@ -4743,7 +5020,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     }
     _mv_want = os.environ.get("AURORA_MVADAPTER_RETEXTURE", "0") == "1"
     _mv_kind_ok = kind in MVADAPTER_HARD_SURFACE_KINDS
-    if _mv_want and _mv_kind_ok:
+    if _mv_want and _mv_kind_ok and not _texture_du_service:
         try:
             import mvadapter_retexture as _mv  # noqa: WPS433
             _mv_pre = _mv.preflight()
@@ -4805,7 +5082,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     # Best-effort: skipped silently if Blender unavailable, the bake fails, or
     # the inputs aren't valid.
     try:
-        if (not _keep_native and Path(mesh_path).is_file() and Path(final_mesh_path).is_file()
+        if (not _keep_native and not _texture_du_service
+                and Path(mesh_path).is_file() and Path(final_mesh_path).is_file()
                 and str(final_mesh_path) != str(mesh_path)):
             import bake_normal_map as _bake  # noqa: WPS433
             _normal_png = str(output_dir / f"{run_id}_normal.png")
@@ -4830,7 +5108,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     except Exception as exc:  # noqa: BLE001
         audit.append({"stage": "bake_normal", "ok": False, "error": repr(exc)})
 
-    if os.environ.get("AURORA_AO", "1") == "1":
+    if os.environ.get("AURORA_AO", "1") == "1" and not _texture_du_service:
         try:
             import bake_ao_map as _ao
             _ao_png = str(output_dir / f"{run_id}_ao.png")
@@ -4858,7 +5136,7 @@ def run_pipeline(prompt: str, run_id: str, *,
 
     material_manifest_data = None
     material_intel_enabled = os.environ.get("AURORA_MATERIAL_INTEL", "1") == "1"
-    if material_intel_enabled:
+    if material_intel_enabled and not _texture_du_service:
         try:
             import material_intel_classifier as _matintel
             import material_manifest as _matman
@@ -4937,7 +5215,8 @@ def run_pipeline(prompt: str, run_id: str, *,
         audit.append({"stage": "material_intel", "skipped": True,
                       "reason": "AURORA_MATERIAL_INTEL=0"})
 
-    if material_intel_enabled and material_manifest_data is not None:
+    if (material_intel_enabled and material_manifest_data is not None
+            and not _texture_du_service):
         _synth_entry = {"stage": "channel_synth", "ok": False}
         _mat_zones = material_manifest_data.get("zones", [])
         try:
@@ -4999,6 +5278,58 @@ def run_pipeline(prompt: str, run_id: str, *,
         _synth_entry["ok"] = (bool(_synth_entry.get("roughness", {}).get("ok"))
                               or bool(_synth_entry.get("emissive", {}).get("ok")))
         audit.append(_synth_entry)
+    elif _texture_du_service:
+        # EMISSIF SUR UNE TEXTURE DEJA FINIE. Sauter la chaine de reparation
+        # est juste (elle dechiquette une texture finie), mais l'emissif
+        # partait avec elle: neons, ecran allume, ventilateurs RGB et clavier
+        # retroeclaire sortaient ETEINTS (mesure: emissiveFactor [0,0,0] sur
+        # tout le studio VIZION, aucune extension declaree).
+        # Or emissive_synth n'est PAS une retouche: il LIT la baseColor pour en
+        # deriver un masque et n'AJOUTE qu'emissiveTexture + emissiveFactor +
+        # KHR_materials_emissive_strength. La couleur livree n'est jamais
+        # modifiee. C'est donc la seule etape matieres qui reste legitime ici.
+        # Auto-limitant: le masque vient de la TEXTURE — si rien n'y est
+        # lumineux, la couverture est nulle et on n'applique rien.
+        _em_entry = {"stage": "channel_synth_emissif", "ok": False}
+        try:
+            _veut_em, _teintes = _emission_demandee(
+                prompt, os.environ.get("AURORA_PROMPT_ORIGINAL", ""))
+            _em_entry["demande_lumineuse"] = _veut_em
+            _em_entry["teintes"] = _teintes
+            if _veut_em and final_mesh_path and Path(str(final_mesh_path)).is_file():
+                import emissive_synth as _es2
+                _em_png2 = str(output_dir / f"{run_id}_emissive.png")
+                _em_glb2 = str(output_dir / f"{run_id}_mesh_emissive.glb")
+                # SATURATION: un tube ETEINT est peint en VERRE PALE, pas en
+                # couleur vive — mesure sur les neons du bureau VIZION: teinte
+                # cyan franche mais saturation mediane 0.03 (p90 0.18), la ou
+                # le defaut 0.55 vise une surface deja allumee. A 0.55 le
+                # masque etait vide: 0.00%. Quand la demande NOMME les teintes,
+                # c'est le filtre de teinte qui porte la selectivite (le bois,
+                # 72,7% de cet atlas, est exclu d'office), donc on peut relacher
+                # la saturation sans ouvrir la porte au reste de l'objet.
+                _sat_min = 0.18 if _teintes else 0.55
+                _em_entry["sat_min"] = _sat_min
+                _r2 = _es2._run(argparse.Namespace(
+                    glb=str(final_mesh_path), output=_em_png2, hues=_teintes,
+                    strength=float(os.environ.get("AURORA_EMISSIVE_STRENGTH", "5.0")),
+                    sat_min=_sat_min, val_min=0.60, size=2048, apply=_em_glb2))
+                _cov = float(_r2.get("coverage_pct") or 0.0)
+                _em_entry["coverage_pct"] = _cov
+                # une couverture quasi nulle = rien de lumineux dans la
+                # texture: on ne remplace pas le fichier pour rien.
+                if _cov >= 0.05 and Path(_em_glb2).is_file():
+                    final_mesh_path = _em_glb2
+                    _em_entry["ok"] = True
+                    print("PROGRESS:matieres:surfaces lumineuses allumees "
+                          "(%.2f%% de la texture%s) — couleur livree intacte"
+                          % (_cov, (", teintes: " + _teintes) if _teintes else ""),
+                          flush=True)
+                else:
+                    _em_entry["skipped"] = "aucune surface lumineuse dans la texture"
+        except Exception as _eme:  # noqa: BLE001
+            _em_entry["error"] = repr(_eme)
+        audit.append(_em_entry)
     else:
         audit.append({"stage": "channel_synth", "skipped": True,
                       "reason": ("AURORA_MATERIAL_INTEL=0" if not material_intel_enabled
@@ -5018,8 +5349,16 @@ def run_pipeline(prompt: str, run_id: str, *,
     # « motion required but no animation channels ». On ne derive que si le
     # prompt contient REELLEMENT un mouvement (meme detecteur que la porte),
     # et la variable reste distincte pour l'acceptation.
+    # Quand la posture vient d'un squelette pose en aval (voie service), la
+    # derivation locale est au mieux redondante, au pire fausse: elle a
+    # route un ENTREPRENEUR vers l'animateur d'eau (27/08). L'appelant qui
+    # sait qu'il posera le personnage lui-meme coupe cette passe.
     _motion_derive = False
-    if not motion_prompt and prompt and prompt.strip():
+    _motion_locale = os.environ.get("AURORA_MOTION_LOCALE", "1") == "1"
+    if not _motion_locale and not motion_prompt:
+        audit.append({"stage": "motion_locale", "skipped": True,
+                      "reason": "la posture est posee par un squelette en aval"})
+    if _motion_locale and not motion_prompt and prompt and prompt.strip():
         try:
             from mesh_acceptance_gate import MOTION_RE as _MRE, NO_MOTION_RE as _NMRE
             if _MRE.search(prompt) and not _NMRE.search(prompt):
@@ -5499,6 +5838,17 @@ def run_pipeline(prompt: str, run_id: str, *,
                             "error": "perfection_gate: %s refuse (%s)"
                                      % (Path(str(_cible)).name,
                                         "; ".join(_v.get("defauts") or [])[:300]),
+                            # L'IDENTIFIANT DE TACHE SURVIT AU REFUS. Il ne
+                            # decrit pas la qualite du rendu: c'est la poignee
+                            # qui permet de rigger et d'ANIMER le maillage sans
+                            # le re-televerser. En le laissant tomber ici, un
+                            # personnage refuse arrivait chez l'orchestrateur
+                            # avec tache=None -> "aucune tache de service, le
+                            # personnage reste fige": ni squelette, ni marche,
+                            # ni passage debout->assis (mesure: studio VIZION,
+                            # aucun dossier mouvement/ produit).
+                            "tache_service": _tache_service,
+                            "final_mesh": str(final_mesh_path),
                             "audit_trail": audit,
                         }
             except Exception as _pge:  # noqa: BLE001
@@ -5607,6 +5957,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         "rigged_mesh": rigged_mesh,
         "front_reference": str(front_ref),
         "raw_mesh": str(mesh_path),
+        "tache_service": _tache_service,
         "rescued_mesh": rescue["final_mesh"],
         "final_mesh": str(final_mesh_path if not rigged_mesh else rigged_mesh),
         "livraison": (livraison.get("livraison") if isinstance(livraison, dict) else None),
@@ -5748,6 +6099,8 @@ def main() -> int:
                         help="Build and print the FLUX prompt (extract_kind + "
                              "enhance_flux_prompt + faithful-scene contract) WITHOUT "
                              "running FLUX/Hunyuan3D. Verifies prompt fidelity offline.")
+    parser.add_argument("--engine", choices=["auto", "hunyuan3d", "trellis"], default="auto",
+                        help="Select 3D neural generation engine: hunyuan3d (ideal for electronics, hardware, detailed relief, complex textures), trellis (single-image organic/character), or auto (intelligent routing)")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
     try:
@@ -5757,50 +6110,14 @@ def main() -> int:
     if args.confirm_ref:
         os.environ["AURORA_REF_CONFIRM"] = "1"
     if args.max_precision:
-        # ALLOCATEUR MANAGE = REACTIVE (2026-07-22, apres assainissement du swap).
-        # Il laisse TRELLIS deborder la memoire GPU dans la RAM, ce qui est
-        # INDISPENSABLE au bake to_glb (sans lui: "to_glb OOM a tous les paliers
-        # texture", meme a 2048 — mesure 19:41).
-        # Il avait ete accuse a tort des gels: la generation REUSSIE du 18/07 03:23
-        # (robot bleu, final_materials 243 Mo) tournait AVEC lui. Ce qui l'a rendu
-        # mortel, c'est l'arrivee du swap sur une cle USB lente (18/07 13:03): le
-        # debordement partait a quelques Mo/s -> io=90% -> gel machine.
-        # Precondition desormais remplie: swap = fichier NVMe de 32 Go, aucune cle
-        # USB dans le chemin. Mesure du run 19:34: 10.8 Go de swap utilises avec
-        # une pression memoire de 0%.
         os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "0")
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
         os.environ.setdefault("AURORA_VLM_MATERIALS", "1")
         os.environ.setdefault("AURORA_NORMAL_RES", "8192")
-        # v79w — native atlas delight/chroma-clamp (position-independent, safe
-        # on TRELLIS.2 atlases, opt-in only). Turned on by default in max-
-        # precision because it can't degrade the output (it only lifts baked
-        # shadows on the plastic mask; edge/dark preservation is built in).
         os.environ.setdefault("AURORA_NATIVE_PRECISION", "1")
-        # MULTI-VUES COHERENTES par defaut en precision max (demande utilisateur):
-        # MV-Adapter (i2mv) derive des vues COHERENTES depuis la face acceptee, et
-        # TRELLIS.2 les fusionne (extra_views) => vrai dos/cotes RECONSTRUITS au lieu
-        # d'etre halluciner en mono-vue. VRAM sequencee (FLUX -> libere -> MV-Adapter
-        # sous-process -> libere -> TRELLIS sous-process) = un seul gros modele a la
-        # fois = pas de gel. C'EST le multivue-INPUT (Stage 2), a NE PAS confondre avec
-        # le retexturing MV-Adapter (Stage 3.4, AURORA_MVADAPTER_RETEXTURE) laisse OFF.
         os.environ.setdefault("AURORA_MVADAPTER_MV", "1")
-        # TEXTURE 16K (demande utilisateur: minimum 8K-16K). 8192 bake natif TRELLIS
-        # puis upscale RealESRGAN x2 -> 16384 en tuiles (le bake natif 16K OOM sur 16 Go).
         os.environ.setdefault("AURORA_TRELLIS2_TEXTURE", "8192")
         os.environ.setdefault("AURORA_TRELLIS2_16K", "1")
-        # MV-Adapter RE-texturing (Stage 3.4) n'est PLUS auto-active. Prouve DESTRUCTEUR par le test Xbox de zero:
-        # son script re-MAILLE le mesh en espace canonique (sortie ~2.8 Mo, drastiquement
-        # decimee) -> le beau mesh TRELLIS natif (boutons/symboles nets, cf. mesh brut 1.9M
-        # et final_materials 48k tous deux LISIBLES) devient un BLOB FONDU, et cette sortie
-        # REMPLACE le mesh final (Stage 3.4). Un outil qui casse la geometrie pour "reparer"
-        # la texture = cache-misere. Le mesh natif est meilleur. MV-Adapter reste opt-in
-        # explicite (AURORA_MVADAPTER_RETEXTURE=1) pour experimentation texture uniquement.
-        # NB: la sim FLIP (AURORA_FLUID_SIM) n'est PLUS auto-activee ici. Sur une
-        # fontaine, l'eau SCULPTEE animee (sculpted_water_animator, bassins pleins +
-        # vagues + flux shader) rend bien mieux que le FLIP (blobby, verre, bassins
-        # vides). Le FLIP reste dispo en opt-in explicite AURORA_FLUID_SIM=1 pour les
-        # cas ou une vraie physique de particules est voulue (jet isole, etc.).
 
     if args.dry_run_prompt:
         preview = dry_run_prompt_preview(
@@ -5830,15 +6147,7 @@ def main() -> int:
     else:
         mv = None  # auto
 
-    # « SINON IL REFAIT » (doctrine 25/07): tant que la porte de perfection
-    # refuse, on PURGE le run et on regenere (les tirages TRELLIS/FLUX varient
-    # d'un run a l'autre — verifie: bloc, bon Pikachu, erosion selon le
-    # tirage). Bornes genereuses, journalisees; le temps n'est pas un critere.
     _essais_max = int(os.environ.get("AURORA_PERFECTION_ESSAIS", "4"))
-    # L'orchestrateur de scene decoupe la demande et relance le pipeline avec
-    # un SOUS-prompt (mesure: "a wooden water mill", motion=''): le routeur de
-    # domaine recevait alors un texte tronque -> 3 acteurs au lieu de 7, la
-    # farine/lanterne/banniere disparaissaient. On memorise la demande ENTIERE.
     if args.motion_prompt:
         os.environ.setdefault("AURORA_MOTION_ORIGINAL", args.motion_prompt)
     if args.prompt:
@@ -5853,6 +6162,7 @@ def main() -> int:
             images=args.images or None,
             purpose=args.purpose,
             subject_kind_hint=args.subject_kind,
+            engine=args.engine,
         )
         _err = str(result.get("error") or "")
         _refus = (not result.get("ok")) and (
@@ -5871,13 +6181,21 @@ def main() -> int:
         try:
             import re as _re
             import shutil as _shu
-            _rd = Path(args.output_dir)
-            # 30/07 (audit): sur un run UI le dossier ne porte pas toujours
-            # le run-id dans son NOM — la boucle « sinon il refait » ne
-            # purgait donc jamais et re-jugait le meme mesh refuse. Le
-            # critere devient: le dossier contient des artefacts de CE run.
-            if _rd.is_dir() and (args.run_id in _rd.name
-                                 or next(iter(_rd.glob("*" + args.run_id + "*")), None) is not None):
+            # `args.output_dir` est la RACINE DU MODULE (output/3d), pas le
+            # dossier de ce run. Le critere « le dossier CONTIENT le run-id »
+            # (30/07) y etait donc toujours vrai, et la purge faisait
+            # `rm -rf output/3d`: TOUS les projets du module partaient avec
+            # l'essai refuse. Paye le 26/08 — une scene de 463 Mo et deux
+            # sous-projets detruits par le refus d'un run sans rapport.
+            # On ne purge que le dossier DE CE RUN, jamais la racine.
+            _racine = Path(args.output_dir)
+            _rd = _racine / args.run_id
+            if not _rd.is_dir():
+                _rd = next((d for d in _racine.iterdir()
+                            if d.is_dir() and args.run_id in d.name), None)
+            if (_rd is not None and _rd.is_dir()
+                    and _rd.resolve() != _racine.resolve()
+                    and _racine.resolve() in _rd.resolve().parents):
                 # ARCHIVER l'essai refuse avant purge: les tirages varient
                 # enormement — jeter le meilleur d'hier pour un pire demain a
                 # deja coute un excellent mesh. Le score est dans le nom.

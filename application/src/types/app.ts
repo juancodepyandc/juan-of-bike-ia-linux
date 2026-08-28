@@ -165,6 +165,9 @@ export type ModuleId =
   | 'conversation'
   | 'image'
   | 'code'
+  // 'video': module supprime (code, vues, services et modeles). L'identifiant
+  // reste dans l'union: il est encore lu par les reglages, les agents et le
+  // canvas, et le retirer casserait 15 fichiers sans rien supprimer de plus.
   | 'video'
   | 'drawing'
   | '3d'
@@ -312,6 +315,16 @@ export interface AssistantTurnAnalysis {
 }
 
 export interface AssistantTurnVerification {
+  /**
+   * Le verificateur a-t-il REELLEMENT rendu un jugement ?
+   *
+   * Quand il echoue — modele injoignable, JSON illisible — le pipeline
+   * retombait sur un objet code en dur `{score: 94, confidence: 88,
+   * verdict: 'ready'}`. Un juge qui n'a PAS juge annoncait donc la note la
+   * plus haute, et `ConversationView` affichait « 94/100 » a l'utilisateur.
+   * Ce drapeau separe « verifie et bon » de « pas verifie du tout ».
+   */
+  verified: boolean
   score: number
   confidence: number
   verdict: 'ready' | 'refine' | 'blocked'

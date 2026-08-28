@@ -1,17 +1,17 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
-import ModuleErrorBoundary from './components/ModuleErrorBoundary'
-import PrivilegeBootstrapDialog from './components/PrivilegeBootstrapDialog'
-import ToastContainer from './components/ToastContainer'
-import { SpatialCanvas, SPATIAL_MODULES } from './components/SpatialCanvas'
-import AuroraV1AppShell from './components/AuroraV1AppShell'
-import AuroraCommandPalette from './components/AuroraCommandPalette'
-import ScrollToTop from './components/ScrollToTop'
-import HelpFab from './components/HelpFab'
-import ConnectionIndicator from './components/ConnectionIndicator'
-import VoiceQuickToggle from './components/VoiceQuickToggle'
-import { reloadFresh } from './utils/buildRecovery'
+import ModuleErrorBoundary from './components/ModuleErrorBoundary.tsx'
+import PrivilegeBootstrapDialog from './components/PrivilegeBootstrapDialog.tsx'
+import ToastContainer from './components/ToastContainer.tsx'
+import { SpatialCanvas, SPATIAL_MODULES } from './components/SpatialCanvas.tsx'
+import AuroraV1AppShell from './components/AuroraV1AppShell.tsx'
+import AuroraCommandPalette from './components/AuroraCommandPalette.tsx'
+import ScrollToTop from './components/ScrollToTop.tsx'
+import HelpFab from './components/HelpFab.tsx'
+import ConnectionIndicator from './components/ConnectionIndicator.tsx'
+import VoiceQuickToggle from './components/VoiceQuickToggle.tsx'
+import { reloadFresh } from './utils/buildRecovery.ts'
 // v82aq : direct lazy import for the voice overlay (need onClose prop
 // which pickView's wrapper doesn't expose).
 // v82ay : skin-aware voice overlay. aurora_v1 → AuroraV1VoiceView
@@ -23,10 +23,10 @@ import { reloadFresh } from './utils/buildRecovery'
 const VoiceOverlayManga = lazy(() => import('./views/VoiceCopilotView'))
 const VoiceOverlayV1 = lazy(() => import('./views/AuroraV1VoiceView'))
 const VoiceOverlayV3 = lazy(() => import('./views/AuroraV3VoiceView'))
-import MobileGrimoire from './components/MobileGrimoire'
-import { readUiSkin } from './utils/uiSkin'
-import { isTauriRuntime } from './utils/runtime'
-import SkinSafeView from './components/SkinSafeView'
+import MobileGrimoire from './components/MobileGrimoire.tsx'
+import { readUiSkin } from './utils/uiSkin.ts'
+import { isTauriRuntime } from './utils/runtime.ts'
+import SkinSafeView from './components/SkinSafeView.tsx'
 
 // v81o: skin-aware mobile shell. Manga keeps the legacy MobileGrimoire
 // (cover/canvas/create/chat/voice/forge pages, two-finger swipe nav,
@@ -62,21 +62,21 @@ function MobileShell() {
   }
   return <MobileGrimoire />
 }
-import GlobalSearch from './components/GlobalSearch'
-import SettingsPanel from './components/SettingsPanel'
-import KeyboardCheatsheet from './components/KeyboardCheatsheet'
-import CoworkOverlay from './components/CoworkOverlay'
-import { useCoworkStore } from './stores/coworkStore'
-import { useDeviceKind } from './utils/device'
+import GlobalSearch from './components/GlobalSearch.tsx'
+import SettingsPanel from './components/SettingsPanel.tsx'
+import KeyboardCheatsheet from './components/KeyboardCheatsheet.tsx'
+import CoworkOverlay from './components/CoworkOverlay.tsx'
+import { useCoworkStore } from './stores/coworkStore.ts'
+import { useDeviceKind } from './utils/device.ts'
 import {
   DEFAULT_CODE_MODEL,
   DEFAULT_MAIN_MODEL,
   DEFAULT_VISION_MODEL,
   selectAdaptivePrimaryModel,
   selectAdaptiveVisionModel,
-} from './config/models'
-import { useRuntimeTelemetry } from './hooks/useRuntimeTelemetry'
-import { useLinuxRuntimeFirstRun } from './hooks/useLinuxRuntimeFirstRun'
+} from './config/models.ts'
+import { useRuntimeTelemetry } from './hooks/useRuntimeTelemetry.ts'
+import { useLinuxRuntimeFirstRun } from './hooks/useLinuxRuntimeFirstRun.ts'
 import {
   checkServiceStatus,
   detectHardware,
@@ -84,20 +84,20 @@ import {
   ollamaListModels,
   restartApplicationAsAdmin,
   runtimeInspectServices,
-} from './hooks/useTauri'
-import { useAppStore } from './stores/appStore'
-import { useChatStore } from './stores/chatStore'
-import { useFlashcardsStore } from './stores/flashcardsStore'
-import { useGamificationStore } from './stores/gamificationStore'
-import { useLearningSessionStore } from './stores/learningSessionStore'
-import { useModuleHistoryStore } from './stores/moduleHistoryStore'
-import type { HostPrivilegeStatus, ModuleId } from './types/app'
-import { pickView } from './utils/uiSkinViews'
+} from './hooks/useTauri.ts'
+import { useAppStore } from './stores/appStore.ts'
+import { useChatStore } from './stores/chatStore.ts'
+import { useFlashcardsStore } from './stores/flashcardsStore.ts'
+import { useGamificationStore } from './stores/gamificationStore.ts'
+import { useLearningSessionStore } from './stores/learningSessionStore.ts'
+import { useModuleHistoryStore } from './stores/moduleHistoryStore.ts'
+import type { HostPrivilegeStatus, ModuleId } from './types/app.ts'
+import { pickView } from './utils/uiSkinViews.ts'
 // v82lk9 : Aurora Team — 8 agents IA personnalisés (1 par module),
 // V3 only. Mascot SVG cartoon animé + Team Manager pour éditer
 // nom/voix/sysprompt. Voir application/src/services/auroraAgents.ts.
-import AuroraAgentMascot from './components/AuroraAgentMascot'
-import AuroraV3TeamManager from './views/AuroraV3TeamManager'
+import AuroraAgentMascot from './components/AuroraAgentMascot.tsx'
+import AuroraV3TeamManager from './views/AuroraV3TeamManager.tsx'
 
 const ConversationView = pickView({
   manga:     () => import('./views/MangaChatView'),
@@ -116,12 +116,6 @@ const CodeView = pickView({
   aurora_v1: () => import('./views/AuroraV1CodeView'),
   aurora_v3: () => import('./views/AuroraV3CodeView'),
   aurora_v4: () => import('./views/CodeView'),
-})
-const VideoView = pickView({
-  manga:     () => import('./views/MangaVideoView'),
-  aurora_v1: () => import('./views/AuroraV1VideoView'),
-  aurora_v3: () => import('./views/AuroraV1VideoView'),
-  aurora_v4: () => import('./views/AuroraV4VideoView'),
 })
 const DrawingView = pickView({
   manga:     () => import('./views/MangaDrawingView'),
@@ -157,7 +151,6 @@ const VIEW_MAP = {
   conversation: ConversationView,
   image: ImageView,
   code: CodeView,
-  video: VideoView,
   drawing: DrawingView,
   '3d': ModelView,
   learning: LearningView,
@@ -352,18 +345,15 @@ export default function App() {
         void import('./views/AuroraV4ImageView').catch(() => {})
         void import('./views/CodeView').catch(() => {})
         void import('./views/AuroraV4CyberView').catch(() => {})
-        void import('./views/AuroraV4VideoView').catch(() => {})
         void import('./views/AuroraV4DrawingView').catch(() => {})
       } else if (skin === 'aurora_v1') {
         void import('./views/AuroraV1ChatView').catch(() => {})
         void import('./views/AuroraV1ImageView').catch(() => {})
         void import('./views/AuroraV1CodeView').catch(() => {})
         void import('./views/AuroraV1CyberView').catch(() => {})
-        void import('./views/AuroraV1VideoView').catch(() => {})
         void import('./views/AuroraV1DrawingView').catch(() => {})
       } else if (skin === 'aurora_v3') {
         void import('./views/AuroraV3CodeView').catch(() => {})
-        void import('./views/AuroraV3VideoView').catch(() => {})
         void import('./views/AuroraV3AcademyView').catch(() => {})
       } else {
         // manga (théorique : skin filtré du picker, jamais sélectionnable user)
@@ -371,7 +361,6 @@ export default function App() {
         void import('./views/MangaChatView').catch(() => {})
         void import('./views/MangaImageView').catch(() => {})
         void import('./views/MangaCyberView').catch(() => {})
-        void import('./views/MangaVideoView').catch(() => {})
         void import('./views/MangaDrawingView').catch(() => {})
       }
     })
@@ -440,7 +429,6 @@ export default function App() {
       '1': 'conversation',
       '2': 'image',
       '3': 'code',
-      '4': 'video',
       '5': 'drawing',
       '6': '3d',
       '7': 'cyber',
@@ -545,7 +533,7 @@ export default function App() {
   // la prochaine key match un module.
   useEffect(() => {
     const G_MAP: Record<string, ModuleId | 'cowork'> = {
-      c: 'conversation', i: 'image', o: 'code', v: 'video', d: 'drawing',
+      c: 'conversation', i: 'image', o: 'code', d: 'drawing',
       t: '3d', a: 'learning', s: 'voice', y: 'cyber',
       // v82ge : "gg" double-tap → home/conversation (vim-style)
       g: 'conversation',
@@ -594,7 +582,7 @@ export default function App() {
   // long pages firing module switches.
   useEffect(() => {
     const SWIPE_ORDER: ModuleId[] = [
-      'conversation', 'image', 'code', 'video', 'drawing', '3d', 'cyber', 'learning',
+      'conversation', 'image', 'code', 'drawing', '3d', 'cyber', 'learning',
     ]
     const gesture = { active: false, startX: 0, startY: 0, startT: 0, multi: false }
     const isInEditable = (target: EventTarget | null) => {
@@ -859,8 +847,6 @@ export default function App() {
         return { value: hist.length || 0, caption: 'FLUX · 15 styles · édition référence.', tags: ['FLUX', 'dev', 'SDXL'] }
       case 'code':
         return { value: hist.length || 0, caption: 'Pipeline modele expert avec auto-correction.', tags: ['22 langs', 'sandbox', 'preview'] }
-      case 'video':
-        return { value: hist.length || 0, caption: 'Wan2.2 T2V/I2V · motion presets.', tags: ['T2V', 'I2V', 'motion'] }
       case 'drawing':
         return { value: hist.length || 0, caption: 'Canvas + rendu FLUX preserving sketch.', tags: ['sketch', 'vision'] }
       case '3d':
@@ -1220,7 +1206,6 @@ function CoworkRootMount({ focusMode, onCloseFocusMode }: { focusMode: boolean; 
 const V3_DOCK_MODULES: ReadonlyArray<{ id: ModuleId; label: string; glyph: string }> = [
   { id: 'conversation', label: 'Chat',     glyph: '◐' },
   { id: 'image',        label: 'Image',    glyph: '◉' },
-  { id: 'video',        label: 'Vidéo',    glyph: '▷' },
   { id: 'code',         label: 'Code',     glyph: '⌘' },
   { id: 'drawing',      label: 'Dessin',   glyph: '墨' },
   { id: '3d',           label: '3D',       glyph: '◇' },

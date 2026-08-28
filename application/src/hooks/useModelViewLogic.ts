@@ -2,7 +2,7 @@
  * useModelViewLogic — minimal editorial 3D intent state machine.
  *
  * Skeleton hook (v82bf), same pattern as useCodeViewLogic /
- * useVideoViewLogic. The full ModelView (3617 LOC) ships the
+ * useImageViewLogic. The full ModelView (3617 LOC) ships the
  * Hunyuan3D + DreamGaussian + Blender procedural + Meshroom router
  * with rescue, bones display, HDRI, and post-process.
  *
@@ -27,10 +27,10 @@
  * the editorial.
  */
 import { useCallback, useState } from 'react'
-import { previewThreeDIntent, type ThreeDIntent } from '../services/threeDIntent'
-import { RANDOM_3D_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts'
-import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
+import { previewThreeDIntent, type ThreeDIntent } from '../services/threeDIntent.ts'
+import { RANDOM_3D_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
+import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
 
 export interface UseModelViewLogic {
   prompt: string

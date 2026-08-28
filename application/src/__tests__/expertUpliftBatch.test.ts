@@ -3,7 +3,6 @@
  *   - threeDLodAndRig
  *   - imagePromptBuilder
  *   - voicePhonemes
- *   - videoCompositionPlanner
  *   - drawingStyleAndSvg
  *
  * Run: node --experimental-strip-types --test src/__tests__/expertUpliftBatch.test.ts
@@ -180,55 +179,6 @@ describe('Voice phonemes + profiles', () => {
   test('VAD ignores noise below threshold', () => {
     const mode = transition('speaking', { kind: 'user_voice_detected', rms: 0.01 })
     assert.equal(mode, 'speaking')
-  })
-})
-
-// --- Video ------------------------------------------------------------------
-import { defaultExportPresets, planTimeline } from '../services/videoCompositionPlanner.ts'
-
-describe('Video composition planner', () => {
-  const sample = {
-    script: 'Bonjour. Voici un cours rapide sur le pendule simple. La période vaut deux pi racine de L sur g. ',
-    format: '16:9' as const,
-    tone: 'tutoriel' as const,
-    platform: 'youtube-long' as const,
-    speakerName: 'Aurora',
-  }
-
-  test('timeline has hook + body + cta', () => {
-    const t = planTimeline(sample)
-    assert.ok(t.clips.find((c) => c.id === 'hook'))
-    assert.ok(t.clips.find((c) => c.id === 'cta'))
-    assert.ok(t.clips.filter((c) => c.kind === 'talking-head' || c.kind === 'b-roll-3d').length >= 2)
-  })
-
-  test('subtitles split into chunks', () => {
-    const t = planTimeline(sample)
-    assert.ok(t.subtitles.length >= 2)
-  })
-
-  test('audio tracks include duck-on-VO music', () => {
-    const t = planTimeline(sample)
-    const music = t.audioTracks.find((a) => a.kind === 'music')
-    assert.ok(music)
-    assert.equal(music.duckOnVoiceOver, true)
-    assert.equal(music.duckDb, -18)
-  })
-
-  test('platform tiktok yields 9:16', () => {
-    const t = planTimeline({ ...sample, platform: 'tiktok', format: '9:16' })
-    assert.equal(t.format, '9:16')
-  })
-
-  test('lower-third inserted when speakerName', () => {
-    const t = planTimeline(sample)
-    assert.ok(t.clips.find((c) => c.kind === 'lower-third'))
-  })
-
-  test('export presets cover 16:9 when timeline 16:9', () => {
-    const t = planTimeline(sample)
-    const presets = defaultExportPresets(t)
-    assert.ok(presets.some((p) => p.format === '16:9'))
   })
 })
 

@@ -237,6 +237,40 @@ def _ask_vlm(cands: list, desc: str, sheet: str) -> tuple[int, str]:
     return idx, raw[:40]
 
 
+def _etendues(glb: str):
+    """Etendues X/Y/Z du maillage, lues dans les accesseurs glTF (Y = hauteur)."""
+    try:
+        from pygltflib import GLTF2
+        g = GLTF2().load(glb)
+        lo = [1e30] * 3
+        hi = [-1e30] * 3
+        for m in (g.meshes or []):
+            for p in m.primitives:
+                a = g.accessors[p.attributes.POSITION]
+                if not a.min or not a.max:
+                    continue
+                for i in range(3):
+                    lo[i] = min(lo[i], float(a.min[i]))
+                    hi[i] = max(hi[i], float(a.max[i]))
+        if lo[0] > 1e29:
+            return None
+        return [hi[i] - lo[i] for i in range(3)]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _est_couche(ext) -> bool:
+    """Un objet est COUCHE quand sa hauteur est sa plus petite dimension.
+
+    Un moniteur pose a plat: hauteur 0.11 contre 1.90 et 1.16 -> couche.
+    Le meme moniteur debout: hauteur 1.16, la plus petite etant l'epaisseur
+    0.11 -> deja droit. C'est le seul cas ou un redressement a un sens.
+    """
+    if not ext:
+        return True                      # dans le doute on laisse juger le VLM
+    return ext[1] <= min(ext[0], ext[2]) + 1e-9
+
+
 def upright(glb: str, out_glb: str, desc: str = "", workdir: str | None = None) -> dict:
     wd = workdir or tempfile.mkdtemp(prefix="upright_")
     os.makedirs(wd, exist_ok=True)
@@ -254,6 +288,21 @@ def upright(glb: str, out_glb: str, desc: str = "", workdir: str | None = None) 
         return {"ok": False, "error": "le modele de vision n'a pas tranche (%s)" % why}
 
     rot = cands[idx]["rot"]
+    # GARDE: ne redresser QUE ce qui est couche. Un objet deja debout n'a rien
+    # a gagner d'une bascule, et il a tout a perdre — mesure du 27/08 sur le
+    # studio VIZION: l'ecran sortait juste (1.90 large x 1.16 haut), le VLM a
+    # choisi une bascule de 90 deg et l'a livre en PORTRAIT (1.16 x 1.90),
+    # seul objet de la scene, tourne. Une bascule qui change l'axe VERTICAL
+    # d'un objet deja debout est donc refusee; on prefere ne rien faire et le
+    # dire, comme pour le VLM muet juste au-dessus.
+    _ext = _etendues(glb)
+    _bascule_verticale = any(abs(float(r)) > 1e-6 for r in (rot[0], rot[2]))
+    if _bascule_verticale and not _est_couche(_ext):
+        return {"ok": True, "already_upright": True, "choice": cands[idx]["name"],
+                "reason": ("bascule %s REFUSEE: l'objet est deja debout "
+                           "(etendues %s, hauteur non minimale) — %s"
+                           % (rot, [round(x, 2) for x in (_ext or [])], why)),
+                "output": glb}
     if rot == [0, 0, 0] or tuple(rot) == (0, 0, 0):
         # deja droit: on ne reexporte pas (un aller-retour GLB coute et peut degrader)
         return {"ok": True, "already_upright": True, "choice": cands[idx]["name"],
