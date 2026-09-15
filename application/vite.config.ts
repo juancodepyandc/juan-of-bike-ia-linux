@@ -46,7 +46,10 @@ function pruneBundledPublicAssets(): Plugin {
     apply: 'build',
     closeBundle() {
       const distRoot = resolve(__dirname, 'dist')
-      rmSync(resolve(distRoot, '_pbr_test'), { recursive: true, force: true })
+      // `public/_pbr_test` n'existe plus : les 110 scripts proceduraux qui y
+      // deposaient leur GLB ecrivent desormais sous
+      // `application/output/3d/<projet>/`, comme l'exige aurora_output_paths.
+      // Ce nettoyage devenait un no-op sur un dossier absent.
 
       const avatarsDir = resolve(distRoot, 'avatars')
       try {

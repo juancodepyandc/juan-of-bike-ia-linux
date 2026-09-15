@@ -1,11 +1,40 @@
 {
-  "_comment": "User-local overrides only (permissions, machine-specific tunnel domains). Shared hooks live in .claude/settings.json (committed).",
   "permissions": {
     "allow": [
       "Bash(npx tsc:*)",
       "Bash(npx vite:*)",
       "mcp__Claude_in_Chrome__tabs_context_mcp",
-      "WebFetch(domain:fin-isaac-reduce-fingers.trycloudflare.com)"
+      "WebFetch(domain:fin-isaac-reduce-fingers.trycloudflare.com)",
+      "Bash(timeout 300 node --experimental-strip-types --test 'src/__tests__/code'*.test.ts)",
+      "Bash(grep -vE '\\\\.md$')",
+      "Bash(awk '$1>600')",
+      "Bash(git log *)",
+      "Bash(echo \"---exit $?---\")",
+      "Bash(timeout 180 npx tsx --test src/__tests__/codeTreeSitterAst.test.ts src/__tests__/codeStructuralAnalysis.test.ts src/__tests__/codeStaticCritics.test.ts src/__tests__/codeSandboxModules.test.ts)",
+      "Bash(node --test --experimental-strip-types src/__tests__/codeRegressionGuard.test.ts src/__tests__/codeAutoCorrection.test.ts src/__tests__/codeCorrectionMessages.test.ts src/__tests__/codeReasoningEngine.test.ts)",
+      "Bash(node --test --experimental-strip-types src/__tests__/codeProjectEmission.test.ts src/__tests__/codeProjectWriter.test.ts src/__tests__/codeProjectTree.test.ts)",
+      "Read(//home/juan/.local/share/auroraia/venvs/code-auto-tools/**)",
+      "Read(//home/juan/.local/share/auroraia/venvs/code-auto-tools/proof-python-slugify-kept/**)",
+      "Bash(grep -n '\\\\],\" *$\\\\|\\\\]\",\" *$' src/services/codePreflight.ts)",
+      "Bash(python3 -c \"import json;b=json.load\\(open\\('output/code_assets/ws15-live-complete-v4/asset-bundle.json'\\)\\);print\\('kinds:',[a['kind'] for a in b['assets']]\\);print\\('missing:',b['missingRequired']\\);print\\('deferred:',b.get\\('deferred'\\)\\);print\\('rag fetchedPages:',b.get\\('rag',{}\\).get\\('fetchedPages'\\),'embedding:',b.get\\('rag',{}\\).get\\('embedding'\\)\\);[print\\(a['kind'],a['bridgeEndpoint'],a['bytes'],'optimized=',a['optimized']\\) for a in b['assets']]\")",
+      "Bash(node --test --import tsx src/__tests__/codeToolingLoop.test.ts)",
+      "Bash(python3 -m pytest test_simulation_environments.py -q)",
+      "Bash(python3 -m unittest test_simulation_environments -v)",
+      "Bash(node --test src/__tests__/codeSimulationLab.test.ts)",
+      "Bash(xxd)",
+      "Bash(python3 -c \"import json;b=json.load\\(open\\('output/code_assets/ws15-live-complete-v4/asset-bundle.json'\\)\\);i=[a for a in b['assets'] if a['kind']=='image'][0];print\\('img meta:',i.get\\('metadata'\\)\\);m=[a for a in b['assets'] if a['kind']=='model3d'][0];print\\('3d meta:',m.get\\('metadata'\\)\\);print\\('routes:',[{r['kind']:r.get\\('ok'\\)} for r in b['routes']]\\)\")",
+      "Bash(node --experimental-strip-types --test src/__tests__/codeToolingLoop.test.ts)",
+      "Bash(command -v podman qemu-system-x86_64)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(podman --version)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(m['name'] for m in d.get\\('models',[]\\)\\)\\)\")",
+      "Bash(node --experimental-strip-types --test src/__tests__/codeModelRouting.test.ts src/__tests__/codeArchitecturePlan.test.ts src/__tests__/codeArchitecturePlanSelection.test.ts)",
+      "Bash(node --experimental-strip-types --test 'src/__tests__/codeProjectMemory.test.ts' 'src/__tests__/codeIncrementalPatchScope.test.ts' 'src/__tests__/codeProjectMemoryPersistence.test.ts' 'src/__tests__/codeExistingProjectContext.test.ts' 'src/__tests__/codeGenerationActionProducer.test.ts')",
+      "Bash(timeout 500 node --experimental-strip-types --test src/__tests__/*.test.ts)",
+      "Bash(timeout 180 node --experimental-strip-types --test src/__tests__/codeBrowserWorkspaceRuntime.test.ts)",
+      "Bash(node --experimental-strip-types --test 'src/__tests__/codeDesignSpec.test.ts' 'src/__tests__/codeColorMetrics.test.ts')"
     ]
-  }
+  },
+  "_comment": "User-local overrides only (permissions, machine-specific tunnel domains). Shared hooks live in .claude/settings.json (committed)."
 }

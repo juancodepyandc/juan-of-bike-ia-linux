@@ -203,3 +203,29 @@ external/
 # Sorties de travail et listings generes
 scratchpad/
 fichiers.txt
+application/.conformance-sauvegarde/
+
+# Cles d API — jamais versionnees
+.secrets/
+
+# Aurora CLI & Environments
+.aurora_cli_sessions.json
+.aurora_cli_agent_state.json
+.aurora_dynamic_agents.json
+.aurora_connections.json
+.gemini/
+__pycache__/
+*.pyc
+.env
+.venv
+cycle_app_venv/
+node_modules/
+.DS_Store
+*.log
+tunnel.txt
+tunnel_url.txt
+.claude/agent-tracker/
+models/
+models_eval/
+Outputs/
+Inputs/

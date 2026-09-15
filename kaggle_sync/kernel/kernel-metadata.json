@@ -1,0 +1,14 @@
+{
+  "id": "evanpasdeloup/aurora-universal-trainer",
+  "title": "Aurora Universal Trainer",
+  "code_file": "train.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": "true",
+  "enable_gpu": "true",
+  "machine_shape": "gpu_t4_x2",
+  "enable_internet": "true",
+  "dataset_sources": ["evanpasdeloup/aurora-training-data"],
+  "competition_sources": [],
+  "kernel_sources": []
+}

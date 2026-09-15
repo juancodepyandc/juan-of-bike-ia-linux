@@ -42,6 +42,7 @@ KNOWN_AGENTS = {
     "voice-lead", "voice-tts-stt-tuner", "voice-lipsync",
     "cyber-lead", "cyber-lab-builder", "cyber-pyops-keeper",
     "simulator-lead", "simulator-physics-engine", "simulator-scene-io",
+    "web-action-runner",
     "tunnel-validator", "bridge-doctor",
 }
 

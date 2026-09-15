@@ -1,0 +1,68 @@
+{
+  "1": {
+    "inputs": {
+      "image": "test_monobloc_world_reference.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "1. Charger l'image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "target_size": 518,
+      "strategy": "crop",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "PreprocessImagesForHWM",
+    "_meta": {
+      "title": "2. Preprocess (HWM)"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model_name": "tencent/HunyuanWorld-Mirror",
+      "device": "cuda",
+      "precision": "fp16",
+      "force_reload": false
+    },
+    "class_type": "LoadHunyuanWorldMirrorModel",
+    "_meta": {
+      "title": "3. Charger le modele 3D"
+    }
+  },
+  "4": {
+    "inputs": {
+      "batch_size": 16,
+      "focal_length_mode": "auto",
+      "seed": 42,
+      "model": [
+        "3",
+        0
+      ],
+      "images": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "HWMInference",
+    "_meta": {
+      "title": "4. Generer le Monde 3D"
+    }
+  },
+  "5": {
+    "inputs": {
+      "gaussians": [
+        "4",
+        5
+      ]
+    },
+    "class_type": "View3DInBrowser",
+    "_meta": {
+      "title": "5. PREVISUALISATION 3D (Tournez avec la souris)"
+    }
+  }
+}

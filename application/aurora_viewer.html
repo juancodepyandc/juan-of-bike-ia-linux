@@ -181,49 +181,63 @@ function classer(nom) {
   return { badge: 'résultat', poids: 1, final: false };
 }
 
-async function lienDossier(url) {
-  const r = await fetch(url); const t = await r.text();
-  const doc = new DOMParser().parseFromString(t, 'text/html');
-  return [...doc.querySelectorAll('a')].map(a => a.getAttribute('href')).filter(h => h && h !== '../');
+function poids(n) {
+  const o = n / 1e6;
+  return o >= 1 ? o.toFixed(1) + ' Mo' : Math.round(n / 1e3) + ' ko';
 }
 
+// Inventaire via /api/3d/list: RECURSIF sur tout output/3d.
+// Avant (03/09) cette liste grattait un listing de repertoire Vite sur
+// /output/3d/generations/, que Vite ne sert pas (404) — d'ou une colonne
+// « aucun GLB trouve » alors que les modeles existaient bel et bien, et
+// seule la racine etait de toute facon servie par la route fichiers.
 async function listeGlb() {
   const conteneur = document.getElementById('liste');
-  conteneur.textContent = '';
+  conteneur.textContent = 'inventaire…';
   try {
-    const base = '/output/3d/generations/';
-    for (const d of (await lienDossier(base)).filter(h => h.endsWith('/'))) {
-      const fichiers = (await lienDossier(base + d)).filter(h => h.toLowerCase().endsWith('.glb'));
-      if (!fichiers.length) continue;
+    const r = await fetch('/api/3d/list');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const { modeles } = await r.json();
+    conteneur.textContent = '';
+    if (!modeles || !modeles.length) { conteneur.textContent = 'aucun GLB sous output/3d'; return; }
+
+    const parDossier = new Map();
+    for (const m of modeles) {
+      if (!parDossier.has(m.dossier)) parDossier.set(m.dossier, []);
+      parDossier.get(m.dossier).push(m);
+    }
+    for (const [dossier, fichiers] of parDossier) {
       const bloc = document.createElement('div'); bloc.className = 'dossier';
       const titre = document.createElement('div'); titre.className = 'titre';
-      titre.textContent = decodeURIComponent(d.replace('/', ''));
+      titre.textContent = dossier === '.' ? 'output/3d' : dossier;
       bloc.appendChild(titre);
-      const infos = fichiers.map(f => ({ f, ...classer(f) })).sort((a, b) => a.poids - b.poids);
+      const infos = fichiers.map(m => ({ ...m, ...classer(m.nom) }))
+                            .sort((a, b) => a.poids - b.poids || a.nom.localeCompare(b.nom));
       const etapes = document.createElement('div'); etapes.className = 'etapes';
       let nEtapes = 0;
       for (const it of infos) {
-        const a = document.createElement('a'); a.className = 'fichier' + (it.final ? ' final' : '');
-        a.innerHTML = '<span class="badge">' + it.badge + '</span>' + decodeURIComponent(it.f);
+        const a = document.createElement('a');
+        a.className = 'fichier' + (it.final ? ' final' : '');
+        a.innerHTML = '<span class="badge">' + it.badge + '</span>' + it.nom
+                    + '<span class="badge" style="float:right">' + poids(it.octets) + '</span>';
         a.onclick = () => {
           document.querySelectorAll('.fichier').forEach(x => x.classList.remove('actif'));
           a.classList.add('actif');
-          charge(base + d + it.f, decodeURIComponent(it.f));
+          charge(it.url, it.nom);
         };
         if (it.poids <= 1) bloc.appendChild(a);
         else { etapes.appendChild(a); nEtapes++; }
       }
       if (nEtapes) {
         const plus = document.createElement('div'); plus.className = 'plus';
-        plus.textContent = '▸ ' + nEtapes + ' étape(s) intermédiaire(s)';
-        plus.onclick = () => { bloc.classList.toggle('ouvert');
-          plus.textContent = (bloc.classList.contains('ouvert') ? '▾ ' : '▸ ') + nEtapes + ' étape(s) intermédiaire(s)'; };
+        const libelle = o => (o ? '▾ ' : '▸ ') + nEtapes + ' étape(s) intermédiaire(s)';
+        plus.textContent = libelle(false);
+        plus.onclick = () => { bloc.classList.toggle('ouvert'); plus.textContent = libelle(bloc.classList.contains('ouvert')); };
         bloc.appendChild(plus); bloc.appendChild(etapes);
       }
       conteneur.appendChild(bloc);
     }
-    if (!conteneur.children.length) conteneur.textContent = 'aucun GLB trouvé';
-  } catch (e) { conteneur.textContent = 'listing indisponible: ' + e; }
+  } catch (e) { conteneur.textContent = 'inventaire indisponible : ' + e; }
 }
 
 addEventListener('dragover', e => e.preventDefault());
@@ -256,7 +270,7 @@ document.getElementById('btnFond').onclick = () => {
 const vitesse = document.getElementById('vitesse');
 
 const param = new URLSearchParams(location.search).get('file');
-if (param) charge('/' + param.replace(/^\//, ''), param.split('/').pop());
+if (param) charge('/' + param.replace(/^\//, ''), decodeURIComponent(param.split('/').pop()));
 listeGlb();
 
 renderer.setAnimationLoop(() => {
