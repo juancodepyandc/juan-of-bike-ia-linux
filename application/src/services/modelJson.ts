@@ -1,6 +1,6 @@
-import { ollamaGenerate } from '../hooks/useTauri'
-import { resilientOllamaGenerate } from './ollamaResilience'
-import { withTimeout } from './llmTimebox'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import { resilientOllamaGenerate } from './ollamaResilience.ts'
+import { withTimeout } from './llmTimebox.ts'
 
 function tryParseJson<T>(candidate: string): T | null {
   try {

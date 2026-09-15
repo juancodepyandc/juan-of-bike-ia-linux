@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { BAC_STI2D_SIN_ID, buildBacSTI2DSINCategory } from './bacSti2dSinSeed'
+import { BAC_STI2D_SIN_ID, buildBacSTI2DSINCategory } from './bacSti2dSinSeed.ts'
 
 export type ItemKind = 'cours' | 'exo' | 'fiche' | 'quiz'
 

@@ -9,7 +9,7 @@
  * v82dp.
  */
 import { useMemo } from 'react'
-import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore'
+import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
 
 const GOLD = 'oklch(0.74 0.13 60)'
 const GREEN = 'oklch(0.72 0.12 145)'

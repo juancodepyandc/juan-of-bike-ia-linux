@@ -91,9 +91,8 @@ function parseLLMJson(raw: string): SemanticEvalResult | null {
     const obj = JSON.parse(candidate.slice(first, last + 1)) as {
       score?: unknown; feedback?: unknown; weak_concepts?: unknown
     }
-    const score = typeof obj.score === 'number'
-      ? Math.max(0, Math.min(100, Math.round(obj.score)))
-      : 0
+    if (typeof obj.score !== 'number' || !Number.isFinite(obj.score)) return null
+    const score = Math.max(0, Math.min(100, Math.round(obj.score)))
     const feedback = typeof obj.feedback === 'string'
       ? obj.feedback.slice(0, 400)
       : ''
@@ -133,7 +132,6 @@ export async function evaluateAnswerSemantically(
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9 ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
   if (norm(input.userAnswer) === norm(input.expected)) {

@@ -356,7 +356,9 @@ export function validateOutputMatchesIntent(files: CodeFile[], intent: CodeInten
       const hasFrameworkWebEntry = normalizedNames.some((name) =>
         /\.(astro|vue|svelte)$/i.test(name)
         || /^src\/pages\//i.test(name)
-        || /astro\.config\.(mjs|js|ts)$/i.test(name))
+        || /astro\.config\.(mjs|js|ts)$/i.test(name)
+        || /vite\.config\.(mjs|js|ts)$/i.test(name)
+        || name === 'package.json')
       const hasRuntimeReadyJavascript = normalizedNames.some((name) => /\.(js|mjs|cjs)$/i.test(name))
       const hasRawTypeScriptOnly = normalizedNames.some((name) => /\.(ts|tsx)$/i.test(name)) && !hasRuntimeReadyJavascript
 

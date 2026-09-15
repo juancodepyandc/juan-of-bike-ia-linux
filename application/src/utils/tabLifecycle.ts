@@ -12,7 +12,7 @@
  * The backend (bridge_server.py + ComfyUI) is untouched. A reload of the tab
  * now only costs reconnecting to the persisted queue/store state.
  */
-import { useForgeQueueStore } from '../stores/forgeQueueStore'
+import { useForgeQueueStore } from '../stores/forgeQueueStore.ts'
 
 type WakeLockSentinel = { release: () => Promise<void>; released: boolean }
 let wakeLock: WakeLockSentinel | null = null

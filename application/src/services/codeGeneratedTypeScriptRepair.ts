@@ -32,5 +32,34 @@ export function repairGeneratedTypeScriptContent(filename: string, content: stri
     )
   }
 
+  // Browser TS environments do not have NodeJS namespace for setInterval/setTimeout
+  next = next.replace(/\bNodeJS\.(?:Timeout|Timer)\b/g, 'ReturnType<typeof setInterval>')
+
+  // Clean unused date-fns imports when date-fns is not installed
+  if (/import\s+\{[^}]*\}\s+from\s+['"]date-fns['"];?\s*\n?/.test(next) && !/\bformatDistance\b|\bparseISO\b|\bisAfter\b|\bisBefore\b/.test(next.replace(/import\s+\{[^}]*\}\s+from\s+['"]date-fns['"];?/, ''))) {
+    next = next.replace(/import\s+\{[^}]*\}\s+from\s+['"]date-fns['"];?\s*\n?/, '')
+  }
+
+  // Permissive Date typing in serialized models (JSON ISO strings vs Date objects)
+  next = next.replace(/\b(createdAt|updatedAt|dueDate)\s*:\s*Date\b/g, '$1: string | Date')
+  next = next.replace(/\b(createdAt|updatedAt|dueDate)\s*\?\s*:\s*Date\b/g, '$1?: string | Date')
+
+  // Task interface elasticity: local models often toggle between task.status and task.completed
+  if (/\binterface\s+Task\b/.test(next)) {
+    next = next.replace(/\binterface\s+Task\s*\{([\s\S]*?)\}/g, (m, body) => {
+      let b = body
+      if (!b.includes('completed')) b += '\n  completed?: boolean;'
+      return `interface Task {${b}\n}`
+    })
+  }
+
+  // Remove phantom mockData exports
+  next = next.replace(/\bkanbanColumns:\s*typeof\s+mockKanbanColumns;?/g, 'kanbanColumns?: unknown[];')
+  next = next.replace(/\bkanbanColumns:\s*mockKanbanColumns,?/g, 'kanbanColumns: [],')
+  next = next.replace(/\bkanbanColumns:\s*}/g, 'kanbanColumns: []\n  }')
+  next = next.replace(/,\s*mockKanbanColumns\b/g, '')
+  next = next.replace(/\bmockKanbanColumns\s*,\s*/g, '')
+
   return next
 }
+

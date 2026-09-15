@@ -13,20 +13,20 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import ClarificationDialog from '../components/ClarificationDialog'
-import type { ClarificationRequest } from '../components/ClarificationDialog'
-import ContextFilesField from '../components/ContextFilesField'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import ModuleAssetPackCard from '../components/ModuleAssetPackCard'
-import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel'
-import PromptLibraryPanel from '../components/PromptLibraryPanel'
-import SessionSwitcher from '../components/SessionSwitcher'
-import SaveDialog from '../components/SaveDialog'
-import type { SaveDialogData } from '../components/SaveDialog'
-import { buildImageModuleAssets } from '../config/moduleAssetPacks'
-import { AUXILIARY_ANALYSIS_MODEL, IMAGE_MODEL_PACK_LABEL } from '../config/models'
-import { useAppStore } from '../stores/appStore'
-import { usePromptLibraryStore } from '../stores/promptLibraryStore'
+import ClarificationDialog from '../components/ClarificationDialog.tsx'
+import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
+import ContextFilesField from '../components/ContextFilesField.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import ModuleAssetPackCard from '../components/ModuleAssetPackCard.tsx'
+import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel.tsx'
+import PromptLibraryPanel from '../components/PromptLibraryPanel.tsx'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
+import SaveDialog from '../components/SaveDialog.tsx'
+import type { SaveDialogData } from '../components/SaveDialog.tsx'
+import { buildImageModuleAssets } from '../config/moduleAssetPacks.ts'
+import { AUXILIARY_ANALYSIS_MODEL, IMAGE_MODEL_PACK_LABEL } from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
@@ -37,30 +37,30 @@ import {
   fsWriteBinary,
   getWorkspacePath,
   toAssetUrl,
-} from '../hooks/useTauri'
-import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero'
-import { useManagedRuntime } from '../hooks/useManagedRuntime'
-import { useModuleAssetPack } from '../hooks/useModuleAssetPack'
-import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics'
-import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow'
-import { extractComfyPromptId, waitForComfyResult } from '../utils/comfyui'
-import { prepareTaskIntelligence } from '../services/taskIntelligence'
-import { analyzeImage } from '../services/visionService'
-import { getErrorMessage } from '../utils/errors'
-import { isCloudRuntime, isTauriRuntime } from '../utils/runtime'
-import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
-import { useGenerationTrackerStore } from '../stores/generationTrackerStore'
-import RecoveryBanner from '../components/RecoveryBanner'
-import { prepareContextFiles } from '../utils/multimodalContext'
-import { pickPrimaryImageFile, stageBlobToComfyInput, stageBrowserFileToComfyInput } from '../utils/referenceMedia'
-import type { GenerationContract } from '../services/generationContract'
-import { findBestReferenceVisual } from '../services/referenceVisualResearch'
-import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore'
-import { recommendPlacement } from '../services/imageCompositionRules'
-import { buildPrompt, buildPromptContractBlock, parseBrief } from '../services/imagePromptBuilder'
-import { diffPrompts } from '../services/imagePromptDiff'
-import LyraCharacter from '../components/voice/LyraCharacter'
-import { parseImageIntent, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser'
+} from '../hooks/useTauri.ts'
+import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
+import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
+import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
+import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics.ts'
+import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
+import { extractComfyPromptId, waitForComfyResult } from '../utils/comfyui.ts'
+import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
+import { analyzeImage } from '../services/visionService.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
+import { useGenerationRecovery } from '../hooks/useGenerationRecovery.ts'
+import { useGenerationTrackerStore } from '../stores/generationTrackerStore.ts'
+import RecoveryBanner from '../components/RecoveryBanner.tsx'
+import { prepareContextFiles } from '../utils/multimodalContext.ts'
+import { pickPrimaryImageFile, stageBlobToComfyInput, stageBrowserFileToComfyInput } from '../utils/referenceMedia.ts'
+import type { GenerationContract } from '../services/generationContract.ts'
+import { findBestReferenceVisual } from '../services/referenceVisualResearch.ts'
+import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore.ts'
+import { recommendPlacement } from '../services/imageCompositionRules.ts'
+import { buildPrompt, buildPromptContractBlock, parseBrief } from '../services/imagePromptBuilder.ts'
+import { diffPrompts } from '../services/imagePromptDiff.ts'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
+import { parseImageIntent, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser.ts'
 
 function promptSlug(text: string, maxLen = 28): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, maxLen) || 'aurora'
@@ -817,10 +817,8 @@ export default function ImageView() {
   }, [activeOllamaModel, contextFiles, diagnostics.blockingReason, executeWithRuntime, fixedSeed, getRecentMessages, height, isGenerating, preparePack, prompt, pushMessage, runtimeServices.comfyui.path, seed, selectedStyle, steps, visionModel, width])
 
   const downloadImage = useCallback(async (image: GeneratedImage, format: 'png' | 'jpeg' | 'webp' = 'png') => {
-    const ext = format === 'jpeg' ? 'jpg' : format
-    const filename = `juan-bike-${image.style}-${image.timestamp}.${ext}`
     const { downloadImageUniversal } = await import('../utils/imageDownload')
-    await downloadImageUniversal(image, { filename, format })
+    await downloadImageUniversal(image, { format })
   }, [])
 
   const downloadAllAsZip = useCallback(async () => {

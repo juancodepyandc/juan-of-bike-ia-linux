@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Brush, Download, Eraser, Eye, Loader2, Palette, RotateCcw, Sparkles, StopCircle } from 'lucide-react'
 import {
@@ -7,10 +7,10 @@ import {
   comfyuiGetImage,
   comfyuiQueuePrompt,
   ensureComfyUIRunning,
-} from '../hooks/useTauri'
-import { createFluxWorkflow } from '../utils/fluxWorkflow'
-import { useModuleDraftsStore } from '../stores/moduleDraftsStore'
-import { saveBlob, loadBlobUrl } from '../utils/blobStore'
+} from '../hooks/useTauri.ts'
+import { createFluxWorkflow } from '../utils/fluxWorkflow.ts'
+import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
+import { saveBlob, loadBlobUrl } from '../utils/blobStore.ts'
 
 type Character = 'natsu' | 'lucy'
 const PORTRAITS: Record<Character, string> = {

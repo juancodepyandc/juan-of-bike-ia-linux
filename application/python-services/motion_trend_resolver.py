@@ -35,7 +35,7 @@ import urllib.request
 from pathlib import Path
 
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-MODEL = os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+MODEL = os.environ.get("AURORA_MOTION_LLM", "orcarouter/Qwen3.8-27B-Uncensored")
 
 # MEMOIRE DES MOUVEMENTS APPRIS. Sans elle, le systeme re-payait la recherche
 # (LLM + Wikipedia, ~30-60 s) A CHAQUE generation du meme mouvement, et les

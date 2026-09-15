@@ -10,7 +10,7 @@ import type {
   RuntimeServiceId,
   RuntimeServiceInfo,
   ServiceStatus,
-} from '../types/app'
+} from '../types/app.ts'
 import {
   getBridgeUrl,
   isCloudRuntime,
@@ -19,6 +19,7 @@ import {
 } from '../utils/runtime.ts'
 import { getErrorMessage, safeParseJson } from '../utils/errors.ts'
 import { createFirstByteWatchdog, isCallerCancellation } from '../services/ollamaFirstByteWatchdog.ts'
+import { readOllamaStream } from '../services/ollamaStream.ts'
 
 // ---------------------------------------------------------------------------
 // Cloud mode helpers
@@ -362,11 +363,11 @@ export async function ollamaChat(
   model: string,
   messages: OllamaMessage[],
   temperature?: number,
-  extraOptions?: { num_ctx?: number; baseUrl?: string; signal?: AbortSignal; firstByteTimeoutMs?: number }
+  extraOptions?: { num_ctx?: number; num_predict?: number; baseUrl?: string; signal?: AbortSignal; firstByteTimeoutMs?: number }
 ) {
   const baseUrl = extraOptions?.baseUrl
 
-  if (isTauriRuntime()) {
+  if (isTauriRuntime() && !extraOptions && !model.startsWith('aurora-rl-')) {
     await runtimeEnsureService('ollama')
     await runtimePrepareOllamaModel(model)
     const result = await desktopInvoke<string>('ollama_chat', { model, messages, temperature })
@@ -376,6 +377,7 @@ export async function ollamaChat(
   return ollamaChatStreamAsNonStream(model, messages, {
     temperature,
     num_ctx: extraOptions?.num_ctx,
+    num_predict: extraOptions?.num_predict,
     baseUrl,
     signal: extraOptions?.signal,
     firstByteTimeoutMs: extraOptions?.firstByteTimeoutMs,
@@ -385,9 +387,9 @@ export async function ollamaChat(
 export async function ollamaGenerate(
   model: string,
   prompt: string,
-  extraOptions?: { num_ctx?: number; signal?: AbortSignal; firstByteTimeoutMs?: number },
+  extraOptions?: { num_ctx?: number; num_predict?: number; signal?: AbortSignal; firstByteTimeoutMs?: number },
 ) {
-  if (isTauriRuntime()) {
+  if (isTauriRuntime() && !extraOptions && !model.startsWith('aurora-rl-')) {
     await runtimeEnsureService('ollama')
     await runtimePrepareOllamaModel(model)
     const result = await desktopInvoke<string>('ollama_generate', { model, prompt })
@@ -400,6 +402,7 @@ export async function ollamaGenerate(
     extraOptions?.num_ctx,
     extraOptions?.signal,
     extraOptions?.firstByteTimeoutMs,
+    extraOptions?.num_predict,
   )
 }
 
@@ -413,6 +416,7 @@ async function ollamaChatStreamAsNonStream(
   opts: {
     temperature?: number
     num_ctx?: number
+    num_predict?: number
     baseUrl?: string
     signal?: AbortSignal
     firstByteTimeoutMs?: number
@@ -427,6 +431,8 @@ async function ollamaChatStreamAsNonStream(
     {
       temperature: opts.temperature,
       num_ctx: opts.num_ctx,
+      num_predict: opts.num_predict,
+      baseUrl: opts.baseUrl,
       signal: opts.signal,
       firstByteTimeoutMs: opts.firstByteTimeoutMs,
     },
@@ -440,12 +446,22 @@ async function ollamaGenerateStreamAsNonStream(
   num_ctx?: number,
   signal?: AbortSignal,
   firstByteTimeoutMs?: number,
+  num_predict?: number,
 ): Promise<{ response: string; done?: boolean }> {
+  if (isTauriRuntime() && !model.startsWith('aurora-rl-')) {
+    await runtimeEnsureService('ollama')
+    await runtimePrepareOllamaModel(model)
+  }
   const body: Record<string, unknown> = { model, prompt, stream: true }
-  if (num_ctx) body.options = { num_ctx }
+  const generationOptions: Record<string, number> = {}
+  if (num_ctx !== undefined) generationOptions.num_ctx = num_ctx
+  if (num_predict !== undefined) generationOptions.num_predict = num_predict
+  if (Object.keys(generationOptions).length) body.options = generationOptions
 
   const bridge = getBridgeUrl()
-  const endpoints = [
+  const endpoints = model.startsWith('aurora-rl-')
+    ? [bridge ? `${bridge}/proxy/trained/api/generate` : 'http://127.0.0.1:11435/api/generate']
+    : isTauriRuntime() ? [`${ollamaBaseUrl()}/api/generate`] : [
     `${bridge}/proxy/ollama/api/generate`,
     `${bridge}/api/ollama/generate`,
     'http://127.0.0.1:11434/api/generate',
@@ -472,8 +488,9 @@ async function ollamaGenerateStreamAsNonStream(
           signal: watchdog.signal,
         })
         const ct = response.headers.get('content-type') || ''
-        const fatal = ct.includes('text/html') || response.status >= 500
+        const fatal = ct.includes('text/html') || response.status >= 500 || response.status === 404
         if (fatal && endpoints.indexOf(endpoint) < endpoints.length - 1) {
+          await response.body?.cancel().catch(() => {})
           response = null
           continue
         }
@@ -484,47 +501,44 @@ async function ollamaGenerateStreamAsNonStream(
         if (endpoints.indexOf(endpoint) >= endpoints.length - 1) throw err
       }
     }
+  } catch (error) {
+    watchdog.dispose()
+    throw error
   } finally {
     watchdog.disarm()
   }
-  if (!response) throw lastError ?? new Error('Ollama generate indisponible.')
-  if (!response.ok || !response.body) {
-    throw new Error(`Ollama generate a retourne ${response.status}.`)
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let full = ''
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let newlineIndex = buffer.indexOf('\n')
-    while (newlineIndex >= 0) {
-      const line = buffer.slice(0, newlineIndex).trim()
-      buffer = buffer.slice(newlineIndex + 1)
-      if (line) {
-        try {
-          const payload = JSON.parse(line)
-          if (typeof payload.response === 'string') full += payload.response
-          if (payload.done) break
-        } catch {
-          // Ignore partial JSON frames
-        }
-      }
-      newlineIndex = buffer.indexOf('\n')
+  try {
+    if (!response) throw lastError ?? new Error('Ollama generate indisponible.')
+    if (!response.ok || !response.body) {
+      const errText = await response.text().catch(() => '')
+      throw new Error(`Ollama generate a retourne ${response.status}: ${errText.slice(0, 300)}`)
     }
+    let full = ''
+    await readOllamaStream(response.body, (payload) => {
+      if (typeof payload.response === 'string') full += payload.response
+    })
+    return { response: full, done: true }
+  } finally {
+    watchdog.dispose()
   }
-  return { response: full, done: true }
 }
 
 export async function ollamaListModels(baseUrl?: string) {
-  if (isTauriRuntime()) {
-    const result = await desktopInvoke<string>('ollama_list_models')
-    return JSON.parse(result)
-  }
-  return ollamaFetch('/api/tags', { method: 'GET' }, 'Ollama list', baseUrl)
+  const result = isTauriRuntime()
+    ? JSON.parse(await desktopInvoke<string>('ollama_list_models'))
+    : await ollamaFetch('/api/tags', { method: 'GET' }, 'Ollama list', baseUrl)
+  if (baseUrl) return result
+  try {
+    const bridge = getBridgeUrl()
+    const url = bridge ? `${bridge}/api/training/models` : 'http://127.0.0.1:11435/api/tags'
+    const response = await fetch(url, { signal: AbortSignal.timeout(2000) })
+    if (response.ok) {
+      const trained = await response.json()
+      const seen = new Set((result.models || []).map((m: { name: string }) => m.name))
+      result.models = [...(result.models || []), ...(trained.models || []).filter((m: { name: string }) => !seen.has(m.name))]
+    }
+  } catch { /* The base models remain available while the training service is stopped. */ }
+  return result
 }
 
 export async function ollamaPullModel(model: string) {
@@ -621,6 +635,7 @@ export async function ollamaChatStream(
     // certain Modelfile presets) cap num_predict at 256-1024 → output
     // truncates after a single fence opener. Pass 8000+ for code-gen.
     num_predict?: number
+    baseUrl?: string
     firstByteTimeoutMs?: number
     // v82lg: callback optionnel pour les tokens de thinking (qwen3 / qwen3-vl
     // en mode reasoning). Permet à l'UI d'afficher une progression "le modèle
@@ -629,7 +644,7 @@ export async function ollamaChatStream(
     onThinking?: (token: string) => void
   }
 ) {
-  if (isTauriRuntime()) {
+  if (isTauriRuntime() && !options?.baseUrl && !model.startsWith('aurora-rl-')) {
     await runtimeEnsureService('ollama')
     await runtimePrepareOllamaModel(model)
   }
@@ -656,7 +671,11 @@ export async function ollamaChatStream(
   // tunnel on cold model starts. The old `/api/ollama/chat` alias is kept for
   // backward compatibility only.
   const bridge = getBridgeUrl()
-  const chatEndpoints = isTauriRuntime()
+  const chatEndpoints = options?.baseUrl
+    ? [`${options.baseUrl.replace(/\/$/, '')}/api/chat`]
+    : model.startsWith('aurora-rl-')
+    ? [bridge ? `${bridge}/proxy/trained/api/chat` : 'http://127.0.0.1:11435/api/chat']
+    : isTauriRuntime()
     ? [`${ollamaBaseUrl()}/api/chat`]
     : [
         `${bridge}/proxy/ollama/api/chat`,
@@ -713,6 +732,7 @@ export async function ollamaChatStream(
         const htmlLooking = ct.includes('text/html')
         const fatal5xx = response.status >= 500
         if ((htmlLooking || fatal5xx) && chatEndpoints.indexOf(endpoint) < chatEndpoints.length - 1) {
+          await response.body?.cancel().catch(() => {})
           response = null
           continue
         }
@@ -726,6 +746,9 @@ export async function ollamaChatStream(
         if (chatEndpoints.indexOf(endpoint) >= chatEndpoints.length - 1) throw err
       }
     }
+  } catch (error) {
+    watchdog.dispose()
+    throw error
   } finally {
     // Desarme des les en-tetes recues: le budget borne le PREMIER OCTET, jamais
     // la duree du flux. Le rearmement, lui, a lieu au debut de chaque tentative.
@@ -733,10 +756,12 @@ export async function ollamaChatStream(
   }
 
   if (!response) {
+    watchdog.dispose()
     throw lastError || new Error('Ollama non joignable (ni via bridge, ni directement)')
   }
 
   if (!response.ok) {
+    watchdog.dispose()
     const errBody = await response.text().catch(() => '')
     const detail = errBody ? `: ${errBody.slice(0, 300)}` : ''
     throw new Error(`Ollama error: ${response.status}${detail}`)
@@ -745,6 +770,7 @@ export async function ollamaChatStream(
   // Détecter réponse HTML au lieu de JSON stream (proxy qui renvoie index.html)
   const contentType = response.headers.get('content-type') || ''
   if (contentType.includes('text/html')) {
+    watchdog.dispose()
     const htmlBody = await response.text().catch(() => '')
     throw new Error(
       `Ollama stream: reponse HTML au lieu de JSON stream (le service est peut-etre indisponible). ` +
@@ -753,60 +779,23 @@ export async function ollamaChatStream(
   }
 
   if (!response.body) {
+    watchdog.dispose()
     throw new Error('No response body')
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) {
-      break
-    }
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    // Keep last (potentially incomplete) line in buffer
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      try {
-        const json = JSON.parse(trimmed)
-        if (json.message?.content) {
-          try { onToken(json.message.content) } catch { /* callback error — never crash stream */ }
-        }
-        // v82lg: relayer les tokens de thinking (qwen3-vl reasoning mode) pour
-        // que l'UI puisse afficher "le modèle réfléchit..." sans freeze visuel.
-        if (json.message?.thinking && options?.onThinking) {
-          try { options.onThinking(json.message.thinking) } catch { /* never crash stream */ }
-        }
-        if (json.done) {
-          try { onDone() } catch { /* callback error — never crash stream */ }
-          return
-        }
-      } catch {
-        // Partial or non-JSON line, skip
-      }
-    }
-  }
-
-  // Process remaining buffer
-  if (buffer.trim()) {
-    try {
-      const json = JSON.parse(buffer.trim())
-      if (json.message?.content) {
+  try {
+    await readOllamaStream(response.body, (json) => {
+      if (typeof json.message?.content === 'string') {
         try { onToken(json.message.content) } catch { /* callback error — never crash stream */ }
       }
-    } catch {
-      // Ignore trailing partial data
-    }
+      if (typeof json.message?.thinking === 'string' && options?.onThinking) {
+        try { options.onThinking(json.message.thinking) } catch { /* callback error — never crash stream */ }
+      }
+    })
+    try { onDone() } catch { /* callback error — never crash stream */ }
+  } finally {
+    watchdog.dispose()
   }
-
-  try { onDone() } catch { /* callback error — never crash stream */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -929,6 +918,19 @@ export async function freeGpuBeforeFlux(ollamaModelsToEvict: string[] = []): Pro
 }
 
 export async function comfyuiQueuePrompt(workflow: Record<string, unknown>) {
+  // Apply only a locally audited adapter, before either desktop or tunnel routing.
+  let prepared: Response | undefined
+  try {
+    prepared = await fetch(`${getBridgeUrl()}/api/training/image-workflow`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflow }), signal: AbortSignal.timeout(15_000),
+    })
+  } catch { /* Bridge unavailable: the normal ComfyUI path remains usable. */ }
+  if (prepared?.ok) {
+    workflow = (await prepared.json()).workflow
+  } else if (prepared && prepared.status !== 404) {
+    throw new Error(`Validation de l’adaptateur image impossible : HTTP ${prepared.status}`)
+  }
   if (isTauriRuntime()) {
     const result = await desktopInvoke<string>('comfyui_queue_prompt', {
       workflow: JSON.stringify(workflow),

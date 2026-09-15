@@ -1,7 +1,7 @@
 import {
   buildBrowserWorkspacePreviewHtml,
   supportsBrowserWorkspaceRuntime,
-} from '../services/codeBrowserWorkspaceRuntime'
+} from '../services/codeBrowserWorkspaceRuntime.ts'
 import { buildAuroraInlineSvgDataUri } from '../services/codeVisualFallbacks.ts'
 
 type CodeFile = {

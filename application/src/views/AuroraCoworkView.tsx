@@ -64,13 +64,13 @@ import {
   Wrench,
   X,
 } from 'lucide-react'
-import CodeBlock from '../components/CodeBlock'
+import CodeBlock from '../components/CodeBlock.tsx'
 import {
   detectCoworkRuntime,
   getCoworkCapabilities,
   runCoworkPrompt,
-} from '../services/coworkPipeline'
-import type { CoworkActionEvent, CoworkCapability, CoworkRuntime } from '../services/coworkTypes'
+} from '../services/coworkPipeline.ts'
+import type { CoworkActionEvent, CoworkCapability, CoworkRuntime } from '../services/coworkTypes.ts'
 import {
   artifactLabel,
   createEmptyCoworkProjectThread,
@@ -81,12 +81,12 @@ import {
   updateCoworkProjectThreadFromEvents,
   type CoworkProjectArtifact,
   type CoworkProjectThread,
-} from '../services/coworkProjectThread'
-import { useCoworkStore } from '../stores/coworkStore'
-import { useAppStore } from '../stores/appStore'
-import { loadSettings, saveSettings, type CoworkSettings } from '../services/coworkSettings'
-import { CONNECTORS } from '../services/coworkConnectors'
-import CoworkConfirmDialog from '../components/CoworkConfirmDialog'
+} from '../services/coworkProjectThread.ts'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { loadSettings, saveSettings, type CoworkSettings } from '../services/coworkSettings.ts'
+import { CONNECTORS } from '../services/coworkConnectors.ts'
+import CoworkConfirmDialog from '../components/CoworkConfirmDialog.tsx'
 
 // Shared chat-history key so the current client thread keeps continuity.
 const CHAT_STORAGE_KEY = 'cowork:chat-history'
@@ -181,7 +181,7 @@ function normalizeChatTurn(input: unknown): ChatTurn | null {
 function sanitizeChatTurns(turns: unknown[]): ChatTurn[] {
   return turns
     .map(normalizeChatTurn)
-    .filter((turn): turn is ChatTurn => Boolean(turn) && !turn.pending)
+    .filter((turn): turn is ChatTurn => turn !== null && !turn.pending)
     .slice(-MAX_CHAT_TURNS)
 }
 

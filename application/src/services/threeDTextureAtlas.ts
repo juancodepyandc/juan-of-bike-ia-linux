@@ -110,9 +110,28 @@ function tryPack(textures: TextureInput[], atlasW: number, atlasH: number, paddi
     })
     usedArea += realW * realH
 
-    // Subdivise les free rects : retire celui utilisé, ajoute les 2 morceaux
-    // restants (droite + bas), puis nettoie les rectangles enfermés.
-    const placedRect: FreeRect = { x: placement.rect.x, y: placement.rect.y, width: w, height: h }
+    // Subdivise les free rects : retire celui utilisé, ajoute les morceaux
+    // restants, puis nettoie les rectangles enfermés.
+    //
+    // L'empreinte à retirer est celle du PLACEMENT, pas celle de la texture.
+    // L'ancien code passait `{ width: w, height: h }`, c'est-à-dire les
+    // dimensions NON TOURNÉES, alors que `findBestPlacement` peut avoir choisi
+    // de coucher la texture à 90° — auquel cas la case occupée mesure h × w.
+    // Le découpage carvait donc la mauvaise région : la surface réellement
+    // prise restait marquée libre, et une texture suivante venait s'y poser.
+    //
+    // Mesure avant correction : sur 12 textures de tailles variées, 4 paires
+    // de cases se CHEVAUCHAIENT ; sur 20 tailles impaires, 7 paires. Deux
+    // textures partageant des pixels, c'est la mauvaise matière plaquée sur
+    // une partie du modèle — un défaut visible que rien ne signalait.
+    // Les jeux de tuiles carrées n'exhibaient rien, la rotation y étant sans
+    // effet : d'où le silence des essais uniformes.
+    const placedRect: FreeRect = {
+      x: placement.rect.x,
+      y: placement.rect.y,
+      width: placement.rect.width,
+      height: placement.rect.height,
+    }
     splitFreeRects(freeRects, placedRect)
     pruneFreeRects(freeRects)
   }

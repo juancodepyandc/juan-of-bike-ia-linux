@@ -1,11 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import AuroraMascot from '../components/generationFx/mascots'
-import { useImageViewLogic, DIMENSIONS, type DimensionId, type GeneratedCard } from '../hooks/useImageViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import FavoriteButton from '../components/FavoriteButton'
-import { getDailyTip } from '../utils/dailyTip'
+import AuroraMascot from '../components/generationFx/mascots.tsx'
+import { useImageViewLogic, DIMENSIONS, type DimensionId, type GeneratedCard } from '../hooks/useImageViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import FavoriteButton from '../components/FavoriteButton.tsx'
+import { getDailyTip } from '../utils/dailyTip.ts'
 
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
 
@@ -336,9 +336,7 @@ export default function AuroraV4ImageView() {
   }
   const downloadImage = async (img: GeneratedCard) => {
     const { downloadImageUniversal } = await import('../utils/imageDownload')
-    await downloadImageUniversal(img, {
-      filename: `fairy-tail-${img.style}-${img.id}.png`,
-    })
+    await downloadImageUniversal(img)
   }
   const recallWithSeed = (img: GeneratedCard, offset: number) => {
     I.setPrompt(img.prompt)

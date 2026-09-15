@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import type { MindNode } from '../services/deckMindMap'
+import type { MindNode } from '../services/deckMindMap.ts'
 
 type Props = {
   root: MindNode

@@ -8,6 +8,8 @@
  */
 
 const KNOWN: Array<{ pattern: RegExp; ctxTokens: number }> = [
+  // Qwen 3.8 : 262k natif
+  { pattern: /qwen3\.8|qwen38/i, ctxTokens: 262144 },
   // Qwen3 / Qwen3-Coder : 32k natif, 128k via YaRN.
   { pattern: /qwen3-?32b|qwen3:32b|qwen3-coder/i, ctxTokens: 32768 },
   { pattern: /qwen3/i, ctxTokens: 32768 },

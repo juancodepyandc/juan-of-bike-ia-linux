@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import LyraCharacter from '../components/voice/LyraCharacter'
-import { analyzeCyclomaticComplexity, computeHalstead } from '../services/codeStructuralAnalysis'
-import { detectFileLanguage } from './codeViewLanguage'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
+import { analyzeCyclomaticComplexity, computeHalstead } from '../services/codeStructuralAnalysis.ts'
+import { detectFileLanguage } from './codeViewLanguage.ts'
 
 // ---------------------------------------------------------------------------
 // Code console panel — small left-side panel that replaces the old mini

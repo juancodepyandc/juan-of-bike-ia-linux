@@ -15,7 +15,7 @@
  * new cards.
  */
 
-import type { Flashcard, FlashcardDeck } from '../stores/flashcardsStore'
+import type { Flashcard, FlashcardDeck } from '../stores/flashcardsStore.ts'
 
 export type MindNode = {
   label: string

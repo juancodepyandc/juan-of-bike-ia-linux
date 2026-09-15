@@ -1,8 +1,8 @@
 import { Archive, Code2, FolderOpen, Globe, Loader2, MessageSquare, Palette, ScanSearch } from 'lucide-react'
-import type { CodeIntent, CodeProjectType } from '../services/codeIntent'
-import type { CodePreflightReport } from '../services/codePreflight'
-import type { FollowUpAnalysis } from '../services/codeOrchestrator'
-import type { DevServerState } from '../services/codeDevServer'
+import type { CodeIntent, CodeProjectType } from '../services/codeIntent.ts'
+import type { CodePreflightReport } from '../services/codePreflight.ts'
+import type { FollowUpAnalysis } from '../services/codeOrchestrator.ts'
+import type { DevServerState } from '../services/codeDevServer.ts'
 
 export type RecentCodeMessage = { role: string; content?: string }
 export type DesignReport = { score: number; missing: string[]; penalties: string[] }

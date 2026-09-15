@@ -12,7 +12,7 @@
  */
 import { useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, Shuffle, Check, RotateCw, Eye } from 'lucide-react'
-import type { AcademyFlashcard } from '../hooks/useAcademyViewLogic'
+import type { AcademyFlashcard } from '../hooks/useAcademyViewLogic.ts'
 
 const GOLD = 'oklch(0.74 0.11 90)'
 const RED = 'oklch(0.55 0.18 25)'

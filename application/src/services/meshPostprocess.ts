@@ -11,7 +11,7 @@
  * Returns structured progress events when an onProgress callback is provided.
  */
 
-import { runPythonScript, getWorkspacePath } from '../hooks/useTauri'
+import { runPythonScript, getWorkspacePath } from '../hooks/useTauri.ts'
 
 export type MeshPostprocessProfile = 'character' | 'creature' | 'product' | 'mechanical_part' | 'body_part' | 'vehicle' | 'default'
 export type MeshPostprocessMotionReadiness = 'static_only' | 'poseable' | 'articulated' | 'rig_candidate'

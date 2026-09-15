@@ -1,6 +1,6 @@
 import { AlertCircle, Check, Loader2, RefreshCw, X } from 'lucide-react'
-import type { GenerationRecoveryState, RecoveredResult } from '../hooks/useGenerationRecovery'
-import type { TrackedGeneration } from '../stores/generationTrackerStore'
+import type { GenerationRecoveryState, RecoveredResult } from '../hooks/useGenerationRecovery.ts'
+import type { TrackedGeneration } from '../stores/generationTrackerStore.ts'
 
 interface RecoveryBannerProps {
   recovery: GenerationRecoveryState

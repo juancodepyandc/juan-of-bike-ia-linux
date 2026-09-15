@@ -16,7 +16,8 @@ import {
   filesImplicatedByFailures,
 } from './codeCorrectionRegressionFeedback.ts'
 import { gatherCorrectionContext } from './codeCorrectionContextGathering.ts'
-import { prioritizeCompileErrors } from './codeMissingModuleCompletion.ts'
+import { normalizedFilesChanged, collectFailingStepOutputs, truncateCorrectionErrors, compactCorrectionLog } from './codeCorrectionLog.ts'
+export { normalizedFilesChanged, collectFailingStepOutputs, truncateCorrectionErrors, compactCorrectionLog } from './codeCorrectionLog.ts'
 import { RESERVED_OUTPUT_TOKENS } from './codeCorrectionPromptBudget.ts'
 import {
   CODE_EXPERT_CONTEXT_TOKENS, CORRECTION_FIRST_BYTE_TIMEOUT_MS, CORRECTION_TIMEOUT_MS,
@@ -38,40 +39,6 @@ type ValidationCorrectionLoopResult = {
    * Distinct d un echec de validation: ici le juge n a rien mesure.
    */
   infrastructureFailure: boolean
-}
-
-export function normalizedFilesChanged(currentFiles: CodeFile[], normalizedFiles?: CodeFile[]): boolean {
-  if (!normalizedFiles || normalizedFiles.length === 0) return false
-  return normalizedFiles.length !== currentFiles.length
-    || normalizedFiles.some((file, index) =>
-      file.name !== currentFiles[index]?.name || file.content !== currentFiles[index]?.content,
-    )
-}
-
-export function collectFailingStepOutputs(sandboxResult: CodeSandboxResult): string[] {
-  return sandboxResult.steps.filter((step) => !step.ok).map((step) => step.output)
-}
-
-export function truncateCorrectionErrors(sandboxResult: CodeSandboxResult): string[] {
-  // Ordre causal: un module introuvable rend tout typage du fichier impossible.
-  // Sans cela, la boucle traite des TS2339 pendant que des fichiers manquent.
-  return collectFailingStepOutputs(sandboxResult).map(prioritizeCompileErrors).map((output) => output.length > 1500
-    ? `${output.slice(0, 1000)}\n...[tronque: ${output.length} chars total]...\n${output.slice(-400)}`
-    : output)
-}
-
-export function compactCorrectionLog(correctionLog: CorrectionPass[]): void {
-  if (correctionLog.length <= 4) return
-
-  for (let index = 0; index < correctionLog.length - 4; index++) {
-    const old = correctionLog[index]
-    if (old.errors.length > 1 || (old.errors[0] && old.errors[0].length > 200)) {
-      correctionLog[index] = {
-        ...old,
-        errors: [`[passe archivee: ${old.errors.length} erreurs, score ${old.score}%]`],
-      }
-    }
-  }
 }
 
 export async function runValidationAndCorrectionLoop(
@@ -109,12 +76,12 @@ export async function runValidationAndCorrectionLoop(
 
     if (signal?.aborted) break
 
-    setPhase(`Sandbox passe ${attempt} — validation en cours...`, Math.min(85, 60 + attempt * 4))
+    setPhase(`Sandbox passe ${attempt} — validation en cours...`, Math.min(88, 70 + attempt * 3))
     sandboxResult = await runCodeSandboxValidation({
       files: currentFiles,
       prompt,
       setPhase,
-      setProgress: (detail) => setPhase(detail, Math.min(90, 65 + attempt * 4)),
+      setProgress: (detail) => setPhase(detail, Math.min(89, 72 + attempt * 3)),
     })
 
     if (normalizedFilesChanged(currentFiles, sandboxResult.normalizedFiles)) {
@@ -221,7 +188,7 @@ export async function runValidationAndCorrectionLoop(
       const reason = currentScore >= 100
         ? 'livraison validee a 100%'
         : `boucle infinie detectee sur la meme erreur apres ${attempt} passes`
-      setPhase(`Arret de la boucle : ${reason}.`, 92)
+      setPhase(`Arret de la boucle : ${reason}.`, 89)
       break
     }
 
@@ -288,24 +255,27 @@ export async function runValidationAndCorrectionLoop(
 
       const rescueContent = rescueResponse?.response?.trim() || ''
       const rescueFiles = parseCodeFiles(rescueContent)
-      if (rescueFiles.length > 0 && !validateOutputMatchesIntent(rescueFiles, intent)) {
-        const regressionReport = inspectCodePatchRegression(currentFiles, rescueFiles)
-        if (regressionReport.ok) {
-          currentFiles = rescueFiles
-          guardRejectionStreak = 0
-          lastGuardReport = null
-          currentNotes = extractNotes(rescueContent)
-          onFilesUpdate(currentFiles, currentNotes)
-          lastScore = currentScore
-          continue
-        }
+      if (rescueFiles.length > 0) {
+        const mergedRescue = mergeExistingWithUpdates(currentFiles, rescueFiles)
+        if (!validateOutputMatchesIntent(mergedRescue, intent)) {
+          const regressionReport = inspectCodePatchRegression(currentFiles, mergedRescue)
+          if (regressionReport.ok) {
+            currentFiles = mergedRescue
+            guardRejectionStreak = 0
+            lastGuardReport = null
+            currentNotes = extractNotes(rescueContent)
+            onFilesUpdate(currentFiles, currentNotes)
+            lastScore = currentScore
+            continue
+          }
 
-        const reportText = formatCodeRegressionGuardReport(regressionReport)
-        guardRejectionStreak += 1
-        lastGuardReport = reportText
-        pass.errors = [`[Regeneration de secours refusee]\n${reportText}`, ...pass.errors]
-        onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
-        setPhase(`Passe ${attempt} — regeneration refusee par anti-regression.`, Math.min(94, 76 + attempt * 3))
+          const reportText = formatCodeRegressionGuardReport(regressionReport)
+          guardRejectionStreak += 1
+          lastGuardReport = reportText
+          pass.errors = [`[Regeneration de secours refusee]\n${reportText}`, ...pass.errors]
+          onCorrectionLogUpdate([...correctionLog], attempt, currentScore)
+          setPhase(`Passe ${attempt} — regeneration refusee par anti-regression.`, Math.min(94, 76 + attempt * 3))
+        }
       }
     }
 

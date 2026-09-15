@@ -1,9 +1,9 @@
 import {
   CODE_SINGLE_MODEL,
-} from '../config/models'
-import { getWorkspacePath } from '../hooks/useTauri'
-import { resilientOllamaGenerate } from './ollamaResilience'
-import type { CodeIntent } from './codeIntent'
+} from '../config/models.ts'
+import { getWorkspacePath } from '../hooks/useTauri.ts'
+import { resilientOllamaGenerate } from './ollamaResilience.ts'
+import type { CodeIntent } from './codeIntent.ts'
 import {
   chooseRelevantPreflightTools,
   inspectPreflightExistingFiles,
@@ -13,9 +13,9 @@ import {
   uniquePreflightStrings as uniqueStrings,
   type CodePreflightFile,
   type CodePreflightToolFact,
-} from './codePreflightProbe'
+} from './codePreflightProbe.ts'
 
-export type { CodePreflightToolFact } from './codePreflightProbe'
+export type { CodePreflightToolFact } from './codePreflightProbe.ts'
 
 export type CodePreflightReport = {
   summary: string

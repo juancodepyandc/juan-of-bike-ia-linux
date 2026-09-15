@@ -40,9 +40,9 @@ import {
   scanInstalledBrowsers,
   type BrowserId,
   type BrowserInfo,
-} from '../services/coworkBrowserDetect'
-import { getBridgeUrl } from '../utils/runtime'
-import { useCoworkStore } from '../stores/coworkStore'
+} from '../services/coworkBrowserDetect.ts'
+import { getBridgeUrl } from '../utils/runtime.ts'
+import { useCoworkStore } from '../stores/coworkStore.ts'
 import {
   loadSettings,
   saveSettings,
@@ -51,8 +51,8 @@ import {
   type CoworkSettings,
   DEFAULT_TEXT_PROMPT,
   DEFAULT_VOICE_PROMPT,
-} from '../services/coworkSettings'
-import { CONNECTORS, testConnector } from '../services/coworkConnectors'
+} from '../services/coworkSettings.ts'
+import { CONNECTORS, testConnector } from '../services/coworkConnectors.ts'
 
 type Tab = 'prompts' | 'permissions' | 'connecteurs' | 'extension'
 

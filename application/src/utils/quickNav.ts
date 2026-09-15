@@ -5,8 +5,8 @@
  * Inspired by Gmail/GitHub's "g + letter" leader key. Zero-install, just
  * attaches a single keydown listener at the document level.
  */
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 const SHORTCUT_MAP: Record<string, ModuleId> = {
   c: 'conversation',

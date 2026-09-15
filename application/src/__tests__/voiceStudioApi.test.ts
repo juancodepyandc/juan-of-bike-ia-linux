@@ -1,7 +1,8 @@
-import { describe, it } from 'node:test'
+import { describe, it, type TestContext } from 'node:test'
 import assert from 'node:assert'
 import {
   resolveVoiceAudioUrl,
+  uploadVoiceSampleBlob,
   type VoiceSampleQuality,
   type VoiceStudioTree,
 } from '../services/voiceStudioApi.ts'
@@ -78,5 +79,52 @@ describe('voiceStudioApi helper unit tests', () => {
     assert.strictEqual(tree.directories.generations.includes('generations'), true)
     assert.strictEqual(tree.directories.sessions.includes('sessions'), true)
     assert.strictEqual(tree.counts.profils, 1)
+  })
+})
+
+describe('voice sample upload failures', () => {
+  function installReader(t: TestContext) {
+    const fetch = t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: 'sample too short' }), {
+      status: 422, headers: { 'Content-Type': 'application/json' },
+    }))
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'FileReader')
+    class Reader {
+      result = 'data:audio/wav;base64,UklGRg=='
+      onloadend?: () => void
+      readAsDataURL() { this.onloadend?.() }
+    }
+    Object.defineProperty(globalThis, 'FileReader', { configurable: true, value: Reader })
+    t.after(() => {
+      if (previous) Object.defineProperty(globalThis, 'FileReader', previous)
+      else Reflect.deleteProperty(globalThis, 'FileReader')
+    })
+    return fetch
+  }
+
+  it('does not upload a second time after a server rejection', async (t) => {
+    const fetch = installReader(t)
+    await assert.rejects(uploadVoiceSampleBlob(new Blob(['audio'])), /sample too short/)
+    assert.equal(fetch.mock.callCount(), 1)
+  })
+
+  it('does not upload a second time after an uncertain network failure', async (t) => {
+    const fetch = installReader(t)
+    fetch.mock.mockImplementation(async () => { throw new TypeError('network interrupted') })
+    await assert.rejects(uploadVoiceSampleBlob(new Blob(['audio'])), /network interrupted/)
+    assert.equal(fetch.mock.callCount(), 1)
+  })
+
+  it('uploads multipart when FileReader cannot encode the blob', async (t) => {
+    const fetch = installReader(t)
+    t.mock.method(FileReader.prototype, 'readAsDataURL', () => { throw new Error('FileReader unavailable') })
+    fetch.mock.mockImplementation(async () => new Response(JSON.stringify({ ok: true, sampleId: 'sample-1' }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    const result = await uploadVoiceSampleBlob(new Blob(['audio']), 'voice.wav')
+    assert.equal(result.sampleId, 'sample-1')
+    assert.equal(fetch.mock.callCount(), 1)
+    const body = fetch.mock.calls[0].arguments[1]?.body
+    assert.ok(body instanceof FormData)
+    assert.equal((body.get('audio') as File).name, 'voice.wav')
   })
 })

@@ -3,19 +3,15 @@
 // Extracted from codeIntent.ts during WS1 modularisation.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent, CodeIntentContext, CodeProjectType, PreviewType } from './codeIntentTypes.ts'
-import { classifyCodeAssetPlan } from './codeIntentAssets.ts'
-import { BUNDLED_PREVIEW_PROJECTS, DEV_SERVER_PROJECTS, getBuildCommand, getDevCommand, getTestCommand } from './codeIntentCommands.ts'
-import { estimateComplexity } from './codeIntentComplexity.ts'
-import { estimateFileCount } from './codeIntentFileCount.ts'
-import { classifyGameKind } from './codeIntentGameCatalog.ts'
-import { hasExplicitStackMention } from './codeIntentFollowup.ts'
+import type { CodeIntent, CodeIntentContext, CodeProjectType } from './codeIntentTypes.ts'
+import { tryResolveIncrementReuse } from './codeIntentIncrementReuse.ts'
 import { looksLikeDesktopAppRequest, looksLikeMobileAppRequest } from './codeIntentPlatformHeuristics.ts'
 import {
   API_SIGNALS,
   FRAMEWORK_SIGNALS,
   FULLSTACK_SIGNALS,
   GAME_SIGNALS,
+  INTERACTIVE_WIDGET_SIGNALS,
   LANGUAGE_SIGNALS,
   MULTIPAGE_SIGNALS,
   THREED_APP_SIGNALS,
@@ -28,52 +24,9 @@ import { finalizeCodeIntentClassification } from './codeIntentFinalization.ts'
 export function classifyCodeIntent(prompt: string, context?: CodeIntentContext): CodeIntent {
   const lower = normalizeSignalText(prompt)
 
-  // If the follow-up analyzer said "increment" and the new prompt is short
-  // and does not mention any framework/language on its own, inherit the
-  // previous stack so "ajoute un bouton delete" does not downgrade a Flask
-  // API back to a generic script.
-  const isIncrementReuse = context?.pivotKind === 'increment'
-    && context.previousProjectType
-    && context.previousProjectType !== 'unknown'
-
-  if (isIncrementReuse) {
-    const mentionsExplicitStack = hasExplicitStackMention(lower)
-    if (!mentionsExplicitStack) {
-      const assetPlan = classifyCodeAssetPlan(prompt)
-      const complexity = estimateComplexity(prompt)
-      const previousType = context.previousProjectType!
-      const languages = context.previousLanguages ?? []
-      const frameworks = context.previousFrameworks ?? []
-      const needsDevServer = DEV_SERVER_PROJECTS.has(previousType)
-      const needsBundling = BUNDLED_PREVIEW_PROJECTS.has(previousType) || previousType.startsWith('spa_')
-      const previewType: PreviewType =
-        needsDevServer ? 'dev_server'
-          : (needsBundling) ? 'iframe_bundled'
-          : (previousType === 'static_web' || previousType === 'game_web') ? 'iframe_static'
-          : (previousType.startsWith('cli_') || previousType.startsWith('system_') || previousType === 'script' || previousType === 'data_python') ? 'console'
-          : 'none'
-      const isGameRequest = previousType === 'game_web'
-      const { gameKind, knownGame } = classifyGameKind(lower, isGameRequest)
-
-      return {
-        projectType: previousType,
-        complexity,
-        languages,
-        frameworks,
-        features: [],
-        needsDevServer,
-        needsBundling,
-        previewType,
-        devCommand: getDevCommand(previousType),
-        buildCommand: getBuildCommand(previousType),
-        testCommand: getTestCommand(previousType),
-        primaryModelRole: 'code',
-        needsArchitecturePlanning: false,
-        estimatedFileCount: estimateFileCount(complexity, previousType),
-        assetPlan,
-        ...(isGameRequest ? { gameKind, ...(knownGame ? { knownGame } : {}) } : {}),
-      }
-    }
+  const incrementIntent = tryResolveIncrementReuse(prompt, lower, context)
+  if (incrementIntent) {
+    return incrementIntent
   }
   // pivot_platform / pivot_feature / fresh_start → fall through to full reclassification
 
@@ -165,18 +118,57 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
   // "app android" wins over a vague "application") — but skipped entirely when
   // the user explicitly asked for a web/browser page.
   if (projectType === 'unknown' && !userExplicitlyAskedWeb && looksLikeMobileAppRequest(lower)) {
-    projectType = 'mobile_rn'
-    frameworks.push('react-native', 'expo')
-    languages.push('typescript')
-    features.push('mobile-native')
+    if (/\b(?:flutter|dart|apk\s*universel|universal\s*apk|apk)\b/i.test(lower)) {
+      projectType = 'mobile_flutter'
+      frameworks.push('flutter')
+      languages.push('dart')
+      features.push('mobile-flutter', 'apk-universal')
+    } else if (/\b(?:kotlin|android|compose)\b/i.test(lower) && !/\breact[-\s]?native\b/i.test(lower)) {
+      projectType = 'mobile_android'
+      frameworks.push('jetpack-compose')
+      languages.push('kotlin')
+      features.push('mobile-android')
+    } else if (/\b(?:swift|swiftui|ios|iphone|ipad)\b/i.test(lower) && !/\breact[-\s]?native\b/i.test(lower)) {
+      projectType = 'mobile_ios'
+      frameworks.push('swiftui')
+      languages.push('swift')
+      features.push('mobile-ios')
+    } else {
+      projectType = 'mobile_rn'
+      frameworks.push('react-native', 'expo')
+      languages.push('typescript')
+      features.push('mobile-native')
+    }
   }
 
   // Step 3b: desktop/native app detection — same web guard.
   if (projectType === 'unknown' && !userExplicitlyAskedWeb && looksLikeDesktopAppRequest(lower)) {
-    projectType = 'desktop_tauri'
-    frameworks.push('tauri')
-    languages.push('typescript', 'rust')
-    features.push('desktop-native')
+    if (/\b(?:python|py)\b/i.test(lower)) {
+      projectType = 'desktop_app'
+      frameworks.push('customtkinter')
+      languages.push('python')
+      features.push('desktop-python-gui')
+    } else if (/\b(?:c\+\+|cpp|qt)\b/i.test(lower)) {
+      projectType = 'desktop_app'
+      frameworks.push('qt')
+      languages.push('cpp')
+      features.push('desktop-cpp-qt')
+    } else if (/\b(?:go|golang|fyne)\b/i.test(lower)) {
+      projectType = 'desktop_app'
+      frameworks.push('fyne')
+      languages.push('go')
+      features.push('desktop-go-gui')
+    } else if (/\b(?:c#|csharp|\.net|avalonia|wpf)\b/i.test(lower)) {
+      projectType = 'desktop_app'
+      frameworks.push('avalonia')
+      languages.push('csharp')
+      features.push('desktop-csharp-gui')
+    } else {
+      projectType = 'desktop_tauri'
+      frameworks.push('tauri')
+      languages.push('typescript', 'rust')
+      features.push('desktop-native')
+    }
   }
 
   // Step 3c (v89b): an EXPLICIT web request resolves to a web front-end here,
@@ -310,6 +302,54 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
           features.push('desktop-native', '3d')
         }
         break
+      }
+    }
+  }
+
+  // Step 6e: Interactive widgets & graphical UI tools
+  // (calculatrice, convertisseur, minuteur, soundboard, palette, horloge, etc.)
+  if (projectType === 'unknown' || projectType === 'script' || projectType.startsWith('cli_')) {
+    const hasWidgetSignal = containsAnySignal(lower, INTERACTIVE_WIDGET_SIGNALS)
+      || /\bcalculatrice\b|\bcalculator\b|\bconvertisseur\b|\bminuteur\b|\bchronometre\b|\bchronomètre\b|\bgenerateur\b|\bwidget\b|\bsoundboard\b|\bpalette\b/i.test(lower)
+    const hasVisualGraphicSignal = userExplicitlyAskedWeb
+      || /\bgraphisme\b|\bgraphismes\b|\bdesign\b|\bvisuel\b|\bminecraft\b|\bpixel[\s-]?art\b|\b8[\s-]?bit\b|\binterface\b|\bui\b|\btheme\b|\bthème\b|\bgui\b/i.test(lower)
+
+    if (hasWidgetSignal || (hasVisualGraphicSignal && !/\b(script|cli|terminal|command\s*line)\b/i.test(lower))) {
+      // Détermination fine selon le langage et la plateforme demandée
+      if (/\b(?:python|py)\b/i.test(lower)) {
+        projectType = 'desktop_app'
+        frameworks.push('customtkinter')
+        if (!languages.includes('python')) languages.push('python')
+        features.push('interactive-widget', 'desktop-python-gui')
+      } else if (/\b(?:c\+\+|cpp|qt)\b/i.test(lower)) {
+        projectType = 'desktop_app'
+        frameworks.push('qt')
+        if (!languages.includes('cpp')) languages.push('cpp')
+        features.push('interactive-widget', 'desktop-cpp-qt')
+      } else if (/\b(?:rust|slint)\b/i.test(lower)) {
+        projectType = 'desktop_tauri'
+        frameworks.push('tauri')
+        if (!languages.includes('rust')) languages.push('rust')
+        features.push('interactive-widget', 'desktop-rust-gui')
+      } else if (/\b(?:go|golang|fyne)\b/i.test(lower)) {
+        projectType = 'desktop_app'
+        frameworks.push('fyne')
+        if (!languages.includes('go')) languages.push('go')
+        features.push('interactive-widget', 'desktop-go-gui')
+      } else if (/\b(?:c#|csharp|\.net|avalonia|wpf)\b/i.test(lower)) {
+        projectType = 'desktop_app'
+        frameworks.push('avalonia')
+        if (!languages.includes('csharp')) languages.push('csharp')
+        features.push('interactive-widget', 'desktop-csharp-gui')
+      } else if (/\b(?:apk|flutter|dart)\b/i.test(lower)) {
+        projectType = 'mobile_flutter'
+        frameworks.push('flutter')
+        if (!languages.includes('dart')) languages.push('dart')
+        features.push('interactive-widget', 'mobile-flutter', 'apk-universal')
+      } else {
+        projectType = 'static_web'
+        if (!languages.includes('html')) languages.push('html', 'css', 'javascript')
+        features.push('interactive-widget', 'visual-ui')
       }
     }
   }

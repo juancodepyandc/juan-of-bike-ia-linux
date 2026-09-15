@@ -17,7 +17,7 @@
  *   - `exportAnkiHtml(deck, cards)` — standalone HTML page that also works
  *     as a study view if the user doesn't have Anki.
  */
-import type { Flashcard, FlashcardDeck } from '../stores/flashcardsStore'
+import type { Flashcard, FlashcardDeck } from '../stores/flashcardsStore.ts'
 
 function escapeTsv(s: string): string {
   return (s || '').replace(/\t/g, ' ').replace(/\n/g, '<br>').trim()

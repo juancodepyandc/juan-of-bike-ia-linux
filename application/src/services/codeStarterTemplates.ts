@@ -6,8 +6,8 @@
 // qui rapproche le rendu d un studio premium.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent } from './codeIntent'
-import type { DesignArchetype } from './codeDesignDirectives'
+import type { CodeIntent } from './codeIntent.ts'
+import type { DesignArchetype } from './codeDesignDirectives.ts'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
 import { buildStructuredEmissionInstructions } from './codeProjectEmission.ts'
 

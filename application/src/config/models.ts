@@ -1,66 +1,44 @@
-// Llama 4 Scout -- architecture MoE 16x17B, 10M context, Q4_K_M (~67GB)
+// Configuration des modeles d inference par module et profil materiel
 import type { HardwareProfile } from '../types/app.ts'
 
-// v82bp : guard import.meta.env so node --test (no vite replacement)
-// can load this module from a regression test without crashing.
-// Vite still substitutes the literal at build time ; at runtime in
-// node, `(import.meta as any).env` is undefined so we fall back to {}.
 const __env: Record<string, string | undefined> =
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {}
 const IS_CLOUD = __env.VITE_CLOUD_MODE === 'true'
 
-// Modele chat principal : Qwen3-30B-A3B-Instruct-2507 (MoE, 3B actifs) — reellement
-// installe, Apache-2.0, ~20-22 t/s sur RTX 5070 Ti 16GB avec offload partiel, francais
-// propre, pas de <think> (variante Instruct). Remplace llama4:scout (67GB, jamais installe
-// ni chargeable sur 16GB VRAM + 30GB RAM).
-export const DEFAULT_MAIN_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
-// Fallback chat generaliste (JAMAIS un modele code) — utilise au cold-start quand le
-// hardware n'est pas encore connu, cf. appStore.
-export const MAIN_FALLBACK_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
+// Modele principal (Chat, Cowork, Planification agentique, Vision native) :
+// Qwen3.8-27B Uncensored (Abliterated, vision native, contexte 262K, tool-calling).
+export const DEFAULT_MAIN_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+export const MAIN_FALLBACK_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
 export const DEFAULT_VISION_MODEL = 'qwen3-vl:30b'
 export const DOCUMENT_EXTRACTION_PACK_LABEL = 'PyMuPDF + pdfplumber + openpyxl + pandas'
 
 // ---------------------------------------------------------------------------
 // Modeles locaux -- optimises pour 16-24GB VRAM (RTX 5070 Ti / RTX 4090)
-// qwen3:14b = meilleur ratio qualite/taille pour chat general (~8-9GB VRAM)
-// qwen3-vl:30b = vision haute qualite (~19GB, offload CPU sur 16GB VRAM)
-// qwen3-vl:8b = vision rapide en 16GB VRAM (~5-6GB) pour mode live
-// Le code model (qwen3-coder:30b-a3b MoE, 3B actifs) fonctionne en offloading.
 // ---------------------------------------------------------------------------
-export const LOCAL_MAIN_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
-export const LOCAL_VISION_MODEL = 'qwen3-vl:30b'
+export const LOCAL_MAIN_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+export const LOCAL_VISION_MODEL = 'qwen3-vl:8b'
 
-// Modele partage pour l'evaluation semantique / audit factuel de l'Academie.
-// (Remplace les references gemma3:12b jamais installees.)
-export const LEARNING_EVAL_MODEL = 'qwen3:30b-a3b-instruct-2507-q4_K_M'
+// Modele pour evaluation semantique et validation inter-modules
+export const LEARNING_EVAL_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
 
 // ---------------------------------------------------------------------------
-// Vision multimodale -- 3 niveaux de qualite selon contexte
-// HIGH_QUALITY: qwen3-vl:30b (~19GB, offload) -- analyses detaillees (image reference,
-//   video, academie). Partage avec le module 3D : NE PAS changer sans validation.
-// LIVE: qwen3-vl:8b (~6GB, pure VRAM) -- capture camera temps reel, latence minimale.
-// FALLBACK: qwen3-vl:8b -- modele vision leger, resident VRAM, jamais le 30b lourd.
+// Vision multimodale
+// HIGH_QUALITY: qwen3-vl:30b (~19GB) ou Qwen3.8 (VLM natif)
+// LIVE: qwen3-vl:8b (~6GB, resident VRAM) pour le flux camera temps reel
+// FALLBACK: qwen3-vl:8b
 // ---------------------------------------------------------------------------
 export const VISION_HIGH_QUALITY_MODEL = 'qwen3-vl:30b'
 export const VISION_LIVE_MODEL = 'qwen3-vl:8b'
 export const VISION_FALLBACK_MODEL = 'qwen3-vl:8b'
-export const VISION_MODEL_PACK_LABEL = 'Qwen3-VL 30B (qualite) + Qwen3-VL 8B (live)'
+export const VISION_MODEL_PACK_LABEL = 'Qwen3.8 27B + Qwen3-VL 8B (live)'
 
 // ---------------------------------------------------------------------------
-// Code module -- architecture multi-roles
-// Le Codeur reste le meilleur modele code qui tient sur la machine locale.
-// L Architecte et l Auditeur utilisent un modele raisonnement distinct quand
-// /api/tags prouve qu il est installe ; sinon le pipeline retombe sur le codeur
-// operationnel pour ne pas casser une generation en cours.
+// Module Code -- architecture multi-roles
 // ---------------------------------------------------------------------------
 export const CODE_NEXT_HIGH_MODEL = 'qwen3-coder-next:q8_0'
 export const CODE_NEXT_MODEL = 'qwen3-coder-next:q4_K_M'
 export const CODE_LEGACY_HIGH_MODEL = 'qwen3-coder:30b-a3b-q8_0'
 export const CODE_LEGACY_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
-// Modele code LOCAL principal : Qwen3-Coder-30B-A3B-Instruct (MoE, 3B actifs, 18GB,
-// installe, Apache-2.0, contexte 256K). Les variantes qwen3-coder-next (q8_0 ~85GB,
-// q4_K_M 51GB) ne tiennent pas en 16GB VRAM + 30GB RAM et ne servent que sur le
-// chemin cloud >=48GB (CODE_CLOUD_HIGH_MODEL ci-dessous).
 export const CODE_LOCAL_PRIMARY_MODEL = 'qwen3-coder:30b'
 export const CODE_PRIMARY_MODEL = CODE_LOCAL_PRIMARY_MODEL
 export const CODE_CLOUD_HIGH_MODEL = CODE_NEXT_HIGH_MODEL
@@ -80,28 +58,17 @@ const CODE_MODEL_CANDIDATES = [
   CODE_MINI_MODEL,
 ]
 
-// Legacy aliases -- tout redirige vers le modele expert principal
+// Legacy aliases
 export const DEFAULT_CODE_MODEL = CODE_SINGLE_MODEL
 export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
-// Devstral Small 24B (Mistral, Apache-2.0, ~14GB Q4 -> tient dans 16GB VRAM):
-// meilleur modele AGENTIQUE de sa classe (SWE-bench Verified 52.3%, tool-use et
-// multi-fichiers natifs). Role: planification/agent + verifieur INDEPENDANT du
-// codeur. La generation de code pur reste sur qwen3-coder:30b (superieur a
-// Qwen2.5-Coder-32B sur les benchmarks recents — verifie 2026-07).
-// Agent/planificateur. A/B COMPLEXE local (2026-07, plan SaaS 12+ fichiers):
-// qwen3.6:27b produit un plan PLUS COMPLET que devstral (14 fichiers/couverture
-// totale vs 12/4-sur-6). Plus lent (~275s vs 35s) mais qualite > vitesse. Sur
-// tache simple ils sont a egalite -> qwen3.6 >= devstral partout, donc primaire.
-export const CODE_AGENT_MODEL = 'qwen3.6:27b'
-// Devstral conserve comme REPLI rapide (resilience si qwen3.6 echoue/timeout).
-export const CODE_AGENT_FALLBACK_MODEL = 'devstral'
-// Verifieur/directeur = modele de RAISONNEMENT independant du codeur (un codeur
-// qui se juge se sur-note). deepseek-r1:32b (distill Qwen, ~20GB): chain-of-
-// thought, attrape les bugs subtils. Confirme par A/B local (2026-07): bug
-// attrape; role review/verification ou la latence (raisonnement) est toleree
-// car il tourne moins souvent que la generation.
+
+// Agent et planificateur : Qwen3.8 27B Uncensored (contexte 262k, multi-fichiers natif)
+export const CODE_AGENT_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+export const CODE_AGENT_FALLBACK_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+
+// Verificateur independant pour le controle et l analyse logique
 export const CODE_VERIFIER_REASONING_MODEL = 'deepseek-r1:32b'
-export const CODE_PLANNING_MODEL = CODE_REASONING_MODEL
+export const CODE_PLANNING_MODEL = CODE_AGENT_MODEL
 export const CODE_REVIEW_MODEL = CODE_VERIFIER_REASONING_MODEL
 
 export const HEAVY_REASONING_MIN_RAM_GB = 48
@@ -340,6 +307,7 @@ export function selectAdaptiveReasoningModel(
   heavyModel = DEFAULT_MAIN_MODEL,
   fallbackModel = AUXILIARY_ANALYSIS_MODEL,
 ) {
+  if (heavyModel.startsWith('aurora-rl-')) return heavyModel
   return shouldAvoidHeavyReasoningModel(hardware) ? fallbackModel : heavyModel
 }
 
@@ -372,7 +340,7 @@ export const CLOUD_MODEL_TIERS = {
   },
   low: {
     label: 'LOW (RTX 5070 Ti 16GB)',
-    main: 'qwen3:30b-a3b-instruct-2507-q4_K_M',
+    main: 'orcarouter/Qwen3.8-27B-Uncensored',
     code: CODE_LOCAL_PRIMARY_MODEL,
     vision: 'qwen3-vl:8b',
     image: 'flux1-schnell-fp8.safetensors',
@@ -404,12 +372,16 @@ export function selectAdaptivePrimaryModel(hardware: Pick<HardwareProfile, 'ram_
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detection du meilleur modele CHAT installe dans Ollama.
-// Priorite: Qwen3-30B-A3B-Instruct-2507 (installe) > successeurs Qwen3.5 >
-//           gemma3:27b / mistral-small > plus petits Qwen/Llama en dernier recours.
+// Auto-detection du meilleur modele conversationnel installe dans Ollama.
+// Priorite: Qwen3.8-27B Uncensored > Qwen3.8 > Qwen3.6 > fallback
 // ---------------------------------------------------------------------------
 
 const MAIN_MODEL_PRIORITY: string[] = [
+  'orcarouter/Qwen3.8-27B-Uncensored',
+  'orcarouter/qwen3.8-27b-uncensored',
+  'qwen3.8:27b',
+  'qwen3.8',
+  'qwen3.6:27b',
   'qwen3:30b-a3b-instruct-2507-q4_K_M',
   'qwen3:30b-a3b-instruct-2507',
   'qwen3.5:35b',
@@ -512,6 +484,7 @@ export function selectCodeModelForHardware(
   installedModels: string[] = [],
   preferredModel?: string | null,
 ): string {
+  if (preferredModel?.startsWith('aurora-rl-') && hasInstalledModel(installedModels, preferredModel)) return preferredModel
   const orderedCandidates = getCodeRecoveryFallbackModels(hardware, installedModels, preferredModel)
   const preferredResolved = orderedCandidates[0] || resolveConfiguredModel(preferredModel, CODE_SINGLE_MODEL)
   return selectOperationalOllamaModel(preferredResolved, installedModels, orderedCandidates)

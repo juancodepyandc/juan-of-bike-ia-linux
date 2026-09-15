@@ -65,19 +65,19 @@ MOOD_PATTERNS: dict[str, list[str]] = {
 
 CATEGORY_PATTERNS: dict[str, list[str]] = {
     "character": [r"\bperson", r"\bman\b", r"\bwoman\b", r"\bwarrior", r"\bknight", r"\bwizard",
-                   r"\belf\b", r"\borc\b", r"\bsamurai", r"\bcharacter"],
+                   r"\belf\b", r"\borc\b", r"\bsamurai", r"\bcharacter", r"\bpersonnage", r"\bhomme", r"\bfemme", r"\bfille", r"\bgar[cç]on"],
     "creature": [r"\bdragon", r"\bbird", r"\banimal", r"\bbeast", r"\bcreature", r"\bdog\b",
-                  r"\bcat\b", r"\bhorse", r"\bfish", r"\binsect"],
+                  r"\bcat\b", r"\bhorse", r"\bfish", r"\binsect", r"\bchien", r"\bchat", r"\bcheval", r"\boiseau", r"\bmonstre", r"\bcr[eé]ature"],
     "vehicle": [r"\bcar\b", r"\btruck", r"\bship", r"\bplane", r"\brocket", r"\bvehicle",
-                r"\bmotorcycle", r"\bboat", r"\bspaceship"],
-    "mechanical": [r"\brobot", r"\bmecha", r"\bautomaton", r"\bdrone", r"\bturret"],
+                r"\bmotorcycle", r"\bboat", r"\bspaceship", r"\bvoiture", r"\bcamion", r"\bavion", r"\bmoto", r"\bbateau", r"\bv[eé]hicule"],
+    "mechanical": [r"\brobot", r"\bmecha", r"\bautomaton", r"\bdrone", r"\bturret", r"\bm[eé]ca"],
     "object": [r"\bsword", r"\blantern", r"\bbottle", r"\bbook", r"\bcrown", r"\bring",
-                r"\bweapon", r"\bartifact", r"\bvase", r"\bclock", r"\bmechanism"],
+                r"\bweapon", r"\bartifact", r"\bvase", r"\bclock", r"\bmechanism", r"\b[eé]p[eé]e", r"\bobjet", r"\blanterne", r"\blivre", r"\barme"],
     "architecture": [r"\bhouse", r"\bcastle", r"\btower", r"\bbuilding", r"\btemple",
-                       r"\bcathedral", r"\bbridge", r"\bruin"],
+                       r"\bcathedral", r"\bbridge", r"\bruin", r"\bmaison", r"\bch[aâ]teau", r"\bb[aâ]timent", r"\bpont", r"\barchitecture"],
     "nature": [r"\btree", r"\bplant", r"\bflower", r"\bmountain", r"\bcanyon", r"\bisland",
-                r"\bwaterfall", r"\bvolcano"],
-    "scenery_landscape": [r"\blandscape", r"\bvista", r"\bscene", r"\bdiorama"],
+                r"\bwaterfall", r"\bvolcano", r"\barbre", r"\bplante", r"\bfleur", r"\bmontagne", r"\bvolcan", r"\b[iî]le", r"\bnature"],
+    "scenery_landscape": [r"\blandscape", r"\bvista", r"\bscene", r"\bdiorama", r"\bpaysage", r"\bville", r"\bcity", r"\benvironnement"],
 }
 
 # Kept short so CLIP's 77-token window does not truncate it when appended to
@@ -118,6 +118,8 @@ class SceneProfile:
     confidence: float = 0.0
     duration_s: float = 6.0
     fps: int = 24
+    engine: str = "auto"
+    pose: str = "A-pose"
 
 
 def _any_match(text: str, patterns: list[str]) -> bool:
@@ -181,7 +183,7 @@ def _strip_env_context(prompt: str) -> str:
     return cleaned
 
 
-def refine_image_prompt(prompt: str, mood: str, category: str, materials: list[str]) -> str:
+def refine_image_prompt(prompt: str, mood: str, category: str, materials: list[str], pose: str = "A-pose") -> str:
     """Image prompt tuned for Hunyuan3D image-to-3D: front-loads composition cues
     that Hunyuan3D needs (isolation, full subject, no environment), keeps mood
     as a tonal hint at the end so it does not dominate.
@@ -198,7 +200,7 @@ def refine_image_prompt(prompt: str, mood: str, category: str, materials: list[s
     parts: list[str] = [img_prompt]
     
     if category == "character":
-        parts.append("single character, full body, A-pose, facing camera, no held items obscuring face")
+        parts.append(f"single character, full body, {pose}, facing camera, no held items obscuring face")
     elif category == "creature":
         parts.append("single creature, full body, neutral pose, facing camera")
     elif category == "vehicle":
@@ -248,7 +250,33 @@ def classify(prompt: str, name: str | None = None) -> SceneProfile:
     confidence = min(1.0, 0.25 + 0.18 * len(animations) + 0.08 * len(materials) +
                        (0.12 if mood != "neutral" else 0) + (0.12 if category != "object" else 0))
 
-    refined = refine_image_prompt(prompt, mood, category, materials)
+    pose = "A-pose"
+    if _any_match(p, [r"\bpose en t\b", r"\bt-pose\b", r"\bpose t\b"]):
+        pose = "T-pose"
+    elif _any_match(p, [r"\bpose en a\b", r"\ba-pose\b", r"\bpose a\b"]):
+        pose = "A-pose"
+
+    engine = "auto"
+    if _any_match(p, [r"\bmoge\b"]):
+        engine = "moge"
+    elif _any_match(p, [r"\bhunyuanworldmirror\b", r"\bworldmirror\b"]):
+        engine = "hunyuanworldmirror"
+    elif _any_match(p, [r"\bhunyuanworld\b", r"\bworld\b"]):
+        engine = "hunyuanworld"
+    elif _any_match(p, [r"\btrelli(?:s)?\b"]):
+        engine = "trellis"
+    elif _any_match(p, [r"\bhunyuan(?:3d)?\b"]):
+        engine = "hunyuan3d"
+    elif category in ("scenery_landscape", "nature"):
+        engine = "hunyuanworld"  # SOTA for environment reconstruction
+    elif category == "character":
+        engine = "trellis"       # Better organic volume consistency
+    elif category in ("object", "vehicle", "architecture"):
+        engine = "hunyuanworldmirror"  # SOTA feedforward 3D reconstruction
+    else:
+        engine = "hunyuan3d"
+
+    refined = refine_image_prompt(prompt, mood, category, materials, pose)
     return SceneProfile(
         name=name or _slugify(prompt),
         prompt_original=prompt,
@@ -259,6 +287,8 @@ def classify(prompt: str, name: str | None = None) -> SceneProfile:
         category=category,
         has_animation=has_animation,
         confidence=round(confidence, 2),
+        engine=engine,
+        pose=pose,
     )
 
 

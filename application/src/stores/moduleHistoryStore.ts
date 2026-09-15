@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 import { inferTitle } from '../utils/titleInference.ts'
 
 export interface ModuleHistoryMessage {

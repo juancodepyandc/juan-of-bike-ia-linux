@@ -1945,7 +1945,9 @@ function summarizeCreativeReferenceHistory(history: PlannerContext['history']): 
     .filter((entry) => entry.action.kind === 'web_search' || entry.action.kind === 'fetch')
     .slice(-4)
     .map((entry) => {
-      const label = entry.action.kind === 'web_search' ? `web_search ${entry.action.query}` : `fetch ${entry.action.url}`
+      const label = entry.action.kind === 'web_search'
+        ? `web_search ${entry.action.query}`
+        : entry.action.kind === 'fetch' ? `fetch ${entry.action.url}` : ''
       const output = (entry.result.output || entry.result.error || '').replace(/\s+/g, ' ').trim().slice(0, 500)
       return `- ${label}: ${output || (entry.result.ok ? 'OK' : 'KO')}`
     })

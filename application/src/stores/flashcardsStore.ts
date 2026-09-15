@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 // Re-export pure utilities from dedicated module so existing imports continue to work
-export { detectSubjectKind, SUBJECT_HINTS } from '../utils/subjectDetection'
-export type { SubjectKind } from '../utils/subjectDetection'
-import type { SubjectKind } from '../utils/subjectDetection'
+export { detectSubjectKind, SUBJECT_HINTS } from '../utils/subjectDetection.ts'
+export type { SubjectKind } from '../utils/subjectDetection.ts'
+import type { SubjectKind } from '../utils/subjectDetection.ts'
 
 export type LeitnerBox = 1 | 2 | 3 | 4 | 5
 

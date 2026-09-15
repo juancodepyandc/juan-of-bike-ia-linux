@@ -10,7 +10,7 @@
  * Usage : <MapPreview carte={parcoursPayload.cartes[0]} />
  */
 import React from 'react'
-import type { AcademyParcoursCarte } from '../../hooks/useAcademyViewLogic'
+import type { AcademyParcoursCarte } from '../../hooks/useAcademyViewLogic.ts'
 
 interface Props {
   carte: AcademyParcoursCarte

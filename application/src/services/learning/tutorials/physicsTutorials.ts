@@ -1,4 +1,4 @@
-import type { Tutorial } from '../tutorialEngine'
+import type { Tutorial } from '../tutorialEngine.ts'
 
 export const physicsTutorials: Tutorial[] = [
   {

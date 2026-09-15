@@ -4,7 +4,7 @@
 // requested SUBJECT. Catches the "Coca-Cola → restaurant generique" drift.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent } from './codeIntent'
+import type { CodeIntent } from './codeIntent.ts'
 import { hasPerceptualColorMatch } from './codeColorMetrics.ts'
 import { CODE_ASSET_MANIFEST_PATH } from './codeInterModuleAssets.ts'
 

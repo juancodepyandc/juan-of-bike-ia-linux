@@ -26,18 +26,14 @@ les couleurs maquillent les defauts.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import sys
 from pathlib import Path
 
 
 def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
-    """Copie un GLB en retirant materiaux/textures/images (geometrie pure).
-
-    pygltflib seulement — pas de Blender: on garde sommets, normales et
-    ANIMATIONS intacts, on detache juste toute matiere. Les accessors des
-    images restent dans le binaire (inoffensif); l'important est qu'aucune
-    primitive ne reference plus de materiau.
-    """
+    """Copie un GLB en retirant materiaux/textures/images (geometrie pure)."""
     try:
         from pygltflib import GLTF2
         g = GLTF2().load(str(src))
@@ -50,8 +46,29 @@ def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
         g.samplers = []
         g.save(str(dst))
         return {"ok": True, "fichier": str(dst)}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": repr(exc)}
+    except Exception as exc1:
+        # Fallback vers le venv python de l'application
+        try:
+            import subprocess
+            vpy = str(Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python")
+            if os.path.isfile(vpy) and vpy != sys.executable:
+                code = f"from pygltflib import GLTF2; g = GLTF2().load('{src}'); [setattr(p, 'material', None) for m in g.meshes or [] for p in m.primitives or []]; g.materials=[]; g.textures=[]; g.images=[]; g.samplers=[]; g.save('{dst}')"
+                r = subprocess.run([vpy, "-c", code], capture_output=True, text=True, timeout=60)
+                if r.returncode == 0 and os.path.isfile(str(dst)):
+                    return {"ok": True, "fichier": str(dst)}
+        except Exception:
+            pass
+        # Fallback vers Blender headless
+        try:
+            import shutil, subprocess
+            blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "/usr/bin/blender"
+            bcode = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath='{src}'); [bpy.data.materials.remove(m, do_unlink=True) for m in list(bpy.data.materials)]; bpy.ops.export_scene.gltf(filepath='{dst}', export_format='GLB', export_yup=True, export_animations=True)"
+            r = subprocess.run([blender, "-b", "--python-expr", bcode], capture_output=True, text=True, timeout=120)
+            if r.returncode == 0 and os.path.isfile(str(dst)):
+                return {"ok": True, "fichier": str(dst)}
+        except Exception as exc2:
+            return {"ok": False, "error": f"{exc1}; {exc2}"}
+        return {"ok": False, "error": repr(exc1)}
 
 
 def organiser(run_dir: str | Path, run_id: str, *,
@@ -96,6 +113,13 @@ def organiser(run_dir: str | Path, run_id: str, *,
 
     # 1) LIVRABLES nommes clairement
     livraison: dict = {}
+    if not (final_mesh and Path(final_mesh).is_file()):
+        cand_glbs = [c for c in run_dir.rglob("*.glb") if not str(c).startswith(str(d_modele)) and not str(c).startswith(str(d_mouv))]
+        if cand_glbs:
+            # Prefer largest/final mesh
+            cand_glbs.sort(key=lambda f: f.stat().st_size, reverse=True)
+            final_mesh = str(cand_glbs[0])
+
     if final_mesh and Path(final_mesh).is_file():
         p = _mv(Path(final_mesh), d_modele / "modele_couleurs.glb")
         if p:
@@ -103,6 +127,14 @@ def organiser(run_dir: str | Path, run_id: str, *,
             geo = _glb_sans_materiaux(p, d_modele / "modele_geometrie.glb")
             if geo.get("ok"):
                 livraison["modele_geometrie"] = geo["fichier"]
+
+    p_coul = d_modele / "modele_couleurs.glb"
+    p_geo = d_modele / "modele_geometrie.glb"
+    if p_coul.is_file() and not p_geo.is_file():
+        geo = _glb_sans_materiaux(p_coul, p_geo)
+        if geo.get("ok"):
+            livraison["modele_geometrie"] = str(p_geo)
+
     if rigged_mesh and Path(rigged_mesh).is_file():
         p = _mv(Path(rigged_mesh), d_mouv / "mouvement_couleurs.glb")
         if p:
@@ -111,17 +143,48 @@ def organiser(run_dir: str | Path, run_id: str, *,
             if geo.get("ok"):
                 livraison["mouvement_geometrie"] = geo["fichier"]
 
+    m_coul = d_mouv / "mouvement_couleurs.glb"
+    m_geo = d_mouv / "mouvement_geometrie.glb"
+    if m_coul.is_file() and not m_geo.is_file():
+        geo = _glb_sans_materiaux(m_coul, m_geo)
+        if geo.get("ok"):
+            livraison["mouvement_geometrie"] = str(m_geo)
+
+    # Dossier alias motion/ pour compatibilite
+    d_motion = run_dir / "motion"
+    if avec_mouvement or (d_mouv.is_dir() and any(d_mouv.iterdir())):
+        d_motion.mkdir(parents=True, exist_ok=True)
+        for f in list(d_mouv.iterdir()):
+            if f.is_file() and not (d_motion / f.name).exists():
+                try:
+                    os.link(str(f), str(d_motion / f.name))
+                except Exception:
+                    shutil.copyfile(str(f), str(d_motion / f.name))
+
     # 2) REFERENCE retenue (face + vues derivees RETENUES seulement)
     if front_reference and Path(front_reference).is_file():
         p = _mv(Path(front_reference), d_ref / "face.png")
         if p:
             livraison["reference_face"] = str(p)
-    for suffixe, nom in (("_reference_v2.png", "cote.png"),
-                         ("_reference_v3.png", "dos.png")):
-        for base in (run_dir, run_dir / "models"):
-            src = base / (run_id + suffixe)
-            if src.is_file():
-                _mv(src, d_ref / nom)
+    for suffixe, nom in (("_reference_mvstrip.png", "mvstrip.png"),
+                         ("_reference_v2.png", "cote_droit.png"),
+                         ("_reference_v3.png", "dos.png"),
+                         ("_reference_v4.png", "cote_gauche.png"),
+                         ("_reference.png", "face.png")):
+        for base in (run_dir, run_dir / "models", run_dir / "references"):
+            if not base.is_dir():
+                continue
+            for src in list(base.glob("*" + suffixe)) + list(base.glob(suffixe.lstrip("_"))):
+                if src.is_file() and (d_ref / nom).resolve() != src.resolve():
+                    _mv(src, d_ref / nom)
+
+    # Deplacer toute autre image de reference trouvee dans models/ ou sous-dossiers
+    for base in (run_dir / "models", run_dir):
+        if not base.is_dir():
+            continue
+        for src in list(base.rglob("*reference*.png")) + list(base.rglob("*mvstrip*.png")) + list(base.rglob("*volu*.png")):
+            if src.is_file() and not str(src).startswith(str(d_ref)) and not str(src).startswith(str(d_modele)) and not str(src).startswith(str(d_travail)):
+                _mv(src, d_ref / src.name)
 
     # 3) Planches argile / geometrie a cote de leur GLB
     cibles_planches = [(run_id + "_GEOMETRIE.png", d_modele / "GEOMETRIE.png")]
@@ -130,9 +193,14 @@ def organiser(run_dir: str | Path, run_id: str, *,
                                 d_mouv / "MOUVEMENT_GEOMETRIE.png"))
     for motif, dst in cibles_planches:
         for base in (run_dir, run_dir / "models"):
+            if not base.is_dir():
+                continue
             src = base / motif
             if src.is_file():
                 _mv(src, dst)
+    for src in list(run_dir.rglob("*_GEOMETRIE.png")):
+        if src.is_file() and not str(src).startswith(str(d_modele)) and not str(src).startswith(str(d_mouv)):
+            _mv(src, d_modele / "GEOMETRIE.png")
     src_frames = run_dir / (run_id + "_MOUVEMENT_GEOMETRIE_frames")
     if src_frames.is_dir() and avec_mouvement:
         try:

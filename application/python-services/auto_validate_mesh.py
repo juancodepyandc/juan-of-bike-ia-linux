@@ -49,8 +49,18 @@ RETRY_GRAPH: dict[tuple[str, str], str | None] = {
     ("dreamgaussian", "silhouette_aspect"): "procedural_or_multiview",
     ("dreamgaussian", "manifold_health"): "mesh_postprocess",
     ("procedural", "color_richness"):   None,  # procedural rarely has color anyway
+    ("procedural", "silhouette_aspect"): None,  # la silhouette vient du script:
+    #     rejouer le meme generateur rendrait la meme forme. Rien a tenter ici.
     ("procedural", "manifold_health"):  "mesh_postprocess",
     ("mesh_postprocess", "manifold_health"): None,  # last resort
+    # Le post-traitement ne touche NI la couleur NI la silhouette: il repare la
+    # topologie. Lui adresser un echec de couleur ou d aspect n aurait aucun
+    # effet. Ces deux couples etaient simplement ABSENTS de la table; a
+    # l execution, une cle absente et une cle a None se comportent pareil, mais
+    # elles ne veulent pas dire la meme chose — l une est une decision, l autre
+    # un oubli, et c est l oubli qui laisse un echec sans suite ni trace.
+    ("mesh_postprocess", "color_richness"):   None,
+    ("mesh_postprocess", "silhouette_aspect"): None,
 }
 
 

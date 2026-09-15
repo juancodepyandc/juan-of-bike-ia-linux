@@ -432,7 +432,7 @@ class AuroraStorageManager:
             return {"ok": True, "model": model_id, "purged": [str(p) for p in paths]}
 
     def ensure_output_target(self, needed_gb: float = 0.0) -> dict:
-        internal = self.workspace / "output" / "videos"
+        internal = self.workspace / "output" / "video"
         if not self.cold_mounted():
             internal.mkdir(parents=True, exist_ok=True)
             return {
@@ -541,7 +541,7 @@ class AuroraStorageManager:
             outputs_path = str(self.cold_root / "outputs" / "videos")
         else:
             outputs_tier = "hot"
-            outputs_path = str(self.workspace / "output" / "videos")
+            outputs_path = str(self.workspace / "output" / "video")
             warnings.append({
                 "code": "output_fallback_internal",
                 "message": "Les nouvelles sorties resteront sur le NVMe interne tant que le support froid est absent.",

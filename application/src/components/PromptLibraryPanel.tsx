@@ -1,9 +1,9 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { BookOpen, Search, Trash2, X, Zap } from 'lucide-react'
 import { useState } from 'react'
-import type { ModuleId } from '../types/app'
-import type { SavedPrompt } from '../stores/promptLibraryStore'
-import { usePromptLibraryStore } from '../stores/promptLibraryStore'
+import type { ModuleId } from '../types/app.ts'
+import type { SavedPrompt } from '../stores/promptLibraryStore.ts'
+import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
 
 type Props = {
   open: boolean

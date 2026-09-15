@@ -2813,17 +2813,17 @@ output_dir = argv[1] if len(argv) > 1 else "/tmp"
 run_id = argv[2] if len(argv) > 2 else "proc"
 fmt = argv[3] if len(argv) > 3 else "glb"
 
-# ATX form factor: 305 mm x 244 mm, scale to 0.305 m x 0.244 m
-PCB_W = float(params.get("pcb_width_m", 0.305))
-PCB_H = float(params.get("pcb_height_m", 0.244))
+# ATX form factor: 244 mm (width X) x 305 mm (height Y)
+PCB_W = float(params.get("pcb_width_m", 0.244))
+PCB_H = float(params.get("pcb_height_m", 0.305))
 PCB_THICK = float(params.get("pcb_thickness_m", 0.002))
-SOCKET_SIZE = float(params.get("socket_size_m", 0.045))  # AM5 = 45 mm square
+SOCKET_SIZE = float(params.get("socket_size_m", 0.048))  # AM5 = 48 mm square
 DIMM_COUNT = int(params.get("dimm_count", 4))
 M2_COUNT = int(params.get("m2_count", 5))
-PCB_COLOR = tuple(params.get("pcb_color", [0.95, 0.95, 0.95]))  # white Hero
-HEATSINK_COLOR = tuple(params.get("heatsink_color", [0.85, 0.86, 0.88]))  # silver
+PCB_COLOR = tuple(params.get("pcb_color", [0.08, 0.08, 0.09]))  # ROG dark titanium PCB
+HEATSINK_COLOR = tuple(params.get("heatsink_color", [0.14, 0.14, 0.16]))  # ROG dark gunmetal heatsinks
 SCREEN_TEXT = str(params.get("screen_text", "X870E HERO"))
-ROG_GLOW = tuple(params.get("rog_glow", [1.0, 0.0, 0.4]))  # ROG cyber pink
+ROG_GLOW = tuple(params.get("rog_glow", [0.0, 0.75, 1.0]))  # ROG cyan/polymo glow
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
@@ -2857,12 +2857,7 @@ def add_box(name, dims, location, color=(0.5, 0.5, 0.5), metallic=0.0,
     return obj, mat
 
 
-# 1. PCB plate. iter28 HYBRID: if the orchestrator pre-baked a FLUX top-down
-# photo of the motherboard, bind it as baseColorTexture. The PCB plane then
-# reads as a photoreal motherboard view (white PCB, ROG branding, components
-# all visible in their real positions) while we still ship a SEPARATE
-# OLED face plane with aurora.oled-atlas.v1 extras for the live screen.
-# Without the texture path we fall back to a flat white PCB color.
+# 1. PCB plate with exact planar UV mapping
 pcb, pcb_mat = add_box("Mat_pcb_PCB",
                        dims=(PCB_W, PCB_H, PCB_THICK),
                        location=(0, 0, 0),
@@ -2879,111 +2874,92 @@ if _pcb_tex_path and os.path.isfile(_pcb_tex_path):
             pcb_tex = nt.nodes.new("ShaderNodeTexImage")
             pcb_tex.image = pcb_img
             nt.links.new(pcb_tex.outputs["Color"], bsdf.inputs["Base Color"])
-            # Tag the material so the iter27.fix colorize-skip preserves the
-            # texture binding (same guard the OLED face uses).
             pcb_mat["aurora_pcb_texture"] = {"schema": "aurora.pcb-texture.v1",
-                                              "source": "flux_topdown"}
+                                              "source": "official_ref"}
         except Exception as _exc:
             print("[pcb-texture-load] failed:", _exc)
 
-# UV-unwrap the PCB plate so the texture actually maps to the top face.
-# Default cube UVs come per-face stacked; we need a planar projection from
-# the +Z side so the FLUX photo lands flat on the top.
+# Direct Planar UV Projection matching ATX orientation
 try:
-    bpy.ops.object.select_all(action="DESELECT")
-    pcb.select_set(True)
-    bpy.context.view_layer.objects.active = pcb
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=66.0, island_margin=0.0,
-                             scale_to_bounds=True)
-    bpy.ops.object.mode_set(mode="OBJECT")
+    uv_layer = pcb.data.uv_layers.active or pcb.data.uv_layers.new(name="UVMap")
+    for poly in pcb.data.polygons:
+        for loop_index in poly.loop_indices:
+            vert_idx = pcb.data.loops[loop_index].vertex_index
+            v = pcb.data.vertices[vert_idx].co
+            u = (v.x + PCB_W / 2.0) / PCB_W
+            v_coord = (v.y + PCB_H / 2.0) / PCB_H
+            uv_layer.data[loop_index].uv = (u, v_coord)
 except Exception as _exc:
-    print("[pcb-uv-unwrap] skipped:", _exc)
+    print("[pcb-planar-uv] failed:", _exc)
 
-# iter28.fix2 HYBRID: when the PCB plate carries a FLUX top-down photo as
-# baseColorTexture, the photo ALREADY shows the socket, DIMMs, heatsinks,
-# M.2 slots, IO shield, connectors etc. Stacking 3D cubes on top of those
-# duplicates the components and obscures the photo. So when the texture is
-# present we ship ONLY the textured PCB + the OLED face plane (which is
-# the one piece the photo can't animate). The result is a flat photoreal
-# motherboard with one elevated animated screen on top.
-HYBRID_MODE = bool(_pcb_tex_path and os.path.isfile(_pcb_tex_path))
+socket_y = PCB_H * 0.16
 
-socket_y = PCB_H * 0.18
-if not HYBRID_MODE:
-    # 2. AM5 socket (gray square with ILM look — gray box centered top half)
-    socket_obj, _ = add_box("Mat_socket_AM5",
-                            dims=(SOCKET_SIZE, SOCKET_SIZE, 0.012),
-                            location=(0, socket_y, PCB_THICK / 2 + 0.006),
-                            color=(0.32, 0.32, 0.34),
-                            metallic=0.4, roughness=0.45)
+# 2. AM5 socket (nickel-plated ILM bracket with central pin array)
+socket_obj, _ = add_box("Mat_socket_AM5",
+                        dims=(SOCKET_SIZE, SOCKET_SIZE, 0.008),
+                        location=(0.002, socket_y, PCB_THICK / 2 + 0.004),
+                        color=(0.35, 0.36, 0.38),
+                        metallic=0.85, roughness=0.25)
+add_box("Mat_socket_pins",
+        dims=(SOCKET_SIZE * 0.72, SOCKET_SIZE * 0.72, 0.003),
+        location=(0.002, socket_y, PCB_THICK / 2 + 0.007),
+        color=(0.12, 0.12, 0.13),
+        metallic=0.2, roughness=0.8)
 
-# Always-needed origin reference for OLED placement
-io_x = -PCB_W / 2 + 0.015
+# 3. DIMM slots (4 vertical DDR5 slots right of socket)
+dimm_x = 0.046
+dimm_w = 0.0055
+dimm_h = 0.135
+dimm_d = 0.010
+dimm_spacing = 0.009
+for i in range(DIMM_COUNT):
+    x = dimm_x + i * dimm_spacing
+    color = (0.22, 0.22, 0.24) if i % 2 == 0 else (0.14, 0.14, 0.16)
+    add_box(f"Mat_dimm_DIMM_{i}",
+            dims=(dimm_w, dimm_h, dimm_d),
+            location=(x, socket_y + 0.008, PCB_THICK / 2 + dimm_d / 2),
+            color=color, metallic=0.3, roughness=0.4)
 
-if not HYBRID_MODE:
-    # 3. DIMM slots (4 vertical DDR5 slots right of socket, white-on-black)
-    dimm_x = SOCKET_SIZE * 1.4
-    dimm_w = 0.005
-    dimm_h = 0.130
-    dimm_d = 0.018
-    dimm_spacing = 0.0095
-    for i in range(DIMM_COUNT):
-        x = dimm_x + i * dimm_spacing
-        color = (0.92, 0.92, 0.94) if i % 2 == 0 else (0.16, 0.16, 0.18)
-        add_box(f"Mat_dimm_DIMM_{i}",
-                dims=(dimm_w, dimm_h, dimm_d),
-                location=(x, socket_y, PCB_THICK / 2 + dimm_d / 2),
-                color=color, metallic=0.05, roughness=0.55)
+# 4. VRM heatsinks (Top block and Left IO shield block)
+add_box("Mat_heatsink_VRM_Top",
+        dims=(0.125, 0.042, 0.026),
+        location=(0.010, socket_y + 0.055, PCB_THICK / 2 + 0.013),
+        color=HEATSINK_COLOR, metallic=0.90, roughness=0.18)
+add_box("Mat_heatsink_VRM_Left",
+        dims=(0.046, 0.160, 0.030),
+        location=(-PCB_W / 2 + 0.028, socket_y + 0.008, PCB_THICK / 2 + 0.015),
+        color=HEATSINK_COLOR, metallic=0.90, roughness=0.18)
 
-    # 4. VRM heatsinks (massive chrome block above socket + L-shape on left)
-    add_box("Mat_heatsink_VRM_Top",
-            dims=(SOCKET_SIZE * 1.6, 0.040, 0.025),
-            location=(0, socket_y + SOCKET_SIZE / 2 + 0.030, PCB_THICK / 2 + 0.013),
-            color=HEATSINK_COLOR, metallic=0.85, roughness=0.18)
-    add_box("Mat_heatsink_VRM_Left",
-            dims=(0.025, SOCKET_SIZE * 1.4, 0.025),
-            location=(-SOCKET_SIZE / 2 - 0.020, socket_y, PCB_THICK / 2 + 0.013),
-            color=HEATSINK_COLOR, metallic=0.85, roughness=0.18)
+# 5. PCIe Gen5 Slots (2 reinforced SafeSlots)
+pcie_w = 0.135
+add_box("Mat_pcie_Slot1",
+        dims=(pcie_w, 0.008, 0.009),
+        location=(0.005, socket_y - 0.048, PCB_THICK / 2 + 0.0045),
+        color=(0.82, 0.84, 0.86), metallic=0.85, roughness=0.2)
+add_box("Mat_pcie_Slot2",
+        dims=(pcie_w, 0.008, 0.009),
+        location=(0.005, -PCB_H * 0.32, PCB_THICK / 2 + 0.0045),
+        color=(0.82, 0.84, 0.86), metallic=0.85, roughness=0.2)
 
-    # 5. ROG RGB central heatsink (chipset)
-    add_box("Mat_heatsink_ROG_Chipset_emit",
-            dims=(0.032, 0.032, 0.012),
-            location=(0, -PCB_H * 0.15, PCB_THICK / 2 + 0.006),
-            color=(0.18, 0.18, 0.20), metallic=0.6, roughness=0.30,
-            emission=ROG_GLOW, emission_strength=0.4)
+# 6. M.2 NVMe armor shields
+add_box("Mat_heatsink_M2_TopShield",
+        dims=(pcie_w, 0.022, 0.007),
+        location=(0.005, socket_y - 0.026, PCB_THICK / 2 + 0.0035),
+        color=HEATSINK_COLOR, metallic=0.88, roughness=0.20)
+add_box("Mat_heatsink_M2_MainArmor",
+        dims=(0.178, 0.125, 0.007),
+        location=(-0.014, -PCB_H * 0.185, PCB_THICK / 2 + 0.0035),
+        color=HEATSINK_COLOR, metallic=0.88, roughness=0.20)
 
-    # 6. M.2 NVMe heatsinks (5 horizontal bars below socket)
-    m2_y_start = -PCB_H * 0.02
-    m2_y_step = -0.022
-    m2_dims = (PCB_W * 0.42, 0.018, 0.006)
-    for i in range(M2_COUNT):
-        y = m2_y_start + i * m2_y_step
-        add_box(f"Mat_heatsink_M2_{i}",
-                dims=m2_dims,
-                location=(-PCB_W * 0.18, y, PCB_THICK / 2 + 0.003),
-                color=HEATSINK_COLOR, metallic=0.80, roughness=0.22)
-
-    # 7. IO shield (left edge of board, vertical stack of USB/network ports)
-    add_box("Mat_ioshield_IOShield",
-            dims=(0.030, 0.110, 0.018),
-            location=(io_x, socket_y + 0.05, PCB_THICK / 2 + 0.009),
-            color=(0.13, 0.13, 0.15), metallic=0.7, roughness=0.30)
-
-# 8. OLED LiveDash screen — SEPARATE face plane on top of left heatsink area.
-# This is the key piece: aurora_oled_atlas v1 extras tag the material so the
-# runtime reader animates an atlas PNG sequence at draw-time. The user gets a
-# REAL animated OLED display, not a baked still image.
-oled_w = 0.052  # ~2 inches
-oled_h = 0.026
+# 7. OLED LiveDash screen on left IO cover
+oled_w = 0.036
+oled_h = 0.052
 oled_obj, oled_mat = add_box("screen_oled_LiveDash",
                              dims=(oled_w, oled_h, 0.001),
-                             location=(io_x + 0.025, socket_y + 0.105,
-                                      PCB_THICK / 2 + 0.0185),
+                             location=(-PCB_W / 2 + 0.028, socket_y + 0.035,
+                                       PCB_THICK / 2 + 0.0305),
                              color=(0.02, 0.02, 0.02),
                              metallic=0.0, roughness=0.05,
-                             emission=(0.0, 0.85, 1.0),  # cyan boot screen
                              emission_strength=1.5)
 
 # Load the pre-baked OLED atlas PNG if the orchestrator forwarded one.
@@ -3035,24 +3011,17 @@ oled_mat["aurora_oled_atlas"] = {
     "loop": True,
 }
 
-if not HYBRID_MODE:
-    # 9. 24-pin ATX power connector (right edge top)
-    add_box("Mat_connector_ATX24",
-            dims=(0.026, 0.012, 0.014),
-            location=(PCB_W / 2 - 0.018, PCB_H * 0.32, PCB_THICK / 2 + 0.007),
-            color=(0.06, 0.06, 0.08), metallic=0.0, roughness=0.65)
+# 9. 24-pin ATX power connector (right edge top)
+add_box("Mat_connector_ATX24",
+        dims=(0.026, 0.012, 0.014),
+        location=(PCB_W / 2 - 0.018, PCB_H * 0.32, PCB_THICK / 2 + 0.007),
+        color=(0.06, 0.06, 0.08), metallic=0.0, roughness=0.65)
 
-    # 10. 12VHPWR PCIe connector (right edge mid)
-    add_box("Mat_connector_12VHPWR",
-            dims=(0.020, 0.010, 0.012),
-            location=(PCB_W / 2 - 0.014, PCB_H * 0.05, PCB_THICK / 2 + 0.006),
-            color=(0.06, 0.06, 0.08), metallic=0.0, roughness=0.65)
-
-    # 11. PCIe x16 slot (long horizontal slot below socket)
-    add_box("Mat_pcie_PCIe_x16",
-            dims=(PCB_W * 0.34, 0.010, 0.012),
-            location=(-PCB_W * 0.05, -PCB_H * 0.30, PCB_THICK / 2 + 0.006),
-            color=(0.32, 0.32, 0.34), metallic=0.05, roughness=0.55)
+# 10. 12VHPWR PCIe connector (right edge mid)
+add_box("Mat_connector_12VHPWR",
+        dims=(0.020, 0.010, 0.012),
+        location=(PCB_W / 2 - 0.014, PCB_H * 0.05, PCB_THICK / 2 + 0.006),
+        color=(0.06, 0.06, 0.08), metallic=0.0, roughness=0.65)
 
 # Centre origin so viewer auto-fit looks good
 bpy.ops.object.select_all(action="SELECT")
@@ -3095,6 +3064,10 @@ print(json.dumps({
 _historical_person_template = Path(__file__).with_name("proc_historical_person_performer.py")
 if _historical_person_template.is_file():
     PROCEDURAL_TEMPLATES["historical_person_performer"] = _historical_person_template.read_text(encoding="utf-8")
+
+_auto_landscape_template = Path(__file__).with_name("proc_auto_landscape.py")
+if _auto_landscape_template.is_file():
+    PROCEDURAL_TEMPLATES["auto_landscape"] = _auto_landscape_template.read_text(encoding="utf-8")
 
 
 VALIDATION_SCRIPT = '''

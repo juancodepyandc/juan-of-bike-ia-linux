@@ -17,7 +17,7 @@ import {
   ENTERPRISE_SYSTEMIC_GRAPH,
   type AttackPath,
   type GraphNode,
-} from '../../services/cyber/attackGraphEngine'
+} from '../../services/cyber/attackGraphEngine.ts'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

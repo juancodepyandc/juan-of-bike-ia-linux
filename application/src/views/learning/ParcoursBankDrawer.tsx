@@ -10,7 +10,7 @@
  * de générations accessible depuis le module.
  */
 import React, { useMemo } from 'react'
-import { useLearningSessionStore, type ParcoursBankEntry } from '../../stores/learningSessionStore'
+import { useLearningSessionStore, type ParcoursBankEntry } from '../../stores/learningSessionStore.ts'
 
 const GOLD = 'oklch(0.86 0.18 75)'
 const PANEL_BG = 'oklch(0.16 0.018 70 / 0.96)'

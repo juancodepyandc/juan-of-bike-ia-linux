@@ -18,15 +18,15 @@ import {
   Sparkles,
   Zap,
 } from 'lucide-react'
-import MarkdownPro from '../../components/MarkdownPro'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+import MarkdownPro from '../../components/MarkdownPro.tsx'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 import {
   DEEP_REASONING_PRESETS,
   DEEP_REASONING_PROMPT_SYSTEM,
   type CyberInvestigationScenario,
-} from '../../services/cyber/cyberDeepReasoning'
-import { ollamaChatStream } from '../../hooks/useTauri'
-import { useAppStore } from '../../stores/appStore'
+} from '../../services/cyber/cyberDeepReasoning.ts'
+import { ollamaChatStream } from '../../hooks/useTauri.ts'
+import { useAppStore } from '../../stores/appStore.ts'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

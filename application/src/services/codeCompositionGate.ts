@@ -250,14 +250,57 @@ export function buildCompositionCritique(failed: CompositionCheck[]): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Plages Unicode des pictogrammes. On ignore volontairement les symboles
- * typographiques courants (fleches, puces) qui ne pretendent pas etre des
- * icones de produit.
+ * Detection des pictogrammes, en DEUX etages.
+ *
+ * L ancienne version enumerait des plages a la main
+ * (`1F300-1FAFF`, `2600-27BF`, `1F000-1F02F`). Mesure sur 28 glyphes:
+ * elle RATAIT les emoji vivant hors de ces plages — `⭐` (U+2B50, bloc
+ * Miscellaneous Symbols and Arrows), `▶️` (U+25B6 + VS16, bloc Geometric
+ * Shapes), `⌚` (U+231A), `⏰` (U+23F0), les drapeaux `🇫🇷` (paire
+ * d indicateurs regionaux U+1F1E6-1F1FF) et les keycaps `1️⃣` — tous des
+ * icones de pacotille de premier choix. Et elle signalait `✓` `✔` comme
+ * emoji alors que ce sont des dingbats typographiques.
+ *
+ * On s appuie desormais sur les proprietes Unicode, qui sont la definition
+ * normative (UTS #51), et non sur des bornes recopiees:
+ *
+ *   ETAGE 1 — vrais emoji. Un caractere dont la presentation PAR DEFAUT est
+ *   graphique (`Emoji_Presentation`), ou force en graphique par le selecteur
+ *   VS16 (`\uFE0F`), ou une paire d indicateurs regionaux. C est ce que le
+ *   navigateur affichera en couleur. `©` `®` `™` `€` `±` `°` `→` restent
+ *   propres: `Emoji_Presentation=No` et pas de VS16 — un entete de licence
+ *   `// © 2026` ne doit pas faire tomber la porte.
+ *
+ *   ETAGE 2 — glyphes typographiques employes EN GUISE d icone. `★ ☆ ✓ ✔ ▶`
+ *   ne sont pas des emoji (`Emoji=No` pour `★` et `✓`) mais quand ils
+ *   tiennent lieu d icone produit — le cas mesure au run 1061,
+ *   `{'★'.repeat(rating)}` — c est la meme pauvrete visuelle. Liste fermee
+ *   et explicite: on ne veut pas rafler la typographie legitime.
  */
-const EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}]/gu
-/** Meme jeu de plages, SANS le drapeau global: `.test()` sur un regex global
- * avance `lastIndex` et rend le resultat dependant de l appel precedent. */
-const EMOJI_ANYWHERE_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}]/u
+const EMOJI_SOURCE = '\\p{Emoji_Presentation}|\\p{Emoji}\\uFE0F|[\\u{1F1E6}-\\u{1F1FF}]{2}'
+
+/** Glyphes non-emoji utilises comme icones de substitution (etage 2). */
+const FAUX_ICON_SOURCE = '[\\u2605\\u2606\\u2713\\u2714\\u2717\\u2718\\u25B6\\u25C0\\u25CF\\u25CB\\u25A0\\u25A1\\u2666\\u2665\\u2660\\u2663\\u266A\\u266B\\u2022\\u25AA\\u25AB]'
+
+const PICTOGRAM_SOURCE = `(?:${EMOJI_SOURCE}|${FAUX_ICON_SOURCE})`
+
+/** Avec le drapeau global — pour `matchAll` / `replace`. */
+const EMOJI_RE = new RegExp(PICTOGRAM_SOURCE, 'gu')
+/** SANS le drapeau global: `.test()` sur un regex global avance `lastIndex`
+ * et rend le resultat dependant de l appel precedent. */
+const EMOJI_ANYWHERE_RE = new RegExp(PICTOGRAM_SOURCE, 'u')
+
+/** Etage 1 seul: vrai emoji au sens UTS #51 (rendu en couleur par le navigateur). */
+const TRUE_EMOJI_RE = new RegExp(EMOJI_SOURCE, 'u')
+
+/**
+ * Le texte contient-il un VRAI emoji (etage 1) ? Distinct de
+ * `containsPictographicEmoji`, qui accepte aussi les dingbats de l etage 2.
+ * Utile quand on veut refuser l emoji sans toucher a `★`.
+ */
+export function containsTrueEmoji(text: string): boolean {
+  return TRUE_EMOJI_RE.test(text)
+}
 
 /**
  * Le texte contient-il un pictogramme, OU QUE CE SOIT ?

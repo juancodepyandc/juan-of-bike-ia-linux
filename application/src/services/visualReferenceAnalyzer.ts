@@ -1,4 +1,4 @@
-import { ollamaChat } from '../hooks/useTauri'
+import { ollamaChat } from '../hooks/useTauri.ts'
 
 export type ReferenceEntity = {
   label: string

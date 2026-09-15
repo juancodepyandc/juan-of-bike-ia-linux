@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
-import type { VoiceLivePhase } from '../hooks/useVoiceLive'
+import type { VoiceLivePhase } from '../hooks/useVoiceLive.ts'
 
 interface Props {
   phase: VoiceLivePhase

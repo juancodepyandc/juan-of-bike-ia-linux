@@ -1,7 +1,7 @@
 // auroraExpertPrompts.ts — centralised principal-engineer-grade system
 // prompts for every Aurora module. Each module's orchestrator can opt-in:
 //
-//   import { EXPERT } from '../services/auroraExpertPrompts'
+//   import { EXPERT } from '../services/auroraExpertPrompts.ts'
 //   const sys = EXPERT.code.system  // or .image / .voice / .video / ...
 //
 // The prompts are written in the same voice across modules so the user

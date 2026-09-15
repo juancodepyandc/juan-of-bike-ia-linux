@@ -1,5 +1,5 @@
-import { ollamaGenerate } from '../hooks/useTauri'
-import { DEFAULT_CODE_MODEL } from '../config/models'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import { DEFAULT_CODE_MODEL } from '../config/models.ts'
 
 /**
  * Generates a concise French session title (3-6 words) using the LLM.

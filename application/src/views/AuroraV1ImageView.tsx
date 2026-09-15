@@ -11,13 +11,13 @@
  */
 import { lazy, Suspense, useState, useEffect } from 'react'
 import { Brush, Download, Loader2, Maximize, Sparkles, StopCircle, X } from 'lucide-react'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useImageViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import FavoriteButton from '../components/FavoriteButton'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import SessionSwitcher from '../components/SessionSwitcher'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useImageViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import FavoriteButton from '../components/FavoriteButton.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
 
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
 

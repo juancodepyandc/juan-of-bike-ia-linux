@@ -15,12 +15,12 @@ import {
   fsMkdir,
   runWorkspaceCommand,
   getWorkspacePath,
-} from '../hooks/useTauri'
-import { isTauriRuntime, getBridgeUrl } from '../utils/runtime'
+} from '../hooks/useTauri.ts'
+import { isTauriRuntime, getBridgeUrl } from '../utils/runtime.ts'
 import { MAIN_FALLBACK_MODEL } from '../config/models.ts'
-import { searchWeb } from './auroraExtensionBridge'
-import { SAFETY_LIMITS } from './coworkSafety'
-import type { CoworkAction, CoworkActionResult, CoworkRuntime } from './coworkTypes'
+import { searchWeb } from './auroraExtensionBridge.ts'
+import { SAFETY_LIMITS } from './coworkSafety.ts'
+import type { CoworkAction, CoworkActionResult, CoworkRuntime } from './coworkTypes.ts'
 
 // ---------------------------------------------------------------------------
 // Public dispatcher
@@ -96,6 +96,35 @@ async function dispatch(
 
     case 'dom_query':
       return runDomQuery(action.selector, action.attribute)
+
+    case 'ephemeral_tool': {
+      const { runEphemeralToolSandbox } = await import('./ephemeralToolRunner')
+      const res = await runEphemeralToolSandbox({
+        name: action.toolName,
+        packages: action.packages,
+        scriptCode: action.scriptCode,
+        autoCleanup: action.autoCleanup !== false,
+        timeoutSeconds: action.timeoutSeconds,
+      })
+      return {
+        ok: res.ok,
+        output: res.ok
+          ? `Outil éphémère exécuté avec succès (${res.elapsedSeconds}s, ${res.producedFiles.length} fichier(s) généré(s), nettoyage=${res.cleanedUp}).\nSortie :\n${res.stdout}`
+          : `Erreur outil éphémère :\n${res.stderr || res.error}`,
+        data: res,
+      }
+    }
+
+    case 'file_bundle': {
+      const { emitModuleFiles } = await import('./moduleFileExchange')
+      const emitted = await emitModuleFiles(action.moduleTarget, action.files)
+      return {
+        ok: true,
+        output: `${emitted.length} fichier(s) émis pour le module ${action.moduleTarget} :\n` +
+          emitted.map((e) => `- ${e.filename} (${e.byteLength} o) -> ${e.targetPath}`).join('\n'),
+        data: { emitted },
+      }
+    }
 
     case 'think':
       // Pure reasoning — surface the thought via output. Cheap & deterministic.
@@ -772,8 +801,8 @@ async function synthesizeKokoroTts(text: string, runtime: CoworkRuntime): Promis
     try {
       const { runPythonScript, getWorkspacePath, fsReadBinary } = await import('../hooks/useTauri')
       const wp = await getWorkspacePath()
-      const tmpInput = `${wp}/output/cowork_tts_${Date.now()}.txt`
-      const tmpOutput = `${wp}/output/cowork_tts_${Date.now()}.wav`
+      const tmpInput = `${wp}/output/voix/cowork_tts_${Date.now()}.txt`
+      const tmpOutput = `${wp}/output/voix/cowork_tts_${Date.now()}.wav`
       const { fsWriteText } = await import('../hooks/useTauri')
       await fsWriteText(tmpInput, text)
       const out = await runPythonScript(

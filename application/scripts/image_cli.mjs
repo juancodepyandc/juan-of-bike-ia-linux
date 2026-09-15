@@ -129,9 +129,23 @@ async function queueAndWait(comfyUrl, workflow, timeoutMs = 30 * 60 * 1000) {
 }
 
 async function uploadReference(comfyUrl, refPath) {
-  const bytes = readFileSync(refPath)
+  let bytes
+  let name = 'reference.png'
+  let mime = 'image/png'
+
+  if (typeof refPath === 'string' && (refPath.startsWith('data:image/') || (refPath.length > 200 && !refPath.includes('\n') && !refPath.startsWith('/') && !refPath.includes(':') && !refPath.includes('\\')))) {
+    const b64Data = refPath.includes('base64,') ? refPath.split('base64,')[1] : refPath
+    bytes = Buffer.from(b64Data, 'base64')
+    name = `ref_${Date.now()}.png`
+    mime = 'image/png'
+  } else {
+    bytes = readFileSync(refPath)
+    name = basename(refPath)
+    mime = contentType(refPath)
+  }
+
   const form = new FormData()
-  form.append('image', new Blob([bytes], { type: contentType(refPath) }), basename(refPath))
+  form.append('image', new Blob([bytes], { type: mime }), name)
   form.append('overwrite', 'true')
   return comfy(comfyUrl, '/upload/image', { method: 'POST', body: form }).then((r) => r.json())
 }
@@ -481,9 +495,24 @@ async function main() {
   const steps = numberOpt(args.steps, 28)
   const seed = args.seed === undefined ? null : numberOpt(args.seed, null)
   const style = args.style || 'none'
-  const negative = args.negative || ''
-  const refPath = args.ref ? resolve(args.ref) : null
-  const ref2Path = args.ref2 ? resolve(args.ref2) : null
+  // `negative` etait UTILISE (buildNegativePrompt ligne ~672, negativeHints
+  // ligne ~714) mais jamais DECLARE : chaque generation d'image levait
+  // `ReferenceError: negative is not defined`. Le module etait casse a
+  // 100 % des appels, aussi bien en ligne de commande que par le pont
+  // (`/api/aurora/image/generate` rendait HTTP 500), et l'option `--negative`
+  // documentee dans l'aide ligne 46 n'avait aucun effet possible.
+  const negative = String(args.negative || '').trim()
+  function resolveInputRef(raw) {
+    if (!raw) return null
+    const s = String(raw).trim()
+    if (!s) return null
+    if (s.startsWith('data:image/') || (s.length > 200 && !s.includes('\n') && !s.startsWith('/') && !s.includes(':') && !s.includes('\\'))) {
+      return s
+    }
+    return resolve(s)
+  }
+  const refPath = resolveInputRef(args.ref)
+  const ref2Path = resolveInputRef(args.ref2)
   const stitchDirection = args['stitch-direction'] || 'right'
   if (!['right', 'down', 'left', 'up'].includes(stitchDirection)) {
     throw new Error(`--stitch-direction invalide: ${stitchDirection} (right|down|left|up)`)

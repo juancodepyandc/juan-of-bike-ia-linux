@@ -288,6 +288,48 @@ export interface ChatMessage {
   pinned?: boolean
   /** Set when the user has edited the content after creation. */
   edited?: boolean
+  /**
+   * Sites réellement consultés pour produire cette réponse.
+   *
+   * Sans ça une réponse « sourcée » n'était qu'une promesse dans le prompt
+   * système : le modèle disait avoir cherché sur le web alors que la seule
+   * « recherche » était une introspection de ses propres poids. Les sources
+   * sont attachées au message, pas au run, pour survivre au rechargement.
+   */
+  sources?: WebSource[]
+  /** Requêtes envoyées au moteur pour ce tour (visible dans le panneau). */
+  searchQueries?: string[]
+}
+
+/**
+ * Une ressource web consultée : page, image ou vidéo.
+ *
+ * `status` sert au rendu en direct — la carte apparaît dès que le moteur a
+ * renvoyé le lien (`found`), passe en `reading` pendant l'extraction de la
+ * page, puis `read`. Un `failed` reste affiché : un site injoignable est une
+ * information, l'effacer ferait croire qu'il n'a jamais été tenté.
+ */
+export interface WebSource {
+  id: string
+  url: string
+  domain: string
+  title: string
+  snippet: string
+  kind: 'page' | 'image' | 'video'
+  status: 'found' | 'reading' | 'read' | 'failed'
+  /** Requête qui a fait remonter cette source. */
+  query?: string
+  /** Vignette (image trouvée, miniature vidéo). */
+  thumb?: string
+  /** Page d'origine d'une image (crédit / licence). */
+  sourcePage?: string
+  /** Licence déclarée par le fournisseur d'images. */
+  license?: string
+  /** Texte extrait de la page, tronqué. Absent tant que status !== 'read'. */
+  content?: string
+  /** Rang de citation utilisé dans la réponse ([1], [2]...). */
+  rank?: number
+  fetchedAt: number
 }
 
 export type AssistantStage =
@@ -355,4 +397,8 @@ export interface AssistantRunState {
   verification: AssistantTurnVerification | null
   timeline: AssistantTimelineItem[]
   lastError: string | null
+  /** Sources du tour en cours, mises à jour au fil de la recherche. */
+  sources: WebSource[]
+  /** Requêtes envoyées au moteur pour le tour en cours. */
+  searchQueries: string[]
 }

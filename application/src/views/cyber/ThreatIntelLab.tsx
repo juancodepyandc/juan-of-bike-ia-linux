@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Clock, Radar, Search, Shield } from 'lucide-react'
-import { parseIocs, summariseIocs, type Ioc } from '../../services/cyber/iocParser'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+import { parseIocs, summariseIocs, type Ioc } from '../../services/cyber/iocParser.ts'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 type Tab = 'cve' | 'mitre' | 'timeline' | 'nist' | 'osint' | 'ioc'
 

@@ -1,8 +1,8 @@
 import { startTransition, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { CorrectionPass } from '../services/codeAutoCorrection'
-import type { CodeFile, FollowUpAnalysis } from '../services/codeOrchestrator'
-import type { CodeSandboxResult } from '../services/codeSandbox'
-import type { RecoveryEvent } from '../services/ollamaResilience'
+import type { CorrectionPass } from '../services/codeAutoCorrection.ts'
+import type { CodeFile, FollowUpAnalysis } from '../services/codeOrchestrator.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
+import type { RecoveryEvent } from '../services/ollamaResilience.ts'
 
 type CallbackDeps = {
   setPhase: (detail: string, progress: number) => void

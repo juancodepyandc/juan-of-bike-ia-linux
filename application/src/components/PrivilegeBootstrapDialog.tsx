@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ShieldAlert, ShieldCheck, Zap } from 'lucide-react'
-import type { HostPrivilegeStatus } from '../types/app'
+import type { HostPrivilegeStatus } from '../types/app.ts'
 
 type Props = {
   visible: boolean

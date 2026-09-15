@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAppStore } from '../../stores/appStore'
-import { useCodeStreamStore } from '../../stores/codeStreamStore'
-import type { ModuleId } from '../../types/app'
-import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus'
-import { watchComfyProgress } from './comfyProgress'
-import AuroraMascot, { FX_AGENTS } from './mascots'
-import { FX_SCENES, type SceneDraw } from './scenes'
+import { useAppStore } from '../../stores/appStore.ts'
+import { useCodeStreamStore } from '../../stores/codeStreamStore.ts'
+import type { ModuleId } from '../../types/app.ts'
+import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus.ts'
+import { watchComfyProgress } from './comfyProgress.ts'
+import AuroraMascot, { FX_AGENTS } from './mascots.tsx'
+import { FX_SCENES, type SceneDraw } from './scenes.ts'
 
 const REVEAL_MS = 2600
 
@@ -39,19 +39,76 @@ const CODE_PHASE_INDEX: Record<string, number> = {
   idle: 0, planning: 1, research: 2, brand: 2, streaming: 3, validation: 4, done: 6, error: 6,
 }
 
+const MODULE_PHASE_RANGES: Partial<Record<FxModule, [number, number][]>> = {
+  '3d': [
+    [0.00, 0.15], // 0: Analyse
+    [0.15, 0.40], // 1: Référence photo
+    [0.40, 0.70], // 2: Sculpture 3D
+    [0.70, 0.85], // 3: Matériaux & zones
+    [0.85, 0.95], // 4: Animation
+    [0.95, 1.00], // 5: Finalisation
+  ],
+}
+
 function phaseIndexFor(module: FxModule, entry: FxEntry, now: number): { idx: number; simProg: number } {
   const phases = FX_SCENES[module].phases
-  const elapsed = now - entry.startedAt
-  const simProg = typeof entry.progress === 'number'
-    ? Math.max(0, Math.min(1, entry.progress))
-    : Math.min(0.96, 1 - Math.exp(-elapsed / 42000))
+  const ranges = MODULE_PHASE_RANGES[module]
+  let idx = 0
+
   if (entry.phase) {
     const needle = entry.phase.toLowerCase()
     const direct = phases.findIndex((p) => needle.includes(p.toLowerCase()) || p.toLowerCase().includes(needle))
-    if (direct >= 0) return { idx: direct, simProg }
-    if (module === 'code' && CODE_PHASE_INDEX[needle] !== undefined) return { idx: CODE_PHASE_INDEX[needle], simProg }
+    if (direct >= 0) {
+      idx = direct
+    } else if (module === 'code' && CODE_PHASE_INDEX[needle] !== undefined) {
+      idx = CODE_PHASE_INDEX[needle]
+    } else if (typeof entry.progress === 'number' && ranges) {
+      const p = Math.max(0, Math.min(1, entry.progress))
+      const matchedIdx = ranges.findIndex(([start, end]) => p >= start && p < end)
+      if (matchedIdx >= 0) idx = matchedIdx
+    }
+  } else if (typeof entry.progress === 'number' && ranges) {
+    const p = Math.max(0, Math.min(1, entry.progress))
+    const matchedIdx = ranges.findIndex(([start, end]) => p >= start && p < end)
+    if (matchedIdx >= 0) idx = matchedIdx
+  } else {
+    const elapsed = now - entry.startedAt
+    const rawProg = Math.min(0.96, 1 - Math.exp(-elapsed / 45000))
+    idx = Math.min(phases.length - 1, Math.floor(rawProg * phases.length))
   }
-  return { idx: Math.min(phases.length - 1, Math.floor(simProg * phases.length)), simProg }
+
+  idx = Math.max(0, Math.min(phases.length - 1, idx))
+
+  let simProg = 0
+  if (ranges && ranges[idx]) {
+    const [phaseStart, phaseEnd] = ranges[idx]
+    const phaseSpan = phaseEnd - phaseStart
+    if (typeof entry.progress === 'number') {
+      const p = Math.max(0, Math.min(1, entry.progress))
+      if (p >= phaseStart && p <= phaseEnd) {
+        simProg = p
+      } else if (p <= 1) {
+        simProg = phaseStart + p * phaseSpan
+      } else {
+        simProg = Math.max(phaseStart, Math.min(phaseEnd, p / 100))
+      }
+    } else {
+      const elapsedInPhase = Math.max(0, now - entry.startedAt)
+      const subProg = 1 - Math.exp(-elapsedInPhase / 20000)
+      simProg = phaseStart + subProg * phaseSpan * 0.96
+    }
+  } else {
+    const phaseSpan = 1 / phases.length
+    const phaseStart = idx * phaseSpan
+    if (typeof entry.progress === 'number') {
+      simProg = Math.max(0, Math.min(1, entry.progress))
+    } else {
+      const elapsed = now - entry.startedAt
+      simProg = Math.min(0.96, phaseStart + (1 - Math.exp(-elapsed / 25000)) * phaseSpan)
+    }
+  }
+
+  return { idx, simProg: Math.max(0, Math.min(1, simProg)) }
 }
 
 function FxCanvas({ module, entry }: { module: FxModule; entry: FxEntry }) {
@@ -256,11 +313,13 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
           </div>
         ) : (
           <div style={{
-            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#5A6377', fontSize: 12, letterSpacing: '.25em',
+            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            color: accent, fontSize: 12, letterSpacing: '.2em',
             fontFamily: "'Cascadia Code',Consolas,monospace",
-            animation: 'aurora-fx-wait 2.2s ease-in-out infinite',
-          }}>EN ATTENTE DU DÉMARRAGE…</div>
+            textShadow: `0 0 12px ${accent}66`,
+          }}>
+            <span style={{ animation: 'aurora-fx-wait 2s ease-in-out infinite' }}>SCULPTURE 3D EN DIRECT · FORMATION DU MAILLAGE…</span>
+          </div>
         )}
       </div>
       {lastReject && (
@@ -303,13 +362,9 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
       style={{
         position: 'fixed', inset: 0,
         width: '100%', height: '100%',
-        // Une question ouverte VERROUILLE l'ecran: sans cela un clic
-        // traversait vers l'interface en dessous (constate: un clic aveugle a
-        // ouvert un selecteur de fichiers pendant une clarification).
-        zIndex: 118, pointerEvents: entry.ask ? 'auto' : 'none',
+        zIndex: 99999, pointerEvents: 'auto',
         overflow: 'hidden',
-        background: 'rgba(4,6,11,.97)',
-        backdropFilter: 'blur(14px)',
+        background: '#04060b',
         boxShadow: `inset 0 0 120px ${agent.accent}18`,
         animation: 'aurora-fx-in .5s cubic-bezier(.22,1,.36,1)',
       }}
@@ -399,8 +454,8 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         }}>{scene.says[sayIdx]}</span>
       </div>
       )}
-      <div style={{ position: 'absolute', left: 48, right: 48, bottom: 36, fontFamily: "'Cascadia Code',Consolas,monospace", pointerEvents: 'none' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+      <div style={{ position: 'absolute', left: 48, right: 48, bottom: 28, fontFamily: "'Cascadia Code',Consolas,monospace", pointerEvents: 'none' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
           <span style={{ fontSize: 10, letterSpacing: '.32em', color: '#8B93A7' }}>
             {module.toUpperCase()} · {agent.name.toUpperCase()} TRAVAILLE
           </span>
@@ -408,29 +463,63 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
             {Math.floor(simProg * 100)}%
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
-          {scene.phases.map((p, i) => (
-            <span
-              key={p}
-              style={{
-                fontSize: 10, padding: '4px 10px', borderRadius: 999,
-                border: `1px solid ${i === idx ? agent.accent : 'rgba(255,255,255,.1)'}`,
-                color: i < idx ? '#E6EAF5' : i === idx ? '#fff' : '#5A6377',
-                background: i === idx ? `${agent.accent}24` : 'rgba(255,255,255,.02)',
-                boxShadow: i === idx ? `0 0 14px ${agent.accent}55` : 'none',
-                transition: 'all .4s',
-              }}
-            >
-              {i < idx ? '✓ ' : ''}{p}
-            </span>
-          ))}
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${scene.phases.length}, minmax(0, 1fr))`, gap: 6, marginBottom: 10 }}>
+          {scene.phases.map((p, i) => {
+            const isDone = i < idx
+            const isCurrent = i === idx
+            let phaseFill = 0
+            if (isDone) phaseFill = 100
+            else if (isCurrent) {
+              const ranges = MODULE_PHASE_RANGES[module]
+              if (ranges && ranges[i]) {
+                const [start, end] = ranges[i]
+                phaseFill = Math.max(5, Math.min(100, Math.round(((simProg - start) / (end - start)) * 100)))
+              } else {
+                phaseFill = Math.max(10, Math.min(100, Math.round((simProg * scene.phases.length - i) * 100)))
+              }
+            }
+            return (
+              <div
+                key={p}
+                style={{
+                  display: 'flex', flexDirection: 'column', gap: 3,
+                  padding: '5px 8px', borderRadius: 8,
+                  border: `1px solid ${isCurrent ? agent.accent : isDone ? 'rgba(74,222,128,.35)' : 'rgba(255,255,255,.08)'}`,
+                  background: isCurrent ? `${agent.accent}18` : isDone ? 'rgba(74,222,128,.06)' : 'rgba(255,255,255,.02)',
+                  boxShadow: isCurrent ? `0 0 16px ${agent.accent}44` : 'none',
+                  transition: 'all .3s ease',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{
+                    fontSize: 9.5, fontWeight: isCurrent ? 700 : 500,
+                    color: isDone ? '#4ADE80' : isCurrent ? '#fff' : '#6B7280',
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {isDone ? '✓ ' : ''}{p}
+                  </span>
+                  <span style={{ fontSize: 9, color: isDone ? '#4ADE80' : isCurrent ? agent.accent : '#4B5563', fontWeight: 600 }}>
+                    {isDone ? '100%' : isCurrent ? `${phaseFill}%` : '0%'}
+                  </span>
+                </div>
+                <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
+                  <div style={{
+                    height: '100%', width: `${phaseFill}%`,
+                    background: isDone ? '#4ADE80' : `linear-gradient(90deg, ${agent.accent}, #fff)`,
+                    boxShadow: isCurrent ? `0 0 8px ${agent.accent}` : 'none',
+                    transition: 'width .25s ease',
+                  }} />
+                </div>
+              </div>
+            )
+          })}
         </div>
         {entry.phase && (
-          <div style={{ fontSize: 11, color: '#B7C0D4', marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {entry.phase}
+          <div style={{ fontSize: 11, color: '#B7C0D4', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span style={{ color: agent.accent }}>›</span> {entry.phase}
           </div>
         )}
-        <div style={{ height: 3, borderRadius: 3, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
+        <div style={{ height: 4, borderRadius: 4, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
           <i style={{
             display: 'block', height: '100%', width: `${simProg * 100}%`,
             background: `linear-gradient(90deg, ${agent.accent}, #fff8)`,

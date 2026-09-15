@@ -9,10 +9,10 @@
  * symmetry, undo/redo, IDB persistence, FLUX render via Aurora-Connect,
  * drying-line gallery, download PNG.
  */
-import { useDrawingViewLogic, PALETTE } from '../hooks/useDrawingViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import { useDrawingViewLogic, PALETTE } from '../hooks/useDrawingViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 
 const PAPER = '#faf2e0'
 const INK = '#2a1f15'

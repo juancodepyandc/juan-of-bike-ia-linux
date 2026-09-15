@@ -12,14 +12,14 @@
  */
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { HelpCircle, Loader2, RefreshCw, ShieldCheck, Sparkles, Target, Wand2, X, Zap } from 'lucide-react'
-import { useCyberViewLogic, computeBelt } from '../hooks/useCyberViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import { useAchievementToasts } from '../hooks/useAchievementToasts'
-import Sparkline from '../components/Sparkline'
-import TextPreviewExpander from '../components/TextPreviewExpander'
-import LyraCharacter from '../components/voice/LyraCharacter'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import { useCyberViewLogic, computeBelt } from '../hooks/useCyberViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { useAchievementToasts } from '../hooks/useAchievementToasts.ts'
+import Sparkline from '../components/Sparkline.tsx'
+import TextPreviewExpander from '../components/TextPreviewExpander.tsx'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 const AchievementsPanel = lazy(() => import('../components/AchievementsPanel'))
 const CyberWeeklyChallenges = lazy(() => import('../components/CyberWeeklyChallenges'))
 

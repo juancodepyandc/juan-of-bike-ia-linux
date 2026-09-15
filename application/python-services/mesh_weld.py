@@ -88,6 +88,34 @@ for ob in meshes:
     # remove_doubles fusionne les sommets mais garde les loops distincts, donc les
     # UV des coutures ne sont pas moyennees).
     bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=DIST)
+    # Prune tiny floating disconnected islands (< 0.5% of largest component or < 50 verts)
+    seen = set()
+    components = []
+    for v in bm.verts:
+        if v.index in seen:
+            continue
+        comp = []
+        stack = [v]
+        while stack:
+            w = stack.pop()
+            if w.index in seen:
+                continue
+            seen.add(w.index)
+            comp.append(w)
+            for e in w.link_edges:
+                o = e.other_vert(w)
+                if o.index not in seen:
+                    stack.append(o)
+        components.append(comp)
+    if len(components) > 1:
+        largest_size = max(len(c) for c in components)
+        thresh = max(50, int(largest_size * 0.005))
+        to_delete = []
+        for c in components:
+            if len(c) < thresh:
+                to_delete.extend(c)
+        if to_delete:
+            bmesh.ops.delete(bm, geom=to_delete, context='VERTS')
     bm.to_mesh(me); bm.free()
     me.update()
     total_after += len(me.vertices)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useAppStore } from '../stores/appStore'
-import { fsExists, getWorkspacePath } from '../hooks/useTauri'
-import { getRuntimeLabel, isCloudRuntime, isTauriRuntime } from '../utils/runtime'
+import { useAppStore } from '../stores/appStore.ts'
+import { fsExists, getWorkspacePath } from '../hooks/useTauri.ts'
+import { getRuntimeLabel, isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
 
 export type StudioRequirementTone = 'good' | 'warn' | 'default'
 

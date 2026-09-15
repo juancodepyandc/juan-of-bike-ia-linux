@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import { BlockMath, InlineMath } from 'react-katex'
 import 'katex/dist/katex.min.css'
-import MarkdownPro from '../MarkdownPro'
+import MarkdownPro from '../MarkdownPro.tsx'
 import {
   computeXpReward,
   getSimulationLoader,
@@ -23,9 +23,9 @@ import {
   type SimulationId,
   type Tutorial,
   type TutorialStep,
-} from '../../services/learning/tutorialEngine'
-import { useTutorialStore } from '../../stores/tutorialStore'
-import { useGamificationStore } from '../../stores/gamificationStore'
+} from '../../services/learning/tutorialEngine.ts'
+import { useTutorialStore } from '../../stores/tutorialStore.ts'
+import { useGamificationStore } from '../../stores/gamificationStore.ts'
 
 type Props = {
   tutorial: Tutorial

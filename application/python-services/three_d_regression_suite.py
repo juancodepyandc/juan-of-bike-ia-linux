@@ -138,7 +138,7 @@ def _case_definitions() -> list[RegressionCase]:
                 "must_search_or_supply_reference": False,
                 "query": "belt drive pulley mechanism 2:1 ratio reference",
             },
-            default_fixture="application/public/_pbr_test/pbr_pulley_proc.glb",
+            default_fixture="application/output/3d/proc_pulley/pbr_pulley_proc.glb",
             strict_mesh_kind="mechanism",
         ),
         RegressionCase(
@@ -206,7 +206,7 @@ def _case_definitions() -> list[RegressionCase]:
                 "must_search_or_supply_reference": False,
                 "query": "realistic original humanoid full body front back side reference",
             },
-            default_fixture="application/public/_pbr_test/pbr_viking_proc.glb",
+            default_fixture="application/output/3d/proc_viking_longhouse_feast/pbr_viking_proc.glb",
             strict_mesh_kind="character",
         ),
         RegressionCase(

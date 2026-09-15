@@ -1,97 +1,113 @@
-// This module provides server-side temporary session storage utilities.
-// It may be imported on the frontend during bundling; to avoid breaking the
-// build we export safe no-op stubs when Node's FS API is unavailable.
-
-let isNode = false
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node)
-} catch {
-  isNode = false
+// Node utilities. Browser callers must use the session endpoints on the bridge.
+function nodeModules() {
+  if (typeof process === 'undefined' || !process.getBuiltinModule) {
+    throw new Error('Temporary session storage requires Node 22+; use the bridge in a browser.')
+  }
+  return {
+    fs: process.getBuiltinModule('node:fs'),
+    path: process.getBuiltinModule('node:path'),
+  }
 }
 
-if (!isNode) {
-  // Browser-friendly stubs: throw informative errors when called.
-  const err = (fnName: string) => () => { throw new Error(`${fnName} is not available in the browser runtime. Use the bridge backend instead.`) }
+function baseDir(): string {
+  const { path } = nodeModules()
+  const cwd = process.cwd()
+  return path.basename(cwd) === 'application'
+    ? path.join(cwd, 'temp-sessions')
+    : path.join(cwd, 'application', 'temp-sessions')
+}
 
-  export const sessionDir = err('sessionDir') as unknown as (s: string) => string
-  export const ensureSessionDir = err('ensureSessionDir') as unknown as (s: string) => Promise<string>
-  export const writeTempFile = err('writeTempFile') as unknown as (s: string, f: string, c: string | Buffer) => Promise<string>
-  export const readTempFile = err('readTempFile') as unknown as (s: string, f: string) => Promise<Buffer>
-  export const listTempFiles = err('listTempFiles') as unknown as (s: string) => Promise<string[]>
-  export const removeSessionDir = err('removeSessionDir') as unknown as (s: string) => Promise<void>
-  export const cleanupOlderThan = err('cleanupOlderThan') as unknown as (d: number) => Promise<string[]>
+export function sessionDir(sessionId: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) throw new Error('Invalid session id')
+  return nodeModules().path.join(baseDir(), sessionId)
+}
 
-} else {
-  // Node implementation
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fs = require('fs')
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const path = require('path')
-
-  const BASE_DIR = path.join(process.cwd(), 'application', 'temp-sessions')
-
-  function ensureBaseDir(): void {
-    if (!fs.existsSync(BASE_DIR)) fs.mkdirSync(BASE_DIR, { recursive: true })
+function filePath(sessionId: string, filename: string): string {
+  if (!filename || /[\\/\x00-\x1f]/.test(filename) || filename === '.' || filename === '..') {
+    throw new Error('Invalid session filename')
   }
+  return nodeModules().path.join(sessionDir(sessionId), filename)
+}
 
-  export function sessionDir(sessionId: string): string {
-    ensureBaseDir()
-    return path.join(BASE_DIR, sessionId)
+async function rejectSymlink(path: string): Promise<void> {
+  try {
+    if ((await nodeModules().fs.promises.lstat(path)).isSymbolicLink()) {
+      throw new Error('Session storage does not follow symbolic links')
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
+}
 
-  export async function ensureSessionDir(sessionId: string): Promise<string> {
-    const dir = sessionDir(sessionId)
-    await fs.promises.mkdir(dir, { recursive: true })
-    return dir
+export async function ensureSessionDir(sessionId: string): Promise<string> {
+  const dir = sessionDir(sessionId)
+  await rejectSymlink(baseDir())
+  await rejectSymlink(dir)
+  await nodeModules().fs.promises.mkdir(dir, { recursive: true })
+  return dir
+}
+
+export async function writeTempFile(sessionId: string, filename: string, content: string | Uint8Array): Promise<string> {
+  const target = filePath(sessionId, filename)
+  await ensureSessionDir(sessionId)
+  await rejectSymlink(target)
+  const { fs } = nodeModules()
+  const handle = await fs.promises.open(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW, 0o600)
+  try {
+    await handle.writeFile(content)
+  } finally {
+    await handle.close()
   }
+  return target
+}
 
-  export async function writeTempFile(sessionId: string, filename: string, content: string | Buffer): Promise<string> {
-    const dir = await ensureSessionDir(sessionId)
-    const safeName = path.basename(filename)
-    const filePath = path.join(dir, safeName)
-    await fs.promises.writeFile(filePath, content)
-    return filePath
+export async function readTempFile(sessionId: string, filename: string): Promise<Buffer> {
+  const target = filePath(sessionId, filename)
+  await rejectSymlink(baseDir())
+  await rejectSymlink(sessionDir(sessionId))
+  const { fs } = nodeModules()
+  const handle = await fs.promises.open(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+  try {
+    return await handle.readFile()
+  } finally {
+    await handle.close()
   }
+}
 
-  export async function readTempFile(sessionId: string, filename: string): Promise<Buffer> {
-    const filePath = path.join(sessionDir(sessionId), path.basename(filename))
-    return fs.promises.readFile(filePath)
+export async function listTempFiles(sessionId: string): Promise<string[]> {
+  const dir = sessionDir(sessionId)
+  await rejectSymlink(baseDir())
+  await rejectSymlink(dir)
+  try {
+    return await nodeModules().fs.promises.readdir(dir)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
   }
+}
 
-  export async function listTempFiles(sessionId: string): Promise<string[]> {
-    const dir = sessionDir(sessionId)
-    try {
-      const files = await fs.promises.readdir(dir)
-      return files
-    } catch {
-      return []
+export async function removeSessionDir(sessionId: string): Promise<void> {
+  const dir = sessionDir(sessionId)
+  await rejectSymlink(baseDir())
+  await rejectSymlink(dir)
+  await nodeModules().fs.promises.rm(dir, { recursive: true, force: true })
+}
+
+export async function cleanupOlderThan(days: number): Promise<string[]> {
+  if (!Number.isFinite(days) || days <= 0) throw new Error('Retention must be a positive number of days')
+  const { fs, path } = nodeModules()
+  const base = baseDir()
+  await rejectSymlink(base)
+  await fs.promises.mkdir(base, { recursive: true })
+  const cutoff = Date.now() - days * 86_400_000
+  const removed: string[] = []
+  for (const entry of await fs.promises.readdir(base, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]+$/.test(entry.name)) continue
+    const stat = await fs.promises.lstat(path.join(base, entry.name))
+    if (!stat.isSymbolicLink() && stat.mtimeMs < cutoff) {
+      await removeSessionDir(entry.name)
+      removed.push(entry.name)
     }
   }
-
-  export async function removeSessionDir(sessionId: string): Promise<void> {
-    const dir = sessionDir(sessionId)
-    try {
-      await fs.promises.rm(dir, { recursive: true, force: true })
-    } catch {
-      // ignore
-    }
-  }
-
-  export async function cleanupOlderThan(days: number): Promise<string[]> {
-    ensureBaseDir()
-    const now = Date.now()
-    const cutoff = now - days * 86_400_000
-    const removed: string[] = []
-    const sessions = await fs.promises.readdir(BASE_DIR)
-    for (const sid of sessions) {
-      const stat = await fs.promises.stat(path.join(BASE_DIR, sid))
-      if (stat.mtime.getTime() < cutoff) {
-        await fs.promises.rm(path.join(BASE_DIR, sid), { recursive: true, force: true })
-        removed.push(sid)
-      }
-    }
-    return removed
-  }
-
+  return removed
 }

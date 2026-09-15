@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Brain,
@@ -57,27 +57,27 @@ import {
   Zap,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
-import LyraCharacter from './voice/LyraCharacter'
+import LyraCharacter from './voice/LyraCharacter.tsx'
 import remarkGfm from 'remark-gfm'
-import { isTauriRuntime } from '../utils/runtime'
+import { isTauriRuntime } from '../utils/runtime.ts'
 import {
   detectCoworkRuntime,
   getCoworkCapabilities,
   runCoworkPrompt,
-} from '../services/coworkPipeline'
+} from '../services/coworkPipeline.ts'
 import type {
   CoworkActionEvent,
   CoworkCapability,
   CoworkRuntime,
-} from '../services/coworkTypes'
-import { useCoworkStore } from '../stores/coworkStore'
-import { loadSettings, saveSettings } from '../services/coworkSettings'
+} from '../services/coworkTypes.ts'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import { loadSettings, saveSettings } from '../services/coworkSettings.ts'
 import {
   coworkEventToAgentState,
   deriveEtaMs,
   useAgentRuntimeStore,
-} from '../stores/agentRuntimeStore'
-import { appendConnectorOptInClicked, clearAuditLog, readAuditLog, filterAuditEntriesForChip, summariseOptInClicksByHost, listExtractHostsFromAuditEntries, OPTIN_CLICKED_REASON_MARKER, type CoworkAuditEntry, type AuditChipMode } from '../services/coworkAudit'
+} from '../stores/agentRuntimeStore.ts'
+import { appendConnectorOptInClicked, clearAuditLog, readAuditLog, filterAuditEntriesForChip, summariseOptInClicksByHost, listExtractHostsFromAuditEntries, OPTIN_CLICKED_REASON_MARKER, type CoworkAuditEntry, type AuditChipMode } from '../services/coworkAudit.ts'
 import {
   pinConnector,
   isConnectorPinned,
@@ -87,23 +87,23 @@ import {
   readPinnedConnectors,
   type PinConflictDescriptor,
   type PlannerConnectorRecommendation,
-} from '../services/coworkConnectorPin'
+} from '../services/coworkConnectorPin.ts'
 import {
   fetchDualSignalEffective,
   postDualSignalReset,
   fetchTrendSignalStats,
   postTrendSignalReset,
   type CoworkDualSignalEffective,
-} from '../services/coworkExtractionStats'
+} from '../services/coworkExtractionStats.ts'
 import {
   extractConnectorHintFromEventDetail,
   summariseConnectorHint,
   extractConnectorTargetFromHint,
-} from '../services/coworkConnectorPill'
-import CoworkConfirmDialog from './CoworkConfirmDialog'
-import CoworkSettingsDialog from './CoworkSettingsDialog'
-import CoworkExtractionStatsTile from './CoworkExtractionStatsTile'
-import CodeBlock from './CodeBlock'
+} from '../services/coworkConnectorPill.ts'
+import CoworkConfirmDialog from './CoworkConfirmDialog.tsx'
+import CoworkSettingsDialog from './CoworkSettingsDialog.tsx'
+import CoworkExtractionStatsTile from './CoworkExtractionStatsTile.tsx'
+import CodeBlock from './CodeBlock.tsx'
 import {
   artifactLabel,
   clearCoworkProjectThread,
@@ -114,7 +114,7 @@ import {
   updateCoworkProjectThreadFromEvents,
   type CoworkProjectArtifact,
   type CoworkProjectThread,
-} from '../services/coworkProjectThread'
+} from '../services/coworkProjectThread.ts'
 
 type CoworkOverlayProps = {
   open: boolean
@@ -1627,8 +1627,9 @@ export default function CoworkOverlay({ open, onClose }: CoworkOverlayProps) {
                             setSessionsList((prev) => [...prev, { id: resp.session!.id, title: resp.session!.title }])
                             setSelectedSessionId(resp.session!.id)
                           }
-                          if (resp?.warnings && resp.warnings.length > 0) {
-                            setEvents((prev) => [...prev, ...resp.warnings.map((w: string) => ({ kind: 'warn' as const, message: w, at: Date.now() }))])
+                          const warnings = resp?.warnings ?? []
+                          if (warnings.length > 0) {
+                            setEvents((prev) => [...prev, ...warnings.map((w: string) => ({ kind: 'warn' as const, message: w, at: Date.now() }))])
                             setShowAudit(true)
                           }
                         } catch (err) { setEvents((prev) => [...prev, { kind: 'error', message: String(err instanceof Error ? err.message : err), at: Date.now() }]) }
@@ -1656,8 +1657,9 @@ export default function CoworkOverlay({ open, onClose }: CoworkOverlayProps) {
                                 setSessionsList((prev) => prev.filter((s) => s.id !== idToRemove))
                                 if (selectedSessionId === idToRemove) setSelectedSessionId(null)
                               }
-                              if (resp?.warnings && resp.warnings.length > 0) {
-                                setEvents((prev) => [...prev, ...resp.warnings.map((w: string) => ({ kind: 'warn' as const, message: w, at: Date.now() }))])
+                              const warnings = resp?.warnings ?? []
+                              if (warnings.length > 0) {
+                                setEvents((prev) => [...prev, ...warnings.map((w: string) => ({ kind: 'warn' as const, message: w, at: Date.now() }))])
                                 setShowAudit(true)
                               }
                             } catch (err) { setEvents((prev) => [...prev, { kind: 'error', message: String(err instanceof Error ? err.message : err), at: Date.now() }]) }
@@ -4058,7 +4060,7 @@ function summariseEntry(entry: CoworkAuditEntry): string {
   switch (a.kind) {
     case 'read_file':       return a.path
     case 'list_dir':        return a.path
-    case 'write_file':      return `${a.path} (${a.content.length} octets)`
+    case 'write_file':      return `${a.path} (${new TextEncoder().encode(a.content).byteLength} octets)`
     case 'edit_file':       return a.path
     case 'delete_file':     return a.path
     case 'shell':           return `${a.command} ${(a.args ?? []).slice(0, 3).join(' ')}`
@@ -4079,6 +4081,8 @@ function summariseEntry(entry: CoworkAuditEntry): string {
     case 'screenshot_desktop': return `desktop ${a.quality ?? 'fast'}`
     case 'connector':       return `${a.connector}.${a.action}`
     case 'browser':         return `${a.operation}${a.payload?.selector ? ' ' + String(a.payload.selector).slice(0, 40) : ''}`
+    case 'ephemeral_tool':  return a.toolName
+    case 'file_bundle':     return `${a.moduleTarget} : ${a.files.length} fichier(s)`
   }
 }
 

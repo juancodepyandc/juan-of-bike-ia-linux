@@ -18,7 +18,7 @@ import {
   BookOpen, Calendar, ChevronLeft, ChevronRight, Clock, Eye, Hand,
   Headphones, Layers, Sparkles, Target, X,
 } from 'lucide-react'
-import type { LearnerProfile } from '../../stores/learningSessionStore'
+import type { LearnerProfile } from '../../stores/learningSessionStore.ts'
 
 type Props = {
   open: boolean

@@ -6,7 +6,7 @@
  * into a single .zip instead of one file at a time. JSZip is already a
  * project dependency.
  */
-import type { CodeFile } from '../services/codeOrchestrator'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
 import {
   collectAssetExportEntries,
   rewriteAssetUrlsForExport,

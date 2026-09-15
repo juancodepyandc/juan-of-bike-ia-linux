@@ -16,13 +16,13 @@ import {
   Video,
   type LucideIcon,
 } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import { useCoworkStore } from '../stores/coworkStore'
-import type { ModuleId } from '../types/app'
-import GeneratedDownloads from './GeneratedDownloads'
-import { useDeviceKind } from '../utils/device'
-import { useCoworkLiveCounters } from '../hooks/useCoworkLiveCounters'
-import { readUiSkin } from '../utils/uiSkin'
+import { useAppStore } from '../stores/appStore.ts'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import type { ModuleId } from '../types/app.ts'
+import GeneratedDownloads from './GeneratedDownloads.tsx'
+import { useDeviceKind } from '../utils/device.ts'
+import { useCoworkLiveCounters } from '../hooks/useCoworkLiveCounters.ts'
+import { readUiSkin } from '../utils/uiSkin.ts'
 
 // =============================================================================
 // MODULE META (labels, kickers, colors) — used by GuildBoard, Dock, Slash

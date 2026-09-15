@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Mic, MicOff, Volume2, VolumeX, Loader2, Radio } from 'lucide-react'
-import { useVoiceLive, type VoiceLivePhase } from '../hooks/useVoiceLive'
-import { cleanTextForVoice } from '../utils/textCleaner'
+import { useVoiceLive, type VoiceLivePhase } from '../hooks/useVoiceLive.ts'
+import { cleanTextForVoice } from '../utils/textCleaner.ts'
 
 interface VoiceLiveChatProps {
   onTranscript: (text: string) => void

@@ -1,6 +1,6 @@
-import type { OllamaMessage } from '../types/app'
+import type { OllamaMessage } from '../types/app.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
-import type { CodeIntent } from './codeIntent'
+import type { CodeIntent } from './codeIntent.ts'
 import { buildExecutorQualityContract } from './codeExecutorQualityContract.ts'
 import type {
   CodeGenerationActionProducer,

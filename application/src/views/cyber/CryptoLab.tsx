@@ -23,7 +23,7 @@ import {
   toHex,
   toMorse,
   vigenere,
-} from '../../services/cyber/cryptoService'
+} from '../../services/cyber/cryptoService.ts'
 import {
   applyAtbash,
   applyRot47,
@@ -36,11 +36,11 @@ import {
   detectCipher,
   guessVigenerePeriod,
   indexOfCoincidence,
-} from '../../services/cyber/classicalCipherAnalysis'
-import { inspectJwt, summariseJwt } from '../../services/cyber/jwtInspector'
-import { crackHs256, forgeAlgNone, forgeHs256, JWT_WEAK_SECRETS } from '../../services/cyber/jwtForger'
-import { inspectCertificate } from '../../services/cyber/tlsCertInspector'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+} from '../../services/cyber/classicalCipherAnalysis.ts'
+import { inspectJwt, summariseJwt } from '../../services/cyber/jwtInspector.ts'
+import { crackHs256, forgeAlgNone, forgeHs256, JWT_WEAK_SECRETS } from '../../services/cyber/jwtForger.ts'
+import { inspectCertificate } from '../../services/cyber/tlsCertInspector.ts'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 type Tab = 'classic' | 'aes' | 'rsa' | 'dh' | 'encoding' | 'freq' | 'auto' | 'jwt' | 'tls'
 

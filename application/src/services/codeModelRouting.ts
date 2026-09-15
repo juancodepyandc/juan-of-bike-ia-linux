@@ -43,8 +43,6 @@ export type CodeModelRouteDecision = {
 }
 
 const PLANNING_MODEL_CANDIDATES = [
-  // qwen3.6:27b: meilleur planificateur sur tache complexe (confirme A/B) ->
-  // primaire. devstral en repli rapide. (Installe -> gagne; absent -> suivant.)
   CODE_AGENT_MODEL,
   CODE_AGENT_FALLBACK_MODEL,
   CODE_PLANNING_MODEL,
@@ -58,11 +56,8 @@ const PLANNING_MODEL_CANDIDATES = [
 ]
 
 const REVIEW_MODEL_CANDIDATES = [
-  // Verifieur/directeur INDEPENDANT du codeur (un codeur qui se juge se sur-note).
-  // deepseek-r1:32b (raisonnement) en tete = juge chain-of-thought confirme par
-  // A/B (attrape le bug closure subtil); devstral en repli independant et rapide.
   CODE_REVIEW_MODEL,
-  CODE_AGENT_FALLBACK_MODEL,
+  CODE_AGENT_MODEL,
   CODE_VERIFIER_MODEL,
   CODE_BALANCED_MODEL,
   'qwen3:32b-q4_K_M',
@@ -106,6 +101,7 @@ function installedModelMatchesCandidate(installedModel: string, candidate: strin
   if (!installed || !target) return false
   if (installed === target) return true
   if (target.startsWith('hf.co/')) return false
+  if (installed.endsWith(`/${target}`) || target.endsWith(`/${installed}`)) return true
   return installed.startsWith(`${target}-`) || installed.startsWith(`${target}_`)
 }
 

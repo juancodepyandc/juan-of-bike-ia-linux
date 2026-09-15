@@ -1,4 +1,4 @@
-import type { OllamaMessage } from '../types/app'
+import type { OllamaMessage } from '../types/app.ts'
 import {
   type CodeIntent,
   type CodeProjectType,

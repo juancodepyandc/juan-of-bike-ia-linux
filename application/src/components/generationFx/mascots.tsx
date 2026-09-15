@@ -1,5 +1,5 @@
 import { useId, type ReactElement } from 'react'
-import type { FxModule } from './fxBus'
+import type { FxModule } from './fxBus.ts'
 
 export type { FxModule }
 

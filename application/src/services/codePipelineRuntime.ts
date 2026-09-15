@@ -20,9 +20,9 @@ export const PLANNING_FIRST_BYTE_TIMEOUT_MS = 720_000
 export const GENERATION_FIRST_BYTE_TIMEOUT_MS = 900_000
 export const CORRECTION_FIRST_BYTE_TIMEOUT_MS = 180_000
 export const DOCUMENTATION_EXTENSIONS_EARLY = new Set(['md', 'txt', 'doc', 'docx', 'pdf', 'rtf'])
-export const CODE_PLANNING_CONTEXT_TOKENS = 16_384
-export const CODE_EXPERT_CONTEXT_TOKENS = 24_576
-export const CODE_EXPERT_OUTPUT_TOKENS = 16_000
+export const CODE_PLANNING_CONTEXT_TOKENS = 4096
+export const CODE_EXPERT_CONTEXT_TOKENS = 8192
+export const CODE_EXPERT_OUTPUT_TOKENS = 8192
 export const INTERACTIVE_3D_FIDELITY_MAX_PASSES = 4
 
 export type { CodeModelPhase, CodeModelRouteDecision, CodeModelRoutingContext }

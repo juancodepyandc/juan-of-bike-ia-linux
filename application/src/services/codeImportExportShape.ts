@@ -31,7 +31,126 @@ const SOURCE_FILE = /\.(tsx?|jsx?|mjs|cjs)$/i
 
 const normalize = (name: string) => name.replace(/\\/g, '/')
 
-export function readModuleExports(source: string): ModuleExports {
+/**
+ * Neutralise commentaires et litteraux de chaine, EN CONSERVANT les offsets.
+ *
+ * Les analyses d'imports et d'exports balayaient la source brute a coups
+ * d'expressions regulieres. Elles voyaient donc :
+ *
+ *     // import Faux from 'faux'          -> import fantome
+ *     /* import Bidon from 'bidon' *SLASH -> import fantome
+ *     const s = "import Chaine from 'x'"  -> import fantome
+ *
+ * Mesure : sur un fichier portant trois leurres et un seul vrai import,
+ * `readImports` en rendait QUATRE. La consequence n'est pas cosmetique :
+ * `planImportShapeFixes` compare ce qu'un module importe a ce que la cible
+ * exporte, puis REECRIT le code. Un export apercu dans un commentaire fait
+ * croire a un nom disponible, et la reparation transforme un import valide
+ * en import d'un symbole qui n'existe pas — du code livre qui ne compile plus.
+ *
+ * On remplace le contenu neutralise par des espaces de MEME LONGUEUR, en
+ * gardant les sauts de ligne : les positions restent valides, donc les
+ * fragments extraits correspondent toujours au texte d'origine.
+ */
+export function maskNonCode(source: string): string {
+  const out = source.split('')
+  const n = source.length
+  const blanchir = (from: number, to: number) => {
+    for (let k = from; k < to && k < n; k += 1) {
+      if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' '
+    }
+  }
+
+  // Automate a pile : les gabarits peuvent s'imbriquer via `${ ... }`, et
+  // l'interieur d'une interpolation est du VRAI code, qu'il faut continuer a
+  // analyser. Une premiere version traitait le gabarit comme une chaine
+  // ordinaire ; le backtick FERMANT etait alors pris pour l'ouverture d'une
+  // nouvelle chaine, et tout le reste du fichier passait en blanc — les
+  // imports situes plus bas disparaissaient. La pile evite cela.
+  const pileGabarits: number[] = [] // profondeur d'accolades par gabarit ouvert
+  let i = 0
+  while (i < n) {
+    const c = source[i]
+    const suivant = source[i + 1]
+
+    // Dans une interpolation : on suit les accolades pour savoir quand elle
+    // se referme et que le gabarit reprend.
+    if (pileGabarits.length > 0) {
+      const haut = pileGabarits.length - 1
+      if (c === '{') { pileGabarits[haut] += 1; i += 1; continue }
+      if (c === '}') {
+        pileGabarits[haut] -= 1
+        if (pileGabarits[haut] === 0) {
+          pileGabarits.pop()
+          // Reprise de la partie litterale du gabarit.
+          i = masqueCorpsGabarit(i + 1)
+          continue
+        }
+        i += 1
+        continue
+      }
+    }
+
+    if (c === '/' && suivant === '/') {
+      let j = i + 2
+      while (j < n && source[j] !== '\n') j += 1
+      blanchir(i, j)
+      i = j
+      continue
+    }
+    if (c === '/' && suivant === '*') {
+      let j = i + 2
+      while (j < n && !(source[j] === '*' && source[j + 1] === '/')) j += 1
+      const stop = Math.min(j + 2, n)
+      blanchir(i, stop)
+      i = stop
+      continue
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1
+      while (j < n) {
+        if (source[j] === '\\') { j += 2; continue }
+        if (source[j] === c) break
+        if (source[j] === '\n') break // chaine non fermee : on s'arrete a la ligne
+        j += 1
+      }
+      blanchir(i + 1, j)
+      i = Math.min(j + 1, n)
+      continue
+    }
+    if (c === '`') {
+      i = masqueCorpsGabarit(i + 1)
+      continue
+    }
+    i += 1
+  }
+
+  /**
+   * Blanchit la partie litterale d'un gabarit a partir de `depart` et rend la
+   * position ou l'analyse doit reprendre : soit apres le backtick fermant,
+   * soit au debut d'une interpolation (dont le contenu reste du code).
+   */
+  function masqueCorpsGabarit(depart: number): number {
+    let j = depart
+    while (j < n) {
+      if (source[j] === '\\') { j += 2; continue }
+      if (source[j] === '`') { blanchir(depart, j); return j + 1 }
+      if (source[j] === '$' && source[j + 1] === '{') {
+        blanchir(depart, j)
+        pileGabarits.push(1)
+        return j + 2
+      }
+      j += 1
+    }
+    blanchir(depart, n)
+    return n
+  }
+
+  return out.join('')
+}
+
+export function readModuleExports(rawSource: string): ModuleExports {
+  const source = maskNonCode(rawSource)
   const named = new Set<string>()
   let hasDefault = /(^|\n)\s*export\s+default\b/.test(source)
   for (const match of source.matchAll(/export\s+(?:async\s+)?(?:const|let|var|function|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/g)) {
@@ -55,16 +174,23 @@ export type ParsedImport = {
   namedBindings: string[]
 }
 
-export function readImports(source: string): ParsedImport[] {
+export function readImports(rawSource: string): ParsedImport[] {
+  // Le specifier vit ENTRE GUILLEMETS : on le lit donc sur la source
+  // d'origine, aux positions rendues par le balayage du texte masque.
+  const masked = maskNonCode(rawSource)
   const out: ParsedImport[] = []
-  for (const match of source.matchAll(/import\s+(?:type\s+)?([^;'"]+?)\s+from\s*['"]([^'"]+)['"]/g)) {
+  for (const match of masked.matchAll(/import\s+(?:type\s+)?([^;'"]+?)\s+from\s*['"]([^'"]*)['"]/g)) {
+    const debut = match.index ?? 0
+    const statement = rawSource.slice(debut, debut + match[0].length)
+    const specifier = /from\s*['"]([^'"]+)['"]/.exec(statement)?.[1]
+    if (!specifier) continue
     const clause = match[1].trim()
     const namedPart = /\{([^}]*)\}/.exec(clause)?.[1]
     const defaultBinding = /^([A-Za-z_$][\w$]*)\s*(?:,|$)/.exec(clause)?.[1]
     const namedBindings = namedPart
       ? namedPart.split(',').map((part) => part.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean)
       : []
-    out.push({ statement: match[0], specifier: match[2], defaultBinding, namedBindings })
+    out.push({ statement, specifier, defaultBinding, namedBindings })
   }
   return out
 }

@@ -9,7 +9,7 @@
 // keeping the storage footprint bounded.
 // ---------------------------------------------------------------------------
 
-import type { CoworkAction, CoworkActionResult } from './coworkTypes'
+import type { CoworkAction, CoworkActionResult } from './coworkTypes.ts'
 
 const STORAGE_KEY = 'cowork:audit'
 const MAX_ENTRIES = 200

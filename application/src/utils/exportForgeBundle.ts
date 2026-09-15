@@ -14,7 +14,7 @@
  * browser so this works in Tauri AND in cloud mode.
  */
 import JSZip from 'jszip'
-import type { ForgeResult } from '../services/characterForge'
+import type { ForgeResult } from '../services/characterForge.ts'
 
 async function fetchToUint8(url: string): Promise<Uint8Array | null> {
   try {

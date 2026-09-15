@@ -1,7 +1,7 @@
-import { fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, ollamaChat, runPythonScript } from '../hooks/useTauri'
-import type { ModuleId } from '../types/app'
-import { isTauriRuntime, getBridgeUrl } from './runtime'
-import { pickPrimaryPreparedImage } from './referenceMedia'
+import { fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, ollamaChat, runPythonScript } from '../hooks/useTauri.ts'
+import type { ModuleId } from '../types/app.ts'
+import { isTauriRuntime, getBridgeUrl } from './runtime.ts'
+import { pickPrimaryPreparedImage } from './referenceMedia.ts'
 
 export type PreparedContextFile = {
   id: string

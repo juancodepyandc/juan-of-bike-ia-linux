@@ -16,7 +16,7 @@
 // Schema: aurora.motion-intent.v1  (versioned for future drift)
 // ────────────────────────────────────────────────────────────────────────────
 
-import { ollamaChat } from '../hooks/useTauri'
+import { ollamaChat } from '../hooks/useTauri.ts'
 
 export type MotionCategory =
   | 'led_emission'        // RGB/LED material animation, no rig (Strimer, addressable strips)

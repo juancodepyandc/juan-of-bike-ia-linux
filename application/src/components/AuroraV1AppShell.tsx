@@ -26,9 +26,9 @@
 import type { ReactNode } from 'react'
 import { lazy, Suspense } from 'react'
 import { Settings } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
-import AuroraAmbientField from './AuroraAmbientField'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
+import AuroraAmbientField from './AuroraAmbientField.tsx'
 
 // v82s-studio iter13 : petit personnage vivant (v10 SVG) en bas de sidebar.
 // Lazy → réutilise le chunk `avatars` déjà splitté.

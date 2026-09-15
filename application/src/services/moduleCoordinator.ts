@@ -1,6 +1,6 @@
-import { AUXILIARY_ANALYSIS_MODEL } from '../config/models'
-import { ollamaGenerate } from '../hooks/useTauri'
-import { sharedMemory } from './sharedMemory'
+import { AUXILIARY_ANALYSIS_MODEL } from '../config/models.ts'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import { sharedMemory } from './sharedMemory.ts'
 
 interface HelpRequest {
   fromModule: string

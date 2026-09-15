@@ -9,22 +9,22 @@
  * will wire real plan/log streams from the cowork orchestrator service.
  */
 import { lazy, Suspense, useState } from 'react'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import MachineConnectionsPanel from '../components/MachineConnectionsPanel'
-import { useCoworkStore } from '../stores/coworkStore'
-import { useChatStore } from '../stores/chatStore'
-import { useAppStore } from '../stores/appStore'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import MachineConnectionsPanel from '../components/MachineConnectionsPanel.tsx'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
 // v82ao : useRealAgents extracted to a shared hook so V3 Cowork can
 // reuse the same roundtrip + cache (one fetch, both consumers).
-import { useRealAgents } from '../hooks/useRealAgents'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
+import { useRealAgents } from '../hooks/useRealAgents.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
 // v81p: parity boost — CoworkConfirmDialog is mounted INSIDE the Aurora
 // overlays so destructive-action approval prompts still fire correctly.
 // A "Console technique" escape hatch lazy-loads the full manga CoworkOverlay
 // when the user wants the streaming events log + plan + audit drawer that
 // haven't yet been ported into the Aurora skins.
-import CoworkConfirmDialog from '../components/CoworkConfirmDialog'
+import CoworkConfirmDialog from '../components/CoworkConfirmDialog.tsx'
 const CoworkOverlayLazy = lazy(() => import('../components/CoworkOverlay'))
 
 function Eyebrow({ children, dot }: { children: React.ReactNode; dot?: string }) {

@@ -17,7 +17,7 @@ import type {
   SoftBodyConfig,
   TimelineState,
   TransformState,
-} from './types'
+} from './types.ts'
 
 export const DEFAULT_TRANSFORM: TransformState = {
   position: [0, 0, 0],

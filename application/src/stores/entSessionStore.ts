@@ -13,7 +13,7 @@
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { EntSection } from '../services/entAdapters'
+import type { EntSection } from '../services/entAdapters.ts'
 
 export type EntHarvestSummary = {
   ts: number

@@ -21,9 +21,9 @@ import {
   auditWebEndpoint,
   type SecurityHeaderCheck,
   type WebAuditResult,
-} from '../../services/cyber/webEndpointAuditor'
-import { triggerBrowserDownload } from '../../services/cyber/cyberOutputManager'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+} from '../../services/cyber/webEndpointAuditor.ts'
+import { triggerBrowserDownload } from '../../services/cyber/cyberOutputManager.ts'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

@@ -12,16 +12,16 @@
  * make real — queued for a future iteration).
  */
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { useCoworkStore } from '../stores/coworkStore'
-import { useChatStore } from '../stores/chatStore'
-import { useAppStore } from '../stores/appStore'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
 // v82ao : real agent roster from /api/agents/list (replaces hardcoded
 // CDX-01 / PCT-04 / SCH-02 / CST-01 / VOX-03 mock callsigns)
-import { useRealAgents } from '../hooks/useRealAgents'
+import { useRealAgents } from '../hooks/useRealAgents.ts'
 // v81p: parity boost — CoworkConfirmDialog mounted inside V3 overlay so
 // destructive-action prompts always fire. "[CONSOLE]" button lazy-mounts
 // the full manga CoworkOverlay (events stream + plan + audit drawer).
-import CoworkConfirmDialog from '../components/CoworkConfirmDialog'
+import CoworkConfirmDialog from '../components/CoworkConfirmDialog.tsx'
 const CoworkOverlayLazy = lazy(() => import('../components/CoworkOverlay'))
 
 const PHOSPHOR = '#7df9c4'

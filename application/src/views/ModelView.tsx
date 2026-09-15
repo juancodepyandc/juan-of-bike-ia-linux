@@ -1,51 +1,51 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, BookOpen, Box, Check, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
+import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
 import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, Color, Group, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector3 } from 'three'
 import type { Texture } from 'three'
-import ClarificationDialog from '../components/ClarificationDialog'
-import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay'
-import type { ClarificationRequest } from '../components/ClarificationDialog'
-import ContextFilesField from '../components/ContextFilesField'
-import SubjectSelectPanel from '../components/SubjectSelectPanel'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import ModuleAssetPackCard from '../components/ModuleAssetPackCard'
-import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel'
-import PromptLibraryPanel from '../components/PromptLibraryPanel'
-import SaveDialog from '../components/SaveDialog'
-import type { SaveDialogData } from '../components/SaveDialog'
-import SessionSwitcher from '../components/SessionSwitcher'
-import { buildThreeDModuleAssets } from '../config/moduleAssetPacks'
-import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models'
-import { clearResumableJob, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript, toAssetUrl } from '../hooks/useTauri'
-import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus'
-import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero'
-import { useManagedRuntime } from '../hooks/useManagedRuntime'
-import { useModuleAssetPack } from '../hooks/useModuleAssetPack'
-import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics'
-import { prepareTaskIntelligence } from '../services/taskIntelligence'
-import { prepareThreeDReferenceSupport, type ThreeDReferenceSupport } from '../services/threeDReferenceSupport'
-import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenceViews, verifyViewImage, buildCorrectedViewDirective, getSyntheticViewDirective, type ThreeDViewPlan, type ThreeDViewTag, type ThreeDViewAssignment, type ThreeDViewOverlay } from '../services/threeDViewPlanner'
-import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFromPrompt, type VisualReferenceAnalysis, type ReferencePaletteEntry, type ColorOverride } from '../services/visualReferenceAnalyzer'
-import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel'
-import { analyzeThreeDIntent, buildFluxVisualDescription, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent'
-import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge'
-import { runAutoRigFromPrompt } from '../services/motionPipeline'
-import { verifyGeneratedReferenceVisual } from '../services/referenceVisualResearch'
-import { useAppStore } from '../stores/appStore'
-import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore'
-import { usePromptLibraryStore } from '../stores/promptLibraryStore'
-import { extractComfyHistoryFailure, extractComfyImageOutput, extractComfyPromptId } from '../utils/comfyui'
-import { getErrorMessage } from '../utils/errors'
-import { useGenerationTrackerStore } from '../stores/generationTrackerStore'
-import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
-import RecoveryBanner from '../components/RecoveryBanner'
-import { createFlux2Workflow, type FluxStyle } from '../utils/fluxWorkflow'
-import { prepareContextFiles, type PreparedContextFile } from '../utils/multimodalContext'
-import { pickPrimaryPreparedImage, stageBlobToComfyInput } from '../utils/referenceMedia'
-import type { HardwareProfile } from '../types/app'
-import { readUiSkin } from '../utils/uiSkin'
+import ClarificationDialog from '../components/ClarificationDialog.tsx'
+import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay.tsx'
+import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
+import ContextFilesField from '../components/ContextFilesField.tsx'
+import SubjectSelectPanel from '../components/SubjectSelectPanel.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import ModuleAssetPackCard from '../components/ModuleAssetPackCard.tsx'
+import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel.tsx'
+import PromptLibraryPanel from '../components/PromptLibraryPanel.tsx'
+import SaveDialog from '../components/SaveDialog.tsx'
+import type { SaveDialogData } from '../components/SaveDialog.tsx'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
+import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
+import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
+import { clearResumableJob, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript, toAssetUrl } from '../hooks/useTauri.ts'
+import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
+import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
+import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
+import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
+import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics.ts'
+import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
+import { prepareThreeDReferenceSupport, type ThreeDReferenceSupport } from '../services/threeDReferenceSupport.ts'
+import { detectUploadedImageView, prepareThreeDViewPlan, resolvePreparedReferenceViews, verifyViewImage, buildCorrectedViewDirective, getSyntheticViewDirective, type ThreeDViewPlan, type ThreeDViewTag, type ThreeDViewAssignment, type ThreeDViewOverlay } from '../services/threeDViewPlanner.ts'
+import { analyzeReferenceImage, mergePaletteWithOverrides, parseColorOverridesFromPrompt, type VisualReferenceAnalysis, type ReferencePaletteEntry, type ColorOverride } from '../services/visualReferenceAnalyzer.ts'
+import ReferenceInspectorPanel from '../components/ReferenceInspectorPanel.tsx'
+import { analyzeThreeDIntent, buildFluxVisualDescription, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
+import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge.ts'
+import { runAutoRigFromPrompt } from '../services/motionPipeline.ts'
+import { verifyGeneratedReferenceVisual } from '../services/referenceVisualResearch.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore.ts'
+import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
+import { extractComfyHistoryFailure, extractComfyImageOutput, extractComfyPromptId } from '../utils/comfyui.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { useGenerationTrackerStore } from '../stores/generationTrackerStore.ts'
+import { useGenerationRecovery } from '../hooks/useGenerationRecovery.ts'
+import RecoveryBanner from '../components/RecoveryBanner.tsx'
+import { createFlux2Workflow, type FluxStyle } from '../utils/fluxWorkflow.ts'
+import { prepareContextFiles, type PreparedContextFile } from '../utils/multimodalContext.ts'
+import { pickPrimaryPreparedImage, stageBlobToComfyInput } from '../utils/referenceMedia.ts'
+import type { HardwareProfile } from '../types/app.ts'
+import { readUiSkin } from '../utils/uiSkin.ts'
 
 const AURORA_V4_SKIN = readUiSkin() === 'aurora_v4'
 const COLORS = ['#ff6a3d', '#37c7bf', '#ffd166', '#4dd5a4', '#7fb7ff']
@@ -347,7 +347,7 @@ async function generateAndVerifySyntheticViews({
     if (!directive) continue
 
     const viewLabel = assignment.view
-    setPhase(`Generation autonome de la vue ${viewLabel} (${viewIndex + 1}/${syntheticAssignments.length})...`, 66 + viewIndex * 3)
+    setPhase(`Référence photo — vue ${viewLabel} (${viewIndex + 1}/${syntheticAssignments.length})...`, 25 + viewIndex * 2)
 
     // Use the front view as an identity seed for the other angles. By the time
     // we hit the synthetic branch, symmetric views have already been resolved
@@ -567,7 +567,7 @@ function buildReferencePrompt(
     '3D reference image contract:',
     '- THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE',
     '- CRITICAL: Show the subject at a THREE-QUARTER ANGLE (slightly rotated) so that 3 faces are visible (front + one side + top)',
-    '- NEVER generate a flat front-on view — TRELLIS.2 needs depth cues for proper 3D reconstruction',
+    '- NEVER generate a flat front-on view — depth cues are required for proper 3D reconstruction',
     '- The image must look like a professional 3D product photograph with visible DEPTH, VOLUME and SHADOWS',
     '- Strong directional lighting to reveal all surface details: edges, bevels, recesses, holes, buttons, ports',
     '- Do not use cube/block/sphere/cylinder placeholders or basic primitives unless the user explicitly asked for that primitive',
@@ -2392,7 +2392,7 @@ function Scene3D({
 
 export default function ModelView() {
   const { runtimeServices, visionModel, hardware } = useAppStore()
-  const diagnostics = useStudioDiagnostics({ requiresTauri: true, requiresComfyui: true, requiresOllama: true, requiredFiles: [{ label: 'Pipeline TRELLIS.2', relativePath: 'python-services/aurora_3d_pipeline.py' }] })
+  const diagnostics = useStudioDiagnostics({ requiresTauri: true, requiresComfyui: true, requiresOllama: true, requiredFiles: [{ label: 'Pipeline Atlas', relativePath: 'python-services/aurora_3d_pipeline.py' }] })
   const { executeWithRuntime } = useManagedRuntime()
   const { pushMessage, getRecentMessages } = useModuleHistoryStore()
   const { trackGeneration, completeGeneration, failGeneration } = useGenerationTrackerStore()
@@ -2415,6 +2415,7 @@ export default function ModelView() {
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
   const [viewerWebUrl, setViewerWebUrl] = useState<string | null>(null)
   const [referenceImageUrl, setReferenceImageUrl] = useState<string | null>(null)
+  const [discoveredSourceWeb, setDiscoveredSourceWeb] = useState<{ site?: string; url?: string; title?: string } | null>(null)
   // Validation de la reference AVANT la reconstruction 3D (~20 min): l'utilisateur
   // accepte (vert) ou refuse (rouge, avec un motif optionnel) l'image en LOT. Sur
   // acceptation, la photo est VERROUILLEE (jamais retouchee, reproduite fidelement).
@@ -3175,9 +3176,9 @@ export default function ModelView() {
         module: '3d',
         title: 'Generation 3D',
         services: ['ollama', 'comfyui'],
-        ollamaModel: activeOllamaModel,
-        prepare: async ({ setPhase }) => { await preparePack(setPhase) },
+        prepare: async ({ setPhase }) => { setPhase('Initialisation des modèles...', 2); await preparePack(setPhase) },
         job: async ({ setPhase }) => {
+          setPhase('Analyse de la demande 3D...', 5)
           const preparedContext = contextFiles.length > 0 ? await prepareContextFiles(contextFiles) : []
           const preparedViews = resolvePreparedReferenceViews(preparedContext)
           const primaryPreparedImage = preparedViews.primary ?? pickPrimaryPreparedImage(preparedContext)
@@ -3191,7 +3192,8 @@ export default function ModelView() {
             conversationHistory.flatMap(m => m.content.toLowerCase().split(/\W+/)).filter(w => w.length >= 4)
           )
           const sharedStemCount = [...promptStems].filter(s => historyStems.has(s)).length
-          const subjectShifted = conversationHistory.length > 0 && sharedStemCount < 2
+          const isContinuityOrEdit = EDIT_INTENT.test(currentPrompt) || /^(et|puis|aussi|maintenant|fais|pose|couleur|mati[eè]re|taille|texture|ajoute|modifie)\b/i.test(currentPrompt)
+          const subjectShifted = conversationHistory.length > 0 && sharedStemCount < 2 && !isContinuityOrEdit
           const effectiveHistory = subjectShifted ? [] : conversationHistory
           if (subjectShifted) {
             console.warn('[ModelView] Subject shift detected, discarding conversation history to prevent contamination')
@@ -3272,7 +3274,7 @@ export default function ModelView() {
           // jamais tourne. Avec la memoire des mouvements appris, ce passage
           // est instantane pour un mouvement deja connu.
           if (nomDeMouvementRx.test(workingPrompt)) {
-            setPhase('Mouvement nomme detecte — je me renseigne au lieu de vous interrompre...', 45)
+            setPhase('Analyse — mouvement nommé détecté...', 8)
             try {
               const wsp = await getWorkspacePath()
               const trOut = await runPythonScript(`${wsp}/python-services/motion_trend_resolver.py`, ['--prompt', workingPrompt])
@@ -3282,12 +3284,12 @@ export default function ModelView() {
                 workingPrompt = `${workingPrompt}\n\nMouvement nomme "${tr.name}" compris (${tr.source}): ${tr.description_en}`
                 historyPrompt = `${historyPrompt}\n\nMouvement compris: ${tr.name}`
                 clarificationDejaResolue = true
-                setPhase(`Mouvement "${tr.name}" compris — aucune question necessaire.`, 47)
+                setPhase(`Analyse — mouvement "${tr.name}" compris`, 10)
               }
             } catch { /* resolveur indisponible -> la question sera posee */ }
           }
           if (!clarificationDejaResolue && !aUneImage && intent.needsClarification && intent.clarificationQuestion) {
-            setPhase('Clarification utile pour fiabiliser la reconstruction 3D.', 46)
+            setPhase('Analyse — clarification nécessaire', 12)
             // v77zh: surface the categorised options as quick-pick buttons so
             // the user clicks instead of typing — character anatomy, mechanism
             // motion, vehicle motion, material ambiguous, person reproduction
@@ -3361,12 +3363,9 @@ export default function ModelView() {
             }, null, 2)),
           )
           let referenceImagePath = `${runPaths.references}/${runId}_reference.png`
-          const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: workingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 50, phaseSpan: 18 })
-          // 30/07: le LLM demandait « pouvez-vous fournir la photo ? » alors
-          // que la photo ETAIT jointe — plus aucune question quand une image
-          // est la (elle repond d'elle-meme).
+          const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: workingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 5, phaseSpan: 10 })
           if (!clarificationDejaResolue && !aUneImage && taskContext.clarificationQuestion) {
-            setPhase('Clarification utilisateur requise avant reconstruction 3D.', 56)
+            setPhase('Analyse — clarification utilisateur', 12)
             const viaFx2 = fxAsk<string | null>('3d', {
               id: `clar2-${Date.now()}`,
               kind: 'question',
@@ -3403,7 +3402,7 @@ export default function ModelView() {
           // (view planner, FLUX directives, correction loop) shares the same
           // palette / text / entity focus extracted from what the user uploaded
           // (or from the most faithful external reference if none was supplied).
-          setPhase('Analyse visuelle de la reference (entites, palette, textes)...', 60)
+          setPhase('Référence photo — analyse de la référence visuelle...', 18)
           let referenceAnalysisResult: VisualReferenceAnalysis | null = null
           try {
             let analysisBlob: Blob | null = null
@@ -3505,7 +3504,7 @@ export default function ModelView() {
 
           // Build a FLUX-native visual description directly, bypassing the weak distillation
           // This is the AUTHORITATIVE prompt that FLUX will actually render
-          setPhase('Construction du prompt visuel FLUX optimise...', 62)
+          setPhase('Référence photo — construction du prompt visuel FLUX...', 20)
           const fluxVisualPrompt = await buildFluxVisualDescription({
             prompt: currentPrompt,
             intent,
@@ -3530,7 +3529,7 @@ export default function ModelView() {
           let resolvedViewPlan = referenceViewPlan
           if (hasSyntheticViews) {
             setProgress('Generation autonome des vues individuelles...')
-            setPhase('Generation autonome de chaque vue separement via FLUX + verification...', 64)
+            setPhase('Référence photo — génération des vues FLUX...', 22)
             const baseSyntheticWorkflow = resolveReferenceWorkflow(intent, hardware, false, currentPrompt, referenceSupportPlan)
             // Push quality higher for synthetic multi-view — precision over speed
             const syntheticWorkflow = {
@@ -3552,7 +3551,7 @@ export default function ModelView() {
               frontSeedFilename = `${runId}_front_seed.png`
             } else if (syntheticFrontAssignment) {
               // Front view is also synthetic — generate it FIRST without seed so it becomes the consistency anchor
-              setPhase('Generation de la vue front comme ancre de coherence...', 65)
+              setPhase('Référence photo — génération de la vue front ancre...', 24)
               const frontDirective = getSyntheticViewDirective(syntheticFrontAssignment)
               if (frontDirective) try {
                 const frontBlob = await generateSyntheticView(
@@ -3640,7 +3639,12 @@ export default function ModelView() {
             lastReferenceImagePathRef.current = referenceImagePath
             setReferenceImageUrl(toAssetUrl(referenceImagePath))
             setProgress(`Mode multivue autonome actif (${materializedViewPlan.summary})...`)
-            setPhase('Mode multivue direct actif pour TRELLIS.2...', 68)
+            setPhase('Référence photo — multi-vues prêtes pour reconstruction...', 35)
+            const allRefs = materializedViewPlan.assignments.map((a) => ({
+              url: toAssetUrl(a.path),
+              role: a.view === 'front' ? 'face' : a.view === 'right' ? 'droite' : a.view === 'left' ? 'gauche' : 'dos',
+            }))
+            emitGenerationFx('3d', { active: true, phase: 'Référence photo — multi-vues prêtes', refs: allRefs })
             referenceSeedForWorkflow = true
             referenceVerificationSummary = `Reference multivue directe retenue: ${materializedViewPlan.summary}.`
           } else {
@@ -3680,15 +3684,14 @@ export default function ModelView() {
               lastReferenceImagePathRef.current = referenceImagePath
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
               setProgress('Reference 3D fiable retenue, preparation de la reconstruction...')
-              setPhase('Reference 3D fiable retenue, preparation de la reconstruction...', 70)
+              setPhase('Référence photo — référence visuelle retenue...', 35)
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
             } else try {
               setProgress(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...')
-              setPhase(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...', 62)
+              setPhase(referenceSeed ? 'Référence photo — raffinement de la vue...' : 'Référence photo — génération de la vue...', 25)
               const referenceWorkflow = resolveReferenceWorkflow(intent, hardware, Boolean(referenceSeed), currentPrompt, referenceSupportPlan)
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
-                // FLUX.1: seuls poids reels sur disque (les fichiers FLUX.2 sont
-                // tronques a 133 octets et font segfauter ComfyUI).
                 const workflow = createFlux2Workflow({
                   prompt: promptText,
                   width: referenceWorkflow.width,
@@ -3700,13 +3703,11 @@ export default function ModelView() {
                   workflow,
                   setPhase,
                   pollRef,
-                  phaseStart: 70,
+                  phaseStart: 25,
                   label,
                   vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
                 })
               }
-              // expose au scope externe pour la regeneration sur refus (voir porte
-              // de validation apres la reference).
               renderRefBlobRef.current = renderReferenceBlob
               baseRefPromptRef.current = baseReferencePrompt
 
@@ -3730,7 +3731,7 @@ export default function ModelView() {
 
               if (!isReferenceAccepted(referenceAssessment)) {
                 setProgress('Auto-correction de la reference 3D (tentative 1)...')
-                setPhase('Auto-correction de la reference 3D (tentative 1)...', 74)
+                setPhase('Référence photo — auto-correction de la vue (tentative 1)...', 30)
                 const correctionPrompt = buildReferenceCorrectionPrompt(
                   baseReferencePrompt,
                   intent,
@@ -3751,7 +3752,7 @@ export default function ModelView() {
               // (bypasses the distilled prompt entirely and uses pure product knowledge)
               if (!isReferenceAccepted(referenceAssessment) && (referenceAssessment?.wrongSubject || (referenceAssessment?.score ?? 0) < 40)) {
                 setProgress('Sujet incorrect detecte - regeneration avec connaissance produit directe...')
-                setPhase('Sujet incorrect detecte - regeneration avec connaissance produit directe...', 76)
+                setPhase('Référence photo — régénération avec identité forcée...', 32)
                 // Build a raw prompt from the FLUX visual description + strict correction
                 const rawVisualPrompt = [
                   fluxVisualPrompt,
@@ -3768,7 +3769,7 @@ export default function ModelView() {
                   model: visionModel,
                   blob: imageBlob,
                   profile: referenceSupportPlan.searchProfile,
-                  label: `${referenceSupportPlan.searchProfile.subjectLabel || 'Generated 3D reference'} identity-forced`,
+                  label: `${referenceSupportPlan.searchProfile.subjectLabel || 'Generated 3D reference'} product-guided`,
                 })
               }
 
@@ -3776,7 +3777,7 @@ export default function ModelView() {
                 imageBlob = referenceSupportPlan.externalReference.blob
                 referenceVerificationSummary = `Reference auto rejetee (${referenceAssessment?.notes || 'hors sujet'}). Fallback sur la reference externe stricte ${referenceSupportPlan.externalReference.title} (${referenceSupportPlan.externalReference.score}/100).`
                 setProgress('Fallback vers la reference externe la plus fidele...')
-                setPhase('Fallback vers la reference externe la plus fidele...', 76)
+                setPhase('Référence photo — fallback référence externe...', 35)
               } else {
                 referenceVerificationSummary = referenceAssessment
                   ? `Verification reference: ${referenceAssessment.score}/100 - ${referenceAssessment.notes}`
@@ -3810,13 +3811,24 @@ export default function ModelView() {
               await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await imageBlob.arrayBuffer())))
               lastReferenceImagePathRef.current = referenceImagePath
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — vue front prête', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
             } catch (refErr) {
               // ECHEC NON FATAL. Un 400 ComfyUI ici (mauvais graphe, modele
-              // absent, service down) tuait TOUTE la generation avant meme le
-              // pipeline — "aucune question, aucune photo, rien". Le pipeline
-              // Aurora possede sa PROPRE synthese de reference (+ validation
-              // vert/rouge): on continue sans reference UI plutot que de mourir.
-              console.error('[3D] reference UI impossible, le pipeline generera la sienne:', refErr)
+              // absent, service down) ne doit PAS tuer la generation.
+              // Si une reference externe web a ete trouvee, on la sauvegarde directement !
+              console.error('[3D] reference UI impossible, repli gracieux:', refErr)
+              if (referenceSupportPlan.externalReference?.blob) {
+                try {
+                  await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await referenceSupportPlan.externalReference.blob.arrayBuffer())))
+                  lastReferenceImagePathRef.current = referenceImagePath
+                  setReferenceImageUrl(toAssetUrl(referenceImagePath))
+                  setProgress('Reference externe web conservee (repli direct sans FLUX)...')
+                } catch { /* best effort */ }
+              } else if (materializedViewPlan.primaryPath && await fsExists(materializedViewPlan.primaryPath)) {
+                referenceImagePath = materializedViewPlan.primaryPath
+                lastReferenceImagePathRef.current = referenceImagePath
+                setReferenceImageUrl(toAssetUrl(referenceImagePath))
+              }
               setProgress('Reference UI indisponible — le pipeline generera sa propre reference...')
               setPhase('Reference deleguee au pipeline (echec du rendu UI non bloquant)...', 66)
             }
@@ -3919,6 +3931,12 @@ export default function ModelView() {
               setPhaseSnapshot({ label: 'En attente de votre validation...', percent: 87 })
               return
             }
+            if (message.startsWith('PROGRESS:reference:source_web:')) {
+              try {
+                const webJson = JSON.parse(message.slice('PROGRESS:reference:source_web:'.length))
+                setDiscoveredSourceWeb(webJson)
+              } catch {}
+            }
             const detail = parts.slice(2).join(':') || parts[1] || 'Execution Python en cours...'
             setProgress(detail)
             const phaseProgress = stage === 'install' ? 82 : stage === 'device' || stage === 'bg' || stage === 'asset_scan' ? 84 : stage === 'asset_download' || stage === 'shape_fallback' || stage === 'shape_load' ? 86 : stage === 'shape_run' || stage === 'gaussian' ? 90 : stage === 'texture_load' || stage === 'texture_run' || stage === 'texture_retry' || stage === 'texture_warn' || stage === 'mesh_extract' ? 92 : stage === 'export' || stage === 'export_fallback' ? 95 : stage === 'procedural' ? 88 : stage === 'sfm' || stage === 'photogrammetry' ? 87 : stage === 'validate' ? 94 : stage === 'rig' ? 93 : 88
@@ -3933,7 +3951,7 @@ export default function ModelView() {
           if (activePipeline === 'procedural' && intent.pipelineRouting.proceduralTemplate) {
             // ── PROCEDURAL PIPELINE: Blender Python (mechanisms, cables) ──
             setProgress(`Modelisation procedurale Blender (${intent.pipelineRouting.proceduralTemplate})...`)
-            setPhase('Modelisation procedurale dans Blender...', 86)
+            setPhase('Sculpture 3D — modélisation procédurale dans Blender...', 45)
             const proceduralResult = await runProceduralModeling({
               template: intent.pipelineRouting.proceduralTemplate as Parameters<typeof runProceduralModeling>[0]['template'],
               prompt: currentPrompt,
@@ -3948,7 +3966,7 @@ export default function ModelView() {
             } else {
               // Fallback to AI generation
               setProgress('Procedural echoue, fallback vers generation IA...')
-              setPhase('Fallback vers generation IA...', 84)
+              setPhase('Sculpture 3D — fallback vers génération IA...', 45)
             }
           }
 
@@ -3957,14 +3975,14 @@ export default function ModelView() {
             const imageFiles = preparedContext.filter((f) => f.kind === 'image').map((f) => f.stagedPath || f.name)
             if (imageFiles.length >= 3) {
               setProgress(`Photogrammetrie Meshroom (${imageFiles.length} images)...`)
-              setPhase('Reconstruction photogrammetrique via Meshroom...', 86)
+              setPhase('Sculpture 3D — reconstruction photogrammétrique...', 45)
               const photoOutput = await runPythonScript(`${workspacePath}/python-services/meshroom_run.py`, ['--images', imageFiles[0].replace(/[^/\\]*$/, ''), '--output-dir', outputDir, '--run-id', runId, '--format', 'glb'], { resumeKey: 'model' })
               const photoResult = parseLastJsonLine(photoOutput)
               if (photoResult?.ok && photoResult.path) {
                 result = { ...photoResult, pipeline: 'photogrammetry' } as ModelGenerationResult
               } else {
                 setProgress('Photogrammetrie echouee, fallback vers generation IA...')
-                setPhase('Fallback vers generation IA...', 84)
+                setPhase('Sculpture 3D — fallback vers génération IA...', 45)
               }
             }
           }
@@ -3979,14 +3997,8 @@ export default function ModelView() {
             auroraAttempted = true
             let auroraWatch: number | undefined
             try {
-              setProgress('Pipeline Aurora 3D (TRELLIS.2 natif, qualite maximale)...')
-              setPhase('Pipeline Aurora 3D — geometrie native + materiaux...', 86)
-              // UNE SEULE arborescence. Avant, l'UI creait le run dans
-              // output/3d/conversations/<sujet>_<session>/<run>/ (references,
-              // prompts, audits) mais lancait le pipeline dans
-              // output/3d/generations/<run>/ : references d'un cote, GLB de
-              // l'autre, rien au meme endroit. Le pipeline ecrit maintenant
-              // dans le dossier du run de la conversation.
+              setProgress('Atlas construit en qualite maximale...')
+              setPhase('Sculpture 3D — géométrie native et maillage...', 50)
               const genDir = outputDir
               const genRel = genDir.startsWith(`${workspacePath}/`)
                 ? genDir.slice(workspacePath.length + 1)
@@ -3994,33 +4006,34 @@ export default function ModelView() {
               await fsMkdir(genDir).catch(() => {})
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
-              const hasUserImage = contextFiles.some((f) => f.type.startsWith('image/') || /\.(png|jpe?g|webp|avif|bmp|gif|tiff?|heic|heif|jfif|svg)$/i.test(f.name || ''))
-              if (hasUserImage) {
-                // TOUTES les images fournies partent au pipeline: 1 image = il
-                // complete/devine le reste; plusieurs = vraies vues TRELLIS
-                // multivue (reproduction fidele, aucune regeneration).
-                const seenImgs = new Set<string>()
-                // 31/07: la copie interne (reference.png) partait EN PLUS des
-                // photos utilisateur — meme contenu poussé deux fois, que
-                // l'auto-tag re-etiquetait « droite »: TRELLIS recevait la
-                // MEME image comme face ET profil -> modele dechire. Photo(s)
-                // utilisateur presentes = ELLES SEULES partent.
-                if (referenceImagePath && preparedImages.length === 0) { auroraArgs.push('--image', referenceImagePath); seenImgs.add(referenceImagePath) }
-                for (const img of preparedImages) {
-                  if (img.stagedPath && !seenImgs.has(img.stagedPath)) {
-                    auroraArgs.push('--image', img.stagedPath)
-                    seenImgs.add(img.stagedPath)
-                  }
+              const seenImgs = new Set<string>()
+              let effectiveRefImg: string | null = null
+              if (referenceImagePath && await fsExists(referenceImagePath)) {
+                effectiveRefImg = referenceImagePath
+              } else if (materializedViewPlan.primaryPath && await fsExists(materializedViewPlan.primaryPath)) {
+                effectiveRefImg = materializedViewPlan.primaryPath
+              } else {
+                const candFront = `${runPaths.references}/${runId}_front_reference.png`
+                if (await fsExists(candFront)) {
+                  effectiveRefImg = candFront
                 }
-              } else if (directMultiView) {
-                // Aucune photo utilisateur: le plan de vues autonome (recherche/FLUX,
-                // verifie par vision) a materialise plusieurs angles sur disque.
-                // Les transmettre au pipeline (auto-tag CLIP + gates qualite deja
-                // testes sur les photos utilisateur) au lieu de les laisser inutilisees
-                // pendant que TRELLIS refait sa propre synthese a partir du seul prompt.
-                const seenImgs = new Set<string>()
+              }
+
+              if (effectiveRefImg) {
+                auroraArgs.push('--image', effectiveRefImg)
+                seenImgs.add(effectiveRefImg)
+                referenceImagePath = effectiveRefImg
+                setReferenceImageUrl(toAssetUrl(effectiveRefImg))
+              }
+              for (const img of preparedImages) {
+                if (img.stagedPath && !seenImgs.has(img.stagedPath) && await fsExists(img.stagedPath)) {
+                  auroraArgs.push('--image', img.stagedPath)
+                  seenImgs.add(img.stagedPath)
+                }
+              }
+              if (directMultiView) {
                 for (const { path } of materializedViewPlan.assignments) {
-                  if (path && !seenImgs.has(path)) {
+                  if (path && !seenImgs.has(path) && await fsExists(path)) {
                     auroraArgs.push('--image', path)
                     seenImgs.add(path)
                   }
@@ -4029,10 +4042,6 @@ export default function ModelView() {
               if (referenceImagePath) {
                 emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
               }
-              // Azimuts REELS des vues derivees (MV-Adapter pick=[2,3] sur
-              // _AZ=[0,45,90,180,...]): v2 = 90 deg = COTE, v3 = 180 deg = DOS.
-              // v2 etait etiquetee "dos" -> l'utilisateur voyait la vue de dos
-              // la ou l'ecran affichait le cote.
               const refRoles: [string, string][] = [
                 [`${genDir}/${runId}_reference.png`, 'face'],
                 [`${genDir}/${runId}_reference_v2.png`, 'droite'],
@@ -4049,16 +4058,19 @@ export default function ModelView() {
                     if (refs.length === 0 && referenceImagePath) refs.push({ url: toAssetUrl(referenceImagePath), role: 'face' })
                     const meshPath = `${genDir}/${runId}_mesh.glb`
                     const meshExists = !meshEmitted && await fsExists(meshPath)
-                    if (meshExists) meshEmitted = true
+                    if (meshExists) {
+                      meshEmitted = true
+                      setPhase('Matériaux & zones — textures et matériaux par zones...', 75)
+                    }
                     emitGenerationFx('3d', {
                       active: true,
                       refs: refs.length ? refs : undefined,
-                      meshUrl: meshExists ? toAssetUrl(meshPath) : undefined,
+                      meshUrl: (meshExists || meshEmitted) ? toAssetUrl(meshPath) : undefined,
                       meshInfo: meshEmitted ? 'géométrie native posée — texture & matériaux en cours' : undefined,
                     })
                   } catch { /* fichier pas encore là */ }
                 })()
-              }, 8000)
+              }, 1500)
               // 31/07 (observation Juan, 3 fois): les modeles Ollama de la
               // phase d'analyse (vision 19 Go) restaient residents quand
               // TRELLIS commencait a deborder en RAM. Eviction TOTALE ici —
@@ -4066,36 +4078,46 @@ export default function ModelView() {
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model' })
-              if (/"ok":\s*true/.test(auroraOutput)) {
-                // Le pipeline RANGE la livraison (modele/modele_couleurs.glb...)
-                // et renvoie le chemin reel dans son JSON: on le lit au lieu de
-                // deviner un ancien nom de fichier qui n'existe plus.
-                const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { final_mesh?: string; livraison?: Record<string, string> | null } | null
-                const livre = parsedAurora?.livraison ?? undefined
-                const finalMeshAbs = livre?.mouvement_couleurs
-                  ?? livre?.modele_couleurs
-                  ?? parsedAurora?.final_mesh
-                  ?? `${genDir}/${runId}_final_materials.glb`
-                const finalRel = finalMeshAbs.startsWith(`${workspacePath}/`)
-                  ? finalMeshAbs.slice(workspacePath.length + 1)
-                  : finalMeshAbs
-                // 31/07 (audit): le port 3009 n'etait demarre par personne —
-                // le viewer etait un ecran noir. Le bridge le sert desormais.
+              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; final_mesh?: string; livraison?: Record<string, string> | null; source_web?: { site?: string; url?: string; title?: string } } | null
+              if (parsedAurora?.source_web) {
+                setDiscoveredSourceWeb(parsedAurora.source_web)
+              }
+              const candidateMesh = parsedAurora?.livraison?.mouvement_couleurs
+                ?? parsedAurora?.livraison?.modele_couleurs
+                ?? parsedAurora?.final_mesh
+                ?? `${genDir}/${runId}_final_materials.glb`
+
+              let existingMeshPath: string | null = null
+              for (const candidate of [
+                candidateMesh,
+                `${genDir}/${runId}_final_materials.glb`,
+                `${genDir}/${runId}_matte.glb`,
+                `${genDir}/${runId}_mesh.glb`,
+                `${runPaths.models}/${runId}_mesh.glb`,
+                `${runPaths.models}/${runId}_final_materials.glb`,
+              ]) {
+                if (candidate && await fsExists(candidate)) {
+                  existingMeshPath = candidate
+                  break
+                }
+              }
+
+              if (existingMeshPath) {
+                const finalRel = existingMeshPath.startsWith(`${workspacePath}/`)
+                  ? existingMeshPath.slice(workspacePath.length + 1)
+                  : existingMeshPath
                 const { getBridgeUrl: _gbu } = await import('../utils/runtime')
                 setViewerWebUrl(`${_gbu()}/aurora_viewer.html?file=${finalRel.split('/').map(encodeURIComponent).join('/')}`)
                 result = {
                   ok: true,
-                  path: finalMeshAbs,
+                  path: existingMeshPath,
                   pipeline: 'ai_generation',
                   eu_compliant: true,
-                  license: 'MIT (TRELLIS.2)',
-                  shape_model: 'TRELLIS.2-4B',
+                  license: 'MIT',
+                  shape_model: 'Atlas',
                   shape_input_mode: 'single_view',
                 } as ModelGenerationResult
               } else {
-                // Extraire la VRAIE raison du pipeline (sentinelle anti-gel, OOM,
-                // job ComfyUI perdu, reference refusee...) au lieu d'un message
-                // generique qui cache tout.
                 try {
                   const errMatch = auroraOutput.match(/"error":\s*"((?:[^"\\]|\\.)*)"/)
                   if (errMatch) auroraFailReason = JSON.parse(`"${errMatch[1]}"`)
@@ -4151,8 +4173,8 @@ export default function ModelView() {
           if (!result) {
             // Try DreamGaussian first if preferred (EU-safe MIT license)
             if (intent.pipelineRouting.dreamgaussianPreferred) {
-              setProgress('Generation DreamGaussian (MIT, EU-safe)...')
-              setPhase('Generation DreamGaussian (Gaussian Splatting → mesh)...', 86)
+              setProgress('Atlas construit (MIT, EU-safe)...')
+              setPhase('Sculpture 3D — conversion du nuage en maillage...', 60)
               try {
                 const dgOutput = await runPythonScript(`${workspacePath}/python-services/dreamgaussian_run.py`, ['--image', referenceImagePath, '--output-dir', outputDir, '--run-id', runId, '--format', 'glb'], { resumeKey: 'model' })
                 const dgResult = parseLastJsonLine(dgOutput)
@@ -4160,7 +4182,7 @@ export default function ModelView() {
                   result = { ...dgResult, pipeline: 'ai_generation' } as ModelGenerationResult
                 }
               } catch {
-                setProgress('DreamGaussian indisponible, aucun second moteur disponible.')
+                setProgress('Atlas ne dispose d aucune autre methode de construction.')
               }
             }
 
@@ -4168,10 +4190,6 @@ export default function ModelView() {
 
           if (!result?.ok || !result.path) throw new Error(result?.error || 'Aucun pipeline n a produit de mesh exploitable.')
 
-          // Dimension nommee dans le prompt ("50cm de haut") et symetrie bilaterale:
-          // ce n'est plus un flag de generation (Hunyuan3D l'appliquait au vol) mais
-          // un post-traitement generique sur le mesh deja produit, quel que soit le
-          // moteur — mesh_postprocess.py le supporte deja pour le sauvetage qualite.
           if (dimensionHintForGen || wantsSymmetryEnforced) {
             const scaledPath = `${outputDir}/${runId}_scaled.glb`
             const scaleArgs = ['--input', result.path, '--output', scaledPath, '--intent-purpose', intent.purpose, '--motion-readiness', intent.motionReadiness]
@@ -4193,9 +4211,6 @@ export default function ModelView() {
 
           // ══════════════════════════════════════════════════════════════
           // AUTO-CORRECTION LOOP: iterate until QA = PASS or diminishing returns
-          // Phase 5 of the Lead Engineer spec: no fixed trial limit.
-          // Stop only when: (1) fidelity >= 75, (2) geometry grade is acceptable,
-          // (3) score stops improving, or (4) maximum escalation reached with no gain.
           // ══════════════════════════════════════════════════════════════
           let activeMeshPath = result.path
           let activeReferenceImagePath = referenceImagePath
@@ -4214,7 +4229,7 @@ export default function ModelView() {
 
           // eslint-disable-next-line no-constant-condition
           while (true) {
-            if (result.shape_model === 'TRELLIS.2-4B') {
+            if (result.shape_model === 'Atlas') {
               correctionLog.push('Voie Aurora native: gates internes du pipeline (acceptance, matieres, zones) deja passes — boucle de correction UI sautee pour ne pas degrader le natif')
               break
             }
@@ -4222,12 +4237,9 @@ export default function ModelView() {
             if (result.mesh_quality_ok === false && result.mesh_quality_issues?.length) {
               const qualityIssues = result.mesh_quality_issues.join('; ')
               setProgress(`Qualite mesh insuffisante: ${qualityIssues}. Sauvetage renforce...`)
-              setPhase(`Correction qualite mesh (tentative ${correctionAttempt + 1})...`, 88)
+              setPhase(`Sculpture 3D — optimisation qualité mesh (tentative ${correctionAttempt + 1})...`, 65)
               {
-                // Sauvetage agressif du mesh (post-process renforce): extreme
-                // floater drop + Taubin lourd, sans dependance a un second
-                // pipeline de generation.
-                setPhase('Sauvetage agressif du mesh (post-process renforce)...', 89)
+                setPhase('Sculpture 3D — post-process géométrique renforcé...', 66)
                 const aggressivePath = `${outputDir}/${runId}_aggressive_${correctionAttempt}.glb`
                 try {
                   const aggressiveOutput = await runPythonScript(
@@ -4260,7 +4272,7 @@ export default function ModelView() {
             // ── Step B: Blender mesh validation + auto-fix ──
             if (intent.pipelineRouting.validationChecks.length > 0) {
               setProgress('Validation geometrique du mesh...')
-              setPhase('Validation geometrique...', 92)
+              setPhase('Sculpture 3D — validation géométrique...', 68)
               try {
                 const validationResult = await runMeshValidation({
                   meshPath: activeMeshPath,
@@ -4274,7 +4286,7 @@ export default function ModelView() {
                   result.validationReport = report
                   const issues = report.issues.filter((i) => i.severity === 'error' || i.severity === 'warning')
                   if (issues.length > 0 && issues.some((i) => i.autoFixAvailable)) {
-                    setPhase('Auto-correction Blender...', 93)
+                    setPhase('Sculpture 3D — auto-correction Blender...', 69)
                     const cleanupResult = await runMeshCleanup({
                       meshPath: activeMeshPath,
                       checks: intent.pipelineRouting.validationChecks,
@@ -4299,13 +4311,9 @@ export default function ModelView() {
             }
 
             // ── Step C: Mesh fidelity verification (vision model comparison) ──
-            // CRITICAL: Capture a REAL screenshot of the actual 3D mesh, then compare
-            // it against the reference image. Previously this was inverted (reference
-            // was passed as meshScreenshot, defeating the entire fidelity check).
             setProgress(`Capture du rendu mesh reel (passage ${correctionAttempt + 1})...`)
-            setPhase('Rendu du mesh pour comparaison fidelite...', 93)
+            setPhase('Matériaux & zones — rendu pour comparaison fidélité...', 72)
             try {
-              // Step C.1: Render actual mesh screenshot via Python (trimesh + matplotlib)
               let meshScreenshotBase64: string | null = null
               try {
                 const screenshotPath = `${runPaths.audits}/${runId}_meshshot_${correctionAttempt}.png`
@@ -4321,19 +4329,16 @@ export default function ModelView() {
                   correctionLog.push(`Mesh screenshot captured: ${shotPath}`)
                 }
               } catch {
-                // Mesh screenshot capture failed — fall back to reference-only comparison
               }
 
-              // Step C.2: Load the reference image separately for comparison
               let refBase64: string | null = null
               try {
                 const refBytes = await fsReadBinary(activeReferenceImagePath)
                 refBase64 = btoa(String.fromCharCode(...new Uint8Array(refBytes)))
-              } catch { /* reference not available */ }
+              } catch { }
 
-              // Step C.3: Compare real mesh render against reference + prompt
               setProgress(`Verification fidelite mesh (passage ${correctionAttempt + 1})...`)
-              setPhase('Comparaison mesh reel vs reference...', 94)
+              setPhase('Matériaux & zones — comparaison mesh reel vs référence...', 74)
               meshFidelityResult = await verify3DMeshFidelity({
                 meshScreenshotBase64: meshScreenshotBase64 || refBase64 || '',
                 referenceImageBase64: meshScreenshotBase64 ? refBase64 : null,
@@ -4547,7 +4552,7 @@ export default function ModelView() {
           // n'etait plus celui que la porte avait juge. Le pipeline TRELLIS
           // possede son propre mouvement et ses portes: aucun post-traitement
           // UI par-dessus.
-          if (intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'TRELLIS.2-4B') {
+          if (intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'Atlas') {
             const rigSubject: 'humanoid' | 'creature' | 'vehicle' | 'mechanism' | 'mechanical' | 'pendulum' | 'product' = isCharacter
               ? (intent.subjectKind === 'creature' ? 'creature' : 'humanoid')
               : isVehicle
@@ -4567,7 +4572,7 @@ export default function ModelView() {
                     ? 'Turntable ambiant 6s pour overview 360deg...'
                     : 'Auto-rigging Rigify (squelette + IK + breathing)...'
             setProgress(rigLabel)
-            setPhase(rigLabel, 96)
+            setPhase('Animation — ' + rigLabel, 88)
             try {
               // v75: pick the most relevant test_action based on prompt.
               // 'walk' beats 'applaud' as default because almost every
@@ -4653,28 +4658,16 @@ export default function ModelView() {
           }
 
           // ── v82nu iter22: AUTO RESCUE chain (vertex colors → PBR materials) ──
-          // Hunyuan3D outputs raw vertex colors only (no materials, no PBR).
-          // Without this stage, motion-intent overlays (e.g. OLED screen atlas)
-          // bind to base_color_fallback because there are zero materials to
-          // attach to. auto_rescue_mesh.py:
-          //   1. Scores the mesh on 5 axes (color/density/aspect/manifold/surface)
-          //   2. Bakes the FLUX reference onto vertex colors when color_richness
-          //      fails (the X870E case: 1 unique colour, score 0/100)
-          //   3. Reshapes silhouette toward canonical aspect when needed
-          //   4. Returns the rescued GLB path with proper colour distribution
-          // Fail-soft: any error keeps the original mesh and logs to summary.
           let autoRescueSummary = ''
           try {
-            if (result.shape_model === 'TRELLIS.2-4B') {
-              // 31/07 (audit): l'auto-rescue re-cuisait des couleurs vertex
-              // PAR-DESSUS la texture TRELLIS jugee — mutation hors porte.
-              throw new Error('TRELLIS gere sa propre qualite — auto-rescue UI saute')
+            if (result.shape_model === 'Atlas') {
+              throw new Error('Atlas gere sa propre qualite — auto-rescue UI saute')
             }
             const { getBridgeUrl: getRescueBridge } = await import('../utils/runtime')
             const rescueBridge = getRescueBridge()
             const rescueOutDir = runPaths.rescue
             setProgress('Auto-rescue mesh (score + bake colors si necessaire)...')
-            setPhase('Auto-rescue mesh (PBR materials)...', 94)
+            setPhase('Matériaux & zones — application des matières PBR...', 80)
             const rescueResp = await fetch(`${rescueBridge}/api/3d/auto-rescue`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -4711,8 +4704,6 @@ export default function ModelView() {
               autoRescueSummary = `Auto-rescue skip: ${rescueData.error.slice(0, 80)}.`
             }
           } catch (rescueExc) {
-            // Bridge unreachable, rescue script crashed, or timeout. The raw
-            // mesh is still valid — we just don't bake PBR materials. Log only.
             autoRescueSummary = `Auto-rescue skip: ${getErrorMessage(rescueExc).slice(0, 80)}.`
           }
           if (autoRescueSummary) {
@@ -4722,14 +4713,6 @@ export default function ModelView() {
           }
 
           // ── v82nu iter8.A: AUTO motion-intent gate ────────────────────────
-          // After mesh+rigging is finalised, classify the prompt via
-          // motion_intent_classifier.py and bake the appropriate animation
-          // (LED/fan/OLED/creature/mechanical) when category != rigid_static
-          // and confidence >= 0.75. This wires the iter1-7 motion-intent
-          // expert system into the standard ModelView submit path so a user
-          // who prompts "Lian Li Strimer Plus V2" gets blinking LEDs without
-          // any extra click. ZERO hardcoded brand→animation map: gemma3:12b
-          // reasons about what the object IS and picks one of 6 primitives.
           let autoMotionSummary = ''
           if (!motionEnabledRef.current) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
@@ -4738,7 +4721,7 @@ export default function ModelView() {
             const bridge = getBridgeUrl()
             const autoMotionOutGlb = activeMeshPath.replace(/\.glb$/i, '_anim.glb')
             setProgress('Classification motion-intent (gemma3:12b)...')
-            setPhase('Classification motion-intent (LLM)...', 95)
+            setPhase('Animation — classification motion-intent...', 90)
             const motResp = await fetch(`${bridge}/api/3d/auto-motion-bake`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -4770,8 +4753,6 @@ export default function ModelView() {
               autoMotionSummary = `Motion auto indisponible: ${motData.error.slice(0, 80)}.`
             }
           } catch (motExc) {
-            // Bridge unreachable, classifier crashed, or timeout. The static
-            // GLB is still valid — we just don't add animation. Log only.
             autoMotionSummary = `Motion auto skip: ${getErrorMessage(motExc).slice(0, 80)}.`
           }
           if (autoMotionSummary) {
@@ -4784,7 +4765,7 @@ export default function ModelView() {
           let finalAcceptanceRejectedReason = ''
           try {
             setProgress('Gate qualite finale 3D (texture, silhouette, mouvement)...')
-            setPhase('Gate qualite finale 3D...', 97)
+            setPhase('Finalisation — contrôle qualité final 3D...', 95)
             const acceptanceOutput = await runPythonScript(
               `${workspacePath}/python-services/mesh_acceptance_gate.py`,
               [
@@ -4867,10 +4848,10 @@ export default function ModelView() {
             surfaceArea: result.mesh_surface_area,
             volume: result.mesh_volume,
           })
-          const shapeLabel = result.shape_model ? result.shape_model.split('/').pop() || result.shape_model : 'TRELLIS.2'
+          const shapeLabel = result.shape_model ? result.shape_model.split('/').pop() || result.shape_model : 'Atlas'
           const textureState = result.textured === false ? 'sans texture paint' : 'avec texture paint'
           const fallbackState = result.fallback_used ? ' via fallback shape autonome' : ''
-          const pipelineLabel = activePipeline === 'procedural' ? 'Pipeline procedurale Blender' : activePipeline === 'photogrammetry' ? 'Pipeline photogrammetrie Meshroom' : intent.pipelineRouting.dreamgaussianPreferred && result.shape_model?.includes('DreamGaussian') ? 'Pipeline DreamGaussian (MIT)' : 'Pipeline TRELLIS.2'
+          const pipelineLabel = activePipeline === 'procedural' ? 'Pipeline Atlas (procedural)' : activePipeline === 'photogrammetry' ? 'Pipeline Atlas (photogrammetrie)' : intent.pipelineRouting.dreamgaussianPreferred && result.shape_model?.includes('Atlas') ? 'Pipeline Atlas (MIT)' : 'Pipeline Atlas'
           const referencePassSummary = directMultiView
             ? `Reference multivue directe: ${multiviewSummary}.`
             : `Reference ${referenceWorkflow.style} ${referenceWorkflow.width}x${referenceWorkflow.height}.`
@@ -4878,14 +4859,19 @@ export default function ModelView() {
           // Adjust fidelity score based on mesh verification
           const fidelityScore = meshFidelityResult ? Math.round((baseFidelityScore + meshFidelityResult.score) / 2) : baseFidelityScore
           setProgress(`${pipelineLabel}: mesh ${shapeLabel} ${textureState} genere${fallbackState}. ${validationSummary} ${riggingSummary} ${meshFidelitySummary}`.trim())
-          setPhase('Mesh charge et nettoyage du runtime...', 96)
+          setPhase('Finalisation — validation et chargement du modèle 3D...', 98)
           const syntheticViewsSummary = resolvedViewPlan.assignments.filter((a) => a.sourceKind === 'synthetic' && a.resolvedBlob).length
           const verifiedViewsSummary = resolvedViewPlan.assignments.filter((a) => a.verification?.passed).length
           const verificationFailedSummary = resolvedViewPlan.assignments.filter((a) => a.verification && !a.verification.passed).length
           const functionalDetailsSummary = resolvedViewPlan.assignments.flatMap((a) => a.verification?.functionalDetailsFound || []).filter(Boolean)
           const functionalMissingSummary = resolvedViewPlan.assignments.flatMap((a) => a.verification?.functionalDetailsMissing || []).filter(Boolean)
-          pushMessage('3d', { role: 'assistant', content: [`Intent 3D: ${intent.summary}.`, `Pipeline: ${pipelineLabel}.`, activeMotionPreset ? `Preset applique: ${activeMotionPreset.label}.` : '', intent.movingPartsFocus[0] ? `Sous-ensembles mobiles: ${intent.movingPartsFocus.slice(0, 3).join(', ')}.` : '', intent.anchoredPartsFocus[0] ? `Sous-ensembles fixes: ${intent.anchoredPartsFocus.slice(0, 3).join(', ')}.` : '', referenceSupportPlan.sourceNotes[0] ? `${referenceSupportPlan.sourceNotes[0]}.` : '', referenceVerificationSummary ? `${referenceVerificationSummary}.` : '', resolvedViewPlan.sourceNotes[0] ? `${resolvedViewPlan.sourceNotes[0]}.` : '', referencePassSummary, `Mesh ${shapeLabel} ${textureState}${fallbackState}.`, result.multiview_used || directMultiView ? `Multivue active: ${multiviewSummary || `${result.view_count || materializedViewPlan.assignments.length} vues`}.` : '', syntheticViewsSummary > 0 ? `${syntheticViewsSummary} vue(s) generee(s) automatiquement.` : '', verifiedViewsSummary > 0 ? `${verifiedViewsSummary} vue(s) verifiee(s) OK.` : '', verificationFailedSummary > 0 ? `${verificationFailedSummary} vue(s) verification partielle.` : '', functionalDetailsSummary.length > 0 ? `Details fonctionnels confirmes: ${[...new Set(functionalDetailsSummary)].slice(0, 4).join(', ')}.` : '', functionalMissingSummary.length > 0 ? `Details manquants: ${[...new Set(functionalMissingSummary)].slice(0, 3).join(', ')}.` : '', resolvedViewPlan.verificationNotes[0] ? `Verification cle: ${resolvedViewPlan.verificationNotes[0]}.` : '', resolvedViewPlan.lightingNotes[0] ? `Signal lumineux: ${resolvedViewPlan.lightingNotes[0]}.` : '', validationSummary ? validationSummary : '', riggingSummary ? riggingSummary : '', meshFidelitySummary ? meshFidelitySummary : '', intent.motionRisks[0] ? `Risque principal: ${intent.motionRisks[0]}.` : '', result.compatibility_reason ? `Compatibilite: ${result.compatibility_reason}` : ''].filter(Boolean).join(' '), images: [referenceImagePath, activeMeshPath] })
-          setSaveDialogData({ module: '3d', sourcePath: activeMeshPath, prompt: currentPrompt, fidelityScore, parameters: { format: result.format ?? 'glb', pipeline: activePipeline, shapeModel: result.shape_model, shapeSubfolder: result.shape_subfolder, shapeWeightFormat: result.shape_weight_format, shapeRuntime: result.shape_runtime, shapeStrategy: result.shape_strategy, shapeOffload: result.shape_offload, textureModel: result.texture_model, textureStrategy: result.texture_strategy, paintOffload: result.paint_offload, textured: result.textured, fallbackUsed: result.fallback_used, compatibilityReason: result.compatibility_reason, shapeInputMode: result.shape_input_mode ?? (directMultiView ? 'multiview' : 'single_view'), multiviewUsed: result.multiview_used ?? directMultiView, viewCount: result.view_count ?? (directMultiView ? materializedViewPlan.assignments.length : 1), multiviewSummary, viewPlanNotes: resolvedViewPlan.sourceNotes.join(' | '), viewVerificationNotes: resolvedViewPlan.verificationNotes.join(' | '), viewLightingNotes: resolvedViewPlan.lightingNotes.join(' | '), viewFunctionalVerification: resolvedViewPlan.functionalVerificationSummary.join(' | '), syntheticViewsGenerated: syntheticViewsSummary, viewsVerifiedOk: verifiedViewsSummary, viewsVerificationPartial: verificationFailedSummary, functionalDetailsConfirmed: functionalDetailsSummary.join(' | '), functionalDetailsMissing: functionalMissingSummary.join(' | '), intentPurpose: intent.purpose, intentSubjectKind: intent.subjectKind, systemClass: intent.systemClass, representationGoal: intent.representationGoal, referenceFraming: intent.referenceFraming, motionReadiness: intent.motionReadiness, pipelineJustifications: intent.pipelineRouting.justifications.map((j) => `${j.point} (${j.risk})`).join(' | '), validationChecks: intent.pipelineRouting.validationChecks.join(' | '), postProcessing: intent.pipelineRouting.postProcessing.join(' | '), validationSummary, riggingSummary, animationFrames: result.animationFrames, rigBones: result.rigBones, euCompliant: result.eu_compliant, license: result.license, motionRisks: intent.motionRisks.join(' | '), movingPartsFocus: intent.movingPartsFocus.join(' | '), anchoredPartsFocus: intent.anchoredPartsFocus.join(' | '), researchQueries: intent.researchQueries.join(' | '), motionPresetId: activeMotionPreset?.id ?? null, motionPresetLabel: activeMotionPreset?.label ?? null, motionPresetDirective: activeMotionPreset?.promptDirective ?? null, dimensionalPrecision: intent.requiresDimensionalPrecision, referenceMode: referenceSupportPlan.referenceMode, dimensionStrategy: referenceSupportPlan.dimensionStrategy, dimensionNotes: referenceSupportPlan.dimensionNotes.join(' | '), referenceSourceNotes: referenceSupportPlan.sourceNotes.join(' | '), referenceVerification: referenceVerificationSummary, externalReferenceTitle: referenceSupportPlan.externalReference?.title ?? null, referenceStyle: directMultiView ? 'direct_multiview' : referenceWorkflow.style, referenceResolution: directMultiView ? `direct:${materializedViewPlan.summary}` : `${referenceWorkflow.width}x${referenceWorkflow.height}`, referenceSteps: directMultiView ? 0 : referenceWorkflow.steps, meshFidelityScore: meshFidelityResult?.score ?? null, meshFidelityMissing: meshFidelityResult?.missingDetails?.join(' | ') ?? null, meshFidelityArtifacts: meshFidelityResult?.artifacts?.join(' | ') ?? null, meshFidelitySuggestions: meshFidelityResult?.suggestions?.join(' | ') ?? null, meshFidelityCategory: meshFidelityResult?.failureCategory ?? null, autoCorrectionPasses: correctionAttempt, autoCorrectionLog: correctionLog.join(' → '), meshGeometryGrade: result.mesh_geometry_grade ?? null }, modelLabel: result.shape_model || pipelineLabel })
+          const activeSourceWeb = discoveredSourceWeb?.url
+            ? `Source web : ${discoveredSourceWeb.title ? `"${discoveredSourceWeb.title}" ` : ''}(${discoveredSourceWeb.site || 'web'} — ${discoveredSourceWeb.url}).`
+            : (referenceSupportPlan.externalReference?.pageUrl
+              ? `Source web : ${referenceSupportPlan.externalReference.title ? `"${referenceSupportPlan.externalReference.title}" ` : ''}(${(() => { try { return new URL(referenceSupportPlan.externalReference.pageUrl).hostname.replace(/^www\./, '') } catch { return 'web' } })()} — ${referenceSupportPlan.externalReference.pageUrl}).`
+              : '')
+          pushMessage('3d', { role: 'assistant', content: [`Intent 3D: ${intent.summary}.`, `Pipeline: ${pipelineLabel}.`, activeSourceWeb, activeMotionPreset ? `Preset applique: ${activeMotionPreset.label}.` : '', intent.movingPartsFocus[0] ? `Sous-ensembles mobiles: ${intent.movingPartsFocus.slice(0, 3).join(', ')}.` : '', intent.anchoredPartsFocus[0] ? `Sous-ensembles fixes: ${intent.anchoredPartsFocus.slice(0, 3).join(', ')}.` : '', referenceSupportPlan.sourceNotes[0] ? `${referenceSupportPlan.sourceNotes[0]}.` : '', referenceVerificationSummary ? `${referenceVerificationSummary}.` : '', resolvedViewPlan.sourceNotes[0] ? `${resolvedViewPlan.sourceNotes[0]}.` : '', referencePassSummary, `Mesh ${shapeLabel} ${textureState}${fallbackState}.`, result.multiview_used || directMultiView ? `Multivue active: ${multiviewSummary || `${result.view_count || materializedViewPlan.assignments.length} vues`}.` : '', syntheticViewsSummary > 0 ? `${syntheticViewsSummary} vue(s) generee(s) automatiquement.` : '', verifiedViewsSummary > 0 ? `${verifiedViewsSummary} vue(s) verifiee(s) OK.` : '', verificationFailedSummary > 0 ? `${verificationFailedSummary} vue(s) verification partielle.` : '', functionalDetailsSummary.length > 0 ? `Details fonctionnels confirmes: ${[...new Set(functionalDetailsSummary)].slice(0, 4).join(', ')}.` : '', functionalMissingSummary.length > 0 ? `Details manquants: ${[...new Set(functionalMissingSummary)].slice(0, 3).join(', ')}.` : '', resolvedViewPlan.verificationNotes[0] ? `Verification cle: ${resolvedViewPlan.verificationNotes[0]}.` : '', resolvedViewPlan.lightingNotes[0] ? `Signal lumineux: ${resolvedViewPlan.lightingNotes[0]}.` : '', validationSummary ? validationSummary : '', riggingSummary ? riggingSummary : '', meshFidelitySummary ? meshFidelitySummary : '', intent.motionRisks[0] ? `Risque principal: ${intent.motionRisks[0]}.` : '', result.compatibility_reason ? `Compatibilite: ${result.compatibility_reason}` : ''].filter(Boolean).join(' '), images: [referenceImagePath, activeMeshPath] })
+          setSaveDialogData({ module: '3d', sourcePath: activeMeshPath, prompt: currentPrompt, fidelityScore, parameters: { format: result.format ?? 'glb', pipeline: activePipeline, shapeModel: result.shape_model, shapeSubfolder: result.shape_subfolder, shapeWeightFormat: result.shape_weight_format, shapeRuntime: result.shape_runtime, shapeStrategy: result.shape_strategy, shapeOffload: result.shape_offload, textureModel: result.texture_model, textureStrategy: result.texture_strategy, paintOffload: result.paint_offload, textured: result.textured, fallbackUsed: result.fallback_used, compatibilityReason: result.compatibility_reason, shapeInputMode: result.shape_input_mode ?? (directMultiView ? 'multiview' : 'single_view'), multiviewUsed: result.multiview_used ?? directMultiView, viewCount: result.view_count ?? (directMultiView ? materializedViewPlan.assignments.length : 1), multiviewSummary, viewPlanNotes: resolvedViewPlan.sourceNotes.join(' | '), viewVerificationNotes: resolvedViewPlan.verificationNotes.join(' | '), viewLightingNotes: resolvedViewPlan.lightingNotes.join(' | '), viewFunctionalVerification: resolvedViewPlan.functionalVerificationSummary.join(' | '), syntheticViewsGenerated: syntheticViewsSummary, viewsVerifiedOk: verifiedViewsSummary, viewsVerificationPartial: verificationFailedSummary, functionalDetailsConfirmed: functionalDetailsSummary.join(' | '), functionalDetailsMissing: functionalMissingSummary.join(' | '), intentPurpose: intent.purpose, intentSubjectKind: intent.subjectKind, systemClass: intent.systemClass, representationGoal: intent.representationGoal, referenceFraming: intent.referenceFraming, motionReadiness: intent.motionReadiness, pipelineJustifications: intent.pipelineRouting.justifications.map((j) => `${j.point} (${j.risk})`).join(' | '), validationChecks: intent.pipelineRouting.validationChecks.join(' | '), postProcessing: intent.pipelineRouting.postProcessing.join(' | '), validationSummary, riggingSummary, animationFrames: result.animationFrames, rigBones: result.rigBones, euCompliant: result.eu_compliant, license: result.license, motionRisks: intent.motionRisks.join(' | '), movingPartsFocus: intent.movingPartsFocus.join(' | '), anchoredPartsFocus: intent.anchoredPartsFocus.join(' | '), researchQueries: intent.researchQueries.join(' | '), motionPresetId: activeMotionPreset?.id ?? null, motionPresetLabel: activeMotionPreset?.label ?? null, motionPresetDirective: activeMotionPreset?.promptDirective ?? null, dimensionalPrecision: intent.requiresDimensionalPrecision, referenceMode: referenceSupportPlan.referenceMode, dimensionStrategy: referenceSupportPlan.dimensionStrategy, dimensionNotes: referenceSupportPlan.dimensionNotes.join(' | '), referenceSourceNotes: referenceSupportPlan.sourceNotes.join(' | '), referenceVerification: referenceVerificationSummary, externalReferenceTitle: referenceSupportPlan.externalReference?.title ?? null, referenceStyle: directMultiView ? 'direct_multiview' : referenceWorkflow.style, referenceResolution: directMultiView ? `direct:${materializedViewPlan.summary}` : `${referenceWorkflow.width}x${referenceWorkflow.height}`, referenceSteps: directMultiView ? 0 : referenceWorkflow.steps, meshFidelityScore: meshFidelityResult?.score ?? null, meshFidelityMissing: meshFidelityResult?.missingDetails?.join(' | ') ?? null, meshFidelityArtifacts: meshFidelityResult?.artifacts?.join(' | ') ?? null, meshFidelitySuggestions: meshFidelityResult?.suggestions?.join(' | ') ?? null, meshFidelityCategory: meshFidelityResult?.failureCategory ?? null, autoCorrectionPasses: correctionAttempt, autoCorrectionLog: correctionLog.join(' → '), meshGeometryGrade: result.mesh_geometry_grade ?? null, sourceWebSite: discoveredSourceWeb?.site ?? null, sourceWebUrl: discoveredSourceWeb?.url ?? referenceSupportPlan.externalReference?.pageUrl ?? null }, modelLabel: result.shape_model || pipelineLabel })
         },
       })
       // Generation terminee — marquer dans le tracker. L'annonce TTS utilisera
@@ -4990,7 +4976,7 @@ export default function ModelView() {
             </div>
           </div>
           <SessionSwitcher module="3d" onSessionChange={(session) => { hydrateSession(session); setContextFiles([]); setPrompt('') }} />
-          {uiIntent && <div className="rounded-[1.4rem] border border-aurora-accent/20 bg-aurora-accent/8 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-accent-light">Intent detecte</p><p className="mt-2 text-sm text-aurora-text">{uiIntent.summary}</p><p className="mt-1 text-xs text-aurora-text-muted">{uiIntent.requiresDimensionalPrecision ? 'Mode precision: le module vise un prototype plus technique et protege la lisibilite structurelle.' : 'Mode visuel: le module privilegie une silhouette propre et une reference exploitable.'}</p><p className="mt-2 text-xs font-medium text-aurora-accent-light">Pipeline: {uiIntent.pipelineRouting.pipeline === 'procedural' ? 'Procedural Blender (cinematique exacte)' : uiIntent.pipelineRouting.pipeline === 'photogrammetry' ? 'Photogrammetrie Meshroom (fidelite maximale)' : uiIntent.pipelineRouting.pipeline === 'hybrid' ? 'Hybride (procedural + IA)' : uiIntent.pipelineRouting.dreamgaussianPreferred ? 'IA TRELLIS.2 (secours DreamGaussian, MIT, EU-safe)' : 'IA TRELLIS.2'}</p>{uiIntent.pipelineRouting.justifications.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">{uiIntent.pipelineRouting.justifications[0].point}</p>}{uiIntent.pipelineRouting.blenderRequired && <p className="mt-1 text-xs text-aurora-text-muted">Blender requis pour post-traitement{uiIntent.pipelineRouting.postProcessing.length > 0 ? `: ${uiIntent.pipelineRouting.postProcessing.slice(0, 2).join(', ')}` : ''}</p>}{uiIntent.pipelineRouting.validationChecks.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Validation: {uiIntent.pipelineRouting.validationChecks.slice(0, 3).join(', ')}</p>}{uiIntent.motionGuidance.length > 0 && <p className="mt-2 text-xs text-aurora-text-muted">Mouvement: {uiIntent.motionGuidance[0]}</p>}{uiIntent.movingPartsFocus.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Mobiles: {uiIntent.movingPartsFocus.slice(0, 3).join(', ')}</p>}{uiIntent.anchoredPartsFocus.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Fixes: {uiIntent.anchoredPartsFocus.slice(0, 3).join(', ')}</p>}{uiIntent.motionRisks.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Limite: {uiIntent.motionRisks[0]}</p>}{selectedMotionPreset && <p className="mt-2 text-xs text-aurora-accent-light">Preset actif: {selectedMotionPreset.label}</p>}</div>}
+          {uiIntent && <div className="rounded-[1.4rem] border border-aurora-accent/20 bg-aurora-accent/8 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-accent-light">Intent detecte</p><p className="mt-2 text-sm text-aurora-text">{uiIntent.summary}</p><p className="mt-1 text-xs text-aurora-text-muted">{uiIntent.requiresDimensionalPrecision ? 'Mode precision: le module vise un prototype plus technique et protege la lisibilite structurelle.' : 'Mode visuel: le module privilegie une silhouette propre et une reference exploitable.'}</p><p className="mt-2 text-xs font-medium text-aurora-accent-light">Pipeline: {uiIntent.pipelineRouting.pipeline === 'procedural' ? 'Procedural Blender (cinematique exacte)' : uiIntent.pipelineRouting.pipeline === 'photogrammetry' ? 'Atlas en photogrammetrie (fidelite maximale)' : uiIntent.pipelineRouting.pipeline === 'hybrid' ? 'Hybride (procedural + IA)' : uiIntent.pipelineRouting.dreamgaussianPreferred ? 'Atlas (MIT, EU-safe)' : 'Atlas'}</p>{uiIntent.pipelineRouting.justifications.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">{uiIntent.pipelineRouting.justifications[0].point}</p>}{uiIntent.pipelineRouting.blenderRequired && <p className="mt-1 text-xs text-aurora-text-muted">Blender requis pour post-traitement{uiIntent.pipelineRouting.postProcessing.length > 0 ? `: ${uiIntent.pipelineRouting.postProcessing.slice(0, 2).join(', ')}` : ''}</p>}{uiIntent.pipelineRouting.validationChecks.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Validation: {uiIntent.pipelineRouting.validationChecks.slice(0, 3).join(', ')}</p>}{uiIntent.motionGuidance.length > 0 && <p className="mt-2 text-xs text-aurora-text-muted">Mouvement: {uiIntent.motionGuidance[0]}</p>}{uiIntent.movingPartsFocus.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Mobiles: {uiIntent.movingPartsFocus.slice(0, 3).join(', ')}</p>}{uiIntent.anchoredPartsFocus.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Fixes: {uiIntent.anchoredPartsFocus.slice(0, 3).join(', ')}</p>}{uiIntent.motionRisks.length > 0 && <p className="mt-1 text-xs text-aurora-text-muted">Limite: {uiIntent.motionRisks[0]}</p>}{selectedMotionPreset && <p className="mt-2 text-xs text-aurora-accent-light">Preset actif: {selectedMotionPreset.label}</p>}</div>}
           {referenceSupport && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Reference pilotee</p><p className="mt-2 text-sm text-aurora-text">{referenceSupport.referenceMode === 'exact_reference' ? 'Sujet de reference connu: le pipeline cherche a coller au sujet reel avant de styliser la vue 3D.' : referenceSupport.referenceMode === 'known_subject' ? 'Sujet connu: le pipeline enrichit la reference 3D avec recherche et filtrage visuel.' : 'Sujet libre: la reference 3D reste surtout pilotee par le brief.'}</p>{referenceSupport.sourceNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{referenceSupport.sourceNotes[0]}</p>}{referenceSupport.dimensionNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">Dimensions / rapports trouves: {referenceSupport.dimensionNotes.slice(0, 2).join(' | ')}</p>}</div>}
           {viewPlan && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Plan De Vues</p><p className="mt-2 text-sm text-aurora-text">{viewPlan.shouldUseMultiview ? 'Le module assemble plusieurs vues coherentes avant reconstruction.' : 'Le module reste en reference principale unique tant qu une multivue fiable n est pas garantie.'}</p>{viewPlan.sourceNotes[0] && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{viewPlan.sourceNotes[0]}</p>}{viewPlan.assignments.some((a) => a.sourceKind === 'synthetic') && <p className="mt-2 text-xs leading-relaxed text-aurora-accent-light">Generation autonome: {viewPlan.assignments.filter((a) => a.sourceKind === 'synthetic').map((a) => a.view).join(', ')} seront generees par FLUX + verifiees.</p>}{viewPlan.assignments.some((a) => a.verification) && <div className="mt-2 space-y-1">{viewPlan.assignments.filter((a) => a.verification).map((a) => <p key={a.view} className={`text-xs leading-relaxed ${a.verification?.passed ? 'text-aurora-text-muted' : 'text-aurora-red/80'}`}>{a.view}: {a.verification?.passed ? 'OK' : 'partiel'}{a.verification?.functionalDetailsFound.length ? ` (${a.verification.functionalDetailsFound.slice(0, 2).join(', ')})` : ''}{a.verification?.functionalDetailsMissing.length ? ` — manque: ${a.verification.functionalDetailsMissing.slice(0, 2).join(', ')}` : ''}</p>)}</div>}{viewPlan.verificationNotes.length > 0 && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">Verification: {viewPlan.verificationNotes.slice(0, 2).join(' | ')}</p>}{viewPlan.lightingNotes.length > 0 && <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">Lumiere / LED: {viewPlan.lightingNotes.slice(0, 2).join(' | ')}</p>}{viewPlan.functionalVerificationSummary && viewPlan.functionalVerificationSummary.length > 0 && <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">{viewPlan.functionalVerificationSummary[0]}</p>}</div>}
           {recentMessages.length > 0 && <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Continuite</p><p className="mt-2 text-sm text-aurora-text">La session 3D garde les derniers echanges et peut reprendre la derniere reference pour modifier le mesh au lieu de repartir de zero.</p></div>}
@@ -5021,7 +5007,45 @@ export default function ModelView() {
             {isGeneratingPhysics ? <><Loader2 size={14} className="animate-spin" /><span>Simulation physique...</span></> : <span>⛓ Generer chaine physique (Blender)</span>}
           </button>
           {(progress || error) && <div className="space-y-3">{progress && <div className="rounded-2xl border border-aurora-border/40 bg-aurora-surface/70 px-4 py-3"><p className="text-[11px] uppercase tracking-[0.2em] text-aurora-text-dim">Etat courant</p><p className="mt-2 text-sm text-aurora-text">{progress}</p></div>}{error && <div className="flex items-start gap-2 rounded-2xl border border-aurora-red/25 bg-aurora-red/10 px-3 py-3"><AlertCircle size={16} className="mt-0.5 shrink-0 text-aurora-red" /><p className="text-xs leading-relaxed text-aurora-red">{error}</p></div>}</div>}
-          {referenceImageUrl && <div className="rounded-[1.6rem] border border-aurora-border/40 bg-aurora-surface/65 p-4"><p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Reference locale</p>{referenceSupport?.sourceNotes[0] && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{referenceSupport.sourceNotes[0]}</p>}{referenceSupport?.dimensionNotes.length ? <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">Dimensions / rapports retenus: {referenceSupport.dimensionNotes.slice(0, 2).join(' | ')}</p> : null}<img src={referenceImageUrl} alt="Reference 3D" className="mt-3 w-full rounded-[1.2rem] border border-aurora-border/35" /></div>}
+          {referenceImageUrl && (
+            <div className="rounded-[1.6rem] border border-aurora-border/40 bg-aurora-surface/65 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Reference 3D</p>
+                {(discoveredSourceWeb?.site || referenceSupport?.externalReference?.title) && (
+                  <a
+                    href={discoveredSourceWeb?.url || referenceSupport?.externalReference?.pageUrl || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-aurora-accent/40 bg-aurora-accent/10 px-2.5 py-1 text-[11px] font-medium text-aurora-accent hover:bg-aurora-accent/20 transition-colors shadow-sm"
+                    title={discoveredSourceWeb?.url || referenceSupport?.externalReference?.pageUrl || ''}
+                  >
+                    <Globe size={13} />
+                    <span className="truncate max-w-[200px] font-mono">{discoveredSourceWeb?.site || referenceSupport?.externalReference?.title}</span>
+                  </a>
+                )}
+              </div>
+              {(discoveredSourceWeb?.title || referenceSupport?.externalReference?.title) && (
+                <div className="mt-2 rounded-lg bg-aurora-surface/80 p-2 border border-aurora-border/30">
+                  <p className="text-xs font-semibold text-aurora-text truncate">
+                    {discoveredSourceWeb?.title || referenceSupport?.externalReference?.title}
+                  </p>
+                  {(discoveredSourceWeb?.url || referenceSupport?.externalReference?.pageUrl) && (
+                    <a
+                      href={discoveredSourceWeb?.url || referenceSupport?.externalReference?.pageUrl || '#'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-aurora-accent/80 hover:text-aurora-accent hover:underline truncate block mt-0.5"
+                    >
+                      {discoveredSourceWeb?.url || referenceSupport?.externalReference?.pageUrl}
+                    </a>
+                  )}
+                </div>
+              )}
+              {referenceSupport?.sourceNotes[0] && <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">{referenceSupport.sourceNotes[0]}</p>}
+              {referenceSupport?.dimensionNotes.length ? <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">Dimensions / rapports retenus: {referenceSupport.dimensionNotes.slice(0, 2).join(' | ')}</p> : null}
+              <img src={referenceImageUrl} alt="Reference 3D" className="mt-3 w-full rounded-[1.2rem] border border-aurora-border/35" />
+            </div>
+          )}
           <ReferenceInspectorPanel
             analysis={referenceAnalysis}
             referenceImageUrl={referenceImageUrl}
@@ -5380,7 +5404,7 @@ export default function ModelView() {
                     </div>
                   )}
                 </div>
-              ) : referenceImageUrl ? <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116] p-6"><div className="max-w-xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.4rem] gradient-accent text-white"><ImageIcon size={26} /></div><p className="mt-4 text-sm text-aurora-text">La reference est prete. Le viewer affichera le mesh des que TRELLIS.2 aura termine l export.</p><img src={referenceImageUrl} alt="Reference en attente du mesh" className="mt-5 max-h-[60vh] rounded-[1.6rem] border border-aurora-border/35 shadow-2xl" /></div></div> : <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116]"><div className="text-center"><div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[1.8rem] border border-aurora-border bg-aurora-surface-2"><Box size={40} className="text-aurora-text-dim" /></div><p className="mt-4 text-sm text-aurora-text-muted">Decris le but, choisis un preset sur la droite si besoin, puis laisse le module construire une reference propre avant la reconstruction.</p></div></div>}
+              ) : referenceImageUrl ? <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116] p-6"><div className="max-w-xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.4rem] gradient-accent text-white"><ImageIcon size={26} /></div><p className="mt-4 text-sm text-aurora-text">La référence est prête. L'agent Poly sculpte la géométrie 3D et le viewer l'affichera dès la fin de la génération.</p><img src={referenceImageUrl} alt="Reference en attente du mesh" className="mt-5 max-h-[60vh] rounded-[1.6rem] border border-aurora-border/35 shadow-2xl" /></div></div> : <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116]"><div className="text-center"><div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[1.8rem] border border-aurora-border bg-aurora-surface-2"><Box size={40} className="text-aurora-text-dim" /></div><p className="mt-4 text-sm text-aurora-text-muted">Decris le but, choisis un preset sur la droite si besoin, puis laisse le module construire une reference propre avant la reconstruction.</p></div></div>}
             </div>
             <div className="space-y-4">
               <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4">

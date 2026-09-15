@@ -1,4 +1,4 @@
-import type { ChemistryReactionConfig, ReactionKind, SceneEntity, Vec3 } from './types'
+import type { ChemistryReactionConfig, ReactionKind, SceneEntity, Vec3 } from './types.ts'
 
 export type ReactionRuntime = {
   entityId: string

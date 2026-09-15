@@ -51,6 +51,16 @@ KIND_PROJECTION: dict[str, tuple[int, int, int]] = {
     "gadget":     (0, 1, 2),
     "architecture": (0, 1, 2),
     "sphere":     (0, 1, 2),
+    # `mechanism` et `mechanical` MANQUAIENT a la table alors qu ils existent
+    # dans KIND_ASPECT. La lecture se faisait par
+    # `KIND_PROJECTION.get(kind, KIND_PROJECTION["generic"])` : le repli etait
+    # silencieux, et rien ne distinguait « ce sujet est projete en vue de face
+    # PAR CHOIX » de « ce sujet n a pas d entree ». Le moulin a eau de la demo
+    # tombait dans ce cas. Ces deux familles n ont pas d axe long impose —
+    # KIND_ASPECT leur donne (-1,-1,-1), soit aucune contrainte de forme — donc
+    # la vue de face est le bon defaut : on l ecrit, au lieu d y tomber.
+    "mechanism":  (0, 1, 2),
+    "mechanical": (0, 1, 2),
     "generic":    (0, 1, 2),
 }
 

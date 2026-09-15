@@ -15,7 +15,7 @@
  *   - what specifically gets better when each one is wired
  */
 
-import type { ConnectorId } from './coworkSettings'
+import type { ConnectorId } from './coworkSettings.ts'
 
 export type ModuleId =
   | 'conversation'

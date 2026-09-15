@@ -3,11 +3,11 @@ import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, Star, Flame, Trophy, Layers, Sparkles, Target, BookOpen, GraduationCap, Map as MapIcon } from 'lucide-react'
-import { useFlashcardsStore } from '../../stores/flashcardsStore'
-import { useGamificationStore } from '../../stores/gamificationStore'
-import type { LearningSource } from '../../services/learningResearch'
-import type { TocEntry, Tab } from './types'
-import { slugify } from './utils'
+import { useFlashcardsStore } from '../../stores/flashcardsStore.ts'
+import { useGamificationStore } from '../../stores/gamificationStore.ts'
+import type { LearningSource } from '../../services/learningResearch.ts'
+import type { TocEntry, Tab } from './types.ts'
+import { slugify } from './utils.ts'
 
 export function LearningMetricCard({
   icon: Icon,

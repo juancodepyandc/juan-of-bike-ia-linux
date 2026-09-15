@@ -13,8 +13,8 @@ import {
   type MagicResult,
   type MemScanResult,
   type StringsResult,
-} from '../../services/cyber/pythonClient'
-import { detectMagic, extractStrings, hexDump, parseExif } from '../../services/cyber/forensicsTools'
+} from '../../services/cyber/pythonClient.ts'
+import { detectMagic, extractStrings, hexDump, parseExif } from '../../services/cyber/forensicsTools.ts'
 
 type Tab = 'magic' | 'hashes' | 'strings' | 'exif' | 'entropy' | 'memscan' | 'hex' | 'browser'
 

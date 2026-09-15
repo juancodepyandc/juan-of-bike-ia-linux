@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, CircleDashed, Loader2, Play, Save, Sparkles, X } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import type { AvatarEntry } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import type { AvatarEntry } from '../types/app.ts'
 import {
   FORGE_STEPS,
   type ForgeResult,
@@ -18,11 +18,11 @@ import {
   type ForgeStepStatus,
   type RigPlan,
   runForgePipeline,
-} from '../services/characterForge'
-import { useForgeQueueStore } from '../stores/forgeQueueStore'
-import { isBridgeReachable } from '../services/pythonJobClient'
-import RigEditor from '../components/RigEditor'
-import RigPlayer from '../components/RigPlayer'
+} from '../services/characterForge.ts'
+import { useForgeQueueStore } from '../stores/forgeQueueStore.ts'
+import { isBridgeReachable } from '../services/pythonJobClient.ts'
+import RigEditor from '../components/RigEditor.tsx'
+import RigPlayer from '../components/RigPlayer.tsx'
 
 interface Props {
   open: boolean

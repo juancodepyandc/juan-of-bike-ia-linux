@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { useAppStore } from '../stores/appStore'
-import { onRuntimeProgress, runtimeInspectServices } from './useTauri'
-import { isTauriRuntime } from '../utils/runtime'
+import { useAppStore } from '../stores/appStore.ts'
+import { onRuntimeProgress, runtimeInspectServices } from './useTauri.ts'
+import { isTauriRuntime } from '../utils/runtime.ts'
 
 function mapRuntimeServices(
   services: Awaited<ReturnType<typeof runtimeInspectServices>>,

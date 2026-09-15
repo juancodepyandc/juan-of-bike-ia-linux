@@ -18,8 +18,8 @@ import {
   VOICE_OPTIONS,
   type AuroraAgent,
   type AgentVoice,
-} from '../services/auroraAgents'
-import AuroraAgentMascot from '../components/AuroraAgentMascot'
+} from '../services/auroraAgents.ts'
+import AuroraAgentMascot from '../components/AuroraAgentMascot.tsx'
 
 export default function AuroraV3TeamManager() {
   const [agents, setAgents] = useState<AuroraAgent[]>(() => getAllAgents())

@@ -12,7 +12,7 @@
  * whether to render the dynamic data or a fallback.
  */
 import { useEffect, useState } from 'react'
-import { getBridgeUrl } from '../utils/runtime'
+import { getBridgeUrl } from '../utils/runtime.ts'
 
 export type AgentInfo = {
   count: number

@@ -157,7 +157,7 @@ export function updateCoworkProjectThreadFromEvents(
     if (desc.trim()) notes.push(`Image jointe: ${compact(desc, 220)}`)
   }
 
-  let artifacts = base.artifacts.map((artifact) => ({ ...artifact, parentIds: artifact.parentIds ? [...artifact.parentIds] : undefined }))
+  let artifacts: CoworkProjectArtifact[] = base.artifacts.map((artifact) => ({ ...artifact, parentIds: artifact.parentIds ? [...artifact.parentIds] : undefined }))
   const stages = [...base.stages, ...records.map(recordToStage)].slice(-MAX_STAGES)
 
   for (const record of records) {

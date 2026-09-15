@@ -125,7 +125,8 @@ export async function runAgenticGenerationPhase({
       nextMeta: createMetaFactory(),
       runner: createCodeGenerationSandboxRunner(),
       onFilesUpdate: (files, item) => {
-        setPhase(`Executor agentique WS3: ${item.path} ecrit.`, Math.min(78, 35 + item.order))
+        const itemPct = 35 + Math.round((item.order / Math.max(1, queue.items.length)) * 30)
+        setPhase(`Executor agentique WS3 (${item.order}/${queue.items.length}): ${item.path}`, Math.min(68, itemPct))
         onFilesUpdate?.(files, `Generation agentique WS3 en cours: ${item.order}/${queue.items.length}`)
       },
     }), { label: 'Generation agentique WS3', timeoutMs: STREAM_GENERATION_TOTAL_TIMEOUT_MS })

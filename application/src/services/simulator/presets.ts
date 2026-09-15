@@ -1,6 +1,6 @@
-import { DEFAULT_CAMERA, DEFAULT_QUALITY, DEFAULT_TIMELINE } from './defaults'
-import { PHENOMENA, type PhenomenonId } from './phenomena'
-import type { SceneSnapshot } from './types'
+import { DEFAULT_CAMERA, DEFAULT_QUALITY, DEFAULT_TIMELINE } from './defaults.ts'
+import { PHENOMENA, type PhenomenonId } from './phenomena.ts'
+import type { SceneSnapshot } from './types.ts'
 
 export type ScenePreset = {
   id: PhenomenonId | 'empty_studio' | 'solar_system' | 'explosion' | 'galileo' | 'sodium_water' | 'fluid_pour'

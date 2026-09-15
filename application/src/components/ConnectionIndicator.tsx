@@ -14,8 +14,8 @@
  * Bottom-left est déjà occupé par HelpFab (v82gc) → top-right.
  */
 import { useEffect, useRef, useState } from 'react'
-import { pushTransition } from '../utils/serviceTransitions'
-import { useNotificationStore } from '../stores/notificationStore'
+import { pushTransition } from '../utils/serviceTransitions.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
 
 type Tick = { ok: boolean; ms: number }
 type Statuses = { bridge: Tick | null; ollama: Tick | null; comfy: Tick | null }

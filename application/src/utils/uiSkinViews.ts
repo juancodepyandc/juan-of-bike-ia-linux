@@ -1,5 +1,5 @@
 import { lazy, type ComponentType } from 'react'
-import { readUiSkin, type UiSkinId } from './uiSkin'
+import { readUiSkin, type UiSkinId } from './uiSkin.ts'
 
 type ViewMod = { default: ComponentType }
 

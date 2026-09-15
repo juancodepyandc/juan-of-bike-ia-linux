@@ -1,5 +1,5 @@
 import { Color, Vector3 } from 'three'
-import type { ParticleEmitterConfig, SceneEntity, Vec3 } from './types'
+import type { ParticleEmitterConfig, SceneEntity, Vec3 } from './types.ts'
 
 export type Particle = {
   position: Vector3

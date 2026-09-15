@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { HelpCircle, Loader2, Send } from 'lucide-react'
-import { ollamaChat } from '../hooks/useTauri'
-import { getErrorMessage } from '../utils/errors'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { getErrorMessage } from '../utils/errors.ts'
 
 export type AskAboutContentBoxProps = {
   /** Title of the panel, shown in the header */

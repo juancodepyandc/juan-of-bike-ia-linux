@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { Copy, StopCircle, X } from 'lucide-react'
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
 
 const CodeBlock = lazy(() => import('../components/CodeBlock'))
 

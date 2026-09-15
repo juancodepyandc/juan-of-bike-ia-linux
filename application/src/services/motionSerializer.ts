@@ -35,7 +35,7 @@
  * Pure: no Tauri / React / fs deps.
  */
 
-import type { MotionDescriptor, KinematicPrimitive } from './kinematicsLibrary'
+import type { MotionDescriptor, KinematicPrimitive } from './kinematicsLibrary.ts'
 
 export type SerializedMotionPrimitive = {
   kind: KinematicPrimitive['kind']

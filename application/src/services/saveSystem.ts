@@ -1,11 +1,11 @@
 import JSZip from 'jszip'
-import { fsMkdir, fsReadBinary, fsWriteBinary, fsWriteText, getWorkspacePath, ollamaGenerate, toAssetUrl } from '../hooks/useTauri'
+import { fsMkdir, fsReadBinary, fsWriteBinary, fsWriteText, getWorkspacePath, ollamaGenerate, toAssetUrl } from '../hooks/useTauri.ts'
 import {
   AUXILIARY_ANALYSIS_MODEL,
   resolveConfiguredModel,
-} from '../config/models'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
+} from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 export type SaveTarget = 'workspace' | 'zip'
 

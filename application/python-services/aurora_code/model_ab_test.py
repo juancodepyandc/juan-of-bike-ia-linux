@@ -71,9 +71,9 @@ def judge_verify(txt):
 
 
 CANDIDATES = {
-    "agentique": {"models": sys.argv[1].split(",") if len(sys.argv) > 1 else ["devstral", "qwen3.6:27b"],
+    "agentique": {"models": sys.argv[1].split(",") if len(sys.argv) > 1 else ["orcarouter/Qwen3.8-27B-Uncensored", "qwen3-coder:30b"],
                   "tests": [("plan", PLAN_SYS, PLAN_USER, judge_plan), ("actions", ACTIONS_SYS, ACTIONS_USER, judge_actions)]},
-    "verifieur": {"models": sys.argv[2].split(",") if len(sys.argv) > 2 else ["deepseek-r1:32b", "qwen3-coder:30b"],
+    "verifieur": {"models": sys.argv[2].split(",") if len(sys.argv) > 2 else ["deepseek-r1:32b", "orcarouter/Qwen3.8-27B-Uncensored"],
                   "tests": [("verif", VERIFY_SYS, VERIFY_USER, judge_verify)]},
 }
 

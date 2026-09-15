@@ -1,6 +1,6 @@
-import { ollamaChat } from '../hooks/useTauri'
-import type { ModuleId } from '../types/app'
-import { summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import type { ModuleId } from '../types/app.ts'
+import { summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext.ts'
 
 export type GenerationContract = {
   mode: 'create' | 'edit' | 'transform' | 'analyze' | 'research'

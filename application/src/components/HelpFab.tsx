@@ -8,7 +8,7 @@
  * la cheatsheet n'a aucune valeur, et l'orbe chevauchait le contenu en
  * bas-gauche des shells mobile.
  */
-import { useDeviceKind } from '../utils/device'
+import { useDeviceKind } from '../utils/device.ts'
 
 export default function HelpFab() {
   const device = useDeviceKind()

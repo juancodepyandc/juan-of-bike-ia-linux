@@ -1,5 +1,5 @@
-import type { ConversationSession, ModuleHistoryMessage } from '../stores/moduleHistoryStore'
-import type { FluxStyle } from '../utils/fluxWorkflow'
+import type { ConversationSession, ModuleHistoryMessage } from '../stores/moduleHistoryStore.ts'
+import type { FluxStyle } from '../utils/fluxWorkflow.ts'
 
 type StyleResolutionInput = {
   style: FluxStyle

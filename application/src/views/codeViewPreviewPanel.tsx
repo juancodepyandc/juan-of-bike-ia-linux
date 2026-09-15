@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ExternalLink, Maximize2, Minimize2, Monitor, Smartphone, Tablet } from 'lucide-react'
-import { parsePartialStreamFiles, buildLivePreviewHtml, webProjectFromFiles } from '../components/CodeProjectPreview'
-import { LIVE_PREVIEW_TOTAL_CAP_BYTES, shouldPauseLivePreviewDuringGeneration } from '../services/codeLivePreviewPolicy'
-import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent'
-import type { CodeFile } from '../services/codeOrchestrator'
-import { isHeavyWebGLProject } from './codeViewPreviewHeuristics'
-import { CodeFullscreenViewer } from './codeViewFullscreenViewer'
-import { PreviewStage, type BigViewport } from './codeViewPreviewStage'
+import { parsePartialStreamFiles, buildLivePreviewHtml, webProjectFromFiles } from '../components/CodeProjectPreview.tsx'
+import { LIVE_PREVIEW_TOTAL_CAP_BYTES, shouldPauseLivePreviewDuringGeneration } from '../services/codeLivePreviewPolicy.ts'
+import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent.ts'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import { isHeavyWebGLProject } from './codeViewPreviewHeuristics.ts'
+import { CodeFullscreenViewer } from './codeViewFullscreenViewer.tsx'
+import { PreviewStage, type BigViewport } from './codeViewPreviewStage.tsx'
 
 // ---------------------------------------------------------------------------
 // Big live preview frame — dedicated to the large right panel. Watches the
@@ -19,7 +19,7 @@ import { PreviewStage, type BigViewport } from './codeViewPreviewStage'
 //    gauche, redimensionnable et repliable.
 // ---------------------------------------------------------------------------
 
-export type { BigViewport } from './codeViewPreviewStage'
+export type { BigViewport } from './codeViewPreviewStage.tsx'
 
 // Total bytes cap: beyond this, the preview recompute on every token is too
 // expensive (split + regex + blob + iframe reload). We freeze the preview

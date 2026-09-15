@@ -1,5 +1,5 @@
 import { Box3, Euler, Matrix4, Quaternion, Vector3 } from 'three'
-import type { ColliderShape, PhysicsBody, SceneEntity, Vec3 } from './types'
+import type { ColliderShape, PhysicsBody, SceneEntity, Vec3 } from './types.ts'
 
 type RigidBodyState = {
   id: string

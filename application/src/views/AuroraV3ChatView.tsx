@@ -12,15 +12,18 @@
  */
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import MarkdownPro from '../components/MarkdownPro'
-import { useChatViewLogic, stripThink, type Attachment } from '../hooks/useChatViewLogic'
-import { useAppStore } from '../stores/appStore'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { suggestCommands, getRecentSlash, type SlashCommand } from '../utils/slashCommands'
-import { pickRandomStarter } from '../utils/randomChatStarters'
-import { getDailyTip } from '../utils/dailyTip'
-import { getContextUsage } from '../utils/modelContext'
-import { useNotificationStore } from '../stores/notificationStore'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import SourcesPanel from '../components/chat/SourcesPanel.tsx'
+import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
+import { extractRichMedia } from '../utils/mediaLinks.ts'
+import { useChatViewLogic, stripThink, type Attachment } from '../hooks/useChatViewLogic.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { suggestCommands, getRecentSlash, type SlashCommand } from '../utils/slashCommands.ts'
+import { pickRandomStarter } from '../utils/randomChatStarters.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { getContextUsage } from '../utils/modelContext.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
 
@@ -600,6 +603,10 @@ export default function AuroraV3ChatView() {
                       {isAsst
                         ? <MarkdownPro content={visible || m.content} idPrefix={`v3-bubble-${id}`} />
                         : (visible || m.content)}
+                      <MediaStrip urls={extractRichMedia(visible || m.content)} />
+                      {isAsst && m.sources && m.sources.length > 0 && (
+                        <SourcesPanel sources={m.sources} queries={m.searchQueries ?? []} />
+                      )}
                     </div>
                   )}
                   {!isEditing && (

@@ -153,6 +153,21 @@ def resolve_profile(intent_purpose: str, motion_readiness: str) -> dict[str, Any
         profile["taubin_iterations"] = max(profile["taubin_iterations"], 14)
     if intent_purpose == "mechanical_part":
         profile["preserve_features"] = True
+    # PLAFOND DE DECIMATION REGLABLE. Les cibles ci-dessus (80 000 a 150 000,
+    # ramenees a 90 000 des qu'un rig est prevu) ont ete choisies pour que le
+    # calcul automatique des poids ne parte pas en spaghetti. Mais le
+    # generateur livre desormais 300 000 faces, et TOUT ce qui est fin — une
+    # meche bouclee, une lanniere, une grille — passe sous la maille a 90 000
+    # et ressort en bloc ou en confettis. Le rig venant maintenant du service
+    # (qui remaille lui-meme avant de poser le squelette), ce plafond n'a plus
+    # la meme utilite. On le laisse par defaut, mais AURORA_DECIMATE_TARGET
+    # permet de demander la geometrie pleine sans toucher au code.
+    _cible = os.environ.get("AURORA_DECIMATE_TARGET")
+    if _cible:
+        try:
+            profile["decimate_target_faces"] = int(_cible)
+        except ValueError:
+            pass
     return profile
 
 
@@ -163,34 +178,56 @@ def resolve_profile(intent_purpose: str, motion_readiness: str) -> dict[str, Any
 
 
 def _trimesh_drop_floaters(mesh, ratio: float):
-    """Remove small disconnected components that are likely AI artefacts."""
+    """Retire les petites composantes detachees (artefacts de generation).
+
+    SANS `mesh.split()`. Celui-ci construit un sous-maillage par composante et
+    RECOPIE l'atlas pour chacun (trimesh/util.py -> material.copy() -> PIL
+    Image.copy()). Mesure du 05/09: 7 208 composantes sur un maillage de
+    personnage, 50 Mo par copie d'atlas 4096 = 360 Go demandes, processus tue
+    par le noyau a 30 Go. Huit lancements perdus, tous a cause de ce motif.
+
+    On lit la connectivite sur le graphe d'adjacence des faces, on mesure
+    chaque composante sur ses SOMMETS, puis on applique un masque de faces:
+    `update_faces` conserve les UV et la texture unique, sans aucune copie.
+    """
     try:
-        components = mesh.split(only_watertight=False)
-        if len(components) <= 1:
+        import numpy as np
+        from trimesh.graph import connected_components as _cc
+
+        faces = np.asarray(mesh.faces)
+        if len(faces) == 0:
             return mesh, 0
-        biggest_volume = max((float(c.bounding_box.volume) if c.bounding_box.volume > 0 else float(c.area)) for c in components)
-        threshold = max(1e-9, biggest_volume * ratio)
-        kept = []
-        dropped = 0
-        for component in components:
-            volume = float(component.bounding_box.volume)
-            if volume <= 0:
-                volume = float(component.area)
-            if volume >= threshold:
-                kept.append(component)
+        comps = _cc(mesh.face_adjacency, nodes=np.arange(len(faces)))
+        if len(comps) <= 1:
+            return mesh, 0
+
+        verts = np.asarray(mesh.vertices)
+        mesures = []
+        for c in comps:
+            vi = np.unique(faces[c].ravel())
+            pts = verts[vi]
+            etendue = pts.max(axis=0) - pts.min(axis=0)
+            vol = float(np.prod(np.maximum(etendue, 1e-12)))
+            mesures.append(vol)
+        plus_gros = max(mesures) if mesures else 0.0
+        if plus_gros <= 0:
+            return mesh, 0
+        seuil = max(1e-9, plus_gros * ratio)
+
+        garder = np.zeros(len(faces), dtype=bool)
+        jetes = 0
+        for c, vol in zip(comps, mesures):
+            if vol >= seuil:
+                garder[c] = True
             else:
-                dropped += 1
-        if not kept:
+                jetes += 1
+        if not garder.any() or jetes == 0:
             return mesh, 0
-        if len(kept) == 1:
-            return kept[0], dropped
-        import trimesh
-
-        return trimesh.util.concatenate(kept), dropped
-    except Exception as exc:
-        emit("post_warn", f"floater drop ignored ({exc})")
+        mesh.update_faces(garder)
+        mesh.remove_unreferenced_vertices()
+        return mesh, jetes
+    except Exception:  # noqa: BLE001 — en cas de doute on ne touche pas au maillage
         return mesh, 0
-
 
 def _trimesh_taubin_smoothing(mesh, iterations: int, lamb: float, mu: float):
     """Pure trimesh Taubin smoothing fallback (volume preserving)."""
@@ -325,8 +362,91 @@ def _trimesh_apply_bilateral_symmetry(mesh, blend: float = 0.55):
     return mesh
 
 
+_SCRIPT_DECIMATE_BLENDER = r"""
+import bpy, sys
+src, dst, ratio = sys.argv[-3], sys.argv[-2], float(sys.argv[-1])
+bpy.ops.wm.read_factory_settings(use_empty=True)
+bpy.ops.import_scene.gltf(filepath=src)
+objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+if not objs:
+    print("DECIM_FAIL: aucun maillage", flush=True); sys.exit(3)
+for o in objs:
+    bpy.context.view_layer.objects.active = o
+    m = o.modifiers.new(name="decim", type="DECIMATE")
+    m.decimate_type = "COLLAPSE"
+    m.ratio = ratio
+    m.use_collapse_triangulate = True
+    bpy.ops.object.modifier_apply(modifier=m.name)
+bpy.ops.export_scene.gltf(filepath=dst, export_format="GLB",
+                          export_materials="EXPORT", export_texcoords=True,
+                          export_normals=True, export_yup=True)
+print("DECIM_OK", flush=True)
+"""
+
+
+def _decimate_texture_preservee(mesh, target_faces: int):
+    """Decime SANS perdre les UV ni l'atlas.
+
+    `simplify_quadric_decimation` de trimesh ne transporte pas les
+    coordonnees de texture: mesure du 05/09 sur le personnage Caine,
+    TextureVisuals (252 637 UV, atlas 2048) ressort en ColorVisuals avec
+    uv=None. Tout ce qui suit devient impossible — le bake de normales
+    s'arrete sur "low-poly has no UV map" et le GLB livre n'a plus AUCUN
+    materiau: three.js retombe sur son materiau par defaut (metalness 1) et
+    le personnage sort gris metallique. Ce defaut etait masque tant que
+    le post-traitement mourait en OOM avant d'arriver ici.
+
+    Blender interpole les UV a travers son modificateur Decimate. On lui
+    confie donc l'operation quand le maillage est texture. Rend (mesh, jetes)
+    ou None si la voie Blender n'est pas disponible.
+    """
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from bake_normal_map import _find_blender
+        exe = _find_blender()
+        if not exe:
+            return None
+        import trimesh
+        ratio = max(0.01, min(0.99, float(target_faces) / float(len(mesh.faces))))
+        with tempfile.TemporaryDirectory() as td:
+            src = str(Path(td) / "avant.glb")
+            dst = str(Path(td) / "apres.glb")
+            script = Path(td) / "decim.py"
+            script.write_text(_SCRIPT_DECIMATE_BLENDER, encoding="utf-8")
+            mesh.export(src)
+            r = subprocess.run([exe, "-b", "-P", str(script), "--", src, dst,
+                                "%.6f" % ratio],
+                               capture_output=True, text=True, timeout=1800)
+            if "DECIM_OK" not in (r.stdout or "") or not Path(dst).is_file():
+                emit("post_warn", "decimation Blender indisponible (%s)"
+                     % ((r.stdout or r.stderr or "")[-120:].replace("\n", " ")))
+                return None
+            rendu = trimesh.load(dst, force="mesh", process=False)
+            if getattr(getattr(rendu, "visual", None), "uv", None) is None:
+                emit("post_warn", "decimation Blender sans UV — ecartee")
+                return None
+            return rendu, len(mesh.faces) - len(rendu.faces)
+    except Exception as exc:  # noqa: BLE001
+        emit("post_warn", "decimation Blender echouee (%r)" % (exc,))
+        return None
+
+
 def _trimesh_decimate(mesh, target_faces: int):
     if target_faces <= 0 or len(mesh.faces) <= target_faces:
+        return mesh, 0
+    _texture = getattr(getattr(mesh, "visual", None), "uv", None) is not None
+    if _texture:
+        _via_blender = _decimate_texture_preservee(mesh, target_faces)
+        if _via_blender is not None:
+            emit("decimate", "decimation Blender (UV et atlas conserves)")
+            return _via_blender
+        # UN MODELE DENSE VAUT MIEUX QU'UN MODELE NU. Decimer ici couterait
+        # la texture entiere; on garde donc la geometrie telle quelle.
+        emit("post_warn", "decimation ecartee: elle detruirait les UV et "
+                          "l'atlas (maillage dense conserve)")
         return mesh, 0
     try:
         new_mesh = mesh.simplify_quadric_decimation(face_count=target_faces)

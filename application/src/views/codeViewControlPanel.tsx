@@ -1,17 +1,17 @@
 import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import { BookOpen, Bot, Loader2, ScanSearch, Sparkles, Workflow } from 'lucide-react'
-import CodeCorrectionLog from '../components/CodeCorrectionLog'
-import ContextFilesField from '../components/ContextFilesField'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import ModuleAssetPackCard from '../components/ModuleAssetPackCard'
-import SessionSwitcher from '../components/SessionSwitcher'
-import type { CorrectionPass } from '../services/codeAutoCorrection'
-import type { CodePreflightReport } from '../services/codePreflight'
-import type { CodeFile, FollowUpAnalysis } from '../services/codeOrchestrator'
-import type { CodeIntent, CodeProjectType } from '../services/codeIntent'
-import type { DevServerState } from '../services/codeDevServer'
-import type { SaveDialogData } from '../components/SaveDialog'
-import { CodeViewControlActions } from './codeViewControlActions'
+import CodeCorrectionLog from '../components/CodeCorrectionLog.tsx'
+import ContextFilesField from '../components/ContextFilesField.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import ModuleAssetPackCard from '../components/ModuleAssetPackCard.tsx'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
+import type { CorrectionPass } from '../services/codeAutoCorrection.ts'
+import type { CodePreflightReport } from '../services/codePreflight.ts'
+import type { CodeFile, FollowUpAnalysis } from '../services/codeOrchestrator.ts'
+import type { CodeIntent, CodeProjectType } from '../services/codeIntent.ts'
+import type { DevServerState } from '../services/codeDevServer.ts'
+import type { SaveDialogData } from '../components/SaveDialog.tsx'
+import { CodeViewControlActions } from './codeViewControlActions.tsx'
 import {
   CodeConversationPanel,
   CodeDesignPanel,
@@ -21,7 +21,7 @@ import {
   CodeSavedProjectPanel,
   type DesignReport,
   type RecentCodeMessage,
-} from './codeViewControlStatusPanels'
+} from './codeViewControlStatusPanels.tsx'
 
 type CodeViewControlPanelProps = {
   assetPack: ComponentProps<typeof ModuleAssetPackCard>['pack']

@@ -1,15 +1,15 @@
-import { ollamaChat, ollamaGenerate } from '../hooks/useTauri'
-import { summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext'
-import { detectThreeDClarification, type ThreeDClarification } from './threeDClarification'
-import { buildHumanoidAnatomyBlock, type HumanoidProportionMetrics } from './humanoidAnatomy'
-import { buildQuadrupedAnatomyBlock, buildVehicleAnatomyBlock } from './subjectAnatomy'
+import { ollamaChat, ollamaGenerate } from '../hooks/useTauri.ts'
+import { summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext.ts'
+import { detectThreeDClarification, type ThreeDClarification } from './threeDClarification.ts'
+import { buildHumanoidAnatomyBlock, type HumanoidProportionMetrics } from './humanoidAnatomy.ts'
+import { buildQuadrupedAnatomyBlock, buildVehicleAnatomyBlock } from './subjectAnatomy.ts'
 import {
   buildKinematicsDirectiveBlock,
   parseCustomMotionPrompt,
   type KinematicSubjectKind,
   type KinematicSystemClass,
   type MotionDescriptor as KinematicMotionDescriptor,
-} from './kinematicsLibrary'
+} from './kinematicsLibrary.ts'
 
 export type ThreeDPipeline =
   | 'ai_generation'       // TRELLIS.2 / DreamGaussian — creative or reference-based
@@ -238,8 +238,8 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
 // fluids + luminous effects + motion) must not be collapsed to its dominant
 // noun. The detection + MUST-render contract live in the pure ./compoundScene
 // module (no Tauri deps) so node --test can exercise it; re-exported here.
-export { buildCompoundSceneContract, hasNamedIdentitySignal } from './compoundScene'
-import { buildCompoundSceneContract } from './compoundScene'
+export { buildCompoundSceneContract, hasNamedIdentitySignal } from './compoundScene.ts'
+import { buildCompoundSceneContract } from './compoundScene.ts'
 
 function detectPurpose(prompt: string): ThreeDPurpose {
   const normalized = prompt.toLowerCase()
@@ -348,7 +348,7 @@ export function detectMotionVerbHint(prompt: string): ThreeDMotionVerbHint {
 // in ./pbrProfile.ts (no Tauri / React deps) so node --test can exercise it
 // without dragging the runtime bridge in. Re-exported here for callers that
 // already import the rest of threeDIntent.
-export { inferPbrProfile, type PbrProfile, type PbrProfileKind } from './pbrProfile'
+export { inferPbrProfile, type PbrProfile, type PbrProfileKind } from './pbrProfile.ts'
 
 function detectMotionReadiness(
   prompt: string,
@@ -1841,8 +1841,8 @@ export {
   parseCustomMotionPrompt,
   selectKinematicPresets,
   listAllPresetIds as listAllKinematicPresetIds,
-} from './kinematicsLibrary'
-export type { MotionDescriptor as KinematicMotionDescriptor } from './kinematicsLibrary'
+} from './kinematicsLibrary.ts'
+export type { MotionDescriptor as KinematicMotionDescriptor } from './kinematicsLibrary.ts'
 
 /**
  * v77zm: maps ThreeDIntent's wider subjectKind / systemClass enums onto the
@@ -2003,12 +2003,12 @@ FLUX visual description:`
   // v77zai on analyzeThreeDIntent — Ollama can sit on a request for
   // minutes producing zero tokens. Without a timeout, this blocks the
   // shape stage from ever being reached.
-  const FLUX_PROMPT_TIMEOUT_MS = 60_000
+  const FLUX_PROMPT_TIMEOUT_MS = 20_000
   const fluxAbort = new AbortController()
   const fluxTimeout = setTimeout(() => fluxAbort.abort(), FLUX_PROMPT_TIMEOUT_MS)
 
   try {
-    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal })
+    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal, num_predict: 350, num_ctx: 4096 })
     clearTimeout(fluxTimeout)
     const text = (response?.response || '').trim()
     const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
@@ -2124,7 +2124,7 @@ export async function analyzeThreeDIntent({
   // the whole generation forever — user sees the overlay's red "stuck"
   // warning but the bake never starts. Fallback heuristic is always
   // available so we lose nothing by abandoning the LLM call after 90s.
-  const INTENT_TIMEOUT_MS = 90_000
+  const INTENT_TIMEOUT_MS = 20_000
   const abortController = new AbortController()
   const timeoutId = setTimeout(() => abortController.abort(), INTENT_TIMEOUT_MS)
 
@@ -2166,7 +2166,7 @@ export async function analyzeThreeDIntent({
           documentContext ? `Attached context:\n${documentContext}` : '',
         ].filter(Boolean).join('\n\n'),
       },
-    ], 0.05, { signal: abortController.signal })
+    ], 0.05, { signal: abortController.signal, num_predict: 512, num_ctx: 4096 })
     clearTimeout(timeoutId)
 
     const parsed = parseIntentJson(response?.message?.content || '')
@@ -2274,7 +2274,7 @@ export type MeshCorrectionStrategy = {
  * correction strategy falls back to its generic path until a mesh-geometry
  * script (independent of which generator produced the GLB) computes them.
  */
-export type { HumanoidProportionMetrics } from './humanoidAnatomy'
+export type { HumanoidProportionMetrics } from './humanoidAnatomy.ts'
 
 export function buildMeshCorrectionStrategy({
   fidelity,

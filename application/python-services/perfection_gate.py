@@ -297,6 +297,9 @@ def orienter_face_viewer(glb: str) -> dict:
     """Face vers +Z (la camera du viewer), jugee sur projections BRUTES."""
     sys.path.insert(0, str(PS))
     from vlm_judge import ask_vlm
+    # Un fichier sans texture ne peut etre juge QUE sur la forme.
+    if forme_seule is None:
+        forme_seule = not _a_une_texture(glb)
     with tempfile.TemporaryDirectory() as td:
         azs = (0, 90, 180, 270)
         img = os.path.join(td, "brut.png")
@@ -447,7 +450,40 @@ def porte_structure(glb: str) -> dict:
 
 
 # --------------------------------------------------------------- juge ------
-def juger(glb: str, reference: str, contexte: str = "") -> dict:
+def _a_une_texture(glb: str) -> bool:
+    """Ce GLB porte-t-il une texture (donc des couleurs et du texte) ?
+
+    Sert a savoir COMMENT juger: un fichier `*_matte.glb` est la geometrie
+    pure rendue en blanc mat. Lui demander s'il "correspond a la demande"
+    quand la demande parle de couleurs ou d'un mot imprime garantit un refus:
+    il n'a ni l'un ni l'autre PAR CONSTRUCTION. Mesure du 05/09: trois essais
+    de suite refuses score 0 sur un maillage sain, et le personnage jamais
+    livre. On lit donc le fichier au lieu de deviner d'apres son nom.
+    """
+    try:
+        import json as _json
+        import struct as _st
+        with open(glb, "rb") as _f:
+            _entete = _f.read(12)
+            if len(_entete) < 12 or _entete[:4] != b"glTF":
+                return True  # doute -> on juge tout, y compris les couleurs
+            _lg, _typ = _st.unpack("<II", _f.read(8))
+            if _typ != 0x4E4F534A:
+                return True
+            _doc = _json.loads(_f.read(_lg).decode("utf-8", "replace"))
+        if _doc.get("images"):
+            return True
+        for _m in _doc.get("materials", []):
+            _pbr = _m.get("pbrMetallicRoughness") or {}
+            if _pbr.get("baseColorTexture") or _m.get("emissiveTexture"):
+                return True
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def juger(glb: str, reference: str, contexte: str = "",
+          forme_seule: bool | None = None) -> dict:
     """Rendus textures multi-vues vs REFERENCE: liste des defauts que l'image
     n'a pas. parfait=false -> le pipeline REFUSE la livraison et refait."""
     sys.path.insert(0, str(PS))
@@ -482,25 +518,47 @@ def juger(glb: str, reference: str, contexte: str = "") -> dict:
         votes = []
         for _tour in range(3):
             try:
-                v = ask_vlm(
-                    [reference] + vues,
+                _preambule = (
                     "Image 1 = REFERENCE. Images 2-5 = un modele 3D "
                     "reconstruit, 4 angles. Reponds STRICTEMENT en JSON par "
                     "OUI/NON factuels (ignore le style de rendu et "
-                    "l'eclairage):\n"
-                    "- trous: des perforations/manques DANS la surface du "
+                    "l'eclairage):\n")
+                if forme_seule:
+                    _preambule = (
+                        "Image 1 = REFERENCE. Images 2-5 = la GEOMETRIE du "
+                        "modele 3D, rendue en ARGILE BLANCHE SANS TEXTURE, "
+                        "4 angles. Tu juges UNIQUEMENT LA FORME: silhouette, "
+                        "proportions, membres, volumes. L'absence de couleur, "
+                        "de motif, de logo ou de texte imprime est NORMALE a "
+                        "cette etape et ne doit JAMAIS compter comme un "
+                        "defaut ni faire baisser la note. Ignore aussi "
+                        "l'eclairage et les ombres portees: sur de l'argile "
+                        "blanche une zone sombre est une ombre, pas une "
+                        "tache. Reponds STRICTEMENT en JSON par OUI/NON "
+                        "factuels:\n")
+                v = ask_vlm(
+                    [reference] + vues,
+                    _preambule
+                    + "- trous: des perforations/manques DANS la surface du "
                     "sujet (pas le fond) ?\n"
                     "- morceaux_manquants: un membre/partie du sujet absent "
                     "ou fondu par rapport a la reference ?\n"
                     "- eclate: le sujet est en fragments/debris ?\n"
                     "- taches: mouchetures ou taches sombres parasites bien "
                     "visibles sur la surface ?\n"
-                    "- conforme_demande: le modele correspond-il a la "
-                    "DEMANDE ecrite ci-dessous ? (un fragment, une piece "
-                    "isolee ou un sujet different = false)\n"
-                    "- score: fidelite globale 0-100 a la reference "
-                    "(silhouette, couleurs, details).\n"
-                    "DEMANDE DE L'UTILISATEUR: " + (contexte or "(non fournie)"),
+                    + ("- conforme_demande: la FORME est-elle celle du "
+                       "sujet demande ci-dessous ? (un fragment, une piece "
+                       "isolee ou un sujet different = false ; une couleur, "
+                       "un texte ou un motif manquant = true quand meme)\n"
+                       "- score: fidelite 0-100 de la SILHOUETTE et des "
+                       "PROPORTIONS a la reference, couleurs exclues.\n"
+                       if forme_seule else
+                       "- conforme_demande: le modele correspond-il a la "
+                       "DEMANDE ecrite ci-dessous ? (un fragment, une piece "
+                       "isolee ou un sujet different = false)\n"
+                       "- score: fidelite globale 0-100 a la reference "
+                       "(silhouette, couleurs, details).\n")
+                    + "DEMANDE DE L'UTILISATEUR: " + (contexte or "(non fournie)"),
                     schema_hint='{"trous": true|false, '
                                 '"morceaux_manquants": true|false, '
                                 '"eclate": true|false, "taches": true|false, '

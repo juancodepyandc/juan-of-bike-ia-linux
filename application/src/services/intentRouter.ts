@@ -26,6 +26,7 @@ export type ModuleId =
   | 'cyber'
   | 'simulator'
   | 'cowork'
+  | 'web-action'
 
 export type IntentSignal = {
   /** Token, bigram or short n-gram to detect (normalised lowercase, no accents). */
@@ -269,6 +270,22 @@ const PROFILES: readonly ModuleProfile[] = [
       { pattern: 'github', weight: 2 },
       { pattern: 'vercel', weight: 3 },
       { pattern: 'pipeline', weight: 3 },
+    ],
+  },
+  {
+    id: 'web-action',
+    label: 'Web Action (Agent Autonome)',
+    priority: 1.2,
+    signals: [
+      { pattern: 'remplis le formulaire', weight: 5, loose: true },
+      { pattern: 'clique sur', weight: 5, loose: true },
+      { pattern: 'va sur le site', weight: 4, loose: true },
+      { pattern: 'navigue', weight: 4 },
+      { pattern: 'scrappe', weight: 4 },
+      { pattern: 'cherche et clique', weight: 5, loose: true },
+      { pattern: 'automatise', weight: 3 },
+      { pattern: 'playwright', weight: 5 },
+      { pattern: 'web action', weight: 5, loose: true },
     ],
   },
   {

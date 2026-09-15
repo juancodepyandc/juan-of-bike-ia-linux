@@ -9,8 +9,8 @@ import {
   sha256,
   sha384,
   sha512,
-} from '../../services/cyber/hashService'
-import { generateSalt, hashWithSalt, lookupHash } from '../../services/cyber/rainbowTableDemo'
+} from '../../services/cyber/hashService.ts'
+import { generateSalt, hashWithSalt, lookupHash } from '../../services/cyber/rainbowTableDemo.ts'
 
 export default function HashLab() {
   return (

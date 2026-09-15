@@ -45,7 +45,7 @@ import {
   type VoiceSampleUploadResponse,
   type VoiceStudioProfile,
   type VoiceStudioTree,
-} from '../../services/voiceStudioApi'
+} from '../../services/voiceStudioApi.ts'
 
 interface Props {
   onClose?: () => void

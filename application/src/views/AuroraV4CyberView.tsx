@@ -1,15 +1,18 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
-  Activity, Award, Check, ChevronDown, Clipboard, Dice5, Download, Flame,
-  HelpCircle, Lightbulb, Loader2, Play, RefreshCw, ShieldCheck, Sparkles,
-  Target, TerminalSquare, Trophy, Upload, Wand2, X, Zap,
+  Activity, AlertTriangle, Award, BookOpen, Check, CheckCircle2, ChevronDown, ChevronUp, Clipboard, Copy, Dice5, Download, Flame,
+  HelpCircle, Lightbulb, Loader2, MessageSquare, Play, RefreshCw, Send, Shield, ShieldCheck, Sparkles,
+  Target, Terminal, TerminalSquare, Trash2, Trophy, Upload, Wand2, X, Zap,
 } from 'lucide-react'
-import AuroraMascot from '../components/generationFx/mascots'
-import MarkdownPro from '../components/MarkdownPro'
-import Sparkline from '../components/Sparkline'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { useCyberViewLogic } from '../hooks/useCyberViewLogic'
+import AuroraMascot from '../components/generationFx/mascots.tsx'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import Sparkline from '../components/Sparkline.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { useCyberViewLogic } from '../hooks/useCyberViewLogic.ts'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { generateCyberAdvisory } from '../services/cyber/advisory.ts'
 
 const WarRoomToolBench = lazy(() => import('./cyber/WarRoomLab'))
 const AutonomousInvestigatorToolBench = lazy(() => import('./cyber/AutonomousInvestigatorLab'))
@@ -258,6 +261,150 @@ export default function AuroraV4CyberView() {
   const [briefingCopied, setBriefingCopied] = useState(false)
   const [activeToolBench, setActiveToolBench] = useState<ToolBenchId | null>(null)
   const logEndRef = useRef<HTMLDivElement | null>(null)
+  const [directRunning, setDirectRunning] = useState(false)
+  const [directSteps, setDirectSteps] = useState<Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'error'; detail?: string; durationMs?: number }>>([])
+  const [directLogs, setDirectLogs] = useState<Array<{ id: string; time: string; text: string; tone?: 'info' | 'warn' | 'ok' | 'accent' }>>([])
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false)
+  const [directResult, setDirectResult] = useState<string | null>(null)
+  const consoleEndRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (isConsoleOpen) {
+      consoleEndRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [directLogs, isConsoleOpen])
+
+  const [cyberMode, setCyberMode] = useState<'chat' | 'lab'>('chat')
+  const [chatMessages, setChatMessages] = useState<Array<{
+    id: string
+    role: 'user' | 'assistant'
+    content: string
+    time: string
+    target?: string
+    steps?: Array<{ id: string; label: string; status: 'pending' | 'running' | 'done' | 'error'; detail?: string; durationMs?: number }>
+  }>>(() => [
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content: `### 🛡️ Aurora Cyber Engine · Espace d'Audit & Ingénierie
+Bienvenue dans votre environnement d'analyse de sécurité et d'audit technique.
+- **💬 Mode Discussion & Audit** : Posez des questions techniques, demandez des analyses d'invariants, des audits d'API/Web ou des revues de code sans restrictions artificielles.
+- **⚒️ Mode Forge Laboratoire** : Basculez dans l'onglet **Forger son Laboratoire** pour créer et manipuler des environnements sandboxés et résoudre des épreuves interactives.`,
+      time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+    },
+  ])
+  const chatBottomRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages, directRunning])
+
+  function extractTargetAndType(brief: string, scope: string): { target: string; targetType: string; isWeb: boolean } {
+    const combined = `${scope} ${brief}`
+    const urlMatch = combined.match(/https?:\/\/[^\s"'<>]+/i)
+    if (urlMatch) {
+      return { target: urlMatch[0], targetType: 'Cible Web & Réseau Distant (URL)', isWeb: true }
+    }
+    const domainMatch = combined.match(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|fr|org|net|io|dev|app|ai|tech|cloud|edu|gov|co|local|internal|xyz|eu|ch|ca|de|uk)\b(?::\d+)?(?:\/[^\s]*)?/i)
+    if (domainMatch) {
+      const full = domainMatch[0].startsWith('http') ? domainMatch[0] : `https://${domainMatch[0]}`
+      return { target: full, targetType: 'Cible Web & Domaine Distant (FQDN)', isWeb: true }
+    }
+    const ipMatch = combined.match(/\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/)
+    if (ipMatch) {
+      return { target: ipMatch[0], targetType: 'Hôte Réseau / Adresse IP', isWeb: true }
+    }
+    if (scope.trim()) {
+      const isWebScope = /https?:\/\/|www\.|\.com|\.fr|\.org|\.io|\.net/i.test(scope)
+      return { target: scope.trim(), targetType: isWebScope ? 'Cible Web Distante' : 'Système / Dépôt Local', isWeb: isWebScope }
+    }
+    const lowerBrief = brief.toLowerCase()
+    if (lowerBrief.includes('site') || lowerBrief.includes('web') || lowerBrief.includes('api') || lowerBrief.includes('url') || lowerBrief.includes('endpoint') || lowerBrief.includes('http') || lowerBrief.includes('domaine') || lowerBrief.includes('serveur distant') || lowerBrief.includes('portail')) {
+      return { target: 'Service Web & API en ligne', targetType: 'Cible Applicative Web', isWeb: true }
+    }
+    return { target: 'Environnement Local / Code Source', targetType: 'Environnement Local', isWeb: false }
+  }
+
+  const handleDirectExecute = async () => {
+    if (!C.customBrief.trim() || directRunning) return
+    const inputContent = C.customBrief.trim()
+    setDirectRunning(true)
+    setDirectResult(null)
+    const startTime = Date.now()
+    const nowStamp = () => new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+    const { target, targetType, isWeb } = extractTargetAndType(inputContent, C.scopeTarget)
+
+    const userMsg = {
+      id: `u_${Date.now()}`,
+      role: 'user' as const,
+      content: inputContent,
+      time: nowStamp(),
+      target: target,
+    }
+    setChatMessages((prev) => [...prev, userMsg])
+    C.setCustomBrief('')
+
+    const steps = [
+      { id: 's1', label: '1. Lecture de la demande', status: 'done' as const, detail: `Cible mentionnée : ${target} ; accès non vérifié` },
+      { id: 's2', label: '2. Analyse du contexte fourni', status: 'running' as const, detail: 'Hypothèses et contrôles à préparer' },
+      { id: 's3', label: '3. Synthèse et recommandations', status: 'pending' as const, detail: 'Restitution de l’analyse' },
+    ]
+    setDirectSteps(steps)
+    setDirectLogs([
+      { id: 'l1', time: nowStamp(), text: `[ANALYSE] Demande reçue : "${inputContent.slice(0, 80)}"`, tone: 'accent' },
+      { id: 'l2', time: nowStamp(), text: `[CONTEXTE] Type déduit du texte : ${targetType} | Cible mentionnée : ${target}`, tone: 'info' },
+      { id: 'l3', time: nowStamp(), text: '[PREUVES] Analyse du texte fourni ; aucune collecte ni vérification de la cible effectuée dans cette discussion.', tone: 'info' },
+    ])
+
+    try {
+      const { mainModel } = useAppStore.getState()
+      const effectiveModel = (mainModel && mainModel.trim()) ? mainModel : 'qwen-cyber'
+      const advisory = await generateCyberAdvisory({
+        model: effectiveModel,
+        request: inputContent,
+        target,
+        targetType,
+        isWeb,
+        stance: C.stance,
+      }, ollamaGenerate)
+      const rawText = `Analyse fondée sur la demande fournie. Cible non vérifiée par des outils.\n\n${advisory.content}`
+      setDirectResult(rawText)
+
+      const finishedSteps = steps.map((s, i) => i === 1 ? { ...s, status: 'done' as const, durationMs: Date.now() - startTime } : { ...s, status: 'done' as const })
+      setDirectSteps(finishedSteps)
+
+      const assistantMsg = {
+        id: `a_${Date.now()}`,
+        role: 'assistant' as const,
+        content: rawText,
+        time: nowStamp(),
+        target: target,
+        steps: finishedSteps,
+      }
+      setChatMessages((prev) => [...prev, assistantMsg])
+
+      setDirectLogs((prev) => [
+        ...prev,
+        { id: `l_${Date.now()}`, time: nowStamp(), text: `[RÉSULTAT] Analyse disponible (${advisory.content.length} caractères). Vérifications techniques à effectuer.`, tone: 'ok' }
+      ])
+      C.addXp(30)
+      C.pushLog({ text: `✓ Analyse préparée : ${inputContent.slice(0, 35)}… (+30 XP)`, tone: 'xp' })
+    } catch (err) {
+      const errStr = err instanceof Error ? err.message : String(err)
+      setDirectSteps((prev) => prev.map((s) => s.status === 'running' ? { ...s, status: 'error', detail: errStr } : s))
+      setDirectLogs((prev) => [...prev, { id: `l_${Date.now()}`, time: nowStamp(), text: `[ERREUR] ${errStr}`, tone: 'warn' }])
+      setDirectResult(`Échec de l’analyse : ${errStr}`)
+      setChatMessages((prev) => [...prev, {
+        id: `err_${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ **Erreur lors de l’analyse :**\n\`\`\`\n${errStr}\n\`\`\``,
+        time: nowStamp(),
+      }])
+    } finally {
+      setDirectRunning(false)
+    }
+  }
 
   useEffect(() => {
     if (!briefingCopied) return
@@ -568,6 +715,311 @@ export default function AuroraV4CyberView() {
         </Card>
       )}
 
+      {/* 2-Mode Segmented Selector */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, position: 'relative', zIndex: 1, flexWrap: 'wrap' }}>
+        <div style={{ display: 'inline-flex', padding: 4, background: 'rgba(10,15,30,.85)', borderRadius: 14, border: '1px solid rgba(255,255,255,.12)', gap: 4 }}>
+          <button
+            type="button"
+            onClick={() => setCyberMode('chat')}
+            style={{
+              padding: '8px 20px',
+              borderRadius: 10,
+              border: cyberMode === 'chat' ? `1px solid ${ACCENT}` : '1px solid transparent',
+              background: cyberMode === 'chat' ? `linear-gradient(135deg, ${ACCENT}33, rgba(255,255,255,.06))` : 'transparent',
+              color: cyberMode === 'chat' ? '#fff' : DIM,
+              fontWeight: cyberMode === 'chat' ? 800 : 500,
+              fontSize: 13,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              boxShadow: cyberMode === 'chat' ? `0 4px 18px ${ACCENT}44` : 'none',
+              transition: 'all .2s ease',
+            }}
+          >
+            <MessageSquare size={15} color={cyberMode === 'chat' ? ACCENT : DIM} />
+            <span>💬 Discussion & Audit Cyber</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setCyberMode('lab')}
+            style={{
+              padding: '8px 20px',
+              borderRadius: 10,
+              border: cyberMode === 'lab' ? `1px solid ${BLUE}` : '1px solid transparent',
+              background: cyberMode === 'lab' ? `linear-gradient(135deg, ${BLUE}33, rgba(255,255,255,.06))` : 'transparent',
+              color: cyberMode === 'lab' ? '#fff' : DIM,
+              fontWeight: cyberMode === 'lab' ? 800 : 500,
+              fontSize: 13,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              cursor: 'pointer',
+              boxShadow: cyberMode === 'lab' ? `0 4px 18px ${BLUE}44` : 'none',
+              transition: 'all .2s ease',
+            }}
+          >
+            <Wand2 size={15} color={cyberMode === 'lab' ? BLUE : DIM} />
+            <span>⚒️ Forger son Laboratoire</span>
+          </button>
+        </div>
+        <span style={{ flex: 1 }} />
+        {cyberMode === 'chat' ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Chip tone={C.stance === 'offense' ? ACCENT : BLUE} active onClick={() => C.setStance(C.stance === 'offense' ? 'defense' : 'offense')} title="Cliquer pour basculer de posture">
+              {C.stance === 'offense' ? '🔴 Posture Offensive (Red Team)' : '🔵 Posture Défensive (Blue Team)'}
+            </Chip>
+            {chatMessages.length > 1 && (
+              <Btn variant="ghost" onClick={() => setChatMessages([chatMessages[0]])} title="Effacer l'historique de conversation">
+                <Trash2 size={13} />
+              </Btn>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Chip tone={ACCENT} active>
+              Ceinture {C.belt} · {C.xp} XP
+            </Chip>
+            <Chip tone={BLUE}>
+              Stage {C.stage}/4
+            </Chip>
+          </div>
+        )}
+      </div>
+
+      {cyberMode === 'chat' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18, alignItems: 'start', position: 'relative', zIndex: 1 }} className="cyber-in">
+          {/* Colonne Principale de Conversation */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Card style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 560, background: 'rgba(10,15,30,.75)', border: '1px solid rgba(255,255,255,.1)' }}>
+              
+              {/* En-tête du Chat */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,.08)', background: 'rgba(5,8,16,.5)' }}>
+                <MessageSquare size={16} color={ACCENT} />
+                <span style={{ fontWeight: 750, fontSize: 13, color: FG }}>Discussion Technique & Audit d'Invariants</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ ...mono, fontSize: 10.5, color: DIM }}>
+                  Modèle : <b style={{ color: FG }}>{C.mainModel || 'Qwen Cyber'}</b>
+                </span>
+              </div>
+
+              {/* Flux de messages */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 'calc(100vh - 380px)', minHeight: 380 }}>
+                {chatMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                      gap: 6,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: MUTE, ...mono }}>
+                      {msg.role === 'user' ? (
+                        <>
+                          <span>{msg.time}</span>
+                          <span style={{ color: ACCENT, fontWeight: 700 }}>Opérateur</span>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ color: OK, fontWeight: 700 }}>🛡️ Aurora Cyber Engine</span>
+                          <span>{msg.time}</span>
+                        </>
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        maxWidth: '92%',
+                        padding: msg.role === 'user' ? '12px 16px' : '16px 20px',
+                        borderRadius: msg.role === 'user' ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                        background: msg.role === 'user' ? 'rgba(244,63,94,.12)' : 'rgba(255,255,255,.03)',
+                        border: msg.role === 'user' ? `1px solid ${ACCENT}44` : '1px solid rgba(255,255,255,.09)',
+                        color: FG,
+                        fontSize: 13.5,
+                        lineHeight: 1.6,
+                        boxShadow: '0 4px 16px rgba(0,0,0,.25)',
+                      }}
+                    >
+                      {msg.role === 'user' ? (
+                        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</div>
+                      ) : (
+                        <div className="cyber-brief-md">
+                          <MarkdownPro content={msg.content} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {directRunning && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '14px 18px', borderRadius: 14, background: 'rgba(244,63,94,.06)', border: `1px solid ${ACCENT}33` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Loader2 size={15} color={ACCENT} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                      <span style={{ ...mono, fontSize: 11.5, fontWeight: 700, color: FG }}>
+                        Audit technique & déduction d'invariants en cours…
+                      </span>
+                    </div>
+                    <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
+                      {directSteps.map((step) => (
+                        <div key={step.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, ...mono }}>
+                          {step.status === 'running' ? (
+                            <Loader2 size={12} color={ACCENT} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                          ) : step.status === 'done' ? (
+                            <CheckCircle2 size={12} color={OK} />
+                          ) : step.status === 'error' ? (
+                            <AlertTriangle size={12} color={WARN} />
+                          ) : (
+                            <span style={{ width: 12, height: 12, borderRadius: '50%', border: '1px solid rgba(255,255,255,.2)' }} />
+                          )}
+                          <span style={{ color: step.status === 'running' ? FG : step.status === 'done' ? OK : MUTE }}>{step.label}</span>
+                          <span style={{ flex: 1 }} />
+                          {step.durationMs ? <span style={{ color: OK, fontSize: 10 }}>{step.durationMs}ms</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Barre de saisie conversationnelle */}
+              <div style={{ padding: '14px 16px', background: 'rgba(5,8,16,.75)', borderTop: '1px solid rgba(255,255,255,.08)' }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                  <textarea
+                    value={C.customBrief}
+                    onChange={(e) => C.setCustomBrief(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !directRunning && C.customBrief.trim()) {
+                        e.preventDefault()
+                        void handleDirectExecute()
+                      }
+                    }}
+                    disabled={directRunning}
+                    rows={2}
+                    placeholder="Posez votre question cyber, URL cible, audit d'API ou analyse de code... (Ctrl + Entrée)"
+                    style={{ ...inputBase, flex: 1, padding: '10px 12px', fontSize: 12.5, resize: 'none', lineHeight: 1.5 }}
+                  />
+                  <VoicePushToTalk
+                    onTranscript={(text) => C.setCustomBrief((C.customBrief ? C.customBrief + ' ' : '') + text)}
+                    label="Dicter la demande"
+                    disabled={directRunning}
+                    variant="ghost"
+                    size={38}
+                  />
+                  <Btn
+                    variant="primary"
+                    disabled={!C.customBrief.trim() || directRunning}
+                    onClick={() => void handleDirectExecute()}
+                    style={{ padding: '10px 18px', height: 38, fontWeight: 750 }}
+                  >
+                    {directRunning ? (
+                      <Loader2 size={15} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                    ) : (
+                      <>
+                        <Send size={14} />
+                        <span>Envoyer</span>
+                      </>
+                    )}
+                  </Btn>
+                </div>
+              </div>
+            </Card>
+
+            {/* Console Déployable */}
+            <Card style={{ padding: '12px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Terminal size={14} color={ACCENT} />
+                <Label>Journal de l’analyse</Label>
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => setIsConsoleOpen(!isConsoleOpen)}
+                  style={{
+                    background: isConsoleOpen ? `${ACCENT}22` : 'rgba(255,255,255,.05)',
+                    border: `1px solid ${isConsoleOpen ? ACCENT : 'rgba(255,255,255,.14)'}`,
+                    borderRadius: 8,
+                    padding: '4px 9px',
+                    color: isConsoleOpen ? ACCENT : DIM,
+                    fontSize: 10.5,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    cursor: 'pointer',
+                    ...mono,
+                  }}
+                >
+                  <Terminal size={11} />
+                  {isConsoleOpen ? 'Réduire la console' : 'Déployer la console'}
+                  {isConsoleOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+              </div>
+              {isConsoleOpen && (
+                <div style={{ marginTop: 10, padding: '10px 11px', borderRadius: 10, background: '#070B14', border: '1px solid rgba(255,255,255,.15)', maxHeight: 200, overflowY: 'auto', ...mono, fontSize: 10.5, lineHeight: 1.45 }}>
+                  <div style={{ color: MUTE, marginBottom: 6, borderBottom: '1px solid rgba(255,255,255,.08)', paddingBottom: 4 }}>
+                    --- FLUX DE TÉLÉMÉTRIE & LOGS D'AUDIT EN DIRECT ---
+                  </div>
+                  {directLogs.map((log) => (
+                    <div key={log.id} style={{ color: log.tone === 'ok' ? OK : log.tone === 'accent' ? ACCENT : log.tone === 'warn' ? WARN : DIM, marginBottom: 3 }}>
+                      <span style={{ color: MUTE, marginRight: 6 }}>[{log.time}]</span>
+                      {log.text}
+                    </div>
+                  ))}
+                  <div ref={consoleEndRef} />
+                </div>
+              )}
+            </Card>
+          </div>
+
+          {/* Panneau Latéral Droit : Scénarios rapides & Statut */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Card>
+              <Label style={{ marginBottom: 10 }}>Scénarios d'Audit Prédéfinis</Label>
+              <div style={{ display: 'grid', gap: 7 }}>
+                {CYBER_REQUEST_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      C.setStance(preset.stance)
+                      C.setCustomBrief(preset.text)
+                    }}
+                    style={{
+                      textAlign: 'left',
+                      padding: '9px 11px',
+                      borderRadius: 10,
+                      background: 'rgba(255,255,255,.03)',
+                      border: '1px solid rgba(255,255,255,.08)',
+                      color: FG,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 3,
+                    }}
+                  >
+                    <span style={{ fontWeight: 700, color: preset.stance === 'offense' ? ACCENT : BLUE }}>{preset.label}</span>
+                    <span style={{ fontSize: 11, color: DIM, lineHeight: 1.4 }}>{preset.text.slice(0, 75)}…</span>
+                  </button>
+                ))}
+              </div>
+            </Card>
+
+            <Card>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <ShieldCheck size={16} color={OK} />
+                <Label>Moteur d'Audit Actif</Label>
+              </div>
+              <div style={{ ...mono, fontSize: 11, color: DIM, lineHeight: 1.6 }}>
+                Modèle : <b style={{ color: FG }}>{C.mainModel || 'Qwen Cyber'}</b><br />
+                Contexte : <span style={{ color: OK }}>4096 / 8192 tokens</span><br />
+                Invariants : <span style={{ color: OK }}>Code/Data, Timing O(1), PQC</span><br />
+                Posture : <span style={{ color: C.stance === 'offense' ? ACCENT : BLUE }}>{C.stance === 'offense' ? 'Offensive (Red Team)' : 'Défensive (Blue Team)'}</span>
+              </div>
+            </Card>
+          </div>
+        </div>
+      ) : (
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 430px) 1fr', gap: 18, alignItems: 'start', position: 'relative', zIndex: 1 }} className="cyber-in">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
@@ -584,9 +1036,9 @@ export default function AuroraV4CyberView() {
               value={C.customBrief}
               onChange={(e) => C.setCustomBrief(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !C.labLoading && C.customBrief.trim()) {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !C.labLoading && !directRunning && C.customBrief.trim()) {
                   e.preventDefault()
-                  void C.discussCyberBrief()
+                  void handleDirectExecute()
                 }
               }}
               disabled={C.labLoading || C.briefStatus === 'thinking'}
@@ -627,34 +1079,84 @@ export default function AuroraV4CyberView() {
                 <span>Autoriser Aurora a planifier en autonomie bornee : choisir les outils, preparer l'installation/config et enchainer uniquement ce que le backend autorise dans le perimetre confirme.</span>
               </label>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-              <Btn variant="primary" disabled={!C.customBrief.trim() || C.briefStatus === 'thinking'}
-                onClick={() => void C.discussCyberBrief()}>
-                {C.briefStatus === 'thinking'
-                  ? <><Loader2 size={13} style={{ animation: 'cyberSpin 1s linear infinite' }} /> Brief en cours…</>
-                  : <><Activity size={13} /> Brief expert</>}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 12 }}>
+              <Btn
+                variant="primary"
+                disabled={!C.customBrief.trim() || directRunning || C.labLoading}
+                onClick={() => void handleDirectExecute()}
+                title="Analyse les informations fournies et prépare les vérifications à effectuer"
+                style={{ justifyContent: 'center', padding: '12px 14px', fontSize: 13, fontWeight: 800 }}
+              >
+                {directRunning ? (
+                  <>
+                    <Loader2 size={15} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                    Analyse en cours…
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} fill="#0A0F1E" color="#0A0F1E" />
+                    Préparer l’analyse
+                  </>
+                )}
               </Btn>
-              <Btn variant="ghost" disabled={(!C.customBrief.trim() && !C.scopeTarget.trim()) || C.toolStrategyStatus === 'thinking'}
-                onClick={() => void C.buildToolStrategy()}
-                title="Choisit les vrais outils, les checks d'installation et l'ordre d'execution borne">
-                {C.toolStrategyStatus === 'thinking'
-                  ? <><Loader2 size={13} style={{ animation: 'cyberSpin 1s linear infinite' }} /> Outils…</>
-                  : <><TerminalSquare size={13} /> Strategie outils</>}
+
+              <Btn
+                variant="ghost"
+                disabled={!C.customBrief.trim() || C.labLoading || directRunning}
+                onClick={() => void C.forgeCustomKata()}
+                title="Forge un lab interactif sandboxé complet depuis cette demande"
+                style={{
+                  justifyContent: 'center',
+                  padding: '12px 14px',
+                  fontSize: 13,
+                  fontWeight: 750,
+                  border: `1px solid ${BLUE}66`,
+                  background: 'rgba(96,165,250,.08)',
+                  color: BLUE,
+                }}
+              >
+                {C.labLoading ? (
+                  <>
+                    <Loader2 size={15} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                    Forgeage du lab…
+                  </>
+                ) : (
+                  <>
+                    <Wand2 size={15} color={BLUE} />
+                    Forger le lab
+                  </>
+                )}
               </Btn>
-              <Btn variant="ghost" disabled={C.labLoading || !C.customBrief.trim()} onClick={() => void C.forgeCustomKata()}
-                title="Forge un lab interactif sandboxe depuis cette demande">
-                {C.labLoading
-                  ? <><Loader2 size={13} style={{ animation: 'cyberSpin 1s linear infinite' }} /> Forge…</>
-                  : <><Wand2 size={13} /> Forger lab</>}
-              </Btn>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
               <VoicePushToTalk
                 onTranscript={(text) => C.setCustomBrief((C.customBrief ? C.customBrief + ' ' : '') + text)}
                 label="Dicter la demande cyber"
-                disabled={C.labLoading || C.briefStatus === 'thinking'}
+                disabled={C.labLoading || directRunning}
                 variant="ghost"
                 size={34}
               />
+              <Btn
+                variant="ghost"
+                disabled={!C.customBrief.trim() || C.briefStatus === 'thinking'}
+                onClick={() => void C.discussCyberBrief()}
+                style={{ padding: '6px 12px', fontSize: 11 }}
+                title="Génère un cadrage d'ingénierie et d'architecture préalable"
+              >
+                <Activity size={12} /> Brief expert
+              </Btn>
+              <Btn
+                variant="ghost"
+                disabled={(!C.customBrief.trim() && !C.scopeTarget.trim()) || C.toolStrategyStatus === 'thinking'}
+                onClick={() => void C.buildToolStrategy()}
+                style={{ padding: '6px 12px', fontSize: 11 }}
+                title="Choisit les vrais outils et prépare l'installation"
+              >
+                <TerminalSquare size={12} /> Outils requis
+              </Btn>
             </div>
+
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
               {CYBER_REQUEST_PRESETS.map((preset) => (
                 <Chip key={preset.label} tone={preset.stance === 'offense' ? ACCENT : BLUE}
@@ -664,6 +1166,97 @@ export default function AuroraV4CyberView() {
                 </Chip>
               ))}
             </div>
+
+            {directSteps.length > 0 && (
+              <div style={{ marginTop: 14, padding: '12px 13px', borderRadius: 14, background: 'rgba(10,15,30,.75)', border: '1px solid rgba(255,255,255,.1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <Activity size={14} color={ACCENT} />
+                  <span style={{ ...mono, fontSize: 11, fontWeight: 700, color: FG }}>
+                    {directRunning ? 'Analyse en cours' : 'Résultat de l’analyse'}
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    type="button"
+                    onClick={() => setIsConsoleOpen(!isConsoleOpen)}
+                    style={{
+                      background: isConsoleOpen ? `${ACCENT}22` : 'rgba(255,255,255,.05)',
+                      border: `1px solid ${isConsoleOpen ? ACCENT : 'rgba(255,255,255,.14)'}`,
+                      borderRadius: 8,
+                      padding: '4px 9px',
+                      color: isConsoleOpen ? ACCENT : DIM,
+                      fontSize: 10.5,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      cursor: 'pointer',
+                      ...mono,
+                    }}
+                  >
+                    <Terminal size={11} />
+                    {isConsoleOpen ? 'Réduire la console' : 'Déployer la console'}
+                    {isConsoleOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gap: 6 }}>
+                  {directSteps.map((step) => (
+                    <div
+                      key={step.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 9px',
+                        borderRadius: 8,
+                        background: step.status === 'running' ? 'rgba(244,63,94,.08)' : step.status === 'done' ? 'rgba(74,222,128,.04)' : 'rgba(255,255,255,.02)',
+                        border: `1px solid ${step.status === 'running' ? ACCENT + '44' : step.status === 'done' ? OK + '33' : 'rgba(255,255,255,.05)'}`,
+                      }}
+                    >
+                      {step.status === 'running' ? (
+                        <Loader2 size={13} color={ACCENT} style={{ animation: 'cyberSpin 1s linear infinite' }} />
+                      ) : step.status === 'done' ? (
+                        <CheckCircle2 size={13} color={OK} />
+                      ) : step.status === 'error' ? (
+                        <AlertTriangle size={13} color={WARN} />
+                      ) : (
+                        <span style={{ width: 13, height: 13, borderRadius: '50%', border: '1px solid rgba(255,255,255,.2)' }} />
+                      )}
+                      <span style={{ ...mono, fontSize: 11, color: step.status === 'running' ? FG : step.status === 'done' ? FG : MUTE, fontWeight: step.status === 'running' ? 700 : 500 }}>
+                        {step.label}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      {step.durationMs ? (
+                        <span style={{ ...mono, fontSize: 9.5, color: OK }}>
+                          {step.durationMs} ms
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+
+                {isConsoleOpen && (
+                  <div style={{ marginTop: 10, padding: '10px 11px', borderRadius: 10, background: '#070B14', border: '1px solid rgba(255,255,255,.15)', maxHeight: 220, overflowY: 'auto', ...mono, fontSize: 10.5, lineHeight: 1.45 }}>
+                    <div style={{ color: MUTE, marginBottom: 6, borderBottom: '1px solid rgba(255,255,255,.08)', paddingBottom: 4 }}>
+                      --- CONSOLE D'EXÉCUTION CYBER & TÉLÉMÉTRIE EN DIRECT ---
+                    </div>
+                    {directLogs.map((log) => (
+                      <div key={log.id} style={{ color: log.tone === 'ok' ? OK : log.tone === 'accent' ? ACCENT : log.tone === 'warn' ? WARN : DIM, marginBottom: 3 }}>
+                        <span style={{ color: MUTE, marginRight: 6 }}>[{log.time}]</span>
+                        {log.text}
+                      </div>
+                    ))}
+                    <div ref={consoleEndRef} />
+                  </div>
+                )}
+
+                {directResult && (
+                  <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)', fontSize: 11.5, lineHeight: 1.55, color: FG, maxHeight: 280, overflowY: 'auto' }}>
+                    <MarkdownPro content={directResult} />
+                  </div>
+                )}
+              </div>
+            )}
+
             {C.briefStatus === 'ready' && (
               <div style={{ ...mono, fontSize: 10.5, color: OK, marginTop: 9 }}>
                 Brief pret dans le panneau de droite. Tu peux enchainer sur un lab ou coller des artefacts.
@@ -1379,6 +1972,7 @@ export default function AuroraV4CyberView() {
           </Card>
         </div>
       </div>
+      )}
     </div>
   )
 }

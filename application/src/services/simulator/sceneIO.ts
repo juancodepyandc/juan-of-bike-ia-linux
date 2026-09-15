@@ -1,4 +1,4 @@
-import type { SceneSnapshot } from './types'
+import type { SceneSnapshot } from './types.ts'
 
 export const SCENE_FILE_EXTENSION = '.aurora-scene.json'
 

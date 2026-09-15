@@ -1,8 +1,8 @@
 import { useCallback, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronDown, MessageSquarePlus, Trash2, Pencil, Check, X } from 'lucide-react'
-import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore'
-import type { ModuleId } from '../types/app'
+import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 interface SessionSwitcherProps {
   module: ModuleId

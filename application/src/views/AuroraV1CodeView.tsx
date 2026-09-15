@@ -14,24 +14,24 @@
  * l'orchestrateur" — full feature parity guaranteed.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useCodeViewLogic } from '../hooks/useCodeViewLogic'
-import { useModuleStreak } from '../hooks/useModuleStreak'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { extractGeneratedFiles, extractWebPreview, type ParsedFile } from '../services/codeOutputFiles'
-import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent'
-import { useCodeStreamStore } from '../stores/codeStreamStore'
-import { downloadProjectZip } from '../utils/codeDownload'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import { AuroraV1CodeLiveView } from './auroraV1CodeLiveView'
+import { useCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import { useModuleStreak } from '../hooks/useModuleStreak.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { extractGeneratedFiles, extractWebPreview, type ParsedFile } from '../services/codeOutputFiles.ts'
+import { intelligentlyElevateFiles } from '../services/codeOutputIntelligent.ts'
+import { useCodeStreamStore } from '../stores/codeStreamStore.ts'
+import { downloadProjectZip } from '../utils/codeDownload.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import { AuroraV1CodeLiveView } from './auroraV1CodeLiveView.tsx'
 import {
   AuroraV1CodeConfirmModal,
   AuroraV1CodeDropHint,
   AuroraV1CodeErrorDialog,
   AuroraV1CodePipelineBanner,
-} from './auroraV1CodeOverlays'
-import { AuroraV1CodeOutputPane } from './auroraV1CodeOutputPane'
-import { AuroraV1CodePreviewPane } from './auroraV1CodePreviewPane'
-import { AuroraV1CodeSidebar } from './auroraV1CodeSidebar'
+} from './auroraV1CodeOverlays.tsx'
+import { AuroraV1CodeOutputPane } from './auroraV1CodeOutputPane.tsx'
+import { AuroraV1CodePreviewPane } from './auroraV1CodePreviewPane.tsx'
+import { AuroraV1CodeSidebar } from './auroraV1CodeSidebar.tsx'
 
 export default function AuroraV1CodeView() {
   const [live, setLive] = useState(false)

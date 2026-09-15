@@ -2,13 +2,13 @@ import { useEffect, useState, type RefObject } from 'react'
 import {
   AlertTriangle, Code2, FileCode2, Gauge, Layers, Maximize, Monitor, ScrollText, Server, Terminal, X,
 } from 'lucide-react'
-import type { CodeFile } from '../services/codeOrchestrator'
-import type { CodeIntent } from '../services/codeIntent'
-import type { CodeSandboxResult } from '../services/codeSandbox'
-import type { DevServerState } from '../services/codeDevServer'
-import CodeMirrorViewer from '../components/CodeMirrorViewer'
-import CodeFileTree from '../components/CodeFileTree'
-import { BigLivePreviewFrame, type BigViewport } from './codeViewPreviewPanel'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import type { CodeIntent } from '../services/codeIntent.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
+import type { DevServerState } from '../services/codeDevServer.ts'
+import CodeMirrorViewer from '../components/CodeMirrorViewer.tsx'
+import CodeFileTree from '../components/CodeFileTree.tsx'
+import { BigLivePreviewFrame, type BigViewport } from './codeViewPreviewPanel.tsx'
 
 // ---------------------------------------------------------------------------
 // Aurora Code Studio — VIEWER DEDIE COMPLET (distinct du simulateur compact).

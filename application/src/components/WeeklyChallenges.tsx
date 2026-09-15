@@ -7,7 +7,7 @@
  * adaptent le wording / target selon les runs récents.
  */
 import { useMemo } from 'react'
-import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore'
+import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore.ts'
 
 const GOLD = 'oklch(0.74 0.11 90)'
 const GREEN = 'oklch(0.72 0.12 145)'

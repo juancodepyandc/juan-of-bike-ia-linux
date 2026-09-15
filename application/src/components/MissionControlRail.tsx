@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { Bot, Cpu, Gauge, Sparkles, TimerReset, Waypoints } from 'lucide-react'
-import { selectCodeModelForHardware } from '../config/models'
-import { useAppStore } from '../stores/appStore'
+import { selectCodeModelForHardware } from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
 
 const PHASE_LABELS = {
   idle: 'En attente',

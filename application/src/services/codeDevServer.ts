@@ -3,9 +3,9 @@
 // Handles port detection, background process lifecycle, health checks
 // ---------------------------------------------------------------------------
 
-import { fsReadText, runWorkspaceCommand, spawnWorkspaceCommand } from '../hooks/useTauri'
-import type { CodeIntent } from './codeIntent'
-import { getDevCommandSpec, isWindows, type DevCommandSpec } from './codeDevServerCommand'
+import { fsReadText, runWorkspaceCommand, spawnWorkspaceCommand } from '../hooks/useTauri.ts'
+import type { CodeIntent } from './codeIntent.ts'
+import { getDevCommandSpec, isWindows, type DevCommandSpec } from './codeDevServerCommand.ts'
 
 // ---------------------------------------------------------------------------
 // Types

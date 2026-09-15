@@ -67,7 +67,28 @@ KIND_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"viking|gladiateur|gladiator|homme|femme|man|woman|monsieur|madame|"
         r"gar[cç]on|fille|enfant|child|boy|girl|personne|person|humain|human|"
         r"adulte|adult|vieillard|soldat|soldier|policier|pompier|docteur|"
-        r"m[ée]decin|infirmi[èe]re|chef|cuisinier|danseur|danseuse|athl[èe]te)\b",
+        r"m[ée]decin|infirmi[èe]re|chef|cuisinier|danseur|danseuse|athl[èe]te|"
+        # METIERS ET ROLES. Ils manquaient entierement : « un entrepreneur
+        # assis a son bureau » ressortait en `generic` avec une confiance de
+        # 0,0 — le sujet de la phrase n etait tout simplement pas reconnu comme
+        # un etre humain. Ce sont pourtant les mots les plus naturels pour
+        # decrire une personne au travail.
+        r"entrepreneur|entrepreneuse|freelance|ind[ée]pendant|"
+        r"d[ée]veloppeur|d[ée]veloppeuse|developer|programmeur|codeur|"
+        r"designer|graphiste|architecte|ing[ée]nieur|ing[ée]nieure|engineer|"
+        r"[ée]tudiant|[ée]tudiante|student|professeur|enseignant|formateur|"
+        r"employ[ée]|salari[ée]|travailleur|travailleuse|worker|"
+        r"commercial|vendeur|vendeuse|marketeur|consultant|consultante|"
+        r"analyste|analyst|manager|dirigeant|patron|patronne|"
+        r"secr[ée]taire|comptable|avocat|avocate|journaliste|"
+        r"photographe|musicien|musicienne|artiste|[ée]crivain|"
+        r"streamer|youtubeur|influenceur|influenceuse|"
+        r"businessman|businesswoman|homme d affaires|femme d affaires|"
+        r"jeune homme|jeune femme|adolescent|adolescente|teenager|"
+        r"gamer|joueur|joueuse|pilote|conducteur|chauffeur|"
+        r"scientifique|chercheur|chercheuse|technicien|technicienne|"
+        r"m[ée]canicien|artisan|ouvrier|ouvriere|agriculteur|"
+        r"serveur de restaurant|barista|boulanger|p[âa]tissier)\b",
         re.IGNORECASE,
     )),
     ("character", re.compile(
@@ -130,11 +151,32 @@ def extract_kind(prompt: str) -> dict:
     if not prompt:
         return {"kind": "generic", "confidence": 0.0, "matched_pattern": None,
                 "alternatives": []}
-    matches: list[tuple[str, str]] = []
-    for kind, pattern in KIND_PATTERNS:
+    # ARBITRAGE PAR POSITION DANS LA PHRASE.
+    #
+    # L ancienne version retenait `matches[0]`, c est-a-dire le premier motif
+    # dans l ORDRE DE DECLARATION DE LA TABLE — sans aucun rapport avec ce que
+    # la phrase decrit. Un accessoire cite en passant emportait donc la
+    # classification du sujet. Mesure :
+    #
+    #   « un jeune entrepreneur assis a son bureau avec un smartphone »
+    #       -> gadget, confiance 1,0   (c est le smartphone qui gagnait)
+    #   « un developpeur devant son ordinateur »
+    #       -> computer, confiance 1,0 (c est le meuble qui gagnait)
+    #
+    # La consequence n est pas cosmetique : le `kind` fixe le plancher de
+    # sommets, le rapport de forme attendu et l axe de projection du bake de
+    # couleurs. Classer une personne en `gadget`, c est juger sa silhouette
+    # contre celle d une montre.
+    #
+    # En francais comme en anglais, le SUJET d un groupe nominal vient en
+    # tete : « un entrepreneur assis a son bureau AVEC un smartphone ». On
+    # retient donc le motif qui apparait le plus TOT dans la phrase, et l ordre
+    # de la table ne sert plus que de departage a position egale.
+    matches: list[tuple[int, int, str, str]] = []
+    for rang, (kind, pattern) in enumerate(KIND_PATTERNS):
         m = pattern.search(prompt)
         if m:
-            matches.append((kind, m.group(0)))
+            matches.append((m.start(), rang, kind, m.group(0)))
     if not matches:
         return {
             "kind": "generic",
@@ -142,14 +184,15 @@ def extract_kind(prompt: str) -> dict:
             "matched_pattern": None,
             "alternatives": [],
         }
-    primary_kind, primary_match = matches[0]
+    matches.sort(key=lambda t: (t[0], t[1]))
+    _, _, primary_kind, primary_match = matches[0]
     # Confidence: 1.0 for sole match, drops with each alternative.
     confidence = round(1.0 / len(matches), 2)
     return {
         "kind": primary_kind,
         "confidence": confidence,
         "matched_pattern": primary_match,
-        "alternatives": [k for k, _ in matches[1:]],
+        "alternatives": [k for _pos, _rang, k, _m in matches[1:]],
     }
 
 

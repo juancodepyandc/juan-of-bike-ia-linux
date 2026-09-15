@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fsWriteBinary, getWorkspacePath, runPythonScript } from './useTauri'
-import { isTauriRuntime, getBridgeUrl, isCloudRuntime } from '../utils/runtime'
-import { safeParseJson } from '../utils/errors'
+import { fsWriteBinary, getWorkspacePath, runPythonScript } from './useTauri.ts'
+import { isTauriRuntime, getBridgeUrl, isCloudRuntime } from '../utils/runtime.ts'
+import { safeParseJson } from '../utils/errors.ts'
 
 /**
  * Décode n'importe quel format audio (WebM, Ogg…) et ré-encode en WAV PCM 16-bit mono.

@@ -3,9 +3,9 @@
 // Cliquer un portrait route vers le module métier correspondant (chat, code, image, voix, etc.).
 import React from 'react'
 // @ts-ignore - studio avatars is a ported JS-loose module
-import { Avatar, P } from './avatars'
-import { useAppStore } from '../../stores/appStore'
-import type { ModuleId } from '../../types/app'
+import { Avatar, P } from './avatars.tsx'
+import { useAppStore } from '../../stores/appStore.ts'
+import type { ModuleId } from '../../types/app.ts'
 
 export type Persona = 'sage' | 'lou' | 'mira' | 'diego' | 'tess' | 'sam' | 'yann'
 

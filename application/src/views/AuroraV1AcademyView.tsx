@@ -14,16 +14,16 @@
  */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Send, StopCircle, Loader2, Upload, X as XIcon, Image as ImgIcon } from 'lucide-react'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import AuroraV1AcademyMobile from './AuroraV1AcademyMobile'
-import { useIsMobile } from '../hooks/useIsMobile'
-import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic'
-import { useLearningSessionStore, type LearnerProfile } from '../stores/learningSessionStore'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import { useAchievementToasts } from '../hooks/useAchievementToasts'
-import Sparkline from '../components/Sparkline'
-import TextPreviewExpander from '../components/TextPreviewExpander'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import AuroraV1AcademyMobile from './AuroraV1AcademyMobile.tsx'
+import { useIsMobile } from '../hooks/useIsMobile.ts'
+import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic.ts'
+import { useLearningSessionStore, type LearnerProfile } from '../stores/learningSessionStore.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { useAchievementToasts } from '../hooks/useAchievementToasts.ts'
+import Sparkline from '../components/Sparkline.tsx'
+import TextPreviewExpander from '../components/TextPreviewExpander.tsx'
 
 // v82jz : MangaAcademyView delegate retiré. Le V1 view couvre déjà
 // 10 modes (study-card, eval-type, free-form, question-dev, auto-correct,

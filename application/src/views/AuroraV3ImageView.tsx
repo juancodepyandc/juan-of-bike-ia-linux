@@ -9,9 +9,9 @@
  * download) live in a slide-out drawer triggered from the strip.
  */
 import { lazy, Suspense, useState } from 'react'
-import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useImageViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import { useImageViewLogic, DIMENSIONS, type DimensionId } from '../hooks/useImageViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
 

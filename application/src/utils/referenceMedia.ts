@@ -1,5 +1,5 @@
-import { fsMkdir, fsWriteBinary, getWorkspacePath } from '../hooks/useTauri'
-import type { PreparedContextFile } from './multimodalContext'
+import { fsMkdir, fsWriteBinary, getWorkspacePath } from '../hooks/useTauri.ts'
+import type { PreparedContextFile } from './multimodalContext.ts'
 
 function sanitizeFilename(name: string) {
   return name.replace(/[^\w.\-]+/g, '_')

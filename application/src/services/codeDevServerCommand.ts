@@ -1,5 +1,5 @@
-import type { CodeIntent } from './codeIntent'
-import { auroraPythonExecutable } from './codePythonEnvironment'
+import type { CodeIntent } from './codeIntent.ts'
+import { auroraPythonExecutable } from './codePythonEnvironment.ts'
 
 export type DevCommandSpec = {
   executable: string

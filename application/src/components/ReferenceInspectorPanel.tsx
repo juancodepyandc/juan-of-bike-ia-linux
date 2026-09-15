@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { Eye, Palette, RefreshCcw, Type } from 'lucide-react'
-import type { ColorOverride, VisualReferenceAnalysis } from '../services/visualReferenceAnalyzer'
+import type { ColorOverride, VisualReferenceAnalysis } from '../services/visualReferenceAnalyzer.ts'
 
 export type ReferenceInspectorProps = {
   analysis: VisualReferenceAnalysis | null

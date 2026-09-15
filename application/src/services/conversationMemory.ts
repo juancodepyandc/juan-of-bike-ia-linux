@@ -66,11 +66,11 @@ export function tokenize(text: string): string[] {
 }
 
 export function tokenFrequencies(text: string): Record<string, number> {
-  const out: Record<string, number> = {}
+  const out = new Map<string, number>()
   for (const tok of tokenize(text)) {
-    out[tok] = (out[tok] ?? 0) + 1
+    out.set(tok, (out.get(tok) ?? 0) + 1)
   }
-  return out
+  return Object.fromEntries(out)
 }
 
 // FNV-1a hash for content dedup.
@@ -120,9 +120,9 @@ export function addMemory(store: MemoryStore, draft: AddMemoryDraft, now: Date =
     contentHash,
     tokens,
   }
-  const df = { ...store.documentFrequency }
-  for (const tok of Object.keys(tokens)) df[tok] = (df[tok] ?? 0) + 1
-  return { ...store, entries: [...store.entries, entry], documentFrequency: df }
+  const df = new Map(Object.entries(store.documentFrequency))
+  for (const tok of Object.keys(tokens)) df.set(tok, (df.get(tok) ?? 0) + 1)
+  return { ...store, entries: [...store.entries, entry], documentFrequency: Object.fromEntries(df) }
 }
 
 export function removeMemory(store: MemoryStore, id: string): MemoryStore {
@@ -229,8 +229,8 @@ function bm25Score(
   let score = 0
   const docLength = Object.values(dTokens).reduce((a, b) => a + b, 0)
   for (const tok of Object.keys(qTokens)) {
-    if (!dTokens[tok]) continue
-    const dfTok = df[tok] ?? 1
+    if (!Object.prototype.hasOwnProperty.call(dTokens, tok) || !dTokens[tok]) continue
+    const dfTok = Object.prototype.hasOwnProperty.call(df, tok) ? df[tok] : 1
     // IDF style BM25 (peut être négatif si dfTok > D/2 — on clamp ≥ 0 pour
     // éviter de pénaliser un terme commun dans plusieurs docs).
     const idf = Math.max(0, Math.log((D - dfTok + 0.5) / (dfTok + 0.5) + 1))
@@ -249,7 +249,7 @@ export function touch(store: MemoryStore, id: string, now: Date = new Date()): M
   }
 }
 
-/** Drop memories below importance × usage threshold or unused for > prune days. */
+/** Prune old or low-priority memories; pinned entries are exempt from the quota. */
 export function prune(store: MemoryStore, opts: { maxEntries?: number; maxAgeDays?: number; now?: Date } = {}): MemoryStore {
   const max = opts.maxEntries ?? 500
   const maxAge = opts.maxAgeDays ?? 365
@@ -263,14 +263,16 @@ export function prune(store: MemoryStore, opts: { maxEntries?: number; maxAgeDay
   })
   // If still over budget, drop the lowest "importance * (1 + usage)" entries.
   if (filtered.length <= max) return rebuildDf({ ...store, entries: filtered })
-  filtered.sort((a, b) => (b.importance * (1 + b.usageCount)) - (a.importance * (1 + a.usageCount)))
-  return rebuildDf({ ...store, entries: filtered.slice(0, max) })
+  const pinned = filtered.filter((e) => e.kind === 'pinned')
+  const unpinned = filtered.filter((e) => e.kind !== 'pinned')
+  unpinned.sort((a, b) => (b.importance * (1 + b.usageCount)) - (a.importance * (1 + a.usageCount)))
+  return rebuildDf({ ...store, entries: [...pinned, ...unpinned.slice(0, Math.max(0, max - pinned.length))] })
 }
 
 function rebuildDf(store: MemoryStore): MemoryStore {
-  const df: Record<string, number> = {}
+  const df = new Map<string, number>()
   for (const e of store.entries) {
-    for (const tok of Object.keys(e.tokens)) df[tok] = (df[tok] ?? 0) + 1
+    for (const tok of Object.keys(e.tokens)) df.set(tok, (df.get(tok) ?? 0) + 1)
   }
-  return { ...store, documentFrequency: df }
+  return { ...store, documentFrequency: Object.fromEntries(df) }
 }

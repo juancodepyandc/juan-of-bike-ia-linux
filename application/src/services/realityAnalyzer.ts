@@ -1,6 +1,6 @@
-import { ollamaGenerate } from '../hooks/useTauri'
-import type { PromptNature, RealityAnalysis } from '../types/app'
-import { AUXILIARY_ANALYSIS_MODEL } from '../config/models'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import type { PromptNature, RealityAnalysis } from '../types/app.ts'
+import { AUXILIARY_ANALYSIS_MODEL } from '../config/models.ts'
 
 const CACHE_MAX_SIZE = 64
 const CACHE_TTL_MS = 20 * 60 * 1000 // 20 minutes

@@ -2,7 +2,7 @@
 // Covers all bac STI2D subjects + SIN specialty.
 // Each sub-category gets: 1 cours (markdown), 1 quiz (MCQ JSON), 1 fiche (cards + mindmap JSON), 1 exo (mission JSON).
 
-import type { Category, SubCategory, AcademyItem } from './academyStore'
+import type { Category, SubCategory, AcademyItem } from './academyStore.ts'
 
 const uid = (p: string) => `${p}-${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36)}`
 const now = () => Date.now()

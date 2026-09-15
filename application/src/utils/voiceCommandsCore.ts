@@ -7,7 +7,7 @@
  * Le wrapper public `tryHandleVoiceCommand` reste dans voiceCommands.ts
  * (avec les effets de bord setActiveModule / dispatchEvent).
  */
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 export const MODULE_KEYWORDS: Array<{ id: ModuleId; words: string[] }> = [
   { id: 'conversation', words: ['chat', 'conversation', 'discussion', 'parle', 'discute'] },

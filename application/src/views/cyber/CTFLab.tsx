@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Clock, Flag, HelpCircle, Loader2, Lock, Star, Trophy, Unlock } from 'lucide-react'
-import { sha256 } from '../../services/cyber/hashService'
-import { useCTFStore, type CTFChallenge } from '../../services/cyber/ctfStore'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+import { sha256 } from '../../services/cyber/hashService.ts'
+import { useCTFStore, type CTFChallenge } from '../../services/cyber/ctfStore.ts'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 const CHALLENGES: CTFChallenge[] = [
   {

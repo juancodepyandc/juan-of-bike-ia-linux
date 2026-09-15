@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+# --- Resolution des modules voisins ----------------------------------------
+# Ces tests importent leurs modules VOISINS a plat (`import _safety`). Cela
+# fonctionne quand on les lance depuis ce dossier, mais pas sous
+# `unittest discover` lance depuis python-services/, ou le fichier est charge
+# comme `<paquet>.test_x` et ou le dossier du paquet n est PAS dans sys.path.
+# L import echouait alors, et unittest comptait une ERREUR de test — un
+# defaut d environnement maquille en regression. On ajoute le dossier du
+# fichier, comme le font deja les tests de la racine.
+import sys as _sys_boot
+from pathlib import Path as _Path_boot
+_sys_boot.path.insert(0, str(_Path_boot(__file__).resolve().parent))
+# ---------------------------------------------------------------------------
+
 import tempfile
 import unittest
 from pathlib import Path

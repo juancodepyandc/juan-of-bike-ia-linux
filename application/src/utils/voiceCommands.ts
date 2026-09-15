@@ -10,12 +10,12 @@
  * extraits dans voiceCommandsCore.ts pour être testables sans dépendance
  * sur le store / window.
  */
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
-import { normalize, parseNavigation } from './voiceCommandsCore'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
+import { normalize, parseNavigation } from './voiceCommandsCore.ts'
 
 // Re-exports pour ne pas casser les callers existants qui importent depuis ici.
-export { normalize, parseNavigation } from './voiceCommandsCore'
+export { normalize, parseNavigation } from './voiceCommandsCore.ts'
 
 type VoiceCommandResult =
   | { handled: true; reply: string }

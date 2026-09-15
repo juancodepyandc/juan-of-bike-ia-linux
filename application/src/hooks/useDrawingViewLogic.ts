@@ -12,7 +12,7 @@
  * drawing semantics carry over identically.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus'
+import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
@@ -20,15 +20,15 @@ import {
   comfyuiUploadImage,
   ensureComfyUIRunning,
   ollamaChat,
-} from '../hooks/useTauri'
-import { createFluxWorkflow } from '../utils/fluxWorkflow'
-import { parseImageIntent } from '../utils/imagePromptParser'
-import { useModuleDraftsStore } from '../stores/moduleDraftsStore'
-import { useAppStore } from '../stores/appStore'
-import { saveBlob, loadBlobUrl } from '../utils/blobStore'
-import { RANDOM_DRAW_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts'
-import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
+} from '../hooks/useTauri.ts'
+import { createFluxWorkflow } from '../utils/fluxWorkflow.ts'
+import { parseImageIntent } from '../utils/imagePromptParser.ts'
+import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { saveBlob, loadBlobUrl } from '../utils/blobStore.ts'
+import { RANDOM_DRAW_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
+import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
 
 // v82n6 : sketch vision analysis BEFORE FLUX — qwen3-vl:30b describes the
 // canvas in natural language so the FLUX prompt actually reflects what the

@@ -158,6 +158,21 @@ describe('emptyDoc + serialise', () => {
     const xml = serialise(d)
     assert.ok(xml.includes('stroke-dasharray="4 2"'))
   })
+
+  test('serialise escapes every string attribute, including styles and nested groups', () => {
+    const doc = emptyDoc()
+    const injected = '\"/><script>alert(1)</script><path d=\"'
+    doc.cssVariables = { accent: injected }
+    doc.elements.push({ kind: 'group', transform: injected, children: [
+      { kind: 'path', d: injected, fill: injected },
+      { kind: 'line', x1: 0, y1: 0, x2: 1, y2: 1, stroke: injected },
+      { kind: 'text', x: 0, y: 0, text: 'safe', fontFamily: injected },
+    ] })
+    const xml = serialise(doc)
+    assert.ok(!xml.includes('<script>'))
+    assert.ok(xml.includes('&quot;/&gt;&lt;script&gt;'))
+    assert.equal((xml.match(/<path /g) ?? []).length, 1)
+  })
 })
 
 describe('flowChartDoc', () => {
@@ -202,6 +217,18 @@ describe('flowChartDoc', () => {
 })
 
 describe('gridOverlay', () => {
+  test('rejects nonpositive or nonfinite spacing before building the grid', () => {
+    for (const spacing of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assert.throws(() => gridOverlay({ x: 0, y: 0, w: 100, h: 100 }, spacing), RangeError)
+    }
+  })
+
+  test('rejects invalid or excessively dense view boxes', () => {
+    assert.throws(() => gridOverlay({ x: 0, y: 0, w: -1, h: 10 }), RangeError)
+    assert.throws(() => gridOverlay({ x: Infinity, y: 0, w: 10, h: 10 }), RangeError)
+    assert.throws(() => gridOverlay({ x: 0, y: 0, w: 100, h: 100 }, 1e-10), RangeError)
+  })
+
   test('grille 100×100 spacing 50 → ~5+5 lignes', () => {
     const lines = gridOverlay({ x: 0, y: 0, w: 100, h: 100 }, 50)
     assert.ok(lines.length >= 4)

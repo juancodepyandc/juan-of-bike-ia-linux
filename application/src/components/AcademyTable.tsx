@@ -4,7 +4,7 @@
  */
 import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
-import type { AcademyTable as TableData } from '../hooks/useAcademyViewLogic'
+import type { AcademyTable as TableData } from '../hooks/useAcademyViewLogic.ts'
 
 const GOLD = 'oklch(0.74 0.11 90)'
 

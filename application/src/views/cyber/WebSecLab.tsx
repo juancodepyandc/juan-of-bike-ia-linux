@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, Bug, Cookie, Globe, Shield } from 'lucide-react'
-import { tryInject, SQL_DEMO_PAYLOADS } from '../../services/cyber/sqlInjectionSandbox'
+import { tryInject, SQL_DEMO_PAYLOADS } from '../../services/cyber/sqlInjectionSandbox.ts'
 
 type Tab = 'xss' | 'sqli' | 'jwt' | 'csrf' | 'ssrf' | 'owasp'
 

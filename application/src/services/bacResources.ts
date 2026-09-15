@@ -7,7 +7,7 @@
  * filière + matière, and returns a list of real past-exam subjects the AI
  * can study before generating a new exercise.
  */
-import { runPythonScript } from '../hooks/useTauri'
+import { runPythonScript } from '../hooks/useTauri.ts'
 
 export interface BacSubject {
   id: string

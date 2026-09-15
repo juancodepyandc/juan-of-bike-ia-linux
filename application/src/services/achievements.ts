@@ -8,8 +8,8 @@
  *
  * v82bz.
  */
-import type { KataRun } from '../stores/cyberLeaderboardStore'
-import type { AcademyRun } from '../stores/academyLeaderboardStore'
+import type { KataRun } from '../stores/cyberLeaderboardStore.ts'
+import type { AcademyRun } from '../stores/academyLeaderboardStore.ts'
 import { computeStreak } from '../utils/streak.ts'
 
 export type AchievementCategory = 'cyber' | 'academy' | 'cross'

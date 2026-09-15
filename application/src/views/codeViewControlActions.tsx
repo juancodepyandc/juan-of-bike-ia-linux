@@ -1,8 +1,8 @@
 import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import { AlertTriangle, Loader2, Play, StopCircle } from 'lucide-react'
-import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel'
-import { StudioDiagnosticsPanel } from '../components/StudioHero'
-import type { CodeFile } from '../services/codeOrchestrator'
+import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel.tsx'
+import { StudioDiagnosticsPanel } from '../components/StudioHero.tsx'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
 
 type CodeViewControlActionsProps = {
   canGenerate: boolean

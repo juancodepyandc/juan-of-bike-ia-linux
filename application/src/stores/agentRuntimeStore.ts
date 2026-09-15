@@ -1,11 +1,11 @@
 import { create } from 'zustand'
-import type { AssistantStage, ModuleId } from '../types/app'
+import type { AssistantStage, ModuleId } from '../types/app.ts'
 import {
   PRODUCTION_AGENT_IDS,
   type AgentRuntimeState,
   type ProductionAgentId,
-} from '../services/auroraAgents'
-import type { CoworkActionEvent } from '../services/coworkTypes'
+} from '../services/auroraAgents.ts'
+import type { CoworkActionEvent } from '../services/coworkTypes.ts'
 
 export type AgentRuntimeTool =
   | 'runtime'

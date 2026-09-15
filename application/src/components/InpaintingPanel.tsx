@@ -10,7 +10,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { comfyuiGetImage, comfyuiQueuePrompt } from '../hooks/useTauri'
+import { comfyuiGetImage, comfyuiQueuePrompt } from '../hooks/useTauri.ts'
 
 interface Props {
   imageSrc: string

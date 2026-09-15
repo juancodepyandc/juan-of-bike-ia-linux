@@ -1,20 +1,20 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Brush, Download, ImageOff, Loader2, Maximize, Send, Sparkles, StopCircle, X } from 'lucide-react'
 const InpaintingPanel = lazy(() => import('../components/InpaintingPanel'))
-import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow'
-import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise } from '../utils/imagePromptParser'
+import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
+import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise } from '../utils/imagePromptParser.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
   comfyuiQueuePrompt,
   comfyuiUploadImage,
   ensureComfyUIRunning,
-} from '../hooks/useTauri'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import { useModuleDraftsStore } from '../stores/moduleDraftsStore'
-import { saveBlob, loadBlobUrl, pruneOldBlobs, deleteBlob } from '../utils/blobStore'
+} from '../hooks/useTauri.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
+import { saveBlob, loadBlobUrl, pruneOldBlobs, deleteBlob } from '../utils/blobStore.ts'
 
 type Character = 'natsu' | 'lucy'
 
@@ -415,9 +415,7 @@ export default function MangaImageView() {
   const downloadCurrent = async () => {
     if (!current) return
     const { downloadImageUniversal } = await import('../utils/imageDownload')
-    await downloadImageUniversal(current, {
-      filename: `fairy-tail-${current.style}-${current.id}.png`,
-    })
+    await downloadImageUniversal(current)
   }
 
   const coreStyles = useMemo(() => styles.slice(0, 8), [styles])

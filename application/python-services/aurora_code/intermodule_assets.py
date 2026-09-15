@@ -289,7 +289,7 @@ def build_bundle(payload: dict[str, Any]) -> dict[str, Any]:
     image_prompt = str(payload.get("imagePrompt") or "").strip() or prompt
     base_url = str(payload.get("baseUrl") or os.environ.get("AURORA_BRIDGE_URL") or "http://127.0.0.1:3001").rstrip("/")
     run_id = slug(str(payload.get("runId") or f"ws15_{int(time.time())}"))
-    out_dir = root / "output" / "code_assets" / run_id
+    out_dir = root / "output" / "code" / "assets" / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     requested = requested_asset_kinds(payload, SUPPORTED_KINDS)
     seed = int(payload.get("seed") or randint(1, 2**32 - 1))

@@ -1,4 +1,4 @@
-import type { CodeFile } from '../services/codeOrchestrator'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
 
 export function isHeavyWebGLProject(files: CodeFile[]): boolean {
   for (const f of files) {

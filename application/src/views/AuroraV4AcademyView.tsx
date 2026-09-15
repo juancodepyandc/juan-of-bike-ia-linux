@@ -1,12 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import AuroraMascot from '../components/generationFx/mascots'
-import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic'
-import { useLearningSessionStore, type LearnerProfile } from '../stores/learningSessionStore'
-import { getDailyTip } from '../utils/dailyTip'
-import { useAchievementToasts } from '../hooks/useAchievementToasts'
-import Sparkline from '../components/Sparkline'
-import TextPreviewExpander from '../components/TextPreviewExpander'
+import AuroraMascot from '../components/generationFx/mascots.tsx'
+import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic.ts'
+import { useLearningSessionStore, type LearnerProfile } from '../stores/learningSessionStore.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { useAchievementToasts } from '../hooks/useAchievementToasts.ts'
+import Sparkline from '../components/Sparkline.tsx'
+import TextPreviewExpander from '../components/TextPreviewExpander.tsx'
 
 const AcademyMindMap = lazy(() => import('../components/AcademyMindMap'))
 const AcademyFlashcards = lazy(() => import('../components/AcademyFlashcards'))

@@ -6,7 +6,7 @@
 //   - run  : executes a typed action and returns a structured payload
 // ---------------------------------------------------------------------------
 
-import type { ConnectorId } from './coworkSettings'
+import type { ConnectorId } from './coworkSettings.ts'
 import { getBridgeUrl, isTauriRuntime } from '../utils/runtime.ts'
 
 // v83 — resolve the Flask bridge base. In the Tauri desktop app the WebView

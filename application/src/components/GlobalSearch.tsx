@@ -18,10 +18,10 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useAcademyStore } from '../stores/academyStore'
-import { useAppStore } from '../stores/appStore'
-import { useChatStore } from '../stores/chatStore'
-import type { ModuleId } from '../types/app'
+import { useAcademyStore } from '../stores/academyStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 interface SearchHit {
   id: string

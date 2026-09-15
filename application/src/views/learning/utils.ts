@@ -1,8 +1,8 @@
 // Pure utility functions for the Learning module (no React)
-import { buildAcademicLevelInstructions, type LearningSource, type AcademicIntent } from '../../services/learningResearch'
-import { SUBJECT_HINTS } from '../../stores/flashcardsStore'
-import type { SubjectKind } from '../../stores/flashcardsStore'
-import type { Tab, QuizQuestion, FlashcardDraft, LearningPathNode, TocEntry } from './types'
+import { buildAcademicLevelInstructions, type LearningSource, type AcademicIntent } from '../../services/learningResearch.ts'
+import { SUBJECT_HINTS } from '../../stores/flashcardsStore.ts'
+import type { SubjectKind } from '../../stores/flashcardsStore.ts'
+import type { Tab, QuizQuestion, FlashcardDraft, LearningPathNode, TocEntry } from './types.ts'
 
 export function buildLearningSystemPrompt(
   mode: 'quiz' | 'course' | 'path' | 'quiz_verify' | 'flashcards',

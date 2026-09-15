@@ -4,7 +4,7 @@
 // detect the archetype and compose the final block.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent } from './codeIntent'
+import type { CodeIntent } from './codeIntent.ts'
 import type { DesignArchetype } from './codeDesignDirectives.ts'
 import {
   dataDenseEnterpriseBlock,

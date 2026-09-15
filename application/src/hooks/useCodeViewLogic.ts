@@ -12,12 +12,12 @@ import {
   useCodeStreamStore,
   type CodeWorkMode,
   type RepoScanInfo,
-} from '../stores/codeStreamStore'
-import { selectCodeModelForHardware } from '../config/models'
-import { useAppStore } from '../stores/appStore'
-import { RANDOM_CODE_IDEAS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts'
-import type { PromptHistoryEntry } from '../utils/promptHistory'
-import type { CodeFile, FollowUpKind } from '../services/codeOrchestrator'
+} from '../stores/codeStreamStore.ts'
+import { selectCodeModelForHardware } from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { RANDOM_CODE_IDEAS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
+import type { PromptHistoryEntry } from '../utils/promptHistory.ts'
+import type { CodeFile, FollowUpKind } from '../services/codeOrchestrator.ts'
 
 export interface UseCodeViewLogic {
   draft: string

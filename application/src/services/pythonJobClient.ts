@@ -14,6 +14,7 @@
  * Forge queue store and resumed after a reload.
  */
 import { getBridgeUrl, isTauriRuntime } from '../utils/runtime.ts'
+import { parseProgressLine, type StructuredProgressEvent } from './moduleProgressTracker.ts'
 
 export interface PythonJobStatus {
   jobId: string
@@ -21,6 +22,15 @@ export interface PythonJobStatus {
   output: string
   error: string
   exitCode: number
+  progressPct?: number
+  stage?: string
+  stageLabel?: string
+  subStage?: string
+  stepDetail?: string
+  currentStep?: number
+  totalSteps?: number
+  elapsedSeconds?: number
+  estimatedRemainingSeconds?: number
 }
 
 function baseUrl(): string {
@@ -99,6 +109,15 @@ export async function fetchPythonJob(jobId: string): Promise<PythonJobStatus> {
       output?: string
       error?: string
       exitCode?: number
+      progressPct?: number
+      stage?: string
+      stageLabel?: string
+      subStage?: string
+      stepDetail?: string
+      currentStep?: number
+      totalSteps?: number
+      elapsedSeconds?: number
+      estimatedRemainingSeconds?: number
     }
     return {
       jobId,
@@ -106,6 +125,15 @@ export async function fetchPythonJob(jobId: string): Promise<PythonJobStatus> {
       output: data.output ?? '',
       error: data.error ?? '',
       exitCode: typeof data.exitCode === 'number' ? data.exitCode : -1,
+      progressPct: typeof data.progressPct === 'number' ? data.progressPct : undefined,
+      stage: data.stage,
+      stageLabel: data.stageLabel,
+      subStage: data.subStage,
+      stepDetail: data.stepDetail,
+      currentStep: data.currentStep,
+      totalSteps: data.totalSteps,
+      elapsedSeconds: data.elapsedSeconds,
+      estimatedRemainingSeconds: data.estimatedRemainingSeconds,
     }
   } catch {
     return { jobId, status: 'unknown', output: '', error: '', exitCode: -1 }

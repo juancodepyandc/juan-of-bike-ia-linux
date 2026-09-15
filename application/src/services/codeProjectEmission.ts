@@ -72,14 +72,39 @@ function findFileHeader(stream: string, from: number): FileHeaderMatch | null {
   }
 
   const lineEnd = stream.indexOf('\n', metadataStart)
-  const metadataEnd = lineEnd < 0 ? stream.length : lineEnd
+  const finDeLigne = lineEnd < 0 ? stream.length : lineEnd
+
+  // REVISION ANTERIEURE DU PROTOCOLE. Une premiere version d'`AURORA_CODE_VFS/1`
+  // fermait les metadonnees par `>>>` SUR LA MEME LIGNE, le contenu suivant
+  // immediatement :
+  //
+  //     AURORA_FILE {"path":"js/form-handler.js","length":567,...}>>>// Gestion...
+  //
+  // La forme courante les termine par le saut de ligne. En ne cherchant que le
+  // `\n`, l'analyseur avalait le `>>>` ET le debut du contenu dans les
+  // metadonnees, ce qui donnait un JSON invalide : sur
+  // `output/code/audit_v92/mercedes_full/main.js`, il rendait ZERO fichier avec
+  // `invalid_metadata` a l'offset 36, alors que l'enveloppe en portait
+  // plusieurs. Un lecteur incapable de relire sa propre revision anterieure
+  // condamne les livrables produits avant le changement.
+  //
+  // On accepte donc le `>>>` comme terminateur quand il precede le saut de
+  // ligne. Le format courant n'en comporte pas sur cette ligne : son analyse
+  // est inchangee.
+  const fermetureSurLigne = stream.indexOf(TAG_CLOSE, metadataStart)
+  const ancienneRevision = fermetureSurLigne >= 0 && fermetureSurLigne < finDeLigne
+  const metadataEnd = ancienneRevision ? fermetureSurLigne : finDeLigne
+
   return {
     start: match.index,
     metadataStart,
     metadataEnd,
-    // `metadataEnd` pointe sur le `\n`; le `\r` eventuel est retire par le trim
-    // des metadonnees. Le contenu commence apres ce saut de ligne.
-    contentStart: skipLineBreak(stream, metadataEnd),
+    // `metadataEnd` pointe sur le `\n` (forme courante) ou sur le `>>>`
+    // (revision anterieure); le `\r` eventuel est retire par le trim des
+    // metadonnees.
+    contentStart: ancienneRevision
+      ? metadataEnd + TAG_CLOSE.length
+      : skipLineBreak(stream, metadataEnd),
     bracketed,
   }
 }

@@ -16,8 +16,8 @@ import {
   Mic, Paintbrush, Search, Shield, Sparkles, Video,
   type LucideIcon,
 } from 'lucide-react'
-import { useCoworkStore } from '../stores/coworkStore'
-import type { ModuleId } from '../types/app'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 type PaletteEntry = {
   id: ModuleId | 'cowork'

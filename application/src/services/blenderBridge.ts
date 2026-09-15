@@ -11,7 +11,7 @@
  * 2. MCP server: if blender-mcp is running, uses tool calls
  */
 
-import { runPythonScript, getWorkspacePath } from '../hooks/useTauri'
+import { runPythonScript, getWorkspacePath } from '../hooks/useTauri.ts'
 
 export type BlenderScriptResult = {
   ok: boolean

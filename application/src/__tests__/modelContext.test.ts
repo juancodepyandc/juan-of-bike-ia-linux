@@ -23,6 +23,11 @@ describe('getModelContextLimit', () => {
     assert.equal(getModelContextLimit('llama3:8b'), 128000)
   })
 
+  test('qwen3.8 → 262144', () => {
+    assert.equal(getModelContextLimit('orcarouter/Qwen3.8-27B-Uncensored'), 262144)
+    assert.equal(getModelContextLimit('qwen3.8:27b'), 262144)
+  })
+
   test('qwen3 → 32768', () => {
     assert.equal(getModelContextLimit('qwen3:30b'), 32768)
   })

@@ -9,8 +9,8 @@ import {
   TrendingUp,
   Zap,
 } from 'lucide-react'
-import type { CorrectionPass } from '../services/codeAutoCorrection'
-import type { CodeIntent } from '../services/codeIntent'
+import type { CorrectionPass } from '../services/codeAutoCorrection.ts'
+import type { CodeIntent } from '../services/codeIntent.ts'
 
 const LEVEL_LABELS: Record<string, { label: string; icon: typeof Zap; color: string }> = {
   initial: { label: 'Generation initiale', icon: Zap, color: 'text-blue-400' },

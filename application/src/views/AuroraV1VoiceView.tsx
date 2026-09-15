@@ -14,10 +14,10 @@
  */
 import { lazy, Suspense, useState, useEffect } from 'react'
 import { Camera, MicOff, Settings, Sparkles, X } from 'lucide-react'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import LyraCharacter from '../components/voice/LyraCharacter'
-import VoiceLandscape from '../components/voice/VoiceLandscape'
-import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
+import VoiceLandscape from '../components/voice/VoiceLandscape.tsx'
+import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio.tsx'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
 

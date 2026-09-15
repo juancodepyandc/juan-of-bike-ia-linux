@@ -11,13 +11,13 @@ import {
   type HttpHeadersResult,
   type PortScanResult,
   type TlsCertResult,
-} from '../../services/cyber/pythonClient'
+} from '../../services/cyber/pythonClient.ts'
 import {
   crackHandshake,
   DEMO_DICTIONARY,
   forgeCapturedHandshake,
   type SimHandshake,
-} from '../../services/cyber/wifiHandshakeSim'
+} from '../../services/cyber/wifiHandshakeSim.ts'
 
 type Tab = 'dns' | 'tls' | 'whois' | 'http' | 'scan' | 'trace' | 'pcap' | 'wifi' | 'wps'
 

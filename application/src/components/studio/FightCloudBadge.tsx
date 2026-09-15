@@ -4,8 +4,8 @@
 // Tapping opens the forge overlay so the user can see progress live.
 import React, { useMemo } from 'react'
 // @ts-ignore - studio avatars is a ported JS-loose module
-import { FightCloud } from './avatars'
-import { useForgeQueueStore } from '../../stores/forgeQueueStore'
+import { FightCloud } from './avatars.tsx'
+import { useForgeQueueStore } from '../../stores/forgeQueueStore.ts'
 
 interface Props {
   onOpen: () => void

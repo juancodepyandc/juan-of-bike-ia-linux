@@ -192,33 +192,33 @@ export function emptyDoc(viewBox: SvgViewBox = { x: 0, y: 0, w: 1000, h: 1000 })
 // --- Serialiseur ------------------------------------------------------------
 export function serialise(doc: SvgDocument): string {
   const vb = `${doc.viewBox.x} ${doc.viewBox.y} ${doc.viewBox.w} ${doc.viewBox.h}`
-  const w = doc.width != null ? ` width="${doc.width}"` : ''
-  const h = doc.height != null ? ` height="${doc.height}"` : ''
+  const w = attr('width', doc.width)
+  const h = attr('height', doc.height)
   const css = Object.entries(doc.cssVariables).map(([k, v]) => `--${k}: ${v}`).join('; ')
   const inner = doc.elements.map(renderEl).join('\n  ')
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}"${w}${h} style="${css}">\n  ${inner}\n</svg>`
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg"${attr('viewBox', vb)}${w}${h}${attr('style', css)}>\n  ${inner}\n</svg>`
 }
 
 function renderEl(el: SvgElement): string {
   switch (el.kind) {
     case 'rect':
-      return `<rect x="${el.x}" y="${el.y}" width="${el.w}" height="${el.h}"${attr('rx', el.rx)}${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
+      return `<rect${attr('x', el.x)}${attr('y', el.y)}${attr('width', el.w)}${attr('height', el.h)}${attr('rx', el.rx)}${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
     case 'circle':
-      return `<circle cx="${el.cx}" cy="${el.cy}" r="${el.r}"${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
+      return `<circle${attr('cx', el.cx)}${attr('cy', el.cy)}${attr('r', el.r)}${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
     case 'line':
-      return `<line x1="${el.x1}" y1="${el.y1}" x2="${el.x2}" y2="${el.y2}" stroke="${el.stroke}"${attr('stroke-width', el.strokeWidth)}${el.dash ? ` stroke-dasharray="${el.dash.join(' ')}"` : ''} />`
+      return `<line${attr('x1', el.x1)}${attr('y1', el.y1)}${attr('x2', el.x2)}${attr('y2', el.y2)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)}${attr('stroke-dasharray', el.dash?.join(' '))} />`
     case 'path':
-      return `<path d="${el.d}"${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
+      return `<path${attr('d', el.d)}${attr('fill', el.fill)}${attr('stroke', el.stroke)}${attr('stroke-width', el.strokeWidth)} />`
     case 'text':
-      return `<text x="${el.x}" y="${el.y}"${attr('font-size', el.fontSize)}${attr('font-family', el.fontFamily)}${attr('text-anchor', el.anchor)}${attr('fill', el.fill)}>${escapeXml(el.text)}</text>`
+      return `<text${attr('x', el.x)}${attr('y', el.y)}${attr('font-size', el.fontSize)}${attr('font-family', el.fontFamily)}${attr('text-anchor', el.anchor)}${attr('fill', el.fill)}>${escapeXml(el.text)}</text>`
     case 'group':
-      return `<g${el.transform ? ` transform="${el.transform}"` : ''}>${el.children.map(renderEl).join('')}</g>`
+      return `<g${attr('transform', el.transform)}>${el.children.map(renderEl).join('')}</g>`
   }
 }
 
 function attr(name: string, value: string | number | undefined): string {
   if (value == null || value === '') return ''
-  return ` ${name}="${value}"`
+  return ` ${name}="${escapeXml(String(value))}"`
 }
 
 function escapeXml(text: string): string {
@@ -269,11 +269,23 @@ export function flowChartDoc(nodes: Array<{ id: string; label: string; x: number
 
 /** Génère une grille pour aligner les croquis techniques sur un fond quadrillé. */
 export function gridOverlay(viewBox: SvgViewBox, spacing = 40): SvgElement[] {
+  if (!Number.isFinite(spacing) || spacing <= 0) {
+    throw new RangeError('Grid spacing must be a positive finite number')
+  }
+  if (![viewBox.x, viewBox.y, viewBox.w, viewBox.h, viewBox.x + viewBox.w, viewBox.y + viewBox.h].every(Number.isFinite)
+    || viewBox.w < 0 || viewBox.h < 0) {
+    throw new RangeError('Grid view box must have finite coordinates and nonnegative dimensions')
+  }
+  const columns = Math.floor(viewBox.w / spacing) + 1
+  const rows = Math.floor(viewBox.h / spacing) + 1
+  if (columns + rows > 10_000) throw new RangeError('Grid exceeds the limit of 10000 lines')
   const out: SvgElement[] = []
-  for (let x = viewBox.x; x <= viewBox.x + viewBox.w; x += spacing) {
+  for (let column = 0; column < columns; column += 1) {
+    const x = viewBox.x + column * spacing
     out.push({ kind: 'line', x1: x, y1: viewBox.y, x2: x, y2: viewBox.y + viewBox.h, stroke: 'rgba(154,164,255,0.15)', strokeWidth: 0.5 })
   }
-  for (let y = viewBox.y; y <= viewBox.y + viewBox.h; y += spacing) {
+  for (let row = 0; row < rows; row += 1) {
+    const y = viewBox.y + row * spacing
     out.push({ kind: 'line', x1: viewBox.x, y1: y, x2: viewBox.x + viewBox.w, y2: y, stroke: 'rgba(154,164,255,0.15)', strokeWidth: 0.5 })
   }
   return out

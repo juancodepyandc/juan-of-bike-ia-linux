@@ -178,10 +178,27 @@ export function rayAabbIntersect(origin: Vec3, direction: Vec3, box: AABB): numb
  * Build un frustum standard depuis une matrice ViewProjection (16 floats,
  * row-major). Extrait les 6 plans par la méthode Gribb-Hartmann (2001).
  */
-export function frustumFromMatrix(m: number[]): Frustum {
+export type MatrixLayout = 'row-major' | 'column-major'
+
+export function frustumFromMatrix(m: number[], layout: MatrixLayout = 'row-major'): Frustum {
   if (m.length !== 16) throw new Error('frustumFromMatrix: 16-element matrix required')
-  // Indexation row-major : m[row * 4 + col].
-  const i = (r: number, c: number) => m[r * 4 + c]
+  // Disposition mémoire de la matrice. Ce paramètre existe parce que
+  // l'erreur est INDÉTECTABLE à l'exécution : une matrice rangée dans l'autre
+  // sens est un tableau de 16 nombres parfaitement valide, et l'extraction
+  // rend des plans plausibles mais faux.
+  //
+  // Mesuré sur une perspective 90°/1:1/near=1/far=100 et 9 points de contrôle :
+  // en `row-major`, 9 classements justes sur 9 ; en passant la MÊME matrice
+  // rangée en colonnes, 6 sur 9 — les points au-delà du plan lointain et hors
+  // du cône étaient déclarés visibles. Le tri par cône ne trie plus rien.
+  //
+  // Le piège est concret : `Matrix4.elements` de Three.js est rangé en
+  // COLONNES. Un appelant qui passe `camera.projectionMatrix.elements` sans y
+  // penser tombe exactement dans ce cas. On l'oblige donc à dire ce qu'il
+  // fournit, au lieu de le laisser deviner.
+  const i = layout === 'row-major'
+    ? (r: number, c: number) => m[r * 4 + c]
+    : (r: number, c: number) => m[c * 4 + r]
   const planes: Array<[number, number, number, number]> = [
     [i(3, 0) + i(0, 0), i(3, 1) + i(0, 1), i(3, 2) + i(0, 2), i(3, 3) + i(0, 3)], // left
     [i(3, 0) - i(0, 0), i(3, 1) - i(0, 1), i(3, 2) - i(0, 2), i(3, 3) - i(0, 3)], // right

@@ -24,7 +24,7 @@ import {
   type WarRoomEvent,
   type WarRoomPhase,
   type WarRoomState,
-} from '../../services/cyber/autonomousWarRoom'
+} from '../../services/cyber/autonomousWarRoom.ts'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

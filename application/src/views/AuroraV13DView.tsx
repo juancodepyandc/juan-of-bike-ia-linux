@@ -15,13 +15,13 @@
  */
 import { lazy, Suspense, useState, useEffect } from 'react'
 import { Send, Loader2 } from 'lucide-react'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import { useModelViewLogic } from '../hooks/useModelViewLogic'
-import { useModuleStreak } from '../hooks/useModuleStreak'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import LyraCharacter from '../components/voice/LyraCharacter'
-import FavoriteButton from '../components/FavoriteButton'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import { useModelViewLogic } from '../hooks/useModelViewLogic.ts'
+import { useModuleStreak } from '../hooks/useModuleStreak.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
+import FavoriteButton from '../components/FavoriteButton.tsx'
 
 const ModelView = lazy(() => import('./ModelView'))
 

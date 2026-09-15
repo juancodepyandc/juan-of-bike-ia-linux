@@ -164,12 +164,16 @@ def extract_features(path: str) -> dict:
     emis = _emissive_ratio(mesh)
     # connected components: mesh.split() builds full face-adjacency (heavy) -> only on small meshes.
     # TRELLIS meshes are welded upstream anyway; a huge raw mesh is treated as one body here.
+    # `split()` recopie l'atlas par composante (mesure: 360 Go demandes sur un
+    # personnage). Ici on ne veut qu'un COMPTE: le graphe d'adjacence suffit,
+    # sans sous-maillage ni copie — et sans plafond de faces.
     n_comp = 1
-    if len(mesh.faces) <= 120_000:
-        try:
-            n_comp = int(len(mesh.split(only_watertight=False)))
-        except Exception:
-            n_comp = 1
+    try:
+        import numpy as _np_c
+        from trimesh.graph import connected_components as _cc
+        n_comp = int(len(_cc(mesh.face_adjacency, nodes=_np_c.arange(len(mesh.faces)))))
+    except Exception:
+        n_comp = 1
     return {
         "n_verts": int(len(v)), "n_faces": int(len(mesh.faces)),
         "aspect_long": round(a_long, 3), "aspect_flat": round(a_flat, 3), "tall_z": round(up, 3),

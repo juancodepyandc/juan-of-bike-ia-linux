@@ -1,8 +1,8 @@
 import { Clock, Download, Save } from 'lucide-react'
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
-import type { ParsedFile } from '../services/codeOutputFiles'
-import { formatEta } from '../utils/codeDownload'
-import { GREEN } from './auroraV1CodeHelpers'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import type { ParsedFile } from '../services/codeOutputFiles.ts'
+import { formatEta } from '../utils/codeDownload.ts'
+import { GREEN } from './auroraV1CodeHelpers.ts'
 
 type ConfirmAction = 'download' | 'repo'
 type WebPreview = { html: string; entry: ParsedFile; kind: 'html' | 'react' | 'css' }

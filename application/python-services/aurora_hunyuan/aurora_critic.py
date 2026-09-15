@@ -46,6 +46,13 @@ def _mesh_sanity(glb_path: Path) -> dict:
         dims = sorted(float(d) for d in bbox)
         smallest, mid, largest = dims
         aspect = largest / max(smallest, 1e-6)
+        # Analyse purement geometrique: on neutralise la texture avant le
+        # decoupage, sinon `split()` la recopie pour CHAQUE composante.
+        try:
+            from trimesh.visual import ColorVisuals as _CV
+            mesh.visual = _CV(mesh=mesh)
+        except Exception:
+            pass
         components = mesh.split(only_watertight=False)
         main_face_count = max((len(c.faces) for c in components), default=0)
         floaters = sum(1 for c in components if len(c.faces) < main_face_count * 0.005 and len(c.faces) > 0)

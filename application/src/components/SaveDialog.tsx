@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Archive, Check, FolderOpen, X } from 'lucide-react'
 import { useState } from 'react'
-import type { CodeFileEntry, SaveRequest } from '../services/saveSystem'
-import { exportAsZip, saveAndExportZip, saveToWorkspace } from '../services/saveSystem'
+import type { CodeFileEntry, SaveRequest } from '../services/saveSystem.ts'
+import { exportAsZip, saveAndExportZip, saveToWorkspace } from '../services/saveSystem.ts'
 
 export type SaveDialogData = Omit<SaveRequest, 'module'> & {
   module: SaveRequest['module']

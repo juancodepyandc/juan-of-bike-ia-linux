@@ -350,17 +350,36 @@ def main() -> int:
             print(json.dumps({"ok": False, "error": "Missing --query"}))
             return 1
 
-        # Essayer Crawl4AI d'abord (Playwright, meilleur rendu JS)
-        crawl_candidates = search_via_crawl4ai(args.query, max(3, args.limit))
-        if crawl_candidates:
-            print(json.dumps({"ok": True, "candidates": crawl_candidates, "engine": "crawl4ai"}))
-            return 0
-
-        # Fallback direct images: useful when generic web result pages do not
-        # expose OG images or DuckDuckGo HTML returns sparse markup.
-        bing_candidates = search_bing_images(args.query, max(3, args.limit))
-        if bing_candidates:
-            print(json.dumps({"ok": True, "candidates": bing_candidates, "engine": "bing-images"}))
+        # FUSIONNER LES SOURCES, NE PAS COURT-CIRCUITER SUR LA PREMIERE.
+        # Mesure du 04/09 sur « Caine The Amazing Digital Circus »:
+        #   crawl4ai (adosse a Wikimedia) -> « Caine 1902 », « Hall Caine »,
+        #     « Jack y Caine », « Caine Road Church » — il apparie sur le seul
+        #     mot « Caine » et ignore l'oeuvre;
+        #   Bing Images -> « Caine (The Amazing Digital Circus) » sur
+        #     greatcharacterswiki et digital-circus.net, exactement le sujet.
+        # Comme crawl4ai passait EN PREMIER et rendait toujours quelque chose,
+        # Bing n'etait JAMAIS interroge. Toute la chaine de fidelite travaillait
+        # donc sur des images sans rapport, et les filtres en aval ne pouvaient
+        # que choisir le moins mauvais dechet (un avion, un medaillon de bronze).
+        # On interroge donc les deux et on FUSIONNE: plus de candidats, et le
+        # vote de consensus en aval peut trancher sur des faits.
+        fusion: list[dict] = []
+        vus_img: set[str] = set()
+        # Bing d'abord: il tient compte de la requete ENTIERE, pas du seul nom.
+        for source, nom in ((search_bing_images, "bing-images"),
+                            (search_via_crawl4ai, "crawl4ai")):
+            try:
+                for c in (source(args.query, max(3, args.limit)) or []):
+                    u = str(c.get("imageUrl") or "")
+                    if not u or u in vus_img:
+                        continue
+                    vus_img.add(u)
+                    fusion.append(c | {"engine": nom})
+            except Exception:  # noqa: BLE001 — une source morte n'en tue pas une autre
+                continue
+        if fusion:
+            print(json.dumps({"ok": True, "candidates": fusion[:max(3, args.limit) * 2],
+                              "engine": "fusion"}))
             return 0
 
         # Fallback: DuckDuckGo HTML scrape classique

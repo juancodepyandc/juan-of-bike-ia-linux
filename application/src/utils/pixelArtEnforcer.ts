@@ -242,7 +242,7 @@ export async function enforcePixelArtBlob(blob: Blob, options: PixelArtOptions):
 
     const grid = quantizeToPixelGrid(imageData.data, canvas.width, canvas.height, options)
     const upscaled = upscaleNearest(grid, canvas.width, canvas.height)
-    ctx.putImageData(new ImageData(upscaled, canvas.width, canvas.height), 0, 0)
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(upscaled), canvas.width, canvas.height), 0, 0)
 
     const result = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     return result ?? blob

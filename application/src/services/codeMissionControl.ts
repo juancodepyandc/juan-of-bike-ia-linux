@@ -1,8 +1,8 @@
 import {
   CODE_SINGLE_MODEL,
-} from '../config/models'
-import type { CodeIntent } from './codeIntent'
-import { generateJsonFromModel } from './modelJson'
+} from '../config/models.ts'
+import type { CodeIntent } from './codeIntent.ts'
+import { generateJsonFromModel } from './modelJson.ts'
 import {
   shorten,
   summarizeExistingFiles,

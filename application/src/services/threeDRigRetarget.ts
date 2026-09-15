@@ -173,7 +173,25 @@ export function retargetAnimation(animation: Animation, sourceBoneIds: BoneId[],
 /** Sample une rotation interpolée à un temps donné (linear quaternion lerp). */
 export function sampleAnimation(animation: Animation, boneId: BoneId, t: number): Quaternion {
   if (animation.frames.length === 0) return [0, 0, 0, 1]
-  const time = animation.loop ? t % animation.duration : Math.min(t, animation.duration)
+
+  // Garde-fous sur le temps demande. Trois entrees produisaient un quaternion
+  // [NaN, NaN, NaN, NaN] :
+  //   - une duree nulle avec `loop` : `t % 0` vaut NaN;
+  //   - `t` non fini (NaN, Infinity) : le modulo propage;
+  //   - et le NaN traversait ensuite la recherche dichotomique, le ratio
+  //     d'interpolation, puis la normalisation.
+  //
+  // Un quaternion NaN pose sur un os ne « degrade » pas le rendu : la matrice
+  // de l'os devient invalide et le maillage qui en depend DISPARAIT, ou part
+  // a l'infini. Rien ne signale la cause, et le defaut se lit comme un
+  // probleme de maillage alors qu'il vient de l'echantillonnage.
+  const duration = Number.isFinite(animation.duration) && animation.duration > 0
+    ? animation.duration
+    : 0
+  const tSain = Number.isFinite(t) ? t : 0
+  const time = animation.loop && duration > 0
+    ? ((tSain % duration) + duration) % duration
+    : Math.min(tSain, duration > 0 ? duration : tSain)
   // Bornes par binary search.
   let lo = 0
   let hi = animation.frames.length - 1
@@ -189,7 +207,11 @@ export function sampleAnimation(animation: Animation, boneId: BoneId, t: number)
   const ratio = (time - a.t) / Math.max(1e-9, b.t - a.t)
   const qa = a.rotations[boneId] ?? [0, 0, 0, 1]
   const qb = b.rotations[boneId] ?? [0, 0, 0, 1]
-  return quatNLerp(qa, qb, ratio)
+  const out = quatNLerp(qa, qb, ratio)
+  // Dernier filet : une image-cle porteuse d'une valeur non finie ne doit pas
+  // ressortir du module. On rend l'identite, qui est visible et corrigeable,
+  // plutot qu'un NaN qui fait disparaitre le sujet.
+  return out.every(Number.isFinite) ? out : [0, 0, 0, 1]
 }
 
 /**

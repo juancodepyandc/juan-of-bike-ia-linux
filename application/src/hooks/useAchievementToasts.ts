@@ -8,10 +8,10 @@
  * v82dd.
  */
 import { useEffect, useRef } from 'react'
-import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore'
-import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore'
-import { useNotificationStore } from '../stores/notificationStore'
-import { computeAchievements } from '../services/achievements'
+import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
+import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
+import { computeAchievements } from '../services/achievements.ts'
 
 const SEEN_KEY = 'aurora-achievements-seen-v1'
 const TIERS_KEY = 'aurora-achievements-tiers-v1'

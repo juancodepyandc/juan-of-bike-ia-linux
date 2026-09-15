@@ -1,6 +1,6 @@
 // Cause-driven Code auto-correction engine.
 
-import type { CodeSandboxResult } from './codeSandbox'
+import type { CodeSandboxResult } from './codeSandbox.ts'
 import { ERROR_PATTERNS, isCorrectionScoreClimbing } from './codeCorrectionErrorPatterns.ts'
 import { MAX_CORRECTION_PASSES, MAX_LOCAL_REPAIR_PASSES, computeAdaptiveCorrectionBudget, countModelPasses } from './codeCorrectionBudget.ts'
 export { MAX_CORRECTION_PASSES, MAX_LOCAL_REPAIR_PASSES, computeAdaptiveCorrectionBudget }

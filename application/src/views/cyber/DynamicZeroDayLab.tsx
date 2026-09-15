@@ -30,7 +30,7 @@ import {
   type DynamicReasoningSession,
 } from '../../services/cyber/dynamicZeroDayEngine.ts'
 import { triggerBrowserDownload } from '../../services/cyber/cyberOutputManager.ts'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

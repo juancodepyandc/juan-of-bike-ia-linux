@@ -13,8 +13,8 @@
  * still reaches the user with a transparent badge.
  */
 
-import { ollamaChat } from '../hooks/useTauri'
-import type { LearningSource } from './learningResearch'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import type { LearningSource } from './learningResearch.ts'
 
 export type AcademicVerdict = 'verified' | 'general' | 'uncertain' | 'contradicted'
 

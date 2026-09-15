@@ -17,10 +17,10 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import { useCoworkStore } from '../stores/coworkStore'
-import type { ModuleId } from '../types/app'
-import CoworkOverlay from './CoworkOverlay'
+import { useAppStore } from '../stores/appStore.ts'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import type { ModuleId } from '../types/app.ts'
+import CoworkOverlay from './CoworkOverlay.tsx'
 
 // v81t: AppShell.tsx is *orphaned dead code* — none of its exports
 // (Sidebar, Topbar, AppShell, SHELL_MODULES) are imported anywhere.

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 
@@ -178,7 +179,7 @@ def _confirm_named_via_llm(word: str) -> dict | None:
         import os as _os
         import json as _json
         import urllib.request as _url
-        model = _os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+        model = _os.environ.get("AURORA_MOTION_LLM", "orcarouter/Qwen3.8-27B-Uncensored")
         q = (f"Is '{word}' the name of a widely-known fictional character, hero, robot, "
              f"mascot or real celebrity that a person would recognize on sight? "
              f'Reply ONLY strict JSON: {{"is_named": true|false, "canonical": '
@@ -202,12 +203,103 @@ def _confirm_named_via_llm(word: str) -> dict | None:
     return None
 
 
+_MEMO_IDENTITE: dict = {}
+
+
+def _identifier_via_llm(prompt: str) -> dict | None:
+    """Lit le PROMPT ENTIER et en extrait le personnage et son oeuvre.
+
+    Remplace la liste codee en dur comme voie PRINCIPALE. Cette liste ne
+    contenait que 57 noms (mario, goku, pikachu...): tout personnage absent
+    n'etait pas reconnu, et l'ancien repli LLM ne recevait qu'un MOT isole,
+    jamais la phrase — il ne pouvait donc pas comprendre « Caine de The Amazing
+    Digital Circus » comme un tout. Mesure du 03/09: la regle des noms propres
+    a deux mots attrapait « Digital Circus » (l'oeuvre) au lieu de « Caine »
+    (le personnage).
+
+    Rend {name, character, franchise, basis} ou None si le prompt ne nomme
+    personne. Hors-ligne (Ollama injoignable), l'appelant retombe sur la liste.
+    """
+    cle = (prompt or "").strip().lower()
+    if not cle:
+        return None
+    if cle in _MEMO_IDENTITE:
+        return _MEMO_IDENTITE[cle]
+    try:
+        import json as _json
+        import os as _os
+        import urllib.request as _url
+        modele = _os.environ.get("AURORA_IDENTITE_LLM",
+                                 _os.environ.get("AURORA_MOTION_LLM", "qwen3-coder:30b"))
+        q = ("Tu analyses une demande de generation 3D. Dis si elle nomme un PERSONNAGE "
+             "precis (fiction, jeu, dessin anime, mascotte) ou une PERSONNE REELLE celebre.\n"
+             "Ignore les mots de mise en scene (fond blanc, pose, couleur, eclairage).\n"
+             "Un objet ou un animal generique (un lapin, un flacon, une chaise) n'est PAS "
+             "un personnage nomme.\n"
+             "Reponds UNIQUEMENT en JSON strict:\n"
+             '{"nomme": true|false, "personnage": "<le NOM SEUL du personnage>", '
+             '"oeuvre": "<serie/film/jeu ou vide>"}\n'
+             "Le champ personnage ne contient QUE le nom, jamais l'oeuvre ni la mise en scene.\n"
+             'Exemple: "caine de the amazing digital circus, fond blanc" -> '
+             '{"nomme": true, "personnage": "Caine", "oeuvre": "The Amazing Digital Circus"}\n'
+             'Exemple: "un lapin, fond blanc" -> {"nomme": false, "personnage": "", "oeuvre": ""}\n\n'
+             f"Demande: {prompt}")
+        body = _json.dumps({"model": modele, "prompt": q, "stream": False,
+                            "options": {"temperature": 0}, "keep_alive": 0}).encode()
+        req = _url.Request("http://127.0.0.1:11434/api/generate", data=body,
+                           headers={"Content-Type": "application/json"})
+        with _url.urlopen(req, timeout=float(_os.environ.get("AURORA_IDENTITE_TIMEOUT", "90"))) as r:
+            out = _json.loads(r.read().decode()).get("response", "")
+        a, b = out.find("{"), out.rfind("}")
+        if a < 0 or b <= a:
+            _MEMO_IDENTITE[cle] = None
+            return None
+        d = _json.loads(out[a:b + 1])
+        if not d.get("nomme"):
+            _MEMO_IDENTITE[cle] = None
+            return None
+        perso = str(d.get("personnage") or "").strip()
+        oeuvre = str(d.get("oeuvre") or "").strip()
+        # Filet: certains modeles recopient toute la phrase dans « personnage ».
+        # On retire l'oeuvre et le connecteur qui la relie au nom.
+        if oeuvre and oeuvre.lower() in perso.lower():
+            _i = perso.lower().index(oeuvre.lower())
+            perso = perso[:_i].strip()
+            perso = re.sub(r"\s*\b(de|du|des|dans|from|of|in)\b\s*$", "", perso,
+                           flags=re.IGNORECASE).strip(" ,;:-")
+        perso = " ".join(perso.split()[:4])
+        if not perso:
+            _MEMO_IDENTITE[cle] = None
+            return None
+        # `basis` DOIT rester "named_identity": tout le pipeline teste cette
+        # valeur exacte pour decider s'il va chercher une VRAIE photo du
+        # personnage. Un basis inedit ("llm_identity") passait au travers de
+        # ces tests -> aucune recherche web -> FLUX inventait un personnage
+        # generique. Mesure du 03/09: « Caine » rendu en homme quelconque en
+        # costume bleu. La provenance va dans `source`, pas dans `basis`.
+        res = {"name": (perso + " " + oeuvre).strip() if oeuvre else perso,
+               "character": perso, "basis": "named_identity", "source": "llm"}
+        if oeuvre:
+            res["franchise"] = oeuvre
+        _MEMO_IDENTITE[cle] = res
+        return res
+    except Exception:  # noqa: BLE001 — hors-ligne: on retombe sur la liste
+        return None
+
+
 def _detect_identity(prompt: str) -> dict | None:
     """Return {name, basis} when a named real person / known character is
     requested, else None. Preserves both character identity and franchise context."""
     fiction = bool(_FICTION_CONTEXT_RE.search(prompt))
 
-    # 1. Check for single-name known icons with optional franchise context
+    # 0. INTELLIGENCE D'ABORD: le LLM lit la phrase entiere. Les regles
+    # lexicales ci-dessous ne sont plus qu'un repli hors-ligne.
+    if os.environ.get("AURORA_IDENTITE_LLM_OFF") != "1":
+        _par_llm = _identifier_via_llm(prompt)
+        if _par_llm:
+            return _par_llm
+
+    # 1. Repli: noms connus codes en dur, avec contexte d'oeuvre optionnel
     # (e.g. "Happy dans Fairy Tail", "Goldorak dans l'espace", "Luffy in One Piece")
     tokens = list(re.finditer(r"\b([A-ZÀ-Ý][\wÀ-ÿ'’-]{2,})\b", prompt))
     for m in tokens:
@@ -217,8 +309,8 @@ def _detect_identity(prompt: str) -> dict | None:
             continue
         if low in _KNOWN_ICONS:
             rest = prompt[m.end():]
-            franchise_match = re.match(
-                r"^\s+(?:dans\s+la\s+|dans\s+l['’]?|dans\s+le\s+|dans\s+les\s+|dans\s+|de\s+la\s+|de\s+l['’]?|des\s+|du\s+|de\s+|d['’]|in\s+the\s+|in\s+|from\s+the\s+|from\s+|of\s+the\s+|of\s+)([A-ZÀ-Ý][\wÀ-ÿ'’._-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’._-]+)*)",
+            franchise_match = re.search(
+                r"\b(?:dans\s+la\s+|dans\s+l['’]?|dans\s+le\s+|dans\s+les\s+|dans\s+|de\s+la\s+|de\s+l['’]?|des\s+|du\s+|de\s+|d['’]|in\s+the\s+|in\s+|from\s+the\s+|from\s+|of\s+the\s+|of\s+)([A-ZÀ-Ý][\wÀ-ÿ'’._-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’._-]+)*)",
                 rest,
                 re.IGNORECASE,
             )
@@ -475,10 +567,9 @@ _HUMAN_SIGNAL_RE = re.compile(
 
 # Non-human kinds that a named-human prompt should override. We keep the
 # original kind for anything already organic (character/humanoid/creature/
-# quadruped) — only rescue prompts misrouted to an object kind.
+# quadruped) or hardware products (motherboard, pc_tower, computer).
 _OVERRIDABLE_KINDS = {
     "vehicle", "product", "gadget", "generic", "sphere", "architecture",
-    "motherboard", "computer", "pc_tower", "case",
 }
 
 
@@ -497,12 +588,17 @@ def refine_subject_kind(prompt: str, kind: str | None,
     Returns {kind, changed, reason}.
     """
     original = (kind or "generic").lower()
-    identity = _detect_identity(prompt or "")
     text = f"{prompt or ''} {motion_prompt or ''}"
+    is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", text, re.I))
+    if is_hardware and original in ("motherboard", "computer", "product", "pc_tower"):
+        return {"kind": "motherboard", "changed": False, "reason": None}
+
+    identity = _detect_identity(prompt or "")
     has_human_signal = bool(_HUMAN_SIGNAL_RE.search(text))
     if (identity and identity.get("name")
             and has_human_signal
-            and original in _OVERRIDABLE_KINDS):
+            and original in _OVERRIDABLE_KINDS
+            and not is_hardware):
         return {
             "kind": "character",
             "changed": True,

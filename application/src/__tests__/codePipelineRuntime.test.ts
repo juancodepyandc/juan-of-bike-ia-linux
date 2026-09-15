@@ -48,8 +48,8 @@ describe('codePipelineRuntime', () => {
   })
 
   test('constantes critiques du pipeline restent exposees', () => {
-    assert.equal(CODE_EXPERT_CONTEXT_TOKENS, 24_576)
-    assert.equal(CODE_EXPERT_OUTPUT_TOKENS, 16_000)
+    assert.equal(CODE_EXPERT_CONTEXT_TOKENS, 8192)
+    assert.equal(CODE_EXPERT_OUTPUT_TOKENS, 8192)
     assert.equal(DOCUMENTATION_EXTENSIONS_EARLY.has('md'), true)
   })
 })

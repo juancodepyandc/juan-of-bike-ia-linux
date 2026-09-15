@@ -13,7 +13,7 @@ import {
   probe,
   saveTarget,
   tcpProbe,
-} from '../services/machineConnectors'
+} from '../services/machineConnectors.ts'
 
 type Platform = NonNullable<MachineTarget['platform']>
 

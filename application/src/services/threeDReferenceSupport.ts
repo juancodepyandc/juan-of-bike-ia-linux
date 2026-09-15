@@ -1,6 +1,6 @@
-import { ollamaChat } from '../hooks/useTauri'
-import { findBestReferenceVisual, type ReferenceSearchProfile, type ReferenceVisualSelection } from './referenceVisualResearch'
-import type { ThreeDIntent } from './threeDIntent'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { findBestReferenceVisual, type ReferenceSearchProfile, type ReferenceVisualSelection } from './referenceVisualResearch.ts'
+import type { ThreeDIntent } from './threeDIntent.ts'
 
 export type ThreeDReferenceMode = 'freeform' | 'known_subject' | 'exact_reference'
 export type ThreeDDimensionStrategy = 'user_override' | 'auto_researched' | 'visual_only'

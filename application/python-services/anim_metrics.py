@@ -85,6 +85,7 @@ _EPS = 1e-9
 THRESHOLDS: Dict[str, Tuple[float, str]] = {
     # shared / deforming
     "edge_stretch":              (1.50, "<="),   # p99 strain ratio (rest=1.0)
+    "motion_amplitude":          (0.005, ">="),  # deplacement max / diagonale du corps
     # humanoid
     "foot_ground":               (0.02, "<="),   # stance clearance / body height
     "heel_toe_roll":             (-0.60, "<="),  # Spearman(frame, toe-heel) — want strong neg
@@ -113,6 +114,9 @@ THRESHOLDS: Dict[str, Tuple[float, str]] = {
 #  bouton tourner" registry.
 # ===========================================================================
 KNOBS: Dict[str, Dict[str, str]] = {
+    "motion_amplitude":        {"param": "motion_bake",
+                                "action": "verifier que le bake a ecrit des cles",
+                                "suggest": "amplitude nulle = AUCUN mouvement dans la prise: verifier que l action est bien liee a l armature, que la plage de frames est la bonne, et que le bake n a pas ete avale par une exception silencieuse"},
     "edge_stretch":            {"param": "weight_smooth_iterations",
                                 "action": "increase",
                                 "suggest": "+1 Laplacian weight-smoothing iteration per +0.2 over threshold; re-weld remove_doubles first"},
@@ -435,6 +439,61 @@ def m_edge_stretch(take: dict, family: str = "shared") -> dict:
         "max_strain": round(float(strain.max()), 4),
         "edges": int(len(E)),
         "hard_tear": bool(strain.max() > 3.0),
+    })
+
+
+# ===========================================================================
+#  SHARED metric — motion amplitude ("est-ce que ca bouge, tout simplement ?")
+# ===========================================================================
+def m_motion_amplitude(take: dict, family: str = "shared") -> dict:
+    """Deplacement maximal d un sommet au fil des images, rapporte a la taille
+    du sujet.
+
+    POURQUOI CETTE METRIQUE EXISTE. Sans elle, une prise reduite au minimum
+    — `verts` + `edges` + `part_labels`, c est-a-dire ce que rend un bake
+    depourvu de pistes de joints — n avait que deux metriques notables:
+    `edge_stretch` et `self_intersection`. Or un personnage ENTIEREMENT FIGE
+    passe trivialement les deux: un maillage qui ne bouge pas ne se dechire
+    pas et ne s auto-traverse pas davantage qu au repos.
+
+    Mesure avant correction, sur un humanoide de synthese a trois parties:
+    le personnage fige et le personnage qui marche rendaient TOUS DEUX
+    `passed=True`, avec exactement les memes metriques notees. La porte ne
+    les distinguait pas.
+
+    Le garde-fou existant — `passed = len(failed)==0 and len(graded)>0` —
+    exige qu au moins une metrique ait pu noter. Il ne suffit pas: il ne
+    demande a AUCUNE metrique d avoir observe du mouvement. Celle-ci ne
+    depend que de `verts`, donc elle note toujours des qu il y a plus d une
+    image, et elle vaut exactement 0.0 sur une prise figee.
+
+    Le seuil de 0,5 % de la diagonale du corps est tres bas a dessein: il
+    laisse passer une respiration ou un balancement discret, et n arrete que
+    l absence REELLE de mouvement.
+    """
+    verts = take.get("verts")
+    if verts is None:
+        return _mk("motion_amplitude", family, None, skipped=True, note="need verts")
+    V = _as_f(verts)
+    if V.ndim != 3 or V.shape[0] < 2:
+        return _mk("motion_amplitude", family, None, skipped=True,
+                   note="une seule image: ce n est pas une prise animee")
+    # `_bbox_diag` rend deja 1.0 pour une boite degeneree: pas de division par
+    # zero possible ici, et un sujet reduit a un point qui ne bouge pas reste
+    # a juste titre un echec.
+    diag = _bbox_diag(V[0])
+    # Amplitude par sommet: etendue de sa trajectoire, pas l ecart entre deux
+    # images voisines — une oscillation lente doit compter autant qu un a-coup.
+    span = (V.max(axis=0) - V.min(axis=0))          # (V,3)
+    per_vertex = np.linalg.norm(span, axis=1)       # (V,)
+    amplitude = float(per_vertex.max() / diag)
+    moving = int((per_vertex / diag > 0.005).sum())
+    return _mk("motion_amplitude", family, amplitude, detail={
+        "frames": int(V.shape[0]),
+        "body_diagonal": round(float(diag), 6),
+        "moving_vertices": moving,
+        "total_vertices": int(V.shape[1]),
+        "frozen": bool(amplitude <= _EPS),
     })
 
 
@@ -983,11 +1042,13 @@ def m_emission_dynamic_range(take: dict, family: str = "luminous") -> dict:
 #  REGISTRY + dispatcher
 # ===========================================================================
 FAMILY_METRICS: Dict[str, List[Callable[[dict, str], dict]]] = {
-    "humanoid": [m_edge_stretch, m_foot_ground, m_heel_toe_roll,
+    "humanoid": [m_motion_amplitude, m_edge_stretch, m_foot_ground, m_heel_toe_roll,
                  m_contralateral_arm_swing, m_head_carriage, m_self_intersection,
                  m_hand_flexion, m_finger_spread],
-    "creature": [m_edge_stretch, m_floating_part_stability, m_self_intersection],
-    "mecha_rigid": [m_part_rigidity, m_plate_interpenetration, m_joint_coherence],
+    "creature": [m_motion_amplitude, m_edge_stretch, m_floating_part_stability,
+                 m_self_intersection],
+    "mecha_rigid": [m_motion_amplitude, m_part_rigidity, m_plate_interpenetration,
+                    m_joint_coherence],
     "screen": [m_screen_face_coherence],
     "luminous": [m_temporal_smoothness, m_pulsation_coherence, m_flicker,
                  m_emission_dynamic_range],

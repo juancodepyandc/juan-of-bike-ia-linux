@@ -30,7 +30,7 @@ import {
   type ThreatIntelligenceRecord,
 } from '../../services/cyber/autonomousInvestigator.ts'
 import { triggerBrowserDownload } from '../../services/cyber/cyberOutputManager.ts'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
 
 const SAMPLE_INVESTIGATION_TOPICS = [
   'OpenSSH Signal Handler Race Condition (regreSSHion)',

@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   BookLock, Bug, FileLock2, Fingerprint, Key, Loader2, Network, RefreshCw, ScanEye,
   ShieldCheck, Sparkles, Swords, Target, Wand2, X, Zap,
 } from 'lucide-react'
-import { ollamaChat } from '../hooks/useTauri'
-import { getBuiltinFallbackLab } from '../services/cyber/builtinLabs'
-import { useAppStore } from '../stores/appStore'
-import { useCyberLeaderboardStore, formatDuration, medalFor } from '../stores/cyberLeaderboardStore'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { getBuiltinFallbackLab } from '../services/cyber/builtinLabs.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useCyberLeaderboardStore, formatDuration, medalFor } from '../stores/cyberLeaderboardStore.ts'
 
 type Character = 'natsu' | 'lucy'
 const PORTRAITS: Record<Character, string> = {

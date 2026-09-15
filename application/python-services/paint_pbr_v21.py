@@ -45,10 +45,19 @@ def _ensure_path() -> None:
     p = str(_HY3DPAINT)
     if p not in sys.path:
         sys.path.insert(0, p)
+    for sub in [
+        _HY3DPAINT / "custom_rasterizer" / "build" / "lib.linux-x86_64-cpython-312",
+        _HY3DPAINT / "custom_rasterizer",
+        _HY3DPAINT / "DifferentiableRenderer",
+        _HY3DPAINT / "DifferentiableRenderer" / "build" / "lib.linux-x86_64-cpython-312",
+    ]:
+        if sub.is_dir() and str(sub) not in sys.path:
+            sys.path.insert(0, str(sub))
 
 
 def is_available() -> bool:
     """Cheap check: vendored dir + the built extensions importable."""
+    _ensure_path()
     if not (_HY3DPAINT / "textureGenPipeline.py").is_file():
         return False
     try:

@@ -88,8 +88,8 @@ def judge_bug(txt):
         or "meme variable" in t or "partagent" in t or "hoist" in t
     return ("BUG SUBTIL ATTRAPE (closure/var)" if ok else "manque la vraie cause"), ok, 0
 
-MODELS_AGENT = sys.argv[1].split(",") if len(sys.argv) > 1 else ["devstral", "qwen3.6:27b"]
-MODELS_VERIF = sys.argv[2].split(",") if len(sys.argv) > 2 else ["deepseek-r1:32b", "qwen3-coder:30b"]
+MODELS_AGENT = sys.argv[1].split(",") if len(sys.argv) > 1 else ["orcarouter/Qwen3.8-27B-Uncensored", "qwen3-coder:30b"]
+MODELS_VERIF = sys.argv[2].split(",") if len(sys.argv) > 2 else ["deepseek-r1:32b", "orcarouter/Qwen3.8-27B-Uncensored"]
 
 print(f"[{time.strftime('%H:%M:%S')}] swap initial: {swap_used_gb()}GB", flush=True)
 results = {}

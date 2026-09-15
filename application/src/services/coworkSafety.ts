@@ -1,6 +1,6 @@
 // Validation preventive des actions Cowork avant execution.
 
-import type { CoworkAction, CoworkRuntime } from './coworkTypes'
+import type { CoworkAction, CoworkRuntime } from './coworkTypes.ts'
 
 export const SAFETY_LIMITS = {
   maxReadFileBytes: 5 * 1024 * 1024,
@@ -65,10 +65,8 @@ export function clearSessionApprovals(): void {
 }
 
 function isSessionApprovedPath(path: string): boolean {
-  const normalized = normalizePath(path).toLowerCase()
-  for (const approvedRaw of sessionApprovedExternalPaths) {
-    const approved = normalizePath(approvedRaw).toLowerCase()
-    if (normalized === approved || normalized.startsWith(approved + '/')) return true
+  for (const approved of sessionApprovedExternalPaths) {
+    if (isInsideWorkspace(path, approved)) return true
   }
   return false
 }
@@ -85,6 +83,19 @@ export function validateAction(
   workspaceRoot: string,
   options: ValidateOptions = {},
 ): SafetyVerdict {
+  // Un chemin porteur d un caractere de controle est MALFORME, pas risque:
+  // ce n est pas une question de permission, et le deverrouillage total ne
+  // doit pas le laisser passer. On refuse avant tout autre arbitrage.
+  const rawPath = (action as { path?: unknown }).path
+  if (typeof rawPath === 'string' && pathHasControlChars(rawPath)) {
+    return {
+      decision: 'block',
+      reason: 'Chemin malforme: caractere de controle (NUL / saut de ligne) interdit.',
+      destructive: false,
+      normalized: action,
+    }
+  }
+
   if (options.fullyUnlocked) {
     return {
       decision: 'allow',
@@ -175,10 +186,11 @@ function computeBaseVerdict(
     }
 
     case 'write_file': {
-      if (action.content.length > SAFETY_LIMITS.maxWriteFileBytes) {
+      const byteLength = new TextEncoder().encode(action.content).byteLength
+      if (byteLength > SAFETY_LIMITS.maxWriteFileBytes) {
         return {
           decision: 'block',
-          reason: `Contenu trop volumineux (${action.content.length} > ${SAFETY_LIMITS.maxWriteFileBytes} octets).`,
+          reason: `Contenu trop volumineux (${byteLength} > ${SAFETY_LIMITS.maxWriteFileBytes} octets).`,
           destructive: true,
           normalized: action,
         }
@@ -198,10 +210,11 @@ function computeBaseVerdict(
     }
 
     case 'edit_file': {
-      if (action.newText.length > SAFETY_LIMITS.maxWriteFileBytes) {
+      const byteLength = new TextEncoder().encode(action.newText).byteLength
+      if (byteLength > SAFETY_LIMITS.maxWriteFileBytes) {
         return {
           decision: 'block',
-          reason: `Contenu trop volumineux (${action.newText.length} octets).`,
+          reason: `Contenu trop volumineux (${byteLength} octets).`,
           destructive: true,
           normalized: action,
         }
@@ -223,7 +236,7 @@ function computeBaseVerdict(
     case 'delete_file': {
       const resolved = resolvePath(action.path, workspaceRoot)
       if (
-        resolved === workspaceRoot ||
+        normalizePath(resolved) === normalizePath(workspaceRoot) ||
         /^[/\\]$/.test(resolved) ||
         /^[a-z]:[/\\]?$/i.test(resolved)
       ) {
@@ -447,6 +460,15 @@ function computeBaseVerdict(
       return { decision: 'allow', reason: 'lecture DOM', destructive: false, normalized: action }
     }
 
+    case 'ephemeral_tool':
+    case 'file_bundle':
+      return {
+        decision: 'block',
+        reason: `La validation de l action ${action.kind} n est pas encore prise en charge.`,
+        destructive: true,
+        normalized: action,
+      }
+
     default: {
       const _exhaustive: never = action
       return {
@@ -460,7 +482,7 @@ function computeBaseVerdict(
 }
 
 function isDestructive(action: CoworkAction): boolean {
-  return ['write_file', 'edit_file', 'delete_file', 'shell'].includes(action.kind)
+  return ['write_file', 'edit_file', 'delete_file', 'shell', 'ephemeral_tool', 'file_bundle'].includes(action.kind)
 }
 
 function isPreventableBlock(action: CoworkAction, reason: string): boolean {
@@ -490,20 +512,40 @@ export function resolvePath(input: string, workspaceRoot: string): string {
   return normalizePath(joinPaths(workspaceRoot, input))
 }
 
+/**
+ * Caracteres de controle interdits dans un chemin.
+ *
+ * `\0` d abord: un chemin qui en contient n est jamais legitime, et les
+ * couches sous-jacentes le TRONQUENT au premier octet nul. Un chemin
+ * `<workspace>/\0/../../etc/passwd` passait la cloture — il commence bien par
+ * la racine du workspace — et ressortait en `allow` sans confirmation.
+ *
+ * `\r` et `\n` ensuite: l executeur interpole les chemins dans des lignes de
+ * commande PowerShell; un saut de ligne y injecte une commande.
+ */
+const PATH_CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/
+
+/** Le chemin porte-t-il un caractere de controle ? (jamais legitime) */
+export function pathHasControlChars(path: string): boolean {
+  return PATH_CONTROL_CHARS_RE.test(path)
+}
+
 export function isInsideWorkspace(absolutePath: string, workspaceRoot: string): boolean {
-  const root = normalizePath(workspaceRoot).toLowerCase()
-  const path = normalizePath(absolutePath).toLowerCase()
+  // Un chemin malforme n est DANS rien: on refuse avant de comparer les prefixes.
+  if (pathHasControlChars(absolutePath) || pathHasControlChars(workspaceRoot)) return false
+  const windowsPath = /^(?:[a-z]:|\/[a-z]\/Users(?:\/|$))/i.test(normalizePath(workspaceRoot))
+  const root = windowsPath ? normalizePath(workspaceRoot).toLowerCase() : normalizePath(workspaceRoot)
+  const path = windowsPath ? normalizePath(absolutePath).toLowerCase() : normalizePath(absolutePath)
   if (root === path) return true
-  return path.startsWith(root + '/') || path.startsWith(root + '\\')
+  return path.startsWith(root === '/' ? '/' : root + '/')
 }
 
 function isInsideStandardUserReadPath(absolutePath: string, workspaceRoot: string): boolean {
   const home = inferUserHomeFromWorkspace(workspaceRoot)
   if (!home) return false
-  const path = normalizePath(absolutePath).toLowerCase()
   const allowedFolders = ['Desktop', 'Bureau', 'Documents', 'Downloads', 'Telechargements']
-    .map((folder) => joinPaths(home, folder).toLowerCase())
-  return allowedFolders.some((folder) => path === folder || path.startsWith(folder + '/'))
+    .map((folder) => joinPaths(home, folder))
+  return allowedFolders.some((folder) => isInsideWorkspace(absolutePath, folder))
 }
 
 function inferUserHomeFromWorkspace(workspaceRoot: string): string | null {

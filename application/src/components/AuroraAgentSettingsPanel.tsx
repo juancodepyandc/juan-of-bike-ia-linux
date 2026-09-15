@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import AuroraAgentMascot from './AuroraAgentMascot'
+import AuroraAgentMascot from './AuroraAgentMascot.tsx'
 import {
   AGENT_RUNTIME_STATES,
   VOICE_OPTIONS,
@@ -11,8 +11,8 @@ import {
   type AgentVoice,
   type AuroraProductionAgent,
   type ProductionAgentId,
-} from '../services/auroraAgents'
-import { useAgentRuntimeStore } from '../stores/agentRuntimeStore'
+} from '../services/auroraAgents.ts'
+import { useAgentRuntimeStore } from '../stores/agentRuntimeStore.ts'
 
 type AgentDraft = Pick<
   AuroraProductionAgent,

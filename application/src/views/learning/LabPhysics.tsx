@@ -12,7 +12,7 @@ import {
   Wind,
   Zap,
 } from 'lucide-react'
-import { velocityVerlet } from '../../services/simulator/analyticIntegrators'
+import { velocityVerlet } from '../../services/simulator/analyticIntegrators.ts'
 
 type SimId = 'pendulum' | 'projectile' | 'spring' | 'collision' | 'gravity'
 

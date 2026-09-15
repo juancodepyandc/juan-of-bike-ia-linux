@@ -15,7 +15,7 @@
 import { isCancellationMessage, isInfrastructureFailureMessage } from './codeInfrastructureFailure.ts'
 import type { CodeFile, CodeOrchestrationResult } from './codeOrchestratorTypes.ts'
 import type { CodeIntent } from './codeIntent.ts'
-import type { RecoveryEvent } from './ollamaResilience'
+import type { RecoveryEvent } from './ollamaResilience.ts'
 
 export type InterruptedDelivery = {
   cause: string

@@ -15,11 +15,11 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { GraduationCap, Send, Loader2, Sparkles, Video, X, RotateCcw, ImagePlus } from 'lucide-react'
-import { ollamaChatStream } from '../../hooks/useTauri'
-import LyraCharacter from '../../components/voice/LyraCharacter'
-import VoiceLandscape from '../../components/voice/VoiceLandscape'
-import VoicePushToTalk from '../../components/VoicePushToTalk'
-import { buildBacInspirationBlock } from '../../services/learning/bacInspirationDb'
+import { ollamaChatStream } from '../../hooks/useTauri.ts'
+import LyraCharacter from '../../components/voice/LyraCharacter.tsx'
+import VoiceLandscape from '../../components/voice/VoiceLandscape.tsx'
+import VoicePushToTalk from '../../components/VoicePushToTalk.tsx'
+import { buildBacInspirationBlock } from '../../services/learning/bacInspirationDb.ts'
 
 /** Lit un File image → base64 brut (sans le préfixe data:). */
 function fileToBase64(file: File): Promise<string> {

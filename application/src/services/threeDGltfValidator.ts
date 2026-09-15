@@ -206,6 +206,131 @@ export function validateGltfJson(input: unknown): GltfValidationReport {
     }
   }
 
+  // 10. Chaine de donnees : accessor -> bufferView -> buffer.
+  //
+  // Ces trois maillons n'etaient PAS verifies. Mesure sur 18 violations de la
+  // specification, 7 passaient — dont les trois references de cette chaine.
+  // Un `POSITION: 99` avec deux accessors declares est un fichier qui s'ouvre
+  // et ne rend rien : le controle disait « conforme », le rendu restait vide,
+  // et rien ne reliait les deux.
+  const nbAccessors = root.accessors?.length ?? 0
+  const nbBufferViews = root.bufferViews?.length ?? 0
+  const nbBuffers = root.buffers?.length ?? 0
+
+  const refAccessor = (idx: number | undefined, pointer: string, quoi: string) => {
+    if (idx == null) return
+    if (idx < 0 || idx >= nbAccessors) {
+      issues.push({ severity: 'error', message: `${quoi} ref accessor ${idx} inexistant (${nbAccessors} declares).`, pointer })
+    }
+  }
+
+  if (root.meshes) {
+    root.meshes.forEach((mesh, i) => {
+      mesh.primitives?.forEach((prim, p) => {
+        if (prim.attributes) {
+          for (const [nom, idx] of Object.entries(prim.attributes)) {
+            refAccessor(idx, `/meshes/${i}/primitives/${p}/attributes/${nom}`, `Mesh ${i} primitive ${p} attribut ${nom}`)
+          }
+        }
+        refAccessor(prim.indices, `/meshes/${i}/primitives/${p}/indices`, `Mesh ${i} primitive ${p} indices`)
+      })
+    })
+  }
+
+  if (root.accessors) {
+    root.accessors.forEach((acc, i) => {
+      if (acc.bufferView != null && (acc.bufferView < 0 || acc.bufferView >= nbBufferViews)) {
+        issues.push({ severity: 'error', message: `Accessor ${i} ref bufferView ${acc.bufferView} inexistant (${nbBufferViews} declares).`, pointer: `/accessors/${i}/bufferView` })
+      }
+    })
+  }
+
+  if (root.bufferViews) {
+    root.bufferViews.forEach((bv, i) => {
+      if (bv.buffer == null || bv.buffer < 0 || bv.buffer >= nbBuffers) {
+        issues.push({ severity: 'error', message: `BufferView ${i} ref buffer ${bv.buffer} inexistant (${nbBuffers} declares).`, pointer: `/bufferViews/${i}/buffer` })
+        return
+      }
+      // Debordement : une tranche qui sort du tampon est une lecture hors
+      // limites cote chargeur, pas une simple imprecision.
+      const buf = root.buffers?.[bv.buffer]
+      const fin = (bv.byteOffset ?? 0) + bv.byteLength
+      if (buf && fin > buf.byteLength) {
+        issues.push({ severity: 'error', message: `BufferView ${i} deborde le buffer ${bv.buffer} : ${fin} octets demandes pour ${buf.byteLength} disponibles.`, pointer: `/bufferViews/${i}/byteLength` })
+      }
+    })
+  }
+
+  // 11. Les scenes referencent des noeuds qui existent.
+  if (root.scenes && root.nodes) {
+    root.scenes.forEach((scene, i) => {
+      scene.nodes?.forEach((n, k) => {
+        if (n < 0 || n >= root.nodes!.length) {
+          issues.push({ severity: 'error', message: `Scene ${i} ref node ${n} inexistant.`, pointer: `/scenes/${i}/nodes/${k}` })
+        }
+      })
+    })
+  }
+
+  // 12. La hierarchie de noeuds doit etre un ARBRE, pas un graphe.
+  //
+  // La specification l'exige (3.5.2) et pour une raison tres concrete : tout
+  // parcours recursif — calcul des matrices monde, export, affichage de
+  // l'arborescence — BOUCLE INDEFINIMENT sur un cycle. Le fichier ne
+  // « rend pas mal » : il fige le programme qui le lit. C'est le pire mode
+  // de defaillance, et il n'etait pas detecte.
+  if (root.nodes && root.nodes.length > 0) {
+    const BLANC = 0, GRIS = 1, NOIR = 2
+    const couleur = new Array<number>(root.nodes.length).fill(BLANC)
+    let cycle: number[] | null = null
+
+    // Parcours en profondeur ITERATIF, coloriage blanc/gris/noir. Deux
+    // raisons de ne pas recurser : un cycle deborderait la pile avant de
+    // conclure, et une hierarchie profonde legitime la deborderait aussi.
+    // Le noircissement est differe par un jeton d'indice negatif repose sur
+    // la pile derriere les enfants.
+    const parcours = (depart: number): number[] | null => {
+      const pile: Array<{ n: number; chemin: number[] }> = [{ n: depart, chemin: [] }]
+      while (pile.length > 0) {
+        const { n, chemin } = pile.pop()!
+        if (n < 0) { couleur[-1 - n] = NOIR; continue }
+        if (n >= root.nodes!.length) continue
+        if (couleur[n] === GRIS) return [...chemin, n]
+        if (couleur[n] === NOIR) continue
+        couleur[n] = GRIS
+        pile.push({ n: -1 - n, chemin })
+        for (const c of root.nodes![n].children ?? []) pile.push({ n: c, chemin: [...chemin, n] })
+      }
+      return null
+    }
+    for (let i = 0; i < root.nodes.length && !cycle; i += 1) {
+      if (couleur[i] === BLANC) cycle = parcours(i)
+    }
+    if (cycle) {
+      issues.push({
+        severity: 'error',
+        message: `Cycle dans la hierarchie de noeuds (${cycle.join(' -> ')}) : tout parcours recursif boucle indefiniment.`,
+        pointer: '/nodes',
+      })
+    }
+  }
+
+  // 13. Chemin d'animation : la specification ferme la liste (3.6.2.1).
+  const CHEMINS_ANIMATION = new Set(['translation', 'rotation', 'scale', 'weights'])
+  if (root.animations) {
+    root.animations.forEach((anim, i) => {
+      anim.channels?.forEach((ch, c) => {
+        if (ch.target?.path != null && !CHEMINS_ANIMATION.has(ch.target.path)) {
+          issues.push({ severity: 'error', message: `Animation ${i} channel ${c} : chemin « ${ch.target.path} » hors specification (translation, rotation, scale, weights).`, pointer: `/animations/${i}/channels/${c}/target/path` })
+        }
+      })
+      anim.samplers?.forEach((sp, k) => {
+        refAccessor(sp.input, `/animations/${i}/samplers/${k}/input`, `Animation ${i} sampler ${k} input`)
+        refAccessor(sp.output, `/animations/${i}/samplers/${k}/output`, `Animation ${i} sampler ${k} output`)
+      })
+    })
+  }
+
   const hasBlocker = issues.some((i) => i.severity === 'block')
   const hasError = issues.some((i) => i.severity === 'error')
   return {

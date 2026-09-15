@@ -218,7 +218,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--pick", type=int, nargs="+", default=[2, 3])
     a = ap.parse_args()
-    r = generate(a.front, a.out_dir, a.stem, a.text, a.steps, a.seed, a.pick)
+    r = generate(a.front, a.out_dir, a.stem, text=a.text, steps=a.steps,
+                 seed=a.seed, pick=a.pick)
     print("AURORA_MVADAPTER_RESULT " + json.dumps(r))
     return 0 if r.get("ok") else 1
 

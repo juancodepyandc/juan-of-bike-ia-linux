@@ -3,6 +3,8 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { InlineMath, BlockMath } from 'react-katex'
 import 'katex/dist/katex.min.css'
+import { MarkdownImage } from './chat/MediaEmbed.tsx'
+import { domainOf, isRichMedia } from '../utils/mediaLinks.ts'
 
 type Props = {
   content: string
@@ -144,11 +146,26 @@ function MarkdownProBase({ content, idPrefix = 'md', className }: Props) {
       td: ({ children }) => (
         <td className="px-3 py-2 text-aurora-text-dim">{renderChildrenWithMath(children, `${idPrefix}-td`)}</td>
       ),
-      a: ({ children, href }) => (
-        <a href={href} target="_blank" rel="noreferrer" className="text-aurora-accent hover:underline">
-          {children}
-        </a>
+      // Une image du markdown se regarde : cliquer l'ouvre en plein écran.
+      // Avant, elle sortait en <img> brut, sans taille ni bordure, et
+      // débordait de la bulle.
+      img: ({ src, alt }) => (
+        <MarkdownImage src={typeof src === 'string' ? src : undefined} alt={alt} />
       ),
+      a: ({ children, href }) => {
+        const url = typeof href === 'string' ? href : ''
+        // Un lien dont le texte EST l'URL et qui pointe vers un média est
+        // remplacé par son domaine : la carte lisible correspondante est
+        // rendue sous la bulle par MediaStrip. Afficher les deux ferait
+        // doublon, n'afficher que l'URL nue ne dirait rien.
+        const bare = typeof children === 'string' && children === url
+        const label = bare && isRichMedia(url) ? (domainOf(url) || url) : children
+        return (
+          <a href={href} target="_blank" rel="noreferrer" className="text-aurora-accent hover:underline">
+            {label}
+          </a>
+        )
+      },
       hr: () => <hr className="my-4 border-t border-aurora-border/40" />,
       input: ({ checked, disabled }) => (
         <input type="checkbox" checked={Boolean(checked)} disabled={disabled} readOnly className="mr-2 align-middle accent-aurora-accent" />

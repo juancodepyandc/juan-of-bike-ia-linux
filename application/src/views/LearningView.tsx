@@ -20,9 +20,9 @@ import {
   TreePine,
   Zap,
 } from 'lucide-react'
-import RecoveryBanner from '../components/RecoveryBanner'
-import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
-import type { Tab, LessonRef } from './learning/types'
+import RecoveryBanner from '../components/RecoveryBanner.tsx'
+import { useGenerationRecovery } from '../hooks/useGenerationRecovery.ts'
+import type { Tab, LessonRef } from './learning/types.ts'
 
 const Hub = lazy(() => import('./learning/Hub'))
 const DailyChallenge = lazy(() => import('./learning/DailyChallenge'))

@@ -34,6 +34,24 @@ export type CoworkAction =
   | { kind: 'clipboard_write'; text: string }
   | { kind: 'voice_speak'; text: string }
   | { kind: 'dom_query'; selector: string; attribute?: string }
+  | {
+      kind: 'ephemeral_tool'
+      toolName: string
+      packages?: string[]
+      scriptCode: string
+      autoCleanup?: boolean
+      timeoutSeconds?: number
+    }
+  | {
+      kind: 'file_bundle'
+      moduleTarget: 'conversation' | 'academic' | 'cyber'
+      files: Array<{
+        filename: string
+        content: string
+        category?: string
+        format?: 'markdown' | 'json' | 'yaml' | 'python' | 'latex' | 'raw'
+      }>
+    }
 
   // Reasoning trace — Aurora "thinks out loud" for the user. The orchestrator
   // emits the message as a streaming event but doesn't forward to the LLM

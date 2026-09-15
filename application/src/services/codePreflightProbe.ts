@@ -1,5 +1,5 @@
-import { fsExists, runWorkspaceCommand } from '../hooks/useTauri'
-import type { CodeIntent } from './codeIntent'
+import { fsExists, runWorkspaceCommand } from '../hooks/useTauri.ts'
+import type { CodeIntent } from './codeIntent.ts'
 
 type ToolProbeSpec = {
   id: string

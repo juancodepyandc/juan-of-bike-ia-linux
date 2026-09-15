@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, lazy, Suspense } from 'react'
-import { analyseTone } from '../services/conversationToneMatcher'
-import { EXPERT } from '../services/auroraExpertPrompts'
-import LyraCharacter from '../components/voice/LyraCharacter'
+import { analyseTone } from '../services/conversationToneMatcher.ts'
+import { EXPERT } from '../services/auroraExpertPrompts.ts'
+import LyraCharacter from '../components/voice/LyraCharacter.tsx'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Bot,
@@ -31,29 +31,29 @@ import {
   VolumeX,
   X,
 } from 'lucide-react'
-import ContextFilesField from '../components/ContextFilesField'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import { auroraVoice } from '../services/auroraVoice'
-import ModuleAssetPackCard from '../components/ModuleAssetPackCard'
-import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel'
-import RecoveryBanner from '../components/RecoveryBanner'
-import SessionSwitcher from '../components/SessionSwitcher'
-import { buildConversationModuleAssets } from '../config/moduleAssetPacks'
+import ContextFilesField from '../components/ContextFilesField.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import { auroraVoice } from '../services/auroraVoice.ts'
+import ModuleAssetPackCard from '../components/ModuleAssetPackCard.tsx'
+import ConnectorRecommendationsPanel from '../components/ConnectorRecommendationsPanel.tsx'
+import RecoveryBanner from '../components/RecoveryBanner.tsx'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
+import { buildConversationModuleAssets } from '../config/moduleAssetPacks.ts'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
-import { useChatStore } from '../stores/chatStore'
-import { useAppStore } from '../stores/appStore'
-import { useGenerationTrackerStore } from '../stores/generationTrackerStore'
-import { useGenerationRecovery } from '../hooks/useGenerationRecovery'
-import { useManagedRuntime } from '../hooks/useManagedRuntime'
-import { useModuleAssetPack } from '../hooks/useModuleAssetPack'
-import { runConversationTurn } from '../services/conversationOrchestrator'
-import { prepareTaskIntelligence } from '../services/taskIntelligence'
-import type { AssistantRunState, ChatMessage, ModuleId } from '../types/app'
-import { getErrorMessage } from '../utils/errors'
-import { getRuntimeLabel } from '../utils/runtime'
-import { prepareContextFiles } from '../utils/multimodalContext'
-import { fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, runPythonScript } from '../hooks/useTauri'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useGenerationTrackerStore } from '../stores/generationTrackerStore.ts'
+import { useGenerationRecovery } from '../hooks/useGenerationRecovery.ts'
+import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
+import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
+import { runConversationTurn } from '../services/conversationOrchestrator.ts'
+import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
+import type { AssistantRunState, ChatMessage, ModuleId } from '../types/app.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { getRuntimeLabel } from '../utils/runtime.ts'
+import { prepareContextFiles } from '../utils/multimodalContext.ts'
+import { fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, runPythonScript } from '../hooks/useTauri.ts'
 
 function processThinkTags(raw: string): { visible: string; thinking: string | null } {
   let visible = raw
@@ -245,7 +245,13 @@ function TurnStatusPanel({
         <SmallCard
           icon={Gauge}
           label="Precision"
-          value={runState.verification ? `${runState.verification.score}/100` : 'Non lancee'}
+          value={!runState.verification
+            ? 'Non lancee'
+            // Une verification qui n'a pas eu lieu n'a pas de note. Afficher
+            // « 94/100 » sur un jugement absent trompait l'utilisateur.
+            : runState.verification.verified === false
+              ? 'Non verifiee'
+              : `${runState.verification.score}/100`}
         />
         <SmallCard
           icon={ShieldCheck}

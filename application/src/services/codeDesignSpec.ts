@@ -111,6 +111,8 @@ function paletteFor(intent: CodeIntent, archetype: DesignArchetype, prompt: stri
 function componentsFor(archetype: DesignArchetype, platform: CodeDesignPlatform): string[] {
   if (platform === 'mobile_native') return ['safe-area shell', 'bottom tabs', 'detail screen', 'settings screen']
   if (platform === 'game_canvas') return ['canvas', 'hud', 'start screen', 'game over screen']
+  if (archetype === 'retro_pixel_gaming') return ['display', 'button', 'grid', 'calculator']
+  if (archetype === 'interactive_tool_widget') return ['display', 'button', 'keypad', 'calculator']
   if (archetype === 'data_dense_enterprise') return ['sidebar', 'topbar', 'data table', 'chart panel', 'filter bar']
   if (archetype === 'ide_code_editor') return ['file tree', 'editor pane', 'terminal panel', 'command palette']
   if (archetype === 'os_shell') return ['terminal viewport', 'process panel', 'status bar']
@@ -123,6 +125,8 @@ function componentsFor(archetype: DesignArchetype, platform: CodeDesignPlatform)
 function wireframeFor(archetype: DesignArchetype, platform: CodeDesignPlatform): string[] {
   if (platform === 'mobile_native') return ['splash', 'onboarding', 'home', 'detail', 'settings']
   if (platform === 'game_canvas') return ['start menu', 'playfield', 'pause overlay', 'game over']
+  if (archetype === 'retro_pixel_gaming') return ['pixel container', 'display screen', 'button matrix']
+  if (archetype === 'interactive_tool_widget') return ['tool container', 'display screen', 'keypad grid']
   if (archetype === 'data_dense_enterprise') return ['sidebar', 'topbar', 'kpi row', 'table + chart split', 'details drawer']
   if (archetype === 'ide_code_editor') return ['activity bar', 'file tree', 'editor tabs', 'code editor', 'terminal']
   if (archetype === 'os_shell') return ['boot log', 'command prompt', 'process list', 'status footer']
@@ -134,14 +138,14 @@ export function buildCodeDesignSpec(prompt: string, intent: CodeIntent, archetyp
   const tokens = platform === 'mobile_native'
     ? {
         spacing: '4/8/12/16/24/32 native dp',
-        radius: '12 card / 20 sheet / 999 pill',
-        motion: 'native spring gestures, no CSS hover contract',
+        radius: '6 chip / 12 card / 24 sheet',
+        motion: 'spring damping 0.8',
       }
     : platform === 'game_canvas'
       ? {
-          spacing: 'HUD 8px grid, canvas safe margins',
-          radius: 'menu 8 / button 6',
-          motion: 'requestAnimationFrame delta-time, particles, screen shake',
+          spacing: '8 HUD / 16 panel / 32 viewport',
+          radius: '0 pixel / 4 retro / 8 panel',
+          motion: 'delta-time frame loop',
         }
       : {
           spacing: '4/8/12/16/24/32/48/64/96 CSS tokens',
@@ -231,7 +235,7 @@ export function verifyCodeDesignSpecAgainstFiles(spec: CodeDesignSpec, files: Co
     issues.push({ kind: 'component', detail: component })
   }
 
-  if (spec.platform === 'web') {
+  if (spec.platform === 'web' && !['retro_pixel_gaming', 'interactive_tool_widget', 'os_shell', 'ide_code_editor'].includes(spec.archetype)) {
     const sectionCount = (all.match(/<section\b/g) ?? []).length
     if (sectionCount < 3) issues.push({ kind: 'wireframe', detail: `sections:${sectionCount}` })
   }

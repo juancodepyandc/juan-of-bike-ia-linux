@@ -9,18 +9,21 @@ import {
   type KeyboardEvent as RKeyboardEvent,
   type ReactNode,
 } from 'react'
-import MarkdownPro from '../components/MarkdownPro'
-import AuroraMascot from '../components/generationFx/mascots'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import { useChatViewLogic, stripThink, WELCOME, type Attachment } from '../hooks/useChatViewLogic'
-import { useChatStore } from '../stores/chatStore'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { useNotificationStore } from '../stores/notificationStore'
-import { suggestCommands, getRecentSlash } from '../utils/slashCommands'
-import { pickRandomStarter } from '../utils/randomChatStarters'
-import { getDailyTip } from '../utils/dailyTip'
-import { getContextUsage } from '../utils/modelContext'
-import type { ChatMessage } from '../types/app'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import SourcesPanel from '../components/chat/SourcesPanel.tsx'
+import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
+import { extractRichMedia } from '../utils/mediaLinks.ts'
+import AuroraMascot from '../components/generationFx/mascots.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import { useChatViewLogic, stripThink, WELCOME, type Attachment } from '../hooks/useChatViewLogic.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
+import { suggestCommands, getRecentSlash } from '../utils/slashCommands.ts'
+import { pickRandomStarter } from '../utils/randomChatStarters.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { getContextUsage } from '../utils/modelContext.ts'
+import type { ChatMessage } from '../types/app.ts'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
 
@@ -798,6 +801,18 @@ export default function AuroraV4ConversationView() {
         <GhostBtn title="Exporter en PDF" onClick={() => void L.exportConversation('pdf')}>
           <Ic name="file" /> PDF
         </GhostBtn>
+        <GhostBtn
+          active={L.webMode === 'on'}
+          danger={L.webMode === 'off'}
+          title={
+            L.webMode === 'on' ? 'Recherche web : toujours (clic pour couper)'
+              : L.webMode === 'off' ? 'Recherche web : coupée (clic pour revenir en auto)'
+                : 'Recherche web : automatique (clic pour forcer)'
+          }
+          onClick={() => L.setWebMode(L.webMode === 'auto' ? 'on' : L.webMode === 'on' ? 'off' : 'auto')}
+        >
+          <Ic name="globe" /> Web {L.webMode === 'on' ? 'on' : L.webMode === 'off' ? 'off' : 'auto'}
+        </GhostBtn>
         <GhostBtn title="Lire la page active du navigateur (Aurora-Connect)" onClick={() => void L.readActiveTab()}>
           <Ic name="globe" /> Onglet
         </GhostBtn>
@@ -1135,6 +1150,12 @@ export default function AuroraV4ConversationView() {
                       {isAsst
                         ? <MarkdownPro content={visible || m.content} idPrefix={`v4-bubble-${id}`} />
                         : <span style={{ whiteSpace: 'pre-wrap' }}>{visible || m.content}</span>}
+                      {/* Photos, vidéos, audios et modèles 3D cités dans le
+                          message, rendus lisibles sur place. */}
+                      <MediaStrip urls={extractRichMedia(visible || m.content)} />
+                      {isAsst && m.sources && m.sources.length > 0 && (
+                        <SourcesPanel sources={m.sources} queries={m.searchQueries ?? []} />
+                      )}
                     </div>
                   )}
                   {!isEditing && (
@@ -1220,6 +1241,9 @@ export default function AuroraV4ConversationView() {
                   </Chip>
                 </div>
                 <PipelineStepper />
+                {(L.runSources.length > 0 || L.runQueries.length > 0) && (
+                  <SourcesPanel sources={L.runSources} queries={L.runQueries} live />
+                )}
                 <div style={{ fontSize: 14, lineHeight: 1.6 }}>
                   {L.streamingVisible
                     ? <MarkdownPro content={L.streamingVisible} idPrefix="v4-stream" />

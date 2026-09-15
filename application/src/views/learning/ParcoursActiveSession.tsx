@@ -18,18 +18,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence, type PanInfo } from 'framer-motion'
-import { useIsMobile } from '../../hooks/useIsMobile'
+import { useIsMobile } from '../../hooks/useIsMobile.ts'
 import {
   ChevronLeft, ChevronRight, X, Clock, BookOpen, Layers, Target, Swords,
   CheckCircle2, AlertTriangle, Trophy, Mic, Flame, Sparkles, Shuffle,
 } from 'lucide-react'
-import type { UseAcademyViewLogic, AcademyParcoursExo } from '../../hooks/useAcademyViewLogic'
-import { evaluateAnswerSemantically, regenerateSimilarExo, type SemanticEvalResult } from '../../services/learningSemanticEval'
+import type { UseAcademyViewLogic, AcademyParcoursExo } from '../../hooks/useAcademyViewLogic.ts'
+import { evaluateAnswerSemantically, regenerateSimilarExo, type SemanticEvalResult } from '../../services/learningSemanticEval.ts'
 import { LEARNING_EVAL_MODEL } from '../../config/models.ts'
-import { getBridgeUrl } from '../../utils/runtime'
-import { useLearningSessionStore } from '../../stores/learningSessionStore'
-import MapPreview from './MapPreview'
-import ParcoursAssistantBubble from './ParcoursAssistantBubble'
+import { getBridgeUrl } from '../../utils/runtime.ts'
+import { useLearningSessionStore } from '../../stores/learningSessionStore.ts'
+import MapPreview from './MapPreview.tsx'
+import ParcoursAssistantBubble from './ParcoursAssistantBubble.tsx'
 
 // iter32.K : nouvelle étape "menu d'entraînement" entre Fiches et Exos.
 // iter33   : oral n'est PLUS un step séparé (cf clarification user) — c'est

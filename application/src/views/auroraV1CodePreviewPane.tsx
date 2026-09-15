@@ -1,9 +1,9 @@
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
-import type { ParsedFile } from '../services/codeOutputFiles'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import type { ParsedFile } from '../services/codeOutputFiles.ts'
 import { FileCode2 } from 'lucide-react'
-import { GREEN } from './auroraV1CodeHelpers'
-import { CodePreviewFrame } from './auroraV1CodePreviewFrame'
-import { Eyebrow } from './auroraV1CodePrimitives'
+import { GREEN } from './auroraV1CodeHelpers.ts'
+import { CodePreviewFrame } from './auroraV1CodePreviewFrame.tsx'
+import { Eyebrow } from './auroraV1CodePrimitives.tsx'
 
 type WebPreview = { html: string; entry: ParsedFile; kind: 'html' | 'react' | 'css' }
 

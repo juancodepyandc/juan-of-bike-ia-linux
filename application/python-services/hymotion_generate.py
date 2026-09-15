@@ -105,7 +105,7 @@ def generate(prompt: str, output_dir: str, *, duration: float = 4.0,
            "USE_HF_MODELS": os.environ.get("USE_HF_MODELS", "1"),
            "HF_HOME": os.environ.get(
                "HF_HOME", str(Path.home() / ".cache" / "huggingface"))}
-    cmd = [_python(), str(HY_ROOT / "local_infer.py"),
+    cmd = [_python(), str(REPO_ROOT / "auto_rl" / "hymotion_infer.py"),
            "--model_path", str(_model_path()),
            "--input_text_dir", str(tmp),
            "--output_dir", str(out),

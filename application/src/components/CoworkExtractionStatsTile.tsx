@@ -39,7 +39,7 @@ import {
   type ExtractionStatsTone,
   type DeltaBadgeTone,
   type SparklineTone,
-} from '../services/coworkExtractionStats'
+} from '../services/coworkExtractionStats.ts'
 
 type CoworkExtractionStatsTileProps = {
   // Polling interval in ms. Defaults to 30 000 ms (30 s) to match the agenda

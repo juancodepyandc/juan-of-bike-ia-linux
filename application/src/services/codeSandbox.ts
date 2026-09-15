@@ -81,7 +81,7 @@ export async function runCodeSandboxValidation({
 
   try {
     const workspacePath = await getWorkspacePath()
-    const sandboxBasePath = `${workspacePath}/output/code-sandbox`
+    const sandboxBasePath = `${workspacePath}/output/code/sandbox`
     try {
       const gcResult = await collectCodeSandboxGarbage(sandboxBasePath)
       if (gcResult.removed.length > 0) {

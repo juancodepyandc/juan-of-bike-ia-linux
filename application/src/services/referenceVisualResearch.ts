@@ -1,4 +1,4 @@
-import { getWorkspacePath, ollamaChat, runPythonScript } from '../hooks/useTauri'
+import { getWorkspacePath, ollamaChat, runPythonScript } from '../hooks/useTauri.ts'
 
 export type ReferenceVisualCandidate = {
   title: string

@@ -1,9 +1,9 @@
-import { analyzeMultimodalContext, summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext'
-import { analyzePromptReality, buildRealityEnrichedPrompt } from './realityAnalyzer'
-import type { ModuleId, RealityAnalysis } from '../types/app'
-import { analyzeGenerationContract, buildGenerationContractSection, type GenerationContract } from './generationContract'
-import { ollamaGenerate } from '../hooks/useTauri'
-import { withTimeout } from './llmTimebox'
+import { analyzeMultimodalContext, summarizePreparedContext, type PreparedContextFile } from '../utils/multimodalContext.ts'
+import { analyzePromptReality, buildRealityEnrichedPrompt } from './realityAnalyzer.ts'
+import type { ModuleId, RealityAnalysis } from '../types/app.ts'
+import { analyzeGenerationContract, buildGenerationContractSection, type GenerationContract } from './generationContract.ts'
+import { ollamaGenerate } from '../hooks/useTauri.ts'
+import { withTimeout } from './llmTimebox.ts'
 
 type ResearchHit = {
   wiki: 'fr' | 'en'
@@ -543,11 +543,7 @@ function buildTaskIntelligenceFallback(prompt: string): TaskIntelligenceResult {
 }
 
 export async function prepareTaskIntelligence(input: TaskIntelligenceInput): Promise<TaskIntelligenceResult> {
-  // v77zam: wrap the whole intelligence phase in a hard 120s budget. If any
-  // sub-step (multimodal, reality, contract, research, distill) hangs on
-  // Ollama, the global timeout fires and we fall back to a minimal
-  // intelligence struct so the generation pipeline downstream still runs.
-  const TIMEOUT_MS = 120_000
+  const TIMEOUT_MS = input.module === '3d' ? 15_000 : 60_000
 
   return new Promise<TaskIntelligenceResult>((resolve) => {
     let settled = false

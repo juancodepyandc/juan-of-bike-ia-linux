@@ -27,9 +27,9 @@ import {
   Trophy,
   Zap,
 } from 'lucide-react'
-import { useFlashcardsStore } from '../../stores/flashcardsStore'
-import { useGamificationStore } from '../../stores/gamificationStore'
-import type { Tab } from './types'
+import { useFlashcardsStore } from '../../stores/flashcardsStore.ts'
+import { useGamificationStore } from '../../stores/gamificationStore.ts'
+import type { Tab } from './types.ts'
 
 interface HubProps {
   onNavigate: (tab: Tab) => void

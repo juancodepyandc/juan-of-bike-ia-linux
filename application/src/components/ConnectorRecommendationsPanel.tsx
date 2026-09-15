@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Plug, Sparkles, Zap } from 'lucide-react'
-import { getModuleRecommendations, type ModuleId } from '../services/moduleConnectorRecommendations'
-import { probeExtension } from '../services/auroraExtensionBridge'
+import { getModuleRecommendations, type ModuleId } from '../services/moduleConnectorRecommendations.ts'
+import { probeExtension } from '../services/auroraExtensionBridge.ts'
 
 type Props = {
   module: ModuleId

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 export interface ModuleLogEntry {
   timestamp: number

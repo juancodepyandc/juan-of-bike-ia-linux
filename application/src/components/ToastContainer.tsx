@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { AlertCircle, CheckCircle2, Info, TriangleAlert, X } from 'lucide-react'
-import { useNotificationStore } from '../stores/notificationStore'
-import type { NotificationLevel } from '../stores/notificationStore'
+import { useNotificationStore } from '../stores/notificationStore.ts'
+import type { NotificationLevel } from '../stores/notificationStore.ts'
 
 const LEVEL_CONFIG: Record<NotificationLevel, { icon: typeof Info; border: string; bg: string; text: string }> = {
   info:    { icon: Info,          border: 'border-aurora-border/40',  bg: 'bg-aurora-surface/90',   text: 'text-aurora-text' },

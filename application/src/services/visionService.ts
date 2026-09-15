@@ -10,13 +10,13 @@
 // - analyzeLiveSnapshot: optimise pour latence faible (camera live, ~2s)
 // - Utilitaires: blobToBase64, dataUrlToBase64, downscaleImage (reduit la latence)
 
-import { ollamaChat, ollamaChatStream } from '../hooks/useTauri'
+import { ollamaChat, ollamaChatStream } from '../hooks/useTauri.ts'
 import {
   VISION_HIGH_QUALITY_MODEL,
   VISION_LIVE_MODEL,
   VISION_FALLBACK_MODEL,
-} from '../config/models'
-import type { OllamaMessage } from '../types/app'
+} from '../config/models.ts'
+import type { OllamaMessage } from '../types/app.ts'
 
 // ---------------------------------------------------------------------------
 // Type public

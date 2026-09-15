@@ -10,8 +10,8 @@
  * at a glance where they're strong and where they should spend time.
  */
 import { useMemo } from 'react'
-import { useGamificationStore } from '../stores/gamificationStore'
-import { useAcademyStore, type Category } from '../stores/academyStore'
+import { useGamificationStore } from '../stores/gamificationStore.ts'
+import { useAcademyStore, type Category } from '../stores/academyStore.ts'
 
 interface Props {
   category: Category

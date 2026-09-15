@@ -1,12 +1,12 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { ClarificationRequest } from '../components/ClarificationDialog'
+import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
 import {
   buildAutonomousAssumption,
   classifyClarificationSeverity,
-} from '../services/codeOrchestrator'
-import { classifyCodeIntent } from '../services/codeIntent'
-import { prepareTaskIntelligence } from '../services/taskIntelligence'
-import { prepareContextFiles } from '../utils/multimodalContext'
+} from '../services/codeOrchestrator.ts'
+import { classifyCodeIntent } from '../services/codeIntent.ts'
+import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
+import { prepareContextFiles } from '../utils/multimodalContext.ts'
 
 export async function prepareCodeViewTaskContext({
   activePrompt,

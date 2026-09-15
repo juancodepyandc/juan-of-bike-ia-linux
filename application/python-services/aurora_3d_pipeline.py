@@ -4032,7 +4032,11 @@ def run_pipeline(prompt: str, run_id: str, *,
             "watch", "camera", "avion", "car", "voiture", "moteur", "engine", "machine", "hero", "rog"
         ]) or kind in ("product", "mechanical", "electronics", "vehicle")
 
-        if _engine_choice == "hunyuan3d" or (_engine_choice == "auto" and _is_tech_or_planar):
+        if _engine_choice in ("hunyuanworld", "hunyuanworldmirror"):
+            print("PROGRESS:engine:Moteur HunyuanWorldMirror (réplication stricte) demandé.", flush=True)
+            _primary_engine = "hunyuan3d"
+            _secondary_engine = "trellis"
+        elif _engine_choice == "hunyuan3d" or (_engine_choice == "auto" and _is_tech_or_planar):
             _primary_engine = "hunyuan3d"
             _secondary_engine = "trellis"
         else:
@@ -4118,6 +4122,36 @@ def run_pipeline(prompt: str, run_id: str, *,
                 return _res
             except Exception as _exc:
                 return {"ok": False, "error": f"Hunyuan3D-2 subprocess failed: {_exc!r}"}
+
+        if not _shape_ok and _primary_engine == "hunyuanworld":
+            print("PROGRESS:shape:Atlas sculpte le monde en Splats (HunyuanWorld)...", flush=True)
+            _free_gpu_before_shape(audit)
+            _hw_wrapper = str(REPO_ROOT / "application" / "python-services" / "run_monobloc_world.py")
+            _hw_out = str(mesh_path).replace(".glb", ".ply")
+            _hw_cmd = [sys.executable, _hw_wrapper, "--input", str(front_ref), "--output", _hw_out]
+            try:
+                subprocess.run(_hw_cmd, check=True)
+                if Path(_hw_out).is_file():
+                    _shape_ok = True
+                    mesh_path = Path(_hw_out)
+                    audit.append({"stage": "hunyuanworld", "ok": True, "mesh_path": str(mesh_path)})
+            except Exception as e:
+                audit.append({"stage": "hunyuanworld", "ok": False, "error": str(e)})
+
+        if not _shape_ok and _primary_engine == "hunyuanworld":
+            print("PROGRESS:shape:Atlas sculpte le monde en Splats (HunyuanWorld)...", flush=True)
+            _free_gpu_before_shape(audit)
+            _hw_wrapper = str(REPO_ROOT / "application" / "python-services" / "run_monobloc_world.py")
+            _hw_out = str(mesh_path).replace(".glb", ".ply")
+            _hw_cmd = [sys.executable, _hw_wrapper, "--input", str(front_ref), "--output", _hw_out]
+            try:
+                subprocess.run(_hw_cmd, check=True)
+                if Path(_hw_out).is_file():
+                    _shape_ok = True
+                    mesh_path = Path(_hw_out)
+                    audit.append({"stage": "hunyuanworld", "ok": True, "mesh_path": str(mesh_path)})
+            except Exception as e:
+                audit.append({"stage": "hunyuanworld", "ok": False, "error": str(e)})
 
         if not _shape_ok and _primary_engine == "hunyuan3d":
             _hy = _run_hunyuan3d_engine(front_ref, mesh_path, prompt, audit)
@@ -6071,6 +6105,7 @@ def main() -> int:
                      help="Use automatic multi-view policy (default)")
     grp.add_argument("--single-view", action="store_true",
                      help="Force single-view FLUX synth")
+    parser.add_argument("--no-scene", action="store_true", help="Desactive scene orchestrator pour eviter la recursion")
     parser.add_argument("--force", action="store_true",
                         help="Re-run all stages even when intermediate files exist")
     parser.add_argument("--motion-prompt", default=None, dest="motion_prompt",
@@ -6162,7 +6197,7 @@ def main() -> int:
             images=args.images or None,
             purpose=args.purpose,
             subject_kind_hint=args.subject_kind,
-            engine=args.engine,
+            engine=args.engine, allow_scene=not args.no_scene,
         )
         _err = str(result.get("error") or "")
         _refus = (not result.get("ok")) and (

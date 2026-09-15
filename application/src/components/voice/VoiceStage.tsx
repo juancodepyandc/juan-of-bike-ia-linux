@@ -12,8 +12,8 @@
  */
 import { useEffect, useState } from 'react'
 import { Loader2, Mic, MicOff, X } from 'lucide-react'
-import LyraCharacter, { type LyraEmotion, type LyraPhase, type LyraViseme } from './LyraCharacter'
-import VoiceLandscape, { type LandscapeMode } from './VoiceLandscape'
+import LyraCharacter, { type LyraEmotion, type LyraPhase, type LyraViseme } from './LyraCharacter.tsx'
+import VoiceLandscape, { type LandscapeMode } from './VoiceLandscape.tsx'
 
 interface Props {
   phase: LyraPhase

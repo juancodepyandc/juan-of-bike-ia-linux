@@ -1,4 +1,4 @@
-import type { CodeIntent, CodeProjectType } from '../services/codeIntent'
+import type { CodeIntent, CodeProjectType } from '../services/codeIntent.ts'
 
 const PROJECT_TYPE_LABELS: Record<CodeProjectType, string> = {
   static_web: 'Page web statique',

@@ -12,8 +12,8 @@
  */
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import { MessageCircle, X, Send, Sparkles, Loader2 } from 'lucide-react'
-import type { AcademyParcoursPayload } from '../../hooks/useAcademyViewLogic'
-import { getBridgeUrl } from '../../utils/runtime'
+import type { AcademyParcoursPayload } from '../../hooks/useAcademyViewLogic.ts'
+import { getBridgeUrl } from '../../utils/runtime.ts'
 import { LEARNING_EVAL_MODEL } from '../../config/models.ts'
 
 const GOLD = 'oklch(0.86 0.18 75)'

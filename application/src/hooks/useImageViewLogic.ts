@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus'
-import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow'
-import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser'
+import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
+import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser.ts'
 import {
   assembleKontextInstruction,
   buildStagedKontextEditPlan,
@@ -9,16 +9,16 @@ import {
   resolveKontextModel,
   shouldUseStagedKontextEditPlan,
   type StitchDirection,
-} from '../utils/fluxKontextWorkflow'
-import { translateEditInstructionToEnglish } from '../utils/kontextInstructionTranslator'
+} from '../utils/fluxKontextWorkflow.ts'
+import { translateEditInstructionToEnglish } from '../utils/kontextInstructionTranslator.ts'
 import {
   detectSubjectToResearch,
   resolveSubjectReference,
   buildAppearanceClause,
-} from '../services/selfInformedReference'
-import { findMultipleReferenceVisuals, type ReferenceSearchProfile } from '../services/referenceVisualResearch'
-import { analyzeImage } from '../services/visionService'
-import { VISION_LIVE_MODEL } from '../config/models'
+} from '../services/selfInformedReference.ts'
+import { findMultipleReferenceVisuals, type ReferenceSearchProfile } from '../services/referenceVisualResearch.ts'
+import { analyzeImage } from '../services/visionService.ts'
+import { VISION_LIVE_MODEL } from '../config/models.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
@@ -29,25 +29,25 @@ import {
   ensureComfyUIRunning,
   freeGpuBeforeFlux,
   ollamaGenerate,
-} from '../hooks/useTauri'
-import { useAppStore } from '../stores/appStore'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import { computeStreak } from '../utils/streak'
-import { useModuleDraftsStore } from '../stores/moduleDraftsStore'
-import { saveBlob, loadBlobUrl, pruneOldBlobs } from '../utils/blobStore'
-import { RANDOM_IMAGE_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts'
-import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory'
-import { buildPromptContractBlock, parseBrief } from '../services/imagePromptBuilder'
+} from '../hooks/useTauri.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import { computeStreak } from '../utils/streak.ts'
+import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
+import { saveBlob, loadBlobUrl, pruneOldBlobs } from '../utils/blobStore.ts'
+import { RANDOM_IMAGE_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
+import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
+import { buildPromptContractBlock, parseBrief } from '../services/imagePromptBuilder.ts'
 import {
   buildImageAutocorrectionContract,
   buildImageConversationContext,
   resolveImageConversationStyle,
-} from '../services/imageConversationContract'
+} from '../services/imageConversationContract.ts'
 import {
   claimImageGenerationLock,
   releaseImageGenerationLock,
-} from '../services/imageGenerationSafety'
-import type { ConversationSession } from '../stores/moduleHistoryStore'
+} from '../services/imageGenerationSafety.ts'
+import type { ConversationSession } from '../stores/moduleHistoryStore.ts'
 
 export type GeneratedCard = {
   id: string
@@ -206,7 +206,7 @@ export function useImageViewLogic() {
   const [prompt, setPrompt] = useState<string>(() => imgDraft?.prompt ?? '')
   const [negPrompt, setNegPrompt] = useState<string>(() => (imgDraft?.options?.negPrompt as string) ?? '')
   const [showNeg, setShowNeg] = useState<boolean>(() => Boolean((imgDraft?.options?.negPrompt as string) ?? ''))
-  const [style, setStyle] = useState<FluxStyle>(() => ((imgDraft?.style as FluxStyle) ?? 'manga'))
+  const [style, setStyle] = useState<FluxStyle>(() => ((imgDraft?.style as FluxStyle) ?? 'none'))
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -826,7 +826,7 @@ export function useImageViewLogic() {
               secondReferenceFilename: null,
               stitchDirection: 'right',
               unetName: kontextModel,
-              filenamePrefix: `manga_${Date.now()}_${k}_stage${stageIndex + 1}`,
+              filenamePrefix: `aurora_stage_${Date.now()}_${k}_stage${stageIndex + 1}`,
               seed: runSeed !== null ? runSeed + stageIndex : null,
               steps: 28,
               width: dim.w,
@@ -835,7 +835,7 @@ export function useImageViewLogic() {
             const queueResponse = await comfyuiQueuePrompt(stageWorkflow)
             const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
             const promptId = parsed?.prompt_id as string | undefined
-            if (!promptId) throw new Error('ComfyUI n\'a pas retournÃ© de prompt_id')
+            if (!promptId) throw new Error('ComfyUI n\'a pas retourné de prompt_id')
 
             try {
               localStorage.setItem('aurora.pendingComfyPrompt.v1', JSON.stringify({
@@ -874,13 +874,6 @@ export function useImageViewLogic() {
         if (!blob) {
         const workflow = useKontext && groundedReference && kontextModel
           ? createFluxKontextWorkflow({
-              // v87 : source UNIQUE de l'instruction, partagee mot pour mot avec la
-              // CLI (assembleKontextInstruction). On NE PASSE PLUS sessionContract ni
-              // promptContract : le graphe Kontext n'a aucun canal negatif, donc ces
-              // contrats (qui listent "shoulders, chest volume, body proportions,
-              // enlarge, anatomy, torso"...) devenaient du guidage POSITIF et
-              // rendaient le sujet plus musclé sur un simple ajout. Instruction
-              // minimale = coeur traduit + apparence d'entite + preservation.
               instruction: assembleKontextInstruction({
                 rawPrompt: text,
                 intent,
@@ -892,7 +885,7 @@ export function useImageViewLogic() {
               secondReferenceFilename: injection ? effectiveSecondReference : null,
               stitchDirection: 'right',
               unetName: kontextModel,
-              filenamePrefix: `manga_${Date.now()}_${k}`,
+              filenamePrefix: `aurora_image_${Date.now()}_${k}`,
               seed: runSeed,
               steps: 28,
               width: dim.w,
@@ -905,7 +898,7 @@ export function useImageViewLogic() {
               width: dim.w,
               height: dim.h,
               steps: 28,
-              filenamePrefix: `manga_${Date.now()}_${k}`,
+              filenamePrefix: `aurora_image_${Date.now()}_${k}`,
               referenceImage: groundedReference,
               seed: runSeed,
               editIntent: intent,
@@ -1019,9 +1012,7 @@ export function useImageViewLogic() {
   const downloadCurrent = useCallback(async () => {
     if (!current) return
     const { downloadImageUniversal } = await import('../utils/imageDownload')
-    await downloadImageUniversal(current, {
-      filename: `fairy-tail-${current.style}-${current.id}.png`,
-    })
+    await downloadImageUniversal(current)
   }, [current])
 
   const previewIntent: ParsedImageIntent = useMemo(

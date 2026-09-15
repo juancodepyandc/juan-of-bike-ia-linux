@@ -1,8 +1,8 @@
 import { Component, Fragment, type ErrorInfo, type ReactNode } from 'react'
 import { AlertTriangle, RefreshCcw, RotateCcw } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { getRuntimeHint, getRuntimeLabel } from '../utils/runtime'
-import { isChunkError, recoverFromStaleBuild } from '../utils/buildRecovery'
+import { getRuntimeHint, getRuntimeLabel } from '../utils/runtime.ts'
+import { isChunkError, recoverFromStaleBuild } from '../utils/buildRecovery.ts'
 
 type Props = {
   children: ReactNode

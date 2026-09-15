@@ -8,10 +8,10 @@
 //   3. Ollama synthesis pour fusionner refs + sujet en directives concretes.
 // ---------------------------------------------------------------------------
 
-import { CODE_SINGLE_MODEL } from '../config/models'
-import { resilientOllamaGenerate } from './ollamaResilience'
-import type { CodeIntent } from './codeIntent'
-import { detectDesignArchetype, type DesignArchetype } from './codeDesignDirectives'
+import { CODE_SINGLE_MODEL } from '../config/models.ts'
+import { resilientOllamaGenerate } from './ollamaResilience.ts'
+import type { CodeIntent } from './codeIntent.ts'
+import { detectDesignArchetype, type DesignArchetype } from './codeDesignDirectives.ts'
 import { searchCodeWebReferences } from './codeWebResearchClient.ts'
 import { ARCHETYPE_KB } from './codeDesignResearchCatalog.ts'
 

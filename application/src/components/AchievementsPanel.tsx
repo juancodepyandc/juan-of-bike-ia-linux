@@ -5,11 +5,11 @@
  * v82bz.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore'
-import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore'
-import { computeAchievements, countUnlocked, currentStreak, type Achievement, type AchievementCategory } from '../services/achievements'
-import { UNLOCK_TIMES_KEY } from '../hooks/useAchievementToasts'
-import Sparkline from './Sparkline'
+import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
+import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore.ts'
+import { computeAchievements, countUnlocked, currentStreak, type Achievement, type AchievementCategory } from '../services/achievements.ts'
+import { UNLOCK_TIMES_KEY } from '../hooks/useAchievementToasts.ts'
+import Sparkline from './Sparkline.tsx'
 
 const GOLD = 'oklch(0.74 0.13 60)'
 const DIM = 'var(--fg-mute, #777)'

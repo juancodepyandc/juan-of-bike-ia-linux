@@ -4,9 +4,9 @@
 // is stuck at high escalation levels
 // ---------------------------------------------------------------------------
 
-import { CODE_SINGLE_MODEL } from '../config/models'
-import { resilientOllamaGenerate } from './ollamaResilience'
-import type { CodeIntent } from './codeIntent'
+import { CODE_SINGLE_MODEL } from '../config/models.ts'
+import { resilientOllamaGenerate } from './ollamaResilience.ts'
+import type { CodeIntent } from './codeIntent.ts'
 import { searchCodeWebReferences } from './codeWebResearchClient.ts'
 
 // ---------------------------------------------------------------------------

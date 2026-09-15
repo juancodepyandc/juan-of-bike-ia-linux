@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import torch
 from pathlib import Path
 
 log = logging.getLogger("trellis2_wrapper")
@@ -108,7 +109,17 @@ def _load_pipe():
     from trellis2.pipelines import Trellis2ImageTo3DPipeline
     log.info("[trellis2] loading Trellis2ImageTo3DPipeline from %s", MODEL_ID)
     pipe = Trellis2ImageTo3DPipeline.from_pretrained(MODEL_ID)
-    pipe.cuda()
+    pipe.low_vram = True
+    pipe.to(torch.device("cuda"))
+    # Apply only an audited adapter for this exact TRELLIS base.
+    from pathlib import Path as _Path
+    import sys as _sys
+    _sys.path.insert(0, str(_Path(__file__).resolve().parents[3]))
+    from auto_rl.runtime import attach_validated
+    _trained = attach_validated(pipe.models["sparse_structure_flow_model"], "3d", MODEL_ID)
+    if _trained:
+        log.info("[trellis2] audited adapter %s", _trained["name"])
+
     # Etape A (gratuit) : liberer les latents (shape_slat/tex_slat) AVANT fill_holes/CuMesh
     # (le pic OOM du 1536) -> rend ~1-3 Go juste avant l'extraction. Sur des monkeypatch de
     # decode_latent car le wrapper ne peut pas s'inserer dans run(). Sur (return_latent=False).
@@ -179,34 +190,130 @@ def _auto_expose_glb_texture(glb_path: str, target_p50: float = 0.30, floor_p50:
         return False
 
 
+def _remplacer_image_glb(glb_path: str, index_image: int, png_bytes: bytes) -> bool:
+    """Remplace UNE image d'un GLB sans jamais charger le maillage.
+
+    L'ancienne voie faisait `trimesh.load(...)` puis `m.export(...)` juste pour
+    echanger une texture: elle materialisait sommets, faces et toutes les
+    textures, puis re-serialisait le fichier entier — plus d'un Go de pic pour
+    remplacer une image. On repacke ici les seules donnees binaires.
+    """
+    import sys as _s
+    from pathlib import Path as _P
+    _ps = str(_P(__file__).resolve().parent.parent)
+    if _ps not in _s.path:
+        _s.path.insert(0, _ps)
+    import glb_io
+
+    j, blob = glb_io.load(glb_path)
+    if index_image >= len(j.get("images", [])):
+        return False
+    j["images"][index_image]["mimeType"] = "image/png"
+    neuf = bytearray()
+    nbv = []
+
+    def _repack(bvi, remplacement=None):
+        bv = j["bufferViews"][bvi]
+        data = (remplacement if remplacement is not None
+                else blob[bv.get("byteOffset", 0):bv.get("byteOffset", 0) + bv["byteLength"]])
+        while len(neuf) % 4:
+            neuf.append(0)
+        off = len(neuf)
+        neuf.extend(data)
+        d2 = {"buffer": 0, "byteOffset": off, "byteLength": len(data)}
+        for k in ("byteStride", "target"):
+            if k in bv:
+                d2[k] = bv[k]
+        nbv.append(d2)
+        return len(nbv) - 1
+
+    cible = j["images"][index_image].get("bufferView")
+    for a in j.get("accessors", []):
+        a["bufferView"] = _repack(a["bufferView"])
+    for k, im in enumerate(j.get("images", [])):
+        im["bufferView"] = _repack(im["bufferView"],
+                                   png_bytes if k == index_image else None)
+    j["bufferViews"] = nbv
+    j["buffers"] = [{"byteLength": len(neuf)}]
+    glb_io.save(glb_path, j, bytes(neuf))
+    return cible is not None
+
+
 def _upscale_glb_texture(glb_path: str, factor: int = 2, tile: int = 768) -> bool:
-    """Upscale l'albedo du GLB x`factor` (8192 -> 16384 = 16K) via RealESRGAN en tuiles
-    (faible VRAM), en place. Best-effort : renvoie False sans casser si indispo."""
+    """Agrandit l'albedo du GLB x`factor` (8192 -> 16384 = 16K) via RealESRGAN.
+
+    MICROGRAVURE. C'est ce qui donne la densite de texels: un lettrage fin
+    ("POLICE" sur un flanc de voiture) ne survit que si l'atlas a de quoi
+    l'ecrire. On veut donc cette etape — mais elle coutait 29,5 Go et faisait
+    tuer le run par le noyau.
+
+    Trois gaspillages supprimes (mesure du 04/09):
+      1. `np.array(img)` materialisait l'atlas entier, et RealESRGAN en faisait
+         une copie float32: 8192x8192x3 = 201 Mo en uint8, 805 Mo en float32,
+         et autant pour la sortie 16384 — plusieurs Go pour une seule image;
+      2. la sortie etait assemblee d'un bloc en memoire;
+      3. `trimesh.load` + `m.export` chargeaient et re-serialisaient TOUT le
+         maillage juste pour echanger une texture.
+    On decoupe donc en BLOCS avec recouvrement, on ecrit chaque bloc agrandi
+    dans une sortie preallouee, et on echange les octets de l'image sans
+    toucher a la geometrie. Best-effort: rend False sans casser si indispo.
+    """
     try:
         import numpy as np
         from PIL import Image
         Image.MAX_IMAGE_PIXELS = None
-        import trimesh
-        _ps = str(Path(__file__).resolve().parent.parent)  # python-services
+        _ps = str(Path(__file__).resolve().parent.parent)
         if _ps not in sys.path:
             sys.path.insert(0, _ps)
-        import paint_pbr_v21 as _pbr  # reutilise le fix torchvision + RealESRGAN de la texture
+        import glb_io
+        import paint_pbr_v21 as _pbr
         _pbr._apply_torchvision_fix()
         from realesrgan import RealESRGANer
         from basicsr.archs.rrdbnet_arch import RRDBNet
-        ckpt = str(Path(_ps) / "_hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth")
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-        up = RealESRGANer(scale=4, model_path=ckpt, model=model, tile=tile, tile_pad=16,
-                          pre_pad=0, half=True, gpu_id=0)
-        m = trimesh.load(glb_path, force="mesh", process=False)
-        mat = getattr(m.visual, "material", None)
-        img = getattr(mat, "baseColorTexture", None) if mat is not None else None
-        if img is None:
+        import io as _io
+
+        j, blob = glb_io.load(glb_path)
+        mats = j.get("materials") or []
+        if not mats:
             return False
-        out, _ = up.enhance(np.array(img.convert("RGB")), outscale=factor)
-        mat.baseColorTexture = Image.fromarray(out)
-        m.export(glb_path)
-        return True
+        tex = (mats[0].get("pbrMetallicRoughness") or {}).get("baseColorTexture")
+        if not tex:
+            return False
+        idx_img = j["textures"][tex["index"]]["source"]
+        src = Image.open(_io.BytesIO(glb_io.image_bytes(j, blob, idx_img))).convert("RGB")
+        del j, blob
+        L, H = src.size
+        ckpt = str(Path(_ps) / "_hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth")
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23,
+                        num_grow_ch=32, scale=4)
+        up = RealESRGANer(scale=4, model_path=ckpt, model=model, tile=tile,
+                          tile_pad=16, pre_pad=0, half=True, gpu_id=0)
+
+        bloc = int(os.environ.get("AURORA_16K_BLOC", "2048"))
+        marge = 64
+        sortie = np.zeros((H * factor, L * factor, 3), np.uint8)   # preallouee
+        for y0 in range(0, H, bloc):
+            for x0 in range(0, L, bloc):
+                x1, y1 = min(x0 + bloc, L), min(y0 + bloc, H)
+                ax0, ay0 = max(x0 - marge, 0), max(y0 - marge, 0)
+                ax1, ay1 = min(x1 + marge, L), min(y1 + marge, H)
+                morceau = np.asarray(src.crop((ax0, ay0, ax1, ay1)))
+                agrandi, _ = up.enhance(morceau, outscale=factor)
+                cx0, cy0 = (x0 - ax0) * factor, (y0 - ay0) * factor
+                sortie[y0*factor:y1*factor, x0*factor:x1*factor] = agrandi[
+                    cy0:cy0 + (y1 - y0) * factor, cx0:cx0 + (x1 - x0) * factor]
+                del morceau, agrandi
+        del src, up, model
+        try:
+            import ctypes as _ct
+            import gc as _gc
+            _gc.collect(); _ct.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:  # noqa: BLE001
+            pass
+        tampon = _io.BytesIO()
+        Image.fromarray(sortie).save(tampon, format="PNG", compress_level=3)
+        del sortie
+        return _remplacer_image_glb(glb_path, idx_img, tampon.getvalue())
     except Exception:
         return False
 
@@ -291,6 +398,9 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                 used_q = _q
                 break
             except Exception as _oom:  # noqa: BLE001
+                import traceback
+                print(f"[TRELLIS_DEBUG_EXCEPTION] Quality {_q}:", file=sys.stderr)
+                traceback.print_exc()
                 _msg = str(_oom).lower()
                 if "out of memory" in _msg or "outofmemory" in type(_oom).__name__.lower():
                     torch.cuda.empty_cache()
@@ -316,6 +426,29 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         except Exception:  # noqa: BLE001
             pass
 
+        # LE DECOUPAGE EN ILOTS UV EST PARAMETRABLE ET N'ETAIT JAMAIS TRANSMIS.
+        # Mesures du 29/08 sur le personnage, 300 k faces, pour lever le doute:
+        # le regroupement conique ne produit que 175 ilots, et c'est l'etage
+        # xatlas du depliage qui les refait en 7 277. Ni les reglages coniques
+        # (les defauts de la bibliotheque, refine=100/global=3, donnent 309 ilots
+        # soit PLUS que les 175 actuels) ni ceux de xatlas (7 124 a 7 637 selon
+        # les poids) ne deplacent ce plafond: la fragmentation tient a la surface
+        # elle-meme, bosselee par le Marching Cubes. Les reglages restent donc
+        # exposes — pour pouvoir remesurer sans reediter du code — mais leurs
+        # valeurs par defaut sont celles qui ont gagne la mesure, pas un pari.
+        import numpy as np
+
+        _uv_decoupe = {
+            "mesh_cluster_threshold_cone_half_angle_rad": np.radians(
+                float(os.environ.get("AURORA_TRELLIS2_UV_CONE_DEG", "90"))),
+            "mesh_cluster_refine_iterations": int(
+                os.environ.get("AURORA_TRELLIS2_UV_REFINE", "0")),
+            "mesh_cluster_global_iterations": int(
+                os.environ.get("AURORA_TRELLIS2_UV_GLOBAL", "1")),
+            "mesh_cluster_smooth_strength": float(
+                os.environ.get("AURORA_TRELLIS2_UV_SMOOTH", "1")),
+        }
+
         # Export to_glb (remesh + bake texture) : CuMesh / nvdiffrast rasterization
         _glb_ladder = [(int(texture_size), int(decimation_target)),
                        (4096, 1_000_000), (2048, 500_000), (1024, 250_000)]
@@ -331,6 +464,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                     coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
                     aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                     decimation_target=_dt, texture_size=_ts,
+                    **_uv_decoupe,
                     remesh=(os.environ.get("AURORA_TRELLIS2_REMESH", "0") == "1"), remesh_band=1,
                     remesh_project=float(os.environ.get("AURORA_TRELLIS2_REMESH_PROJECT", "0.9")),
                     verbose=False,
@@ -351,6 +485,7 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                         coords=mesh.coords, attr_layout=mesh.layout, voxel_size=mesh.voxel_size,
                         aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                         decimation_target=_dt, texture_size=_ts,
+                        **_uv_decoupe,
                         remesh=False, verbose=False,
                     )
                     texture_size = _ts
@@ -416,7 +551,15 @@ def main(argv: list[str]) -> int:
         elif os.path.isfile(_a):
             _rest.append(_a)
     extras = _rest
+    # PLAFOND DE FACES NATIVES. Mesure du 04/09: une reference contenant DEUX
+    # poses du personnage a fait poser 15 917 921 faces natives — le pipeline
+    # parent, qui charge ce maillage, s'est fait tuer par le noyau. Le
+    # `decimation_target` par defaut (2 M) ne s'applique qu'a l'export GLB, pas
+    # au maillage natif tenu en memoire. On le rend pilotable pour que le budget
+    # memoire du pipeline puisse le serrer sur une machine chargee.
+    _dec = os.environ.get("AURORA_TRELLIS2_DECIMATION")
     r = generate_glb(image, out, extra_views=extras or None,
+                     **({"decimation_target": int(_dec)} if _dec else {}),
                      **({"seed": _seed} if _seed is not None else {}))
     # marqueur une-ligne pour parsing par le pipeline (subprocess)
     print("AURORA_TRELLIS_RESULT:" + json.dumps(r), flush=True)

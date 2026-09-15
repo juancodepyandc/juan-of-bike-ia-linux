@@ -22,15 +22,15 @@
  * avatar qui "dicte" pendant que l'agent principal écrit (cas chat).
  */
 import { useEffect, useState } from 'react'
-import type { ModuleId } from '../types/app'
-import { useChatStore } from '../stores/chatStore'
-import { getAgent, type AgentState, type AuroraAgent } from '../services/auroraAgents'
+import type { ModuleId } from '../types/app.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { getAgent, type AgentState, type AuroraAgent } from '../services/auroraAgents.ts'
 // v82s-studio iter12 : on remplace les images statiques DiceBear par les
 // avatars SVG vivants de la v10 (anatomie 35+ éléments, 40 keyframes Pixar :
 // respiration, clignement, mèches qui suivent…). Le simple import injecte la
 // feuille de keyframes <style id="a10-keyframes">, donc la figure « vit »
 // dès qu'elle est montée.
-import { Avatar as LiveAvatar } from './studio/avatars'
+import { Avatar as LiveAvatar } from './studio/avatars.tsx'
 
 // ModuleId → persona v10 (7 personae pour 8 modules → mira/tess réutilisés).
 const MODULE_PERSONA: Record<string, string> = {

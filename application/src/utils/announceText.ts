@@ -5,7 +5,7 @@
  * Extrait d'auroraVoice pour pouvoir tester la logique de génération sans
  * dépendances DOM/Audio.
  */
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 export type AnnounceKind = 'started' | 'completed' | 'failed' | 'cancelled'
 

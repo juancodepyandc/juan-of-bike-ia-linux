@@ -49,3 +49,23 @@ export type CodeOrchestrationResult = {
 }
 
 export type PhaseCallback = (detail: string, progress: number) => void
+
+export type OrchestrateCodeGenerationOptions = {
+  prompt: string
+  enrichedPrompt: string
+  conversationHistory: import('../types/app.ts').OllamaMessage[]
+  existingFiles: CodeFile[]
+  contextImages: string[]
+  userFileDataUrls?: Record<string, string>
+  configuredCodeModel: string
+  visionModel: string
+  setPhase: PhaseCallback
+  onToken: (token: string) => void
+  onFilesUpdate: (files: CodeFile[], notes: string) => void
+  onValidationUpdate: (result: CodeSandboxResult) => void
+  onCorrectionLogUpdate: (log: CorrectionPass[], attempt: number, score: number) => void
+  onRecoveryEvent?: (event: RecoveryEvent) => void
+  onFollowUpAnalysis?: (analysis: FollowUpAnalysis) => void
+  signal?: AbortSignal
+  modelRouting?: import('./codePipelineRuntime.ts').CodeModelRoutingContext
+}

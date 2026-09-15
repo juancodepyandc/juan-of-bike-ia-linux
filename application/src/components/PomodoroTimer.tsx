@@ -7,8 +7,8 @@
  * PWA install on iOS, cf. existing notificationBus).
  */
 import { useEffect, useRef, useState } from 'react'
-import { useGamificationStore } from '../stores/gamificationStore'
-import { emit as emitNotif } from '../utils/notificationBus'
+import { useGamificationStore } from '../stores/gamificationStore.ts'
+import { emit as emitNotif } from '../utils/notificationBus.ts'
 
 type Phase = 'work' | 'short' | 'long' | 'idle'
 

@@ -1,4 +1,4 @@
-import type { OllamaMessage } from '../types/app'
+import type { OllamaMessage } from '../types/app.ts'
 import type { CodeIntent } from './codeIntent.ts'
 import type { CorrectionStrategy } from './codeAutoCorrection.ts'
 import type { CodeSandboxResult } from './codeSandbox.ts'

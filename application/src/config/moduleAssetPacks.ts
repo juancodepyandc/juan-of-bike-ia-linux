@@ -1,4 +1,4 @@
-import type { ModuleAssetDefinition } from '../types/app'
+import type { ModuleAssetDefinition } from '../types/app.ts'
 import {
   AUXILIARY_ANALYSIS_MODEL,
   IMAGE_CLIP_MODEL,
@@ -14,7 +14,7 @@ import {
   VIDEO_UNIFIED_5B_MODEL,
   VOICE_STT_MODEL,
   VOICE_TTS_MODEL,
-} from './models'
+} from './models.ts'
 
 // FLUX.2 partout. Ces constantes pointaient encore sur la pile FLUX.1
 // (Comfy-Org/flux1-dev, t5xxl, CLIP-L, l'AE de Lumina) alors que les noms de

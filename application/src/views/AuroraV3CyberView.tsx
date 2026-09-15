@@ -10,10 +10,10 @@
  * grading, deep hints, multi-stage, leaderboard recording.
  */
 import { useEffect, useState } from 'react'
-import { useCyberViewLogic } from '../hooks/useCyberViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import { useCyberViewLogic } from '../hooks/useCyberViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 
 const RED = '#ff4a4a'
 const RED_DIM = '#cc8c8c'

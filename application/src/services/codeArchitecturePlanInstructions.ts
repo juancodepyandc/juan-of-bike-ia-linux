@@ -13,7 +13,7 @@ export function buildArchitecturePlanJsonInstructions() {
   return [
     '## FORMAT DE SORTIE OBLIGATOIRE — JSON SCHEMA',
     '',
-    'Reponds UNIQUEMENT avec un objet JSON valide. Aucun markdown, aucun texte avant/apres, aucun bloc ```.',
+    'Reponds UNIQUEMENT avec un objet JSON valide. Aucun markdown, aucun texte avant/apres, aucun bloc ``` ni balise <think>. Sortie directe { ... }.',
     'Le plan est un contrat machine: s il ne valide pas ce schema, il sera rejete et ignore par l executeur.',
     '',
     buildCodegenDependencyBan(),

@@ -4,7 +4,7 @@ import {
   buildCodeFileTree,
   formatCodeFileSize,
   type CodeFileTreeNode,
-} from '../services/codeFileTreeModel'
+} from '../services/codeFileTreeModel.ts'
 
 type CodeFile = {
   name: string

@@ -1,17 +1,17 @@
 import { lazy, Suspense } from 'react'
 import { Plus, Send, Sparkles, StopCircle } from 'lucide-react'
-import FavoriteButton from '../components/FavoriteButton'
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
-import type { ParsedFile } from '../services/codeOutputFiles'
-import { getDailyTip } from '../utils/dailyTip'
+import FavoriteButton from '../components/FavoriteButton.tsx'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import type { ParsedFile } from '../services/codeOutputFiles.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
 import {
   FOLLOWUP_LABELS,
   GREEN,
   RED,
   detectStreamLanguage,
-} from './auroraV1CodeHelpers'
-import { MachinePanelSection } from './auroraV1CodeMachinePanel'
-import { AuroraV1CodeOutputHeader } from './auroraV1CodeOutputHeader'
+} from './auroraV1CodeHelpers.ts'
+import { MachinePanelSection } from './auroraV1CodeMachinePanel.tsx'
+import { AuroraV1CodeOutputHeader } from './auroraV1CodeOutputHeader.tsx'
 
 const CodeBlock = lazy(() => import('../components/CodeBlock'))
 

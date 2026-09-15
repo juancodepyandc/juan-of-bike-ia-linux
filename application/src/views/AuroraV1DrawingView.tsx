@@ -11,14 +11,14 @@
  */
 import { useEffect, useState } from 'react'
 import { Brush, Download, Eraser, Eye, Loader2, RotateCcw, Sparkles, StopCircle } from 'lucide-react'
-import { useDrawingViewLogic, PALETTE, PORTRAITS } from '../hooks/useDrawingViewLogic'
-import { useModuleStreak } from '../hooks/useModuleStreak'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { getDailyTip } from '../utils/dailyTip'
-import { loadBlobUrl } from '../utils/blobStore'
-import type { PromptHistoryEntry } from '../utils/promptHistory'
-import FavoriteButton from '../components/FavoriteButton'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import { useDrawingViewLogic, PALETTE, PORTRAITS } from '../hooks/useDrawingViewLogic.ts'
+import { useModuleStreak } from '../hooks/useModuleStreak.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { loadBlobUrl } from '../utils/blobStore.ts'
+import type { PromptHistoryEntry } from '../utils/promptHistory.ts'
+import FavoriteButton from '../components/FavoriteButton.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 
 const PAPER = 'oklch(0.99 0.005 85)'
 

@@ -1,12 +1,12 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { SaveDialogData } from '../components/SaveDialog'
-import type { CodeFile } from '../services/codeOrchestrator'
-import { stopDevServer } from '../services/codeDevServer'
-import { saveAndExportZip, saveToWorkspace } from '../services/saveSystem'
-import type { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore'
-import type { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import type { usePromptLibraryStore } from '../stores/promptLibraryStore'
-import type { WorkspaceSetters } from './useCodeViewWorkspacePersistence'
+import type { SaveDialogData } from '../components/SaveDialog.tsx'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import { stopDevServer } from '../services/codeDevServer.ts'
+import { saveAndExportZip, saveToWorkspace } from '../services/saveSystem.ts'
+import type { useCodeWorkspaceStore } from '../stores/codeWorkspaceStore.ts'
+import type { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import type { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
+import type { WorkspaceSetters } from './useCodeViewWorkspacePersistence.ts'
 
 export function useCodeViewActions({
   activeFileData,

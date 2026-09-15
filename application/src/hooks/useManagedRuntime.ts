@@ -1,22 +1,22 @@
 import { useCallback } from 'react'
-import { useAppStore } from '../stores/appStore'
-import { useModuleLogStore } from '../stores/moduleLogStore'
-import type { ModuleId, RuntimeServiceId } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import { useModuleLogStore } from '../stores/moduleLogStore.ts'
+import type { ModuleId, RuntimeServiceId } from '../types/app.ts'
 import {
   runtimeEnsureService,
   runtimeInspectServices,
   runtimePrepareOllamaModel,
   runtimeReleaseService,
-} from './useTauri'
-import { isCloudRuntime, isTauriRuntime } from '../utils/runtime'
-import { getErrorMessage } from '../utils/errors'
+} from './useTauri.ts'
+import { isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
+import { getErrorMessage } from '../utils/errors.ts'
 import {
   AUXILIARY_ANALYSIS_MODEL,
   DEFAULT_MAIN_MODEL,
   resolveConfiguredModel,
   selectAdaptiveReasoningModel,
   shouldAvoidHeavyReasoningModel,
-} from '../config/models'
+} from '../config/models.ts'
 
 let runtimeExecutionQueue: Promise<void> = Promise.resolve()
 type ManagedRuntimePhase = 'prepare' | 'generate' | 'cleanup' | 'done' | 'error'

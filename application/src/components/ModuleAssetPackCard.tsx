@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
 import { Box, CheckCircle2, CircleDashed, Download, AlertTriangle } from 'lucide-react'
-import type { ModuleAssetPackState, ModuleAssetStatus } from '../types/app'
+import type { ModuleAssetPackState, ModuleAssetStatus } from '../types/app.ts'
 
 function statusLabel(status: ModuleAssetStatus) {
   switch (status) {

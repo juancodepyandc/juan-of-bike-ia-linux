@@ -1,27 +1,27 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, Camera, CameraOff, Check, ClipboardCheck, Copy, Download, Eye, FileText, Maximize2, Mic, MicOff, Minimize2, Music, RefreshCw, Sparkles, Trash2, Volume2, UserCircle, Loader2 } from 'lucide-react'
-import AuroraAvatar from '../components/AuroraAvatar'
-import AuroraMascot from '../components/generationFx/mascots'
-import V4VoiceCharacter from '../components/generationFx/voiceCharacter'
-import AvatarSelectorModal from '../components/AvatarSelectorModal'
-import VoiceStage from '../components/voice/VoiceStage'
-import MusicStudio from '../components/voice/MusicStudio'
-import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio'
-import type { LyraViseme } from '../components/voice/LyraCharacter'
-import CharacterForgeOverlay from './CharacterForgeOverlay'
-import { useVoiceLive, type VoiceLivePhase } from '../hooks/useVoiceLive'
-import { getAllAgents, type AuroraAgent } from '../services/auroraAgents'
-import { useCameraLive } from '../hooks/useCameraLive'
-import { useAppStore } from '../stores/appStore'
-import { ollamaChatStream } from '../hooks/useTauri'
-import { analyzeLiveSnapshot, askAboutImage, detectFacialFeatures } from '../services/visionService'
-import type { OllamaMessage } from '../types/app'
-import { cleanTextForVoice } from '../utils/textCleaner'
-import { isTauriRuntime, getBridgeUrl } from '../utils/runtime'
-import { safeParseJson } from '../utils/errors'
-import { tryHandleVoiceCommand } from '../utils/voiceCommands'
-import { readTextFile } from '../utils/textFileExtract'
+import AuroraAvatar from '../components/AuroraAvatar.tsx'
+import AuroraMascot from '../components/generationFx/mascots.tsx'
+import V4VoiceCharacter from '../components/generationFx/voiceCharacter.tsx'
+import AvatarSelectorModal from '../components/AvatarSelectorModal.tsx'
+import VoiceStage from '../components/voice/VoiceStage.tsx'
+import MusicStudio from '../components/voice/MusicStudio.tsx'
+import VoiceReplicationStudio from '../components/voice/VoiceReplicationStudio.tsx'
+import type { LyraViseme } from '../components/voice/LyraCharacter.tsx'
+import CharacterForgeOverlay from './CharacterForgeOverlay.tsx'
+import { useVoiceLive, type VoiceLivePhase } from '../hooks/useVoiceLive.ts'
+import { getAllAgents, type AuroraAgent } from '../services/auroraAgents.ts'
+import { useCameraLive } from '../hooks/useCameraLive.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { ollamaChatStream } from '../hooks/useTauri.ts'
+import { analyzeLiveSnapshot, askAboutImage, detectFacialFeatures } from '../services/visionService.ts'
+import type { OllamaMessage } from '../types/app.ts'
+import { cleanTextForVoice } from '../utils/textCleaner.ts'
+import { isTauriRuntime, getBridgeUrl } from '../utils/runtime.ts'
+import { safeParseJson } from '../utils/errors.ts'
+import { tryHandleVoiceCommand } from '../utils/voiceCommands.ts'
+import { readTextFile } from '../utils/textFileExtract.ts'
 import {
   buildVoiceExamOpener,
   buildVoiceExamPromptBlock,
@@ -43,7 +43,7 @@ import {
   type VoiceExamFormat,
   type VoiceExamIntensity,
   type VoiceExamInterviewer,
-} from '../services/voiceExamMode'
+} from '../services/voiceExamMode.ts'
 
 interface Entry { id: string; role: 'user' | 'assistant'; text: string; image?: string; video?: string }
 

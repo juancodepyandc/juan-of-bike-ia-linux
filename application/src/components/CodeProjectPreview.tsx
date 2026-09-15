@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { buildPreviewHtml, isWebProject } from './codeProjectPreviewHtml'
-export { buildLivePreviewHtml, webProjectFromFiles } from './codeProjectPreviewHtml'
+import { buildPreviewHtml, isWebProject } from './codeProjectPreviewHtml.ts'
+export { buildLivePreviewHtml, webProjectFromFiles } from './codeProjectPreviewHtml.ts'
 
 // Heavy project detection — prevents recomputing + reloading the iframe on
 // every token when the project is Three.js/WebGL (GPU killer) or simply too
@@ -29,7 +29,7 @@ import {
   Terminal,
   ExternalLink,
 } from 'lucide-react'
-import type { DevServerState } from '../services/codeDevServer'
+import type { DevServerState } from '../services/codeDevServer.ts'
 
 type CodeFile = {
   name: string

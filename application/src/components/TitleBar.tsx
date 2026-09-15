@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { Focus, Maximize2, Minimize2, Minus, Monitor, Square, X } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import { getRuntimeLabel, getRuntimeMode, isTauriRuntime } from '../utils/runtime'
+import { useAppStore } from '../stores/appStore.ts'
+import { getRuntimeLabel, getRuntimeMode, isTauriRuntime } from '../utils/runtime.ts'
 
 type WindowControls = {
   minimize: () => Promise<void> | void

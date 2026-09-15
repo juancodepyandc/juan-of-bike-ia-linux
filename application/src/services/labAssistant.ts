@@ -12,7 +12,7 @@
  *
  * All calls return structured JSON. No markdown/disclaimers upstream.
  */
-import { ollamaChat } from '../hooks/useTauri'
+import { ollamaChat } from '../hooks/useTauri.ts'
 
 const COACH_SYSTEM = [
   'Tu es un coach pédagogique universitaire, dense et rigoureux.',

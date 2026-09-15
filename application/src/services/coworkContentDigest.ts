@@ -9,7 +9,7 @@
 // case (typical landing pages, articles, dashboards).
 // ---------------------------------------------------------------------------
 
-import type { CoworkAction, CoworkActionResult } from './coworkTypes'
+import type { CoworkAction, CoworkActionResult } from './coworkTypes.ts'
 
 export function extractHtmlDigest(html: string): string {
   if (!html || typeof html !== 'string') return '(aucun contenu HTML structurant detecte)'

@@ -1,7 +1,7 @@
 import { Square } from 'lucide-react'
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
-import { GREEN } from './auroraV1CodeHelpers'
-import { Eyebrow } from './auroraV1CodePrimitives'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import { GREEN } from './auroraV1CodeHelpers.ts'
+import { Eyebrow } from './auroraV1CodePrimitives.tsx'
 
 type FinalStats = {
   avg: number

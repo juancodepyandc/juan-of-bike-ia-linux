@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
+# Add python-services directory to path to import aurora_output_paths
+SERVICES_ROOT = Path(__file__).resolve().parents[1]
+if str(SERVICES_ROOT) not in sys.path:
+    sys.path.insert(0, str(SERVICES_ROOT))
 
-APPLICATION_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_ROOT = APPLICATION_ROOT / "output" / "code-loop"
-OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+try:
+    from aurora_output_paths import get_code_project_dir, get_output_root
+except ImportError:
+    def get_code_project_dir(name: str) -> Path:
+        p = Path(__file__).resolve().parents[2] / "output" / "code" / name
+        p.mkdir(parents=True, exist_ok=True)
+        return p
 _FILE_TAG = re.compile(r'<FILE\s+path="([^"]+)"\s*>(.*?)</FILE>', re.DOTALL)
 
 
@@ -122,5 +131,7 @@ def slugify(text: str, maxlen: int = 48) -> str:
 
 
 def make_pack_dir(prompt: str, name: str | None) -> Path:
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    return OUTPUT_ROOT / f"{timestamp}-{name or slugify(prompt)}"
+    proj_name = name or slugify(prompt)
+    target = get_code_project_dir(proj_name)
+    target.mkdir(parents=True, exist_ok=True)
+    return target

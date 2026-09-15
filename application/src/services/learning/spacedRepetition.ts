@@ -1,5 +1,18 @@
-// FSRS-4.5 — Free Spaced Repetition Scheduler.
+// FSRS — Free Spaced Repetition Scheduler.
 // Spec: https://github.com/open-spaced-repetition/fsrs4anki
+//
+// PRECISION DE VERSION. L'en-tete annoncait « FSRS-4.5 ». C'est inexact et il
+// vaut mieux le dire que le laisser croire :
+//   - la courbe d'oubli implementee ici est celle de FSRS v4,
+//     R(t,S) = (1 + t/(9S))^-1, et `nextInterval` en est l'inverse EXACT —
+//     l'ensemble est donc coherent, et R(S,S) = 0,9 par construction;
+//   - FSRS-4.5 et 5 utilisent une loi de puissance differente
+//     (R = (1 + FACTOR·t/S)^DECAY, DECAY = -0,5, FACTOR = 19/81);
+//   - le vecteur de poids compte 21 coefficients, ce qui est le format
+//     FSRS-6, et w20 y vaut 0 (valeur neutre, non ajustee).
+// Autrement dit: courbe v4, poids au format v6. Les deux se tiennent parce
+// que la courbe et son inverse sont accordees entre elles, mais il ne faut
+// pas presenter ce scheduler comme une implementation fidele de 4.5.
 //
 // Why FSRS over SM-2 (Anki's classic algo):
 //   • SM-2 over-schedules easy material (treats stability and difficulty as
@@ -132,11 +145,23 @@ function initDifficulty(w: number[], rating: Rating): number {
 
 // --- Drift functions on subsequent reviews ---------------------------------
 function nextDifficulty(w: number[], d: number, rating: Rating): number {
+  // Amortissement lineaire (FSRS-5+): plus la carte est deja difficile, moins
+  // une note supplementaire la deplace. Sans lui, quelques « Again » suffisent
+  // a coller la difficulte au plafond et l'echelle perd toute resolution dans
+  // le haut, la ou se trouvent justement les cartes qui posent probleme.
   const deltaD = -w[6] * (rating - 3)
-  const dPrime = d + deltaD
-  // Mean reversion: D drifts back toward D₀(3).
-  const d0 = w[4]
-  const next = w[7] * d0 + (1 - w[7]) * dPrime
+  const damped = deltaD * (10 - d) / 9
+  const dPrime = d + damped
+
+  // Retour a la moyenne. La cible du barycentre est D₀(Easy), PAS D₀(Good):
+  // c'est ce que fixe la reference FSRS. L'ancien code utilisait `w[4]`,
+  // c'est-a-dire D₀(3) = 7,2102, au lieu de D₀(4) = w4 - w5 = 6,6786.
+  // L'ecart parait minime par revision (0,0124) mais il deplace le POINT FIXE
+  // de la suite : la difficulte d'equilibre s'etablissait a 7,21 au lieu de
+  // 6,68, soit une demi-graduation de trop sur toute la collection — et des
+  // intervalles systematiquement raccourcis.
+  const d0Easy = w[4] - w[5]
+  const next = w[7] * d0Easy + (1 - w[7]) * dPrime
   return clamp(next, 1, 10)
 }
 
@@ -287,6 +312,11 @@ export function fuzzInterval(intervalDays: number, seedString: string): number {
     h = Math.imul(h, 0x01000193)
   }
   const noise = ((h >>> 0) / 4294967296) - 0.5 // [-0.5, 0.5)
-  const factor = 1 + noise * 0.05
+  // Le bruit vaut [-0,5 ; 0,5) : pour obtenir l'amplitude +/-5 % annoncee il
+  // faut le multiplier par 0,10, pas par 0,05. L'ancienne constante donnait
+  // +/-2,5 % — mesure sur 5000 cartes : [0,9750 ; 1,0250]. Deux fois moins
+  // d'etalement que voulu, donc des paquets de revision qui restent groupes
+  // le meme jour, ce que le brouillage doit precisement eviter.
+  const factor = 1 + noise * 0.10
   return Math.max(1, Math.round(intervalDays * factor))
 }

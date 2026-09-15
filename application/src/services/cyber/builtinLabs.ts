@@ -9,7 +9,7 @@
  * objectifs auto-validés (postMessage), panneau Solution verrouillé. Le flag
  * est RÉELLEMENT dérivable par la manip — rien n'est codé en dur côté joueur.
  */
-import type { Lab } from '../../hooks/useCyberViewLogic'
+import type { Lab } from '../../hooks/useCyberViewLogic.ts'
 
 const CHAIN_LAB_HTML = `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">

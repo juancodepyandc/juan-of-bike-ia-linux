@@ -964,14 +964,22 @@ def run_tts(text: str, output_path: str, lang: str = "fr", persona: str | None =
 
     # ─── 1. Piper (offline, voix naturelle) — LOCAL-FIRST ───
     # App locale / RGPD : on privilegie systematiquement les moteurs offline.
-    piper_result = _run_tts_piper(clean_text, output_path, lang)
+    # An explicit training-page choice targets Kokoro (base or audited adapter).
+    # Keep the existing voice preference when the user has made no such choice.
+    from pathlib import Path as _SelectionPath
+    import sys as _selection_sys
+    _selection_sys.path.insert(0, str(_SelectionPath(__file__).resolve().parents[2]))
+    from auto_rl.config import STATE as _TRAINING_STATE
+    from auto_rl.storage import read_json as _read_training_json
+    explicit_kokoro = 'audio' in _read_training_json(_TRAINING_STATE/'inference_preferences.json', {})
+    piper_result = None if explicit_kokoro else _run_tts_piper(clean_text, output_path, lang)
     if piper_result is not None:
         return piper_result
 
     # ─── 2. edge-tts (voix Microsoft Neural, CLOUD Azure) — OPT-IN uniquement ───
     # On n'envoie JAMAIS le texte utilisateur a un service cloud par defaut.
     # A activer explicitement via AURORA_ALLOW_CLOUD_TTS=1.
-    if os.environ.get("AURORA_ALLOW_CLOUD_TTS") == "1":
+    if not explicit_kokoro and os.environ.get("AURORA_ALLOW_CLOUD_TTS") == "1":
         edge_result = _run_tts_edge(clean_text, output_path, lang, persona=persona)
         if edge_result is not None:
             return edge_result
@@ -996,6 +1004,14 @@ def run_tts(text: str, output_path: str, lang: str = "fr", persona: str | None =
             emit("tts_warn", f"Langue {lang!r} non supportee par Kokoro, bascule sur anglais.")
             pipe = KPipeline(lang_code="a")
             voice = KOKORO_VOICES["en"]
+
+        from pathlib import Path as _Path
+        import sys as _sys
+        _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+        from auto_rl.runtime import attach_validated
+        _trained = attach_validated(pipe.model, "audio", "hexgrad/Kokoro-82M")
+        if _trained:
+            emit("tts_load", "Adaptateur Kokoro validé : " + _trained["name"])
 
         emit("tts_run", "Synthese vocale en cours...")
 

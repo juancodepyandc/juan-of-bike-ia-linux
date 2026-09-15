@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { LearningSource } from '../services/learningResearch'
-import type { QuizQuestion, LearningPathNode } from '../views/learning/types'
-import type { AcademyParcoursPayload } from '../hooks/useAcademyViewLogic'
+import type { LearningSource } from '../services/learningResearch.ts'
+import type { QuizQuestion, LearningPathNode } from '../views/learning/types.ts'
+import type { AcademyParcoursPayload } from '../hooks/useAcademyViewLogic.ts'
 
 // ---------------------------------------------------------------------------
 // Types per panel

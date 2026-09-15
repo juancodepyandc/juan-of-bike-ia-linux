@@ -20,13 +20,13 @@
  *   • who (Character) + setWho persistence
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useGenerationFxEmitter } from '../components/generationFx/fxBus'
-import { useChatStore } from '../stores/chatStore'
-import { useAppStore } from '../stores/appStore'
-import { runConversationTurn } from '../services/conversationOrchestrator'
-import type { ChatMessage } from '../types/app'
-import { getErrorMessage } from '../utils/errors'
-import { speakify } from '../utils/speakify'
+import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { runConversationTurn } from '../services/conversationOrchestrator.ts'
+import type { ChatMessage } from '../types/app.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { speakify } from '../utils/speakify.ts'
 
 export type Attachment = {
   id: string
@@ -36,6 +36,19 @@ export type Attachment = {
   text?: string
   previewUrl?: string
   visionText?: string
+}
+
+export type WebMode = 'auto' | 'on' | 'off'
+
+const WEB_MODE_KEY = 'aurora-chat-web-mode'
+
+function readWebMode(): WebMode {
+  try {
+    const value = window.localStorage.getItem(WEB_MODE_KEY)
+    return value === 'on' || value === 'off' ? value : 'auto'
+  } catch {
+    return 'auto'
+  }
 }
 
 export type Character = 'natsu' | 'lucy'
@@ -87,13 +100,23 @@ export function useChatViewLogic() {
   const {
     messages, isStreaming, streamContent,
     addMessage, setStreaming, setStreamContent, appendStreamContent,
-    startRun, setRunStage, setRunAnalysis, setRunVerification, finishRun, failRun, clearMessages, popLastAssistantTurn,
+    startRun, setRunStage, setRunAnalysis, setRunVerification, upsertRunSource, setRunQueries,
+    finishRun, failRun, clearMessages, popLastAssistantTurn,
     updateMessage, removeMessage, togglePinned,
   } = useChatStore()
   const mainModel = useAppStore((s) => s.mainModel)
   useGenerationFxEmitter('conversation', isStreaming)
 
   const [draft, setDraft] = useState('')
+  // Recherche web : 'auto' (heuristique), 'on' (globe allume, on cherche
+  // toujours), 'off' (aucune sortie reseau). Persiste entre les sessions
+  // parce qu'un choix de confidentialite ne doit pas se reinitialiser tout
+  // seul au rechargement.
+  const [webMode, setWebModeState] = useState<WebMode>(readWebMode)
+  const setWebMode = (mode: WebMode) => {
+    setWebModeState(mode)
+    try { window.localStorage.setItem(WEB_MODE_KEY, mode) } catch { /* stockage refuse */ }
+  }
   const [narrationOn, setNarrationOn] = useState(false)
   const [voiceOpen, setVoiceOpen] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -146,15 +169,25 @@ export function useChatViewLogic() {
         messages: history,
         userInput: payload,
         voiceMode,
+        webMode,
         signal: abortRef.current.signal,
         onEvent: (ev) => {
           if (ev.type === 'stage') setRunStage(ev.stage, ev.label, ev.detail, ev.progress, ev.timelineStatus)
           else if (ev.type === 'analysis') setRunAnalysis(ev.analysis)
           else if (ev.type === 'verification') setRunVerification(ev.verification)
+          else if (ev.type === 'source') upsertRunSource(ev.source)
+          else if (ev.type === 'queries') setRunQueries(ev.queries)
         },
         onToken: (tok) => appendStreamContent(tok),
       })
-      addMessage({ role: 'assistant', content: result.finalText })
+      addMessage({
+        role: 'assistant',
+        content: result.finalText,
+        // Les sources restent collees a la reponse qu'elles ont servie : le
+        // panneau de run est ecrase au tour suivant, le message non.
+        sources: result.sources.length > 0 ? result.sources : undefined,
+        searchQueries: result.searchQueries.length > 0 ? result.searchQueries : undefined,
+      })
       finishRun()
       setStreamContent('')
       if (narrationOn) void narrate(result.finalText)
@@ -377,6 +410,10 @@ export function useChatViewLogic() {
   }
 
   const streamingVisible = useMemo(() => stripThink(streamContent).visible, [streamContent])
+  // Sources du tour EN COURS : elles alimentent le panneau live pendant que
+  // le modele redige, avant d'etre figees sur le message livre.
+  const runSources = useChatStore((s) => s.runState.sources)
+  const runQueries = useChatStore((s) => s.runState.searchQueries)
 
   return {
     // identity
@@ -384,6 +421,8 @@ export function useChatViewLogic() {
     // state
     messages, isStreaming, streamContent, streamingVisible,
     draft, setDraft,
+    webMode, setWebMode,
+    runSources, runQueries,
     attachments, addFiles, removeAttachment,
     narrationOn, setNarrationOn,
     narrating, narrate, stopNarration,

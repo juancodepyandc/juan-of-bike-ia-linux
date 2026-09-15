@@ -1,6 +1,6 @@
 import { Code2 } from 'lucide-react'
 import type { ComponentProps } from 'react'
-import { StudioHero } from '../components/StudioHero'
+import { StudioHero } from '../components/StudioHero.tsx'
 
 type CodeViewChromeProps = {
   activeModel: string

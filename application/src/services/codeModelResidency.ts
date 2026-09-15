@@ -12,7 +12,7 @@ const OLLAMA = 'http://localhost:11434'
 // Prefixes des gros modeles code qu on ne doit jamais empiler. On ne touche PAS
 // aux modeles partages legers (vision qwen3-vl, embeddings nomic, main instruct)
 // qui peuvent coexister.
-const HEAVY_CODE_MODEL_PREFIXES = ['devstral', 'qwen3-coder', 'deepseek-r1', 'qwen3.6']
+const HEAVY_CODE_MODEL_PREFIXES = ['devstral', 'qwen3-coder', 'deepseek-r1', 'qwen3.6', 'orcarouter', 'qwen3.8', 'qwen3']
 
 function norm(model: string): string {
   return (model || '').trim().replace(/:latest$/i, '').toLowerCase()

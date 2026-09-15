@@ -5,8 +5,8 @@
  * bundle initial — réutilise le chunk `avatars` déjà splitté par AuroraAgentScene.
  */
 // @ts-nocheck — avatars.tsx est en @ts-nocheck (SVG procédural), on reste lâche.
-import { Avatar } from './avatars'
-import { getAgent } from '../../services/auroraAgents'
+import { Avatar } from './avatars.tsx'
+import { getAgent } from '../../services/auroraAgents.ts'
 
 const MODULE_PERSONA: Record<string, string> = {
   conversation: 'sage', voice: 'diego',

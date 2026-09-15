@@ -15,11 +15,11 @@
  *   - context cours : DocStructured[] (depuis entDocParser pass 4).
  *   - notes trend : SubjectTrend (pour calibrer difficulté).
  */
-import { ollamaChat } from '../hooks/useTauri'
-import { useAppStore } from '../stores/appStore'
-import type { HarvestDevoirItem } from './entHarvestService'
-import type { DocStructured } from './entDocParser'
-import type { SubjectTrend } from './entNotesAnalysis'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import type { HarvestDevoirItem } from './entHarvestService.ts'
+import type { DocStructured } from './entDocParser.ts'
+import type { SubjectTrend } from './entNotesAnalysis.ts'
 
 export type RevisionFiche = {
   title: string

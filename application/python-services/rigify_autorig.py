@@ -26,6 +26,9 @@ from pathlib import Path
 WORKSPACE = Path(__file__).resolve().parent.parent
 
 BLENDER_CANDIDATES = [
+    os.path.expanduser("~/.local/bin/blender"),
+    r"/usr/bin/blender",
+    r"/usr/local/bin/blender",
     r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe",
     r"C:\Program Files\Blender Foundation\Blender 5.0\blender.exe",
     r"C:\Program Files\Blender Foundation\Blender 4.4\blender.exe",
@@ -35,8 +38,6 @@ BLENDER_CANDIDATES = [
     r"C:\Program Files\Blender Foundation\Blender 4.0\blender.exe",
     r"C:\Program Files\Blender Foundation\Blender 3.6\blender.exe",
     r"/Applications/Blender.app/Contents/MacOS/Blender",
-    r"/usr/bin/blender",
-    r"/usr/local/bin/blender",
 ]
 
 
@@ -136,6 +137,9 @@ def redresser_pca(glb_in: str, glb_out: str) -> dict:
 
 
 def find_blender() -> str | None:
+    env_b = os.environ.get("AURORA_BLENDER") or os.environ.get("BLENDER_BIN")
+    if env_b and os.path.isfile(env_b):
+        return env_b
     # 0. portable Blender shipped under application/_blender/
     for portable in (WORKSPACE / "_blender").glob("blender-*-windows-x64"):
         exe = portable / "blender.exe"
@@ -145,7 +149,7 @@ def find_blender() -> str | None:
     found = shutil.which("blender")
     if found:
         return found
-    # 2. Well-known Windows paths
+    # 2. Well-known Linux / Mac / Windows paths
     for cand in BLENDER_CANDIDATES:
         if os.path.isfile(cand):
             return cand
@@ -1464,7 +1468,7 @@ def _motion_to_english(text: str) -> str:
         return "a person walks forward"
     try:
         import urllib.request
-        model = os.environ.get("AURORA_MOTION_LLM", "qwen3:30b-a3b-instruct-2507-q4_K_M")
+        model = os.environ.get("AURORA_MOTION_LLM", "orcarouter/Qwen3.8-27B-Uncensored")
         body = json.dumps({
             "model": model,
             "prompt": ("You convert a motion description to a concise English phrase for a "

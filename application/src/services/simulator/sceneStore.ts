@@ -14,7 +14,7 @@ import {
   lightDefaults,
   reactionDefaults,
   constraintDefaults,
-} from './defaults'
+} from './defaults.ts'
 import type {
   CameraState,
   ChemistryReactionConfig,
@@ -42,7 +42,7 @@ import type {
   TimelineState,
   TransformState,
   Vec3,
-} from './types'
+} from './types.ts'
 
 const MAX_HISTORY = 40
 

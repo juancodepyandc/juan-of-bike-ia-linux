@@ -1,9 +1,9 @@
-import { ollamaChat } from '../hooks/useTauri'
-import type { PreparedContextFile } from '../utils/multimodalContext'
-import { findBestReferenceVisual, type ReferenceSearchProfile, type ReferenceVisualSelection } from './referenceVisualResearch'
-import type { ThreeDReferenceSupport } from './threeDReferenceSupport'
-import type { ThreeDIntent } from './threeDIntent'
-import { isPersonReproductionPrompt } from './threeDClarification'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import type { PreparedContextFile } from '../utils/multimodalContext.ts'
+import { findBestReferenceVisual, type ReferenceSearchProfile, type ReferenceVisualSelection } from './referenceVisualResearch.ts'
+import type { ThreeDReferenceSupport } from './threeDReferenceSupport.ts'
+import type { ThreeDIntent } from './threeDIntent.ts'
+import { isPersonReproductionPrompt } from './threeDClarification.ts'
 import {
   formatPaletteInstruction,
   formatTextInstruction,
@@ -11,7 +11,7 @@ import {
   type ReferenceEntity,
   type ReferencePaletteEntry,
   type ReferenceVisibleText,
-} from './visualReferenceAnalyzer'
+} from './visualReferenceAnalyzer.ts'
 
 export type ThreeDViewOverlay = {
   palette?: ReferencePaletteEntry[]

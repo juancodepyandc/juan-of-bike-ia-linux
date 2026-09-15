@@ -22,7 +22,7 @@
 // cible sur le fichier en cours et borne par un budget de caracteres.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent } from './codeIntent'
+import type { CodeIntent } from './codeIntent.ts'
 import { detectDesignArchetype } from './codeDesignDirectives.ts'
 import { archetypeBlock, autoDepsBlock, depthDirectivesBlock, typographyContractBlock } from './codeDesignDirectiveBlocks.ts'
 import { requiredEntryFilesForProject } from './codeArchitecturePlanEntryContract.ts'
@@ -182,11 +182,13 @@ const TYPED_FILE_RE = /\.(tsx?|mtsx?)$/i
  */
 function typeContractBlock(): string[] {
   return [
-    '## CONTRAT DE TYPAGE (ce fichier)',
+    '## CONTRAT DE TYPAGE & FIABILITE (ce fichier)',
     '- Annote TOUT parametre de fonction et de rappel, y compris dans .map/.filter/.reduce/.sort et les gestionnaires d evenements. Aucun parametre implicitement `any`.',
     '- Rendre un composant, c est honorer son interface: passe EXACTEMENT les props qu elle declare — aucune requise omise, aucune non declaree ajoutee. Si la donnee existe deja dans ce fichier, passe-la; sinon rends la prop optionnelle a la declaration.',
     '- Les donnees d exemple et l interface qui les type s ecrivent ENSEMBLE et au meme moment: tout champ present dans la donnee figure dans l interface, et reciproquement.',
     '- Une union de statuts se compare toujours a ses propres valeurs, jamais a un libelle affiche. Garde les valeurs techniques dans une seule langue et traduis pour l affichage.',
+    '- Pour les timers React/browser, type avec `ReturnType<typeof setInterval>` ou `number` (jamais le namespace `NodeJS.Timeout`).',
+    '- Pour les graphiques/dataviz, privilégie des visualisations vectorielles directes en pur SVG/React ou CSS (autonomes, réactives et sans dépendance tierce complexe).',
   ]
 }
 

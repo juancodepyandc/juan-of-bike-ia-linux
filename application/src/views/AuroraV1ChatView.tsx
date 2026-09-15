@@ -14,16 +14,19 @@ import {
   FileText, Mic, Paperclip, Send, StopCircle, Trash2, Volume2, VolumeX,
   X, Cpu, Copy, RefreshCw, Radio, Globe,
 } from 'lucide-react'
-import MarkdownPro from '../components/MarkdownPro'
-import AuroraSphereV1 from '../components/AuroraSphereV1'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import { useChatViewLogic, stripThink, PORTRAITS, WELCOME, type Attachment } from '../hooks/useChatViewLogic'
-import { useFileDrop } from '../hooks/useFileDrop'
-import { suggestCommands, getRecentSlash, type SlashCommand } from '../utils/slashCommands'
-import { pickRandomStarter } from '../utils/randomChatStarters'
-import { getDailyTip } from '../utils/dailyTip'
-import { getContextUsage } from '../utils/modelContext'
-import { useNotificationStore } from '../stores/notificationStore'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import SourcesPanel from '../components/chat/SourcesPanel.tsx'
+import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
+import { extractRichMedia } from '../utils/mediaLinks.ts'
+import AuroraSphereV1 from '../components/AuroraSphereV1.tsx'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import { useChatViewLogic, stripThink, PORTRAITS, WELCOME, type Attachment } from '../hooks/useChatViewLogic.ts'
+import { useFileDrop } from '../hooks/useFileDrop.ts'
+import { suggestCommands, getRecentSlash, type SlashCommand } from '../utils/slashCommands.ts'
+import { pickRandomStarter } from '../utils/randomChatStarters.ts'
+import { getDailyTip } from '../utils/dailyTip.ts'
+import { getContextUsage } from '../utils/modelContext.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
 // v82n5 : appStore + ModuleId imports dropped — swipe handler hoisted to
 // App.tsx, ChatView no longer needs to switch modules itself.
 
@@ -722,6 +725,10 @@ export default function AuroraV1ChatView() {
                       {isAsst
                         ? <MarkdownPro content={visible || m.content} idPrefix={`v1-bubble-${id}`} />
                         : (visible || m.content)}
+                      <MediaStrip urls={extractRichMedia(visible || m.content)} />
+                      {isAsst && m.sources && m.sources.length > 0 && (
+                        <SourcesPanel sources={m.sources} queries={m.searchQueries ?? []} />
+                      )}
                     </div>
                   )}
                   {!isEditing && (

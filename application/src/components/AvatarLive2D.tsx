@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { MutableRefObject } from 'react'
-import type { VoiceLivePhase, RhubarbCue } from '../hooks/useVoiceLive'
+import type { VoiceLivePhase, RhubarbCue } from '../hooks/useVoiceLive.ts'
 
 export interface FaceFeatures2D {
   eyeL: { x: number; y: number; w: number; h: number } | null

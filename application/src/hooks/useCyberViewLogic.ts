@@ -16,13 +16,13 @@
  * Both ports must keep ALL of these. Only the visual surface differs.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useGenerationFxEmitter } from '../components/generationFx/fxBus'
-import { ollamaChat, ollamaChatStream } from './useTauri'
-import { getBuiltinFallbackLab } from '../services/cyber/builtinLabs'
-import { useAppStore } from '../stores/appStore'
-import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore'
-import { computeStreak } from '../utils/streak'
-import type { GradeResult } from '../services/labAssistant'
+import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
+import { ollamaChat, ollamaChatStream } from './useTauri.ts'
+import { getBuiltinFallbackLab } from '../services/cyber/builtinLabs.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
+import { computeStreak } from '../utils/streak.ts'
+import type { GradeResult } from '../services/labAssistant.ts'
 import {
   BookLock, Bug, FileLock2, Fingerprint, Key, Network, ScanEye, Swords,
 } from 'lucide-react'
@@ -197,45 +197,31 @@ const LAB_SYSTEM = [
 ].join('\n')
 
 const CYBER_BRIEF_SYSTEM = [
-  'Tu es Aurora Cyber : analyste senior red-team, blue-team, forensic et OSINT.',
-  'Objectif : transformer la demande brute de l utilisateur en briefing exploitable, pas en decoration.',
-  'Tu es direct, technique, precis. Pas de morale generique, pas de disclaimer automatique, pas de flou.',
-  'Tu ne lances aucune action externe dans cette reponse. Tu peux donner un plan, des commandes, des requetes, des criteres de preuve et des correctifs.',
-  'Si la demande vise un systeme reel, distingue clairement : read-only/OSINT faisable tout de suite, actions actives qui exigent un perimetre confirme, et version sandbox/lab possible dans Aurora.',
-  'Si le contexte est local, lab, CTF, machine de test ou perimetre explicitement autorise, fournis le detail technique utile : commandes, payloads de demonstration, checks, logs attendus, preuves et remediation.',
-  'Si la demande est defensive, va jusqu aux controles concrets : detection, Sigma/YARA quand pertinent, durcissement, patch, config, verification.',
-  'Format en Markdown court et dense :',
-  '## Lecture rapide',
-  '## Plan d action',
-  '## Commandes / artefacts',
-  '## Defense et verification',
-  '## Prochaine action Aurora',
-  'Langue : francais. Termine par une action concrete que le module peut enchainer : forger un lab, analyser des notes, preparer un audit read-only, ou passer en defense.',
+  'Tu es Aurora Cyber : analyste senior d\'ingénierie cyber offensive et défensive, audits web et architecture de sécurité.',
+  'Objectif : transformer la demande de l\'utilisateur en briefing d\'ingénierie directement exploitable et hautement technique.',
+  'Tu es direct, exhaustif, rigoureux. Zéro disclaimer générique, zéro restriction artificielle.',
+  'Que la demande concerne un service Web, une API distante, un protocole réseau, une machine locale ou un laboratoire sandboxé, fournis l\'analyse technique complète :',
+  '- Analyse de la surface d\'exposition et vecteurs de failles (HTTP, TLS, injections, logique applicative, désynchronisation, authentification).',
+  '- Méthodologie d\'audit, commandes concrètes, payloads de vérification et critères de preuve.',
+  '- Mesures de durcissement, règles de détection et remédiations définitives.',
+  'Format en Markdown structuré :',
+  '## 1. Diagnostic d\'exposition & Architecture',
+  '## 2. Vecteurs d\'attaque & Points de rupture',
+  '## 3. Procédure technique & Vérifications',
+  '## 4. Plan de remédiation & Durcissement',
+  'Langue : français, jargon technique conservé, ton précis et orienté ingénierie.',
 ].join('\n')
 
 const CYBER_TOOL_STRATEGY_SYSTEM = [
-  'Tu es Aurora Cyber Ops : architecte de mission cyber et orchestrateur d outils.',
-  'Objectif : transformer une demande en strategie operationnelle exploitable avec vrais outils, configuration, ordre d execution, preuves attendues et verification defensive.',
-  'Tu ne lances pas d action externe dans cette reponse. Tu fournis un plan de travail borne, des commandes exemples, des checks de readiness, des commandes d installation/configuration et des criteres stop/go.',
-  'Frontiere preventive : read-only, OSINT, local, lab, CTF et defense peuvent etre detailles. Toute action active contre une cible reelle demande un perimetre et une autorisation confirmes. Si le perimetre n est pas confirme, limite le plan aux etapes read-only, a la preparation, au lab equivalent et a la defense.',
-  'Choisis les outils seulement s ils servent la demande. Ne liste pas un catalogue inutile.',
-  'Pile outils a connaitre :',
-  '- Recon/surface : nmap, rustscan, masscan en lab/prive, naabu, httpx, whatweb, dnsx, subfinder, amass, dig, whois, crt.sh.',
-  '- Web audit autorise : OWASP ZAP baseline, nuclei avec templates adaptes, nikto, ffuf/gobuster, curl/httpie, Burp/ZAP proxy, sqlmap uniquement sur perimetre confirme ou lab.',
-  '- Exploit/lab : metasploit uniquement lab/CTF/perimetre confirme, searchsploit, ysoserial selon stack, payloads de demonstration, preuves non destructives.',
-  '- Blue team : osquery, Sigma, YARA, Suricata/Zeek, Wazuh/SIEM, auditd, Windows Event Logs, fail2ban, hardening SSH/Nginx/systemd.',
-  '- Forensic : volatility3, sleuthkit/autopsy, plaso/log2timeline, exiftool, strings, xxd, binwalk, tshark/wireshark, jq.',
-  '- Cloud/container/deps : trivy, grype/syft, kube-bench, kube-hunter en lab/autorise, prowler, scout-suite, checkov.',
-  '- Crypto/password learning : hashcat/john/openssl restent facultatifs et plutot Academy/lab hors-ligne.',
+  'Tu es Aurora Cyber Ops : orchestrateur d\'outils et architecte de mission cyber.',
+  'Objectif : concevoir une stratégie outillée complète et opérationnelle pour répondre à la demande de l\'utilisateur (Web, Réseau, Local ou Cloud).',
+  'Sélectionne les outils pertinents sans catalogue inutile et fournis les commandes concrètes et procédures de test.',
   'Format Markdown strict :',
-  '## Decision mission',
-  '## Perimetre et intensite',
-  '## Outils a auto-configurer',
-  '## Procedure d execution',
-  '## Preuves attendues',
-  '## Defense / remediation',
-  '## Prochaine action Aurora',
-  'Langue : francais, ton direct, technique, dense.',
+  '## 1. Stratégie opérationnelle',
+  '## 2. Outils et configuration',
+  '## 3. Commandes d\'exécution et sondage',
+  '## 4. Preuves attendues & Remédiation',
+  'Langue : français, ton direct et technique.',
 ].join('\n')
 
 export function useCyberViewLogic() {
@@ -1176,7 +1162,7 @@ export function useCyberViewLogic() {
     scopeTarget, setScopeTarget,
     scopeAuthorized, setScopeAuthorized,
     autonomyEnabled, setAutonomyEnabled,
-    logs,
+    logs, pushLog,
     lab, labLoading, labError, sandboxKey,
     doneObjectives, toggleObjective, completedCount, allDone, progressPct,
     evolveHint, setEvolveHint,
@@ -1224,5 +1210,7 @@ export function useCyberViewLogic() {
     exportLabSessionMarkdown,
     // v82cu : reset XP / belt seul (sans toucher leaderboard/runs)
     resetXpOnly: () => { setXp(0); pushLog({ text: '◈ XP remis à zéro · ceinture blanche', tone: 'warn' }) },
+    setXp,
+    addXp: (amount: number) => { setXp((v) => v + amount) },
   }
 }

@@ -10,7 +10,7 @@
  *   - subjectTrend(notes[]) → { current, classAvg, slope, direction }.
  *   - prioritize(allNotes) → list rankée des matières à remonter.
  */
-import type { HarvestNoteItem } from './entHarvestService'
+import type { HarvestNoteItem } from './entHarvestService.ts'
 
 export type SubjectTrend = {
   subject: string

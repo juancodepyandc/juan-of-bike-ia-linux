@@ -27,7 +27,7 @@
  * and deterministic.
  */
 
-import type { ParsedFile } from './codeOutputFiles'
+import type { ParsedFile } from './codeOutputFiles.ts'
 import {
   fixBrokenImages,
   fixBrokenPictures,

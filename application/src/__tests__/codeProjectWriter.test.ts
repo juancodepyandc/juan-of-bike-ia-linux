@@ -86,6 +86,24 @@ describe('codeProjectWriter — round-trip filesystem', () => {
     assert.equal(joinProjectRoot('/tmp/root', '/src/App.tsx'), '/tmp/root/src/App.tsx')
   })
 
+  test('encode les assets de plus de 1 Mio sans dépasser la pile du navigateur', () => {
+    for (const size of [0, 1, 2, 3, 32767, 32768, 32769, 1048577]) {
+      const bytes = Array.from({ length: size }, (_, index) => index % 256)
+      assert.equal(encodeBytesToBase64(bytes), Buffer.from(bytes).toString('base64'), `size=${size}`)
+    }
+  })
+
+  test('préserve un asset binaire de 1 Mio pendant la sauvegarde et la relecture', async () => {
+    const bytes = Array.from({ length: 1024 * 1024 }, (_, index) => index % 256)
+    const base64 = Buffer.from(bytes).toString('base64')
+    const parsed = parseProjectTreeEmission(serializeProjectTreeEmission([
+      { path: 'assets/scene.glb', content: base64, encoding: 'base64' },
+    ]))
+    const result = await roundTripProjectTreeOnFs(parsed.tree, '/tmp/large-project', createMemoryFs())
+    assert.equal(result.readTree.files[0].content, base64)
+    assert.equal(result.writeResult.files[0].size, bytes.length)
+  })
+
   test('writeCodeFilesToDirectory: nesting a n niveaux + ecriture binaire (backing de la sauvegarde Workspace)', async () => {
     const bytes = [10, 20, 30, 200]
     const fs = createMemoryFs()

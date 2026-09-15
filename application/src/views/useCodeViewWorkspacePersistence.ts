@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react'
-import type { SaveDialogData } from '../components/SaveDialog'
-import type { CorrectionPass } from '../services/codeAutoCorrection'
-import type { CodeIntent } from '../services/codeIntent'
-import { parseCodeFiles, type CodeFile, type FollowUpAnalysis } from '../services/codeOrchestrator'
-import type { CodePreflightReport } from '../services/codePreflight'
-import type { CodeSandboxResult } from '../services/codeSandbox'
-import { stopDevServer, type DevServerState } from '../services/codeDevServer'
-import type { ModuleHistoryMessage } from '../stores/moduleHistoryStore'
-import { useCodeWorkspaceStore, type PersistedCodeWorkspaceState } from '../stores/codeWorkspaceStore'
+import type { SaveDialogData } from '../components/SaveDialog.tsx'
+import type { CorrectionPass } from '../services/codeAutoCorrection.ts'
+import type { CodeIntent } from '../services/codeIntent.ts'
+import { parseCodeFiles, type CodeFile, type FollowUpAnalysis } from '../services/codeOrchestrator.ts'
+import type { CodePreflightReport } from '../services/codePreflight.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
+import { stopDevServer, type DevServerState } from '../services/codeDevServer.ts'
+import type { ModuleHistoryMessage } from '../stores/moduleHistoryStore.ts'
+import { useCodeWorkspaceStore, type PersistedCodeWorkspaceState } from '../stores/codeWorkspaceStore.ts'
 
 type WorkspaceViewState = Pick<PersistedCodeWorkspaceState,
   | 'prompt' | 'progress' | 'notes' | 'files' | 'activeFile' | 'error'
@@ -57,7 +57,7 @@ export function useCodeViewWorkspacePersistence({
   setters: WorkspaceSetters
   setWorkspaceSnapshot: ReturnType<typeof useCodeWorkspaceStore.getState>['setWorkspaceSnapshot']
 }) {
-  const hydrationTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const hydrationTimerRef = useRef<number | null>(null)
   const [persistenceReady, setPersistenceReady] = useState(false)
 
   const armPersistence = useCallback(() => {

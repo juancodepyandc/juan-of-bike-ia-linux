@@ -23,7 +23,11 @@ import urllib.request
 import urllib.error
 
 OLLAMA_URL = "http://127.0.0.1:11434"
-DEFAULT_MODEL = "gemma3:27b"   # installe, non-thinking -> JSON propre (gemma3:12b n'existe pas ici)
+try:  # `gemma3:27b` absent de cette machine -> appel mort, repli silencieux
+    from llm_disponible import resoudre_modele as _res_llm
+    DEFAULT_MODEL = _res_llm("gemma3:27b", "texte", bavard=False)
+except Exception:  # noqa: BLE001
+    DEFAULT_MODEL = "gemma3:27b"   # installe, non-thinking -> JSON propre (gemma3:12b n'existe pas ici)
 FALLBACK_MODEL = "qwen3:14b"
 
 # Keep this verbatim with the TS service. If you change one, update the other.

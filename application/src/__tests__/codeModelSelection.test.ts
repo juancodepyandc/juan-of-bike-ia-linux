@@ -11,9 +11,13 @@ import {
   CODE_PRIMARY_MODEL,
   getCodeRecoveryFallbackModels,
   selectCodeModelForHardware,
+  selectAdaptiveReasoningModel,
 } from '../config/models.ts'
 
 describe('code model selection', () => {
+  test('keeps an explicitly selected trained learning model in the Academy on limited RAM', () => {
+    assert.equal(selectAdaptiveReasoningModel({ ram_gb: 16 }, 'aurora-rl-learning:v1'), 'aurora-rl-learning:v1')
+  })
   test('local production code model is the fitting Qwen3-Coder 30B (not the oversized Next)', () => {
     // qwen3-coder:30b (18GB, MoE 3B actifs) tient sur 16GB VRAM + 30GB RAM ; les
     // variantes qwen3-coder-next (q4_K_M 51GB, q8_0 ~85GB) non — elles sont

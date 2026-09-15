@@ -80,9 +80,9 @@ def mesurer(glb: str) -> dict:
         m3_val = part
         m3 = part > 0.30 and rms < 0.015
 
-    # Un vrai masque / bas-relief / silhouette plate est soit ultra-plat (m1_ratio < 0.15),
-    # soit un relief sans epaisseur (M2 fin) ou a dos plat (M3).
-    est_masque = (m1_ratio < 0.15) or (m2 and (m1 or m3)) or (m1 and m3)
+    # Un vrai masque / bas-relief / silhouette plate presente AU MOINS DEUX indicateurs concordants
+    # (ou un aplatissement extreme < 0.05, pour ne pas confondre un objet volumetrique a large envergure avec un masque).
+    est_masque = (m1_ratio < 0.05) or (int(m1) + int(m2) + int(m3) >= 2)
     votes = int(m1) + int(m2) + int(m3)
     return {
         "masque": bool(est_masque),

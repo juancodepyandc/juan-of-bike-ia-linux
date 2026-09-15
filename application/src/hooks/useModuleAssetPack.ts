@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { useAppStore } from '../stores/appStore'
+import { useAppStore } from '../stores/appStore.ts'
 import type {
   ModuleAssetDefinition,
   ModuleAssetPackState,
   ModuleAssetStatus,
   ModuleId,
   RuntimeProgressEvent,
-} from '../types/app'
+} from '../types/app.ts'
 import {
   fsExists,
   getWorkspacePath,
@@ -15,10 +15,10 @@ import {
   onRuntimeProgress,
   runPythonScript,
   runtimeEnsureOllamaModelAvailable,
-} from './useTauri'
-import { getErrorMessage } from '../utils/errors'
-import { resolveConfiguredModel } from '../config/models'
-import { isTauriRuntime } from '../utils/runtime'
+} from './useTauri.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { resolveConfiguredModel } from '../config/models.ts'
+import { isTauriRuntime } from '../utils/runtime.ts'
 
 function parseLastJsonObject(text: string) {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)

@@ -174,23 +174,37 @@ def remove_background(in_path: Path, out_path: Path) -> None:
 
 
 def _drop_tiny_components(mesh, min_face_ratio: float = 0.01):
-    """Keep only the largest connected component if a mesh has been blown up
-    by decimation into thousands of tiny floaters. Returns the cleaned mesh
-    and the count of components dropped.
-    """
-    import trimesh as tm
-    components = mesh.split(only_watertight=False)
-    if len(components) <= 1:
-        return mesh, 0
-    main = max(components, key=lambda c: len(c.faces))
-    main_n = len(main.faces)
-    keep = [c for c in components if len(c.faces) >= main_n * min_face_ratio]
-    if len(keep) == len(components):
-        return mesh, 0
-    cleaned = tm.util.concatenate(keep) if len(keep) > 1 else keep[0]
-    cleaned.visual = mesh.visual
-    return cleaned, len(components) - len(keep)
+    """Retire les composantes minuscules (maillage pulverise par la decimation).
 
+    Sans `split()`: celui-ci recopie l'atlas par composante (mesure: 360 Go
+    demandes sur un personnage, processus tue a 30 Go). Un masque de faces
+    donne le meme resultat, conserve les UV et la texture, et ne copie rien.
+    """
+    try:
+        import numpy as _np
+        from trimesh.graph import connected_components as _cc
+
+        faces = _np.asarray(mesh.faces)
+        if len(faces) == 0:
+            return mesh, 0
+        comps = _cc(mesh.face_adjacency, nodes=_np.arange(len(faces)))
+        if len(comps) <= 1:
+            return mesh, 0
+        main_n = max(len(c) for c in comps)
+        garder = _np.zeros(len(faces), dtype=bool)
+        jetes = 0
+        for c in comps:
+            if len(c) >= main_n * min_face_ratio:
+                garder[c] = True
+            else:
+                jetes += 1
+        if jetes == 0 or not garder.any():
+            return mesh, 0
+        mesh.update_faces(garder)
+        mesh.remove_unreferenced_vertices()
+        return mesh, jetes
+    except Exception:
+        return mesh, 0
 
 def decimate_mesh(mesh, target_faces: int) -> tuple:
     """Quadric edge-collapse decimation toward target_faces, with post-cleanup

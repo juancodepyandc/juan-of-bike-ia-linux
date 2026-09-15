@@ -12,6 +12,7 @@ import {
 } from './codeGeneratedDependencyPolicy.ts'
 import { repairGeneratedTypeScriptContent } from './codeGeneratedTypeScriptRepair.ts'
 import { isApostropheRepairable, repairFrenchApostrophes } from './codeApostropheRepair.ts'
+import { repairHtmlAssetLinks } from './codeHtmlAssetRepair.ts'
 import {
   parseSpecVersion,
   readManifestDependencySpec,
@@ -19,92 +20,18 @@ import {
 } from './codeManifestVersion.ts'
 export { isVersionBelow, readManifestDependencySpec } from './codeManifestVersion.ts'
 export type { LocalNodeManifest } from './codeManifestVersion.ts'
+import {
+  stripFormattingArtifacts,
+  stripJsonCommentsAndTrailingCommas,
+  isProseDocument,
+  type StripOptions,
+} from './codeFormattingArtifacts.ts'
+
+// Re-export : les appelants historiques importent ces symboles depuis ce
+// module. Le deplacement reste interne.
+export { stripFormattingArtifacts, type StripOptions }
 
 
-export function stripFormattingArtifacts(content: string) {
-  let current = content
-    .replace(/^\uFEFF/, '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .trim()
-
-  for (let index = 0; index < 3; index += 1) {
-    const next = current
-      .replace(/^```[\w.-]*\s*\r?\n/, '')
-      .replace(/\r?\n```$/, '')
-      .trim()
-
-    if (next === current) break
-    current = next
-  }
-
-  return current
-}
-
-function stripJsonCommentsAndTrailingCommas(content: string) {
-  let out = ''
-  let inString = false
-  let quote = ''
-  let escaped = false
-  let inLineComment = false
-  let inBlockComment = false
-
-  for (let index = 0; index < content.length; index += 1) {
-    const ch = content[index]
-    const next = content[index + 1]
-
-    if (inLineComment) {
-      if (ch === '\n' || ch === '\r') {
-        inLineComment = false
-        out += ch
-      }
-      continue
-    }
-
-    if (inBlockComment) {
-      if (ch === '*' && next === '/') {
-        inBlockComment = false
-        index += 1
-      }
-      continue
-    }
-
-    if (inString) {
-      out += ch
-      if (escaped) {
-        escaped = false
-      } else if (ch === '\\') {
-        escaped = true
-      } else if (ch === quote) {
-        inString = false
-        quote = ''
-      }
-      continue
-    }
-
-    if (ch === '"' || ch === "'") {
-      inString = true
-      quote = ch
-      out += ch
-      continue
-    }
-
-    if (ch === '/' && next === '/') {
-      inLineComment = true
-      index += 1
-      continue
-    }
-
-    if (ch === '/' && next === '*') {
-      inBlockComment = true
-      index += 1
-      continue
-    }
-
-    out += ch
-  }
-
-  return out.replace(/,\s*([}\]])/g, '$1')
-}
 
 function isStructuredMachineFile(filename: string) {
   const normalized = filename.replace(/\\/g, '/').toLowerCase()
@@ -163,7 +90,10 @@ function repairKnownManifestDependencyNames(manifest: Record<string, unknown>) {
 
 export function sanitizeGeneratedFileContent(filename: string, content: string) {
   const normalized = filename.replace(/\\/g, '/').toLowerCase()
-  const cleaned = stripFormattingArtifacts(repairEscapedNewlines(filename, content).content)
+  const cleaned = stripFormattingArtifacts(
+    repairEscapedNewlines(filename, content).content,
+    { markdown: isProseDocument(normalized) },
+  )
 
   if (normalized.endsWith('.json')) {
     const parsed = tryParseJson(cleaned)
@@ -378,7 +308,8 @@ export function sanitizeGeneratedFiles(files: CodeFile[]) {
     ...file,
     content: sanitizeGeneratedFileContent(file.name, file.content),
   }))
-  return repairPackageManifestFromSourceImports(sanitized)
+  const manifestRepaired = repairPackageManifestFromSourceImports(sanitized)
+  return repairHtmlAssetLinks(manifestRepaired)
 }
 
 export function normalizeGeneratedCodeFilesForTest(files: CodeFile[]) {

@@ -29,7 +29,7 @@
  */
 import { lazy, Suspense, useEffect, useRef, useState, useMemo } from 'react'
 import { Send, Loader2, Upload, X as XIcon, Image as ImgIcon } from 'lucide-react'
-import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic'
+import { useAcademyViewLogic, type AcademyMode, type AcademySubject } from '../hooks/useAcademyViewLogic.ts'
 
 const ParcoursActiveSession = lazy(() => import('./learning/ParcoursActiveSession'))
 const ParcoursBankDrawer = lazy(() => import('./learning/ParcoursBankDrawer'))

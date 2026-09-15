@@ -13,7 +13,7 @@
  * and the next segmentation step uses the new rig.
  */
 import { useState } from 'react'
-import type { RigLayer, RigPlan } from '../services/characterForge'
+import type { RigLayer, RigPlan } from '../services/characterForge.ts'
 
 const KIND_OPTIONS: Array<RigLayer['kind']> = [
   'static',

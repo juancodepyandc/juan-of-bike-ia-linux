@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, Copy, Dices, KeyRound, RefreshCw, Shield, UserRound } from 'lucide-react'
-import { analyzePassword, generateDiceware, generatePassword, type GenerateOptions } from '../../services/cyber/passwordAnalyzer'
-import { assessKdf, attackCost, formatUsd, OWASP_2024_DEFAULTS } from '../../services/cyber/kdfCostAnalyzer'
-import { auditHash } from '../../services/cyber/hashParameterParser'
-import { checkBreached, checkCredentialReuse } from '../../services/cyber/breachChecker'
+import { analyzePassword, generateDiceware, generatePassword, type GenerateOptions } from '../../services/cyber/passwordAnalyzer.ts'
+import { assessKdf, attackCost, formatUsd, OWASP_2024_DEFAULTS } from '../../services/cyber/kdfCostAnalyzer.ts'
+import { auditHash } from '../../services/cyber/hashParameterParser.ts'
+import { checkBreached, checkCredentialReuse } from '../../services/cyber/breachChecker.ts'
 
 export default function PasswordLab() {
   return (

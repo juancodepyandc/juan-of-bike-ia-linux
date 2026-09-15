@@ -13,7 +13,7 @@
 // action. Pure read — the executor is unchanged.
 // ---------------------------------------------------------------------------
 
-import type { CoworkActionEvent } from './coworkTypes'
+import type { CoworkActionEvent } from './coworkTypes.ts'
 
 /**
  * Read the connector_hint string out of an event's detail JSON.

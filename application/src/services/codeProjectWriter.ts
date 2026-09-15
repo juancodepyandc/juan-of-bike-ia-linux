@@ -80,7 +80,11 @@ export function decodeBase64ToBytes(content: string) {
 export function encodeBytesToBase64(bytes: number[]) {
   const normalized = bytes.map((byte) => byte & 0xff)
   if (typeof btoa === 'function') {
-    return btoa(String.fromCharCode(...normalized))
+    const chunks: string[] = []
+    for (let offset = 0; offset < normalized.length; offset += 0x8000) {
+      chunks.push(String.fromCharCode(...normalized.slice(offset, offset + 0x8000)))
+    }
+    return btoa(chunks.join(''))
   }
 
   const bufferFactory = getBufferFactory()

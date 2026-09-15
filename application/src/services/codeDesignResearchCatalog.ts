@@ -214,6 +214,26 @@ export const ARCHETYPE_KB: Record<DesignArchetype, ArchetypeKB> = {
     paletteHints: ['#0a0a0b', '#ec4899', '#22d3ee'],
     knownLibs: ['none — vanilla canvas + Web Audio'],
   },
+  retro_pixel_gaming: {
+    inspirationSites: ['itch.io', 'lospec.com', 'piskelapp.com'],
+    searchAnchors: [
+      'pixel art game interface limited palette',
+      'retro browser game readable HUD keyboard controls',
+      'pixel art sprite animation integer scaling',
+    ],
+    paletteHints: ['#1b1b3a', '#f7f7e8', '#f9a826', '#68c3a3'],
+    knownLibs: ['Canvas 2D', 'Web Audio'],
+  },
+  interactive_tool_widget: {
+    inspirationSites: ['desmos.com/calculator', 'excalidraw.com', 'squoosh.app'],
+    searchAnchors: [
+      'interactive calculator immediate feedback accessible inputs',
+      'browser tool workspace preview controls layout',
+      'data conversion widget validation empty states',
+    ],
+    paletteHints: ['#f8fafc', '#0f172a', '#2563eb', '#16a34a'],
+    knownLibs: ['Intl API', 'Canvas 2D', 'Web Workers'],
+  },
   data_dense_enterprise: {
     inspirationSites: [
       'linear.app',

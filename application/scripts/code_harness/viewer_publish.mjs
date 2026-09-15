@@ -13,7 +13,12 @@ import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 
-export const VIEWERS_ROOT = path.resolve('output/code_assets/viewers')
+// ARCHITECTURE : `output/code_assets/` n'est PAS un module canonique. Le
+// contrat de `aurora_output_paths` impose `output/<module>/<projet>/`, et le
+// pont lui-meme qualifie `output/code_assets` de « legacy »
+// (bridge_server.py, route /api/code/assets/file). Les visionneuses vivent
+// donc sous le module `code`, dans son projet `assets`.
+export const VIEWERS_ROOT = path.resolve('output/code/assets/viewers')
 const resolveSrc = (rel) => pathToFileURL(path.resolve(rel)).href
 
 async function services() {

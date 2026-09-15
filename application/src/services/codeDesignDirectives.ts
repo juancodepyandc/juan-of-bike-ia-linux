@@ -6,7 +6,7 @@
 // un rendu digne d Awwwards / Apple / Linear / Stripe / Vercel.
 // ---------------------------------------------------------------------------
 
-import type { CodeIntent, CodeProjectType } from './codeIntent'
+import type { CodeIntent, CodeProjectType } from './codeIntent.ts'
 import { matchesAnyHint, normalizeHintText } from './codePromptHints.ts'
 
 export type DesignArchetype =
@@ -23,6 +23,8 @@ export type DesignArchetype =
   | 'mobile_native_premium' // mobile RN / Flutter — gestures, blur header, sheets
   | 'desktop_native_app'    // Tauri / Electron app — title bar, menus, panels
   | 'game_visual_premium'   // jeu web — palette neon, particles, screen shake
+  | 'retro_pixel_gaming'    // minecraft, pixel-art, 8-bit, 16-bit, retro gaming UI
+  | 'interactive_tool_widget' // calculatrice, convertisseur, tool interactif, widget tactile
   | 'data_dense_enterprise'  // enterprise dense — tables, filters, charts, detail drawers
   | 'ide_code_editor'        // IDE / code editor — file tree, editor, terminal
   | 'os_shell'               // OS / shell visual — terminal, boot log, status
@@ -143,6 +145,17 @@ const NUMBERS_DEPTH_HINTS = [
  * scandinave » contient « minimaliste » — comme REFUS. Compter l occurrence,
  * c est lire un refus comme une commande (motif du run 1021).
  */
+const RETRO_PIXEL_HINTS = [
+  'minecraft', 'pixel art', 'pixelart', 'pixel-art', '8-bit', '8bit', '16-bit', '16bit',
+  'retro gaming', 'arcade', 'voxel', 'chiptune', 'gameboy', 'nes', 'snes', 'blocky',
+]
+
+const INTERACTIVE_TOOL_HINTS = [
+  'calculatrice', 'calculator', 'convertisseur', 'converter', 'minuteur', 'timer',
+  'chronometre', 'chronomètre', 'stopwatch', 'generateur', 'soundboard', 'synthetiseur',
+  'compteur', 'palette de couleur', 'color picker',
+]
+
 function hasAny(text: string, hints: string[]): boolean {
   return matchesAnyHint(text, hints)
 }
@@ -168,16 +181,23 @@ export function detectDesignArchetype(prompt: string, intent: CodeIntent): Desig
     return 'os_shell'
   }
 
+  // Retro / Minecraft / Pixel-art explicit style
+  if (hasAny(text, RETRO_PIXEL_HINTS) || ap?.styleHints?.some((s) => RETRO_PIXEL_HINTS.includes(s))) {
+    return 'retro_pixel_gaming'
+  }
+
   // Style hints take priority on visual archetypes.
-  // `styleHints` peut manquer sur un assetPlan partiel: l optional chaining doit
-  // porter sur le tableau lui-meme, sinon `.some` leve un TypeError et fait
-  // tomber toute la detection d archetype (donc la generation).
   if (hasAny(text, BRUTALIST_HINTS) || ap?.styleHints?.some((s) => BRUTALIST_HINTS.includes(s))) {
     return 'minimal_brutalist'
   }
 
   if (hasAny(text, SCROLL_3D_HINTS) || (ap?.wants3D && intent.projectType === 'static_web')) {
     return 'scroll_3d_journey'
+  }
+
+  // Interactive widgets / tools
+  if (hasAny(text, INTERACTIVE_TOOL_HINTS) || intent.features?.includes('interactive-widget')) {
+    return 'interactive_tool_widget'
   }
 
   if (hasAny(text, DATA_DENSE_HINTS)) return 'data_dense_enterprise'

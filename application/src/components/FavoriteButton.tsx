@@ -17,8 +17,8 @@
  *   compact? : version icon-only sans label.
  */
 import { useState } from 'react'
-import { usePromptLibraryStore } from '../stores/promptLibraryStore'
-import type { ModuleId } from '../types/app'
+import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 interface Props {
   prompt: string

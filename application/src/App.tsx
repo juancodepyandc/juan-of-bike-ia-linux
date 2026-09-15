@@ -868,7 +868,7 @@ export default function App() {
   }, [messages, historyByModule, xp, level, quizHistory, decks, cards])
 
   const renderModule = (id: ModuleId) => {
-    const View = VIEW_MAP[id]
+    const View = VIEW_MAP[id === 'video' ? 'conversation' : id]
     const meta = SPATIAL_MODULES.find((m) => m.id === id)
     return (
       <Suspense

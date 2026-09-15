@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { ExternalLink, Maximize2, Minimize2, Monitor, Smartphone, Tablet } from 'lucide-react'
-import { instrumentPreviewHtml } from './auroraV1CodeHelpers'
+import { instrumentPreviewHtml } from './auroraV1CodeHelpers.ts'
 
 type PreviewViewport = 'desktop' | 'tablet' | 'mobile'
 const VIEWPORT_WIDTH: Record<PreviewViewport, string> = {

@@ -250,7 +250,7 @@ describe('createMeshRescueClient', () => {
       fixtureSmoke: true,
       liveReference: false,
       strictMesh: true,
-      meshMap: { mechanical_belt_drive_motion: 'application/public/_pbr_test/pbr_pulley_proc.glb' },
+      meshMap: { mechanical_belt_drive_motion: 'application/output/3d/proc_pulley/pbr_pulley_proc.glb' },
     })
     assert.equal(calls[0].url, `${BASE}/api/3d/regression-suite`)
     assert.equal(calls[0].method, 'POST')
@@ -259,7 +259,7 @@ describe('createMeshRescueClient', () => {
       fixture_smoke: true,
       live_reference: false,
       strict_mesh: true,
-      mesh_map: { mechanical_belt_drive_motion: 'application/public/_pbr_test/pbr_pulley_proc.glb' },
+      mesh_map: { mechanical_belt_drive_motion: 'application/output/3d/proc_pulley/pbr_pulley_proc.glb' },
     })
     assert.equal(out.ok, true)
   })

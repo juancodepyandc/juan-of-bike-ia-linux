@@ -196,23 +196,31 @@ def eteindre_reflets_lunettes(bgr: np.ndarray, landmarks, bbox=None, log=print
     lum = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.int16)
     sel = zone > 0
     ref = float(np.median(lum[sel]))
+    bmr_peau = float(np.median((b - r)[sel]))
     # Un écran émet du bleu/cyan: la PEAU ne le fait jamais (son B-R est
     # franchement négatif). Le critère est donc l'inversion de teinte par
     # rapport à la peau environnante MESURÉE, plus un net surcroît de
     # luminance — aucun seuil absolu, une photo claire ou sombre se comporte
     # pareil. Le reflet de fenêtre/lampe (blanc, non bleu) est pris par le
     # second critère, spéculaire.
-    bmr_peau = float(np.median((b - r)[sel]))
-    reflet_ecran = ((b - r) > max(bmr_peau + 40.0, 8.0)) & (lum > ref * 1.4)
-    reflet_speculaire = lum > max(ref * 2.5, np.percentile(lum[sel], 99.5))
-    masque = ((reflet_ecran | reflet_speculaire).astype(np.uint8) * 255) & zone
-    n = int(np.count_nonzero(masque))
-    if n < 40:
-        return bgr, {"applique": False, "raison": "aucun reflet significatif"}
-    masque = cv2.dilate(masque, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
-                        iterations=2)
-    out = cv2.inpaint(bgr, masque, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
-    return out, {"applique": True, "px_reflet": n,
+    # Correction NON-DESTRUCTIVE du reflet d'écran bleu sur le verre :
+    # Au lieu d'un inpainting destructif (Telea) qui noie l'œil dans un flou laiteux,
+    # on soustrait l'excédent chromatique bleu du reflet pour retrouver la carnation
+    # et la transparence réelle. Les cils, l'iris, la pupille et les détails restent 100% NETS.
+    blue_excess = np.clip((b - np.maximum(g, r)) / 255.0, 0.0, 1.0) * (zone.astype(np.float32) / 255.0)
+    b_fixed = b.astype(np.float32) - blue_excess * (b.astype(np.float32) - g.astype(np.float32))
+    
+    # Inpainting subtil uniquement sur les éclats spéculaires purs (reflet blanc brûlé >99.5%)
+    reflet_spec = (lum > np.percentile(lum[sel], 99.2)).astype(np.uint8) * 255 & zone
+    bgr_corr = np.stack([b_fixed, g.astype(np.float32), r.astype(np.float32)], axis=2).clip(0, 255).astype(np.uint8)
+    
+    if np.count_nonzero(reflet_spec) > 20:
+        masque_spec = cv2.dilate(reflet_spec, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+        out = cv2.inpaint(bgr_corr, masque_spec, inpaintRadius=2, flags=cv2.INPAINT_TELEA)
+    else:
+        out = bgr_corr
+
+    return out, {"applique": True, "px_reflet": int(np.count_nonzero(blue_excess > 0.05)),
                  "bmr_peau": round(bmr_peau, 1), "luma_zone": round(ref, 1)}
 
 
@@ -297,6 +305,16 @@ def rectify_photo_for_3d(
         log("[photo_rectifier] detourage indisponible (%s) — image pleine conservee"
             % type(exc).__name__)
 
+    # `arr` n'etait DEFINI NULLE PART: utilise plus bas ligne ~324 (dans un try,
+    # donc avale en « filtrage logos/textes (name 'arr' is not defined) ») ET
+    # ligne ~339 HORS try — la fonction levait donc un NameError a chaque appel.
+    # Consequence: la rectification entiere n'a JAMAIS tourne. Ni le nettoyage
+    # des filigranes, ni surtout le CADRAGE qui ferme la silhouette — celui-la
+    # meme dont le commentaire ci-dessous dit qu'il existe pour empecher le
+    # « toujours presque plat ». Corrige le 03/09.
+    rgba = rgba.convert("RGBA")
+    arr = np.array(rgba)
+
     # CADRE CARRÉ AVEC MARGE GARANTIE — la silhouette doit être FERMÉE.
     # Mesuré sur ce selfie: le sujet occupait 77% du cadre et touchait les
     # bords (100% en bas, ~30% de chaque côté). Une silhouette qui sort du
@@ -308,12 +326,51 @@ def rectify_photo_for_3d(
     # fraction bornée, sans jamais redimensionner ni déformer les pixels
     # réels. Ce qui sortait du cadre d'origine reste absent — rien n'est
     # inventé; on rend seulement le contour exploitable.
-    arr = np.array(rgba)
+    # NETTOYAGE DES TEXTES ET LOGOS PARASITES DÉCONNECTÉS.
+    # Les images transparentes du web (pngitem, pikpng...) contiennent souvent
+    # un logo ou texte de franchise (ex: "FAIRY TAIL", "PIKPNG") dans un coin.
+    # Si on le laisse, la reconstruction 3D sculpte ce texte flottant dans le maillage.
+    try:
+        bin_mask = (arr[..., 3] > 15).astype(np.uint8)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bin_mask, connectivity=8)
+        if num_labels > 2:
+            areas = stats[1:, cv2.CC_STAT_AREA]
+            max_area = float(areas.max())
+            for comp_idx in range(1, num_labels):
+                c_area = float(stats[comp_idx, cv2.CC_STAT_AREA])
+                c_w = float(stats[comp_idx, cv2.CC_STAT_WIDTH])
+                c_h = float(stats[comp_idx, cv2.CC_STAT_HEIGHT])
+                is_text_aspect = (c_w > 2.5 * c_h and c_area < 0.20 * max_area) or (c_h > 2.5 * c_w and c_area < 0.10 * max_area)
+                if c_area < 0.08 * max_area or is_text_aspect:
+                    arr[labels == comp_idx, 3] = 0
+            rgba = Image.fromarray(arr)
+    except Exception as _cc_exc:
+        log(f"[photo_rectifier] filtrage logos/textes ({_cc_exc})")
+
     ys, xs = np.where(arr[..., 3] > 10)
+    # NE PADDER QUE SI LA SILHOUETTE EN A BESOIN. Ce canevas carre existe
+    # pour FERMER une silhouette qui touche les bords (sinon la
+    # reconstruction rend une dalle). Applique a un sujet qui remplit deja
+    # son cadre — un personnage debout occupe ~96% de la hauteur d'un
+    # portrait — il ne ferme rien et AJOUTE du vide sur les cotes: le moteur
+    # travaillant a resolution fixe, le sujet ressort alors PLUS PETIT, donc
+    # moins detaille (mesure du 28/08: 1024x1408 -> 1645x1645 sans un pixel
+    # gagne sur le personnage).
     if len(xs):
         y0, y1, x0, x1 = int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())
+        _touche = bool((arr[0, :, 3] > 10).any() or (arr[-1, :, 3] > 10).any()
+                       or (arr[:, 0, 3] > 10).any() or (arr[:, -1, 3] > 10).any())
+        _rempli = max(y1 - y0, x1 - x0) / max(arr.shape[0], arr.shape[1])
         sujet = rgba.crop((x0, y0, x1 + 1, y1 + 1))
         occupation = float(os.environ.get("AURORA_RECTIFIER_OCCUPATION", "0.82"))
+        if not _touche and _rempli >= occupation:
+            log("[photo_rectifier] cadre conserve — silhouette deja fermee et "
+                "sujet a %.0f%% du cadre (un canevas carre le retrecirait)"
+                % (100 * _rempli))
+            rapport["cadrage"] = {"inchange": True, "remplissage": round(_rempli, 3)}
+            _cadre_ok = True
+        else:
+            _cadre_ok = False
         cote = int(max(sujet.width, sujet.height) / max(0.1, min(occupation, 0.95)))
         canevas = Image.new("RGBA", (cote, cote), (0, 0, 0, 0))
         canevas.paste(sujet, ((cote - sujet.width) // 2,
@@ -326,9 +383,10 @@ def rectify_photo_for_3d(
                 "gauche": bool((arr[:, 0, 3] > 10).any()),
                 "droite": bool((arr[:, -1, 3] > 10).any())},
             "canevas": [cote, cote], "occupation_cible": occupation}
-        log("[photo_rectifier] cadre carre %dpx, marge garantie autour du sujet "
-            "(silhouette fermee pour la reconstruction)" % cote)
-        rgba = canevas
+        if not _cadre_ok:
+            log("[photo_rectifier] cadre carre %dpx, marge garantie autour du sujet "
+                "(silhouette fermee pour la reconstruction)" % cote)
+            rgba = canevas
 
     rgba.save(output_rgba_path)
     if output_white_path:

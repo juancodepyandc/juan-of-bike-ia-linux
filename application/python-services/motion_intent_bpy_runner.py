@@ -554,18 +554,8 @@ def bake_oled_screen(intent, scene, fps):
 
 
 def _detect_creature_topology(mesh_obj, hint=None):
-    """Decide which kind of skeleton fits the imported mesh.
-
-    Cheap heuristic: bbox aspect ratio + symmetry hint.
-      - height >> width   -> humanoid (vertical biped)
-      - width  >> height  -> quadruped (horizontal animal)
-      - length >> all     -> serpent (long/snake-like)
-      - flat/cube         -> none (fallback breathing)
-
-    The user-provided hint (creature_anim.locomotion) wins when it is one of
-    {humanoid, quadruped, serpent}; "auto" or missing -> heuristic.
-    """
-    if hint in ("humanoid", "quadruped", "serpent"):
+    """Decide which kind of skeleton fits the imported mesh."""
+    if hint in ("humanoid", "quadruped", "serpent", "winged_creature", "arthropod"):
         return hint
     dx, dy, dz = mesh_obj.dimensions.x, mesh_obj.dimensions.y, mesh_obj.dimensions.z
     if max(dx, dy, dz) < 1e-4:
@@ -573,17 +563,22 @@ def _detect_creature_topology(mesh_obj, hint=None):
     long_axis = max(dx, dy, dz)
     short_axis = max(min(dx, dy, dz), 1e-4)
     aspect = long_axis / short_axis
+    # Winged creature: wide wingspan relative to depth and height
+    if dx >= dy * 1.25 and dx >= dz * 1.1:
+        return "winged_creature"
+    # Arthropod / insect: wide flat multi-leg silhouette
+    if dz < min(dx, dy) * 0.65 and aspect >= 1.2:
+        return "arthropod"
     # Vertical = Z dominant
-    if dz >= dx and dz >= dy and aspect >= 1.6:
+    if dz >= dx and dz >= dy and aspect >= 1.4:
         return "humanoid"
     # Horizontal: X or Y dominant, Z is "low"
     horizontal = max(dx, dy)
     if horizontal >= dz * 1.4 and aspect >= 1.6:
-        # Long thin -> serpent, otherwise quadruped
         if aspect >= 4.0:
             return "serpent"
         return "quadruped"
-    return "none"
+    return "winged_creature" if dx >= dy else "quadruped"
 
 
 def _add_breathing_scale_loop(target, fps, bpm):
@@ -605,26 +600,15 @@ def _add_breathing_scale_loop(target, fps, bpm):
 
 
 def _rigify_creature_skeleton(mesh, topology, base_loop, bpm, fps):
-    """Build a topology-appropriate Rigify rig + bake idle/walk cycles.
-
-    Returns (rig_obj_or_none, total_frames, info_dict). On any Rigify error
-    returns (None, 0, {error}); the caller is expected to graceful-degrade.
-
-    Rigify ships with three relevant metarig presets:
-      - `armature_human_metarig_add`     (humanoid)
-      - `armature_basic_quadruped_metarig_add` (quadruped)
-      - For serpent we manually build a 6-bone spline chain (rigify has no
-        snake metarig as of 5.1 — snakes need spine.basic_chain via the
-        rigify_types module which is overkill for a baked NLA cycle).
-    """
+    """Build a topology-appropriate Rigify / Armature rig + bake idle/walk/flap cycles."""
     info = {"topology": topology, "base_loop": base_loop, "bpm": bpm}
     try:
         bpy.ops.preferences.addon_enable(module="rigify")
-    except Exception as exc:
-        return None, 0, {"error": "rigify enable failed: %s" % exc, **info}
+    except Exception:
+        pass
 
     # Center the mesh at origin so the metarig lines up
-    if topology in ("humanoid", "quadruped"):
+    if topology in ("humanoid", "quadruped", "winged_creature", "arthropod"):
         bpy.ops.object.select_all(action="DESELECT")
         mesh.select_set(True)
         bpy.context.view_layer.objects.active = mesh
@@ -636,14 +620,91 @@ def _rigify_creature_skeleton(mesh, topology, base_loop, bpm, fps):
             bpy.ops.object.armature_human_metarig_add()
             metarig = bpy.context.object
         elif topology == "quadruped":
-            # Rigify quadruped operator (Blender 4.x+)
             try:
                 bpy.ops.object.armature_basic_quadruped_metarig_add()
             except Exception:
-                # Some builds register it under a different name
                 bpy.ops.object.armature_basic_human_metarig_add()
             metarig = bpy.context.object
-        elif topology == "serpent":
+        elif topology == "winged_creature":
+            bpy.ops.object.armature_add(enter_editmode=True)
+            metarig = bpy.context.object
+            arm = metarig.data
+            arm.edit_bones.remove(arm.edit_bones[0])
+            dx, dy, dz = mesh.dimensions.x, mesh.dimensions.y, mesh.dimensions.z
+            span_x = dx * 0.45
+            span_z = dz * 0.35
+            b_root = arm.edit_bones.new("root_body")
+            b_root.head = (0, -dy * 0.1, dz * 0.2)
+            b_root.tail = (0, dy * 0.1, dz * 0.5)
+            b_head = arm.edit_bones.new("head")
+            b_head.head = (0, dy * 0.1, dz * 0.5)
+            b_head.tail = (0, dy * 0.25, dz * 0.75)
+            b_head.parent = b_root
+            w_l1 = arm.edit_bones.new("wing_root.L")
+            w_l1.head = (dx * 0.08, -dy * 0.05, dz * 0.45)
+            w_l1.tail = (span_x * 0.6, -dy * 0.08, dz * 0.45 + span_z * 0.5)
+            w_l1.parent = b_root
+            w_l2 = arm.edit_bones.new("wing_tip.L")
+            w_l2.head = w_l1.tail
+            w_l2.tail = (span_x, -dy * 0.1, dz * 0.45 + span_z)
+            w_l2.parent = w_l1
+            w_l2.use_connect = True
+            w_r1 = arm.edit_bones.new("wing_root.R")
+            w_r1.head = (-dx * 0.08, -dy * 0.05, dz * 0.45)
+            w_r1.tail = (-span_x * 0.6, -dy * 0.08, dz * 0.45 + span_z * 0.5)
+            w_r1.parent = b_root
+            w_r2 = arm.edit_bones.new("wing_tip.R")
+            w_r2.head = w_r1.tail
+            w_r2.tail = (-span_x, -dy * 0.1, dz * 0.45 + span_z)
+            w_r2.parent = w_r1
+            w_r2.use_connect = True
+            leg_l = arm.edit_bones.new("leg.L")
+            leg_l.head = (dx * 0.15, 0, dz * 0.15)
+            leg_l.tail = (dx * 0.15, 0, 0)
+            leg_l.parent = b_root
+            leg_r = arm.edit_bones.new("leg.R")
+            leg_r.head = (-dx * 0.15, 0, dz * 0.15)
+            leg_r.tail = (-dx * 0.15, 0, 0)
+            leg_r.parent = b_root
+            bpy.ops.object.mode_set(mode="OBJECT")
+            info["winged_creature_rig"] = True
+        elif topology == "arthropod":
+            bpy.ops.object.armature_add(enter_editmode=True)
+            metarig = bpy.context.object
+            arm = metarig.data
+            arm.edit_bones.remove(arm.edit_bones[0])
+            dx, dy, dz = mesh.dimensions.x, mesh.dimensions.y, mesh.dimensions.z
+            span_x = dx * 0.45
+            b_thorax = arm.edit_bones.new("thorax")
+            b_thorax.head = (0, -dy * 0.15, dz * 0.3)
+            b_thorax.tail = (0, dy * 0.15, dz * 0.3)
+            b_head = arm.edit_bones.new("head")
+            b_head.head = (0, dy * 0.15, dz * 0.3)
+            b_head.tail = (0, dy * 0.4, dz * 0.3)
+            b_head.parent = b_thorax
+            b_abd = arm.edit_bones.new("abdomen")
+            b_abd.head = (0, -dy * 0.15, dz * 0.3)
+            b_abd.tail = (0, -dy * 0.45, dz * 0.28)
+            b_abd.parent = b_thorax
+            w_l = arm.edit_bones.new("wing.L")
+            w_l.head = (dx * 0.1, 0, dz * 0.4)
+            w_l.tail = (span_x, -dy * 0.1, dz * 0.45 + dz * 0.3)
+            w_l.parent = b_thorax
+            w_r = arm.edit_bones.new("wing.R")
+            w_r.head = (-dx * 0.1, 0, dz * 0.4)
+            w_r.tail = (-span_x, -dy * 0.1, dz * 0.45 + dz * 0.3)
+            w_r.parent = b_thorax
+            for y_off, name_sfx in [(dy * 0.2, "front"), (0, "mid"), (-dy * 0.2, "rear")]:
+                leg_l = arm.edit_bones.new("leg_%s.L" % name_sfx)
+                leg_l.head = (dx * 0.18, y_off, dz * 0.25)
+                leg_l.tail = (dx * 0.45, y_off, 0)
+                leg_l.parent = b_thorax
+                leg_r = arm.edit_bones.new("leg_%s.R" % name_sfx)
+                leg_r.head = (-dx * 0.18, y_off, dz * 0.25)
+                leg_r.tail = (-dx * 0.45, y_off, 0)
+                leg_r.parent = b_thorax
+            bpy.ops.object.mode_set(mode="OBJECT")
+            info["arthropod_rig"] = True
             # iter6.C: build a denser 8-segment spine chain (smoother curve fit
             # for IK Spline). Length is split along whichever horizontal axis
             # is longer so we follow the actual snake orientation.
@@ -1057,6 +1118,37 @@ def _rigify_creature_skeleton(mesh, topology, base_loop, bpm, fps):
                 if name.startswith("snake_"):
                     bone_targets.append(("snake_%d" % i, name, "rotation_quaternion", 2, 0.15))
             info["serpent_fallback_fk"] = True
+    elif topology == "winged_creature":
+        root = _first_match("root_body", "spine", "body") or available_bones[0]
+        w_l1 = _first_match("wing_root.l", "wing.l", "wing_l")
+        w_r1 = _first_match("wing_root.r", "wing.r", "wing_r")
+        w_l2 = _first_match("wing_tip.l", "wing_flex.l")
+        w_r2 = _first_match("wing_tip.r", "wing_flex.r")
+        bone_targets.append(("breathe", root, "location", 2, 0.03))
+        if w_l1: bone_targets.append(("wing_flap_l", w_l1, "rotation_quaternion", 0, 0.55))
+        if w_r1: bone_targets.append(("wing_flap_r", w_r1, "rotation_quaternion", 0, 0.55))
+        if w_l2: bone_targets.append(("wing_flex_l", w_l2, "rotation_quaternion", 0, 0.35))
+        if w_r2: bone_targets.append(("wing_flex_r", w_r2, "rotation_quaternion", 0, 0.35))
+    elif topology == "arthropod":
+        root = _first_match("thorax", "body", "root") or available_bones[0]
+        w_l = _first_match("wing.l", "wing_root.l")
+        w_r = _first_match("wing.r", "wing_root.r")
+        bone_targets.append(("breathe", root, "location", 2, 0.015))
+        if w_l: bone_targets.append(("wing_flap_l", w_l, "rotation_quaternion", 0, 0.70))
+        if w_r: bone_targets.append(("wing_flap_r", w_r, "rotation_quaternion", 0, 0.70))
+        # 6-legged tripod gait
+        l_fl = _first_match("leg_front.l", "leg_fl")
+        l_fr = _first_match("leg_front.r", "leg_fr")
+        l_ml = _first_match("leg_mid.l", "leg_ml")
+        l_mr = _first_match("leg_mid.r", "leg_mr")
+        l_rl = _first_match("leg_rear.l", "leg_rl")
+        l_rr = _first_match("leg_rear.r", "leg_rr")
+        if l_fl: bone_targets.append(("walk_l", l_fl, "location", 1, 0.04))
+        if l_fr: bone_targets.append(("walk_r", l_fr, "location", 1, 0.04))
+        if l_ml: bone_targets.append(("walk_r", l_ml, "location", 1, 0.04))
+        if l_mr: bone_targets.append(("walk_l", l_mr, "location", 1, 0.04))
+        if l_rl: bone_targets.append(("walk_l", l_rl, "location", 1, 0.04))
+        if l_rr: bone_targets.append(("walk_r", l_rr, "location", 1, 0.04))
 
     # Apply keyframes
     bones_animated = 0
@@ -1084,6 +1176,26 @@ def _rigify_creature_skeleton(mesh, topology, base_loop, bpm, fps):
                     if axis_idx == 0: qx = val
                     elif axis_idx == 1: qy = val
                     else: qz = val
+                elif kind == "wing_flap_l":
+                    val = math.sin(2 * math.pi * phase * 2.0) * amplitude
+                    qw = 1.0 - abs(val) * 0.5
+                    qx = val
+                    qy = qz = 0.0
+                elif kind == "wing_flap_r":
+                    val = -math.sin(2 * math.pi * phase * 2.0) * amplitude
+                    qw = 1.0 - abs(val) * 0.5
+                    qx = val
+                    qy = qz = 0.0
+                elif kind == "wing_flex_l":
+                    val = math.sin(2 * math.pi * phase * 2.0 - 0.5) * amplitude
+                    qw = 1.0 - abs(val) * 0.5
+                    qx = val
+                    qy = qz = 0.0
+                elif kind == "wing_flex_r":
+                    val = -math.sin(2 * math.pi * phase * 2.0 - 0.5) * amplitude
+                    qw = 1.0 - abs(val) * 0.5
+                    qx = val
+                    qy = qz = 0.0
                 elif kind.startswith("snake_"):
                     seg_idx = int(kind.split("_")[1])
                     val = math.sin(2 * math.pi * phase + seg_idx * 0.6) * amplitude
@@ -1226,7 +1338,7 @@ def bake_creature_organic(intent, scene, fps):
 
     # Try Rigify path first when topology is recognised
     rigify_info = None
-    if topology in ("humanoid", "quadruped", "serpent"):
+    if topology in ("humanoid", "quadruped", "serpent", "winged_creature", "arthropod"):
         try:
             rig, total_frames, rigify_info = _rigify_creature_skeleton(
                 target, topology, base_loop, bpm, fps,

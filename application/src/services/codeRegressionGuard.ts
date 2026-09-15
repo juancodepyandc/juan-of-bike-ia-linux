@@ -337,7 +337,12 @@ export function compareCodeCapabilities(
     }
   }
 
-  pushMissingMapEntries(violations, 'removed_script', before.packageScripts, after.packageScripts)
+  // Verifier que les scripts cles du package.json (dev, build, test...) ne sont pas supprimes
+  for (const scriptKey of Object.keys(before.packageScripts)) {
+    if (!(scriptKey in after.packageScripts)) {
+      violations.push({ kind: 'removed_script', detail: `${scriptKey}:${before.packageScripts[scriptKey]}` })
+    }
+  }
   // Les exports et les points d entree sont indexes PAR CHEMIN: un renommage
   // les deplacerait tous sans qu aucun ne disparaisse. On reindexe donc avant
   // de comparer, sinon un simple renommage se lit comme une amputation.

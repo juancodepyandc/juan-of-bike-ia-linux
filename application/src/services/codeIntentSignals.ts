@@ -31,12 +31,35 @@ export const FRAMEWORK_SIGNALS: Record<string, { projectType: CodeProjectType; f
   'ruby on rails': { projectType: 'fullstack_rails', frameworks: ['rails'], languages: ['ruby'] },
   '.net': { projectType: 'api_dotnet', frameworks: ['.net'], languages: ['csharp'] },
   'asp.net': { projectType: 'api_dotnet', frameworks: ['asp.net'], languages: ['csharp'] },
-  // Mobile
+  // Mobile & Cross-platform APK
   'react native': { projectType: 'mobile_rn', frameworks: ['react-native'], languages: ['typescript'] },
+  'expo': { projectType: 'mobile_rn', frameworks: ['expo', 'react-native'], languages: ['typescript'] },
   'flutter': { projectType: 'mobile_flutter', frameworks: ['flutter'], languages: ['dart'] },
-  // Desktop
+  'flet': { projectType: 'mobile_flutter', frameworks: ['flet'], languages: ['python'] },
+  'kivy': { projectType: 'mobile_android', frameworks: ['kivy'], languages: ['python'] },
+  'compose multiplatform': { projectType: 'mobile_android', frameworks: ['compose-multiplatform'], languages: ['kotlin'] },
+  'jetpack compose': { projectType: 'mobile_android', frameworks: ['jetpack-compose'], languages: ['kotlin'] },
+  'swiftui': { projectType: 'mobile_ios', frameworks: ['swiftui'], languages: ['swift'] },
+  'capacitor': { projectType: 'mobile_rn', frameworks: ['capacitor'], languages: ['typescript', 'javascript'] },
+  'maui': { projectType: 'mobile_rn', frameworks: ['maui'], languages: ['csharp'] },
+  // Desktop & Native GUI
   'electron': { projectType: 'desktop_electron', frameworks: ['electron'], languages: ['typescript'] },
   'tauri': { projectType: 'desktop_tauri', frameworks: ['tauri'], languages: ['typescript', 'rust'] },
+  'customtkinter': { projectType: 'desktop_app', frameworks: ['customtkinter'], languages: ['python'] },
+  'tkinter': { projectType: 'desktop_app', frameworks: ['tkinter'], languages: ['python'] },
+  'pyqt': { projectType: 'desktop_app', frameworks: ['pyqt'], languages: ['python'] },
+  'pyqt5': { projectType: 'desktop_app', frameworks: ['pyqt5'], languages: ['python'] },
+  'pyqt6': { projectType: 'desktop_app', frameworks: ['pyqt6'], languages: ['python'] },
+  'pyside': { projectType: 'desktop_app', frameworks: ['pyside'], languages: ['python'] },
+  'pyside6': { projectType: 'desktop_app', frameworks: ['pyside6'], languages: ['python'] },
+  'slint': { projectType: 'desktop_tauri', frameworks: ['slint'], languages: ['rust'] },
+  'iced': { projectType: 'desktop_app', frameworks: ['iced'], languages: ['rust'] },
+  'egui': { projectType: 'desktop_app', frameworks: ['egui'], languages: ['rust'] },
+  'qt': { projectType: 'desktop_app', frameworks: ['qt'], languages: ['cpp'] },
+  'fyne': { projectType: 'desktop_app', frameworks: ['fyne'], languages: ['go'] },
+  'wails': { projectType: 'desktop_app', frameworks: ['wails'], languages: ['go', 'typescript'] },
+  'avalonia': { projectType: 'desktop_app', frameworks: ['avalonia'], languages: ['csharp'] },
+  'wpf': { projectType: 'desktop_app', frameworks: ['wpf'], languages: ['csharp'] },
   // Data/ML
   'pandas': { projectType: 'data_python', frameworks: ['pandas'], languages: ['python'] },
   'numpy': { projectType: 'data_python', frameworks: ['numpy'], languages: ['python'] },
@@ -102,16 +125,20 @@ export const WEB_SIGNALS = new Set([
 ])
 
 export const MOBILE_SIGNALS = new Set([
-  'mobile', 'android', 'ios', 'iphone', 'ipad',
-  'react native', 'flutter',
+  'mobile', 'android', 'ios', 'iphone', 'ipad', 'smartphone',
+  'apk', 'apk universel', 'universal apk', 'appli mobile', 'application mobile',
+  'mobile app', 'cross platform mobile', 'cross-platform mobile',
+  'react native', 'flutter', 'flet', 'kivy', 'compose multiplatform', 'capacitor',
 ])
 
 export const DESKTOP_SIGNALS = new Set([
   'application de bureau', 'app de bureau', 'desktop app', 'application desktop',
-  'application windows', 'app windows', 'windows app', 'application pc',
-  'native app', 'application native', 'client lourd',
-  'offline app', 'application locale', 'local app',
-  'tauri', 'electron', 'winui', 'win32', 'gtk', 'qt',
+  'application windows', 'app windows', 'windows app', 'application pc', 'app pc',
+  'application mac', 'app mac', 'application linux', 'app linux',
+  'native app', 'application native', 'client lourd', 'logiciel',
+  'offline app', 'application locale', 'local app', 'programme bureau',
+  'interface graphique', 'application graphique', 'gui',
+  'tauri', 'electron', 'winui', 'win32', 'gtk', 'qt', 'tkinter', 'customtkinter', 'pyqt', 'pyside', 'fyne', 'wails', 'avalonia', 'wpf', 'slint',
 ])
 
 export const API_SIGNALS = new Set([
@@ -130,6 +157,22 @@ export const MULTIPAGE_SIGNALS = new Set([
   'saas', 'crm', 'erp', 'cms',
   'routing', 'router', 'navigation',
   'pages', 'tableau de bord',
+])
+
+export const INTERACTIVE_WIDGET_SIGNALS = new Set([
+  'calculatrice', 'calculateur', 'calculator',
+  'convertisseur', 'converter',
+  'minuteur', 'timer', 'chronometre', 'chronomètre', 'stopwatch',
+  'generateur', 'générateur', 'generator',
+  'synthetiseur', 'synthétiseur', 'synthesizer', 'synth',
+  'drum machine', 'boite a rythme', 'boîte à rythme',
+  'visualiseur', 'visualizer',
+  'lecteur audio', 'audio player', 'music player',
+  'soundboard', 'table d harmonie',
+  'palette de couleur', 'color picker',
+  'horloge', 'clock', 'world clock',
+  'compteur', 'counter',
+  'tableau blanc', 'whiteboard',
 ])
 
 // ---------------------------------------------------------------------------

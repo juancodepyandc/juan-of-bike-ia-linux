@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import '../styles/aurora-v4.css'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
-import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
+import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
 
 type ShellModuleId = ModuleId | 'cowork' | 'voice'
 

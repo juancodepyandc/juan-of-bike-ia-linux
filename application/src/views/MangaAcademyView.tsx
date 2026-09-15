@@ -1,15 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import VoicePushToTalk from '../components/VoicePushToTalk'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft, Download, FileText, FolderPlus, Loader2, Plus, Printer, RefreshCw, Send, Sparkles, Timer, Trash2, Upload, Wand2, X,
 } from 'lucide-react'
-import { useAcademyStore, type AcademyItem, type ItemKind, type SubCategory } from '../stores/academyStore'
-import { useGamificationStore } from '../stores/gamificationStore'
-import { useAppStore } from '../stores/appStore'
-import { ollamaChat } from '../hooks/useTauri'
-import MarkdownPro from '../components/MarkdownPro'
-import { printElement } from '../utils/exportPdf'
+import { useAcademyStore, type AcademyItem, type ItemKind, type SubCategory } from '../stores/academyStore.ts'
+import { useGamificationStore } from '../stores/gamificationStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import { printElement } from '../utils/exportPdf.ts'
 const ExamBlancPanel = lazy(() => import('../components/ExamBlancPanel'))
 const ProgressStats = lazy(() => import('../components/ProgressStats'))
 const LeitnerReviewPanel = lazy(() => import('../components/LeitnerReviewPanel'))

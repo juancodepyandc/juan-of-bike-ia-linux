@@ -47,3 +47,29 @@ test('image generation lock release cannot delete another active render', () => 
   releaseImageGenerationLock('run-a', storage)
   assert.equal(storage.getItem(IMAGE_GENERATION_LOCK_KEY), null)
 })
+
+test('image generation lock treats a zero timestamp as an active lock', () => {
+  const storage = memoryStorage()
+  assert.equal(claimImageGenerationLock('first', { storage, now: 0, token: 'first' }), 'first')
+  assert.equal(claimImageGenerationLock('second', { storage, now: 1, token: 'second' }), null)
+})
+
+test('image generation lock recovers from invalid stored timestamps', () => {
+  const storage = memoryStorage()
+  storage.setItem(IMAGE_GENERATION_LOCK_KEY, JSON.stringify({ token: 'invalid', startedAt: '1000' }))
+  assert.equal(claimImageGenerationLock('next', { storage, now: 2000, token: 'next' }), 'next')
+})
+
+test('image generation lock tolerates a denied localStorage getter', (t) => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    get() { throw new DOMException('Storage unavailable', 'SecurityError') },
+  })
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor)
+    else Reflect.deleteProperty(globalThis, 'localStorage')
+  })
+  assert.equal(claimImageGenerationLock('first', { token: 'first' }), 'first')
+  assert.doesNotThrow(() => releaseImageGenerationLock('first'))
+})

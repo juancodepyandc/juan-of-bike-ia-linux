@@ -14,9 +14,9 @@
  * les évals à venir, et au parcours builder (Pass 8) de prioriser le
  * chapitre concerné.
  */
-import { ollamaChat } from '../hooks/useTauri'
-import { useAppStore } from '../stores/appStore'
-import type { HarvestDevoirItem } from './entHarvestService'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import type { HarvestDevoirItem } from './entHarvestService.ts'
 
 export type EvalKind =
   | 'eval'           // contrôle, DST, DS, interro, éval certifiante

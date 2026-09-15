@@ -16,7 +16,7 @@
  *   error      head tilt + sweat drop
  */
 import { useEffect, useRef, useState } from 'react'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 import {
   getAgent,
   getAvatarUrl,
@@ -24,7 +24,7 @@ import {
   type AgentState,
   type AuroraAgent,
   type ProductionAgentId,
-} from '../services/auroraAgents'
+} from '../services/auroraAgents.ts'
 
 // v82n2: map runtime state (8) → legacy mascot state (5) for CSS/animations.
 function toMascotState(s: AgentRuntimeState | AgentState | undefined): AgentState {

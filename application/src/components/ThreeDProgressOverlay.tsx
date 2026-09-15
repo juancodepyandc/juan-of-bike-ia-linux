@@ -24,7 +24,7 @@
  * rerendered when those change.
  */
 import { useEffect, useRef, useState } from 'react'
-import { emitGenerationFx } from './generationFx/fxBus'
+import { emitGenerationFx } from './generationFx/fxBus.ts'
 
 export type ThreeDProgressProps = {
   active: boolean

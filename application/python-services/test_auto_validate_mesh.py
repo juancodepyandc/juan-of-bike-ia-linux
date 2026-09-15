@@ -73,26 +73,70 @@ class PrimaryFailureTests(unittest.TestCase):
 
 
 class RetryGraphTests(unittest.TestCase):
+    """Graphe de reprise apres echec de generation.
 
-    def test_hunyuan_color_failure_to_dreamgaussian(self):
-        rec = recommend_next_pipeline("hunyuan3d", ["color_richness"])
-        self.assertEqual(rec["next_pipeline"], "dreamgaussian")
+    Ces tests interrogeaient `hunyuan3d`, un generateur qui n est PLUS une
+    entree du graphe : celui-ci a ete migre vers `trellis2`, seule voie de
+    reconstruction conservee (le commentaire de RETRY_GRAPH le documente).
+    Les trois tests rendaient donc `None` et echouaient a chaque execution
+    depuis la migration — une suite durablement rouge ne signale plus rien.
+    Ils portent desormais sur les cles reellement presentes, et un test de
+    COUVERTURE verifie que le graphe couvre chaque generateur declare.
+    """
 
-    def test_hunyuan_aspect_failure_to_dreamgaussian(self):
-        rec = recommend_next_pipeline("hunyuan3d", ["silhouette_aspect"])
-        self.assertEqual(rec["next_pipeline"], "dreamgaussian")
-
-    def test_hunyuan_manifold_to_postprocess(self):
-        rec = recommend_next_pipeline("hunyuan3d", ["manifold_health"])
+    def test_trellis2_manifold_to_postprocess(self):
+        rec = recommend_next_pipeline("trellis2", ["manifold_health"])
         self.assertEqual(rec["next_pipeline"], "mesh_postprocess")
+
+    def test_trellis2_color_stays(self):
+        # Pas de second generateur vers lequel basculer : l echec de couleur
+        # remonte tel quel, et la RAISON doit le dire.
+        rec = recommend_next_pipeline("trellis2", ["color_richness"])
+        self.assertIsNone(rec["next_pipeline"])
+        self.assertIn("no retry path", rec["reason"])
+
+    def test_trellis2_aspect_stays(self):
+        rec = recommend_next_pipeline("trellis2", ["silhouette_aspect"])
+        self.assertIsNone(rec["next_pipeline"])
 
     def test_dreamgaussian_to_procedural(self):
         rec = recommend_next_pipeline("dreamgaussian", ["color_richness"])
         self.assertEqual(rec["next_pipeline"], "procedural_or_multiview")
 
-    def test_no_failures_returns_none(self):
-        rec = recommend_next_pipeline("hunyuan3d", [])
+    def test_dreamgaussian_manifold_to_postprocess(self):
+        rec = recommend_next_pipeline("dreamgaussian", ["manifold_health"])
+        self.assertEqual(rec["next_pipeline"], "mesh_postprocess")
+
+    def test_mesh_postprocess_est_le_dernier_recours(self):
+        rec = recommend_next_pipeline("mesh_postprocess", ["manifold_health"])
         self.assertIsNone(rec["next_pipeline"])
+
+    def test_no_failures_returns_none(self):
+        rec = recommend_next_pipeline("trellis2", [])
+        self.assertIsNone(rec["next_pipeline"])
+        self.assertEqual(rec["reason"], "no failed axes")
+
+    def test_chaque_generateur_declare_a_une_entree_pour_chaque_axe(self):
+        """Couverture : tout couple (generateur, axe) doit etre DECIDE.
+
+        Une cle absente et une cle a None se comportent pareil a l execution
+        — aucune reprise — mais ne veulent pas dire la meme chose : l une est
+        un choix, l autre un oubli. C est cet oubli qui laisse un echec de
+        generation sans suite. On exige donc une entree EXPLICITE.
+        """
+        from auto_validate_mesh import RETRY_GRAPH
+        generateurs = sorted({g for (g, _axe) in RETRY_GRAPH})
+        axes = ("color_richness", "silhouette_aspect", "manifold_health")
+        manquants = [(g, a) for g in generateurs for a in axes
+                     if (g, a) not in RETRY_GRAPH]
+        self.assertEqual(
+            manquants, [],
+            f"couples sans decision explicite dans RETRY_GRAPH : {manquants}")
+
+    def test_un_generateur_inconnu_ne_leve_pas(self):
+        rec = recommend_next_pipeline("generateur_inexistant", ["color_richness"])
+        self.assertIsNone(rec["next_pipeline"])
+        self.assertIn("no retry path", rec["reason"])
 
 
 class Cat1AutoValidateTests(unittest.TestCase):

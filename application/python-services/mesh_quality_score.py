@@ -89,6 +89,20 @@ AXIS_HARD_FLOORS: dict[str, int] = {
     "color_richness":    25,
     "silhouette_aspect": 40,
     "manifold_health":   30,
+    # La DENSITE n avait aucun plancher: elle ne pesait que 20 % de la note
+    # globale et ne pouvait donc jamais bloquer a elle seule une livraison.
+    # Mesure du defaut: une icosphere de 12 SOMMETS (20 faces), correctement
+    # coloriee, sortait a 67,8 sur 100 avec `retry_recommended = False` et
+    # aucun axe en echec. Le detail de l axe disait pourtant
+    # `passes_floor: False` — l information existait et etait jetee. Un
+    # maillage de 20 faces partait comme modele 3D fini.
+    #
+    # Calibrage du seuil sur les livraisons REELLES: les 26 GLB presents dans
+    # output/3d comptent de 65 858 a 5 610 029 sommets et notent TOUS la
+    # densite a 100. Un plancher a 20 — soit un cinquieme du plancher de
+    # sommets declare pour la famille, environ 1 000 sommets en generique —
+    # n en rejette aucun. Il n arrete que le degenere.
+    "geometric_density": 20,
 }
 
 
@@ -438,6 +452,7 @@ def score_mesh(path: str | Path, kind: str = "generic") -> dict:
         "color_richness": color_score,
         "silhouette_aspect": aspect_score,
         "manifold_health": manifold_score,
+        "geometric_density": density_score,
     }
     failed_axes = [
         axis for axis, floor in AXIS_HARD_FLOORS.items()

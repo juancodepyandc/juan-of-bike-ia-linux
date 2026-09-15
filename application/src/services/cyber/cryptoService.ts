@@ -51,39 +51,48 @@ export function vigenere(text: string, key: string, decrypt = false) {
     .join('')
 }
 
-export function railFence(text: string, rails: number, decrypt = false) {
-  if (rails <= 1) return text
-  if (!decrypt) {
-    const fence: string[][] = Array.from({ length: rails }, () => [])
-    let row = 0
-    let dir = 1
-    for (const ch of text) {
-      fence[row].push(ch)
-      if (row === 0) dir = 1
-      else if (row === rails - 1) dir = -1
-      row += dir
-    }
-    return fence.flat().join('')
-  }
-  const len = text.length
+/**
+ * Zigzag des rangees pour `n` unites de texte. Extrait pour que le
+ * chiffrement et le dechiffrement partagent EXACTEMENT le meme parcours.
+ */
+function railPattern(n: number, rails: number): number[] {
   const pattern: number[] = []
   let row = 0
   let dir = 1
-  for (let i = 0; i < len; i++) {
+  for (let i = 0; i < n; i++) {
     pattern.push(row)
     if (row === 0) dir = 1
     else if (row === rails - 1) dir = -1
     row += dir
   }
+  return pattern
+}
+
+/**
+ * Chiffre de la haie (rail fence).
+ *
+ * On decoupe en POINTS DE CODE (`[...text]`) des deux cotes. L ancienne
+ * version chiffrait avec `for...of` (points de code) mais dechiffrait avec
+ * `text.length` / `text[i]` (unites UTF-16): des que le texte contenait un
+ * caractere hors BMP — le moindre emoji — les deux cotes ne comptaient pas
+ * le meme nombre de cases et l aller-retour rendait des demi-substituts.
+ * Mesure avant correction: 254 aller-retours casses sur 280 des que le texte
+ * portait un emoji (ASCII et BMP: 0 sur 700).
+ */
+export function railFence(text: string, rails: number, decrypt = false) {
+  if (rails <= 1) return text
+  const units = [...text]
+  const pattern = railPattern(units.length, rails)
+  if (!decrypt) {
+    const fence: string[][] = Array.from({ length: rails }, () => [])
+    pattern.forEach((r, i) => fence[r].push(units[i]))
+    return fence.flat().join('')
+  }
   const rowSizes = Array.from({ length: rails }, (_, r) => pattern.filter((p) => p === r).length)
-  const rowStarts: number[] = []
+  const cursors: number[] = []
   let acc = 0
-  for (const s of rowSizes) { rowStarts.push(acc); acc += s }
-  const cursors = rowStarts.slice()
-  return pattern.map((r) => {
-    const idx = cursors[r]++
-    return text[idx]
-  }).join('')
+  for (const size of rowSizes) { cursors.push(acc); acc += size }
+  return pattern.map((r) => units[cursors[r]++]).join('')
 }
 
 export function frequencyAnalysis(text: string) {
@@ -133,12 +142,31 @@ export function suggestCaesarShift(text: string, lang: 'en' | 'fr' = 'fr') {
   return { bestShift, bestScore, suggestion: caesarShift(text, -bestShift) }
 }
 
+/**
+ * Encodage base64 d un texte UTF-8.
+ *
+ * L ancienne version, `btoa(unescape(encodeURIComponent(text)))`, LEVAIT une
+ * `URIError: URI malformed` des que le texte contenait un substitut isole —
+ * exactement ce que produit un `slice()` au milieu d un emoji, cas courant
+ * quand l interface tronque un message. Le laboratoire plantait au lieu de
+ * chiffrer. `TextEncoder` applique la substitution U+FFFD prevue par la norme
+ * et ne jette jamais. Au passage on sort de `escape`/`unescape`, retires de
+ * la norme (Annexe B).
+ */
 export function toBase64(text: string) {
-  return btoa(unescape(encodeURIComponent(text)))
+  const bytes = enc.encode(text)
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin)
 }
 
 export function fromBase64(b64: string) {
-  try { return decodeURIComponent(escape(atob(b64))) } catch { return '' }
+  try {
+    const bin = atob(b64.trim())
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return dec.decode(bytes)
+  } catch { return '' }
 }
 
 export function toHex(text: string) {
@@ -164,12 +192,29 @@ export function fromBinary(binary: string) {
   return dec.decode(bytes)
 }
 
+/**
+ * Alphabet morse international, recommandation UIT-R M.1677-1.
+ *
+ * L ancienne table s arretait aux 26 lettres et aux 10 chiffres: toute
+ * ponctuation etait jetee en silence par `toMorse` (`"a,b"` rendait `"ab"`
+ * a l aller-retour, la virgule disparue sans un mot). La table couvre
+ * desormais la ponctuation normalisee de la recommandation, plus les
+ * lettres accentuees prevues pour le francais — un laboratoire francophone
+ * qui code "operateur prive de creme" doit retrouver son texte.
+ */
 const MORSE_MAP: Record<string, string> = {
   a: '.-', b: '-...', c: '-.-.', d: '-..', e: '.', f: '..-.', g: '--.', h: '....',
   i: '..', j: '.---', k: '-.-', l: '.-..', m: '--', n: '-.', o: '---', p: '.--.',
   q: '--.-', r: '.-.', s: '...', t: '-', u: '..-', v: '...-', w: '.--', x: '-..-',
   y: '-.--', z: '--..', '0': '-----', '1': '.----', '2': '..---', '3': '...--',
   '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+  // Ponctuation UIT-R M.1677-1.
+  '.': '.-.-.-', ',': '--..--', '?': '..--..', "'": '.----.', '!': '-.-.--',
+  '/': '-..-.', '(': '-.--.', ')': '-.--.-', '&': '.-...', ':': '---...',
+  ';': '-.-.-.', '=': '-...-', '+': '.-.-.', '-': '-....-', '_': '..--.-',
+  '"': '.-..-.', '$': '...-..-', '@': '.--.-.',
+  // Lettres accentuees (memes codes que la tradition telegraphique FR).
+  é: '..-..', è: '.-..-', à: '.--.-', ù: '..--', ç: '-.-..', ü: '..--', ö: '---.',
 }
 
 export function toMorse(text: string) {
@@ -179,9 +224,33 @@ export function toMorse(text: string) {
   }).filter(Boolean).join(' ')
 }
 
+const MORSE_INVERSE: Record<string, string> = (() => {
+  const out: Record<string, string> = {}
+  // Premier gagnant: `ù` et `ü` partagent `..--`, on garde l entree initiale
+  // pour que le decodage reste deterministe.
+  for (const [k, v] of Object.entries(MORSE_MAP)) if (!(v in out)) out[v] = k
+  return out
+})()
+
 export function fromMorse(morse: string) {
-  const inverse = Object.fromEntries(Object.entries(MORSE_MAP).map(([k, v]) => [v, k]))
-  return morse.split(' ').map((token) => token === '/' ? ' ' : (inverse[token] || '')).join('')
+  return morse.trim().split(/\s+/).map((token) => {
+    if (!token) return ''
+    return token === '/' ? ' ' : (MORSE_INVERSE[token] ?? '')
+  }).join('')
+}
+
+/**
+ * Caracteres que `toMorse` ne sait pas transcrire. Rendre la perte visible
+ * plutot que de la subir: l interface peut prevenir au lieu de livrer un
+ * texte ampute sans explication.
+ */
+export function morseUnsupported(text: string): string[] {
+  const out = new Set<string>()
+  for (const ch of text.toLowerCase()) {
+    if (ch === ' ' || ch === '\n' || ch === '\t') continue
+    if (!(ch in MORSE_MAP)) out.add(ch)
+  }
+  return [...out]
 }
 
 // -------- AES-GCM via WebCrypto --------

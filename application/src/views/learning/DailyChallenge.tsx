@@ -10,7 +10,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { useGamificationStore } from '../../stores/gamificationStore'
+import { useGamificationStore } from '../../stores/gamificationStore.ts'
 
 // Mini-banque locale de leçons style Duolingo (FR/EN/Math/SVT/Histoire)
 // Pas besoin du LLM pour la mini-leçon — instantané, mobile, jouable hors ligne.

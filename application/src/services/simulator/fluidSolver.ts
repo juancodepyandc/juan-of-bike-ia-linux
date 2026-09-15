@@ -1,5 +1,5 @@
 import { Vector3 } from 'three'
-import type { FluidConfig, SceneEntity, Vec3 } from './types'
+import type { FluidConfig, SceneEntity, Vec3 } from './types.ts'
 
 export type FluidParticle = {
   position: Vector3

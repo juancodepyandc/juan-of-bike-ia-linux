@@ -4,7 +4,7 @@
 // LLM-driven planner (which requires browser/Tauri APIs).
 // ---------------------------------------------------------------------------
 
-import type { CoworkAction, CoworkPlan } from './coworkTypes'
+import type { CoworkAction, CoworkPlan } from './coworkTypes.ts'
 
 export type ParseResult =
   | { ok: true; plan: CoworkPlan }
@@ -1381,6 +1381,8 @@ function actionSignature(action: CoworkAction): string {
     case 'screenshot_desktop': return `screenshot_desktop:${action.quality ?? 'fast'}:${action.display ?? 'primary'}`
     case 'connector':       return `conn:${action.connector}:${action.action}:${hashString(JSON.stringify(action.params ?? {}))}`
     case 'browser':         return `browser:${action.operation}:${hashString(JSON.stringify(action.payload ?? {}))}`
+    case 'ephemeral_tool':  return `ephemeral_tool:${hashString(JSON.stringify(action))}`
+    case 'file_bundle':     return `file_bundle:${hashString(JSON.stringify(action))}`
   }
 }
 

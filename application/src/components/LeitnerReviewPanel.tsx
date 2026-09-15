@@ -9,9 +9,9 @@
  */
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useFlashcardsStore, type Flashcard, type FlashcardDeck } from '../stores/flashcardsStore'
-import { useGamificationStore } from '../stores/gamificationStore'
-import MarkdownPro from './MarkdownPro'
+import { useFlashcardsStore, type Flashcard, type FlashcardDeck } from '../stores/flashcardsStore.ts'
+import { useGamificationStore } from '../stores/gamificationStore.ts'
+import MarkdownPro from './MarkdownPro.tsx'
 
 interface Props {
   deck: FlashcardDeck

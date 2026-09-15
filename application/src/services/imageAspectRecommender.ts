@@ -44,8 +44,29 @@ const LANDSCAPE_KEYWORDS = [
 ]
 
 const PANORAMIC_KEYWORDS = [
-  'panoramique extra-large', 'cinemascope', 'cinematic',
-  'défilé', 'ligne d horizon', '21:9', 'ultrawide',
+  'panoramique', 'panoramique extra-large', 'cinemascope', 'cinematic',
+  'défilé', 'ligne d horizon', '21:9', 'ultrawide', 'très large', 'tres large',
+]
+
+/**
+ * Formats d'imprimé et de publication. Ils manquaient entierement : « affiche
+ * de film » et « bannière pour un site web » ne rencontraient AUCUN mot-cle et
+ * tombaient tous les deux sur le repli 1:1 — un carre pour une affiche, un
+ * carre pour une banniere. Le repli silencieux donnait un resultat plausible
+ * et faux, le pire des deux mondes.
+ */
+const POSTER_KEYWORDS = [
+  'affiche', 'poster', 'placard', 'couverture de livre', 'jaquette',
+  'couverture de magazine', 'flyer', 'tract', 'prospectus', 'une de magazine',
+]
+
+const BANNER_KEYWORDS = [
+  'bannière', 'banner', 'en-tête de site', 'header', 'bandeau',
+  'couverture facebook', 'couverture linkedin', 'image de couverture',
+]
+
+const THUMBNAIL_KEYWORDS = [
+  'miniature', 'thumbnail', 'vignette youtube', 'vignette video',
 ]
 
 const SQUARE_KEYWORDS = [
@@ -115,12 +136,30 @@ export function recommendAspectRatio(subject: string): AspectRecommendation[] {
   const vertical = countKeywords(subject, VERTICAL_PLATFORM_KEYWORDS)
   const wide = countKeywords(subject, WIDE_PLATFORM_KEYWORDS)
 
+  const poster = countKeywords(subject, POSTER_KEYWORDS)
+  const banner = countKeywords(subject, BANNER_KEYWORDS)
+  const thumbnail = countKeywords(subject, THUMBNAIL_KEYWORDS)
+
   if (portrait > 0) add('2:3', 10 * portrait, `${portrait} mot(s)-clé portrait`)
-  if (landscape > 0) add('3:2', 10 * landscape, `${landscape} mot(s)-clé paysage`)
-  if (panoramic > 0) add('21:9', 15 * panoramic, `${panoramic} mot(s)-clé panoramique`)
+  // « panoramique » n'est pas un CONCURRENT de « paysage », c'en est un
+  // qualificatif : il elargit le cadre. On lui fait donc absorber le poids du
+  // paysage au lieu de le laisser perdre l'arbitrage. Sans cela,
+  // « paysage de montagne panoramique » rendait 3:2 — deux mots-cles paysage
+  // valant 20 points contre 15 au panoramique.
+  if (panoramic > 0) {
+    add('21:9', 15 * panoramic + 10 * landscape, `${panoramic} mot(s)-clé panoramique`)
+  } else if (landscape > 0) {
+    add('3:2', 10 * landscape, `${landscape} mot(s)-clé paysage`)
+  }
   if (square > 0) add('1:1', 12 * square, `${square} mot(s)-clé carré/logo`)
   if (vertical > 0) add('9:16', 20 * vertical, 'plateforme vertical')
   if (wide > 0) add('16:9', 15 * wide, 'plateforme widescreen')
+  // Une affiche est un format vertical normalise (2:3 ~ 40x60 cm, 27x40 in).
+  if (poster > 0) add('2:3', 18 * poster, `${poster} mot(s)-clé affiche/couverture`)
+  // Une banniere est un bandeau : le format le plus large disponible.
+  if (banner > 0) add('21:9', 18 * banner, `${banner} mot(s)-clé bannière/bandeau`)
+  // Une miniature de plateforme video est en 16:9.
+  if (thumbnail > 0) add('16:9', 18 * thumbnail, `${thumbnail} mot(s)-clé miniature`)
 
   // Fallback : si rien matché, propose 1:1.
   if (candidates.size === 0) {

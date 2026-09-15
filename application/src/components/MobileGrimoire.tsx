@@ -7,17 +7,17 @@
  * services (conversationOrchestrator, characterForge, speakify). Nothing mock.
  */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAcademyStore } from '../stores/academyStore'
-import { useAppStore } from '../stores/appStore'
-import { useChatStore } from '../stores/chatStore'
-import { useGamificationStore } from '../stores/gamificationStore'
-import { runConversationTurn } from '../services/conversationOrchestrator'
-import { speakify } from '../utils/speakify'
-import MarkdownPro from './MarkdownPro'
-import { ensurePushPermission, pushPermissionState, subscribe as subscribeNotif } from '../utils/notificationBus'
-import { detectInstallState, type InstallState } from '../utils/device'
-import { useForgeQueueStore } from '../stores/forgeQueueStore'
-import { useModuleDraftsStore } from '../stores/moduleDraftsStore'
+import { useAcademyStore } from '../stores/academyStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useGamificationStore } from '../stores/gamificationStore.ts'
+import { runConversationTurn } from '../services/conversationOrchestrator.ts'
+import { speakify } from '../utils/speakify.ts'
+import MarkdownPro from './MarkdownPro.tsx'
+import { ensurePushPermission, pushPermissionState, subscribe as subscribeNotif } from '../utils/notificationBus.ts'
+import { detectInstallState, type InstallState } from '../utils/device.ts'
+import { useForgeQueueStore } from '../stores/forgeQueueStore.ts'
+import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
 
 const CharacterForgeOverlay = lazy(() => import('../views/CharacterForgeOverlay'))
 const VoiceCopilotView = lazy(() => import('../views/VoiceCopilotView'))
@@ -962,7 +962,7 @@ function ChatPage({ onOpenVoice }: { onOpenVoice: () => void }) {
 // Create — 2×2 of creative modules (image, video, code, drawing)
 // ---------------------------------------------------------------------------
 
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 function CreatePage({ onOpenModule }: { onOpenModule: (id: ModuleId) => void }) {
   const arts: Array<{ id: ModuleId; name: string; sub: string; tag: string; preview: string }> = [
     { id: 'image',   name: 'Image',  sub: 'flux · styles multiples',  tag: 'S', preview: 'ouvrir atelier' },

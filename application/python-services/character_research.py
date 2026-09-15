@@ -57,6 +57,25 @@ def detect_installed_vision_model() -> str | None:
         return None
 
 
+def search_duckduckgo_for_character(query: str) -> tuple[str, str | None]:
+    """Recherche DuckDuckGo / Fandom pour extraire un resume et l'URL d'image canonique."""
+    try:
+        url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
+        req = urllib.request.Request(url, headers={"User-Agent": "AuroraIA/1.0"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            data = json.loads(r.read())
+        abstract = data.get("AbstractText", "") or ""
+        img = data.get("Image", None) or None
+        if not img and data.get("RelatedTopics"):
+            for t in data["RelatedTopics"]:
+                if isinstance(t, dict) and t.get("Icon", {}).get("URL"):
+                    img = t["Icon"]["URL"]
+                    break
+        return abstract[:2000], img
+    except Exception:
+        return "", None
+
+
 def fetch_wikipedia_summary(query: str, lang: str = "en") -> tuple[str, str | None]:
     """Retourne (summary, image_url) -- l image est le portrait canonique si dispo."""
     try:
@@ -66,7 +85,8 @@ def fetch_wikipedia_summary(query: str, lang: str = "en") -> tuple[str, str | No
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read())
         if not data or len(data) < 4 or not data[1]:
-            return "", None
+            # Repli sur DuckDuckGo
+            return search_duckduckgo_for_character(query)
         title = data[1][0]
         # Recupere le summary + thumbnail
         summary_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(title)}"
@@ -79,10 +99,14 @@ def fetch_wikipedia_summary(query: str, lang: str = "en") -> tuple[str, str | No
             img = page["thumbnail"]["source"]
         elif page.get("originalimage", {}).get("source"):
             img = page["originalimage"]["source"]
+        if not summary or not img:
+            ddg_summary, ddg_img = search_duckduckgo_for_character(query)
+            summary = summary or ddg_summary
+            img = img or ddg_img
         return summary[:2000], img
     except Exception as e:
         emit(0, f"Wikipedia fetch failed: {e}")
-        return "", None
+        return search_duckduckgo_for_character(query)
 
 
 def classify_animation_mode_heuristic(prompt: str, summary: str) -> str:

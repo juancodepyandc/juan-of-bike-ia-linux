@@ -1,12 +1,12 @@
 // Code orchestrator: public facade and multi-phase pipeline.
 
-import type { OllamaMessage } from '../types/app'
-import type { RecoveryEvent } from './ollamaResilience'
-import { type CodeIntent, classifyCodeIntent } from './codeIntent'
-import { buildAutonomousAssumptionNotes, buildCodeMissionDossier, type CodeMissionDossier } from './codeMissionControl'
-import type { CorrectionPass } from './codeAutoCorrection'
-import type { CodeSandboxResult } from './codeSandbox'
-import type { CodePreflightReport } from './codePreflight'
+import type { OllamaMessage } from '../types/app.ts'
+import type { RecoveryEvent } from './ollamaResilience.ts'
+import { type CodeIntent, classifyCodeIntent } from './codeIntent.ts'
+import { buildAutonomousAssumptionNotes, buildCodeMissionDossier, type CodeMissionDossier } from './codeMissionControl.ts'
+import type { CorrectionPass } from './codeAutoCorrection.ts'
+import type { CodeSandboxResult } from './codeSandbox.ts'
+import type { CodePreflightReport } from './codePreflight.ts'
 import { parseCodeFiles, serializeCodeFiles, extractNotes } from './codeGeneratedFileParser.ts'
 export * from './codeOrchestratorReexports.ts'
 import { buildEmptyGenerationDiagnostic } from './codeGenerationDiagnostics.ts'
@@ -65,45 +65,15 @@ export function buildAutonomousAssumption(prompt: string, intent: CodeIntent): s
 // Main orchestration entry point
 // ---------------------------------------------------------------------------
 
-export async function orchestrateCodeGeneration({
-  prompt,
-  enrichedPrompt,
-  conversationHistory,
-  existingFiles,
-  contextImages,
-  userFileDataUrls,
-  configuredCodeModel,
-  visionModel,
-  setPhase,
-  onToken,
-  onFilesUpdate,
-  onValidationUpdate,
-  onCorrectionLogUpdate,
-  onRecoveryEvent,
-  onFollowUpAnalysis,
-  signal,
-  modelRouting,
-}: {
-  prompt: string
-  enrichedPrompt: string
-  conversationHistory: OllamaMessage[]
-  existingFiles: CodeFile[]
-  contextImages: string[]
-  /** Map of placeholder → data URL for user-attached files (USER_FILE_0 → data:image/jpeg;base64,...) */
-  userFileDataUrls?: Record<string, string>
-  configuredCodeModel: string
-  visionModel: string
-  setPhase: PhaseCallback
-  onToken: (token: string) => void
-  onFilesUpdate: (files: CodeFile[], notes: string) => void
-  onValidationUpdate: (result: CodeSandboxResult) => void
-  onCorrectionLogUpdate: (log: CorrectionPass[], attempt: number, score: number) => void
-  onRecoveryEvent?: (event: RecoveryEvent) => void
-  /** Fires as soon as the follow-up analyzer has decided the pivot kind. */
-  onFollowUpAnalysis?: (analysis: FollowUpAnalysis) => void
-  signal?: AbortSignal
-  modelRouting?: CodeModelRoutingContext
-}): Promise<CodeOrchestrationResult> {
+export async function orchestrateCodeGeneration(
+  options: import('./codeOrchestratorTypes.ts').OrchestrateCodeGenerationOptions,
+): Promise<CodeOrchestrationResult> {
+  const {
+    prompt, enrichedPrompt, conversationHistory, existingFiles, contextImages,
+    userFileDataUrls, configuredCodeModel, visionModel, setPhase, onToken,
+    onFilesUpdate, onValidationUpdate, onCorrectionLogUpdate, onRecoveryEvent,
+    onFollowUpAnalysis, signal, modelRouting,
+  } = options
   const generationModel = contextImages.length > 0 ? visionModel : configuredCodeModel
   // Run 1041: 32 fichiers detruits par un `fetch failed`. On garde le dernier
   // etat connu pour pouvoir le livrer si le pipeline meurt en route.
@@ -370,10 +340,12 @@ async function runFullPipeline({
     modelRouting,
   )
 
+  setPhase('Finalisation du projet: fichiers support et manifest de conformite...', 92)
   const delivery = finalizeCodePipelineDelivery({
     files: validationResult.files, notes: validationResult.notes, score: validationResult.finalScore,
     intent, enrichedPrompt: reformulatedEnriched, architecturePlan, assetBundle: interModuleAssetBundle,
   })
+  setPhase(`Projet ${intent.projectType} livre avec succes (score: ${delivery.score}/100).`, 100)
 
   return {
     files: delivery.files,

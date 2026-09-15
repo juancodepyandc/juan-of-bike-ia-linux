@@ -1,9 +1,9 @@
-import { startDevServer, type DevServerState } from '../services/codeDevServer'
-import { blendRenderedVisualIntoFinalScore, runCodeVisualRenderAudit } from '../services/codeVisualAuditClient'
-import { MAX_VISUAL_CORRECTION_PASSES, decideVisualCorrection } from '../services/codeVisualCorrectionDecision'
-import { pickBestDelivery } from '../services/codeBestDeliverySelection'
-import type { CodeFile, CodeOrchestrationResult } from '../services/codeOrchestrator'
-import { getErrorMessage } from '../utils/errors'
+import { startDevServer, type DevServerState } from '../services/codeDevServer.ts'
+import { blendRenderedVisualIntoFinalScore, runCodeVisualRenderAudit } from '../services/codeVisualAuditClient.ts'
+import { MAX_VISUAL_CORRECTION_PASSES, decideVisualCorrection } from '../services/codeVisualCorrectionDecision.ts'
+import { pickBestDelivery } from '../services/codeBestDeliverySelection.ts'
+import type { CodeFile, CodeOrchestrationResult } from '../services/codeOrchestrator.ts'
+import { getErrorMessage } from '../utils/errors.ts'
 
 /**
  * WS9 — boucle du juge visuel DANS le cycle de livraison. Extrait de la vue pour

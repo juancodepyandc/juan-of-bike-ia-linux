@@ -1,4 +1,4 @@
-import type { OllamaMessage } from '../types/app'
+import type { OllamaMessage } from '../types/app.ts'
 import {
   ollamaChat,
   ollamaChatStream,
@@ -9,12 +9,12 @@ import {
   runtimeEnsureOllamaModelAvailable,
   runtimeEnsureService,
   runtimeReleaseService,
-} from '../hooks/useTauri'
+} from '../hooks/useTauri.ts'
 import {
   CODE_SINGLE_MODEL,
-} from '../config/models'
-import { useAppStore } from '../stores/appStore'
-import { isLlmTimeboxError, withTimeout } from './llmTimebox'
+} from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { isLlmTimeboxError, withTimeout } from './llmTimebox.ts'
 
 export type RecoveryEvent = {
   attempt: number

@@ -104,13 +104,13 @@ def check_models_present(comfy_models_dir: str | None = None) -> dict:
 
 def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
                    steps: int = 25, seed: int | None = None,
-                   filename_prefix: str = "aurora_flux") -> dict:
+                   filename_prefix: str = "aurora_flux", trained_adapter: bool = True) -> dict:
     """FLUX.2-dev workflow (encodeur Mistral-3, Flux2Scheduler + SamplerCustomAdvanced).
     Poids REELS presents (diffusion 33 Go + Mistral 16.8 Go + VAE 0.31 Go).
     Miroir du template officiel ComfyUI image_flux2_text_to_image."""
     if seed is None:
         seed = randint(1, 2**32 - 1)
-    return {
+    workflow = {
         "11": {
             "class_type": "CLIPLoader",
             "inputs": {"clip_name": DEFAULT_CLIP, "type": "flux2",
@@ -179,6 +179,13 @@ def build_workflow(prompt: str, *, width: int = 1024, height: int = 1024,
             "inputs": {"images": ["8", 0], "filename_prefix": filename_prefix},
         },
     }
+
+    if trained_adapter:
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from auto_rl.image_runtime import apply_validated_workflow
+        workflow = apply_validated_workflow(workflow)
+    return workflow
 
 
 def _unload_ollama() -> None:

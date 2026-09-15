@@ -1,6 +1,6 @@
 import type { StoreApi } from 'zustand'
-import type { CodeFile } from '../services/codeOrchestrator'
-import { getBridgeUrl } from '../utils/runtime'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import { getBridgeUrl } from '../utils/runtime.ts'
 import type { CodeStreamStore } from './codeStreamTypes.ts'
 
 type SetStore = StoreApi<CodeStreamStore>['setState']

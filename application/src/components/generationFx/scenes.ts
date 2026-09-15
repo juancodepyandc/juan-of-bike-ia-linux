@@ -1,4 +1,4 @@
-import type { FxModule } from './mascots'
+import type { FxModule } from './mascots.tsx'
 
 export type SceneDraw = (ctx: CanvasRenderingContext2D, W: number, H: number, now: number, prog: number, accent: string) => void
 
@@ -677,7 +677,7 @@ function buildIco() {
 }
 
 const threeD: FxScene = {
-  phases: ['Analyse', 'Référence photo', 'TRELLIS.2 natif', 'Matériaux & zones', 'Animation', 'Finalisation'],
+  phases: ['Analyse', 'Référence photo', 'Sculpture 3D', 'Matériaux & zones', 'Animation', 'Finalisation'],
   says: ['Je choisis la meilleure photo…', 'Je sculpte en géométrie native…', 'Je pose les matières par zones…', 'Modèle prêt.'],
   create: () => {
     const GEO = buildIco()

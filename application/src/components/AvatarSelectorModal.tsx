@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X, Plus, Check, Trash2, FolderOpen } from 'lucide-react'
-import type { AvatarEntry } from '../types/app'
+import type { AvatarEntry } from '../types/app.ts'
 
 interface Props {
   open: boolean

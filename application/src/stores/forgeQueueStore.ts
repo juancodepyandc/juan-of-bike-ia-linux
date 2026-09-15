@@ -7,10 +7,10 @@ import {
   notifyQueueEnqueued,
   notifyQueueStarted,
   notifyStarted,
-} from '../utils/notificationBus'
-import type { AvatarEntry } from '../types/app'
-import { runForgePipeline, type ForgeResult, type ForgeResume, type ForgeStepId } from '../services/characterForge'
-import { useAppStore } from './appStore'
+} from '../utils/notificationBus.ts'
+import type { AvatarEntry } from '../types/app.ts'
+import { runForgePipeline, type ForgeResult, type ForgeResume, type ForgeStepId } from '../services/characterForge.ts'
+import { useAppStore } from './appStore.ts'
 
 export type QueueStatus = 'queued' | 'running' | 'done' | 'error'
 

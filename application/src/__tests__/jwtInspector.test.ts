@@ -34,6 +34,38 @@ describe('inspectJwt — token malformé', () => {
     const r = inspectJwt('aaa.bbb', NOW)
     assert.ok(r.issues.some(i => i.severity === 'block' && i.message.includes('mal formé')))
   })
+
+  test('segments vides ou base64url invalide → block', () => {
+    for (const token of ['..', '!.!.sig', 'a.a.sig', 'e30=.e30=.sig']) {
+      assert.ok(inspectJwt(token, NOW).issues.some(i => i.severity === 'block'), token)
+    }
+  })
+
+  test('header et payload doivent être des objets JSON', () => {
+    for (const value of [null, [], 'text', 42, true]) {
+      const part = base64url(JSON.stringify(value))
+      const badHeader = inspectJwt(`${part}.${base64url('{}')}.sig`, NOW)
+      const badPayload = inspectJwt(`${base64url('{"alg":"HS256"}')}.${part}.sig`, NOW)
+      assert.equal(badHeader.header, null)
+      assert.equal(badPayload.payload, null)
+      assert.ok(badHeader.issues.some(i => i.severity === 'block'))
+      assert.ok(badPayload.issues.some(i => i.severity === 'block'))
+    }
+  })
+
+  test('alg manquant ou de type incorrect → block sans exception', () => {
+    for (const alg of [undefined, null, '', ' ', 123, { toString: null }]) {
+      const result = inspectJwt(makeJwt({ alg }, {}), NOW)
+      assert.equal(result.header, null)
+      assert.ok(result.issues.some(i => i.severity === 'block'))
+    }
+  })
+
+  test('UTF-8 invalide dans une chaîne JSON → block', () => {
+    const bytes = Buffer.concat([Buffer.from('{"sub":"'), Buffer.from([0xff]), Buffer.from('"}')])
+    const token = `${base64url('{"alg":"HS256"}')}.${bytes.toString('base64url')}.sig`
+    assert.equal(inspectJwt(token, NOW).payload, null)
+  })
 })
 
 describe('inspectJwt — décodage', () => {
@@ -43,6 +75,11 @@ describe('inspectJwt — décodage', () => {
     assert.equal(r.header?.alg, 'HS256')
     assert.equal(r.payload?.sub, '123')
     assert.equal(r.payload?.iss, 'aurora')
+  })
+
+  test('préserve les claims Unicode, y compris les emojis', () => {
+    const payload = { sub: 'élève 🙂', iss: 'école' }
+    assert.deepEqual(inspectJwt(makeJwt({ alg: 'HS256' }, payload), NOW).payload, payload)
   })
 
   test('signature préservée', () => {
@@ -110,6 +147,26 @@ describe('inspectJwt — validité temporelle', () => {
     assert.equal(r.expired, false)
   })
 
+  test('exp à la date courante → expired', () => {
+    assert.equal(inspectJwt(makeJwt({ alg: 'HS256' }, { exp: NOW_SEC }), NOW).expired, true)
+  })
+
+  test('respecte les fractions de seconde de NumericDate', () => {
+    const now = new Date(NOW.getTime() + 750)
+    assert.equal(inspectJwt(makeJwt({ alg: 'HS256' }, { exp: NOW_SEC + 0.5 }), now).expired, true)
+    assert.equal(inspectJwt(makeJwt({ alg: 'HS256' }, { exp: NOW_SEC + 0.9 }), now).expired, false)
+  })
+
+  test('signale les dates non finies et les claims temporels non numériques', () => {
+    const payload = base64url('{"exp":1e400,"nbf":"tomorrow","iat":1e400}')
+    const result = inspectJwt(`${base64url('{"alg":"HS256"}')}.${payload}.sig`, NOW)
+    for (const claim of ['exp', 'nbf', 'iat']) {
+      assert.ok(result.issues.some(i => i.severity === 'warn' && i.message.startsWith(claim)))
+    }
+    assert.equal(result.ageHours, null)
+    assert.equal(result.notYetValid, false)
+  })
+
   test('nbf futur → notYetValid', () => {
     const token = makeJwt({ alg: 'HS256' }, { sub: '1', exp: NOW_SEC + 3600, nbf: NOW_SEC + 1000 })
     const r = inspectJwt(token, NOW)
@@ -156,5 +213,10 @@ describe('summariseJwt', () => {
   test('JWT invalide → "JWT invalide"', () => {
     const r = inspectJwt('foo.bar', NOW)
     assert.equal(summariseJwt(r), 'JWT invalide')
+  })
+
+  test('un claim de type objet ne fait pas planter le récapitulatif', () => {
+    const token = makeJwt({ alg: 'HS256' }, { iss: { toString: null }, sub: { toString: null } })
+    assert.equal(summariseJwt(inspectJwt(token, NOW)), 'alg=HS256')
   })
 })

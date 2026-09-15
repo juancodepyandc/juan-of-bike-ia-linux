@@ -75,7 +75,7 @@ VERB_TO_PRESET: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\b(grimpe|grimper|escalade|escalader|climb|climbs|climbing|scale|scaling|monter en escalade)\b", re.I), "character.climb"),
     (re.compile(r"\b(pirouette|pirouettes|tourne sur (?:lui|elle)[\s-]m[eê]me|spins?\s+on\s+the\s+spot|spin\s+in\s+place|tournoiement|whirls?|twirls?|twirling|tourbillonne)\b", re.I), "character.spin"),
     # Creature
-    (re.compile(r"\b(vole|voler|fly|flying|flies|battement d ailes|battement d'ailes|plane|planes|planing|soar|soars|soaring)\b", re.I), "creature.flap_fly"),
+    (re.compile(r"\b(vole|voler|volant|volante|volants|fly|flying|flies|battement[s]?\s+(?:d['’]|des?\s+|d\s+)?ailes?|flapping\s+wings?|wings?\s+flap(?:ping|s)?|plane|planes|planing|soar|soars|soaring|sustentation)\b", re.I), "creature.flap_fly"),
     (re.compile(r"\b(serpente|slither|slithers|slithering|onduler|ondule|ondulant|wriggle|wriggles|wriggling|squirm|squirms)\b", re.I), "creature.slither"),
     (re.compile(r"\b(rode|r[oô]der|rodeur|prowl|prowling|stalk|stalking|sneak|sneaks|sneaking|creep|creeps|creeping)\b", re.I), "creature.prowl"),
     # Quadruped (v77zt + v80u)

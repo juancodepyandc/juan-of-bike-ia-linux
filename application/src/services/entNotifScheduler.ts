@@ -16,8 +16,8 @@
  *
  * Toggleable via Settings (entNotifEnabled + leadDays).
  */
-import type { HarvestDevoirItem } from './entHarvestService'
-import { fastClassify } from './entEvalDetector'
+import type { HarvestDevoirItem } from './entHarvestService.ts'
+import { fastClassify } from './entEvalDetector.ts'
 
 const PREF_KEY = 'aurora-ent-notif-prefs-v1'
 const SENT_KEY = 'aurora-ent-notifs-sent-v1'

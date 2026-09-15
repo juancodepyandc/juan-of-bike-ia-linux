@@ -7,7 +7,7 @@ import {
   cyberImgDiff,
   cyberImgEncode,
   cyberLsbStats,
-} from '../../services/cyber/pythonClient'
+} from '../../services/cyber/pythonClient.ts'
 
 export default function SteganographyLab() {
   return (

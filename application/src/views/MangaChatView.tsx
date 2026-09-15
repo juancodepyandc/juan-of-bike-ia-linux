@@ -1,17 +1,20 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { FileText, Mic, Paperclip, Send, StopCircle, Trash2, Volume2, VolumeX, Wand2, X, Cpu, Copy, RefreshCw, Radio } from 'lucide-react'
-import { useChatStore } from '../stores/chatStore'
-import { useAppStore } from '../stores/appStore'
-import { runConversationTurn } from '../services/conversationOrchestrator'
-import type { ChatMessage } from '../types/app'
-import { getErrorMessage } from '../utils/errors'
-import { speakify } from '../utils/speakify'
-import MarkdownPro from '../components/MarkdownPro'
-import VoicePushToTalk from '../components/VoicePushToTalk'
-import { pickRandomStarter } from '../utils/randomChatStarters'
-import { getContextUsage } from '../utils/modelContext'
-import { useNotificationStore } from '../stores/notificationStore'
+import { useChatStore } from '../stores/chatStore.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { runConversationTurn } from '../services/conversationOrchestrator.ts'
+import type { ChatMessage } from '../types/app.ts'
+import { getErrorMessage } from '../utils/errors.ts'
+import { speakify } from '../utils/speakify.ts'
+import MarkdownPro from '../components/MarkdownPro.tsx'
+import SourcesPanel from '../components/chat/SourcesPanel.tsx'
+import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
+import { extractRichMedia } from '../utils/mediaLinks.ts'
+import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
+import { pickRandomStarter } from '../utils/randomChatStarters.ts'
+import { getContextUsage } from '../utils/modelContext.ts'
+import { useNotificationStore } from '../stores/notificationStore.ts'
 
 const VoiceCopilotView = lazy(() => import('./VoiceCopilotView'))
 
@@ -176,7 +179,13 @@ function Bubble({ msg, who, onNarrate, isNarrating, onCopy, copyFeedback, onRege
               {msg.edited && <span className="mc-msg-edited">(modifié)</span>}
             </>
           ) : (
-            <MarkdownPro content={visible || msg.content} idPrefix={`bubble-${msg.id || msg.timestamp}`} />
+            <>
+              <MarkdownPro content={visible || msg.content} idPrefix={`bubble-${msg.id || msg.timestamp}`} />
+              <MediaStrip urls={extractRichMedia(visible || msg.content)} />
+              {msg.sources && msg.sources.length > 0 && (
+                <SourcesPanel sources={msg.sources} queries={msg.searchQueries ?? []} />
+              )}
+            </>
           )}
         </div>
         {!editing && (

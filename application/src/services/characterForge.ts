@@ -11,10 +11,10 @@
  * une raison lisible, l'UI l'affiche tel quel. La pipeline continue tant que
  * les étapes critiques 01-04 ont abouti.
  */
-import { ollamaChat } from '../hooks/useTauri'
-import type { OllamaMessage } from '../types/app'
-import { getBridgeUrl } from '../utils/runtime'
-import { fetchPythonJob, launchPythonJob, waitForPythonJob } from './pythonJobClient'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import type { OllamaMessage } from '../types/app.ts'
+import { getBridgeUrl } from '../utils/runtime.ts'
+import { fetchPythonJob, launchPythonJob, waitForPythonJob } from './pythonJobClient.ts'
 
 export type ForgeStepId =
   | 'intent' | 'traits' | 'rig_plan' | 'reference'

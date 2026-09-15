@@ -550,9 +550,47 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
     try:
         # allow_scene=False: l'orchestrateur EST deja dans une scene. Sans ce garde-fou,
         # run_pipeline redetecterait une scene et se rappellerait sans fin.
-        res = run_pipeline(desc, run_id, output_dir=sub,
-                           motion_prompt=(motion or None), purpose=purpose,
-                           images=imgs, allow_scene=False)
+        # UNE ENTITE = UN PROCESSUS. `run_pipeline` tournait DANS ce processus:
+        # mesure du 05/09 a la sonde memoire, le parent passe de moins de 9 Go a
+        # 25 Go au moment ou la geometrie est posee, puis se fait tuer par le
+        # noyau — et le second personnage n'existe jamais. Cinq lancements
+        # perdus ainsi. En sous-processus la memoire est INTEGRALEMENT rendue au
+        # systeme a la fin de chaque entite, et un personnage qui echoue
+        # n'emporte plus les suivants.
+        if os.environ.get("AURORA_ENTITE_SOUS_PROCESSUS", "1") == "1":
+            _cmd = [sys.executable,
+                    str(Path(__file__).resolve().parent / "aurora_3d_pipeline.py"),
+                    "--prompt", desc, "--run-id", run_id, "--output-dir", str(sub),
+                    "--purpose", purpose, "--no-scene"]
+            if motion:
+                _cmd += ["--motion-prompt", motion]
+            for _im in (imgs or []):
+                _cmd += ["--image", str(_im)]
+            _p = subprocess.run(_cmd, capture_output=True, text=True, timeout=7200)
+            for _l in (_p.stdout or "").splitlines():
+                if _l.startswith("PROGRESS:") or _l.startswith("SCENE_ORCH"):
+                    print(_l, flush=True)
+            
+            # Find the first line that starts precisely with "{" (the start of the JSON block)
+            _lines = (_p.stdout or "").splitlines()
+            _json_start = -1
+            for i, l in enumerate(_lines):
+                if l.startswith("{"):
+                    _json_start = i
+                    break
+            
+            try:
+                _j = "\n".join(_lines[_json_start:]) if _json_start >= 0 else ""
+                res = json.loads(_j) if _j else {}
+            except Exception:  # noqa: BLE001
+                res = {}
+            if not res:
+                res = {"ok": False,
+                       "error": (_p.stderr or "")[-300:] or "sous-processus sans resultat"}
+        else:
+            res = run_pipeline(desc, run_id, output_dir=sub,
+                               motion_prompt=(motion or None), purpose=purpose,
+                               images=imgs, allow_scene=False)
     finally:
         if _mv_prev is None:
             os.environ.pop("AURORA_MVADAPTER_MV", None)
@@ -573,13 +611,39 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
     # bureau etait un MUG (26/08). On le remonte a l'appelant.
     erreur = str(res.get("error") or "")
     refus = None
+    # IDENTITE TRAHIE = REFUS. Mesure du 04/09: « Caine » est sorti en chien
+    # generique (sa reference avait ete inventee par FLUX faute de photo web
+    # exploitable), la porte finale l'a note 95/100 « PARFAIT » — elle compare
+    # le modele a SA reference, jamais la reference a l'identite demandee — et
+    # la scene est passee au personnage suivant comme si de rien n'etait.
+    # Un personnage nomme qui n'est pas le bon n'est pas un succes.
+    if res.get("identite_trahie"):
+        refus = ("le modele ne represente pas le personnage demande "
+                 "(reference inventee, identite non verifiee)")
     for signe in ("ne correspond pas a la demande", "does not match the request",
                   "wrong subject", "score 0"):
         if signe in erreur.lower():
             refus = erreur[:200]
             break
-    mesh = res.get("rigged_mesh") or res.get("final_mesh") or res.get("rescued_mesh")
-    chemin = str(mesh) if (mesh and os.path.isfile(str(mesh))) else None
+    # LE RANGEMENT DEPLACE LES FICHIERS. `organiser()` met les livrables dans
+    # modele/ et mouvement/ APRES coup; les chemins bruts renvoyes par le
+    # pipeline peuvent donc pointer un emplacement qui n'existe plus. Mesure du
+    # 05/09: Caine etait bel et bien produit (modele/modele_couleurs.glb,
+    # 10 Mo) et l'orchestrateur annoncait "entite NON generee" — un succes
+    # complet perdu sur un chemin perime. On consulte donc d'abord la
+    # LIVRAISON que le pipeline rend justement pour cela, puis on retombe sur
+    # l'arborescence rangee, et on dit ce qu'on a essaye.
+    _liv = res.get("livraison") if isinstance(res.get("livraison"), dict) else {}
+    _pistes = [res.get("rigged_mesh"), res.get("final_mesh"),
+               res.get("rescued_mesh"),
+               _liv.get("mouvement_couleurs"), _liv.get("modele_couleurs"),
+               str(Path(sub) / "mouvement" / "mouvement_couleurs.glb"),
+               str(Path(sub) / "modele" / "modele_couleurs.glb")]
+    chemin = next((str(m) for m in _pistes
+                   if m and os.path.isfile(str(m))), None)
+    if chemin is None:
+        print("SCENE_ORCH: aucun GLB trouve pour cette entite — essaye: %s"
+              % "; ".join(str(m) for m in _pistes if m), flush=True)
     if rendre_le_detail:
         return {"glb": chemin, "refus": refus, "tache": res.get("tache_service"),
                 "score": res.get("score"), "erreur": erreur or None}
@@ -725,8 +789,44 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     # Deux entites identiques ("deux grands ecrans") = UNE generation reutilisee.
     # Les generer deux fois coute une passe TRELLIS complete pour un resultat
     # que l'on possede deja.
+    def _liberer_entre_entites(role: str) -> None:
+        """Rend la memoire avant l'entite suivante.
+
+        Les entites d'une scene sont generees SEQUENTIELLEMENT mais dans le
+        MEME processus: ce que la premiere a alloue (mesure le 03/09: un
+        maillage natif de 4,5 M de faces) est encore detenu quand la seconde
+        demarre. Le noyau a tue le run a 29,5 Go sur 32 pendant le premier
+        personnage — le second n'a jamais commence. Sans cette liberation,
+        toute scene a plusieurs sujets meurt avant d'etre composee.
+        """
+        import gc
+        gc.collect()
+        try:  # rend au systeme ce que l'allocateur garde en reserve
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import urllib.request as _u, json as _j
+            _u.urlopen(_u.Request(
+                "http://127.0.0.1:11434/api/generate",
+                data=_j.dumps({"model": os.environ.get(
+                    "AURORA_MOTION_LLM", "qwen3-coder:30b"),
+                    "prompt": "", "keep_alive": 0}).encode(),
+                headers={"Content-Type": "application/json"}), timeout=10).read()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import psutil
+            _dispo = psutil.virtual_memory().available / (1024 ** 3)
+            print("SCENE_ORCH: memoire liberee avant %r — %.1f Go disponibles"
+                  % (role, _dispo), flush=True)
+        except Exception:  # noqa: BLE001
+            print("SCENE_ORCH: memoire liberee avant %r" % role, flush=True)
+
     deja = {}
     for o in objets:
+        _liberer_entre_entites(o.get("role", "?"))
         cle = re.sub(r"\s+", " ", o["desc"].strip().lower())
         jumeau = deja.get(cle)
         if jumeau is not None:
@@ -769,8 +869,29 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
             if not (res or {}).get("refus"):
                 break
             if _essai + 1 < _essais:
-                print("SCENE_ORCH: %r refuse (%s) — nouvel essai %d/%d"
-                      % (o["role"], str((res or {}).get("refus"))[:70],
+                # UN REFUS DOIT CHANGER LA REFERENCE, PAS SEULEMENT LE TIRAGE.
+                # `run_pipeline` reutilise la reference deja ecrite
+                # (« reference exists; pass --force to regenerate »), donc les
+                # essais rejouaient la reconstruction sur LA MEME image.
+                # Mesure du 04/09 sur « Caine »: trois essais, trois refus au
+                # score RIGOUREUSEMENT identique (25, « morceaux
+                # manquants/fondus ») — les jambes etaient deja fondues dans la
+                # reference, aucun nouveau tirage ne pouvait les inventer.
+                # On efface donc la reference de l'entite: le prochain essai en
+                # cherche une autre, et la selection garde desormais la
+                # MEILLEURE (voir `_note_reference`), pas la premiere venue.
+                _sous = projet / o["role"]
+                _efface = 0
+                for _motif in ("*_reference.png", "*_reference_detouree.png",
+                               "*_front_reference.png"):
+                    for _f in list(_sous.glob(_motif)) + list(_sous.glob("**/" + _motif)):
+                        try:
+                            _f.unlink(); _efface += 1
+                        except OSError:
+                            pass
+                print("SCENE_ORCH: %r refuse (%s) — %d reference(s) ecartee(s), "
+                      "nouvelle recherche, essai %d/%d"
+                      % (o["role"], str((res or {}).get("refus"))[:70], _efface,
                          _essai + 2, _essais), file=sys.stderr)
         o["glb"] = (res or {}).get("glb")
         o["refus"] = (res or {}).get("refus")

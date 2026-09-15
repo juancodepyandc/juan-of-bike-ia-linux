@@ -6,15 +6,15 @@
  * duplicate credential flows.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { useEntSessionStore } from '../stores/entSessionStore'
-import { listHarvests, getHarvest, type HarvestNoteItem, type HarvestDevoirItem } from '../services/entHarvestService'
-import { analyzeAllSubjects, formatTrend, type SubjectTrend } from '../services/entNotesAnalysis'
-import { fastClassify } from '../services/entEvalDetector'
-import { readNotifPrefs, writeNotifPrefs, recomputeEvalNotifs, triggerTestNotif, type EntNotifPrefs } from '../services/entNotifScheduler'
-import { buildRevisionParcours, saveParcours, type RevisionParcours } from '../services/entRevisionBuilder'
-import { fullPipeline } from '../services/entCredentialBridge'
-import { ENT_ADAPTERS } from '../services/entAdapters'
-import { getBridgeUrl, isTauriRuntime } from '../utils/runtime'
+import { useEntSessionStore } from '../stores/entSessionStore.ts'
+import { listHarvests, getHarvest, type HarvestNoteItem, type HarvestDevoirItem } from '../services/entHarvestService.ts'
+import { analyzeAllSubjects, formatTrend, type SubjectTrend } from '../services/entNotesAnalysis.ts'
+import { fastClassify } from '../services/entEvalDetector.ts'
+import { readNotifPrefs, writeNotifPrefs, recomputeEvalNotifs, triggerTestNotif, type EntNotifPrefs } from '../services/entNotifScheduler.ts'
+import { buildRevisionParcours, saveParcours, type RevisionParcours } from '../services/entRevisionBuilder.ts'
+import { fullPipeline } from '../services/entCredentialBridge.ts'
+import { ENT_ADAPTERS } from '../services/entAdapters.ts'
+import { getBridgeUrl, isTauriRuntime } from '../utils/runtime.ts'
 
 export default function EntDashboard() {
   const desktopNative = isTauriRuntime()

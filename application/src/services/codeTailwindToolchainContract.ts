@@ -121,11 +121,55 @@ export function planTailwindToolchainFix(files: CodeFile[]): TailwindToolchainFi
   return { addFiles, stylesheetToPrefix, addDevDependencies, notes }
 }
 
+/**
+ * Injecte proprement les directives Tailwind dans une feuille de style existante.
+ * Selon la spec CSS et PostCSS, les regles @import (ou @charset) DOIVENT
+ * preceder toutes les autres declarations (@tailwind base inclus).
+ * De plus, les imports locaux fictifs (ex: 'design-spec/tokens.css') qui
+ * n'existent pas sur disque sont filtres pour eviter tout crash de build.
+ */
+export function injectTailwindDirectivesIntoCss(content: string, existingPaths?: Set<string>): string {
+  if (content.includes('@tailwind base')) return content
+
+  const lines = content.split('\n')
+  const importLines: string[] = []
+  const restLines: string[] = []
+  let inLeadingImports = true
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (inLeadingImports && (trimmed.startsWith('@charset') || trimmed.startsWith('@import') || trimmed === '')) {
+      if (trimmed.startsWith('@import')) {
+        const match = /@import\s+['"]([^'"]+)['"]/.exec(trimmed)
+        if (match) {
+          const target = match[1].toLowerCase()
+          // Ignorer les imports locaux fictifs inexistants
+          if (!target.startsWith('http') && !target.startsWith('//') && existingPaths && !existingPaths.has(target)) {
+            continue
+          }
+        }
+        importLines.push(line)
+      } else if (trimmed !== '') {
+        importLines.push(line)
+      }
+    } else {
+      inLeadingImports = false
+      if (trimmed.includes('design-spec/tokens.css')) continue
+      restLines.push(line)
+    }
+  }
+
+  const importBlock = importLines.length > 0 ? `${importLines.join('\n')}\n\n` : ''
+  const restBlock = restLines.join('\n').trimStart()
+  return `${importBlock}${DIRECTIVES}\n${restBlock}`
+}
+
 /** Applique le plan. Fonction pure — on complete, on ne redecide jamais. */
 export function applyTailwindToolchainFix(files: CodeFile[], fix: TailwindToolchainFix): CodeFile[] {
+  const existingPaths = new Set(files.map((f) => normalizedName(f.name)))
   const next = files.map((file) => {
     if (fix.stylesheetToPrefix && file.name === fix.stylesheetToPrefix) {
-      return { ...file, content: `${DIRECTIVES}\n${file.content}` }
+      return { ...file, content: injectTailwindDirectivesIntoCss(file.content, existingPaths) }
     }
     if (normalizedName(file.name) === 'package.json' && Object.keys(fix.addDevDependencies).length > 0) {
       try {
@@ -145,3 +189,4 @@ export function applyTailwindToolchainFix(files: CodeFile[], fix: TailwindToolch
   })
   return [...next, ...fix.addFiles]
 }
+

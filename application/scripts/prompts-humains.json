@@ -1,0 +1,110 @@
+{
+  "_lisez_moi": "Contextes de prompt HUMANISES : ce qu'un utilisateur reel ecrit, avec ses imperfections. Pas de specification propre, pas d'enumeration de contraintes. Le but est de voir si le pipeline officiel se comporte en expert face a une demande ordinaire — floue, familiere, parfois fautive — et non seulement face a un enonce bien forme. Chaque entree porte ce que l'on attend d'un expert, pour pouvoir en juger la sortie.",
+  "modules": [
+    {
+      "module": "conversation",
+      "route": "/api/aurora/conversation/chat",
+      "projet": "velo_chaine_saute",
+      "prompt": "slt, jai un pb avec mon velo la chaine saute quand je pedale fort en montee. cest grave ? je dois changer quoi",
+      "humain": "familier, sans accents, faute de frappe, question ouverte sans contexte technique",
+      "attendu_d_un_expert": [
+        "ne renvoie pas une liste generique de 10 causes : hierarchise",
+        "cite la cause la plus probable en premier (cassette ou chaine usee, derailleur mal regle)",
+        "pose UNE question de discrimination utile (kilometrage, age de la chaine)",
+        "donne un geste verifiable soi-meme avant d'acheter quoi que ce soit",
+        "repond en francais courant, sans jargon non explique, sans emoji"
+      ]
+    },
+    {
+      "module": "code",
+      "route": "/api/code/generate/stream",
+      "projet": "brulerie_nomade",
+      "prompt": "fais moi un site pour ma brulerie de cafe a lyon. faut quon puisse commander en ligne et voir sur quels marches on est cette semaine. moderne mais pas trop charge, jaime bien les trucs sobres",
+      "humain": "demande metier sans specification technique, gout exprime vaguement, aucune contrainte de stack",
+      "attendu_d_un_expert": [
+        "un projet qui se lance vraiment (package.json coherent, point d'entree)",
+        "chaque fichier passe l'analyseur TypeScript sans diagnostic",
+        "aucun emoji en guise d'icone, aucun lorem ipsum, aucun TODO",
+        "les marches et les commandes existent VRAIMENT, pas des sections vides",
+        "sobre au sens ou l'utilisateur l'entend : peu de couleurs, typographie lisible"
+      ]
+    },
+    {
+      "module": "image",
+      "route": "/api/aurora/image/generate",
+      "projet": "renard_neige",
+      "prompt": "un renard roux qui dort dans la neige au coucher du soleil, genre peinture",
+      "humain": "sujet simple, style evoque par comparaison plutot que nomme",
+      "attendu_d_un_expert": [
+        "l'image n'est ni uniforme ni noire",
+        "le sujet demande est present et identifiable",
+        "le format est choisi selon le sujet, pas un carre par defaut",
+        "la lumiere correspond au coucher de soleil demande"
+      ]
+    },
+    {
+      "module": "3d",
+      "route": "/api/3d/run-pipeline",
+      "projet": "moulin_a_eau",
+      "prompt": "un moulin a eau en bois avec sa grande roue",
+      "humain": "objet du quotidien, aucune indication de style, de taille ni de format",
+      "attendu_d_un_expert": [
+        "un GLB qui s'ouvre, avec de la geometrie reelle (pas 20 faces)",
+        "des couleurs ou une texture : ni noir ni monochrome",
+        "la roue est reconnaissable dans la silhouette",
+        "le fichier arrive sous output/3d/<projet>/, visible de l'UI et du tunnel"
+      ]
+    },
+    {
+      "module": "voix",
+      "route": "/api/voice/tts",
+      "projet": "accueil_brulerie",
+      "prompt": "Bonjour et bienvenue a la Brulerie Nomade. Nos cafes sont torrefies chaque semaine, en petits lots, dans notre atelier lyonnais.",
+      "humain": "texte d'accueil reel, avec liaisons et une phrase longue",
+      "attendu_d_un_expert": [
+        "un WAV audible : crete franche, pas de silence",
+        "la duree correspond au texte (ni tronque, ni etire)",
+        "range sous output/voix/<projet>/, horodate, sans ecraser le precedent"
+      ]
+    },
+    {
+      "module": "cyber",
+      "route": "/api/aurora/cyber/analyze",
+      "projet": "ctf_hash",
+      "prompt": "jai trouve ca dans un CTF : 5f4dcc3b5aa765d61d8327deb882cf99 tu peux me dire ce que cest ?",
+      "humain": "contexte CTF explicite, empreinte collee sans indication de format",
+      "attendu_d_un_expert": [
+        "identifie la forme (32 hexa -> MD5/NTLM/MD4) sans affirmer une seule",
+        "reconnait cette empreinte precise : c'est le MD5 de « password »",
+        "explique la methode plutot que de donner seulement la reponse",
+        "reste dans le cadre pedagogique du CTF"
+      ]
+    },
+    {
+      "module": "academy",
+      "route": "/api/aurora/learning/explain",
+      "projet": "derivees_seconde",
+      "prompt": "explique moi les derivees comme si javais 15 ans, avec un exemple concret pas juste des formules",
+      "humain": "demande de vulgarisation avec un niveau explicite et un refus explicite du formalisme",
+      "attendu_d_un_expert": [
+        "part d'une situation concrete avant toute formule",
+        "respecte le niveau demande : pas de limite epsilon-delta",
+        "l'exemple est verifiable a la main",
+        "propose une verification que l'eleve peut faire seul"
+      ]
+    },
+    {
+      "module": "video",
+      "route": "/api/cinema/generate",
+      "projet": "velo_pont",
+      "prompt": "une petite video dun velo rouge qui traverse un pont en ville, genre 5 secondes",
+      "humain": "duree approximative, sujet simple, aucune indication de cadrage ni de mouvement de camera",
+      "attendu_d_un_expert": [
+        "la video BOUGE reellement : pas une photo encodee",
+        "le mouvement porte sur la scene, pas seulement sur un detail",
+        "la duree est proche des 5 secondes demandees",
+        "range sous output/video/<projet>/"
+      ]
+    }
+  ]
+}

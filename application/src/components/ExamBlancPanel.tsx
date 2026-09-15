@@ -10,9 +10,9 @@
  *     + note simulée sur 20, forces/faiblesses, conseils de révision
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useAppStore } from '../stores/appStore'
-import { ollamaChat } from '../hooks/useTauri'
-import MarkdownPro from './MarkdownPro'
+import { useAppStore } from '../stores/appStore.ts'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import MarkdownPro from './MarkdownPro.tsx'
 
 interface Question {
   id: string

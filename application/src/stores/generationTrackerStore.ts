@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ModuleId } from '../types/app'
-import { auroraVoice } from '../services/auroraVoice'
-import { cleanFilenameForTTS } from '../utils/voiceSummary'
+import type { ModuleId } from '../types/app.ts'
+import { auroraVoice } from '../services/auroraVoice.ts'
+import { cleanFilenameForTTS } from '../utils/voiceSummary.ts'
 
 // ---------------------------------------------------------------------------
 // Types

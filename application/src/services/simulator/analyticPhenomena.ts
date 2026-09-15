@@ -10,8 +10,8 @@
 //
 // All units SI. No DOM, no Three.js. Deterministic.
 
-import type { Acceleration, Derivative, EnergyFn } from './analyticIntegrators'
-import type { Channel } from './dataRecorder'
+import type { Acceleration, Derivative, EnergyFn } from './analyticIntegrators.ts'
+import type { Channel } from './dataRecorder.ts'
 
 export type Didactic = {
   /** TeX equations rendered in the panel (KaTeX) — already in the dependency list. */

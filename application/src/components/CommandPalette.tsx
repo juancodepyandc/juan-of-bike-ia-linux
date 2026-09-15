@@ -17,8 +17,8 @@ import {
   Volume2,
   type LucideIcon,
 } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 type Command = {
   id: string

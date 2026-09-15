@@ -6,9 +6,9 @@ import {
   type LabId,
   type Tutorial,
   type TutorialDifficulty,
-} from '../../services/learning/tutorialEngine'
-import { useTutorialStore } from '../../stores/tutorialStore'
-import TutorialRunner from './TutorialRunner'
+} from '../../services/learning/tutorialEngine.ts'
+import { useTutorialStore } from '../../stores/tutorialStore.ts'
+import TutorialRunner from './TutorialRunner.tsx'
 
 type Props = {
   lab: LabId

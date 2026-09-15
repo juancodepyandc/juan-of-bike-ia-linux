@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { aggregateAll, findComponentMarkup, findCss, findHtml, findJs } from './codeVisualSurfaces.ts'
-import type { CodeIntent } from './codeIntent'
+import type { CodeIntent } from './codeIntent.ts'
 import {
   scoreRenderedVisualAudit,
   type CodeVisualRenderAudit,

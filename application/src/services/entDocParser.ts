@@ -17,8 +17,8 @@
  * Le content-script Aurora-Connect télécharge les pièces jointes via
  * fetch(blob URL) authenticated puis POST le blob ici via uploadDoc().
  */
-import { ollamaChat } from '../hooks/useTauri'
-import { useAppStore } from '../stores/appStore'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import { useAppStore } from '../stores/appStore.ts'
 
 export type DocKind = 'cours' | 'exo' | 'devoir' | 'corrige' | 'fiche-revision' | 'autre'
 export type DocLevel = '6e' | '5e' | '4e' | '3e' | '2nde' | '1ere' | 'Tle' | 'inconnu'

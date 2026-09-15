@@ -12,13 +12,13 @@ import {
   PanelBottom,
   Terminal,
 } from 'lucide-react'
-import type { CodeFile } from '../services/codeOrchestrator'
-import type { CodeSandboxResult } from '../services/codeSandbox'
-import type { DevServerState } from '../services/codeDevServer'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
+import type { DevServerState } from '../services/codeDevServer.ts'
 import {
   runCodeSimulationLab,
   type CodeSimulationLabReport,
-} from '../services/codeSimulationLab'
+} from '../services/codeSimulationLab.ts'
 import {
   buildWorkspaceStats,
   ErrorPanel,
@@ -27,7 +27,7 @@ import {
   SimulationPanel,
   SummaryPanel,
   VirtualizedProjectTree,
-} from './codeViewWorkspacePanels'
+} from './codeViewWorkspacePanels.tsx'
 
 type AtelierTab = 'tree' | 'file' | 'preview' | 'logs' | 'errors' | 'perf' | 'simulations' | 'state'
 type DockMode = 'left' | 'bottom' | 'hidden'

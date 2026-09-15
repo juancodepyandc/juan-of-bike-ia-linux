@@ -2,14 +2,14 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import {
   ArrowLeft, ChevronsDownUp, Eye, FileCode2, FolderTree, PanelLeftClose, PanelLeftOpen, X,
 } from 'lucide-react'
-import CodeFileTree from '../components/CodeFileTree'
-import { buildLivePreviewHtml } from '../components/CodeProjectPreview'
+import CodeFileTree from '../components/CodeFileTree.tsx'
+import { buildLivePreviewHtml } from '../components/CodeProjectPreview.tsx'
 import {
   buildCodeFileTree,
   collectDirectoryPaths,
   formatCodeFileSize,
-} from '../services/codeFileTreeModel'
-import type { CodeFile } from '../services/codeOrchestrator'
+} from '../services/codeFileTreeModel.ts'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
 
 const CodeMirrorViewer = lazy(() => import('../components/CodeMirrorViewer'))
 

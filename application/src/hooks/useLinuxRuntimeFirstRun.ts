@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { linuxRuntimeCheck, linuxRuntimeInstallMissing } from './useTauri'
-import { isTauriRuntime } from '../utils/runtime'
+import { linuxRuntimeCheck, linuxRuntimeInstallMissing } from './useTauri.ts'
+import { isTauriRuntime } from '../utils/runtime.ts'
 
 let installStarted = false
 

@@ -300,15 +300,9 @@ verts = verts.reshape(-1, 3)
 mw_np = np.array(mw.to_4x4())
 vw = verts @ mw_np[:3, :3].T + mw_np[:3, 3]
 
-AXES = [0, 1, 2]
-side_axes = [a for a in AXES if a != UPAX]
-inb = np.ones(len(vw), dtype=bool)
-inb &= (vw[:, UPAX] >= HEAD_MIN[UPAX]) & (vw[:, UPAX] <= HEAD_MAX[UPAX])
-# axe lateral (largeur mesuree dans le rendu): on le connait, il est fourni
-LAT = int(cfg["lateral_axis"])
-inb &= (vw[:, LAT] >= HEAD_MIN[LAT]) & (vw[:, LAT] <= HEAD_MAX[LAT])
-
-head_faces = [p.index for p in me.polygons if all(inb[v] for v in p.vertices)]
+# Inclure tous les sommets du haut du corps/tete au-dessus du torse sans decoupe laterale artificielle
+inb = (vw[:, UPAX] >= HEAD_MIN[UPAX])
+head_faces = [p.index for p in me.polygons if any(inb[v] for v in p.vertices)]
 print("PROJ_INFO %d/%d faces tete" % (len(head_faces), len(me.polygons)))
 if not head_faces:
     print("PROJ_FAIL aucune face tete"); sys.exit(5)
@@ -369,19 +363,22 @@ for shot in SHOTS:
     u = px * 0.5 + 0.5
     v = py * 0.5 + 0.5
 
-    # 2) poids = orientation x marge de cadre x ellipse du VISAGE x visibilite
+    # 2) poids = orientation x marge de cadre x visibilite
     facing = -(nrm @ view)                        # normale face a la camera
-    w = np.clip((facing - 0.15) / 0.45, 0.0, 1.0)
+    w = np.clip((facing - 0.02) / 0.25, 0.0, 1.0)
     # marge de cadre: fondu 6% au bord, zero hors cadre
     fu = np.clip((np.minimum(u, 1.0 - u)) / 0.06, 0.0, 1.0)
     fv = np.clip((np.minimum(v, 1.0 - v)) / 0.06, 0.0, 1.0)
     w *= fu * fv
-    # ellipse du visage: seul le VISAGE est reellement restaure par le prior.
-    # Ailleurs (cheveux, nuque, col) l'image restauree n'est qu'un reechantillonnage
-    # de l'albedo -> la reprojeter n'apporterait rien et ajouterait du flou.
-    uc, vc, ru, rv = shot["face_uv"]
-    rr = np.sqrt(((u - uc) / ru) ** 2 + ((v - vc) / rv) ** 2)
-    w *= np.clip((1.15 - rr) / 0.30, 0.0, 1.0)
+    # ellipse du visage: pour un prior synthetique (GFPGAN), seul l'ovale du visage
+    # est valide. Pour une VRAIE reference photo (qui contient toute la tete, cheveux,
+    # barbe, col), on utilise toute la vue projetee avec le fondu de normale et de cadre.
+    if shot.get("is_reference", False) or shot.get("full_coverage", False):
+        pass  # pas de coupure d'ellipse artificielle : fondu continu naturel
+    else:
+        uc, vc, ru, rv = shot["face_uv"]
+        rr = np.sqrt(((u - uc) / ru) ** 2 + ((v - vc) / rv) ** 2)
+        w *= np.clip((1.15 - rr) / 0.30, 0.0, 1.0)
     # 3) visibilite: rayon vers la camera
     cand = np.where(w > 0.01)[0]
     vis = np.zeros(len(hvw), dtype=np.float32)
@@ -685,35 +682,25 @@ def _delta_from_reference(render_png: str, reference_png: str, delta_png: str,
     if not info.get("ok"):
         return None, "reference non restauree: %s" % info.get("error")
 
-    crop = cv2.imread(crop_png, cv2.IMREAD_COLOR)
+    # Utiliser l'image de reference complete (pleine resolution) plutot qu'un crop etroit
+    # pour couvrir integralement les deux joues, les oreilles, le menton et le front sans couture.
+    ref_full = cv2.imread(reference_png, cv2.IMREAD_COLOR)
     ren = cv2.imread(render_png, cv2.IMREAD_COLOR)
     R = ren.shape[0]
-
-    hx, hy, hs, _ = info["head_box"]
-    sc = float(info["target"]) / float(hs)
     lmk_ref = np.array(info["landmarks"], dtype=np.float32)
-    lmk_crop = (lmk_ref - np.array([hx, hy], np.float32)) * sc      # reperes dans le crop
-    lmk_ren = np.array(hit_ren.landmarks, dtype=np.float32)         # reperes dans le rendu
+    lmk_ren = np.array(hit_ren.landmarks, dtype=np.float32)
 
-    M, _inl = cv2.estimateAffinePartial2D(lmk_crop, lmk_ren, method=cv2.LMEDS)
+    M, _inl = cv2.estimateAffinePartial2D(lmk_ref, lmk_ren, method=cv2.LMEDS)
     if M is None:
         return None, "recalage des reperes impossible"
-    warped = cv2.warpAffine(crop, M, (R, R), flags=cv2.INTER_LANCZOS4,
+    warped = cv2.warpAffine(ref_full, M, (R, R), flags=cv2.INTER_LANCZOS4,
                             borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
 
-    # MASQUE DE VALIDITE: hors du crop de la reference, warpAffine REPLIQUE les
-    # pixels de bord. Cette zone repliquee est du faux contenu, et sa lisiere se
-    # voit comme une arete nette en travers de la joue. On ne garde donc que ce que
-    # la reference couvre REELLEMENT, avec un fondu.
-    valid = cv2.warpAffine(np.ones(crop.shape[:2], np.float32), M, (R, R),
-                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
-                           borderValue=0.0)
-    k = max(3, int(0.03 * R) | 1)
-    valid = cv2.erode(valid, np.ones((k, k), np.uint8))
-    valid = cv2.GaussianBlur(valid, (0, 0), k * 0.5)[..., None]
+    # Masque de validite doux couvrant toute l'image
+    valid = np.ones((R, R, 1), dtype=np.float32)
 
     # residu de recalage (en px) = qualite de la superposition des traits
-    proj = cv2.transform(lmk_crop.reshape(-1, 1, 2), M).reshape(-1, 2)
+    proj = cv2.transform(lmk_ref.reshape(-1, 1, 2), M).reshape(-1, 2)
     err = float(np.linalg.norm(proj - lmk_ren, axis=1).mean())
 
     # NB: on s'en tient a la SIMILITUDE. Un recalage dense (flot optique) a ete
@@ -725,12 +712,9 @@ def _delta_from_reference(render_png: str, reference_png: str, delta_png: str,
     fw = max(hit_ren.bbox[2], hit_ren.bbox[3])
     ren_f = ren.astype(np.float32)
 
-    # on ne garde que la structure: basses frequences reprises au mesh
-    sig = max(2.0, 0.10 * fw)
-    matched = warped - cv2.GaussianBlur(warped, (0, 0), sig) \
-        + cv2.GaussianBlur(ren_f, (0, 0), sig)
-
-    d = (matched - ren_f) / 255.0 * valid
+    # Sur une vraie photo de reference, on transfere la vraie carnation et les micro-details
+    # sans lui reimposer les ombres ou artefacts de rendu du mesh initial
+    d = (warped - ren_f) / 255.0 * valid
     enc = np.clip(d * 0.5 + 0.5, 0.0, 1.0)
     cv2.imwrite(delta_png, (enc * 65535.0).astype(np.uint16))
 
@@ -988,6 +972,7 @@ def refine_face(glb: str, out_glb: str, views: int = 3, res: int = 1024,
                                     (bw * 0.5) / Rv * 1.25, (bh * 0.5) / Rv * 1.15]
                 front["png_delta"] = os.path.join(wd, "ref_delta.png")
                 front["png_restored"] = os.path.join(wd, "ref_crop.png")
+                front["is_reference"] = True
                 kept.append(front)
                 sys.stderr.write(
                     "[face_refine] REFERENCE recalee: visage %s->%s px, residu "

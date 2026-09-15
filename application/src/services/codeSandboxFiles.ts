@@ -50,6 +50,65 @@ function normalizeStructuredFileContent(file: CodeFile) {
   return file.content
 }
 
+function ensureCompatiblePackageManifest(files: CodeFile[]) {
+  const packageFile = findFile(files, 'package.json')
+  if (!packageFile) return { files, notes: [] as string[] }
+  const manifest = parseJsonSafely<NodePackageManifest>(packageFile.content)
+  if (!manifest) return { files, notes: [] as string[] }
+
+  const hasVite = files.some((f) => /(^|\/)vite\.config\.(?:ts|js|mjs)$/i.test(f.name) || /(^|\/)index\.html$/i.test(f.name))
+  let changed = false
+  const scripts = { ...(manifest.scripts || {}) } as Record<string, string>
+  const deps = { ...(manifest.dependencies || {}) } as Record<string, string>
+  const devDeps = { ...(manifest.devDependencies || {}) } as Record<string, string>
+
+  if (hasVite && (deps['react-scripts'] || (scripts.build && scripts.build.includes('react-scripts')))) {
+    delete deps['react-scripts']
+    delete deps['@testing-library/jest-dom']
+    delete deps['@testing-library/react']
+    delete deps['@testing-library/user-event']
+    delete deps['@types/jest']
+    delete deps['web-vitals']
+    if (deps['@types/node']) deps['@types/node'] = '^20.11.0'
+    if (devDeps['@types/node']) devDeps['@types/node'] = '^20.11.0'
+    if (!devDeps.vite) devDeps.vite = '^5.4.14'
+    if (!devDeps['@vitejs/plugin-react']) devDeps['@vitejs/plugin-react'] = '^4.3.4'
+    if (!devDeps.typescript && !deps.typescript) devDeps.typescript = '^5.3.3'
+    scripts.dev = 'vite'
+    scripts.build = 'tsc && vite build'
+    scripts.preview = 'vite preview'
+    changed = true
+  }
+
+  const KNOWN_BUILTINS = new Set(['fs', 'path', 'os', 'child_process', 'crypto', 'http', 'https', 'events', 'stream', 'util', 'url', 'assert'])
+
+  for (const file of files) {
+    if (!/\.[cm]?[jt]sx?$/i.test(file.name)) continue
+    const matches = file.content.matchAll(/\b(?:import\s+(?:[\w*\s{},]+from\s+)?|from\s+)['"]([^.'"/][^'"]*|@[^'"]+)['"]/g)
+    for (const match of matches) {
+      const raw = match[1]
+      const pkgName = raw.startsWith('@') ? raw.split('/').slice(0, 2).join('/') : raw.split('/')[0]
+      if (KNOWN_BUILTINS.has(pkgName) || pkgName.startsWith('node:')) continue
+      if (!deps[pkgName] && !devDeps[pkgName]) {
+        deps[pkgName] = pkgName === 'react-beautiful-dnd' ? '^13.1.8' : 'latest'
+        if (pkgName === 'react-beautiful-dnd' && !devDeps['@types/react-beautiful-dnd']) {
+          devDeps['@types/react-beautiful-dnd'] = '^13.1.8'
+        }
+        changed = true
+      }
+    }
+  }
+
+  if (!changed) return { files, notes: [] as string[] }
+
+  const updatedManifest = { ...manifest, scripts, dependencies: deps, devDependencies: devDeps }
+  const updatedFile = { ...packageFile, content: `${JSON.stringify(updatedManifest, null, 2)}\n` }
+  return {
+    files: upsertSandboxFile(files, updatedFile),
+    notes: ['package.json aligne sur Vite (react-scripts remplace par vite & @vitejs/plugin-react)'],
+  }
+}
+
 export function normalizeSandboxFiles(files: CodeFile[]) {
   const notes: string[] = []
   const normalizedFiles = files.map((file) => {
@@ -60,11 +119,15 @@ export function normalizeSandboxFiles(files: CodeFile[]) {
     return nextContent === file.content ? file : { ...file, content: nextContent }
   })
 
-  const isolatedTypeScript = ensureIsolatedTypeScriptProject(normalizedFiles)
+  const alignedManifest = ensureCompatiblePackageManifest(normalizedFiles)
+  notes.push(...alignedManifest.notes)
+
+  const isolatedTypeScript = ensureIsolatedTypeScriptProject(alignedManifest.files)
   notes.push(...isolatedTypeScript.notes)
 
   return { files: isolatedTypeScript.files, notes }
 }
+
 
 export type NodePackageManifest = {
   name?: string
@@ -260,7 +323,25 @@ export function detectPackageManager(files: CodeFile[], packageJson: { packageMa
 }
 
 export function sanitizeRelativePath(filePath: string) {
-  return filePath.replace(/^[./\\]+/, '').replace(/\.\.(\/|\\)/g, '').replace(/\\/g, '/')
+  // L'ancienne version retirait `/^[./\\]+/` : elle otait bien les prefixes
+  // `./` et `/`, mais elle DECAPITAIT aussi tous les fichiers caches.
+  // `.gitignore` devenait `gitignore`, `.env` devenait `env`, `.npmrc`
+  // devenait `npmrc` — dans CHAQUE projet livre. Un `.gitignore` sans point
+  // n'ignore rien, un `.env` sans point n'est pas charge : le fichier est la,
+  // il a l'air correct, et il est inerte. Constate sur la generation reelle du
+  // 24/08/2026 (`output/code/sandbox/1787598849366/gitignore`).
+  //
+  // On raisonne desormais par SEGMENT de chemin plutot que par prefixe :
+  // un segment vide (`//`), un `.` et un `..` sont ecartes — ce qui neutralise
+  // la remontee de repertoire — et tout autre segment est conserve tel quel,
+  // point initial compris.
+  const segments = String(filePath).replace(/\\/g, '/').split('/')
+  const gardes: string[] = []
+  for (const segment of segments) {
+    if (segment === '' || segment === '.' || segment === '..') continue
+    gardes.push(segment)
+  }
+  return gardes.join('/')
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ Tests the underlying t_inspect_* functions directly (no MCP transport
 needed for the logic). Plus one smoke test that the server module
 imports + the tool registry has the expected 7 tools wired."""
 
+
 from __future__ import annotations
 
 import json
@@ -112,6 +113,39 @@ class GeometryAuditTests(unittest.TestCase):
         self.assertFalse(r["ok"])
 
 
+class GlbHeaderTests(unittest.TestCase):
+
+    def test_truncated_headers_return_an_error_instead_of_raising(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "truncated.glb"
+            for raw in (b"", b"glTF", b"glTF" + b"\0" * 12):
+                with self.subTest(length=len(raw)):
+                    p.write_bytes(raw)
+                    self.assertEqual(mcp._read_gltf_json(p), {})
+                    self.assertFalse(mcp.t_inspect_motion(str(p))["ok"])
+
+    def test_invalid_version_length_and_json_types_are_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "invalid.glb"
+            object_payload = b'{"asset":{}}'
+            for version, declared_length, payload in (
+                (1, 20 + len(object_payload), object_payload),
+                (2, 100, object_payload),
+                (2, 24, b"[1] "),
+                (2, 24, b"null"),
+            ):
+                with self.subTest(version=version, length=declared_length, payload=payload):
+                    p.write_bytes(b"glTF" + struct.pack("<IIII", version, declared_length, len(payload), 0x4E4F534A) + payload)
+                    self.assertEqual(mcp._read_gltf_json(p), {})
+
+    def test_chunk_cannot_extend_beyond_the_declared_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "overflow.glb"
+            payload = b'{"asset":{}}'
+            p.write_bytes(b"glTF" + struct.pack("<IIII", 2, 20 + len(payload), 400, 0x4E4F534A) + payload)
+            self.assertEqual(mcp._read_gltf_json(p), {})
+
+
 class TextureAuditTests(unittest.TestCase):
 
     def test_no_material_no_uv_flagged(self):
@@ -202,6 +236,7 @@ class ServerWiringTests(unittest.TestCase):
         self.assertIn("inspect_squash", names)
         self.assertIn("summarize_quality", names)
 
+    @unittest.skipUnless(mcp.MCP_DISPONIBLE, "MCP transport package is optional")
     def test_server_instance_exists(self):
         self.assertIsNotNone(mcp.server)
 

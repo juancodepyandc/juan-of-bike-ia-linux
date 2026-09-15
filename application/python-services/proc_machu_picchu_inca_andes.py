@@ -791,7 +791,20 @@ for c in condors:
         c.keyframe_insert("rotation_euler", frame=f)
 
 # ============ EXPORT ============
-out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "public", "_pbr_test")
+# ARCHITECTURE DE SORTIE. Ce script ecrivait son GLB dans
+# `application/public/_pbr_test/`, un dossier servi par Vite — et que le build
+# EFFACAIT au build (vite.config.ts, closeBundle). Le
+# livrable ne rejoignait donc jamais `application/output/3d/`, ou la
+# bibliotheque 3D, l interface et le tunnel vont le chercher : le fichier
+# existait sur le disque et restait invisible. 111 scripts partageaient ce
+# defaut, alors que `aurora_output_paths` enonce le contraire en toutes
+# lettres : « Every module MUST place its outputs under
+# application/output/<module_name>/<project_name>/ ».
+import sys as _sys_out
+_sys_out.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from aurora_output_paths import get_3d_project_dir as _aurora_dir_3d
+out_dir = str(_aurora_dir_3d(
+    os.path.splitext(os.path.basename(os.path.abspath(__file__)))[0]))
 out_dir = os.path.normpath(out_dir)
 os.makedirs(out_dir, exist_ok=True)
 out_glb = os.path.join(out_dir, "pbr_machu_proc.glb")

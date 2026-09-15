@@ -15,7 +15,7 @@ Each entry is one line of JSON:
     "axis_scores": {"color_richness": 100, ...}}
 
 Schema: `aurora.score_event.v1`. The file lives at
-`application/output/3d/score_history.jsonl` and rotates after 5000 lines
+`application/output/3d/_historique/score_history.jsonl` and rotates after 5000 lines
 to `score_history-<UTC>.jsonl` to keep the live file readable.
 
 Usage:
@@ -34,7 +34,12 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LOG = REPO_ROOT / "application" / "output" / "3d" / "score_history.jsonl"
+# ARCHITECTURE : rien ne se depose a la RACINE d un module. Le contrat de
+# `aurora_output_paths` est explicite — « Nothing should ever be scattered at
+# the root of output/ ». L historique des scores est un artefact du module 3D :
+# il vit dans son propre projet, comme n importe quelle autre production.
+DEFAULT_LOG = (REPO_ROOT / "application" / "output" / "3d" / "_historique"
+               / "score_history.jsonl")
 ROTATE_AT_LINES = 5000
 
 

@@ -7,7 +7,8 @@ import type {
   AssistantTurnAnalysis,
   AssistantTurnVerification,
   ChatMessage,
-} from '../types/app'
+  WebSource,
+} from '../types/app.ts'
 
 function createEmptyRunState(): AssistantRunState {
   return {
@@ -21,6 +22,8 @@ function createEmptyRunState(): AssistantRunState {
     verification: null,
     timeline: [],
     lastError: null,
+    sources: [],
+    searchQueries: [],
   }
 }
 
@@ -44,6 +47,10 @@ interface ChatState {
   ) => void
   setRunAnalysis: (analysis: AssistantTurnAnalysis) => void
   setRunVerification: (verification: AssistantTurnVerification) => void
+  /** Ajoute ou remplace une source du tour en cours (affichage en direct). */
+  upsertRunSource: (source: WebSource) => void
+  /** Requetes envoyees au moteur pour le tour en cours. */
+  setRunQueries: (queries: string[]) => void
   finishRun: () => void
   failRun: (error: string) => void
   resetRun: () => void
@@ -137,6 +144,20 @@ export const useChatStore = create<ChatState>()(
         ...state.runState,
         verification,
       },
+    })),
+  upsertRunSource: (source) =>
+    set((state) => {
+      // Meme source, nouvel etat (found -> reading -> read) : on remplace en
+      // place pour que la carte ne saute pas de position pendant la lecture.
+      const index = state.runState.sources.findIndex((s) => s.id === source.id)
+      const sources = index === -1
+        ? [...state.runState.sources, source]
+        : state.runState.sources.map((s, i) => (i === index ? source : s))
+      return { runState: { ...state.runState, sources } }
+    }),
+  setRunQueries: (queries) =>
+    set((state) => ({
+      runState: { ...state.runState, searchQueries: queries },
     })),
   finishRun: () =>
     set((state) => ({
@@ -241,7 +262,15 @@ export const useChatStore = create<ChatState>()(
       name: 'aurora-chat-store',
       version: 1,
       partialize: (state) => ({
-        messages: state.messages.slice(-80),
+        // Les sources voyagent avec le message : au rechargement, une reponse
+        // sourcee doit encore montrer ses sites. On les borne a 12 par message
+        // et on jette le contenu extrait des pages (lourd, reconstitutible)
+        // pour que le localStorage ne sature pas.
+        messages: state.messages.slice(-80).map((m) => (
+          m.sources?.length
+            ? { ...m, sources: m.sources.slice(0, 12).map(({ content: _content, ...rest }) => rest) }
+            : m
+        )),
       }),
     },
   ),

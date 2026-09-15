@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Download, X, FileImage, FileVideo, FileAudio, Boxes, FileText } from 'lucide-react'
-import { getBridgeUrl } from '../utils/runtime'
+import { getBridgeUrl } from '../utils/runtime.ts'
 
 type GeneratedFile = {
   name: string

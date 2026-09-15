@@ -838,7 +838,7 @@ const VERB_TO_PRESET: { rx: RegExp; presetId: string }[] = [
   { rx: /\b(grimpe|grimper|escalade|escalader|climb|climbs|climbing|scale|scaling|monter en escalade)\b/i, presetId: 'character.climb' },
   { rx: /\b(pirouette|pirouettes|tourne sur (?:lui|elle)[\s-]m[eê]me|spins?\s+on\s+the\s+spot|spin\s+in\s+place|tournoiement|whirls?|twirls?|twirling|tourbillonne)\b/i, presetId: 'character.spin' },
 
-  { rx: /\b(vole|voler|fly|flying|flies|battement d ailes|battement d'ailes|plane|planes|planing|soar|soars|soaring)\b/i, presetId: 'creature.flap_fly' },
+  { rx: /\b(vole|voler|volant|volante|volants|fly|flying|flies|battement[s]?\s+(?:d['’]|des?\s+|d\s+)?ailes?|flapping\s+wings?|wings?\s+flap(?:ping|s)?|plane|planes|planing|soar|soars|soaring|sustentation)\b/i, presetId: 'creature.flap_fly' },
   { rx: /\b(serpente|slither|slithers|slithering|onduler|ondule|ondulant|wriggle|wriggles|wriggling|squirm|squirms)\b/i, presetId: 'creature.slither' },
   { rx: /\b(rode|r[oô]der|rodeur|prowl|prowling|stalk|stalking|sneak|sneaks|sneaking|creep|creeps|creeping)\b/i, presetId: 'creature.prowl' },
   { rx: /\b(galop|galope|galoper|gallop|galloping|gallops|charge|charges|charging|fonce a quatre pattes)\b/i, presetId: 'creature.quadruped_run' },

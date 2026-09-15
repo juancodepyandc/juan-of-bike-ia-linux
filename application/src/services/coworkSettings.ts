@@ -6,7 +6,7 @@
 // prompt + the action validator (trust mode bypasses confirmations).
 // ---------------------------------------------------------------------------
 
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 const STORAGE_KEY = 'cowork:settings'
 

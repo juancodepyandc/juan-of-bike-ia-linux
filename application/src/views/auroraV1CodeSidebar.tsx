@@ -1,10 +1,10 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
 import { Download, FileCode2, FolderGit2, FolderOpen, Globe, Save } from 'lucide-react'
-import SessionSwitcher from '../components/SessionSwitcher'
-import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic'
-import type { ParsedFile } from '../services/codeOutputFiles'
-import { GREEN } from './auroraV1CodeHelpers'
-import { Eyebrow } from './auroraV1CodePrimitives'
+import SessionSwitcher from '../components/SessionSwitcher.tsx'
+import type { UseCodeViewLogic } from '../hooks/useCodeViewLogic.ts'
+import type { ParsedFile } from '../services/codeOutputFiles.ts'
+import { GREEN } from './auroraV1CodeHelpers.ts'
+import { Eyebrow } from './auroraV1CodePrimitives.tsx'
 
 type ConfirmAction = 'download' | 'repo'
 

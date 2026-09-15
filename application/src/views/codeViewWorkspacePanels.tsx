@@ -1,13 +1,13 @@
 import { useMemo } from 'react'
 import { List, type RowComponentProps } from 'react-window'
 import { AlertTriangle, FileCode2 } from 'lucide-react'
-import type { CodeFile } from '../services/codeOrchestrator'
-import type { CodeSandboxResult } from '../services/codeSandbox'
-import { supportsBrowserWorkspaceRuntime } from '../services/codeBrowserWorkspaceRuntime'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
+import { supportsBrowserWorkspaceRuntime } from '../services/codeBrowserWorkspaceRuntime.ts'
 import {
   summarizeCodeSimulationLab,
   type CodeSimulationLabReport,
-} from '../services/codeSimulationLab'
+} from '../services/codeSimulationLab.ts'
 
 export function VirtualizedProjectTree({
   files,

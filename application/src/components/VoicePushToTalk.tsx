@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Mic, MicOff, Loader2 } from 'lucide-react'
-import { auroraVoice, type ListenHandle, type VoicePhase } from '../services/auroraVoice'
+import { auroraVoice, type ListenHandle, type VoicePhase } from '../services/auroraVoice.ts'
 
 interface Props {
   /** Callback appelé avec le texte transcrit. */

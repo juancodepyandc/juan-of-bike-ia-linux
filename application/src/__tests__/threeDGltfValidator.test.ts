@@ -8,12 +8,23 @@ import {
   readGltfHeader,
 } from '../services/threeDGltfValidator.ts'
 
+// Gabarit minimal REELLEMENT valide au sens de la specification glTF 2.0.
+//
+// La version precedente s'arretait a `attributes: { POSITION: 0 }` sans
+// declarer de tableau `accessors`. Or `POSITION` est un INDEX dans ce tableau
+// (spec 3.7.2.1) : sans lui, la reference ne resout pas, et le validateur de
+// reference de Khronos rend `UNRESOLVED_REFERENCE` sur ce meme fichier. Le
+// gabarit decrivait donc un asset invalide, ce qui empechait de tester la
+// chaine accessor -> bufferView -> buffer.
 const MIN_VALID = {
   asset: { version: '2.0' },
   scene: 0,
   scenes: [{ nodes: [0] }],
   nodes: [{ mesh: 0 }],
   meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+  accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' }],
+  bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 36 }],
+  buffers: [{ byteLength: 36 }],
 }
 
 describe('validateGltfJson — input non-objet', () => {

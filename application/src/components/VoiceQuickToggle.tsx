@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Volume2, VolumeX, Bell, BellOff, Globe, Play, Mic } from 'lucide-react'
-import { auroraVoice } from '../services/auroraVoice'
+import { auroraVoice } from '../services/auroraVoice.ts'
 
 /**
  * Petit toggle flottant pour piloter la voix Aurora :

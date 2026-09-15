@@ -1,11 +1,11 @@
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import AvatarLive2D, { type FaceFeatures2D } from './AvatarLive2D'
-import AvatarTalkingVideo from './AvatarTalkingVideo'
+import AvatarLive2D, { type FaceFeatures2D } from './AvatarLive2D.tsx'
+import AvatarTalkingVideo from './AvatarTalkingVideo.tsx'
 import { VRMLoaderPlugin, VRMExpressionPresetName } from '@pixiv/three-vrm'
 import type { VRM } from '@pixiv/three-vrm'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { textToPhonemeTimelineV2 } from '../services/voiceFrPhonemizer'
+import { textToPhonemeTimelineV2 } from '../services/voiceFrPhonemizer.ts'
 import {
   Box3, BoxGeometry, BufferAttribute, Color, CylinderGeometry, Group,
   MathUtils, Mesh, MeshBasicMaterial, MeshStandardMaterial,
@@ -14,8 +14,8 @@ import {
 } from 'three'
 import { motion } from 'framer-motion'
 import type { MutableRefObject } from 'react'
-import type { VoiceLivePhase, RhubarbCue } from '../hooks/useVoiceLive'
-import type { AvatarType } from '../types/app'
+import type { VoiceLivePhase, RhubarbCue } from '../hooks/useVoiceLive.ts'
+import type { AvatarType } from '../types/app.ts'
 
 interface Props {
   phase: VoiceLivePhase

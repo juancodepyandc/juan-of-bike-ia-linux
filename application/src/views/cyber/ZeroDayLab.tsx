@@ -19,7 +19,7 @@ import {
   ZERO_DAY_CATALOG,
   type ZeroDayArchetype,
   type ZeroDayVulnerability,
-} from '../../services/cyber/zeroDayEngine'
+} from '../../services/cyber/zeroDayEngine.ts'
 
 const ACCENT = '#F43F5E'
 const OK = '#4ADE80'

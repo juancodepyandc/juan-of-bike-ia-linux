@@ -1,0 +1,235 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""aurora — lance le pipeline OFFICIEL de chaque module depuis le terminal.
+
+Pourquoi ce fichier existe : chaque module avait sa propre incantation, avec
+des noms d'options differents (`--output` ici, `--out` la, `--output-dir`
+ailleurs), et la conversation n'avait AUCUN point d'entree en ligne de
+commande. Cet outil n'invente aucun traitement : il appelle exactement ce que
+l'interface appelle, et applique les chemins canoniques
+`application/output/<module>/<projet>/` sans que l'appelant ait a les ecrire.
+
+    ./scripts/aurora 3d      "un moulin a eau en bois avec sa grande roue"
+    ./scripts/aurora image   "un renard roux qui dort dans la neige"
+    ./scripts/aurora video   "un velo rouge qui traverse un pont"
+    ./scripts/aurora voix    "Bonjour et bienvenue a la Brulerie Nomade."
+    ./scripts/aurora conversation "la chaine de mon velo saute en montee"
+    ./scripts/aurora cyber   hash 5f4dcc3b5aa765d61d8327deb882cf99
+    ./scripts/aurora liste
+
+Options communes : --projet <nom> (defaut : derive du prompt).
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import unicodedata
+from pathlib import Path
+
+APP = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(APP / "python-services"))
+from aurora_output_paths import get_module_output_dir, sanitize_slug  # noqa: E402
+
+PY = str(APP / ".venv" / "bin" / "python")
+if not os.path.isfile(PY):
+    PY = sys.executable
+
+GABARIT_CONVERSATION = "\nimport {{ runConversationTurn }} from {orch}\nimport {{ writeFileSync }} from 'node:fs'\nconst etapes = []\nconst t0 = Date.now()\nconst r = await runConversationTurn({{\n  model: {modele},\n  messages: [],\n  userInput: {prompt},\n  onEvent: (e) => etapes.push(`${{e.type || '?'}}${{e.stage ? ':' + e.stage : ''}}`),\n}})\nwriteFileSync({rep}, r.finalText || '', 'utf8')\nwriteFileSync({trace}, JSON.stringify({{\n  duree_s: +((Date.now() - t0) / 1000).toFixed(1), etapes,\n  analysis: r.analysis, verification: r.verification }}, null, 2), 'utf8')\nconsole.log('etapes      :', etapes.join(' -> '))\nconsole.log('verification:', r.verification.verified\n  ? `${{r.verification.score}}/100 (${{r.verification.verdict}})`\n  : 'NON VERIFIEE — ' + r.verification.summary)\nconsole.log('---')\nconsole.log(r.finalText || '(vide)')\n"
+
+
+def node_exe() -> str | None:
+    """Node vit souvent sous nvm, hors du PATH d'un service."""
+    for candidat in (os.environ.get("NODE_EXE"), shutil.which("node")):
+        if candidat and os.path.isfile(candidat):
+            return candidat
+    nvm = Path.home() / ".nvm" / "versions" / "node"
+    if nvm.is_dir():
+        def cle(p: Path):
+            try:
+                return tuple(int(x) for x in p.name.lstrip("v").split("."))
+            except ValueError:
+                return (0,)
+        for v in sorted(nvm.iterdir(), key=cle, reverse=True):
+            exe = v / "bin" / "node"
+            if exe.is_file():
+                return str(exe)
+    return None
+
+
+def projet_depuis(prompt: str, fourni: str | None) -> str:
+    if fourni:
+        return sanitize_slug(fourni)
+    plat = unicodedata.normalize("NFD", prompt.lower()).encode("ascii", "ignore").decode()
+    mots = [m for m in re.findall(r"[a-z0-9]+", plat) if len(m) > 2]
+    return sanitize_slug("_".join(mots[:4]) or "sans_titre")
+
+
+def lance(cmd: list[str], cwd: Path, titre: str) -> int:
+    print("\n\033[1m%s\033[0m" % titre)
+    return subprocess.call(cmd, cwd=str(cwd))
+
+
+def cmd_3d(a) -> int:
+    projet = projet_depuis(a.prompt, a.projet)
+    sortie = get_module_output_dir("3d")
+    code = lance([PY, str(APP / "python-services" / "aurora_3d_pipeline.py"),
+                  "--prompt", a.prompt, "--run-id", projet,
+                  "--output-dir", str(sortie), "--purpose", a.purpose],
+                 APP / "python-services", "3D - projet %s" % projet)
+    print("\n  sortie : %s" % (sortie / projet))
+    return code
+
+
+def cmd_image(a) -> int:
+    projet = projet_depuis(a.prompt, a.projet)
+    sortie = get_module_output_dir("image", project_name=projet)
+    exe = node_exe()
+    if not exe:
+        print("Node introuvable.", file=sys.stderr)
+        return 1
+    cmd = [exe, "--experimental-strip-types", str(APP / "scripts" / "image_cli.mjs"),
+           "--prompt", a.prompt, "--out", str(sortie), "--tag", "img"]
+    if a.style:
+        cmd += ["--style", a.style]
+    code = lance(cmd, APP, "IMAGE - projet %s" % projet)
+    print("\n  sortie : %s" % sortie)
+    return code
+
+
+def cmd_video(a) -> int:
+    projet = projet_depuis(a.prompt, a.projet)
+    sortie = get_module_output_dir("video", project_name=projet)
+    cible = sortie / ("%s.mp4" % projet)
+    code = lance([PY, str(APP / "python-services" / "video_generate.py"),
+                  "--prompt", a.prompt, "--output", str(cible),
+                  "--num_frames", str(a.frames), "--width", str(a.width),
+                  "--height", str(a.height), "--quality_mode", a.qualite],
+                 APP / "python-services", "VIDEO - projet %s" % projet)
+    print("\n  sortie : %s" % cible)
+    return code
+
+
+def cmd_voix(a) -> int:
+    projet = projet_depuis(a.prompt, a.projet)
+    sortie = get_module_output_dir("voix", project_name=projet)
+    cible = sortie / ("%s.wav" % projet)
+    cmd = [PY, str(APP / "python-services" / "voice_service.py"),
+           "--mode", "tts", "--text", a.prompt, "--output", str(cible), "--lang", a.lang]
+    if a.voix:
+        cmd += ["--voice", a.voix]
+    code = lance(cmd, APP / "python-services", "VOIX - projet %s" % projet)
+    print("\n  sortie : %s" % cible)
+    return code
+
+
+def cmd_conversation(a) -> int:
+    """Le pipeline conversation est en TypeScript et n'avait aucune entree CLI.
+
+    On execute l'orchestrateur REEL - celui que l'interface appelle - via Node,
+    contre l'Ollama local, et on range la reponse sous le module context.
+    """
+    projet = projet_depuis(a.prompt, a.projet)
+    sortie = get_module_output_dir("context", project_name=projet)
+    exe = node_exe()
+    if not exe:
+        print("Node introuvable.", file=sys.stderr)
+        return 1
+    script = sortie / "_tour.mjs"
+    script.write_text(GABARIT_CONVERSATION.format(
+        orch=json.dumps(str(APP / "src" / "services" / "conversationOrchestrator.ts")),
+        modele=json.dumps(a.modele),
+        prompt=json.dumps(a.prompt),
+        rep=json.dumps(str(sortie / "reponse.md")),
+        trace=json.dumps(str(sortie / "trace.json")),
+    ), encoding="utf-8")
+    code = lance([exe, "--experimental-strip-types", str(script)], APP,
+                 "CONVERSATION - projet %s" % projet)
+    print("\n  sortie : %s" % sortie)
+    return code
+
+
+def cmd_cyber(a) -> int:
+    if a.action == "hash":
+        exe = node_exe()
+        if not exe:
+            print("Node introuvable.", file=sys.stderr)
+            return 1
+        js = ("import('%s/src/services/cyber/hashService.ts').then(m => {"
+              "const h=%s;"
+              "console.log('empreinte  :', h, '(' + h.length + ' caracteres)');"
+              "console.log('familles   :', JSON.stringify(m.identifyHash(h)));"
+              "});") % (APP, json.dumps(a.valeur))
+        return lance([exe, "--experimental-strip-types", "-e", js], APP,
+                     "CYBER - identification d empreinte")
+    outils = {"fichier": "forensics_ops.py", "reseau": "network_ops.py",
+              "stego": "stego_ops.py", "motdepasse": "password_ops.py"}
+    script = outils.get(a.action)
+    if not script:
+        print("action inconnue : %s (hash|%s)" % (a.action, "|".join(outils)), file=sys.stderr)
+        return 2
+    args = ([a.valeur] if a.valeur else []) + list(a.reste)
+    return lance([PY, str(APP / "python-services" / "cyber" / script)] + args,
+                 APP / "python-services", "CYBER - %s" % a.action)
+
+
+def cmd_liste(a) -> int:
+    racine = APP / "output"
+    print("\n\033[1mcontenu de %s\033[0m" % racine)
+    if not racine.is_dir():
+        print("  (vide)")
+        return 0
+    for module in sorted(racine.iterdir()):
+        if not module.is_dir():
+            continue
+        projets = sorted(p for p in module.iterdir() if p.is_dir())
+        fichiers = [f for f in module.rglob("*") if f.is_file()]
+        octets = sum(f.stat().st_size for f in fichiers)
+        print("  %-10s %3d projet(s)  %5d fichier(s)  %8.1f Mio"
+              % (module.name, len(projets), len(fichiers), octets / 1048576))
+        for p in projets:
+            n = len([f for f in p.rglob("*") if f.is_file()])
+            print("      %-34s %4d fichier(s)  %s" % (p.name, n, p))
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="aurora", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="module", required=True)
+
+    def commun(p):
+        p.add_argument("prompt")
+        p.add_argument("--projet", default=None)
+
+    p = sub.add_parser("3d"); commun(p)
+    p.add_argument("--purpose", default="visual_preview"); p.set_defaults(fn=cmd_3d)
+    p = sub.add_parser("image"); commun(p)
+    p.add_argument("--style", default=None); p.set_defaults(fn=cmd_image)
+    p = sub.add_parser("video"); commun(p)
+    p.add_argument("--frames", type=int, default=49)
+    p.add_argument("--width", type=int, default=832)
+    p.add_argument("--height", type=int, default=480)
+    p.add_argument("--qualite", default="balanced", choices=["auto", "balanced", "premium"])
+    p.set_defaults(fn=cmd_video)
+    p = sub.add_parser("voix"); commun(p)
+    p.add_argument("--lang", default="fr"); p.add_argument("--voix", default=None)
+    p.set_defaults(fn=cmd_voix)
+    p = sub.add_parser("conversation"); commun(p)
+    p.add_argument("--modele", default="qwen3-vl:8b"); p.set_defaults(fn=cmd_conversation)
+    p = sub.add_parser("cyber")
+    p.add_argument("action"); p.add_argument("valeur", nargs="?", default="")
+    p.add_argument("reste", nargs=argparse.REMAINDER); p.set_defaults(fn=cmd_cyber)
+    p = sub.add_parser("liste"); p.set_defaults(fn=cmd_liste)
+
+    a = ap.parse_args()
+    return a.fn(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

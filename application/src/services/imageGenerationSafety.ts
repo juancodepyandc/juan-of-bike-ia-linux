@@ -22,14 +22,15 @@ export function claimImageGenerationLock(
     ttlMs?: number
   } = {},
 ): string | null {
-  const storage = options.storage ?? globalThis.localStorage
   const now = options.now ?? Date.now()
   const ttlMs = options.ttlMs ?? IMAGE_GENERATION_LOCK_TTL_MS
   const token = options.token ?? `${now}-${Math.random().toString(36).slice(2)}`
 
   try {
+    const storage = options.storage ?? globalThis.localStorage
     const existing = readLock(storage)
-    if (existing?.token && existing.startedAt && now - existing.startedAt < ttlMs) {
+    if (existing?.token && typeof existing.startedAt === 'number'
+      && Number.isFinite(existing.startedAt) && now - existing.startedAt < ttlMs) {
       return null
     }
     storage.setItem(IMAGE_GENERATION_LOCK_KEY, JSON.stringify({ token, prompt, startedAt: now }))
@@ -41,10 +42,11 @@ export function claimImageGenerationLock(
 
 export function releaseImageGenerationLock(
   token: string,
-  storage: ImageGenerationLockStorage = globalThis.localStorage,
+  storage?: ImageGenerationLockStorage,
 ): void {
   try {
-    if (readLock(storage)?.token === token) storage.removeItem(IMAGE_GENERATION_LOCK_KEY)
+    const lockStorage = storage ?? globalThis.localStorage
+    if (readLock(lockStorage)?.token === token) lockStorage.removeItem(IMAGE_GENERATION_LOCK_KEY)
   } catch {
   }
 }

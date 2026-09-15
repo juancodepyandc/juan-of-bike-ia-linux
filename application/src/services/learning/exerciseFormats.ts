@@ -308,12 +308,18 @@ export function scoreAttempt(ex: Exercise, ans: ExerciseAnswer): ScoredAttempt {
         return { ratio01: 0, feedback: 'Lance les tests pour évaluer.', flagged: [], shouldRelearn: false }
       }
       const total = ex.tests.length
-      const passed = runs.filter((r) => r.pass).length
+      const results = new Map<string, boolean>()
+      for (const run of runs) {
+        // A repeated successful result must not hide a failed execution.
+        results.set(run.testId, (results.get(run.testId) ?? true) && run.pass === true)
+      }
+      const flagged = ex.tests.filter((test) => results.get(test.id) !== true).map((test) => test.id)
+      const passed = total - flagged.length
       const ratio = total === 0 ? 0 : passed / total
       return {
         ratio01: ratio,
         feedback: `${passed}/${total} tests passent.`,
-        flagged: runs.filter((r) => !r.pass).map((r) => r.testId),
+        flagged,
         shouldRelearn: ratio < 0.5,
       }
     }

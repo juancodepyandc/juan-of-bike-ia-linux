@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useGenerationTrackerStore, type TrackedGeneration } from '../stores/generationTrackerStore'
-import { comfyuiGetHistory, comfyuiGetImage, toAssetUrl } from './useTauri'
-import { extractComfyImageOutput, waitForComfyResult } from '../utils/comfyui'
-import { scanOutputFiles } from '../utils/outputScanner'
-import type { ModuleId } from '../types/app'
+import { useGenerationTrackerStore, type TrackedGeneration } from '../stores/generationTrackerStore.ts'
+import { comfyuiGetHistory, comfyuiGetImage, toAssetUrl } from './useTauri.ts'
+import { extractComfyImageOutput, waitForComfyResult } from '../utils/comfyui.ts'
+import { scanOutputFiles } from '../utils/outputScanner.ts'
+import type { ModuleId } from '../types/app.ts'
 
 // ---------------------------------------------------------------------------
 // Types

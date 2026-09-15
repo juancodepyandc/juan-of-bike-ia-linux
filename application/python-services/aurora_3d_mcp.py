@@ -39,14 +39,27 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import struct
 import sys
 from pathlib import Path
 from typing import Any
 
-import mcp.types as types
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
+# LE PAQUET mcp NE SERT QU'AU TRANSPORT DU SERVEUR. Les audits eux-memes sont
+# du Python pur, et le reste du pipeline les importe en direct. Tant que cet
+# import etait dur, son absence dans le venv faisait echouer l'import du module
+# entier: la reparation automatique perdait en silence son bake de texture ET
+# son decoupage en pieces (celui-ci en cascade, sur un _summarize jamais lie).
+try:
+    import mcp.types as types
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+    MCP_DISPONIBLE = True
+except ModuleNotFoundError:  # audits utilisables sans le transport
+    types = None
+    Server = None
+    stdio_server = None
+    MCP_DISPONIBLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -57,14 +70,21 @@ from mcp.server.stdio import stdio_server
 def _read_gltf_json(glb_path: Path) -> dict:
     """Return the parsed JSON chunk of a GLB. {} on read error."""
     try:
-        raw = glb_path.read_bytes()
-        if raw[:4] != b"glTF":
-            return {}
-        json_len, json_type = struct.unpack_from("<II", raw, 12)
-        if json_type != 0x4E4F534A:
-            return {}
-        return json.loads(raw[20:20 + json_len].rstrip(b"\x00"))
-    except (OSError, ValueError):
+        with glb_path.open("rb") as stream:
+            header = stream.read(20)
+            if len(header) != 20 or header[:4] != b"glTF":
+                return {}
+            version, total_length, json_len, json_type = struct.unpack_from("<IIII", header, 4)
+            if (version != 2 or json_type != 0x4E4F534A or json_len % 4
+                    or total_length != os.fstat(stream.fileno()).st_size
+                    or json_len > total_length - 20):
+                return {}
+            payload = stream.read(json_len)
+            if len(payload) != json_len:
+                return {}
+        parsed = json.loads(payload.rstrip(b"\x00"))
+        return parsed if isinstance(parsed, dict) else {}
+    except (OSError, ValueError, struct.error):
         return {}
 
 
@@ -100,7 +120,23 @@ def t_inspect_geometry(path: str) -> dict:
     sorted_norm = sorted(norm, reverse=True)
 
     parts_in_gltf = len(gltf.get("meshes") or [])
-    components = m.split(only_watertight=False)
+    # COMPTER, PAS DECOUPER. `m.split()` construit un SOUS-MAILLAGE par
+    # composante connexe et, pour chacun, RECOPIE L'ATLAS ENTIER
+    # (trimesh/util.py:1633 -> material.copy() -> PIL Image.copy()). Sur un
+    # maillage a milliers de confettis et un atlas 4096, cela fait 50 Mo par
+    # composante: mesure du 05/09 a la veille memoire installee dans le
+    # pipeline, 1 Go -> 28 Go en HUIT secondes, puis mort par le noyau. Sept
+    # lancements perdus, et le second personnage jamais atteint.
+    # Or `components` ne sert qu'a etre COMPTE (len). On lit donc la
+    # connectivite sur le graphe d'adjacence des faces: aucune copie, aucun
+    # sous-maillage, meme resultat.
+    try:
+        from trimesh.graph import connected_components as _cc
+        import numpy as _np_cc
+        _comp = _cc(m.face_adjacency, nodes=_np_cc.arange(len(m.faces)))
+        components = list(_comp)
+    except Exception:  # noqa: BLE001 — repli sur l'ancienne voie si indisponible
+        components = m.split(only_watertight=False)
 
     # Density: faces per cubic-unit volume (proxy for "is this geometry rich
     # enough to look not blocky?")
@@ -465,6 +501,18 @@ def t_inspect_components(path: str) -> dict:
         return {"ok": False, "error": "trimesh load failed"}
     import numpy as np
 
+    # RETIRER L'ATLAS AVANT DE DECOUPER. `m.split()` construit un sous-maillage
+    # par composante et RECOPIE la texture pour CHACUN
+    # (trimesh/util.py:1633 -> material.copy() -> PIL Image.copy()). Mesure du
+    # 05/09: 7 208 composantes sur ce maillage, 50 Mo par copie d'atlas 4096 =
+    # 360 Go demandes, mort du processus a 30 Go. Cette analyse est purement
+    # GEOMETRIQUE: elle mesure des epaisseurs et des volumes, la texture ne lui
+    # sert a rien. On la neutralise donc avant le decoupage.
+    try:
+        from trimesh.visual import ColorVisuals as _CV
+        m.visual = _CV(mesh=m)
+    except Exception:  # noqa: BLE001 — pas de visuals a neutraliser
+        pass
     components = m.split(only_watertight=False)
     parts_data: list[dict] = []
     for ci, c in enumerate(components):
@@ -640,7 +688,7 @@ def t_summarize_quality(path: str, expected_kind: str = "generic") -> dict:
 server = Server("aurora-3d-audit", version="1.0.0",
                 instructions="Engineer-grade 3D file audit (Meshy-equivalent). "
                 "Call summarize_quality(path, expected_kind) for a full report, "
-                "or any specific tool for a focused check.")
+                "or any specific tool for a focused check.") if MCP_DISPONIBLE else None
 
 
 _TOOLS: list[tuple[str, str, dict, callable]] = [
@@ -706,27 +754,33 @@ _TOOLS: list[tuple[str, str, dict, callable]] = [
 ]
 
 
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(name=name, description=desc, inputSchema=schema)
-        for name, desc, schema, _ in _TOOLS
-    ]
+def _cabler_serveur() -> None:
+    """Branche les outils sur le transport MCP, seulement s'il est installe."""
+
+    @server.list_tools()
+    async def list_tools() -> list[types.Tool]:
+        return [
+            types.Tool(name=name, description=desc, inputSchema=schema)
+            for name, desc, schema, _ in _TOOLS
+        ]
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
+        impl = next((fn for n, _, _, fn in _TOOLS if n == name), None)
+        if impl is None:
+            return [types.TextContent(type="text",
+                                      text=json.dumps({"ok": False, "error": f"unknown tool: {name}"}))]
+        try:
+            result = impl(**arguments)
+        except TypeError as exc:
+            return [types.TextContent(type="text",
+                                      text=json.dumps({"ok": False, "error": f"bad arguments: {exc}"}))]
+        return [types.TextContent(type="text",
+                                  text=json.dumps(result, ensure_ascii=False, indent=2))]
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextContent]:
-    impl = next((fn for n, _, _, fn in _TOOLS if n == name), None)
-    if impl is None:
-        return [types.TextContent(type="text",
-                                  text=json.dumps({"ok": False, "error": f"unknown tool: {name}"}))]
-    try:
-        result = impl(**arguments)
-    except TypeError as exc:
-        return [types.TextContent(type="text",
-                                  text=json.dumps({"ok": False, "error": f"bad arguments: {exc}"}))]
-    return [types.TextContent(type="text",
-                              text=json.dumps(result, ensure_ascii=False, indent=2))]
+if MCP_DISPONIBLE:
+    _cabler_serveur()
 
 
 async def run() -> None:
@@ -735,4 +789,6 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
+    if not MCP_DISPONIBLE:
+        raise SystemExit("paquet mcp absent: audits importables, transport indisponible")
     asyncio.run(run())

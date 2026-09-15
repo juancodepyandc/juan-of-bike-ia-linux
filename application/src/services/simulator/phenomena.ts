@@ -1,5 +1,5 @@
-import type { SceneEntity, Vec3 } from './types'
-import { DEFAULT_MATERIAL, DEFAULT_PHYSICS, DEFAULT_TRANSFORM, emitterDefaults, fluidDefaults, forceFieldDefaults, geometryDefaults, lightDefaults, reactionDefaults, DEFAULT_SOFTBODY } from './defaults'
+import type { SceneEntity, Vec3 } from './types.ts'
+import { DEFAULT_MATERIAL, DEFAULT_PHYSICS, DEFAULT_TRANSFORM, emitterDefaults, fluidDefaults, forceFieldDefaults, geometryDefaults, lightDefaults, reactionDefaults, DEFAULT_SOFTBODY } from './defaults.ts'
 
 export type PhenomenonId =
   | 'pendulum_simple'

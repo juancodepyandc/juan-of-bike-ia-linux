@@ -30,7 +30,7 @@ import type {
   CoworkPlan,
   CoworkRuntime,
 } from './coworkTypes.ts'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 // ---------------------------------------------------------------------------
 // Plan/execute/confirm signatures the orchestrator expects.
@@ -647,6 +647,8 @@ function describeAction(action: CoworkAction): string {
     case 'screenshot_desktop': return `Capture ecran systeme (Print Screen ${action.quality === 'hq' ? 'HQ' : 'fast'})`
     case 'connector':       return `Connecteur ${action.connector}.${action.action}`
     case 'browser':         return `Navigateur : ${action.operation}${action.payload?.selector ? ' ' + action.payload.selector : ''}`
+    case 'ephemeral_tool':  return `Outil temporaire : ${action.toolName}`
+    case 'file_bundle':     return `${action.files.length} fichier(s) pour ${action.moduleTarget}`
   }
 }
 

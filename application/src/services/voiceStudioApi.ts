@@ -196,9 +196,9 @@ export function blobToBase64(blob: Blob): Promise<string> {
 }
 
 export async function uploadVoiceSampleBlob(blob: Blob, filename = 'recording.wav'): Promise<VoiceSampleUploadResponse> {
+  let b64: string
   try {
-    const b64 = await blobToBase64(blob)
-    return await uploadVoiceSampleBase64(b64)
+    b64 = await blobToBase64(blob)
   } catch {
     // Fallback multipart si FileReader indisponible
     const formData = new FormData()
@@ -213,6 +213,7 @@ export async function uploadVoiceSampleBlob(blob: Blob, filename = 'recording.wa
     }
     return data
   }
+  return uploadVoiceSampleBase64(b64)
 }
 
 export async function uploadVoiceSampleBase64(wavBase64: string): Promise<VoiceSampleUploadResponse> {

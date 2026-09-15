@@ -201,14 +201,35 @@ def retexture(
         cmd.append("--remove_bg")
 
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(mvadapter_root),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
+        # SORTIE SUR DISQUE, PAS EN MEMOIRE. `capture_output=True` accumule
+        # TOUT ce que l'enfant ecrit dans la RAM du parent, sans borne. MV-Adapter
+        # est un modele de diffusion: il ecrit des barres de progression en
+        # continu pendant des minutes. Mesure du 05/09 a la sonde 2 secondes:
+        # le pipeline passe de 1 Go a 28 Go en HUIT secondes a cette etape,
+        # sans aucun processus enfant visible, puis se fait tuer par le noyau.
+        # Sept lancements perdus. On ne garde que la fin du flux: le resultat
+        # et les messages d'erreur y sont.
+        import tempfile as _tf
+
+        class _Proc:
+            pass
+
+        with _tf.TemporaryFile("w+", encoding="utf-8", errors="replace") as _fo, \
+             _tf.TemporaryFile("w+", encoding="utf-8", errors="replace") as _fe:
+            _rc = subprocess.run(
+                cmd,
+                cwd=str(mvadapter_root),
+                env=env,
+                stdout=_fo,
+                stderr=_fe,
+                text=True,
+                timeout=timeout_s,
+            )
+            _fo.seek(0); _fe.seek(0)
+            proc = _Proc()
+            proc.returncode = _rc.returncode
+            proc.stdout = _fo.read()[-200000:]
+            proc.stderr = _fe.read()[-200000:]
     except subprocess.TimeoutExpired as exc:
         result["reason"] = f"timeout after {timeout_s}s"
         result["log_tail"] = (exc.stderr or "")[-4096:] if hasattr(exc, "stderr") else ""

@@ -10,7 +10,7 @@
 // store, fichier). Le planner LLM passe le `CoworkPlan` ici avant exécution
 // pour produire le panneau "voici ce que je vais faire et combien ça coûte".
 
-import type { CoworkAction, CoworkPlan } from './coworkTypes'
+import type { CoworkAction, CoworkPlan } from './coworkTypes.ts'
 
 export type CostModel = {
   /** $/1M input tokens (planner LLM). */

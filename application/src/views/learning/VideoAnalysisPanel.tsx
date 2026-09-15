@@ -16,7 +16,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { analyzeVideoFrames, askAboutImage } from '../../services/visionService'
+import { analyzeVideoFrames, askAboutImage } from '../../services/visionService.ts'
 
 interface FrameSnapshot {
   dataUrl: string

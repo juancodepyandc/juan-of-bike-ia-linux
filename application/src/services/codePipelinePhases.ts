@@ -32,8 +32,8 @@ export function isArchitecturePlanUsable(plan: string | null) {
   return parseArchitecturePlanJson(plan).ok
 }
 
-const INTENT_SEMANTIC_TIMEOUT_MS = 22000
-const INTENT_SEMANTIC_FIRST_BYTE_MS = 9000
+const INTENT_SEMANTIC_TIMEOUT_MS = 45000
+const INTENT_SEMANTIC_FIRST_BYTE_MS = 30000
 
 /**
  * Phase 1: classify intent. Utilise le classifieur semantique LLM (WS6) pour
@@ -139,7 +139,7 @@ export async function runPlanningPhase(
   modelRouting?: CodeModelRoutingContext,
 ): Promise<string> {
   const model = selectModel('planning', intent, 0, configuredCodeModel, modelRouting)
-  setPhase(`Architecte en reflexion (${getModelShortName(model)})...`, 10)
+  setPhase(`Architecte en reflexion (${getModelShortName(model)})...`, 15)
   const preflightBlock = preflightReport
     ? [
         '### PREFLIGHT LOCAL OBLIGATOIRE',
@@ -185,7 +185,10 @@ export async function runPlanningPhase(
     const rawCandidates: string[] = []
     for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
       if (candidateCount > 1) {
-        setPhase(`Architecte best-of-${candidateCount} - candidat ${candidateIndex + 1}/${candidateCount}...`, 12 + candidateIndex * 5)
+        setPhase(
+          `Architecte best-of-${candidateCount} - candidat ${candidateIndex + 1}/${candidateCount}...`,
+          16 + Math.round(((candidateIndex + 1) / candidateCount) * 8),
+        )
       }
       const response = await resilientOllamaGenerate(
         model,
@@ -199,7 +202,7 @@ export async function runPlanningPhase(
           neverMemorySkip: true,
           onRecoveryAttempt: (event) => {
             if (event.action !== 'retry') {
-              setPhase(`Architecte - ${event.action}...`, 16)
+              setPhase(`Architecte - ${event.action}...`, 18)
               onRecovery?.(event)
             }
           },

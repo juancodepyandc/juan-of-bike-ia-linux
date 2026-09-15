@@ -8,7 +8,7 @@
  *
  * The image module calls `upscaleAuto(dataUrl, scale)` and gets a new URL.
  */
-import { comfyuiGetImage, comfyuiQueuePrompt } from '../hooks/useTauri'
+import { comfyuiGetImage, comfyuiQueuePrompt } from '../hooks/useTauri.ts'
 
 async function fetchBlob(src: string): Promise<Blob> {
   const r = await fetch(src, { cache: 'no-store' })

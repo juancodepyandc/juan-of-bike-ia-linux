@@ -338,7 +338,12 @@ process.stdout.write(`${JSON.stringify(matrix, null, 2)}\n`)
 // Publication: la matrice n a de valeur que si on peut la LIRE. Elle part donc
 // a cote du hub, servie par la meme route que les viewers.
 if (process.argv.includes('--publish')) {
-  const outDir = path.resolve('output/code_assets/viewers')
+    // ARCHITECTURE : `output/code_assets/` n'est PAS un module canonique. Le
+  // contrat de `aurora_output_paths` impose `output/<module>/<projet>/`, et le
+  // pont lui-meme qualifie `output/code_assets` de « legacy »
+  // (bridge_server.py, route /api/code/assets/file). Les visionneuses vivent
+  // donc sous le module `code`, dans son projet `assets`.
+  const outDir = path.resolve('output/code/assets/viewers')
   fs.mkdirSync(outDir, { recursive: true })
   fs.writeFileSync(path.join(outDir, 'capacites.json'), JSON.stringify(matrix), 'utf8')
   const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -370,5 +375,5 @@ footer{margin-top:1.4rem;color:#6e7681;font-size:11px;max-width:1100px}
 <footer>PROUVE = artefact produit et verifie. PARTIEL = une partie seulement est verifiable sur cet hote. IMPOSSIBLE = limite de plateforme, la raison est donnee.</footer>
 </body></html>
 `, 'utf8')
-  process.stderr.write(`  publie: output/code_assets/viewers/capacites.html\n`)
+  process.stderr.write(`  publie: output/code/assets/viewers/capacites.html\n`)
 }

@@ -11,13 +11,13 @@
  * Indépendant de React : peut être appelé depuis un store, un service ou un hook.
  * Les vues exposent un bouton micro via `<VoicePushToTalk />` qui appelle `listen()`.
  */
-import { getBridgeUrl } from '../utils/runtime'
-import { safeParseJson } from '../utils/errors'
-import { tryHandleVoiceCommand } from '../utils/voiceCommands'
-import { CoalesceTracker } from '../utils/coalesceTracker'
-import { buildAnnounceText } from '../utils/announceText'
-import { getAgent } from './auroraAgents'
-import type { ModuleId } from '../types/app'
+import { getBridgeUrl } from '../utils/runtime.ts'
+import { safeParseJson } from '../utils/errors.ts'
+import { tryHandleVoiceCommand } from '../utils/voiceCommands.ts'
+import { CoalesceTracker } from '../utils/coalesceTracker.ts'
+import { buildAnnounceText } from '../utils/announceText.ts'
+import { getAgent } from './auroraAgents.ts'
+import type { ModuleId } from '../types/app.ts'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Types

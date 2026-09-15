@@ -1,10 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { CorrectionPass } from '../services/codeAutoCorrection'
-import type { CodeIntent } from '../services/codeIntent'
-import type { CodeFile } from '../services/codeOrchestrator'
-import type { CodePreflightReport } from '../services/codePreflight'
-import type { CodeSandboxResult } from '../services/codeSandbox'
+import type { CorrectionPass } from '../services/codeAutoCorrection.ts'
+import type { CodeIntent } from '../services/codeIntent.ts'
+import type { CodeFile } from '../services/codeOrchestrator.ts'
+import type { CodePreflightReport } from '../services/codePreflight.ts'
+import type { CodeSandboxResult } from '../services/codeSandbox.ts'
 
 export type PersistedCodeWorkspaceState = {
   sessionId: string | null

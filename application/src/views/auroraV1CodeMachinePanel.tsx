@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import MachineConnectionsPanel from '../components/MachineConnectionsPanel'
+import MachineConnectionsPanel from '../components/MachineConnectionsPanel.tsx'
 
 export function MachinePanelSection() {
   const [open, setOpen] = useState(false)

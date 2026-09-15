@@ -391,7 +391,7 @@ def auto_rescue(mesh_path: Path, reference_path: Path, prompt: str,
             "stage": "bake_to_texture",
             "ok": False,
             "skipped": True,
-            "reason": f"texture bake unavailable: {type(_exc).__name__}",
+            "reason": f"texture bake unavailable: {type(_exc).__name__}: {_exc}",
         })
 
     # v80aj: optional k-means part split stage. Same gate: only commit if it
@@ -400,6 +400,11 @@ def auto_rescue(mesh_path: Path, reference_path: Path, prompt: str,
     # non-watertight diagnostics at cluster boundaries — net delta tells us.
     try:
         from mesh_part_split import split as _mesh_split
+        # IMPORT LOCAL VOLONTAIRE: _summarize n'etait lie que dans l'etape
+        # precedente, si bien qu'un seul module manquant tuait les deux — la
+        # seconde en UnboundLocalError, un symptome qui ne designe jamais sa
+        # cause. Chaque etape porte desormais ses propres dependances.
+        from aurora_3d_mcp import t_summarize_quality as _summarize
         pre_audit2 = _summarize(str(current_mesh), kind)
         if pre_audit2.get("ok"):
             single_blob = any(
@@ -434,7 +439,7 @@ def auto_rescue(mesh_path: Path, reference_path: Path, prompt: str,
             "stage": "mesh_part_split",
             "ok": False,
             "skipped": True,
-            "reason": f"split unavailable: {type(_exc).__name__}",
+            "reason": f"split unavailable: {type(_exc).__name__}: {_exc}",
         })
 
     # Optional stages above may swap current_mesh after the last score pass

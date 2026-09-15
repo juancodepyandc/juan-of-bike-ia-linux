@@ -8,9 +8,9 @@
  * Compute current + longest via le util computeStreak (v82i7).
  */
 import { useMemo } from 'react'
-import type { ModuleId } from '../types/app'
-import { useModuleHistoryStore } from '../stores/moduleHistoryStore'
-import { computeStreak } from '../utils/streak'
+import type { ModuleId } from '../types/app.ts'
+import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
+import { computeStreak } from '../utils/streak.ts'
 
 export type ModuleStreak = { current: number; longest: number }
 

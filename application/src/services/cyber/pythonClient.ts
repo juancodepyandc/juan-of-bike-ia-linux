@@ -1,4 +1,4 @@
-import { runPythonScript } from '../../hooks/useTauri'
+import { runPythonScript } from '../../hooks/useTauri.ts'
 
 function scriptPath(name: string) {
   return `python-services/cyber/${name}`

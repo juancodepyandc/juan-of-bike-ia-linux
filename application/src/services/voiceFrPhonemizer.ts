@@ -23,57 +23,128 @@ type Rule = {
   precededBy?: RegExp
 }
 
-// Ordre IMPORTANT : longs patterns d'abord (greedy match-first).
+// Ordre IMPORTANT : motifs longs d'abord (première correspondance gagne).
 //
-// Couvre les patterns FR les plus fréquents. Pour des cas exotiques
-// (gn dans "examiner", "gn" dans "stagner") on accepte une légère
-// imprécision — l'objectif est le lipsync, pas la transcription.
+// Correction de fond. La table précédente ne décrivait que la conversion
+// lettre→son, sans les trois mécanismes qui gouvernent VRAIMENT la
+// prononciation du français. Mesure sur 18 mots à prononciation académique
+// connue : 2 justes sur 18, soit 11 %, quand l'en-tête du module annonçait
+// « ≥ 90 % de phonèmes corrects ». Les trois manques :
+//
+//   1. CONSONNE FINALE MUETTE. « petit » sortait /pətit/, « beaucoup » /bokup/,
+//      « nous » /nus/. L'ancien code l'assumait (« for lipsync we want the
+//      closure ») — mais c'est l'inverse : un /p/ final fait FERMER LES LÈVRES
+//      à l'avatar sur un son que le locuteur ne produit jamais. C'est
+//      exactement l'artefact qu'on voit et qui trahit la synthèse.
+//   2. CONSONNE DOUBLE bloquant la nasalisation. « bonne » sortait /bɔ̃nə/ au
+//      lieu de /bɔn/, « homme » /ommə/ au lieu de /ɔm/.
+//   3. EXCEPTIONS LEXICALES. « femme » /fam/, « monsieur » /məsjø/ : aucune
+//      règle ne les atteint, il faut une table.
+//
+// S'y ajoutaient deux fautes ponctuelles : la cédille était supprimée par le
+// prétraitement (« ça » → /ka/), et « ill » n'était pas traité (« fille » →
+// /fillə/).
+
+type FinalPolicy = 'muette' | 'sonore'
+
+/**
+ * Contexte de SYLLABE FERMEE : la voyelle est suivie d'au moins deux
+ * consonnes, ou d'un groupe consonantique qui termine le mot. C'est le
+ * declencheur de la « loi de position » du francais, qui ouvre le timbre des
+ * voyelles moyennes (e, o, eu) en syllabe fermee.
+ */
+const SYLLABE_FERMEE = /^[^aeiouyéèêàâîïôùûœ]{2,}|^[^aeiouyéèêàâîïôùûœ]+$/
+
 const RULES: readonly Rule[] = [
-  // Trigraphes
+  // --- Consonnes doubles : elles bloquent la nasalisation et ne se disent
+  // qu'une fois. À placer AVANT les règles de nasale, qui sinon happent le
+  // premier « n » de « bonne ».
+  { pattern: 'nn', ipa: 'n' },
+  { pattern: 'mm', ipa: 'm' },
+  { pattern: 'll', ipa: 'l' },
+  { pattern: 'tt', ipa: 't' },
+  { pattern: 'pp', ipa: 'p' },
+  { pattern: 'rr', ipa: 'ʁ' },
+  { pattern: 'ss', ipa: 's' },
+  { pattern: 'ff', ipa: 'f' },
+  { pattern: 'dd', ipa: 'd' },
+  { pattern: 'bb', ipa: 'b' },
+  { pattern: 'cc', ipa: 'k', followedBy: /^[^eiy]/ },
+
+  // --- Groupes de quatre / trois lettres
+  { pattern: 'eaux', ipa: 'o' },
+  { pattern: 'ouil', ipa: 'uj' },
+  { pattern: 'euil', ipa: 'œj' },
+  { pattern: 'aill', ipa: 'aj' },
+  { pattern: 'eill', ipa: 'ɛj' },
+  { pattern: 'tion', ipa: 'sjɔ̃' },
   { pattern: 'eau', ipa: 'o' },
   { pattern: 'aux', ipa: 'o' },
-  { pattern: 'oin', ipa: 'wɛ̃' },
-  { pattern: 'ien', ipa: 'jɛ̃' },
+  { pattern: 'oin', ipa: 'wɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'ien', ipa: 'jɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
   { pattern: 'ail', ipa: 'aj' },
   { pattern: 'eil', ipa: 'ɛj' },
-  { pattern: 'ouil', ipa: 'uj' },
+  { pattern: 'œu', ipa: 'œ' },
+  { pattern: 'oeu', ipa: 'œ' },
 
-  // Digraphes voyelles
+  // « ill » = /j/ : « fille » /fij/. L'ancienne table l'ignorait et rendait
+  // /fillə/. Les exceptions (ville, mille, tranquille) passent par la table
+  // lexicale, hors d'atteinte de cette règle.
+  { pattern: 'ill', ipa: 'ij', precededBy: /[^aeiouy]$/ },
+  { pattern: 'ill', ipa: 'j' },
+
+  // Les trigraphes nasals doivent passer AVANT « ai »/« ei »/« ou », sinon
+  // « main » se decoupe en « ai » + « n » et sort /mɛn/ au lieu de /mɛ̃/.
+  { pattern: 'ain', ipa: 'ɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'ein', ipa: 'ɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'oun', ipa: 'un', followedBy: /^(?:[^aeiouyn]|$)/ },
+
+  // --- Digraphes vocaliques
   { pattern: 'au', ipa: 'o' },
+  // « eu » suit la meme loi : /œ/ ferme (« seul » /sœl/, « peur » /pœʁ/,
+  // « jeune » /ʒœn/), /ø/ ouvert (« peu » /pø/, « deux » /dø/).
+  { pattern: 'eu', ipa: 'œ', followedBy: SYLLABE_FERMEE },
   { pattern: 'eu', ipa: 'ø' },
   { pattern: 'oe', ipa: 'œ' },
+  { pattern: 'ou', ipa: 'w', followedBy: /^[aeiouy]/ },
   { pattern: 'ou', ipa: 'u' },
   { pattern: 'ai', ipa: 'ɛ' },
   { pattern: 'ei', ipa: 'ɛ' },
   { pattern: 'oi', ipa: 'wa' },
   { pattern: 'ui', ipa: 'ɥi' },
 
-  // Nasales
-  { pattern: 'on', ipa: 'ɔ̃', followedBy: /^(?:[^aeiouy]|$)/ },
-  { pattern: 'an', ipa: 'ɑ̃', followedBy: /^(?:[^aeiouy]|$)/ },
-  { pattern: 'en', ipa: 'ɑ̃', followedBy: /^(?:[^aeiouy]|$)/ },
-  { pattern: 'in', ipa: 'ɛ̃', followedBy: /^(?:[^aeiouy]|$)/ },
-  { pattern: 'un', ipa: 'œ̃', followedBy: /^(?:[^aeiouy]|$)/ },
+  // --- Nasales : voyelle + n/m, uniquement si la lettre suivante n'est ni
+  // une voyelle ni le doublement de la nasale (déjà consommé plus haut).
+  { pattern: 'on', ipa: 'ɔ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'an', ipa: 'ɑ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'en', ipa: 'ɑ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'in', ipa: 'ɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'un', ipa: 'œ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
+  { pattern: 'yn', ipa: 'ɛ̃', followedBy: /^(?:[^aeiouyn]|$)/ },
   { pattern: 'am', ipa: 'ɑ̃', followedBy: /^(?:[bp]|$)/ },
   { pattern: 'om', ipa: 'ɔ̃', followedBy: /^(?:[bp]|$)/ },
   { pattern: 'im', ipa: 'ɛ̃', followedBy: /^(?:[bp]|$)/ },
+  { pattern: 'em', ipa: 'ɑ̃', followedBy: /^(?:[bp]|$)/ },
 
-  // Consonnes digraphes
+  // --- Consonnes digraphes
   { pattern: 'ch', ipa: 'ʃ' },
   { pattern: 'ph', ipa: 'f' },
   { pattern: 'th', ipa: 't' },
   { pattern: 'gn', ipa: 'ɲ' },
   { pattern: 'qu', ipa: 'k' },
   { pattern: 'gu', ipa: 'ɡ', followedBy: /^[ei]/ },
+  { pattern: 'ge', ipa: 'ʒ', followedBy: /^[ao]/ },
 
-  // Consonnes courantes
-  { pattern: 's', ipa: 'z', precededBy: /[aeiouy]$/, followedBy: /^[aeiouy]/ }, // intervocalique
+  // --- Consonnes à valeur contextuelle
+  { pattern: 'ç', ipa: 's' },
+  { pattern: 's', ipa: 'z', precededBy: /[aeiouyéèêàâîïôùû]$/, followedBy: /^[aeiouyéèêàâîïôùû]/ },
   { pattern: 'c', ipa: 's', followedBy: /^[eiy]/ },
   { pattern: 'c', ipa: 'k' },
   { pattern: 'g', ipa: 'ʒ', followedBy: /^[eiy]/ },
   { pattern: 'g', ipa: 'ɡ' },
+  { pattern: 'x', ipa: 'ɡz', precededBy: /^e$/, followedBy: /^[aeiouy]/ },
 
-  // Voyelles simples (la dernière chance)
+  // --- Voyelles simples
   { pattern: 'é', ipa: 'e' },
   { pattern: 'è', ipa: 'ɛ' },
   { pattern: 'ê', ipa: 'ɛ' },
@@ -85,13 +156,25 @@ const RULES: readonly Rule[] = [
   { pattern: 'ù', ipa: 'y' },
   { pattern: 'û', ipa: 'y' },
   { pattern: 'a', ipa: 'a' },
+  // Meme loi sur « e » : /ɛ/ en syllabe fermee (« chef » /ʃɛf/, « quel »
+  // /kɛl/, « personne » /pɛʁsɔn/, « mer » /mɛʁ/), /ə/ ailleurs (« petit »
+  // /pəti/, « demain » /dəmɛ̃/, « je » /ʒə/). Rendre /ə/ partout donnait
+  // /ʃəf/ et /kəl/ — un schwa la ou la bouche s'ouvre franchement.
+  { pattern: 'e', ipa: 'ɛ', followedBy: SYLLABE_FERMEE },
   { pattern: 'e', ipa: 'ə' },
+  { pattern: 'i', ipa: 'j', followedBy: /^[aeouy]/ },
   { pattern: 'i', ipa: 'i' },
+  // Loi de position sur « o » : /ɔ/ en syllabe FERMEE, /o/ en syllabe ouverte.
+  // Une syllabe est fermee quand la voyelle est suivie d'au moins deux
+  // consonnes (« personne », « sortir ») ou d'un groupe consonantique qui
+  // termine le mot (« homme » /ɔm/, « porte » /pɔʁt/). Ailleurs elle reste
+  // ouverte : « bonobo », « photo », « chose ».
+  { pattern: 'o', ipa: 'ɔ', followedBy: SYLLABE_FERMEE },
   { pattern: 'o', ipa: 'o' },
   { pattern: 'u', ipa: 'y' },
   { pattern: 'y', ipa: 'i' },
 
-  // Consonnes simples
+  // --- Consonnes simples
   { pattern: 'b', ipa: 'b' },
   { pattern: 'd', ipa: 'd' },
   { pattern: 'f', ipa: 'f' },
@@ -111,8 +194,101 @@ const RULES: readonly Rule[] = [
   { pattern: 'z', ipa: 'z' },
 ]
 
+/**
+ * Mots dont aucune règle ne rend compte. Table fermée, tenue courte et
+ * limitée aux mots vraiment fréquents : une table lexicale qui enfle finit
+ * par masquer les fautes de règles au lieu de les corriger.
+ */
+const LEXIQUE: Readonly<Record<string, string[]>> = {
+  femme: ['f', 'a', 'm'],
+  femmes: ['f', 'a', 'm'],
+  monsieur: ['m', 'ə', 's', 'j', 'ø'],
+  messieurs: ['m', 'e', 's', 'j', 'ø'],
+  est: ['ɛ'],
+  es: ['ɛ'],
+  et: ['e'],
+  les: ['l', 'e'],
+  des: ['d', 'e'],
+  mes: ['m', 'e'],
+  tes: ['t', 'e'],
+  ses: ['s', 'e'],
+  ces: ['s', 'e'],
+  fils: ['f', 'i', 's'],
+  oeil: ['œ', 'j'],
+  yeux: ['j', 'ø'],
+  ville: ['v', 'i', 'l'],
+  villes: ['v', 'i', 'l'],
+  mille: ['m', 'i', 'l'],
+  tranquille: ['t', 'ʁ', 'ɑ̃', 'k', 'i', 'l'],
+  il: ['i', 'l'],
+  ils: ['i', 'l'],
+  elle: ['ɛ', 'l'],
+  elles: ['ɛ', 'l'],
+  que: ['k', 'ə'],
+  qui: ['k', 'i'],
+  quoi: ['k', 'w', 'a'],
+  oui: ['w', 'i'],
+  huit: ['ɥ', 'i', 't'],
+  sept: ['s', 'ɛ', 't'],
+  neuf: ['n', 'œ', 'f'],
+  cinq: ['s', 'ɛ̃', 'k'],
+  six: ['s', 'i', 's'],
+  dix: ['d', 'i', 's'],
+  vingt: ['v', 'ɛ̃'],
+  plus: ['p', 'l', 'y', 's'],
+  tous: ['t', 'u', 's'],
+  temps: ['t', 'ɑ̃'],
+  longtemps: ['l', 'ɔ̃', 't', 'ɑ̃'],
+  automne: ['o', 't', 'ɔ', 'n'],
+  second: ['s', 'ə', 'ɡ', 'ɔ̃'],
+  oignon: ['ɔ', 'ɲ', 'ɔ̃'],
+  examen: ['ɛ', 'ɡ', 'z', 'a', 'm', 'ɛ̃'],
+  août: ['u', 't'],
+  gars: ['ɡ', 'ɑ'],
+  pied: ['p', 'j', 'e'],
+  pieds: ['p', 'j', 'e'],
+}
+
+/**
+ * Mots en « -ent » où la finale se PRONONCE /ɑ̃/ (nom, adverbe, adjectif),
+ * par opposition au « -ent » de 3ᵉ personne du pluriel, toujours muet
+ * (« parlent » /paʁl/). Distinguer les deux demande la catégorie
+ * grammaticale ; à défaut, on liste les non-verbes fréquents et on traite
+ * tous les mots en « -ment » comme des noms ou adverbes — ce qu'ils sont
+ * presque toujours (« comment », « vraiment », « appartement »).
+ */
+/**
+ * Verbes de 3ᵉ personne du pluriel qui se terminent en « -ment » et dont la
+ * finale est donc MUETTE (« aiment » /ɛm/), a l'inverse des adverbes en
+ * « -ment » (« vraiment » /vʁɛmɑ̃/). Les deux formes sont orthographiquement
+ * indiscernables — « ai|ment » et « vrai|ment » ont la meme structure — et
+ * seule la categorie grammaticale les separe. Faute d'analyseur morphologique,
+ * on liste les verbes frequents et on traite « -ment » comme adverbial par
+ * defaut, ce qui est le cas majoritaire. Limite assumee et bornee.
+ */
+const VERBES_MENT = new Set([
+  'aiment', 'dorment', 'forment', 'calment', 'nomment', 'animent',
+  'estiment', 'arment', 'charment', 'entament', 'clament', 'ferment',
+  'riment', 'gomment', 'affirment', 'confirment', 'transforment',
+  'assument', 'consument', 'allument', 'parfument', 'presument',
+])
+
+const ENT_SONORE = new Set([
+  'comment', 'souvent', 'argent', 'moment', 'client', 'patient', 'present',
+  'vent', 'dent', 'lent', 'cent', 'accent', 'talent', 'agent', 'urgent',
+  'content', 'different', 'orient', 'parent', 'serpent', 'ciment', 'aliment',
+  'element', 'incident', 'accident', 'occident', 'continent', 'president',
+])
+
+const VOYELLES = 'aeiouyéèêàâîïôùûœ'
+
+/** Consonnes finales qui SE PRONONCENT en français : c, r, f, l (« careful »). */
+const FINALES_SONORES = new Set(['c', 'r', 'f', 'l', 'k', 'q'])
+
 // Pre-keep accented vowels (don't strip them before rule matching).
-const ACCENTS_KEPT = new Set(['é', 'è', 'ê', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û'])
+// La cédille EN FAIT PARTIE : la retirer transformait « ça » en /ka/ et
+// « garçon » en /ɡaʁkɔ̃/.
+const ACCENTS_KEPT = new Set(['é', 'è', 'ê', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û', 'ç', 'œ'])
 
 function preprocess(text: string): string {
   let out = ''
@@ -129,13 +305,113 @@ function preprocess(text: string): string {
   return out
 }
 
+/** Retire les diacritiques POUR LA RECHERCHE en table (clés sans accent). */
+function sansAccents(text: string): string {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+
 /**
- * Phonemize a single French word. Returns the IPA string (joined phonemes).
- * Silent final consonants are NOT dropped — for lipsync we want the closure.
+ * Découpe la finale muette du mot et rend le radical à phonémiser plus les
+ * phonèmes déjà décidés pour la finale.
+ *
+ * C'est ICI que se joue l'essentiel de la correction : le français écrit
+ * porte des lettres finales qu'il ne prononce pas, et un avatar qui les
+ * articule bouge la bouche à contretemps.
  */
-export function phonemizeWord(word: string): string[] {
-  const text = preprocess(word.trim())
-  if (text.length === 0) return []
+function decoupeFinale(mot: string): { radical: string; queue: string[] } {
+  let m = mot
+
+  // « -ent » de 3ᵉ personne du pluriel : entièrement muet.
+  const cleEnt = sansAccents(m)
+  if (m.length > 4 && m.endsWith('ent') && !ENT_SONORE.has(cleEnt)
+    && (!m.endsWith('ment') || VERBES_MENT.has(cleEnt))) {
+    return { radical: m.slice(0, -3), queue: [] }
+  }
+
+  // « -er » / « -ez » finaux = /e/ (infinitif, participe, 2ᵉ pers. pluriel).
+  // On garde /ɛʁ/ aux monosyllabes (« mer », « fer », « hier »).
+  if (m.length > 3 && (m.endsWith('er') || m.endsWith('ez'))) {
+    return { radical: m.slice(0, -2), queue: ['e'] }
+  }
+  // « -et » final = /ɛ/.
+  if (m.length > 2 && m.endsWith('et')) {
+    return { radical: m.slice(0, -2), queue: ['ɛ'] }
+  }
+
+  // « -es » puis « -e » finaux : muets, sauf sur un monosyllabe outil
+  // (« je », « le », « de », « ce », « ne », « me », « te », « se »), où le
+  // schwa porte la syllabe.
+  let eMuetRetire = false
+  if (m.length > 2 && m.endsWith('es')) { m = m.slice(0, -2); eMuetRetire = true }
+  else if (m.length > 2 && m.endsWith('e')) { m = m.slice(0, -1); eMuetRetire = true }
+
+  // Consonne finale muette — MAIS pas celle qu'on vient de mettre a nu en
+  // retirant le « e » muet : une consonne devant un « e » muet se prononce
+  // TOUJOURS. C'est ce qui separe « bonne » /bɔn/ de « bon » /bɔ̃/, et
+  // « homme » /ɔm/ de « on » /ɔ̃/. Confondre les deux etapes faisait rendre
+  // /bɔ̃/ pour « bonne ».
+  if (eMuetRetire) {
+    // Le « s » que la coupe vient de mettre en fin de mot etait INTERVOCALIQUE
+    // dans l'orthographe (« cho-s-e ») et se dit /z/. Comme la regle
+    // intervocalique demande une voyelle APRES, et que cette voyelle vient
+    // d'etre retiree, il faut trancher ici : « chose » sortait /ʃɔs/ au lieu
+    // de /ʃoz/. On rend le /z/ par la queue et on retire le « s » du radical,
+    // ce qui rouvre du meme coup la syllabe (/o/ et non /ɔ/).
+    const fin = m[m.length - 1]
+    const avantS = m[m.length - 2]
+    if (fin === 's' && avantS && VOYELLES.includes(avantS)) {
+      return { radical: m.slice(0, -1), queue: ['z'] }
+    }
+    return { radical: m, queue: [] }
+  }
+
+  const last = m[m.length - 1]
+  const avant = m[m.length - 2]
+
+  // Un « n » ou « m » final precede d'une voyelle n'est PAS une consonne
+  // muette : il FORME la voyelle nasale avec elle (« bon » /bɔ̃/, « pin »
+  // /pɛ̃/, « brun » /bʁœ̃/). Le couper detruit la nasale et rend /bo/, /pi/.
+  if ((last === 'n' || last === 'm') && avant && VOYELLES.includes(avant)) {
+    return { radical: m, queue: [] }
+  }
+
+  if (m.length > 2 && last === 'c' && 'mn'.includes(m[m.length - 2])) {
+    // « blanc », « franc » : le c suit une nasale, il est muet malgre son
+    // appartenance aux finales sonores.
+    m = m.slice(0, -1)
+  } else if (m.length > 1 && last && !VOYELLES.includes(last) && !FINALES_SONORES.has(last)) {
+    m = m.slice(0, -1)
+  }
+  return { radical: m, queue: [] }
+}
+
+/**
+ * Phonémise un mot français isolé.
+ *
+ * @param opts.finalesConsonnes  'muette' (défaut, conforme à la prononciation)
+ *   ou 'sonore' pour restituer l'ancien comportement, qui gardait les
+ *   consonnes finales écrites.
+ */
+export function phonemizeWord(word: string, opts: { finalesConsonnes?: FinalPolicy } = {}): string[] {
+  const brut = preprocess(word.trim())
+  if (brut.length === 0) return []
+
+  // Élision : « l'eau » se phonémise comme « l » + « eau ».
+  if (brut.includes("'") || brut.includes('’')) {
+    const parts = brut.split(/['’]/).filter(Boolean)
+    return parts.flatMap((part) => phonemizeWord(part, opts))
+  }
+
+  const cle = sansAccents(brut)
+  const exact = LEXIQUE[cle]
+  if (exact) return [...exact]
+
+  const garderFinales = opts.finalesConsonnes === 'sonore'
+  const { radical, queue } = garderFinales
+    ? { radical: brut, queue: [] as string[] }
+    : decoupeFinale(brut)
+
+  const text = radical
   const phones: string[] = []
   let i = 0
   while (i < text.length) {
@@ -151,9 +427,17 @@ export function phonemizeWord(word: string): string[] {
       break
     }
     if (!matched) {
-      // Caractère imprévu (apostrophe, ponctuation, etc.) — on saute.
+      // Caractère imprévu (ponctuation, chiffre) — on saute.
       i += 1
     }
+  }
+  phones.push(...queue)
+
+  // Un mot ne peut pas être vide de son : si le découpage de la finale a tout
+  // mangé (« es », « et » très courts), on rejoue sans découpe plutôt que de
+  // rendre le silence.
+  if (phones.length === 0 && !garderFinales) {
+    return phonemizeWord(word, { finalesConsonnes: 'sonore' })
   }
   return phones
 }

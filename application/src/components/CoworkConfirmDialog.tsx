@@ -8,8 +8,8 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import { Check, ShieldAlert, SkipForward, X } from 'lucide-react'
-import { useCoworkStore } from '../stores/coworkStore'
-import type { CoworkAction, CoworkConfirmation } from '../services/coworkTypes'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import type { CoworkAction, CoworkConfirmation } from '../services/coworkTypes.ts'
 import { useState } from 'react'
 
 export default function CoworkConfirmDialog() {
@@ -103,7 +103,7 @@ function Dialog({ confirmation }: { confirmation: CoworkConfirmation }) {
 
 function describe(action: CoworkAction): string {
   switch (action.kind) {
-    case 'write_file':  return `Ecrire ${action.path} (${action.content.length} octets)`
+    case 'write_file':  return `Ecrire ${action.path} (${new TextEncoder().encode(action.content).byteLength} octets)`
     case 'edit_file':   return `Modifier ${action.path} (replace exact-match)`
     case 'delete_file': return `Supprimer ${action.path}`
     case 'shell':       return `Lancer "${action.command} ${(action.args ?? []).join(' ')}"`.trim()
@@ -126,6 +126,8 @@ function describe(action: CoworkAction): string {
     case 'screenshot_desktop': return `Capture ecran systeme (Print Screen)`
     case 'connector':       return `Connecteur ${action.connector}.${action.action}`
     case 'browser':         return `Navigateur : ${action.operation}`
+    case 'ephemeral_tool':  return `Executer l outil temporaire ${action.toolName}`
+    case 'file_bundle':     return `Creer ${action.files.length} fichier(s) pour ${action.moduleTarget}`
   }
 }
 

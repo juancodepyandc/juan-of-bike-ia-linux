@@ -16,8 +16,8 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { useAppStore } from '../stores/appStore'
-import type { ModuleId } from '../types/app'
+import { useAppStore } from '../stores/appStore.ts'
+import type { ModuleId } from '../types/app.ts'
 
 interface ModuleDef {
   id: ModuleId

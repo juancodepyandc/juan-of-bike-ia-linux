@@ -74,7 +74,7 @@ export async function runCodeGenerationCommandInSandbox({
   const workingFiles = normalized.files
   const lang: DetectedLanguage = detectDominantLanguage(workingFiles)
   const workspacePath = await getPath()
-  const sandboxRoot = `${workspacePath}/output/code-command-runner/${now()}`
+  const sandboxRoot = `${workspacePath}/output/code/command-runner/${now()}`
   const output: string[] = []
   let workspaceVolumePrepared = false
 

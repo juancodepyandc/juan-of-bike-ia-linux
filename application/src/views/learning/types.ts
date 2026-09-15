@@ -1,5 +1,5 @@
 // Shared type definitions for the Learning module
-import type { LearningSource } from '../../services/learningResearch'
+import type { LearningSource } from '../../services/learningResearch.ts'
 
 export type Tab =
   | 'dashboard'

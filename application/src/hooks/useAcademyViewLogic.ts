@@ -17,19 +17,19 @@
  * (les 10 modes ci-dessus + extraction Mermaid/JSON/markdown/etc.).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGenerationFxEmitter } from '../components/generationFx/fxBus'
-import { ollamaChatStream } from './useTauri'
-import { selectAdaptiveReasoningModel, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL, VISION_HIGH_QUALITY_MODEL } from '../config/models'
-import { useAppStore } from '../stores/appStore'
-import { useAcademyLeaderboardStore, type AcademyRun } from '../stores/academyLeaderboardStore'
-import { useLearningSessionStore } from '../stores/learningSessionStore'
-import { computeStreak } from '../utils/streak'
-import { readTextFile } from '../utils/textFileExtract'
+import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
+import { ollamaChatStream } from './useTauri.ts'
+import { selectAdaptiveReasoningModel, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL, VISION_HIGH_QUALITY_MODEL } from '../config/models.ts'
+import { useAppStore } from '../stores/appStore.ts'
+import { useAcademyLeaderboardStore, type AcademyRun } from '../stores/academyLeaderboardStore.ts'
+import { useLearningSessionStore } from '../stores/learningSessionStore.ts'
+import { computeStreak } from '../utils/streak.ts'
+import { readTextFile } from '../utils/textFileExtract.ts'
 // iter34 : LLM-based oral classifier — replaces iter32/33 regex hardcode.
 // Pas de regex sur "anglais|espagnol|ETLV", pas de "subject===langues = oral".
 // gemma3:12b classifie {is_oral, language, format, duration_min}.
-import { classifyOralMode, classificationToPromptBlock, type OralClassification } from '../services/oralModeClassifier'
-import { buildBacInspirationBlock } from '../services/learning/bacInspirationDb'
+import { classifyOralMode, classificationToPromptBlock, type OralClassification } from '../services/oralModeClassifier.ts'
+import { buildBacInspirationBlock } from '../services/learning/bacInspirationDb.ts'
 
 export type AcademySubject =
   | 'auto'

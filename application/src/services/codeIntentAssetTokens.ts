@@ -18,6 +18,8 @@ export const PREMIUM_LOOK_TOKENS = [
   // Style family
   'cyberpunk', 'minimaliste', 'glassmorphism', 'neumorphism', 'futuriste', 'retro', 'vintage',
   'art deco', 'art nouveau', 'brutaliste', 'brutalist', 'scandinave', 'japandi', 'bauhaus',
+  'minecraft', 'pixel-art', 'pixel art', 'pixelart', '8-bit', '16-bit', 'voxel', 'retro gaming',
+  'arcade', 'graphisme', 'graphismes', 'visuel', 'design', 'ui', 'interface',
   'animation', 'animations', 'animee', 'anime', 'dynamique', 'interactif', 'interactive',
 ]
 

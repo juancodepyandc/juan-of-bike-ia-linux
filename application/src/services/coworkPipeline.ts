@@ -7,28 +7,28 @@
 // coworkOrchestrator.ts where it can be unit-tested with mocks.
 // ---------------------------------------------------------------------------
 
-import { useCoworkStore } from '../stores/coworkStore'
-import { isTauriRuntime } from '../utils/runtime'
-import { getWorkspacePath } from '../hooks/useTauri'
-import { appendAuditEntry, makePromptId } from './coworkAudit'
-import { readPinnedConnectors } from './coworkConnectorPin'
-import { runAction, reportDualSignalEvent, reportTrendSignalEvent } from './coworkExecutor'
-import { orchestrateCoworkRun } from './coworkOrchestrator'
-import { planNextStep } from './coworkPlanner'
+import { useCoworkStore } from '../stores/coworkStore.ts'
+import { isTauriRuntime } from '../utils/runtime.ts'
+import { getWorkspacePath } from '../hooks/useTauri.ts'
+import { appendAuditEntry, makePromptId } from './coworkAudit.ts'
+import { readPinnedConnectors } from './coworkConnectorPin.ts'
+import { runAction, reportDualSignalEvent, reportTrendSignalEvent } from './coworkExecutor.ts'
+import { orchestrateCoworkRun } from './coworkOrchestrator.ts'
+import { planNextStep } from './coworkPlanner.ts'
 import {
   enrichPlannerContextWithBridgeSignals,
   _clearPlannerCtxCachesForTesting as _clearCacheForTestingImpl,
-} from './coworkPlannerCtxEnricher'
-import { loadSettings } from './coworkSettings'
+} from './coworkPlannerCtxEnricher.ts'
+import { loadSettings } from './coworkSettings.ts'
 import type {
   CoworkAction,
   CoworkActionEvent,
   CoworkCapability,
   CoworkPlan,
   CoworkRuntime,
-} from './coworkTypes'
+} from './coworkTypes.ts'
 import type { CoworkProjectThread } from './coworkProjectThread.ts'
-import type { ModuleId } from '../types/app'
+import type { ModuleId } from '../types/app.ts'
 
 // ---------------------------------------------------------------------------
 // Re-exports for existing UI imports.
@@ -40,7 +40,7 @@ export type {
   CoworkCapability,
   CoworkPlan,
   CoworkRuntime,
-} from './coworkTypes'
+} from './coworkTypes.ts'
 
 // ---------------------------------------------------------------------------
 // Runtime detection

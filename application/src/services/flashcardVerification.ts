@@ -17,9 +17,9 @@
  * removed during fact-check".
  */
 
-import { ollamaChat } from '../hooks/useTauri'
-import type { Flashcard } from '../stores/flashcardsStore'
-import type { LearningSource } from './learningResearch'
+import { ollamaChat } from '../hooks/useTauri.ts'
+import type { Flashcard } from '../stores/flashcardsStore.ts'
+import type { LearningSource } from './learningResearch.ts'
 
 export type VerificationStatus = 'verified' | 'general' | 'uncertain' | 'contradicted'
 

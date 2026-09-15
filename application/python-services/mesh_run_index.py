@@ -109,9 +109,34 @@ def index_runs(directory: Path, kind: str | None = None,
     runs: dict[str, dict] = defaultdict(lambda: {"files": []})
     standalones: list[dict] = []
 
-    for item in sorted(directory.iterdir(), key=lambda p: p.stat().st_mtime if p.exists() else 0):
-        if item.is_dir() or item.name.startswith("."):
+    # L index descend DANS les dossiers de projet.
+    #
+    # Cette boucle ne regardait que la racine (`if item.is_dir(): continue`) :
+    # elle datait d une disposition A PLAT, `output/3d/<run>_mesh.glb`. Or le
+    # contrat d architecture — enonce par `aurora_output_paths` — impose
+    # `output/<module>/<projet>/`, et c est bien ainsi que le pipeline range
+    # ses productions. Les deux se contredisaient, et le resultat etait le
+    # pire possible : le pipeline ecrivait correctement, l index ne trouvait
+    # rien, et l interface comme le tunnel affichaient une bibliotheque VIDE
+    # alors que le GLB etait sur le disque.
+    #
+    # Mesure : apres une generation reelle produisant
+    # `output/3d/moulin_a_eau/moulin_a_eau_mesh.glb` (166 Mo, 1 353 001
+    # sommets), `/api/3d/run-index` rendait 0 run.
+    #
+    # On rassemble donc les fichiers de la racine ET ceux des sous-dossiers de
+    # projet, en gardant la disposition a plat pour les anciens contenus.
+    a_examiner: list[Path] = []
+    for entree in directory.iterdir():
+        if entree.name.startswith("."):
             continue
+        if entree.is_dir():
+            a_examiner.extend(f for f in entree.rglob("*")
+                              if f.is_file() and not f.name.startswith("."))
+        else:
+            a_examiner.append(entree)
+
+    for item in sorted(a_examiner, key=lambda p: p.stat().st_mtime if p.exists() else 0):
         run_id, role = categorize(item.name)
         meta = stat_file(item)
         meta["role"] = role

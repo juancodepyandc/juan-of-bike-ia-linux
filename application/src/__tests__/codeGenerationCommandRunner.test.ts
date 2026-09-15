@@ -68,8 +68,8 @@ describe('codeGenerationCommandRunner', () => {
     assert.match(result.output, /run_command WS3: validation/)
     assert.match(result.output, /build ok/)
     assert.deepEqual(records, [
-      'write:/tmp/aurora/output/code-command-runner/42:2',
-      'run:podman:/tmp/aurora/output/code-command-runner/42',
+      'write:/tmp/aurora/output/code/command-runner/42:2',
+      'run:podman:/tmp/aurora/output/code/command-runner/42',
     ])
   })
 

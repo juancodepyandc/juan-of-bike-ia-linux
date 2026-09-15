@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import { Gauge, Radar } from 'lucide-react'
-import type { StudioDiagnostics, StudioRequirementTone } from '../hooks/useStudioDiagnostics'
+import type { StudioDiagnostics, StudioRequirementTone } from '../hooks/useStudioDiagnostics.ts'
 
 type StudioStat = {
   label: string
