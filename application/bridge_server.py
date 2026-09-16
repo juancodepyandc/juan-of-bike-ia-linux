@@ -17996,7 +17996,9 @@ def cli_mission_stream(mission_id):
                     return
             if mission.get("status") in ("completed", "failed") and last_idx >= len(events):
                 return
-            time.sleep(0.1)
+            import time as _time
+            yield f"data: {json.dumps({'type': 'heartbeat', 'elapsed': _time.time() - mission.get('started_at', _time.time())})}\n\n"
+            _time.sleep(0.1)
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
