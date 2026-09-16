@@ -17704,6 +17704,9 @@ def _cli_run_mission(mission_id):
     model = mission["model"]
     workspace = mission["workspace"]
     request_text = mission["request"]
+    
+    os.makedirs(os.path.join(workspace, "transfer_to_client"), exist_ok=True)
+    
     try:
         # Step 1: Load context
         _cli_mission_emit(mission_id, "step_start", {"step": "Chargement du contexte", "index": 0})
@@ -17747,8 +17750,9 @@ def _cli_run_mission(mission_id):
             "Exécute ce plan. RÈGLES STRICTES :\n"
             "1. CODE DIFF : Pour chaque fichier modifié, explique clairement ce que tu modifies et émets un format Diff lisible.\n"
             "2. GITHUB/GIT : Pousse le code de manière 100% humanisée. Tes messages de commit doivent être pro (ex: 'feat: add auth'). AUCUNE MENTION de l'IA, de toi-même ou de 'généré par'. Le code et les README doivent paraître écrits par un développeur humain expert.\n"
-            "3. SUDO/PRIVILÈGES : Si une commande requiert `sudo`, arrête-toi et signale-le (génère un événement 'sudo_request' ou indique que tu attends le mot de passe). Le client te le transmettra de manière éphémère.\n"
-            "4. AUTONOMIE : N'hésite pas à prendre des décisions d'architecture fortes et à utiliser le mode headless si nécessaire. Montre ton expertise.\n"
+            "3. DOSSIER MAGIQUE (BUREAU DU MAC/CLIENT) : L'utilisateur n'est PAS sur cette machine Linux, il est sur un client léger (Mac/Windows). Si l'utilisateur te demande de générer un fichier (code, image, 3D, PDF, script) SUR SON BUREAU, tu DOIS enregistrer ce fichier dans le répertoire exact `./transfer_to_client/` de ton workspace. À la fin de la mission, le système attrapera ce fichier et le copiera silencieusement et magiquement sur le Bureau de son Mac. NE DIS PAS que tu ne peux pas écrire sur son disque dur.\n"
+            "4. SUDO/PRIVILÈGES : Si une commande requiert `sudo`, arrête-toi et signale-le (génère un événement 'sudo_request' ou indique que tu attends le mot de passe). Le client te le transmettra de manière éphémère.\n"
+            "5. AUTONOMIE : N'hésite pas à prendre des décisions d'architecture fortes et à utiliser le mode headless si nécessaire. Montre ton expertise.\n"
         )
         try:
             r = requests.post(f"{OLLAMA_URL}/api/chat", json={
@@ -17772,6 +17776,25 @@ def _cli_run_mission(mission_id):
             mission["errors"].append(str(e))
 
         _cli_mission_emit(mission_id, "step_end", {"step": "Exécution", "index": 2})
+
+        # --- TELEPORTATION MAGIC ---
+        transfer_dir = os.path.join(workspace, "transfer_to_client")
+        if os.path.exists(transfer_dir):
+            import base64
+            import shutil
+            for fname in os.listdir(transfer_dir):
+                fpath = os.path.join(transfer_dir, fname)
+                if os.path.isfile(fpath):
+                    try:
+                        with open(fpath, "rb") as f:
+                            b64 = base64.b64encode(f.read()).decode('utf-8')
+                        _cli_mission_emit(mission_id, "file_transfer", {"filename": fname, "data": b64})
+                    except Exception as e:
+                        pass
+            try:
+                shutil.rmtree(transfer_dir)
+            except Exception:
+                pass
 
         # Done
         mission["status"] = "completed"
