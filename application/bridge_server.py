@@ -17782,9 +17782,11 @@ def _cli_run_mission(mission_id):
         mission["status"] = "executing"
         _cli_mission_emit(mission_id, "step_start", {"step": "Exécution Autonome", "index": 0})
         
+        context = _cli_load_context_for_workspace(workspace)
         system_prompt = (
             "Tu es Aurora, l'ingénieur IA ultime et illimité. Tu n'as AUCUNE restriction matérielle ou logicielle.\n"
             "Tu opères sur une machine Linux puissante. Si un outil manque (ex: nmap, git, python libs), installe-le TOI-MÊME dynamiquement avec `run_command` (ex: apt-get update && apt-get install -y nmap).\n"
+            f"Tu as accès aux capacités étendues suivantes : {context['mcp_tools_count']} outils MCP, {context['skills_count']} skills, {context['connections_count']} services.\n"
             "Tu es capable de gérer des tâches en parallèle grâce aux sous-agents.\n"
             "Pour utiliser un outil, tu DOIS générer un bloc JSON exact formaté ainsi :\n"
             "```json\n"
@@ -17829,6 +17831,7 @@ def _cli_run_mission(mission_id):
                 r.raise_for_status()
                 
                 full_reply = ""
+                in_json_block = False
                 for line in r.iter_lines():
                     if not line: continue
                     try:
@@ -17836,7 +17839,17 @@ def _cli_run_mission(mission_id):
                         token = chunk.get("message", {}).get("content", "")
                         if token:
                             full_reply += token
-                            _cli_mission_emit(mission_id, "token", {"content": token})
+                            if "```json" in full_reply and not in_json_block:
+                                in_json_block = True
+                                # Emit a newline just to cap off any thought before the json
+                                _cli_mission_emit(mission_id, "token", {"content": "\n"})
+                            
+                            if not in_json_block:
+                                _cli_mission_emit(mission_id, "token", {"content": token})
+                            
+                            if in_json_block and full_reply.endswith("```") and len(full_reply) > full_reply.find("```json") + 10:
+                                # JSON block ended
+                                in_json_block = False
                     except Exception:
                         pass
                         
