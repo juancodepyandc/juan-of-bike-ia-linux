@@ -17767,6 +17767,7 @@ def _run_sub_agent(model, workspace, task):
     return "Sub-agent timeout."
 
 def _cli_run_mission(mission_id):
+    import pty, select
     """Execute a mission autonomously with FULL Agentic ReAct Loop."""
     mission = _CLI_MISSIONS.get(mission_id)
     if not mission:
@@ -17825,6 +17826,7 @@ def _cli_run_mission(mission_id):
                     "model": model, "stream": True,
                     "messages": messages,
                 }, stream=True, timeout=600)
+                r.raise_for_status()
                 
                 full_reply = ""
                 for line in r.iter_lines():
@@ -17854,7 +17856,7 @@ def _cli_run_mission(mission_id):
                         if t_name == "run_command":
                             cmd = t_args.get("command", "")
                             _cli_mission_emit(mission_id, "token", {"content": f"\n\n[EXECUTION BASH]: {cmd}\n"})
-                            import pty, os, select
+                            
                             master, slave = pty.openpty()
                             proc = subprocess.Popen(cmd, shell=True, cwd=workspace, stdout=slave, stderr=slave, close_fds=True)
                             os.close(slave)
