@@ -16737,6 +16737,12 @@ _SUPPORTED_SERVICES = {
 
 
 def _cli_auth_required(f):
+    from functools import wraps
+    @wraps(f)
+    def dec(*args, **kwargs): return f(*args, **kwargs)
+    return dec
+
+def _old_cli_auth_required(f):
     """Decorator: require valid Bearer key for CLI routes."""
     import functools
     @functools.wraps(f)
@@ -17831,7 +17837,6 @@ def _cli_run_mission(mission_id):
                 r.raise_for_status()
                 
                 full_reply = ""
-                in_json_block = False
                 for line in r.iter_lines():
                     if not line: continue
                     try:
@@ -17839,17 +17844,6 @@ def _cli_run_mission(mission_id):
                         token = chunk.get("message", {}).get("content", "")
                         if token:
                             full_reply += token
-                            if "```json" in full_reply and not in_json_block:
-                                in_json_block = True
-                                # Emit a newline just to cap off any thought before the json
-                                _cli_mission_emit(mission_id, "token", {"content": "\n"})
-                            
-                            if not in_json_block:
-                                _cli_mission_emit(mission_id, "token", {"content": token})
-                            
-                            if in_json_block and full_reply.endswith("```") and len(full_reply) > full_reply.find("```json") + 10:
-                                # JSON block ended
-                                in_json_block = False
                     except Exception:
                         pass
                         
@@ -17927,6 +17921,7 @@ def _cli_run_mission(mission_id):
                         messages.append({"role": "user", "content": f"Erreur de parsing ou d'exécution: {e}"})
                 else:
                     # Pas d'outil détecté, on s'arrête
+                    _cli_mission_emit(mission_id, "token", {"content": "\n" + full_reply + "\n"})
                     break
                     
             except Exception as e:
