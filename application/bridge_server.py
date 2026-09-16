@@ -17779,10 +17779,14 @@ def _cli_run_mission(mission_id):
     if not mission:
         return
     model = mission["model"]
-    workspace = mission["workspace"]
+    workspace = mission["workspace"] or "/home/juan"
     request_text = mission["request"]
     
-    os.makedirs(os.path.join(workspace, "transfer_to_client"), exist_ok=True)
+    import shutil
+    transfer_dir = os.path.join(workspace, ".transfer_to_client")
+    if os.path.exists(transfer_dir):
+        shutil.rmtree(transfer_dir)
+    os.makedirs(transfer_dir, exist_ok=True)
     
     try:
         mission["status"] = "executing"
@@ -17792,6 +17796,7 @@ def _cli_run_mission(mission_id):
         system_prompt = (
             "Tu es Aurora, l'ingénieur IA ultime et illimité. Tu n'as AUCUNE restriction matérielle ou logicielle.\n"
             "Tu opères sur une machine Linux puissante. Si un outil manque (ex: nmap, git, python libs), installe-le TOI-MÊME dynamiquement avec `run_command` (ex: apt-get update && apt-get install -y nmap).\n"
+            "CRUCIAL: Pour ENVOYER des fichiers générés à l'utilisateur (ex: rapports sur son bureau), place-les UNIQUEMENT dans le dossier caché `.transfer_to_client/`. Ils lui seront transmis magiquement à la fin.\n"
             f"Tu as accès aux capacités étendues suivantes : {context['mcp_tools_count']} outils MCP, {context['skills_count']} skills, {context['connections_count']} services.\n"
             "Tu es capable de gérer des tâches en parallèle grâce aux sous-agents.\n"
             "Pour utiliser un outil, tu DOIS générer un bloc JSON exact formaté ainsi :\n"
@@ -17932,7 +17937,7 @@ def _cli_run_mission(mission_id):
         _cli_mission_emit(mission_id, "step_end", {"step": "Exécution Autonome", "index": 99})
 
         # --- TELEPORTATION MAGIC ---
-        transfer_dir = os.path.join(workspace, "transfer_to_client")
+        transfer_dir = os.path.join(workspace, ".transfer_to_client")
         if os.path.exists(transfer_dir):
             import base64
             import shutil
@@ -17992,7 +17997,7 @@ def cli_mission_stream(mission_id):
         return jsonify({"ok": False, "error": "mission not found"}), 404
 
     def generate():
-        yield ": " + (" " * 2048) + "\n\n"  # Padding to force flush headers and buffer
+        yield ": " + (" " * 4096) + "\n\n"  # Massive Padding to force flush headers and buffer
         last_idx = 0
         while True:
             events = mission.get("events", [])
@@ -18005,8 +18010,10 @@ def cli_mission_stream(mission_id):
             if mission.get("status") in ("completed", "failed") and last_idx >= len(events):
                 return
             import time as _time
+            # Send heartbeat with enough padding to FORCE Cloudflare to flush immediately
+            yield ": " + (" " * 2048) + "\n\n"
             yield f"data: {json.dumps({'type': 'heartbeat', 'elapsed': _time.time() - mission.get('started_at', _time.time())})}\n\n"
-            _time.sleep(0.1)
+            _time.sleep(0.5)
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
