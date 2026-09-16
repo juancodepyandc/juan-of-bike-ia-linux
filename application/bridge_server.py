@@ -16767,6 +16767,43 @@ def _cli_save_json(path, data):
 
 # --- Auth & Status ---
 
+@app.route("/api/cli/register", methods=["POST"])
+def cli_register():
+    """Point d'entrée sans friction : le client s'enregistre lui-même avec une clé unique."""
+    data = request.get_json(silent=True) or {}
+    device_name = data.get("device_name", "Unknown-Device")
+    client_key = data.get("client_key")
+    
+    if not client_key:
+        return jsonify({"ok": False, "error": "client_key missing"}), 400
+        
+    try:
+        import sqlite3
+        import hashlib
+        db_path = os.path.join(WORKSPACE, "aurora.db")
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # Ensure api_keys table exists (in case it wasn't initialized)
+        c.execute('''CREATE TABLE IF NOT EXISTS api_keys
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      key_hash TEXT UNIQUE NOT NULL,
+                      label TEXT,
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      expires_at TIMESTAMP)''')
+                      
+        key_hash = hashlib.sha256(client_key.encode()).hexdigest()
+        
+        # Insert or ignore (if already registered)
+        c.execute("INSERT OR IGNORE INTO api_keys (key_hash, label) VALUES (?, ?)", 
+                  (key_hash, f"CLI_{device_name}"))
+        conn.commit()
+        conn.close()
+        
+        return jsonify({"ok": True, "message": "Registered successfully", "device": device_name})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
 @app.route("/api/cli/auth", methods=["POST"])
 @_cli_auth_required
 def cli_auth():
