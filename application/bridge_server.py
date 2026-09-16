@@ -17937,4 +17937,4 @@ if __name__ == "__main__":
     except Exception as _e:  # noqa: BLE001
         print(f"  VISION PICKER    = (probe failed: {_e})")
     print("=" * 60)
-        app.run(host="0.0.0.0", port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
+    app.run(host="0.0.0.0", port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
