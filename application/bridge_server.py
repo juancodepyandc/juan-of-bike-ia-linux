@@ -17984,6 +17984,7 @@ def cli_mission_stream(mission_id):
         return jsonify({"ok": False, "error": "mission not found"}), 404
 
     def generate():
+        yield ": " + (" " * 2048) + "\n\n"  # Padding to force flush headers and buffer
         last_idx = 0
         while True:
             events = mission.get("events", [])
