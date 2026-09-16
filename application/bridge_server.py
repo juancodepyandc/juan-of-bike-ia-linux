@@ -17872,7 +17872,25 @@ _training_sys.path.insert(0, str(_TrainingPath(__file__).resolve().parent.parent
 from auto_rl.integration import register_routes as _register_training_routes
 _register_training_routes(app, _proxy)
 
+
+def sync_tunnel_url_to_gist():
+    import subprocess, os
+    try:
+        tunnel_file = "tunnel.txt"
+        if not os.path.exists(tunnel_file):
+            tunnel_file = "tunnel_url.txt"
+        
+        if os.path.exists(tunnel_file):
+            print("🔗 Syncing tunnel URL to GitHub Gist for remote clients...")
+            subprocess.run(["gh", "gist", "edit", "4510a5d538cef3e262ec38b6acc5bde0", "-a", "tunnel_sync.txt", tunnel_file], 
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("✅ Tunnel URL synced to Gist.")
+    except Exception as e:
+        pass
+
+
 if __name__ == "__main__":
+    sync_tunnel_url_to_gist()
     print("=" * 60)
     print("  BRIDGE AURORA — Port 3001")
     print("=" * 60)
@@ -17919,4 +17937,4 @@ if __name__ == "__main__":
     except Exception as _e:  # noqa: BLE001
         print(f"  VISION PICKER    = (probe failed: {_e})")
     print("=" * 60)
-    app.run(host="0.0.0.0", port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
+        app.run(host="0.0.0.0", port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
