@@ -16778,27 +16778,26 @@ def cli_register():
         return jsonify({"ok": False, "error": "client_key missing"}), 400
         
     try:
-        import sqlite3
+        # Ensure it registers properly in the JSON store used by _ext_auth
         import hashlib
-        db_path = os.path.join(WORKSPACE, "aurora.db")
-        conn = sqlite3.connect(db_path)
-        c = conn.cursor()
         
-        # Ensure api_keys table exists (in case it wasn't initialized)
-        c.execute('''CREATE TABLE IF NOT EXISTS api_keys
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                      key_hash TEXT UNIQUE NOT NULL,
-                      label TEXT,
-                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                      expires_at TIMESTAMP)''')
-                      
-        key_hash = hashlib.sha256(client_key.encode()).hexdigest()
+        # We reuse the server's internal hashing function
+        h = _hashlib.sha256(("aurora-ext-key-v1::" + client_key).encode("utf-8")).hexdigest()
         
-        # Insert or ignore (if already registered)
-        c.execute("INSERT OR IGNORE INTO api_keys (key_hash, label) VALUES (?, ?)", 
-                  (key_hash, f"CLI_{device_name}"))
-        conn.commit()
-        conn.close()
+        store = _ext_load()
+        if "keys" not in store:
+            store["keys"] = []
+            
+        # Check if already registered
+        exists = any(rec.get("hash") == h for rec in store["keys"])
+        if not exists:
+            store["keys"].append({
+                "hash": h,
+                "label": f"CLI_{device_name}",
+                "origin": "",
+                "created_at": __import__("datetime").datetime.utcnow().isoformat() + "Z"
+            })
+            _ext_save(store)
         
         return jsonify({"ok": True, "message": "Registered successfully", "device": device_name})
     except Exception as e:
@@ -17876,12 +17875,13 @@ _register_training_routes(app, _proxy)
 def sync_tunnel_url_to_gist():
     import subprocess, os
     try:
-        tunnel_file = "tunnel.txt"
+        # Il FAUT utiliser WORKSPACE car bridge_server tourne dans 'application/'
+        tunnel_file = os.path.join(WORKSPACE, "tunnel.txt")
         if not os.path.exists(tunnel_file):
-            tunnel_file = "tunnel_url.txt"
+            tunnel_file = os.path.join(WORKSPACE, "tunnel_url.txt")
         
         if os.path.exists(tunnel_file):
-            print("🔗 Syncing tunnel URL to GitHub Gist for remote clients...")
+            print(f"🔗 Syncing tunnel URL from {tunnel_file} to GitHub Gist for remote clients...")
             subprocess.run(["gh", "gist", "edit", "4510a5d538cef3e262ec38b6acc5bde0", "-a", "tunnel_sync.txt", tunnel_file], 
                            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print("✅ Tunnel URL synced to Gist.")
