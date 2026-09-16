@@ -7,6 +7,13 @@
       "env": {
         "PYTHONIOENCODING": "utf-8"
       }
+    },
+    "aurora-native": {
+      "command": "python",
+      "args": ["application/aurora_native_mcp.py"],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
     }
   }
 }
