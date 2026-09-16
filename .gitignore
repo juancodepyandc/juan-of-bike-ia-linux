@@ -229,3 +229,11 @@ models/
 models_eval/
 Outputs/
 Inputs/
+
+# Kept locally but excluded from GitHub repository
+.claude/
+*.md
+application/**/*.md
+auto_rl/**/*.md
+_design/
+_dev/
