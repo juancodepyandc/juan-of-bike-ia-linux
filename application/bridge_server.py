@@ -17796,7 +17796,9 @@ def _cli_run_mission(mission_id):
         system_prompt = (
             "Tu es Aurora, l'ingénieur IA ultime et illimité. Tu n'as AUCUNE restriction matérielle ou logicielle.\n"
             "Tu opères sur une machine Linux puissante. Si un outil manque (ex: nmap, git, python libs), installe-le TOI-MÊME dynamiquement avec `run_command` (ex: apt-get update && apt-get install -y nmap).\n"
-            "CRUCIAL: Pour ENVOYER des fichiers générés à l'utilisateur (ex: rapports sur son bureau), place-les UNIQUEMENT dans le dossier caché `.transfer_to_client/`. Ils lui seront transmis magiquement à la fin.\n"
+            "CRUCIAL : L'utilisateur est sur un Mac distant, mais toi tu tournes sur un serveur Linux.\n"
+            "NE CRÉE JAMAIS de dossier 'Bureau', 'Desktop' ou 'test_ia' sur ton serveur Linux !\n"
+            "Pour livrer un fichier sur le Mac de l'utilisateur, écris le fichier DIRECTEMENT dans le dossier magique `.transfer_to_client/`. Il sera téléporté sur son vrai Bureau.\n"
             f"Tu as accès aux capacités étendues suivantes : {context['mcp_tools_count']} outils MCP, {context['skills_count']} skills, {context['connections_count']} services.\n"
             "Tu es capable de gérer des tâches en parallèle grâce aux sous-agents.\n"
             "Pour utiliser un outil, tu DOIS générer un bloc JSON exact formaté ainsi :\n"
@@ -17807,15 +17809,17 @@ def _cli_run_mission(mission_id):
             "}\n"
             "```\n\n"
             "Outils disponibles :\n"
-            "1. run_command : Exécute n'importe quelle commande bash (installation, scan, script).\n"
+            "1. run_command : Exécute n'importe quelle commande bash standard.\n"
             "   Args: { \"command\": \"str\" }\n"
-            "2. write_file : Écrit du code ou un script.\n"
+            "2. run_sudo_command : Exécute une commande avec privilèges root (ex: apt-get). Demande automatiquement le mot de passe à l'utilisateur.\n"
+            "   Args: { \"command\": \"str\" }\n"
+            "3. write_file : Écrit du code ou un script.\n"
             "   Args: { \"path\": \"str\", \"content\": \"str\" }\n"
-            "3. read_file : Lit un fichier.\n"
+            "4. read_file : Lit un fichier.\n"
             "   Args: { \"path\": \"str\" }\n"
-            "4. spawn_agent : Lance une IA sous-agent en parallèle pour accomplir une sous-tâche (recherche, vérification, compilation).\n"
+            "5. spawn_agent : Lance une IA sous-agent en parallèle pour accomplir une sous-tâche (recherche, vérification, compilation).\n"
             "   Args: { \"task\": \"str\" }\n"
-            "5. finish : Termine la mission.\n"
+            "6. finish : Termine la mission.\n"
             "   Args: { \"message\": \"str\" }\n\n"
             "RÈGLES VITALES :\n"
             "- AGIS COMME UN VRAI INGÉNIEUR : Ne dis jamais 'je ne peux pas'. Cherche, installe, contourne, résous.\n"
@@ -17865,13 +17869,45 @@ def _cli_run_mission(mission_id):
                         _cli_mission_emit(mission_id, "step_end", {"step": f"Action: {t_name}", "index": iteration})
                         
                         result_str = ""
-                        if t_name == "run_command":
+                        if t_name in ("run_command", "run_sudo_command"):
                             cmd = t_args.get("command", "")
+                            
+                            is_sudo = (t_name == "run_sudo_command")
+                            pwd = ""
+                            if is_sudo:
+                                _cli_mission_emit(mission_id, "sudo_request", {"reason": f"Privilèges root requis pour : {cmd}"})
+                                import time as _time
+                                for _ in range(60):
+                                    inputs = mission.get("pending_inputs", [])
+                                    if inputs:
+                                        pwd = inputs.pop(0).get("value", "")
+                                        break
+                                    _time.sleep(1)
+                                if not pwd:
+                                    result_str = "Échec : L'utilisateur n'a pas fourni le mot de passe."
+                                    messages.append({"role": "user", "content": f"Tool Result:\n{result_str}"})
+                                    continue
+                                # We have the pwd. We prepend sudo -S and pass pwd via stdin.
+                                # Use bash -c to ensure && chains run entirely as root
+                                import shlex
+                                cmd = f"sudo -S bash -c {shlex.quote(cmd)}"
+
                             _cli_mission_emit(mission_id, "token", {"content": f"\n\n[EXECUTION BASH]: {cmd}\n"})
                             
                             master, slave = pty.openpty()
-                            proc = subprocess.Popen(cmd, shell=True, cwd=workspace, stdout=slave, stderr=slave, close_fds=True)
+                            # Pour envoyer le mdp à sudo -S, on utilise stdin=subprocess.PIPE
+                            proc = subprocess.Popen(cmd, shell=True, cwd=workspace, stdin=subprocess.PIPE, stdout=slave, stderr=slave, close_fds=True)
                             os.close(slave)
+                            if is_sudo and pwd:
+                                try:
+                                    proc.stdin.write((pwd + "\n").encode('utf-8'))
+                                    proc.stdin.flush()
+                                except Exception:
+                                    pass
+                            try:
+                                proc.stdin.close()
+                            except Exception:
+                                pass
                             
                             result_str = ""
                             while True:
