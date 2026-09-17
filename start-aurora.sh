@@ -86,6 +86,26 @@ echo "[3/5] Bridge Python"
   exec "$APP_PY" bridge_server.py
 ) >"$LOG_DIR/bridge.log" 2>&1 &
 
+echo "[3.5/5] Cerveau AGI (J.O.B.I.A. Core)"
+(
+  # Boucle de résilience avec auto-restart et codes d'erreurs propres
+  while true; do
+    echo "Démarrage du démon AGI..." >> "$LOG_DIR/agi_daemon.log"
+    if (cd "$ROOT_DIR" && exec "$APP_PY" aurora_agi_daemon.py >> "$LOG_DIR/agi_daemon.log" 2>&1); then
+      EXIT_CODE=$?
+      echo "Arrêt propre (code $EXIT_CODE)" >> "$LOG_DIR/agi_daemon.log"
+      break
+    else
+      EXIT_CODE=$?
+      echo "ERREUR CRITIQUE AGI: Crash avec le code $EXIT_CODE." >> "$LOG_DIR/agi_daemon.log"
+      echo "Tentative de redémarrage dans 5 secondes..." >> "$LOG_DIR/agi_daemon.log"
+      sleep 5
+    fi
+  done
+) &
+AGI_PID=$!
+echo "      AGI Daemon lancé en arrière-plan (PID: $AGI_PID, logs: $LOG_DIR/agi_daemon.log)"
+
 echo "[4/5] Interface (build + Vite)"
 # 30/07: `npm` n'etait PAS dans le PATH de ce script (installe via nvm) ->
 # la ligne echouait EN SILENCE, Vite ne demarrait jamais et l'application
