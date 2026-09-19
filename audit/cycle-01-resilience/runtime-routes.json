@@ -1,0 +1,3326 @@
+{
+  "routes": [
+    {
+      "path": "/",
+      "methods": [
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PUT"
+      ],
+      "endpoint": "vite_bp.vite_root",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 3108
+    },
+    {
+      "path": "/<path:path>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "PATCH",
+        "POST",
+        "PUT"
+      ],
+      "endpoint": "vite_bp.vite_catchall",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 3215
+    },
+    {
+      "path": "/api/3d/auto-motion-bake",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_auto_motion_bake",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2631
+    },
+    {
+      "path": "/api/3d/auto-rescue",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_auto_rescue",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1929
+    },
+    {
+      "path": "/api/3d/auto-validate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_auto_validate",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2126
+    },
+    {
+      "path": "/api/3d/bake-colors",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_bake_colors",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2000
+    },
+    {
+      "path": "/api/3d/color-diagnostic",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_color_diagnostic",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2066
+    },
+    {
+      "path": "/api/3d/compose-scene",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_compose_scene",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 729
+    },
+    {
+      "path": "/api/3d/custom-motion",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_custom_motion",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2555
+    },
+    {
+      "path": "/api/3d/file/<path:fname>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "three_d_file",
+      "file": "application/bridge_server.py",
+      "line": 1056
+    },
+    {
+      "path": "/api/3d/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "three_d_list",
+      "file": "application/bridge_server.py",
+      "line": 1016
+    },
+    {
+      "path": "/api/3d/mesh-compare",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_mesh_compare",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1695
+    },
+    {
+      "path": "/api/3d/mesh-score",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_mesh_score",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2185
+    },
+    {
+      "path": "/api/3d/mesh-sharpen",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_mesh_sharpen",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 544
+    },
+    {
+      "path": "/api/3d/motion-compile",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_motion_compile",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 276
+    },
+    {
+      "path": "/api/3d/motion-intent",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_motion_intent",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2497
+    },
+    {
+      "path": "/api/3d/motion-parity",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_motion_parity",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1574
+    },
+    {
+      "path": "/api/3d/motion-parser-self-test",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_motion_parser_self_test",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 338
+    },
+    {
+      "path": "/api/3d/motion-resolve-prompt",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_motion_resolve_prompt",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 307
+    },
+    {
+      "path": "/api/3d/motion-self-test",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_motion_self_test",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 358
+    },
+    {
+      "path": "/api/3d/pipeline-status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_pipeline_status",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 384
+    },
+    {
+      "path": "/api/3d/regression-suite",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_regression_suite",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 431
+    },
+    {
+      "path": "/api/3d/route-test",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_route_test",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2436
+    },
+    {
+      "path": "/api/3d/run-index",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_run_index",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1603
+    },
+    {
+      "path": "/api/3d/run-pipeline",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_run_pipeline",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 614
+    },
+    {
+      "path": "/api/3d/score-history",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.three_d_score_history",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1639
+    },
+    {
+      "path": "/api/3d/select-subject",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "asset_bp.three_d_select_subject",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 30
+    },
+    {
+      "path": "/api/3d/viewer-html",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.three_d_viewer_html",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1752
+    },
+    {
+      "path": "/api/_dev/reload",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.dev_reload_endpoint",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 310
+    },
+    {
+      "path": "/api/_dev/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.dev_status",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 293
+    },
+    {
+      "path": "/api/academy/parcours/latest",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.academy_parcours_latest",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 365
+    },
+    {
+      "path": "/api/admin/git-pull",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.admin_git_pull",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2782
+    },
+    {
+      "path": "/api/admin/restart-bridge",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.admin_restart_bridge",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 254
+    },
+    {
+      "path": "/api/admin/restart-vite",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.admin_restart_vite",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2918
+    },
+    {
+      "path": "/api/admin/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.admin_status",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 148
+    },
+    {
+      "path": "/api/agents/<name>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_get",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1903
+    },
+    {
+      "path": "/api/agents/coverage",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_coverage",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2374
+    },
+    {
+      "path": "/api/agents/dispatches",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_dispatches",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2326
+    },
+    {
+      "path": "/api/agents/health",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_health",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2289
+    },
+    {
+      "path": "/api/agents/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_list",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1861
+    },
+    {
+      "path": "/api/agents/metrics",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_metrics",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2404
+    },
+    {
+      "path": "/api/agents/watchdog",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.agents_watchdog",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 2235
+    },
+    {
+      "path": "/api/architecture",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.aurora_architecture",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1010
+    },
+    {
+      "path": "/api/asset/<path:filepath>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "asset_bp.serve_asset",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 80
+    },
+    {
+      "path": "/api/aurora/<module>/<action>",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.aurora_module_dispatch",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1541
+    },
+    {
+      "path": "/api/brand/enrich",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.brand_enrich",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 588
+    },
+    {
+      "path": "/api/calendar/fetch-ics",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.calendar_fetch_ics",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 237
+    },
+    {
+      "path": "/api/cinema/benchmark",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_video_benchmark",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 609
+    },
+    {
+      "path": "/api/cinema/cancel/<job_id>",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_job_cancel",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1128
+    },
+    {
+      "path": "/api/cinema/films",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.cinema_films",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1003
+    },
+    {
+      "path": "/api/cinema/films/<film_id>/rapport",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.cinema_film_rapport",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1063
+    },
+    {
+      "path": "/api/cinema/films/<film_id>/video",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.cinema_film_video",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1049
+    },
+    {
+      "path": "/api/cinema/generate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_generate",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 721
+    },
+    {
+      "path": "/api/cinema/job/<job_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.cinema_job_status",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1078
+    },
+    {
+      "path": "/api/cinema/preview-keyframes",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_preview_keyframes",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 668
+    },
+    {
+      "path": "/api/cinema/regenerate-shot",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_regenerate_shot",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 433
+    },
+    {
+      "path": "/api/cinema/sample-render",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_sample_render",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 380
+    },
+    {
+      "path": "/api/cinema/selftest",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_selftest",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 526
+    },
+    {
+      "path": "/api/cinema/storyboard",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.cinema_storyboard",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 276
+    },
+    {
+      "path": "/api/cli/agents/dynamic/<agent_id>",
+      "methods": [
+        "DELETE",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agent_delete",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 637
+    },
+    {
+      "path": "/api/cli/agents/dynamic/<agent_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agent_get",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 612
+    },
+    {
+      "path": "/api/cli/agents/dynamic/<agent_id>/modify",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agent_modify",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 622
+    },
+    {
+      "path": "/api/cli/agents/dynamic/<agent_id>/save",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agent_save",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 647
+    },
+    {
+      "path": "/api/cli/agents/dynamic/create",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agent_create",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 587
+    },
+    {
+      "path": "/api/cli/agents/dynamic/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_dynamic_agents_list",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 580
+    },
+    {
+      "path": "/api/cli/agents/official",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_agents_official",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 546
+    },
+    {
+      "path": "/api/cli/agents/official/<name>/disable",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_agent_disable",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 558
+    },
+    {
+      "path": "/api/cli/agents/official/<name>/enable",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_agent_enable",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 569
+    },
+    {
+      "path": "/api/cli/auth",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_auth",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 164
+    },
+    {
+      "path": "/api/cli/chat",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_chat",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 356
+    },
+    {
+      "path": "/api/cli/connections/add",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_connections_add",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 931
+    },
+    {
+      "path": "/api/cli/connections/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_connections_list",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 917
+    },
+    {
+      "path": "/api/cli/connections/remove",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_connections_remove",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 958
+    },
+    {
+      "path": "/api/cli/connections/test",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_connections_test",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 969
+    },
+    {
+      "path": "/api/cli/doctor",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_doctor",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 230
+    },
+    {
+      "path": "/api/cli/mcp/call",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_mcp_call",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 738
+    },
+    {
+      "path": "/api/cli/mcp/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_mcp_list",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 689
+    },
+    {
+      "path": "/api/cli/mcp/tools",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_mcp_tools",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 697
+    },
+    {
+      "path": "/api/cli/mission/<mission_id>/input",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_mission_input",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 1141
+    },
+    {
+      "path": "/api/cli/mission/<mission_id>/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_mission_status",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 1195
+    },
+    {
+      "path": "/api/cli/mission/<mission_id>/stop",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_mission_stop",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 1211
+    },
+    {
+      "path": "/api/cli/mission/<mission_id>/stream",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_mission_stream",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 1158
+    },
+    {
+      "path": "/api/cli/mission/start",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_mission_start",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 1024
+    },
+    {
+      "path": "/api/cli/models",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_models",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 503
+    },
+    {
+      "path": "/api/cli/permissions",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_permissions_get",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 426
+    },
+    {
+      "path": "/api/cli/permissions",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_permissions_set",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 433
+    },
+    {
+      "path": "/api/cli/register",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_register",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 123
+    },
+    {
+      "path": "/api/cli/session/<session_id>",
+      "methods": [
+        "DELETE",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_session_delete",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 344
+    },
+    {
+      "path": "/api/cli/session/<session_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_session_get",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 322
+    },
+    {
+      "path": "/api/cli/session/<session_id>/resume",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_session_resume",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 332
+    },
+    {
+      "path": "/api/cli/session/create",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_session_create",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 282
+    },
+    {
+      "path": "/api/cli/session/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_session_list",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 305
+    },
+    {
+      "path": "/api/cli/skills/create",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_skills_create",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 845
+    },
+    {
+      "path": "/api/cli/skills/discover",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_skills_discover",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 882
+    },
+    {
+      "path": "/api/cli/skills/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_skills_list",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 819
+    },
+    {
+      "path": "/api/cli/skills/read",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_skills_read",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 827
+    },
+    {
+      "path": "/api/cli/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_status",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 183
+    },
+    {
+      "path": "/api/cli/tools",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_tools",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 471
+    },
+    {
+      "path": "/api/cli/version",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_version",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 175
+    },
+    {
+      "path": "/api/cli/workspace",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cli_bp.cli_workspace_get",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 453
+    },
+    {
+      "path": "/api/cli/workspace",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cli_bp.cli_workspace_set",
+      "file": "application/routes/cli_bp_routes.py",
+      "line": 459
+    },
+    {
+      "path": "/api/code/assets/file/<path:asset_path>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.code_assets_file",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1398
+    },
+    {
+      "path": "/api/code/assets/generate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.code_assets_generate",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1324
+    },
+    {
+      "path": "/api/code/detect-editor",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "code_detect_editor",
+      "file": "application/bridge_server.py",
+      "line": 353
+    },
+    {
+      "path": "/api/code/generate/stream",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.code_generate_stream",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1416
+    },
+    {
+      "path": "/api/code/install-model",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "code_install_model",
+      "file": "application/bridge_server.py",
+      "line": 315
+    },
+    {
+      "path": "/api/code/open-folder",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "code_open_folder",
+      "file": "application/bridge_server.py",
+      "line": 363
+    },
+    {
+      "path": "/api/code/repo/git",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.code_repo_git_info",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 241
+    },
+    {
+      "path": "/api/code/repo/install",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.code_repo_install",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 263
+    },
+    {
+      "path": "/api/code/repo/pick",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.code_repo_pick",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 65
+    },
+    {
+      "path": "/api/code/repo/scan",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.code_repo_scan",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 91
+    },
+    {
+      "path": "/api/code/repo/write",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.code_repo_write",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 183
+    },
+    {
+      "path": "/api/code/simulation-lab",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.code_simulation_lab",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1228
+    },
+    {
+      "path": "/api/code/tooling-eval",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.code_tooling_eval",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1278
+    },
+    {
+      "path": "/api/code/visual-audit",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "vite_bp.code_visual_audit",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1172
+    },
+    {
+      "path": "/api/comfyui/image",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "comfy_life_bp.comfyui_image",
+      "file": "application/routes/comfy_life_bp_routes.py",
+      "line": 29
+    },
+    {
+      "path": "/api/comfyui/start",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "comfy_life_bp.comfyui_start",
+      "file": "application/routes/comfy_life_bp_routes.py",
+      "line": 18
+    },
+    {
+      "path": "/api/comfyui/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "comfy_life_bp.comfyui_status",
+      "file": "application/routes/comfy_life_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/command/run",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.command_run",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1262
+    },
+    {
+      "path": "/api/command/spawn",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.command_spawn",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1285
+    },
+    {
+      "path": "/api/conformance",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.aurora_conformance",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 905
+    },
+    {
+      "path": "/api/connect/ssh/keygen",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_ssh_keygen",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 268
+    },
+    {
+      "path": "/api/connect/ssh/probe",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_ssh_probe",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 109
+    },
+    {
+      "path": "/api/connect/ssh/run",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_ssh_run",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 154
+    },
+    {
+      "path": "/api/connect/ssh/upload",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_ssh_upload",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 199
+    },
+    {
+      "path": "/api/connect/targets/delete",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_targets_delete",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 76
+    },
+    {
+      "path": "/api/connect/targets/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "connect_bp.connect_targets_list",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 41
+    },
+    {
+      "path": "/api/connect/targets/save",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_targets_save",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 51
+    },
+    {
+      "path": "/api/connect/tcp/probe",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "connect_bp.connect_tcp_probe",
+      "file": "application/routes/connect_bp_routes.py",
+      "line": 294
+    },
+    {
+      "path": "/api/cowork/browsers/detect",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_browsers_detect",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4858
+    },
+    {
+      "path": "/api/cowork/db/sql",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "postgres_bp.cowork_db_sql",
+      "file": "application/routes/postgres_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/cowork/delete",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_delete_path",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 95
+    },
+    {
+      "path": "/api/cowork/dual-signal-effective",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_dual_signal_effective",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4562
+    },
+    {
+      "path": "/api/cowork/dual-signal-event",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_dual_signal_event",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4449
+    },
+    {
+      "path": "/api/cowork/dual-signal-reset",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_dual_signal_reset",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4635
+    },
+    {
+      "path": "/api/cowork/dual-signal-stats",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_dual_signal_stats",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4484
+    },
+    {
+      "path": "/api/cowork/extension/await-result",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_await",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 144
+    },
+    {
+      "path": "/api/cowork/extension/dispatch",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_dispatch",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 105
+    },
+    {
+      "path": "/api/cowork/extension/download",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_download",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 177
+    },
+    {
+      "path": "/api/cowork/extension/inbound",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_inbound",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 160
+    },
+    {
+      "path": "/api/cowork/extension/inbound",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_inbound_list",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 171
+    },
+    {
+      "path": "/api/cowork/extension/install-md",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_install_md",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 712
+    },
+    {
+      "path": "/api/cowork/extension/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_list",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 202
+    },
+    {
+      "path": "/api/cowork/extension/poll",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_poll",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 76
+    },
+    {
+      "path": "/api/cowork/extension/result",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_result",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 130
+    },
+    {
+      "path": "/api/cowork/extension/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_status",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 214
+    },
+    {
+      "path": "/api/cowork/extension/version",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_ext_version",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 235
+    },
+    {
+      "path": "/api/cowork/extract-structured",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_extract_structured",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3849
+    },
+    {
+      "path": "/api/cowork/extraction-stats",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_extraction_stats",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4252
+    },
+    {
+      "path": "/api/cowork/iot/mqtt",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "iot_bp.cowork_iot_mqtt",
+      "file": "application/routes/iot_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/cowork/iot/tuya",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "iot_bp.cowork_iot_tuya",
+      "file": "application/routes/iot_bp_routes.py",
+      "line": 87
+    },
+    {
+      "path": "/api/cowork/mobile/dispatch",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_mobile_dispatch",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4971
+    },
+    {
+      "path": "/api/cowork/mobile/events",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_mobile_events",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4964
+    },
+    {
+      "path": "/api/cowork/mobile/inbound",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_mobile_inbound",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4952
+    },
+    {
+      "path": "/api/cowork/mobile/poll",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_mobile_poll",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4985
+    },
+    {
+      "path": "/api/cowork/mobile/result",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_mobile_result",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4999
+    },
+    {
+      "path": "/api/cowork/read",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_file_bp.cowork_read_file",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 51
+    },
+    {
+      "path": "/api/cowork/session/cleanup",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_cleanup",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 299
+    },
+    {
+      "path": "/api/cowork/session/create",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_create",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 156
+    },
+    {
+      "path": "/api/cowork/session/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_list",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 177
+    },
+    {
+      "path": "/api/cowork/session/list_files",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_list_files",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 263
+    },
+    {
+      "path": "/api/cowork/session/read",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_read",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 234
+    },
+    {
+      "path": "/api/cowork/session/remove",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_remove",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 279
+    },
+    {
+      "path": "/api/cowork/session/write",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_session_write",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 201
+    },
+    {
+      "path": "/api/cowork/storage/s3",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "s3_bp.cowork_storage_s3",
+      "file": "application/routes/s3_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/cowork/trend-signal-event",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_trend_signal_event",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4761
+    },
+    {
+      "path": "/api/cowork/trend-signal-reset",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_trend_signal_reset",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4697
+    },
+    {
+      "path": "/api/cowork/trend-signal-stats",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.cowork_trend_signal_stats",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 4794
+    },
+    {
+      "path": "/api/cowork/write",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_file_bp.cowork_write_file",
+      "file": "application/routes/cowork_file_bp_routes.py",
+      "line": 72
+    },
+    {
+      "path": "/api/download/<path:filepath>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "asset_bp.download_asset",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 104
+    },
+    {
+      "path": "/api/ent/analyze-dom",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.ent_analyze_dom",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 784
+    },
+    {
+      "path": "/api/ent/discover-pronote",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.ent_discover_pronote",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 575
+    },
+    {
+      "path": "/api/ent/discover-school",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.ent_discover_pronote",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 575
+    },
+    {
+      "path": "/api/ent/get",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.ent_get",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 401
+    },
+    {
+      "path": "/api/ent/harvest",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.ent_harvest",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 312
+    },
+    {
+      "path": "/api/ent/list",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.ent_list",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 356
+    },
+    {
+      "path": "/api/ent/native/run",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.ent_native_run",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 483
+    },
+    {
+      "path": "/api/expertise",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.aurora_expertise",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1034
+    },
+    {
+      "path": "/api/ext/3d/generate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ext_3d_generate",
+      "file": "application/bridge_server.py",
+      "line": 829
+    },
+    {
+      "path": "/api/ext/3d/status/<job_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "ext_3d_status",
+      "file": "application/bridge_server.py",
+      "line": 859
+    },
+    {
+      "path": "/api/ext/chat",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ext_chat",
+      "file": "application/bridge_server.py",
+      "line": 657
+    },
+    {
+      "path": "/api/ext/do",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ext_do",
+      "file": "application/bridge_server.py",
+      "line": 917
+    },
+    {
+      "path": "/api/ext/key/generate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ext_key_generate",
+      "file": "application/bridge_server.py",
+      "line": 600
+    },
+    {
+      "path": "/api/ext/key/revoke",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ext_key_revoke",
+      "file": "application/bridge_server.py",
+      "line": 627
+    },
+    {
+      "path": "/api/ext/key/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "ext_key_status",
+      "file": "application/bridge_server.py",
+      "line": 586
+    },
+    {
+      "path": "/api/ext/ping",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "ext_ping",
+      "file": "application/bridge_server.py",
+      "line": 645
+    },
+    {
+      "path": "/api/fs/exists",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_exists",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 17
+    },
+    {
+      "path": "/api/fs/list",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_list_dir",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 92
+    },
+    {
+      "path": "/api/fs/mkdir",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_mkdir",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 23
+    },
+    {
+      "path": "/api/fs/read-binary",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_read_binary",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 62
+    },
+    {
+      "path": "/api/fs/read-text",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_read_text",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 30
+    },
+    {
+      "path": "/api/fs/remove-dir",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_remove_dir",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 72
+    },
+    {
+      "path": "/api/fs/workspace-path",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "fs_bp.fs_workspace_path",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/fs/write-binary",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_write_binary",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 51
+    },
+    {
+      "path": "/api/fs/write-text",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "fs_bp.fs_write_text",
+      "file": "application/routes/fs_bp_routes.py",
+      "line": 40
+    },
+    {
+      "path": "/api/generated-files",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "asset_bp.list_generated_files",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 119
+    },
+    {
+      "path": "/api/hardware",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "hardware_bp.hardware",
+      "file": "application/routes/hardware_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/health",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "python_bp.python_bridge_health",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 868
+    },
+    {
+      "path": "/api/image/persist",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "asset_bp.persist_generated_image",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 148
+    },
+    {
+      "path": "/api/music/exports",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.music_exports",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2390
+    },
+    {
+      "path": "/api/music/exports/<path:filename>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.music_export_file",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2412
+    },
+    {
+      "path": "/api/music/jobs",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.music_create",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2298
+    },
+    {
+      "path": "/api/music/jobs/<job_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.music_job",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2382
+    },
+    {
+      "path": "/api/music/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.music_status",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2211
+    },
+    {
+      "path": "/api/music/voices",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.music_voice_import",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2234
+    },
+    {
+      "path": "/api/music/voices",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.music_voice_list",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 2216
+    },
+    {
+      "path": "/api/ollama/chat",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "repo_bp.ollama_chat",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 323
+    },
+    {
+      "path": "/api/ollama/models",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "ollama_enh_bp.ollama_models",
+      "file": "application/routes/ollama_enh_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/ollama/pull",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "ollama_enh_bp.ollama_pull",
+      "file": "application/routes/ollama_enh_bp_routes.py",
+      "line": 34
+    },
+    {
+      "path": "/api/ollama/tags",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "ollama_list_bp.ollama_tags",
+      "file": "application/routes/ollama_list_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/picker/explain",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_explain",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1355
+    },
+    {
+      "path": "/api/picker/history",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1512
+    },
+    {
+      "path": "/api/picker/history/by-model",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_by_model",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1855
+    },
+    {
+      "path": "/api/picker/history/by-model-and-reason",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_by_model_and_reason",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 2818
+    },
+    {
+      "path": "/api/picker/history/by-reason",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_by_reason",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1939
+    },
+    {
+      "path": "/api/picker/history/cells/empty",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_cells_empty",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3049
+    },
+    {
+      "path": "/api/picker/history/clear",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_clear",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1529
+    },
+    {
+      "path": "/api/picker/history/coverage",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_coverage",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3167
+    },
+    {
+      "path": "/api/picker/history/coverage/global",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_coverage_global",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3287
+    },
+    {
+      "path": "/api/picker/history/coverage/heatmap",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_coverage_heatmap",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3598
+    },
+    {
+      "path": "/api/picker/history/coverage/timeline",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_coverage_timeline",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3453
+    },
+    {
+      "path": "/api/picker/history/distinct-models",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_distinct_models",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1778
+    },
+    {
+      "path": "/api/picker/history/intersections",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_intersections",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 2940
+    },
+    {
+      "path": "/api/picker/history/kinds",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_kinds",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1741
+    },
+    {
+      "path": "/api/picker/history/replay",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_replay",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 3753
+    },
+    {
+      "path": "/api/picker/history/stats",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_stats",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1579
+    },
+    {
+      "path": "/api/picker/history/timeline",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_timeline",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 2041
+    },
+    {
+      "path": "/api/picker/history/timeline/summary",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.picker_history_timeline_summary",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 2748
+    },
+    {
+      "path": "/api/ping",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "python_bp.python_bridge_ping",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 859
+    },
+    {
+      "path": "/api/python/cancel/<job_id>",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.python_job_cancel",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1230
+    },
+    {
+      "path": "/api/python/job/<job_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "python_bp.python_job_status",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1212
+    },
+    {
+      "path": "/api/python/progress",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "python_prog_bp.python_progress",
+      "file": "application/routes/python_prog_bp_routes.py",
+      "line": 77
+    },
+    {
+      "path": "/api/python/run",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.python_run",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1236
+    },
+    {
+      "path": "/api/python/run-async",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "python_bp.python_run_async",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 826
+    },
+    {
+      "path": "/api/runtime/inspect",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "hardware_bp.runtime_inspect",
+      "file": "application/routes/hardware_bp_routes.py",
+      "line": 44
+    },
+    {
+      "path": "/api/runtime/prepare-model",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "hardware_bp.prepare_model",
+      "file": "application/routes/hardware_bp_routes.py",
+      "line": 84
+    },
+    {
+      "path": "/api/runtime/privilege",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "hardware_bp.runtime_privilege",
+      "file": "application/routes/hardware_bp_routes.py",
+      "line": 79
+    },
+    {
+      "path": "/api/services/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "status_bp.services_status",
+      "file": "application/routes/status_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/storage/gc",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.storage_gc",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1240
+    },
+    {
+      "path": "/api/storage/purge",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.storage_purge",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1251
+    },
+    {
+      "path": "/api/storage/stage",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.storage_stage",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1224
+    },
+    {
+      "path": "/api/storage/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.storage_status",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1183
+    },
+    {
+      "path": "/api/storage/tier",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.storage_tier",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1214
+    },
+    {
+      "path": "/api/storage/unstage",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.storage_unstage",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1232
+    },
+    {
+      "path": "/api/system/info",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "sysinfo_bp.system_info",
+      "file": "application/routes/sysinfo_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/training/artifact/<path:name>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_artifact",
+      "file": "auto_rl/integration.py",
+      "line": 222
+    },
+    {
+      "path": "/api/training/control/<action>",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "training_control",
+      "file": "auto_rl/integration.py",
+      "line": 55
+    },
+    {
+      "path": "/api/training/dashboard-extras.js",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_dashboard_extras",
+      "file": "auto_rl/integration.py",
+      "line": 51
+    },
+    {
+      "path": "/api/training/diagnostic/<run_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_diagnostic",
+      "file": "auto_rl/integration.py",
+      "line": 104
+    },
+    {
+      "path": "/api/training/image-workflow",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "image_workflow",
+      "file": "auto_rl/integration.py",
+      "line": 235
+    },
+    {
+      "path": "/api/training/media",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "training_media",
+      "file": "auto_rl/integration.py",
+      "line": 149
+    },
+    {
+      "path": "/api/training/models",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_models",
+      "file": "auto_rl/integration.py",
+      "line": 232
+    },
+    {
+      "path": "/api/training/parents/<module>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_parents",
+      "file": "auto_rl/integration.py",
+      "line": 152
+    },
+    {
+      "path": "/api/training/reference",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "training_reference",
+      "file": "auto_rl/integration.py",
+      "line": 163
+    },
+    {
+      "path": "/api/training/review/<run_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_review",
+      "file": "auto_rl/integration.py",
+      "line": 191
+    },
+    {
+      "path": "/api/training/review/<run_id>/asset",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_review_asset",
+      "file": "auto_rl/integration.py",
+      "line": 204
+    },
+    {
+      "path": "/api/training/runs/<run_id>/<artifact>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_run_artifact",
+      "file": "auto_rl/integration.py",
+      "line": 139
+    },
+    {
+      "path": "/api/training/samples/<run_id>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_samples",
+      "file": "auto_rl/integration.py",
+      "line": 74
+    },
+    {
+      "path": "/api/training/samples/<run_id>/asset",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_sample",
+      "file": "auto_rl/integration.py",
+      "line": 80
+    },
+    {
+      "path": "/api/training/selection",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "training_selection",
+      "file": "auto_rl/integration.py",
+      "line": 66
+    },
+    {
+      "path": "/api/training/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_status",
+      "file": "auto_rl/integration.py",
+      "line": 28
+    },
+    {
+      "path": "/api/training/ui",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_ui",
+      "file": "auto_rl/integration.py",
+      "line": 46
+    },
+    {
+      "path": "/api/training/viewer-lib/<path:name>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "training_viewer_lib",
+      "file": "auto_rl/integration.py",
+      "line": 95
+    },
+    {
+      "path": "/api/tunnel/url",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "python_bp.tunnel_url",
+      "file": "application/routes/python_bp_routes.py",
+      "line": 1127
+    },
+    {
+      "path": "/api/upload",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "upload_bp.upload_file",
+      "file": "application/routes/upload_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/video/gallery",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.video_gallery",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1263
+    },
+    {
+      "path": "/api/video/queue",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.video_gpu_queue_status",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1134
+    },
+    {
+      "path": "/api/video/render",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.video_render",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 787
+    },
+    {
+      "path": "/api/voice/check",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_clone_check",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1557
+    },
+    {
+      "path": "/api/voice/extract",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_extract_async",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1440
+    },
+    {
+      "path": "/api/voice/idle-video",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.serve_idle_video",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 226
+    },
+    {
+      "path": "/api/voice/library",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_library_list",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1326
+    },
+    {
+      "path": "/api/voice/library/<slug>",
+      "methods": [
+        "DELETE",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_library_delete",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1333
+    },
+    {
+      "path": "/api/voice/library/clear",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_library_clear",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1350
+    },
+    {
+      "path": "/api/voice/personas",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.voice_personas",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 934
+    },
+    {
+      "path": "/api/voice/register",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_register",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1367
+    },
+    {
+      "path": "/api/voice/stt",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.voice_stt",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/voice/stt-info",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.voice_stt_info",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 919
+    },
+    {
+      "path": "/api/voice/studio/calibrate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_calibrate",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1893
+    },
+    {
+      "path": "/api/voice/studio/clean-legacy",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_clean_legacy",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1974
+    },
+    {
+      "path": "/api/voice/studio/emotion/detect",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_detect_emotion",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1879
+    },
+    {
+      "path": "/api/voice/studio/generation/<gen_name>/audio",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_stream_generation",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1910
+    },
+    {
+      "path": "/api/voice/studio/music/search",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_music_search",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1850
+    },
+    {
+      "path": "/api/voice/studio/music/track/<track_name>/audio",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_stream_music",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1864
+    },
+    {
+      "path": "/api/voice/studio/profile/<slug>",
+      "methods": [
+        "DELETE",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_delete_profile",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1958
+    },
+    {
+      "path": "/api/voice/studio/profiles",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_profiles",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1943
+    },
+    {
+      "path": "/api/voice/studio/replicate",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_replicate",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1711
+    },
+    {
+      "path": "/api/voice/studio/sample",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_upload_sample",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1593
+    },
+    {
+      "path": "/api/voice/studio/sample/<sample_id>/audio",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_stream_sample",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1692
+    },
+    {
+      "path": "/api/voice/studio/sing",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_studio_sing",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1778
+    },
+    {
+      "path": "/api/voice/studio/tree",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cinema_bp.voice_studio_tree",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1931
+    },
+    {
+      "path": "/api/voice/synthesize",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cinema_bp.voice_synthesize",
+      "file": "application/routes/cinema_bp_routes.py",
+      "line": 1502
+    },
+    {
+      "path": "/api/voice/talking-head/check",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.talking_head_check",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 157
+    },
+    {
+      "path": "/api/voice/talking-head/idle",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.talking_head_idle",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 180
+    },
+    {
+      "path": "/api/voice/tts",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "voice_bp.voice_tts",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 34
+    },
+    {
+      "path": "/api/voice/tts-audio",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.serve_tts_audio",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 124
+    },
+    {
+      "path": "/api/voice/tts-video",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "voice_bp.serve_tts_video",
+      "file": "application/routes/voice_bp_routes.py",
+      "line": 148
+    },
+    {
+      "path": "/api/warmup/health",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.warmup_health",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 1424
+    },
+    {
+      "path": "/api/warmup/restart",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "cowork_ext_bp.warmup_restart",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 523
+    },
+    {
+      "path": "/api/warmup/status",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "cowork_ext_bp.warmup_status",
+      "file": "application/routes/cowork_ext_bp_routes.py",
+      "line": 464
+    },
+    {
+      "path": "/api/web/action",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_action_bp.web_action",
+      "file": "application/routes/web_action_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/api/web/download",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.web_download",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 62
+    },
+    {
+      "path": "/api/web/extract",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.web_extract",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 134
+    },
+    {
+      "path": "/api/web/image",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.web_image_single",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 679
+    },
+    {
+      "path": "/api/web/images",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.web_images",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 156
+    },
+    {
+      "path": "/api/web/search",
+      "methods": [
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "web_search_bp.web_search",
+      "file": "application/routes/web_search_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/aurora-api.md",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "aurora_api_doc",
+      "file": "application/bridge_server.py",
+      "line": 1079
+    },
+    {
+      "path": "/aurora_viewer.html",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "asset_bp.aurora_viewer_page",
+      "file": "application/routes/asset_bp_routes.py",
+      "line": 71
+    },
+    {
+      "path": "/draco/<path:relpath>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "vite_bp.serve_draco_static",
+      "file": "application/routes/vite_bp_routes.py",
+      "line": 1814
+    },
+    {
+      "path": "/proxy/comfy/<path:path>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST",
+        "PUT"
+      ],
+      "endpoint": "comfy_proxy_bp.comfyui_proxy",
+      "file": "application/routes/comfy_proxy_bp_routes.py",
+      "line": 12
+    },
+    {
+      "path": "/proxy/ollama/<path:path>",
+      "methods": [
+        "DELETE",
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST",
+        "PUT"
+      ],
+      "endpoint": "repo_bp.ollama_proxy",
+      "file": "application/routes/repo_bp_routes.py",
+      "line": 315
+    },
+    {
+      "path": "/proxy/trained/<path:path>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS",
+        "POST"
+      ],
+      "endpoint": "trained_proxy",
+      "file": "auto_rl/integration.py",
+      "line": 246
+    },
+    {
+      "path": "/static/<path:filename>",
+      "methods": [
+        "GET",
+        "HEAD",
+        "OPTIONS"
+      ],
+      "endpoint": "static",
+      "file": "external",
+      "line": 278
+    }
+  ],
+  "failures": [],
+  "unauthenticated_probes": [
+    {
+      "method": "GET",
+      "path": "/api/cli/version",
+      "status": 401
+    },
+    {
+      "method": "POST",
+      "path": "/api/cli/auth",
+      "status": 401
+    },
+    {
+      "method": "GET",
+      "path": "/api/cli/mission/nonexistent/status",
+      "status": 401
+    }
+  ]
+}

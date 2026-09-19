@@ -1,0 +1,26 @@
+{
+  "AuroraIA": {
+    "files": 2067,
+    "units": 6423,
+    "calls": 140340,
+    "imports": 7625,
+    "routes": 597,
+    "markers": 2045,
+    "parse_failures": 0,
+    "duplicate_files": 30,
+    "head": "f5c81b51ec6f99717dcc35000a95363c32f570ad",
+    "source_lines": 607699
+  },
+  "aurora-remote-cli": {
+    "files": 42,
+    "units": 125,
+    "calls": 1000,
+    "imports": 154,
+    "routes": 0,
+    "markers": 50,
+    "parse_failures": 0,
+    "duplicate_files": 0,
+    "head": "5ae7cf0d36f58e2ee85e16d92a48db95b3350575",
+    "source_lines": 2841
+  }
+}

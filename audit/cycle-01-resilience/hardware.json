@@ -1,0 +1,22 @@
+{
+  "measured_at": "2026-09-19T16:46:31.213601+00:00",
+  "blender": "/home/juan/.local/bin/blender",
+  "services": {
+    "comfyui": {
+      "http_status": 200,
+      "devices": [
+        {
+          "name": "cuda:0 NVIDIA GeForce RTX 5070 Ti : cudaMallocAsync",
+          "type": "cuda",
+          "vram_total": 16602497024,
+          "vram_free": 16136994816
+        }
+      ]
+    },
+    "ollama": {
+      "http_status": 200,
+      "model_count": 8
+    }
+  },
+  "gpu": "NVIDIA GeForce RTX 5070 Ti, 16303, 468, 3"
+}

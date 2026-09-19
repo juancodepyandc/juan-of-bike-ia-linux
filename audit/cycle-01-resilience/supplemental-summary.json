@@ -1,0 +1,40 @@
+{
+  "comfyui": {
+    "python_files": 2471,
+    "lines": 582923,
+    "parse_failures": 0
+  },
+  "lab_div_zero": {
+    "python_files": 3,
+    "lines": 32,
+    "parse_failures": 0
+  },
+  "transfer_to_client": {
+    "python_files": 2,
+    "lines": 3,
+    "parse_failures": 0
+  },
+  "custom_node_packages": {
+    "ComfyUI-3D-Pack": 816,
+    "ComfyUI-GGUF": 9,
+    "ComfyUI-HunyuanWorld-Mirror": 173,
+    "ComfyUI-SeedVR2_VideoUpscaler": 95,
+    "ComfyUI-VideoHelperSuite": 13,
+    "ComfyUI_HunyuanWorldnode": 10,
+    "comfyui_controlnet_aux": 667
+  },
+  "failure_memory_counts": {
+    "3d.json": {
+      "records": 4,
+      "training_records": 4
+    },
+    "animation.json": {
+      "records": 12,
+      "training_records": 12
+    },
+    "code.json": {
+      "records": 20,
+      "training_records": 20
+    }
+  }
+}

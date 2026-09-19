@@ -1,0 +1,56 @@
+{
+  "tests": [
+    {
+      "suite": "brain-tests",
+      "tests": 23,
+      "seconds": 0.625,
+      "passed": true
+    },
+    {
+      "suite": "client-tests",
+      "tests": 19,
+      "seconds": 0.101,
+      "passed": true
+    },
+    {
+      "suite": "blender-tests",
+      "tests": 1,
+      "seconds": 0.867,
+      "passed": true
+    }
+  ],
+  "total_passed": 43,
+  "mission_http_recovery": {
+    "tokens_expected": 100,
+    "tokens_received_in_order": 100,
+    "duplicates": 0,
+    "lost_tokens": 0,
+    "connections": 2,
+    "injected_disconnect_after_event": 1,
+    "source": "tests_agi/test_cli_resilience.py:154"
+  },
+  "concurrent_stream_readers": {
+    "readers": 32,
+    "threads": 8,
+    "history_events": 101,
+    "incorrect_histories": 0,
+    "source": "tests_agi/test_cli_resilience.py:137"
+  },
+  "authentication": {
+    "cli_rules_checked": 42,
+    "unauthenticated_status": 401,
+    "source": "tests_agi/test_cli_resilience.py:62"
+  },
+  "blender_fixture": {
+    "solid_cube_open_edges_before": 24,
+    "solid_cube_open_edges_after": 0,
+    "open_plane_edges_before": 4,
+    "open_plane_edges_after": 4,
+    "source": "tests_agi/test_blender_geometry_contract.py:13"
+  },
+  "limits": [
+    "Loopback HTTP with injected transport failure, not a Cloudflare WAN benchmark",
+    "No generation quality or VRAM optimization benchmark",
+    "Mission replay survives client network loss only while the bridge history remains in memory"
+  ]
+}

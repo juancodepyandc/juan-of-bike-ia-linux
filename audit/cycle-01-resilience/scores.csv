@@ -1,0 +1,15 @@
+composant,justesse_x3,robustesse_x2,parite_x3,observabilite_x2,note_ponderee,plan_immediat,reference
+API CLI,6,6,6,4,5.6,P0: durabilite IPC et arret reel,application/routes/cli_bp_routes.py:1213
+Autres routes API,4,2,3,3,3.1,P0: authentification et confinement des chemins,application/routes/python_bp_routes.py:827
+aurora_uplift,4,4,2,5,3.6,P2: evaluation des propositions avant application,application/python-services/aurora_uplift/aurora_module_uplift.py:206
+aurora_code,6,5,3,5,4.7,P1: exposer les validateurs dans les missions CLI,application/python-services/aurora_code/aurora_code_validators.py:180
+aurora_hunyuan,6,5,3,5,4.7,P1: corpus de generations et gate partage par les wrappers,application/python-services/aurora_hunyuan/aurora_loop_robust.py:144
+scene_orchestrator,6,5,3,4,4.5,P1: contrat de routage et budgets par objet,application/python-services/scene_orchestrator.py:763
+Rigging,6,5,3,4,4.5,P1: tests de deformation et animation sur corpus GLB,application/python-services/rigify_autorig.py:1535
+Services cyber,5,4,2,4,3.7,P1: appliquer le validateur au dispatch du daemon,application/python-services/cyber/_safety.py:58
+Auto-RL,6,5,2,6,4.6,P1: journal concurrent des echecs et mesures avant/apres,auto_rl/failure_memory.py:48
+ComfyUI et custom nodes,5,4,3,4,4.0,P1: superviseur Linux et budget GPU commun,application/python-services/comfy_supervisor.py:44
+Daemon et bus IPC,3,3,3,3,3.0,"P0: accusés durables, annulation et timeouts",agi_core/bus.py:94
+CLI core et interface,6,6,5,4,5.3,P1: checkpoint local et historique par session,../aurora-remote-cli/aurora_cli/core/jobia.py:26
+Transport des assets,2,2,1,2,1.7,"P0: manifeste SHA-256, Range, reprise et ecriture atomique",../aurora-remote-cli/aurora_cli/mission.py:145
+Labos de resilience,3,3,2,2,2.5,P1: remplacer scripts manuels par tests isoles reproductibles,../aurora-remote-cli/lab_div_zero/test_div_zero.py:1
