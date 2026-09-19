@@ -26,8 +26,9 @@ from PIL import Image
 from aurora_classify import SceneProfile, classify
 
 REPO = Path(__file__).resolve().parent
-AURORA = Path(r"C:\Users\Juan\Desktop\ia\AuroraIA-v2")
-BLENDER = AURORA / "application" / "_blender" / "blender-4.2.12-windows-x64" / "blender.exe"
+AURORA = Path(__file__).resolve().parents[3]
+BLENDER = Path(os.environ.get("AURORA_BLENDER") or shutil.which("blender") or
+               AURORA / "application" / "_blender" / "blender-4.2.12-windows-x64" / "blender.exe")
 OUTPUT_ROOT = AURORA / "application" / "output" / "3d"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")

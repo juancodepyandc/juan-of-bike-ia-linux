@@ -27,6 +27,12 @@ def audit_mesh(glb_path, out_json):
     bpy.ops.mesh.select_all(action='SELECT')
     
     bm = bmesh.from_edit_mesh(obj.data)
+    # Audit geometric topology independently of GLB normal/UV seams. Only
+    # exactly coincident vertices are welded, on this disposable import.
+    vertex_count = len(bm.verts)
+    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=0.0)
+    seam_vertices = vertex_count - len(bm.verts)
+    bmesh.update_edit_mesh(obj.data)
     bm.faces.ensure_lookup_table()
     bm.edges.ensure_lookup_table()
     bm.verts.ensure_lookup_table()
@@ -47,6 +53,7 @@ def audit_mesh(glb_path, out_json):
     
     report = {
         "is_manifold": non_manifold_edges == 0,
+        "attribute_seam_vertices": seam_vertices,
         "non_manifold_edges": non_manifold_edges,
         "degenerated_faces": degenerated_faces,
         "parts_count": len(parts),

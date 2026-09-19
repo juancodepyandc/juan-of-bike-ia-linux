@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+import os
 import shutil
 import subprocess
 import sys
@@ -25,8 +27,9 @@ from aurora_critic import evaluate
 import pipeline_hunyuan_robust as pipeline
 
 REPO = Path(__file__).resolve().parent
-AURORA = Path(r"C:\Users\Juan\Desktop\ia\AuroraIA-v2")
-BLENDER = AURORA / "application" / "_blender" / "blender-4.2.12-windows-x64" / "blender.exe"
+AURORA = Path(__file__).resolve().parents[3]
+BLENDER = Path(os.environ.get("AURORA_BLENDER") or shutil.which("blender") or
+               AURORA / "application" / "_blender" / "blender-4.2.12-windows-x64" / "blender.exe")
 STATE = REPO / "aurora_state_robust.json"
 
 log = logging.getLogger("loop_robust")
@@ -47,20 +50,44 @@ def save_state(state: dict) -> None:
 
 def audit_shape(glb_path: Path) -> dict:
     audit_json = glb_path.with_name("audit.json")
+    audit_json.unlink(missing_ok=True)
     cmd = [str(BLENDER), "--background", "--python", str(REPO / "blender_mesh_auditor.py"), "--", str(glb_path), str(audit_json)]
-    subprocess.run(cmd, capture_output=True, text=True)
-    if audit_json.exists():
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=True)
         return json.loads(audit_json.read_text())
-    return {"error": "Audit JSON not produced"}
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return {"error": f"Geometry audit failed: {exc}"}
 
 def repair_shape(glb_path: Path) -> Path:
     out_glb = glb_path.with_name(glb_path.stem + "_repaired.glb")
+    out_glb.unlink(missing_ok=True)
     cmd = [str(BLENDER), "--background", "--python", str(REPO / "blender_mesh_repair.py"), "--", str(glb_path), str(out_glb)]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if out_glb.exists():
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=600, check=True)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.error("Repair failed: %s", exc)
+        return glb_path
+    if out_glb.is_file() and out_glb.stat().st_size:
         return out_glb
-    log.error(f"Repair failed: {res.stderr}")
+    log.error("Repair did not produce a mesh")
     return glb_path
+
+
+def _audit_complete(audit: dict) -> bool:
+    """Require measured geometry; absent counters cannot stand for zero defects."""
+    if not isinstance(audit, dict) or audit.get("error"):
+        return False
+    for field in ("non_manifold_edges", "degenerated_faces", "parts_count", "total_faces"):
+        value = audit.get(field)
+        if type(value) is not int or value < 0:
+            return False
+    return audit["parts_count"] > 0 and audit["total_faces"] > 0
+
+
+def _geometry_accepted(audit: dict) -> bool:
+    return (_audit_complete(audit) and audit["non_manifold_edges"] == 0
+            and audit["degenerated_faces"] == 0 and audit["parts_count"] == 1)
+
 
 def process_scene(prompt: str, name: str, device: str = "cuda") -> bool:
     log.info(f"=== Starting {name} on {device} ===")
@@ -88,20 +115,23 @@ def process_scene(prompt: str, name: str, device: str = "cuda") -> bool:
     # 3. Audit & Repair
     audit = audit_shape(shape_glb)
     log.info(f"Shape Audit: {audit}")
-    needs_repair = False
-    if audit.get("non_manifold_edges", 0) > 0: needs_repair = True
-    if audit.get("degenerated_faces", 0) > 0: needs_repair = True
-    if audit.get("parts_count", 1) > 1: needs_repair = True
-    
-    if needs_repair:
+    if not _audit_complete(audit):
+        log.error("Scene rejected: geometry audit is unavailable or incomplete")
+        return False
+
+    if not _geometry_accepted(audit):
         log.warning("Shape geometry is flawed. Triggering Blender repair...")
         repaired_glb = repair_shape(shape_glb)
-        if repaired_glb != shape_glb:
-            # Swap
-            shape_glb.unlink()
-            repaired_glb.rename(shape_glb)
-            audit2 = audit_shape(shape_glb)
-            log.info(f"Shape Audit After Repair: {audit2}")
+        if repaired_glb == shape_glb:
+            return False
+        audit2 = audit_shape(repaired_glb)
+        log.info("Shape Audit After Repair: %s", audit2)
+        if not _geometry_accepted(audit2):
+            log.error("Scene rejected: repaired geometry failed validation")
+            return False
+        repaired_glb.replace(shape_glb)
+        # A cached textured mesh predating the repair cannot validate that repair.
+        final_glb.unlink(missing_ok=True)
             
     # 4. Texture
     if not final_glb.exists():
@@ -112,7 +142,12 @@ def process_scene(prompt: str, name: str, device: str = "cuda") -> bool:
     
     # Final Critic (Texture, exposure, etc)
     crit = evaluate(pack_dir, min_score=0.60)
-    log.info(f"Final Critic Score: {crit['score']}")
+    score = crit.get("score") if isinstance(crit, dict) else None
+    if (type(score) not in (int, float) or not math.isfinite(score)
+            or not 0.60 <= score <= 1.0 or crit.get("passed") is not True):
+        log.error("Scene rejected by final critic: %s", crit)
+        return False
+    log.info("Final Critic Score: %s", score)
     
     # Git Commit
     subprocess.run(["git", "-C", str(AURORA), "add", "-f", str(pack_dir)], check=False, capture_output=True)
