@@ -1061,6 +1061,37 @@ def cli_mission_start():
 
 import socket
 
+def _cli_record_mission_event(payload):
+    if not isinstance(payload, dict):
+        return
+    mission_id = payload.get("mission_id")
+    event = payload.get("event")
+    if not isinstance(mission_id, str) or not isinstance(event, dict):
+        return
+    event_type = event.get("type")
+    if not isinstance(event_type, str) or not event_type:
+        return
+    mission = _CLI_MISSIONS.get(mission_id)
+    if not mission or mission.get("status") in ("completed", "failed", "stopped"):
+        return
+    event = dict(event)
+    if event_type == "error":
+        event.setdefault("message", event.get("error", "Mission failed"))
+        mission["errors"].append(event)
+        mission["finished_at"] = time.time()
+        status = "failed"
+    elif event_type == "mission_complete":
+        mission["result"] = event.get("result", "")
+        mission["finished_at"] = time.time()
+        status = "completed"
+    else:
+        if event_type == "step_start":
+            mission["steps"].append(event)
+        status = "running"
+    mission["events"].append(event)
+    mission["status"] = status
+
+
 def _ipc_mission_listener():
     import time
     while True:
@@ -1073,12 +1104,8 @@ def _ipc_mission_listener():
                     if not line: break
                     try:
                         msg = json.loads(line)
-                        if msg.get("event_type") == "mission.event":
-                            payload = msg.get("payload", {})
-                            mission_id = payload.get("mission_id")
-                            print(f"[BRIDGE] IPC msg received for mission {mission_id}")
-                            if mission_id and mission_id in _CLI_MISSIONS:
-                                _CLI_MISSIONS[mission_id]["events"].append(payload.get("event"))
+                        if isinstance(msg, dict) and msg.get("event_type") == "mission.event":
+                            _cli_record_mission_event(msg.get("payload"))
                     except Exception as e:
                         print(f"[BRIDGE] JSON Parse error in listener: {e}")
         except Exception:
