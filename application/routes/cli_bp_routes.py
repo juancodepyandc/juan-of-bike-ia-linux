@@ -90,12 +90,6 @@ _SUPPORTED_SERVICES = {
 
 
 def _cli_auth_required(f):
-    from functools import wraps
-    @wraps(f)
-    def dec(*args, **kwargs): return f(*args, **kwargs)
-    return dec
-
-def _old_cli_auth_required(f):
     """Decorator: require valid Bearer key for CLI routes."""
     import functools
     @functools.wraps(f)
@@ -127,14 +121,19 @@ def _cli_save_json(path, data):
 # --- Auth & Status ---
 
 @cli_bp.route("/api/cli/register", methods=["POST"])
+@_cli_auth_required
 def cli_register():
-    """Point d'entrée sans friction : le client s'enregistre lui-même avec une clé unique."""
-    data = request.get_json(silent=True) or {}
+    """Register a device using an already authorized bridge key."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
     device_name = data.get("device_name", "Unknown-Device")
     client_key = data.get("client_key")
-    
-    if not client_key:
-        return jsonify({"ok": False, "error": "client_key missing"}), 400
+
+    if not isinstance(client_key, str) or not 1 <= len(client_key) <= 256:
+        return jsonify({"ok": False, "error": "client_key must contain 1 to 256 characters"}), 400
+    if not isinstance(device_name, str) or len(device_name) > 128:
+        return jsonify({"ok": False, "error": "device_name must be a string of at most 128 characters"}), 400
         
     try:
         # Ensure it registers properly in the JSON store used by _ext_auth
@@ -1026,12 +1025,22 @@ def _cli_load_context_for_workspace(workspace_path):
 @_cli_auth_required
 def cli_mission_start():
     """Start an autonomous mission. Returns mission_id for SSE streaming."""
-    data = request.get_json(silent=True) or {}
-    request_text = str(data.get("request", "")).strip()[:5000]
-    if not request_text:
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    request_text = data.get("request", "")
+    if not isinstance(request_text, str) or not request_text.strip():
         return jsonify({"ok": False, "error": "request text required"}), 400
+    if len(request_text) > 5000:
+        return jsonify({"ok": False, "error": "request text exceeds 5000 characters"}), 400
+    request_text = request_text.strip()
+    for field in ("workspace", "permissions", "model", "session_id"):
+        if field in data and not isinstance(data[field], str):
+            return jsonify({"ok": False, "error": f"{field} must be a string"}), 400
     workspace = data.get("workspace", WORKSPACE)
     permissions = data.get("permissions", "AUTONOMOUS")
+    if permissions not in _CLI_PERMISSION_LEVELS:
+        return jsonify({"ok": False, "error": "unknown permission level"}), 400
     session_id = data.get("session_id")
     model = data.get("model") or _ext_default_model()
     mission_id = "mis_" + _secrets.token_hex(8)
@@ -1047,13 +1056,16 @@ def cli_mission_start():
     _CLI_MISSIONS[mission_id] = mission
     
     # Rapatriement de la logique vers le vrai Cerveau (Daemon AGI) via IPC
-    _cli_publish_ipc("mission.start", {
+    published = _cli_publish_ipc("mission.start", {
         "mission_id": mission_id,
         "request": request_text,
         "workspace": workspace,
         "permissions": permissions,
         "model": model
     })
+    if not published:
+        _CLI_MISSIONS.pop(mission_id, None)
+        return jsonify({"ok": False, "error": "mission daemon unavailable"}), 503
     
     return jsonify({"ok": True, "mission_id": mission_id, "status": "planning"})
 
@@ -1121,8 +1133,10 @@ def _cli_publish_ipc(event_type, payload):
             s.connect(('127.0.0.1', 3002))
             msg = json.dumps({"action": "publish", "event_type": event_type, "payload": payload}) + "\n"
             s.sendall(msg.encode())
-    except Exception as e:
+        return True
+    except OSError as e:
         print(f"[BRIDGE] IPC Bus error: {e}")
+        return False
 
 @cli_bp.route("/api/cli/mission/<mission_id>/input", methods=["POST"])
 @_cli_auth_required
@@ -1144,23 +1158,29 @@ def cli_mission_input(mission_id):
 @cli_bp.route("/api/cli/mission/<mission_id>/stream", methods=["GET"])
 @_cli_auth_required
 def cli_mission_stream(mission_id):
-    """SSE stream for mission events."""
+    """Replay buffered mission events after the client's acknowledged cursor."""
     mission = _CLI_MISSIONS.get(mission_id)
     if not mission:
         return jsonify({"ok": False, "error": "mission not found"}), 404
+    cursor = request.headers.get("Last-Event-ID", "0")
+    if not re.fullmatch(r"[0-9]{1,20}", cursor):
+        return jsonify({"ok": False, "error": "invalid Last-Event-ID"}), 400
+    cursor = int(cursor)
+    if cursor > len(mission.get("events", [])):
+        return jsonify({"ok": False, "error": "Last-Event-ID exceeds mission history"}), 409
 
     def generate():
         yield ": " + (" " * 4096) + "\n\n"  # Massive Padding to force flush headers and buffer
-        last_idx = 0
+        last_idx = cursor
         while True:
             events = mission.get("events", [])
             while last_idx < len(events):
                 evt = events[last_idx]
-                yield f"data: {json.dumps(evt)}\n\n"
                 last_idx += 1
-                if evt.get("type") in ("mission_complete", "error") and mission.get("status") in ("completed", "failed"):
+                yield f"id: {last_idx}\ndata: {json.dumps(evt)}\n\n"
+                if evt.get("type") in ("mission_complete", "error") and mission.get("status") in ("completed", "failed", "stopped"):
                     return
-            if mission.get("status") in ("completed", "failed") and last_idx >= len(events):
+            if mission.get("status") in ("completed", "failed", "stopped") and last_idx >= len(events):
                 return
             import time as _time
             # Send heartbeat with enough padding to FORCE Cloudflare to flush immediately
@@ -1199,5 +1219,4 @@ def cli_mission_stop(mission_id):
     _cli_mission_emit(mission_id, "mission_complete", {"stopped": True,
                       "total_seconds": round(mission["finished_at"] - mission["started_at"], 1)})
     return jsonify({"ok": True, "status": "stopped"})
-
 
