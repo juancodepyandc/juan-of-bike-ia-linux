@@ -21,13 +21,23 @@ class OmniscientMemory:
         except ImportError:
             logger.warning("[MEMORY] ChromaDB manquant. Exécution avec mémoire volatile.")
 
-    def embed_experience(self, context: str, outcome: str, metadata: dict = None):
+    async def embed_experience(self, context: str, outcome: str, metadata: dict = None):
         if not self.collection: return
+        import asyncio
         doc_id = str(uuid.uuid4())
         doc_str = json.dumps({"context": context, "outcome": outcome})
-        self.collection.add(documents=[doc_str], metadatas=[metadata or {}], ids=[doc_id])
+        
+        def _add():
+            self.collection.add(documents=[doc_str], metadatas=[metadata or {}], ids=[doc_id])
+            
+        await asyncio.to_thread(_add)
 
-    def query_experience(self, situation: str, n_results: int = 3) -> list:
+    async def query_experience(self, situation: str, n_results: int = 3) -> list:
         if not self.collection: return []
-        res = self.collection.query(query_texts=[situation], n_results=n_results)
+        import asyncio
+        
+        def _query():
+            return self.collection.query(query_texts=[situation], n_results=n_results)
+            
+        res = await asyncio.to_thread(_query)
         return res.get("documents", [[]])[0]

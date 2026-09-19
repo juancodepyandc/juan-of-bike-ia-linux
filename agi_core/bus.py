@@ -1,27 +1,116 @@
 import asyncio
 import logging
+import json
 from typing import Callable, Dict, List, Any
+import socket
+import threading
 
 logger = logging.getLogger("AuroraAGI.Bus")
+BUS_PORT = 3002
 
 class AsyncEventBus:
-    """Système nerveux central du Backend Aurora."""
+    """
+    Système nerveux central du Backend Aurora.
+    Implémentation IPC via TCP (Pub/Sub) pour la communication Bridge <-> Daemon.
+    """
     def __init__(self):
         self._subscribers: Dict[str, List[Callable]] = {}
+        self._clients = set()
+
+    async def start_server(self):
+        """Démarre le serveur IPC central (lancé uniquement par le Daemon AGI)."""
+        server = await asyncio.start_server(self._handle_client, '127.0.0.1', BUS_PORT)
+        logger.info(f"[BUS] Serveur IPC démarré sur le port {BUS_PORT}")
+        async with server:
+            await server.serve_forever()
+
+    async def _handle_client(self, reader, writer):
+        self._clients.add(writer)
+        peer = writer.get_extra_info('peername')
+        try:
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                
+                try:
+                    msg = json.loads(line.decode().strip())
+                except json.JSONDecodeError:
+                    continue
+                
+                action = msg.get("action")
+                logger.info(f"[BUS] Action reçue: {action} msg: {msg}")
+                if action == "publish":
+                    # Relai local aux subscribers asynchrones du Daemon
+                    event_type = msg.get("event_type")
+                    payload = msg.get("payload")
+                    logger.info(f"[BUS] Local publish event: {event_type}")
+                    await self._local_publish(event_type, payload)
+                    
+                    # Relai réseau aux autres clients TCP connectés (ex: bridge Flask SSE)
+                    # On re-broadcast (simplifié) à tout le monde. Les clients filtrent.
+                    broadcast_msg = json.dumps({"event_type": event_type, "payload": payload}) + "\n"
+                    for w in list(self._clients):
+                        if w != writer:
+                            try:
+                                w.write(broadcast_msg.encode())
+                                await w.drain()
+                            except Exception:
+                                self._clients.discard(w)
+                
+                elif action == "subscribe":
+                    # Le client informe qu'il écoute (utile pour log/debug, le filtrage est côté client pr simplifier)
+                    pass
+
+        except Exception as e:
+            logger.debug(f"[BUS] Erreur client IPC {peer}: {e}")
+        finally:
+            self._clients.discard(writer)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     def subscribe(self, event_pattern: str, callback: Callable):
+        """Souscription locale (dans le même process)."""
         if event_pattern not in self._subscribers:
             self._subscribers[event_pattern] = []
         self._subscribers[event_pattern].append(callback)
-        logger.debug(f"[BUS] Node connecté sur: {event_pattern}")
+        logger.debug(f"[BUS] Node local connecté sur: {event_pattern}")
+
+    async def _local_publish(self, event_type: str, payload: Any):
+        logger.info(f"[BUS] self._subscribers = {list(self._subscribers.keys())}")
+        if event_type in self._subscribers:
+            for cb in self._subscribers[event_type]:
+                try:
+                    if asyncio.iscoroutinefunction(cb):
+                        asyncio.create_task(cb(payload)).add_done_callback(lambda t: logger.error(f"[BUS] Task error: {t.exception()}") if t.exception() else None)
+                    else:
+                        asyncio.create_task(asyncio.to_thread(cb, payload))
+                except Exception as e:
+                    logger.error(f"[BUS] _local_publish error: {e}")
 
     async def publish(self, event_type: str, payload: Any):
-        if event_type in self._subscribers:
-            tasks = [
-                asyncio.create_task(cb(payload)) if asyncio.iscoroutinefunction(cb) else asyncio.to_thread(cb, payload)
-                for cb in self._subscribers[event_type]
-            ]
-            if tasks:
-                await asyncio.gather(*tasks)
+        """Publication globale depuis le Daemon."""
+        await self._local_publish(event_type, payload)
+        broadcast_msg = json.dumps({"event_type": event_type, "payload": payload}) + "\n"
+        for w in list(self._clients):
+            try:
+                w.write(broadcast_msg.encode())
+                await w.drain()
+            except Exception:
+                self._clients.discard(w)
+
+def publish_sync(event_type: str, payload: Any):
+    """Publication synchrone depuis le Bridge Flask."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            s.connect(('127.0.0.1', BUS_PORT))
+            msg = json.dumps({"action": "publish", "event_type": event_type, "payload": payload}) + "\n"
+            s.sendall(msg.encode())
+    except Exception as e:
+        logger.warning(f"[BUS] Échec de la publication synchrone: {e}")
 
 global_bus = AsyncEventBus()

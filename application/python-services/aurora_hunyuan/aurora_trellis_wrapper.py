@@ -159,7 +159,7 @@ def _load_pipe():
 # veut la precision max meme si plus lent). Options: 512, 1024, 1024_cascade, 1536_cascade.
 QUALITY = os.environ.get("AURORA_TRELLIS2_QUALITY", "1536_cascade")
 # Pas de diffusion (raffinement). Plus haut = plus precis, plus lent. Defaut TRELLIS ~12-25.
-STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "30"))
+STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "50"))
 # Echelle de repli sur OOM (garde la meilleure resolution qui tient reellement en VRAM).
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
@@ -496,6 +496,18 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
             return {"ok": False, "error": "to_glb OOM a tous les paliers texture"}
         out_glb = str(out_glb)
         glb.export(out_glb)
+        
+        # Export a PLY with colored geometry ("geometrie couleur" requirement)
+        try:
+            out_ply = out_glb.replace(".glb", ".ply")
+            ply_mesh = glb.copy()
+            if hasattr(ply_mesh.visual, 'to_color'):
+                ply_mesh.visual = ply_mesh.visual.to_color()
+            ply_mesh.export(out_ply)
+            print(f"Exported colored geometry to {out_ply}")
+        except Exception as e:
+            print(f"Failed to export colored PLY: {e}")
+            
         exposed = False
         if os.environ.get("AURORA_TEXTURE_AUTOEXPOSE", "1") == "1":
             exposed = _auto_expose_glb_texture(out_glb)

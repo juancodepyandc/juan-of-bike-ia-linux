@@ -8,7 +8,7 @@ mcp = FastMCP("AuroraNativeCapabilities")
 def generate_2d_image(prompt: str) -> str:
     """Génère une image 2D (ComfyUI natif)."""
     try:
-        r = httpx.post("http://127.0.0.1:3001/api/comfyui/image", json={"prompt": prompt}, timeout=120.0)
+        r = httpx.post("http://127.0.0.1:3001/api/aurora/image/generate", json={"prompt": prompt}, timeout=120.0)
         if r.status_code == 200: return f"Image générée avec succès : '{prompt}'"
         return f"Erreur : {r.text}"
     except Exception as e: return str(e)

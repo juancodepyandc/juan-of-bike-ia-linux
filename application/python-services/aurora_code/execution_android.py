@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from simulation_android_app import ACTIVITY_SOURCE, MANIFEST
-from simulation_android_profiles import ANDROID_PROFILES
-from simulation_tooling import TOOL_ROOT, android_sdk_root, run_command, tail, terminate_owned, unavailable
+from execution_android_app import ACTIVITY_SOURCE, MANIFEST
+from execution_android_profiles import ANDROID_PROFILES
+from execution_tooling import TOOL_ROOT, android_sdk_root, run_command, tail, terminate_owned, unavailable
 
 
 ANDROID_MARKER = "AURORA_WS12_PWA_EXECUTED"

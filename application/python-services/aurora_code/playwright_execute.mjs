@@ -72,7 +72,7 @@ async function runBrowser(profile, url, outDir, waitMs) {
 async function main() {
   const [url, outDir, waitRaw] = process.argv.slice(2)
   if (!url || !outDir) {
-    console.error('usage: playwright_simulate.mjs <url> <out_dir> [wait_ms]')
+    console.error('usage: playwright_execute.mjs <url> <out_dir> [wait_ms]')
     process.exit(2)
   }
   mkdirSync(outDir, { recursive: true })

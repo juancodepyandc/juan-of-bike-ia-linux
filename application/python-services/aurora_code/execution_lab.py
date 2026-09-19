@@ -17,13 +17,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from simulation_android import run_android_stages
-from simulation_embedded import run_qemu_os_stage, run_qemu_raspberry_stage, run_renode_stage
+from execution_android import run_android_stages
+from execution_embedded import run_qemu_os_stage, run_qemu_raspberry_stage, run_renode_stage
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CDP_HELPER = ROOT / "python-services" / "aurora_code" / "cdp_drive.mjs"
-PLAYWRIGHT_HELPER = ROOT / "python-services" / "aurora_code" / "playwright_simulate.mjs"
+PLAYWRIGHT_HELPER = ROOT / "python-services" / "aurora_code" / "playwright_execute.mjs"
 SCHEMA = "aurora.code.simulation-lab/1"
 
 
@@ -144,7 +144,7 @@ def _run_playwright_matrix(url: str, out_dir: Path, wait_ms: int) -> list[dict[s
       "family": "web",
       "status": "unavailable",
       "realExecution": False,
-      "error": "playwright_simulate.mjs introuvable",
+      "error": "playwright_execute.mjs introuvable",
     }]
   target = out_dir / "playwright"
   target.mkdir(parents=True, exist_ok=True)
@@ -276,7 +276,7 @@ def run_lab(url: str, out_dir: Path, wait_ms: int = 2500) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
   if len(argv) < 3:
-    print("usage: simulation_lab.py <url> <out_dir> [wait_ms]", file=sys.stderr)
+    print("usage: execution_lab.py <url> <out_dir> [wait_ms]", file=sys.stderr)
     return 2
   wait_ms = int(argv[3]) if len(argv) > 3 else 2500
   print(json.dumps(run_lab(argv[1], Path(argv[2]), wait_ms), ensure_ascii=False))

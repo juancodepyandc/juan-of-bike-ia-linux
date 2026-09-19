@@ -1,6 +1,6 @@
 """Empaquette un projet web genere dans un VRAI APK Android signe.
 
-Pourquoi ce module existe, et pourquoi il ne touche pas a `simulation_android`:
+Pourquoi ce module existe, et pourquoi il ne touche pas a `execution_android`:
 celui-ci construit une sonde WS12 — une coquille WebView qui pointe le
 dev-server pour TESTER le rendu sur telephone. Ce qu il faut ici est different:
 un APK installable qui EMBARQUE le projet livre et fonctionne hors ligne, sans
@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from simulation_tooling import TOOL_ROOT, android_sdk_root  # noqa: E402
+from execution_tooling import TOOL_ROOT, android_sdk_root  # noqa: E402
 
 PACKAGE = "ia.aurora.codeapp"
 

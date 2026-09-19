@@ -11,32 +11,32 @@ from agi_core.consciousness import AGICortex
 from agi_core.bus import global_bus
 
 def check_for_previous_crashes(brain):
-    log_file = os.path.expandvars("${TMPDIR:-/tmp}/auroraia/agi_daemon.log")
+    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    log_file = os.path.join(tmpdir, "auroraia/agi_daemon.log")
     if os.path.exists(log_file):
         with open(log_file, 'r') as f:
             logs = f.read()
             if "Traceback (most recent call last)" in logs or "ERREUR CRITIQUE AGI" in logs:
                 logging.error("[AUTO-HEALING] Un crash précédent a été détecté au démarrage.")
-                # L'AGI s'injecte le crash comme première tâche pour l'analyser et l'encoder dans sa mémoire
-                last_crash = logs[-2000:] # Prend les 2000 derniers caractères (le traceback)
-                asyncio.create_task(brain.swarm.delegate(f"AUTO-DIAGNOSTIC CRITIQUE : Analyse ce crash précédent et empêche sa reproduction : {last_crash}"))
+                last_crash = logs[-2000:]
+                
+                async def _heal_and_learn():
+                    result = await brain.swarm.delegate(f"AUTO-DIAGNOSTIC CRITIQUE : Analyse ce crash précédent et empêche sa reproduction : {last_crash}")
+                    if brain.memory:
+                        await brain.memory.embed_experience(
+                            context=f"Crash système détecté:\n{last_crash}",
+                            outcome=f"Analyse interne (Auto-healing):\n{result}",
+                            metadata={"type": "auto_healing"}
+                        )
+                task = asyncio.create_task(_heal_and_learn())
+                task.add_done_callback(lambda t: logging.error(f"[AUTO-HEALING] Echec: {t.exception()}") if t.exception() else logging.info("[AUTO-HEALING] Diagnostic terminé et encodé."))
                 
                 # Nettoie le log pour ne pas re-diagnostiquer en boucle
                 with open(log_file, 'w') as fw:
-                    fw.write("--- Crash Log Analysé et Purgé par l'AGI ---
-")
+                    fw.write("--- Crash Log Analysé et Purgé par l'AGI ---\n")
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
-
-async def simulate_client():
-    """Simule un client distant (ex: le CLI) qui envoie une requête complexe au vrai cerveau."""
-    await asyncio.sleep(2)
-    # Le CLI envoie juste un événement sur le réseau (ici simulé via le bus)
-    await global_bus.publish("client.request", {
-        "client_id": "remote-cli-01",
-        "prompt": "Fais un audit de sécurité de l'infrastructure réseau"
-    })
 
 async def main():
     brain = AGICortex()
@@ -44,17 +44,27 @@ async def main():
     # Activation de l'auto-guérison
     check_for_previous_crashes(brain)
 
+    logger = logging.getLogger("AuroraAGI")
+    logger.info("Démarrage du système nerveux (IPC Bus)...")
     
-    # Écoute des réponses pour le client simulé
-    async def on_response(data):
-        print(f"\n[CLIENT CLI] A reçu la réponse finale du cerveau AGI :\n{data}\n")
+    async def on_mission_start(payload):
+        logger.info(f"[DAEMON] Nouvelle mission reçue : {payload.get('mission_id')}")
+        task = asyncio.create_task(brain.swarm.run_mission(
+            mission_id=payload.get("mission_id"),
+            request_text=payload.get("request"),
+            workspace=payload.get("workspace"),
+            model=payload.get("model"),
+            permissions=payload.get("permissions"),
+            memory_module=brain.memory
+        ))
+        task.add_done_callback(lambda t: logger.error(f"[DAEMON] Swarm crash: {t.exception()}") if t.exception() else logger.info("[DAEMON] Swarm terminé proprement"))
         
-    global_bus.subscribe("server.response.remote-cli-01", on_response)
+    global_bus.subscribe("mission.start", on_mission_start)
     
-    # Lancement du cerveau et de la simulation client
+    # Lancement du bus IPC et de la boucle du cerveau
     await asyncio.gather(
-        brain.run_continuous_loop(),
-        simulate_client()
+        global_bus.start_server(),
+        brain.run_continuous_loop()
     )
 
 if __name__ == "__main__":
@@ -62,3 +72,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nArrêt du Cerveau AGI.")
+    except Exception as e:
+        print(f"\n[CRITIQUE] Le daemon AGI a eu un crash inattendu: {e}")
