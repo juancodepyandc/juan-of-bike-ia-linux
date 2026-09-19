@@ -86,7 +86,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": ar,
             "width": w,
             "height": h,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.2,
             "suggested_directory": "photos",
             "quality_checklist": [
@@ -110,7 +110,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
-            "steps": 28,
+            "steps": 50,
             "guidance": 5.5,
             "game_asset_meta": {
                 "asset_type": "sprite",
@@ -139,7 +139,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.8,
             "game_asset_meta": {
                 "asset_type": "isometric_building",
@@ -166,7 +166,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.5,
             "game_asset_meta": {
                 "asset_type": "ui_icon",
@@ -193,7 +193,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "1:1",
             "width": 1024,
             "height": 1024,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.5,
             "game_asset_meta": {
                 "asset_type": "tileable_texture",
@@ -219,7 +219,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "2:3",
             "width": 832,
             "height": 1216,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.2,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -241,7 +241,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "3:2",
             "width": 1216,
             "height": 832,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.2,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -262,7 +262,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "2:3",
             "width": 832,
             "height": 1216,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.8,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -283,7 +283,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "3:2",
             "width": 1216,
             "height": 832,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.2,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -304,7 +304,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "4:3",
             "width": 1152,
             "height": 896,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.0,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -325,7 +325,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "3:2",
             "width": 1216,
             "height": 832,
-            "steps": 28,
+            "steps": 50,
             "guidance": 3.8,
             "suggested_directory": "stylized",
             "quality_checklist": [
@@ -346,7 +346,7 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "aspect_ratio": "16:9",
             "width": 1344,
             "height": 768,
-            "steps": 28,
+            "steps": 50,
             "guidance": 4.0,
             "suggested_directory": "stylized",
             "quality_checklist": [

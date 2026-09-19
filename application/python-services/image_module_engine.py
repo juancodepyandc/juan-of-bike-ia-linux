@@ -262,7 +262,7 @@ def submit_comfy_prompt(workflow: Dict[str, Any]) -> Optional[str]:
         print(f"[ComfyUI] Queue error: {exc}")
         return None
 
-def wait_for_comfy_image(prompt_id: str, timeout_s: int = 360) -> Optional[bytes]:
+def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1200) -> Optional[bytes]:
     start = time.time()
     while time.time() - start < timeout_s:
         try:
