@@ -1,0 +1,35 @@
+{
+  "AuroraIA": {
+    "files": 2010,
+    "units": 6348,
+    "calls": 139557,
+    "imports": 7521,
+    "routes": 597,
+    "markers": 2038,
+    "parse_failures": 0,
+    "duplicate_files": 29,
+    "head": "5525496a3fadc6b81a4eba95583f7d681c21b243",
+    "source_lines": 606434,
+    "physical_tree": {
+      "directory": 35383,
+      "file": 259399,
+      "symlink": 163
+    }
+  },
+  "aurora-remote-cli": {
+    "files": 47,
+    "units": 93,
+    "calls": 819,
+    "imports": 139,
+    "routes": 0,
+    "markers": 35,
+    "parse_failures": 0,
+    "duplicate_files": 0,
+    "head": "1f5ba5a6c3c7ae75cabb5383bb34f02fc67fabd5",
+    "source_lines": 2516,
+    "physical_tree": {
+      "directory": 218,
+      "file": 414
+    }
+  }
+}

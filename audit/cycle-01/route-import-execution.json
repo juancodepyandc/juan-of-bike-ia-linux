@@ -1,0 +1,106 @@
+[
+  {
+    "module": "routes.asset_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.cinema_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.cli_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.comfy_life_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.comfy_proxy_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.connect_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.cowork_ext_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.cowork_file_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.ext_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.fs_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.hardware_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.iot_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.ollama_enh_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.ollama_list_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.postgres_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.python_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.python_prog_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.repo_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.s3_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.status_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.sysinfo_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.upload_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.vite_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.voice_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.web_action_bp_routes",
+    "status": "imported"
+  },
+  {
+    "module": "routes.web_search_bp_routes",
+    "status": "imported"
+  }
+]

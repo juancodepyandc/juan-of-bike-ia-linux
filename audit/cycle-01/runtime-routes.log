@@ -1,0 +1,52 @@
+[pont] file GPU video absente (module retire) — chemins video inertes
+[vite-sup] supervisor armed (auto-respawn Vite on port 1420 silence)
+[bridge] GET /api/cli/version -> 200 (0ms)
+[2026-09-19 12:48:22,351] ERROR in app: Exception on /api/cli/auth [POST]
+Traceback (most recent call last):
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask/app.py", line 1511, in wsgi_app
+    response = self.full_dispatch_request()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask/app.py", line 919, in full_dispatch_request
+    rv = self.handle_user_exception(e)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask_cors/extension.py", line 206, in wrapped_function
+    return cors_after_request(app_any.make_response(f(*args, **kwargs)))
+                                                    ^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask/app.py", line 917, in full_dispatch_request
+    rv = self.dispatch_request()
+         ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask/app.py", line 902, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)  # type: ignore[no-any-return]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/routes/cli_bp_routes.py", line 95, in dec
+    def dec(*args, **kwargs): return f(*args, **kwargs)
+                                     ^^^^^^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/routes/cli_bp_routes.py", line 171, in cli_auth
+    "label": g.cli_key_rec.get("label", ""),
+             ^^^^^^^^^^^^^
+  File "/home/juan/AuroraIA/application/.venv/lib/python3.12/site-packages/flask/ctx.py", line 56, in __getattr__
+    raise AttributeError(name) from None
+AttributeError: cli_key_rec
+[bridge] POST /api/cli/auth -> 500 (1ms)
+[bridge] GET /api/cli/mission/nonexistent/status -> 404 (0ms)
+{
+  "registered_routes": 313,
+  "failures": [],
+  "unauthenticated_probes": [
+    {
+      "method": "GET",
+      "path": "/api/cli/version",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/cli/auth",
+      "status": 500
+    },
+    {
+      "method": "GET",
+      "path": "/api/cli/mission/nonexistent/status",
+      "status": 404
+    }
+  ]
+}

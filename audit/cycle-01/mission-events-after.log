@@ -1,0 +1,13 @@
+test_completion_updates_status_and_elapsed_time (__main__.MissionEventTests.test_completion_updates_status_and_elapsed_time) ... ok
+test_error_records_failure_for_both_error_fields (__main__.MissionEventTests.test_error_records_failure_for_both_error_fields) ... ok
+test_late_events_do_not_reopen_completed_mission (__main__.MissionEventTests.test_late_events_do_not_reopen_completed_mission) ... ok
+test_malformed_event_is_not_added_to_stream (__main__.MissionEventTests.test_malformed_event_is_not_added_to_stream) ... ok
+test_remote_client_receives_terminal_event_over_http (__main__.MissionEventTests.test_remote_client_receives_terminal_event_over_http) ... 127.0.0.1 - - [19/Sep/2026 12:50:58] "GET /api/cli/mission/fixture/stream HTTP/1.1" 200 -
+127.0.0.1 - - [19/Sep/2026 12:50:58] "GET /api/cli/mission/fixture/status HTTP/1.1" 200 -
+ok
+test_terminal_stream_closes_without_heartbeat (__main__.MissionEventTests.test_terminal_stream_closes_without_heartbeat) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.488s
+
+OK

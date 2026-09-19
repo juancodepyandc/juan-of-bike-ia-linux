@@ -1,0 +1,10 @@
+npm notice run juan-of-bike-ia@2.0.0 test
+npm notice run node --experimental-strip-types --test src/__tests__/*.test.ts
+ℹ tests 0
+ℹ suites 0
+ℹ pass 0
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3.477026

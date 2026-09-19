@@ -1,0 +1,11 @@
+test_configured_accepts_local_url_with_existing_key (test_client_config.ClientConfigTests.test_configured_accepts_local_url_with_existing_key) ... ok
+test_configured_still_requires_key (test_client_config.ClientConfigTests.test_configured_still_requires_key) ... ok
+test_environment_does_not_replace_saved_server (test_client_config.ClientConfigTests.test_environment_does_not_replace_saved_server) ... ok
+test_explicit_server_overrides_environment (test_client_config.ClientConfigTests.test_explicit_server_overrides_environment) ... ok
+test_local_wrapper_environment_overrides_saved_remote (test_client_config.ClientConfigTests.test_local_wrapper_environment_overrides_saved_remote) ... ok
+test_saved_server_is_used_without_override (test_client_config.ClientConfigTests.test_saved_server_is_used_without_override) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.124s
+
+OK

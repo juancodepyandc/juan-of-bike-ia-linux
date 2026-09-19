@@ -1,0 +1,10 @@
+test_cycles_distinguish_recursion_from_acyclic_imports (scripts.audit.test_inventory.InventoryTests.test_cycles_distinguish_recursion_from_acyclic_imports) ... ok
+test_markers_never_include_secret_values (scripts.audit.test_inventory.InventoryTests.test_markers_never_include_secret_values) ... ok
+test_nested_units_and_routes_keep_source_locations (scripts.audit.test_inventory.InventoryTests.test_nested_units_and_routes_keep_source_locations) ... ok
+test_parse_failure_does_not_hide_following_files (scripts.audit.test_inventory.InventoryTests.test_parse_failure_does_not_hide_following_files) ... ok
+test_physical_tree_does_not_follow_symlink_cycles (scripts.audit.test_inventory.InventoryTests.test_physical_tree_does_not_follow_symlink_cycles) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.008s
+
+OK

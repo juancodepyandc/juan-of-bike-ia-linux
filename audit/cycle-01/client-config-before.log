@@ -1,0 +1,30 @@
+test_configured_accepts_local_url_with_existing_key (test_client_config.ClientConfigTests.test_configured_accepts_local_url_with_existing_key) ... FAIL
+test_configured_still_requires_key (test_client_config.ClientConfigTests.test_configured_still_requires_key) ... ok
+test_environment_does_not_replace_saved_server (test_client_config.ClientConfigTests.test_environment_does_not_replace_saved_server) ... ok
+test_explicit_server_overrides_environment (test_client_config.ClientConfigTests.test_explicit_server_overrides_environment) ... ok
+test_local_wrapper_environment_overrides_saved_remote (test_client_config.ClientConfigTests.test_local_wrapper_environment_overrides_saved_remote) ... FAIL
+test_saved_server_is_used_without_override (test_client_config.ClientConfigTests.test_saved_server_is_used_without_override) ... ok
+
+======================================================================
+FAIL: test_configured_accepts_local_url_with_existing_key (test_client_config.ClientConfigTests.test_configured_accepts_local_url_with_existing_key)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/juan/aurora-remote-cli/tests/test_client_config.py", line 60, in test_configured_accepts_local_url_with_existing_key
+    self.assertTrue(self.config.is_configured())
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_local_wrapper_environment_overrides_saved_remote (test_client_config.ClientConfigTests.test_local_wrapper_environment_overrides_saved_remote)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/juan/aurora-remote-cli/tests/test_client_config.py", line 44, in test_local_wrapper_environment_overrides_saved_remote
+    self.assertEqual(client.server_url, 'http://127.0.0.1:3001')
+AssertionError: 'https://remote.example' != 'http://127.0.0.1:3001'
+- https://remote.example
++ http://127.0.0.1:3001
+
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.132s
+
+FAILED (failures=2)

@@ -1,0 +1,1080 @@
+{
+  "weights": {
+    "justesse": 3,
+    "robustesse": 2,
+    "choix_technique": 3,
+    "architecture": 2,
+    "tests": 2,
+    "observabilite": 1,
+    "securite": 2,
+    "lisibilite": 1
+  },
+  "denominator": 16,
+  "method": "Provisional review of listed functions; file/module score uses the minimum per criterion to expose the weakest unit. Other units remain explicitly unreviewed. No claim of best available models without benchmarks.",
+  "reviews": [
+    {
+      "kind": "module",
+      "file": "agi_core",
+      "name": "agi_core",
+      "line": 1,
+      "scores": {
+        "justesse": 1,
+        "robustesse": 2,
+        "choix_technique": 1,
+        "architecture": 2,
+        "tests": 1,
+        "observabilite": 1,
+        "securite": 1,
+        "lisibilite": 3
+      },
+      "weighted_score": 1.375,
+      "evidence": {
+        "justesse": "agi_core/explorer.py:26: annonce zéro faille sans analyse",
+        "robustesse": "agi_core/explorer.py:17: boucle sans traitement des erreurs de publication",
+        "choix_technique": "agi_core/explorer.py:18: simulation, aucun moteur de découverte",
+        "architecture": "agi_core/mission_agent.py:19: contexte remplacé par des compteurs constants",
+        "tests": "agi_core/explorer.py:26: aucun test de découverte dans les fichiers suivis inventoriés",
+        "observabilite": "agi_core/explorer.py:19: logs sans mesure",
+        "securite": "agi_core/mission_agent.py:285: permissions non appliquées à l’écriture et chemin non confiné",
+        "lisibilite": "agi_core/explorer.py:21: fonctionnalité décrite uniquement en commentaires"
+      },
+      "status": "minimum_by_criterion; not_an_average"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/explorer.py",
+      "name": "agi_core/explorer.py",
+      "line": 1,
+      "scores": {
+        "justesse": 1,
+        "robustesse": 2,
+        "choix_technique": 1,
+        "architecture": 3,
+        "tests": 1,
+        "observabilite": 1,
+        "securite": 3,
+        "lisibilite": 3
+      },
+      "weighted_score": 1.75,
+      "evidence": {
+        "justesse": "agi_core/explorer.py:26: annonce zéro faille sans analyse",
+        "robustesse": "agi_core/explorer.py:17: boucle sans traitement des erreurs de publication",
+        "choix_technique": "agi_core/explorer.py:18: simulation, aucun moteur de découverte",
+        "architecture": "agi_core/explorer.py:15: aucune entrée ni résultat vérifiable",
+        "tests": "agi_core/explorer.py:26: aucun test de découverte dans les fichiers suivis inventoriés",
+        "observabilite": "agi_core/explorer.py:19: logs sans mesure",
+        "securite": "agi_core/explorer.py:26: déclaration de sécurité sans preuve",
+        "lisibilite": "agi_core/explorer.py:21: fonctionnalité décrite uniquement en commentaires"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/explorer.py",
+      "name": "DeepDiscoveryEngine.explore_unknown",
+      "line": 15,
+      "scores": {
+        "justesse": 1,
+        "robustesse": 2,
+        "choix_technique": 1,
+        "architecture": 3,
+        "tests": 1,
+        "observabilite": 1,
+        "securite": 3,
+        "lisibilite": 3
+      },
+      "weighted_score": 1.75,
+      "evidence": {
+        "justesse": "agi_core/explorer.py:26: annonce zéro faille sans analyse",
+        "robustesse": "agi_core/explorer.py:17: boucle sans traitement des erreurs de publication",
+        "choix_technique": "agi_core/explorer.py:18: simulation, aucun moteur de découverte",
+        "architecture": "agi_core/explorer.py:15: aucune entrée ni résultat vérifiable",
+        "tests": "agi_core/explorer.py:26: aucun test de découverte dans les fichiers suivis inventoriés",
+        "observabilite": "agi_core/explorer.py:19: logs sans mesure",
+        "securite": "agi_core/explorer.py:26: déclaration de sécurité sans preuve",
+        "lisibilite": "agi_core/explorer.py:21: fonctionnalité décrite uniquement en commentaires"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/mission_agent.py",
+      "name": "agi_core/mission_agent.py",
+      "line": 1,
+      "scores": {
+        "justesse": 2,
+        "robustesse": 2,
+        "choix_technique": 3,
+        "architecture": 2,
+        "tests": 1,
+        "observabilite": 3,
+        "securite": 1,
+        "lisibilite": 3
+      },
+      "weighted_score": 2.0625,
+      "evidence": {
+        "justesse": "agi_core/mission_agent.py:299: texte sans appel outil accepté comme mission accomplie",
+        "robustesse": "agi_core/mission_agent.py:228: itération requests synchrone dans une coroutine",
+        "choix_technique": "agi_core/mission_agent.py:240: extraction par regex et actions sans schéma validé",
+        "architecture": "agi_core/mission_agent.py:19: contexte remplacé par des compteurs constants",
+        "tests": "agi_core/mission_agent.py:161: aucun test direct du moteur avec exécution contrôlée avant cet audit",
+        "observabilite": "agi_core/mission_agent.py:277: code de sortie perdu, sortie vide transformée en succès",
+        "securite": "agi_core/mission_agent.py:285: permissions non appliquées à l’écriture et chemin non confiné",
+        "lisibilite": "agi_core/mission_agent.py:203: noms de dossiers de transfert contradictoires"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/mission_agent.py",
+      "name": "AutonomousMissionAgent.run",
+      "line": 161,
+      "scores": {
+        "justesse": 2,
+        "robustesse": 2,
+        "choix_technique": 3,
+        "architecture": 2,
+        "tests": 1,
+        "observabilite": 3,
+        "securite": 1,
+        "lisibilite": 3
+      },
+      "weighted_score": 2.0625,
+      "evidence": {
+        "justesse": "agi_core/mission_agent.py:299: texte sans appel outil accepté comme mission accomplie",
+        "robustesse": "agi_core/mission_agent.py:228: itération requests synchrone dans une coroutine",
+        "choix_technique": "agi_core/mission_agent.py:240: extraction par regex et actions sans schéma validé",
+        "architecture": "agi_core/mission_agent.py:19: contexte remplacé par des compteurs constants",
+        "tests": "agi_core/mission_agent.py:161: aucun test direct du moteur avec exécution contrôlée avant cet audit",
+        "observabilite": "agi_core/mission_agent.py:277: code de sortie perdu, sortie vide transformée en succès",
+        "securite": "agi_core/mission_agent.py:285: permissions non appliquées à l’écriture et chemin non confiné",
+        "lisibilite": "agi_core/mission_agent.py:203: noms de dossiers de transfert contradictoires"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/core/jobia.py",
+      "name": "JOBIACore.process_request",
+      "line": 25,
+      "scores": {
+        "justesse": 2,
+        "robustesse": 2,
+        "choix_technique": 3,
+        "architecture": 5,
+        "tests": 1,
+        "observabilite": 2,
+        "securite": 5,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.0,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/core/jobia.py:56: callback success même en cas d’erreur distante",
+        "robustesse": "../aurora-remote-cli/aurora_cli/core/jobia.py:43: fin de flux sans mission_complete acceptée",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/core/jobia.py:26: identifiant limité à l’heure à la seconde",
+        "architecture": "../aurora-remote-cli/aurora_cli/core/jobia.py:37: mode demandé jamais transmis",
+        "tests": "../aurora-remote-cli/aurora_cli/core/jobia.py:25: aucun test de callback de cette API dans ce cycle",
+        "observabilite": "../aurora-remote-cli/aurora_cli/core/jobia.py:44: seuls les tokens sont consommés",
+        "securite": "../aurora-remote-cli/aurora_cli/core/jobia.py:25: état de mission non isolé par identifiant serveur",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/core/jobia.py:54: erreur représentée par une chaîne de résultat"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/payload_manager.py",
+      "name": "agi_core/payload_manager.py",
+      "line": 1,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 4,
+        "tests": 1,
+        "observabilite": 3,
+        "securite": 2,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.0625,
+      "evidence": {
+        "justesse": "agi_core/payload_manager.py:38: renvoie un chemin serveur à un PC distant",
+        "robustesse": "agi_core/payload_manager.py:26: lecture et encodage intégraux en RAM",
+        "choix_technique": "agi_core/payload_manager.py:26: base64 monolithique pour des artefacts volumineux",
+        "architecture": "agi_core/payload_manager.py:22: protocole différent selon le terminal",
+        "tests": "agi_core/payload_manager.py:15: pas de test de transfert du fichier produit",
+        "observabilite": "agi_core/payload_manager.py:20: seul le formatage est journalisé",
+        "securite": "agi_core/payload_manager.py:25: aucun contrôle du périmètre de lecture",
+        "lisibilite": "agi_core/payload_manager.py:22: deux branches sans contrat commun versionné"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/payload_manager.py",
+      "name": "SmartPayloadManager.package_for_client",
+      "line": 15,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 4,
+        "tests": 1,
+        "observabilite": 3,
+        "securite": 2,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.0625,
+      "evidence": {
+        "justesse": "agi_core/payload_manager.py:38: renvoie un chemin serveur à un PC distant",
+        "robustesse": "agi_core/payload_manager.py:26: lecture et encodage intégraux en RAM",
+        "choix_technique": "agi_core/payload_manager.py:26: base64 monolithique pour des artefacts volumineux",
+        "architecture": "agi_core/payload_manager.py:22: protocole différent selon le terminal",
+        "tests": "agi_core/payload_manager.py:15: pas de test de transfert du fichier produit",
+        "observabilite": "agi_core/payload_manager.py:20: seul le formatage est journalisé",
+        "securite": "agi_core/payload_manager.py:25: aucun contrôle du périmètre de lecture",
+        "lisibilite": "agi_core/payload_manager.py:22: deux branches sans contrat commun versionné"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/core/paths.py",
+      "name": "init_app_dirs",
+      "line": 23,
+      "scores": {
+        "justesse": 2,
+        "robustesse": 3,
+        "choix_technique": 5,
+        "architecture": 5,
+        "tests": 1,
+        "observabilite": 1,
+        "securite": 3,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.1875,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/core/paths.py:25: crée les destinations avant les conditions de migration",
+        "robustesse": "../aurora-remote-cli/aurora_cli/core/paths.py:31: dossiers sources ne peuvent plus être migrés après leur création",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/core/paths.py:6: XDG utilisé mais règle de migration incohérente",
+        "architecture": "../aurora-remote-cli/aurora_cli/core/paths.py:43: effets de bord à l’import",
+        "tests": "../aurora-remote-cli/aurora_cli/core/paths.py:23: migration réelle non testée dans ce cycle",
+        "observabilite": "../aurora-remote-cli/aurora_cli/core/paths.py:39: échec de nettoyage ignoré",
+        "securite": "../aurora-remote-cli/aurora_cli/core/paths.py:26: permissions laissées à l’umask pour les données locales",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/core/paths.py:31: branches de migration inatteignables"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "file",
+      "file": "aurora_agi_daemon.py",
+      "name": "aurora_agi_daemon.py",
+      "line": 1,
+      "scores": {
+        "justesse": 3,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 3,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.3125,
+      "evidence": {
+        "justesse": "aurora_agi_daemon.py:35: log supprimé avant réussite du diagnostic",
+        "robustesse": "aurora_agi_daemon.py:18: lecture intégrale du journal",
+        "choix_technique": "aurora_agi_daemon.py:24: réponse textuelle confondue avec guérison",
+        "architecture": "aurora_agi_daemon.py:15: état de reprise dépendant du dossier temporaire",
+        "tests": "aurora_agi_daemon.py:13: pas de test d’échec de cette reprise",
+        "observabilite": "aurora_agi_daemon.py:36: preuve du crash remplacée",
+        "securite": "aurora_agi_daemon.py:35: réécriture destructive des traces",
+        "lisibilite": "aurora_agi_daemon.py:32: callback ne traite pas l’annulation"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "aurora_agi_daemon.py",
+      "name": "check_for_previous_crashes",
+      "line": 13,
+      "scores": {
+        "justesse": 3,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 3,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.3125,
+      "evidence": {
+        "justesse": "aurora_agi_daemon.py:35: log supprimé avant réussite du diagnostic",
+        "robustesse": "aurora_agi_daemon.py:18: lecture intégrale du journal",
+        "choix_technique": "aurora_agi_daemon.py:24: réponse textuelle confondue avec guérison",
+        "architecture": "aurora_agi_daemon.py:15: état de reprise dépendant du dossier temporaire",
+        "tests": "aurora_agi_daemon.py:13: pas de test d’échec de cette reprise",
+        "observabilite": "aurora_agi_daemon.py:36: preuve du crash remplacée",
+        "securite": "aurora_agi_daemon.py:35: réécriture destructive des traces",
+        "lisibilite": "aurora_agi_daemon.py:32: callback ne traite pas l’annulation"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/bus.py",
+      "name": "agi_core/bus.py",
+      "line": 1,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 3,
+        "securite": 2,
+        "lisibilite": 4
+      },
+      "weighted_score": 3.4375,
+      "evidence": {
+        "justesse": "agi_core/bus.py:98: diffuse vers tous les clients sans tenir compte des abonnements",
+        "robustesse": "agi_core/bus.py:101: un client lent peut bloquer le bus",
+        "choix_technique": "agi_core/bus.py:97: sérialisation JSON sans limite explicite ni schéma",
+        "architecture": "agi_core/bus.py:96: livraison locale et distante sans accusé de réception",
+        "tests": "agi_core/bus.py:20: aucun test de reconnexion IPC ajouté dans ce cycle",
+        "observabilite": "agi_core/bus.py:102: exception de livraison supprimée",
+        "securite": "agi_core/bus.py:98: fuite de missions entre abonnés locaux",
+        "lisibilite": "agi_core/bus.py:103: client écarté sans fermeture explicite"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/consciousness.py",
+      "name": "agi_core/consciousness.py",
+      "line": 1,
+      "scores": {
+        "justesse": 3,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 4,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.4375,
+      "evidence": {
+        "justesse": "agi_core/consciousness.py:53: analyse textuelle ne produit ni correctif ni validation",
+        "robustesse": "agi_core/consciousness.py:53: même souvenir peut être réanalysé indéfiniment",
+        "choix_technique": "agi_core/consciousness.py:50: recherche littérale Error Exception Crash Traceback",
+        "architecture": "agi_core/consciousness.py:45: planification par temporisation constante",
+        "tests": "agi_core/consciousness.py:41: boucle réelle non couverte par un test de reprise",
+        "observabilite": "agi_core/consciousness.py:52: aucune preuve de réparation stockée",
+        "securite": "agi_core/consciousness.py:50: accès à une mémoire globale sans scope",
+        "lisibilite": "agi_core/consciousness.py:42: docstring auto-optimisation excède le comportement"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/bus.py",
+      "name": "AsyncEventBus.publish",
+      "line": 94,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 3,
+        "securite": 2,
+        "lisibilite": 4
+      },
+      "weighted_score": 3.4375,
+      "evidence": {
+        "justesse": "agi_core/bus.py:98: diffuse vers tous les clients sans tenir compte des abonnements",
+        "robustesse": "agi_core/bus.py:101: un client lent peut bloquer le bus",
+        "choix_technique": "agi_core/bus.py:97: sérialisation JSON sans limite explicite ni schéma",
+        "architecture": "agi_core/bus.py:96: livraison locale et distante sans accusé de réception",
+        "tests": "agi_core/bus.py:94: diffusion réelle non couverte dans ce cycle",
+        "observabilite": "agi_core/bus.py:102: exception de livraison supprimée",
+        "securite": "agi_core/bus.py:98: fuite de missions entre abonnés locaux",
+        "lisibilite": "agi_core/bus.py:103: client écarté sans fermeture explicite"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/consciousness.py",
+      "name": "AGICortex.run_continuous_loop",
+      "line": 41,
+      "scores": {
+        "justesse": 3,
+        "robustesse": 3,
+        "choix_technique": 3,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 4,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.4375,
+      "evidence": {
+        "justesse": "agi_core/consciousness.py:53: analyse textuelle ne produit ni correctif ni validation",
+        "robustesse": "agi_core/consciousness.py:53: même souvenir peut être réanalysé indéfiniment",
+        "choix_technique": "agi_core/consciousness.py:50: recherche littérale Error Exception Crash Traceback",
+        "architecture": "agi_core/consciousness.py:45: planification par temporisation constante",
+        "tests": "agi_core/consciousness.py:41: boucle réelle non couverte par un test de reprise",
+        "observabilite": "agi_core/consciousness.py:52: aucune preuve de réparation stockée",
+        "securite": "agi_core/consciousness.py:50: accès à une mémoire globale sans scope",
+        "lisibilite": "agi_core/consciousness.py:42: docstring auto-optimisation excède le comportement"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/bus.py",
+      "name": "publish_sync",
+      "line": 105,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 3,
+        "securite": 3,
+        "lisibilite": 5
+      },
+      "weighted_score": 3.625,
+      "evidence": {
+        "justesse": "agi_core/bus.py:114: échec masqué au demandeur",
+        "robustesse": "agi_core/bus.py:112: absence d’accusé de réception",
+        "choix_technique": "agi_core/bus.py:111: message sans version ni validation",
+        "architecture": "agi_core/bus.py:105: implémentation recopiée dans les routes CLI",
+        "tests": "agi_core/bus.py:105: aucun test d’échec de livraison IPC dans ce cycle",
+        "observabilite": "agi_core/bus.py:114: warning sans état de requête retourné",
+        "securite": "agi_core/bus.py:110: bus sans authentification locale",
+        "lisibilite": "agi_core/bus.py:109: timeout et port codés en dur"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/memory.py",
+      "name": "agi_core/memory.py",
+      "line": 1,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 3.9375,
+      "evidence": {
+        "justesse": "agi_core/memory.py:25: aucune mémorisation lorsque Chroma est absent",
+        "robustesse": "agi_core/memory.py:31: erreur de persistance propagée après une mission",
+        "choix_technique": "agi_core/memory.py:19: embedding implicite et non versionné",
+        "architecture": "agi_core/memory.py:10: chemin absolu lié à cette machine",
+        "tests": "agi_core/memory.py:24: persistance réelle non couverte par les tests ajoutés",
+        "observabilite": "agi_core/memory.py:22: mémoire dite volatile alors qu’aucun stockage de repli existe",
+        "securite": "agi_core/memory.py:28: stockage de contextes sans attribution obligatoire à un client",
+        "lisibilite": "agi_core/memory.py:31: métadonnées par défaut non validées"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/memory.py",
+      "name": "OmniscientMemory.embed_experience",
+      "line": 24,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 3.9375,
+      "evidence": {
+        "justesse": "agi_core/memory.py:25: aucune mémorisation lorsque Chroma est absent",
+        "robustesse": "agi_core/memory.py:31: erreur de persistance propagée après une mission",
+        "choix_technique": "agi_core/memory.py:19: embedding implicite et non versionné",
+        "architecture": "agi_core/memory.py:10: chemin absolu lié à cette machine",
+        "tests": "agi_core/memory.py:24: persistance réelle non couverte par les tests ajoutés",
+        "observabilite": "agi_core/memory.py:22: mémoire dite volatile alors qu’aucun stockage de repli existe",
+        "securite": "agi_core/memory.py:28: stockage de contextes sans attribution obligatoire à un client",
+        "lisibilite": "agi_core/memory.py:31: métadonnées par défaut non validées"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/memory.py",
+      "name": "OmniscientMemory.query_experience",
+      "line": 35,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 5,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 3.9375,
+      "evidence": {
+        "justesse": "agi_core/memory.py:40: recherche sans filtre workspace/client",
+        "robustesse": "agi_core/memory.py:40: n_results non validé et erreurs non contextualisées",
+        "choix_technique": "agi_core/memory.py:19: embedding implicite non versionné",
+        "architecture": "agi_core/memory.py:10: chemin de base lié à cette machine",
+        "tests": "agi_core/memory.py:35: pertinence et rappel non mesurés",
+        "observabilite": "agi_core/memory.py:40: pas de mesure de pertinence ni journal de récupération",
+        "securite": "agi_core/memory.py:40: souvenirs de tous les clients dans la même collection",
+        "lisibilite": "agi_core/memory.py:43: forme des résultats supposée"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/config.py",
+      "name": "save",
+      "line": 47,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 2,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 3,
+        "observabilite": 2,
+        "securite": 2,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.0,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/config.py:49: interruption peut tronquer la configuration",
+        "robustesse": "../aurora-remote-cli/aurora_cli/config.py:49: écriture non atomique",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/config.py:49: pas de remplacement transactionnel",
+        "architecture": "../aurora-remote-cli/aurora_cli/config.py:49: données persistées sans version de schéma",
+        "tests": "../aurora-remote-cli/aurora_cli/config.py:47: résistance au crash non testée ici",
+        "observabilite": "../aurora-remote-cli/aurora_cli/config.py:49: pas de signal de validation après écriture",
+        "securite": "../aurora-remote-cli/aurora_cli/config.py:49: permissions du fichier de clé laissées à l’umask",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/config.py:49: pas de validation des valeurs"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/swarm.py",
+      "name": "agi_core/swarm.py",
+      "line": 1,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 4,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 5,
+        "securite": 4,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.375,
+      "evidence": {
+        "justesse": "agi_core/swarm.py:69: plan dit validé sans exécution de vérification",
+        "robustesse": "agi_core/swarm.py:48: retour d’erreur du LLM seulement journalisé, pipeline poursuivi",
+        "choix_technique": "agi_core/swarm.py:52: choix du plan par texte libre sans critère objectif",
+        "architecture": "agi_core/swarm.py:69: planification distincte du pipeline conversation TypeScript",
+        "tests": "agi_core/swarm.py:94: pas de test direct de délégation dans ce cycle",
+        "observabilite": "agi_core/swarm.py:61: sorties de planification mélangées au flux final",
+        "securite": "agi_core/swarm.py:76: permissions relayées mais non appliquées par l’agent appelé",
+        "lisibilite": "agi_core/swarm.py:35: chaîne de prompts sans contrat de plan versionné"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/swarm.py",
+      "name": "SwarmSupervisor.delegate",
+      "line": 94,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 4,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 5,
+        "securite": 5,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.5,
+      "evidence": {
+        "justesse": "agi_core/swarm.py:107: renvoie la collecte même si la passerelle a renvoyé une erreur",
+        "robustesse": "agi_core/swarm.py:105: aucun statut d’échec fourni au demandeur",
+        "choix_technique": "agi_core/swarm.py:105: modèle de 48.19 GiB fixé dans le code",
+        "architecture": "agi_core/swarm.py:105: sélection du modèle hors routeur partagé",
+        "tests": "agi_core/swarm.py:94: pas de test direct de délégation dans ce cycle",
+        "observabilite": "agi_core/swarm.py:106: résultat partiel journalisé sans identifiant de tâche",
+        "securite": "agi_core/swarm.py:96: tâche potentiellement sensible écrite dans les logs",
+        "lisibilite": "agi_core/swarm.py:107: chaîne seule sans résultat typé"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "aurora_agi_daemon.py",
+      "name": "main",
+      "line": 41,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 5,
+        "architecture": 6,
+        "tests": 3,
+        "observabilite": 5,
+        "securite": 4,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.5625,
+      "evidence": {
+        "justesse": "aurora_agi_daemon.py:62: seul mission.start est enregistré, mission.stop absent",
+        "robustesse": "aurora_agi_daemon.py:52: tâches créées sans registre de reprise",
+        "choix_technique": "aurora_agi_daemon.py:64: pas d’état durable de l’ordonnanceur",
+        "architecture": "aurora_agi_daemon.py:52: transport et cycle de vie des tâches non séparés",
+        "tests": "aurora_agi_daemon.py:52: superviseur testé, démarrage complet non rejoué",
+        "observabilite": "aurora_agi_daemon.py:60: callback sans statut persistant",
+        "securite": "aurora_agi_daemon.py:50: payload non validé avant lancement",
+        "lisibilite": "aurora_agi_daemon.py:60: callback ne traite pas l’annulation"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "file",
+      "file": "agi_core/llm_gateway.py",
+      "name": "agi_core/llm_gateway.py",
+      "line": 1,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 3,
+        "securite": 8,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.625,
+      "evidence": {
+        "justesse": "agi_core/llm_gateway.py:38: erreur HTTP transformée en texte de résultat",
+        "robustesse": "agi_core/llm_gateway.py:31: timeout total fixe et aucune reprise qualifiée",
+        "choix_technique": "agi_core/llm_gateway.py:12: modèle par défaut mistral absent de l’inventaire Ollama",
+        "architecture": "agi_core/llm_gateway.py:23: contexte codé en dur indépendamment du routage",
+        "tests": "agi_core/llm_gateway.py:14: aucun benchmark de qualité réel exécuté dans ce cycle",
+        "observabilite": "agi_core/llm_gateway.py:76: exception renvoyée sans log corrélé",
+        "securite": "agi_core/llm_gateway.py:31: transport local par défaut",
+        "lisibilite": "agi_core/llm_gateway.py:38: succès et erreur partagent le même type"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/client.py",
+      "name": "AuroraClient.stream_sse",
+      "line": 67,
+      "scores": {
+        "justesse": 4,
+        "robustesse": 3,
+        "choix_technique": 5,
+        "architecture": 6,
+        "tests": 5,
+        "observabilite": 3,
+        "securite": 5,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.625,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/client.py:84: ne reconnaît que data suivi de deux-points puis espace",
+        "robustesse": "../aurora-remote-cli/aurora_cli/client.py:87: JSON invalide supprimé silencieusement",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/client.py:83: pas de reconstruction des événements SSE multilignes",
+        "architecture": "../aurora-remote-cli/aurora_cli/client.py:69: crée un second client HTTP avec sa propre configuration",
+        "tests": "../aurora-remote-cli/aurora_cli/client.py:67: chemin terminal HTTP testé, fragmentation et reprise non testées",
+        "observabilite": "../aurora-remote-cli/aurora_cli/client.py:88: absence de compteurs d’événements perdus",
+        "securite": "../aurora-remote-cli/aurora_cli/client.py:74: même clé réutilisée sans contrat de version du serveur",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/client.py:75: durée 600 secondes codée en dur"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/bus.py",
+      "name": "AsyncEventBus.start_server",
+      "line": 20,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 4,
+        "choix_technique": 5,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 5,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.625,
+      "evidence": {
+        "justesse": "agi_core/bus.py:22: aucune négociation de version du protocole",
+        "robustesse": "agi_core/bus.py:22: aucune gestion du port déjà occupé",
+        "choix_technique": "agi_core/bus.py:32: limite implicite du lecteur pour les gros messages",
+        "architecture": "agi_core/bus.py:9: port fixé séparément de la copie côté bridge",
+        "tests": "agi_core/bus.py:20: aucun test de reconnexion IPC ajouté dans ce cycle",
+        "observabilite": "agi_core/bus.py:23: journal de démarrage sans identifiant de requête",
+        "securite": "agi_core/bus.py:22: TCP local sans authentification des processus clients",
+        "lisibilite": "agi_core/bus.py:9: configuration du transport disséminée"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/bus.py",
+      "name": "AsyncEventBus.subscribe",
+      "line": 75,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 4,
+        "choix_technique": 5,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 5,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.625,
+      "evidence": {
+        "justesse": "agi_core/bus.py:77: event_pattern ne prend en charge qu’une égalité exacte",
+        "robustesse": "agi_core/bus.py:79: abonnements dupliqués non évités",
+        "choix_technique": "agi_core/bus.py:79: aucune désinscription ni durée de vie",
+        "architecture": "agi_core/bus.py:77: contrat de callback non validé",
+        "tests": "agi_core/bus.py:75: absence de tests d’abonnement dédiés",
+        "observabilite": "agi_core/bus.py:80: seul le nom de l’événement est tracé",
+        "securite": "agi_core/bus.py:79: tout callback enregistré reçoit la charge globale",
+        "lisibilite": "agi_core/bus.py:75: nom pattern ambigu par rapport au comportement"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/llm_gateway.py",
+      "name": "LLMGateway.generate_stream",
+      "line": 43,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 3,
+        "securite": 8,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.625,
+      "evidence": {
+        "justesse": "agi_core/llm_gateway.py:72: fin de flux acceptée sans événement done",
+        "robustesse": "agi_core/llm_gateway.py:70: JSON malformé ignoré sans diagnostic",
+        "choix_technique": "agi_core/llm_gateway.py:12: modèle par défaut absent de l’inventaire local",
+        "architecture": "agi_core/llm_gateway.py:52: contexte et température fixés dans la passerelle",
+        "tests": "agi_core/llm_gateway.py:43: qualité d’inférence non mesurée ici",
+        "observabilite": "agi_core/llm_gateway.py:76: exception renvoyée sans log corrélé",
+        "securite": "agi_core/llm_gateway.py:58: transport local par défaut",
+        "lisibilite": "agi_core/llm_gateway.py:74: erreurs encodées dans une chaîne de réponse"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/llm_gateway.py",
+      "name": "LLMGateway.generate",
+      "line": 14,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 3,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 2,
+        "observabilite": 4,
+        "securite": 8,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.6875,
+      "evidence": {
+        "justesse": "agi_core/llm_gateway.py:38: erreur HTTP transformée en texte de résultat",
+        "robustesse": "agi_core/llm_gateway.py:31: timeout total fixe et aucune reprise qualifiée",
+        "choix_technique": "agi_core/llm_gateway.py:12: modèle par défaut mistral absent de l’inventaire Ollama",
+        "architecture": "agi_core/llm_gateway.py:23: contexte codé en dur indépendamment du routage",
+        "tests": "agi_core/llm_gateway.py:14: aucun benchmark de qualité réel exécuté dans ce cycle",
+        "observabilite": "agi_core/llm_gateway.py:37: log sans identifiant de mission",
+        "securite": "agi_core/llm_gateway.py:31: transport local par défaut",
+        "lisibilite": "agi_core/llm_gateway.py:38: succès et erreur partagent le même type"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "agi_core/swarm.py",
+      "name": "SwarmSupervisor.run_mission",
+      "line": 21,
+      "scores": {
+        "justesse": 5,
+        "robustesse": 4,
+        "choix_technique": 4,
+        "architecture": 6,
+        "tests": 5,
+        "observabilite": 5,
+        "securite": 4,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.75,
+      "evidence": {
+        "justesse": "agi_core/swarm.py:69: plan dit validé sans exécution de vérification",
+        "robustesse": "agi_core/swarm.py:48: retour d’erreur du LLM seulement journalisé, pipeline poursuivi",
+        "choix_technique": "agi_core/swarm.py:52: choix du plan par texte libre sans critère objectif",
+        "architecture": "agi_core/swarm.py:69: planification distincte du pipeline conversation TypeScript",
+        "tests": "agi_core/swarm.py:79: tests de concurrence réels, génération et outils remplacés dans le test",
+        "observabilite": "agi_core/swarm.py:61: sorties de planification mélangées au flux final",
+        "securite": "agi_core/swarm.py:76: permissions relayées mais non appliquées par l’agent appelé",
+        "lisibilite": "agi_core/swarm.py:35: chaîne de prompts sans contrat de plan versionné"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/config.py",
+      "name": "load",
+      "line": 37,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 3,
+        "choix_technique": 5,
+        "architecture": 6,
+        "tests": 6,
+        "observabilite": 2,
+        "securite": 3,
+        "lisibilite": 6
+      },
+      "weighted_score": 4.8125,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/config.py:43: config corrompue remplacée silencieusement par des valeurs vides",
+        "robustesse": "../aurora-remote-cli/aurora_cli/config.py:43: toutes les exceptions absorbées",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/config.py:41: fusion de dictionnaires sans validation de schéma",
+        "architecture": "../aurora-remote-cli/aurora_cli/config.py:38: lecture crée aussi des répertoires",
+        "tests": "../aurora-remote-cli/aurora_cli/config.py:37: scénarios URL testés, corruption non testée ici",
+        "observabilite": "../aurora-remote-cli/aurora_cli/config.py:43: aucune trace de corruption",
+        "securite": "../aurora-remote-cli/aurora_cli/config.py:41: lecture de clé locale sans vérification des permissions du fichier",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/config.py:43: erreur non distinguée d’une configuration absente"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/client.py",
+      "name": "AuroraClient.delete",
+      "line": 57,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 4,
+        "choix_technique": 6,
+        "architecture": 6,
+        "tests": 3,
+        "observabilite": 4,
+        "securite": 5,
+        "lisibilite": 7
+      },
+      "weighted_score": 5.1875,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/client.py:61: réponse 204 sans JSON provoque une erreur",
+        "robustesse": "../aurora-remote-cli/aurora_cli/client.py:61: réponse non JSON non gérée",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/client.py:59: HTTP existant adapté mais contrat de résultat absent",
+        "architecture": "../aurora-remote-cli/aurora_cli/client.py:63: errors réseau et réponses métier confondus",
+        "tests": "../aurora-remote-cli/aurora_cli/client.py:57: aucun test de suppression simulée dans ce cycle",
+        "observabilite": "../aurora-remote-cli/aurora_cli/client.py:63: aucune trace de requête corrélée",
+        "securite": "../aurora-remote-cli/aurora_cli/client.py:28: redirections activées sans politique explicite de serveur",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/client.py:57: méthode courte"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/client.py",
+      "name": "AuroraClient.get",
+      "line": 37,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 4,
+        "choix_technique": 6,
+        "architecture": 6,
+        "tests": 4,
+        "observabilite": 4,
+        "securite": 5,
+        "lisibilite": 7
+      },
+      "weighted_score": 5.3125,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/client.py:41: JSON supposé être un objet",
+        "robustesse": "../aurora-remote-cli/aurora_cli/client.py:41: réponse HTML ou JSON invalide non gérée",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/client.py:22: httpx avec reprise de connexion mais aucun contrat de réponse",
+        "architecture": "../aurora-remote-cli/aurora_cli/client.py:43: erreurs et résultats métier partagent un dictionnaire libre",
+        "tests": "../aurora-remote-cli/aurora_cli/client.py:37: cas de réponse malformée non testé dans ce cycle",
+        "observabilite": "../aurora-remote-cli/aurora_cli/client.py:43: erreur sans identifiant de requête",
+        "securite": "../aurora-remote-cli/aurora_cli/client.py:28: redirections activées sans politique explicite de serveur",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/client.py:37: méthode courte"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/client.py",
+      "name": "AuroraClient.post",
+      "line": 47,
+      "scores": {
+        "justesse": 6,
+        "robustesse": 4,
+        "choix_technique": 6,
+        "architecture": 6,
+        "tests": 4,
+        "observabilite": 4,
+        "securite": 5,
+        "lisibilite": 7
+      },
+      "weighted_score": 5.3125,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/client.py:51: JSON supposé être un objet",
+        "robustesse": "../aurora-remote-cli/aurora_cli/client.py:51: réponse non JSON non gérée",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/client.py:49: sérialisation HTTP partagée, schéma absent",
+        "architecture": "../aurora-remote-cli/aurora_cli/client.py:53: erreurs de transport dans le même type que le résultat",
+        "tests": "../aurora-remote-cli/aurora_cli/client.py:47: erreurs de démarrage non couvertes dans ce cycle",
+        "observabilite": "../aurora-remote-cli/aurora_cli/client.py:53: absence de trace de requête corrélée",
+        "securite": "../aurora-remote-cli/aurora_cli/client.py:28: redirections activées sans politique explicite de serveur",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/client.py:47: méthode courte"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "file",
+      "file": "aurora_cli.py",
+      "name": "aurora_cli.py",
+      "line": 1,
+      "scores": {
+        "justesse": 7,
+        "robustesse": 5,
+        "choix_technique": 6,
+        "architecture": 7,
+        "tests": 7,
+        "observabilite": 5,
+        "securite": 5,
+        "lisibilite": 8
+      },
+      "weighted_score": 6.25,
+      "evidence": {
+        "justesse": "aurora_cli.py:24: URL locale maintenant respectée par le client partagé",
+        "robustesse": "aurora_cli.py:18: toute erreur d’import est présentée comme dépôt absent",
+        "choix_technique": "aurora_cli.py:11: dépendance à un dépôt frère de nom fixe",
+        "architecture": "aurora_cli.py:17: client partagé sans copie métier",
+        "tests": "aurora_cli.py:10: test du wrapper avec transport HTTP remplacé",
+        "observabilite": "aurora_cli.py:19: message d’import sans cause détaillée",
+        "securite": "aurora_cli.py:24: clé persistée éventuellement issue d’un autre serveur",
+        "lisibilite": "aurora_cli.py:10: fonction courte et directe"
+      },
+      "status": "minimum_by_criterion_of_reviewed_public_functions"
+    },
+    {
+      "kind": "function",
+      "file": "aurora_cli.py",
+      "name": "main",
+      "line": 10,
+      "scores": {
+        "justesse": 7,
+        "robustesse": 5,
+        "choix_technique": 6,
+        "architecture": 7,
+        "tests": 7,
+        "observabilite": 5,
+        "securite": 5,
+        "lisibilite": 8
+      },
+      "weighted_score": 6.25,
+      "evidence": {
+        "justesse": "aurora_cli.py:24: URL locale maintenant respectée par le client partagé",
+        "robustesse": "aurora_cli.py:18: toute erreur d’import est présentée comme dépôt absent",
+        "choix_technique": "aurora_cli.py:11: dépendance à un dépôt frère de nom fixe",
+        "architecture": "aurora_cli.py:17: client partagé sans copie métier",
+        "tests": "aurora_cli.py:10: test du wrapper avec transport HTTP remplacé",
+        "observabilite": "aurora_cli.py:19: message d’import sans cause détaillée",
+        "securite": "aurora_cli.py:24: clé persistée éventuellement issue d’un autre serveur",
+        "lisibilite": "aurora_cli.py:10: fonction courte et directe"
+      },
+      "status": "provisional_code_review; inference_quality_not_benchmarked"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/config.py",
+      "name": "is_configured",
+      "line": 68,
+      "scores": {
+        "justesse": 8,
+        "robustesse": 6,
+        "choix_technique": 7,
+        "architecture": 8,
+        "tests": 8,
+        "observabilite": 5,
+        "securite": 6,
+        "lisibilite": 8
+      },
+      "weighted_score": 7.125,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/config.py:70: prend en compte l’URL de l’environnement",
+        "robustesse": "../aurora-remote-cli/aurora_cli/config.py:70: vérifie la présence, pas la validité du couple URL/clé",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/config.py:70: réutilise le résolveur partagé",
+        "architecture": "../aurora-remote-cli/aurora_cli/config.py:69: cohérent avec l’instanciation du client",
+        "tests": "../aurora-remote-cli/aurora_cli/config.py:68: clé absente et URL locale couvertes",
+        "observabilite": "../aurora-remote-cli/aurora_cli/config.py:70: booléen sans raison du refus",
+        "securite": "../aurora-remote-cli/aurora_cli/config.py:70: clé possiblement issue d’un autre serveur non détectée",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/config.py:68: fonction courte"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    },
+    {
+      "kind": "function",
+      "file": "../aurora-remote-cli/aurora_cli/config.py",
+      "name": "resolve_server_url",
+      "line": 62,
+      "scores": {
+        "justesse": 9,
+        "robustesse": 8,
+        "choix_technique": 8,
+        "architecture": 9,
+        "tests": 9,
+        "observabilite": 7,
+        "securite": 8,
+        "lisibilite": 9
+      },
+      "weighted_score": 8.4375,
+      "evidence": {
+        "justesse": "../aurora-remote-cli/aurora_cli/config.py:65: priorité explicitement couverte par les tests",
+        "robustesse": "../aurora-remote-cli/aurora_cli/config.py:65: types déclarés, valeurs URL malformées non validées",
+        "choix_technique": "../aurora-remote-cli/aurora_cli/config.py:65: chemin unique partagé par les deux entrées",
+        "architecture": "../aurora-remote-cli/aurora_cli/config.py:65: aucune modification de la valeur persistée",
+        "tests": "../aurora-remote-cli/aurora_cli/config.py:62: six tests de configuration et test du wrapper",
+        "observabilite": "../aurora-remote-cli/aurora_cli/config.py:65: valeur sélectionnée inspectable sur le client",
+        "securite": "../aurora-remote-cli/aurora_cli/config.py:65: aucune écriture des secrets",
+        "lisibilite": "../aurora-remote-cli/aurora_cli/config.py:62: résolution compacte"
+      },
+      "status": "provisional; other functions in file remain unreviewed"
+    }
+  ]
+}

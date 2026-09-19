@@ -1,0 +1,39 @@
+kind,file,name,line,justesse,robustesse,choix_technique,architecture,tests,observabilite,securite,lisibilite,weighted_score,status
+module,agi_core,agi_core,1,1,2,1,2,1,1,1,3,1.375,minimum_by_criterion; not_an_average
+file,agi_core/explorer.py,agi_core/explorer.py,1,1,2,1,3,1,1,3,3,1.75,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/explorer.py,DeepDiscoveryEngine.explore_unknown,15,1,2,1,3,1,1,3,3,1.75,provisional_code_review; inference_quality_not_benchmarked
+file,agi_core/mission_agent.py,agi_core/mission_agent.py,1,2,2,3,2,1,3,1,3,2.0625,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/mission_agent.py,AutonomousMissionAgent.run,161,2,2,3,2,1,3,1,3,2.0625,provisional_code_review; inference_quality_not_benchmarked
+function,../aurora-remote-cli/aurora_cli/core/jobia.py,JOBIACore.process_request,25,2,2,3,5,1,2,5,5,3.0,provisional; other functions in file remain unreviewed
+file,agi_core/payload_manager.py,agi_core/payload_manager.py,1,4,3,3,4,1,3,2,5,3.0625,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/payload_manager.py,SmartPayloadManager.package_for_client,15,4,3,3,4,1,3,2,5,3.0625,provisional_code_review; inference_quality_not_benchmarked
+function,../aurora-remote-cli/aurora_cli/core/paths.py,init_app_dirs,23,2,3,5,5,1,1,3,5,3.1875,provisional; other functions in file remain unreviewed
+file,aurora_agi_daemon.py,aurora_agi_daemon.py,1,3,3,3,5,2,4,3,5,3.3125,minimum_by_criterion_of_reviewed_public_functions
+function,aurora_agi_daemon.py,check_for_previous_crashes,13,3,3,3,5,2,4,3,5,3.3125,provisional_code_review; inference_quality_not_benchmarked
+file,agi_core/bus.py,agi_core/bus.py,1,4,3,4,5,2,3,2,4,3.4375,minimum_by_criterion_of_reviewed_public_functions
+file,agi_core/consciousness.py,agi_core/consciousness.py,1,3,3,3,5,2,4,4,5,3.4375,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/bus.py,AsyncEventBus.publish,94,4,3,4,5,2,3,2,4,3.4375,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/consciousness.py,AGICortex.run_continuous_loop,41,3,3,3,5,2,4,4,5,3.4375,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/bus.py,publish_sync,105,4,3,4,5,2,3,3,5,3.625,provisional_code_review; inference_quality_not_benchmarked
+file,agi_core/memory.py,agi_core/memory.py,1,5,3,4,5,2,4,3,6,3.9375,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/memory.py,OmniscientMemory.embed_experience,24,5,3,4,5,2,4,3,6,3.9375,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/memory.py,OmniscientMemory.query_experience,35,5,3,4,5,2,4,3,6,3.9375,provisional_code_review; inference_quality_not_benchmarked
+function,../aurora-remote-cli/aurora_cli/config.py,save,47,6,2,4,6,3,2,2,6,4.0,provisional; other functions in file remain unreviewed
+file,agi_core/swarm.py,agi_core/swarm.py,1,5,4,4,6,2,5,4,6,4.375,minimum_by_criterion_of_reviewed_public_functions
+function,agi_core/swarm.py,SwarmSupervisor.delegate,94,5,4,4,6,2,5,5,6,4.5,provisional_code_review; inference_quality_not_benchmarked
+function,aurora_agi_daemon.py,main,41,5,3,5,6,3,5,4,6,4.5625,provisional_code_review; inference_quality_not_benchmarked
+file,agi_core/llm_gateway.py,agi_core/llm_gateway.py,1,5,3,4,6,2,3,8,6,4.625,minimum_by_criterion_of_reviewed_public_functions
+function,../aurora-remote-cli/aurora_cli/client.py,AuroraClient.stream_sse,67,4,3,5,6,5,3,5,6,4.625,provisional; other functions in file remain unreviewed
+function,agi_core/bus.py,AsyncEventBus.start_server,20,6,4,5,6,2,5,3,6,4.625,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/bus.py,AsyncEventBus.subscribe,75,6,4,5,6,2,5,3,6,4.625,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/llm_gateway.py,LLMGateway.generate_stream,43,5,3,4,6,2,3,8,6,4.625,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/llm_gateway.py,LLMGateway.generate,14,5,3,4,6,2,4,8,6,4.6875,provisional_code_review; inference_quality_not_benchmarked
+function,agi_core/swarm.py,SwarmSupervisor.run_mission,21,5,4,4,6,5,5,4,6,4.75,provisional_code_review; inference_quality_not_benchmarked
+function,../aurora-remote-cli/aurora_cli/config.py,load,37,6,3,5,6,6,2,3,6,4.8125,provisional; other functions in file remain unreviewed
+function,../aurora-remote-cli/aurora_cli/client.py,AuroraClient.delete,57,6,4,6,6,3,4,5,7,5.1875,provisional; other functions in file remain unreviewed
+function,../aurora-remote-cli/aurora_cli/client.py,AuroraClient.get,37,6,4,6,6,4,4,5,7,5.3125,provisional; other functions in file remain unreviewed
+function,../aurora-remote-cli/aurora_cli/client.py,AuroraClient.post,47,6,4,6,6,4,4,5,7,5.3125,provisional; other functions in file remain unreviewed
+file,aurora_cli.py,aurora_cli.py,1,7,5,6,7,7,5,5,8,6.25,minimum_by_criterion_of_reviewed_public_functions
+function,aurora_cli.py,main,10,7,5,6,7,7,5,5,8,6.25,provisional_code_review; inference_quality_not_benchmarked
+function,../aurora-remote-cli/aurora_cli/config.py,is_configured,68,8,6,7,8,8,5,6,8,7.125,provisional; other functions in file remain unreviewed
+function,../aurora-remote-cli/aurora_cli/config.py,resolve_server_url,62,9,8,8,9,9,7,8,9,8.4375,provisional; other functions in file remain unreviewed

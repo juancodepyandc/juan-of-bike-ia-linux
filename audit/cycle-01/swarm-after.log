@@ -1,0 +1,15 @@
+test_concurrent_missions_keep_identity_workspace_and_memory (test_swarm.SwarmTests.test_concurrent_missions_keep_identity_workspace_and_memory) ... ok
+test_error_retains_its_mission_id (test_swarm.SwarmTests.test_error_retains_its_mission_id) ... [SUPERVISOR] Erreur critique du Swarm: fixture failure
+Traceback (most recent call last):
+  File "/home/juan/AuroraIA/agi_core/swarm.py", line 47, in run_mission
+    res = await llm.generate_stream(oracle_sys, oracle_prompt, on_oracle_token, model)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/unittest/mock.py", line 2262, in _execute_mock_call
+    raise effect
+RuntimeError: fixture failure
+ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.005s
+
+OK

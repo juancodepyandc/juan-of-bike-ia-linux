@@ -1,0 +1,7 @@
+test_local_entry_uses_shared_client_and_loopback_url (__main__.LocalCliTests.test_local_entry_uses_shared_client_and_loopback_url) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.116s
+
+OK
+Démarrage de la CLI unifiée (mode local)...
