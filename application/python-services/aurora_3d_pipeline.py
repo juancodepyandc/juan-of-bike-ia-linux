@@ -1995,7 +1995,7 @@ def extract_template_params(prompt: str, template: str, run_id: str = "proc", ou
                     )
                     _res = _flux_synth(_topdown_prompt, flux_run_id,
                                        output_dir=output_dir,
-                                       width=1024, height=1024, steps=25)
+                                       width=1024, height=1024, steps=20)
                     if _res.get("ok") and flux_ref.is_file():
                         flux_image_path = str(flux_ref)
                 else:
@@ -3745,10 +3745,10 @@ def run_pipeline(prompt: str, run_id: str, *,
             _k_syn = (subject_kind_hint or kind or "").lower()
             if _k_syn in ("character", "humanoid", "creature", "quadruped"):
                 res = synth(flux_prompt, run_id, output_dir=output_dir,
-                            width=1024, height=1408, steps=44)
+                            width=1024, height=1408, steps=20)
             else:
                 res = synth(flux_prompt, run_id, output_dir=output_dir,
-                            width=1216, height=1216, steps=44)
+                            width=1216, height=1216, steps=20)
         reference_synth_result = res
         if not res.get("ok") and multi_view and front_ref.is_file() and front_ref.stat().st_size > 50_000:
             # REPLI NON DESTRUCTIF. La synthese multivue echoue des qu'UNE vue
@@ -3814,7 +3814,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     _fp2 = "%s, %s, EXACTEMENT ce personnage, personnage officiel" % (
                         flux_prompt, _desc_lock or "")
                     _res2 = synth(_fp2, run_id, output_dir=output_dir,
-                                  width=1024, height=1408, steps=44,
+                                  width=1024, height=1408, steps=20,
                                   seed=(1234 + _try * 911))
                     if not _res2.get("ok"):
                         break
@@ -3890,7 +3890,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             _fpc = ("%s. %s. EXACTEMENT le sujet demande." % (_fp_base, _fb)
                     if _fb else _fp_base)
             _resc = synth(_fpc, run_id, output_dir=output_dir,
-                          width=1024, height=1408, steps=44,
+                          width=1024, height=1408, steps=20,
                           seed=(4242 + _cft * 977))
             if not _resc.get("ok"):
                 audit.append({"stage": "confirm_front_regen", "ok": False,
