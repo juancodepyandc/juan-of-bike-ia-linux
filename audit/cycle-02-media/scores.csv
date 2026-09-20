@@ -1,0 +1,5 @@
+composant,justesse_x3,robustesse_x2,parite_x3,observabilite_x2,note_ponderee,prochain_patch
+Image interface,6,6,3,5,5.0,P0: evaluation semantique reelle et alignement du worker Python
+Dessin explicatif,6,5,2,5,4.4,P1: contrat API/CLI et corpus factuel de schemas
+Benchmark Image,6,5,3,7,5.1,P0: mesures GPU reelles et jugement du contenu
+Hunyuan et 3D,6,5,3,5,4.7,P0: gate commun aux chemins Hunyuan et TRELLIS

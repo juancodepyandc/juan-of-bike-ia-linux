@@ -51,9 +51,9 @@ def check_hardware(device: str = "cuda") -> None:
             log.warning("Recommendation: Run with --safe-mode to avoid system instability.")
         
     if torch.cuda.is_available():
-        t, f = torch.cuda.mem_get_info()
-        log.info(f"VRAM: {f / 1e9:.2f} GB free / {t / 1e9:.2f} GB total")
-        if t < 15e9:
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        log.info(f"VRAM: {free_bytes / 1e9:.2f} GB free / {total_bytes / 1e9:.2f} GB total")
+        if total_bytes < 15e9:
             log.warning("GPU has < 15GB VRAM. CPU offload/Safe Mode is highly recommended.")
             if device != "cpu":
                 log.warning("Recommendation: Run with --safe-mode if your PC crashes under GPU load.")

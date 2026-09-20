@@ -1,0 +1,207 @@
+{
+  "mode": "SIMULATION_STRUCTURE_ONLY",
+  "semantic_evaluation": "NOT_EVALUATED",
+  "seed": 42,
+  "valid_packages": 9,
+  "total_cases": 9,
+  "median_wall_ms": 44.17,
+  "p95_wall_ms": 138.79,
+  "cases": [
+    {
+      "prompt": "photo portrait macro 85mm d'un artisan bijoutier examinant un diamant avec sa loupe d'horloger",
+      "seed": 42,
+      "category": "photo_realistic",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_01/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_01/metadata.json",
+      "width": 832,
+      "height": 1216,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.03,
+        "contrast_std": 4.97,
+        "dominant_palette_hex": [
+          "#141920",
+          "#181d25",
+          "#232933",
+          "#1f252e",
+          "#1a1f27",
+          "#171c24",
+          "#222831",
+          "#151a22"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 42.43
+    },
+    {
+      "prompt": "sprite pixel art 16-bit d'un chevalier avec armure d'argent et bouclier dore",
+      "seed": 43,
+      "category": "game_asset_pixel_art",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_02/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_02/metadata.json",
+      "width": 1024,
+      "height": 1024,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#101218"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 79.66
+    },
+    {
+      "prompt": "tour de garde medievale en pierre taille vue isometrique 3d pour un rts",
+      "seed": 44,
+      "category": "game_asset_isometric",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_03/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_03/metadata.json",
+      "width": 1024,
+      "height": 1024,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#101218"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 76.33
+    },
+    {
+      "prompt": "elixir de vie potion magique rougeoyante pour icone d inventaire rpg",
+      "seed": 45,
+      "category": "game_asset_icon_ui",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_04/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_04/metadata.json",
+      "width": 1024,
+      "height": 1024,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#101218"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 76.63
+    },
+    {
+      "prompt": "texture sol pave de donjon en pierre antique seamless tileable",
+      "seed": 46,
+      "category": "game_asset_texture",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_05/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_05/metadata.json",
+      "width": 1024,
+      "height": 1024,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#101218"
+        ],
+        "seamless_tileability_mse": 0.0,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 138.79
+    },
+    {
+      "prompt": "un jeune dragonceau curieux et amical style animation pixar 3d",
+      "seed": 47,
+      "category": "stylized_pixar_3d",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_06/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_06/metadata.json",
+      "width": 832,
+      "height": 1216,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#1c1a20"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 44.17
+    },
+    {
+      "prompt": "train vapeur traversant une prairie fleurie sous les nuages d ete style anime ghibli",
+      "seed": 48,
+      "category": "stylized_anime_ghibli",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_07/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_07/metadata.json",
+      "width": 1216,
+      "height": 832,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#1c1a20"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 33.12
+    },
+    {
+      "prompt": "duel au sommet entre deux maitres d arts martiaux planche manga noir et blanc trames",
+      "seed": 49,
+      "category": "stylized_manga_ink",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_08/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_08/metadata.json",
+      "width": 832,
+      "height": 1216,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#1c1a20"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 43.77
+    },
+    {
+      "prompt": "marche clandestin cyberpunk dans une ruelle de neo tokyo sous la pluie et les neons",
+      "seed": 50,
+      "category": "stylized_cyberpunk",
+      "semantic_evaluation": "NOT_EVALUATED",
+      "image": "/tmp/aurora-image-structure-check/case_09/image.png",
+      "metadata": "/tmp/aurora-image-structure-check/case_09/metadata.json",
+      "width": 1216,
+      "height": 832,
+      "measurements": {
+        "sharpness_laplacian_variance": 0.0,
+        "contrast_std": 0.0,
+        "dominant_palette_hex": [
+          "#0a0c18"
+        ],
+        "seamless_tileability_mse": null,
+        "status": "SIMULATED_NOT_EVALUATED"
+      },
+      "status": "STRUCTURE_VALID",
+      "wall_ms": 33.64
+    }
+  ]
+}

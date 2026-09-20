@@ -4,7 +4,7 @@
  * keep every Manga feature: pointer-pressure brushes (ink/eraser), colour
  * palette + custom picker, brush size, symmetry mode, undo/redo, IDB
  * sketch persistence, FLUX render via Aurora-Connect grounding, drying
- * line gallery, download PNG.
+ * line gallery, PNG and explanatory SVG exports.
  *
  * The hook owns canvas refs and exposes `bindCanvas` so both ports can
  * mount the canvas element wherever their layout demands. All mutations
@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { waitForComfyImages, type ComfyImageOutput } from '../services/comfyJobMonitor.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
@@ -21,6 +22,7 @@ import {
   ensureComfyUIRunning,
   ollamaChat,
 } from '../hooks/useTauri.ts'
+import { explanationInstruction, generateExplanationWithRepair, isExplanatoryDrawing, sketchBase64 } from '../services/drawingExplanation.ts'
 import { createFluxWorkflow } from '../utils/fluxWorkflow.ts'
 import { parseImageIntent } from '../utils/imagePromptParser.ts'
 import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
@@ -30,16 +32,7 @@ import { RANDOM_DRAW_PROMPTS, pickRandom as pickRandomCreative } from '../utils/
 import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
 import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
 
-// v82n6 : sketch vision analysis BEFORE FLUX — qwen3-vl:30b describes the
-// canvas in natural language so the FLUX prompt actually reflects what the
-// user drew. Without this, the V1/V3 sumi-e skin sent only the user prompt
-// + extension ref to FLUX and the canvas was effectively ignored (the
-// drawing module's whole reason to exist). Mirrors the pattern from the
-// legacy DrawingView.tsx (lines 89-122) per CLAUDE.md hard rule:
-// "analyzeSketchWithVision() runs qwen3-vl:30b BEFORE FLUX to describe the
-//  sketch in natural language. Don't skip — without it, FLUX ignores the
-//  canvas." The sketch canvas is intentionally NOT staged as a denoise
-// reference here (sumi-e skin design choice — vision description only).
+// Describe the canvas before diffusion; the canvas also anchors the img2img reference.
 async function analyzeSketchWithVision(
   sketchBlob: Blob,
   userPrompt: string,
@@ -48,8 +41,7 @@ async function analyzeSketchWithVision(
 ): Promise<string> {
   try {
     if (signal?.aborted) return userPrompt
-    const arrayBuffer = await sketchBlob.arrayBuffer()
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+    const base64 = await sketchBase64(sketchBlob)
     const response = await ollamaChat(visionModel, [
       {
         role: 'user',
@@ -73,11 +65,12 @@ async function analyzeSketchWithVision(
         ].join('\n'),
         images: [base64],
       },
-    ], 0.3)
+    ], 0.3, { signal })
     const text = response?.message?.content?.trim() || ''
     if (text.length > 10) return text
-  } catch {
-    /* fallback silencieux : on retombe sur le prompt user pur */
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException('Annulé', 'AbortError')
+    console.warn('Analyse du croquis indisponible, conservation du prompt et de la référence.', error)
   }
   return userPrompt
 }
@@ -109,30 +102,8 @@ function readCharacter(): Character {
   catch { return 'natsu' }
 }
 
-async function waitForComfyOutput(promptId: string, signal: AbortSignal): Promise<string[]> {
-  const maxMs = 4 * 60 * 1000
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < maxMs) {
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-    try {
-      const hist = await comfyuiGetHistory(promptId)
-      if (hist && typeof hist === 'object') {
-        const payload = Object.values(hist)[0] as { outputs?: Record<string, { images?: Array<{ filename?: string }> }> } | undefined
-        const outputs = payload?.outputs
-        if (outputs) {
-          const filenames: string[] = []
-          for (const node of Object.values(outputs)) {
-            for (const img of node?.images ?? []) {
-              if (img?.filename) filenames.push(img.filename)
-            }
-          }
-          if (filenames.length > 0) return filenames
-        }
-      }
-    } catch { /* keep polling */ }
-    await new Promise((r) => setTimeout(r, 1400))
-  }
-  throw new Error("ComfyUI: timeout (4 min)")
+async function waitForComfyOutput(promptId: string, signal: AbortSignal): Promise<ComfyImageOutput[]> {
+  return waitForComfyImages(promptId, signal, comfyuiGetHistory)
 }
 
 function canvasHasVisibleContent(canvas: HTMLCanvasElement): boolean {
@@ -632,97 +603,115 @@ export function useDrawingViewLogic({ paperColor = '#faf3de' }: { paperColor?: s
       const sketchUrl = await saveBlob(sketchBlobId, sketchBlob, 'drawing')
       const hasSketchContent = Boolean(canvasRef.current && canvasHasVisibleContent(canvasRef.current))
 
-      const up = await ensureComfyUIRunning()
-      if (!up.ok) throw new Error(up.error || 'ComfyUI indisponible')
+      let blob: Blob
+      if (isExplanatoryDrawing(text)) {
+        setProgress('Construction du schéma explicatif…')
+        const sketchImages = hasSketchContent ? [await sketchBase64(sketchBlob)] : undefined
+        const svg = await generateExplanationWithRepair(async (correction) => {
+          if (correction) setProgress('Correction automatique du schéma…')
+          const response = await ollamaChat(visionModel, [{
+            role: 'user',
+            content: [explanationInstruction(text), correction].filter(Boolean).join('\n\n'),
+            ...(sketchImages ? { images: sketchImages } : {}),
+          }], 0.1, { signal: ac.signal, num_predict: 2200 })
+          return response?.message?.content ?? ''
+        }, ac.signal, { monochrome: colorMode === 'monochrome' })
+        blob = new Blob([svg], { type: 'image/svg+xml' })
+      } else {
+        const up = await ensureComfyUIRunning()
+        if (!up.ok) throw new Error(up.error || 'ComfyUI indisponible')
 
-      const drawIntent = parseImageIntent(text)
-      const cleanedDrawText = drawIntent.cleanedPrompt
+        const drawIntent = parseImageIntent(text)
+        const cleanedDrawText = drawIntent.cleanedPrompt
 
-      let sketchReference: { filename: string; denoise?: number } | null = null
-      if (hasSketchContent) {
-        setProgress('Ancrage du croquis dans ComfyUI...')
-        const file = new File([sketchBlob], `aurora_sketch_${runTs}.png`, { type: sketchBlob.type || 'image/png' })
-        const uploaded = await comfyuiUploadImage(file)
-        if (uploaded?.name) {
-          sketchReference = {
-            filename: uploaded.name,
-            denoise: sketchDenoiseForIntent(drawIntent.isEditIntent, colorMode),
-          }
-        }
-      }
-
-      let extReference: { filename: string; denoise?: number } | null = null
-      if (!sketchReference) {
-        try {
-          const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
-          const refResult = await searchReferenceImages(cleanedDrawText, { limit: 1, signal: ac.signal })
-          if (refResult.ok && refResult.data.length > 0) {
-            const refUrl = refResult.data[0].url
-            const refResponse = await fetch(refUrl, { signal: ac.signal })
-            if (refResponse.ok) {
-              const refBlob = await refResponse.blob()
-              const file = new File([refBlob], `aurora_extref_${runTs}.png`, { type: refBlob.type || 'image/png' })
-              const uploaded = await comfyuiUploadImage(file)
-              if (uploaded?.name) extReference = { filename: uploaded.name, denoise: 0.62 }
+        let sketchReference: { filename: string; denoise?: number } | null = null
+        if (hasSketchContent) {
+          setProgress('Ancrage du croquis dans ComfyUI...')
+          const file = new File([sketchBlob], `aurora_sketch_${runTs}.png`, { type: sketchBlob.type || 'image/png' })
+          const uploaded = await comfyuiUploadImage(file)
+          if (uploaded?.name) {
+            sketchReference = {
+              filename: uploaded.name,
+              denoise: sketchDenoiseForIntent(drawIntent.isEditIntent, colorMode),
             }
           }
-        } catch { /* extension grounding best-effort */ }
-      }
-
-      setProgress('Workflow FLUX…')
-      // v82bj : strip natural-language removals from the user prompt
-      // before sending to FLUX. Same fix that v82bi shipped for Image
-      // — without this, "sans X" / "enlève X" / "without X" stayed
-      // in the positive prompt and FLUX rendered X anyway.
-      // v82n6 : analyze the canvas with qwen3-vl:30b BEFORE FLUX so the
-      // user's actual drawing drives the prompt (not just the textbox).
-      // The vision model reads the sketch shapes and emits a polished
-      // English description that we prepend to the FLUX prompt. If the
-      // vision call fails or returns nothing useful we silently fall
-      // back to the cleaned user prompt — no UX regression.
-      setProgress('Analyse du croquis (vision)…')
-      let sketchDescription = cleanedDrawText
-      if (hasSketchContent && sketchBlob.size > 0) {
-        const visionDesc = await analyzeSketchWithVision(
-          sketchBlob,
-          cleanedDrawText,
-          visionModel,
-          ac.signal,
-        )
-        if (visionDesc && visionDesc !== cleanedDrawText) {
-          sketchDescription = visionDesc
         }
+
+        let extReference: { filename: string; denoise?: number } | null = null
+        if (!sketchReference) {
+          try {
+            const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
+            const refResult = await searchReferenceImages(cleanedDrawText, { limit: 1, signal: ac.signal })
+            if (refResult.ok && refResult.data.length > 0) {
+              const refUrl = refResult.data[0].url
+              const refResponse = await fetch(refUrl, { signal: ac.signal })
+              if (refResponse.ok) {
+                const refBlob = await refResponse.blob()
+                const file = new File([refBlob], `aurora_extref_${runTs}.png`, { type: refBlob.type || 'image/png' })
+                const uploaded = await comfyuiUploadImage(file)
+                if (uploaded?.name) extReference = { filename: uploaded.name, denoise: 0.62 }
+              }
+            }
+          } catch { /* extension grounding best-effort */ }
+        }
+
+        setProgress('Workflow FLUX…')
+        // v82bj : strip natural-language removals from the user prompt
+        // before sending to FLUX. Same fix that v82bi shipped for Image
+        // — without this, "sans X" / "enlève X" / "without X" stayed
+        // in the positive prompt and FLUX rendered X anyway.
+        // v82n6 : analyze the canvas with qwen3-vl:30b BEFORE FLUX so the
+        // user's actual drawing drives the prompt (not just the textbox).
+        // The vision model reads the sketch shapes and emits a polished
+        // English description that we prepend to the FLUX prompt. If the
+        // vision call fails or returns nothing useful we silently fall
+        // back to the cleaned user prompt — no UX regression.
+        setProgress('Analyse du croquis (vision)…')
+        let sketchDescription = cleanedDrawText
+        if (hasSketchContent && sketchBlob.size > 0) {
+          const visionDesc = await analyzeSketchWithVision(
+            sketchBlob,
+            cleanedDrawText,
+            visionModel,
+            ac.signal,
+          )
+          if (visionDesc && visionDesc !== cleanedDrawText) {
+            sketchDescription = visionDesc
+          }
+        }
+        const interpretedPrompt = sketchDescription !== cleanedDrawText
+          ? `${sketchDescription}. ${cleanedDrawText}`
+          : cleanedDrawText
+
+        setProgress('Workflow FLUX…')
+        const referenceImage = sketchReference ?? extReference
+        const faithfulPrompt = buildSketchFaithfulPrompt({
+          interpretedPrompt,
+          userPrompt: cleanedDrawText,
+          colorMode,
+          hasSketchReference: Boolean(sketchReference),
+        })
+        const workflow = createFluxWorkflow({
+          prompt: `${faithfulPrompt}, detailed polished illustration`,
+          style: 'none',
+          width: 1024, height: 1024, steps: 26,
+          filenamePrefix: `sumi_${runTs}`,
+          referenceImage,
+        })
+
+        if (ac.signal.aborted) throw new DOMException('Annulé', 'AbortError')
+        setProgress('Envoi…')
+        const q = await comfyuiQueuePrompt(workflow)
+        const parsed = typeof q === 'string' ? JSON.parse(q) : q
+        const promptId = parsed?.prompt_id as string | undefined
+        if (!promptId) throw new Error('Pas de prompt_id')
+
+        setProgress('Rendu en cours…')
+        const [first] = await waitForComfyOutput(promptId, ac.signal)
+        setProgress('Récupération…')
+        blob = await comfyuiGetImage(first.filename, first.subfolder)
       }
-      const interpretedPrompt = sketchDescription !== cleanedDrawText
-        ? `${sketchDescription}. ${cleanedDrawText}`
-        : cleanedDrawText
-
-      setProgress('Workflow FLUX…')
-      const referenceImage = sketchReference ?? extReference
-      const faithfulPrompt = buildSketchFaithfulPrompt({
-        interpretedPrompt,
-        userPrompt: cleanedDrawText,
-        colorMode,
-        hasSketchReference: Boolean(sketchReference),
-      })
-      const workflow = createFluxWorkflow({
-        prompt: `${faithfulPrompt}, detailed polished illustration`,
-        style: 'manga',
-        width: 1024, height: 1024, steps: 26,
-        filenamePrefix: `sumi_${runTs}`,
-        referenceImage,
-      })
-
-      setProgress('Envoi…')
-      const q = await comfyuiQueuePrompt(workflow)
-      const parsed = typeof q === 'string' ? JSON.parse(q) : q
-      const promptId = parsed?.prompt_id as string | undefined
-      if (!promptId) throw new Error('Pas de prompt_id')
-
-      setProgress('Rendu… (30–90s)')
-      const [first] = await waitForComfyOutput(promptId, ac.signal)
-      setProgress('Récupération…')
-      const blob = await comfyuiGetImage(first)
+      if (ac.signal.aborted) throw new DOMException('Annulé', 'AbortError')
       const url = await saveBlob(renderBlobId, blob, 'drawing')
       setRenderUrl(url)
       setProgress('')
@@ -758,12 +747,20 @@ export function useDrawingViewLogic({ paperColor = '#faf3de' }: { paperColor?: s
 
   const stop = () => abortRef.current?.abort()
 
-  const downloadRender = () => {
+  const downloadRender = async () => {
     if (!renderUrl) return
-    const a = document.createElement('a')
-    a.href = renderUrl
-    a.download = `sumi-${Date.now()}.png`
-    document.body.appendChild(a); a.click(); a.remove()
+    try {
+      const blob = await (await fetch(renderUrl)).blob()
+      const extension = blob.type === 'image/svg+xml' ? 'svg' : 'png'
+      const a = document.createElement('a')
+      a.href = renderUrl
+      a.download = `sumi-${Date.now()}.${extension}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error))
+    }
   }
 
   return {

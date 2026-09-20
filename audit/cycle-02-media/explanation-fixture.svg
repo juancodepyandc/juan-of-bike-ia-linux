@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 744 708" width="744" height="708" style="--primary: #3aa4ff; --secondary: #ff5a1f; --accent: #ffd166; --surface: #0b1220; --surfaceLight: #1b2230; --textPrimary: #ffffff; --textSecondary: #9aa4ff; --good: #4dd5a4; --warn: #ffd166; --bad: #ff6a3d">
+  <rect x="0" y="0" width="744" height="708" fill="#10131d" />
+  <path d="M 230 132 L 230 232" fill="none" stroke="#9aa4ff" stroke-width="2" />
+  <path d="M 230 232 L 224.78041359066523 221.19463477176788 L 235.21958640933477 221.19463477176788 Z" fill="#9aa4ff" />
+  <text x="242" y="174" font-size="13" font-family="system-ui, sans-serif" text-anchor="start" fill="#9aa4ff">refroidissement</text>
+  <path d="M 230 304 L 230 404" fill="none" stroke="#9aa4ff" stroke-width="2" />
+  <path d="M 230 404 L 224.78041359066523 393.1946347717679 L 235.21958640933477 393.1946347717679 Z" fill="#9aa4ff" />
+  <text x="242" y="346" font-size="13" font-family="system-ui, sans-serif" text-anchor="start" fill="#9aa4ff">gouttelettes</text>
+  <path d="M 230 476 L 230 576" fill="none" stroke="#9aa4ff" stroke-width="2" />
+  <path d="M 230 576 L 224.78041359066523 565.1946347717678 L 235.21958640933477 565.1946347717678 Z" fill="#9aa4ff" />
+  <text x="242" y="518" font-size="13" font-family="system-ui, sans-serif" text-anchor="start" fill="#9aa4ff">écoulement</text>
+  <path d="M 400 612 L 430 612 L 430 96 L 400 96" fill="none" stroke="#9aa4ff" stroke-width="2" />
+  <path d="M 400 96 L 410.8053652282321 90.78041359066523 L 410.8053652282321 101.21958640933477 Z" fill="#9aa4ff" />
+  <text x="438" y="354" font-size="13" font-family="system-ui, sans-serif" text-anchor="start" fill="#9aa4ff">retour vers les océans</text>
+  <rect x="60" y="60" width="340" height="72" rx="12" fill="#1b2230" stroke="#3aa4ff" stroke-width="2" />
+  <text x="230" y="101" font-size="16" font-family="system-ui, sans-serif" text-anchor="middle" fill="#ffffff">Évaporation</text>
+  <rect x="60" y="232" width="340" height="72" rx="12" fill="#1b2230" stroke="#3aa4ff" stroke-width="2" />
+  <text x="230" y="273" font-size="16" font-family="system-ui, sans-serif" text-anchor="middle" fill="#ffffff">Condensation</text>
+  <rect x="60" y="404" width="340" height="72" rx="12" fill="#1b2230" stroke="#3aa4ff" stroke-width="2" />
+  <text x="230" y="445" font-size="16" font-family="system-ui, sans-serif" text-anchor="middle" fill="#ffffff">Précipitations</text>
+  <rect x="60" y="576" width="340" height="72" rx="12" fill="#1b2230" stroke="#3aa4ff" stroke-width="2" />
+  <text x="230" y="617" font-size="16" font-family="system-ui, sans-serif" text-anchor="middle" fill="#ffffff">Ruissellement</text>
+</svg>

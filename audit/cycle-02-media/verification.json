@@ -1,0 +1,42 @@
+[
+  {
+    "name": "frontend-check",
+    "command": [
+      "npm",
+      "run",
+      "check"
+    ],
+    "cwd": "/home/juan/AuroraIA/application",
+    "exit_code": 0,
+    "wall_ms": 21255.62
+  },
+  {
+    "name": "python-tests",
+    "command": [
+      "/home/juan/AuroraIA/application/.venv/bin/python",
+      "-m",
+      "unittest",
+      "tests_agi.test_image_benchmark_contract",
+      "tests_agi.test_hunyuan_hardware",
+      "tests_agi.test_hunyuan_quality_gate",
+      "-v"
+    ],
+    "cwd": "/home/juan/AuroraIA",
+    "exit_code": 0,
+    "wall_ms": 285.85
+  },
+  {
+    "name": "svg-browser-check",
+    "command": [
+      "node",
+      "--experimental-strip-types",
+      "application/scripts/verify-explanation.mjs",
+      "audit/cycle-02-media"
+    ],
+    "cwd": "/home/juan/AuroraIA",
+    "exit_code": 0,
+    "initial_exit_code": 1,
+    "initial_wall_ms": 737.14,
+    "resolution": "Final command succeeded after awaiting document fonts and two animation frames, then capturing the SVG element. Initial failure log retained."
+  }
+]

@@ -50,3 +50,20 @@ export function releaseImageGenerationLock(
   } catch {
   }
 }
+
+/** Keep an active render protected across long queue waits and multi-stage edits. */
+export function renewImageGenerationLock(
+  token: string,
+  storage?: ImageGenerationLockStorage,
+  now: number = Date.now(),
+): boolean {
+  try {
+    const lockStorage = storage ?? globalThis.localStorage
+    const existing = readLock(lockStorage)
+    if (existing?.token !== token) return false
+    lockStorage.setItem(IMAGE_GENERATION_LOCK_KEY, JSON.stringify({ ...existing, startedAt: now }))
+    return readLock(lockStorage)?.token === token
+  } catch {
+    return false
+  }
+}

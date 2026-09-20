@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { waitForComfyImages, type ComfyImageOutput } from '../services/comfyJobMonitor.ts'
 import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
 import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser.ts'
 import {
@@ -46,6 +47,7 @@ import {
 import {
   claimImageGenerationLock,
   releaseImageGenerationLock,
+  renewImageGenerationLock,
 } from '../services/imageGenerationSafety.ts'
 import type { ConversationSession } from '../stores/moduleHistoryStore.ts'
 
@@ -128,31 +130,8 @@ async function buildSessionCards(session: ConversationSession): Promise<Generate
   return cards
 }
 
-async function waitForComfyOutput(promptId: string, signal: AbortSignal): Promise<string[]> {
-  const maxMs = 6 * 60 * 1000
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < maxMs) {
-    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
-    try {
-      const hist = await comfyuiGetHistory(promptId)
-      if (hist && typeof hist === 'object') {
-        const payload = Object.values(hist)[0] as { outputs?: Record<string, { images?: Array<{ filename?: string }> }> } | undefined
-        const outputs = payload?.outputs
-        if (outputs) {
-          const filenames: string[] = []
-          for (const node of Object.values(outputs)) {
-            for (const img of node?.images ?? []) {
-              if (img?.filename) filenames.push(img.filename)
-            }
-          }
-          if (filenames.length > 0) return filenames
-        }
-      }
-    } catch {
-    }
-    await new Promise((r) => setTimeout(r, 1500))
-  }
-  throw new Error('ComfyUI: timeout d\'attente du rendu (6 min)')
+async function waitForComfyOutput(promptId: string, signal: AbortSignal): Promise<ComfyImageOutput[]> {
+  return waitForComfyImages(promptId, signal, comfyuiGetHistory)
 }
 
 async function imageBlobLooksBlack(blob: Blob): Promise<boolean> {
@@ -331,49 +310,35 @@ export function useImageViewLogic() {
     const elapsedMin = Math.max(0, Math.round((Date.now() - pending.startedAt) / 60_000))
     setResumeBanner({ minutes: elapsedMin, text: pending.prompt })
     const stable = pending
+    const controller = new AbortController()
     ;(async () => {
-      const maxMs = 10 * 60 * 1000
-      const startedAt = Date.now()
-      while (alive && Date.now() - startedAt < maxMs) {
-        try {
-          const hist = await comfyuiGetHistory(stable.promptId)
-          if (hist && typeof hist === 'object') {
-            const payload = Object.values(hist)[0] as { outputs?: Record<string, { images?: Array<{ filename?: string }> }> } | undefined
-            const outputs = payload?.outputs
-            if (outputs) {
-              const filenames: string[] = []
-              for (const node of Object.values(outputs)) {
-                for (const img of node?.images ?? []) {
-                  if (img?.filename) filenames.push(img.filename)
-                }
-              }
-              if (filenames.length > 0 && alive) {
-                const blob = await comfyuiGetImage(filenames[0])
-                const cardId = `img-resume-${Date.now()}`
-                const url = await saveBlob(cardId, blob, 'image')
-                const card: GeneratedCard = {
-                  id: cardId, url,
-                  prompt: stable.prompt,
-                  style: stable.style,
-                  timestamp: Date.now(),
-                  rotation: stable.rotation,
-                }
-                setImages((prev) => [card, ...prev].slice(0, 24))
-                setCurrent(card)
-                try { localStorage.removeItem('aurora.pendingComfyPrompt.v1') } catch {}
-                if (alive) setResumeBanner(null)
-                return
-              }
-            }
-          }
-        } catch {
+      try {
+        const [first] = await waitForComfyOutput(stable.promptId, controller.signal)
+        const blob = await comfyuiGetImage(first.filename, first.subfolder)
+        if (!alive) return
+        if (await imageBlobLooksBlack(blob)) throw new Error('Rendu noir détecté pendant la reprise.')
+        const cardId = `img-resume-${Date.now()}`
+        const url = await saveBlob(cardId, blob, 'image')
+        if (!alive) return
+        const card: GeneratedCard = {
+          id: cardId, url, prompt: stable.prompt, style: stable.style,
+          timestamp: Date.now(), rotation: stable.rotation, seed: stable.runSeed,
         }
-        await new Promise((r) => setTimeout(r, 2500))
+        setImages((prev) => [card, ...prev].slice(0, 24))
+        setCurrent(card)
+        try {
+          const currentPending = JSON.parse(localStorage.getItem('aurora.pendingComfyPrompt.v1') || 'null')
+          if (currentPending?.promptId === stable.promptId) localStorage.removeItem('aurora.pendingComfyPrompt.v1')
+        } catch {}
+        setResumeBanner(null)
+      } catch (error) {
+        if (alive && !controller.signal.aborted) {
+          setError(error instanceof Error ? error.message : String(error))
+          setResumeBanner(null)
+        }
       }
-      try { localStorage.removeItem('aurora.pendingComfyPrompt.v1') } catch {}
-      if (alive) setResumeBanner(null)
     })()
-    return () => { alive = false }
+    return () => { alive = false; controller.abort() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -540,6 +505,7 @@ export function useImageViewLogic() {
       setNotice('Un rendu image est deja en cours dans Aurora. Attends la fin ou utilise STOP avant de relancer, sinon FLUX peut saturer la memoire.')
       return
     }
+    const lockHeartbeat = setInterval(() => renewImageGenerationLock(lockToken), 60_000)
     generationLockRef.current = true
     setError(null)
     setNotice(null)
@@ -852,7 +818,7 @@ export function useImageViewLogic() {
             setProgress(batch > 1 ? `${stage.label} ${k + 1}/${batch} - rendu...` : `${stage.label} - rendu...`)
             const filenames = await waitForComfyOutput(promptId, ac.signal)
             const first = filenames[0]
-            const stageBlob = await comfyuiGetImage(first)
+            const stageBlob = await comfyuiGetImage(first.filename, first.subfolder)
             if (await imageBlobLooksBlack(stageBlob)) {
               throw new Error('Rendu noir detecte pendant le workflow multi-etage Kontext.')
             }
@@ -921,12 +887,12 @@ export function useImageViewLogic() {
         } catch {
         }
 
-        setProgress(batch > 1 ? `Rendu ${k + 1}/${batch}… (30-90s)` : 'Rendu en cours… (30-90s)')
+        setProgress(batch > 1 ? `Rendu ${k + 1}/${batch}…` : 'Rendu en cours…')
         const filenames = await waitForComfyOutput(promptId, ac.signal)
 
         setProgress(batch > 1 ? `Image ${k + 1}/${batch}…` : 'Récupération de l\'image…')
         const first = filenames[0]
-        blob = await comfyuiGetImage(first)
+        blob = await comfyuiGetImage(first.filename, first.subfolder)
         }
         if (!blob) throw new Error('Aucune image produite par le workflow')
         // v83 : pixel art authentique garanti — FLUX seul produit du pseudo
@@ -996,6 +962,7 @@ export function useImageViewLogic() {
       } catch {
       }
       setProgress(finalProgressAfterCleanup)
+      clearInterval(lockHeartbeat)
       releaseImageGenerationLock(lockToken)
       generationLockRef.current = false
       abortRef.current = null

@@ -1,0 +1,81 @@
+{
+  "fixture_source": "HAND_WRITTEN",
+  "evaluation": "LAYOUT_ONLY",
+  "width": 744,
+  "height": 708,
+  "labels": [
+    {
+      "text": "refroidissement",
+      "bounds": {
+        "x": 242,
+        "y": 160,
+        "width": 96.8970947265625,
+        "height": 18
+      }
+    },
+    {
+      "text": "gouttelettes",
+      "bounds": {
+        "x": 242,
+        "y": 332,
+        "width": 74.25,
+        "height": 18
+      }
+    },
+    {
+      "text": "écoulement",
+      "bounds": {
+        "x": 242,
+        "y": 504,
+        "width": 72.67803955078125,
+        "height": 18
+      }
+    },
+    {
+      "text": "retour vers les océans",
+      "bounds": {
+        "x": 438,
+        "y": 340,
+        "width": 133.984375,
+        "height": 18
+      }
+    },
+    {
+      "text": "Évaporation",
+      "bounds": {
+        "x": 184.8671875,
+        "y": 84,
+        "width": 90.265625,
+        "height": 22
+      }
+    },
+    {
+      "text": "Condensation",
+      "bounds": {
+        "x": 177.7265625,
+        "y": 256,
+        "width": 104.546875,
+        "height": 22
+      }
+    },
+    {
+      "text": "Précipitations",
+      "bounds": {
+        "x": 178.671875,
+        "y": 428,
+        "width": 102.65625,
+        "height": 22
+      }
+    },
+    {
+      "text": "Ruissellement",
+      "bounds": {
+        "x": 177.375,
+        "y": 600,
+        "width": 105.47219848632812,
+        "height": 22
+      }
+    }
+  ],
+  "overflowing": []
+}
