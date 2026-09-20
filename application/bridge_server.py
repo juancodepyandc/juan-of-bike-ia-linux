@@ -564,16 +564,23 @@ def _ext_default_model():
     try:
         r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=6)
         models = r.json().get("models", []) if r.ok else []
-        names = [m.get("name", "") for m in models if isinstance(m, dict)]
-        for pref in ("qwen3", "llama3.2", "llama3", "mistral", "gemma", "qwen"):
-            for n in names:
-                if pref in n.lower():
+        candidates = []
+        for m in models:
+            if not isinstance(m, dict):
+                continue
+            name = m.get("name", "")
+            if "embed" in name.lower():
+                continue
+            candidates.append(name)
+        for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "qwen3-coder:30b", "orcarouter", "qwen3-vl:8b"):
+            for n in candidates:
+                if pref.lower() in n.lower():
                     return n
-        if names:
-            return names[0]
+        if candidates:
+            return candidates[0]
     except Exception:
         pass
-    return "qwen3:8b"
+    return "qwen3-coder-next:q4_K_M"
 
 
 # --- gestion de clé (LOCAL only) — plusieurs clés actives possibles

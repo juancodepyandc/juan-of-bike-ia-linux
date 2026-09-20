@@ -9,7 +9,7 @@ class LLMGateway:
     """Passerelle Neuronale pour interroger Ollama en local de manière asynchrone."""
     def __init__(self, ollama_url: str = "http://127.0.0.1:11434"):
         self.ollama_url = ollama_url
-        self.default_model = "mistral" # Peut être remplacé par llama3, deepseek-coder, etc.
+        self.default_model = "qwen3-coder-next:q4_K_M"
 
     async def generate(self, system_prompt: str, user_prompt: str, model: str = None) -> str:
         url = f"{self.ollama_url}/api/generate"
@@ -27,8 +27,9 @@ class LLMGateway:
         logger.debug(f"[GATEWAY] Appel LLM ({payload['model']}) en cours...")
         
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=120) as response:
+            timeout = aiohttp.ClientTimeout(total=180.0, sock_connect=10.0, sock_read=120.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=payload) as response:
                     if response.status == 200:
                         data = await response.json()
                         return data.get("response", "").strip()
@@ -37,8 +38,9 @@ class LLMGateway:
                         logger.error(f"[GATEWAY] Erreur API : {response.status} - {error_text}")
                         return f"<Erreur de traitement LLM : {response.status}>"
         except Exception as e:
-            logger.error(f"[GATEWAY] Impossible de joindre Ollama : {e}")
-            return "<Le cortex local est inaccessible. Vérifiez qu'Ollama tourne.>"
+            err_msg = str(e) or type(e).__name__
+            logger.error(f"[GATEWAY] Impossible de joindre Ollama : {err_msg}")
+            return f"<Le cortex local est inaccessible : {err_msg}>"
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, on_token: callable, model: str = None) -> str:
         url = f"{self.ollama_url}/api/generate"
@@ -54,8 +56,9 @@ class LLMGateway:
         }
         full_text = ""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=120) as response:
+            timeout = aiohttp.ClientTimeout(total=None, sock_connect=10.0, sock_read=120.0)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=payload) as response:
                     if response.status == 200:
                         async for line in response.content:
                             if not line: continue
@@ -73,4 +76,6 @@ class LLMGateway:
                     else:
                         return f"<Erreur de traitement LLM : {response.status}>"
         except Exception as e:
-            return f"<Le cortex local est inaccessible : {e}>"
+            err_msg = str(e) or type(e).__name__
+            logger.error(f"[GATEWAY] Erreur streaming Ollama : {err_msg}")
+            return f"<Le cortex local est inaccessible : {err_msg}>"
