@@ -2565,6 +2565,20 @@ pub async fn runtime_ensure_service(
                 "--port",
                 "8188",
             ]);
+            let memory_helper = Path::new(&get_workspace_path()).join("comfy_runtime.py");
+            if memory_helper.is_file() {
+                let memory_options = Command::new(&python_path)
+                    .arg(memory_helper)
+                    .arg(&comfy_dir)
+                    .output()
+                    .await
+                    .map_err(|e| format!("Configuration memoire ComfyUI: {}", e))?;
+                if !memory_options.status.success() {
+                    return Err("Configuration memoire ComfyUI invalide.".to_string());
+                }
+                let args = String::from_utf8_lossy(&memory_options.stdout);
+                command.args(args.lines().filter(|line| !line.is_empty()));
+            }
             command.current_dir(&comfy_dir);
             command.stdin(Stdio::null());
             command.stdout(stdout_handle.map(Stdio::from).unwrap_or_else(Stdio::null));

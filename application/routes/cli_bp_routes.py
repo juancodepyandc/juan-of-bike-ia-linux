@@ -41,7 +41,27 @@ for old_name, new_path in [
         shutil.move(old_path, new_path)
 # --------------------------------------------------------
 
-_CLI_MISSIONS = {}  # mission_id -> state (in-memory, persisted in sessions)
+_CLI_MISSIONS = {}  # mission_id -> state (in-memory; see _cli_prune_missions for retention)
+_CLI_MISSIONS_TTL = 24 * 3600  # seconds before a finished mission is pruned from memory
+_CLI_MISSIONS_LOCK = threading.Lock()
+
+
+def _cli_prune_missions(force_ttl: float | None = None):
+    """Remove finished missions older than the TTL to bound memory growth."""
+    ttl = force_ttl if force_ttl is not None else _CLI_MISSIONS_TTL
+    now = time.time()
+    with _CLI_MISSIONS_LOCK:
+        for mid in list(_CLI_MISSIONS):
+            mission = _CLI_MISSIONS[mid]
+            if not isinstance(mission, dict):
+                continue
+            finished = mission.get("finished_at")
+            if finished is not None and now - finished > ttl:
+                _CLI_MISSIONS.pop(mid, None)
+            elif finished is None and mission.get("status") in ("completed", "failed", "stopped"):
+                continue
+            elif finished is None and now - mission.get("started_at", now) > ttl * 4:
+                _CLI_MISSIONS.pop(mid, None)
 
 _CLI_PERMISSION_LEVELS = {
     "SAFE": {
@@ -102,18 +122,36 @@ def _cli_auth_required(f):
     return wrapper
 
 
+_CLI_JSON_LOCKS = {}
+
+def _cli_json_lock(path):
+    lock = _CLI_JSON_LOCKS.get(path)
+    if lock is None:
+        lock = _CLI_JSON_LOCKS.setdefault(path, threading.Lock())
+    return lock
+
+
 def _cli_load_json(path):
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with _cli_json_lock(path), open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
 def _cli_save_json(path, data):
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        parent = os.path.dirname(path)
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
+        with _cli_json_lock(path):
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
     except Exception:
         pass
 
@@ -175,9 +213,19 @@ def cli_auth():
 @cli_bp.route("/api/cli/version", methods=["GET"])
 @_cli_auth_required
 def cli_version():
-    return jsonify({"ok": True, "server_version": _CLI_VERSION,
-                    "bridge_lines": 16738, "api_routes": 237,
-                    "agents_official": 37, "modules": 8})
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bridge_server.py"),
+                  "r", encoding="utf-8") as f:
+            bridge_lines = len(f.readlines())
+    except Exception:
+        bridge_lines = 0
+    return jsonify({
+        "ok": True, "server_version": _CLI_VERSION,
+        "bridge_lines": bridge_lines,
+        "api_routes": len(list(current_app.url_map.iter_rules())),
+        "agents_official": len(_cli_list_official_agents()),
+        "modules": 8,
+    })
 
 
 @cli_bp.route("/api/cli/status", methods=["GET"])
@@ -216,7 +264,7 @@ def cli_status():
         "ok": True, "bridge": True, "ollama": ollama_ok, "comfyui": comfy_ok,
         "models": models, "models_count": len(models),
         "hardware": hw,
-        "agents_official": 37,
+        "agents_official": len(_cli_list_official_agents()),
         "agents_dynamic_saved": len(_cli_load_json(_CLI_DYNAMIC_AGENTS_PATH).get("agents", [])),
         "skills_count": len(skills),
         "mcp_servers": len(mcp),
@@ -262,10 +310,13 @@ def cli_doctor():
     except Exception:
         pass
     checks.append({"name": "Tunnel Cloudflare", "ok": bool(tun), "detail": tun or "non configuré"})
-    # Streaming
-    checks.append({"name": "Streaming SSE", "ok": True})
-    # Permissions
-    checks.append({"name": "Permissions", "ok": True, "detail": "4 niveaux disponibles"})
+    # Daemon AGI (bus IPC 3002) — readiness réelle pour les missions
+    daemon_ok = _cli_publish_ipc("heartbeat.ping", {})
+    checks.append({"name": "Daemon AGI (bus IPC 3002)", "ok": daemon_ok,
+                   "detail": "abonné et joignable" if daemon_ok else "indisponible : missions impossibles"})
+    # Permissions — le compte suit la constante, pas une valeur écrite en dur
+    checks.append({"name": "Permissions", "ok": True,
+                   "detail": f"{len(_CLI_PERMISSION_LEVELS)} niveaux disponibles"})
     # MCP
     mcp = _cli_discover_mcp(WORKSPACE)
     checks.append({"name": "MCP Servers", "ok": len(mcp) > 0, "detail": f"{len(mcp)} serveur(s)"})
@@ -274,6 +325,9 @@ def cli_doctor():
     checks.append({"name": "Skills", "ok": True, "detail": f"{len(skills)} skill(s)"})
     # Version
     checks.append({"name": "Version serveur", "ok": True, "detail": _CLI_VERSION})
+    # Streaming (le transport SSE est le flux mission ; sa readiness dépend du daemon)
+    checks.append({"name": "Streaming SSE", "ok": daemon_ok,
+                   "detail": "le flux mission suit l'état du daemon" if daemon_ok else "indisponible sans daemon"})
     return jsonify({"ok": True, "checks": checks})
 
 
@@ -283,7 +337,9 @@ def cli_doctor():
 @_cli_auth_required
 def cli_session_create():
     try:
-        data = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
         sid = "ses_" + _secrets.token_hex(8)
         now = datetime.datetime.utcnow().isoformat() + "Z"
         session = {
@@ -298,8 +354,7 @@ def cli_session_create():
         _cli_save_json(_CLI_SESSIONS_PATH, store)
         return jsonify({"ok": True, "session": session})
     except Exception as e:
-        import traceback
-        return jsonify({"ok": False, "error": str(e), "trace": traceback.format_exc()}), 500
+        return jsonify({"ok": False, "error": f"session create failed: {e}"}), 500
 
 
 @cli_bp.route("/api/cli/session/list", methods=["GET"])
@@ -310,8 +365,10 @@ def cli_session_list():
     # Return summary, not full message history
     summaries = []
     for s in sessions:
+        if not isinstance(s, dict):
+            continue
         summaries.append({
-            "id": s["id"], "created_at": s["created_at"], "updated_at": s["updated_at"],
+            "id": s.get("id", ""), "created_at": s.get("created_at", ""), "updated_at": s.get("updated_at", ""),
             "workspace": s.get("workspace", ""), "permissions": s.get("permissions", ""),
             "message_count": len(s.get("messages", [])),
             "has_mission": s.get("mission_state") is not None,
@@ -324,7 +381,7 @@ def cli_session_list():
 def cli_session_get(session_id):
     store = _cli_load_json(_CLI_SESSIONS_PATH)
     for s in store.get("sessions", []):
-        if s["id"] == session_id:
+        if isinstance(s, dict) and s.get("id") == session_id:
             return jsonify({"ok": True, "session": s})
     return jsonify({"ok": False, "error": "session not found"}), 404
 
@@ -334,7 +391,7 @@ def cli_session_get(session_id):
 def cli_session_resume(session_id):
     store = _cli_load_json(_CLI_SESSIONS_PATH)
     for s in store.get("sessions", []):
-        if s["id"] == session_id:
+        if isinstance(s, dict) and s.get("id") == session_id:
             s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
             _cli_save_json(_CLI_SESSIONS_PATH, store)
             return jsonify({"ok": True, "session": s})
@@ -346,7 +403,7 @@ def cli_session_resume(session_id):
 def cli_session_delete(session_id):
     store = _cli_load_json(_CLI_SESSIONS_PATH)
     before = len(store.get("sessions", []))
-    store["sessions"] = [s for s in store.get("sessions", []) if s["id"] != session_id]
+    store["sessions"] = [s for s in store.get("sessions", []) if isinstance(s, dict) and s.get("id") != session_id]
     _cli_save_json(_CLI_SESSIONS_PATH, store)
     return jsonify({"ok": True, "deleted": before - len(store["sessions"])})
 
@@ -412,10 +469,10 @@ def cli_chat():
 def _cli_session_append_message(session_id, user_msg, assistant_msg):
     store = _cli_load_json(_CLI_SESSIONS_PATH)
     for s in store.get("sessions", []):
-        if s["id"] == session_id:
+        if isinstance(s, dict) and s.get("id") == session_id:
             if user_msg:
-                s["messages"].append(user_msg)
-            s["messages"].append(assistant_msg)
+                s.setdefault("messages", []).append(user_msg)
+            s.setdefault("messages", []).append(assistant_msg)
             s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
             break
     _cli_save_json(_CLI_SESSIONS_PATH, store)
@@ -441,7 +498,7 @@ def cli_permissions_set():
     if session_id:
         store = _cli_load_json(_CLI_SESSIONS_PATH)
         for s in store.get("sessions", []):
-            if s["id"] == session_id:
+            if isinstance(s, dict) and s.get("id") == session_id:
                 s["permissions"] = level
                 break
         _cli_save_json(_CLI_SESSIONS_PATH, store)
@@ -686,6 +743,82 @@ def _cli_discover_mcp(workspace_path):
     return servers
 
 
+_CLI_MCP_SPAWN_TIMEOUT = 12.0  # seconds for init + one JSON-RPC round-trip
+
+def _cli_mcp_rpc(server, method, params, timeout=_CLI_MCP_SPAWN_TIMEOUT, cwd=None):
+    """Run one JSON-RPC request against an MCP stdio server with a bounded wait.
+
+    Never leaves a spawned process alive on failure and never blocks a Flask
+    thread indefinitely. Returns (result_or_None, error_or_None)."""
+    cmd = [server["command"]] + list(server.get("args", []))
+    if not cmd or not cmd[0]:
+        return None, "MCP server command is empty"
+    env = {**os.environ, **server.get("env", {})}
+    proc = None
+    reader = None
+    try:
+        import errno as _errno
+        import select as _select
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, env=env, cwd=cwd or os.getcwd())
+        reader = proc.stdout
+        reader_fd = reader.fileno()
+        deadline = time.monotonic() + timeout
+
+        def request(mid, method, params):
+            payload = json.dumps({"jsonrpc": "2.0", "id": mid, "method": method,
+                                  "params": params}) + "\n"
+            if proc.stdin is None or proc.stdin.closed:
+                raise OSError("MCP stdin closed")
+            proc.stdin.write(payload.encode())
+            proc.stdin.flush()
+
+        request(1, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+                                  "clientInfo": {"name": "aurora-cli", "version": _CLI_VERSION}})
+        request(2, method, params)
+        buf = b""
+        while True:
+            while b"\n" in buf:
+                line, _, buf = buf.partition(b"\n")
+                try:
+                    msg = json.loads(line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(msg, dict) and msg.get("id") == 2:
+                    return msg, None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, "MCP server timed out (no response)"
+            ready, _, _ = _select.select([reader_fd], [], [], min(remaining, 5.0))
+            if not ready:
+                continue
+            chunk = os.read(reader_fd, 65536)
+            if not chunk:
+                return None, "MCP server closed while waiting for response"
+            buf += chunk
+            if len(buf) > 1_000_000:
+                return None, "MCP server response too large"
+    except OSError as e:
+        return None, f"MCP request failed: {e}"
+    finally:
+        try:
+            if reader is not None and not reader.closed:
+                reader.close()
+        except Exception:
+            pass
+        try:
+            if proc is not None:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2.0)
+        except Exception:
+            pass
+
+
 @cli_bp.route("/api/cli/mcp/list", methods=["GET"])
 @_cli_auth_required
 def cli_mcp_list():
@@ -698,77 +831,49 @@ def cli_mcp_list():
 @_cli_auth_required
 def cli_mcp_tools():
     """List tools from all MCP servers (spawns each, sends tools/list)."""
-    workspace = request.args.get("workspace", WORKSPACE)
+    workspace = request.args.get("workspace") or WORKSPACE
     servers = _cli_discover_mcp(workspace)
     all_tools = []
+    errors = []
     for srv in servers:
-        try:
-            cmd = [srv["command"]] + srv["args"]
-            env = {**os.environ, **srv.get("env", {})}
-            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.DEVNULL, env=env, cwd=workspace)
-            # Send initialize
-            init_msg = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                                   "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                                              "clientInfo": {"name": "aurora-cli", "version": _CLI_VERSION}}}) + "\n"
-            proc.stdin.write(init_msg.encode())
-            proc.stdin.flush()
-            # Read init response
-            proc.stdout.readline()
-            # Send tools/list
-            list_msg = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n"
-            proc.stdin.write(list_msg.encode())
-            proc.stdin.flush()
-            resp_line = proc.stdout.readline().decode("utf-8", errors="replace")
-            proc.terminate()
-            try:
-                resp = json.loads(resp_line)
-                tools = resp.get("result", {}).get("tools", [])
-                for t in tools:
-                    all_tools.append({"server": srv["name"], "name": t.get("name", ""),
-                                      "description": t.get("description", ""),
-                                      "schema": t.get("inputSchema", {})})
-            except Exception:
-                pass
-        except Exception:
+        resp, err = _cli_mcp_rpc(srv, "tools/list", {}, cwd=workspace)
+        if err:
+            errors.append({"server": srv["name"], "error": err})
             continue
-    return jsonify({"ok": True, "tools": all_tools, "total": len(all_tools)})
+        try:
+            for t in resp.get("result", {}).get("tools", []):
+                all_tools.append({"server": srv["name"], "name": t.get("name", ""),
+                                  "description": t.get("description", ""),
+                                  "schema": t.get("inputSchema", {})})
+        except AttributeError:
+            pass
+    return jsonify({"ok": True, "tools": all_tools, "total": len(all_tools), "errors": errors})
 
 
 @cli_bp.route("/api/cli/mcp/call", methods=["POST"])
 @_cli_auth_required
 def cli_mcp_call():
     """Call an MCP tool by server name + tool name."""
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
     server_name = data.get("server", "")
     tool_name = data.get("tool", "")
     arguments = data.get("arguments", {})
-    workspace = data.get("workspace", WORKSPACE)
+    if not isinstance(arguments, dict):
+        return jsonify({"ok": False, "error": "arguments must be an object"}), 400
+    workspace = data.get("workspace") or WORKSPACE
     servers = _cli_discover_mcp(workspace)
     srv = next((s for s in servers if s["name"] == server_name), None)
     if not srv:
         return jsonify({"ok": False, "error": f"MCP server '{server_name}' not found"}), 404
-    try:
-        cmd = [srv["command"]] + srv["args"]
-        env = {**os.environ, **srv.get("env", {})}
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env, cwd=workspace)
-        # Initialize
-        proc.stdin.write((json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                                      "params": {"protocolVersion": "2024-11-05", "capabilities": {},
-                                                 "clientInfo": {"name": "aurora-cli", "version": _CLI_VERSION}}}) + "\n").encode())
-        proc.stdin.flush()
-        proc.stdout.readline()
-        # Call tool
-        proc.stdin.write((json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-                                      "params": {"name": tool_name, "arguments": arguments}}) + "\n").encode())
-        proc.stdin.flush()
-        resp_line = proc.stdout.readline().decode("utf-8", errors="replace")
-        proc.terminate()
-        resp = json.loads(resp_line)
-        return jsonify({"ok": True, "result": resp.get("result", {})})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)[:300]}), 500
+    resp, err = _cli_mcp_rpc(srv, "tools/call", {"name": tool_name, "arguments": arguments},
+                             cwd=workspace)
+    if err:
+        return jsonify({"ok": False, "error": err}), 504
+    if resp is None:
+        return jsonify({"ok": False, "error": "empty MCP response"}), 502
+    return jsonify({"ok": True, "result": resp.get("result", {})})
 
 
 # --- Skills ---
@@ -842,16 +947,36 @@ def cli_skills_read():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _cli_safe_skill_name(name):
+    """Normalize a skill name to [a-z0-9_-], forbidding path traversal."""
+    if not isinstance(name, str):
+        return ""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", name).strip("-")
+    if not cleaned or name != cleaned or cleaned in (".", ".."):
+        return ""
+    return cleaned[:80]
+
+
 @cli_bp.route("/api/cli/skills/create", methods=["POST"])
 @_cli_auth_required
 def cli_skills_create():
-    data = request.get_json(silent=True) or {}
-    name = data.get("name", "new-skill")
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"ok": False, "error": "JSON object required"}), 400
+    name = _cli_safe_skill_name(data.get("name", "new-skill"))
+    if not name:
+        return jsonify({"ok": False, "error": "Invalid skill name (only letters, digits, '-', '_')"}), 400
     level = data.get("level", "user")
+    if level not in ("project", "user", "global"):
+        return jsonify({"ok": False, "error": "Invalid level (project|user|global)"}), 400
     description = data.get("description", "")
     triggers = data.get("triggers", [])
+    if not isinstance(triggers, list) or not all(isinstance(t, str) for t in triggers):
+        return jsonify({"ok": False, "error": "triggers must be a list of strings"}), 400
     if level == "project":
         base = os.path.join(WORKSPACE, ".aurora", "skills")
+    elif level == "global" and platform.system() != "Windows":
+        base = "/etc/aurora/skills"
     else:
         base = os.path.expanduser("~/.aurora/skills")
     skill_dir = os.path.join(base, name)
@@ -1021,6 +1146,19 @@ def _cli_load_context_for_workspace(workspace_path):
 
 # --- Mission system (autonomous mode) ---
 
+@cli_bp.route("/api/cli/artifacts/<token>", methods=["GET"])
+@_cli_auth_required
+def cli_artifact_download(token):
+    from cli_artifacts import load_artifact
+    try:
+        path, metadata = load_artifact(token)
+    except (OSError, ValueError, KeyError):
+        return jsonify({"ok": False, "error": "artifact not found"}), 404
+    return send_file(
+        path, as_attachment=True, download_name=pathlib.PurePosixPath(metadata["filename"]).name,
+        conditional=True, etag=metadata["sha256"], max_age=0,
+    )
+
 @cli_bp.route("/api/cli/mission/start", methods=["POST"])
 @_cli_auth_required
 def cli_mission_start():
@@ -1044,6 +1182,32 @@ def cli_mission_start():
     session_id = data.get("session_id")
     model = data.get("model") or _ext_default_model()
     mission_id = "mis_" + _secrets.token_hex(8)
+
+    # Récupération de l'historique et persistance du message utilisateur dans la session
+    history = []
+    if session_id:
+        try:
+            store = _cli_load_json(_CLI_SESSIONS_PATH)
+            for s in store.get("sessions", []):
+                if s.get("id") == session_id:
+                    raw_messages = s.get("messages", [])
+                    history = [
+                        {"role": m.get("role", "user"), "content": m.get("content", "")}
+                        for m in raw_messages[-10:]
+                        if m.get("content")
+                    ]
+                    s.setdefault("messages", []).append({
+                        "role": "user",
+                        "content": request_text,
+                        "mission_id": mission_id,
+                        "ts": time.time()
+                    })
+                    s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    break
+            _cli_save_json(_CLI_SESSIONS_PATH, store)
+        except Exception as e:
+            print(f"[BRIDGE] Error updating session with user request: {e}")
+
     mission = {
         "id": mission_id, "request": request_text, "status": "planning",
         "workspace": workspace, "permissions": permissions, "model": model,
@@ -1052,19 +1216,25 @@ def cli_mission_start():
         "steps": [], "files_changed": [], "sources_consulted": [],
         "agents_used": [], "errors": [],
         "events": [],  # SSE events buffer
+        "accumulated_text": "",
     }
-    _CLI_MISSIONS[mission_id] = mission
+    _cli_prune_missions()
+    with _CLI_MISSIONS_LOCK:
+        _CLI_MISSIONS[mission_id] = mission
     
     # Rapatriement de la logique vers le vrai Cerveau (Daemon AGI) via IPC
     published = _cli_publish_ipc("mission.start", {
         "mission_id": mission_id,
+        "session_id": session_id,
         "request": request_text,
+        "history": history,
         "workspace": workspace,
         "permissions": permissions,
         "model": model
     })
     if not published:
-        _CLI_MISSIONS.pop(mission_id, None)
+        with _CLI_MISSIONS_LOCK:
+            _CLI_MISSIONS.pop(mission_id, None)
         return jsonify({"ok": False, "error": "mission daemon unavailable"}), 503
     
     return jsonify({"ok": True, "mission_id": mission_id, "status": "planning"})
@@ -1093,13 +1263,34 @@ def _cli_record_mission_event(payload):
         mission["finished_at"] = time.time()
         status = "failed"
     elif event_type == "mission_complete":
-        mission["result"] = event.get("result", "")
+        result_text = event.get("result", "") or mission.get("accumulated_text", "")
+        mission["result"] = result_text
         mission["finished_at"] = time.time()
-        status = "completed"
+        status = "stopped" if event.get("stopped") else "completed"
+        # Enregistrement du résultat assistant dans la session pour la mémoire conversationnelle
+        session_id = mission.get("session_id")
+        if session_id and result_text:
+            try:
+                store = _cli_load_json(_CLI_SESSIONS_PATH)
+                for s in store.get("sessions", []):
+                    if s.get("id") == session_id:
+                        s.setdefault("messages", []).append({
+                            "role": "assistant",
+                            "content": result_text,
+                            "mission_id": mission_id,
+                            "ts": time.time()
+                        })
+                        s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+                        break
+                _cli_save_json(_CLI_SESSIONS_PATH, store)
+            except Exception as e:
+                print(f"[BRIDGE] Error recording assistant response in session: {e}")
     else:
         if event_type == "step_start":
             mission["steps"].append(event)
-        status = "running"
+        elif event_type == "token":
+            mission["accumulated_text"] = mission.get("accumulated_text", "") + event.get("content", "")
+        status = "stopping" if mission.get("status") == "stopping" else "running"
     mission["events"].append(event)
     mission["status"] = status
 
@@ -1189,7 +1380,12 @@ def cli_mission_stream(mission_id):
             _time.sleep(0.5)
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                    headers={
+                        "Cache-Control": "no-cache, no-transform",
+                        "X-Accel-Buffering": "no",
+                        "Content-Type": "text/event-stream",
+                        "Connection": "keep-alive",
+                    })
 
 
 @cli_bp.route("/api/cli/mission/<mission_id>/status", methods=["GET"])
@@ -1214,9 +1410,11 @@ def cli_mission_stop(mission_id):
     mission = _CLI_MISSIONS.get(mission_id)
     if not mission:
         return jsonify({"ok": False, "error": "mission not found"}), 404
-    mission["status"] = "stopped"
-    mission["finished_at"] = time.time()
-    _cli_mission_emit(mission_id, "mission_complete", {"stopped": True,
-                      "total_seconds": round(mission["finished_at"] - mission["started_at"], 1)})
-    return jsonify({"ok": True, "status": "stopped"})
-
+    if mission["status"] in ("completed", "failed", "stopped"):
+        return jsonify({"ok": True, "status": mission["status"]})
+    previous = mission["status"]
+    mission["status"] = "stopping"
+    if not _cli_publish_ipc("mission.stop", {"mission_id": mission_id}):
+        mission["status"] = previous
+        return jsonify({"ok": False, "error": "mission daemon unavailable"}), 503
+    return jsonify({"ok": True, "status": mission["status"]}), 202

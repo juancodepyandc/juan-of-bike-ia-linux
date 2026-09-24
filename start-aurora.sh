@@ -72,9 +72,13 @@ if [ -n "$COMFY_DIR" ]; then
   else
     COMFY_PY="python3"
   fi
+  COMFY_MEMORY_ARGS=()
+  while IFS= read -r arg; do
+    [ -z "$arg" ] || COMFY_MEMORY_ARGS+=("$arg")
+  done < <("$APP_PY" "$APP_DIR/comfy_runtime.py" "$COMFY_DIR")
   (
     cd "$COMFY_DIR"
-    exec "$COMFY_PY" main.py --listen 127.0.0.1 --port 8188
+    exec "$COMFY_PY" main.py --listen 127.0.0.1 --port 8188 "${COMFY_MEMORY_ARGS[@]}"
   ) >"$LOG_DIR/comfyui.log" 2>&1 &
 else
   echo "ComfyUI introuvable sous modele/comfyui; il sera lance a la demande si installe plus tard."
@@ -224,7 +228,8 @@ fi
 
 # Surveillance de l'etat -> publie "ouvert/ferme" sur le repo aurora-live automatiquement
 if [ -x "$ROOT_DIR/scripts/aurora-status-watcher.sh" ]; then
-  pkill -f "aurora-status-watcher.sh" 2>/dev/null || true
+  pkill -9 -f "aurora-status-watcher.sh" 2>/dev/null || true
+  sleep 0.5
   setsid bash "$ROOT_DIR/scripts/aurora-status-watcher.sh" >"$LOG_DIR/status-watcher.log" 2>&1 </dev/null &
   echo "  Surveillance etat: active (repo aurora-live tenu a jour ouvert/ferme)"
 fi

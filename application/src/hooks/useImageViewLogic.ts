@@ -837,6 +837,7 @@ export function useImageViewLogic() {
           }
         }
 
+        let pendingPromptId: string | undefined
         if (!blob) {
         const workflow = useKontext && groundedReference && kontextModel
           ? createFluxKontextWorkflow({
@@ -879,6 +880,7 @@ export function useImageViewLogic() {
         const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
         const promptId = parsed?.prompt_id as string | undefined
         if (!promptId) throw new Error('ComfyUI n\'a pas retourné de prompt_id')
+        pendingPromptId = promptId
 
         try {
           localStorage.setItem('aurora.pendingComfyPrompt.v1', JSON.stringify({
@@ -910,9 +912,14 @@ export function useImageViewLogic() {
         if (await imageBlobLooksBlack(blob)) {
           throw new Error('Rendu noir detecte: ComfyUI a termine sans erreur mais le PNG est inutilisable. Aurora a libere la memoire; relance avec moins de batch/steps ou verifie les logs Comfy.')
         }
-        try { localStorage.removeItem('aurora.pendingComfyPrompt.v1') } catch {}
         const cardId = `img-${Date.now()}-${k}`
         const url = await saveBlob(cardId, blob, 'image')
+        try {
+          const pending = JSON.parse(localStorage.getItem('aurora.pendingComfyPrompt.v1') || 'null')
+          if (pendingPromptId && pending?.promptId === pendingPromptId) {
+            localStorage.removeItem('aurora.pendingComfyPrompt.v1')
+          }
+        } catch {}
         const card: GeneratedCard = {
           id: cardId, url,
           prompt: text,

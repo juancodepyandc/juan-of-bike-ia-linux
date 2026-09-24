@@ -33,42 +33,61 @@ from pathlib import Path
 
 
 def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
-    """Copie un GLB en retirant materiaux/textures/images (geometrie pure)."""
+    """Write a complete geometry GLB atomically, discarding unreferenced image bytes."""
     try:
-        from pygltflib import GLTF2
-        g = GLTF2().load(str(src))
-        for mesh in g.meshes or []:
-            for prim in mesh.primitives or []:
-                prim.material = None
-        g.materials = []
-        g.textures = []
-        g.images = []
-        g.samplers = []
-        g.save(str(dst))
-        return {"ok": True, "fichier": str(dst)}
-    except Exception as exc1:
-        # Fallback vers le venv python de l'application
-        try:
-            import subprocess
-            vpy = str(Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python")
-            if os.path.isfile(vpy) and vpy != sys.executable:
-                code = f"from pygltflib import GLTF2; g = GLTF2().load('{src}'); [setattr(p, 'material', None) for m in g.meshes or [] for p in m.primitives or []]; g.materials=[]; g.textures=[]; g.images=[]; g.samplers=[]; g.save('{dst}')"
-                r = subprocess.run([vpy, "-c", code], capture_output=True, text=True, timeout=60)
-                if r.returncode == 0 and os.path.isfile(str(dst)):
-                    return {"ok": True, "fichier": str(dst)}
-        except Exception:
-            pass
-        # Fallback vers Blender headless
-        try:
-            import shutil, subprocess
-            blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "/usr/bin/blender"
-            bcode = f"import bpy; bpy.ops.wm.read_factory_settings(use_empty=True); bpy.ops.import_scene.gltf(filepath='{src}'); [bpy.data.materials.remove(m, do_unlink=True) for m in list(bpy.data.materials)]; bpy.ops.export_scene.gltf(filepath='{dst}', export_format='GLB', export_yup=True, export_animations=True)"
-            r = subprocess.run([blender, "-b", "--python-expr", bcode], capture_output=True, text=True, timeout=120)
-            if r.returncode == 0 and os.path.isfile(str(dst)):
-                return {"ok": True, "fichier": str(dst)}
-        except Exception as exc2:
-            return {"ok": False, "error": f"{exc1}; {exc2}"}
-        return {"ok": False, "error": repr(exc1)}
+        import glb_io
+        graph, blob = glb_io.load(src)
+        for mesh in graph.get("meshes", []):
+            for primitive in mesh.get("primitives", []):
+                primitive.pop("material", None)
+        for key in ("materials", "textures", "images", "samplers"):
+            graph.pop(key, None)
+
+        # Meshopt embeds direct binary offsets outside bufferViews; leave that
+        # representation intact. Ordinary and Draco buffers can be repacked.
+        if "EXT_meshopt_compression" not in graph.get("extensionsUsed", []):
+            used = set()
+            def references(value):
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        if key == "bufferView":
+                            used.add(child)
+                        else:
+                            references(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        references(child)
+            references(graph)
+            remap, views, compact = {}, [], bytearray()
+            for index in sorted(used):
+                view = dict(graph["bufferViews"][index])
+                if view.get("buffer", 0) != 0:
+                    raise ValueError("External geometry buffers cannot be packaged as a GLB")
+                while len(compact) % 4:
+                    compact.append(0)
+                start = view.get("byteOffset", 0)
+                view["byteOffset"] = len(compact)
+                compact.extend(memoryview(blob)[start:start + view["byteLength"]])
+                remap[index] = len(views)
+                views.append(view)
+            def reindex(value):
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        if key == "bufferView":
+                            value[key] = remap[child]
+                        else:
+                            reindex(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        reindex(child)
+            reindex(graph)
+            graph["bufferViews"] = views
+            graph["buffers"] = [{"byteLength": len(compact)}]
+            blob = compact
+        size = glb_io.save(dst, graph, blob)
+        return {"ok": True, "fichier": str(dst), "size_bytes": size}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def organiser(run_dir: str | Path, run_id: str, *,
@@ -99,6 +118,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
         d.mkdir(parents=True, exist_ok=True)
 
     deplaces: list[str] = []
+    errors: list[str] = []
 
     def _mv(src: Path, dst: Path) -> Path | None:
         try:
@@ -127,6 +147,8 @@ def organiser(run_dir: str | Path, run_id: str, *,
             geo = _glb_sans_materiaux(p, d_modele / "modele_geometrie.glb")
             if geo.get("ok"):
                 livraison["modele_geometrie"] = geo["fichier"]
+            else:
+                errors.append(geo.get("error", "Geometry export failed"))
 
     p_coul = d_modele / "modele_couleurs.glb"
     p_geo = d_modele / "modele_geometrie.glb"
@@ -142,6 +164,8 @@ def organiser(run_dir: str | Path, run_id: str, *,
             geo = _glb_sans_materiaux(p, d_mouv / "mouvement_geometrie.glb")
             if geo.get("ok"):
                 livraison["mouvement_geometrie"] = geo["fichier"]
+            else:
+                errors.append(geo.get("error", "Motion geometry export failed"))
 
     m_coul = d_mouv / "mouvement_couleurs.glb"
     m_geo = d_mouv / "mouvement_geometrie.glb"
@@ -307,7 +331,17 @@ def organiser(run_dir: str | Path, run_id: str, *,
     except Exception:  # noqa: BLE001
         pass
 
-    return {"ok": True, "livraison": livraison, "deplaces": len(deplaces),
+    required = [d_modele / "modele_couleurs.glb", d_modele / "modele_geometrie.glb"]
+    if avec_mouvement:
+        required.extend([d_mouv / "mouvement_couleurs.glb", d_mouv / "mouvement_geometrie.glb"])
+    import glb_io
+    for path in required:
+        try:
+            glb_io.load(path)
+        except (OSError, ValueError, KeyError) as exc:
+            errors.append(f"{path.name}: {exc}")
+    return {"ok": not errors, "error": "; ".join(errors) if errors else None,
+            "livraison": livraison, "deplaces": len(deplaces),
             "arborescence": ["prompt/", "reference/", "modele/", "mouvement/",
                              "journal/", "travail/"]}
 

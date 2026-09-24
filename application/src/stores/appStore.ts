@@ -132,7 +132,7 @@ interface AppState {
   checkingConfig: boolean
   setCheckingConfig: (v: boolean) => void
   runtimeServices: Record<RuntimeServiceId, RuntimeServiceInfo>
-  setRuntimeServices: (next: Record<RuntimeServiceId, RuntimeServiceInfo>) => void
+  setRuntimeServices: (next: Partial<Record<RuntimeServiceId, RuntimeServiceInfo>>) => void
   mergeRuntimeService: (id: RuntimeServiceId, patch: Partial<RuntimeServiceInfo>) => void
   runtimeTask: RuntimeTaskState
   setRuntimeTask: (patch: Partial<RuntimeTaskState>) => void
@@ -192,7 +192,10 @@ export const useAppStore = create<AppState>()(
       checkingConfig: false,
       setCheckingConfig: (v) => set({ checkingConfig: v }),
       runtimeServices: INITIAL_RUNTIME_SERVICES,
-      setRuntimeServices: (next) => set({ runtimeServices: next }),
+      setRuntimeServices: (next) => set({ runtimeServices: {
+        ollama: { ...INITIAL_RUNTIME_SERVICES.ollama, ...next.ollama },
+        comfyui: { ...INITIAL_RUNTIME_SERVICES.comfyui, ...next.comfyui },
+      } }),
       mergeRuntimeService: (id, patch) =>
         set((state) => ({
           runtimeServices: {

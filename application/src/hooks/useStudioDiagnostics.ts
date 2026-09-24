@@ -42,19 +42,12 @@ export function useStudioDiagnostics(options: StudioDiagnosticsOptions = {}): St
   const [checking, setChecking] = useState(false)
   const requiredFiles = options.requiredFiles ?? []
   const requiredFilesKey = JSON.stringify(requiredFiles)
-  const tauriReady = isTauriRuntime() || isCloudRuntime()
+  const tauriReady = isTauriRuntime() || Boolean(workspacePath)
 
   useEffect(() => {
     let cancelled = false
 
     async function inspectWorkspace() {
-      if (!tauriReady) {
-        setWorkspacePath(null)
-        setFileChecks({})
-        setChecking(false)
-        return
-      }
-
       setChecking(true)
 
       try {
@@ -96,7 +89,7 @@ export function useStudioDiagnostics(options: StudioDiagnosticsOptions = {}): St
     return () => {
       cancelled = true
     }
-  }, [requiredFilesKey, tauriReady])
+  }, [requiredFilesKey])
 
   const requirements = useMemo<StudioRequirement[]>(() => {
     const items: StudioRequirement[] = []
@@ -105,12 +98,12 @@ export function useStudioDiagnostics(options: StudioDiagnosticsOptions = {}): St
       const cloudReady = isCloudRuntime()
       items.push({
         id: 'runtime',
-        label: 'Shell natif',
+        label: isTauriRuntime() ? 'Shell natif' : 'Bridge Python',
         detail: tauriReady
           ? cloudReady
-            ? 'Cloud RunPod actif, acces distant disponible.'
-            : 'Tauri natif actif, acces local disponible.'
-          : 'Ce module attend le shell Tauri pour lire le disque et lancer les workflows lourds.',
+            ? 'Bridge distant actif, acces au serveur disponible.'
+            : 'Acces au poste et aux workflows disponible.'
+          : 'Le module attend une connexion au bridge pour acceder aux fichiers et aux moteurs.',
         ready: tauriReady,
         tone: tauriReady ? 'good' : 'warn',
       })

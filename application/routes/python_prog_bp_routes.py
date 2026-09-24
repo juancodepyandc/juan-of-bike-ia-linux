@@ -16,6 +16,7 @@ _python_progress_lock = threading.Lock()
 
 def _update_job_progress_from_line(job_id: str, line: str):
     """Parse PROGRESS line and update _python_jobs[job_id] with rich progress fields."""
+    from routes.python_bp_routes import _python_jobs, _python_jobs_lock
     if not line or not line.startswith("PROGRESS:"):
         return
     content = line[9:].strip()

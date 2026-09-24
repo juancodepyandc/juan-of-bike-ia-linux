@@ -13,8 +13,8 @@ update-aurora.bat appelle ce script pour :
      "https://*.trycloudflare.com"
   4. écrire l'URL trouvée dans tunnel.txt + l'afficher en gros
 
-Le bridge_server.py reste sur :3001, le tunnel pointe dessus, Vite tourne
-en proxy via le bridge sur :1420.
+Le bridge_server.py reste sur :3001, le tunnel pointe dessus, Vite (mode dev)
+proxy ses /api et /proxy vers le bridge sur :3001 aussi.
 """
 
 from __future__ import annotations

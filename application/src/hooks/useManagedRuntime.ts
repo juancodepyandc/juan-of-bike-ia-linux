@@ -8,7 +8,6 @@ import {
   runtimePrepareOllamaModel,
   runtimeReleaseService,
 } from './useTauri.ts'
-import { isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
 import { getErrorMessage } from '../utils/errors.ts'
 import {
   AUXILIARY_ANALYSIS_MODEL,
@@ -78,8 +77,6 @@ export function useManagedRuntime() {
   const { log: moduleLog } = useModuleLogStore()
 
   const syncRuntime = useCallback(async () => {
-    if (!isTauriRuntime() && !isCloudRuntime()) return
-
     const services = await runtimeInspectServices()
     const mapped = services.reduce((accumulator, service) => {
       accumulator[service.id] = service
@@ -160,57 +157,6 @@ export function useManagedRuntime() {
       ) => {
         setRuntimeTask({ phase, detail, progress })
         setGenerationJob(jobId, { phase, detail, progress })
-      }
-
-      if (!isTauriRuntime() && !isCloudRuntime()) {
-        try {
-          setPhase('Execution locale navigateur en cours.', 42, 'generate')
-
-          const result = await job({ setPhase })
-
-          setGenerationJob(jobId, {
-            status: 'done',
-            phase: 'done',
-            detail: 'Session terminee.',
-            progress: 100,
-            finishedAt: Date.now(),
-            error: null,
-          })
-          setRuntimeTask({
-            active: true,
-            phase: 'done',
-            detail: 'Session terminee. Etat conserve sans redemarrage.',
-            progress: 100,
-            finishedAt: Date.now(),
-            error: null,
-          })
-
-          return result
-        } catch (error) {
-          const isAbort = error instanceof Error && error.name === 'AbortError'
-          const message = getErrorMessage(error, 'Erreur runtime inconnue.')
-
-          setGenerationJob(jobId, {
-            status: isAbort ? 'cancelled' : 'error',
-            phase: isAbort ? 'done' : 'error',
-            detail: isAbort ? 'Generation interrompue.' : message,
-            progress: 100,
-            finishedAt: Date.now(),
-            error: isAbort ? null : message,
-          })
-          setRuntimeTask({
-            active: true,
-            phase: isAbort ? 'done' : 'error',
-            detail: isAbort ? 'Generation interrompue.' : message,
-            progress: 100,
-            finishedAt: Date.now(),
-            error: isAbort ? null : message,
-          })
-
-          throw error
-        } finally {
-          pruneGenerationJobs()
-        }
       }
 
       try {

@@ -2,7 +2,8 @@
 # Publie l'ETAT du studio dans le repo aurora-live (README, section <!--STATUS-->) et pousse sur GitHub :
 #  - OUVERT  : affiche l'adresse publique en cours (tunnel Cloudflare)
 #  - FERME   : affiche une page maintenance + contacts
-# Mode : "open" | "closed" | "auto" (auto = teste si l'app repond sur 127.0.0.1:1420). Defaut auto.
+# Mode : "open" | "closed" | "auto" (auto = teste si le bridge, cible du
+# tunnel, repond sur 127.0.0.1:3001). Defaut auto.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,7 +15,9 @@ MODE="${1:-auto}"
 [ -d "$LIVE_REPO/.git" ] || { echo "[publish] $LIVE_REPO absent"; exit 0; }
 
 if [ "$MODE" = "auto" ]; then
-  if curl -s -m 5 -o /dev/null "http://127.0.0.1:1420/" 2>/dev/null; then MODE="open"; else MODE="closed"; fi
+  # Le tunnel route vers le bridge :3001 (pas l'UI Vite :1420). C'est lui qui
+  # rend l'URL publique joignable ; s'il tombe, éviter de publier 'open'.
+  if curl -s -m 5 -o /dev/null "http://127.0.0.1:3001/api/health" 2>/dev/null; then MODE="open"; else MODE="closed"; fi
 fi
 
 STAMP="$(date '+%Y-%m-%d %H:%M')"

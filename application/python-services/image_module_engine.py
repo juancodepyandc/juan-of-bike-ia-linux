@@ -144,6 +144,7 @@ def build_comfy_flux_workflow(
     seed: int,
     prefix: str
 ) -> Dict[str, Any]:
+    """Use the same distilled FLUX sampling path as the image workspace."""
     workflow = {
         "11": {
             "class_type": "CLIPLoader",
@@ -172,12 +173,16 @@ def build_comfy_flux_workflow(
                 "text": prompt
             }
         },
-        "33": {
-            "class_type": "CLIPTextEncode",
+        "13": {
+            "class_type": "ModelSamplingFlux",
             "inputs": {
-                "clip": ["11", 0],
-                "text": negative_prompt
+                "model": ["12", 0], "max_shift": 1.15, "base_shift": 0.5,
+                "width": width, "height": height
             }
+        },
+        "14": {
+            "class_type": "FluxGuidance",
+            "inputs": {"conditioning": ["6", 0], "guidance": guidance}
         },
         "27": {
             "class_type": "EmptyFlux2LatentImage",
@@ -188,11 +193,10 @@ def build_comfy_flux_workflow(
             }
         },
         "40": {
-            "class_type": "Flux2Scheduler",
+            "class_type": "BasicScheduler",
             "inputs": {
-                "steps": steps,
-                "width": width,
-                "height": height
+                "steps": steps, "scheduler": "simple", "denoise": 1.0,
+                "model": ["13", 0]
             }
         },
         "41": {
@@ -202,12 +206,10 @@ def build_comfy_flux_workflow(
             }
         },
         "26": {
-            "class_type": "CFGGuider",
+            "class_type": "BasicGuider",
             "inputs": {
-                "model": ["12", 0],
-                "positive": ["6", 0],
-                "negative": ["33", 0],
-                "cfg": guidance
+                "model": ["13", 0],
+                "conditioning": ["14", 0]
             }
         },
         "42": {
@@ -262,29 +264,44 @@ def submit_comfy_prompt(workflow: Dict[str, Any]) -> Optional[str]:
         print(f"[ComfyUI] Queue error: {exc}")
         return None
 
-def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1200) -> Optional[bytes]:
-    start = time.time()
-    while time.time() - start < timeout_s:
+def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1800) -> bytes:
+    """Follow the submitted job and reject failed or incomplete image output."""
+    deadline = time.monotonic() + timeout_s
+    failures = 0
+    while time.monotonic() < deadline:
         try:
             req = urllib.request.Request(f"{COMFY_BASE}/history/{prompt_id}")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 hist = json.loads(resp.read().decode("utf-8"))
-                if prompt_id in hist:
-                    outputs = hist[prompt_id].get("outputs", {})
-                    for node_id, node_out in outputs.items():
-                        images = node_out.get("images", [])
-                        if images:
-                            fn = images[0].get("filename")
-                            sub = images[0].get("subfolder", "")
-                            t = images[0].get("type", "output")
-                            qs = urllib.parse.urlencode({"filename": fn, "subfolder": sub, "type": t})
-                            img_req = urllib.request.Request(f"{COMFY_BASE}/view?{qs}")
-                            with urllib.request.urlopen(img_req, timeout=15) as img_resp:
-                                return img_resp.read()
-        except Exception:
-            pass
+            failures = 0
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+            failures += 1
+            if failures >= 5:
+                raise RuntimeError(f"ComfyUI connection lost; job {prompt_id} retained") from exc
+            time.sleep(2.0)
+            continue
+        entry = hist.get(prompt_id)
+        if entry:
+            status = entry.get("status") or {}
+            failure = next((message for kind, message in status.get("messages", [])
+                            if kind in ("execution_error", "execution_interrupted")), None)
+            if failure is not None or status.get("status_str") == "error":
+                detail = (failure or {}).get("exception_message", "execution interrupted")
+                raise RuntimeError(f"ComfyUI job {prompt_id} failed: {detail}")
+            if not status or status.get("completed") or status.get("status_str") == "success":
+                for node_out in entry.get("outputs", {}).values():
+                    for image in node_out.get("images", []):
+                        if not image.get("filename") or image.get("type", "output") != "output":
+                            continue
+                        qs = urllib.parse.urlencode({"filename": image["filename"],
+                                                     "subfolder": image.get("subfolder", ""),
+                                                     "type": "output"})
+                        with urllib.request.urlopen(f"{COMFY_BASE}/view?{qs}", timeout=15) as response:
+                            return response.read()
+                if status.get("completed"):
+                    raise RuntimeError(f"ComfyUI job {prompt_id} completed without an image")
         time.sleep(2.0)
-    return None
+    raise TimeoutError(f"ComfyUI monitoring timed out; job {prompt_id} retained on server")
 
 # --- MAIN GENERATION PIPELINE ---
 
@@ -298,6 +315,7 @@ def generate_image_manifest(
     start_time = time.time()
     
     spec = direct_prompt(raw_prompt)
+    spec["steps"] = 28
     if force_category:
         spec["category"] = force_category
         
@@ -338,7 +356,7 @@ def generate_image_manifest(
                     p_id = submit_comfy_prompt(wf)
                     if p_id:
                         print(f"[ComfyUI] Job {p_id} queued on CUDA ({w}x{h}, {spec['steps']} steps)...")
-                        img_data = wait_for_comfy_image(p_id, timeout_s=360)
+                        img_data = wait_for_comfy_image(p_id)
                         if img_data:
                             engine_name = "flux2_dev_comfyui_cuda"
         except Exception as exc:
@@ -552,11 +570,13 @@ if __name__ == "__main__":
     parser.add_argument("prompt", type=str, help="User prompt description")
     parser.add_argument("--category", type=str, default=None, help="Force category")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Destination for this image package")
     parser.add_argument("--no-comfy", action="store_true", help="Disable ComfyUI live queue")
     args = parser.parse_args()
     
     manifest = generate_image_manifest(
         args.prompt,
+        output_dir=args.output_dir,
         force_category=args.category,
         seed=args.seed,
         use_comfy=not args.no_comfy

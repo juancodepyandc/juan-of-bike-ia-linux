@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, Response, send_file, current_app, abort, g, stream_with_context
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
+import bridge_server as bridge
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
 
 hardware_bp = Blueprint('hardware_bp', __name__)
@@ -18,6 +19,7 @@ def hardware():
         ram = round(psutil.virtual_memory().total / (1024 ** 3), 1)
         gpu_name = "GPU (utilise nvidia-smi pour details)"
         vram = 0
+        free_vram = 0
         try:
             nv = subprocess.check_output(
                 ["nvidia-smi", "--query-gpu=name,memory.total,memory.free", "--format=csv,noheader,nounits"],
@@ -26,6 +28,7 @@ def hardware():
             if len(nv) >= 3:
                 gpu_name = nv[0].strip()
                 vram = round(int(nv[1].strip()) / 1024, 1)
+                free_vram = round(int(nv[2].strip()) / 1024, 1)
         except Exception:
             pass
         return jsonify({
@@ -35,7 +38,7 @@ def hardware():
             "ram_gb": ram,
             "gpu": gpu_name,
             "vram_gb": vram,
-            "vram_free_gb": vram,
+            "vram_free_gb": free_vram,
         })
     except Exception as e:
         return jsonify({"os": platform.system(), "cpu": "unknown", "cores": 4, "ram_gb": 8, "gpu": "unknown", "vram_gb": 0, "vram_free_gb": 0})
@@ -48,7 +51,7 @@ def runtime_inspect():
     # Ollama
     ollama_ok = False
     try:
-        requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+        requests.get(f"{OLLAMA_URL}/api/tags", timeout=3).raise_for_status()
         ollama_ok = True
     except Exception:
         pass
@@ -58,9 +61,10 @@ def runtime_inspect():
         "detail": "Actif" if ollama_ok else "Non joignable", "path": None, "processId": None,
     })
     # ComfyUI — available = installe, running = repond sur HTTP
-    comfy_ok = _comfyui_is_ready()
-    comfyui_installed = COMFYUI_PATH is not None
-    started_by_app = _comfyui_process is not None and _comfyui_process.poll() is None
+    comfy_ok = bridge._comfyui_is_ready()
+    comfyui_installed = bridge.COMFYUI_PATH is not None
+    process = bridge._comfyui_process
+    started_by_app = process is not None and process.poll() is None
     services.append({
         "id": "comfyui", "label": "ComfyUI",
         "available": comfyui_installed,
@@ -70,8 +74,8 @@ def runtime_inspect():
         "detail": "Actif" if comfy_ok else (
             "Installe — demarrage automatique a la premiere generation" if comfyui_installed else "Non installe"
         ),
-        "path": COMFYUI_PATH,
-        "processId": _comfyui_process.pid if started_by_app else None,
+        "path": bridge.COMFYUI_PATH,
+        "processId": process.pid if started_by_app else None,
     })
     return jsonify(services)
 
@@ -84,5 +88,4 @@ def runtime_privilege():
 @hardware_bp.route("/api/runtime/prepare-model", methods=["POST"])
 def prepare_model():
     return jsonify({"ok": True, "detail": "Bridge Ready"})
-
 

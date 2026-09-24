@@ -29,7 +29,8 @@ def check_for_previous_crashes(brain):
                             metadata={"type": "auto_healing"}
                         )
                 task = asyncio.create_task(_heal_and_learn())
-                task.add_done_callback(lambda t: logging.error(f"[AUTO-HEALING] Echec: {t.exception()}") if t.exception() else logging.info("[AUTO-HEALING] Diagnostic terminé et encodé."))
+                brain.background_task = task
+                task.add_done_callback(lambda t: None if t.cancelled() else logging.error(f"[AUTO-HEALING] Echec: {t.exception()}") if t.exception() else logging.info("[AUTO-HEALING] Diagnostic terminé et encodé."))
                 
                 # Nettoie le log pour ne pas re-diagnostiquer en boucle
                 with open(log_file, 'w') as fw:
@@ -46,20 +47,45 @@ async def main():
 
     logger = logging.getLogger("AuroraAGI")
     logger.info("Démarrage du système nerveux (IPC Bus)...")
+    missions = brain.active_missions
+
+    async def execute_mission(payload):
+        mission_id = payload["mission_id"]
+        try:
+            await brain.stop_background_work()
+            await brain.swarm.run_mission(
+                mission_id=mission_id, request_text=payload.get("request"),
+                workspace=payload.get("workspace"), model=payload.get("model"),
+                permissions=payload.get("permissions"), memory_module=brain.memory,
+                history=payload.get("history"),
+            )
+        except asyncio.CancelledError:
+            await global_bus.publish("mission.event", {
+                "mission_id": mission_id,
+                "event": {"type": "mission_complete", "stopped": True, "result": "Mission arrêtée."},
+            })
+            raise
+        except Exception as exc:
+            logger.exception("Mission failed: %s", mission_id)
+            await global_bus.publish("mission.event", {
+                "mission_id": mission_id, "event": {"type": "error", "message": str(exc)},
+            })
+        finally:
+            missions.pop(mission_id, None)
     
     async def on_mission_start(payload):
         logger.info(f"[DAEMON] Nouvelle mission reçue : {payload.get('mission_id')}")
-        task = asyncio.create_task(brain.swarm.run_mission(
-            mission_id=payload.get("mission_id"),
-            request_text=payload.get("request"),
-            workspace=payload.get("workspace"),
-            model=payload.get("model"),
-            permissions=payload.get("permissions"),
-            memory_module=brain.memory
-        ))
-        task.add_done_callback(lambda t: logger.error(f"[DAEMON] Swarm crash: {t.exception()}") if t.exception() else logger.info("[DAEMON] Swarm terminé proprement"))
+        mission_id = payload.get("mission_id")
+        if mission_id and mission_id not in missions:
+            missions[mission_id] = asyncio.create_task(execute_mission(payload))
+
+    async def on_mission_stop(payload):
+        task = missions.get(payload.get("mission_id"))
+        if task is not None and not task.done() and not task.cancelling():
+            task.cancel()
         
     global_bus.subscribe("mission.start", on_mission_start)
+    global_bus.subscribe("mission.stop", on_mission_stop)
     
     # Lancement du bus IPC et de la boucle du cerveau
     await asyncio.gather(

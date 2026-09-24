@@ -613,7 +613,7 @@ export function useDrawingViewLogic({ paperColor = '#faf3de' }: { paperColor?: s
             role: 'user',
             content: [explanationInstruction(text), correction].filter(Boolean).join('\n\n'),
             ...(sketchImages ? { images: sketchImages } : {}),
-          }], 0.1, { signal: ac.signal, num_predict: 2200 })
+          }], 0.1, { signal: ac.signal, num_ctx: 16384, num_predict: 8192 })
           return response?.message?.content ?? ''
         }, ac.signal, { monochrome: colorMode === 'monochrome' })
         blob = new Blob([svg], { type: 'image/svg+xml' })

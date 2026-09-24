@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, Response, send_file, current_app,
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
+from bridge_server import COMFYUI_PATH, _comfyui_is_ready, _start_comfyui
 
 comfy_life_bp = Blueprint('comfy_life_bp', __name__)
 
@@ -59,5 +60,4 @@ def comfyui_image():
         )
     except Exception as e:
         return jsonify({"error": f"ComfyUI image non accessible: {e}"}), 504
-
 

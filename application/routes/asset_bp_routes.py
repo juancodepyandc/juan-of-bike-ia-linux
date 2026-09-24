@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, Response, send_file, current_app, abort, g, stream_with_context
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
-from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
+from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PATH, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
 
 asset_bp = Blueprint('asset_bp', __name__)
 
@@ -36,6 +36,7 @@ def three_d_select_subject():
     dans output/context/ et son chemin (le meme circuit que les pieces
     jointes).
     """
+    from routes.python_bp_routes import _build_python_env
     data = request.get_json(silent=True) or {}
     image_path = _resoudre_chemin_workspace(data.get("image_path"))
     if not image_path:
@@ -176,5 +177,3 @@ def persist_generated_image():
             return jsonify({"ok": True, "path": rel, "filename": out_filename})
 
     return jsonify({"ok": False, "error": "Fichier source introuvable"}), 404
-
-

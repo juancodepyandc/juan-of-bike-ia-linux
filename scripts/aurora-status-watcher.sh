@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Surveille le studio (127.0.0.1:1420) ET l'adresse du tunnel; publie sur le
-# repo aurora-live a chaque changement d'etat OU d'URL.
+# Surveille le bridge expose par le tunnel (127.0.0.1:3001) ET l'adresse du
+# tunnel; publie sur le repo aurora-live a chaque changement d'etat OU d'URL.
 # 31/07: l'URL n'etait publiee qu'UNE fois au demarrage — a chaque relance de
 # l'app le tunnel change d'adresse et GitHub gardait l'ancienne (constate:
 # fichier phi-match-... vs tunnel reel characterization-...). Le watcher
@@ -17,7 +17,8 @@ LAST_URL=""
 cleanup(){ bash "$PUB" closed >/dev/null 2>&1 || true; exit 0; }
 trap cleanup TERM INT HUP
 while true; do
-  if curl -s -m 5 -o /dev/null "http://127.0.0.1:1420/" 2>/dev/null; then STATE=open; else STATE=closed; fi
+  # Cible = bridge :3001 (ce que le tunnel expose), pas l'UI Vite :1420.
+  if curl -s -m 5 -o /dev/null "http://127.0.0.1:3001/api/health" 2>/dev/null; then STATE=open; else STATE=closed; fi
   URL="$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -1)"
   if [ -n "$URL" ] && [ "$URL" != "$LAST_URL" ]; then
     if bash "$TUNNEL_CHECKER" "$URL" 15 >/dev/null; then
@@ -28,6 +29,9 @@ while true; do
     else
       echo "[watcher] tunnel non joignable; nouvel essai dans 60 s."
     fi
+  fi
+  if [ "$STATE" = "open" ] && [ ! -s "${AURORA_LIVE_REPO:-$ROOT_DIR/../aurora-live}/tunnel.txt" ]; then
+    LAST_STATE=""
   fi
   if [ "$STATE" != "$LAST_STATE" ]; then
     if bash "$PUB" "$STATE"; then

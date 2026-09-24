@@ -15,6 +15,8 @@ class AGICortex:
     def __init__(self):
         self.memory = OmniscientMemory()
         self.swarm = SwarmSupervisor()
+        self.active_missions = {}
+        self.background_task = None
         
         # Le cerveau écoute toutes les requêtes réseau entrantes via le bus
         global_bus.subscribe("client.request", self._handle_client_request)
@@ -38,18 +40,35 @@ class AGICortex:
         await self.memory.embed_experience(prompt, result, {"client": client_id})
         await global_bus.publish(f"server.response.{client_id}", result)
 
+    async def stop_background_work(self):
+        """Release inference resources when a user mission arrives."""
+        task = self.background_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _introspect(self):
+        failures = await self.memory.query_experience("Error Exception Crash Traceback", n_results=1)
+        if failures and not self.active_missions:
+            await self.swarm.delegate(
+                f"Tâche de fond: analyse cette ancienne erreur et rédige des principes de mitigation : {failures[0]}")
+
     async def run_continuous_loop(self):
         """Boucle d'introspection (quand l'IA n'est pas sollicitée, elle s'auto-optimise)."""
         logger.info("[CORTEX] Démarrage de la boucle de conscience AGI.")
         while True:
             await asyncio.sleep(300) # Introspection toutes les 5 minutes
+            if self.active_missions:
+                continue
             logger.info("[CORTEX] Auto-évaluation en arrière-plan...")
-            
-            # 1. Vérification des erreurs récurrentes dans la mémoire
+            self.background_task = asyncio.create_task(self._introspect())
             try:
-                failures = await self.memory.query_experience("Error Exception Crash Traceback", n_results=1)
-                if failures:
-                    logger.info("[CORTEX] Découverte d'erreurs passées, tentative de conceptualisation de patchs.")
-                    await self.swarm.delegate(f"Tâche de fond: analyse cette ancienne erreur et rédige des principes de mitigation : {failures[0]}")
+                await self.background_task
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise
+                logger.info("[CORTEX] Travail de fond interrompu pour une mission utilisateur.")
             except Exception as e:
                 logger.error(f"[CORTEX] Erreur lors de l'introspection : {e}")
+            finally:
+                self.background_task = None

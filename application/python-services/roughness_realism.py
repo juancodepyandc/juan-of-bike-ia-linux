@@ -119,6 +119,20 @@ for _o in bpy.context.scene.objects:
             bpy.ops.object.shade_smooth()
         except Exception:
             pass
-bpy.ops.export_scene.gltf(filepath=OUT_GLB, export_format="GLB", export_yup=True,
-                          export_animations=True, export_morph=True, export_extras=True)
+import struct
+import uuid
+from pathlib import Path
+
+target = Path(OUT_GLB)
+temporary = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.glb")
+try:
+    bpy.ops.export_scene.gltf(filepath=str(temporary), export_format="GLB", export_yup=True,
+                              export_animations=True, export_morph=True, export_extras=True)
+    with temporary.open("rb") as reader:
+        magic, version, size = struct.unpack("<4sII", reader.read(12))
+    if magic != b"glTF" or version != 2 or size != temporary.stat().st_size:
+        raise ValueError("Incomplete geometry export")
+    temporary.replace(target)
+finally:
+    temporary.unlink(missing_ok=True)
 print("ROUGH_REALISM_OK glb=%s lifted=%d floor=%.2f" % (OUT_GLB, lifted, FLOOR), flush=True)

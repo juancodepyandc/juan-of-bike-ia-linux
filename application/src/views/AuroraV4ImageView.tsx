@@ -395,7 +395,7 @@ export default function AuroraV4ImageView() {
         </span>
         <div>
           <h1 className="av4img-gradsoft" style={{ margin: 0, fontSize: 23, fontWeight: 800, letterSpacing: '-0.02em', filter: `drop-shadow(0 0 16px ${ACCENT}38)` }}>Image</h1>
-          <TechLabel style={{ marginTop: 3 }}>flux.1 dev · kontext · comfyui</TechLabel>
+          <TechLabel style={{ marginTop: 3 }}>flux · kontext · comfyui</TechLabel>
         </div>
         <span style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>

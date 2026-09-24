@@ -24,6 +24,10 @@ from pathlib import Path
 
 log = logging.getLogger("trellis2_wrapper")
 
+_SERVICES_DIR = str(Path(__file__).resolve().parent.parent)
+if _SERVICES_DIR not in sys.path:
+    sys.path.insert(0, _SERVICES_DIR)
+
 # TRELLIS.2 vit hors du package (repo external) — l'ajouter au path.
 # `~/.local/share/auroraia/external/TRELLIS.2` recoit les correctifs (BiRefNet
 # sans transformers AutoModel, DINOv3 compat, conditionnement multi-images) et
@@ -520,14 +524,24 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         up16 = False
         if os.environ.get("AURORA_TRELLIS2_16K", "0") == "1" and int(texture_size) <= 8192:
             up16 = _upscale_glb_texture(out_glb, factor=2)
-        try:
-            faces = int(len(mesh.faces))
-            verts = int(len(mesh.vertices))
-        except Exception:
-            faces = verts = 0
+        import glb_io
+        graph, _ = glb_io.load(out_glb)
+        faces = verts = 0
+        for exported_mesh in graph.get("meshes", []):
+            for primitive in exported_mesh.get("primitives", []):
+                position = primitive.get("attributes", {}).get("POSITION")
+                if position is None:
+                    continue
+                count = graph["accessors"][position]["count"]
+                verts += count
+                if primitive.get("mode", 4) == 4:
+                    index = primitive.get("indices")
+                    faces += (graph["accessors"][index]["count"] if index is not None else count) // 3
+        if not faces or not verts:
+            raise ValueError("Exported GLB contains no triangle geometry")
         return {"ok": True, "out_glb": out_glb, "faces": faces, "verts": verts,
-                "peak_vram_gb": round(peak, 2), "quality": ptype,
-                "texture_size": (16384 if up16 else int(texture_size)),
+                "peak_vram_gb": round(peak, 2), "quality": used_q,
+                "texture_size": int(texture_size) * (2 if up16 else 1),
                 "auto_exposed": exposed}
     except Exception as e:  # noqa: BLE001
         import traceback

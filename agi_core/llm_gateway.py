@@ -20,7 +20,8 @@ class LLMGateway:
             "stream": False,
             "options": {
                 "temperature": 0.7,
-                "num_ctx": 8192
+                "num_ctx": 16384,
+                "num_predict": 8192
             }
         }
         
@@ -51,7 +52,8 @@ class LLMGateway:
             "stream": True,
             "options": {
                 "temperature": 0.7,
-                "num_ctx": 8192
+                "num_ctx": 16384,
+                "num_predict": 8192
             }
         }
         full_text = ""
@@ -60,11 +62,18 @@ class LLMGateway:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, json=payload) as response:
                     if response.status == 200:
+                        finished = False
                         async for line in response.content:
                             if not line: continue
                             try:
                                 data = json.loads(line)
+                                if data.get("error"):
+                                    raise RuntimeError(str(data["error"]))
+                                if data.get("done"):
+                                    finished = True
                                 token = data.get("response", "")
+                                if not token:
+                                    continue
                                 full_text += token
                                 if asyncio.iscoroutinefunction(on_token):
                                     await on_token(token)
@@ -72,6 +81,8 @@ class LLMGateway:
                                     on_token(token)
                             except json.JSONDecodeError:
                                 pass
+                        if not finished or not full_text.strip():
+                            raise RuntimeError("Model returned no complete answer")
                         return full_text.strip()
                     else:
                         return f"<Erreur de traitement LLM : {response.status}>"

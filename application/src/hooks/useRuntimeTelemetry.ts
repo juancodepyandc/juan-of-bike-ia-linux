@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../stores/appStore.ts'
 import { onRuntimeProgress, runtimeInspectServices } from './useTauri.ts'
-import { isTauriRuntime } from '../utils/runtime.ts'
 
 function mapRuntimeServices(
   services: Awaited<ReturnType<typeof runtimeInspectServices>>,
@@ -20,10 +19,6 @@ export function useRuntimeTelemetry() {
     let unlisten: (() => void) | null = null
 
     async function refresh() {
-      if (!isTauriRuntime()) {
-        return
-      }
-
       try {
         const services = await runtimeInspectServices()
         if (cancelled) return

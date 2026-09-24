@@ -4,7 +4,7 @@ Tourne sur le port 3001, proxy vers tous les services locaux.
 
 Usage:
   python bridge_server.py
-  cloudflared tunnel --url http://localhost:1420   (Vite proxy redirige /api et /proxy ici)
+  cloudflared tunnel --url http://127.0.0.1:3001   (les clients distant/app web passent ici)
 """
 
 from flask import Flask, request, jsonify, Response, send_file, abort, g, stream_with_context
@@ -230,9 +230,11 @@ def _start_comfyui() -> bool:
             python_exe = pathlib.Path(sys.executable)                   # fallback systeme
 
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        from comfy_runtime import memory_args
         _comfyui_process = subprocess.Popen(
             [str(python_exe), str(comfyui_dir / "main.py"),
-             "--listen", "127.0.0.1", "--port", str(COMFYUI_PORT)],
+             "--listen", "127.0.0.1", "--port", str(COMFYUI_PORT),
+             *memory_args(comfyui_dir)],
             cwd=str(comfyui_dir),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
