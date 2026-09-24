@@ -5165,8 +5165,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/conformanceMesures.mjs",
-   "sha256": "5c52ae780622c1418f9251e586e6125fdca67b2b1972d657007a4dd2fb0963d2",
-   "lines": 246
+   "sha256": "d154759325e11885a11fbe74f8d717ac6ecf7a6bbb84b6718c3863ef263f1c90",
+   "lines": 374
   },
   {
    "repo": "AuroraIA",
@@ -8093,8 +8093,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/intentRouter.ts",
-   "sha256": "7eb1d88b1abd3572fd78ca8f35e2ff7f66edff97eb26785ff70623221c29401f",
-   "lines": 425
+   "sha256": "ee12d744766ae6427f48f1395f0c3b1302610a7c3349a03d5a1ccfb0b828314d",
+   "lines": 442
   },
   {
    "repo": "AuroraIA",
@@ -11227,216 +11227,6 @@
    "path": "workflow_world_mirror_preview.json",
    "sha256": "6733624a3eee88146cb7daf140689e083ff9d355944efe87e139760eb1b4ed7f",
    "lines": 68
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "apply_dns_patch.py",
-   "sha256": "916cda2506dc3286bca50f077dac4867e5c94451aac0127616dd93d85ba0f9f2",
-   "lines": 39
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/__init__.py",
-   "sha256": "f6db04b3db3c6cd388c3461d140e7c5f56e2dbe0d884339e009b8676aa90a6c7",
-   "lines": 2
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/__main__.py",
-   "sha256": "dae3f6080ba0dbb8ecf9e67dab4632d6d0305fd46f3c4f91529ec7842fe60c08",
-   "lines": 3
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/cli.py",
-   "sha256": "61e0ba542e2d6de5129cc1f957b953fecbabd0c0612285b496729e08eea3c143",
-   "lines": 296
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/client.py",
-   "sha256": "efe8dfeb79201120e3f396c19b89f24ad595a6451be59b0c2de014943f325484",
-   "lines": 295
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/config.py",
-   "sha256": "e4daf35d8ffbd7b6e4f809b0f8e1723baa000185fb0c6d5a9751c6073c253757",
-   "lines": 89
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/core/jobia.py",
-   "sha256": "51662e928dc0017027af7b6d234c46a30089ed0c3a3fd6cdbc839d02c00d9693",
-   "lines": 99
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/core/paths.py",
-   "sha256": "8c9c5d9430238394366b8406701e71058c19dbd2fd9a83cfbd0a6487cd79a3fc",
-   "lines": 43
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/display.py",
-   "sha256": "bc117dbc517444248d76f8f684913480e6961d3c6657597b346d60544c2e4746",
-   "lines": 313
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/interactive.py",
-   "sha256": "e7858ab07b704f20705924cbc958be738e30e13a6a1e9535d2a4c810629e115d",
-   "lines": 486
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/interactive_patch.py",
-   "sha256": "094d5f01414bfe50d37dfefbf2371f591f0e7ef9a54909382ac519c489ea8758",
-   "lines": 86
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/mission.py",
-   "sha256": "1c3c5b5362ede30711acd0fe8b20b99aafcd84cb061282eec1a2be2836fbad9c",
-   "lines": 289
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "aurora_cli/transfers.py",
-   "sha256": "8cbf02e1e660ff699c44dba442cbb59a8d708259ee07fb4cea1790e4c27fcd12",
-   "lines": 109
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "debug_client.py",
-   "sha256": "cfb5269f91e9336ff22408b951a0207cb98526ee6feb122e8e38e9946bed888b",
-   "lines": 16
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "fix_client_syntax.py",
-   "sha256": "41bad0e4953e4109fb34aabcd46094cf6311f168d1f36cc0e5a37943dffa10b4",
-   "lines": 20
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "fix_syntax.py",
-   "sha256": "5e6e4b941e3a4bb343184e576dfeebe619c0530eb42f31553f04c2be58c68ac6",
-   "lines": 13
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "install.ps1",
-   "sha256": "58379666848d2a801c9736ed127c189cb0b9aafa8656f23912d6c60866f31c57",
-   "lines": 43
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "install.sh",
-   "sha256": "8a534a1f9d9dc95de349804ddb861d916cab67d3f94aa853af56422a87315ad7",
-   "lines": 56
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_aurora_ui.py",
-   "sha256": "9ad143a2ce7e9fc345c9492bf6706f0d2dd7e067f7226cce854e4c0f404dbc78",
-   "lines": 30
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_client_cache.py",
-   "sha256": "0fce6bc61a19290503ff0593f4a28ad342ca275521bffcaddaecd1ae015e0328",
-   "lines": 17
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_client_timer.py",
-   "sha256": "9f2ecb42ee1c0cb6233338785048ce2f7c5236bc4081bca3e3cdaeb1a3f0a8ab",
-   "lines": 23
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_client_ui.py",
-   "sha256": "8605ddd5c9da99a36b58e93245081b61d8892ad959af19c87e53cec943197396",
-   "lines": 118
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_cmds.py",
-   "sha256": "099f5a43ea250129939f1a25a5b682b973ae1f8b141703559ef3d86415b2efff",
-   "lines": 39
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_display.py",
-   "sha256": "0d813a3a929ccb2ec8997a3244a6519086364b4c3895b57f18af63615973127d",
-   "lines": 65
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_downloads.py",
-   "sha256": "7506a40a0af6eadbee15933a89cc45079bd765d0f34c4478843cd4ff20a83be7",
-   "lines": 52
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_file_transfer.py",
-   "sha256": "cf7ef5267a4331c4bef7be3d9b17b634e77635be01be444265f5517c0bc4ce9f",
-   "lines": 26
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_mission_ui.py",
-   "sha256": "958c6365b6547b2014f586994b91097592599c37a3d347aebd7ac4859b611b62",
-   "lines": 35
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_mission_ui2.py",
-   "sha256": "05829a2726b83c695e769047977f208568d25363ef45fd9f1d87e47de5e461e9",
-   "lines": 118
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_prompt.py",
-   "sha256": "224e0981b30249998f36460a64504af6817f96b5fd3b62bad90eca04e8611120",
-   "lines": 70
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_remote_exec.py",
-   "sha256": "5e83d5767f6a460a0dca714ead19e245c46575ee25544abd8090feea47a8ff0d",
-   "lines": 54
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_ui_title.py",
-   "sha256": "a874dc4c645f464c6a1a8e553f6aabe8cdb7bc9b19a0777163982d98937a133b",
-   "lines": 30
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_workspace_cli.py",
-   "sha256": "b05a8f2bdadcae23ee4ae28e164188eafb6afd75b803a5a94252e8dc2463fd63",
-   "lines": 14
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "patch_workspace_interactive.py",
-   "sha256": "5b804f5be3247e19b123324a80f0733847a7f32f1185778d9aa074c2de6ef36a",
-   "lines": 14
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "pyproject.toml",
-   "sha256": "c1ddf11ac5b5398c3b27d67bb5ff30ad227f6eec3e4c74960ddfe1a7494fe8ef",
-   "lines": 30
-  },
-  {
-   "repo": "aurora-remote-cli",
-   "path": "setup.py",
-   "sha256": "5ee12d7f4385c800c7bf3caeb13e903e5b1313316e861ef7baf83741cd4917ab",
-   "lines": 19
   }
  ]
 }

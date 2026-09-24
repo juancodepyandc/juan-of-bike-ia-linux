@@ -242,5 +242,133 @@ export async function mesure() {
     ajoute('code', 'livrable non altere', defauts, details.join(' ; ') || 'README et JSON rendus intacts')
   }
 
+  // --- 13. DESSIN / detection d'intention explicative ----------------------
+  {
+    const { isExplanatoryDrawing } = await charge('src/services/drawingExplanation.ts')
+    const explicatifs = [
+      'explique le fonctionnement de ce moteur', 'schema technique du circuit',
+      'diagramme de flux du processus', 'comment ca marche, en schema',
+    ]
+    const artistiques = [
+      'dessine un coucher de soleil au pastel', 'crocquis artistique d un portrait',
+      'illustre une scene de fete', 'peins un paysage impressionniste',
+    ]
+    const faux = explicatifs.filter((t) => !isExplanatoryDrawing(t))
+    const fauxPositifs = artistiques.filter((t) => isExplanatoryDrawing(t))
+    ajoute('dessin', 'detection dessin explicatif', faux.length + fauxPositifs.length,
+      `${faux.length} explicatif(s) non reconnu(s), ${fauxPositifs.length} artistique(s) pris(s) pour un schema`)
+  }
+
+  // --- 14. DESSIN / lissage geometrique (rdp + beziers) --------------------
+  {
+    const { rdp, smoothPolyline } = await charge('src/services/drawingCurveSmoothing.ts')
+    let defauts = 0
+    const details = []
+    const carre = []
+    for (let i = 0; i <= 100; i += 1) carre.push({ x: Math.round(i * 0.3 * 10) / 10, y: Math.round(i * 0.3 * 10) / 10 })
+    const reduit = rdp(carre, 2)
+    if (reduit.length > 4) { defauts += 1; details.push(`rdp garde ${reduit.length} points sur une droite`) }
+    const path = smoothPolyline(carre, { epsilon: 2 })
+    if (!path.path.startsWith('M')) { defauts += 1; details.push('chemin SVG sans commande initiale') }
+    if (path.beziers.length === 0) { defauts += 1; details.push('aucune courbe de bezier produite') }
+    ajoute('dessin', 'lissage geometrique', defauts, details.join(' ; ') || 'rdp reduit, beziers produits, chemin SVG valide')
+  }
+
+  // --- 15. APPRENTISSAGE / reprises dues et ordre ---------------------------
+  {
+    const { makeNewCard, review, pickDueCards, RATING } = await charge('src/services/learning/spacedRepetition.ts')
+    const maintenant = new Date('2026-01-01T00:00:00.000Z')
+    const deck = [
+      { card: makeNewCard(maintenant), extra: 'a' },
+      { card: makeNewCard(maintenant), extra: 'b' },
+    ]
+    deck[0].card = review(deck[0].card, RATING.Good, maintenant).card
+    deck[1].card = review(deck[1].card, RATING.Good, maintenant).card
+    const pasDue = new Date('2026-01-01T01:00:00.000Z')
+    let faux = 0
+    if (pickDueCards(deck, pasDue, Infinity).length !== 0) faux += 1
+    const plusTard = new Date('2031-01-01T00:00:00.000Z')
+    const dues = pickDueCards(deck, plusTard, Infinity)
+    if (dues.length !== 2) faux += 1
+    ajoute('apprentissage', 'planification des reprises', faux,
+      `${faux === 0 ? 'aucune carte due avant terme, toutes recalees ensuite' : `${faux} anomalie(s)`}`)
+  }
+
+  // --- 16. IMAGE / classification des edits ---------------------------------
+  {
+    const { classifyImageEditRequest } = await charge('src/services/imageConversationContract.ts')
+    const cas = [
+      ['remplace l arriere-plan par une plage', '', 'decorChange'],
+      ['ajoute un chat noir sur ce canape', '', 'addedCharacter'],
+      ['change ma tenue en robe rouge', 'ref.jpg', 'humanPhotoEdit'],
+      ['le bras autour de son epaule, en amis', 'ref.jpg', 'socialInteraction'],
+    ]
+    const erreurs = []
+    for (const [p, r, attendu] of cas) {
+      const d = classifyImageEditRequest(p, r === 'ref.jpg')
+      const touches = Object.entries(d).filter(([, v]) => v).map(([k]) => k)
+      if (!touches.includes(attendu)) erreurs.push(`« ${p} » : ${touches.join('+') || 'rien'} au lieu de ${attendu}`)
+    }
+    ajoute('image', 'classification des edits', erreurs.length,
+      erreurs.join(' ; ') || `${cas.length}/${cas.length} demandes d'edition classees`)
+  }
+
+  // --- 17. VOIX / liaisons et prosodie -------------------------------------
+  {
+    const { detectLiaison, phonemizeSentence } = await charge('src/services/voiceFrPhonemizer.ts')
+    const { generateSsml } = await charge('src/services/voiceProsody.ts')
+    let ko = 0
+    const attents = [
+      ['les', 'enfants'], ['des', 'amis'], ['nous', 'avons'], ['un', 'arbre'],
+    ]
+    for (const [a, b] of attents) if (detectLiaison(a, b) === '') ko += 1
+    const interdit = [
+      ['les', 'héros'], ['les', 'huit'], ['la', 'haine'],
+    ]
+    for (const [a, b] of interdit) if (detectLiaison(a, b) !== '') ko += 1
+    const ssml = generateSsml('Bonjour ! Comment allez-vous ?', 1.0)
+    if (!ssml.includes('<speak>') || !ssml.includes('</speak>')) ko += 1
+    const fantomes = phonemizeSentence('bonjour').filter((s) => /[0-9]/.test(s)).length
+    ajoute('voix', 'liaisons + prosodie', ko + fantomes,
+      `${ko} liaison(s) fausse(s) ; ${fantomes} chiffre(s) evocant des sons dans la phonetisation`)
+  }
+
+  // --- 18. CONVERSATION / routage d'intention -------------------------------
+  {
+    const { routeIntent } = await charge('src/services/intentRouter.ts')
+    const cas = [
+      ['genere moi un jeu de plateforme', 'code'],
+      ['dessine un paysage', 'image'],
+      ['resume la scene en 3d', '3d'],
+      ['exploite la faille xss', 'cyber'],
+      ['hash ce mot de passe', 'cyber'],
+      ['analyse ce malware', 'cyber'],
+    ]
+    const faux = []
+    for (const [texte, attendu] of cas) {
+      let r
+      try { r = routeIntent(texte) } catch { r = null }
+      const module = (r && r.moduleId) || (typeof r === 'string' ? r : null)
+      if (!module || !String(module).toLowerCase().includes(attendu.toLowerCase().slice(0, 3))) {
+        faux.push(`« ${texte} » -> ${module ?? 'aucun'}`)
+      }
+    }
+    ajoute('conversation', 'routage d intention', faux.length,
+      faux.join(' ; ') || `${cas.length}/${cas.length} intentions routees vers le bon module`)
+  }
+
+  // --- 19. COWORK / format des rendus d'extraction ---------------------------
+  {
+    const { formatYieldPct, colorToneForUnderExtractionRate, renderDeltaSparkline } = await charge('src/services/coworkExtractionStats.ts')
+    let ko = 0
+    if (!/^[0-9]+([.,][0-9])?%$/.test(formatYieldPct(0.1234))) ko += 1
+    const r = colorToneForUnderExtractionRate(0)
+    if (!r) ko += 1
+    const line = renderDeltaSparkline([1, 2, 3, 4])
+    if (!line || typeof line !== 'string') ko += 1
+    ajoute('cowork', 'rendus d extraction', ko,
+      ko === 0 ? 'pourcentage, jauge et sparkline formatables' : `${ko} rendu(s) en echec`)
+  }
+
   return out
 }

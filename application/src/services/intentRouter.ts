@@ -85,6 +85,9 @@ const PROFILES: readonly ModuleProfile[] = [
       { pattern: 'compiler', weight: 2 },
       { pattern: 'tsc', weight: 3 },
       { pattern: 'tests', weight: 1.5 },
+      { pattern: 'jeu', weight: 3 },
+      { pattern: 'game', weight: 3 },
+      { pattern: 'plateforme', weight: 2 },
     ],
   },
   {
@@ -231,6 +234,12 @@ const PROFILES: readonly ModuleProfile[] = [
       { pattern: 'chiffrement', weight: 4 },
       { pattern: 'tls', weight: 4 },
       { pattern: 'osint', weight: 5 },
+      { pattern: 'pentest', weight: 5 },
+      { pattern: 'malware', weight: 5 },
+      { pattern: 'faille', weight: 4 },
+      { pattern: 'exploit', weight: 4 },
+      { pattern: 'xss', weight: 4 },
+      { pattern: 'injection sql', weight: 4, loose: true },
     ],
   },
   {
@@ -412,7 +421,15 @@ function matchSignal(norm: string, tokens: Set<string>, sig: IntentSignal): bool
     // multi-word phrase — fall back to includes with word boundaries.
     return new RegExp(`(?:^|\\W)${escapeRe(p)}(?:\\W|$)`).test(norm)
   }
-  return tokens.has(p)
+  if (tokens.has(p)) return true
+  // Signal court — autorise le prefixe/la flexion ("hacking" matche "hack", "vues"
+  // matche "vue") sans transformer un token different ("chateau" != "chat").
+  if (p.length >= 4) {
+    for (const t of tokens) {
+      if (t !== p && t.length >= p.length + 2 && t.startsWith(p)) return true
+    }
+  }
+  return false
 }
 
 function escapeRe(s: string): string {

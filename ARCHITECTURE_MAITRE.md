@@ -841,7 +841,7 @@ Les chemins ci-dessous désignent des fichiers existants au relevé. Les lignes 
 | `POST /api/python/run-async` | `application/routes/python_bp_routes.py` → `python_run_async` (ligne 830) |
 | `GET,HEAD /api/ping` | `application/routes/python_bp_routes.py` → `python_bridge_ping` (ligne 863) |
 | `GET /api/health` | `application/routes/python_bp_routes.py` → `python_bridge_health` (ligne 872) |
-| `GET,POST /api/conformance` | `application/routes/python_bp_routes.py` → `aurora_conformance` (ligne 905) |
+| `GET,POST /api/conformance` | `application/routes/python_bp_routes.py` → `aurora_conformance` (ligne 905) — 24 mesures comportementales : 19 TS (voix, cyber, cowork, code, image, conversation, apprentissage, dessin, 3D) + 5 Python 3D (anim/mouvement/qualité/couleur/reprise). |
 | `GET,POST /api/architecture` | `application/routes/python_bp_routes.py` → `aurora_architecture` (ligne 1009) |
 | `GET,POST /api/expertise` | `application/routes/python_bp_routes.py` → `aurora_expertise` (ligne 1033) |
 | `GET /api/tunnel/url` | `application/routes/python_bp_routes.py` → `tunnel_url` (ligne 1127) |
@@ -2123,7 +2123,7 @@ web_search_bp_routes.py  (770 L)
 ```text
 apercu_glb_three.mjs  (107 L)
 conformance.mjs  (59 L)
-conformanceMesures.mjs  (246 L)
+conformanceMesures.mjs  (374 L)
 conformance_mesures.py  (166 L)
 expertise-artefacts.py  (413 L)
 expertise-livrables.mjs  (308 L)
@@ -2723,7 +2723,7 @@ imageGenerationSafety.ts  (69 L)
 imagePromptBuilder.ts  (708 L)
 imagePromptDiff.ts  (176 L)
 imageVariationPicker.ts  (200 L)
-intentRouter.ts  (425 L)
+intentRouter.ts  (442 L)
 kinematicsLibrary.ts  (1214 L)
 labAssistant.ts  (180 L)
 learningResearch.ts  (571 L)
