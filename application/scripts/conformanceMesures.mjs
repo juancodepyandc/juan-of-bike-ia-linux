@@ -473,5 +473,80 @@ export async function mesure() {
     ajoute('3D', 'serialisation mouvement', defauts, details.join(' ; ') || 'payload Blender schema/fps/primitives produit sans exception')
   }
 
+  // --- 26. CYBER / analyse de robustesse d'un mot de passe -----------------
+  {
+    const { analyzePassword, generatePassword } = await charge('src/services/cyber/passwordAnalyzer.ts')
+    let defauts = 0
+    const details = []
+    const faible = analyzePassword('123456')
+    if (!faible || faible.score > 1 || faible.entropy >= 30) { defauts += 1; details.push('mot de passe trivial note trop fort') }
+    const fort = analyzePassword('K7!xqR2$lO9#mB4zW1@')
+    if (!fort || fort.score < 3 || fort.entropy < 80) { defauts += 1; details.push(`mot de passe fort sous-cote (score ${fort?.score ?? '?'}/4)`) }
+    const gen = generatePassword({ lower: true, upper: true, digits: true, symbols: true, length: 16 })
+    if (!gen || gen.length !== 16) { defauts += 1; details.push(`generatePassword rend ${gen?.length} caracteres sur 16`) }
+    ajoute('cyber', 'analyse + generation MDP', defauts, details.join(' ; ') || 'faible mal note, fort bien note, generateur 16 caracteres')
+  }
+
+  // --- 27. CYBER / cout KDF et alerte de fuite ------------------------------
+  {
+    const { assessKdf } = await charge('src/services/cyber/kdfCostAnalyzer.ts')
+    const { checkBreached } = await charge('src/services/cyber/breachChecker.ts')
+    let defauts = 0
+    const details = []
+    const argon = assessKdf({ algorithm: 'argon2id', memoryKib: 65536, timeCost: 3, parallelism: 1 })
+    if (!argon || argon.hashesPerSecondAttacker <= 0 || !argon.recommendation) { defauts += 1; details.push('argon2id mal evalue') }
+    const fuite = checkBreached('password')
+    if (!fuite?.isBreached) { defauts += 1; details.push('mot de passe top-fuite non signale') }
+    const sain = checkBreached('K7!xqR2$lO9#mB4zW1@')
+    if (sain?.isBreached) { defauts += 1; details.push('mot de passe aleatoire signale comme fuit') }
+    ajoute('cyber', 'cout KDF + alerte fuite', defauts, details.join(' ; ') || 'argon2id evalue, fuite reelle detectee, aleatoire sain')
+  }
+
+  // --- 28. VOIX / visemes et synthese SSML --------------------------------
+  {
+    const { textToVisemesRuleBased } = await charge('src/services/voiceFrPhonemizer.ts')
+    let defauts = 0
+    const details = []
+    const visemes = textToVisemesRuleBased('bonjour', 24)
+    if (!visemes || visemes.length === 0) { defauts += 1; details.push('aucun viseme produit') }
+    else {
+      const tps = visemes.filter((v) => Number.isFinite(v.startMs) && Number.isFinite(v.endMs) && v.endMs > v.startMs).length
+      if (tps !== visemes.length) { defauts += 1; details.push('trame temporelle invalide') }
+    }
+    ajoute('voix', 'visemes lipsync', defauts, details.join(' ; ') || `${visemes?.length ?? 0} visemes avec trame temporelle`)
+  }
+
+  // --- 29. DESSIN / mise en page vers SVG -----------------------------------
+  {
+    const { layoutFlowchart, layoutToSvg } = await charge('src/services/drawingAutoLayout.ts')
+    let defauts = 0
+    const details = []
+    const noeuds = [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }]
+    const aretes = [{ from: 'a', to: 'b' }, { from: 'b', to: 'c' }]
+    const layout = layoutFlowchart(noeuds, aretes)
+    if (!layout || layout.nodes.length !== 3) { defauts += 1; details.push('layout incomplet') }
+    else {
+      const pos = layout.nodes.find((n) => n.id === 'b')
+      if (!pos || typeof pos.x !== 'number' || !Number.isFinite(pos.x)) { defauts += 1; details.push('coordonnees manquantes') }
+    }
+    const svg = layoutToSvg(layout)
+    if (!svg || !svg.viewBox || svg.viewBox.w <= 0) { defauts += 1; details.push('viewBox SVG invalide') }
+    if (!svg || svg.elements.length === 0) { defauts += 1; details.push('aucun element SVG') }
+    ajoute('dessin', 'layout vers SVG', defauts, details.join(' ; ') || '3 noeuds disposes, viewBox + elements SVG produits')
+  }
+
+  // --- 30. CONVERSATION / normalisation des verdicts CITE -------------------
+  {
+    const { normalizeVerification } = await charge('src/services/conversationVerification.ts')
+    let defauts = 0
+    const details = []
+    const nonFaite = normalizeVerification({ verified: false, reason: 'pas fait' })
+    if (!nonFaite || nonFaite.verified !== false) { defauts += 1; details.push('verif absente marquee verifiee') }
+    const avecCite = normalizeVerification({ score: 85, confidence: 90, verdict: 'ready', citations: ['doc.pdf p.3'], summary: 'verifie' })
+    if (!avecCite || !avecCite.verified) { defauts += 1; details.push('jugement complet rejete') }
+    if (!avecCite?.summary || avecCite.summary === 'Verification terminee.') { defauts += 1; details.push('resume perdu') }
+    ajoute('conversation', 'verification + citations', defauts, details.join(' ; ') || 'absence vs presence de citation distinguees')
+  }
+
   return out
 }
