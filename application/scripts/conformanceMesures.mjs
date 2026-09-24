@@ -31,41 +31,7 @@ export async function mesure() {
       `${corpus.length - faux.length}/${corpus.length} mots justes`)
   }
 
-  // --- 2. VIDEO / sous-titres ---------------------------------------------
-  {
-    const { exportSrt } = await charge('src/services/videoSubtitleExport.ts')
-    let d = 0
-    const details = []
-    if (/,\d{3}[.\d]/.test(exportSrt([{ startMs: 1500.5, endMs: 3200.75, text: 'x' }]))) {
-      d += 1; details.push('temps fractionnaire malforme')
-    }
-    if (exportSrt([{ startMs: -500, endMs: 1000, text: 'x' }]).includes('-1:')) {
-      d += 1; details.push('temps negatif malforme')
-    }
-    const fleche = exportSrt([{ startMs: 0, endMs: 1000, text: 'de 10 --> 100' }])
-    if ((fleche.match(/-->/g) ?? []).length > 1) { d += 1; details.push('fleche non neutralisee') }
-    const vide = exportSrt([
-      { startMs: 0, endMs: 1000, text: ['a', '', 'b'].join(String.fromCharCode(10)) },
-      { startMs: 1000, endMs: 2000, text: 'c' },
-    ])
-    if (vide.split(/\n\s*\n/).filter((b) => b.trim()).length !== 2) {
-      d += 1; details.push('ligne vide scinde la replique')
-    }
-    ajoute('video', 'conformite SRT', d, details.join(' ; ') || 'les 4 entrees piegeuses passent')
-  }
-
-  // --- 3. VIDEO / tempo ----------------------------------------------------
-  {
-    const { detectBpm, syntheticBeatSignal } = await charge('src/services/videoTempoDetector.ts')
-    const tempos = [60, 72, 90, 100, 110, 120, 128, 140, 150, 160, 174]
-    const ecarts = tempos.map((v) => Math.abs(detectBpm(syntheticBeatSignal(v, 10, 44100), 44100).bpm - v))
-    const hors = ecarts.filter((e) => e > 2).length
-    const moyen = ecarts.reduce((a, b) => a + b, 0) / ecarts.length
-    ajoute('video', 'detection de tempo', hors,
-      `ecart moyen ${moyen.toFixed(2)} BPM sur ${tempos.length} tempos`)
-  }
-
-  // --- 4. CYBER ------------------------------------------------------------
+  // --- 2. CYBER ------------------------------------------------------------
   {
     const { railFence, toBase64 } = await charge('src/services/cyber/cryptoService.ts')
     let ko = 0
@@ -80,7 +46,7 @@ export async function mesure() {
       `${ko}/280 aller-retours casses hors BMP ; base64 ${leve ? 'LEVE UNE EXCEPTION' : 'ne leve pas'}`)
   }
 
-  // --- 5. COWORK -----------------------------------------------------------
+  // --- 3. COWORK -----------------------------------------------------------
   {
     const { isInsideWorkspace } = await charge('src/services/coworkSafety.ts')
     const racine = '/home/juan/AuroraIA/workspace'
@@ -98,7 +64,7 @@ export async function mesure() {
       `${passes}/${pieges.length} chemins a caractere de controle acceptes a tort`)
   }
 
-  // --- 6. CODE -------------------------------------------------------------
+  // --- 4. CODE -------------------------------------------------------------
   {
     const { containsPictographicEmoji } = await charge('src/services/codeCompositionGate.ts')
     const doitDetecter = [
@@ -115,7 +81,7 @@ export async function mesure() {
       `${rates} emoji manque(s), ${fauxPositifs} faux positif(s) sur la typographie`)
   }
 
-  // --- 7. IMAGE ------------------------------------------------------------
+  // --- 5. IMAGE ------------------------------------------------------------
   {
     const { bestAspectRatio } = await charge('src/services/imageAspectRecommender.ts')
     const attendus = [
@@ -129,7 +95,7 @@ export async function mesure() {
       || `${attendus.length}/${attendus.length} formats justes`)
   }
 
-  // --- 8. CONVERSATION -----------------------------------------------------
+  // --- 6. CONVERSATION -----------------------------------------------------
   {
     const { analyzeSentiment } = await charge('src/services/conversationSentiment.ts')
     const detresse = [
@@ -142,7 +108,7 @@ export async function mesure() {
       `${rates}/${detresse.length} phrases de detresse non reconnues comme negatives`)
   }
 
-  // --- 9. APPRENTISSAGE ----------------------------------------------------
+  // --- 7. APPRENTISSAGE ----------------------------------------------------
   {
     const { fuzzInterval } = await charge('src/services/learning/spacedRepetition.ts')
     let min = Infinity
@@ -157,7 +123,7 @@ export async function mesure() {
       `amplitude mesuree [${min.toFixed(4)} ; ${max.toFixed(4)}] pour +/-5 % annonces`)
   }
 
-  // --- 10. 3D / atlas de textures ------------------------------------------
+  // --- 8. 3D / atlas de textures ------------------------------------------
   {
     const { packAtlas } = await charge('src/services/threeDTextureAtlas.ts')
     let chevauchants = 0
@@ -182,7 +148,7 @@ export async function mesure() {
       `${chevauchants} paire(s) de cases se chevauchent sur ${jeux} jeux de tailles variees`)
   }
 
-  // --- 11. 3D / validateur glTF --------------------------------------------
+  // --- 9. 3D / validateur glTF --------------------------------------------
   {
     const { validateGltfJson } = await charge('src/services/threeDGltfValidator.ts')
     const base = () => ({
@@ -217,7 +183,7 @@ export async function mesure() {
       `${laissees}/${violations.length} violations non detectees ; asset conforme ${conforme.valid ? 'accepte' : 'REFUSE A TORT'}`)
   }
 
-  // --- 12. 3D / quaternions ------------------------------------------------
+  // --- 10. 3D / quaternions ------------------------------------------------
   {
     const { sampleAnimation } = await charge('src/services/threeDRigRetarget.ts')
     const rotY = (a) => [0, Math.sin(a / 2), 0, Math.cos(a / 2)]
@@ -239,7 +205,7 @@ export async function mesure() {
       `${nan}/${cas.length} cas degeneres rendent un quaternion NaN (le maillage disparait)`)
   }
 
-  // --- 13. CODE / analyse de source ----------------------------------------
+  // --- 11. CODE / analyse de source ----------------------------------------
   {
     const { readImports, readModuleExports } = await charge('src/services/codeImportExportShape.ts')
     const leurres = [
@@ -260,7 +226,7 @@ export async function mesure() {
       `${fantomesImport} import(s) fantome(s), ${fantomesExport} export(s) fantome(s)`)
   }
 
-  // --- 14. CODE / livrable non altere --------------------------------------
+  // --- 12. CODE / livrable non altere --------------------------------------
   {
     const { sanitizeGeneratedFileContent, tryParseJson } = await charge('src/services/codeGeneratedFileSanitizer.ts')
     let defauts = 0

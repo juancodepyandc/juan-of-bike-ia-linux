@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity,
   Braces,
   Bug,
   Dock,
@@ -16,20 +15,15 @@ import type { CodeFile } from '../services/codeOrchestrator.ts'
 import type { CodeSandboxResult } from '../services/codeSandbox.ts'
 import type { DevServerState } from '../services/codeDevServer.ts'
 import {
-  runCodeSimulationLab,
-  type CodeSimulationLabReport,
-} from '../services/codeSimulationLab.ts'
-import {
   buildWorkspaceStats,
   ErrorPanel,
   formatBytes,
   LogPanel,
-  SimulationPanel,
   SummaryPanel,
   VirtualizedProjectTree,
 } from './codeViewWorkspacePanels.tsx'
 
-type AtelierTab = 'tree' | 'file' | 'preview' | 'logs' | 'errors' | 'perf' | 'simulations' | 'state'
+type AtelierTab = 'tree' | 'file' | 'preview' | 'logs' | 'errors' | 'perf' | 'state'
 type DockMode = 'left' | 'bottom' | 'hidden'
 
 const TABS: Array<{ id: AtelierTab; label: string; icon: typeof FolderTree }> = [
@@ -39,7 +33,6 @@ const TABS: Array<{ id: AtelierTab; label: string; icon: typeof FolderTree }> = 
   { id: 'logs', label: 'Logs', icon: Terminal },
   { id: 'errors', label: 'Erreurs', icon: Bug },
   { id: 'perf', label: 'Perf', icon: Gauge },
-  { id: 'simulations', label: 'Simu', icon: Activity },
   { id: 'state', label: 'Etats', icon: Braces },
 ]
 
@@ -70,30 +63,7 @@ export function CodeViewWorkspaceAtelier({
 }) {
   const [activeTab, setActiveTab] = useState<AtelierTab>('tree')
   const [dockMode, setDockMode] = useState<DockMode>('left')
-  const [simulationReport, setSimulationReport] = useState<CodeSimulationLabReport | null>(null)
-  const [simulationError, setSimulationError] = useState<string | null>(null)
-  const [simulationRunning, setSimulationRunning] = useState(false)
-  const lastSimulationUrlRef = useRef<string | null>(null)
   const stats = useMemo(() => buildWorkspaceStats(files, consoleOutput), [files, consoleOutput])
-
-  useEffect(() => {
-    const url = devServerState.running ? devServerState.url : null
-    if (!url || lastSimulationUrlRef.current === url) return
-    lastSimulationUrlRef.current = url
-    const controller = new AbortController()
-    setSimulationRunning(true)
-    setSimulationError(null)
-    void runCodeSimulationLab({ url, waitMs: 1200, signal: controller.signal })
-      .then((report) => setSimulationReport(report))
-      .catch((err) => {
-        if (controller.signal.aborted) return
-        setSimulationError(err instanceof Error ? err.message : String(err))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSimulationRunning(false)
-      })
-    return () => controller.abort()
-  }, [devServerState.running, devServerState.url])
 
   if (dockMode === 'hidden') {
     return (
@@ -203,14 +173,6 @@ export function CodeViewWorkspaceAtelier({
               ['Plus gros fichier', stats.largestFile ? `${stats.largestFile.name} (${formatBytes(stats.largestFile.content.length)})` : '-'],
               ['Sandbox', validationResult ? (validationResult.ok ? 'OK' : 'ECHEC') : 'non lance'],
             ]}
-          />
-        )}
-        {activeTab === 'simulations' && (
-          <SimulationPanel
-            report={simulationReport}
-            running={simulationRunning}
-            error={simulationError}
-            devServerUrl={devServerState.url}
           />
         )}
         {activeTab === 'state' && (

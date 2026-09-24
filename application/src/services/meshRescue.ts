@@ -293,15 +293,6 @@ export type ThreeDRegressionSuiteResponse =
   | { ok: true; suite: ThreeDRegressionSuiteV1; returncode?: number }
   | { ok: false; error: string }
 
-// ---------- motion-parity ----------
-
-export type MotionParityResponse = {
-  ok: boolean
-  returncode: number
-  summary: string
-  stderr_tail?: string
-}
-
 // ---------- score-history ----------
 
 export type ScoreEventV1 = {
@@ -602,7 +593,6 @@ export type MeshRescueClient = {
   generateViewerHtml(mesh: string, output: string, title?: string): Promise<ViewerHtmlResponse>
   runPipeline(prompt: string, runId: string, opts?: RunPipelineOptions): Promise<RunPipelineResponse>
   runRegressionSuite(opts?: ThreeDRegressionSuiteOptions): Promise<ThreeDRegressionSuiteResponse>
-  motionParity(): Promise<MotionParityResponse>
   getRunIndex(opts?: { kind?: ThreeDSubjectKind; score?: boolean }): Promise<RunIndexResponse>
   scoreHistory(opts?: { runId?: string; top?: number; limit?: number; trend?: boolean }): Promise<ScoreHistoryResponse>
   getTrackerHealth(opts?: { staleMin?: number }): Promise<TrackerHealthResponse>
@@ -668,8 +658,6 @@ export function createMeshRescueClient(base: BridgeBase, fetchImpl?: FetchLike):
         strict_mesh: opts?.strictMesh ?? false,
         mesh_map: opts?.meshMap ?? {},
       }, fetchImpl),
-    motionParity: () =>
-      getJson<MotionParityResponse>(base, '/api/3d/motion-parity', fetchImpl),
     getRunIndex: (opts) => {
       const params = new URLSearchParams()
       if (opts?.kind) params.set('kind', opts.kind)

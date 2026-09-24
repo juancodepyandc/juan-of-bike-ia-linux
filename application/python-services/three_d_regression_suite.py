@@ -39,7 +39,10 @@ if str(SCRIPTS_DIR) not in sys.path:
 if str(SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(SERVICES_DIR))
 
-from route_test import route_pipeline  # noqa: E402
+try:
+    from route_test import route_pipeline  # noqa: E402
+except ImportError:  # routeur Python retiré — le routage réel est décidé dans threeDIntent.ts
+    route_pipeline = None  # type: ignore[assignment]
 
 
 MULTIVIEW_FULL = ["front", "front_3q", "left", "right", "back", "back_3q", "top", "bottom", "iso"]
@@ -604,6 +607,13 @@ def run_case(
     live_reference: bool = False,
     strict_mesh: bool = False,
 ) -> dict[str, Any]:
+    if route_pipeline is None:
+        return {
+            "id": case.id,
+            "ok": False,
+            "error": "router_python_absent",
+            "detail": "route_pipeline indisponible (route_test.py retiré) — vérifier le routage dans threeDIntent.ts",
+        }
     routing = route_pipeline(
         case.prompt,
         image_count=case.image_count,

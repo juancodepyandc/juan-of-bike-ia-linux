@@ -2,6 +2,8 @@ from flask import Blueprint, request, jsonify, Response, send_file, current_app,
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
+from bridge_server import COMFYUI_PATH, _find_comfyui_path, resolve_node_exe
+from routes.python_prog_bp_routes import _emit_progress
 
 python_bp = Blueprint('python_bp', __name__)
 
@@ -20,6 +22,7 @@ def _build_python_env() -> dict:
     # Allocation CUDA fragmentee -> aide l'echelle OOM du paint PBR sur 16 Go.
     run_env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     try:
+        from routes.cowork_ext_bp_routes import _pick_vision_model_or_default
         vision_model, _, _ = _pick_vision_model_or_default("qwen3-vl:8b")
         if vision_model:
             run_env.setdefault("AURORA_VISION_MODEL", vision_model)
@@ -887,28 +890,23 @@ def python_bridge_health():
 # ---------------------------------------------------------------------------
 # Banc de conformite inter-modules, rejouable DEPUIS LE TUNNEL.
 #
-# Les corrections de modules s'accompagnent d'un banc de mesures et de
-# 9 suites de conformite. Cet endpoint les rejoue et rend le resultat en JSON,
-# pour que l'interface (donc le tunnel) puisse le declencher sans passer par
-# un terminal.
+# Les corrections de modules s'accompagnent de mesures comportementales (le
+# projet ne conserve plus de fichiers de tests). Cet endpoint les rejoue et
+# rend le resultat en JSON, pour que l'interface (donc le tunnel) puisse le
+# declencher sans passer par un terminal.
 #
-# LECTURE SEULE, deliberement. Le mode `--preuve`, qui revient temporairement
-# a HEAD sur 9 fichiers pour verifier que les tests echouent bien sur le code
-# d'avant, N'EST PAS expose ici : une requete HTTP interrompue au mauvais
-# moment laisserait le depot dans un etat intermediaire. Ce mode reste sur la
-# ligne de commande, sous l'oeil de l'operateur :
-#     cd application && npm run conformance:preuve
+# LECTURE SEULE, deliberement : il n'execute que des mesures sur le code en
+# place, aucun fichier n'est touche, aucune suite de tests n'est lancee.
 # ---------------------------------------------------------------------------
 _conformance_lock = threading.Lock()
 
 
 @python_bp.route("/api/conformance", methods=["GET", "POST"])
 def aurora_conformance():
-    """Rejoue le banc de conformite (lecture seule) et rend le rapport JSON.
+    """Rejoue les mesures comportementales (lecture seule) et rend le rapport JSON.
 
     Parametres (query ou corps JSON) :
-      mesures=1   ajoute les mesures comportementales chiffrees par module
-      suites=0    saute les 9 suites de tests et ne rend que les mesures
+      mesures=1   calcule les mesures comportementales chiffrees par module
     """
     params = request.get_json(silent=True) or {}
 
@@ -964,8 +962,8 @@ def aurora_conformance():
             "verdict": rapport.get("verdict"),
             "durationMs": int((time.time() - started) * 1000),
             "rapport": rapport,
-            "note": "Lecture seule. La preuve rouge/vert reste en ligne de "
-                    "commande : npm run conformance:preuve",
+            "note": "Lecture seule : mesures comportementales sur le code en place, "
+                    "aucune suite de tests lancee.",
         })
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": "Delai depasse (900 s)."}), 504
@@ -1101,9 +1099,10 @@ _TUNNEL_URL_CACHE: "dict[str, object]" = {"url": None, "mtime": 0.0, "path": Non
 def _resolve_tunnel_url_path():
     """Locate tunnel.txt, falling back to the legacy local-only filename."""
     import pathlib
-    repo_root = pathlib.Path(WORKSPACE).resolve()
-    for directory in (repo_root, repo_root.parent):
-        for filename in ("tunnel.txt", "tunnel_url.txt"):
+    workspace = pathlib.Path(WORKSPACE).resolve()
+    repo_root = workspace.parent if workspace.name == "application" else workspace
+    for filename in ("tunnel.txt", "tunnel_url.txt"):
+        for directory in dict.fromkeys((repo_root, workspace)):
             candidate = directory / filename
             if candidate.is_file():
                 return candidate

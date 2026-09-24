@@ -4,10 +4,6 @@ import { AlertTriangle, FileCode2 } from 'lucide-react'
 import type { CodeFile } from '../services/codeOrchestrator.ts'
 import type { CodeSandboxResult } from '../services/codeSandbox.ts'
 import { supportsBrowserWorkspaceRuntime } from '../services/codeBrowserWorkspaceRuntime.ts'
-import {
-  summarizeCodeSimulationLab,
-  type CodeSimulationLabReport,
-} from '../services/codeSimulationLab.ts'
 
 export function VirtualizedProjectTree({
   files,
@@ -104,61 +100,6 @@ export function LogPanel({ content }: { content: string }) {
       <code>{content.split('\n').slice(-80).join('\n')}</code>
     </pre>
   )
-}
-
-export function SimulationPanel({
-  report,
-  running,
-  error,
-  devServerUrl,
-}: {
-  report: CodeSimulationLabReport | null
-  running: boolean
-  error: string | null
-  devServerUrl: string | null
-}) {
-  if (running && !report) {
-    return (
-      <div className="grid h-[12rem] place-items-center rounded-xl border border-aurora-accent/25 bg-aurora-accent/10 text-center text-xs text-aurora-accent-light">
-        Labo WS12 en cours sur navigateur reel...
-      </div>
-    )
-  }
-  if (error) {
-    return (
-      <div className="rounded-xl border border-aurora-red/25 bg-aurora-red/10 px-3 py-3 text-xs text-aurora-red">
-        {error}
-      </div>
-    )
-  }
-  if (!report) {
-    return (
-      <SummaryPanel
-        rows={[
-          ['Dev-server', devServerUrl || 'inactif'],
-          ['Web', 'attend une URL locale pour Chromium/Firefox reels'],
-          ['Mobile reel', 'jamais remplace par un simple redimensionnement'],
-          ['Embedded/OS', 'Renode/QEMU requis et signales si absents'],
-        ]}
-      />
-    )
-  }
-
-  const summary = summarizeCodeSimulationLab(report)
-  const rows: Array<[string, string]> = [
-    ['Resume', summary.summary],
-    ['Executions reelles', String(summary.realExecutions)],
-    ['Navigateurs web', summary.webBrowsers.join(', ') || '-'],
-  ]
-  for (const stage of report.stages.slice(0, 12)) {
-    rows.push([
-      stage.label,
-      [stage.status, stage.realExecution ? 'execution reelle' : 'non execute', stage.viewport, stage.error || stage.detail]
-        .filter(Boolean)
-        .join(' · '),
-    ])
-  }
-  return <SummaryPanel rows={rows} />
 }
 
 export function ErrorPanel({

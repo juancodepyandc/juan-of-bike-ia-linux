@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Mesures comportementales des services Python 3D et video.
+"""Mesures comportementales des services Python 3D.
 
 Meme contrat que `conformanceMesures.mjs` cote TypeScript : chaque mesure rend
 un entier « nombre de defauts », 0 = conforme, et n appelle que des fonctions
@@ -158,33 +158,6 @@ def mesures() -> list[dict]:
                + (f" : {manquants}" if manquants else ""))
     except Exception as exc:  # noqa: BLE001
         ajoute("3D/reprise", "graphe de reprise", 1, f"sonde en echec : {exc}")
-
-    # --- 6. Video : grille d images et validateur d image-cle --------------
-    try:
-        import video_generate as VG
-        defauts, details = 0, []
-        hors = [v for v in range(-50, 500) if (VG.normalize_model_frames(v) - 1) % 8 != 0]
-        if hors:
-            defauts += len(hors)
-            details.append(f"{len(hors)} valeurs hors grille 8k+1")
-        mauvais = [v for v in range(-100, 2000) if VG.round_to_32(v) % 32 != 0]
-        if mauvais:
-            defauts += len(mauvais)
-            details.append(f"{len(mauvais)} dimensions non multiples de 32")
-        pieges = [
-            ("noir", np.zeros((64, 64, 3), np.uint8), False),
-            ("blanc", np.full((64, 64, 3), 255, np.uint8), False),
-            ("aplat gris", np.full((64, 64, 3), 128, np.uint8), False),
-        ]
-        for nom, frame, attendu in pieges:
-            ok, _raison, _m = VG.validate_key_frame(frame)
-            if ok != attendu:
-                defauts += 1
-                details.append(f"image-cle « {nom} » acceptee a tort")
-        ajoute("video", "contrats d images", defauts,
-               " ; ".join(details) or "grille 8k+1 et multiples de 32 tenus, images-cles mortes refusees")
-    except Exception as exc:  # noqa: BLE001
-        ajoute("video", "contrats d images", 1, f"sonde en echec : {exc}")
 
     return out
 

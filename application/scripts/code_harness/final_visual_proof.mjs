@@ -29,7 +29,7 @@ const files = [
     <header><div><small>MISSION ACTIVE</small><h1>Orchestration produit</h1></div><span class="status">Systemes operationnels</span></header>
     <section class="metrics">
       <article><small>Score qualite</small><b>96</b><span>+8 cette semaine</span></article>
-      <article><small>Tests valides</small><b>705</b><span>0 regression</span></article>
+      <article><small>Modules valides</small><b>11</b><span>0 regression</span></article>
       <article><small>Environnements</small><b>11</b><span>Executions reelles</span></article>
     </section>
     <section class="work">
@@ -74,7 +74,6 @@ const validationResult = {
   detectedLanguage: 'node',
   steps: [
     { label: 'Build production', command: 'npm run build', ok: true, output: 'Build termine sans erreur.' },
-    { label: 'Tests acceptation', command: 'npm test', ok: true, output: '705 tests Code valides.' },
   ],
 }
 
@@ -114,7 +113,7 @@ async function seedCodeModule(page) {
       intent: null,
       totalAttempts: 2,
       finalScore: 96,
-      consoleOutput: '[build] production OK\n[test] 705/705 OK\n[visual] score 96/100',
+      consoleOutput: '[build] production OK\n[visual] score 96/100',
       recoveryStatus: null,
       preflightReport: null,
       pendingResume: false,
@@ -250,13 +249,6 @@ async function captureProfile(browser, profile) {
       || window.__auroraFinalProof?.execution === 'verified'
   }, null, { timeout: 30_000 })
 
-  if (profile.id === 'v4_desktop') {
-    const simulationTab = page.getByRole('button', { name: 'Simu', exact: true })
-    if (await simulationTab.isVisible().catch(() => false)) {
-      await simulationTab.click()
-      await page.waitForTimeout(300)
-    }
-  }
   if (profile.focus === 'delivery') {
     await page.getByRole('heading', { name: 'Scene code', exact: true }).scrollIntoViewIfNeeded()
     await page.waitForTimeout(300)

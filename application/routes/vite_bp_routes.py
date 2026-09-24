@@ -376,58 +376,6 @@ def three_d_motion_self_test():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
-# v77zaf: 3D motion pipeline aggregated healthcheck.
-# Single endpoint that runs every component self-test + parity test in
-# parallel and returns one consolidated report. Lets a tunnel-side
-# observer confirm the entire 3D motion stack is green with one curl
-# instead of N round-trips.
-@vite_bp.route("/api/3d/pipeline-status", methods=["GET"])
-def three_d_pipeline_status():
-    services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "python-services")
-    fixtures_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "src", "__tests__", "fixtures", "motion_parser_fixtures.json",
-    )
-    components = {}
-
-    def _run(args, key, ok_marker):
-        try:
-            proc = subprocess.run(
-                [sys.executable] + args, capture_output=True, text=True, timeout=30,
-            )
-            stdout = (proc.stdout or "").strip()
-            stderr = (proc.stderr or "").strip()
-            ok = proc.returncode == 0 and ok_marker in stdout
-            components[key] = {
-                "ok": ok,
-                "summary": stdout.splitlines()[-1] if stdout else "",
-                "stderr": stderr[-200:] if stderr else "",
-                "returncode": proc.returncode,
-            }
-        except Exception as exc:
-            components[key] = {"ok": False, "error": str(exc)}
-
-    _run([os.path.join(services_dir, "motion_baker.py"), "--self-test"],
-         "motion_baker_self_test", "SELF_TEST_OK")
-    _run([os.path.join(services_dir, "motion_parser.py"), "--self-test"],
-         "motion_parser_self_test", "PARSER_SELF_TEST_OK")
-    _run([os.path.join(services_dir, "motion_parser.py"), "--parity-test", fixtures_path],
-         "parity_test", "PARITY_OK")
-
-    overall_ok = all(c.get("ok") for c in components.values())
-    return jsonify({
-        "ok": overall_ok,
-        "components": components,
-        "axes": {
-            "couleur": 95,
-            "precision": 95,
-            "comprehension": 95,
-            "mouvement": 95,
-        },
-        "version": "v77zaf",
-    })
-
-
 @vite_bp.route("/api/3d/regression-suite", methods=["POST"])
 def three_d_regression_suite():
     """Run the shared 3D regression/audit suite used by CLI and UI.
@@ -536,7 +484,7 @@ def three_d_regression_suite():
 
 
 _AGENTS_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", ".claude", "agents",
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude", "agents",
 )
 _AGENT_DOCS = {"README.md", "EXAMPLES.md"}
 
@@ -1225,56 +1173,6 @@ def code_visual_audit():
     return jsonify({"ok": ok, "audit": audit, "error": error})
 
 
-@vite_bp.route("/api/code/simulation-lab", methods=["POST"])
-def code_simulation_lab():
-    data = request.get_json(silent=True) or {}
-    url = str(data.get("url") or "").strip()
-    if not url:
-        return jsonify({"ok": False, "error": "url requise"}), 400
-    if not _code_visual_audit_url_allowed(url):
-        return jsonify({"ok": False, "error": "labo simulation limite aux URLs locales de dev-server"}), 400
-
-    try:
-        wait_ms = int(data.get("waitMs") or data.get("wait_ms") or 2500)
-    except Exception:
-        wait_ms = 2500
-    wait_ms = max(500, min(12000, wait_ms))
-
-    script = pathlib.Path(WORKSPACE) / "python-services" / "aurora_code" / "simulation_lab.py"
-    if not script.is_file():
-        return jsonify({"ok": False, "error": "simulation_lab.py introuvable"}), 500
-
-    out_dir = pathlib.Path(WORKSPACE) / "output" / "code_simulation_labs" / str(int(time.time() * 1000))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        proc = subprocess.run(
-            [sys.executable, str(script), url, str(out_dir), str(wait_ms)],
-            cwd=WORKSPACE,
-            capture_output=True,
-            text=True,
-            timeout=max(420, int(wait_ms / 1000 * 18) + 180),
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "timeout labo simulation"}), 504
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"labo simulation impossible: {exc}"}), 500
-
-    try:
-        report = json.loads(proc.stdout or "{}")
-    except Exception as exc:
-        return jsonify({"ok": False, "error": f"JSON labo simulation invalide: {exc}", "stderr": (proc.stderr or "")[-1200:]}), 502
-
-    if not isinstance(report, dict):
-        report = {}
-    report.setdefault("schemaVersion", "aurora.code.simulation-lab/1")
-    report.setdefault("url", url)
-    report.setdefault("stages", [])
-    ok = proc.returncode == 0 and len(report.get("stages") or []) > 0
-    error = (proc.stderr or "")[-2000:] if proc.returncode != 0 else ""
-    return jsonify({"ok": ok, "report": report, "error": error})
-
-
 @vite_bp.route("/api/code/tooling-eval", methods=["POST"])
 def code_tooling_eval():
     data = request.get_json(silent=True) or {}
@@ -1571,35 +1469,6 @@ def aurora_module_dispatch(module, action):
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
-@vite_bp.route("/api/3d/motion-parity", methods=["GET"])
-def three_d_motion_parity():
-    """Live parity check: runs motion_parser.py --parity-test against the
-    shared TS↔Python fixtures and returns the verdict. Used by
-    /aurora-self-test gate 18 to lock the verb table."""
-    workspace = os.path.dirname(os.path.abspath(__file__))
-    parser_script = os.path.join(workspace, "python-services", "motion_parser.py")
-    fixtures = os.path.join(workspace, "src", "__tests__", "fixtures", "motion_parser_fixtures.json")
-    if not os.path.isfile(parser_script):
-        return jsonify({"ok": False, "error": "motion_parser.py missing"}), 500
-    if not os.path.isfile(fixtures):
-        return jsonify({"ok": False, "error": "motion_parser_fixtures.json missing"}), 500
-    try:
-        proc = subprocess.run(
-            [sys.executable, parser_script, "--parity-test", fixtures],
-            capture_output=True, timeout=30, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "parity timed out"}), 504
-    out = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
-    err = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
-    return jsonify({
-        "ok": proc.returncode == 0 and "PARITY_OK" in out,
-        "returncode": proc.returncode,
-        "summary": out.splitlines()[-1] if out else "",
-        "stderr_tail": err[-300:] if err else "",
-    })
-
-
 @vite_bp.route("/api/3d/run-index", methods=["GET"])
 def three_d_run_index():
     """Scan application/output/3d/ for grouped runs (id_mesh.glb +
@@ -1880,7 +1749,7 @@ def agents_list():
         if "name" in fm and "description" in fm:
             descriptions[fm["name"]] = fm["description"][:240]
     tracker_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", ".claude",
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude",
         "agent-tracker", "state.json",
     )
     state: dict = {}
@@ -2431,67 +2300,6 @@ def agents_metrics():
     except (ValueError, UnicodeDecodeError) as exc:
         return jsonify({"ok": False, "error": f"invalid JSON: {exc}"}), 500
     return jsonify({"ok": True, "metrics": data})
-
-
-@vite_bp.route("/api/3d/route-test", methods=["POST"])
-def three_d_route_test():
-    """Probe the routePipeline() decision for a given prompt without running
-    the full Hunyuan3D / DreamGaussian / Blender pipeline.
-
-    POST body: {"prompt": "..."}
-    Returns: JSON from application/scripts/route_test.py (regex-mirror of
-    threeDIntent.ts routePipeline).
-
-    Useful for the UI to preview which pipeline a prompt will hit (and surface
-    a hint if Hunyuan3D would be picked for a stylized luxury request).
-    """
-    data = request.get_json(silent=True) or {}
-    prompt = (data.get("prompt") or "").strip()
-    purpose = (data.get("purpose") or "").strip()
-    subject_kind = (data.get("subject_kind") or "").strip()
-    images = data.get("images") or []
-    image_count = data.get("image_count")
-    if isinstance(images, list):
-        image_count = max(int(image_count or 0), len(images))
-    else:
-        image_count = int(image_count or 0)
-    if not prompt:
-        return jsonify({"ok": False, "error": "missing 'prompt' in body"}), 400
-    if len(prompt) > 4000:
-        return jsonify({"ok": False, "error": "prompt too long (>4000 chars)"}), 400
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "scripts", "route_test.py",
-    )
-    if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "route_test.py not found"}), 500
-    cmd = [sys.executable, script_path, prompt]
-    if image_count > 0:
-        cmd += ["--image-count", str(image_count)]
-    if purpose:
-        cmd += ["--purpose", purpose]
-    if subject_kind:
-        cmd += ["--subject-kind", subject_kind]
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True, text=True, timeout=10, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "route_test timed out"}), 504
-    if proc.returncode != 0:
-        return jsonify({
-            "ok": False,
-            "returncode": proc.returncode,
-            "stderr": (proc.stderr or "")[-400:],
-        }), 500
-    try:
-        result = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return jsonify({
-            "ok": False, "error": f"route_test produced invalid JSON: {exc}",
-            "raw": proc.stdout[:400],
-        }), 500
-    return jsonify({"ok": True, "routing": result})
 
 
 @vite_bp.route("/api/3d/motion-intent", methods=["POST"])
@@ -3223,5 +3031,4 @@ def vite_catchall(path: str):
     if _vite_path_blocked(path):
         return jsonify({"error": "forbidden", "path": p}), 404
     return _vite_proxy(path)
-
 

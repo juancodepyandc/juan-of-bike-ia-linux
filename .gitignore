@@ -237,3 +237,7 @@ application/**/*.md
 auto_rl/**/*.md
 _design/
 _dev/
+
+# Documentation canonique ; les projections locales restent ignorees.
+!/ARCHITECTURE_MAITRE.md
+!/AGENTS.md

@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from subject_kind_extractor import extract_kind  # noqa: E402
 from flux_reference_synth import audit_multiview_consistency, synth, synth_multiview  # noqa: E402
 from auto_rescue_mesh import auto_rescue  # noqa: E402
+from neural_process import run_neural_process  # noqa: E402
 try:
     # Faithful-scene composer: forces every requested facet (identity, decor,
     # mechanical, fluids, luminous, motion) of a COMPOUND prompt into an explicit
@@ -63,15 +64,15 @@ try:
 except ImportError:  # tracker_helper is a soft dependency
     _record_tracker_dispatch = None  # type: ignore[assignment]
 
-# Router (Python mirror of routePipeline() in threeDIntent.ts).
-# Lives under application/scripts/route_test.py; add it to sys.path so we
-# can call it programmatically before committing to FLUX -> Hunyuan3D.
+# Choix du pipeline renvoyé au moteur de routage de l'interface.
+# Le miroir Python (route_test.py) a été retiré : on retombe proprement
+# sur le défaut FLUX -> Hunyuan3D quand aucun routeur n'est disponible.
 _SCRIPTS_DIR = REPO_ROOT / "application" / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 try:
     from route_test import route_pipeline  # noqa: E402
-except ImportError:  # router missing — the orchestrator still works (falls through to FLUX)
+except ImportError:  # routeur absent — l'orchestrateur continue (défaut FLUX)
     route_pipeline = None  # type: ignore[assignment]
 
 # Kinds where multi-view materially helps (silhouette / aspect axis is the
@@ -2946,6 +2947,14 @@ def run_pipeline(prompt: str, run_id: str, *,
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
     audit: list[dict] = []
     output_dir.mkdir(parents=True, exist_ok=True)
+    required_space = 2 * 1024 ** 3
+    available_space = shutil.disk_usage(output_dir).free
+    if available_space < required_space:
+        return {
+            "ok": False, "error": "insufficient disk space for 3D generation",
+            "required_bytes": required_space, "available_bytes": available_space,
+            "output_dir": str(output_dir), "audit_trail": audit,
+        }
     # HYGIENE MEMOIRE DES L'ENTREE (30/07, retour utilisateur: « Ollama n'a
     # pas libere correctement les modeles precedents avant le swap »). La
     # liberation n'existait qu'AVANT TRELLIS: les modeles de la session de
@@ -4048,7 +4057,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         # silencieux pour l'utilisateur: cote interface, c'est Atlas qui
         # construit, quel que soit le chemin emprunte.
         _tache_service = None
-        if os.environ.get("AURORA_MESHY", "1") == "1":
+        if _engine_choice == "auto" and os.environ.get("AURORA_MESHY", "1") == "1":
             try:
                 sys.path.insert(0, str(Path(__file__).parent))
                 import meshy_client
@@ -4176,7 +4185,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                 if _trellis_available:
                     _flat_art = False
                     _mv_on = (os.environ.get("AURORA_MVADAPTER_MV", "1") == "1"
-                              and not _user_extra_views)
+                              and multi_view is not False and not _user_extra_views)
                     if _mv_on and front_ref.is_file():
                         try:
                             from vlm_judge import ask_vlm as _avlm
@@ -4724,8 +4733,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                         _vp = f"{_stem}_v{_vi}.png"
                         if os.path.isfile(_vp):
                             _tr_cmd.append(_vp)
-                    _p = subprocess.run(_tr_cmd,
-                                        env=_tr_env, capture_output=True, text=True, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
+                    _p = run_neural_process(_tr_cmd,
+                                           env=_tr_env, timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
                     for _line in reversed((_p.stdout or "").splitlines()):
                         if _line.startswith("AURORA_TRELLIS_RESULT:"):
                             _tr = json.loads(_line[len("AURORA_TRELLIS_RESULT:"):]); break
@@ -4771,9 +4780,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                                     mesh_path.unlink(missing_ok=True)
                                 except Exception:  # noqa: BLE001
                                     pass
-                                _p = subprocess.run(_tr_cmd2, env=_tr_env,
-                                                    capture_output=True, text=True,
-                                                    timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
+                                _p = run_neural_process(_tr_cmd2, env=_tr_env,
+                                                       timeout=int(os.environ.get("AURORA_TRELLIS_TIMEOUT_S", "10800")))
                                 _tr = {}
                                 for _line in reversed((_p.stdout or "").splitlines()):
                                     if _line.startswith("AURORA_TRELLIS_RESULT:"):
@@ -4907,7 +4915,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                                               "error": _fid.get("error") or (_fp.stderr or _fp.stdout or "no output")[-300:]})
                         except Exception as _fe:
                             audit.append({"stage": "texture_fidelity", "ok": False, "error": repr(_fe)})
-                    else:
+                    elif not _trellis_ok:
                         audit.append({"stage": "trellis2", "ok": False,
                                       "error": _tr.get("error")})
                     if _trellis_ok:
@@ -5626,7 +5634,8 @@ def run_pipeline(prompt: str, run_id: str, *,
             _rr_script = str(REPO_ROOT / "application" / "python-services" / "roughness_realism.py")
             _rr_out = str(output_dir / f"{run_id}_matte.glb")
             _blender = os.environ.get("AURORA_BLENDER") or _sh.which("blender") or "blender"
-            _rr_floor = os.environ.get("AURORA_ROUGHNESS_FLOOR", "0.62")
+            _gloss_requested = re.search(r"\b(glossy|glazed|polished|brillant|brillante|verni|vernie)\b", prompt, re.I)
+            _rr_floor = os.environ.get("AURORA_ROUGHNESS_FLOOR", "0.18" if _gloss_requested else "0.62")
             _rr = subprocess.run([_blender, "-b", "-P", _rr_script, "--",
                                   str(final_delivery_mesh), _rr_out, _rr_floor],
                                  capture_output=True, text=True, timeout=600, check=False)
@@ -5825,12 +5834,8 @@ def run_pipeline(prompt: str, run_id: str, *,
             try:
                 from perfection_gate import porte as _porte, porte_structure as _porte_struct
                 _ref_juge = str(front_ref) if front_ref.is_file() else None
-                # juger le LIVRABLE: en reprise, final_mesh_path peut pointer
-                # un intermediaire (mesh_rough) — prefere matte s'il existe.
-                _matte_c = Path(str(final_mesh_path)).parent / (
-                    run_id + "_matte.glb") if final_mesh_path else None
-                _cand_final = (_matte_c if (_matte_c and _matte_c.is_file())
-                               else final_mesh_path)
+                # Only judge the selected deliverable, never a failed intermediate export.
+                _cand_final = final_delivery_mesh
                 # LE MATTE SEUL NE VOIT JAMAIS LES COULEURS. _cand_final est
                 # sans texture (silhouette/forme uniquement) — le VRAI livrable
                 # texture (final_delivery_mesh, celui qui devient
@@ -5888,6 +5893,8 @@ def run_pipeline(prompt: str, run_id: str, *,
             except Exception as _pge:  # noqa: BLE001
                 audit.append({"stage": "perfection_gate", "ok": False,
                               "error": repr(_pge)})
+                return {"ok": False, "error": f"quality validation unavailable: {_pge}",
+                        "final_mesh": str(final_delivery_mesh), "audit_trail": audit}
 
             # DILATATION D'ATLAS avant rangement: les gouttieres sombres entre
             # ilots UV mouchetaient tout le modele aux coutures (verifie
@@ -5917,6 +5924,9 @@ def run_pipeline(prompt: str, run_id: str, *,
                 front_reference=str(front_ref) if front_ref.is_file() else None)
             audit.append({"stage": "livraison", **{k: v for k, v in livraison.items()
                                                    if k != "deplaces"}})
+            if not livraison.get("ok"):
+                return {"ok": False, "error": "delivery validation failed: " + str(livraison.get("error")),
+                        "audit_trail": audit}
             if livraison.get("ok"):
                 _liv = livraison.get("livraison") or {}
                 if _liv.get("modele_couleurs"):
@@ -5945,6 +5955,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     pass
         except Exception as _oe:  # noqa: BLE001
             audit.append({"stage": "livraison", "ok": False, "error": repr(_oe)})
+            return {"ok": False, "error": f"delivery failed: {_oe}", "audit_trail": audit}
 
     _record_pipeline_dispatch(
         run_id, prompt, started_at_iso,

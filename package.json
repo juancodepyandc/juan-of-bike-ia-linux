@@ -4,7 +4,6 @@
   "scripts": {
     "dev": "npm --prefix application run dev",
     "dev:web": "npm --prefix application run dev:web",
-    "test": "npm --prefix application test",
     "build": "npm --prefix application run build",
     "tauri": "npm --prefix application run tauri --",
     "tauri:build": "npm --prefix application run tauri:build",
