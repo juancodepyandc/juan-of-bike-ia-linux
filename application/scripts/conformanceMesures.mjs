@@ -548,5 +548,137 @@ export async function mesure() {
     ajoute('conversation', 'verification + citations', defauts, details.join(' ; ') || 'absence vs presence de citation distinguees')
   }
 
+  // --- 31. COWORK / garde-fou des actions agent -----------------------------
+  {
+    const { validateAction } = await charge('src/services/coworkSafety.ts')
+    let defauts = 0
+    const details = []
+    const ws = '/workspace/projet'
+    const danger = validateAction({ kind: 'shell', command: 'rm', args: ['-rf', '/etc/toto'] }, 'desktop', ws, {})
+    if (danger.decision !== 'confirm') { defauts += 1; details.push(`rm -rf ${danger.decision}`) }
+    const horsWs = validateAction({ kind: 'delete_file', path: '/tmp/fichier.txt' }, 'desktop', ws, {})
+    if (horsWs.decision !== 'confirm') { defauts += 1; details.push(`delete hors ws ${horsWs.decision}`) }
+    const dansWs = validateAction({ kind: 'read_file', path: `${ws}/main.ts` }, 'desktop', ws, {})
+    if (dansWs.decision !== 'allow') { defauts += 1; details.push('lecture workspace refusee a tort') }
+    const ctrl = validateAction({ kind: 'write_file', path: `${ws}/../secrets`, content: 'x' }, 'desktop', ws, {})
+    if (ctrl.decision !== 'confirm') { defauts += 1; details.push(`chemin hors workspace ${ctrl.decision}`) }
+    ajoute('cowork', 'garde-fou de valideAction', defauts, details.join(' ; ') || 'destructif/hors-espace confirme, lecture ws permettent')
+  }
+
+  // --- 32. IMAGE / extraction du brief --------------------------------------
+  {
+    const { parseBrief, buildPromptContractBlock } = await charge('src/services/imagePromptBuilder.ts')
+    let defauts = 0
+    const details = []
+    const b = parseBrief('un chat roux dans un jardin apres la pluie, sans personne, ni grisaille')
+    if (!b || !b.subject || !b.subject.includes('chat roux')) { defauts += 1; details.push('sujet non extrait') }
+    if (!b || b.negativeHints.length === 0 || !b.negativeHints.some((n) => n.includes('personne'))) { defauts += 1; details.push('interdits non extraits') }
+    const bloc = buildPromptContractBlock(b)
+    if (!bloc || !bloc.includes('IMAGE PROMPT BUILDER CONTRACT') || !bloc.includes('chat roux')) { defauts += 1; details.push('contrat de prompt incomplet') }
+    ajoute('image', 'brief vers contrat', defauts, details.join(' ; ') || 'sujet + interdits isoles, contrat prompt genere')
+  }
+
+  // --- 33. CODE / regles statiques de securite ------------------------------
+  {
+    const { SECURITY_RULES } = await charge('src/services/codeStaticSecurityRules.ts')
+    let defauts = 0
+    const details = []
+    const regleEval = SECURITY_RULES.find((r) => r.pattern.source.includes('eval'))
+    if (!regleEval) { defauts += 1; details.push('regle eval absente') }
+    else {
+      const fichier = { path: 'src/app.ts', language: 'ts', content: 'const fn = eval(userInput)' }
+      if (!regleEval.pattern.test(fichier.content) || !regleEval.appliesTo(fichier)) { defauts += 1; details.push('eval non signalment par la regle') }
+      const propre = { path: 'src/app.ts', language: 'ts', content: 'const x = JSON.parse(text)' }
+      if (regleEval.pattern.test(propre.content)) { defauts += 1; details.push('faux positif sur JSON.parse') }
+    }
+    ajoute('code', 'regles statiques de securite', defauts, details.join(' ; ') || 'eval bloque selon la regle, JSON.parse exonere')
+  }
+
+  // --- 34. CYBER / inspection JWT -------------------------------------------
+  {
+    const { inspectJwt, summariseJwt } = await charge('src/services/cyber/jwtInspector.ts')
+    let defauts = 0
+    const details = []
+    const token = 'eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJyb290In0.c2ln'
+    const ins = inspectJwt(token, new Date('2026-01-01'))
+    if (!ins || !ins.header || ins.header.alg !== 'none') { defauts += 1; details.push('entete JWT non decode') }
+    if (!ins || ins.issues.length === 0) { defauts += 1; details.push('aucun probleme signale') }
+    else if (!ins.issues.some((i) => i.severity === 'block')) { defauts += 1; details.push('alg=none non repere') }
+    const sum = summariseJwt(ins)
+    if (!sum || !sum.includes('none')) { defauts += 1; details.push('resume JWT sans mention alg') }
+    ajoute('cyber', 'inspection JWT', defauts, details.join(' ; ') || 'entete none decode + gravite block + resume')
+  }
+
+  // --- 35. CYBER / aller-retour binaire -------------------------------------
+  {
+    const { decodeBinary } = await charge('src/services/cyber/classicalCipherAnalysis.ts')
+    const { toBinary } = await charge('src/services/cyber/cryptoService.ts')
+    let defauts = 0
+    const details = []
+    const phrase = 'Aurora se connecte via le tunnel'
+    const bin = toBinary(phrase)
+    if (!bin || !bin.includes('0') || !bin.includes('1')) { defauts += 1; details.push('encodage binaire vide') }
+    if (decodeBinary(bin) !== phrase) { defauts += 1; details.push('aller-retour binaire casse') }
+    const faussaire = bin.slice(0, -2) + '1 0'
+    if (decodeBinary(faussaire) === phrase && phrase !== decodeBinary(faussaire)) { defauts += 1; details.push('corruption non detectee') }
+    ajoute('cyber', 'aller-retour binaire', defauts, details.join(' ; ') || `${phrase.length} caracteres convertis puis restitues`)
+  }
+
+  // --- 36. CYBER / audit des hachages ---------------------------------------
+  {
+    const { auditHash } = await charge('src/services/cyber/hashParameterParser.ts')
+    let defauts = 0
+    const details = []
+    const argon = '$argon2id$v=19$m=65536,t=3,p=1$c29tZXNhbHQ$mZ9LhW1LQV0wQ3pXbDlxdA'
+    const bcrypt = '$2b$12$LQ5wM9gO3uN1UH8S5R8TLOxLsY7jU9pVjYrY8mXzZ6XmWqZvL9rCq'
+    try {
+      const a = auditHash(argon)
+      if (!a || a.verdict !== 'recommended') { defauts += 1; details.push('argon2id non recommande a tort') }
+      const b = auditHash(bcrypt)
+      if (!b || b.verdict !== 'acceptable') { defauts += 1; details.push('bcrypt cost 12 non acceptable') }
+    } catch (e) { defauts += 1; details.push(`auditHash : ${String(e.message).slice(0, 60)}`) }
+    ajoute('cyber', 'audit des hachages', defauts, details.join(' ; ') || 'argon2id recommende, bcrypt 12 acceptable')
+  }
+
+  // --- 37. CYBER / validation politique algorithmique -----------------------
+  {
+    const { auditJwtVerificationPolicy } = await charge('src/services/cyber/exploitPatchVerifier.ts')
+    let defauts = 0
+    const details = []
+    const sain = auditJwtVerificationPolicy('RS256', ['RS256'], true)
+    if (!sain || sain.isAccepted !== true) { defauts += 1; details.push('RS256 accepte refuse a tort') }
+    const conf = auditJwtVerificationPolicy('HS256', ['RS256', 'HS256'], true)
+    if (!conf || conf.isVulnerableAlgorithmConfusion !== true) { defauts += 1; details.push('confusion RS/HS non detectee') }
+    const none = auditJwtVerificationPolicy('none', ['RS256'], false)
+    if (!none || none.isVulnerableAlgorithmNone !== true) { defauts += 1; details.push('alg=none non bloque') }
+    ajoute('cyber', 'politique algorithmique JWT', defauts, details.join(' ; ') || 'RS256 sain, confusion and none rejetes')
+  }
+
+  // --- 38. CYBER / posture quantique ----------------------------------------
+  {
+    const { auditQuantumReadiness } = await charge('src/services/cyber/postQuantumCryptoAudit.ts')
+    let defauts = 0
+    const details = []
+    const r = auditQuantumReadiness(['RSA-2048', 'Kyber-512'])
+    if (!r || !r.status || r.status === 'QUANTUM_READY') { defauts += 1; details.push('RSA-2048 seul juge prepare') }
+    if (r && r.evaluatedSuites) {
+      const rsa = r.evaluatedSuites.find((s) => s.algorithm === 'RSA-2048')
+      if (!rsa || rsa.isQuantumVulnerable !== true) { defauts += 1; details.push('RSA-2048 non marqué vulnerable') }
+    }
+    ajoute('cyber', 'posture quantique', defauts, details.join(' ; ') || 'RSA vulnerable, verdict non-QM')
+  }
+
+  // --- 39. IMAGE / classification directionnelle (voix inverse) -------------
+  {
+    const { identifyHash } = await charge('src/services/cyber/hashService.ts')
+    let defauts = 0
+    const details = []
+    const md5 = identifyHash('e10adc3949ba59abbe56e057f20f883e')
+    if (!md5 || !md5.includes('MD5')) { defauts += 1; details.push('empreinte MD5 non reconnue') }
+    const sha = identifyHash('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
+    if (!sha || !sha.some((s) => s.startsWith('SHA-256'))) { defauts += 1; details.push('SHA-256 non reconnue') }
+    ajoute('cyber', 'identification d empreintes', defauts, details.join(' ; ') || 'MD5 32g, SHA-256 64g identifiees')
+  }
+
   return out
 }
