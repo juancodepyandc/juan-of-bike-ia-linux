@@ -370,5 +370,108 @@ export async function mesure() {
       ko === 0 ? 'pourcentage, jauge et sparkline formatables' : `${ko} rendu(s) en echec`)
   }
 
+  // --- 20. MÉMOIRE / store, rappel et élagage -------------------------------
+  {
+    const { createMemoryStore, addMemory, retrieve, prune, MEMORY_STORE_VERSION } = await charge('src/services/conversationMemory.ts')
+    let defauts = 0
+    const details = []
+    let store = createMemoryStore()
+    if (!store || store.version !== MEMORY_STORE_VERSION) { defauts += 1; details.push('version du store inattendue') }
+    const base = new Date('2026-01-01T00:00:00.000Z')
+    store = addMemory(store, { kind: 'fact', text: 'Le serveur tourne sur le port 3001', importance: 0.9 }, base)
+    store = addMemory(store, { kind: 'fact', text: 'Le serveur tourne sur le port 3001', importance: 0.9 }, base)
+    if (store.entries.length !== 1) { defauts += 1; details.push(`duplicata non fusionne (${store.entries.length} entrees)`) }
+    const found = retrieve(store, 'port serveur', base, { limit: 5 })
+    if (found.length !== 1) { defauts += 1; details.push('rappel BM25 ne retrouve pas la memoire') }
+    const vieux = addMemory(createMemoryStore(), { kind: 'fact', text: 'ancient', importance: 0.1 }, new Date('1990-01-01T00:00:00.000Z'))
+    const elague = prune(vieux, { maxAgeDays: 1, now: base })
+    if (elague.entries.length !== 0) { defauts += 1; details.push('elagage par age n a rien retire') }
+    ajoute('memoire', 'store + rappel + elagage', defauts, details.join(' ; ') || 'dedoublonnage, BM25 et elagage operants')
+  }
+
+  // --- 21. APPRENTISSAGE / validation et notation d'exercices ---------------
+  {
+    const { validateExercise, scoreAttempt } = await charge('src/services/learning/exerciseFormats.ts')
+    let defauts = 0
+    const details = []
+    const mauvais = validateExercise({ id: '', prompt: 'a', timeBudgetMin: 300, kind: 'qcm', multiAnswer: false, options: [], question: '' })
+    if (mauvais.length === 0) { defauts += 1; details.push('exercice invalide accepte') }
+    const bon = validateExercise({ id: 'e1', prompt: 'Quelle est la capital ?', timeBudgetMin: 2, tags: ['geo'], kind: 'qcm', multiAnswer: false, options: [{ id: 'a', text: 'Paris', correct: true }, { id: 'b', text: 'Rome', correct: false }], question: 'Quelle est la capital ?', explanation: '' })
+    if (bon.length !== 0) { defauts += 1; details.push(`exercice valide refuse : ${bon.join(',')}`) }
+    const malVeille = scoreAttempt({ id: 'e1', prompt: 'q', timeBudgetMin: 2, kind: 'qcm', multiAnswer: false, options: [{ id: 'a', text: 'Paris', correct: true }, { id: 'b', text: 'Rome', correct: false }], question: 'q', explanation: '' }, { kind: 'qcm', selected: ['b'] })
+    if (malVeille.ratio01 !== 0) { defauts += 1; details.push('reponse fausse notee > 0') }
+    const bonne = scoreAttempt({ id: 'e1', prompt: 'q', timeBudgetMin: 2, kind: 'qcm', multiAnswer: false, options: [{ id: 'a', text: 'Paris', correct: true }, { id: 'b', text: 'Rome', correct: false }], question: 'q', explanation: '' }, { kind: 'qcm', selected: ['a'] })
+    if (bonne.ratio01 !== 1) { defauts += 1; details.push('reponse juste notee < 1') }
+    ajoute('apprentissage', 'validation + notation', defauts, details.join(' ; ') || 'validite structurelle et notation 0/1 operantes')
+  }
+
+  // --- 22. APPRENTISSAGE / mnemotechniques ----------------------------------
+  {
+    const { generateAcronymMnemonic, generateAuto, chooseStrategy } = await charge('src/services/learning/mnemonicGenerator.ts')
+    let defauts = 0
+    const details = []
+    const liste = ['algebre', 'geometrie', 'probabilite']
+    const acro = generateAcronymMnemonic(liste)
+    if (acro.strategy !== 'acronyme' || !acro.text || acro.text.length < 5) { defauts += 1; details.push('acronyme non genere') }
+    const auto = generateAuto(liste)
+    if (!auto || auto.strategy !== 'acronyme' || !auto.text) { defauts += 1; details.push('generateAuto ne produit pas de mnemotechnique') }
+    const choix = chooseStrategy(liste)
+    if (!choix) { defauts += 1; details.push('choix de strategie vide') }
+    ajoute('apprentissage', 'mnemotechniques', defauts, details.join(' ; ') || 'acronyme, auto et strategie generent bien pour 3 items')
+  }
+
+  // --- 23. APPRENTISSAGE / pont FSRS-Leitner --------------------------------
+  {
+    const { leitnerToFsrs, dueNowCount, correctToFsrsRating } = await charge('src/services/learning/fsrsLeitnerBridge.ts')
+    let defauts = 0
+    const details = []
+    const base = new Date('2026-01-01T00:00:00.000Z')
+    const baseMs = base.getTime()
+    const cartes = [
+      { box: 1, streak: 0, dueAt: baseMs - 1000, timesCorrect: 1, timesWrong: 0 },
+      { box: 2, streak: 1, dueAt: baseMs + 5000, timesCorrect: 2, timesWrong: 0 },
+      { box: 1, streak: 2, dueAt: baseMs - 2000, timesCorrect: 1, timesWrong: 1 },
+    ]
+    if (dueNowCount(cartes, base) !== 2) { defauts += 1; details.push('dueNowCount mal compte') }
+    for (const c of cartes) {
+      try {
+        const f = leitnerToFsrs(c, base)
+        if (!Number.isFinite(new Date(f.due).getTime())) { defauts += 1; details.push(`due NaN pour box ${c.box}`) }
+      } catch (e) { defauts += 1; details.push(`conversion caisse box ${c.box} : ${String(e.message).slice(0, 50)}`) }
+    }
+    if (correctToFsrsRating(true, 5) !== 4) { defauts += 1; details.push('rating Easy attendu apres 5 sans erreur') }
+    if (correctToFsrsRating(false, 0) === 4) { defauts += 1; details.push('reponse fausse notee Easy') }
+    ajoute('apprentissage', 'pont FSRS-Leitner', defauts, details.join(' ; ') || 'comptage, conversion et rating operants')
+  }
+
+  // --- 24. CHARACTER FORGE / contrat d'etapes -------------------------------
+  {
+    const { FORGE_STEPS, ForgeStepStatus } = await charge('src/services/characterForge.ts')
+    const ids = FORGE_STEPS.map((s) => s.id)
+    const attendus = ['intent', 'traits', 'rig_plan', 'reference', 'expressions', 'segment', 'assemble', 'publish']
+    const manquants = attendus.filter((a) => !ids.includes(a))
+    const doublons = new Set(ids).size !== ids.length
+    ajoute('character', 'contrat etapes forge', manquants.length + (doublons ? 1 : 0),
+      `${manquants.length} etape(s) manquante(s)${doublons ? ' ; id dupliques' : ''} sur ${FORGE_STEPS.length}`)
+  }
+
+  // --- 25. 3D / sérialisation du mouvement pour Blender ---------------------
+  {
+    const { serializeMotionForBlender } = await charge('src/services/motionSerializer.ts')
+    let defauts = 0
+    const details = []
+    const desc = { name: 'marche', duration_seconds: 0.5, loop: true, tokens: ['marche'] }
+    try {
+      const out = serializeMotionForBlender(desc, { fps: 24 })
+      if (!out || typeof out !== 'object') { defauts += 1; details.push('sortie non objet') }
+      else {
+        if (out.schema !== 'aurora.motion.v1') { defauts += 1; details.push('schema absent') }
+        if (!out.fps || out.fps !== 24) { defauts += 1; details.push('fps absent/invalide') }
+        if (!Array.isArray(out.primitives)) { defauts += 1; details.push('primitives absent') }
+      }
+    } catch (e) { defauts += 1; details.push(`exception : ${String(e.message).slice(0, 80)}`) }
+    ajoute('3D', 'serialisation mouvement', defauts, details.join(' ; ') || 'payload Blender schema/fps/primitives produit sans exception')
+  }
+
   return out
 }
