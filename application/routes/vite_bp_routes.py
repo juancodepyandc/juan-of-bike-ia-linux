@@ -4,7 +4,7 @@ import urllib.request as _urllib_req
 import threading as _threading
 import time as _time
 import urllib.request as _urllib_req
-from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
+from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL, _admin_ok
 
 vite_bp = Blueprint('vite_bp', __name__)
 
@@ -253,6 +253,8 @@ def _respawn_bridge_async(reason: str = "manual restart") -> bool:
 
 @vite_bp.route("/api/admin/restart-bridge", methods=["POST", "GET"])
 def admin_restart_bridge():
+    if not _admin_ok():
+        return jsonify({"error": "admin_refuse_tunnel", "détail": "local ou token admin requis"}), 403
     """Spawn a fresh bridge process and exit the current one. Used when the
     bridge_server.py source changed and needs to be reloaded without the user
     closing the cmd window.
@@ -2589,6 +2591,8 @@ def three_d_auto_motion_bake():
 
 @vite_bp.route("/api/admin/git-pull", methods=["POST", "GET"])
 def admin_git_pull():
+    if not _admin_ok():
+        return jsonify({"error": "admin_refuse_tunnel", "détail": "local ou token admin requis"}), 403
     """Pull latest main on the local Aurora repo and respawn Vite. The user
     clicks this from the fallback page when they see "VITE REDEMARRE" — it
     fetches the latest commits Aurora pushed to GitHub and restarts the
@@ -2725,6 +2729,8 @@ def admin_git_pull():
 
 @vite_bp.route("/api/admin/restart-vite", methods=["POST", "GET"])
 def admin_restart_vite():
+    if not _admin_ok():
+        return jsonify({"error": "admin_refuse_tunnel", "détail": "local ou token admin requis"}), 403
     """Force respawn Vite right now without waiting the 15s grace period.
     Useful when the user opens the tunnel URL and modules are blocked by a
     Vite crash they want fixed immediately."""
@@ -2974,6 +2980,15 @@ def _vite_path_blocked(path: str) -> bool:
     canonical = _posixpath.normpath("/" + path).lstrip("/")
     if not canonical or canonical.startswith(".."):
         return True
+    # Step 0 (iter32 SEC): le pseudo-protocole Vite /@fs/ permet de lire
+    # n'importe quel fichier du répertoire du root dev (bridge_server.py,
+    # output/**, python-services/**, scripts/**) et court-circuitait toutes
+    # les blacklists ci-dessous car il était dans l'allow-list testée avant.
+    # Aucun asset du build ne passe par /@fs/ (tout passe par /assets/ et
+    # /src via le disque Vite) → on l'interdit en absolu, quelle que soit la
+    # forme (canonicalized) de l'URL.
+    if canonical.startswith("@fs/"):
+        return True
     # iter30.fix: explicit allow-list for Vite-served runtime paths. Without
     # this, the iter19 .tsx/.ts blocklist also blocked /src/main.tsx (the
     # SPA bootstrap entry point) → React never mounted → black screen.
@@ -2983,7 +2998,7 @@ def _vite_path_blocked(path: str) -> bool:
     # part of the dev bundle, not arbitrary repo files (Vite has its own
     # allow-list of the configured root + node_modules).
     _VITE_ALLOWED_PREFIXES = (
-        "src/", "@vite/", "@react-refresh", "@id/", "@fs/",
+        "src/", "@vite/", "@react-refresh", "@id/",
         "node_modules/",  # covers vite client + .vite deps cache
         "aurora-team/", "draco/", "assets/",
     )

@@ -478,15 +478,56 @@ def _ext_hash(raw):
     return _hashlib.sha256(("aurora-ext-key-v1::" + raw).encode("utf-8")).hexdigest()
 
 
-def _ext_admin_ok():
-    """Gestion de clé (generate/revoke/status). Comme TOUT le bridge, la
-    protection de base est « l'URL du tunnel est le secret + c'est la machine
-    de l'utilisateur ». On autorise donc la gestion depuis l'app Aurora (qu'elle
-    soit ouverte en localhost ou via le tunnel). La CLÉ elle-même, elle, est
-    durcie : hash salé stocké (jamais en clair), compare_digest, origin-lock,
-    rate-limit. (Si tu veux verrouiller aussi la gestion, ajoute un token de
-    setup imprimé dans la console du bridge — laissé en TODO.)"""
-    return True
+def _request_is_local_loopback() -> bool:
+    """True ssi la requête vient réellement de la machine (pas du tunnel
+    public). cloudflared connecte localement (remote_addr == 127.0.0.1) MAIS
+    définit le header X-Forwarded-For avec l'IP réelle du client distant →
+    toute présence d'un XFF non-bouclé = trafic du tunnel = NON local."""
+    xff = request.headers.get("X-Forwarded-For", "").strip()
+    if xff:
+        first = xff.split(",")[0].strip().lower().split(":")[0]
+        if first in ("", "unknown"):
+            return False
+        if first in ("127.0.0.1", "::1", "localhost"):
+            return True
+        return False
+    ra = (request.remote_addr or "").lower()
+    return ra in ("127.0.0.1", "::1", "localhost") or ra.startswith("::ffff:127.")
+
+
+def _admin_ok() -> bool:
+    """Protection des actions d'administration (git-pull, restart des
+    services, gestion de clés). Deux modes sans ambiguïté :
+
+      * Si AURORA_ADMIN_TOKEN est défini (recommandé) : la requête DOIT porter
+        « Authorization: Bearer <token> » (ou ?admin=<token> / JSON admin=).
+        Comparaison en temps constant. Rien d'autre n'est accepté.
+      * Sinon (mode par défaut, machine seule) : seules les requêtes locales
+        loopback sont acceptées. TOUT trafic passant par le tunnel public
+        (X-Forwarded-For présent) est refusé — ainsi /api/admin/git-pull ne
+        peut plus être déclenché à distance par un inconnu.
+
+    Retour: True = autorisé, False = refusé."""
+    token = os.environ.get("AURORA_ADMIN_TOKEN", "").strip()
+    if token:
+        supplied = ""
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+        if not supplied:
+            supplied = (request.args.get("admin") or "").strip()
+        if not supplied:
+            try:
+                body = request.get_json(silent=True) or {}
+                supplied = str(body.get("admin") or "").strip()
+            except Exception:
+                pass
+        if not supplied:
+            return False
+        got = _hashlib.sha256(("aurora-admin::" + supplied).encode("utf-8")).hexdigest()
+        want = _hashlib.sha256(("aurora-admin::" + token).encode("utf-8")).hexdigest()
+        return _hmac.compare_digest(got, want)
+    return _request_is_local_loopback()
 
 
 def _ext_get_raw_key():
@@ -594,8 +635,8 @@ def _ext_key_public(k):
 
 @app.route("/api/ext/key/status", methods=["GET"])
 def ext_key_status():
-    if not _ext_admin_ok():
-        return jsonify({"error": "gestion de clé accessible uniquement en local"}), 403
+    if not _admin_ok():
+        return jsonify({"error": "gestion de clé non autorisée (local ou token admin requis)"}), 403
     active = [k for k in _ext_load().get("keys", []) if not k.get("revoked")]
     return jsonify({
         "exists": len(active) > 0,
@@ -608,8 +649,8 @@ def ext_key_status():
 
 @app.route("/api/ext/key/generate", methods=["POST"])
 def ext_key_generate():
-    if not _ext_admin_ok():
-        return jsonify({"error": "gestion de clé accessible uniquement en local"}), 403
+    if not _admin_ok():
+        return jsonify({"error": "gestion de clé non autorisée (local ou token admin requis)"}), 403
     body = request.get_json(silent=True) or {}
     origin = str(body.get("origin") or "").strip()
     label = (str(body.get("label") or "site externe").strip())[:60] or "site externe"
@@ -635,8 +676,8 @@ def ext_key_generate():
 
 @app.route("/api/ext/key/revoke", methods=["POST"])
 def ext_key_revoke():
-    if not _ext_admin_ok():
-        return jsonify({"error": "gestion de clé accessible uniquement en local"}), 403
+    if not _admin_ok():
+        return jsonify({"error": "gestion de clé non autorisée (local ou token admin requis)"}), 403
     body = request.get_json(silent=True) or {}
     prefix = str(body.get("prefix") or "").strip()  # si fourni → ne révoque QUE celle-là
     store = _ext_load()
