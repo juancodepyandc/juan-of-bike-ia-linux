@@ -829,5 +829,83 @@ export async function mesure() {
     ajoute('image', 'construction prompt + contrat', defauts, details.join(' ; ') || 'positive + contrat embarquent le sujet exact')
   }
 
+  // --- 51. CODE / seuil de blocage de livraison ------------------------------
+  {
+    const { isStaticCritiqueBlocking } = await charge('src/services/codeValidationScoring.ts')
+    let defauts = 0
+    const details = []
+    const sain = { scores: { compile: 1, security: 0.95, lint: 0.8 }, overallScore: 0.9, issues: [{ severity: 'info', message: 'x', path: 'a.ts', line: 1 }], hasBlocker: false }
+    const bloc = { scores: { compile: 1, security: 0.5, lint: 0.8 }, overallScore: 0.6, issues: [{ severity: 'warn', message: 'y', path: 'a.ts', line: 2 }], hasBlocker: false }
+    if (isStaticCritiqueBlocking(sain)) { defauts += 1; details.push('livraison saine bloquee a tort') }
+    if (!isStaticCritiqueBlocking(bloc)) { defauts += 1; details.push('securite 0.5 pas bloquante') }
+    ajoute('code', 'seuil de blocage', defauts, details.join(' ; ') || 'sain accepte, securite faible bloquee')
+  }
+
+  // --- 52. CODE / garde de regression des exports -----------------------------
+  {
+    const { inspectCodePatchRegression } = await charge('src/services/codeRegressionGuard.ts')
+    let defauts = 0
+    const details = []
+    const f = (content) => ({ name: 'a.ts', language: 'ts', content })
+    const recul = inspectCodePatchRegression([f('export function alpha(){return 1}')], [f('export function beta(){return 2}')])
+    if (!recul || recul.ok !== false || recul.violations.length === 0) { defauts += 1; details.push('retrait export non signale') }
+    const idem = inspectCodePatchRegression([f('export function alpha(){return 1}')], [f('export function alpha(){return 1}')])
+    if (!idem || idem.ok !== true) { defauts += 1; details.push('patch neutre faussement en regression') }
+    ajoute('code', 'garde de regression', defauts, details.join(' ; ') || 'export retire detecte, patch identique accepte')
+  }
+
+  // --- 53. COWORK / annuaire des agents de production ------------------------
+  {
+    const { getAllProductionAgents, getAllAgents } = await charge('src/services/auroraAgents.ts')
+    let defauts = 0
+    const details = []
+    const prod = getAllProductionAgents()
+    if (!prod || prod.length < 6) { defauts += 1; details.push(`prod = ${prod?.length} agents`) }
+    if (prod.length !== 9) { defauts += 1; details.push(`attendu 9 prod, obtenu ${prod.length}`) }
+    const tous = getAllAgents()
+    if (!tous || tous.length !== 8) { defauts += 1; details.push(`getAllAgents attendu 8, obtenu ${tous?.length}`) }
+    if (prod.some((a) => !a.id || !a.name || !a.role)) { defauts += 1; details.push('agent sans identite') }
+    ajoute('cowork', 'annuaire agents', defauts, details.join(' ; ') || '9 en production, 8 totaux, identites completes')
+  }
+
+  // --- 54. COWORK / section equipe injectable au prompt -----------------------
+  {
+    const { buildCoworkTeamPromptSection } = await charge('src/services/auroraAgents.ts')
+    let defauts = 0
+    const details = []
+    const sec = buildCoworkTeamPromptSection('image')
+    if (!sec || !sec.includes('EQUIPE AURORA')) { defauts += 1; details.push('section equipe absente') }
+    if (!sec.includes('[actif]')) { defauts += 1; details.push('agent actif non marque') }
+    if (!sec.includes('@image')) { defauts += 1; details.push('conseil handoff absent') }
+    ajoute('cowork', 'section equipe', defauts, details.join(' ; ') || 'section + marquage actif + conseil handoff')
+  }
+
+  // --- 55. VOIX / emphase lexicale --------------------------------------------
+  {
+    const { detectEmphasisWords } = await charge('src/services/voiceProsody.ts')
+    let defauts = 0
+    const details = []
+    const e = detectEmphasisWords('je veux VRAIMENT ceci et PAS cela')
+    if (!e || e.length === 0) { defauts += 1; details.push('aucun mot en emphase') }
+    else {
+      if (!e.some((x) => x.word === 'VRAIMENT' || x.word === 'vraiment')) { defauts += 1; details.push('VRAIMENT manquant') }
+    }
+    if (e && e.filter((x) => x.reason === 'capital-letter').length !== 2) { defauts += 1; details.push('2 capitales attendues') }
+    ajoute('voix', 'emphase ponctuation', defauts, details.join(' ; ') || 'capitales repere, raison signalee')
+  }
+
+  // --- 56. VOIX / conscience du rendu phonemique -------------------------------
+  {
+    const { phonemizeSentence } = await charge('src/services/voiceFrPhonemizer.ts')
+    let defauts = 0
+    const details = []
+    const bj = phonemizeSentence('bonjour')
+    const monde = phonemizeSentence('monde')
+    if (!bj || bj.length !== 5) { defauts += 1; details.push(`bonjour = ${bj?.length} phonemes`) }
+    if (!monde || monde.length !== 3) { defauts += 1; details.push(`monde = ${monde?.length} phonemes`) }
+    if (bj && bj.some((p) => p === '?' || p === undefined)) { defauts += 1; details.push('phoneme inconnu') }
+    ajoute('voix', 'consistance phonemique', defauts, details.join(' ; ') || 'bonjour 5 phonemes, monde 3, nul inconnu')
+  }
+
   return out
 }
