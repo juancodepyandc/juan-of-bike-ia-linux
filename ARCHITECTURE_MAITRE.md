@@ -356,6 +356,8 @@ Le bridge conserve les événements des missions dans un dictionnaire en mémoir
 
 Une amélioration complète doit définir l’acceptation de mission, l’idempotence, l’état terminal, le propriétaire, les limites de file, la rétention, les artefacts partiels et la reprise de chaque moteur. Ne jamais relancer aveuglément un POST de mission à la suite d’une coupure de connexion.
 
+Sur la mémoire de conversation (`conversationMemory.ts`, couvert par les mesures 19/42/43) : le dédoublonnage compare le `contentHash` `kind::text` **byte-identique après `trim()`** — une variante de casse ou d’accent crée une entrée distincte, et c’est un choix documenté, pas un bug. `touch()` incrémente `usageCount` et pose `lastUsedAt` ; `removeMemory()` retire l’entrée et rééquilibre la fréquence documentaire ; le rappel pondère importance × BM25 avec rabais de fraîcheur (demi-vie 14 jours) et l’élagage respecte les entrées épinglées.
+
 <a id="cli"></a>
 ## 10. CLI, connexion, événements et livraison
 
@@ -841,7 +843,7 @@ Les chemins ci-dessous désignent des fichiers existants au relevé. Les lignes 
 | `POST /api/python/run-async` | `application/routes/python_bp_routes.py` → `python_run_async` (ligne 830) |
 | `GET,HEAD /api/ping` | `application/routes/python_bp_routes.py` → `python_bridge_ping` (ligne 863) |
 | `GET /api/health` | `application/routes/python_bp_routes.py` → `python_bridge_health` (ligne 872) |
-| `GET,POST /api/conformance` | `application/routes/python_bp_routes.py` → `aurora_conformance` (ligne 905) — 44 mesures comportementales : 38 TS (voix, cyber, cowork, code, image, conversation, apprentissage, dessin, ménage, character forge) + 6 Python 3D (anim/mouvement/qualité/couleur/reprise/sérialisation). |
+| `GET,POST /api/conformance` | `application/routes/python_bp_routes.py` → `aurora_conformance` (ligne 905) — 50 mesures comportementales : 44 TS (voix, cyber, cowork, code, image, conversation, apprentissage, dessin, mémoire, de character forge, anim) + 6 Python 3D (anim/mouvement/qualité/couleur/reprise/sérialisation). |
 | `GET,POST /api/architecture` | `application/routes/python_bp_routes.py` → `aurora_architecture` (ligne 1009) |
 | `GET,POST /api/expertise` | `application/routes/python_bp_routes.py` → `aurora_expertise` (ligne 1033) |
 | `GET /api/tunnel/url` | `application/routes/python_bp_routes.py` → `tunnel_url` (ligne 1127) |
@@ -2123,7 +2125,7 @@ web_search_bp_routes.py  (770 L)
 ```text
 apercu_glb_three.mjs  (107 L)
 conformance.mjs  (59 L)
-conformanceMesures.mjs  (684 L)
+conformanceMesures.mjs  (772 L)
 conformance_mesures.py  (166 L)
 expertise-artefacts.py  (413 L)
 expertise-livrables.mjs  (308 L)

@@ -5165,8 +5165,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/conformanceMesures.mjs",
-   "sha256": "30d9ae42b0dfa61d4624fb05ce9c8f88332da85468a2aa64df2ef4620916b4cb",
-   "lines": 684
+   "sha256": "abc23d789117dbc7aa7d8afa9766f59d889ad7f484c0169f470e7ab59a7d05b4",
+   "lines": 772
   },
   {
    "repo": "AuroraIA",

@@ -680,5 +680,93 @@ export async function mesure() {
     ajoute('cyber', 'identification d empreintes', defauts, details.join(' ; ') || 'MD5 32g, SHA-256 64g identifiees')
   }
 
+  // --- 40. ANIMATION / commande de mouvement -> intention --------------------
+  {
+    const { resolveMotionFromPrompt } = await charge('src/services/motionPipeline.ts')
+    let defauts = 0
+    const details = []
+    const custom = resolveMotionFromPrompt('marche 3 km/h sur 10 secondes', { subjectKind: 'human', systemClass: 'walk' })
+    if (!custom || !custom.ok) { defauts += 1; details.push('commande mouvement non resolue') }
+    const vague = resolveMotionFromPrompt('comportement inconnu xyz', { subjectKind: 'human', systemClass: 'walk' })
+    if (vague && vague.ok) { defauts += 1; details.push('requete inconnue faussement resolue') }
+    ajoute('3D/anim', 'resolution commande mouvement', defauts, details.join(' ; ') || 'commande parsee, requete inconnue non resolue')
+  }
+
+  // --- 41. ANIMATION / repli intentionnel deterministe -----------------------
+  {
+    const { deterministicMotionIntentFallback } = await charge('src/services/threeDMotionIntent.ts')
+    let defauts = 0
+    const details = []
+    const f = deterministicMotionIntentFallback('danse fluide de creature')
+    if (!f || !f.schema || f.schema !== 'aurora.motion-intent.v1') { defauts += 1; details.push('schéma intention absent') }
+    if (!f || !f.creature_anim || !f.creature_anim.locomotion) { defauts += 1; details.push('locomotion manquante') }
+    if (!f || typeof f.confidence !== 'number' || f.confidence <= 0) { defauts += 1; details.push('confiance non quantifiee') }
+    ajoute('3D/anim', 'repli meme sans Ollama', defauts, details.join(' ; ') || 'intention schema + locomotion + confidence produit')
+  }
+
+  // --- 42. MEMOIRE / tokenisation et frequences ------------------------------
+  {
+    const { tokenize, tokenFrequencies } = await charge('src/services/conversationMemory.ts')
+    let defauts = 0
+    const details = []
+    const toks = tokenize('Le serveur tourne sur le port 3001 !')
+    if (!toks.includes('serveur') || !toks.includes('port') || !toks.includes('3001')) { defauts += 1; details.push('tokenisation ratee') }
+    if (toks.includes('le') || toks.includes('sur')) { defauts += 1; details.push('stopword non filtre') }
+    const freq = tokenFrequencies('chat chat chien chat')
+    if (!freq || freq.chat !== 3 || freq.chien !== 1) { defauts += 1; details.push('frequence fausse') }
+    ajoute('memoire', 'tokenisation + frequences', defauts, details.join(' ; ') || 'mots gardes, stopwords et diacritiques geres, compte exact')
+  }
+
+// --- 43. MEMOIRE / dedoublonnage, compte et suppression --------------------
+    {
+      const { createMemoryStore, addMemory, touch, removeMemory } = await charge('src/services/conversationMemory.ts')
+      let defauts = 0
+      const details = []
+      const now = new Date('2026-02-01T00:00:00Z')
+      let st = createMemoryStore()
+      const d = { text: 'Juan prefere les commits atomiques', kind: 'preference', importance: 0.9, tags: ['git'] }
+      st = addMemory(st, d, now)
+      const avant = st.entries.length
+      if (avant !== 1) { defauts += 1; details.push('premiere insertion absente') }
+      st = addMemory(st, { ...d, text: 'Juan prefere les commits atomiques' }, now)
+      if (st.entries.length !== avant) { defauts += 1; details.push('dedoublonnage exact absent') }
+      const unique = st.entries[0]
+      if (unique.usageCount !== 1) { defauts += 1; details.push(`doublon non compte : ${unique.usageCount}`) }
+      st = touch(st, unique.id, now)
+      const touche = st.entries[0]
+      if (touche.usageCount !== 2 || !touche.lastUsedAt) { defauts += 1; details.push('touch ne met pas a jour compteur/date') }
+      st = removeMemory(st, unique.id)
+      if (st.entries.length !== 0) { defauts += 1; details.push('suppression inefficace') }
+      ajoute('memoire', 'dedoublon + touch + supprimer', defauts, details.join(' ; ') || 'dedoublonnage exact, usageCount=2, suppression totale')
+    }
+
+  // --- 44. APPRENTISSAGE / classification eval explicite ---------------------
+  {
+    const { fastClassify } = await charge('src/services/entEvalDetector.ts')
+    let defauts = 0
+    const details = []
+    const flag = fastClassify({ isEval: true, title: 'Controle de geometrie', description: 'devoir note' })
+    if (!flag || flag.isEval !== true) { defauts += 1; details.push('devoir isEval non classifie') }
+    const supp = fastClassify({ isEval: false, title: 'exercices', description: 'exercices de revision non notes' })
+    if (supp && supp.isEval === true) { defauts += 1; details.push('exercice sain classifie eval') }
+    ajoute('apprentissage', 'detection eval', defauts, details.join(' ; ') || 'flag exploite, surnote evitee')
+  }
+
+  // --- 45. CHARACTER / pipeline des 8 etapes --------------------------------
+  {
+    const { FORGE_STEPS } = await charge('src/services/characterForge.ts')
+    let defauts = 0
+    const details = []
+    if (!FORGE_STEPS || FORGE_STEPS.length !== 8) { defauts += 1; details.push(`FORGE_STEPS = ${FORGE_STEPS?.length}`) }
+    else {
+      const ids = FORGE_STEPS.map((s) => s.id)
+      const attendu = ['intent', 'traits', 'rig_plan', 'reference', 'expressions', 'segment', 'assemble', 'publish']
+      for (const a of attendu) if (!ids.includes(a)) { defauts += 1; details.push(`etape ${a} manquante`) }
+      const labs = FORGE_STEPS.every((s) => typeof s.label === 'string' && s.label.length > 0)
+      if (!labs) { defauts += 1; details.push('etiquette absente') }
+    }
+    ajoute('character', 'pipeline 8 etapes', defauts, details.join(' ; ') || '8 etapes requises presentes en ordre')
+  }
+
   return out
 }
