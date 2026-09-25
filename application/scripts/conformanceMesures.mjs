@@ -768,5 +768,66 @@ export async function mesure() {
     ajoute('character', 'pipeline 8 etapes', defauts, details.join(' ; ') || '8 etapes requises presentes en ordre')
   }
 
+  // --- 46. DESSIN / classification d'intention --------------------------------
+  {
+    const { classifyDrawingIntent } = await charge('src/services/drawingStyleAndSvg.ts')
+    let defauts = 0
+    const details = []
+    const flow = classifyDrawingIntent('diagramme de classe du systeme')
+    if (!flow || !flow.intent || flow.intent !== 'diagramme-flow') { defauts += 1; details.push(`intention flow ${flow?.intent}`) }
+    if (!flow || flow.confidence !== 1) { defauts += 1; details.push('confidence 1 attendue') }
+    ajoute('dessin', 'classification d intention', defauts, details.join(' ; ') || 'diagramme -> flow propre, conf 1')
+  }
+
+  // --- 47. VOIX / prosodie du type de phrase ---------------------------------
+  {
+    const { analyseProsody } = await charge('src/services/voiceProsody.ts')
+    let defauts = 0
+    const details = []
+    const q = analyseProsody('Ou est la reunion ?')
+    if (!q || q.sentenceKind !== 'question') { defauts += 1; details.push(`question -> ${q?.sentenceKind}`) }
+    const e = analyseProsody('Cest top !')
+    if (!e || e.sentenceKind !== 'exclamation') { defauts += 1; details.push(`excl -> ${e?.sentenceKind}`) }
+    if (!q || q.segments.length === 0) { defauts += 1; details.push('aucun segment') }
+    ajoute('voix', 'prosodie phrase', defauts, details.join(' ; ') || 'question vs exclamation distingues')
+  }
+
+  // --- 48. VOIX / liaisons obligatoires et h aspire --------------------------
+  {
+    const { detectLiaison } = await charge('src/services/voiceFrPhonemizer.ts')
+    let defauts = 0
+    const details = []
+    if (detectLiaison('les', 'animaux') !== 'z') { defauts += 1; details.push('liaison z manquante') }
+    if (detectLiaison('des', 'arbres') !== 'z') { defauts += 1; details.push('liaison des+arbres manquante') }
+    if (detectLiaison('les', 'héros') !== '') { defauts += 1; details.push('h aspire liaisonnee a tort') }
+    ajoute('voix', 'liaisons FR', defauts, details.join(' ; ') || 'z coral, h aspire coupe')
+  }
+
+  // --- 49. IMAGE / extraction palette multi-zone -----------------------------
+  {
+    const { parseColorOverridesFromPrompt, formatPaletteInstruction } = await charge('src/services/visualReferenceAnalyzer.ts')
+    let defauts = 0
+    const details = []
+    const o = parseColorOverridesFromPrompt('les pales rouge, le boitier noir')
+    if (!o || o.length !== 2) { defauts += 1; details.push('une seule zone extraite') }
+    if (o && !o.some((x) => x.zone === 'blades')) { defauts += 1; details.push('zone pales manquante') }
+    const instr = formatPaletteInstruction([{ zone: 'corps', hex: '#1b2530', prominence: 0.8 }, { zone: 'accent', hex: '#d7a84a', prominence: 0.2 }])
+    if (!instr || !instr.includes('corps #1b2530') || !instr.includes('accent #d7a84a')) { defauts += 1; details.push('instruction palette incomplete') }
+    ajoute('image', 'extraction palette', defauts, details.join(' ; ') || 'multi-zones extraites, instruction couleur spliceable')
+  }
+
+  // --- 50. IMAGE / filet vs tour de construction ----------------------------
+  {
+    const { buildPrompt, buildPromptContractBlock } = await charge('src/services/imagePromptBuilder.ts')
+    let defauts = 0
+    const details = []
+    const b = { subject: 'un robot de cuisine', negativeHints: ['aucun reflet'], aspectRatio: '1:1', highResolution: false }
+    const built = buildPrompt(b)
+    if (!built || !built.positive || !built.positive.includes('robot de cuisine')) { defauts += 1; details.push('positive prompt incomplet') }
+    const bloc = buildPromptContractBlock(b)
+    if (!bloc || !bloc.includes('robot de cuisine')) { defauts += 1; details.push('contrat ne contient pas le sujet') }
+    ajoute('image', 'construction prompt + contrat', defauts, details.join(' ; ') || 'positive + contrat embarquent le sujet exact')
+  }
+
   return out
 }
