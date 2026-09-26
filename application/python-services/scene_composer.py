@@ -52,7 +52,7 @@ def parse_instruction_regex(text):
         relation = "lie_on"
     elif re.search(r"debout sur|se tient sur|se met debout|monte sur|stand(s|ing)? on", t):
         relation = "stand_on"
-    elif re.search(r"\btient\b|\btenir\b|\bporte\b|\bprend\b|\bhold(s|ing)?\b|\bcarr(y|ies)\b|\bgrab(s)?\b", t):
+    elif re.search(r"\btient\b|\btenir\b|\btenu\b|\bporte\b|\bprend\b|\bhold(s|ing)?\b|\bcarr(y|ies)\b|\bgrab(s)?\b", t):
         relation = "hold"
     elif re.search(r"a cote|aupres de|pres de|next to|beside|\bnear\b", t):
         relation = "next_to"

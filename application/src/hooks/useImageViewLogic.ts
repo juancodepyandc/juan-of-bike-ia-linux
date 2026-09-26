@@ -50,6 +50,7 @@ import {
   renewImageGenerationLock,
 } from '../services/imageGenerationSafety.ts'
 import type { ConversationSession } from '../stores/moduleHistoryStore.ts'
+import { getBridgeUrl, isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
 
 export type GeneratedCard = {
   id: string
@@ -787,6 +788,7 @@ export function useImageViewLogic() {
         setProgress(batch > 1 ? `Construction ${k + 1}/${batch}…` : 'Construction du workflow FLUX…')
         const dim = DIMENSIONS[dimensions]
         let blob: Blob | null = null
+        let comfyFilename: string | undefined
         if (useKontext && groundedReference && kontextModel && stagedReplacementPlan) {
           let activeReferenceFilename = groundedReference.filename
           for (let stageIndex = 0; stageIndex < stagedReplacementPlan.stages.length; stageIndex += 1) {
@@ -825,6 +827,7 @@ export function useImageViewLogic() {
             const filenames = await waitForComfyOutput(promptId, ac.signal)
             const first = filenames[0]
             const stageBlob = await comfyuiGetImage(first.filename, first.subfolder)
+            comfyFilename = first.filename
             if (await imageBlobLooksBlack(stageBlob)) {
               throw new Error('Rendu noir detecte pendant le workflow multi-etage Kontext.')
             }
@@ -901,6 +904,7 @@ export function useImageViewLogic() {
         setProgress(batch > 1 ? `Image ${k + 1}/${batch}…` : 'Récupération de l\'image…')
         const first = filenames[0]
         blob = await comfyuiGetImage(first.filename, first.subfolder)
+        comfyFilename = first.filename
         }
         if (!blob) throw new Error('Aucune image produite par le workflow')
         // v83 : pixel art authentique garanti — FLUX seul produit du pseudo
@@ -950,6 +954,30 @@ export function useImageViewLogic() {
             content: `[image:${url}][id:${cardId}]${styleNote}${runSeed !== null ? ` seed:${runSeed}` : ''}${intent.isEditIntent ? ` edit:${intent.editMode} engine:${engineNote}` : ''}${overrideNote}`,
             images: [url],
           })
+        } catch {
+        }
+
+        // Persistance disque organisée : output/image/<context>/<session>/.
+        // Contexte dérivé de l'environnement (tauri=natif -> ui, tunnel -> tunnel,
+        // navigateur local -> ui) pour ne JAMAIS mélanger les créations CLI avec
+        // les créations UI. Best-effort : une coupure bridge ne bloque pas la
+        // livraison (la carte reste dans IndexedDB local).
+        try {
+          if (typeof window !== 'undefined' && comfyFilename) {
+            const persistContext = (!isTauriRuntime() && isCloudRuntime()) ? 'tunnel' : 'ui'
+            const bridge = getBridgeUrl()
+            await fetch(`${bridge}/api/image/persist`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: comfyFilename,
+                sessionId: activeSessionAtStart?.id || 'general',
+                mode: intent.isEditIntent ? intent.editMode : 'creation',
+                prompt: text,
+                timestamp: Date.now(),
+              }),
+            })
+          }
         } catch {
         }
       }

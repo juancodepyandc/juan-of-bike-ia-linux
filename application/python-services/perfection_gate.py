@@ -298,8 +298,7 @@ def orienter_face_viewer(glb: str) -> dict:
     sys.path.insert(0, str(PS))
     from vlm_judge import ask_vlm
     # Un fichier sans texture ne peut etre juge QUE sur la forme.
-    if forme_seule is None:
-        forme_seule = not _a_une_texture(glb)
+    forme_seule = not _a_une_texture(glb)
     with tempfile.TemporaryDirectory() as td:
         azs = (0, 90, 180, 270)
         img = os.path.join(td, "brut.png")

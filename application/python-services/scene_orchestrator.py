@@ -982,6 +982,30 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
 
     socle = next((o for o in ordre if o["appui"] == "sol" and not o["pose"]),
                  ordre[0])
+
+    # La scene porte l'acteur : le LLM repere son appui par des aliases
+    # generiques ("personnage", "acteur", "perso", "sujet"...) au lieu du role
+    # exact ("loutre"). Sans resolution, un prop (fusil appui=personnage) est
+    # marque orphelin et la scene reste vide de cet objet. On resout ces
+    # aliases vers l'entite VIVANTE (celle qui a une pose, sinon le socle),
+    # MAIS on ne rebat JAMAIS un veritable orphelin sur le socle: un support
+    # refuse reste un support manquant (comportement historique).
+    ALIAS_APPUI = {"personnage", "personne", "acteur", "actrice", "sujet",
+                   "sujets", "perso", "hero", "heroine", "protagoniste",
+                   "character", "le_personnage", "la_personne", "humain"}
+    vivant = next((o for o in ordre if o["pose"]), socle)
+    for o in ordre:
+        appui = o["appui"]
+        if appui not in ("sol", "") and appui not in par_role:
+            if appui in ALIAS_APPUI and vivant is not None and vivant is not o:
+                print("SCENE_ORCH: %r appui %r -> acteur vivant %r"
+                      % (o["role"], appui, vivant["role"]), flush=True)
+                o["appui"] = vivant["role"]
+            elif appui in ALIAS_APPUI and vivant is not None and vivant is o:
+                # un seul vivant designe par un alias: il repose au sol.
+                o["appui"] = "sol"
+        # sinon laisse l'appui tel quel — par_role le verifie ensuite.
+
     scene_courante = socle["glb"]
     journal, etape = [], 0
     orphelins = []
@@ -997,7 +1021,12 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
             print("SCENE_ORCH: %r repose sur %r qui manque — non compose"
                   % (o["role"], o["appui"]), file=sys.stderr)
             continue
-        if o["pose"] == "assis":
+        est_prop = not o["pose"]
+        if est_prop and parent is not None and parent is not socle and parent["pose"]:
+            # prop porte par l'acteur (fusil sur personnage) -> relation "tient",
+            # pas "pose sur" (sinon l'objet flotte a cote, sans main ni contact).
+            liaison = "tenu par"
+        elif o["pose"] == "assis":
             liaison = "assis sur"
         elif o["pose"] == "allonge":
             liaison = "allonge sur"
@@ -1036,9 +1065,72 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     except Exception as exc:  # noqa: BLE001
         geo = {"ok": False, "error": repr(exc)}
 
+    # --- 4. RANGER chaque entite (blanc + couleur), pas de vrac -------------
+    # La branche scene retourne AVANT livraison_organisee: chaque dossier
+    # models/<role>/ restait en vrac (name_mesh.glb, name_mesh_ao.glb,
+    # name_final_materials.glb, ply, png, json...). Mesure 26/09 (loutre/fusil):
+    # des dizaines de fichiers inutiles a la racine du run. On range ici,
+    # best-effort et idempotent: modele/modele_couleurs.glb + modele_geometrie.glb
+    # par entite, tout le reste vers travail/.
+    deliveries = {}
+    try:
+        from livraison_organisee import organiser as _organiser_entite
+        for o in objets:
+            if not o.get("glb") or o.get("refus"):
+                continue
+            role = o["role"]
+            doss = projet / role
+            if not doss.is_dir():
+                continue
+            # la generation d'un jumeau vit dans le dossier du jumeau ORIGINAL:
+            # on ne presente le dossier de l'entite que si elle en est le
+            # PHYSIQUE detenteur (pas "copie_de").
+            if doss.resolve() != Path(str(o["glb"])).parent.resolve():
+                continue
+            # final "couleurs" : privilegier le livrable deja range, sinon le
+            # GLB porte par `o["glb"]` (c'est le fichier que la porte a vu).
+            _fin = doss / "modele" / "modele_couleurs.glb"
+            if not (_fin.is_file()):
+                _fin = Path(str(o["glb"]))
+            _ref = None
+            for _c in (doss / ("%s_reference.png" % role),
+                       doss / ("%s_front_reference.png" % role),
+                       doss / "reference" / "face.png"):
+                if _c.is_file():
+                    _ref = str(_c)
+                    break
+            try:
+                _liv = _organiser_entite(doss, role, final_mesh=str(_fin),
+                                         front_reference=_ref)
+                if _liv.get("ok") and _liv.get("livraison"):
+                    _mc = _liv["livraison"].get("modele_couleurs")
+                    _mg = _liv["livraison"].get("modele_geometrie")
+                    deliveries[role] = {"ok": True, "couleurs": _mc, "geometrie": _mg}
+                    # les chemins publient le fichier RANGE (les jumeaux
+                    # partagent ce chemin).
+                    for _j in objets:
+                        if _j.get("glb") and role in str(_j["glb"]):
+                            if _mc:
+                                _j["glb"] = str(_mc)
+                    print("SCENE_ORCH: %r range — couleurs + geometrie, "
+                          "intermediaires dans travail/" % role, flush=True)
+                else:
+                    deliveries[role] = {"ok": False,
+                                        "error": str(_liv.get("error"))}
+                    print("SCENE_ORCH: rangement de %r impossible (%s)"
+                          % (role, str(_liv.get("error"))[:120]),
+                          file=sys.stderr)
+            except Exception as exc:  # noqa: BLE001
+                deliveries[role] = {"ok": False, "error": repr(exc)}
+    except Exception as exc:  # noqa: BLE001
+        deliveries = {"ok": False, "error": repr(exc)}
+
     complete = (not refuses and not orphelins
                 and all(o.get("glb") for o in objets)
                 and all(e["ok"] for e in journal))
+    livraison_scene = {"scene_couleurs": str(scene_couleurs),
+                       "scene_geometrie": str(scene_geometrie) if geo.get("ok") else None}
+    livraison_scene.update(deliveries)
     return {
         "ok": complete, "is_scene": True, "plan": plan,
         "composants": {o["role"]: {"desc": o["desc"], "glb": o.get("glb"),
@@ -1047,11 +1139,13 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         "orphelins": orphelins,
         "upright": upright_info,
         "composition": journal,
+        "livraison": livraison_scene,
         "scene_glb": str(scene_couleurs),
         "scene_geometrie": str(scene_geometrie) if geo.get("ok") else None,
         "error": ("entites refusees ou composition incomplete: %s"
-                  % ([r["role"] for r in refuses] or
-                     [e["objet"] for e in journal if not e["ok"]]))
+                  % ([r["role"] for r in refuses]
+                     or [e["objet"] for e in orphelins]
+                     or [e["objet"] for e in journal if not e["ok"]]))
                  if not complete else None,
     }
 

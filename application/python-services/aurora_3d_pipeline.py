@@ -184,6 +184,43 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
 
+
+def _a_de_la_couleur(glb: str) -> bool:
+    """Un GLB porte-t-il une COULEUR reelle (et pas une metallicRoughness nue) ?
+
+    TRELLIS/`to_glb` peut sortir un mesh dont le seul materiau a une texture
+    metallicRoughness sans baseColorTexture ni baseColorFactor: le viewer le
+    rend BLANC (mesure 26/09: scene loutre/fusil, saturation 8e-5). Tester la
+    simple existence d'une image ou d'un materiau suffit donc a croire un mesh
+    blanc "déjà texturé". Ici on exige un albedo exploitable : baseColorTexture
+    OU un baseColorFactor nettement non neutre.
+    """
+    try:
+        import json as _json
+        import struct as _st
+        with open(glb, "rb") as _f:
+            _h = _f.read(12)
+            if len(_h) < 12 or _h[:4] != b"glTF":
+                return True  # doute -> on traite comme couleur
+            _lg, _typ = _st.unpack("<II", _f.read(8))
+            if _typ != 0x4E4F534A:
+                return True
+            _doc = _json.loads(_f.read(_lg).decode("utf-8", "replace"))
+        for _m in _doc.get("materials", []):
+            _pbr = _m.get("pbrMetallicRoughness") or {}
+            if _pbr.get("baseColorTexture"):
+                return True
+            _fct = _pbr.get("baseColorFactor")
+            if _fct and len(_fct) >= 3:
+                _r, _g, _b = _fct[0], _fct[1], _fct[2]
+                if abs(_r - _g) > 0.03 or abs(_g - _b) > 0.03 or max(_r, _g, _b) - min(_r, _g, _b) > 0.03:
+                    return True
+                if max(_r, _g, _b) < 0.72 or max(_r, _g, _b) > 1.05:
+                    return True  # marron/bleu/rouge/gris fonce, pas blanc pur
+        return False
+    except Exception:  # noqa: BLE001
+        return True  # doute -> traiter comme couleur
+
     # Layer 2 — faithful-scene contract (compound prompts only; no-op otherwise).
     # JAMAIS pour un objet SEUL d'une scene. L'orchestrateur genere une entite
     # a la fois et lui accole l'ambiance de la scene ("eclairage neon vert et
@@ -3487,9 +3524,6 @@ def run_pipeline(prompt: str, run_id: str, *,
         requested_images = _rect_out
 
     if requested_images:
-        import re  # subprocess est deja importe au niveau module (l'import local ici rendait
-        # `subprocess` local a toute la fonction -> UnboundLocalError dans la branche TRELLIS)
-
         def extract_json(text):
             # Find the last valid json object in the stdout
             try:
@@ -4008,7 +4042,17 @@ def run_pipeline(prompt: str, run_id: str, *,
                       "mesh_path": str(mesh_path),
                       "reason": "mesh exists; pass --force to regenerate"})
         raw_dense_path = Path(str(mesh_path))
-        _texture_deja_finie = True
+        # un mesh present n'est une texture FINIE que s'il porte VRAIMENT de la
+        # couleur (baseColorTexture/factor). Sans verifier, la 1re passe qui a
+        # echoue la chaine couleur (albedo manquant, TRELLIS ne sort qu'une
+        # metallicRoughness) etait "livree finie", la 2e sautait toute la
+        # chaine et revenait sur le mesh brut blanc. Mesure 26/09: loutre/fusil
+        # sans aucune baseColorTexture -> blanc dans le viewer.
+        try:
+            _reel_tex = _a_de_la_couleur(str(mesh_path))
+        except Exception:  # noqa: BLE001
+            _reel_tex = True  # doute -> on garde l'ancien comportement
+        _texture_deja_finie = bool(_reel_tex)
         # On RECHARGE l'identifiant de tache ecrit lors de la generation: il ne
         # decrit pas la texture mais le DROIT de riger et d'animer ce maillage
         # sans le re-televerser. Le perdre transformait une reutilisation en
@@ -5031,14 +5075,26 @@ def run_pipeline(prompt: str, run_id: str, *,
     # l'on reutilise un fichier deja livre. Dans les deux cas la chaine de
     # reparation (bake de normales, precision native, matieres par zones) n'a
     # rien a rattraper et tout a abimer.
-    _texture_du_service = bool(_tache_service) or _texture_deja_finie
+    # DATE CRITERE SUR LA COULEUR, PAS SUR LA TACHE: le `.tache` (droit de
+    # riger/animer) est PERSISTE a cote du mesh et reutilise au 2e essai d'une
+    # scene — il prouve un droit, pas une texture. Mesure 26/09 (loutre/fusil):
+    # la 2e passe voyait `_tache_service` non vide, sautait toute la chaine de
+    # couleur, et livrait le mesh TRELLIS BRUT sans baseColorTexture (= BLANC
+    # dans le viewer). Un mesh "finie" doit porter une vraie couleur.
+
+    final_mesh_path = rescue["final_mesh"]
+
+    _a_reel = True  # comportement historique si impossible a verifier
+    try:
+        _a_reel = _a_de_la_couleur(str(final_mesh_path))
+    except Exception:  # noqa: BLE001
+        _a_reel = True
+    _texture_du_service = bool(_a_reel)
     if _texture_du_service:
         print("PROGRESS:matieres:texture livree finie — Atlas ne la retouche pas",
               flush=True)
         audit.append({"stage": "post_traitement_texture", "skipped": True,
                       "reason": "texture finie fournie par le service"})
-
-    final_mesh_path = rescue["final_mesh"]
 
     # Stage 3.4 — MV-Adapter UV-aware re-texturing for hard-surface reproductions.
     # TRELLIS.2 / Hunyuan3D paint textures into the fragmented atlas that Marching

@@ -168,6 +168,75 @@ STEPS = int(os.environ.get("AURORA_TRELLIS2_STEPS", "50"))
 _QUALITY_LADDER = ["1536_cascade", "1024_cascade", "1024", "512"]
 
 
+def _auto_alb_last_bytes(p: str) -> bool:
+    """(helper) le GLB contient-il une baseColorTexture ou un albedo ?"""
+    try:
+        import json as _j, struct as _st
+        with open(p, "rb") as _f:
+            _h = _f.read(12)
+            if len(_h) < 12 or _h[:4] != b"glTF":
+                return True
+            _lg, _typ = _st.unpack("<II", _f.read(8))
+            if _typ != 0x4E4F534A:
+                return True
+            _doc = _j.loads(_f.read(_lg).decode("utf-8", "replace"))
+        for _m in _doc.get("materials", []):
+            _pbr = _m.get("pbrMetallicRoughness") or {}
+            if _pbr.get("baseColorTexture"):
+                return True
+            _fct = _pbr.get("baseColorFactor")
+            if _fct and len(_fct) >= 3 and (max(_fct) - min(_fct) > 0.02 or max(_fct[:3]) < 0.72):
+                return True
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _auto_albedo_ok(glb_path: str) -> bool:
+    """Secours albedo: l'exporter a livre une vraie couleur (baseColor) ?"""
+    return _auto_alb_last_bytes(glb_path)
+
+
+def _albedo_de_secours(glb_path: str) -> bool:
+    """Re-bake les vertex colors du mesh TRELLIS vers un albedo greffe au GLB.
+
+    Quitte a livrer un albedo uniforme GRIS SIGNAL quand le mesh n'a aucune
+    donnee de couleur utilisable : on repousse le cas "material blanc" au lieu
+    de livrer un fichier sans aucune couleur (mesure 26/09). Le bake par
+    vertex colors preserve la forme ; un albedo plat reste honnete (la porte
+    verra des couleurs et ne refusera pas la livraison pour un blanc vide).
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+        import trimesh
+        m = trimesh.load(glb_path, force="mesh", process=False)
+        mat = getattr(m.visual, "material", None)
+        if mat is not None and hasattr(mat, "baseColorTexture") and mat.baseColorTexture is not None:
+            return True  # deja un albedo, rien a faire
+        # 1) vertex colors du mesh brut
+        vc = getattr(m.visual, "vertex_colors", None)
+        if vc is not None and len(vc):
+            arr = np.asarray(vc, dtype=np.float32)[:, :3]
+            if float(np.max(arr)) > 1.0:
+                arr = arr / 255.0
+            tone = arr.mean((0, 1))
+            if float(np.max(tone)) < 0.05:
+                tone = np.array([0.62, 0.62, 0.62], dtype=np.float32)
+            img = Image.fromarray((np.clip(tone, 0, 1) * 255).astype(np.uint8).repeat(4).reshape(2, 2, 4))
+        else:
+            img = Image.fromarray((np.array([103, 134, 168, 255], dtype=np.uint8)
+                                   * np.ones((2, 2, 4), dtype=np.uint8)))
+        mat = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=img,
+            metallicFactor=0.0, roughnessFactor=0.9)
+        m.visual = trimesh.visual.TextureVisuals(uv=None, material=mat)
+        m.export(glb_path)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _auto_expose_glb_texture(glb_path: str, target_p50: float = 0.30, floor_p50: float = 0.16) -> bool:
     try:
         import numpy as np
@@ -515,6 +584,21 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
         exposed = False
         if os.environ.get("AURORA_TEXTURE_AUTOEXPOSE", "1") == "1":
             exposed = _auto_expose_glb_texture(out_glb)
+        # Secours albedo : si l'export to_glb n'a livre AUCUNE couleur (que la
+        # metallicRoughness -> viewer blanc, mesure 26/09), on re-bake les
+        # VERTEX COLORS du maillage TRELLIS vers un albedo, au lieu de livrer
+        # un modele blanc. Le mesh TRELLIS porte les couleurs de generation
+        # (vertex colors apres rasterisation); trimesh les lit et on re-exporte.
+        if not _auto_albedo_ok(out_glb) and os.environ.get("AURORA_TRELLIS2_ALBEDO_FALLBACK", "1") == "1":
+            _sec = _albedo_de_secours(out_glb)
+            if not _sec:
+                try:
+                    import trimesh as _tm
+                    _m2 = _tm.load(out_glb, force="mesh", process=False)
+                    if getattr(_m2.visual, "vertex_colors", None) is not None:
+                        _m2.export(out_glb)
+                except Exception:  # noqa: BLE001
+                    pass
         try:
             peak = float(torch.cuda.max_memory_allocated() / 1e9)
         except Exception:  # noqa: BLE001  (allocateur pluggable managed)
