@@ -863,7 +863,18 @@ function resolveViewerConfig(intent: ThreeDIntent | null, motionPreset: ThreeDMo
 // (split > anim > textured > rigged > reshaped > baked > raw_mesh). Reference
 // image still uses the simple first-match-newest-first since there's only
 // one canonical reference per run.
+// 27/09 (retour Juan: « sur le modele ... y a que du blanc »): deux families
+// de livrables doivent jamais gagner le viewer.
+//  - `*_geometrie.glb` = le meme maillage SANS materiau (controle de forme).
+//    Aucun `baseColorTexture` -> TOUT BLANC dans three.js. C'est voulu pour la
+//    forme, mais c'est le MAUVAIS fichier a afficher comme « le modele ».
+//  - `*_matte*.glb` / `*_mesh*.glb` = etapes intermediaires non colorees.
+// On les classe donc SOUS le livrable colore, sans les supprimer du classement:
+// un `modele_couleurs.glb` doit toujours passer devant.
 const MESH_STAGE_PRIORITY: { match: RegExp; rank: number }[] = [
+  { match: /scene_couleurs\.glb$/i,         rank: 120 },
+  { match: /modele_couleurs\.glb$/i,       rank: 118 },
+  { match: /mouvement_couleurs\.glb$/i,    rank: 116 },
   { match: /_split_k\d+\.glb$/i,        rank: 100 },
   { match: /_split\.glb$/i,             rank:  95 },
   { match: /_anim(_v\d+)?\.glb$/i,      rank:  90 },
@@ -873,6 +884,10 @@ const MESH_STAGE_PRIORITY: { match: RegExp; rank: number }[] = [
   { match: /_reshaped\.glb$/i,          rank:  55 },
   { match: /_baked\.glb$/i,             rank:  50 },
   { match: /_mesh\.glb$/i,              rank:  40 },
+  // Sans materiau -> blanc au viewer. Utile a la forme, interdit comme
+  // « le modele » quand une version coloree existe (rang superieur).
+  { match: /_geometrie\.glb$/i,         rank:  15 },
+  { match: /_matte.*\.glb$/i,           rank:  12 },
   { match: /\.(glb|gltf|obj)$/i,        rank:  10 },
 ]
 
@@ -3633,6 +3648,17 @@ export default function ModelView() {
             : null
           let referenceSeedForWorkflow = Boolean(primaryPreparedImage?.stagedPath)
           let referenceVerificationSummary = ''
+          // 27/09 (retour Juan: « y a pas de multi-entite ... pas de scene »):
+          // la reference passee au pipeline via --image n'est une VRAIE photo
+          // que si l'utilisateur a TELECHARGE un fichier. Tout le reste (FLUX
+          // synthetise depuis le texte, reference de session, reference web
+          // externe, lot multi-vues) est une image de SYNTHESE qui ne montre
+          // qu'un seul objet alors que le texte peut en demander plusieurs.
+          // Le backend bloquait la scene multi-objets sur TOUTE presence
+          // d'image : depuis l'UI la scene etait donc toujours coupee. On ne
+          // marque `--synthetic-reference` que dans ce cas-la, pour ne jamais
+          // laisser une photo utilisateur debiter en plusieurs sujets.
+          const referenceIsUserPhoto = Boolean(primaryPreparedImage?.stagedPath)
 
           if (directMultiView && materializedViewPlan.primaryPath) {
             referenceImagePath = materializedViewPlan.primaryPath
@@ -4039,6 +4065,13 @@ export default function ModelView() {
                   }
                 }
               }
+              // Reference de SYNTHESE (rien de l'utilisateur n'a ete televerse) :
+              // on previent le pipeline pour qu'il ne prenne pas cette image
+              // comme un verrou anti-scene. Sans ce drapeau, toute demande
+              // multi-objets depuis l'UI partait en un seul objet.
+              if (auroraArgs.includes('--image') && !referenceIsUserPhoto) {
+                auroraArgs.push('--synthetic-reference')
+              }
               if (referenceImagePath) {
                 emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
               }
@@ -4082,7 +4115,15 @@ export default function ModelView() {
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)
               }
-              const candidateMesh = parsedAurora?.livraison?.mouvement_couleurs
+              // 27/09: une SCENE multi-objets livre `scene_couleurs` (l'assemblage
+              // compose) et non `modele_couleurs` (qui n'existe que pour une
+              // entite seule). Sans cette ligne, candidateMesh tombait sur
+              // `final_mesh` puis, a defaut, sur un chemin de run qui n'existe
+              // pas -> le viewer n'affichait RIEN. `scene_couleurs` passe
+              // devant `modele_couleurs`: la scene assemblee est le bon
+              // livrable, et c'est elle qui porte les deux matieres.
+              const candidateMesh = parsedAurora?.livraison?.scene_couleurs
+                ?? parsedAurora?.livraison?.mouvement_couleurs
                 ?? parsedAurora?.livraison?.modele_couleurs
                 ?? parsedAurora?.final_mesh
                 ?? `${genDir}/${runId}_final_materials.glb`

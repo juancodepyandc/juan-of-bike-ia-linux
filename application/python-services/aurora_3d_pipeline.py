@@ -3059,9 +3059,23 @@ def run_pipeline(prompt: str, run_id: str, *,
     # pour chaque objet, et "un homme" n'est evidemment pas une scene.
     # 30/07 (audit): l'orchestrateur de scene decoupait meme les demandes
     # AVEC photo — le sujet de la photo devenait un fragment textuel et la
-    # reference partait en synthese. Une photo fournie = un seul sujet, la
-    # scene ne se decoupe que sur du texte pur.
-    if allow_scene and not images and os.environ.get("AURORA_SCENE_ORCH", "1") == "1":
+    # reference partait en synthese. Une photo FOURNIE PAR L'UTILISATEUR = un
+    # seul sujet, la scene ne se decoupe que sur du texte pur.
+    #
+    # 27/09 (retour Juan: « y a pas de multi-entite ... pas de scene »): cette
+    # condition etait aussi appliquee aux references SYNTHETISEES PAR LE
+    # PIPELINE LUI-MEME. Or l'UI genere TOUJOURS une image FLUX a partir du
+    # texte avant d'appeler le pipeline, puis la passe via --image : depuis
+    # l'UI, `images` n'etait donc JAMAIS vide et l'orchestrateur etait
+    # permanently saute — toute demande multi-objets partait en objet unique.
+    # Le raisonnement de l'audit du 30/07 (une photo = un sujet) ne vaut que
+    # pour une photo REELLE ; une image synthetisee ne montre qu'un seul objet
+    # alors que le texte en demande plusieurs, donc la decoupe doit se faire.
+    # `synthetic_reference` leve donc ce blocage pour cette seule categorie.
+    _images_reelles = [im for im in (images or [])
+                       if str(im) not in set(os.environ.get(
+                           "AURORA_SYNTHETIC_REFERENCES", "").split("::")) - {""}]
+    if allow_scene and not _images_reelles and os.environ.get("AURORA_SCENE_ORCH", "1") == "1":
         try:
             sys.path.insert(0, str(Path(__file__).parent))
             from scene_orchestrator import orchestrate_scene
@@ -6190,6 +6204,15 @@ def main() -> int:
     parser.add_argument("--image", action="append", dest="images", default=[],
                         help="Reference image path (repeatable). >=8 -> photogrammetry; "
                              ">=4 + 'photogrammetry'/'scan' keyword -> photogrammetry.")
+    parser.add_argument("--synthetic-reference", action="store_true",
+                        dest="synthetic_reference",
+                        help="Marque la/les --image comme generees par le pipeline "
+                             "lui-meme (FLUX) a partir du TEXTE, et non comme des "
+                             "photos fournies par l'utilisateur. Une reference "
+                             "synthetisee n'interdit donc PAS la scene multi-objets : "
+                             "une photo reelle reste un sujet unique, une image de "
+                             "synthese qui n'en montre qu'un seul ne doit pas ecraser "
+                             "les autres objets demandes par le texte.")
     parser.add_argument("--max-precision", action="store_true", dest="max_precision",
                         help="Qualite maximale: TRELLIS.2 1536_cascade avec allocateur "
                              "manage (spill RAM) + passe vision materiaux + MV-Adapter "
@@ -6213,6 +6236,13 @@ def main() -> int:
         pass
     if args.confirm_ref:
         os.environ["AURORA_REF_CONFIRM"] = "1"
+    if args.synthetic_reference and args.images:
+        # Enregistre les references synthetisees: run_pipeline les ignore pour
+        # la decision "scenes ou objet unique" (voir plus haut). Le separateur
+        # "::" evite toute collision avec un chemin reel.
+        os.environ["AURORA_SYNTHETIC_REFERENCES"] = "::".join(str(p) for p in args.images)
+        print("PROGRESS:scene:reference(s) marquee(s) synthetisee(s) — la scene "
+              "multi-objets reste eligible au decoupage", flush=True)
     if args.max_precision:
         os.environ.setdefault("AURORA_TRELLIS2_MANAGED", "0")
         os.environ.setdefault("AURORA_TRELLIS2_QUALITY", "1536_cascade")
