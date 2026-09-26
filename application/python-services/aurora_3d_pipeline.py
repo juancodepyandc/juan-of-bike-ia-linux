@@ -184,6 +184,8 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
 
+    return out
+
 
 def _a_de_la_couleur(glb: str) -> bool:
     """Un GLB porte-t-il une COULEUR reelle (et pas une metallicRoughness nue) ?
