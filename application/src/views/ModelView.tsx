@@ -4077,7 +4077,7 @@ export default function ModelView() {
               // le pipeline rechargera ce qu'il lui faut, quand il le faut.
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
-              const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model' })
+              const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model_ia' })
               const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; final_mesh?: string; livraison?: Record<string, string> | null; source_web?: { site?: string; url?: string; title?: string } } | null
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)

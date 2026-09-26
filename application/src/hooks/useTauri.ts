@@ -1854,10 +1854,20 @@ export function toAssetUrl(path: string) {
   if (/^(https?:|data:|blob:|file:)/i.test(path)) return path
 
   // Cloud/tunnel/browser-local: route through bridge
-  const cleaned = path
+  let cleaned = path
     .replace(/\\/g, '/')
     .replace(/^\/workspace\/output\//, '')
     .replace(/^\/workspace\/aurora\//, '')
+
+  // iter32 (quête 10/10): un chemin absolu du projet (/home/.../AuroraIA/
+  // application/output/3d/...) doit devenir relatif « output/... », sinon
+  // /api/asset/ reçoit « home/juan/... » sans slash initial → 404 → l'UI
+  // annonce « géométrie posée » puis n'affiche rien (bug 3D observé).
+  const mAbs = cleaned.match(/^\/.*\/application\/(output|temp)\//)
+  if (mAbs) {
+    const keepIdx = cleaned.indexOf(`/application/${mAbs[1]}/`) + `/application/${mAbs[1]}/`.length
+    cleaned = cleaned.slice(keepIdx)
+  }
 
   // Encode each segment so espaces, accents et #/? n'explosent pas le fetch
   const encoded = cleaned

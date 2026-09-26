@@ -89,11 +89,22 @@ def serve_asset(filepath):
             manager = globals().get("_storage_manager")
             if manager is not None and manager.cold_mounted():
                 cold_gallery_candidate = str(manager.cold_root / "outputs" / "videos" / gallery_name)
+    # iter32 (quête 10/10): si un client envoie un chemin absolu
+    # (…/application/output/3d/…) sans slash initial (Flask l'enlève), on
+    # réduit en chemin relatif « output/… » pour matcher les candidats.
+    normalized = filepath
+    if os.sep + "application" + os.sep + "output" + os.sep in filepath:
+        normalized = filepath.split(os.sep + "application" + os.sep + "output" + os.sep, 1)[1]
+    elif "application/output/" in filepath:
+        normalized = filepath.split("application/output/", 1)[1]
+
     candidates = [
         cold_gallery_candidate,
         os.path.join(WORKSPACE, filepath),
         os.path.join(WORKSPACE, "output", filepath),
         os.path.join(WORKSPACE, "temp", filepath),
+        os.path.join(WORKSPACE, normalized),
+        os.path.join(WORKSPACE, "output", normalized),
         filepath,  # chemin absolu direct
     ]
     for candidate in candidates:

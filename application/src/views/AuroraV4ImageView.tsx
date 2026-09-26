@@ -607,7 +607,7 @@ export default function AuroraV4ImageView() {
               rows={3}
               style={{ ...fieldStyle, resize: 'vertical', lineHeight: 1.55 }}
             />
-            {(I.previewIntent.removals.length > 0 || I.previewIntent.isEditIntent || I.effectiveDenoise !== null || I.styleOverrideReason) && (
+            {(I.previewIntent.isEditIntent || !I.refFilename || I.previewIntent.removals.length > 0) && (
               <div style={{ marginTop: 7, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                 {I.previewIntent.removals.map((r, i) => (
                   <IntentPill key={`${r}-${i}`} bg="rgba(248,113,113,.14)" fg="#F87171" title="Élément détecté à retirer">− {r}</IntentPill>
@@ -620,6 +620,14 @@ export default function AuroraV4ImageView() {
                     bg={I.editEngine === 'kontext' ? 'rgba(110,231,183,.14)' : 'rgba(251,191,36,.14)'}
                     fg={I.editEngine === 'kontext' ? '#6EE7B7' : '#FBBF24'}>
                     {I.editEngine === 'kontext' ? 'kontext · édition réelle' : 'img2img · approximatif'}
+                  </IntentPill>
+                )}
+                {!I.previewIntent.isEditIntent && (
+                  <IntentPill
+                    bg="rgba(34,197,94,.14)"
+                    fg="#34D399"
+                    title="Aucune image d'entrée requise : génération directe depuis ton texte.">
+                    création directe · text-to-image
                   </IntentPill>
                 )}
                 {I.effectiveDenoise !== null && I.editEngine !== 'kontext' && (

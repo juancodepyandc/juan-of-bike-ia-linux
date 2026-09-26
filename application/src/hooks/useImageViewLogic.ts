@@ -573,7 +573,13 @@ export function useImageViewLogic() {
         }
       }
 
-      if (!groundedReference && (intent.editMode === 'replicate' || (!intent.isEditIntent && !targetToResearch))) {
+      // iter32 (quête 10/10): l'auto-référence web n'est déclenchée que pour
+      // un sujet SPÉCIFIQUE nommé (targetToResearch — personnage/objet à
+      // rendre fidèlement) ou un mode replicate explicite. Une simple création
+      // (« un vélo en acier ») sans sujet nommé reste du text-to-image PUR —
+      // avant, on fabriquait systématiquement une référence web (img2img
+      // denoise 0.40) → l'utilisateur voyait « ça attend une image d'entrée ».
+      if (!groundedReference && (intent.editMode === 'replicate' || (targetToResearch !== null && !intent.isEditIntent))) {
         try {
           setProgress('Recherche de reference visuelle...')
           let foundBlob: Blob | null = null
