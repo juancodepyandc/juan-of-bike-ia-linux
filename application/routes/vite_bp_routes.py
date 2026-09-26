@@ -200,8 +200,15 @@ def _respawn_bridge_async(reason: str = "manual restart") -> bool:
     can exit cleanly.
     """
     try:
-        bridge_path = pathlib.Path(__file__).resolve()
-        cwd = str(bridge_path.parent)
+        # iter32 SEC (D.12): le fichier à relancer est TOUJOURS bridge_server.py
+        # à la racine du dossier application. Avant, Path(__file__) pointait
+        # vers routes/vite_bp_routes.py → le restart relançait le module de
+        # routes (sans Flast broche réelle) au lieu du process écoutant 3001.
+        _application_dir = pathlib.Path(WORKSPACE).resolve()
+        bridge_path = (_application_dir / "bridge_server.py").resolve()
+        if not bridge_path.exists():
+            raise FileNotFoundError(f"bridge introuvable: {bridge_path}")
+        cwd = str(_application_dir)
         # Use the same Python interpreter that's running us. sys.executable
         # is the most reliable on Windows (PATH "python" can resolve to the
         # wrong env, e.g. the Microsoft Store stub).

@@ -41,11 +41,50 @@ _PROXY_STRIP_HEADERS = frozenset({
     "sec-fetch-dest", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
 })
 
+
+def _hashlib_sha256(raw: str) -> str:
+    import hashlib
+    return hashlib.sha256(("aurora-cloud::" + raw).encode("utf-8")).hexdigest()
+
+
+def _hmac_compare_digest(a: str, b: str) -> bool:
+    import hmac
+    return hmac.compare_digest(a, b)
+
+
 app = FastAPI(title="AuroraIA Cloud Bridge", version="1.0.0")
+
+
+# iter32 SEC (D.4): le worker cloud exécute commandes/scripts par conception.
+# On durcit néanmoins : (1) CORS restreint aux origines configurées (jamais
+# "*" quand un token d'accès est actif), (2) token d'accès global optionnel
+# AURORA_CLOUD_TOKEN exigé sur TOUTES les routes s'il est défini.
+_CLOUD_ALLOWED_ORIGINS = [
+    o.strip() for o in
+    os.environ.get("AURORA_CLOUD_ORIGINS", "http://localhost:1420,http://127.0.0.1:1420").split(",")
+    if o.strip()
+]
+_CLOUD_TOKEN = os.environ.get("AURORA_CLOUD_TOKEN", "").strip()
+
+
+@app.middleware("http")
+async def _cloud_token_guard(request, call_next):
+    if _CLOUD_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        supplied = ""
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+        if not supplied:
+            supplied = (request.query_params.get("token") or "").strip()
+        want = _hashlib_sha256(_CLOUD_TOKEN)
+        if not supplied or not _hmac_compare_digest(_hashlib_sha256(supplied), want):
+            return JSONResponse({"error": "forbidden_cloud_token"}, status_code=403)
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_CLOUD_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],

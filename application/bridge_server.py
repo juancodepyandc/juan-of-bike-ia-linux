@@ -530,6 +530,51 @@ def _admin_ok() -> bool:
     return _request_is_local_loopback()
 
 
+# iter32 SEC (D.3): garde global des routes à fort impact (exécution de
+# commandes, écriture FS via tunnels, SSRF web extract). Ces routes sont
+# légitimes en local (l'UI Aurora y accède via 127.0.0.1) mais doivent être
+# dures à déclencher depuis le tunnel public — dont l'URL est publiée sur un
+# gist externe (sync_tunnel_url_to_gist). La règle : si la requête vient du
+# tunnel (X-Forwarded-For présent) et que ni le token admin ni une clé
+# extension valide ne sont fournis, on refuse. En local (loopback sans XFF)
+# on reste permissif pour ne pas casser l'UI ni le workflow.
+_SENSITIVE_PREFIXES = (
+    "/api/command/",
+    "/api/python/",
+    "/api/fs/write-",
+    "/api/fs/remove-",
+    "/api/fs/mkdir",
+    "/api/3d/auto-motion-bake",
+    "/api/web/extract",
+    "/api/web/download",
+    "/api/web/image",
+    "/api/connect/ssh/run",
+    "/api/connect/ssh/upload",
+    "/api/connect/tcp/probe",
+    "/api/connect/ssh/probe",
+)
+
+
+@app.before_request
+def _req_sensitive_guard():
+    p = request.path or ""
+    if not any(p.startswith(prefix) for prefix in _SENSITIVE_PREFIXES):
+        return None
+    # Local loopback (sans XFF) → route vers l'UI/native : permet.
+    if not request.headers.get("X-Forwarded-For"):
+        return None
+    # Via tunnel : token admin OU clé extension valide exigés.
+    if _admin_ok():
+        return None
+    try:
+        ext_ok, _rec, _err = _ext_auth()
+        if ext_ok:
+            return None
+    except Exception:
+        pass
+    return jsonify({"error": "forbidden_public", "détail": "route sensible, token admin ou clé extension requis depuis le tunnel"}), 403
+
+
 def _ext_get_raw_key():
     auth = request.headers.get("Authorization", "")
     if auth.lower().startswith("bearer "):
@@ -1376,4 +1421,11 @@ if __name__ == "__main__":
         app.register_blueprint(cowork_ext_bp)
     except Exception as e:
         print(f'Registration failed for {mod_name}: {e}')
-    app.run(host="0.0.0.0", port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
+    # iter32 SEC (D.3): bind loopback par défaut — le bridge est destiné à la
+    # machine + au tunnel cloudflared (qui connecte en local sur 127.0.0.1:3001).
+    # Exposer sur 0.0.0.0 ouvrait toutes les routes (dont exécution de commandes)
+    # au LAN. Override explicite via AURORA_BRIDGE_HOST (ex: 0.0.0.0) si besoin
+    # d'un accès LAN assumé.
+    _bind_host = os.environ.get("AURORA_BRIDGE_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    print(f"  BIND             = {_bind_host}:3001 (AURORA_BRIDGE_HOST pour changer)", flush=True)
+    app.run(host=_bind_host, port=3001, threaded=True, debug=dev_reload, use_reloader=dev_reload)
