@@ -5913,14 +5913,61 @@ def run_pipeline(prompt: str, run_id: str, *,
             if _bords > 200:
                 print("PROGRESS:geometrie:rebouchage - %d aretes de bord detectees"
                       % _bords, flush=True)
+                # `reboucher` edite SUR PLACE: on garde l'original avant de
+                # l'appeler, sinon il n'y a plus rien a restaurer.
+                _origine = final_delivery_mesh.with_name(
+                    final_delivery_mesh.stem + "_avant_rebouchage.glb")
+                try:
+                    shutil.copy2(str(final_delivery_mesh), str(_origine))
+                except OSError as _ce:
+                    _origine = None
+                    print("PROGRESS:geometrie:copie de securite refusee (%s)"
+                          % str(_ce)[:60], flush=True)
                 if _reboucher(str(final_delivery_mesh)).get("ok"):
                     _apres = int(_audit_trous(str(final_delivery_mesh)).get("bords_ouverts", 0) or 0)
-                    audit.append({"stage": "reparation_geometrique", "ok": True,
+                    # Mesure du 27/09 sur la theiere 1536_cascade: 4971 -> 3218
+                    # au premier passage, puis 3218 -> 3201 -> 3191. La courbe
+                    #-plateau: les trous restants depassent `sides=64` ou sont
+                    # des ouvertures legitimes (bec creux, ouverture du couvercle).
+                    # Rejouer ne gagne presque rien et chaque aller-retour Blender
+                    # fait doubler le GLB (165 Mo -> 319 Mo en 3 passages). Donc
+                    # une seule passe, et on rend l'original si le resultat est
+                    # moins bon qu'avant.
+                    _pire = False
+                    if _origine is not None and _apres > _bords:
+                        try:
+                            shutil.copy2(str(_origine), str(final_delivery_mesh))
+                            _pire = True
+                        except OSError as _re:
+                            print("PROGRESS:geometrie:restauration impossible (%s)"
+                                  % str(_re)[:60], flush=True)
+                    if _origine is not None:
+                        try:
+                            _origine.unlink()
+                        except OSError:
+                            pass
+                    audit.append({"stage": "reparation_geometrique",
+                                  "ok": not _pire,
                                   "bords_ouverts_avant": _bords,
-                                  "bords_ouverts_apres": _apres})
-                    print("PROGRESS:geometrie:rebouchage - %d -> %d aretes de bord"
-                          % (_bords, _apres), flush=True)
+                                  "bords_ouverts_apres": _apres,
+                                  "original_restaure": _pire})
+                    print("PROGRESS:geometrie:rebouchage - %d -> %d aretes de bord%s"
+                          % (_bords, _apres,
+                             " (original restaure)" if _pire else ""), flush=True)
                 else:
+                    # `reboucher` a echoue MAIS il a deja reecrit le fichier sur
+                    # place: sans restauration, un echec peut livrer un GLB
+                    # tronque. On remet donc l'original, lui seul etait intact.
+                    if _origine is not None:
+                        try:
+                            shutil.copy2(str(_origine), str(final_delivery_mesh))
+                            _origine.unlink()
+                            print("PROGRESS:geometrie:rebouchage refuse, "
+                                  "original restaure", flush=True)
+                        except OSError as _re:
+                            print("PROGRESS:geometrie:rebouchage refuse ET "
+                                  "restauration impossible (%s)" % str(_re)[:60],
+                                  flush=True)
                     audit.append({"stage": "reparation_geometrique", "ok": False,
                                   "bords_ouverts_avant": _bords,
                                   "error": "rebouchage refuse"})

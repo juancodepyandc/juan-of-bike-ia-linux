@@ -213,9 +213,17 @@ def cycle_config(spec, number, state=STATE):
              audit_partition_seed=defaults()['seed'],
              autonomous_3d=spec['module']=='3d')
     c['training_start']=spec.get('training_start','best')
+    # `strategy.apply` fixe `max_hours=24` et `train_tasks=12` par defaut et
+    # écrase donc ce que le profil Bureau demandait. Le profil reste
+    # autoritaire: on mémorise ses bornes et on les réapplique après `apply`,
+    # sinon `max_hours: 5` et `train_tasks: 3` du fichier 3d n'ont jamais eu
+    # aucun effet. Le budget par défaut reste 24 h si le profil ne dit rien.
+    _bornes = {k: c[k] for k in ('max_hours', 'train_tasks') if k in c}
     if spec.get('strategy','radical-v3') in {'radical-v2','radical-v3'}:
         from .strategy import apply
         apply(c)
+    for _key, _value in _bornes.items():
+        c[_key] = _value
     from .lineage import choose
     parent=choose(c['module'],c['training_start'],state)
     if parent:
