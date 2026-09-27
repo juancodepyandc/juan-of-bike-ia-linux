@@ -111,7 +111,7 @@ class MeshJudge:
             run = subprocess.run([blender, "-b", "--factory-startup", "--disable-autoexec", "-t", "4",
                                   "--python", str(Path(__file__).with_name("render_mesh.py")), "--",
                                   str(Path(artifact).resolve()), str(render_dir.resolve()),
-                                  str(self.views), str(self.size)], stdout=log, stderr=subprocess.STDOUT, timeout=240)
+                                  str(self.views), str(self.size)], stdout=log, stderr=subprocess.STDOUT, timeout=900)
         if run.returncode:
             raise RuntimeError(f"Échec du rendu Blender : {render_dir / 'blender.log'}")
         rendered = sorted(render_dir.glob("view_*.png"))
