@@ -205,13 +205,22 @@ def cycle_config(spec, number, state=STATE):
                 c[key] = value
     for key in ('resume_run', 'resume_audit', 'initial_adapter', 'prepared_tasks'):
         c.pop(key, None)
-    c.update(module=spec['module'], state_dir=str(state), execution='hybrid', stage='full',
+    c.update(module=spec['module'], state_dir=str(state), stage='full',
              mode='auto', cycles=1, fallback_on_quota=False, kaggle_max_session=False,
              training_budget_seconds=spec['training_minutes']*60,
              kaggle_timeout_seconds=spec['training_minutes']*60+900,
              seed=defaults()['seed']+number*100003,
              audit_partition_seed=defaults()['seed'],
              autonomous_3d=spec['module']=='3d')
+    # Comme `max_hours` et `train_tasks`, le choix d'`execution` du profil Bureau
+    # etait ecrase ici par 'hybrid': l'option 'local' de `validate` etait donc
+    # inatteignable, et un cycle ne pouvait pas tourner sans Kaggle. On respecte
+    # le profil, avec 'hybrid' par defaut. `kaggle_only` reste refuse par
+    # `validate` pour les moteurs locaux.
+    _execution = c.get('execution', 'hybrid')
+    if _execution not in {'hybrid', 'local', 'kaggle'}:
+        raise ValueError('Destination d\'entrainement invalide: ' + str(_execution))
+    c['execution'] = _execution
     c['training_start']=spec.get('training_start','best')
     # `strategy.apply` fixe `max_hours=24` et `train_tasks=12` par defaut et
     # écrase donc ce que le profil Bureau demandait. Le profil reste
