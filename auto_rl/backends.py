@@ -264,12 +264,50 @@ class TrellisBackend(Backend):
                 attr_volume=mesh.attrs, coords=mesh.coords, attr_layout=mesh.layout,
                 voxel_size=mesh.voxel_size, aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                 decimation_target=g["decimation_target"], texture_size=g["texture_size"],
-                remesh=False, verbose=False)
+                remesh=bool(g.get("remesh", False)), verbose=False)
             glb.export(str(path))
         del mesh, glb
         gc.collect()
         torch.cuda.empty_cache()
+        _limite_faces(path, int(g.get("judge_face_limit", 250000)),
+                      int(g["decimation_target"]))
         return str(path)
+
+
+def _limite_faces(path, limite, decimation_target):
+    """Garde-fou: un maillage trop dense invalide l'audit ENTIER.
+
+    `auto_rl/render_mesh.py:30-33` ne calcule les auto-intersections que si
+    le maillage a au plus 250 000 faces; au-dela il renvoie `None`, et
+    `judges.py:134` then rend la ligne `valid=False`
+    (`inter is not None and ...`). Or `evaluation.py:29-35` exige que
+    TOUTES les lignes soient valides: un seul maillage trop dense suffit a
+    jeter un audit de 288 generations.
+
+    `decimation_target` vaut 100 000 par defaut (`config.py:54`), donc la
+    generation normale reste tres en dessous. Ce filet n'agit que si la
+    decimation de o_voxel n'a pas tenu, et il est symetrique: les trois
+    branches (base, champion, candidat) passent par le meme code, donc la
+    comparaison reste equitable.
+    """
+    try:
+        import trimesh
+        m = trimesh.load(str(path), force="mesh", process=False)
+        faces = len(getattr(m, "faces", []) or [])
+    except Exception:  # noqa: BLE001
+        return
+    if faces <= limite:
+        return
+    try:
+        m = m.simplify_quadric_decimation(face_count=max(limite // 2, 1000))
+        m.export(str(path))
+        print("[3d] maillage de %d faces > %d: decimation de secours appliquee"
+              % (faces, limite), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        # On ne pretend jamais avoir mesure ce qu'on n'a pas mesure: le
+        # juge le juge refusera la ligne, et c'est correct.
+        print("[3d] %d faces > %d et decimation impossible (%s): ligne d'audit "
+              "invalideee par le juge" % (faces, limite, str(exc)[:80]), flush=True)
 
 
 def make_backend(c, paths):
@@ -282,9 +320,9 @@ def make_backend(c, paths):
     return {"code": CodeBackend, "cyber": CodeBackend, "cowork": CodeBackend, "conversation": ConversationBackend, "learning": ConversationBackend, "image": ImageBackend, "audio": AudioBackend, "3d": TrellisBackend}[c["module"]](c, paths)
 
 
-def visual_tasks(c, root, check, paths):
+def visual_tasks(c, root, check, paths, progress=None):
     from .photo_queue import tasks_from_queue
-    return tasks_from_queue(c, root, check)
+    return tasks_from_queue(c, root, check, progress=progress)
 
 
 def audio_tasks(c):

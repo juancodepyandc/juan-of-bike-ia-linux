@@ -84,12 +84,17 @@ def apply(c):
                  training_context_length=6144)
         c['generation'].update(max_new_tokens=1536)
     elif c['module']=='3d':
-        # Twelve disjoint, style-balanced prompts with three candidates each
-        # provide enough hard negatives for preference learning.  The local
-        # machine still renders only this training slice; the 24-subject audit
-        # remains held out and is evaluated after Kaggle.
+        # 27/09: le chien de garde de `control.py` tue l'etape au-dela de
+        # `local_step_timeout_seconds`, mais une SEULE reference FLUX.2 a un
+        # `poll_history(timeout_s=1800)`: le seuil etait donc PLUS COURT que
+        # le travail le plus long qu'il surveille. Un rendu lent et sain
+        # recevait donc SIGINT. On passe le seuil au-dessus du pire cas
+        # unitaire, et on laisse le vrai garde-fou (`max_hours`, reserve
+        # disque, `stop_signal`) continuer de boire.
         c.update(train_tasks=12,rollouts_per_task=3,minimum_preference_pairs=8,
-                 auto_refill=True,sft_weight=.05)
+                 auto_refill=True,sft_weight=.05,
+                 local_step_timeout_seconds=2400,
+                 local_preparation_seconds=max(3600, 60*75))
     else:
         c.update(train_tasks=12,local_epochs=1,directions=2)
     if c['module']=='audio':c['quality_metrics']={'wer':'lower','clipping_fraction':'lower'}

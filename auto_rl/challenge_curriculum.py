@@ -93,17 +93,17 @@ def visual_briefs(c):
     return rows
 
 
-def prepare_visual(c,root,check):
+def prepare_visual(c,root,check,progress=None):
     from pathlib import Path
     from .config import ROOT
     from .storage import atomic_json,file_hash,read_json
     tasks=visual_briefs(c)
-    materialize_references(c,tasks,check,training_only=c.get('defer_audit_references',False))
+    materialize_references(c,tasks,check,training_only=c.get('defer_audit_references',False),progress=progress)
     from .curriculum import validate_tasks
     return validate_tasks(tasks,c)
 
 
-def materialize_references(c,tasks,check,training_only=False):
+def materialize_references(c,tasks,check,training_only=False,progress=None):
     from pathlib import Path
     from .config import ROOT
     from .storage import atomic_json,file_hash,read_json
@@ -112,6 +112,25 @@ def materialize_references(c,tasks,check,training_only=False):
         sys.path.insert(0,str(ROOT/'application/python-services'))
         from flux_reference_synth import build_workflow,post_prompt,poll_history,output_path_from_history,fetch_to
         from PIL import Image
+        wanted=[t for t in tasks if not (training_only and t.get('split')=='audit')]
+        pending=[]
+        for task in wanted:
+            if task.get('image'):continue
+            folder=Path(c['state_dir'])/'radical_references'/digest({'prompt':task['prompt'],'version':c.get('curriculum_version','radical-v3')})
+            if (folder/'reference.png').exists():continue
+            pending.append(task)
+        # 27/09: le chien de garde (`auto_rl/control.py:339`) tue l'etape au
+        # bout de `local_step_timeout_seconds` (1200 s) en mesurant
+        # `time.time() - step_started_at`. Or `Status.update` ne rafraichit
+        # `step_started_at` que si le MESSAGE change (storage.py:105) : la
+        # synthese de 30 references FLUX.2 emet le meme message du debut a la
+        # fin, donc un travail SAIN et long etait tue a 1200 s. Mesure: le
+        # run 3d-20260915-064158 a ete SIGINT a 1200.2 s, a 2 %, GPU a 52 %,
+        # en train de rendre les 30 references manquantes, sans aucun mesh
+        # produit. On rapporte donc l'avancement reel, ce qui a la fois
+        # rafraichit le chrono du chien de garde et rend la phase visible.
+        if pending and progress:
+            progress(len(pending),len(wanted),'prepare')
         for task in tasks:
             if training_only and task.get('split')=='audit':continue
             if task.get('image'):continue
@@ -136,6 +155,9 @@ def materialize_references(c,tasks,check,training_only=False):
                     temporary.unlink(missing_ok=True)
                 atomic_json(folder/'reference.json',{'prompt':task['prompt'],'sha256':file_hash(path),'generator':'official_flux2','comfy_prompt_id':job})
             task.update(image=str(path),reference_sha256=file_hash(path))
+            if progress:
+                done=sum(1 for t in wanted if t.get('image'))
+                progress(done,len(wanted),'prepare')
     return tasks
 
 

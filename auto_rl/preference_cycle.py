@@ -103,7 +103,15 @@ def execute_preference_cycle(c, cycle_number=1):
         if c.get("prepared_tasks"):
             tasks = read_json(c["prepared_tasks"])
         elif c["module"] == "3d":
-            tasks = visual_tasks(c, task_dir, check, paths)
+            # Chaque reference synthetisee emet un message PROPRE: le message
+            # change donc `Status.update` rafraichit `step_started_at`, et le
+            # chien de garde (control.py:339) ne peut plus tuer une phase
+            # saine parce qu'elle dure plus de `local_step_timeout_seconds`.
+            # C'est aussi ce qui rend la phase lisible dans le suivi.
+            def _ref_progress(done, total, phase):
+                status.update(phase, "Reference de comparaison %d/%d..." % (done, total),
+                              progress_percent=2)
+            tasks = visual_tasks(c, task_dir, check, paths, progress=_ref_progress)
         else:
             tasks = None
         status.update("loading", "Chargement du vrai modèle et des juges…", progress_percent=4)
@@ -364,7 +372,11 @@ def execute_preference_cycle(c, cycle_number=1):
         status.update("local_audit", "Retour sur la RTX 5070 Ti : comparaison des vrais fichiers à paramètres identiques…", progress_percent=80, training_location="local")
         if c['module']=='3d' and c.get('defer_audit_references'):
             from .challenge_curriculum import materialize_references
-            materialize_references(c,audit_tasks,check)
+            def _ref_progress_audit(done, total, phase):
+                status.update("local_audit",
+                              "Reference d'audit %d/%d..." % (done, total),
+                              progress_percent=80)
+            materialize_references(c,audit_tasks,check,progress=_ref_progress_audit)
             atomic_json(task_dir/'curriculum.json',tasks)
             if c['stage']!='remote':reclaim_comfy_ram(state)
         backend = reload_backend(c, paths)

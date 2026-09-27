@@ -124,11 +124,11 @@ def refill(c, count, check=lambda: None):
     return plan
 
 
-def tasks_from_queue(c, task_dir, check=lambda: None):
+def tasks_from_queue(c, task_dir, check=lambda: None, progress=None):
     from PIL import Image
     if c.get('curriculum_version') in {'radical-v2','radical-v3'}:
         from .challenge_curriculum import prepare_visual
-        return prepare_visual(c,task_dir,check)
+        return prepare_visual(c,task_dir,check,progress=progress)
     count = c["train_tasks"] + c["eval_tasks"]
     task_dir = Path(task_dir)
     task_dir.mkdir(parents=True, exist_ok=True)

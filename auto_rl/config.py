@@ -53,6 +53,15 @@ def defaults(module="3d"):
                        "width": 512, "height": 512, "trellis_pipeline": "512",
                        "texture_size": 1024, "decimation_target": 100000,
                        "max_num_tokens": 32768, "guidance_scale": 0.0,
+                       # TRELLIS.2 reconstruit la topologie par Dual Contouring
+                       # AVANT le bake de texture: la couleur survit, et la
+                       # surface sort manifolde, sans auto-intersection. Le
+                       # juge 3D retire la totalite des auto-intersections
+                       # (diviseur `1/(1+inter/faces*20)`), c'est donc le
+                       # levier de qualite le plus direct. Valide par A/B dans
+                       # Outputs/auto_rl/diagnostics/remesh_ab_*.log.
+                       "remesh": False,
+                       "judge_face_limit": 250000,
                        "voice": "ff_siwis", "speed": 1.0},
         "models": {"3d": "microsoft/TRELLIS.2-4B", "code": "Qwen/Qwen3-8B",
                    "image": "Comfy-Org/flux2-dev", "audio": "hexgrad/Kokoro-82M",
