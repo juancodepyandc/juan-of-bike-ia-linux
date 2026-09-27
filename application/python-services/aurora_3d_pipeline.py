@@ -5897,6 +5897,41 @@ def run_pipeline(prompt: str, run_id: str, *,
     # travail/. AURORA_ORGANISER=0 pour debrayer.
     livraison = {}
     if os.environ.get("AURORA_ORGANISER", "1") == "1":
+        # REPARATION GEOMETRIQUE AVANT JUGEMENT (27/09). Mesure sur un
+        # livrable reel (sous-marin): 200 491 aretes de bord sur 994 907
+        # (20.2%) => maillage OUVERT, d'ou les trous et faces manquantes
+        # que l'utilisateur voit; et AUCUN attribut NORMAL => eclairage
+        # plat et patches sombres. `porte_structure` (rebouchage + normales)
+        # n'etait applique qu'aux fichiers ANIMES: le livrable STATIQUE
+        # sortait du pipeline BRUT. Le seul appel a mesh_postprocess.py vit
+        # dans le RESCUE de l'UI, sur un champ (mesh_quality_ok) que le
+        # pipeline ne produit jamais: du code mort. On repare donc ici, une
+        # fois, AVANT que le juge regarde la geometrie.
+        try:
+            from perfection_gate import audit_trous as _audit_trous, reboucher as _reboucher
+            _bords = int(_audit_trous(str(final_delivery_mesh)).get("bords_ouverts", 0) or 0)
+            if _bords > 200:
+                print("PROGRESS:geometrie:rebouchage - %d aretes de bord detectees"
+                      % _bords, flush=True)
+                if _reboucher(str(final_delivery_mesh)).get("ok"):
+                    _apres = int(_audit_trous(str(final_delivery_mesh)).get("bords_ouverts", 0) or 0)
+                    audit.append({"stage": "reparation_geometrique", "ok": True,
+                                  "bords_ouverts_avant": _bords,
+                                  "bords_ouverts_apres": _apres})
+                    print("PROGRESS:geometrie:rebouchage - %d -> %d aretes de bord"
+                          % (_bords, _apres), flush=True)
+                else:
+                    audit.append({"stage": "reparation_geometrique", "ok": False,
+                                  "bords_ouverts_avant": _bords,
+                                  "error": "rebouchage refuse"})
+            else:
+                audit.append({"stage": "reparation_geometrique", "ok": True,
+                              "bords_ouverts_avant": _bords,
+                              "note": "maillage deja ferme, aucune reparation"})
+        except Exception as _rge:  # noqa: BLE001
+            audit.append({"stage": "reparation_geometrique", "ok": False,
+                          "error": repr(_rge)})
+
         try:
             # PORTE DE PERFECTION (doctrine 25/07: « c'est a mon IA de dire
             # s'il est parfait ou non sinon il refait »). Le pipeline repare

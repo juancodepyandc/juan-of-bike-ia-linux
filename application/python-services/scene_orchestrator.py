@@ -625,6 +625,36 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
         if signe in erreur.lower():
             refus = erreur[:200]
             break
+    # 27/09 (retour Juan: « tu n'arrives pas a assembler les 2 »): la liste
+    # ci-dessus etait une liste de MOTS. Le pipeline, lui, refuse avec
+    # d'autres formulations — mesure sur un run reel :
+    #   "final acceptance rejected: engineer_grade 72.0 < threshold 74"
+    # Aucun des quatre signes ci-dessus n'y figure, donc l'orchestrateur
+    # livrait l'objet REFUSE comme s'il etait valide (grade 72 sous le seuil
+    # 74), la scene s'assemblait dessus, et le second objet seemed
+    # simplement "manquant". Un refus de porte EST un refus, quelle que soit
+    # sa phrasing : on lit desormais l'audit (autorite) et non le texte libre.
+    if refus is None:
+        _audit = res.get("audit_trail") if isinstance(res.get("audit_trail"), list) else []
+        for _st in _audit:
+            if not isinstance(_st, dict):
+                continue
+            _stage = str(_st.get("stage") or "")
+            if _stage in ("perfection_gate", "final_acceptance_gate"):
+                _grade = _st.get("engineer_grade")
+                if _grade is None:
+                    _grade = _st.get("score")
+                # Un gate passe ne dit rien ; seul un echec explicite compte.
+                if _st.get("ok") is False or _st.get("acceptance_ok") is False:
+                    refus = ("porte %s refusee (note %s%s)" % (
+                        _stage, _grade,
+                        ", seuil %s" % _st["threshold"] if _st.get("threshold") else ""))
+                    break
+    # Filet de securite: si le pipeline a rendu ok=False ET qu'aucune de ces
+    # branches n'a produit de motif, on ne livre pas en silence. Le maillage
+    # reste disponible pour le diagnostic, mais l'orchestrateur doit le dire.
+    if refus is None and res.get("ok") is False and erreur:
+        refus = erreur[:200]
     # LE RANGEMENT DEPLACE LES FICHIERS. `organiser()` met les livrables dans
     # modele/ et mouvement/ APRES coup; les chemins bruts renvoyes par le
     # pipeline peuvent donc pointer un emplacement qui n'existe plus. Mesure du
@@ -780,6 +810,23 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     projet = Path(output_dir)
     objets = plan["objets"]
     style = plan.get("style") or ""
+
+    # 27/09 (retour Juan: « aucune scene, il manque toujours un objet »):
+    # la scene n'est publiee qu'APRÈS la boucle de composition (plus bas),
+    # mais quand une tentative echoue puis recommence, le `scene_couleurs.glb`
+    # de la tentative precedente RESTE sur disque. Mesure: plan de 2
+    # entites, `scene/scene_couleurs.glb` = 1 mesh "Mesh_0" (le socle seul),
+    # ecrit par une tentative avertee — l'UI affichait donc une "scene"
+    #、旧 et incomplete au lieu d'attendre, ou d'annoncer, l'echec.
+    # On purge les livrables de scene AU DEMARRAGE de chaque tentative:
+    # pas de scene publiee = pas de scene Partial trompeuse.
+    _scene_dir = projet / "scene"
+    for _stale in ("scene_couleurs.glb", "scene_geometrie.glb"):
+        try:
+            (_scene_dir / _stale).unlink(missing_ok=True)
+        except OSError:
+            pass
+
     print("SCENE_ORCH: %d entites -> %s" % (
         len(objets), ", ".join("%s(%s, appui=%s)" % (o["role"], o["desc"][:28], o["appui"])
                                for o in objets)), flush=True)
