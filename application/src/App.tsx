@@ -98,6 +98,7 @@ import { pickView } from './utils/uiSkinViews.ts'
 // nom/voix/sysprompt. Voir application/src/services/auroraAgents.ts.
 import AuroraAgentMascot from './components/AuroraAgentMascot.tsx'
 import AuroraV3TeamManager from './views/AuroraV3TeamManager.tsx'
+import { scanInstalledBrowsers, detectCurrentBrowser } from './services/coworkBrowserDetect.ts'
 
 const ConversationView = pickView({
   manga:     () => import('./views/MangaChatView'),
@@ -1117,7 +1118,6 @@ function CoworkBootScan() {
     let cancelled = false
     const run = async () => {
       try {
-        const { scanInstalledBrowsers, detectCurrentBrowser } = await import('./services/coworkBrowserDetect')
         const [installed, current] = await Promise.all([
           scanInstalledBrowsers(),
           Promise.resolve(detectCurrentBrowser()),

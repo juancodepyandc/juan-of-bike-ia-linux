@@ -60,6 +60,7 @@ import ReactMarkdown from 'react-markdown'
 import LyraCharacter from './voice/LyraCharacter.tsx'
 import remarkGfm from 'remark-gfm'
 import { isTauriRuntime } from '../utils/runtime.ts'
+import { runAction } from '../services/coworkExecutor.ts'
 import {
   detectCoworkRuntime,
   getCoworkCapabilities,
@@ -1372,7 +1373,6 @@ export default function CoworkOverlay({ open, onClose }: CoworkOverlayProps) {
     const imagesAtSubmit = attachedImages.slice()
     if (imagesAtSubmit.length > 0) {
       try {
-        const { runAction } = await import('../services/coworkExecutor')
         for (const img of imagesAtSubmit) {
           const r = await runAction(
             { kind: 'vision_describe', imageDataUrl: img.dataUrl, question: 'Decris precisement le contenu : texte visible, layout, couleurs, sections, chiffres, erreurs eventuelles, contexte general.' },
