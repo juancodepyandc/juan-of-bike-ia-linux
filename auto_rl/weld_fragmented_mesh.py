@@ -2,16 +2,25 @@
 
 TRELLIS livre un maillage dont la surface est continue mais dont les sommets
 sont DUPLIQUÉS: chaque îlot de texture obtient sa propre copie des sommets
-situés sur la couture. Résultat mesuré sur les validations: 8 100 composantes
-connexes pour 97 623 faces, alors que la géométrie est continue au 1e-9.
+situés sur la couture. Mesuré: 8 103 composantes connexes pour 97 623 faces,
+et 951 618 pour la scène Natsu, alors que la géométrie est continue au 1e-9.
+La distance médiane d'un sommet à son plus proche voisin situé dans une AUTRE
+composante vaut exactement 0,000000.
 
-Deux conséquences concretes, toutes deux mesurées:
+Pourquoi cette soudure existe, et ce qu'elle ne fait PAS:
 
-1. Le juge (`auto_rl/judges.py`) punish `fragment = 1 - aire_max/aire_totale`,
-   soit 0,9393 sur ces maillages. La soudure le ramène à 0,0736.
-2. La décimation UV-preserving (`optimize_textured_mesh.py`) est contrainte par
-   `preserveboundary=True`: avec 8 100 îlots, elle plafonne à 58 329 faces
-   pour une cible de 40 000. Après soudure elle atteint la cible (39 999).
+1. Ce que le juge VOIT. `auto_rl/judges.py` (MeshJudge.score) soude déjà une
+   copie avant de mesurer `fragment`. Le juge n'est donc PAS pénalisé par cet
+   artefact: sans soudure 0,93-0,95, avec 0,07-0,32, et l'écart est déjà capté
+   aujourd'hui. Cette soudure n'améliore donc PAS le score du juge. Une mesure
+   de fragmentation prise SANS la soudure du juge surestimerait le gain.
+2. Ce que la décimation subit. `optimize_textured_mesh.py` est réellement
+   bloqué: `preserveboundary=True` verrouille chaque îlot. Mesuré, cible
+   40 000 faces: 97 623 -> 58 329 sans soudure, -> 39 999 avec. Sur Natsu:
+   967 762 faces obtenues, 45 000 atteints, 200,7 Mo -> 90,4 Mo.
+3. Ce que le consommateur voit. Les .glb livrés contiennent des milliers
+   d'îlots non raccordés, ce qui coûte au rendu temps réel, au culling et à
+   tout outillage qui ne soude pas.
 
 La soudure respecte la texture (`merge_tex=True`): seuls des sommets de même
 position ET même UV sont fusionnés, donc l'atlas n'est jamais écrasé.
@@ -42,7 +51,33 @@ _MAX_FACE_LOSS_RATIO = 0.005
 
 
 def _fragments(mesh) -> tuple[int, float, int]:
-    """Mimique exactement la metrique du juge: (composantes, fragment, faces)."""
+    """Reproduit EXACTEMENT la metrique du juge (judges.py, MeshJudge.score).
+
+    Point non evident et decisif: le juge soude DEJA une copie
+    (`topo.merge_vertices(merge_tex=True, merge_norm=True)`) avant de compter
+    les composantes. Un maillage livre par TRELLIS est donc deja immunise contre
+    l'artefact de duplication: mesure SANS soudure `fragment` vaut 0,93-0,95,
+    mesure AVEC elle 0,07-0,32. Comparer les deux sans cette etape surestimerait
+    massivement l'ecart reellement vu par le juge.
+    """
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    topo = mesh.copy()
+    topo.merge_vertices(merge_tex=True, merge_norm=True)
+    adjacent = topo.face_adjacency
+    graph = coo_matrix(
+        (np.ones(len(adjacent), dtype=np.uint8), (adjacent[:, 0], adjacent[:, 1])),
+        shape=(len(topo.faces), len(topo.faces)),
+    ).tocsr()
+    count, labels = connected_components(graph, directed=False)
+    areas = np.bincount(labels, weights=topo.area_faces, minlength=count)
+    fragment = float(1 - areas.max() / max(areas.sum(), 1e-12)) if len(areas) else 1.0
+    return int(count), fragment, int(len(topo.faces))
+
+
+def _components_raw(mesh) -> int:
+    """Composantes connexes SANS soudure: mesure l'indexation, pas la forme."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
 
@@ -51,10 +86,7 @@ def _fragments(mesh) -> tuple[int, float, int]:
         (np.ones(len(adjacent), dtype=np.uint8), (adjacent[:, 0], adjacent[:, 1])),
         shape=(len(mesh.faces), len(mesh.faces)),
     ).tocsr()
-    count, labels = connected_components(graph, directed=False)
-    areas = np.bincount(labels, weights=mesh.area_faces, minlength=count)
-    fragment = float(1 - areas.max() / max(areas.sum(), 1e-12)) if len(areas) else 1.0
-    return int(count), fragment, int(len(mesh.faces))
+    return int(connected_components(graph, directed=False)[0])
 
 
 def weld_mesh(glb_in: str, glb_out: str, digits: int = DEFAULT_DIGITS) -> dict[str, Any]:
@@ -67,6 +99,9 @@ def weld_mesh(glb_in: str, glb_out: str, digits: int = DEFAULT_DIGITS) -> dict[s
         raise ValueError(f"refus d'ecraser l'original: {src}")
 
     base = trimesh.load(str(src), process=False, force="mesh")
+    # faces_before sur le fichier REEL, avant toute transformation.
+    raw_comps_before = _components_raw(base)
+    faces_file = int(len(base.faces))
     comps_before, frag_before, faces_before = _fragments(base)
     uv_before = getattr(base.visual, "uv", None)
     if uv_before is None:
@@ -88,12 +123,13 @@ def weld_mesh(glb_in: str, glb_out: str, digits: int = DEFAULT_DIGITS) -> dict[s
         return {"ok": False, "reason": "soudure incoherente: UVLost"}
 
     comps_after, frag_after, faces_after = _fragments(welded)
-    lost = faces_before - faces_after
-    if lost > max(1, int(faces_before * _MAX_FACE_LOSS_RATIO)):
+    raw_comps_after = _components_raw(welded)
+    lost = faces_file - faces_after
+    if lost > max(1, int(faces_file * _MAX_FACE_LOSS_RATIO)):
         return {
             "ok": False,
-            "reason": f"trop de faces perdues: {lost}/{faces_before}",
-            "faces_before": faces_before,
+            "reason": f"trop de faces perdues: {lost}/{faces_file}",
+            "faces_before": faces_file,
             "faces_after": faces_after,
         }
 
@@ -109,12 +145,19 @@ def weld_mesh(glb_in: str, glb_out: str, digits: int = DEFAULT_DIGITS) -> dict[s
         "input": str(src),
         "output": str(dst),
         "digits": digits,
-        "components_before": comps_before,
-        "components_after": comps_after,
+        # Indexation: ce que voit un consommateur qui ne soude pas (culling,
+        # rendu temps reel, connectivity). C'est la vraie fragmentation du fichier.
+        "components_raw_before": raw_comps_before,
+        "components_raw_after": raw_comps_after,
+        # Metrique du juge, APRES sa propre soudure: deja immunise, donc
+        # fragment_gain reste faible et attendu. Ne pas y lire un gain de score.
+        "components_judge_before": comps_before,
+        "components_judge_after": comps_after,
         "fragment_before": round(frag_before, 6),
         "fragment_after": round(frag_after, 6),
         "fragment_gain": round(frag_before - frag_after, 6),
-        "faces_before": faces_before,
+        "judge_already_welds": True,
+        "faces_before": faces_file,
         "faces_after": faces_after,
         "faces_lost_total": lost,
         "degenerate_faces_removed_explicit": dropped_degenerate,

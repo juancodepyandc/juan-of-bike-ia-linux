@@ -102,16 +102,20 @@ def _weld_fragmented(glb_path: str, out_glb: str, log: list[dict[str, Any]]) -> 
         log.append({"stage": "weld", "skipped": True, "reason": rep.get("reason")})
         return False
 
-    before, after = int(rep["components_before"]), int(rep["components_after"])
+    # Indexation du fichier livre: c'est ce qui bloque la decimation et ce que
+    # paie tout consommateur qui ne soude pas. La metrique du juge est aussi
+    # reportee, mais elle est deja immunisee (il soude une copie lui-meme).
+    before, after = int(rep["components_raw_before"]), int(rep["components_raw_after"])
     # Un maillage deja sain ne doit pas etre reecrit pour rien.
     if after > before * 0.8:
         log.append({"stage": "weld", "skipped": True,
                     "reason": f"maillage deja peu fragmente: {before} -> {after} composantes"})
         return False
 
-    log.append({"stage": "weld", "ok": True, "components_before": before,
-                "components_after": after, "fragment_before": rep["fragment_before"],
-                "fragment_after": rep["fragment_after"],
+    log.append({"stage": "weld", "ok": True, "components_raw_before": before,
+                "components_raw_after": after,
+                "fragment_judge_before": rep["fragment_before"],
+                "fragment_judge_after": rep["fragment_after"],
                 "faces_lost_total": rep["faces_lost_total"]})
     return True
 

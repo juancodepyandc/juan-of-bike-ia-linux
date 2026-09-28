@@ -2,9 +2,13 @@
 """Non-regression de la reparation de fragmentation (auto_rl/weld_fragmented_mesh).
 
 Reproduit le defaut TRELLIS: la surface est continue mais les sommets sont
-dupliques sur les coutures, ce qui casse le maillage en milliers d'iles. Aux
-yeux du juge c'est une qualite catastrophique (fragment -> 1.0) et la decimation
-UV-preserving est bloquee par preserveboundary=True.
+dupliques sur les coutures, ce qui casse l'INDEXATION du fichier en milliers
+d'iles. Deux consequences distinctes, a ne pas confondre:
+
+- la decimation UV-preserving est reellement bloquee (preserveboundary);
+- le juge ne l'est PAS: `judges.py` soude deja une copie avant de mesurer
+  `fragment`. Mesurer la fragmentation sans cette soudure surestimerait donc
+  massivement l'ecart reellement vu par le juge.
 
 Ces tests utilisent un maillage synthetique construit sur place: aucun artefact
 lourd, aucun GPU, aucun rendu.
@@ -62,17 +66,28 @@ class TestWeldFragmentedMesh(unittest.TestCase):
         report = weld_mesh(str(src), str(dst))
         return src, dst, report, before
 
-    def test_weld_reduit_la_fragmentation(self):
+    def test_weld_reduit_la_fragmentation_reelle(self):
+        """La fragmentation REELLE (indexation) chute; le juge, lui, etait deja immunise."""
+        from auto_rl.weld_fragmented_mesh import _components_raw
+
         mesh = _make_fragmented_grid()
-        comps_before, frag_before, faces_before = _fragments(mesh)
-        self.assertGreater(comps_before, 10, "le maillage de test doit etre fragmente")
-        self.assertGreater(frag_before, 0.9)
+        raw_before = _components_raw(mesh)
+        comps_before, frag_before, _ = _fragments(mesh)
+        self.assertGreater(raw_before, 10, "le maillage de test doit etre fragmente a l'indexation")
+        # Le juge soude deja une copie: il ne voit PAS la fragmentation.
+        self.assertEqual(comps_before, 1)
+        self.assertLess(frag_before, 0.05)
 
         _, dst, report, _ = self._roundtrip(mesh)
         self.assertTrue(report["ok"], report.get("reason"))
-        self.assertEqual(report["components_after"], 1, "la grille doit redevenir connexe")
-        self.assertLess(report["fragment_after"], 0.05)
-        self.assertEqual(report["faces_before"], faces_before)
+        self.assertEqual(report["components_raw_after"], 1, "la grille doit redevenir connexe")
+        self.assertLess(report["components_raw_after"], raw_before)
+        self.assertTrue(report["judge_already_welds"])
+        # Le rapport ne doit PAS annoncer un gain de fragmentation que le juge
+        # n'a jamais subi: il distingue les deux mesures.
+        self.assertIn("components_raw_before", report)
+        self.assertIn("components_judge_before", report)
+        self.assertLess(abs(report["fragment_gain"]), 0.05)
 
     def test_uv_preservees_et_alignees(self):
         mesh = _make_fragmented_grid()
