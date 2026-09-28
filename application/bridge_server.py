@@ -815,6 +815,7 @@ def ext_chat():
 #     PRÉCISION / réalisme du rendu — pas la vitesse.
 _EXT_3D_JOBS = {}  # job_id -> {state, started, finished, step, prompt, run_id, glb, glb_url, audit, error, attempts}
 _EXT_3D_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "3d")
+_EXT_3D_SOEURS = ("3d-validation",)  # racinesadditionnelles servies au visualiseur
 _EXT_3D_MIN_SCORE = 70  # seuil de "rendu correct" — sinon retry auto
 
 
@@ -1092,20 +1093,49 @@ def ext_do():
 
 
 # Sert un fichier .glb de output/3d/ (réutilisé par le widget et le site).
+def _racines_3d():
+    """Racines 3D servies au visualiseur: output/3d puis ses soeurs listees.
+
+    `3d-validation` existe comme depot de validation mais n etait scanne par
+    AUCUNE route: ses modeles etaient donc invisibles alors qu ils etaient
+    correctement formates. Chaque racine est verifiee par realpath, donc la
+    garantie anti-evasion tient toujours.
+    """
+    base = os.path.dirname(_EXT_3D_DIR)
+    racines = [os.path.realpath(_EXT_3D_DIR)]
+    for nom in _EXT_3D_SOEURS:
+        candidat = os.path.join(base, nom)
+        if os.path.isdir(candidat):
+            racines.append(os.path.realpath(candidat))
+    return racines
+
+
 def _chemin_3d_sur(rel: str):
-    """Resout un chemin RELATIF sous output/3d en refusant toute evasion.
+    """Resout un chemin RELATIF sous une racine 3d en refusant toute evasion.
 
     Avant (03/09): la route appliquait os.path.basename(), donc SEULE la racine
     de output/3d etait servie — tout modele range dans un sous-dossier etait
     inatteignable depuis le visualiseur. On accepte desormais les sous-chemins,
-    en verifiant par realpath que la cible reste bien sous output/3d (les liens
-    symboliques sont resolus, donc un lien qui sort de l'arbre est refuse).
+    en verifiant par realpath que la cible reste bien sous une racine 3d (les
+    liens symboliques sont resolus, donc un lien qui sort de l'arbre est refuse).
+
+    Un chemin peut etre prefixe par le nom d'une racine secondaire
+    (`3d-validation/...`) pour lever l'ambiguite. Sans prefixe il est resolu
+    sous output/3d, comme avant.
     """
-    racine = os.path.realpath(_EXT_3D_DIR)
-    cible = os.path.realpath(os.path.join(_EXT_3D_DIR, rel.lstrip("/")))
-    if cible != racine and not cible.startswith(racine + os.sep):
-        return None
-    return cible
+    rel = rel.lstrip("/")
+    racines = _racines_3d()
+    for i, r in enumerate(racines):
+        nom = os.path.basename(r)
+        if i and (rel == nom or rel.startswith(nom + "/")):
+            cible = os.path.realpath(os.path.join(r, rel[len(nom) + 1:] if rel != nom else ""))
+            break
+    else:
+        cible = os.path.realpath(os.path.join(racines[0], rel))
+    for r in racines:
+        if cible == r or cible.startswith(r + os.sep):
+            return cible
+    return None
 
 
 @app.route("/api/3d/list", methods=["GET"])
@@ -1123,27 +1153,32 @@ def three_d_list():
     _exts = ((".glb", ".gltf", ".png", ".jpg", ".jpeg", ".webp")
              if _avec_images else (".glb", ".gltf"))
     items = []
-    for dossier, sous, fichiers in os.walk(racine, followlinks=False):
-        sous[:] = [d for d in sous if not d.startswith(".")]
-        for f in fichiers:
-            if not f.lower().endswith(_exts):
-                continue
-            plein = os.path.join(dossier, f)
-            try:
-                st = os.stat(plein)
-            except OSError:
-                continue
-            rel = os.path.relpath(plein, racine).replace(os.sep, "/")
-            items.append({
-                "nom": f,
-                "chemin": rel,
-                "dossier": os.path.dirname(rel) or ".",
-                "url": "/api/3d/file/" + rel,
-                "octets": st.st_size,
-                "modifie": int(st.st_mtime),
-            })
+    racines = _racines_3d()
+    for index, racine in enumerate(racines):
+        prefixe = os.path.basename(racine) + "/" if index else ""
+        for dossier, sous, fichiers in os.walk(racine, followlinks=False):
+            sous[:] = [d for d in sous if not d.startswith(".")]
+            for f in fichiers:
+                if not f.lower().endswith(_exts):
+                    continue
+                plein = os.path.join(dossier, f)
+                try:
+                    st = os.stat(plein)
+                except OSError:
+                    continue
+                rel = prefixe + os.path.relpath(plein, racine).replace(os.sep, "/")
+                items.append({
+                    "nom": f,
+                    "chemin": rel,
+                    "dossier": os.path.dirname(rel) or ".",
+                    "url": "/api/3d/file/" + rel,
+                    "octets": st.st_size,
+                    "modifie": int(st.st_mtime),
+                })
     items.sort(key=lambda x: (-x["modifie"], x["chemin"]))
-    resp = jsonify({"ok": True, "racine": "output/3d", "total": len(items), "modeles": items})
+    resp = jsonify({"ok": True, "racine": "output/3d",
+                    "racines": ["output/3d"] + ["output/" + n for n in _EXT_3D_SOEURS],
+                    "total": len(items), "modeles": items})
     resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
     return resp
 
@@ -1160,7 +1195,7 @@ def three_d_file(fname):
         return jsonify({"error": "type non autorisé"}), 400
     path = _chemin_3d_sur(fname)
     if path is None:
-        return jsonify({"error": "chemin hors de output/3d"}), 403
+        return jsonify({"error": "chemin hors des racines 3d"}), 403
     if not os.path.isfile(path):
         return jsonify({"error": "introuvable"}), 404
     resp = send_file(path, mimetype=_types[_ext], conditional=True)
