@@ -37,8 +37,15 @@ def main():
     # clip_moyen +0.017, clip_pire +0.032, 6/6 graines ameliorlees. Le BVH ci-dessus
     # reste mesure sur la geometrie complete: cette metrique n'est pas modifiee.
     axes = []
+    # Percentiles calculees sur les positions UNIQUES. Sinon le cadrage depend de
+    # l'INDEXATION des sommets et pas de la geometrie: souder des sommets
+    # dupliques (reparation de fragmentation, cf. weld_fragmented_mesh.py) deplace
+    # les percentiles, donc le cadrage, donc les rendus et le score CLIP, alors
+    # que la surface est inchangee au 1e-9. Le rendu doit etre une fonction de la
+    # forme, pas du decoupage en triangles.
+    _uniq = {tuple(v) for v in vertices}
     for i in range(3):
-        column = sorted(v[i] for v in vertices)
+        column = sorted(p[i] for p in _uniq)
         n = len(column)
         axes.append((column[min(n - 1, int(n * 0.02))], column[min(n - 1, int(n * 0.98))]))
     center = Vector(tuple((lo + hi) / 2 for lo, hi in axes))

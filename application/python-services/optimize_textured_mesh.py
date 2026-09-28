@@ -5,6 +5,13 @@ WITHOUT touching its look.
 
 Two best-effort stages, each skipped silently if its tool is missing:
 
+  0. Weld of duplicated vertices (auto_rl/weld_fragmented_mesh.py). TRELLIS
+     duplicates the vertices sitting on texture seams, which fragments the
+     surface into thousands of islands (measured: 8 100 components / 97 623
+     faces) even though the geometry is continuous to 1e-9. Welding with
+     `merge_tex=True` only merges vertices sharing position AND UV, so the
+     atlas is never overwritten. Geometry unchanged, UVs preserved, and it
+     UNBLOCKS stage 1 below.
   1. UV-preserving decimation (pymeshlab `meshing_decimation_quadric_edge_collapse
      _with_texture`, `preserveboundary=True` so texture-island seams are kept) down
      to a conservative target — roughly half the faces, but never below a per-kind
@@ -68,6 +75,45 @@ def _mesh_texture_image(glb_path: str):
     if img is None:
         img = getattr(visual, "image", None)
     return m, img
+
+
+def _weld_fragmented(glb_path: str, out_glb: str, log: list[dict[str, Any]]) -> bool:
+    """Re-soude les sommets dupliques qui fragmentent le maillage.
+
+    Delegue a auto_rl/weld_fragmented_mesh.py (implementation unique, CLI
+    utilisable seule sur les artefacts existants). Ne remplace l'entree que si
+    la fragmentation chute reellement: un maillage deja sain reste intact.
+    """
+    try:
+        root = Path(__file__).resolve().parents[2]
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from auto_rl.weld_fragmented_mesh import weld_mesh
+    except Exception as exc:  # noqa: BLE001
+        log.append({"stage": "weld", "skipped": True, "reason": f"unavailable: {exc}"})
+        return False
+
+    try:
+        rep = weld_mesh(glb_path, out_glb)
+    except Exception as exc:  # noqa: BLE001
+        log.append({"stage": "weld", "skipped": True, "reason": f"{type(exc).__name__}: {exc}"})
+        return False
+    if not rep.get("ok"):
+        log.append({"stage": "weld", "skipped": True, "reason": rep.get("reason")})
+        return False
+
+    before, after = int(rep["components_before"]), int(rep["components_after"])
+    # Un maillage deja sain ne doit pas etre reecrit pour rien.
+    if after > before * 0.8:
+        log.append({"stage": "weld", "skipped": True,
+                    "reason": f"maillage deja peu fragmente: {before} -> {after} composantes"})
+        return False
+
+    log.append({"stage": "weld", "ok": True, "components_before": before,
+                "components_after": after, "fragment_before": rep["fragment_before"],
+                "fragment_after": rep["fragment_after"],
+                "faces_lost_total": rep["faces_lost_total"]})
+    return True
 
 
 def _decimate_uv_preserving(
@@ -196,6 +242,15 @@ def optimize(mesh_path: str, output_path: str, kind: str = "object",
     work_dir = Path(tempfile.mkdtemp())
     try:
         stage_in = str(src)
+
+        # Stage 0 — soudure des sommets dupliques (fragmentation TRELLIS).
+        # DOIT preceder la decimation: avec preserveboundary=True, des milliers
+        # d'ilots empechent le quadric d'atteindre la cible (mesure: 97623 ->
+        # 58329 pour une cible de 40000; apres soudure 39999). Le maillage reste
+        # geometriquement identique au 1e-9 et les UV sont preservees.
+        weld_out = str(work_dir / "welded.glb")
+        if _weld_fragmented(stage_in, weld_out, log):
+            stage_in = weld_out
 
         # Stage 1 — decimation (only worthwhile on dense textured meshes).
         # max_faces abaisse le PLAFOND (450k par defaut). Les planchers par kind
