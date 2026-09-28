@@ -256,7 +256,12 @@ def _job_known(prompt_id: str, comfy_base: str) -> bool:
 
 
 def poll_history(prompt_id: str, *, comfy_base: str = COMFY_BASE,
-                 timeout_s: float = 1800.0, interval_s: float = 2.0) -> dict:
+                 timeout_s: float = 0.0, interval_s: float = 2.0) -> dict:
+    # 1800 s par defaut, mais surchargeable: un job reste en queue quand ComfyUI
+    # est prive de VRAM (Ollama resident), et rien dans la queue ne distingue
+    # "lent" de "bloque". AURORA_FLUX_TIMEOUT_S permet de borner l'attente sans
+    # toucher au code. 0 = defaut.
+    timeout_s = timeout_s or float(os.environ.get("AURORA_FLUX_TIMEOUT_S", "1800"))
     deadline = time.time() + timeout_s
     lost_checks = 0
     while time.time() < deadline:

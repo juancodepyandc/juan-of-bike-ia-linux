@@ -103,6 +103,11 @@ def _decimate_uv_preserving(
             qualitythr=0.5,
         )
         after = ms.current_mesh().face_number()
+        # On poursuit meme si le quadric n a rien reduit: le passage OBJ reencode le
+        # mesh et fait gagner beaucoup de poids a geometrie egale (mesure: 206 Mo ->
+        # 119 Mo sur 967762 faces). Seul le SUCCES DE LA REDUCTION est rapporte
+        # honnetement, pas la production du fichier.
+        _reduced = after <= int(target_faces * 1.05)
 
         with tempfile.TemporaryDirectory() as td:
             obj_path = os.path.join(td, "decimated.obj")
@@ -118,7 +123,15 @@ def _decimate_uv_preserving(
             dm.visual = trimesh.visual.TextureVisuals(uv=uv, material=mat, image=img)
             dm.export(out_glb)
 
-        log.append({"stage": "decimate", "ok": True, "faces_before": before, "faces_after": after, "target": int(target_faces)})
+        if _reduced:
+            log.append({"stage": "decimate", "ok": True, "faces_before": before,
+                        "faces_after": after, "target": int(target_faces)})
+        else:
+            log.append({"stage": "decimate", "ok": False, "faces_before": before,
+                        "faces_after": after, "target": int(target_faces),
+                        "reason": "quadric sans effet: mesh fragmente en ilots, "
+                                  "preserveboundary verrouille chaque frontiere. "
+                                  "Reencodage OBJ conserve, reduction de faces non."})
         return True
     except Exception as exc:  # noqa: BLE001
         log.append({"stage": "decimate", "skipped": True, "reason": f"error: {exc!r}"})
@@ -153,7 +166,8 @@ def _gltfpack(in_glb: str, out_glb: str, log: list[dict[str, Any]]) -> bool:
         return False
 
 
-def optimize(mesh_path: str, output_path: str, kind: str = "object") -> dict[str, Any]:
+def optimize(mesh_path: str, output_path: str, kind: str = "object",
+             max_faces: int | None = None) -> dict[str, Any]:
     src = Path(mesh_path)
     if not src.is_file():
         return {"ok": False, "error": f"mesh not found: {mesh_path}"}
@@ -184,12 +198,22 @@ def optimize(mesh_path: str, output_path: str, kind: str = "object") -> dict[str
         stage_in = str(src)
 
         # Stage 1 — decimation (only worthwhile on dense textured meshes).
+        # max_faces abaisse le PLAFOND (450k par defaut). Les planchers par kind
+        # (180k-280k) protegeent la qualite de livraison: un viewer ne peut pas
+        # rendre 450k faces fluide, alors qu'un modele de scene tres dense (967k
+        # faces mesure sur Natsu) reste au plafond. max_faces sert a produire une
+        # VARIANTE DE PREVISUALISATION cote viewer, sans toucher au livrable.
+        # Non fourni = comportement identique a avant.
         if has_tex and faces_before >= _DECIMATE_MIN_FACES:
             floor = _FACE_FLOOR.get((kind or "object").lower(), _DEFAULT_FLOOR)
-            target = max(min(faces_before // 2, _DECIMATE_FACE_CAP), floor)
+            cap = int(max_faces) if max_faces else _DECIMATE_FACE_CAP
+            target = max(min(faces_before // 2, cap), min(floor, cap))
             dec_out = str(work_dir / "decimated.glb")
             if _decimate_uv_preserving(stage_in, dec_out, target, log):
                 stage_in = dec_out
+            if max_faces and target >= faces_before:
+                log.append({"stage": "decimate", "note": f"max_faces={int(max_faces)} "
+                          f"> faces={faces_before}: pas de reduction possible"})
         elif has_tex:
             log.append({"stage": "decimate", "skipped": True, "reason": f"only {faces_before} faces (< {_DECIMATE_MIN_FACES})"})
 
@@ -233,8 +257,11 @@ def main() -> None:
     ap.add_argument("--mesh", required=True)
     ap.add_argument("--output", required=True)
     ap.add_argument("--kind", default="object")
+    ap.add_argument("--max-faces", type=int, default=None,
+                    help="abaisse le plafond de faces (variante viewer). "
+                         "Par defaut: plafond par kind, 450k.")
     args = ap.parse_args()
-    res = optimize(args.mesh, args.output, args.kind)
+    res = optimize(args.mesh, args.output, args.kind, args.max_faces)
     print(json.dumps(res))
     sys.exit(0 if res.get("ok") else 1)
 

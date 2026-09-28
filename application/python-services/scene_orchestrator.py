@@ -1172,8 +1172,14 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
     except Exception as exc:  # noqa: BLE001
         deliveries = {"ok": False, "error": repr(exc)}
 
+    # "sans_glb" rend la cause reelle NOMMABLE. Sans cette liste, une entite dont
+    # la generation a echoue (ex: reference FLUX expiree) faisait echouer `complete`
+    # alors que refuses/orphelins/journal etaient tous vides, et le message
+    # affichait "[]" — la maintenance cherchait du cote des refus alors que la
+    # cause etait "cet objet n'a produit aucun fichier".
+    sans_glb = [o["role"] for o in objets if not o.get("glb")]
     complete = (not refuses and not orphelins
-                and all(o.get("glb") for o in objets)
+                and not sans_glb
                 and all(e["ok"] for e in journal))
     livraison_scene = {"scene_couleurs": str(scene_couleurs),
                        "scene_geometrie": str(scene_geometrie) if geo.get("ok") else None}
@@ -1184,6 +1190,7 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
                                    "refus": o.get("refus")} for o in objets},
         "refuses": refuses,
         "orphelins": orphelins,
+        "sans_glb": sans_glb,
         "upright": upright_info,
         "composition": journal,
         "livraison": livraison_scene,
@@ -1192,6 +1199,7 @@ def orchestrate_scene(prompt: str, run_id: str, output_dir: str | Path) -> Dict[
         "error": ("entites refusees ou composition incomplete: %s"
                   % ([r["role"] for r in refuses]
                      or [e["objet"] for e in orphelins]
+                     or ["%s (aucun GLB produit)" % r for r in sans_glb]
                      or [e["objet"] for e in journal if not e["ok"]]))
                  if not complete else None,
     }

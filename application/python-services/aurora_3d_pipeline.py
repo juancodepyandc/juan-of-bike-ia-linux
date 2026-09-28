@@ -748,9 +748,13 @@ def _free_gpu_before_shape(audit: list | None = None) -> None:
     # Sans ca, un modele lourd (TRELLIS/SDXL/Hunyuan) peut demarrer alors que le
     # precedent n'a pas fini de rendre sa VRAM -> deux charges en meme temps -> GEL.
     # Best-effort: on sonde nvidia-smi, plafonne l'attente, et on n'echoue jamais.
-    _vram_wait = float(os.environ.get("AURORA_VRAM_WAIT_S", "20"))
+    # 90 s et non 20: la decharge d'un llama-server (13 Go) n'est pas instantanee.
+    # A 20 s on repartait en paint VRAM pleine et FLUX expirait 1800 s plus tard
+    # (run Natsu_dragneel, models/fusil vide, scene repliee en objet unique).
+    _vram_wait = float(os.environ.get("AURORA_VRAM_WAIT_S", "90"))
     _vram_floor = int(os.environ.get("AURORA_VRAM_FREE_MB", "3000"))
     _t0 = time.time()
+    _used = -1
     while time.time() - _t0 < _vram_wait:
         try:
             _q = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
@@ -762,9 +766,23 @@ def _free_gpu_before_shape(audit: list | None = None) -> None:
         except Exception:  # noqa: BLE001
             break
         time.sleep(2)
+    # RAPPORT HONNETE: dire ce qu'on a mesure, pas ce qu'on a demande. Le journal
+    # annoncait "VRAM liberee" meme quand rien n'avait ete rendu, ce qui a masque
+    # la cause reelle des paints FLUX expires. "ok" vaut desormais la mesure.
+    _enough = 0 <= _used <= _vram_floor
+    _elapsed = int(time.time() - _t0)
     if audit is not None:
-        audit.append({"stage": "vram_evict_before_paint", "ok": True, "freed": freed})
-    print(f"PROGRESS:vram:VRAM liberee avant paint (evince: {', '.join(freed) or 'rien'})", flush=True)
+        audit.append({"stage": "vram_evict_before_paint", "ok": _enough,
+                      "freed": freed, "vram_used_mb": _used,
+                      "vram_floor_mb": _vram_floor, "attente_s": _elapsed})
+    if _enough:
+        print(f"PROGRESS:vram:VRAM liberee avant paint "
+              f"(evince: {', '.join(freed) or 'rien'}; {_used} Mo en {_elapsed}s)",
+              flush=True)
+    else:
+        print(f"PROGRESS:vram:ATTENTION VRAM non liberee avant paint "
+              f"({_used if _used >= 0 else 'inconnue'} Mo > {_vram_floor} Mo "
+              f"apres {_elapsed}s) — le paint peut echouer", flush=True)
 
 
 def _ollama_reachable(timeout_s: float = 3.0) -> bool:
