@@ -99,6 +99,18 @@ class MeshJudge:
         fragment = float(1 - areas.max() / max(areas.sum(), 1e-12)) if len(areas) else 1.0
         degenerate = float((topo.area_faces < max(float(topo.area), 1e-12) * 1e-12).mean())
         face_count=len(mesh.faces)
+        # Metrique de SUIVI, volontairement HORS du composite. La regle
+        # historique reste `self_intersections` (recouvrement BVH) pour que les
+        # scores deja produits restent comparables; celle-ci compte les
+        # croisements reels de triangles, sans le bruit de la phase large.
+        # Mesuree avant `del mesh` pour ne pas garder le Trimesh en memoire
+        # pendant le rendu Blender.
+        exact = None
+        try:
+            from .mesh_metrics import exact_intersections as _exact_intersections
+            exact = int(_exact_intersections(np.asarray(mesh.vertices), np.asarray(mesh.faces)))
+        except Exception:
+            exact = None
         # Blender must not coexist with retained trimesh textures/topology
         # caches. Keep just the measured scalars for the final score.
         del mesh,topo,graph,adjacent,counts,labels,areas
@@ -130,7 +142,10 @@ class MeshJudge:
                    "fragment_area_fraction": fragment, "degenerate_face_fraction": degenerate,
                    "self_intersections": inter, "clip_mean": float(np.mean(scores)),
                    "clip_worst_view": min(scores), "views": [str(p) for p in rendered],
-                   "faces": face_count, "components": int(component_count)}
+                   "faces": face_count, "components": int(component_count),
+                   # Suivi seul: n'entre pas dans le composite, cf. plus haut.
+                   "self_intersections_exactes": exact,
+                   "taux_faces_auto_intersectees": (exact / face_count) if exact is not None else None}
         valid = inter is not None and degenerate < 0.1 and nonmanifold < 0.1
         return result(0.45 * topology + 0.35 * np.mean(scores) + 0.2 * min(scores), metrics, valid,
                       [] if valid else ["Géométrie invalide ou intersections non évaluées"],
