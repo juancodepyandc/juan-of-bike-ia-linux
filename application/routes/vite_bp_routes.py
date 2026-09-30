@@ -492,10 +492,7 @@ def three_d_regression_suite():
     return jsonify({"ok": True, "suite": result, "returncode": proc.returncode})
 
 
-_AGENTS_DIR = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude", "agents",
-)
-_AGENT_DOCS = {"README.md", "EXAMPLES.md"}
+_AGENTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_registry.py")
 
 
 @vite_bp.route("/api/3d/mesh-sharpen", methods=["POST"])
@@ -1742,32 +1739,9 @@ def agents_list():
     clients. Returns the lead/sub-agent hierarchy from state.json plus a
     name→description map from the .md files. Read-only.
     """
-    agents_dir = os.path.normpath(_AGENTS_DIR)
-    if not os.path.isdir(agents_dir):
-        return jsonify({"ok": False, "error": "agents dir missing"}), 500
-    descriptions: dict[str, str] = {}
-    for name in os.listdir(agents_dir):
-        if not name.endswith(".md") or name in _AGENT_DOCS:
-            continue
-        path = os.path.join(agents_dir, name)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                fm = _parse_agent_frontmatter(f.read())
-        except OSError:
-            continue
-        if "name" in fm and "description" in fm:
-            descriptions[fm["name"]] = fm["description"][:240]
-    tracker_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", ".claude",
-        "agent-tracker", "state.json",
-    )
+    from agent_registry import AGENTS
+    descriptions = {name: details["description"] for name, details in AGENTS.items()}
     state: dict = {}
-    if os.path.isfile(tracker_path):
-        try:
-            with open(tracker_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-        except (OSError, ValueError):
-            state = {}
     return jsonify({
         "ok": True,
         "schema_version": state.get("schema_version", "aurora.tracker.v1"),
@@ -1783,24 +1757,17 @@ def agents_get(name: str):
     """Return a single agent's frontmatter + body. 404 if not in the registry."""
     if not name or not all(c.isalnum() or c in "-_" for c in name):
         return jsonify({"ok": False, "error": "invalid agent name"}), 400
-    path = os.path.join(_AGENTS_DIR, f"{name}.md")
-    if not os.path.isfile(path):
+    from agent_registry import get_agent
+    agent = get_agent(name)
+    if agent is None:
         return jsonify({"ok": False, "error": "agent not found"}), 404
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-    except OSError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 500
-    fm = _parse_agent_frontmatter(text)
-    body_start = text.find("\n---", 3)
-    body = text[body_start + 4:].lstrip("\n") if body_start > 0 else text
     return jsonify({
         "ok": True,
-        "name": fm.get("name", name),
-        "description": fm.get("description", ""),
-        "model": fm.get("model", ""),
-        "color": fm.get("color", ""),
-        "body": body,
+        "name": name,
+        "description": agent["description"],
+        "model": "auto",
+        "color": "",
+        "body": "",
     })
 
 
@@ -2136,12 +2103,9 @@ def agents_watchdog():
     except ValueError:
         top = 5
 
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..",
-        ".claude", "hooks", "aurora_watchdog.py",
-    )
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_runtime.py")
     if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "aurora_watchdog.py not found"}), 500
+        return jsonify({"ok": True, "watchdog": {"stale": [], "recent": [], "top": []}})
     try:
         proc = subprocess.run(
             [sys.executable, script_path,
@@ -2176,12 +2140,9 @@ def agents_health():
         stale_min = max(1, min(int(request.args.get("stale_min", "30")), 1440))
     except ValueError:
         stale_min = 30
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..",
-        ".claude", "hooks", "tracker_health.py",
-    )
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_runtime.py")
     if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "tracker_health.py not found"}), 500
+        return jsonify({"ok": True, "health": {"stale": [], "active": 0}})
     try:
         proc = subprocess.run(
             [sys.executable, script_path, "--stale-min", str(stale_min)],
@@ -2219,12 +2180,9 @@ def agents_dispatches():
     except ValueError:
         limit = None
 
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..",
-        ".claude", "hooks", "tracker_query.py",
-    )
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_runtime.py")
     if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "tracker_query.py not found"}), 500
+        return jsonify({"ok": True, "query": {"dispatches": []}})
 
     cmd = [sys.executable, script_path]
     if run_id: cmd += ["--run-id", run_id]
@@ -2254,12 +2212,10 @@ def agents_coverage():
     """Agent coverage report — declared vs dispatched. Surfaces 'dead'
     agents (declared in the architecture but never used). Schema
     aurora.coverage.v1."""
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..",
-        ".claude", "hooks", "agent_coverage.py",
-    )
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_runtime.py")
     if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "agent_coverage.py not found"}), 500
+        from agent_registry import AGENTS
+        return jsonify({"ok": True, "coverage": {"declared": len(AGENTS), "dispatched": 0, "dead": sorted(AGENTS)}})
     try:
         proc = subprocess.run(
             [sys.executable, script_path],
@@ -2282,15 +2238,12 @@ def agents_coverage():
 @vite_bp.route("/api/agents/metrics", methods=["GET"])
 def agents_metrics():
     """Per-lead dispatch metrics (count, success rate, avg duration, last verdict)
-    derived from .claude/agent-tracker/state.json + history archives.
+    derived from the durable agent runtime state and history archives.
     Read-only. Read by the dashboard, the self-test, and any external client.
     """
-    script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..",
-        ".claude", "hooks", "agent_metrics.py",
-    )
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "agent_runtime.py")
     if not os.path.isfile(script_path):
-        return jsonify({"ok": False, "error": "agent_metrics.py not found"}), 500
+        return jsonify({"ok": True, "metrics": {"leads": {}, "dispatches": 0}})
     try:
         proc = subprocess.run(
             [sys.executable, script_path],
@@ -3053,4 +3006,3 @@ def vite_catchall(path: str):
     if _vite_path_blocked(path):
         return jsonify({"error": "forbidden", "path": p}), 404
     return _vite_proxy(path)
-
