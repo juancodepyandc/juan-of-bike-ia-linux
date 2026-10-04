@@ -52,7 +52,7 @@ Les modifications locales préexistantes ont été prises en compte telles qu’
 | Historique | Ancien audit, journal ou proposition archivé | Que son défaut ou son résultat est encore actuel |
 | Proposition | Modification suggérée, avec critère d’acceptation | Qu’elle est déjà implémentée |
 
-### 1.3 État observé pendant la consolidation
+### 1.3 État historique observé pendant la consolidation du 24 septembre
 
 - Bridge 3001, Ollama 11434, ComfyUI 8188, service des adaptateurs 11435 et viewer 3009 présents. Les contrôles locaux de statut et d’authentification du CLI répondent.
 - À cet instant, **aucune écoute n’est constatée sur 3002 ni 1420**. Le bus des missions et Vite doivent être vérifiés avant d’annoncer un fonctionnement de bout en bout. L’interface peut aussi être servie par un bundle compilé ; l’absence de Vite ne suffit pas à conclure que toute interface est indisponible.
@@ -62,7 +62,7 @@ Les modifications locales préexistantes ont été prises en compte telles qu’
 
 ### 1.4 Maintenance du 4 octobre 2026 : observations et limites
 
-Le PC utilise le noyau `7.0.0-34-generic`, sans module NVIDIA pour ce noyau. Le module installé correspond à `7.0.0-31-generic` ; `nvidia-smi` échoue et ComfyUI redémarrait en boucle avec `No CUDA GPUs are available`. Le démarrage courant n'utilise pas une option recovery dans `/proc/cmdline`. Le message « safe mode » vu par l'utilisateur avant le démarrage reste à identifier ; le manque de stockage n'en est pas une cause démontrée. Le montage optionnel `AURORA_MODELS` est absent, avec `nofail` et un délai de 10 secondes.
+Le PC utilise le noyau `7.0.0-34-generic`, sans module NVIDIA pour ce noyau. Le module installé correspond à `7.0.0-31-generic` ; `nvidia-smi` échoue et ComfyUI redémarrait en boucle avec `No CUDA GPUs are available`. Le démarrage courant n'utilise pas une option recovery dans `/proc/cmdline`. L'utilisateur confirme que le message « safe mode » demandait F1 pour entrer dans le BIOS/UEFI : c'est une alerte du firmware, distincte de la panne NVIDIA sous Ubuntu. La carte mère est une ASUS ROG CROSSHAIR X870E HERO, BIOS 2306 du 15 juin 2026. [ASUS décrit plusieurs causes possibles d'une invite F1](https://www.asus.com/support/faq/1029955/) ; le message exact et sa cause restent inconnus. Le manque de stockage n'est pas une cause démontrée. Aucun réglage BIOS n'a été modifié. Le montage optionnel `AURORA_MODELS` est absent, avec `nofail` et un délai de 10 secondes.
 
 Environ 114 Gio sont disponibles sur le SSD après le nettoyage de 339,9 Mio de caches reconstruisibles et de l'installeur VS Code déjà installé. Les poids, environnements, données, conversations, sorties et worktrees ont été conservés. Les six services utilisateur Aurora sont arrêtés et désactivés temporairement au démarrage ; Ollama système reste actif sans modèle résident, faute de droits administrateur pour l'arrêter. Aucun tunnel public n'est lancé et la découverte `aurora-live` est fermée.
 
