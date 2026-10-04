@@ -59,6 +59,10 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('expected',payload)
             self.assertNotIn('"sum": 122',payload)
             self.assertNotIn('"sum": 139',payload)
+            schema=next(info for info in value['observed_files'] if info['path'].endswith('summary.json'))
+            self.assertEqual(schema['json_fields'],{'rows':'integer','sum':'integer'})
+            source=next(info for info in value['observed_files'] if info['path'].endswith('input.csv'))
+            self.assertEqual(source['csv_columns'],['label','value'])
             return json.dumps(call('verify',checks=[self.check]))
         replies=self.initial(self.wrong,self.literal)+[
             call('write_file',path='summary.json',content=json.dumps(self.correct)),
