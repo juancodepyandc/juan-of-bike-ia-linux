@@ -19,7 +19,7 @@ import aiohttp
 from agi_core.bus import global_bus
 from agi_core.llm_gateway import LLMGateway
 from agi_core.mission_tools import MissionTools
-from agi_core.mission_protocol import CHECK_FIELDS, tool_response_schema, validate_args
+from agi_core.mission_protocol import CHECK_FIELDS, PURE_CHECKS, tool_response_schema, validate_args, validate_checks
 from agi_core.runtime_policy import RuntimePolicy
 
 APPLICATION_DIR = Path(__file__).resolve().parents[1] / 'application'
@@ -82,7 +82,7 @@ class AutonomousMissionAgent:
         self._require_tool('read_file')
         self.state = {'version':1, 'goal':request_text, 'plan':[], 'criteria':[], 'verified':[],
                       'evidence':[], 'messages':[], 'iteration':0, 'pending':None,
-                      'process_observations':[], 'output_checks':[],
+                      'process_observations':[], 'output_checks':[], 'delegations':[],
                       'last_change':0, 'last_verify':0, 'action_count':0, 'status':'running', 'result':None}
 
     def _require_tool(self, name):
@@ -338,15 +338,36 @@ class AutonomousMissionAgent:
         if name == 'list_skills':
             return _cli_load_context_for_workspace(self.workspace)['skills_summary']
         if name == 'create_skill':
-            return await asyncio.to_thread(create_skill, self.workspace,args.get('name',''),args.get('description',''),args.get('instructions',''))
+            from agi_core.mission_tools import read_verification_bytes
+            expected = (f"---\nname: {json.dumps(args['name'])}\ndescription: {json.dumps(args['description'],ensure_ascii=False)}\n"
+                        f"---\n\n{args['instructions'].strip()}\n")
+            changed = True
+            try:
+                raw_path = await asyncio.to_thread(create_skill,self.workspace,args['name'],args['description'],args['instructions'])
+            except FileExistsError:
+                raw_path = str(self._file_path(str(Path('.aurora/skills')/args['name']/'SKILL.md')))
+                changed = False
+            raw = await asyncio.to_thread(read_verification_bytes,self._file_path(raw_path),65536)
+            matches = raw.decode('utf-8').replace('\r\n','\n')==expected.replace('\r\n','\n')
+            return {'path':raw_path,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'changed':changed,
+                    'passed':matches,'scope':'Saved project skill content; no execution inferred',
+                    **({} if matches else {'error':'Skill already exists with different content; inspect this path instead of recreating it'})}
         if name == 'create_agent':
-            return await asyncio.to_thread(create_agent,args.get('name',''),args.get('role',''),self.model,self.permissions,self.mission_id)
+            context = await asyncio.to_thread(_cli_load_context_for_workspace,self.workspace)
+            existing = next((role for role in context['saved_agents'] if role['name']==args['name']),None)
+            if existing:
+                matches = existing['role']==args['role'] and existing['permissions']==self.permissions
+                return {**existing,'changed':False,'passed':matches,
+                        **({} if matches else {'error':'Agent already exists with another definition; inspect it instead of recreating it'})}
+            saved = await asyncio.to_thread(create_agent,args['name'],args['role'],self.model,self.permissions,self.mission_id)
+            return {**saved,'changed':True}
         raise ValueError('Unknown extension tool')
 
-    async def _run_sub_agent(self, task):
+    async def _run_sub_agent(self, task, *, acceptance_checks=()):
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, self.permissions,
                                        policy=self.policy, depth=self.depth+1,
-                                       additional_context='Delegated task only. Do not repeat the parent\'s other steps or recreate existing roles/skills.')
+                                       additional_context="Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\n"
+                                           'The parent will check these outputs after your task; do not replace your task with other parent steps: '+json.dumps(acceptance_checks,ensure_ascii=False))
         # Worker events share the durable timeline, never the parent's checkpoint.
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
@@ -365,10 +386,10 @@ class AutonomousMissionAgent:
             await self._emit(kind, {**data, 'worker':True, 'worker_goal':task})
         return emit
 
-    async def _spawn_task(self, task, agent_name=''):
+    async def _spawn_task(self, task, agent_name='', *, acceptance_checks=()):
         self._require_tool('spawn_agent')
         if not agent_name:
-            return await self._run_sub_agent(task)
+            return await self._run_sub_agent(task,acceptance_checks=acceptance_checks)
         definition = next((a for a in _cli_load_context_for_workspace(self.workspace)['saved_agents'] if a['name']==agent_name), None)
         if not definition:
             raise ValueError(f'Agent {agent_name} not found; task not executed')
@@ -379,7 +400,8 @@ class AutonomousMissionAgent:
         narrowed = levels[min(levels.index(self.permissions),levels.index(requested))]
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1,
-                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}")
+                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n"
+                                           'The parent will check these outputs after your task; do not replace your task with other parent steps: '+json.dumps(acceptance_checks,ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
         return await self._worker_report(child)
@@ -397,7 +419,7 @@ class AutonomousMissionAgent:
         self._assert_owned()
         self._require_tool(name)
         validate_args(name,args)
-        if name=='verify' and self.state['criteria'] and any(not isinstance(c,dict) or c.get('criterion') not in self.state['criteria'] for c in args['checks']):
+        if name in {'verify','spawn_agent'} and self.state['criteria'] and any(not isinstance(c,dict) or c.get('criterion') not in self.state['criteria'] for c in args['checks']):
             raise ValueError('Every check must name an exact current criterion: '+json.dumps(self.state['criteria'],ensure_ascii=False))
         if name in CHANGE_TOOLS and not self.state['plan']:
             raise ValueError('Set a plan and measurable acceptance criteria before executing actions')
@@ -408,13 +430,22 @@ class AutonomousMissionAgent:
         if name in {'create_skill','create_agent','list_skills'}:
             return await self._extension_tool(name,args)
         if name == 'spawn_agent':
+            validate_checks(args['checks'],self.state['criteria'])
             tasks = args.get('tasks', [args.get('task','')])
             if not isinstance(tasks,list) or not tasks or not all(isinstance(v,str) and v.strip() for v in tasks):
                 raise ValueError('Provide independent nonempty tasks')
+            pure = all(c['kind'] in PURE_CHECKS for c in args['checks'])
+            signature = hashlib.sha256(json.dumps(args,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            if pure:
+                cached = next((d for d in reversed(self.state.get('delegations',[])) if d['signature']==signature),None)
+                if cached:
+                    current = await self.tools.execute('verify',{'checks':args['checks']})
+                    if current['passed'] and self._verification_fingerprint(current)==self._verification_fingerprint(cached['result']['verification']):
+                        return {**cached['result'],'verification':current,'reused':True,'changed':False}
             semaphore = asyncio.Semaphore(self.policy.parallel_workers)
             async def run(task):
                 async with semaphore:
-                    return await self._spawn_task(task,args.get('agent',''))
+                    return await self._spawn_task(task,args.get('agent',''),acceptance_checks=args['checks'])
             pending = [asyncio.create_task(run(task)) for task in tasks]
             try:
                 reports = await asyncio.gather(*pending)
@@ -423,8 +454,15 @@ class AutonomousMissionAgent:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*pending,return_exceptions=True)
-            return {'passed':all(report['status']=='completed' for report in reports),
-                    'workers':[{'task':task,**report} for task,report in zip(tasks,reports)]}
+            verification = await self.tools.execute('verify',{'checks':args['checks']})
+            result = {'passed':all(report['status']=='completed' for report in reports) and verification['passed'],
+                      'agent':args.get('agent',''),'verification':verification,'changed':True,'reused':False,
+                      'scope':'Worker completion and the parent acceptance checks only; report prose is still fallible',
+                      'workers':[{'task':task,**report} for task,report in zip(tasks,reports)]}
+            if result['passed'] and pure:
+                self.state.setdefault('delegations',[]).append({'signature':signature,'tasks':tasks,'agent':args.get('agent',''),'result':result})
+                self.state['delegations'] = self.state['delegations'][-16:]
+            return result
         if name == 'generate_image':
             folder = args.get('folder') or 'image'
             target = self._file_path(str(Path('.transfer_to_client')/self.mission_id/folder))
@@ -440,11 +478,16 @@ class AutonomousMissionAgent:
             return {'path':str(target/'image.png'),'delivery':'pending_verification'}
         return await self.tools.execute(name,args)
 
+    @staticmethod
+    def _verification_fingerprint(result):
+        return [check.get('observed_sha256') for check in result['checks']]
+
     def _messages(self):
         messages = self.state['messages']
         summary = json.dumps({'immutable_goal':self.request_text,'plan':self.state['plan'],
                               'criteria':self.state['criteria'],'verified':self.state['verified'],
                               'unverified':[c for c in self.state['criteria'] if c not in self.state['verified']],
+                              'accepted_delegations':[{'tasks':d['tasks'],'agent':d['agent']} for d in self.state.get('delegations',[])[-4:]],
                               'interrupted_processes':[{'id':e['id'],'status':e['result']['status'],
                                                         'process_started':e['result']['process_started'],
                                                         'output':self._excerpt(e['result']['output'],600)}
@@ -503,10 +546,17 @@ class AutonomousMissionAgent:
             'inspect_csv(path,integer_columns:[str] optional,delimiter optional) measures actual CSV data rows and exact integer sums. DictReader already consumes the header. '
             'run_command(argv:[str] OR command:str); list_tools(query); inspect_tool(name); run_tool(name,argv:[str]); '
             'create_tool(name,code); generate_image(prompt,folder); search_web(query); fetch_url(url); '
-            'spawn_agent(task OR tasks:[str],agent optional); create_agent(name,role); create_skill(name,description,instructions); list_skills(); '
+            'spawn_agent(task OR tasks:[str],checks:[check],agent optional); create_agent(name,role); create_skill(name,description,instructions); list_skills(); '
             'verify(checks:[{kind:"file",path,min_bytes,sha256 optional,criterion optional} OR '
             '{kind:"text",path,equals OR contains,criterion optional} OR {kind:"json",path,equals optional,keys:[str] optional,types:{field:type} optional,criterion optional} OR '
             '{kind:"command",argv,contains optional,expected_exit_code optional(default 0),criterion optional} OR {kind:"source",evidence_ids:[str],criterion optional}]); '
+            'Also {kind:"csv_json",path:csv_input,json_path:output,row_field:output_row_key,sum_fields:{output_sum_key:csv_integer_column},source_sha256 optional,criterion optional} '
+            'computes actual CSV aggregates and compares the complete saved JSON; use it for CSV result verification instead of comparing guessed constants. '
+            '{kind:"agent",name,criterion optional} verifies a saved role exists, not its execution. '
+            'Every spawn_agent needs acceptance checks and a task specifying the files these checks will examine. The parent runs these checks after the workers return. '
+            'If acceptance fails, repair using the actual/expected observations; do not trust the worker report or repeat unchanged work. '
+            'A successful delegation with unchanged verified files is reused. Continue the remaining parent deliverables instead of recreating roles/skills or restarting completed audits. '
+            'Verify an existing project skill with a file/text check on its returned path; verify an existing role with an agent check. A repeated creation is not a verification. '
             'After set_plan, every check must name one exact criterion from the current plan. Cover unverified criteria instead of repeating already verified checks. When all are verified, propose finish for review. Test expected exceptions with an explicit expected_exit_code and output check. '
             'Use text/json checks to measure saved content and exact field names; JSON types: integer, number, string, boolean, object, array, null. '
             'JSON keys lists the complete exact object key set, not a subset. For a subset field type check, use types without keys. '
@@ -548,7 +598,8 @@ class AutonomousMissionAgent:
                 paths.add(result['path'])
             if evidence['tool']=='verify':
                 paths.update(check['path'] for check in result.get('checks',[])
-                             if check.get('kind') in {'file','text','json'} and check.get('path'))
+                             if check.get('kind') in PURE_CHECKS and check.get('path'))
+                paths.update(check['json_path'] for check in result.get('checks',[]) if check.get('kind')=='csv_json')
         # A byte count/hash is not semantic evidence of what a deliverable says.
         # Read the current outputs before review, rather than old typed constants.
         for raw in sorted(paths):
@@ -699,7 +750,7 @@ class AutonomousMissionAgent:
             for index,evidence in enumerate(self.state['evidence'],first):
                 if index>self.state['last_change'] and evidence['tool']=='verify' and evidence['ok']:
                     checks.extend({k:v for k,v in c.items() if k in CHECK_FIELDS[c['kind']]}
-                                  for c in evidence['result']['checks'] if c['kind'] in {'file','text','json'})
+                                  for c in evidence['result']['checks'] if c['kind'] in PURE_CHECKS)
             self.state['output_checks'] = checks
         if not checks:
             return {'passed':True,'checks':[],'scope':'No pure output checks recorded; no inferred semantic proof'}
@@ -841,19 +892,20 @@ class AutonomousMissionAgent:
                                 'elapsed_seconds':time.monotonic()-started}
                     self.state['evidence'].append(evidence)
                     self.state['evidence'] = self.state['evidence'][-64:]
-                    if name in CHANGE_TOOLS and not (name=='write_file' and ok and result.get('changed') is False):
+                    if name in CHANGE_TOOLS and not (name in {'write_file','spawn_agent','create_skill','create_agent'} and isinstance(result,dict) and result.get('changed') is False):
                         self.state['last_change'] = number
                         self.state['verified'] = []
                         self.state['output_checks'] = []
                         self.state.pop('output_revalidation',None)
-                    if name == 'verify' and isinstance(result,dict) and isinstance(result.get('checks'),list):
+                    verification = result if name=='verify' else result.get('verification') if name=='spawn_agent' and ok else None
+                    if isinstance(verification,dict) and isinstance(verification.get('checks'),list):
                         recorded = self.state.setdefault('output_checks',[])
                         verdicts = {}
-                        for check in result['checks']:
+                        for check in verification['checks']:
                             criterion = check.get('criterion')
                             if criterion in self.state['criteria']:
                                 verdicts[criterion] = verdicts.get(criterion,True) and check['passed']
-                            if check['passed'] and check['kind'] in {'file','text','json'}:
+                            if check['passed'] and check['kind'] in PURE_CHECKS:
                                 clean = {k:v for k,v in check.items() if k in CHECK_FIELDS[check['kind']]}
                                 if clean not in recorded:
                                     recorded.append(clean)
@@ -872,7 +924,7 @@ class AutonomousMissionAgent:
                         missing = [c for c in self.state['criteria'] if c not in self.state['verified']]
                         progress = ('Verification progress: '+json.dumps({'unverified':missing,'verified':self.state['verified']},ensure_ascii=False)+
                                     ('; cover the unverified criteria with concrete checks.\n' if missing else '; all planned criteria verified. Propose finish for an original-goal review.\n'))
-                    self.state['messages'].append({'role':'user','content':progress+encoded[:self.policy.output_chars]})
+                    self.state['messages'].append({'role':'user','content':progress+self._excerpt(encoded,self.policy.output_chars)})
                     # Bound model conversation state while keeping the immutable
                     # goal and the lossless durable event journal separately.
                     first, recent, used = self.state['messages'][:2], [], 0

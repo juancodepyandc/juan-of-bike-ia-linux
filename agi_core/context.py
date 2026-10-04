@@ -150,7 +150,7 @@ def create_skill(workspace: str, name: str, description: str, instructions: str)
         raise ValueError("Skill directory escapes workspace")
     target.parent.mkdir(parents=True, exist_ok=True)
     # Never overwrite an existing skill, including through a symlink.
-    with target.open("x", encoding="utf-8") as stream:
+    with target.open("x", encoding="utf-8", newline="") as stream:
         stream.write(content)
     return str(target)
 

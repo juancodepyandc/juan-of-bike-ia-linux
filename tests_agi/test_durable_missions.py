@@ -346,7 +346,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.agent.state['plan'] = ['Delegate']
         with patch('agi_core.mission_agent._cli_load_context_for_workspace',return_value=roles), \
              patch.object(AutonomousMissionAgent,'run',child_run):
-            result = await self.agent._execute('spawn_agent',{'task':task,'agent':'CSV'})
+            result = await self.agent._execute('spawn_agent',{'task':task,'agent':'CSV','checks':[{'kind':'file','path':'missing-report.json'}]})
         self.assertFalse(result['passed'])
         self.assertEqual(result['workers'][0]['status'],'blocked')
         self.assertEqual(result['workers'][0]['report'],'input.csv missing')
@@ -458,7 +458,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.agent.policy = replace(self.agent.policy,parallel_workers=2)
         self.agent.state['plan'] = ['Delegate']
         entered,cancelled = asyncio.Event(),asyncio.Event()
-        async def worker(task, agent_name=''):
+        async def worker(task, agent_name='', *, acceptance_checks=()):
             if task=='fail':
                 await entered.wait()
                 raise RuntimeError('worker failure')
@@ -469,7 +469,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
                 cancelled.set()
         with patch.object(self.agent,'_spawn_task',worker):
             with self.assertRaisesRegex(RuntimeError,'worker failure'):
-                await self.agent._execute('spawn_agent',{'tasks':['wait','fail']})
+                await self.agent._execute('spawn_agent',{'tasks':['wait','fail'],'checks':[{'kind':'file','path':'reports.txt'}]})
         self.assertTrue(cancelled.is_set())
 
     async def test_completion_cannot_skip_verification_after_real_file_write(self):

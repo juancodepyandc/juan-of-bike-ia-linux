@@ -35,9 +35,14 @@ class EvaluationGraders(unittest.TestCase):
             skill.parent.mkdir(parents=True)
             skill.write_text('Real saved skill fixture')
             events = [{'type':'worker_complete','status':'completed'},
-                      {'type':'tool_result','tool':'create_agent','ok':True,'result':{'name':'AuditCSV'}}]
+                      {'type':'tool_result','tool':'create_agent','ok':True,'result':{'name':'AuditCSV'}},
+                      {'type':'tool_result','tool':'spawn_agent','ok':True,'result':{
+                          'agent':'AuditCSV','passed':True,'workers':[{'status':'completed'}]}}]
             self.assertTrue(grade_case('csv-worker',root,oracle,events)['passed'])
             self.assertFalse(grade_case('csv-worker',root,oracle,[])['passed'])
+            self.assertFalse(grade_case('csv-worker',root,oracle,events[:2])['passed'])
+            self.assertFalse(grade_case('csv-worker',root,oracle,[*events[:2],{**events[2],'result':{**events[2]['result'],'agent':''}}])['passed'])
+            self.assertFalse(grade_case('csv-worker',root,oracle,[*events[:2],{**events[2],'ok':False}])['passed'])
             (root/'summary.json').write_text(json.dumps({'rows':len(oracle['values'])-1,'sum':sum(oracle['values'][1:])}))
             self.assertFalse(grade_case('csv-worker',root,oracle,events)['passed'])
             (root/'summary.json').write_text(json.dumps({'rows':len(oracle['values']),'sum':sum(oracle['values'])}))

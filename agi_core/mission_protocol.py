@@ -7,6 +7,7 @@ TEXT = {'type':'string'}
 STRINGS = {'type':'array','items':TEXT}
 NONEMPTY_STRINGS = {**STRINGS,'minItems':1}
 INTEGER = {'type':'integer'}
+PURE_CHECKS = {'file','text','json','csv_json','agent'}
 
 
 def object_args(properties, required=()):
@@ -22,6 +23,13 @@ CHECK_SCHEMA = {'anyOf':[
                  'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'command'},'argv':NONEMPTY_STRINGS,'contains':TEXT,'expected_exit_code':INTEGER,'criterion':TEXT},('kind','argv')),
     object_args({'kind':{'const':'source'},'evidence_ids':NONEMPTY_STRINGS,'criterion':TEXT},('kind','evidence_ids')),
+    object_args({'kind':{'const':'csv_json'},'path':{**TEXT,'description':'CSV input file, read without mutation.'},
+                 'json_path':{**TEXT,'description':'Saved aggregate JSON file; its values are checked against the actual CSV.'},
+                 'row_field':{**TEXT,'description':'JSON key for the number of CSV data rows.'},
+                 'sum_fields':{'type':'object','additionalProperties':TEXT,'description':'Map each JSON sum key to the CSV integer column it aggregates.'},
+                 'delimiter':TEXT,'source_sha256':TEXT,'criterion':TEXT},
+                ('kind','path','json_path','row_field','sum_fields')),
+    object_args({'kind':{'const':'agent'},'name':TEXT,'criterion':TEXT},('kind','name')),
 ]}
 
 
@@ -40,7 +48,8 @@ ARG_SCHEMAS = {
     'generate_image':object_args({'prompt':TEXT,'folder':TEXT},('prompt',)),
     'search_web':object_args({'query':TEXT},('query',)),
     'fetch_url':object_args({'url':TEXT},('url',)),
-    'spawn_agent':object_args({'task':TEXT,'tasks':NONEMPTY_STRINGS,'agent':TEXT}),
+    'spawn_agent':object_args({'task':TEXT,'tasks':NONEMPTY_STRINGS,'agent':TEXT,
+                             'checks':{'type':'array','items':CHECK_SCHEMA,'minItems':1}},('checks',)),
     'create_agent':object_args({'name':TEXT,'role':TEXT},('name','role')),
     'create_skill':object_args({'name':TEXT,'description':TEXT,'instructions':TEXT},('name','description','instructions')),
     'list_skills':object_args({}),
@@ -63,14 +72,17 @@ def tool_response_schema(criteria=(), allowed=None):
     schema = deepcopy(TOOL_RESPONSE_SCHEMA)
     schema['properties']['tool']['enum'] = selected
     schema['anyOf'] = [branch for branch in schema['anyOf'] if branch['properties']['tool']['const'] in selected]
-    verify = next(branch['properties']['args'] for branch in schema['anyOf'] if branch['properties']['tool']['const']=='verify')
-    checks = verify['properties']['checks']['items']['anyOf']
-    if allowed is not None and 'run_command' not in allowed:
-        checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='command']
-    if criteria:
-        for branch in checks:
-            branch['properties']['criterion'] = {'type':'string','enum':list(criteria)}
-            branch['required'].append('criterion')
+    for tool in schema['anyOf']:
+        if tool['properties']['tool']['const'] not in {'verify','spawn_agent'}:
+            continue
+        checks = tool['properties']['args']['properties']['checks']['items']['anyOf']
+        if allowed is not None and 'run_command' not in allowed:
+            checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='command']
+        if criteria:
+            for branch in checks:
+                branch['properties']['criterion'] = {'type':'string','enum':list(criteria)}
+                if 'criterion' not in branch['required']:
+                    branch['required'].append('criterion')
     return schema
 
 
@@ -99,3 +111,40 @@ def validate_args(name, args):
                 raise ValueError(f'{name}.{key} must contain strings')
     if 'oneOf' in schema and sum(all(k in args for k in branch['required']) for branch in schema['oneOf'])!=1:
         raise ValueError(f'{name} requires exactly one of '+', '.join(branch['required'][0] for branch in schema['oneOf']))
+
+
+def validate_checks(checks, criteria=()):
+    """Validate a whole delegation contract before starting any worker/effect."""
+    if not isinstance(checks,list) or not checks:
+        raise ValueError('At least one concrete acceptance check is required')
+    branches = {s['properties']['kind']['const']:s for s in CHECK_SCHEMA['anyOf']}
+    kinds = {'string':str,'integer':int,'array':list,'object':dict}
+    for check in checks:
+        if not isinstance(check,dict) or not isinstance(check.get('kind'),str) or check['kind'] not in branches:
+            raise ValueError('Unsupported acceptance check')
+        schema = branches[check['kind']]
+        if set(check)-schema['properties'].keys() or set(schema['required'])-check.keys():
+            raise ValueError('Acceptance check fields do not match '+check['kind'])
+        if criteria and check.get('criterion') not in criteria:
+            raise ValueError('Every check must name an exact current criterion')
+        for key,value in check.items():
+            field = schema['properties'][key]
+            if 'type' in field and type(value) is not kinds[field['type']]:
+                raise ValueError(f'Acceptance check {key} must be {field["type"]}')
+            if field.get('type')=='array' and (len(value)<field.get('minItems',0) or not all(isinstance(v,str) for v in value)):
+                raise ValueError(f'Acceptance check {key} must contain strings')
+            if isinstance(value,dict) and 'additionalProperties' in field:
+                item = field['additionalProperties']
+                if any(not isinstance(v,str) or ('enum' in item and v not in item['enum']) for v in value.values()):
+                    raise ValueError(f'Acceptance check {key} has invalid field values')
+        if check['kind']=='csv_json':
+            if not check['row_field'] or check['row_field'] in check['sum_fields'] or any(not k or not v for k,v in check['sum_fields'].items()):
+                raise ValueError('CSV JSON row/sum field mappings must be nonempty and distinct')
+            if 'delimiter' in check and len(check['delimiter'])!=1:
+                raise ValueError('CSV delimiter must be one character')
+        if check['kind']=='text' and not {'equals','contains'}&check.keys():
+            raise ValueError('Text verification requires equals or contains')
+        if check['kind']=='json' and not {'equals','keys','types'}&check.keys():
+            raise ValueError('JSON verification requires equals, keys or types')
+        if check['kind']=='file' and check.get('min_bytes',1)<0:
+            raise ValueError('min_bytes must be nonnegative')

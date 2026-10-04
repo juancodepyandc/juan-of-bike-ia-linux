@@ -90,13 +90,13 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
             parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", policy=RuntimePolicy(parallel_workers=2))
             (Path(root)/'reports.txt').write_text('concurrency fixture')
             replies = iter([json.dumps({"tool":"set_plan","args":{"steps":["Collect reports"],"criteria":["Reports fixture"]}}),
-                            json.dumps({"tool": "spawn_agent", "args": {"tasks": ["One", "Two"]}}),
+                            json.dumps({"tool": "spawn_agent", "args": {"tasks": ["One", "Two"],"checks":[{"kind":"file","path":"reports.txt","criterion":"Reports fixture"}]}}),
                             json.dumps({"tool":"verify","args":{"checks":[{"kind":"file","path":"reports.txt","criterion":"Reports fixture"}]}}),
                             json.dumps({"tool": "finish", "args": {"message": "Reports collected"}})])
             active, maximum = 0, 0
             async def chat(messages):
                 yield next(replies)
-            async def worker(task):
+            async def worker(task, *, acceptance_checks=()):
                 nonlocal active, maximum
                 active += 1
                 maximum = max(maximum, active)

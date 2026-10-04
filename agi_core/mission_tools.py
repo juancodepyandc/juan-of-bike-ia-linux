@@ -15,7 +15,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
-from agi_core.mission_protocol import CHECK_FIELDS
+from agi_core.mission_protocol import CHECK_FIELDS, validate_checks
 
 
 def digest_file(path):
@@ -221,6 +221,21 @@ class MissionTools:
                 temporary.unlink(missing_ok=True)
         return {'path':str(path),'bytes':path.stat().st_size,'sha256':digest_file(path),'changed':True}
 
+    def verify_csv_json(self, check):
+        validate_checks([check])
+        sums = check['sum_fields']
+        profile = self.inspect_csv(self.agent._file_path(check['path']),list(dict.fromkeys(sums.values())),check.get('delimiter',','))
+        expected = {check['row_field']:profile['rows'],**{field:profile['integer_columns'][column]['sum'] for field,column in sums.items()}}
+        raw = read_verification_bytes(self.agent._file_path(check['json_path']),self.agent.policy.output_chars*4)
+        actual = strict_json(raw.decode('utf-8'))
+        output_sha = hashlib.sha256(raw).hexdigest()
+        observed = json.dumps(actual,ensure_ascii=False,allow_nan=False)
+        return {'passed':same_json(actual,expected) and ('source_sha256' not in check or check['source_sha256']==profile['sha256']),
+                'expected':expected,'observed':actual if len(observed)<=self.agent.policy.output_chars else observed[:self.agent.policy.output_chars],
+                'truncated':len(observed)>self.agent.policy.output_chars,'source_sha256_observed':profile['sha256'],
+                'output_sha256':output_sha,'observed_sha256':hashlib.sha256((profile['sha256']+output_sha).encode()).hexdigest(),
+                'scope':'Exact integer aggregates computed from all CSV data rows, compared to the complete saved JSON object'}
+
     def inspect(self, path):
         source = path.read_text(encoding='utf-8')
         tree = ast.parse(source)
@@ -335,7 +350,7 @@ class MissionTools:
         if name == 'verify':
             checks = args.get('checks')
             if not isinstance(checks, list) or not checks:
-                raise ValueError('Provide concrete file, text, json, command or source checks')
+                raise ValueError('Provide concrete file, text, json, csv_json, agent, command or source checks')
             results = []
             for check in checks:
                 if not isinstance(check, dict):
@@ -391,6 +406,16 @@ class MissionTools:
                             observed = json.dumps(actual,ensure_ascii=False,allow_nan=False)
                             item['observed'] = actual if len(observed)<=a.policy.output_chars else observed[:a.policy.output_chars]
                             item['truncated'] = len(observed)>a.policy.output_chars
+                    elif kind == 'csv_json':
+                        item.update(await asyncio.to_thread(self.verify_csv_json,check))
+                    elif kind == 'agent':
+                        validate_checks([check])
+                        from agi_core.context import load_context
+                        context = await asyncio.to_thread(load_context,a.workspace)
+                        agent = next((role for role in context['saved_agents'] if role['name']==check['name']),None)
+                        item.update(passed=agent is not None,observed=agent,
+                                    observed_sha256=hashlib.sha256(json.dumps(agent,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
+                                    scope='Saved role definition exists; this does not prove execution')
                     elif kind == 'command':
                         a._require_tool('run_command')
                         argv = check.get('argv')

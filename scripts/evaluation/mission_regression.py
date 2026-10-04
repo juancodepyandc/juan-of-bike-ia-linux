@@ -83,7 +83,9 @@ def grade_case(name, workspace, oracle, events):
         expected = {'rows':len(oracle['values']),'sum':sum(oracle['values'])}
         preserved = (workspace/'input.csv').read_bytes()==oracle['original']
         skills = (workspace/'.aurora/skills/AuditCSV/SKILL.md').is_file()
-        worker = any(e['type']=='worker_complete' and e.get('status')=='completed' for e in events)
+        worker = any(e['type']=='tool_result' and e.get('tool')=='spawn_agent' and e.get('ok')
+                     and isinstance(e.get('result'),dict) and e['result'].get('agent')=='AuditCSV'
+                     and e['result'].get('passed') and any(w.get('status')=='completed' for w in e['result'].get('workers',[])) for e in events)
         roles = any(e['type']=='tool_result' and e.get('tool')=='create_agent' and e.get('ok')
                     and isinstance(e.get('result'),dict) and e['result'].get('name')=='AuditCSV' for e in events)
         passed = isinstance(data,dict) and data==expected and all(type(v) is int for v in data.values())
@@ -123,7 +125,7 @@ async def evaluate(args):
     gateway = LLMGateway()
     if args.model not in await gateway.get_available_models():
         raise ValueError('Explicit evaluation model is not installed; no implicit fallback')
-    files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py',
+    files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py','agi_core/context.py',
              'scripts/evaluation/mission_regression.py']
     result = {'model':args.model,'seed':args.seed,'timeout_seconds':args.timeout,'options':model_options(),'python':platform.python_version(),
               'os':platform.platform(),'substituted_model':False,'agi_certification':False,
@@ -139,8 +141,14 @@ async def evaluate(args):
             (workspace/path).write_bytes(content.encode('utf-8'))
         events = []
         agent = AutonomousMissionAgent('eval_'+uuid4().hex,prompt,str(workspace),args.model,'AUTONOMOUS')
+        event_path = output/(name+'-events.jsonl')
+        event_stream = event_path.open('x',encoding='utf-8')
+        event_path.chmod(0o600)
         async def record(kind,data):
             events.append({'type':kind,**data})
+            event_stream.write(json.dumps(events[-1],ensure_ascii=False)+'\n')
+            if kind not in {'token','command_output'}:
+                event_stream.flush()
         agent._emit = record
         started = time.monotonic()
         print('Starting '+name,flush=True)
@@ -151,6 +159,8 @@ async def evaluate(args):
             error = 'Evaluation deadline exceeded; mission stopped with work preserved'
         except Exception as exc:
             error = type(exc).__name__+': '+str(exc)
+        finally:
+            event_stream.close()
         try:
             assessment = await asyncio.to_thread(grade_case,name,workspace,oracle,events)
         except Exception as exc:
