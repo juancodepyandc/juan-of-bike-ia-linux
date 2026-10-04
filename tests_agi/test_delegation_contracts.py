@@ -38,7 +38,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
     def test_shared_check_schemas_require_each_criterion_once_in_both_tools(self):
         for criterion in ('Criterion A','Criterion B'):
             schema = tool_response_schema([criterion])
-            for branch in schema['anyOf']:
+            for branch in schema['oneOf']:
                 if branch['properties']['tool']['const'] not in {'spawn_agent','verify'}:
                     continue
                 args = branch['properties']['args']
@@ -46,6 +46,56 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
                 for check in args['properties']['checks']['items']['anyOf']:
                     self.assertEqual(check['required'].count('criterion'),1)
                     self.assertEqual(check['properties']['criterion']['enum'],[criterion])
+
+    async def test_declared_delegation_cannot_be_replaced_by_an_unrelated_role_check(self):
+        self.result_file({'rows':3,'sum':25})
+        check = {**self.check,'criterion':'Result exists'}
+        replies = iter([
+            {'tool':'set_plan','args':{'steps':['Delegate'], 'criteria':['Result exists'],'required_tools':['spawn_agent']}},
+            {'tool':'spawn_agent','args':{'task':'Audit'}},  # Rejected before launch.
+            {'tool':'verify','args':{'checks':[check]}},
+            *[{'tool':'finish','args':{'message':'Fictional delegation'}} for _ in range(3)]])
+        received = []
+        async def chat(messages):
+            received.append(messages)
+            yield json.dumps(next(replies))
+        with patch.object(self.agent,'_chat_chunks',chat), patch.object(self.agent,'_spawn_task',AsyncMock()) as worker, \
+             patch.object(self.agent,'_review_completion',AsyncMock(return_value={'approved':True,'unmet':[],'reason':'Model substitute'})) as review:
+            self.assertIsNone(await self.agent.run())
+        worker.assert_not_awaited()
+        review.assert_not_awaited()
+        self.assertEqual(self.agent.state['status'],'failed')
+        self.assertNotIn('spawn_agent',self.agent.state['executed_tools'])
+        progress = received[3][-1]['content']
+        self.assertIn('"pending_tools": ["spawn_agent"]',progress)
+        self.assertNotIn('Propose finish',progress)
+
+    def test_action_variants_are_complete_and_mutually_exclusive(self):
+        schema = tool_response_schema(['Correct data'])
+        for name,choices in (('run_command',{'argv','command'}),('spawn_agent',{'task','tasks'})):
+            branches = [b['properties']['args'] for b in schema['oneOf'] if b['properties']['tool']['const']==name]
+            self.assertEqual(len(branches),2)
+            for args in branches:
+                self.assertNotIn('oneOf',args)
+                present = choices&args['properties'].keys()
+                self.assertEqual(len(present),1)
+                self.assertTrue(present<=set(args['required']))
+        plan = next(b['properties']['args'] for b in schema['oneOf'] if b['properties']['tool']['const']=='set_plan')
+        self.assertIn('required_tools',plan['required'])
+
+    def test_decoding_requires_a_concrete_json_or_text_expectation(self):
+        schema = tool_response_schema(['Measured output'])
+        for action in schema['oneOf']:
+            if action['properties']['tool']['const'] not in {'verify','spawn_agent'}:
+                continue
+            checks = action['properties']['args']['properties']['checks']['items']['anyOf']
+            for kind,fields in (('json',{'equals','keys','types'}),('text',{'equals','contains'})):
+                branches = [c for c in checks if c['properties']['kind']['const']==kind]
+                self.assertTrue(branches)
+                for branch in branches:
+                    self.assertTrue(fields & set(branch['required']))
+                    self.assertNotIn('anyOf',branch)
+                    self.assertFalse(branch['additionalProperties'])
 
     async def test_named_worker_receives_contract_without_replacing_task(self):
         task = 'Count all data rows'
@@ -272,17 +322,19 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         criterion = 'Measured result'
         check = {**self.check,'criterion':criterion}
         replies = iter([
-            {'tool':'set_plan','args':{'steps':['Delegate'], 'criteria':[criterion]}},
+            {'tool':'set_plan','args':{'steps':['Delegate'], 'criteria':[criterion],
+                                      'required_tools':['spawn_agent','inspect_csv']}},
             {'tool':'spawn_agent','args':{'task':'Audit to summary.json','checks':[check]}},
             {'tool':'finish','args':{'message':'Measured delegated result'}}])
         async def chat(messages):
             yield json.dumps(next(replies))
         async def worker(task, name='', *, acceptance_checks=()):
             self.result_file({'rows':3,'sum':25})
-            return {'status':'completed','report':'Measured','goal':task}
+            return {'status':'completed','report':'Measured','goal':task,'executed_tools':['inspect_csv']}
         with patch.object(self.agent,'_chat_chunks',chat), patch.object(self.agent,'_spawn_task',worker), \
              patch.object(self.agent,'_review_completion',AsyncMock(return_value={'approved':True,'unmet':[],'reason':'Model substitute'})):
             self.assertEqual(await self.agent.run(),'Measured delegated result')
         self.assertEqual(self.agent.state['verified'],[criterion])
         self.assertEqual(self.agent.state['last_change'],self.agent.state['last_verify'])
         self.assertEqual(self.agent.state['output_checks'],[check])
+        self.assertEqual(set(self.agent.state['executed_tools']),{'spawn_agent','inspect_csv'})

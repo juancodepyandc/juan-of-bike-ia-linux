@@ -56,9 +56,11 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             response = ''.join([c async for c in agent._chat_chunks([{'role':'user','content':'Test'}])])
         self.assertEqual(json.loads(response)['tool'],'finish')
         schema = self.received[0]['format']
-        self.assertEqual(set(schema['required']),{'tool','args'})
-        self.assertEqual(schema['properties']['args']['type'],'object')
-        self.assertFalse(schema['additionalProperties'])
+        for branch in schema['oneOf']:
+            self.assertEqual(set(branch['required']),{'tool','args'})
+            self.assertEqual(branch['properties']['args']['type'],'object')
+            self.assertFalse(branch['additionalProperties'])
+            self.assertFalse(branch['properties']['args']['additionalProperties'])
 
     async def test_decoding_schema_uses_current_criteria_and_filters_disallowed_worker_tools(self):
         self.lines = [{'message':{'content':'{"tool":"finish","args":{"message":"Done"}}'}},{'done':True}]
@@ -68,9 +70,10 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             agent.state['criteria'] = ['Exact content']
             _ = [c async for c in agent._chat_chunks([{'role':'user','content':'Test'}])]
         schema = self.received[0]['format']
-        self.assertNotIn('spawn_agent',schema['properties']['tool']['enum'])
-        self.assertNotIn('write_file',schema['properties']['tool']['enum'])
-        verify = next(b for b in schema['anyOf'] if b['properties']['tool']['const']=='verify')
+        selected = [b['properties']['tool']['const'] for b in schema['oneOf']]
+        self.assertNotIn('spawn_agent',selected)
+        self.assertNotIn('write_file',selected)
+        verify = next(b for b in schema['oneOf'] if b['properties']['tool']['const']=='verify')
         checks = verify['properties']['args']['properties']['checks']['items']['anyOf']
         self.assertTrue(all('criterion' in c['required'] for c in checks))
         self.assertTrue(all(c['properties']['criterion']['enum']==['Exact content'] for c in checks))
@@ -83,7 +86,7 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             agent.gateway = self.gateway
             agent.state.update(criteria=['Already checked','Still missing'],verified=['Already checked'])
             _ = [c async for c in agent._chat_chunks([{'role':'user','content':'Test'}])]
-        verify = next(b for b in self.received[0]['format']['anyOf'] if b['properties']['tool']['const']=='verify')
+        verify = next(b for b in self.received[0]['format']['oneOf'] if b['properties']['tool']['const']=='verify')
         checks = verify['properties']['args']['properties']['checks']['items']['anyOf']
         self.assertTrue(all(c['properties']['criterion']['enum']==['Still missing'] for c in checks))
 

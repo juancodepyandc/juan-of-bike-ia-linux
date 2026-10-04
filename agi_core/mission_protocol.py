@@ -58,32 +58,56 @@ ARG_SCHEMAS = {
 }
 ARG_SCHEMAS['run_command']['oneOf'] = [{'required':['argv']},{'required':['command']}]
 ARG_SCHEMAS['spawn_agent']['oneOf'] = [{'required':['task']},{'required':['tasks']}]
+ARG_SCHEMAS['set_plan']['properties']['required_tools'] = {'type':'array','items':{'type':'string','enum':[
+    name for name in ARG_SCHEMAS if name not in {'set_plan','verify','finish'}]}}
 
-TOOL_RESPONSE_SCHEMA = {
-    'type':'object','properties':{'tool':{'type':'string','enum':list(ARG_SCHEMAS)},'args':{'type':'object'}},
-    'required':['tool','args'],'additionalProperties':False,
-    'anyOf':[{'properties':{'tool':{'const':name},'args':schema}} for name,schema in ARG_SCHEMAS.items()],
-}
 CHECK_FIELDS = {branch['properties']['kind']['const']:set(branch['properties']) for branch in CHECK_SCHEMA['anyOf']}
 
 
 def tool_response_schema(criteria=(), allowed=None):
     selected = list(ARG_SCHEMAS) if allowed is None else [name for name in ARG_SCHEMAS if name in allowed]
-    schema = deepcopy(TOOL_RESPONSE_SCHEMA)
-    schema['properties']['tool']['enum'] = selected
-    schema['anyOf'] = [branch for branch in schema['anyOf'] if branch['properties']['tool']['const'] in selected]
-    for tool in schema['anyOf']:
-        if tool['properties']['tool']['const'] not in {'verify','spawn_agent'}:
-            continue
-        checks = tool['properties']['args']['properties']['checks']['items']['anyOf']
-        if allowed is not None and 'run_command' not in allowed:
-            checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='command']
-        if criteria:
+    alternatives = []
+    for name in selected:
+        args = deepcopy(ARG_SCHEMAS[name])
+        if name=='set_plan':
+            args['required'].append('required_tools')
+            args['properties']['required_tools']['items']['enum'] = [n for n in selected if n not in {'set_plan','verify','finish'}]
+        if name in {'verify','spawn_agent'}:
+            checks = args['properties']['checks']['items']['anyOf']
+            if allowed is not None and 'run_command' not in allowed:
+                checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='command']
+            concrete = []
             for branch in checks:
-                branch['properties']['criterion'] = {'type':'string','enum':list(criteria)}
-                if 'criterion' not in branch['required']:
+                kind = branch['properties']['kind']['const']
+                expectations = {'text':('equals','contains'),'json':('equals','keys','types')}.get(kind)
+                if expectations:
+                    for field in expectations:
+                        variant = deepcopy(branch)
+                        variant['required'].append(field)
+                        concrete.append(variant)
+                else:
+                    concrete.append(branch)
+            checks[:] = concrete
+            if criteria:
+                for branch in checks:
+                    branch['properties']['criterion'] = {'type':'string','enum':list(criteria)}
                     branch['required'].append('criterion')
-    return schema
+        choices = args.pop('oneOf',None)
+        if choices:
+            exclusive = {key for choice in choices for key in choice['required']}
+            variants = []
+            for choice in choices:
+                variant = deepcopy(args)
+                variant['required'] += choice['required']
+                for key in exclusive-set(choice['required']):
+                    variant['properties'].pop(key)
+                variants.append(variant)
+        else:
+            variants = [args]
+        alternatives.extend(object_args({'tool':{'const':name},'args':variant},('tool','args')) for variant in variants)
+    # Full alternatives avoid relying on a grammar converter composing adjacent
+    # object/union constraints or required-only branches correctly.
+    return {'oneOf':alternatives}
 
 
 def validate_args(name, args):

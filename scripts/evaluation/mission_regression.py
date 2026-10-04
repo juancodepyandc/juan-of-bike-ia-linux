@@ -168,6 +168,7 @@ async def evaluate(args):
         record = {'name':name,'seed':case_seed,'request':prompt,'elapsed_seconds':time.monotonic()-started,
                   'deadline_seconds':args.timeout,'iterations':agent.state['iteration'],
                   'plan':agent.state['plan'],'criteria':agent.state['criteria'],'verified':agent.state['verified'],
+                  'required_tools':agent.state.get('required_tools',[]),'executed_tools':agent.state.get('executed_tools',[]),
                   'status':agent.state['status'],'error':error,'independent_assessment':assessment,
                   'passed':not error and agent.state['status']=='completed' and assessment['passed'],
                   'context_window':agent.state.get('context_window'),'metrics':[e for e in events if e['type']=='model_metrics']}

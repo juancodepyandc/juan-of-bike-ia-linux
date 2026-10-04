@@ -82,7 +82,7 @@ class AutonomousMissionAgent:
         self._require_tool('read_file')
         self.state = {'version':1, 'goal':request_text, 'plan':[], 'criteria':[], 'verified':[],
                       'evidence':[], 'messages':[], 'iteration':0, 'pending':None,
-                      'process_observations':[], 'output_checks':[], 'delegations':[],
+                      'process_observations':[], 'output_checks':[], 'delegations':[], 'required_tools':[], 'executed_tools':[],
                       'last_change':0, 'last_verify':0, 'action_count':0, 'status':'running', 'result':None}
 
     def _require_tool(self, name):
@@ -377,6 +377,7 @@ class AutonomousMissionAgent:
         report = await child.run(worker=True)
         return {'status':child.state['status'],'goal':child.request_text,'report':report,
                 'criteria':child.state['criteria'],'verified':child.state['verified'],
+                'executed_tools':child.state.get('executed_tools',[]),
                 'evidence':[{'id':e['id'],'tool':e['tool'],'ok':e['ok'],'result':e['result']}
                             for e in child.state['evidence'][-8:]],
                 'scope':'Worker result is not independent verification of the parent deliverable'}
@@ -412,8 +413,14 @@ class AutonomousMissionAgent:
             raise ValueError('Plan steps must be nonempty strings')
         if not isinstance(criteria,list) or not criteria or not all(isinstance(v,str) and v.strip() for v in criteria):
             raise ValueError('Acceptance criteria must be nonempty strings')
-        self.state.update(plan=steps,criteria=criteria,verified=[],last_verify=0,output_checks=[])
-        return {'goal':self.request_text,'steps':steps,'criteria':criteria}
+        from agi_core.mission_protocol import ARG_SCHEMAS
+        required = args.get('required_tools',[])
+        if not isinstance(required,list) or any(not isinstance(name,str) or name not in ARG_SCHEMAS or name in {'set_plan','verify','finish'} for name in required):
+            raise ValueError('required_tools must list concrete permitted tools from the protocol')
+        for name in required:
+            self._require_tool(name)
+        self.state.update(plan=steps,criteria=criteria,verified=[],last_verify=0,output_checks=[],required_tools=list(dict.fromkeys(required)))
+        return {'goal':self.request_text,'steps':steps,'criteria':criteria,'required_tools':self.state['required_tools']}
 
     async def _execute(self, name, args):
         self._assert_owned()
@@ -487,6 +494,7 @@ class AutonomousMissionAgent:
         summary = json.dumps({'immutable_goal':self.request_text,'plan':self.state['plan'],
                               'criteria':self.state['criteria'],'verified':self.state['verified'],
                               'unverified':[c for c in self.state['criteria'] if c not in self.state['verified']],
+                              'required_tools':self.state.get('required_tools',[]),'executed_tools':self.state.get('executed_tools',[]),
                               'accepted_delegations':[{'tasks':d['tasks'],'agent':d['agent']} for d in self.state.get('delegations',[])[-4:]],
                               'interrupted_processes':[{'id':e['id'],'status':e['result']['status'],
                                                         'process_started':e['result']['process_started'],
@@ -542,7 +550,8 @@ class AutonomousMissionAgent:
             f'Workspace: {self.workspace}. Host: {sys.platform}. Python executable: {PYTHON_BIN}. Permissions: {self.permissions}. '
             f'Delivery: .transfer_to_client/{self.mission_id}/ (downloaded and hash-checked by the client). '
             'Available tools and arguments:\n'
-            'inspect_runtime(); set_plan(steps:[str],criteria:[str]); list_files(path); read_file(path,offset,limit); write_file(path,content,expected_sha256 optional); '
+            'inspect_runtime(); set_plan(steps:[str],criteria:[str],required_tools:[str]); list_files(path); read_file(path,offset,limit); write_file(path,content,expected_sha256 optional); '
+            'required_tools lists the tools explicitly needed for the original request, not hypothetical optional experiments. Completion requires their successful execution. '
             'inspect_csv(path,integer_columns:[str] optional,delimiter optional) measures actual CSV data rows and exact integer sums. DictReader already consumes the header. '
             'run_command(argv:[str] OR command:str); list_tools(query); inspect_tool(name); run_tool(name,argv:[str]); '
             'create_tool(name,code); generate_image(prompt,folder); search_web(query); fetch_url(url); '
@@ -832,9 +841,11 @@ class AutonomousMissionAgent:
                             raise ValueError('Completion requires a nonempty result')
                         blocked = args.get('status') == 'blocked'
                         missing = set(self.state['criteria'])-set(self.state['verified'])
-                        if not blocked and (missing or self.state['last_change'] > self.state['last_verify']):
+                        missing_tools = set(self.state.get('required_tools',[]))-set(self.state.get('executed_tools',[]))
+                        if not blocked and (missing or missing_tools or self.state['last_change'] > self.state['last_verify']):
                             self.state['messages'].append({'role':'user','content':
-                                'Completion not verified. Run explicit verify checks after the latest change. Missing criteria: '+json.dumps(sorted(missing),ensure_ascii=False)})
+                                'Completion not verified. Run explicit verify checks after the latest change. Missing criteria: '+json.dumps(sorted(missing),ensure_ascii=False)+
+                                '. Required tools without successful execution: '+json.dumps(sorted(missing_tools),ensure_ascii=False)})
                             repeated += 1
                             if repeated >= self.policy.stall_attempts:
                                 raise RuntimeError('Repeated unverified completion; work retained')
@@ -892,6 +903,14 @@ class AutonomousMissionAgent:
                                 'elapsed_seconds':time.monotonic()-started}
                     self.state['evidence'].append(evidence)
                     self.state['evidence'] = self.state['evidence'][-64:]
+                    if ok and name not in {'set_plan','verify','finish'}:
+                        executed = self.state.setdefault('executed_tools',[])
+                        names = [name]
+                        if name=='spawn_agent':
+                            names += [tool for child in result['workers'] for tool in child.get('executed_tools',[])]
+                        for tool in names:
+                            if tool not in executed:
+                                executed.append(tool)
                     if name in CHANGE_TOOLS and not (name in {'write_file','spawn_agent','create_skill','create_agent'} and isinstance(result,dict) and result.get('changed') is False):
                         self.state['last_change'] = number
                         self.state['verified'] = []
@@ -922,8 +941,12 @@ class AutonomousMissionAgent:
                     progress = ''
                     if self.state['criteria']:
                         missing = [c for c in self.state['criteria'] if c not in self.state['verified']]
-                        progress = ('Verification progress: '+json.dumps({'unverified':missing,'verified':self.state['verified']},ensure_ascii=False)+
-                                    ('; cover the unverified criteria with concrete checks.\n' if missing else '; all planned criteria verified. Propose finish for an original-goal review.\n'))
+                        pending_tools = [t for t in self.state.get('required_tools',[]) if t not in self.state.get('executed_tools',[])]
+                        instruction = ('; execute the pending required tools, then verify the current outputs.\n' if pending_tools else
+                                       '; cover the unverified criteria with concrete checks.\n' if missing else
+                                       '; all planned criteria and required tools verified. Propose finish for an original-goal review.\n')
+                        progress = ('Verification progress: '+json.dumps({'unverified':missing,'verified':self.state['verified'],
+                                                                         'pending_tools':pending_tools},ensure_ascii=False)+instruction)
                     self.state['messages'].append({'role':'user','content':progress+self._excerpt(encoded,self.policy.output_chars)})
                     # Bound model conversation state while keeping the immutable
                     # goal and the lossless durable event journal separately.
