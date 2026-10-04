@@ -141,6 +141,8 @@ Observations du 4 octobre pendant ces correctifs : deux reprises réelles après
 
 Les contrôles logiciels de cette version atteignent **134 tests réussis et 29 sous-tests**, avec modèles substitués pour ces tests logiciels. Les mesures réelles utilisent toujours `qwen3-coder:30b` sur CPU et les réglages natifs ; le modèle principal, les générations Image/3D GPU, le tunnel public et chaque module sur chaque OS restent non validés. Ni ces tests, ni l'introspection du runtime ne démontrent une AGI ou une conscience subjective. Les résultats CI du commit publié et les essais supplémentaires sont consignés séparément avec les preuves finales privées.
 
+Au commit `e60655a`, les six configurations de la [matrice des contrats de mission](https://github.com/juancodepyandc/juan-of-bike-ia-linux/actions/runs/37195658660) réussissent sur Linux, Windows et macOS, avec Python 3.10 et 3.13. L'essai CSV final de la même seed, avec adaptation du contexte et délai de 480 secondes, reste `stopped` sans `summary.json`. Son worker et sa revue acceptent à tort 7 lignes/-42, alors que `inspect_csv` mesure 8/-25 sur les octets inchangés ; le worker a de nouveau sauté la première ligne de données après l'en-tête. Le parent observe la contradiction, mais ne livre pas le fichier attendu. Le contexte reste mieux borné (budget final observé 13 186 caractères), sans résoudre cette erreur sémantique. **La délégation fiable et la revue de calcul restent donc non démontrées pour ce cas** ; des contrôles syntaxiques réussis ne permettent pas d'annoncer une AGI.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
