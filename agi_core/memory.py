@@ -1,4 +1,5 @@
 import os
+from contextlib import closing
 import logging
 import uuid
 import json
@@ -20,7 +21,7 @@ class OmniscientMemory:
         self.client = None
         self.sqlite_path = Path(self.db_path) / "experiences.sqlite3"
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.sqlite_path) as connection:
+        with closing(sqlite3.connect(self.sqlite_path)) as connection, connection:
             connection.execute("CREATE TABLE IF NOT EXISTS experiences (id TEXT PRIMARY KEY, document TEXT NOT NULL)")
         self._init_db()
 
@@ -39,7 +40,7 @@ class OmniscientMemory:
         doc_str = json.dumps({"context": context, "outcome": outcome})
         
         def _add():
-            with sqlite3.connect(self.sqlite_path) as connection:
+            with closing(sqlite3.connect(self.sqlite_path)) as connection, connection:
                 connection.execute("INSERT INTO experiences VALUES (?, ?)", (doc_id, doc_str))
             if self.collection is not None:
                 options = {"documents": [doc_str], "ids": [doc_id]}
@@ -67,7 +68,7 @@ class OmniscientMemory:
                             return docs[0]
                 except Exception as exc:
                     logger.warning("[MEMORY] Rappel vectoriel échoué (%s) ; recherche lexicale SQLite.", type(exc).__name__)
-            with sqlite3.connect(self.sqlite_path) as connection:
+            with closing(sqlite3.connect(self.sqlite_path)) as connection:
                 rows = connection.execute("SELECT document FROM experiences ORDER BY rowid DESC LIMIT 500").fetchall()
             terms = set(re.findall(r"\w+", situation.casefold()))
             ranked = sorted(((sum(t in doc.casefold() for t in terms), doc) for (doc,) in rows),
