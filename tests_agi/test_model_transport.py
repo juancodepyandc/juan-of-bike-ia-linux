@@ -98,8 +98,15 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             agent.gateway = self.gateway
             self.assertEqual(await agent._review_completion('Done'),verdict)
         schema = self.received[0]['format']
-        self.assertEqual(set(schema['required']),{'approved','unmet','reason','issues'})
-        self.assertEqual(schema['properties']['approved']['type'],'boolean')
+        approve,reject = schema['oneOf']
+        for branch in (approve,reject):
+            self.assertEqual(set(branch['required']),{'approved','unmet','reason','issues'})
+        self.assertIs(approve['properties']['approved']['const'],True)
+        self.assertEqual(approve['properties']['unmet'],{'const':[]})
+        self.assertEqual(approve['properties']['issues'],{'const':[]})
+        self.assertIs(reject['properties']['approved']['const'],False)
+        self.assertEqual(reject['properties']['unmet']['minItems'],1)
+        self.assertEqual(reject['properties']['issues']['minItems'],1)
 
     async def test_context_window_uses_the_selected_loaded_runner(self):
         self.assertEqual(await self.gateway.running_context_window('fixture:local'),4096)
