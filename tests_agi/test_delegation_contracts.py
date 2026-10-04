@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
+from dataclasses import replace
 
 from agi_core.context import create_agent
 from agi_core.mission_agent import AutonomousMissionAgent
@@ -22,6 +23,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.folder.cleanup)
         self.root = Path(self.folder.name)
         self.agent = AutonomousMissionAgent('contract','Audit the data',str(self.root),'fixture:local')
+        self.agent.policy = replace(self.agent.policy,request_audit=False)
         self.agent._emit = AsyncMock()
         self.agent.state['plan'] = ['Delegate and verify the saved result']
         self.source = self.root/'input.csv'
@@ -158,7 +160,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(conflict['passed'] or conflict['changed'])
 
     async def test_parent_inference_retains_acceptance_facts_before_large_worker_reports(self):
-        self.agent.policy = RuntimePolicy(output_chars=2000)
+        self.agent.policy = RuntimePolicy(output_chars=2000,request_audit=False)
         check = {**self.check,'criterion':'Measured result'}
         replies = iter([
             {'tool':'set_plan','args':{'steps':['Delegate'],'criteria':['Measured result']}},

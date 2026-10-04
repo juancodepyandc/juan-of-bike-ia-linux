@@ -24,6 +24,9 @@ def call(tool, **args):
 
 
 def scripted(agent, replies):
+    # These fixtures isolate the original execution/review contracts; the new
+    # separate checker is exercised explicitly in test_request_audit.py.
+    agent.policy = replace(agent.policy,request_audit=False)
     iterator = iter(replies)
     async def stream(messages):
         yield next(iterator)

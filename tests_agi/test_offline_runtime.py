@@ -87,7 +87,7 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
     async def test_mission_runs_two_workers_concurrently_without_inference(self):
         with tempfile.TemporaryDirectory() as root:
             from agi_core.runtime_policy import RuntimePolicy
-            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", policy=RuntimePolicy(parallel_workers=2))
+            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", policy=RuntimePolicy(parallel_workers=2,request_audit=False))
             (Path(root)/'reports.txt').write_text('concurrency fixture')
             replies = iter([json.dumps({"tool":"set_plan","args":{"steps":["Collect reports"],"criteria":["Reports fixture"]}}),
                             json.dumps({"tool": "spawn_agent", "args": {"tasks": ["One", "Two"],"checks":[{"kind":"file","path":"reports.txt","criterion":"Reports fixture"}]}}),

@@ -26,6 +26,7 @@ class VerificationContinuity(unittest.IsolatedAsyncioTestCase):
         env.start()
         self.addCleanup(env.stop)
         self.agent = AutonomousMissionAgent('continuity','Inspect, change and verify the supplied files',str(self.root),'fixture:local')
+        self.agent.policy = replace(self.agent.policy,request_audit=False)
         self.agent._emit = AsyncMock()
         self.agent._review_completion = AsyncMock(return_value={'approved':True,'unmet':[],'reason':'Model substitute'})
         (self.root/'a.txt').write_text('A',encoding='utf-8')

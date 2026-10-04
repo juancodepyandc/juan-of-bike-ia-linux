@@ -20,9 +20,13 @@ class RuntimePolicy:
     output_chars: int = 12000
     context_chars: int = 60000
     recovery_attempts: int = 2
+    request_audit: bool = True
 
     @classmethod
     def from_env(cls):
+        audit = os.environ.get('AURORA_REQUEST_AUDIT','1')
+        if audit not in {'0','1'}:
+            raise ValueError('AURORA_REQUEST_AUDIT must be 0 or 1')
         return cls(
             max_steps=positive_env("AURORA_MISSION_MAX_STEPS", 128, allow_zero=True),
             command_seconds=positive_env("AURORA_COMMAND_TIMEOUT", 3600),
@@ -31,6 +35,7 @@ class RuntimePolicy:
             output_chars=positive_env("AURORA_TOOL_OUTPUT_CHARS", 12000),
             context_chars=positive_env("AURORA_CONTEXT_CHARS", 60000),
             recovery_attempts=positive_env("AURORA_RECOVERY_ATTEMPTS", 2, allow_zero=True),
+            request_audit=audit=='1',
         )
 
 

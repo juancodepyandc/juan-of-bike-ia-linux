@@ -28,7 +28,7 @@ class MissionRecovery(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(env.stop)
         self.agent = AutonomousMissionAgent('recovery',
             'Repair length.py: equal bounds represent an empty interval, reversed bounds must raise ValueError. Preserve input.json.',
-            str(self.root), 'fixture:local', policy=RuntimePolicy(stall_attempts=2, recovery_attempts=2))
+            str(self.root), 'fixture:local', policy=RuntimePolicy(stall_attempts=2, recovery_attempts=2,request_audit=False))
         self.agent._emit = AsyncMock()
         self.agent._review_completion = AsyncMock(return_value={'approved': True, 'unmet': [], 'reason': 'Substituted review'})
         (self.root / 'input.json').write_text('[3,3]', encoding='utf-8')
@@ -174,6 +174,7 @@ class MissionRecovery(unittest.IsolatedAsyncioTestCase):
         valid = json.loads(self.proposal({'observations':observations},call('read_file',path='input.json')))
         variants = []
         variants.append({**valid,'request_quote':'invented requirement'})
+        variants.append({**valid,'request_quote':'.'})
         variants.append({**valid,'next_action':call('set_plan',steps=['Skip'],criteria=['Presence'])})
         variants.append({**valid,'next_action':call('run_command',argv=['echo','forbidden in SAFE'])})
         variants.append({**valid,'next_action':call('verify',checks=[{**self.check,'criterion':'weakened'}])})

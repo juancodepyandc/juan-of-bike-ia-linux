@@ -31,7 +31,7 @@ def validate_recovery(reply, request, observations, allowed, criteria, stalled_a
     for field in ('request_quote', 'hypothesis', 'expected_observation'):
         if not isinstance(value[field], str) or not value[field].strip():
             raise ValueError('Recovery needs a nonempty ' + field)
-    if value['request_quote'] not in request:
+    if value['request_quote'] not in request or not any(ch.isalnum() for ch in value['request_quote']):
         raise ValueError('Recovery must quote the immutable original request')
     ids = {e['id'] for e in observations}
     if (not isinstance(value['evidence_ids'], list) or not value['evidence_ids']
