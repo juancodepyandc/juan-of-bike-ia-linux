@@ -1,0 +1,43 @@
+name: Mission contracts
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agi_core/**'
+      - 'application/mission_api.py'
+      - 'application/cli_artifacts.py'
+      - 'aurora_agi_daemon.py'
+      - 'tests_agi/**'
+      - 'tests_auto_rl/**'
+      - 'auto_rl/**'
+      - '.github/workflows/mission-contracts.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.10', '3.13']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          path: AuroraIA
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: juancodepyandc/aurora-remote-cli
+          ref: main
+          path: aurora-remote-cli
+          persist-credentials: false
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e "aurora-remote-cli[test]" aiohttp flask
+      - run: python -m pytest tests_agi tests_auto_rl -q
+        working-directory: AuroraIA

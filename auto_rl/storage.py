@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -16,7 +15,7 @@ def atomic_json(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        with tmp.open("w") as f:
+        with tmp.open("w",encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
             f.flush()
             os.fsync(f.fileno())
@@ -27,7 +26,7 @@ def atomic_json(path, data):
 
 def read_json(path, default=None):
     try:
-        return json.loads(Path(path).read_text())
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return default
 
@@ -79,15 +78,28 @@ def assert_unchanged(manifest):
 @contextlib.contextmanager
 def exclusive_lock(path):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with Path(path).open("a+") as f:
+    with Path(path).open("a+",encoding="utf-8") as f:
+        if os.name == 'nt':
+            import msvcrt
+            if os.fstat(f.fileno()).st_size == 0:
+                f.write('\0')
+                f.flush()
+            f.seek(0)
+            lock = lambda: msvcrt.locking(f.fileno(),msvcrt.LK_NBLCK,1)
+            unlock = lambda: msvcrt.locking(f.fileno(),msvcrt.LK_UNLCK,1)
+        else:
+            import fcntl
+            lock = lambda: fcntl.flock(f,fcntl.LOCK_EX | fcntl.LOCK_NB)
+            unlock = lambda: fcntl.flock(f,fcntl.LOCK_UN)
         try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+            lock()
+        except OSError:
             raise RuntimeError("Un cycle Aurora est déjà actif") from None
         try:
             yield
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            f.seek(0)
+            unlock()
 
 
 class Status:
@@ -107,7 +119,7 @@ class Status:
                 self.data['phase_started_at'] = time.time()
             self.data.update(phase=phase, status=message, updated_at=time.time(), **fields)
             self.flush()
-            with (self.run / "events.jsonl").open("a") as f:
+            with (self.run / "events.jsonl").open("a",encoding="utf-8") as f:
                 f.write(json.dumps(self.data, ensure_ascii=False, allow_nan=False) + "\n")
         if os.environ.get("AURORA_KAGGLE_WORKER") == "1":
             print("AURORA_STATUS " + json.dumps({k: self.data.get(k) for k in

@@ -15,7 +15,8 @@ ARTIFACT_MAX_COUNT = 512             # hard cap on the number of descriptors kep
 
 
 def artifact_root() -> Path:
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "aurora/artifacts"
+    from agi_core.context import data_dir
+    return data_dir() / "artifacts"
 
 
 def _prune_artifacts(root: Path) -> None:
@@ -29,8 +30,10 @@ def _prune_artifacts(root: Path) -> None:
     except OSError:
         return
     stale = [p for p in candidates if now - p.stat().st_mtime > ARTIFACT_TTL_SECONDS]
-    # Keep the newest ARTIFACT_MAX_COUNT descriptors even if > TTL.
-    excess = candidates[len(stale):][ARTIFACT_MAX_COUNT:]
+    # Age and count are independent: never slice recent tokens by the stale count.
+    stale_set = set(stale)
+    recent = [p for p in candidates if p not in stale_set]
+    excess = recent[ARTIFACT_MAX_COUNT:]
     for meta in stale + excess:
         token = meta.stem
         meta.unlink(missing_ok=True)

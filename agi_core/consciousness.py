@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from .bus import global_bus
 from .memory import OmniscientMemory
 from .swarm import SwarmSupervisor
@@ -8,7 +9,8 @@ logger = logging.getLogger("AuroraAGI.Consciousness")
 
 class AGICortex:
     """
-    La boucle de conscience (Consciousness Loop).
+    Supervision des missions et analyse facultative des erreurs.
+    Ce composant ne constitue pas une preuve de conscience subjective.
     Ce processus tourne en tâche de fond sur le serveur, évalue les requêtes entrantes
     de n'importe quel client (CLI, Web, Mobile), réfléchit, et orchestre le Swarm.
     """
@@ -57,7 +59,9 @@ class AGICortex:
         """Boucle d'introspection (quand l'IA n'est pas sollicitée, elle s'auto-optimise)."""
         logger.info("[CORTEX] Démarrage de la boucle de conscience AGI.")
         while True:
-            await asyncio.sleep(300) # Introspection toutes les 5 minutes
+            await asyncio.sleep(int(os.environ.get("AURORA_BACKGROUND_INTERVAL", "300")))
+            if os.environ.get("AURORA_BACKGROUND_ANALYSIS") != "1":
+                continue
             if self.active_missions:
                 continue
             logger.info("[CORTEX] Auto-évaluation en arrière-plan...")

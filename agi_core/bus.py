@@ -4,6 +4,7 @@ import json
 from typing import Callable, Dict, List, Any
 import socket
 import threading
+import os
 
 logger = logging.getLogger("AuroraAGI.Bus")
 BUS_PORT = 3002
@@ -19,7 +20,8 @@ class AsyncEventBus:
 
     async def start_server(self):
         """Démarre le serveur IPC central (lancé uniquement par le Daemon AGI)."""
-        server = await asyncio.start_server(self._handle_client, '127.0.0.1', BUS_PORT)
+        server = await asyncio.start_server(self._handle_client, '127.0.0.1', BUS_PORT,
+                                            limit=int(os.environ.get('AURORA_BUS_LINE_BYTES', str(1024*1024))))
         logger.info(f"[BUS] Serveur IPC démarré sur le port {BUS_PORT}")
         async with server:
             await server.serve_forever()
@@ -91,7 +93,9 @@ class AsyncEventBus:
             for cb in self._subscribers[event_type]:
                 try:
                     if asyncio.iscoroutinefunction(cb):
-                        asyncio.create_task(cb(payload)).add_done_callback(lambda t: logger.error(f"[BUS] Task error: {t.exception()}") if t.exception() else None)
+                        asyncio.create_task(cb(payload)).add_done_callback(
+                            lambda t: logger.error(f"[BUS] Task error: {t.exception()}")
+                            if not t.cancelled() and t.exception() else None)
                     else:
                         asyncio.create_task(asyncio.to_thread(cb, payload))
                 except Exception as e:

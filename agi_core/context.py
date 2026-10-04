@@ -12,6 +12,13 @@ from contextlib import contextmanager
 
 
 def data_dir() -> Path:
+    if os.environ.get("AURORA_DATA_DIR"):
+        return Path(os.environ["AURORA_DATA_DIR"]).expanduser()
+    if os.name == "nt" and not os.environ.get("XDG_DATA_HOME"):
+        legacy = Path.home() / '.local/share/aurora'
+        if any((legacy/name).exists() for name in ('dynamic_agents.json','cli_sessions.json','missions.sqlite3','connections.json')):
+            return legacy
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local") / "aurora"
     return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "aurora"
 
 

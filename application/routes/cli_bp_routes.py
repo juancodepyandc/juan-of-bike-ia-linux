@@ -15,11 +15,11 @@ cli_bp = Blueprint('cli_bp', __name__)
 
 import copy as _cli_copy
 
-_CLI_VERSION = "1.0.0"
+_CLI_VERSION = "1.3.0"
 
 # --- Migration vers XDG Base Directory Specification ---
-_xdg_data_home = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-_AURORA_DATA_DIR = os.path.join(_xdg_data_home, "aurora")
+from agi_core.context import data_dir as _aurora_data_dir
+_AURORA_DATA_DIR = str(_aurora_data_dir())
 os.makedirs(_AURORA_DATA_DIR, exist_ok=True)
 
 _CLI_SESSIONS_PATH = os.path.join(_AURORA_DATA_DIR, "cli_sessions.json")
@@ -40,28 +40,6 @@ for old_name, new_path in [
         import shutil
         shutil.move(old_path, new_path)
 # --------------------------------------------------------
-
-_CLI_MISSIONS = {}  # mission_id -> state (in-memory; see _cli_prune_missions for retention)
-_CLI_MISSIONS_TTL = 24 * 3600  # seconds before a finished mission is pruned from memory
-_CLI_MISSIONS_LOCK = threading.Lock()
-
-
-def _cli_prune_missions(force_ttl: float | None = None):
-    """Remove finished missions older than the TTL to bound memory growth."""
-    ttl = force_ttl if force_ttl is not None else _CLI_MISSIONS_TTL
-    now = time.time()
-    with _CLI_MISSIONS_LOCK:
-        for mid in list(_CLI_MISSIONS):
-            mission = _CLI_MISSIONS[mid]
-            if not isinstance(mission, dict):
-                continue
-            finished = mission.get("finished_at")
-            if finished is not None and now - finished > ttl:
-                _CLI_MISSIONS.pop(mid, None)
-            elif finished is None and mission.get("status") in ("completed", "failed", "stopped"):
-                continue
-            elif finished is None and now - mission.get("started_at", now) > ttl * 4:
-                _CLI_MISSIONS.pop(mid, None)
 
 _CLI_PERMISSION_LEVELS = {
     "SAFE": {
@@ -127,7 +105,7 @@ _CLI_JSON_LOCKS = {}
 def _cli_json_lock(path):
     lock = _CLI_JSON_LOCKS.get(path)
     if lock is None:
-        lock = _CLI_JSON_LOCKS.setdefault(path, threading.Lock())
+        lock = _CLI_JSON_LOCKS.setdefault(path, threading.RLock())
     return lock
 
 
@@ -1140,262 +1118,62 @@ def cli_artifact_download(token):
         conditional=True, etag=metadata["sha256"], max_age=0,
     )
 
-@cli_bp.route("/api/cli/mission/start", methods=["POST"])
-@_cli_auth_required
-def cli_mission_start():
-    """Start an autonomous mission. Returns mission_id for SSE streaming."""
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify({"ok": False, "error": "JSON object required"}), 400
-    request_text = data.get("request", "")
-    if not isinstance(request_text, str) or not request_text.strip():
-        return jsonify({"ok": False, "error": "request text required"}), 400
-    if len(request_text) > 5000:
-        return jsonify({"ok": False, "error": "request text exceeds 5000 characters"}), 400
-    request_text = request_text.strip()
-    for field in ("workspace", "permissions", "model", "session_id"):
-        if field in data and not isinstance(data[field], str):
-            return jsonify({"ok": False, "error": f"{field} must be a string"}), 400
-    workspace = data.get("workspace", WORKSPACE)
-    permissions = data.get("permissions", "AUTONOMOUS")
-    if permissions not in _CLI_PERMISSION_LEVELS:
-        return jsonify({"ok": False, "error": "unknown permission level"}), 400
-    session_id = data.get("session_id")
-    model = data.get("model") or _ext_default_model()
-    mission_id = "mis_" + _secrets.token_hex(8)
-
-    # Récupération de l'historique et persistance du message utilisateur dans la session
-    history = []
-    if session_id:
-        try:
-            store = _cli_load_json(_CLI_SESSIONS_PATH)
-            for s in store.get("sessions", []):
-                if s.get("id") == session_id:
-                    raw_messages = s.get("messages", [])
-                    history = [
-                        {"role": m.get("role", "user"), "content": m.get("content", "")}
-                        for m in raw_messages[-10:]
-                        if m.get("content")
-                    ]
-                    s.setdefault("messages", []).append({
-                        "role": "user",
-                        "content": request_text,
-                        "mission_id": mission_id,
-                        "ts": time.time()
-                    })
-                    s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
-                    break
-            _cli_save_json(_CLI_SESSIONS_PATH, store)
-        except Exception as e:
-            print(f"[BRIDGE] Error updating session with user request: {e}")
-
-    mission = {
-        "id": mission_id, "request": request_text, "status": "planning",
-        "workspace": workspace, "permissions": permissions, "model": model,
-        "session_id": session_id,
-        "started_at": time.time(), "finished_at": None,
-        "steps": [], "files_changed": [], "sources_consulted": [],
-        "agents_used": [], "errors": [],
-        "events": [],  # SSE events buffer
-        "accumulated_text": "",
-    }
-    _cli_prune_missions()
-    with _CLI_MISSIONS_LOCK:
-        _CLI_MISSIONS[mission_id] = mission
-    
-    # Rapatriement de la logique vers le vrai Cerveau (Daemon AGI) via IPC
-    published = _cli_publish_ipc("mission.start", {
-        "mission_id": mission_id,
-        "session_id": session_id,
-        "request": request_text,
-        "history": history,
-        "workspace": workspace,
-        "permissions": permissions,
-        "model": model
-    })
-    if not published:
-        with _CLI_MISSIONS_LOCK:
-            _CLI_MISSIONS.pop(mission_id, None)
-        return jsonify({"ok": False, "error": "mission daemon unavailable"}), 503
-    
-    return jsonify({"ok": True, "mission_id": mission_id, "status": "planning"})
-
-
-
+# The execution journal is shared with the daemon; SSE does not rely on this process's RAM.
 import socket
-
-def _cli_record_mission_event(payload):
-    if not isinstance(payload, dict):
-        return
-    mission_id = payload.get("mission_id")
-    event = payload.get("event")
-    if not isinstance(mission_id, str) or not isinstance(event, dict):
-        return
-    event_type = event.get("type")
-    if not isinstance(event_type, str) or not event_type:
-        return
-    mission = _CLI_MISSIONS.get(mission_id)
-    if not mission or mission.get("status") in ("completed", "failed", "stopped"):
-        return
-    event = dict(event)
-    if event_type == "error":
-        event.setdefault("message", event.get("error", "Mission failed"))
-        mission["errors"].append(event)
-        mission["finished_at"] = time.time()
-        status = "failed"
-    elif event_type == "mission_complete":
-        result_text = event.get("result", "") or mission.get("accumulated_text", "")
-        mission["result"] = result_text
-        mission["finished_at"] = time.time()
-        status = "stopped" if event.get("stopped") else "completed"
-        # Enregistrement du résultat assistant dans la session pour la mémoire conversationnelle
-        session_id = mission.get("session_id")
-        if session_id and result_text:
-            try:
-                store = _cli_load_json(_CLI_SESSIONS_PATH)
-                for s in store.get("sessions", []):
-                    if s.get("id") == session_id:
-                        s.setdefault("messages", []).append({
-                            "role": "assistant",
-                            "content": result_text,
-                            "mission_id": mission_id,
-                            "ts": time.time()
-                        })
-                        s["updated_at"] = datetime.datetime.utcnow().isoformat() + "Z"
-                        break
-                _cli_save_json(_CLI_SESSIONS_PATH, store)
-            except Exception as e:
-                print(f"[BRIDGE] Error recording assistant response in session: {e}")
-    else:
-        if event_type == "step_start":
-            mission["steps"].append(event)
-        elif event_type == "token":
-            mission["accumulated_text"] = mission.get("accumulated_text", "") + event.get("content", "")
-        status = "stopping" if mission.get("status") == "stopping" else "running"
-    mission["events"].append(event)
-    mission["status"] = status
+from mission_api import register_mission_routes
 
 
-def _ipc_mission_listener():
-    import time
-    while True:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect(('127.0.0.1', 3002))
-                s.sendall((json.dumps({"action": "subscribe"}) + "\n").encode('utf-8'))
-                f = s.makefile('r', encoding='utf-8')
-                for line in f:
-                    if not line: break
-                    try:
-                        msg = json.loads(line)
-                        if isinstance(msg, dict) and msg.get("event_type") == "mission.event":
-                            _cli_record_mission_event(msg.get("payload"))
-                    except Exception as e:
-                        print(f"[BRIDGE] JSON Parse error in listener: {e}")
-        except Exception:
-            time.sleep(2)
-
-import threading
-threading.Thread(target=_ipc_mission_listener, daemon=True).start()
-
-def _cli_publish_ipc(event_type, payload):
+def _cli_publish_ipc(event_type,payload):
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(2.0)
-            s.connect(('127.0.0.1', 3002))
-            msg = json.dumps({"action": "publish", "event_type": event_type, "payload": payload}) + "\n"
-            s.sendall(msg.encode())
+        with socket.create_connection(('127.0.0.1',3002),timeout=2) as connection:
+            connection.sendall((json.dumps({"action":"publish","event_type":event_type,"payload":payload})+"\n").encode())
         return True
-    except OSError as e:
-        print(f"[BRIDGE] IPC Bus error: {e}")
+    except OSError:
         return False
 
-@cli_bp.route("/api/cli/mission/<mission_id>/input", methods=["POST"])
-@_cli_auth_required
-def cli_mission_input(mission_id):
 
-    """Reçoit des inputs temporaires (ex: sudo password) du client et les injecte dans la mission en cours."""
-    mission = _CLI_MISSIONS.get(mission_id)
-    if not mission:
-        return jsonify({"ok": False, "error": "mission not found"}), 404
-    data = request.get_json(silent=True) or {}
-    val = data.get("value", "")
-    itype = data.get("input_type", "text")
-    # L'input est stocké temporairement dans l'état de la mission en mémoire RAM (jamais sur le disque).
-    # Le thread de la mission le consomme puis l'efface.
-    mission.setdefault("pending_inputs", []).append({"type": itype, "value": val, "ts": time.time()})
-    return jsonify({"ok": True, "status": "input_received"})
+def _mission_history(session_id):
+    for session in _cli_load_json(_CLI_SESSIONS_PATH).get('sessions',[]):
+        if session.get('id')==session_id:
+            return [{"role":m.get('role','user'),"content":m.get('content','')[:3000]+('\n[historique tronqué]' if len(m.get('content',''))>3000 else '')}
+                    for m in session.get('messages',[])[-10:] if m.get('content')]
+    return []
 
 
-@cli_bp.route("/api/cli/mission/<mission_id>/stream", methods=["GET"])
-@_cli_auth_required
-def cli_mission_stream(mission_id):
-    """Replay buffered mission events after the client's acknowledged cursor."""
-    mission = _CLI_MISSIONS.get(mission_id)
-    if not mission:
-        return jsonify({"ok": False, "error": "mission not found"}), 404
-    cursor = request.headers.get("Last-Event-ID", "0")
-    if not re.fullmatch(r"[0-9]{1,20}", cursor):
-        return jsonify({"ok": False, "error": "invalid Last-Event-ID"}), 400
-    cursor = int(cursor)
-    if cursor > len(mission.get("events", [])):
-        return jsonify({"ok": False, "error": "Last-Event-ID exceeds mission history"}), 409
-
-    def generate():
-        yield ": " + (" " * 4096) + "\n\n"  # Massive Padding to force flush headers and buffer
-        last_idx = cursor
-        while True:
-            events = mission.get("events", [])
-            while last_idx < len(events):
-                evt = events[last_idx]
-                last_idx += 1
-                yield f"id: {last_idx}\ndata: {json.dumps(evt)}\n\n"
-                if evt.get("type") in ("mission_complete", "error") and mission.get("status") in ("completed", "failed", "stopped"):
-                    return
-            if mission.get("status") in ("completed", "failed", "stopped") and last_idx >= len(events):
-                return
-            import time as _time
-            # Send heartbeat with enough padding to FORCE Cloudflare to flush immediately
-            yield ": " + (" " * 2048) + "\n\n"
-            yield f"data: {json.dumps({'type': 'heartbeat', 'elapsed': _time.time() - mission.get('started_at', _time.time())})}\n\n"
-            _time.sleep(0.5)
-
-    return Response(stream_with_context(generate()), mimetype="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache, no-transform",
-                        "X-Accel-Buffering": "no",
-                        "Content-Type": "text/event-stream",
-                        "Connection": "keep-alive",
-                    })
+def _mission_accepted(mid,payload):
+    if not payload.get('session_id'):
+        return
+    with _cli_json_lock(_CLI_SESSIONS_PATH):
+        store = _cli_load_json(_CLI_SESSIONS_PATH)
+        for session in store.get('sessions',[]):
+            if session.get('id')==payload['session_id']:
+                session.setdefault('messages',[]).append({'role':'user','content':payload['request'],'mission_id':mid,'ts':time.time()})
+                session['updated_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+                _cli_save_json(_CLI_SESSIONS_PATH,store)
+                break
 
 
-@cli_bp.route("/api/cli/mission/<mission_id>/status", methods=["GET"])
-@_cli_auth_required
-def cli_mission_status(mission_id):
-    mission = _CLI_MISSIONS.get(mission_id)
-    if not mission:
-        return jsonify({"ok": False, "error": "mission not found"}), 404
-    elapsed = round((mission.get("finished_at") or time.time()) - mission["started_at"], 1)
-    return jsonify({
-        "ok": True, "id": mission_id, "status": mission["status"],
-        "elapsed_seconds": elapsed,
-        "steps": len(mission.get("steps", [])),
-        "files_changed": len(mission.get("files_changed", [])),
-        "errors": len(mission.get("errors", [])),
-    })
+def _mission_completed(item):
+    session_id = item['payload'].get('session_id')
+    if not session_id or not item.get('result'):
+        return
+    with _cli_json_lock(_CLI_SESSIONS_PATH):
+        store = _cli_load_json(_CLI_SESSIONS_PATH)
+        for session in store.get('sessions',[]):
+            if session.get('id') != session_id:
+                continue
+            messages = session.setdefault('messages',[])
+            if not any(m.get('mission_id')==item['id'] and m.get('role')=='assistant'
+                       and m.get('content')==item['result'] for m in messages):
+                messages.append({'role':'assistant','content':item['result'],
+                                 'mission_id':item['id'],'ts':time.time(),
+                                 'status':item['status']})
+                session['updated_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+                _cli_save_json(_CLI_SESSIONS_PATH,store)
+            break
 
 
-@cli_bp.route("/api/cli/mission/<mission_id>/stop", methods=["POST"])
-@_cli_auth_required
-def cli_mission_stop(mission_id):
-    mission = _CLI_MISSIONS.get(mission_id)
-    if not mission:
-        return jsonify({"ok": False, "error": "mission not found"}), 404
-    if mission["status"] in ("completed", "failed", "stopped"):
-        return jsonify({"ok": True, "status": mission["status"]})
-    previous = mission["status"]
-    mission["status"] = "stopping"
-    if not _cli_publish_ipc("mission.stop", {"mission_id": mission_id}):
-        mission["status"] = previous
-        return jsonify({"ok": False, "error": "mission daemon unavailable"}), 503
-    return jsonify({"ok": True, "status": mission["status"]}), 202
+_MISSION_STORE = register_mission_routes(
+    cli_bp,_cli_auth_required,workspace=WORKSPACE,model_default=_ext_default_model,
+    publish=_cli_publish_ipc,history_loader=_mission_history,on_accepted=_mission_accepted,
+    on_completed=_mission_completed)

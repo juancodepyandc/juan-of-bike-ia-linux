@@ -83,8 +83,12 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
 
     async def test_mission_runs_two_workers_concurrently_without_inference(self):
         with tempfile.TemporaryDirectory() as root:
-            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local")
-            replies = iter([json.dumps({"tool": "spawn_agent", "args": {"tasks": ["One", "Two"]}}),
+            from agi_core.runtime_policy import RuntimePolicy
+            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", policy=RuntimePolicy(parallel_workers=2))
+            (Path(root)/'reports.txt').write_text('concurrency fixture')
+            replies = iter([json.dumps({"tool":"set_plan","args":{"steps":["Collect reports"],"criteria":["Reports fixture"]}}),
+                            json.dumps({"tool": "spawn_agent", "args": {"tasks": ["One", "Two"]}}),
+                            json.dumps({"tool":"verify","args":{"checks":[{"kind":"file","path":"reports.txt","criterion":"Reports fixture"}]}}),
                             json.dumps({"tool": "finish", "args": {"message": "Reports collected"}})])
             active, maximum = 0, 0
             async def chat(messages):
@@ -96,7 +100,7 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.01)
                 active -= 1
                 return "Checked " + task
-            with patch.object(parent, "_chat_chunks", chat), patch.object(parent, "_run_sub_agent", worker), patch.object(parent, "_emit", AsyncMock()):
+            with patch.object(parent, "_chat_chunks", chat), patch.object(parent, "_run_sub_agent", worker), patch.object(parent, "_emit", AsyncMock()), patch.object(parent,"_review_completion",AsyncMock(return_value={"approved":True,"unmet":[],"reason":"Concurrency test only"})):
                 self.assertEqual(await parent.run(), "Reports collected")
             self.assertEqual(maximum, 2)
 

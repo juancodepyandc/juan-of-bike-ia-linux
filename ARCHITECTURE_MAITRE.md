@@ -70,6 +70,18 @@ Le CLI local était sur `master`, 15 commits derrière `origin/main`. Sa branche
 
 Les contrôles exécutés comprennent les tests CLI et serveur avec modèles substitués, les types TypeScript, le build web et la conformance comportementale existante. Ils ne prouvent ni une génération réelle, ni le trajet public SSE, ni la compatibilité sur un Windows/macOS réel, ni une AGI. Les relevés JSON et journaux détaillés restent privés dans `~/maintenance-pc-2026-10-04`. L'index et les empreintes de septembre restent historiques ; `--check-code` signale les écarts encore à revoir, sans les approuver automatiquement.
 
+### 1.5 Missions vérifiables et interface terminal JOBIA 1.3.0
+
+Le moteur des missions conserve l'objectif original séparément du contexte de dialogue, de la mémoire et des conseils. Une boucle unique remplace l'Oracle et le Gardien exécutés systématiquement avant chaque tâche. Elle établit un plan pour les actions, découvre les scripts disponibles, expérimente, conserve les observations et vérifie les critères avant de terminer. Une revue avec un contexte LLM séparé recherche les écarts ; c'est un jugement du modèle, pas une preuve empirique ni une note de qualité.
+
+`agi_core/mission_store.py` conserve les demandes, événements numérotés, états et checkpoints dans SQLite. Les clés d'idempotence évitent une seconde acceptation de la même requête ; un bail désigne un seul exécutant et rejette les événements/checkpoints de son prédécesseur. Les opérations de fichiers volumineuses s'exécutent hors de la boucle asynchrone pour laisser passer arrêt et renouvellement du bail. Le bridge peut être redémarré sans perdre le flux. Une action interrompue reste de résultat inconnu : sa reprise impose d'inspecter l'état avant de la réexécuter. Cela ne garantit pas une transaction exactement une fois avec chaque outil externe.
+
+JOBIA 1.3.0 ajoute une interface plein écran réelle avec conversation persistante, plan, critères, observations, fichiers reçus, choix de thème/modèle, journal, arrêt et reprise. Les tours précédents sont transmis au pont comme contexte consultatif borné, séparé de la requête actuelle ; une demande incertaine conserve exactement son payload et sa clé pour réessayer son acceptation. Les opérations locales de cette interface sont exécutées dans un processus séparé pour permettre l'arrêt de l'arbre de processus. Les scripts d'installation Linux/macOS et Windows partagent toujours le même installateur ; la détection de version Windows est corrigée et la mise à jour ne force plus la réinstallation de toutes les dépendances.
+
+Les réglages Ollama sont ceux du modèle/moteur par défaut, avec surcharge explicite `AURORA_MODEL_OPTIONS`. Les durées et débits viennent des réponses du moteur, sans score de performance inventé. Les outils et l'historique envoyés au modèle restent bornés ; le journal durable conserve les événements. La concurrence est configurable et vaut un par défaut pour éviter de multiplier les chargements sans mesure de capacité. Les analyses de fond sont facultatives et désactivées par défaut pour privilégier la requête en cours. L'état observable du runtime n'est pas une preuve de conscience subjective.
+
+Les tests utilisent des modèles substitués et des services HTTP temporaires : écritures/lectures et commandes réelles dans des dossiers temporaires, critères échoués puis réparés, coupure après un effet sans rejeu automatique, idempotence, bail, SQLite après réouverture, SSE après reconstruction du bridge, revue refusant une conclusion non étayée et vrai clavier de l'interface plein écran. Le stockage Auto-RL utilise des verrous Windows/POSIX et des fichiers UTF-8 ; cela ne rend pas son contrôleur d'entraînement Linux portable. Les workflows GitHub ajoutent une matrice Linux/Windows/macOS et Python 3.10/3.13 ; leur résultat est à consulter pour le commit publié. Aucun essai réel des modèles, aucune connexion MCP effective, aucun tunnel public ni unification complète des pipelines React/CLI n'est démontré par ces contrôles.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
@@ -93,7 +105,9 @@ flowchart TD
   Bus --> AGI[Daemon agi_core]
   AGI --> Ollama
   AGI --> Python
-  AGI --> Memory[Mémoire Chroma]
+  AGI --> Memory[Mémoire Chroma + SQLite]
+  AGI --> Journal[Journal durable de missions SQLite]
+  Bridge --> Journal
   IPC --> Ollama
   IPC --> Comfy
   IPC --> Python
@@ -188,7 +202,7 @@ Les travaux ci-dessous sont des **propositions**, pas des correctifs exécutés 
 | A02 | P0 | Historique : le diagnostic annonçait SSE sans flux réel ; désormais son état est `unverified` et la readiness mission exige une réponse IPC avec abonnement `mission.start` | Distinguer liveness, readiness et test fonctionnel ; vérifier daemon, abonnement IPC et événement de test non destructif ; rendre un statut dégradé et un code retour exploitable |
 | A03 | P0 | Contrôle direct des outils ajouté : SAFE bloque écritures/commandes, sous-agents bornés par les permissions du parent ; le shell de l’hôte reste sans sandbox OS | Centraliser l’autorisation au point d’exécution, y compris sous-agents ; tests négatifs SAFE/STANDARD et frontières de workspace ; aucun contournement par shell |
 | A04 | P0 | Plusieurs API non-CLI exposent fichiers, commandes ou moteurs ; présence d’un décorateur seule insuffisante pour juger la couverture | Matrice routes × authentification × capacité × origine ; refus vérifié des appels non autorisés, contrôle CORS et exposition du bridge ; ne pas ouvrir un tunnel en assimilant URL difficile à deviner et protection |
-| A05 | P0 | `_CLI_MISSIONS` et `events` résident en mémoire ; reprise SSE limitée à ce processus | Journal durable de missions/événements, curseur persistant et idempotence ; coupure client puis redémarrage bridge sans double exécution ni faux succès ; borne mémoire et rétention |
+| A05 | P0 | Corrigé pour le journal des missions : SQLite, clés d'idempotence, événements et checkpoints, curseurs persistants et baux | Étendre la reprise propre à chaque moteur ; ne pas confondre le journal et une garantie exactement une fois pour les commandes externes ; valider aussi le tunnel réel |
 | A06 | P1 | UI Code : `qwen3-coder:30b` ; CLI/AGI : priorité à `qwen3-coder-next:q4_K_M` | Un registre commun des modèles et profils, overrides explicites par mission ; mêmes prompt/seed/paramètres comparés entre clients et différence documentée |
 | A07 | P1 | Corrigé pour les skills : `agi_core/context.py` découvre et injecte les instructions ; MCP et connexions restent des déclarations non testées | Charger réellement les skills/MCP/connexions utiles et tracer leur usage ; un skill de test doit changer le contexte de la mission, pas seulement apparaître dans `doctor` |
 | A08 | P1 | Lancement shell et unités systemd distincts ; variables Ollama exportées seulement dans le lanceur | Supervision unifiée, démarrage idempotent, dépendances daemon/bridge, arrêt propre ; deux démarrages ne créent pas de doublons et la configuration effective est lisible |
@@ -353,15 +367,16 @@ sequenceDiagram
   participant B as Bridge
   participant D as Daemon/bus 3002
   participant O as Ollama
-  C->>B: POST /api/cli/mission/start
-  B->>B: Crée état mission et historique
+  C->>B: POST /api/cli/mission/start + clé d’idempotence
+  B->>B: Accepte une demande durable SQLite
   B->>D: mission.start (TCP JSON)
   C->>B: GET flux mission, Last-Event-ID
-  D->>O: Oracle puis critique
-  D->>D: Agent d’exécution et outils
+  D->>O: Planification et appels d’outils fondés sur l’objectif
+  D->>D: Outils réels, contrôles et checkpoint
+  D->>O: Revue de fin fondée sur les observations
   D-->>B: mission.event
   B-->>C: Événements SSE numérotés
-  D-->>B: mission_complete ou error
+  D-->>B: mission_complete, blocked, stopped ou error
   C->>B: Récupération des artefacts
 ```
 
@@ -371,18 +386,22 @@ La présence d’Ollama et d’un HTTP 200 de statut ne suffit pas si le daemon 
 
 - `agi_core/bus.py` : pub/sub local et TCP JSON par ligne ; diffusion réseau aux clients, filtrage côté consommateur. Ce n’est pas une file durable ni un broker avec accusés de réception persistants.
 - `aurora_agi_daemon.py` : initialise le cortex, abonne `mission.start/stop`, suit les tâches actives et annule sur demande.
-- `consciousness.py` : mémoire, superviseur, traitement de requêtes et introspection périodique, interrompue pour les missions utilisateur.
-- `swarm.py` : contexte/historique/RAG, approche Oracle, critique, agent d’exécution et événements. Le nom Swarm ne garantit pas que toutes les étapes sont parallèles.
-- `llm_gateway.py` : appels Ollama asynchrones, génération complète/stream, budget de contexte 16 384 et paramètres actuellement inscrits dans le code.
-- `mission_agent.py` : dialogue avec le modèle, appels outils, générations, sorties bornées et arrêt des sous-processus. Le contexte partagé charge les instructions des skills ; MCP reste déclaré sans preuve d’exécution. `create_skill` préserve les fichiers existants, `create_agent` conserve les rôles dynamiques, `spawn_agent` traite une ou deux tâches indépendantes en parallèle et peut réutiliser un rôle enregistré.
+- `consciousness.py` : mémoire, superviseur, traitement de requêtes ; analyse de fond facultative, interrompue pour les missions utilisateur. Ce nom historique ne démontre pas une conscience.
+- `swarm.py` : contexte/historique/RAG puis boucle d'exécution unique. L'objectif original n'est plus remplacé par un plan présenté comme validé avant son exécution.
+- `llm_gateway.py` : transport Ollama asynchrone, streaming contrôlé, options natives ou explicites, fragments regroupés, métriques effectivement retournées. Une fin de flux sans marque de fin n'est pas une réponse complète.
+- `mission_agent.py` : objectif, plan, observations, critères, contrôles et revue de fin ; checkpoint avant les effets, arrêt des sous-processus, réutilisation de la connexion HTTP et contexte borné. Skills et rôles persistants sont chargés. Les workers utilisent une concurrence explicite (`AURORA_PARALLEL_WORKERS`) et ne dépassent pas les permissions du parent ; ils ne lancent pas récursivement d'autres workers.
+- `mission_tools.py` : découverte/inspection de scripts sans exécution, outils de projet Python, arguments effectifs, lectures paginées, recherche et sources consultées avec empreinte, vérifications de fichiers/commandes/sources et mesures du runtime. Une liste de liens de recherche n'est pas une source consultée.
+- `mission_store.py`, `application/mission_api.py` : journal SQLite commun au daemon et au bridge, événements dédupliqués, baux, clés d'idempotence, liste, état, SSE durable, arrêt, reprise et changement explicite de modèle pour le même objectif.
 - `memory.py` : Chroma si disponible et copie SQLite persistante pour la recherche lexicale de repli. `AURORA_MEMORY_DIR` surcharge le chemin ; le `db_vector` existant est conservé, sinon les données utilisent le répertoire Aurora utilisateur. Un souvenir est une donnée, pas une instruction faisant autorité.
 - `payload_manager.py`, `explorer.py` : aides au contexte et à l’exploration ; l’index fournit leurs points de définition.
 
 ### 9.3 Garanties et manques
 
-Le bridge conserve les événements des missions dans un dictionnaire en mémoire ; le SSE peut reprendre après un curseur et refuser un curseur incohérent. Cela aide lors d’une coupure client, mais ne constitue pas une reprise durable après redémarrage serveur. L’état JSON des sessions n’est pas l’équivalent d’un journal d’exécution.
+Le journal est durable dans le répertoire de données Aurora, surcharge `AURORA_MISSION_DB`. Les événements SSE sont ordonnés et rejouables après le redémarrage du bridge. Les checkpoints enregistrent le but, le plan, les observations récentes, les critères, l'action en cours et la conversation bornée. Une reprise accorde un nouveau budget de tours et repart après le curseur du précédent événement terminal ; elle ne transforme pas une issue inconnue en succès. `watch`/`attach` suivent une mission sans la réexécuter.
 
-Une amélioration complète doit définir l’acceptation de mission, l’idempotence, l’état terminal, le propriétaire, les limites de file, la rétention, les artefacts partiels et la reprise de chaque moteur. Ne jamais relancer aveuglément un POST de mission à la suite d’une coupure de connexion.
+Les missions terminées ont une rétention configurable (`AURORA_MISSION_RETENTION_SECONDS`, défaut 14 jours). Les snapshots de fichiers ont leur rétention propre. Le shell reste sans sandbox OS ; des outils externes et les anciens pipelines ont des contrats distincts. Les sessions de dialogue JSON ne sont pas une transaction SQLite commune avec chaque événement de mission. Les critères mécaniques ne prouvent pas à eux seuls la conformité sémantique : celle-ci demande une évaluation appropriée au domaine et des essais réels.
+
+Paramètres explicites : `AURORA_MODEL_OPTIONS` (objet JSON d'options Ollama), `AURORA_DEFAULT_MODEL`, `AURORA_MISSION_MAX_STEPS` (128, 0 désactive cette borne), `AURORA_COMMAND_TIMEOUT`, `AURORA_STALL_ATTEMPTS`, `AURORA_PARALLEL_WORKERS`, `AURORA_CONCURRENT_MISSIONS`, `AURORA_TOOL_OUTPUT_CHARS`, `AURORA_CONTEXT_CHARS`. Ce sont des budgets et réglages, pas des mesures de qualité. `AURORA_BACKGROUND_ANALYSIS=1` active les diagnostics de fond facultatifs ; ils ne modifient pas automatiquement le code et n'effacent plus le journal de crash.
 
 Sur la mémoire de conversation (`conversationMemory.ts`, couvert par les mesures 19/42/43) : le dédoublonnage compare le `contentHash` `kind::text` **byte-identique après `trim()`** — une variante de casse ou d’accent crée une entrée distincte, et c’est un choix documenté, pas un bug. `touch()` incrémente `usageCount` et pose `lastUsedAt` ; `removeMemory()` retire l’entrée et rééquilibre la fréquence documentaire ; le rappel pondère importance × BM25 avec rabais de fraîcheur (demi-vie 14 jours) et l’élagage respecte les entrées épinglées.
 
@@ -408,7 +427,7 @@ Deux commandes portaient auparavant le nom `run`, ce qui masquait la mission dis
 
 ### 10.3 Transport, fichiers et permissions
 
-`bridge.py` fournit HTTP JSON et SSE avec reprise par `Last-Event-ID`, contrôle de séquence et reprises bornées des GET. Un POST n'est pas rejoué après une coupure. La reprise reste limitée à la durée de vie du bridge : aucune reprise durable après son redémarrage n'est revendiquée.
+`bridge.py` fournit HTTP JSON et SSE avec reprise par `Last-Event-ID`, contrôle de séquence et reprises bornées des GET. Une nouvelle mission porte une clé d'idempotence. L'interface conserve une demande dont l'acceptation est inconnue : `/retry` emploie la même clé et le même contenu. `/attach ID` suit une mission existante ; `/resume ID` reprend une mission interrompue/arrêtée/échouée/bloquée à son checkpoint. Le bridge conserve le journal sur disque, au-delà de son redémarrage. Une reprise peut utiliser un autre modèle explicitement choisi sans changer le but initial.
 
 Les artefacts sont instantanés côté serveur dans `application/cli_artifacts.py`. Le client `transfers.py` contrôle noms, confinement, taille et SHA-256, puis termine atomiquement le fichier reçu. Les tests exécutés utilisent des données temporaires et un serveur simulé, avec réception d'un fichier réel vérifié sur disque ; le tunnel public n'est pas testé.
 
@@ -416,15 +435,28 @@ SAFE interdit les outils directs d'écriture, commandes et création. Les lectur
 
 ### 10.4 Interface et validation
 
-Les thèmes `jobia`, `otter`, `abyss`, `plain` et les animations existantes viennent de `themes/` et `core/animation.py`. Options : `--theme`, `--color auto|always|never`, `--animation auto|full|reduced|none`. Les couleurs choisies sont appliquées au Console Rich réellement utilisé ; `NO_COLOR` est respecté et les missions utilisent le renderer actif. Le mode non animé affiche la progression sans lancer de spinner. Les tests vérifient rendu, sorties sans ANSI, terminaux étroits et commande de mission, avec plateformes absentes simulées.
+`jobia` ou `jobia ui` ouvre un espace plein écran basé sur prompt_toolkit : conversation conservée, objectif, plan, critères, preuves, fichiers reçus, journal et mesures du moteur. La colonne latérale s'efface sur les terminaux étroits. L'animation décrit une opération réellement active, sans pourcentage inventé. `jobia ui --text` conserve le parcours linéaire ; un pipe affiche une sortie statique et ne bloque pas en attendant des touches.
+
+Raccourcis : F2 thème, F3 modèle servi observé, F4 conversation/journal/fichiers, F5 diagnostic, Tab navigation, Ctrl+C arrêt, Ctrl+Q sortie, Ctrl+N nouveau dialogue, Alt+Entrée nouvelle ligne. Commandes de l'espace : `/missions`, `/attach ID`, `/resume ID`, `/retry`, `/models`, `/theme`, `/mode`, `/permissions`, `/new`, `/quit`. Une demande locale s'exécute dans un processus séparé ; sa sortie et son reçu restent privés dans `ui-runs`, pour permettre l'arrêt et conserver les diagnostics. Une mission distante garde son identifiant dans la conversation pour un rattachement ultérieur.
+
+Thèmes : `jobia`, `otter`, `abyss`, `plain`. Options globales : `--theme`, `--color auto|always|never`, `--animation auto|full|reduced|none`. Les couleurs et animations suivent les capacités du terminal et `NO_COLOR`. L'installation corrigée lit aussi les métadonnées Windows `Lib/site-packages` et utilise une mise à jour pip ordinaire, sans forcer le remplacement de toutes les dépendances.
 
 ```bash
-jobia --theme jobia --animation reduced preview jobia
+# Dans aurora-remote-cli, sur Linux/macOS :
+git fetch origin
+git switch main
+git pull --ff-only
+./install.sh
+jobia
+
+# Hors interface, pour les missions :
+jobia missions list --json
+jobia missions watch IDENTIFIANT
+jobia missions resume IDENTIFIANT --model MODELE_DISPONIBLE
 jobia doctor --remote --json
-python3 aurora_cli.py mission "Inspecte le projet et propose un plan"
 ```
 
-Les services restent arrêtés pendant les mises à jour. Réparer le pilote et contrôler `nvidia-smi` avant le redémarrage des moteurs ; lancer ensuite des essais réels de conversation, missions, mémoire, agents, skills, livraison et générations, puis le même parcours depuis un client distant.
+Sous Windows, utiliser `./install.ps1` à la place de `./install.sh`, puis un nouveau terminal si le PATH vient d'être configuré. Une installation réelle locale, les tests du clavier et une matrice CI portable vérifient ce client ; ils ne valident pas les moteurs GPU sur chaque OS. La réparation NVIDIA du PC reste un préalable aux essais lourds. Le bundle React/natif n'est pas remplacé par cette interface terminal et sa parité complète reste à établir.
 
 <a id="tunnel"></a>
 ## 11. Tunnel, découverte et publication d’état
@@ -7147,14 +7179,16 @@ Le maître répertorie les blueprints, chemins de routes et handlers, précise l
 Python ≥ 3.10. Référence du serveur : [document maître Aurora](../AuroraIA/ARCHITECTURE_MAITRE.md#cli). Les moteurs ont leurs propres contraintes ; leur disponibilité sur tous les OS n'est pas garantie.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/jobia --help
+git fetch origin
+git switch main
+git pull --ff-only
+./install.sh
+jobia
 ```
 
 Sous Windows : `.venv\Scripts\python.exe` et `.venv\Scripts\jobia.exe`. `install.sh` / `install.ps1` utilisent le même installateur Python. `jobia`, `jbia` et `aurora` exposent le même client.
 
-Le lancement sans commande ouvre l'interface interactive dans un terminal, ou affiche le tableau d'accueil dans un pipe. Thèmes : `jobia`, `otter`, `abyss`, `plain`. Options globales : `--theme`, `--color auto|always|never`, `--animation auto|full|reduced|none`.
+JOBIA 1.3.0 : `jobia` ou `jobia ui` ouvre l'interface plein écran ; un pipe affiche le tableau d'accueil. Conversation, plan, critères, preuves, fichiers reçus et journal suivent les événements réels. F2 thème, F3 modèle, F4 vue, F5 diagnostic, Ctrl+C arrêt, Ctrl+Q sortie. `jobia ui --text` conserve le parcours linéaire. Thèmes : `jobia`, `otter`, `abyss`, `plain`. Options globales : `--theme`, `--color auto|always|never`, `--animation auto|full|reduced|none`.
 
 ```bash
 jobia --theme jobia --animation reduced preview jobia
@@ -7163,13 +7197,13 @@ jobia doctor --remote --json
 jobia mission "Inspecte ce projet et prépare un plan"
 ```
 
-`mission` exécute une tâche sur le serveur ; `run` pilote une boucle locale d'amélioration. Une erreur de mission produit un code de sortie non nul. Les fichiers reçus sont contrôlés par taille et SHA-256. La reprise SSE ne rejoue pas un POST et ne survit pas encore à un redémarrage du bridge.
+`mission` exécute une tâche sur le serveur ; `run` pilote une boucle locale d'amélioration. Une erreur de mission produit un code de sortie non nul. Les fichiers reçus sont contrôlés par taille et SHA-256. Le journal du serveur survit au redémarrage du bridge. `jobia missions list`, `jobia missions watch ID` et `jobia missions resume ID [--model ...]` permettent de retrouver, suivre et reprendre le même objectif. Dans l'interface : `/attach ID`, `/resume ID`, `/retry` pour une acceptation incertaine avec la même clé d'idempotence. Une action de résultat inconnu doit être inspectée avant rejeu.
 
 Configuration privée selon les conventions de l'OS, surcharges `JOBIA_CONFIG_DIR` / `JOBIA_DATA_DIR`, migration des anciennes configurations Aurora sans écrasement. Adresse : argument, `JOBIA_SERVER_URL`, `AURORA_SERVER_URL`, configuration ; clé : `JOBIA_API_KEY`, `AURORA_API_KEY`, configuration. Seule une clé déjà autorisée par le bridge permet la connexion ; ne la publie pas.
 
 `doctor` contrôle le client local ; `doctor --remote` vérifie aussi le daemon et sa capacité à accepter une mission. Un contrôle positif ne prouve pas la qualité d'une génération ou le trajet SSE public. La readiness des moteurs est distincte de leur simple présence sur disque.
 
-Le serveur sait charger les instructions des skills, créer des skills de projet sans écrasement, sauvegarder des rôles et exécuter une ou deux tâches de sous-agents. Les permissions directes sont contrôlées ; les commandes autorisées utilisent encore le shell de l'hôte sans sandbox OS. Aucun comportement AGI ni absence universelle de bugs n'est établi.
+Le serveur conserve l'objectif original, découvre les scripts des modules, mène des expériences, charge les skills, crée des rôles persistants et exécute des tâches de workers avec concurrence configurable. Après une modification, une fin de mission nécessite des contrôles concrets ; une revue LLM de la couverture complète ces mesures sans les remplacer. Ollama utilise ses options natives ou `AURORA_MODEL_OPTIONS` explicite, et les durées/débits viennent du moteur. Les permissions directes sont contrôlées ; les commandes autorisées utilisent encore le shell de l'hôte sans sandbox OS. Aucun comportement AGI ni absence universelle de bugs n'est établi.
 
 Ce README est un export de compatibilité du maître.
 ``````````
