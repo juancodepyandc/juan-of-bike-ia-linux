@@ -74,11 +74,14 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
             create_agent("reviewer", "Check files", "model:local", "FULL", "mis_test")
             parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", "AUTONOMOUS")
             observed = []
-            async def run_worker(worker, task):
-                observed.append(worker.permissions)
+            async def run_worker(child, *, worker=False):
+                observed.append(child.permissions)
+                child.state['status'] = 'completed'
                 return "Checked"
-            with patch.object(AutonomousMissionAgent, "_run_sub_agent", run_worker):
-                self.assertEqual(await parent._spawn_task("Inspect", "reviewer"), "Checked")
+            with patch.object(AutonomousMissionAgent, "run", run_worker):
+                result = await parent._spawn_task("Inspect", "reviewer")
+                self.assertEqual(result['report'], "Checked")
+                self.assertEqual(result['status'], "completed")
             self.assertEqual(observed, ["AUTONOMOUS"])
 
     async def test_mission_runs_two_workers_concurrently_without_inference(self):
@@ -99,10 +102,13 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
                 maximum = max(maximum, active)
                 await asyncio.sleep(0.01)
                 active -= 1
-                return "Checked " + task
+                return {'status':'completed','report':'Checked '+task,'goal':task}
             with patch.object(parent, "_chat_chunks", chat), patch.object(parent, "_run_sub_agent", worker), patch.object(parent, "_emit", AsyncMock()), patch.object(parent,"_review_completion",AsyncMock(return_value={"approved":True,"unmet":[],"reason":"Concurrency test only"})):
                 self.assertEqual(await parent.run(), "Reports collected")
             self.assertEqual(maximum, 2)
+            reports = next(e for e in parent.state['evidence'] if e['tool']=='spawn_agent')
+            self.assertTrue(reports['ok'])
+            self.assertEqual(len(reports['result']['workers']),2)
 
     async def test_concurrent_agent_creation_keeps_both_roles(self):
         with tempfile.TemporaryDirectory() as root, patch.dict("os.environ", {"XDG_DATA_HOME": root}):

@@ -215,7 +215,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.agent._observe_context([{'role':'user','content':'x'*3000}],{'prompt_eval_count':1000,'eval_count':300})
         ratio = self.agent.state['context_chars_per_token']
         self.agent._observe_context([{'role':'user','content':'x'*60000}],{'prompt_eval_count':4096,'eval_count':100})
-        self.assertEqual(self.agent.state['context_chars_per_token'],ratio)
+        self.assertLess(self.agent.state['context_chars_per_token'],ratio)
         self.agent.state['messages'] += [{'role':'user','content':'obsolete '*1000} for _ in range(20)]
         self.agent.state['messages'].append({'role':'user','content':'Latest actual test failed: value is 3, expected 2'})
         messages = self.agent._messages()
@@ -224,6 +224,22 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(self.agent.request_text,messages[2]['content'])
         self.assertLessEqual(sum(len(m['content']) for m in messages),self.agent._context_chars())
         self.assertLess(len(messages),len(self.agent.state['messages']))
+
+    def test_denser_unsaturated_history_recalibrates_from_real_token_counts(self):
+        self.agent.state.update(context_window=4096,context_chars_per_token=5,max_reply_tokens=200)
+        self.agent._observe_context([{'role':'user','content':'x'*6000}],
+                                    {'prompt_eval_count':3000,'eval_count':150})
+        self.assertEqual(self.agent.state['context_chars_per_token'],2)
+        self.assertEqual(self.agent.state['max_reply_tokens'],200)
+        self.assertEqual(self.agent._context_chars(),(4096-200)*2)
+        # A longer sparse prompt cannot grow the budget back over the dense
+        # history measurement, and a full window cannot calibrate upwards.
+        self.agent._observe_context([{'role':'user','content':'x'*15000}],
+                                    {'prompt_eval_count':3000,'eval_count':150})
+        self.assertEqual(self.agent.state['context_chars_per_token'],2)
+        self.agent._observe_context([{'role':'user','content':'x'*60000}],
+                                    {'prompt_eval_count':4096,'eval_count':300})
+        self.assertLess(self.agent._context_chars(),(4096-300)*2)
 
     def test_oversized_immutable_goal_is_reported_instead_of_silently_truncated(self):
         self.agent.state.update(context_window=200,context_chars_per_token=1,max_reply_tokens=0)
@@ -272,6 +288,189 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError,'separate the executable'):
             await self.agent._run_process([sys.executable+' -c print(1)'])
         self.assertNotIn('pending_process',self.agent.state)
+
+    async def test_json_checks_measure_saved_keys_values_and_types(self):
+        path = self.root/'answer.json'
+        self.agent.state['criteria'] = ['Exact fields and values']
+        check = {'kind':'json','path':'answer.json','keys':['rows','sum'],
+                 'types':{'rows':'integer','sum':'integer'},'equals':{'rows':3,'sum':25},
+                 'criterion':'Exact fields and values'}
+        for content,passed in [('{"rows":3,"sum":25}',True),('{"rows":2,"sum":15}',False),
+                               ('{"rows":3,"sum":25,"extra":0}',False),('{"rows":true,"sum":25}',False),
+                               ('{"rows":3,"sum":25.0}',False),('{"rows":3,"sum":NaN}',False),
+                               ('{"rows":3,"sum":15,"sum":25}',False)]:
+            with self.subTest(content=content):
+                path.write_text(content)
+                result = await self.agent.tools.execute('verify',{'checks':[check]})
+                self.assertEqual(result['passed'],passed)
+                self.assertEqual(result['checks'][0]['observed_sha256'],hashlib.sha256(path.read_bytes()).hexdigest())
+
+    async def test_text_checks_are_exact_and_never_silently_accept_missing_expectations(self):
+        path = self.root/'result.txt'
+        path.write_text('reprise après interruption',encoding='utf-8')
+        checks = [{'kind':'text','path':'result.txt','equals':'reprise après interruption'},
+                  {'kind':'text','path':'result.txt','contains':'après'},
+                  {'kind':'text','path':'result.txt','equals':'reprise'},
+                  {'kind':'text','path':'result.txt'},
+                  {'kind':'json','path':'result.txt'}]
+        result = await self.agent.tools.execute('verify',{'checks':checks})
+        self.assertEqual([c['passed'] for c in result['checks']],[True,True,False,False,False])
+        path.write_bytes(b'x'*(self.agent.policy.output_chars*4+1))
+        result = await self.agent.tools.execute('verify',{'checks':[checks[1]]})
+        self.assertFalse(result['passed'])
+        self.assertIn('streaming command',result['checks'][0]['error'])
+
+    async def test_unknown_arguments_and_ambiguous_command_are_rejected_before_effects(self):
+        self.agent.state['plan'] = ['Write or run']
+        with self.assertRaisesRegex(ValueError,'unknown'):
+            await self.agent._execute('write_file',{'path':'result.txt','content':'bad','expected_content':'invented'})
+        self.assertFalse((self.root/'result.txt').exists())
+        with self.assertRaisesRegex(ValueError,'exactly one'):
+            await self.agent._execute('run_command',{'argv':[sys.executable,'-c','print(1)'],'command':'print(2)'})
+        self.assertNotIn('pending_process',self.agent.state)
+
+    async def test_invalid_completion_status_cannot_turn_into_success(self):
+        replies = [call('finish',message='Premature',status='success'),call('finish',message='Valid answer',status='completed')]
+        with scripted(self.agent,replies):
+            self.assertEqual(await self.agent.run(),'Valid answer')
+        self.assertEqual([e['result'] for _,e in self.store.events(self.item['id']) if e['type']=='mission_complete'],['Valid answer'])
+
+    async def test_registered_worker_preserves_task_and_reports_blocked_status(self):
+        task = 'Inspect missing input.csv and report the actual limitation'
+        captured = []
+        async def child_run(child, *, worker=False):
+            captured.append(child)
+            child.state.update(status='blocked',result='input.csv missing')
+            return child.state['result']
+        roles = {'saved_agents':[{'name':'CSV','role':'Inspect CSV without skipping data rows','permissions':'SAFE'}]}
+        self.agent.state['plan'] = ['Delegate']
+        with patch('agi_core.mission_agent._cli_load_context_for_workspace',return_value=roles), \
+             patch.object(AutonomousMissionAgent,'run',child_run):
+            result = await self.agent._execute('spawn_agent',{'task':task,'agent':'CSV'})
+        self.assertFalse(result['passed'])
+        self.assertEqual(result['workers'][0]['status'],'blocked')
+        self.assertEqual(result['workers'][0]['report'],'input.csv missing')
+        self.assertEqual(len(captured),1)
+        self.assertEqual(captured[0].request_text,task)
+        self.assertEqual(captured[0].depth,1)
+        self.assertEqual(captured[0].permissions,'SAFE')
+        self.assertIn('Inspect CSV',captured[0].additional_context)
+
+    async def test_csv_profile_counts_first_row_and_preserves_quoted_crlf_and_bom(self):
+        raw = b'\xef\xbb\xbflabel,value\r\n"premi\xc3\xa8re, ligne",10\r\n"multi\r\nligne",20\r\nz,-5\r\n'
+        path = self.root/'input.csv'
+        path.write_bytes(raw)
+        self.agent.permissions = 'SAFE'
+        result = await self.agent._execute('inspect_csv',{'path':'input.csv','integer_columns':['value']})
+        self.assertEqual(result['rows'],3)
+        self.assertEqual(result['integer_columns']['value'],{'count':3,'sum':25,'min':-5,'max':20})
+        self.assertEqual(result['sha256'],hashlib.sha256(raw).hexdigest())
+        self.assertEqual(path.read_bytes(),raw)
+        for text in ('label,value\nx,no-number\n','label,value,value\nx,1,2\n','label,value\nx,1,extra\n'):
+            path.write_text(text)
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                await self.agent._execute('inspect_csv',{'path':'input.csv','integer_columns':['value']})
+
+    async def test_expected_exception_requires_explicit_exit_status_and_matching_output(self):
+        argv = [sys.executable,'-c',"raise ValueError('expected validation error')"]
+        base = {'kind':'command','argv':argv,'contains':'ValueError'}
+        implicit = await self.agent.tools.execute('verify',{'checks':[base]})
+        explicit = await self.agent.tools.execute('verify',{'checks':[{**base,'expected_exit_code':1}]})
+        mismatch = await self.agent.tools.execute('verify',{'checks':[{**base,'expected_exit_code':2}]})
+        self.assertFalse(implicit['passed'])
+        self.assertTrue(explicit['passed'])
+        self.assertEqual(explicit['checks'][0]['exit_code'],1)
+        self.assertTrue(explicit['checks'][0]['process_started'])
+        self.assertFalse(mismatch['passed'])
+
+    async def test_planned_verification_cannot_use_missing_or_renamed_criterion(self):
+        self.agent._plan({'steps':['Measure'],'criteria':['Actual saved content']})
+        (self.root/'result.txt').write_text('correct')
+        for criterion in (None,'Renamed criterion'):
+            check = {'kind':'text','path':'result.txt','equals':'correct'}
+            if criterion:
+                check['criterion'] = criterion
+            with self.subTest(criterion=criterion), self.assertRaisesRegex(ValueError,'exact current criterion'):
+                await self.agent._execute('verify',{'checks':[check]})
+
+    async def test_completion_without_a_plan_cannot_skip_semantic_review(self):
+        self.agent._review_completion = AsyncMock(return_value={'approved':False,'unmet':['No saved output'],'reason':'No tool evidence'})
+        self.agent.policy = replace(self.agent.policy,max_steps=2)
+        with scripted(self.agent,[call('finish',message='Created the requested file'),call('finish',message='Created it')]):
+            self.assertIsNone(await self.agent.run())
+        self.assertEqual(self.agent._review_completion.await_count,2)
+        self.assertFalse(any(e['type']=='mission_complete' for _,e in self.store.events(self.item['id'])))
+
+    async def test_file_change_during_review_requires_repair_and_new_verification(self):
+        async def review(message):
+            if message=='Premature':
+                (self.root/'result.txt').write_text('external edit')
+            return {'approved':True,'unmet':[],'reason':'Transport fixture'}
+        self.agent._review_completion = review
+        check = {'kind':'text','path':'result.txt','equals':'correct','criterion':'Exact saved content'}
+        replies = [call('set_plan',steps=['Write and measure'],criteria=['Exact saved content']),
+                   call('write_file',path='result.txt',content='correct'),call('verify',checks=[check]),call('finish',message='Premature'),
+                   call('read_file',path='result.txt'),call('write_file',path='result.txt',content='correct'),
+                   call('verify',checks=[check]),call('finish',message='Repaired current output')]
+        with scripted(self.agent,replies):
+            self.assertEqual(await self.agent.run(),'Repaired current output')
+        completed = [e['result'] for _,e in self.store.events(self.item['id']) if e['type']=='mission_complete']
+        self.assertEqual(completed,['Repaired current output'])
+
+    async def test_identical_write_preserves_bytes_mtime_and_verified_criteria(self):
+        raw = 'texte\r\naccentué\n'.encode('utf-8')
+        path = self.root/'result.txt'
+        path.write_bytes(raw)
+        before = path.stat().st_mtime_ns
+        check = {'kind':'text','path':'result.txt','equals':raw.decode('utf-8'),'criterion':'Exact saved content'}
+        replies = [call('set_plan',steps=['Inspect and measure'],criteria=['Exact saved content']),
+                   call('verify',checks=[check]),call('write_file',path='result.txt',content=raw.decode('utf-8')),
+                   call('finish',message='Unchanged verified output')]
+        with scripted(self.agent,replies):
+            self.assertEqual(await self.agent.run(),'Unchanged verified output')
+        self.assertEqual(path.read_bytes(),raw)
+        self.assertEqual(path.stat().st_mtime_ns,before)
+        saved = next(e for e in self.agent.state['evidence'] if e['tool']=='write_file')
+        self.assertFalse(saved['result']['changed'])
+        self.assertEqual(self.agent.state['verified'],['Exact saved content'])
+
+    async def test_mixed_check_results_preserve_only_current_successes_and_invalidate_failed_criteria(self):
+        (self.root/'a.txt').write_text('A')
+        (self.root/'b.txt').write_text('B')
+        a = {'kind':'text','path':'a.txt','equals':'A','criterion':'A correct'}
+        bad_b = {'kind':'text','path':'b.txt','equals':'wrong','criterion':'B correct'}
+        b = {**bad_b,'equals':'B'}
+        replies = [call('set_plan',steps=['Measure both'],criteria=['A correct','B correct']),
+                   call('verify',checks=[a,b]),call('verify',checks=[bad_b]),
+                   call('finish',message='Stale proof'),call('verify',checks=[b]),call('finish',message='Current proofs')]
+        with scripted(self.agent,replies):
+            self.assertEqual(await self.agent.run(),'Current proofs')
+        self.assertEqual([e['result'] for _,e in self.store.events(self.item['id']) if e['type']=='mission_complete'],['Current proofs'])
+        # An overall failed batch can still contain a genuine successful check.
+        other = AutonomousMissionAgent('test','Measure files',str(self.root),'test:local')
+        other._review_completion = self.agent._review_completion
+        other.policy = replace(other.policy,max_steps=2)
+        with scripted(other,[call('set_plan',steps=['Measure'],criteria=['A correct','B correct']),call('verify',checks=[a,bad_b])]):
+            await other.run()
+        self.assertEqual(other.state['verified'],['A correct'])
+
+    async def test_failed_worker_cancels_the_other_active_worker(self):
+        self.agent.policy = replace(self.agent.policy,parallel_workers=2)
+        self.agent.state['plan'] = ['Delegate']
+        entered,cancelled = asyncio.Event(),asyncio.Event()
+        async def worker(task, agent_name=''):
+            if task=='fail':
+                await entered.wait()
+                raise RuntimeError('worker failure')
+            entered.set()
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+        with patch.object(self.agent,'_spawn_task',worker):
+            with self.assertRaisesRegex(RuntimeError,'worker failure'):
+                await self.agent._execute('spawn_agent',{'tasks':['wait','fail']})
+        self.assertTrue(cancelled.is_set())
 
     async def test_completion_cannot_skip_verification_after_real_file_write(self):
         replies = [call('set_plan',steps=['Write the file'],criteria=['Exact file content']),
@@ -330,7 +529,8 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         async def started():
             while True:
                 try:
-                    if (self.root/'counter.txt').read_text()=='1':
+                    if ((self.root/'counter.txt').read_text()=='1' and
+                            any('incremented' in e['result']['output'] for e in self.agent.state.get('process_observations',[]))):
                         return
                 except OSError:
                     pass
@@ -363,6 +563,10 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all('automatic replay is disabled' in e['result']['error'] for e in failures))
         self.assertEqual((self.root/'counter.txt').read_text(),'1')
         self.assertEqual(len(self.store.checkpoint(self.item['id'])['interrupted_processes']),1)
+        proof = self.store.checkpoint(self.item['id'])['process_observations'][0]
+        self.assertTrue(proof['result']['process_started'])
+        self.assertEqual(proof['result']['status'],'interrupted_outcome_unknown')
+        self.assertIn('incremented',proof['result']['output'])
 
     async def test_legacy_pending_command_is_fenced_without_new_checkpoint_fields(self):
         (self.root/'counter.txt').write_text('1')
@@ -382,6 +586,40 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.root/'counter.txt').read_text(),'1')
         failure = next(e for e in restarted.state['evidence'] if e['tool']=='run_command')
         self.assertIn('automatic replay is disabled',failure['result']['error'])
+
+    async def test_legacy_process_proof_uses_only_durable_output_of_the_pending_action(self):
+        script = self.root/'operation.py'
+        script.write_text('print("actual journal fixture")')
+        (self.root/'counter.txt').write_text('1')
+        self.agent.state.update(plan=['Inspect and measure'],criteria=['Counter one'],verified=['Counter one'],last_verify=9,
+                                messages=[{'role':'system','content':'Old protocol'},{'role':'user','content':self.agent.request_text}],
+                                pending={'tool':'run_command','args':{'argv':[sys.executable,'operation.py']}})
+        self.agent.state.pop('process_observations')
+        await self.agent._save()
+        self.store.append(self.item['id'],{'type':'tool_start','tool':'run_command'})
+        self.store.append(self.item['id'],{'type':'command_output','content':'other worker output','worker':True})
+        self.store.append(self.item['id'],{'type':'command_output','content':'actual journal fixture'})
+        restarted = AutonomousMissionAgent(self.item['id'],self.agent.request_text,str(self.root),'test:local',store=self.store)
+        restarted._review_completion = self.agent._review_completion
+        replies = [call('finish',message='Stale verification'),call('read_file',path='counter.txt'),
+                   call('verify',checks=[{'kind':'text','path':'counter.txt','equals':'1','criterion':'Counter one'}]),
+                   call('finish',message='Fresh verification')]
+        with scripted(restarted,replies):
+            self.assertEqual(await restarted.run(),'Fresh verification')
+        proof = restarted.state['process_observations'][0]['result']
+        self.assertTrue(proof['process_started'])
+        self.assertEqual(proof['output'],'actual journal fixture')
+        self.assertEqual([e['result'] for _,e in self.store.events(self.item['id']) if e['type']=='mission_complete'],['Fresh verification'])
+
+    async def test_missing_journal_output_cannot_be_invented_as_process_launch_proof(self):
+        script = self.root/'operation.py'
+        script.write_text('pass')
+        saved = {'pending':{'tool':'run_command'},'process_observations':[]}
+        identity = self.agent._command_identity([sys.executable,str(script)],self.root,'')
+        self.store.append(self.item['id'],{'type':'tool_start','tool':'run_command'})
+        self.store.append(self.item['id'],{'type':'command_output','content':'other worker output','worker':True})
+        await self.agent._restore_process_observation(saved,identity)
+        self.assertEqual(saved['process_observations'],[])
 
     async def test_review_failure_retains_work_without_a_completion_claim(self):
         self.agent._review_completion = AsyncMock(return_value={'approved':False,'unmet':['Requested evidence absent'],'reason':'File presence does not prove requested content'})

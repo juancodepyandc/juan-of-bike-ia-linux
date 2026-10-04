@@ -2,9 +2,11 @@
 from __future__ import annotations
 import asyncio
 import ast
+import csv
 import hashlib
 from html.parser import HTMLParser
 import json
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -13,6 +15,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
+from agi_core.mission_protocol import CHECK_FIELDS
 
 
 def digest_file(path):
@@ -21,6 +24,38 @@ def digest_file(path):
         while chunk := stream.read(1024*1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def read_verification_bytes(path, limit):
+    with path.open('rb') as stream:
+        raw = stream.read(limit+1)
+    if len(raw)>limit:
+        raise ValueError('Content exceeds the verification bound; use a streaming command check')
+    return raw
+
+
+def strict_json(raw):
+    def unique_object(pairs):
+        result = {}
+        for key,value in pairs:
+            if key in result:
+                raise ValueError('Duplicate JSON key: '+key)
+            result[key] = value
+        return result
+    def invalid_constant(value):
+        raise ValueError('Non-finite JSON number: '+value)
+    return json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant)
+
+
+def same_json(actual, expected):
+    # Python's True == 1 must not turn a wrong JSON type into a passing result.
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(actual,dict):
+        return actual.keys()==expected.keys() and all(same_json(actual[k],v) for k,v in expected.items())
+    if isinstance(actual,list):
+        return len(actual)==len(expected) and all(same_json(a,b) for a,b in zip(actual,expected))
+    return actual==expected
 
 
 class PageText(HTMLParser):
@@ -121,6 +156,41 @@ class MissionTools:
             text = stream.read(limit+1)
         return {'path':str(path), 'content':text[:limit], 'next_offset':offset+min(len(text),limit), 'truncated':len(text)>limit}
 
+    def inspect_csv(self, path, columns, delimiter):
+        if not isinstance(columns,list) or not all(isinstance(c,str) for c in columns) or len(set(columns))!=len(columns):
+            raise ValueError('integer_columns must contain distinct column names')
+        if not isinstance(delimiter,str) or len(delimiter)!=1:
+            raise ValueError('CSV delimiter must be one character')
+        raw = read_verification_bytes(path,self.agent.policy.output_chars*4)
+        reader = csv.DictReader(io.StringIO(raw.decode('utf-8-sig'),newline=''),delimiter=delimiter)
+        names = reader.fieldnames
+        if not names or any(not n for n in names) or len(set(names))!=len(names):
+            raise ValueError('CSV must have distinct nonempty header names')
+        if set(columns)-set(names):
+            raise ValueError('Missing CSV columns: '+str(sorted(set(columns)-set(names))))
+        rows,preview,used = 0,[],0
+        summaries = {c:{'count':0,'sum':0,'min':None,'max':None} for c in columns}
+        for row in reader:
+            rows += 1
+            if None in row or any(v is None for v in row.values()):
+                raise ValueError(f'CSV data row {rows} does not match its header')
+            for c,stats in summaries.items():
+                try:
+                    value = int(row[c])
+                except ValueError as exc:
+                    raise ValueError(f'CSV column {c} at data row {rows} must be an integer') from exc
+                stats['count'] += 1
+                stats['sum'] += value
+                stats['min'] = value if stats['min'] is None else min(stats['min'],value)
+                stats['max'] = value if stats['max'] is None else max(stats['max'],value)
+            size = len(json.dumps(row,ensure_ascii=False))
+            if used+size<=self.agent.policy.output_chars:
+                preview.append(row)
+                used += size
+        return {'path':str(path),'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'columns':names,
+                'rows':rows,'integer_columns':summaries,'preview':preview,'preview_truncated':len(preview)<rows,
+                'scope':'All parsed data rows in this bounded snapshot; DictReader consumes the header itself'}
+
     def write(self, path, content, expected):
         self.agent._assert_owned()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,10 +198,15 @@ class MissionTools:
             raise ValueError('Target file does not exist. expected_sha256 guards existing files only; omit it when creating a new file')
         if expected and (not path.is_file() or digest_file(path)!=expected):
             raise ValueError('File hash differs from expected_sha256; read the current file and use its measured sha256 before overwriting')
+        wanted = content.encode('utf-8')
+        wanted_hash = hashlib.sha256(wanted).hexdigest()
+        if path.is_file() and digest_file(path)==wanted_hash:
+            self.agent._assert_owned()
+            return {'path':str(path),'bytes':len(wanted),'sha256':wanted_hash,'changed':False}
         mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
         temporary = None
         try:
-            with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as stream:
+            with tempfile.NamedTemporaryFile('w', encoding='utf-8', newline='', dir=path.parent, delete=False) as stream:
                 temporary = Path(stream.name)
                 stream.write(content)
                 stream.flush()
@@ -144,7 +219,7 @@ class MissionTools:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-        return {'path':str(path),'bytes':path.stat().st_size,'sha256':digest_file(path)}
+        return {'path':str(path),'bytes':path.stat().st_size,'sha256':digest_file(path),'changed':True}
 
     def inspect(self, path):
         source = path.read_text(encoding='utf-8')
@@ -204,6 +279,9 @@ class MissionTools:
             offset = max(0, int(args.get('offset', 0)))
             limit = min(max(1, int(args.get('limit', a.policy.output_chars))), a.policy.output_chars)
             return await asyncio.to_thread(self.read, path, offset, limit)
+        if name == 'inspect_csv':
+            return await asyncio.to_thread(self.inspect_csv,a._file_path(args.get('path','')),
+                                           args.get('integer_columns',[]),args.get('delimiter',','))
         if name == 'list_files':
             root = a._file_path(args.get('path', '.'))
             return await asyncio.to_thread(lambda: [{'name':p.name,'directory':p.is_dir()} for p in sorted(root.iterdir())[:200]])
@@ -217,7 +295,7 @@ class MissionTools:
             command = args.get('argv', args.get('command'))
             if not isinstance(command, (str, list)) or not command:
                 raise ValueError('Provide command text or an argv list')
-            return {'output':await a._run_process(command),'exit_code':0}
+            return await a._run_process(command,return_details=True)
         if name == 'list_tools':
             return await asyncio.to_thread(self.inventory, args.get('query', ''))
         if name == 'inspect_tool':
@@ -228,7 +306,7 @@ class MissionTools:
             argv = args.get('argv', [])
             if not isinstance(argv, list) or not all(isinstance(v, str) for v in argv):
                 raise ValueError('argv must be a list of strings matching inspect_tool')
-            return {'output':await a._run_process([self.python, str(path), *argv], cwd=path.parent),'exit_code':0}
+            return await a._run_process([self.python, str(path), *argv], cwd=path.parent,return_details=True)
         if name == 'create_tool':
             tool_name = args.get('name', '')
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', tool_name):
@@ -257,7 +335,7 @@ class MissionTools:
         if name == 'verify':
             checks = args.get('checks')
             if not isinstance(checks, list) or not checks:
-                raise ValueError('Provide concrete file, command or source checks')
+                raise ValueError('Provide concrete file, text, json, command or source checks')
             results = []
             for check in checks:
                 if not isinstance(check, dict):
@@ -265,21 +343,54 @@ class MissionTools:
                 item = dict(check)
                 try:
                     kind = check.get('kind')
-                    fields = {'file':{'path','min_bytes','sha256'}, 'command':{'argv','contains'},
-                              'source':{'evidence_ids'}}
-                    if kind not in fields:
+                    if kind not in CHECK_FIELDS:
                         raise ValueError('Unsupported verification kind')
-                    unknown = set(check)-fields[kind]-{'kind','criterion'}
+                    unknown = set(check)-CHECK_FIELDS[kind]
                     if unknown:
                         raise ValueError('Unsupported verification fields: '+', '.join(sorted(unknown))+
-                                         '. Accepted fields: '+', '.join(sorted(fields[kind]|{'kind','criterion'})))
+                                         '. Accepted fields: '+', '.join(sorted(CHECK_FIELDS[kind])))
                     if 'criterion' in check and check['criterion'] not in a.state['criteria']:
                         raise ValueError('criterion must exactly match an acceptance criterion from set_plan')
                     if kind == 'file':
                         path = a._file_path(check.get('path', ''))
+                        minimum = check.get('min_bytes',1)
+                        if type(minimum) is not int or minimum<0:
+                            raise ValueError('min_bytes must be a nonnegative integer')
                         digest = await asyncio.to_thread(digest_file, path)
                         item.update(bytes=path.stat().st_size, observed_sha256=digest)
-                        item['passed'] = item['bytes'] >= int(check.get('min_bytes', 1)) and (not check.get('sha256') or check['sha256']==digest)
+                        item['passed'] = item['bytes'] >= minimum and (not check.get('sha256') or check['sha256']==digest)
+                    elif kind in {'text','json'}:
+                        path = a._file_path(check.get('path',''))
+                        raw = await asyncio.to_thread(read_verification_bytes,path,a.policy.output_chars*4)
+                        item.update(observed_sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
+                        actual = raw.decode('utf-8')
+                        if kind=='text':
+                            if not {'equals','contains'}&check.keys():
+                                raise ValueError('Text verification requires equals or contains')
+                            if any(not isinstance(check[k],str) for k in ('equals','contains') if k in check):
+                                raise ValueError('Text equals and contains must be strings')
+                            item['passed'] = ('equals' not in check or actual==check['equals']) and ('contains' not in check or check['contains'] in actual)
+                            item['observed'] = actual[:a.policy.output_chars]
+                            item['truncated'] = len(actual)>a.policy.output_chars
+                        else:
+                            if not {'equals','keys','types'}&check.keys():
+                                raise ValueError('JSON verification requires equals, keys or types')
+                            actual = strict_json(actual)
+                            item['passed'] = 'equals' not in check or same_json(actual,check['equals'])
+                            if 'keys' in check:
+                                keys = check['keys']
+                                if not isinstance(keys,list) or not all(isinstance(k,str) for k in keys) or len(set(keys))!=len(keys):
+                                    raise ValueError('JSON keys must be a list of distinct strings')
+                                item['passed'] &= isinstance(actual,dict) and set(actual)==set(keys)
+                            if 'types' in check:
+                                types = {'integer':int,'number':(int,float),'string':str,'boolean':bool,'object':dict,'array':list,'null':type(None)}
+                                expected = check['types']
+                                if not isinstance(expected,dict) or not expected or any(not isinstance(t,str) or t not in types for t in expected.values()):
+                                    raise ValueError('JSON types must map fields to integer, number, string, boolean, object, array or null')
+                                item['passed'] &= isinstance(actual,dict) and all(k in actual and type(actual[k]) in (types[t] if isinstance(types[t],tuple) else (types[t],)) for k,t in expected.items())
+                            observed = json.dumps(actual,ensure_ascii=False,allow_nan=False)
+                            item['observed'] = actual if len(observed)<=a.policy.output_chars else observed[:a.policy.output_chars]
+                            item['truncated'] = len(observed)>a.policy.output_chars
                     elif kind == 'command':
                         a._require_tool('run_command')
                         argv = check.get('argv')
@@ -287,8 +398,11 @@ class MissionTools:
                             raise ValueError('Command checks require an argv list')
                         if not isinstance(check.get('contains',''),str):
                             raise ValueError('contains must be text')
-                        output = await a._run_process(argv)
-                        item.update(exit_code=0, output=output, passed=check.get('contains', '') in output)
+                        expected = check.get('expected_exit_code',0)
+                        if type(expected) is not int:
+                            raise ValueError('expected_exit_code must be an integer (default 0)')
+                        details = await a._run_process(argv,expected_exit_code=expected,return_details=True)
+                        item.update(details,passed=check.get('contains','') in details['output'])
                     elif kind == 'source':
                         ids = check.get('evidence_ids', [])
                         if not isinstance(ids, list) or not ids:
@@ -297,7 +411,7 @@ class MissionTools:
                         item['passed'] = all(e and e['ok'] and e['tool']=='fetch_url' for e in found)
                     else:
                         raise ValueError('Unsupported verification kind')
-                except (OSError, ValueError, RuntimeError, PermissionError) as exc:
+                except (OSError, ValueError, RuntimeError, PermissionError, TypeError, RecursionError, csv.Error) as exc:
                     item.update(passed=False, error=str(exc))
                 results.append(item)
             return {'passed':all(c['passed'] for c in results), 'checks':results,
