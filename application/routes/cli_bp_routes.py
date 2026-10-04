@@ -579,25 +579,8 @@ def cli_models():
 # --- Official Agents (immutable, only enable/disable) ---
 
 def _cli_list_official_agents():
-    agents_dir = os.path.join(os.path.dirname(WORKSPACE), ".claude", "agents")
-    agents = []
-    if os.path.isdir(agents_dir):
-        for fname in sorted(os.listdir(agents_dir)):
-            if not fname.endswith(".md") or fname in ("README.md", "EXAMPLES.md"):
-                continue
-            name = fname[:-3]
-            fpath = os.path.join(agents_dir, fname)
-            desc = ""
-            try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if line.startswith("description:"):
-                            desc = line.split(":", 1)[1].strip().strip('"').strip("'")
-                            break
-            except Exception:
-                pass
-            agents.append({"name": name, "description": desc, "file": fname})
-    return agents
+    from agent_registry import list_agents
+    return list_agents()
 
 
 @cli_bp.route("/api/cli/agents/official", methods=["GET"])

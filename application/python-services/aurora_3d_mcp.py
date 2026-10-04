@@ -25,7 +25,7 @@ Tools:
   summarize_quality     — combines all above into a Meshy-grade verdict
                           with specific issues + suggested fixes
 
-Run as a Claude Code MCP server: register in .claude/settings.local.json or
+Run as an Aurora MCP server: register it in the local runtime configuration or
 via mcp.json so Claude Code spawns it on stdio. Schema for every tool's
 return: aurora.audit.<tool>.v1.
 
