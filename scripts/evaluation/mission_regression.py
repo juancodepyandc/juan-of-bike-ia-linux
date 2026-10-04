@@ -216,6 +216,7 @@ async def evaluate(args):
                   'plan':agent.state['plan'],'criteria':agent.state['criteria'],'verified':agent.state['verified'],
                   'required_tools':agent.state.get('required_tools',[]),'executed_tools':agent.state.get('executed_tools',[]),
                   'status':agent.state['status'],'error':error,'independent_assessment':assessment,
+                  'failure_reason':next((e.get('message') for e in reversed(events) if e['type']=='error'),None),
                   'passed':not error and agent.state['status']=='completed' and assessment['passed'],
                   'context_window':agent.state.get('context_window'),'metrics':[e for e in events if e['type']=='model_metrics']}
         result['cases'].append(record)

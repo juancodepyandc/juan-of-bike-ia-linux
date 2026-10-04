@@ -221,7 +221,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         messages = self.agent._messages()
         self.assertEqual(messages[1]['content'],self.agent.request_text)
         self.assertEqual(messages[-1]['content'],self.agent.state['messages'][-1]['content'])
-        self.assertIn(self.agent.request_text,messages[2]['content'])
+        self.assertEqual(sum(m['content'].count(self.agent.request_text) for m in messages),1)
         self.assertLessEqual(sum(len(m['content']) for m in messages),self.agent._context_chars())
         self.assertLess(len(messages),len(self.agent.state['messages']))
 
@@ -242,6 +242,7 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.agent._context_chars(),(4096-300)*2)
 
     def test_oversized_immutable_goal_is_reported_instead_of_silently_truncated(self):
+        self.agent.request_text = 'original '*100
         self.agent.state.update(context_window=200,context_chars_per_token=1,max_reply_tokens=0)
         self.agent.state['messages'] = [{'role':'system','content':'protocol'},{'role':'user','content':'original '*100}]
         with self.assertRaisesRegex(RuntimeError,'immutable goal'):

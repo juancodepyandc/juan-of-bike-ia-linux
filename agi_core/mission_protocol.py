@@ -75,14 +75,16 @@ TOOL_DESCRIPTIONS = {
 }
 
 
-def tool_response_schema(criteria=(), allowed=None):
+def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None):
     selected = list(ARG_SCHEMAS) if allowed is None else [name for name in ARG_SCHEMAS if name in allowed]
     alternatives = []
     for name in selected:
         args = deepcopy(ARG_SCHEMAS[name])
         if name=='set_plan':
             args['required'].append('required_tools')
-            args['properties']['required_tools']['items']['enum'] = [n for n in selected if n not in {'set_plan','verify','finish'}]
+            names = [n for n in selected if n not in {'set_plan','verify','finish'}
+                     and (required_tool_names is None or n in required_tool_names)]
+            args['properties']['required_tools'] = ({'type':'array','items':{'type':'string','enum':names}} if names else {'const':[]})
         if name in {'verify','spawn_agent'}:
             checks = args['properties']['checks']['items']['anyOf']
             if allowed is not None and 'run_command' not in allowed:

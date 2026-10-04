@@ -48,6 +48,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(check['properties']['criterion']['enum'],[criterion])
 
     async def test_declared_delegation_cannot_be_replaced_by_an_unrelated_role_check(self):
+        self.agent.request_text = 'Audit the data with spawn_agent and verify the result'
         self.result_file({'rows':3,'sum':25})
         check = {**self.check,'criterion':'Result exists'}
         replies = iter([
@@ -319,6 +320,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIn(check,self.agent.state['output_checks'])
 
     async def test_successful_delegation_validation_marks_criterion_after_worker_effects(self):
+        self.agent.request_text = 'Audit with spawn_agent and inspect_csv, then verify the saved output'
         criterion = 'Measured result'
         check = {**self.check,'criterion':criterion}
         replies = iter([

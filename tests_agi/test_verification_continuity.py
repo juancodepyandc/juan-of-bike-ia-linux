@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from agi_core.mission_agent import AutonomousMissionAgent
+from agi_core.mission_protocol import tool_response_schema
 
 
 def call(tool, **args):
@@ -181,3 +182,62 @@ class VerificationContinuity(unittest.IsolatedAsyncioTestCase):
         result = await self.agent._execute('verify',{'checks':[{'kind':'skill','name':'missing'}]})
         self.assertFalse(result['passed'])
         self.assertIsNone(result['checks'][0]['observed'])
+
+    def test_unrequested_optional_tools_do_not_become_completion_obligations(self):
+        self.agent.request_text = 'Compute the optimum from the supplied JSON using Python'
+        plan = self.agent._plan({'steps':['Compute and verify'],'criteria':['Correct result'],
+                                 'required_tools':['run_command','run_tool','inspect_csv']})
+        self.assertEqual(plan['required_tools'],[])
+        self.assertEqual(plan['optional_tools'],['run_command','run_tool','inspect_csv'])
+        self.agent.request_text = 'Create a role with create_agent, then use spawn_agent for the audit'
+        plan = self.agent._plan({'steps':['Delegate'],'criteria':['Audited'],
+                                 'required_tools':['create_agent','spawn_agent','inspect_csv']})
+        self.assertEqual(plan['required_tools'],['create_agent','spawn_agent'])
+        self.assertEqual(plan['optional_tools'],['inspect_csv'])
+
+    def test_a_mention_is_not_automatically_converted_into_a_tool_requirement(self):
+        self.agent.request_text = 'Read the file without using spawn_agent'
+        self.assertIn('spawn_agent',self.agent._explicit_tool_names())
+        plan = self.agent._plan({'steps':['Read'],'criteria':['Read'],'required_tools':[]})
+        self.assertEqual(plan['required_tools'],[])
+
+    def test_decoder_mandatory_tools_are_filtered_and_an_empty_list_is_a_constant(self):
+        for names in ([],['spawn_agent']):
+            schema = tool_response_schema(required_tool_names=names)
+            plan = next(b['properties']['args'] for b in schema['oneOf'] if b['properties']['tool']['const']=='set_plan')
+            tools = plan['properties']['required_tools']
+            if names:
+                self.assertEqual(tools['items']['enum'],names)
+            else:
+                self.assertEqual(tools,{'const':[]})
+
+    def test_context_compaction_retains_exact_criteria_goal_resources_and_fences(self):
+        criterion = 'Exact saved result with all required fields'
+        goal = 'Inspect the supplied files and preserve the original request'
+        self.agent.request_text = goal
+        self.agent.state.update(context_window=2200,context_chars_per_token=1,max_reply_tokens=500,
+            plan=['An advisory plan detail '*10 for _ in range(8)],criteria=[criterion],verified=[criterion],
+            required_tools=['spawn_agent'],executed_tools=['spawn_agent'],
+            evidence=[{'id':'observation_'+str(i),'tool':'read_file','ok':True} for i in range(40)],
+            resources={'skill:Audit':{'kind':'skill','name':'Audit','path':'skill.md'}},
+            process_observations=[{'id':'interrupted','result':{'status':'interrupted_outcome_unknown',
+                'process_started':True,'output':'known output'}}],
+            messages=[{'role':'system','content':'protocol'},{'role':'user','content':'Different advisory text'}])
+        messages = self.agent._messages()
+        self.assertEqual(messages[1]['content'],goal)
+        self.assertLessEqual(sum(len(m['content']) for m in messages),self.agent._context_chars())
+        state = json.loads(messages[2]['content'].split(': ',1)[1])
+        self.assertEqual(state['criteria'],[{'criterion':criterion,'verified':True}])
+        self.assertEqual(state['required_tools'],['spawn_agent'])
+        self.assertEqual(state['known_resources'][0]['name'],'Audit')
+        self.assertEqual(state['interrupted_processes'][0]['id'],'interrupted')
+        self.assertGreater(state['advisory_items_omitted'],0)
+        self.assertEqual(len(self.agent.state['evidence']),40)
+        self.assertEqual(len(self.agent.state['plan']),8)
+
+    def test_critical_criteria_that_cannot_fit_are_not_silently_truncated(self):
+        self.agent.state.update(context_window=300,context_chars_per_token=1,max_reply_tokens=0,
+            criteria=['Critical criterion '*100],messages=[{'role':'system','content':'protocol'},
+                {'role':'user','content':self.agent.request_text}])
+        with self.assertRaisesRegex(RuntimeError,'immutable goal'):
+            self.agent._messages()
