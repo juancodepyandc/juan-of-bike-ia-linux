@@ -7,7 +7,7 @@ TEXT = {'type':'string'}
 STRINGS = {'type':'array','items':TEXT}
 NONEMPTY_STRINGS = {**STRINGS,'minItems':1}
 INTEGER = {'type':'integer'}
-PURE_CHECKS = {'file','text','json','csv_json','agent'}
+PURE_CHECKS = {'file','text','json','csv_json','agent','skill'}
 
 
 def object_args(properties, required=()):
@@ -30,6 +30,7 @@ CHECK_SCHEMA = {'anyOf':[
                  'delimiter':TEXT,'source_sha256':TEXT,'criterion':TEXT},
                 ('kind','path','json_path','row_field','sum_fields')),
     object_args({'kind':{'const':'agent'},'name':TEXT,'criterion':TEXT},('kind','name')),
+    object_args({'kind':{'const':'skill'},'name':TEXT,'criterion':TEXT},('kind','name')),
 ]}
 
 
@@ -62,6 +63,16 @@ ARG_SCHEMAS['set_plan']['properties']['required_tools'] = {'type':'array','items
     name for name in ARG_SCHEMAS if name not in {'set_plan','verify','finish'}]}}
 
 CHECK_FIELDS = {branch['properties']['kind']['const']:set(branch['properties']) for branch in CHECK_SCHEMA['anyOf']}
+
+TOOL_DESCRIPTIONS = {
+    'create_skill':'Save a project skill once. If it exists, inspect list_skills and verify kind=skill with its name; do not recreate it to prove its existence.',
+    'create_agent':'Save a reusable role once. Verify kind=agent with its name to check the actual saved definition; existence does not prove execution.',
+    'spawn_agent':'Execute a delegated task using an optional saved role and concrete parent acceptance checks. The parent verifies the saved outputs after worker completion.',
+    'list_skills':'List discovered skills with their actual file paths and byte hashes. This is discovery, not proof of successful execution.',
+    'verify':'Run explicit checks bound to exact current criteria. skill and agent check saved definitions; csv_json compares saved aggregates to the actual input.',
+    'list_tools':'Discover permitted built-in protocol tools and Python scripts. Built-ins are called directly; scripts use run_tool after inspecting their arguments.',
+    'inspect_tool':'Inspect a built-in argument contract or a Python script without running it.',
+}
 
 
 def tool_response_schema(criteria=(), allowed=None):

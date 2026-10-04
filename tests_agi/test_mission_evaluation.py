@@ -62,3 +62,40 @@ class EvaluationGraders(unittest.TestCase):
             self.assertTrue(grade_case('code-repair',root,oracle,[])['passed'])
             (root/'solution.py').write_text('def coverage(intervals):\n    return sum(b-a for a,b in intervals)\n')
             self.assertFalse(grade_case('code-repair',root,oracle,[])['passed'])
+
+    def test_route_grader_rejects_wrong_energy_cost_paths_and_types(self):
+        graph = {'nodes':['A','B','C','D'],'start':'A','end':'D','energy_budget':5,'edges':[
+            {'from':'A','to':'B','cost':1,'energy':9},{'from':'B','to':'D','cost':1,'energy':9},
+            {'from':'A','to':'D','cost':8,'energy':2},{'from':'A','to':'C','cost':2,'energy':2},
+            {'from':'C','to':'D','cost':3,'energy':2}]}
+        original = (json.dumps(graph)+'\n').encode('utf-8')
+        oracle = {'graph':graph,'original':original}
+        correct = {'path':['A','C','D'],'cost':5,'energy':4}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); (root/'network.json').write_bytes(original)
+            variants = [(correct,True),({'path':['A','D'],'cost':8,'energy':2},False),
+                ({'path':['A','B','D'],'cost':2,'energy':18},False),({**correct,'cost':4},False),
+                ({**correct,'cost':5.0},False),({**correct,'energy':True},False),
+                ({**correct,'path':['A','B','C','D']},False),({**correct,'extra':1},False),
+                ({'path':[],'cost':None,'energy':None},False)]
+            for data,expected in variants:
+                with self.subTest(data=data):
+                    (root/'route.json').write_text(json.dumps(data),encoding='utf-8')
+                    self.assertEqual(grade_case('route-planning',root,oracle,[])['passed'],expected)
+            (root/'route.json').write_text(json.dumps(correct),encoding='utf-8')
+            (root/'network.json').write_bytes(original+b' ')
+            self.assertFalse(grade_case('route-planning',root,oracle,[])['passed'])
+
+    def test_route_grader_proves_unreachable_case_and_seeded_inputs(self):
+        _,fixtures,oracle = build_case('route-planning',6357)
+        self.assertEqual(build_case('route-planning',6357)[1],fixtures)
+        self.assertNotEqual(build_case('route-planning',6358)[1],fixtures)
+        graph = {**oracle['graph'],'energy_budget':0}
+        original = json.dumps(graph).encode('utf-8')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); (root/'network.json').write_bytes(original)
+            (root/'route.json').write_text('{"path":[],"cost":null,"energy":null}',encoding='utf-8')
+            result = grade_case('route-planning',root,{'graph':graph,'original':original},[])
+            self.assertTrue(result['passed'])
+            self.assertIsNone(result['independent_optimum'])
+            self.assertEqual(result['feasible_routes'],0)

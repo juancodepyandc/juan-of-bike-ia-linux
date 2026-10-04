@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import ast
+from copy import deepcopy
 import csv
 import hashlib
 from html.parser import HTMLParser
@@ -15,7 +16,7 @@ import time
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
-from agi_core.mission_protocol import CHECK_FIELDS, validate_checks
+from agi_core.mission_protocol import ARG_SCHEMAS, CHECK_FIELDS, PURE_CHECKS, TOOL_DESCRIPTIONS, validate_checks
 
 
 def digest_file(path):
@@ -113,6 +114,15 @@ class MissionTools:
 
     def inventory(self, query=''):
         items = []
+        for name,schema in ARG_SCHEMAS.items():
+            try:
+                self.agent._require_tool(name)
+            except PermissionError:
+                continue
+            description = TOOL_DESCRIPTIONS.get(name,'Built-in mission protocol tool: '+name)
+            if not query or query.casefold() in (name+' '+description).casefold():
+                items.append({'name':name,'origin':'builtin','description':description,
+                              'availability':'permitted_protocol_tool','invocation':'direct JSON tool call'})
         for origin, root in [('workspace', Path(self.agent.workspace)/'.aurora/tools'), ('application', self.services)]:
             if not root.exists():
                 continue
@@ -277,11 +287,13 @@ class MissionTools:
             from dataclasses import asdict
             from .runtime_policy import model_options
             disk = shutil.disk_usage(a.workspace)
+            inventory = await asyncio.to_thread(self.inventory)
             status = {'os':platform.system(),'architecture':platform.machine(),'python':platform.python_version(),
                       'cpu_count':os.cpu_count(),'disk_free_bytes':disk.free,'model':a.model,
                       'permissions':a.permissions,'limits':asdict(a.policy),'model_options':model_options(),
                       'goal':a.request_text,'plan':a.state['plan'],'verified':a.state['verified'],
-                      'source_tools':len(await asyncio.to_thread(self.inventory)),'availability':'individual engines must still be probed'}
+                      'source_tools':sum(t['origin']!='builtin' for t in inventory),
+                      'builtin_tools':sum(t['origin']=='builtin' for t in inventory),'availability':'individual engines must still be probed'}
             try:
                 import psutil
                 memory = psutil.virtual_memory()
@@ -314,9 +326,17 @@ class MissionTools:
         if name == 'list_tools':
             return await asyncio.to_thread(self.inventory, args.get('query', ''))
         if name == 'inspect_tool':
+            tool = args.get('name','')
+            if tool in ARG_SCHEMAS:
+                a._require_tool(tool)
+                return {'name':tool,'origin':'builtin','description':TOOL_DESCRIPTIONS.get(tool,'Built-in mission protocol tool: '+tool),
+                        'arguments':deepcopy(ARG_SCHEMAS[tool]),'invocation':'direct JSON tool call',
+                        'criteria':a.state['criteria'],'scope':'Protocol contract only; no tool was executed'}
             path = self.script(args.get('name', ''))
             return await asyncio.to_thread(self.inspect, path)
         if name == 'run_tool':
+            if args.get('name') in ARG_SCHEMAS:
+                raise ValueError('Built-in tools use a direct JSON call, not run_tool; inspect_tool describes their arguments')
             path = self.script(args.get('name', ''))
             argv = args.get('argv', [])
             if not isinstance(argv, list) or not all(isinstance(v, str) for v in argv):
@@ -350,7 +370,7 @@ class MissionTools:
         if name == 'verify':
             checks = args.get('checks')
             if not isinstance(checks, list) or not checks:
-                raise ValueError('Provide concrete file, text, json, csv_json, agent, command or source checks')
+                raise ValueError('Provide concrete file, text, json, csv_json, agent, skill, command or source checks')
             results = []
             for check in checks:
                 if not isinstance(check, dict):
@@ -416,6 +436,18 @@ class MissionTools:
                         item.update(passed=agent is not None,observed=agent,
                                     observed_sha256=hashlib.sha256(json.dumps(agent,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
                                     scope='Saved role definition exists; this does not prove execution')
+                    elif kind == 'skill':
+                        validate_checks([check])
+                        from agi_core.context import load_context
+                        context = await asyncio.to_thread(load_context,a.workspace)
+                        skill = next((s for s in context['skills'] if s['name']==check['name']),None)
+                        if skill is None:
+                            item.update(passed=False,observed=None)
+                        else:
+                            raw = await asyncio.to_thread(read_verification_bytes,Path(skill['file']),65536)
+                            item.update(passed=True,observed=skill,bytes=len(raw),
+                                        observed_sha256=hashlib.sha256(raw).hexdigest())
+                        item['scope'] = 'Discovered skill definition exists; this does not prove execution or semantic quality'
                     elif kind == 'command':
                         a._require_tool('run_command')
                         argv = check.get('argv')
@@ -439,6 +471,14 @@ class MissionTools:
                 except (OSError, ValueError, RuntimeError, PermissionError, TypeError, RecursionError, csv.Error) as exc:
                     item.update(passed=False, error=str(exc))
                 results.append(item)
+            if any(c.get('kind')=='command' for c in checks):
+                # A command may change an output checked earlier in this batch.
+                # Refresh pure observations afterwards, without rerunning commands.
+                indexes = [i for i,c in enumerate(checks) if c.get('kind') in PURE_CHECKS]
+                if indexes:
+                    fresh = await self.execute('verify',{'checks':[checks[i] for i in indexes]})
+                    for index,observation in zip(indexes,fresh['checks']):
+                        results[index] = {**observation,'refreshed_after_commands':True}
             return {'passed':all(c['passed'] for c in results), 'checks':results,
                     'scope':'Only these explicit checks were executed; semantic quality is not a numeric score'}
         raise ValueError('Unknown tool: '+str(name))

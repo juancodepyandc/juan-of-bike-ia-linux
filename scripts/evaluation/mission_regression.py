@@ -21,6 +21,7 @@ import time
 from uuid import uuid4
 
 REPO = Path(__file__).resolve().parents[2]
+CASE_NAMES = ('optimizer','csv-worker','code-repair','route-planning')
 
 
 def build_case(name, seed):
@@ -61,6 +62,19 @@ def build_case(name, seed):
                   "liste vide, intervalles inversés et non-mutation. Préserve les autres fichiers. "
                   "Livrable : solution.py fonctionnel ; résume les vérifications réellement exécutées.")
         return prompt,{'solution.py':'def coverage(intervals):\n    return sum(b-a for a,b in intervals)\n'},{'cases':cases}
+    if name=='route-planning':
+        nodes = ['node_'+str(n) for n in rng.sample(range(1000,9999),8)]
+        edges = [{'from':nodes[i],'to':nodes[j],'cost':rng.randint(1,25),'energy':rng.randint(1,15)}
+                 for i in range(len(nodes)) for j in range(i+1,len(nodes)) if j==i+1 or rng.random()<0.4]
+        graph = {'nodes':nodes,'edges':edges,'start':nodes[0],'end':nodes[-1],'energy_budget':rng.randint(7,28)}
+        content = json.dumps(graph,ensure_ascii=False,indent=2)+'\n'
+        prompt = ("Lis network.json et trouve un chemin dans ce graphe dirigé de start à end, de coût total minimal, "
+                  "avec une énergie totale inférieure ou égale à energy_budget. Les coûts et énergies sont entiers positifs. "
+                  "Calcule et vérifie l'optimalité avec Python standard à partir des arêtes réellement sauvegardées. "
+                  "Écris route.json contenant exactement path (liste de noms de sommets), cost et energy (entiers). "
+                  "S'il n'existe aucun chemin admissible, écris exactement {\"path\":[],\"cost\":null,\"energy\":null}. "
+                  "Préserve les octets de network.json et vérifie le livrable sauvegardé avant de conclure.")
+        return prompt,{'network.json':content},{'graph':graph,'original':content.encode('utf-8')}
     raise ValueError('Unknown evaluation case: '+name)
 
 
@@ -111,6 +125,38 @@ print('independent_cases_passed')
                                 cwd=workspace,text=True,capture_output=True,timeout=30)
         return {'passed':result.returncode==0,'cases':len(oracle['cases']),
                 'stdout':result.stdout[-2000:],'stderr':result.stderr[-2000:]}
+    if name=='route-planning':
+        from agi_core.mission_tools import strict_json
+        data = strict_json((workspace/'route.json').read_text(encoding='utf-8'))
+        graph = oracle['graph']
+        preserved = (workspace/'network.json').read_bytes()==oracle['original']
+        edges = {(e['from'],e['to']):e for e in graph['edges']}
+        feasible = []
+        def enumerate_routes(path,cost,energy):
+            if path[-1]==graph['end']:
+                feasible.append((cost,energy,path))
+                return
+            for (start,end),edge in edges.items():
+                if start==path[-1] and end not in path and energy+edge['energy']<=graph['energy_budget']:
+                    enumerate_routes(path+[end],cost+edge['cost'],energy+edge['energy'])
+        enumerate_routes([graph['start']],0,0)
+        optimum = min((c for c,_,_ in feasible),default=None)
+        schema = isinstance(data,dict) and set(data)=={'path','cost','energy'} and isinstance(data['path'],list)
+        if not schema:
+            passed = False
+        elif optimum is None:
+            passed = data=={'path':[],'cost':None,'energy':None}
+        else:
+            path = data['path']
+            valid = (len(path)>=2 and all(isinstance(n,str) for n in path) and len(path)==len(set(path))
+                     and path[0]==graph['start'] and path[-1]==graph['end']
+                     and all(pair in edges for pair in zip(path,path[1:])))
+            cost = sum(edges[pair]['cost'] for pair in zip(path,path[1:])) if valid else None
+            energy = sum(edges[pair]['energy'] for pair in zip(path,path[1:])) if valid else None
+            passed = (valid and type(data['cost']) is int and type(data['energy']) is int
+                      and data['cost']==cost==optimum and data['energy']==energy<=graph['energy_budget'])
+        return {'passed':bool(passed and preserved),'observed':data,'input_preserved':preserved,
+                'independent_optimum':optimum,'feasible_routes':len(feasible)}
     raise ValueError(name)
 
 
@@ -131,9 +177,9 @@ async def evaluate(args):
               'os':platform.platform(),'substituted_model':False,'agi_certification':False,
               'scope':'Local mission loop; these cases only, no bridge/tunnel/GPU media certification',
               'source_sha256':{p:hashlib.sha256((REPO/p).read_bytes()).hexdigest() for p in files},'cases':[]}
-    names = ['optimizer','csv-worker','code-repair'] if args.case=='all' else [args.case]
+    names = CASE_NAMES if args.case=='all' else [args.case]
     for name in names:
-        case_seed = args.seed+['optimizer','csv-worker','code-repair'].index(name)
+        case_seed = args.seed+CASE_NAMES.index(name)
         prompt,fixtures,oracle = build_case(name,case_seed)
         workspace = output/name
         workspace.mkdir(mode=0o700)
@@ -184,7 +230,7 @@ def main():
     parser.add_argument('--model',required=True,help='Explicit installed Ollama model')
     parser.add_argument('--output',type=Path,required=True,help='New private local output directory')
     parser.add_argument('--seed',type=int,default=secrets.randbits(32))
-    parser.add_argument('--case',choices=['all','optimizer','csv-worker','code-repair'],default='all')
+    parser.add_argument('--case',choices=['all',*CASE_NAMES],default='all')
     parser.add_argument('--timeout',type=float,default=480,help='Seconds per real mission')
     args = parser.parse_args()
     if args.timeout<=0:

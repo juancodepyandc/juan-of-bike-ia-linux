@@ -82,7 +82,7 @@ class AutonomousMissionAgent:
         self._require_tool('read_file')
         self.state = {'version':1, 'goal':request_text, 'plan':[], 'criteria':[], 'verified':[],
                       'evidence':[], 'messages':[], 'iteration':0, 'pending':None,
-                      'process_observations':[], 'output_checks':[], 'delegations':[], 'required_tools':[], 'executed_tools':[],
+                      'process_observations':[], 'output_checks':[], 'check_proofs':{}, 'resources':{}, 'delegations':[], 'required_tools':[], 'executed_tools':[],
                       'last_change':0, 'last_verify':0, 'action_count':0, 'status':'running', 'result':None}
 
     def _require_tool(self, name):
@@ -336,7 +336,14 @@ class AutonomousMissionAgent:
     async def _extension_tool(self, name, args):
         from agi_core.context import create_skill, create_agent
         if name == 'list_skills':
-            return _cli_load_context_for_workspace(self.workspace)['skills_summary']
+            from agi_core.mission_tools import read_verification_bytes
+            context = await asyncio.to_thread(_cli_load_context_for_workspace,self.workspace)
+            skills = []
+            for skill in context['skills']:
+                raw = await asyncio.to_thread(read_verification_bytes,Path(skill['file']),65536)
+                skills.append({**skill,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)})
+                self._remember_resource('skill',skill['name'],{'path':skill['file'],'sha256':skills[-1]['sha256']})
+            return {'skills':skills,'scope':'Discovered definitions and current byte hashes; no execution inferred'}
         if name == 'create_skill':
             from agi_core.mission_tools import read_verification_bytes
             expected = (f"---\nname: {json.dumps(args['name'])}\ndescription: {json.dumps(args['description'],ensure_ascii=False)}\n"
@@ -349,6 +356,7 @@ class AutonomousMissionAgent:
                 changed = False
             raw = await asyncio.to_thread(read_verification_bytes,self._file_path(raw_path),65536)
             matches = raw.decode('utf-8').replace('\r\n','\n')==expected.replace('\r\n','\n')
+            self._remember_resource('skill',args['name'],{'path':raw_path,'sha256':hashlib.sha256(raw).hexdigest()})
             return {'path':raw_path,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw),'changed':changed,
                     'passed':matches,'scope':'Saved project skill content; no execution inferred',
                     **({} if matches else {'error':'Skill already exists with different content; inspect this path instead of recreating it'})}
@@ -357,11 +365,21 @@ class AutonomousMissionAgent:
             existing = next((role for role in context['saved_agents'] if role['name']==args['name']),None)
             if existing:
                 matches = existing['role']==args['role'] and existing['permissions']==self.permissions
+                self._remember_resource('agent',existing['name'],{'permissions':existing['permissions']})
                 return {**existing,'changed':False,'passed':matches,
                         **({} if matches else {'error':'Agent already exists with another definition; inspect it instead of recreating it'})}
             saved = await asyncio.to_thread(create_agent,args['name'],args['role'],self.model,self.permissions,self.mission_id)
+            self._remember_resource('agent',saved['name'],{'permissions':saved['permissions']})
             return {**saved,'changed':True}
         raise ValueError('Unknown extension tool')
+
+    def _remember_resource(self, kind, name, facts):
+        resources = self.state.setdefault('resources',{})
+        key = kind+':'+name
+        resources.pop(key,None)
+        resources[key] = {'kind':kind,'name':name,**facts}
+        while len(resources)>16:
+            resources.pop(next(iter(resources)))
 
     async def _run_sub_agent(self, task, *, acceptance_checks=()):
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, self.permissions,
@@ -419,7 +437,7 @@ class AutonomousMissionAgent:
             raise ValueError('required_tools must list concrete permitted tools from the protocol')
         for name in required:
             self._require_tool(name)
-        self.state.update(plan=steps,criteria=criteria,verified=[],last_verify=0,output_checks=[],required_tools=list(dict.fromkeys(required)))
+        self.state.update(plan=steps,criteria=criteria,verified=[],last_verify=0,output_checks=[],check_proofs={},required_tools=list(dict.fromkeys(required)))
         return {'goal':self.request_text,'steps':steps,'criteria':criteria,'required_tools':self.state['required_tools']}
 
     async def _execute(self, name, args):
@@ -495,6 +513,7 @@ class AutonomousMissionAgent:
                               'criteria':self.state['criteria'],'verified':self.state['verified'],
                               'unverified':[c for c in self.state['criteria'] if c not in self.state['verified']],
                               'required_tools':self.state.get('required_tools',[]),'executed_tools':self.state.get('executed_tools',[]),
+                              'known_resources':list(self.state.get('resources',{}).values()),
                               'accepted_delegations':[{'tasks':d['tasks'],'agent':d['agent']} for d in self.state.get('delegations',[])[-4:]],
                               'interrupted_processes':[{'id':e['id'],'status':e['result']['status'],
                                                         'process_started':e['result']['process_started'],
@@ -565,13 +584,14 @@ class AutonomousMissionAgent:
             'Every spawn_agent needs acceptance checks and a task specifying the files these checks will examine. The parent runs these checks after the workers return. '
             'If acceptance fails, repair using the actual/expected observations; do not trust the worker report or repeat unchanged work. '
             'A successful delegation with unchanged verified files is reused. Continue the remaining parent deliverables instead of recreating roles/skills or restarting completed audits. '
-            'Verify an existing project skill with a file/text check on its returned path; verify an existing role with an agent check. A repeated creation is not a verification. '
+            'Verify an existing skill with a skill check using its name (or file/text checks on its returned path); verify an existing role with an agent check. A repeated creation is not a verification. '
+            'Known resources retain creation/discovery observations; inspect and verify them instead of recreating them. Pure proofs survive later effects only after fresh checks with unchanged fingerprints. '
             'After set_plan, every check must name one exact criterion from the current plan. Cover unverified criteria instead of repeating already verified checks. When all are verified, propose finish for review. Test expected exceptions with an explicit expected_exit_code and output check. '
             'Use text/json checks to measure saved content and exact field names; JSON types: integer, number, string, boolean, object, array, null. '
             'JSON keys lists the complete exact object key set, not a subset. For a subset field type check, use types without keys. '
             'JSON equals compares the whole value, including all object keys; use the exact output filename and fields required by the original request. '
             'finish(message,status:"completed" OR "blocked"). '
-            'list_tools discovers the actual scripts for any domain/module; inspect arguments before execution. '
+            'list_tools discovers built-in protocol tools and actual scripts for any domain/module; inspect_tool describes both. Call built-ins directly and use run_tool only for scripts. '
             'A source-present script or declared MCP server is not a tested runtime. '
             'A command runs in the host shell without OS sandbox isolation. '
             'Verification checks demonstrate only their measured scope. '
@@ -770,6 +790,60 @@ class AutonomousMissionAgent:
         await self._emit('completion_output_check',observation)
         return result
 
+    def _record_verification(self, verification, number):
+        groups = {}
+        for check in verification['checks']:
+            criterion = check.get('criterion')
+            if criterion in self.state['criteria']:
+                groups.setdefault(criterion,[]).append(check)
+        proofs = self.state.setdefault('check_proofs',{})
+        recorded = self.state.setdefault('output_checks',[])
+        for criterion,checks in groups.items():
+            if not all(check['passed'] for check in checks):
+                proofs.pop(criterion,None)
+                if criterion in self.state['verified']:
+                    self.state['verified'].remove(criterion)
+                recorded[:] = [c for c in recorded if c.get('criterion')!=criterion]
+                continue
+            self.state['last_verify'] = number
+            if criterion not in self.state['verified']:
+                self.state['verified'].append(criterion)
+            pure = all(c['kind'] in PURE_CHECKS and c.get('observed_sha256') for c in checks)
+            snapshots = proofs.get(criterion,[]) if pure else []
+            for check in checks:
+                if check['kind'] not in PURE_CHECKS:
+                    continue
+                clean = {k:v for k,v in check.items() if k in CHECK_FIELDS[check['kind']]}
+                if clean not in recorded:
+                    recorded.append(clean)
+                if pure:
+                    snapshots = [p for p in snapshots if p['check']!=clean]
+                    snapshots.append({'check':clean,'observed_sha256':check['observed_sha256']})
+            if pure:
+                proofs[criterion] = snapshots
+            else:
+                proofs.pop(criterion,None)  # Never rerun a command to preserve a mixed proof.
+
+    async def _refresh_verified(self, number):
+        previous = list(self.state['verified'])
+        proofs = self.state.get('check_proofs',{})
+        snapshots = [p for criterion in previous for p in proofs.get(criterion,[])]
+        result = await self.tools.execute('verify',{'checks':[p['check'] for p in snapshots]}) if snapshots else {'checks':[]}
+        unchanged = {}
+        for snapshot,check in zip(snapshots,result['checks']):
+            criterion = snapshot['check']['criterion']
+            check['unchanged'] = bool(check['passed'] and check.get('observed_sha256')==snapshot['observed_sha256'])
+            unchanged[criterion] = unchanged.get(criterion,True) and check['unchanged']
+        preserved = [c for c in previous if proofs.get(c) and unchanged.get(c,False)]
+        self.state['verified'] = preserved
+        self.state['check_proofs'] = {c:proofs[c] for c in preserved}
+        self.state['output_checks'] = [c for c in self.state.get('output_checks',[]) if c.get('criterion') in preserved]
+        self.state['last_verify'] = number if preserved else 0
+        self.state.pop('output_revalidation',None)
+        if previous:
+            await self._emit('verification_refresh',{'preserved':preserved,'invalidated':[c for c in previous if c not in preserved],
+                'checks':result['checks'],'scope':'Previously passing pure checks rerun with identical fingerprints only; no command/source proof reused'})
+
     async def run(self, *, worker=False):
         if self.store:
             saved = await asyncio.to_thread(self.store.checkpoint,self.mission_id)
@@ -781,7 +855,7 @@ class AutonomousMissionAgent:
                     await self._emit('mission_complete', {'result':saved['result'],'recovered':True})
                     return saved['result']
                 if saved.get('pending'):
-                    saved.update(verified=[],last_verify=0)
+                    saved.update(verified=[],last_verify=0,check_proofs={})
                     process = saved.get('pending_process')
                     # Older checkpoints recorded the tool call but not its
                     # normalized subprocess identity. Preserve their fence too.
@@ -853,7 +927,7 @@ class AutonomousMissionAgent:
                         if not blocked:
                             output_snapshot = await self._revalidate_outputs()
                             if not output_snapshot['passed']:
-                                self.state.update(verified=[],last_verify=0)
+                                self.state.update(verified=[],last_verify=0,check_proofs={})
                                 self.state['messages'].append({'role':'user','content':'Current output checks failed: '+json.dumps(output_snapshot,ensure_ascii=False)})
                                 repeated += 1
                                 if repeated>=self.policy.stall_attempts:
@@ -875,7 +949,7 @@ class AutonomousMissionAgent:
                             if (not current_outputs['passed'] or
                                     [c.get('observed_sha256') for c in current_outputs['checks']]!=
                                     [c.get('observed_sha256') for c in output_snapshot['checks']]):
-                                self.state.update(verified=[],last_verify=0)
+                                self.state.update(verified=[],last_verify=0,check_proofs={})
                                 self.state['messages'].append({'role':'user','content':'Outputs changed during the review; inspect and verify the current files before completion'})
                                 await self._save()
                                 continue
@@ -911,30 +985,13 @@ class AutonomousMissionAgent:
                         for tool in names:
                             if tool not in executed:
                                 executed.append(tool)
-                    if name in CHANGE_TOOLS and not (name in {'write_file','spawn_agent','create_skill','create_agent'} and isinstance(result,dict) and result.get('changed') is False):
+                    command_checks = name=='verify' and isinstance(args.get('checks'),list) and any(c.get('kind')=='command' for c in args['checks'] if isinstance(c,dict))
+                    if (name in CHANGE_TOOLS or command_checks) and not (name in {'write_file','spawn_agent','create_skill','create_agent'} and isinstance(result,dict) and result.get('changed') is False):
                         self.state['last_change'] = number
-                        self.state['verified'] = []
-                        self.state['output_checks'] = []
-                        self.state.pop('output_revalidation',None)
+                        await self._refresh_verified(number)
                     verification = result if name=='verify' else result.get('verification') if name=='spawn_agent' and ok else None
                     if isinstance(verification,dict) and isinstance(verification.get('checks'),list):
-                        recorded = self.state.setdefault('output_checks',[])
-                        verdicts = {}
-                        for check in verification['checks']:
-                            criterion = check.get('criterion')
-                            if criterion in self.state['criteria']:
-                                verdicts[criterion] = verdicts.get(criterion,True) and check['passed']
-                            if check['passed'] and check['kind'] in PURE_CHECKS:
-                                clean = {k:v for k,v in check.items() if k in CHECK_FIELDS[check['kind']]}
-                                if clean not in recorded:
-                                    recorded.append(clean)
-                        if any(verdicts.values()):
-                            self.state['last_verify'] = number
-                        for criterion,passed in verdicts.items():
-                            if passed and criterion not in self.state['verified']:
-                                self.state['verified'].append(criterion)
-                            elif not passed and criterion in self.state['verified']:
-                                self.state['verified'].remove(criterion)
+                        self._record_verification(verification,number)
                     self.state['pending'] = None
                     encoded = json.dumps(evidence,ensure_ascii=False)
                     # Durable state keeps the full tool record; inference receives bounded data.
