@@ -243,6 +243,7 @@ class VerificationContinuity(unittest.IsolatedAsyncioTestCase):
             self.agent._messages()
 
     async def test_alternating_unchanged_reads_trigger_a_cycle_notice_and_stop(self):
+        self.agent.policy = replace(self.agent.policy,recovery_attempts=0)
         replies = [self.plan('A content')]+[call('read_file',path=p) for p in ['a.txt','b.txt']*5]
         _,received = await self.play(replies)
         self.assertEqual(self.agent.state['status'],'failed')

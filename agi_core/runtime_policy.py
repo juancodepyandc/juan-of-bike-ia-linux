@@ -19,6 +19,7 @@ class RuntimePolicy:
     parallel_workers: int = 1
     output_chars: int = 12000
     context_chars: int = 60000
+    recovery_attempts: int = 2
 
     @classmethod
     def from_env(cls):
@@ -29,6 +30,7 @@ class RuntimePolicy:
             parallel_workers=positive_env("AURORA_PARALLEL_WORKERS", 1),
             output_chars=positive_env("AURORA_TOOL_OUTPUT_CHARS", 12000),
             context_chars=positive_env("AURORA_CONTEXT_CHARS", 60000),
+            recovery_attempts=positive_env("AURORA_RECOVERY_ATTEMPTS", 2, allow_zero=True),
         )
 
 

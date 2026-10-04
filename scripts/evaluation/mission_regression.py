@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from dataclasses import asdict
 import hashlib
 import io
 import json
@@ -172,6 +173,7 @@ async def evaluate(args):
     if args.model not in await gateway.get_available_models():
         raise ValueError('Explicit evaluation model is not installed; no implicit fallback')
     files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py','agi_core/context.py','agi_core/json_predicates.py',
+             'agi_core/mission_recovery.py','agi_core/runtime_policy.py',
              'scripts/evaluation/mission_regression.py']
     result = {'model':args.model,'seed':args.seed,'timeout_seconds':args.timeout,'options':model_options(),'python':platform.python_version(),
               'os':platform.platform(),'substituted_model':False,'agi_certification':False,
@@ -215,6 +217,8 @@ async def evaluate(args):
                   'deadline_seconds':args.timeout,'iterations':agent.state['iteration'],
                   'plan':agent.state['plan'],'criteria':agent.state['criteria'],'verified':agent.state['verified'],
                   'required_tools':agent.state.get('required_tools',[]),'executed_tools':agent.state.get('executed_tools',[]),
+                  'runtime_policy':asdict(agent.policy),'recovery_attempts_used':agent.state.get('recovery_attempts_used',0),
+                  'recoveries':agent.state.get('recoveries',[]),
                   'status':agent.state['status'],'error':error,'independent_assessment':assessment,
                   'failure_reason':next((e.get('message') for e in reversed(events) if e['type']=='error'),None),
                   'passed':not error and agent.state['status']=='completed' and assessment['passed'],
