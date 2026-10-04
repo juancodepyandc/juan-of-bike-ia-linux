@@ -1,6 +1,7 @@
 """Tool argument contracts shared by constrained decoding and execution."""
 from __future__ import annotations
 from copy import deepcopy
+import json
 from agi_core.json_predicates import parse_json_expression
 
 
@@ -75,6 +76,36 @@ TOOL_DESCRIPTIONS = {
     'list_tools':'Discover permitted built-in protocol tools and Python scripts. Built-ins are called directly; scripts use run_tool after inspecting their arguments.',
     'inspect_tool':'Inspect a built-in argument contract or a Python script without running it.',
 }
+
+
+def audit_response_schema(criteria, allowed, inventory, *, max_chars):
+    """Bind flat integer CSV aggregate output names to observed schemas."""
+    schema = tool_response_schema(criteria,allowed)
+    schema['oneOf'] = [b for b in schema['oneOf'] if b['properties']['tool']['const']=='verify']
+    checks = schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+    csv_branch = next(b for b in checks if b['properties']['kind']['const']=='csv_json')
+    variants = []
+    for info in inventory:
+        fields = info.get('json_fields',{})
+        if len(fields)<2 or any(t!='integer' or not key.strip() for key,t in fields.items()):
+            continue
+        for row in fields:
+            variant = deepcopy(csv_branch)
+            properties = variant['properties']
+            properties['json_path'] = {'const':info['path']}
+            properties['row_field'] = {'const':row}
+            sums = [key for key in fields if key!=row]
+            properties['sum_fields'] = object_args({key:TEXT for key in sums},sums)
+            variants.append(variant)
+            # Large schemas fall back to ordinary decoding plus execution-time
+            # preflight. This is an explicit resource bound, not a quality score.
+            if len(json.dumps(variants,ensure_ascii=False))>max_chars:
+                return schema
+    if variants:
+        checks[:] = [b for b in checks if b is not csv_branch]+variants
+        if len(json.dumps(schema,ensure_ascii=False))>max_chars:
+            checks[:] = [b for b in checks if b not in variants]+[csv_branch]
+    return schema
 
 
 def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None):

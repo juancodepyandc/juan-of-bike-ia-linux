@@ -138,6 +138,25 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         checks=schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
         self.assertFalse(any(c['properties']['kind']['const']=='command' for c in checks))
 
+    async def test_native_schema_and_preflight_reject_invented_aggregate_output_names(self):
+        self.agent._plan(self.plan['args'])
+        result=await self.agent._execute('write_file',{'path':'summary.json','content':json.dumps(self.correct)})
+        self.agent.state['evidence'].append({'id':'actual','tool':'write_file','ok':True,'result':result})
+        received=[]
+        async def generate(system,payload,model,**kwargs):
+            received.append(kwargs['response_format'])
+            return json.dumps(call('verify',checks=[{**self.check,'sum_fields':{'value':'value'}}]))
+        with patch.object(self.agent.gateway,'generate',generate),self.assertRaisesRegex(ValueError,'observed JSON keys'):
+            await self.agent._propose_completion_audit()
+        checks=received[0]['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+        csv=[b for b in checks if b['properties']['kind']['const']=='csv_json']
+        self.assertEqual(len(csv),2)
+        by_row={b['properties']['row_field']['const']:b for b in csv}
+        self.assertEqual(set(by_row),{'rows','sum'})
+        self.assertEqual(by_row['rows']['properties']['sum_fields']['required'],['sum'])
+        self.assertFalse(by_row['rows']['properties']['sum_fields']['additionalProperties'])
+        self.assertEqual(json.loads((self.root/'summary.json').read_text()),self.correct)
+
     async def test_unknown_interrupted_command_remains_fenced_in_the_independent_check(self):
         argv=[sys.executable,'-c','from pathlib import Path;Path("forbidden.txt").write_text("1")']
         command={'kind':'command','criterion':self.criterion,'argv':argv}
