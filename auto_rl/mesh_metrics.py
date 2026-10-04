@@ -64,8 +64,15 @@ def _candidate_pairs(lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
         cell = float(ext.max()) or 1.0
 
     c0 = np.floor(lo / cell).astype(np.int64)
-    span = np.minimum(np.floor(hi / cell).astype(np.int64) - c0, _MAX_CELL_SPAN)
-    span = np.maximum(span, 0)
+    span_true = np.maximum(np.floor(hi / cell).astype(np.int64) - c0, 0)
+    # Une face qui depasse _MAX_CELL_SPAN serait tronquee: deux AABB qui se
+    # recouvrent pourraient alors n'avoir aucune cellule commune, et le compte
+    # serait trop bas. Le sur-ensemble ne serait donc PLUS exact. On borne
+    # toujours l'insertion, mais ces faces rares sont couplees a toutes les
+    # faces plus bas, ce qui restaure l'exactitude sans exploser la memoire.
+    capped = np.minimum(span_true, _MAX_CELL_SPAN)
+    oversized = np.flatnonzero((span_true != capped).any(axis=1))
+    span = capped
     counts = ((span[:, 0] + 1) * (span[:, 1] + 1) * (span[:, 2] + 1)).astype(np.int64)
     total = int(counts.sum())
     if total == 0:
@@ -91,6 +98,14 @@ def _candidate_pairs(lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
             continue
         i, j = np.triu_indices(len(g), 1)
         out.append(np.column_stack([g[i], g[j]]))
+    if len(oversized):
+        # Repli d'exactitude: une face trop etendue pour la grille est
+        # comparee a toutes les autres. Le filtre AABB et la deduplication
+        # eliminent ensuite les paires sans rapport.
+        all_faces = np.arange(n, dtype=np.int64)
+        for f in oversized:
+            others = all_faces[all_faces != f]
+            out.append(np.column_stack([np.full(len(others), f, dtype=np.int64), others]))
     if not out:
         return np.empty((0, 2), dtype=np.int64)
     pairs = np.concatenate(out, axis=0)

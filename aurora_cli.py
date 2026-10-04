@@ -20,10 +20,9 @@ def main():
         print("Vérifiez que le dossier aurora-remote-cli existe bien au même niveau que AuroraIA.")
         sys.exit(1)
         
-    # Surcharge la configuration pour pointer par défaut sur le localhost
-    os.environ["AURORA_SERVER_URL"] = "http://127.0.0.1:3001"
-    
-    print("Démarrage de la CLI unifiée (mode local)...")
+    # Default to the local bridge, preserving explicit environment overrides.
+    if not os.environ.get("JOBIA_SERVER_URL") and not os.environ.get("AURORA_SERVER_URL"):
+        os.environ["JOBIA_SERVER_URL"] = "http://127.0.0.1:3001"
     cli_main()
 
 if __name__ == "__main__":

@@ -39,7 +39,13 @@ class AsyncEventBus:
                     continue
                 
                 action = msg.get("action")
-                logger.info(f"[BUS] Action reçue: {action} msg: {msg}")
+                logger.debug("[BUS] Action reçue: %s", action)
+                if action == "health":
+                    reply = {"ok": True, "protocol": 1,
+                             "mission_ready": bool(self._subscribers.get("mission.start"))}
+                    writer.write((json.dumps(reply) + "\n").encode())
+                    await writer.drain()
+                    continue
                 if action == "publish":
                     # Relai local aux subscribers asynchrones du Daemon
                     event_type = msg.get("event_type")
@@ -114,3 +120,21 @@ def publish_sync(event_type: str, payload: Any):
         logger.warning(f"[BUS] Échec de la publication synchrone: {e}")
 
 global_bus = AsyncEventBus()
+
+
+def probe_sync(timeout: float = 2.0, port: int = BUS_PORT) -> dict:
+    """Require a protocol reply and a mission subscriber, not only an open port."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as connection:
+            connection.sendall(b'{"action":"health"}\n')
+            with connection.makefile("rb") as stream:
+                line = stream.readline(4097)
+            if len(line) > 4096 or not line.endswith(b"\n"):
+                raise ValueError("Invalid health response")
+            reply = json.loads(line)
+            if not isinstance(reply, dict) or reply.get("protocol") != 1:
+                raise ValueError("Unknown bus protocol")
+            return {"ok": reply.get("ok") is True,
+                    "mission_ready": reply.get("mission_ready") is True}
+    except (OSError, ValueError):
+        return {"ok": False, "mission_ready": False}

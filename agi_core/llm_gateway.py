@@ -2,6 +2,7 @@ import aiohttp
 import logging
 import json
 import asyncio
+import os
 
 logger = logging.getLogger("AuroraAGI.Gateway")
 
@@ -9,12 +10,29 @@ class LLMGateway:
     """Passerelle Neuronale pour interroger Ollama en local de manière asynchrone."""
     def __init__(self, ollama_url: str = "http://127.0.0.1:11434"):
         self.ollama_url = ollama_url
-        self.default_model = "qwen3-coder-next:q4_K_M"
+        self.default_model = os.environ.get("AURORA_DEFAULT_MODEL", "qwen3-coder-next:q4_K_M")
+
+    async def get_available_models(self) -> list[str]:
+        timeout = aiohttp.ClientTimeout(total=10, sock_connect=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{self.ollama_url}/api/tags") as response:
+                response.raise_for_status()
+                data = await response.json()
+        return [item["name"] for item in data.get("models", [])
+                if isinstance(item, dict) and isinstance(item.get("name"), str)]
+
+    async def resolve_model(self, requested: str | None = None) -> str:
+        if requested:
+            return requested
+        available = await self.get_available_models()
+        if self.default_model not in available:
+            raise RuntimeError("Configured default model is not installed; choose an available model explicitly")
+        return self.default_model
 
     async def generate(self, system_prompt: str, user_prompt: str, model: str = None) -> str:
         url = f"{self.ollama_url}/api/generate"
         payload = {
-            "model": model or self.default_model,
+            "model": await self.resolve_model(model),
             "system": system_prompt,
             "prompt": user_prompt,
             "stream": False,
@@ -46,7 +64,7 @@ class LLMGateway:
     async def generate_stream(self, system_prompt: str, user_prompt: str, on_token: callable, model: str = None) -> str:
         url = f"{self.ollama_url}/api/generate"
         payload = {
-            "model": model or self.default_model,
+            "model": await self.resolve_model(model),
             "system": system_prompt,
             "prompt": user_prompt,
             "stream": True,

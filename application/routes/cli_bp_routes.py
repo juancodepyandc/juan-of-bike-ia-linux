@@ -309,9 +309,12 @@ def cli_doctor():
         tun = open(os.path.join(os.path.dirname(WORKSPACE), "tunnel.txt")).read().strip()
     except Exception:
         pass
-    checks.append({"name": "Tunnel Cloudflare", "ok": bool(tun), "detail": tun or "non configuré"})
+    checks.append({"name": "Tunnel Cloudflare", "ok": None, "status": "unverified",
+                   "detail": f"adresse enregistrée, disponibilité non vérifiée : {tun}" if tun else "non configuré"})
     # Daemon AGI (bus IPC 3002) — readiness réelle pour les missions
-    daemon_ok = _cli_publish_ipc("heartbeat.ping", {})
+    from agi_core.bus import probe_sync
+    health = probe_sync()
+    daemon_ok = health["ok"] and health["mission_ready"]
     checks.append({"name": "Daemon AGI (bus IPC 3002)", "ok": daemon_ok,
                    "detail": "abonné et joignable" if daemon_ok else "indisponible : missions impossibles"})
     # Permissions — le compte suit la constante, pas une valeur écrite en dur
@@ -326,9 +329,10 @@ def cli_doctor():
     # Version
     checks.append({"name": "Version serveur", "ok": True, "detail": _CLI_VERSION})
     # Streaming (le transport SSE est le flux mission ; sa readiness dépend du daemon)
-    checks.append({"name": "Streaming SSE", "ok": daemon_ok,
-                   "detail": "le flux mission suit l'état du daemon" if daemon_ok else "indisponible sans daemon"})
-    return jsonify({"ok": True, "checks": checks})
+    checks.append({"name": "Streaming SSE de bout en bout", "ok": None, "status": "unverified",
+                   "detail": "nécessite une mission réelle depuis le client ; aucun flux testé par ce diagnostic"})
+    ready = ollama_ok and daemon_ok
+    return jsonify({"ok": ready, "ready": ready, "gpu_ready": gpu_ok, "checks": checks})
 
 
 # --- Sessions ---
@@ -1109,20 +1113,14 @@ def cli_connections_test():
 
 def _cli_load_context_for_workspace(workspace_path):
     """Load full context (skills, MCP, connections, agents) for a workspace."""
-    skills = _cli_discover_skills(workspace_path)
-    mcp = _cli_discover_mcp(workspace_path)
-    conns = _cli_load_json(_CLI_CONNECTIONS_PATH).get("connections", [])
-    active_conns = [c for c in conns if c.get("active")]
+    from agi_core.context import load_context
+    context = load_context(workspace_path)
     official = _cli_list_official_agents()
     state = _cli_load_json(_CLI_AGENT_STATE_PATH)
     disabled = state.get("disabled", [])
     enabled_officials = [a for a in official if a["name"] not in disabled]
     dynamic_saved = [a for a in _cli_load_json(_CLI_DYNAMIC_AGENTS_PATH).get("agents", []) if a.get("type") == "saved"]
-    skills_summary = "\n".join(f"- {s['name']}: {s['description']}" for s in skills[:10]) if skills else ""
-    return {
-        "skills": skills, "skills_count": len(skills), "skills_summary": skills_summary,
-        "mcp_servers": mcp, "mcp_tools_count": sum(len(s.get("tools", [])) for s in mcp),
-        "connections": [c.get("service") for c in active_conns], "connections_count": len(active_conns),
+    return {**context,
         "official_agents": len(enabled_officials), "dynamic_agents_saved": len(dynamic_saved),
     }
 

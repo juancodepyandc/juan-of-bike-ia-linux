@@ -258,9 +258,29 @@ def execute_preference_cycle(c, cycle_number=1):
                     # silently dropping it teaches nothing.
                     ranked = sorted(samples, key=lambda s: (bool(s["judge"].get("valid")),
                                                              float(s["judge"].get("score", -1.0))))
-                    if len(ranked) < 2 or not ranked[-1]["judge"].get("valid"):
-                        continue
-                    loser, winner = ranked[0], ranked[-1]
+                    # 3D: le gagnant est choisi par dominance de Pareto. Un score
+                    # composite plus haut ne doit pas pouvoir se payer par une
+                    # régression d'une métrique suivie, par exemple la pire vue
+                    # CLIP ou le nombre d'auto-intersections exactes. Les autres
+                    # modules conservent le classement scalaire historique.
+                    dominance_info = None
+                    beaten = None
+                    if c["module"] == "3d":
+                        from .dominance import TRACKED_3D, select as dominance_select
+                        chosen, beaten, dominance_info = dominance_select(samples, TRACKED_3D)
+                        if chosen is None:
+                            status.flush(preference_skipped=dominance_info.get("raison"))
+                            continue
+                        winner = chosen
+                        # Un négatif que le gagnant domine encode une amélioration
+                        # sur TOUTES les métriques suivies. À défaut, on garde le
+                        # pire échantillon, invalide compris: un rendu raté reste
+                        # une supervision, il ne faut pas le jeter.
+                        loser = beaten or ranked[0]
+                    else:
+                        if len(ranked) < 2 or not ranked[-1]["judge"].get("valid"):
+                            continue
+                        loser, winner = ranked[0], ranked[-1]
                     # For code, one bounded correction can provide a genuinely judged preference.
                     if c["module"] in TEXT_MODULES and c.get("oracle_teaching"):
                         # Trusted synthetic labels for TRAINING tasks only. This is
@@ -303,6 +323,13 @@ def execute_preference_cycle(c, cycle_number=1):
                         filename = task["id"] + ".safetensors"
                         save_file({"chosen": chosen["latent"], "rejected": rejected["latent"], "cond": chosen["cond"]}, str(pref_dir/filename))
                         record["tensors"] = filename
+                    if dominance_info:
+                        record["selection"] = {"methode": "dominance_pareto",
+                                               "metriques_utilisees": dominance_info.get("metriques_utilisees"),
+                                               "perdant_domine": bool(dominance_info.get("strict")),
+                                               "strict": bool(dominance_info.get("strict")),
+                                               "ecart_score": dominance_info.get("ecart_score"),
+                                               "raison": dominance_info.get("raison")}
                     records.append(record)
                 if len(records) < c.get('minimum_preference_pairs',2):
                     raise RuntimeError("Pas assez de préférences fiables sur les essais générés. Les objets et scores restent disponibles dans self_play ; augmenter les sujets/essais.")

@@ -229,6 +229,9 @@ models/
 models_eval/
 Outputs/
 Inputs/
+db_vector/
+.transfer_to_client/
+.aurora/
 
 # Kept locally but excluded from GitHub repository
 .claude/
