@@ -38,14 +38,35 @@ class LLMGateway:
             raise RuntimeError("Configured default model is not installed; choose an available model explicitly")
         return self.default_model
 
-    async def chat_chunks(self, messages, model=None, *, session=None, on_metrics=None):
+    async def running_context_window(self, model, session=None):
+        """Observe the loaded runner's window, not the model's theoretical maximum."""
+        if session is None:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as client:
+                return await self.running_context_window(model,client)
+        try:
+            async with session.get(f'{self.ollama_url}/api/ps',timeout=aiohttp.ClientTimeout(total=10)) as response:
+                response.raise_for_status()
+                data = await response.json()
+            for item in data.get('models',[]):
+                if item.get('name') == model or item.get('model') == model:
+                    value = item.get('context_length')
+                    if isinstance(value,int) and not isinstance(value,bool) and value>0:
+                        return value
+        except (aiohttp.ClientError, ValueError, asyncio.TimeoutError):
+            logger.debug('Running model context window unavailable',exc_info=True)
+        return None
+
+    async def chat_chunks(self, messages, model=None, *, session=None, on_metrics=None, response_format=None):
         if session is None:
             async with aiohttp.ClientSession(timeout=self.timeout()) as client:
-                async for chunk in self.chat_chunks(messages, model, session=client, on_metrics=on_metrics):
+                async for chunk in self.chat_chunks(messages, model, session=client, on_metrics=on_metrics,
+                                                    response_format=response_format):
                     yield chunk
             return
         selected = await self.resolve_model(model)
         payload = {'model': selected, 'messages': messages, 'stream': True, 'options': model_options()}
+        if response_format is not None:
+            payload['format'] = response_format
         started, last_flush = time.monotonic(), time.monotonic()
         complete, received, pending = False, False, ''
         async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
@@ -81,16 +102,16 @@ class LLMGateway:
         if not complete or not received:
             raise RuntimeError('Model stream ended without a complete answer')
 
-    async def generate_stream(self, system_prompt: str, user_prompt: str, on_token, model=None) -> str:
+    async def generate_stream(self, system_prompt: str, user_prompt: str, on_token, model=None, *, response_format=None) -> str:
         answer = ''
         async for chunk in self.chat_chunks([
             {'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}
-        ], model):
+        ], model, response_format=response_format):
             answer += chunk
             result = on_token(chunk)
             if inspect.isawaitable(result):
                 await result
         return answer.strip()
 
-    async def generate(self, system_prompt: str, user_prompt: str, model=None) -> str:
-        return await self.generate_stream(system_prompt, user_prompt, lambda _: None, model)
+    async def generate(self, system_prompt: str, user_prompt: str, model=None, *, response_format=None) -> str:
+        return await self.generate_stream(system_prompt, user_prompt, lambda _: None, model, response_format=response_format)

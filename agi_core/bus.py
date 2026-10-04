@@ -88,7 +88,7 @@ class AsyncEventBus:
         logger.debug(f"[BUS] Node local connecté sur: {event_pattern}")
 
     async def _local_publish(self, event_type: str, payload: Any):
-        logger.info(f"[BUS] self._subscribers = {list(self._subscribers.keys())}")
+        logger.debug("[BUS] Publish %s to local subscribers", event_type)
         if event_type in self._subscribers:
             for cb in self._subscribers[event_type]:
                 try:

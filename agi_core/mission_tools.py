@@ -102,6 +102,15 @@ class MissionTools:
         return items
 
     def read(self, path, offset, limit):
+        # Hash exactly the bytes observed, including CRLF/non-ASCII. Never scan
+        # a large file merely to attach a hash to a bounded excerpt.
+        with path.open('rb') as stream:
+            raw = stream.read(limit*4+1)
+        if len(raw)<=limit*4:
+            text = raw.decode('utf-8',errors='replace')
+            content = text[offset:offset+limit]
+            return {'path':str(path),'content':content,'next_offset':offset+len(content),
+                    'truncated':len(text)>offset+limit,'sha256':hashlib.sha256(raw).hexdigest()}
         with path.open(encoding='utf-8', errors='replace') as stream:
             remaining = offset
             while remaining:
@@ -115,8 +124,10 @@ class MissionTools:
     def write(self, path, content, expected):
         self.agent._assert_owned()
         path.parent.mkdir(parents=True, exist_ok=True)
+        if expected and not path.is_file():
+            raise ValueError('Target file does not exist. expected_sha256 guards existing files only; omit it when creating a new file')
         if expected and (not path.is_file() or digest_file(path)!=expected):
-            raise ValueError('File changed since the observed version; inspect before overwriting')
+            raise ValueError('File hash differs from expected_sha256; read the current file and use its measured sha256 before overwriting')
         mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
         temporary = None
         try:
@@ -254,6 +265,16 @@ class MissionTools:
                 item = dict(check)
                 try:
                     kind = check.get('kind')
+                    fields = {'file':{'path','min_bytes','sha256'}, 'command':{'argv','contains'},
+                              'source':{'evidence_ids'}}
+                    if kind not in fields:
+                        raise ValueError('Unsupported verification kind')
+                    unknown = set(check)-fields[kind]-{'kind','criterion'}
+                    if unknown:
+                        raise ValueError('Unsupported verification fields: '+', '.join(sorted(unknown))+
+                                         '. Accepted fields: '+', '.join(sorted(fields[kind]|{'kind','criterion'})))
+                    if 'criterion' in check and check['criterion'] not in a.state['criteria']:
+                        raise ValueError('criterion must exactly match an acceptance criterion from set_plan')
                     if kind == 'file':
                         path = a._file_path(check.get('path', ''))
                         digest = await asyncio.to_thread(digest_file, path)
@@ -264,6 +285,8 @@ class MissionTools:
                         argv = check.get('argv')
                         if not isinstance(argv, list) or not argv or not all(isinstance(v, str) for v in argv):
                             raise ValueError('Command checks require an argv list')
+                        if not isinstance(check.get('contains',''),str):
+                            raise ValueError('contains must be text')
                         output = await a._run_process(argv)
                         item.update(exit_code=0, output=output, passed=check.get('contains', '') in output)
                     elif kind == 'source':

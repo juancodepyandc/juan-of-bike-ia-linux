@@ -3,6 +3,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import functools
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -207,6 +208,71 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.emit_patch.start()
         self.addCleanup(self.emit_patch.stop)
 
+    def test_observed_window_bounds_history_but_keeps_goal_and_latest_failure(self):
+        self.agent.state['context_window'] = 4096
+        self.agent.state['messages'] = [{'role':'system','content':'tool protocol'},
+                                        {'role':'user','content':self.agent.request_text}]
+        self.agent._observe_context([{'role':'user','content':'x'*3000}],{'prompt_eval_count':1000,'eval_count':300})
+        ratio = self.agent.state['context_chars_per_token']
+        self.agent._observe_context([{'role':'user','content':'x'*60000}],{'prompt_eval_count':4096,'eval_count':100})
+        self.assertEqual(self.agent.state['context_chars_per_token'],ratio)
+        self.agent.state['messages'] += [{'role':'user','content':'obsolete '*1000} for _ in range(20)]
+        self.agent.state['messages'].append({'role':'user','content':'Latest actual test failed: value is 3, expected 2'})
+        messages = self.agent._messages()
+        self.assertEqual(messages[1]['content'],self.agent.request_text)
+        self.assertEqual(messages[-1]['content'],self.agent.state['messages'][-1]['content'])
+        self.assertIn(self.agent.request_text,messages[2]['content'])
+        self.assertLessEqual(sum(len(m['content']) for m in messages),self.agent._context_chars())
+        self.assertLess(len(messages),len(self.agent.state['messages']))
+
+    def test_oversized_immutable_goal_is_reported_instead_of_silently_truncated(self):
+        self.agent.state.update(context_window=200,context_chars_per_token=1,max_reply_tokens=0)
+        self.agent.state['messages'] = [{'role':'system','content':'protocol'},{'role':'user','content':'original '*100}]
+        with self.assertRaisesRegex(RuntimeError,'immutable goal'):
+            self.agent._messages()
+
+    def test_long_latest_observation_is_excerpted_instead_of_disappearing(self):
+        self.agent.state.update(context_window=4096,context_chars_per_token=1,max_reply_tokens=200)
+        self.agent.state['messages'] = [{'role':'system','content':'protocol'},{'role':'user','content':self.agent.request_text},
+                                       {'role':'user','content':'actual error: '+('x'*20000)+' final diagnostic'}]
+        messages = self.agent._messages()
+        self.assertTrue(messages[-1]['content'].startswith('actual error: '))
+        self.assertTrue(messages[-1]['content'].endswith('final diagnostic'))
+        self.assertIn('truncated',messages[-1]['content'])
+        self.assertLessEqual(sum(len(m['content']) for m in messages),self.agent._context_chars())
+
+    async def test_read_hash_covers_exact_observed_bytes_and_guards_writes(self):
+        original = 'évidence\r\n'.encode()+b'\xff'
+        path = self.root/'observed.txt'
+        path.write_bytes(original)
+        observed = await self.agent.tools.execute('read_file',{'path':'observed.txt'})
+        self.assertEqual(observed['sha256'],hashlib.sha256(original).hexdigest())
+        self.assertIn('\r\n',observed['content'])
+        path.write_text('a concurrent edit')
+        with self.assertRaisesRegex(ValueError,'measured sha256'):
+            await self.agent.tools.execute('write_file',{'path':'observed.txt','content':'replacement','expected_sha256':observed['sha256']})
+        self.assertEqual(path.read_text(),'a concurrent edit')
+        with self.assertRaisesRegex(ValueError,'omit it'):
+            await self.agent.tools.execute('write_file',{'path':'new.txt','content':'new','expected_sha256':observed['sha256']})
+        await self.agent.tools.execute('write_file',{'path':'new.txt','content':'new'})
+        self.assertEqual((self.root/'new.txt').read_text(),'new')
+
+    async def test_unknown_expected_fields_cannot_silently_pass_a_verification(self):
+        (self.root/'actual.txt').write_text('wrong content')
+        self.agent.state['criteria'] = ['Exact content']
+        for check in ({'kind':'file','path':'actual.txt','expected_content':'required content'},
+                      {'kind':'command','argv':[sys.executable,'-c',"print('wrong content')"], 'expected_output':'required content'},
+                      {'kind':'file','path':'actual.txt','criterion':'Invented criterion'}):
+            with self.subTest(check=check):
+                result = await self.agent.tools.execute('verify',{'checks':[check]})
+                self.assertFalse(result['passed'])
+                self.assertIn('error',result['checks'][0])
+
+    async def test_single_shell_string_in_argv_reports_the_required_argument_shape(self):
+        with self.assertRaisesRegex(ValueError,'separate the executable'):
+            await self.agent._run_process([sys.executable+' -c print(1)'])
+        self.assertNotIn('pending_process',self.agent.state)
+
     async def test_completion_cannot_skip_verification_after_real_file_write(self):
         replies = [call('set_plan',steps=['Write the file'],criteria=['Exact file content']),
                    call('write_file',path='result.txt',content='real result'),
@@ -253,6 +319,69 @@ class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await restarted.run(),'Existing write inspected and verified')
         self.assertEqual(written,['result.txt'])
         self.assertEqual((self.root/'result.txt').read_text(),'preserved')
+
+    async def test_interrupted_process_cannot_be_replayed_after_restart_under_an_alias(self):
+        script = self.root/'operation.py'
+        script.write_text("from pathlib import Path\nimport time\np=Path('counter.txt')\np.write_text(str(int(p.read_text())+1) if p.exists() else '1')\nprint('incremented',flush=True)\ntime.sleep(60)\n")
+        self.agent.state.update(plan=['Execute once'],criteria=['Counter equals one'],
+                                messages=[{'role':'system','content':'Tool protocol'}, {'role':'user','content':self.agent.request_text}],
+                                pending={'tool':'run_command','args':{'argv':[sys.executable,'operation.py']}})
+        running = asyncio.create_task(self.agent._run_process([sys.executable,'operation.py']))
+        async def started():
+            while True:
+                try:
+                    if (self.root/'counter.txt').read_text()=='1':
+                        return
+                except OSError:
+                    pass
+                await asyncio.sleep(.01)
+        try:
+            await asyncio.wait_for(started(),10)
+        finally:
+            running.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await running
+        await self.agent._save()
+        restarted = AutonomousMissionAgent(self.item['id'],self.agent.request_text,str(self.root),'test:local',store=MissionStore(self.store.path))
+        restarted._review_completion = self.agent._review_completion
+        if sys.platform=='win32':
+            replay = call('run_command',argv=[sys.executable,str(script)])
+        else:
+            replay = call('run_command',command='python3 operation.py')
+        additional_replays = [call('run_command',argv=[sys.executable,'-u',str(script)])]
+        if sys.platform!='win32':
+            import shutil
+            if shutil.which('timeout'):
+                additional_replays.append(call('run_command',command='timeout 0.1 python3 operation.py'))
+        replies = [call('read_file',path='counter.txt'),replay,*additional_replays,
+                   call('verify',checks=[{'kind':'command','argv':[sys.executable,'-c',"from pathlib import Path; assert Path('counter.txt').read_text()=='1'"],
+                                         'criterion':'Counter equals one'}]),call('finish',message='Existing effect verified without replay')]
+        with scripted(restarted,replies):
+            self.assertEqual(await restarted.run(),'Existing effect verified without replay')
+        failures = [e for e in restarted.state['evidence'] if e['tool']=='run_command' and not e['ok']]
+        self.assertEqual(len(failures),1+len(additional_replays))
+        self.assertTrue(all('automatic replay is disabled' in e['result']['error'] for e in failures))
+        self.assertEqual((self.root/'counter.txt').read_text(),'1')
+        self.assertEqual(len(self.store.checkpoint(self.item['id'])['interrupted_processes']),1)
+
+    async def test_legacy_pending_command_is_fenced_without_new_checkpoint_fields(self):
+        (self.root/'counter.txt').write_text('1')
+        script = self.root/'operation.py'
+        script.write_text("from pathlib import Path\np=Path('counter.txt')\np.write_text(str(int(p.read_text())+1))\n")
+        self.agent.state.update(plan=['Execute once'],criteria=['Counter equals one'],
+                                messages=[{'role':'system','content':'Tool protocol'},{'role':'user','content':self.agent.request_text}],
+                                pending={'tool':'run_command','args':{'argv':[sys.executable,'operation.py']}})
+        await self.agent._save()
+        restarted = AutonomousMissionAgent(self.item['id'],self.agent.request_text,str(self.root),'test:local',store=MissionStore(self.store.path))
+        restarted._review_completion = self.agent._review_completion
+        replies = [call('run_command',argv=[sys.executable,str(script)]),
+                   call('verify',checks=[{'kind':'command','argv':[sys.executable,'-c',"from pathlib import Path; assert Path('counter.txt').read_text()=='1'"],
+                                         'criterion':'Counter equals one'}]),call('finish',message='Legacy effect preserved')]
+        with scripted(restarted,replies):
+            self.assertEqual(await restarted.run(),'Legacy effect preserved')
+        self.assertEqual((self.root/'counter.txt').read_text(),'1')
+        failure = next(e for e in restarted.state['evidence'] if e['tool']=='run_command')
+        self.assertIn('automatic replay is disabled',failure['result']['error'])
 
     async def test_review_failure_retains_work_without_a_completion_claim(self):
         self.agent._review_completion = AsyncMock(return_value={'approved':False,'unmet':['Requested evidence absent'],'reason':'File presence does not prove requested content'})
