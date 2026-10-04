@@ -8,6 +8,7 @@ import hashlib
 from html.parser import HTMLParser
 import json
 import io
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
 from agi_core.mission_protocol import ARG_SCHEMAS, CHECK_FIELDS, PURE_CHECKS, TOOL_DESCRIPTIONS, validate_checks
+from agi_core.json_predicates import evaluate_json_expression
 
 
 def digest_file(path):
@@ -45,7 +47,12 @@ def strict_json(raw):
         return result
     def invalid_constant(value):
         raise ValueError('Non-finite JSON number: '+value)
-    return json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant)
+    def finite_float(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError('Non-finite JSON number: '+value)
+        return result
+    return json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant,parse_float=finite_float)
 
 
 def same_json(actual, expected):
@@ -408,8 +415,8 @@ class MissionTools:
                             item['observed'] = actual[:a.policy.output_chars]
                             item['truncated'] = len(actual)>a.policy.output_chars
                         else:
-                            if not {'equals','keys','types'}&check.keys():
-                                raise ValueError('JSON verification requires equals, keys or types')
+                            if not {'equals','keys','types','expressions'}&check.keys():
+                                raise ValueError('JSON verification requires equals, keys, types or expressions')
                             actual = strict_json(actual)
                             item['passed'] = 'equals' not in check or same_json(actual,check['equals'])
                             if 'keys' in check:
@@ -423,6 +430,18 @@ class MissionTools:
                                 if not isinstance(expected,dict) or not expected or any(not isinstance(t,str) or t not in types for t in expected.values()):
                                     raise ValueError('JSON types must map fields to integer, number, string, boolean, object, array or null')
                                 item['passed'] &= isinstance(actual,dict) and all(k in actual and type(actual[k]) in (types[t] if isinstance(types[t],tuple) else (types[t],)) for k,t in expected.items())
+                            if 'expressions' in check:
+                                validate_checks([check])
+                                item['expression_results'] = []
+                                for expression in check['expressions']:
+                                    if len(expression)>a.policy.output_chars:
+                                        raise ValueError('JSON expression exceeds the output bound; use a command check')
+                                    try:
+                                        outcome = {'expression':expression,'passed':evaluate_json_expression(expression,actual)}
+                                    except ValueError as exc:
+                                        outcome = {'expression':expression,'passed':False,'error':str(exc)}
+                                    item['expression_results'].append(outcome)
+                                item['passed'] &= all(e['passed'] for e in item['expression_results'])
                             observed = json.dumps(actual,ensure_ascii=False,allow_nan=False)
                             item['observed'] = actual if len(observed)<=a.policy.output_chars else observed[:a.policy.output_chars]
                             item['truncated'] = len(observed)>a.policy.output_chars

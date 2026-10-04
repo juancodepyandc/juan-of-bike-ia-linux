@@ -90,7 +90,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
             if action['properties']['tool']['const'] not in {'verify','spawn_agent'}:
                 continue
             checks = action['properties']['args']['properties']['checks']['items']['anyOf']
-            for kind,fields in (('json',{'equals','keys','types'}),('text',{'equals','contains'})):
+            for kind,fields in (('json',{'equals','keys','types','expressions'}),('text',{'equals','contains'})):
                 branches = [c for c in checks if c['properties']['kind']['const']==kind]
                 self.assertTrue(branches)
                 for branch in branches:

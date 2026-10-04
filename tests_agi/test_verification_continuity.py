@@ -241,3 +241,33 @@ class VerificationContinuity(unittest.IsolatedAsyncioTestCase):
                 {'role':'user','content':self.agent.request_text}])
         with self.assertRaisesRegex(RuntimeError,'immutable goal'):
             self.agent._messages()
+
+    async def test_alternating_unchanged_reads_trigger_a_cycle_notice_and_stop(self):
+        replies = [self.plan('A content')]+[call('read_file',path=p) for p in ['a.txt','b.txt']*5]
+        _,received = await self.play(replies)
+        self.assertEqual(self.agent.state['status'],'failed')
+        self.assertLess(self.agent.state['iteration'],len(replies))
+        notices = [c.args[1] for c in self.agent._emit.call_args_list if c.args[0]=='stagnation_notice']
+        self.assertEqual([n['repeated_observations'] for n in notices],[1,2,3])
+        self.assertTrue(any('Do not cycle through unchanged actions' in m['content'] for m in received[-1]))
+        error = next(c.args[1] for c in self.agent._emit.call_args_list if c.args[0]=='error')
+        self.assertIn('without new observations or verification progress',error['message'])
+        self.assertEqual((self.root/'a.txt').read_text(),'A')
+        self.assertFalse(self.agent.state['verified'])
+
+    async def test_reading_changed_content_is_new_evidence_and_does_not_stall(self):
+        replies = [self.plan('A content')]
+        for value in ['first','second','third','A']:
+            replies.extend([call('write_file',path='a.txt',content=value),call('read_file',path='a.txt')])
+        replies.extend([call('verify',checks=[self.a]),call('finish',message='Changed contents actually observed')])
+        result,_ = await self.play(replies)
+        self.assertEqual(result,'Changed contents actually observed')
+        self.assertEqual(self.agent.state['status'],'completed')
+        self.assertFalse(any(c.args[0]=='stagnation_notice' for c in self.agent._emit.call_args_list))
+
+    async def test_verification_progress_makes_a_previous_read_novel_again(self):
+        replies = [self.plan('A content'),call('read_file',path='a.txt'),call('verify',checks=[self.a]),
+                   call('read_file',path='a.txt'),call('finish',message='Current criterion verified')]
+        result,_ = await self.play(replies)
+        self.assertEqual(result,'Current criterion verified')
+        self.assertFalse(any(c.args[0]=='stagnation_notice' for c in self.agent._emit.call_args_list))

@@ -1,6 +1,7 @@
 """Tool argument contracts shared by constrained decoding and execution."""
 from __future__ import annotations
 from copy import deepcopy
+from agi_core.json_predicates import parse_json_expression
 
 
 TEXT = {'type':'string'}
@@ -18,8 +19,9 @@ CHECK_SCHEMA = {'anyOf':[
     object_args({'kind':{'const':'file'},'path':TEXT,'min_bytes':INTEGER,'sha256':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'text'},'path':TEXT,'equals':TEXT,'contains':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'json'},'path':TEXT,'equals':{'description':'Expected complete JSON value; object key sets and values must match exactly.'},
-                 'keys':{**STRINGS,'description':'Complete exact object key set, not a subset.'},
-                 'types':{'type':'object','additionalProperties':{'type':'string','enum':['integer','number','string','boolean','object','array','null']}},
+                 'keys':{**STRINGS,'description':'Complete exact object key set. Structural proof only; does not prove calculations or constraints.'},
+                 'types':{'type':'object','additionalProperties':{'type':'string','enum':['integer','number','string','boolean','object','array','null']},'description':'Field types only; not proof of calculations or value relations.'},
+                 'expressions':{**NONEMPTY_STRINGS,'description':'Boolean predicates evaluated on the actual saved JSON named data. Supports field/array subscripts, numeric arithmetic, comparisons and boolean logic. No calls or attributes. Use actual request parameters for relations; use command assertions for complex or optimality proofs.'},
                  'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'command'},'argv':NONEMPTY_STRINGS,'contains':TEXT,'expected_exit_code':INTEGER,'criterion':TEXT},('kind','argv')),
     object_args({'kind':{'const':'source'},'evidence_ids':NONEMPTY_STRINGS,'criterion':TEXT},('kind','evidence_ids')),
@@ -69,7 +71,7 @@ TOOL_DESCRIPTIONS = {
     'create_agent':'Save a reusable role once. Verify kind=agent with its name to check the actual saved definition; existence does not prove execution.',
     'spawn_agent':'Execute a delegated task using an optional saved role and concrete parent acceptance checks. The parent verifies the saved outputs after worker completion.',
     'list_skills':'List discovered skills with their actual file paths and byte hashes. This is discovery, not proof of successful execution.',
-    'verify':'Run explicit checks bound to exact current criteria. skill and agent check saved definitions; csv_json compares saved aggregates to the actual input.',
+    'verify':'Run explicit checks bound to exact current criteria. JSON expressions check saved value relations; keys/types only check structure. skill and agent check saved definitions; csv_json compares saved aggregates to the actual input.',
     'list_tools':'Discover permitted built-in protocol tools and Python scripts. Built-ins are called directly; scripts use run_tool after inspecting their arguments.',
     'inspect_tool':'Inspect a built-in argument contract or a Python script without running it.',
 }
@@ -92,7 +94,7 @@ def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None)
             concrete = []
             for branch in checks:
                 kind = branch['properties']['kind']['const']
-                expectations = {'text':('equals','contains'),'json':('equals','keys','types')}.get(kind)
+                expectations = {'text':('equals','contains'),'json':('equals','keys','types','expressions')}.get(kind)
                 if expectations:
                     for field in expectations:
                         variant = deepcopy(branch)
@@ -181,7 +183,10 @@ def validate_checks(checks, criteria=()):
                 raise ValueError('CSV delimiter must be one character')
         if check['kind']=='text' and not {'equals','contains'}&check.keys():
             raise ValueError('Text verification requires equals or contains')
-        if check['kind']=='json' and not {'equals','keys','types'}&check.keys():
-            raise ValueError('JSON verification requires equals, keys or types')
+        if check['kind']=='json' and not {'equals','keys','types','expressions'}&check.keys():
+            raise ValueError('JSON verification requires equals, keys, types or expressions')
+        if check['kind']=='json' and 'expressions' in check:
+            for expression in check['expressions']:
+                parse_json_expression(expression)
         if check['kind']=='file' and check.get('min_bytes',1)<0:
             raise ValueError('min_bytes must be nonnegative')

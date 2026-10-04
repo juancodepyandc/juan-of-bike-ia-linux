@@ -171,7 +171,7 @@ async def evaluate(args):
     gateway = LLMGateway()
     if args.model not in await gateway.get_available_models():
         raise ValueError('Explicit evaluation model is not installed; no implicit fallback')
-    files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py','agi_core/context.py',
+    files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py','agi_core/context.py','agi_core/json_predicates.py',
              'scripts/evaluation/mission_regression.py']
     result = {'model':args.model,'seed':args.seed,'timeout_seconds':args.timeout,'options':model_options(),'python':platform.python_version(),
               'os':platform.platform(),'substituted_model':False,'agi_certification':False,
