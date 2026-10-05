@@ -377,7 +377,7 @@ class MissionTools:
         if name == 'verify':
             checks = args.get('checks')
             if not isinstance(checks, list) or not checks:
-                raise ValueError('Provide concrete file, text, json, csv_json, agent, skill, command or source checks')
+                raise ValueError('Provide concrete file, text, json, csv_json, agent, delegation, skill, command or source checks')
             results = []
             for check in checks:
                 if not isinstance(check, dict):
@@ -455,6 +455,17 @@ class MissionTools:
                         item.update(passed=agent is not None,observed=agent,
                                     observed_sha256=hashlib.sha256(json.dumps(agent,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
                                     scope='Saved role definition exists; this does not prove execution')
+                    elif kind == 'delegation':
+                        validate_checks([check])
+                        matches = [r for r in a._delegation_observations()
+                                   if r['agent']==check['agent'] and r['passed'] is True
+                                   and r['worker_statuses'] and all(s=='completed' for s in r['worker_statuses'])
+                                   and ('tasks' not in check or r['tasks']==check['tasks'])
+                                   and ('execution_id' not in check or r['execution_id']==check['execution_id'])]
+                        observed = matches[-1:]  # One witnessed execution, not a count of replayed reports.
+                        item.update(passed=bool(observed),observed=observed,
+                                    observed_sha256=hashlib.sha256(json.dumps(observed,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
+                                    scope='Actual recorded worker completion with this exact role and then-passing parent acceptance; current output correctness requires separate checks')
                     elif kind == 'skill':
                         validate_checks([check])
                         from agi_core.context import load_context

@@ -101,11 +101,14 @@ def grade_case(name, workspace, oracle, events):
         worker = any(e['type']=='tool_result' and e.get('tool')=='spawn_agent' and e.get('ok')
                      and isinstance(e.get('result'),dict) and e['result'].get('agent')=='AuditCSV'
                      and e['result'].get('passed') and any(w.get('status')=='completed' for w in e['result'].get('workers',[])) for e in events)
+        any_worker = any(e['type']=='tool_result' and e.get('tool')=='spawn_agent' and isinstance(e.get('result'),dict)
+                         and any(w.get('status')=='completed' for w in e['result'].get('workers',[])) for e in events)
         roles = any(e['type']=='tool_result' and e.get('tool')=='create_agent' and e.get('ok')
                     and isinstance(e.get('result'),dict) and e['result'].get('name')=='AuditCSV' for e in events)
         passed = isinstance(data,dict) and data==expected and all(type(v) is int for v in data.values())
         return {'passed':passed and preserved and bool(skills) and worker and roles,'observed':data,
-                'input_preserved':preserved,'skill_created':bool(skills),'role_created':roles,'worker_completed':worker}
+                'input_preserved':preserved,'skill_created':bool(skills),'role_created':roles,'worker_completed':worker,
+                'requested_role_worker_completed':worker,'any_worker_completed':any_worker}
     if name=='code-repair':
         program = '''import copy,json,sys
 sys.path.insert(0,sys.argv[1])
@@ -219,6 +222,7 @@ async def evaluate(args):
                   'required_tools':agent.state.get('required_tools',[]),'executed_tools':agent.state.get('executed_tools',[]),
                   'runtime_policy':asdict(agent.policy),'recovery_attempts_used':agent.state.get('recovery_attempts_used',0),
                   'recoveries':agent.state.get('recoveries',[]),
+                  'delegation_records':agent._delegation_observations(),'request_audit':agent.state.get('request_audit'),
                   'status':agent.state['status'],'error':error,'independent_assessment':assessment,
                   'failure_reason':next((e.get('message') for e in reversed(events) if e['type']=='error'),None),
                   'passed':not error and agent.state['status']=='completed' and assessment['passed'],

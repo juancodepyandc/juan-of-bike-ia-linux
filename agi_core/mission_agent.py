@@ -64,7 +64,7 @@ def _cli_load_context_for_workspace(workspace):
 def _stable_observation(value):
     if isinstance(value, dict):
         return {k:_stable_observation(v) for k,v in value.items()
-                if k not in {'retrieved_at','elapsed_seconds','ts'}}
+                if k not in {'retrieved_at','elapsed_seconds','ts','execution_id'}}
     if isinstance(value,list):
         return [_stable_observation(v) for v in value]
     return value
@@ -88,7 +88,7 @@ class AutonomousMissionAgent:
         self._require_tool('read_file')
         self.state = {'version':1, 'goal':request_text, 'plan':[], 'criteria':[], 'verified':[],
                       'evidence':[], 'messages':[], 'iteration':0, 'pending':None,
-                      'process_observations':[], 'output_checks':[], 'check_proofs':{}, 'resources':{}, 'delegations':[], 'required_tools':[], 'executed_tools':[],
+                      'process_observations':[], 'output_checks':[], 'check_proofs':{}, 'resources':{}, 'delegations':[], 'delegation_records':[], 'required_tools':[], 'executed_tools':[],
                       'last_change':0, 'last_verify':0, 'action_count':0, 'status':'running', 'result':None}
 
     def _require_tool(self, name):
@@ -472,6 +472,8 @@ class AutonomousMissionAgent:
             return await self._extension_tool(name,args)
         if name == 'spawn_agent':
             validate_checks(args['checks'],self.state['criteria'])
+            if any(c['kind']=='delegation' for c in args['checks']):
+                raise ValueError('Check completed delegation execution with verify after spawn_agent; worker acceptance checks must inspect its outputs')
             tasks = args.get('tasks', [args.get('task','')])
             if not isinstance(tasks,list) or not tasks or not all(isinstance(v,str) and v.strip() for v in tasks):
                 raise ValueError('Provide independent nonempty tasks')
@@ -500,6 +502,13 @@ class AutonomousMissionAgent:
                       'agent':args.get('agent',''),'verification':verification,'changed':True,'reused':False,
                       'scope':'Worker completion and the parent acceptance checks only; report prose is still fallible',
                       'workers':[{'task':task,**report} for task,report in zip(tasks,reports)]}
+            record = {'execution_id':'delegation_'+uuid4().hex,'agent':args.get('agent',''),
+                      'tasks':list(tasks),'worker_statuses':[report['status'] for report in reports],
+                      'passed':result['passed'],
+                      'acceptance_fingerprints':self._verification_fingerprint(verification)}
+            self.state.setdefault('delegation_records',[]).append(record)
+            self.state['delegation_records'] = self.state['delegation_records'][-64:]
+            result['execution_id'] = record['execution_id']
             if result['passed'] and pure:
                 self.state.setdefault('delegations',[]).append({'signature':signature,'tasks':tasks,'agent':args.get('agent',''),'result':result})
                 self.state['delegations'] = self.state['delegations'][-16:]
@@ -522,6 +531,31 @@ class AutonomousMissionAgent:
     @staticmethod
     def _verification_fingerprint(result):
         return [check.get('observed_sha256') for check in result['checks']]
+
+    def _delegation_observations(self):
+        """Execution metadata only, including compatible older tool receipts.
+
+        The model cannot manufacture these records through a verification call.
+        Reading them never launches a worker or replays its acceptance commands.
+        """
+        current = list(self.state.get('delegation_records',[]))
+        records = []
+        known = {r['execution_id'] for r in current}
+        for evidence in self.state.get('evidence',[]):
+            result = evidence.get('result')
+            if evidence.get('tool')!='spawn_agent' or not isinstance(result,dict):
+                continue
+            identifier = result.get('execution_id') or 'legacy_'+evidence['id']
+            workers = result.get('workers',[])
+            if identifier in known or not workers or (result.get('reused') and not result.get('execution_id')):
+                continue
+            records.append({'execution_id':identifier,'agent':result.get('agent',''),
+                            'tasks':[w['task'] for w in workers],
+                            'worker_statuses':[w['status'] for w in workers],
+                            'passed':evidence.get('ok') is True and result.get('passed') is True,
+                            'acceptance_fingerprints':self._verification_fingerprint(result.get('verification',{'checks':[]}))})
+            known.add(identifier)
+        return (records+current)[-64:]
 
     def _messages(self):
         messages = [self.state['messages'][0],{'role':'user','content':self.request_text},*self.state['messages'][2:]]
@@ -619,6 +653,8 @@ class AutonomousMissionAgent:
             'Also {kind:"csv_json",path:csv_input,json_path:output,row_field:output_row_key,sum_fields:{output_sum_key:csv_integer_column},source_sha256 optional,criterion optional} '
             'computes actual CSV aggregates and compares the complete saved JSON; use it for CSV result verification instead of comparing guessed constants. '
             '{kind:"agent",name,criterion optional} verifies a saved role exists, not its execution. '
+            '{kind:"delegation",agent,tasks:[str] optional,execution_id optional,criterion optional} verifies an actual completed delegation using that exact role and successful parent acceptance. It does not test current outputs; verify those separately. '
+            'When the request specifies a saved role, pass its exact name as spawn_agent.agent. A generic worker does not meet a named-role requirement. '
             'Every spawn_agent needs acceptance checks and a task specifying the files these checks will examine. The parent runs these checks after the workers return. '
             'If acceptance fails, repair using the actual/expected observations; do not trust the worker report or repeat unchanged work. '
             'A successful delegation with unchanged verified files is reused. Continue the remaining parent deliverables instead of recreating roles/skills or restarting completed audits. '
@@ -666,6 +702,7 @@ class AutonomousMissionAgent:
             'Use csv_json to compare saved aggregates to actual CSV rows/sums. JSON expressions use data and numeric arithmetic/comparisons, no calls/attributes. '
             'Write multiline Python to a .py file with real newlines, then run it. Use observed expected_sha256 only; omit it for new files. '
             'Existing roles/skills should be inspected/verified instead of recreated. Each delegation needs concrete parent acceptance checks. '
+            'Pass the requested saved role as spawn_agent.agent. Verify kind=delegation with its exact agent name to prove completed execution; kind=agent proves only a definition. '
             'After the latest effect verify every exact planned criterion. Group command-dependent criteria into one verify batch. '
             'Finish when all obligations are verified; the original-goal review is still required. If blocked, preserve work and explain the missing resource with status=blocked. '
             'Never replay an interrupted process of unknown outcome or expand permissions. Commands use the host without an OS sandbox. '
@@ -691,6 +728,8 @@ class AutonomousMissionAgent:
         """Grounded model judgment, with one recheck of rejected/invalid verdicts."""
         observations = list(self.state['evidence'])+[e for e in self.state.get('process_observations',[])
                                                    if e['result']['status']=='interrupted_outcome_unknown']
+        observations += [{'id':r['execution_id'],'tool':'delegation_execution','ok':r['passed'],'result':r}
+                         for r in self._delegation_observations()]
         if self.state.get('output_revalidation'):
             observations.append(self.state['output_revalidation'])
         paths = set()
@@ -915,6 +954,8 @@ class AutonomousMissionAgent:
             'Use literal equals only for content explicitly required by the user, not a result copied from the task agent. '
             'Honor conditional alternatives, preserve protected inputs, and inspect/assert without repairing or changing deliverables. '
             'Verify skill/agent definitions with the matching kind/name; existence does not prove execution. '
+            'Use kind=delegation with agent=the exact requested role to verify completed execution. The delegation records show the role actually used and worker statuses; an empty agent means a generic worker, not a named role. '
+            'If a requested role has not been executed successfully, propose a delegation check for that role; it must fail until the task agent performs it. Never replace execution with an agent-definition check. '
             'Each check must name one exact supplied criterion. Group command-dependent checks into this single verify batch. '
             'Never replay unknown interrupted processes or expand permissions. Checks will use the normal executor and its guards. '
             f'Workspace: {self.workspace}. Python: {PYTHON_BIN}. Permissions: {self.permissions}.')
@@ -949,6 +990,7 @@ class AutonomousMissionAgent:
                  'interrupted_processes':self.state.get('interrupted_processes',[]),
                  'resources':[{'name':r.get('name'),'kind':r.get('kind'),'path':r.get('path')}
                               for r in self.state.get('resources',{}).values()],
+                 'delegations':self._delegation_observations(),'delegations_omitted':0,
                  'sources':[{'evidence_id':e['id'],'url':e['result'].get('url'),'sha256':e['result'].get('sha256')}
                             for e in self.state['evidence'] if e['ok'] and e['tool']=='fetch_url' and isinstance(e['result'],dict)],
                  'observed_files':inventory,'files_omitted':0}
@@ -957,6 +999,9 @@ class AutonomousMissionAgent:
         while len(encode())>capacity and value['observed_files']:
             value['observed_files'].pop(0)
             value['files_omitted'] += 1
+        while len(encode())>capacity and value['delegations']:
+            value['delegations'].pop(0)
+            value['delegations_omitted'] += 1
         if len(encode())>capacity:
             raise ValueError('Request audit context cannot retain the original goal, criteria and interruption fences')
         schema = audit_response_schema(self.state['criteria'],allowed,value['observed_files'],max_chars=self.policy.context_chars)
