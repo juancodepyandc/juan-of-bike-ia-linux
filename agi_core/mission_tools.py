@@ -423,7 +423,20 @@ class MissionTools:
                                 keys = check['keys']
                                 if not isinstance(keys,list) or not all(isinstance(k,str) for k in keys) or len(set(keys))!=len(keys):
                                     raise ValueError('JSON keys must be a list of distinct strings')
-                                item['passed'] &= isinstance(actual,dict) and set(actual)==set(keys)
+                                requested = set(keys)
+                                observed = set(actual) if isinstance(actual,dict) else None
+                                keys_passed = observed is not None and observed==requested
+                                missing = sorted(requested-observed) if observed is not None else None
+                                unexpected = sorted(observed-requested) if observed is not None else None
+                                reason = ('JSON keys matches the exact complete object key set.' if keys_passed else
+                                          'JSON keys requires a JSON object and its exact complete key set; the saved JSON is not an object.'
+                                          if observed is None else
+                                          'JSON keys requires the exact complete object key set; missing keys: '+json.dumps(missing,ensure_ascii=False)+
+                                          '; unexpected keys: '+json.dumps(unexpected,ensure_ascii=False)+'.')
+                                item['keys_result'] = {'passed':keys_passed,'requested':list(keys),
+                                    'observed':sorted(observed) if observed is not None else None,
+                                    'missing':missing,'unexpected':unexpected,'reason':reason}
+                                item['passed'] &= keys_passed
                             if 'types' in check:
                                 types = {'integer':int,'number':(int,float),'string':str,'boolean':bool,'object':dict,'array':list,'null':type(None)}
                                 expected = check['types']
