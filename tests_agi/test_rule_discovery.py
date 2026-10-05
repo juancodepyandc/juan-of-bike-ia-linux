@@ -1,7 +1,9 @@
 """Independent grid outputs and held-out input checks over actual Python code."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import py_compile
 import subprocess
 import tempfile
 import unittest
@@ -145,3 +147,24 @@ def solve(grid):
             self.assertTrue(grade['public_cases_passed'])
             self.assertFalse(grade['hidden_cases_passed'])
             self.assertTrue(grade['solver_inputs_preserved'])
+
+    def test_grader_executes_delivered_source_despite_timestamp_valid_cached_solver(self):
+        _,fixtures,oracle=build_rule_discovery(2874)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            correct=self.correct_solver(oracle)
+            self.write_delivery(root,fixtures,oracle,correct)
+            source=root/'solver.py'
+            before=source.stat()
+            py_compile.compile(str(source),doraise=True,
+                               invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+            incorrect='def solve(grid):\n    return []\n'
+            incorrect+=' '*(len(correct.encode())-len(incorrect.encode()))
+            source.write_text(incorrect)
+            os.utime(source,ns=(before.st_atime_ns,before.st_mtime_ns))
+            grade=grade_rule_discovery(root,oracle)
+            self.assertFalse(grade['passed'])
+            self.assertTrue(grade['public_predictions_correct'])
+            self.assertTrue(grade['solver_preserved_during_grading'])
+            for group in ('train','public','hidden'):
+                self.assertFalse(grade[group+'_cases_passed'])

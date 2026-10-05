@@ -83,12 +83,19 @@ def grade_rule_discovery(workspace, oracle):
             'public':[{'input':grid,'output':output} for grid,output in zip(examples['test'],oracle['public_outputs'])],
             'hidden':oracle['hidden']}
     inputs=[case['input'] for cases in groups.values() for case in cases]
-    program='''import json,sys
+    program='''import importlib.util,json,sys
+from pathlib import Path
 loads,dumps,emit=json.loads,json.dumps,print
 inputs=loads(sys.stdin.read())
 originals=[dumps(grid,allow_nan=False) for grid in inputs]
 sys.path.insert(0,sys.argv[1])
-from solver import solve
+path=Path(sys.argv[1])/'solver.py'
+spec=importlib.util.spec_from_file_location('solver',path)
+module=importlib.util.module_from_spec(spec)
+sys.modules['solver']=module
+# Execute the delivered source bytes, never an earlier timestamp-valid .pyc.
+exec(compile(path.read_bytes(),str(path),'exec'),module.__dict__)
+solve=module.solve
 outputs=[]
 preserved=[]
 for grid,original in zip(inputs,originals):
@@ -96,11 +103,12 @@ for grid,original in zip(inputs,originals):
     assert isinstance(actual,list) and all(isinstance(row,list) and all(type(v) is int for v in row) for row in actual),"invalid grid types"
     preserved.append(dumps(grid,allow_nan=False)==original)
     outputs.append(loads(dumps(actual,allow_nan=False)))
+preserved=[ok and dumps(grid,allow_nan=False)==original for ok,grid,original in zip(preserved,inputs,originals)]
 emit("AURORA_SOLVER_OUTPUTS="+dumps({'outputs':outputs,'inputs_preserved':preserved},allow_nan=False))
 '''
     result=subprocess.run([sys.executable,'-I','-c',program,str(workspace)],cwd=workspace,
                           input=json.dumps(inputs),text=True,capture_output=True,timeout=30)
-    # Expected outputs never enter the learner process, even through stdin.
+    # Expected outputs are compared in the parent; stdin contains inputs only.
     passed_groups={name:False for name in groups}
     solver_inputs_preserved=False
     if result.returncode==0:

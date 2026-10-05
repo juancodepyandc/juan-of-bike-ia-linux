@@ -116,24 +116,59 @@ def grade_case(name, workspace, oracle, events):
                 'input_preserved':preserved,'skill_created':bool(skills),'role_created':roles,'worker_completed':worker,
                 'requested_role_worker_completed':worker,'any_worker_completed':any_worker}
     if name=='code-repair':
-        program = '''import copy,json,sys
-sys.path.insert(0,sys.argv[1])
-from solution import coverage
-for intervals in json.loads(sys.stdin.read()):
-    before=copy.deepcopy(intervals)
-    if any(a>b for a,b in intervals):
-        try: coverage(intervals)
-        except ValueError: pass
-        else: raise AssertionError('reversed interval accepted')
+        source_path = workspace/'solution.py'
+        source_before = source_path.read_bytes()
+        program = '''import importlib.util,json,sys
+# Bind reporting before learner code can replace public module attributes.
+decode_json,encode_json,emit=json.loads,json.dumps,print
+payload=decode_json(sys.stdin.read())
+sys.path.insert(0,sys.argv[2])
+spec=importlib.util.spec_from_file_location('solution',sys.argv[1])
+module=importlib.util.module_from_spec(spec)
+sys.modules['solution']=module
+exec(compile(bytes.fromhex(payload['source_hex']),sys.argv[1],'exec'),module.__dict__)
+coverage=module.coverage
+observed=[]
+for intervals in payload['cases']:
+    try:
+        value=coverage(intervals)
+    except ValueError:
+        observation={'raised_value_error':True}
     else:
-        expected=len({x for a,b in intervals for x in range(a,b)})
-        assert coverage(intervals)==expected,(intervals,coverage(intervals),expected)
-    assert intervals==before,'input modified'
-print('independent_cases_passed')
+        observation={'raised_value_error':False,'value':value}
+    observation['input_after']=encode_json(intervals,allow_nan=False)
+    observed.append(observation)
+for observation,intervals in zip(observed,payload['cases']):
+    observation['input_final']=encode_json(intervals,allow_nan=False)
+emit('AURORA_COVERAGE_RESULTS='+encode_json(observed,allow_nan=False))
 '''
-        result = subprocess.run([sys.executable,'-I','-c',program,str(workspace)],input=json.dumps(oracle['cases']),
+        result = subprocess.run([sys.executable,'-I','-c',program,str(source_path),str(workspace)],
+                                input=json.dumps({'source_hex':source_before.hex(),'cases':oracle['cases']}),
                                 cwd=workspace,text=True,capture_output=True,timeout=30)
-        return {'passed':result.returncode==0,'cases':len(oracle['cases']),
+        cases_passed = False
+        if result.returncode==0:
+            lines = [line for line in result.stdout.splitlines() if line.startswith('AURORA_COVERAGE_RESULTS=')]
+            if lines:
+                try:
+                    observations = json.loads(lines[-1].removeprefix('AURORA_COVERAGE_RESULTS='))
+                    cases_passed = isinstance(observations,list) and len(observations)==len(oracle['cases'])
+                    for intervals,observation in zip(oracle['cases'],observations):
+                        original = json.dumps(intervals,allow_nan=False)
+                        preserved = observation['input_after']==original and observation['input_final']==original
+                        if any(a>b for a,b in intervals):
+                            correct = observation['raised_value_error'] is True
+                        else:
+                            expected = len({x for a,b in intervals for x in range(a,b)})
+                            correct = observation['raised_value_error'] is False and observation['value']==expected
+                        cases_passed = bool(cases_passed and preserved and correct)
+                except (TypeError,ValueError,KeyError):
+                    cases_passed = False
+        try:
+            source_unchanged = source_path.read_bytes()==source_before
+        except OSError:
+            source_unchanged = False
+        return {'passed':bool(cases_passed and source_unchanged),'cases':len(oracle['cases']),
+                'source_preserved_during_grading':source_unchanged,
                 'stdout':result.stdout[-2000:],'stderr':result.stderr[-2000:]}
     if name=='route-planning':
         from agi_core.mission_tools import strict_json
