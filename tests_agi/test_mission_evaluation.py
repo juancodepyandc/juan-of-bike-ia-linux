@@ -78,17 +78,23 @@ class EvaluationGraders(unittest.TestCase):
                    "    return len({x for a,b in intervals for x in range(a,b)})\n")
         wrong = 'def coverage(intervals):\n    return 0\n'
         wrong += '#'+('x'*(len(correct.encode())-len(wrong.encode())-2))+'\n'
+        # Preserve exact bytes: Windows text writes would otherwise insert CRLF.
+        correct_bytes,wrong_bytes = correct.encode('utf-8'),wrong.encode('utf-8')
+        self.assertEqual(len(correct_bytes),len(wrong_bytes))
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             source = root/'solution.py'
-            source.write_text(correct,encoding='utf-8')
+            source.write_bytes(correct_bytes)
             stamp = 1711000000
             os.utime(source,(stamp,stamp))
+            before = source.stat()
             py_compile.compile(str(source),doraise=True,
                                invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
-            source.write_text(wrong,encoding='utf-8')
+            source.write_bytes(wrong_bytes)
             os.utime(source,(stamp,stamp))
-            self.assertEqual(len(correct.encode()),source.stat().st_size)
+            self.assertEqual(source.stat().st_size,before.st_size)
+            self.assertEqual(source.stat().st_mtime_ns,before.st_mtime_ns)
+            self.assertEqual(source.read_bytes(),wrong_bytes)
             stale = subprocess.run([sys.executable,'-I','-c',
                 'import sys; sys.path.insert(0,sys.argv[1]); from solution import coverage; print(coverage([[0,4],[2,7]]))',
                 str(root)],text=True,capture_output=True,check=True)
@@ -96,7 +102,7 @@ class EvaluationGraders(unittest.TestCase):
             grade = grade_case('code-repair',root,oracle,[])
             self.assertFalse(grade['passed'])
             self.assertTrue(grade['source_preserved_during_grading'])
-            self.assertEqual(source.read_text(encoding='utf-8'),wrong)
+            self.assertEqual(source.read_bytes(),wrong_bytes)
 
     def test_code_grader_detects_mutation_even_if_solution_patches_deepcopy(self):
         _,_,oracle = build_case('code-repair',973)

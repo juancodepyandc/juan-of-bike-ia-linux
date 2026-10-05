@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import py_compile
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -155,13 +156,26 @@ def solve(grid):
             correct=self.correct_solver(oracle)
             self.write_delivery(root,fixtures,oracle,correct)
             source=root/'solver.py'
+            # Timestamp caches require equal source byte sizes on every OS.
+            correct_bytes=correct.encode('utf-8')
+            source.write_bytes(correct_bytes)
             before=source.stat()
             py_compile.compile(str(source),doraise=True,
                                invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
             incorrect='def solve(grid):\n    return []\n'
-            incorrect+=' '*(len(correct.encode())-len(incorrect.encode()))
-            source.write_text(incorrect)
+            incorrect+=' '*(len(correct_bytes)-len(incorrect.encode('utf-8')))
+            incorrect_bytes=incorrect.encode('utf-8')
+            source.write_bytes(incorrect_bytes)
             os.utime(source,ns=(before.st_atime_ns,before.st_mtime_ns))
+            self.assertEqual(source.stat().st_size,before.st_size)
+            self.assertEqual(source.stat().st_mtime_ns,before.st_mtime_ns)
+            self.assertEqual(source.read_bytes(),incorrect_bytes)
+            stale=subprocess.run([sys.executable,'-I','-c',
+                'import json,sys; sys.path.insert(0,sys.argv[1]); from solver import solve; print(json.dumps(solve([[0,1],[2,3]])))',
+                str(root)],text=True,capture_output=True,check=True)
+            rule=oracle['rule']
+            self.assertEqual(json.loads(stale.stdout),
+                             transform([[0,1],[2,3]],rule['turns'],rule['reflected'],rule['colors']))
             grade=grade_rule_discovery(root,oracle)
             self.assertFalse(grade['passed'])
             self.assertTrue(grade['public_predictions_correct'])
