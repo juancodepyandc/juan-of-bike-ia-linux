@@ -167,3 +167,46 @@ class DelegationExecution(unittest.IsolatedAsyncioTestCase):
         second={**first,'execution_id':'second-run'}
         self.assertEqual(_stable_observation(first),_stable_observation(second))
         self.assertNotEqual(_stable_observation(first),_stable_observation({**second,'passed':False}))
+
+    async def test_real_worker_receives_output_bindings_without_parent_delegation_criterion(self):
+        parent_criterion='The parent delegation has completed using the named role'
+        self.agent.state['criteria']=[parent_criterion]
+        acceptance={**self.check,'criterion':parent_criterion}
+        children,contexts=self.child_replies()
+        review=AsyncMock(return_value={'approved':True,'unmet':[],'reason':'Substituted review'})
+        with children,patch.object(AutonomousMissionAgent,'_review_completion',review):
+            result=await self.agent._execute('spawn_agent',{'agent':'NamedRole','task':'Compute summary.json','checks':[acceptance]})
+        self.assertTrue(result['passed'])
+        self.assertTrue(contexts)
+        self.assertTrue(all(parent_criterion not in context for context in contexts))
+        self.assertTrue(all('"row_field": "rows"' in context and '"sum_fields": {"sum": "value"}' in context for context in contexts))
+        self.assertEqual(acceptance['criterion'],parent_criterion)
+
+    async def test_worker_rejects_parent_execution_proof_before_other_check_effects(self):
+        child=AutonomousMissionAgent('worker','Compute the saved aggregates',str(self.root),'fixture:local',depth=1)
+        child.state.update(plan=['Compute'],criteria=['Saved aggregates match the input'])
+        forbidden={'kind':'delegation','agent':'NamedRole','criterion':child.state['criteria'][0]}
+        command={'kind':'command','argv':[sys.executable,'-c','from pathlib import Path;Path("unexpected.txt").write_text("1")'],
+                 'criterion':child.state['criteria'][0]}
+        with patch.object(child,'_run_process',AsyncMock()) as process,self.assertRaisesRegex(PermissionError,'Only the parent'):
+            await child._execute('verify',{'checks':[command,forbidden]})
+        process.assert_not_awaited()
+        self.assertFalse((self.root/'unexpected.txt').exists())
+
+    async def test_worker_audit_decoding_and_preflight_exclude_its_own_delegation(self):
+        child=AutonomousMissionAgent('worker','Compute the saved aggregates',str(self.root),'fixture:local',depth=1)
+        child.state.update(plan=['Compute'],criteria=['Saved aggregates match the input'])
+        schemas=[]
+        async def generate(system,payload,model,**kwargs):
+            schemas.append(kwargs['response_format'])
+            self.assertIn('Parent criterion labels',system)
+            return json.dumps({'tool':'verify','args':{'checks':[{'kind':'delegation','agent':'NamedRole','criterion':child.state['criteria'][0]}]}})
+        with patch.object(child.gateway,'generate',generate),patch.object(child,'_emit',AsyncMock()), \
+             self.assertRaisesRegex(PermissionError,'Worker audit'):
+            await child._propose_completion_audit()
+        checks=schemas[0]['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+        self.assertFalse(any(c['properties']['kind']['const']=='delegation' for c in checks))
+        allowed=tool_response_schema(child.state['criteria'],allow_delegation_checks=False)
+        verify=next(b for b in allowed['oneOf'] if b['properties']['tool']['const']=='verify')
+        checks=verify['properties']['args']['properties']['checks']['items']['anyOf']
+        self.assertFalse(any(c['properties']['kind']['const']=='delegation' for c in checks))

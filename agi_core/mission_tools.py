@@ -457,6 +457,8 @@ class MissionTools:
                                     scope='Saved role definition exists; this does not prove execution')
                     elif kind == 'delegation':
                         validate_checks([check])
+                        if a.depth:
+                            raise PermissionError('Completed delegation is checked by the parent after its worker returns')
                         matches = [r for r in a._delegation_observations()
                                    if r['agent']==check['agent'] and r['passed'] is True
                                    and r['worker_statuses'] and all(s=='completed' for s in r['worker_statuses'])

@@ -172,7 +172,7 @@ class AutonomousMissionAgent:
             allowed = ['finish']
         async for chunk in self.gateway.chat_chunks(messages, self.model, session=self._session, on_metrics=metrics,
                                                     response_format=tool_response_schema(missing or self.state['criteria'],allowed,
-                                                        required_tool_names=self._explicit_tool_names())):
+                                                        required_tool_names=self._explicit_tool_names(),allow_delegation_checks=not self.depth)):
             yield chunk
 
     def _completion_candidate_ready(self):
@@ -405,7 +405,7 @@ class AutonomousMissionAgent:
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, self.permissions,
                                        policy=self.policy, depth=self.depth+1,
                                        additional_context="Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\n"
-                                           'The parent will check these outputs after your task; do not replace your task with other parent steps: '+json.dumps(acceptance_checks,ensure_ascii=False))
+                                           'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         # Worker events share the durable timeline, never the parent's checkpoint.
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
@@ -425,6 +425,12 @@ class AutonomousMissionAgent:
             await self._emit(kind, {**data, 'worker':True, 'worker_goal':task})
         return emit
 
+    @staticmethod
+    def _worker_acceptance_bindings(checks):
+        # Parent criterion labels can describe the delegation itself, not an
+        # obligation of the child. Keep actual output/parameter bindings.
+        return [{key:value for key,value in check.items() if key!='criterion'} for check in checks]
+
     async def _spawn_task(self, task, agent_name='', *, acceptance_checks=()):
         self._require_tool('spawn_agent')
         if not agent_name:
@@ -440,7 +446,7 @@ class AutonomousMissionAgent:
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1,
                                        additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n"
-                                           'The parent will check these outputs after your task; do not replace your task with other parent steps: '+json.dumps(acceptance_checks,ensure_ascii=False))
+                                           'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
         return await self._worker_report(child)
@@ -472,6 +478,8 @@ class AutonomousMissionAgent:
         self._assert_owned()
         self._require_tool(name)
         validate_args(name,args)
+        if name=='verify' and self.depth and any(isinstance(c,dict) and c.get('kind')=='delegation' for c in args['checks']):
+            raise PermissionError('Only the parent checks completed delegation execution after the worker returns; verify the delegated task outputs, not the parent workflow')
         if name in {'verify','spawn_agent'} and self.state['criteria'] and any(not isinstance(c,dict) or c.get('criterion') not in self.state['criteria'] for c in args['checks']):
             raise ValueError('Every check must name an exact current criterion: '+json.dumps(self.state['criteria'],ensure_ascii=False))
         if name in CHANGE_TOOLS and not self.state['plan']:
@@ -666,6 +674,7 @@ class AutonomousMissionAgent:
             'computes actual CSV aggregates and compares the complete saved JSON; use it for CSV result verification instead of comparing guessed constants. '
             '{kind:"agent",name,criterion optional} verifies a saved role exists, not its execution. '
             '{kind:"delegation",agent,tasks:[str] optional,execution_id optional,criterion optional} verifies an actual completed delegation using that exact role and successful parent acceptance. It does not test current outputs; verify those separately. '
+            'Only the parent uses delegation checks after its workers return; a worker verifies its own delegated task rather than the parent workflow. '
             'When the request specifies a saved role, pass its exact name as spawn_agent.agent. A generic worker does not meet a named-role requirement. '
             'Every spawn_agent needs acceptance checks and a task specifying the files these checks will examine. The parent runs these checks after the workers return. '
             'If acceptance fails, repair using the actual/expected observations; do not trust the worker report or repeat unchanged work. '
@@ -973,6 +982,9 @@ class AutonomousMissionAgent:
             'Each check must name one exact supplied criterion. Group command-dependent checks into this single verify batch. '
             'Never replay unknown interrupted processes or expand permissions. Checks will use the normal executor and its guards. '
             f'Workspace: {self.workspace}. Python: {PYTHON_BIN}. Permissions: {self.permissions}.')
+        if self.depth:
+            instructions += (' This is a worker: check only its original delegated task. Parent criterion labels and parent role/delegation workflow are not worker obligations. '
+                             'Do not require proof of its own completed delegation before it can return; the parent checks that afterward. Delegation checks are unavailable here.')
         inventory = self._audit_inventory()
         from agi_core.mission_tools import strict_json
         def json_type(value):
@@ -1018,7 +1030,8 @@ class AutonomousMissionAgent:
             value['delegations_omitted'] += 1
         if len(encode())>capacity:
             raise ValueError('Request audit context cannot retain the original goal, criteria and interruption fences')
-        schema = audit_response_schema(self.state['criteria'],allowed,value['observed_files'],max_chars=self.policy.context_chars)
+        schema = audit_response_schema(self.state['criteria'],allowed,value['observed_files'],max_chars=self.policy.context_chars,
+                                       allow_delegation_checks=not self.depth)
         await self._emit('request_audit_start',{'scope':'Separate context proposes checks; same fallible model, no verdict or effects yet'})
         started = time.monotonic()
         reply = await self.gateway.generate(instructions,encode(),self.model,response_format=schema)
@@ -1028,6 +1041,8 @@ class AutonomousMissionAgent:
         validate_args('verify',call['args'])
         checks = call['args']['checks']
         validate_checks(checks,self.state['criteria'])
+        if self.depth and any(c['kind']=='delegation' for c in checks):
+            raise PermissionError('Worker audit cannot require completion of the parent delegation; use checks of the actual delegated task')
         if {c.get('criterion') for c in checks}!=set(self.state['criteria']):
             raise ValueError('Request audit must cover every exact current criterion')
         for check in checks:

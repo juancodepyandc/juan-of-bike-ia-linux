@@ -80,9 +80,9 @@ TOOL_DESCRIPTIONS = {
 }
 
 
-def audit_response_schema(criteria, allowed, inventory, *, max_chars):
+def audit_response_schema(criteria, allowed, inventory, *, max_chars, allow_delegation_checks=True):
     """Bind flat integer CSV aggregate output names to observed schemas."""
-    schema = tool_response_schema(criteria,allowed)
+    schema = tool_response_schema(criteria,allowed,allow_delegation_checks=allow_delegation_checks)
     schema['oneOf'] = [b for b in schema['oneOf'] if b['properties']['tool']['const']=='verify']
     checks = schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
     csv_branch = next(b for b in checks if b['properties']['kind']['const']=='csv_json')
@@ -110,7 +110,7 @@ def audit_response_schema(criteria, allowed, inventory, *, max_chars):
     return schema
 
 
-def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None):
+def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True):
     selected = list(ARG_SCHEMAS) if allowed is None else [name for name in ARG_SCHEMAS if name in allowed]
     alternatives = []
     for name in selected:
@@ -122,7 +122,7 @@ def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None)
             args['properties']['required_tools'] = ({'type':'array','items':{'type':'string','enum':names}} if names else {'const':[]})
         if name in {'verify','spawn_agent'}:
             checks = args['properties']['checks']['items']['anyOf']
-            if name=='spawn_agent':
+            if name=='spawn_agent' or not allow_delegation_checks:
                 checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='delegation']
             if allowed is not None and 'run_command' not in allowed:
                 checks[:] = [branch for branch in checks if branch['properties']['kind']['const']!='command']
