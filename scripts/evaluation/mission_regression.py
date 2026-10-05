@@ -22,11 +22,14 @@ import time
 from uuid import uuid4
 
 REPO = Path(__file__).resolve().parents[2]
-CASE_NAMES = ('optimizer','csv-worker','code-repair','route-planning')
+CASE_NAMES = ('optimizer','csv-worker','code-repair','route-planning','rule-discovery')
 
 
 def build_case(name, seed):
     rng = random.Random(seed)
+    if name=='rule-discovery':
+        from scripts.evaluation.rule_discovery import build_rule_discovery
+        return build_rule_discovery(seed)
     if name=='optimizer':
         costs = [rng.randint(7,25) for _ in range(2)]
         production = [rng.randint(2,12) for _ in range(2)]
@@ -80,6 +83,9 @@ def build_case(name, seed):
 
 
 def grade_case(name, workspace, oracle, events):
+    if name=='rule-discovery':
+        from scripts.evaluation.rule_discovery import grade_rule_discovery
+        return grade_rule_discovery(workspace,oracle)
     if name=='optimizer':
         from agi_core.mission_tools import strict_json
         data = strict_json((workspace/'answer.json').read_text(encoding='utf-8'))
@@ -177,7 +183,7 @@ async def evaluate(args):
         raise ValueError('Explicit evaluation model is not installed; no implicit fallback')
     files = ['agi_core/mission_agent.py','agi_core/mission_tools.py','agi_core/mission_protocol.py','agi_core/context.py','agi_core/json_predicates.py',
              'agi_core/mission_recovery.py','agi_core/runtime_policy.py',
-             'scripts/evaluation/mission_regression.py']
+             'scripts/evaluation/mission_regression.py','scripts/evaluation/rule_discovery.py']
     result = {'model':args.model,'seed':args.seed,'timeout_seconds':args.timeout,'options':model_options(),'python':platform.python_version(),
               'os':platform.platform(),'substituted_model':False,'agi_certification':False,
               'scope':'Local mission loop; these cases only, no bridge/tunnel/GPU media certification',

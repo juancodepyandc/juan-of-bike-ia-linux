@@ -139,6 +139,7 @@ class AutonomousMissionAgent:
         await global_bus.publish('mission.event', {'mission_id':self.mission_id,'event':event})
 
     async def _chat_chunks(self, messages):
+        completion = self._completion_candidate_ready()
         async def metrics(data):
             count = data.get('prompt_eval_count',0)
             if count:
@@ -155,7 +156,7 @@ class AutonomousMissionAgent:
                 data = {**data,'context_window':self.state.get('context_window'),
                         'effective_context_chars':self._context_chars(),
                         'protocol_variant':self.state.get('protocol_variant','full')}
-            await self._emit('model_metrics', data)
+            await self._emit('model_metrics', {**data,'execution_phase':'completion_proposal' if completion else 'work'})
         from agi_core.mission_protocol import ARG_SCHEMAS
         allowed = []
         for name in ARG_SCHEMAS:
@@ -165,10 +166,21 @@ class AutonomousMissionAgent:
             except PermissionError:
                 pass
         missing = [c for c in self.state['criteria'] if c not in self.state['verified']]
+        if completion:
+            # Propose a conclusion for the existing audit/review pipeline. This
+            # is not approval, and does not execute an unsolicited extra action.
+            allowed = ['finish']
         async for chunk in self.gateway.chat_chunks(messages, self.model, session=self._session, on_metrics=metrics,
                                                     response_format=tool_response_schema(missing or self.state['criteria'],allowed,
                                                         required_tool_names=self._explicit_tool_names())):
             yield chunk
+
+    def _completion_candidate_ready(self):
+        return bool(self.state['criteria'] and not self.state.get('completion_review_gap')
+                    and set(self.state['criteria']).issubset(self.state['verified'])
+                    and set(self.state.get('required_tools',[])).issubset(self.state.get('executed_tools',[]))
+                    and self.state['last_change']<=self.state['last_verify']
+                    and not self.state.get('pending') and not self.state.get('pending_process'))
 
     def _observe_context(self, messages, measured):
         window = self.state.get('context_window')
@@ -661,6 +673,7 @@ class AutonomousMissionAgent:
             'Verify an existing skill with a skill check using its name (or file/text checks on its returned path); verify an existing role with an agent check. A repeated creation is not a verification. '
             'Known resources retain creation/discovery observations; inspect and verify them instead of recreating them. Pure proofs survive later effects only after fresh checks with unchanged fingerprints. '
             'After set_plan, every check must name one exact criterion from the current plan. Cover unverified criteria instead of repeating already verified checks. When all are verified, propose finish for review. Test expected exceptions with an explicit expected_exit_code and output check. '
+            'After a rejected completion review, address its actual gaps and verify every planned criterion again in one batch before proposing completion. '
             'Use text/json checks to measure saved content and exact field names; JSON types: integer, number, string, boolean, object, array, null. '
             'JSON expressions evaluate boolean relations on saved data (data["field"]), using numeric +,-,*,/,//,% and comparisons/and/or/not; no calls or attributes. They prove only the supplied predicates; optimality needs an independent calculation/test. Compare JSON structurally, not with whitespace-sensitive text substrings. '
             'Command checks may mutate outputs and invalidate prior proofs. Group all command-dependent acceptance criteria into the same verify batch, then finish after that batch passes. '
@@ -704,6 +717,7 @@ class AutonomousMissionAgent:
             'Existing roles/skills should be inspected/verified instead of recreated. Each delegation needs concrete parent acceptance checks. '
             'Pass the requested saved role as spawn_agent.agent. Verify kind=delegation with its exact agent name to prove completed execution; kind=agent proves only a definition. '
             'After the latest effect verify every exact planned criterion. Group command-dependent criteria into one verify batch. '
+            'After a rejected completion review, repair its gaps and verify all planned criteria again together. '
             'Finish when all obligations are verified; the original-goal review is still required. If blocked, preserve work and explain the missing resource with status=blocked. '
             'Never replay an interrupted process of unknown outcome or expand permissions. Commands use the host without an OS sandbox. '
             'Verification proves only its measured scope; hypotheses and reports are fallible. '
@@ -1145,6 +1159,8 @@ class AutonomousMissionAgent:
             criterion = check.get('criterion')
             if criterion in self.state['criteria']:
                 groups.setdefault(criterion,[]).append(check)
+        if verification['passed'] and set(self.state['criteria']).issubset(groups) and self.state['criteria']:
+            self.state.pop('completion_review_gap',None)
         proofs = self.state.setdefault('check_proofs',{})
         recorded = self.state.setdefault('output_checks',[])
         for criterion,checks in groups.items():
@@ -1318,10 +1334,12 @@ class AutonomousMissionAgent:
                                 review = {'approved':False,'unmet':[str(exc)],'reason':'Review did not complete'}
                             await self._emit('review_result',{'review':review,'scope':'model_judgment_not_empirical_proof'})
                             if not review['approved'] or review['unmet']:
+                                self.state['completion_review_gap'] = True
                                 self.state['messages'].append({'role':'user','content':'Completion review found gaps: '+json.dumps(review,ensure_ascii=False)})
                                 repeated += 1
                                 if repeated >= self.policy.stall_attempts:
                                     raise RuntimeError('Completion review still finds gaps; work retained for resume')
+                                await self._save()
                                 continue
                             current_outputs = await self._revalidate_outputs()
                             if (not current_outputs['passed'] or

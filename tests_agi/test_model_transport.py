@@ -108,6 +108,34 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reject['properties']['unmet']['minItems'],1)
         self.assertEqual(reject['properties']['issues']['minItems'],1)
 
+    async def test_verified_actions_decode_only_a_completion_proposal(self):
+        self.lines=[{'message':{'content':'{"tool":"finish","args":{"message":"Ready for review"}}'}},{'done':True}]
+        with tempfile.TemporaryDirectory() as workspace:
+            agent=AutonomousMissionAgent('phase','Delegate and verify',workspace,'fixture:local')
+            agent.gateway=self.gateway
+            agent.state.update(criteria=['Actual result'],verified=['Actual result'],required_tools=['spawn_agent'],
+                               executed_tools=['spawn_agent'],last_change=2,last_verify=3)
+            _=[c async for c in agent._chat_chunks([{'role':'user','content':'Verified state'}])]
+        tools=[b['properties']['tool']['const'] for b in self.received[0]['format']['oneOf']]
+        self.assertEqual(tools,['finish'])
+
+    async def test_work_decoding_remains_available_for_missing_or_rejected_proofs(self):
+        self.lines=[{'message':{'content':'{"tool":"inspect_runtime","args":{}}'}},{'done':True}]
+        variants=[{'criteria':[],'verified':[]}, {'verified':[]}, {'last_change':4},
+                  {'executed_tools':[]}, {'completion_review_gap':True}, {'pending':{'tool':'run_command'}}]
+        with tempfile.TemporaryDirectory() as workspace:
+            for change in variants:
+                with self.subTest(change=change):
+                    agent=AutonomousMissionAgent('phase','Delegate and verify',workspace,'fixture:local')
+                    agent.gateway=self.gateway
+                    agent.state.update(criteria=['Actual result'],verified=['Actual result'],required_tools=['spawn_agent'],
+                                       executed_tools=['spawn_agent'],last_change=2,last_verify=3)
+                    agent.state.update(change)
+                    _=[c async for c in agent._chat_chunks([{'role':'user','content':'Needs work'}])]
+                    tools=[b['properties']['tool']['const'] for b in self.received[-1]['format']['oneOf']]
+                    self.assertIn('write_file',tools)
+                    self.assertIn('verify',tools)
+
     async def test_context_window_uses_the_selected_loaded_runner(self):
         self.assertEqual(await self.gateway.running_context_window('fixture:local'),4096)
         self.assertIsNone(await self.gateway.running_context_window('missing:local'))
