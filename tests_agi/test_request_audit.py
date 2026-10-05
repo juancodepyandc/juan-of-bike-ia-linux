@@ -138,6 +138,51 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         checks=schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
         self.assertFalse(any(c['properties']['kind']['const']=='command' for c in checks))
 
+    async def test_worker_retries_forbidden_audit_without_executing_its_batch(self):
+        self.agent.depth=1
+        self.agent.policy=replace(self.agent.policy,max_steps=10)
+        command={'kind':'command','criterion':self.criterion,'argv':[sys.executable,'-c',
+            'from pathlib import Path;Path("unexpected.txt").write_text("1")']}
+        forbidden={'kind':'delegation','agent':'NamedRole','criterion':self.criterion}
+        generate=AsyncMock(side_effect=[json.dumps(call('verify',checks=[command,forbidden])),
+                                       json.dumps(call('verify',checks=[self.check]))])
+        replies=iter(self.initial(self.correct,self.check)+[call('finish',message='Retry the audit'),
+                                                          call('finish',message='Audited worker outputs')])
+        async def stream(messages):
+            yield json.dumps(next(replies))
+        with patch.object(self.agent,'_chat_chunks',stream),patch.object(self.agent.gateway,'generate',generate):
+            result=await self.agent.run(worker=True)
+        self.assertEqual(result,'Audited worker outputs')
+        self.assertEqual(self.agent.state['status'],'completed')
+        self.assertFalse((self.root/'unexpected.txt').exists())
+        self.assertEqual((self.root/'input.csv').read_bytes(),self.raw)
+        self.assertEqual(generate.await_count,2)
+        rejections=[e.args[1] for e in self.agent._emit.call_args_list if e.args[0]=='request_audit_rejected']
+        self.assertEqual(len(rejections),1)
+        self.assertFalse(rejections[0]['effects'])
+        self.assertIn('Worker audit',rejections[0]['error'])
+        self.assertTrue(self.agent.state['request_audit']['passed'])
+        self.agent._review_completion.assert_awaited_once()
+
+    async def test_worker_repeated_forbidden_audits_exhaust_existing_retry_budget(self):
+        self.agent.depth=1
+        self.agent.policy=replace(self.agent.policy,max_steps=10)
+        forbidden={'kind':'delegation','agent':'NamedRole','criterion':self.criterion}
+        generate=AsyncMock(return_value=json.dumps(call('verify',checks=[forbidden])))
+        replies=iter(self.initial(self.correct,self.check)+[call('finish',message='Try the audit again')]*2)
+        async def stream(messages):
+            yield json.dumps(next(replies))
+        with patch.object(self.agent,'_chat_chunks',stream),patch.object(self.agent.gateway,'generate',generate), \
+             self.assertRaisesRegex(RuntimeError,'Repeated invalid request audit'):
+            await self.agent.run(worker=True)
+        self.assertEqual(self.agent.state['status'],'failed')
+        self.assertEqual(generate.await_count,self.agent.policy.stall_attempts)
+        self.assertEqual(self.agent.state['action_count'],4)
+        self.assertNotIn('request_audit',self.agent.state)
+        self.assertEqual((self.root/'input.csv').read_bytes(),self.raw)
+        self.assertEqual(json.loads((self.root/'summary.json').read_text()),self.correct)
+        self.agent._review_completion.assert_not_awaited()
+
     async def test_native_schema_and_preflight_reject_invented_aggregate_output_names(self):
         self.agent._plan(self.plan['args'])
         result=await self.agent._execute('write_file',{'path':'summary.json','content':json.dumps(self.correct)})

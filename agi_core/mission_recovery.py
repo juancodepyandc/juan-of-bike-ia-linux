@@ -9,7 +9,7 @@ RECOVERY_FIELDS = {'request_quote', 'evidence_ids', 'hypothesis',
                    'expected_observation', 'next_action'}
 
 
-def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools):
+def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *, allow_delegation_checks=True):
     return {'type': 'object', 'properties': {
         'request_quote': {'type': 'string'},
         'evidence_ids': {'type': 'array', 'minItems': 1,
@@ -17,11 +17,12 @@ def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools):
         'hypothesis': {'type': 'string'},
         'expected_observation': {'type': 'string'},
         'next_action': tool_response_schema(criteria, allowed,
-                                            required_tool_names=explicit_tools)},
+                                            required_tool_names=explicit_tools,
+                                            allow_delegation_checks=allow_delegation_checks)},
         'required': sorted(RECOVERY_FIELDS), 'additionalProperties': False}
 
 
-def validate_recovery(reply, request, observations, allowed, criteria, stalled_actions):
+def validate_recovery(reply, request, observations, allowed, criteria, stalled_actions, *, allow_delegation_checks=True):
     try:
         value = json.loads(reply)
     except (TypeError, ValueError) as exc:
@@ -45,6 +46,8 @@ def validate_recovery(reply, request, observations, allowed, criteria, stalled_a
     validate_args(call['tool'], call['args'])
     if call['tool'] in {'verify', 'spawn_agent'}:
         validate_checks(call['args']['checks'], criteria)
+        if not allow_delegation_checks and any(c['kind']=='delegation' for c in call['args']['checks']):
+            raise ValueError('Worker recovery cannot require completion of the parent delegation; check the delegated task outputs')
     if call in stalled_actions:
         raise ValueError('Recovery must change the action instead of replaying the detected cycle')
     return value

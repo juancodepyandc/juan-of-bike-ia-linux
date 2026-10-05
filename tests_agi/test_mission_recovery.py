@@ -111,6 +111,45 @@ class MissionRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(errors), 2)
         self.assertTrue(all('supplied observations' in e for e in errors))
 
+    async def test_worker_recovery_rejects_delegation_then_repairs_actual_failure(self):
+        self.agent.depth=1
+        self.agent.policy=replace(self.agent.policy,max_steps=10)
+        schemas=[]
+        async def generate(system,payload,model,**kwargs):
+            schemas.append(kwargs['response_format'])
+            value=json.loads(payload)
+            if len(schemas)==1:
+                command={'kind':'command','criterion':self.criterion,'argv':[sys.executable,'-c',
+                    'from pathlib import Path;Path("unexpected.txt").write_text("1")']}
+                proof={'kind':'delegation','agent':'NamedRole','criterion':self.criterion}
+                return self.proposal(value,call('verify',checks=[command,proof]))
+            return self.proposal(value,call('write_file',path='length.py',
+                content='def length(a,b):\n    if a > b: raise ValueError("reversed")\n    return b-a\n'))
+        replies=iter(self.failing_replies()+[call('verify',checks=[self.check]),
+                                           call('finish',message='Worker repaired and tested')])
+        async def stream(messages):
+            yield json.dumps(next(replies))
+        original=(self.root/'input.json').read_bytes()
+        with patch.object(self.agent,'_chat_chunks',stream),patch.object(self.agent.gateway,'generate',generate):
+            result=await self.agent.run(worker=True)
+        self.assertEqual(result,'Worker repaired and tested')
+        self.assertEqual(self.agent.state['status'],'completed')
+        self.assertFalse((self.root/'unexpected.txt').exists())
+        self.assertEqual((self.root/'input.json').read_bytes(),original)
+        self.assertEqual(self.agent.state['recovery_attempts_used'],2)
+        self.assertEqual(len(self.agent.state['recoveries']),1)
+        self.assertEqual(self.agent.state['recoveries'][0]['next_action']['tool'],'write_file')
+        self.assertTrue(self.agent.state['recoveries'][0]['action_ok'])
+        rejected=[e.args[1] for e in self.agent._emit.call_args_list if e.args[0]=='recovery_rejected']
+        self.assertEqual(len(rejected),1)
+        self.assertFalse(rejected[0]['effects'])
+        self.assertIn('Worker recovery',rejected[0]['error'])
+        for schema in schemas:
+            verify=next(b for b in schema['properties']['next_action']['oneOf']
+                        if b['properties']['tool']['const']=='verify')
+            checks=verify['properties']['args']['properties']['checks']['items']['anyOf']
+            self.assertFalse(any(c['properties']['kind']['const']=='delegation' for c in checks))
+
     async def test_recovery_command_passes_through_interrupted_process_replay_fence(self):
         argv = [sys.executable, '-c', 'from pathlib import Path; Path("counter.txt").write_text("1")']
         env_path = str(Path(sys.executable).parent)+os.pathsep+os.environ.get('PATH','')
@@ -189,6 +228,19 @@ class MissionRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schema['properties']['evidence_ids']['items']['enum'], ['real'])
         branches = schema['properties']['next_action']['oneOf']
         self.assertEqual({b['properties']['tool']['const'] for b in branches}, {'read_file','verify'})
+
+    def test_parent_recovery_still_allows_completed_delegation_proofs(self):
+        observations=[{'id':'real','tool':'read_file','ok':True,'result':{'path':'length.py'}}]
+        proof={'kind':'delegation','agent':'NamedRole','criterion':self.criterion}
+        reply=self.proposal({'observations':observations},call('verify',checks=[proof]))
+        accepted=validate_recovery(reply,self.agent.request_text,observations,['verify'],[self.criterion],[])
+        self.assertEqual(accepted['next_action'],call('verify',checks=[proof]))
+        with self.assertRaisesRegex(ValueError,'Worker recovery'):
+            validate_recovery(reply,self.agent.request_text,observations,['verify'],[self.criterion],[],
+                              allow_delegation_checks=False)
+        schema=recovery_response_schema([self.criterion],['verify'],['real'],[])
+        checks=schema['properties']['next_action']['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+        self.assertTrue(any(c['properties']['kind']['const']=='delegation' for c in checks))
 
     def test_payload_bounds_observations_but_preserves_objective_and_interruption_fences(self):
         self.agent.policy = replace(self.agent.policy, context_chars=2000)

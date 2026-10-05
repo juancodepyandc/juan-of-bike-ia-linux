@@ -881,6 +881,8 @@ class AutonomousMissionAgent:
             'Do not replay an interrupted process of unknown outcome or expand permissions. The normal executor and completion review will validate the proposal. '
             f'Workspace: {self.workspace}. Python: {PYTHON_BIN}. Permissions: {self.permissions}. '
             'Return only JSON with request_quote, evidence_ids, hypothesis, expected_observation, next_action.')
+        if self.depth:
+            instructions += ' This is a worker: test and repair its delegated task outputs. Parent delegation proofs are unavailable until this worker returns.'
         feedback = ''
         while self.state.get('recovery_attempts_used',0) < self.policy.recovery_attempts:
             self._assert_owned()
@@ -893,11 +895,11 @@ class AutonomousMissionAgent:
                 prompt = instructions+feedback
                 value = bounded_recovery_payload(self,observations,stalled_actions,prompt)
                 schema = recovery_response_schema(self.state['criteria'],allowed,
-                    [e['id'] for e in value['observations']],self._explicit_tool_names())
+                    [e['id'] for e in value['observations']],self._explicit_tool_names(),allow_delegation_checks=not self.depth)
                 reply = await self.gateway.generate(prompt,json.dumps(value,ensure_ascii=False),self.model,
                                                     response_format=schema)
                 proposal = validate_recovery(reply,self.request_text,value['observations'],allowed,
-                                             self.state['criteria'],stalled_actions)
+                                             self.state['criteria'],stalled_actions,allow_delegation_checks=not self.depth)
             except (ValueError,RuntimeError,aiohttp.ClientError) as exc:
                 feedback = '\nPrevious proposal was rejected before execution: '+str(exc)
                 await self._emit('recovery_rejected',{'attempt':attempt,'error':str(exc),'effects':False,
@@ -1326,7 +1328,7 @@ class AutonomousMissionAgent:
                             if self.state['criteria'] and self.policy.request_audit and not await self._completion_audit_current():
                                 try:
                                     audit_call = await self._propose_completion_audit()
-                                except (ValueError,RuntimeError,aiohttp.ClientError) as exc:
+                                except (ValueError,RuntimeError,PermissionError,aiohttp.ClientError) as exc:
                                     self.state['messages'].append({'role':'user','content':'Independent request checks could not be generated: '+str(exc)})
                                     await self._emit('request_audit_rejected',{'error':str(exc),'effects':False})
                                     repeated += 1
