@@ -73,7 +73,8 @@ class ThreeDRoutes(unittest.TestCase):
         body = {'actor_glb':'actor.glb','target_glb':'target.glb','instruction':'fixture'}
         response = self.client.post('/api/3d/compose-scene', json=body)
         self.assertEqual(response.status_code, 200, response.json)
-        self.assertTrue(response.json['output'].startswith(str(self.workspace/'output/3d/scenes')))
+        self.assertTrue(Path(response.json['output']).resolve().is_relative_to(
+            (self.workspace/'output/3d/scenes').resolve()))
         self.script('scene_composer.py', 'import json,sys\nprint("AURORA_SCENE_RESULT:"+json.dumps({"ok":True}))\nsys.exit(9)\n')
         response = self.client.post('/api/3d/compose-scene', json=body)
         self.assertEqual(response.status_code, 500)

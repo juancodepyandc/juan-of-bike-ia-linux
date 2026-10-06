@@ -34,7 +34,7 @@ class SwarmSupervisor:
                                "\n".join(str(v)[:2000] for v in memories[:3]))
         agent = AutonomousMissionAgent(
             mission_id, request_text, workspace, selected, permissions,
-            store=store, lease_owner=lease_owner, additional_context="\n\n".join(context))
+            store=store, lease_owner=lease_owner, advisory_context="\n\n".join(context))
         result = await agent.run()
         if memory_module and result and agent.state['status'] == 'completed':
             await memory_module.embed_experience(

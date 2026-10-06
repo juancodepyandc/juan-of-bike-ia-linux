@@ -10,7 +10,13 @@ def register_routes(app, proxy):
     import secrets
     import time
     from urllib.parse import urlsplit
-    from . import control, versions
+    import sys
+    from . import versions
+    # The controller depends on /proc, flock and systemd. Its import must not
+    # prevent unrelated bridge modules from loading on Windows or macOS.
+    control = None
+    if sys.platform.startswith('linux'):
+        from . import control
     token=secrets.token_urlsafe(32)
 
     def same_origin():
@@ -27,6 +33,8 @@ def register_routes(app, proxy):
 
     @app.get('/api/training/status')
     def training_status():
+        if control is None:
+            return jsonify({'supported': False, 'error': 'Le contrôleur d’entraînement local nécessite Linux.'}), 503
         cycle=read_json(STATE/'status.json',{})
         controller=control.snapshot(STATE)
         # When the child is SIGKILLed, its last status file can still say
@@ -56,6 +64,8 @@ def register_routes(app, proxy):
     def training_control(action):
         if not authorized():return jsonify({'error':'Actualiser cette page avant de commander l’entraînement'}),403
         if action not in {'start','stop','switch'}:return jsonify({'error':'Commande inconnue'}),404
+        if control is None:
+            return jsonify({'supported': False, 'error': 'Le contrôleur d’entraînement local nécessite Linux.'}), 503
         data=request.get_json(silent=True)
         try:
             result=control.start(data,STATE) if action=='start' else control.request(action,data,STATE)
