@@ -228,6 +228,54 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         for value,expected in [('0',False),('1',True)]:
             with self.subTest(value=value),patch.dict(os.environ,{'AURORA_REQUEST_AUDIT':value}):
                 self.assertIs(RuntimePolicy.from_env().request_audit,expected)
+
+    async def test_grouped_audit_covers_every_criterion_and_executes_checks_on_real_files(self):
+        criteria = ['Saved value is correct', 'Delivery file is correct', 'Python assertion passes']
+        self.agent.state['criteria'] = criteria
+        self.agent.state['plan'] = ['Write and transfer']
+        delivery = self.root/'.transfer_to_client/audit/result.txt'
+        delivery.parent.mkdir(parents=True)
+        delivery.write_text('CURRENT\n',encoding='utf-8')
+        (self.root/'result.txt').write_text('CURRENT\n',encoding='utf-8')
+        grouped = {criteria[0]:[{'kind':'text','path':'result.txt','equals':'CURRENT\n'}],
+                   criteria[1]:[{'kind':'text','path':str(delivery),'equals':'CURRENT\n'}],
+                   criteria[2]:[{'kind':'command','argv':[sys.executable,'-c',
+                       'from pathlib import Path; assert Path("result.txt").read_bytes()==b"CURRENT\\n"']}]}
+        received = []
+        async def generate(system,payload,model,**kwargs):
+            received.append(kwargs['response_format'])
+            return json.dumps(call('verify',checks=grouped))
+        with patch.object(self.agent.gateway,'generate',generate):
+            proposal = await self.agent._propose_completion_audit()
+        schema = received[0]['oneOf'][0]['properties']['args']['properties']['checks']
+        self.assertEqual(set(schema['required']),set(criteria))
+        self.assertFalse(schema['additionalProperties'])
+        for group in schema['properties'].values():
+            self.assertEqual(group['minItems'],1)
+            self.assertTrue(all('criterion' not in b['properties'] for b in group['items']['anyOf']))
+        result = await self.agent._execute(proposal['tool'],proposal['args'])
+        self.assertTrue(result['passed'],result)
+        self.assertEqual([c['criterion'] for c in result['checks']],criteria)
+        self.assertEqual(delivery.read_bytes(),b'CURRENT\n')
+
+    async def test_incomplete_or_conflicting_audit_group_is_rejected_before_effects(self):
+        self.agent.state['criteria'] = ['First', 'Second']
+        self.agent.state['plan'] = ['Inspect']
+        effect = {'kind':'command','argv':[sys.executable,'-c',
+            'from pathlib import Path; Path("forbidden.txt").write_text("BAD")']}
+        invalid = [{'First':[effect]}, {'First':[effect],'Second':[]},
+                   {'First':[{**effect,'criterion':'Second'}],'Second':[effect]}]
+        for groups in invalid:
+            with self.subTest(groups=groups), patch.object(self.agent.gateway,'generate',
+                    AsyncMock(return_value=json.dumps(call('verify',checks=groups)))), self.assertRaises(ValueError):
+                await self.agent._propose_completion_audit()
+        self.assertFalse((self.root/'forbidden.txt').exists())
+
+    def test_oversized_group_schema_keeps_bounded_flat_decoding_and_executor_validation(self):
+        from agi_core.mission_protocol import audit_response_schema
+        schema = audit_response_schema(['First','Second'],['verify','run_command'],[],max_chars=1)
+        checks = schema['oneOf'][0]['properties']['args']['properties']['checks']
+        self.assertEqual(checks['type'],'array')
         for value in ['2','true','-1']:
             with self.subTest(value=value),patch.dict(os.environ,{'AURORA_REQUEST_AUDIT':value}),self.assertRaises(ValueError):
                 RuntimePolicy.from_env()

@@ -102,12 +102,49 @@ def audit_response_schema(criteria, allowed, inventory, *, max_chars, allow_dele
             # Large schemas fall back to ordinary decoding plus execution-time
             # preflight. This is an explicit resource bound, not a quality score.
             if len(json.dumps(variants,ensure_ascii=False))>max_chars:
-                return schema
+                return _group_audit_criteria(schema,criteria,max_chars)
     if variants:
         checks[:] = [b for b in checks if b is not csv_branch]+variants
         if len(json.dumps(schema,ensure_ascii=False))>max_chars:
             checks[:] = [b for b in checks if b not in variants]+[csv_branch]
-    return schema
+    return _group_audit_criteria(schema,criteria,max_chars)
+
+
+def _group_audit_criteria(schema, criteria, max_chars):
+    """Required object keys cover all criteria without optional array coverage.
+
+    This is the checker's proposal format only. The executor still receives
+    ordinary flat verify checks, with each criterion assigned by its group.
+    """
+    if len(criteria)<2:
+        return schema
+    grouped = deepcopy(schema)
+    args = grouped['oneOf'][0]['properties']['args']
+    item = args['properties']['checks']['items']
+    for branch in item['anyOf']:
+        branch['properties'].pop('criterion',None)
+        branch['required'].remove('criterion')
+    checks = {'type':'array','minItems':1,'items':item}
+    args['properties']['checks'] = object_args({criterion:deepcopy(checks) for criterion in criteria},criteria)
+    return grouped if len(json.dumps(grouped,ensure_ascii=False))<=max_chars else schema
+
+
+def normalize_audit_checks(checks, criteria):
+    """Validate coverage before flattening a grouped checker proposal."""
+    if not isinstance(checks,dict):
+        return checks  # Older flat proposals still undergo ordinary validation.
+    if set(checks)!=set(criteria):
+        raise ValueError('Request audit groups must cover every exact current criterion')
+    result = []
+    for criterion in criteria:
+        group = checks[criterion]
+        if not isinstance(group,list) or not group:
+            raise ValueError('Every request audit criterion needs nonempty checks')
+        for check in group:
+            if not isinstance(check,dict) or 'criterion' in check:
+                raise ValueError('Grouped checks inherit their criterion; do not supply a conflicting criterion')
+            result.append({**check,'criterion':criterion})
+    return result
 
 
 def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True):

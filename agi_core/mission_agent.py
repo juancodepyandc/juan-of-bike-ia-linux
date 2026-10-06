@@ -1009,7 +1009,8 @@ class AutonomousMissionAgent:
             'Verify skill/agent definitions with the matching kind/name; existence does not prove execution. '
             'Use kind=delegation with agent=the exact requested role to verify completed execution. The delegation records show the role actually used and worker statuses; an empty agent means a generic worker, not a named role. '
             'If a requested role has not been executed successfully, propose a delegation check for that role; it must fail until the task agent performs it. Never replace execution with an agent-definition check. '
-            'Each check must name one exact supplied criterion. Group command-dependent checks into this single verify batch. '
+            'Follow the response schema: when checks is an object, include a nonempty check array for EVERY exact criterion key; omit criterion inside those checks because it is inherited from the key. '
+            'For a flat checks array each check must name one exact supplied criterion. Group command-dependent checks into this single verify batch. '
             'Never replay unknown interrupted processes or expand permissions. Checks will use the normal executor and its guards. '
             'When the original request requires file transfer, check the output in runtime.delivery_directory, not a file elsewhere. '
             f'Workspace: {self.workspace}. Python: {PYTHON_BIN}. Permissions: {self.permissions}.')
@@ -1069,6 +1070,9 @@ class AutonomousMissionAgent:
         call = _parse_tool_call(reply)
         if not call or call['tool']!='verify':
             raise ValueError('Request audit must propose verify checks')
+        from agi_core.mission_protocol import normalize_audit_checks
+        if 'checks' in call['args']:
+            call['args']['checks'] = normalize_audit_checks(call['args']['checks'],self.state['criteria'])
         validate_args('verify',call['args'])
         checks = call['args']['checks']
         validate_checks(checks,self.state['criteria'])
