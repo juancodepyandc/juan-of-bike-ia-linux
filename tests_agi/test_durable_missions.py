@@ -171,16 +171,19 @@ class DurableStoreTests(unittest.TestCase):
             self.store.append(mid,{'type':'tool_result','event_id':str(index),'ok':True})
         self.store.append(mid,{'type':'mission_complete','event_id':'done','result':'Done'})
         self.assertEqual(len(self.dispatched),1)
-        client = self.app().test_client()
+        completed = []
+        client = self.app(on_completed=lambda item:completed.append(item['id'])).test_client()
         path = f'/api/cli/mission/{mid}/events?wait=0'
         first = client.get(path,headers=headers).get_json()
         self.assertEqual(len(first['events']),256)
         self.assertEqual(first['cursor'],256)
         self.assertFalse(first['terminal'])
+        self.assertEqual(completed,[])
         second = client.get(path,headers={**headers,'Last-Event-ID':'256'}).get_json()
         self.assertEqual([row['id'] for row in second['events']],[257,258])
         self.assertEqual(second['events'][-1]['event']['type'],'mission_complete')
         self.assertTrue(second['terminal'])
+        self.assertEqual(completed,[mid])
         self.assertEqual(len(self.dispatched),0)
         self.assertEqual(client.get(path).status_code,401)
         for cursor,status in (('-1',400),('invalid',400),('999',409)):

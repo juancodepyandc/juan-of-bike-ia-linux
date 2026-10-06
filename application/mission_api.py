@@ -185,6 +185,8 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
                     current = store.get(mission_id)
             terminal = current['status'] in TERMINAL or current['status']=='interrupted'
             if rows or terminal or time.monotonic()>=deadline:
+                if current['status'] in TERMINAL and (rows[-1][0] if rows else cursor)>=current['last_event_id']:
+                    notify(on_completed,current)
                 response = jsonify(ok=True,events=[{'id':seq,'event':event} for seq,event in rows],
                     cursor=rows[-1][0] if rows else cursor,
                     terminal=terminal and (rows[-1][0] if rows else cursor)>=current['last_event_id'])
