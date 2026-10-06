@@ -235,8 +235,8 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         self.agent.state['plan'] = ['Write and transfer']
         delivery = self.root/'.transfer_to_client/audit/result.txt'
         delivery.parent.mkdir(parents=True)
-        delivery.write_text('CURRENT\n',encoding='utf-8')
-        (self.root/'result.txt').write_text('CURRENT\n',encoding='utf-8')
+        delivery.write_bytes(b'CURRENT\n')
+        (self.root/'result.txt').write_bytes(b'CURRENT\n')
         grouped = {criteria[0]:[{'kind':'text','path':'result.txt','equals':'CURRENT\n'}],
                    criteria[1]:[{'kind':'text','path':str(delivery),'equals':'CURRENT\n'}],
                    criteria[2]:[{'kind':'command','argv':[sys.executable,'-c',
