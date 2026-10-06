@@ -25,6 +25,57 @@ wait_for_http() {
   return 1
 }
 
+bridge_is_running() {
+  "$APP_PY" - <<'PY'
+import json
+import sys
+import urllib.request
+
+try:
+    with urllib.request.urlopen("http://127.0.0.1:3001/api/health", timeout=2) as response:
+        data = json.load(response)
+    ready = isinstance(data, dict) and data.get("ok") is True and data.get("service") == "aurora-bridge"
+except (OSError, ValueError):
+    ready = False
+sys.exit(0 if ready else 1)
+PY
+}
+
+daemon_is_running() {
+  "$APP_PY" - "$ROOT_DIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from agi_core.bus import probe_sync
+
+sys.exit(0 if probe_sync(timeout=2).get("ok") is True else 1)
+PY
+}
+
+run_agi_supervisor() {
+  # Another launcher/systemd may finish starting the daemon between probes.
+  # Reuse its protocol endpoint instead of repeatedly losing the port race.
+  while true; do
+    if daemon_is_running; then
+      echo "Démon AGI existant réutilisé; superviseur local arrêté." >> "$LOG_DIR/agi_daemon.log"
+      return 0
+    fi
+    echo "Démarrage du démon AGI..." >> "$LOG_DIR/agi_daemon.log"
+    if (cd "$ROOT_DIR" && exec "$APP_PY" aurora_agi_daemon.py >> "$LOG_DIR/agi_daemon.log" 2>&1); then
+      echo "Arrêt propre (code 0)" >> "$LOG_DIR/agi_daemon.log"
+      return 0
+    else
+      local exit_code=$?
+      if daemon_is_running; then
+        echo "Démon AGI existant réutilisé après sortie du processus local; aucun redémarrage." >> "$LOG_DIR/agi_daemon.log"
+        return 0
+      fi
+      echo "ERREUR CRITIQUE AGI: Crash avec le code $exit_code." >> "$LOG_DIR/agi_daemon.log"
+      echo "Tentative de redémarrage dans 5 secondes..." >> "$LOG_DIR/agi_daemon.log"
+      sleep 5
+    fi
+  done
+}
+
 if [ "$(uname -s)" = "Linux" ] && [ "${AURORA_SKIP_FIRST_RUN:-0}" != "1" ]; then
   if [ ! -f "$APP_DIR/.aurora-linux-ready" ]; then
     echo "[0/5] First-run Linux initialization"
@@ -85,30 +136,28 @@ else
 fi
 
 echo "[3/5] Bridge Python"
-(
-  cd "$APP_DIR"
-  exec "$APP_PY" bridge_server.py
-) >"$LOG_DIR/bridge.log" 2>&1 &
+if bridge_is_running; then
+  echo "      Bridge existant réutilisé (API Aurora vérifiée)."
+else
+  (
+    cd "$APP_DIR"
+    # A service manager can have completed startup since the first probe.
+    if bridge_is_running; then
+      echo "Bridge existant réutilisé (API Aurora vérifiée)."
+      exit 0
+    fi
+    exec "$APP_PY" bridge_server.py
+  ) >"$LOG_DIR/bridge.log" 2>&1 &
+fi
 
 echo "[3.5/5] Cerveau AGI (J.O.B.I.A. Core)"
-(
-  # Boucle de résilience avec auto-restart et codes d'erreurs propres
-  while true; do
-    echo "Démarrage du démon AGI..." >> "$LOG_DIR/agi_daemon.log"
-    if (cd "$ROOT_DIR" && exec "$APP_PY" aurora_agi_daemon.py >> "$LOG_DIR/agi_daemon.log" 2>&1); then
-      EXIT_CODE=$?
-      echo "Arrêt propre (code $EXIT_CODE)" >> "$LOG_DIR/agi_daemon.log"
-      break
-    else
-      EXIT_CODE=$?
-      echo "ERREUR CRITIQUE AGI: Crash avec le code $EXIT_CODE." >> "$LOG_DIR/agi_daemon.log"
-      echo "Tentative de redémarrage dans 5 secondes..." >> "$LOG_DIR/agi_daemon.log"
-      sleep 5
-    fi
-  done
-) &
-AGI_PID=$!
-echo "      AGI Daemon lancé en arrière-plan (PID: $AGI_PID, logs: $LOG_DIR/agi_daemon.log)"
+if daemon_is_running; then
+  echo "      Démon AGI existant réutilisé (protocole IPC vérifié)."
+else
+  run_agi_supervisor &
+  AGI_PID=$!
+  echo "      AGI Daemon lancé en arrière-plan (PID: $AGI_PID, logs: $LOG_DIR/agi_daemon.log)"
+fi
 
 echo "[4/5] Interface (build + Vite)"
 # 30/07: `npm` n'etait PAS dans le PATH de ce script (installe via nvm) ->

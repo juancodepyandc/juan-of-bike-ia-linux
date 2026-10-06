@@ -84,8 +84,12 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
             history = [{'role':m['role'],'content':m['content']} for m in history]
         elif session_id:
             history = history_loader(session_id)
+        try:
+            selected_model = data.get('model') or model_default()
+        except ValueError as exc:
+            return jsonify(ok=False, error=str(exc), error_kind='model_unavailable'),503
         payload = {'request':text,'workspace':data.get('workspace') or workspace,
-                   'permissions':level,'model':data.get('model') or model_default(),
+                   'permissions':level,'model':selected_model,
                    'requested_model':data.get('model',''),
                    'session_id':session_id,'history':history or []}
         try:
@@ -148,6 +152,45 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
     @auth
     def cli_mission_input(mission_id):
         return jsonify(ok=False,error='Interactive input is unsupported; credentials must not be sent to a mission'),400
+
+    @blueprint.route('/api/cli/mission/<mission_id>/events',methods=['GET'])
+    @auth
+    def cli_mission_events(mission_id):
+        """Finite JSON polling for proxies that do not support SSE."""
+        item = store.get(mission_id)
+        if not item:
+            return jsonify(ok=False,error='mission not found'),404
+        cursor = request.headers.get('Last-Event-ID','0')
+        if not re.fullmatch(r'[0-9]{1,20}',cursor):
+            return jsonify(ok=False,error='invalid Last-Event-ID'),400
+        cursor = int(cursor)
+        if cursor>item['last_event_id']:
+            return jsonify(ok=False,error='Last-Event-ID exceeds mission history'),409
+        try:
+            wait = int(request.args.get('wait','20'))
+        except ValueError:
+            return jsonify(ok=False,error='wait must be an integer from 0 to 20'),400
+        if not 0<=wait<=20:
+            return jsonify(ok=False,error='wait must be an integer from 0 to 20'),400
+        deadline = time.monotonic()+wait
+        while True:
+            rows = store.events(mission_id,cursor)
+            current = store.get(mission_id)
+            if not rows and current['status']=='interrupted':
+                seq = store.append(mission_id,{'type':'mission_interrupted',
+                    'event_id':f"expired:{current['lease']}",
+                    'message':'Execution lease expired; checkpoint is available for explicit resume'})
+                if seq:
+                    rows = store.events(mission_id,cursor)
+                    current = store.get(mission_id)
+            terminal = current['status'] in TERMINAL or current['status']=='interrupted'
+            if rows or terminal or time.monotonic()>=deadline:
+                response = jsonify(ok=True,events=[{'id':seq,'event':event} for seq,event in rows],
+                    cursor=rows[-1][0] if rows else cursor,
+                    terminal=terminal and (rows[-1][0] if rows else cursor)>=current['last_event_id'])
+                response.headers['Cache-Control'] = 'no-store'
+                return response
+            time.sleep(min(.25,max(0,deadline-time.monotonic())))
 
     @blueprint.route('/api/cli/mission/<mission_id>/stream',methods=['GET'])
     @auth

@@ -252,8 +252,11 @@ async function generateSyntheticView(
   steps: number,
   filenamePrefix: string,
   referenceSeed: { filename: string; denoise?: number } | null,
+  ensureComfy: () => Promise<void>,
   vramGuard?: { ollamaModelsToEvict: string[] },
 ): Promise<Blob> {
+  // Start the image service only when this route actually renders an image.
+  await ensureComfy()
   // Enforce single-entity, single-view constraint at FLUX prompt level
   const antiSplitSuffix = ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
   const safePrompt = fluxPrompt + antiSplitSuffix
@@ -319,6 +322,7 @@ async function generateAndVerifySyntheticViews({
   outputDir,
   frontSeedFilename,
   setPhase,
+  ensureComfy,
   vramGuard,
 }: {
   plan: ThreeDViewPlan
@@ -334,6 +338,7 @@ async function generateAndVerifySyntheticViews({
   outputDir: string
   frontSeedFilename: string | null
   setPhase: (message: string, progress: number) => void
+  ensureComfy: () => Promise<void>
   vramGuard?: { ollamaModelsToEvict: string[] }
 }): Promise<ThreeDViewAssignment[]> {
   const syntheticAssignments = plan.assignments.filter((a) => a.sourceKind === 'synthetic')
@@ -385,6 +390,7 @@ async function generateAndVerifySyntheticViews({
           steps,
           `${runId}_${viewLabel}_synth`,
           seed,
+          ensureComfy,
           vramGuard,
         )
 
@@ -469,6 +475,7 @@ async function runReferenceWorkflow({
   pollRef,
   phaseStart = 70,
   label = 'Rendu de la reference en cours...',
+  ensureComfy,
   vramGuard,
 }: {
   workflow: Record<string, unknown>
@@ -476,8 +483,10 @@ async function runReferenceWorkflow({
   pollRef: { current: ReturnType<typeof setInterval> | null }
   phaseStart?: number
   label?: string
+  ensureComfy: () => Promise<void>
   vramGuard?: { ollamaModelsToEvict: string[] }
 }) {
+  await ensureComfy()
   if (vramGuard) {
     await freeGpuBeforeFlux(vramGuard.ollamaModelsToEvict)
   }
@@ -2407,16 +2416,18 @@ function Scene3D({
 
 export default function ModelView() {
   const { runtimeServices, visionModel, hardware } = useAppStore()
-  const diagnostics = useStudioDiagnostics({ requiresTauri: true, requiresComfyui: true, requiresOllama: true, requiredFiles: [{ label: 'Pipeline Atlas', relativePath: 'python-services/aurora_3d_pipeline.py' }] })
+  const diagnostics = useStudioDiagnostics({ requiresTauri: true, requiresOllama: true, requiredFiles: [{ label: 'Pipeline Atlas', relativePath: 'python-services/aurora_3d_pipeline.py' }] })
   const { executeWithRuntime } = useManagedRuntime()
   const { pushMessage, getRecentMessages } = useModuleHistoryStore()
   const { trackGeneration, completeGeneration, failGeneration } = useGenerationTrackerStore()
   const recovery = useGenerationRecovery('3d')
   const activeTrackerIdRef = useRef<string | null>(null)
   const [contextFiles, setContextFiles] = useState<File[]>([])
+  const estImage = (f: File) => f.type.startsWith('image/')
+    || /\.(png|jpe?g|webp|avif|bmp|gif|tiff?|heic|heif|jfif|svg)$/i.test(f.name || '')
   const [selectionCible, setSelectionCible] = useState<File | null>(null)
   const [bridgeUrlSelection, setBridgeUrlSelection] = useState('')
-  const { pack: assetPack, preparePack } = useModuleAssetPack({ module: '3d', title: 'Pack modele 3D', assets: buildThreeDModuleAssets(visionModel, runtimeServices.comfyui.path, contextFiles.length > 0) })
+  const { pack: assetPack, preparePack } = useModuleAssetPack({ module: '3d', title: 'Pack modele 3D', assets: buildThreeDModuleAssets(visionModel, runtimeServices.comfyui.path, contextFiles.length > 0, !contextFiles.some(estImage)) })
   const [prompt, setPrompt] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [progress, setProgress] = useState('')
@@ -3071,9 +3082,6 @@ export default function ModelView() {
   // c'est justement le format qui conserve la TRANSPARENCE: convertir en JPG
   // aplatit l'alpha en damier et fausse l'analyse. On teste donc le MIME ET
   // l'extension, en couvrant les formats courants et modernes.
-  const estImage = (f: File) => f.type.startsWith('image/')
-    || /\.(png|jpe?g|webp|avif|bmp|gif|tiff?|heic|heif|jfif|svg)$/i.test(f.name || '')
-
   const aUneImage = contextFiles.some(estImage)
   const canGenerate = (Boolean(prompt.trim()) || aUneImage) && !isGenerating && !diagnostics.blockingReason
   // UN BOUTON GRISE DOIT DIRE POURQUOI (30/07). Sans ce message, impossible de
@@ -3190,9 +3198,25 @@ export default function ModelView() {
       await executeWithRuntime({
         module: '3d',
         title: 'Generation 3D',
-        services: ['ollama', 'comfyui'],
-        prepare: async ({ setPhase }) => { setPhase('Initialisation des modèles...', 2); await preparePack(setPhase) },
-        job: async ({ setPhase }) => {
+        services: ['ollama'],
+        prepare: async ({ setPhase }) => {
+          const preview = previewThreeDIntent(currentPrompt)
+          const characterRequest = ['character', 'creature', 'body_part'].includes(preview.subjectKind)
+          const geometricRoute = !characterRequest && ['procedural', 'photogrammetry'].includes(preview.pipelineRouting.pipeline)
+          if (!geometricRoute) {
+            setPhase('Verification du moteur de reconstruction 3D...', 2)
+            const workspace = await getWorkspacePath()
+            const output = await runPythonScript(`${workspace}/python-services/aurora_3d_pipeline.py`, ['--check-runtime'])
+            const readiness = parseLastJsonLine(output)
+            if (!readiness?.ok) {
+              throw new Error(String(readiness?.error || 'Moteur de reconstruction 3D indisponible sur le serveur'))
+            }
+          }
+          setPhase('Initialisation des modèles...', 3)
+          await preparePack(setPhase)
+        },
+        job: async ({ setPhase, ensureService }) => {
+          const ensureComfy = () => ensureService('comfyui')
           setPhase('Analyse de la demande 3D...', 5)
           const preparedContext = contextFiles.length > 0 ? await prepareContextFiles(contextFiles) : []
           const preparedViews = resolvePreparedReferenceViews(preparedContext)
@@ -3577,6 +3601,7 @@ export default function ModelView() {
                   syntheticWorkflow.steps + 4,  // More steps for the anchor view
                   `${runId}_front_synth`,
                   null,  // No seed for front — it IS the anchor
+                  ensureComfy,
                   { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
                 )
                 // Stage the front view for seeding other views
@@ -3615,6 +3640,7 @@ export default function ModelView() {
               outputDir: runPaths.references,
               frontSeedFilename,
               setPhase,
+              ensureComfy,
               vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
             })
 
@@ -3734,6 +3760,7 @@ export default function ModelView() {
                   pollRef,
                   phaseStart: 25,
                   label,
+                  ensureComfy,
                   vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
                 })
               }
@@ -4567,6 +4594,7 @@ export default function ModelView() {
                   pollRef,
                   phaseStart: 86,
                   label: `Reference corrigee (passage ${correctionAttempt})...`,
+                  ensureComfy,
                   vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
                 })
                 const correctedRefPath = `${runPaths.references}/${runId}_reference_corr${correctionAttempt}.png`

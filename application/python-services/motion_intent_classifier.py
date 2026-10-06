@@ -419,7 +419,18 @@ def _ollama_chat(model: str, prompt: str, custom_text: str | None,
             {"role": "user", "content": user_msg},
         ],
         "stream": False,
-        "format": "json",   # force un JSON valide (robuste meme pour un modele "thinking")
+        # A JSON object alone allowed replies such as {"fan_pwm": {...}},
+        # silently rejected by _normalize. Decode the required intent fields.
+        "format": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": sorted(CATEGORIES)},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "rationale": {"type": "string"},
+            },
+            "required": ["category", "confidence", "rationale"],
+            "additionalProperties": True,
+        },
         "think": False,     # coupe le raisonnement verbeux quand le modele le supporte
         "options": {"temperature": 0.1, "num_ctx": 4096},
     }

@@ -1582,7 +1582,7 @@ export async function runtimeEnsureService(service: RuntimeServiceId) {
     }
   }
 
-  async function tryStart(): Promise<{ ok: boolean; detail: string }> {
+  async function tryStart(): Promise<{ ok: boolean; detail: string; exited?: boolean }> {
     if (service === 'comfyui') {
       try {
         const r = await fetch(`${base}/api/comfyui/start`, {
@@ -1597,9 +1597,10 @@ export async function runtimeEnsureService(service: RuntimeServiceId) {
         if (ct.includes('text/html')) {
           return { ok: false, detail: 'start proxy retourne HTML (tunnel/bridge indisponible)' }
         }
-        const data = await r.json() as { ok?: boolean; ready?: boolean; error?: string }
+        const data = await r.json() as { ok?: boolean; ready?: boolean; error?: string; state?: string }
         if (data?.ready || data?.ok) return { ok: true, detail: 'ComfyUI demarre par le bridge' }
-        return { ok: false, detail: data?.error || 'start: reponse sans ready/ok' }
+        return { ok: false, detail: data?.error || 'start: reponse sans ready/ok',
+          exited: ['process_exited', 'missing_installation', 'launch_failed'].includes(data?.state || '') }
       } catch (err) {
         return { ok: false, detail: err instanceof Error ? err.message : String(err) }
       }
@@ -1620,7 +1621,7 @@ export async function runtimeEnsureService(service: RuntimeServiceId) {
   // 2) Ask the bridge to start it and wait — up to 3 probe rounds for ~20 s total
   //    because ComfyUI needs a few seconds to bind its port after start.sh spawn.
   const startResult = await tryStart()
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; !startResult.exited && attempt < 10; attempt += 1) {
     if (await probe()) {
       return {
         id: service, label: service, available: true, running: true,

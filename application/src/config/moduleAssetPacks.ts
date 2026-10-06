@@ -314,7 +314,7 @@ export function buildVoiceModuleAssets(): ModuleAssetDefinition[] {
   ]
 }
 
-export function buildThreeDModuleAssets(visionModel: string, comfyuiPath: string | null, includeVision = true): ModuleAssetDefinition[] {
+export function buildThreeDModuleAssets(visionModel: string, comfyuiPath: string | null, includeVision = true, includeReferenceGenerator = true): ModuleAssetDefinition[] {
   const assets: ModuleAssetDefinition[] = [
     {
       id: '3d-analysis',
@@ -329,7 +329,7 @@ export function buildThreeDModuleAssets(visionModel: string, comfyuiPath: string
       'Python CUDA, Hunyuan3D et dependances mesh verifies pour le module 3D.',
       '3d',
     ),
-    ...buildFluxAssets(comfyuiPath),
+    ...(includeReferenceGenerator ? buildFluxAssets(comfyuiPath) : []),
     {
       id: '3d-shape',
       label: 'Hunyuan3D shape',

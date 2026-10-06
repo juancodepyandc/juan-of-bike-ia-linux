@@ -95,12 +95,27 @@ def _try_import():
 _AVAILABLE, _IMPORT_ERROR = _try_import()
 
 
+def _cuda_error() -> str | None:
+    """Check the CUDA runtime without loading weights or generating a mesh."""
+    try:
+        if not torch.cuda.is_available():
+            return ("CUDA indisponible : PyTorch ne detecte aucun GPU CUDA utilisable. "
+                    "Verifier le pilote NVIDIA avec nvidia-smi et le Python du moteur.")
+        # Successful Python imports do not prove that the driver can initialise.
+        torch.cuda.init()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        return f"Initialisation CUDA impossible : {type(exc).__name__}: {exc}"
+
+
 def is_available() -> bool:
-    return _AVAILABLE
+    return _cuda_error() is None and _AVAILABLE
 
 
 def import_error() -> str | None:
-    return _IMPORT_ERROR
+    # Keep the existing API, including the reason when imports succeeded but
+    # the NVIDIA module is absent for the running kernel.
+    return _cuda_error() or _IMPORT_ERROR
 
 
 _PIPE_CACHE = None
@@ -397,8 +412,8 @@ def generate_glb(image_path: Path | str, out_glb: Path | str,
                   extra_views: list | None = None) -> dict:
     """Run TRELLIS.2 image -> 3D (geometrie coherente + PBR) et exporte un GLB.
     Returns {ok, out_glb, faces, verts, peak_vram_gb, quality, error?}. Never raises."""
-    if not _AVAILABLE:
-        return {"ok": False, "error": f"trellis2 not available: {_IMPORT_ERROR}"}
+    if not is_available():
+        return {"ok": False, "error": f"trellis2 not available: {import_error()}"}
     try:
         import torch
         from PIL import Image

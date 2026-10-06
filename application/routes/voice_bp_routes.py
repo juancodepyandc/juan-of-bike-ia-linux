@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, Response, send_file, current_app, abort, g, stream_with_context
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
+from urllib.parse import urlencode
+import tempfile
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
 
 voice_bp = Blueprint('voice_bp', __name__)
@@ -13,17 +15,17 @@ voice_bp = Blueprint('voice_bp', __name__)
 def voice_stt():
     try:
         audio_file = request.files["audio"]
-        os.makedirs("temp", exist_ok=True)
+        os.makedirs(os.path.join(WORKSPACE, "temp"), exist_ok=True)
         # Conserver l'extension réelle (wav depuis le JS, webm depuis anciens clients)
         ext = os.path.splitext(audio_file.filename or "voice.webm")[1] or ".webm"
-        temp_path = os.path.join("temp", f"voice_mobile{ext}")
-        audio_file.save(temp_path)
-
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
-        raw = subprocess.check_output(
-            [sys.executable, script, "--mode", "stt", "--audio", temp_path],
-            stderr=subprocess.STDOUT, timeout=120, cwd=WORKSPACE,
-        ).decode("utf-8")
+        with tempfile.TemporaryDirectory(prefix="voice-stt-", dir=os.path.join(WORKSPACE, "temp")) as folder:
+            temp_path = os.path.join(folder, f"audio{ext}")
+            audio_file.save(temp_path)
+            raw = subprocess.check_output(
+                [sys.executable, script, "--mode", "stt", "--audio", temp_path],
+                stderr=subprocess.STDOUT, timeout=120, cwd=WORKSPACE,
+            ).decode("utf-8")
 
         lines = [l for l in raw.strip().split("\n") if l.strip()]
         return Response(lines[-1], mimetype="application/json")
@@ -52,7 +54,7 @@ def voice_tts():
         # contrat — et surtout, chaque synthese EFFACAIT la precedente. Rien
         # n en gardait trace.
         voice_dir = sortie_module("voix", data.get("projet") or "synthese")
-        output_path = os.path.join(voice_dir, f"tts_{int(time.time() * 1000)}.wav")
+        output_path = os.path.join(voice_dir, f"tts_{int(time.time() * 1000)}_{uuid.uuid4().hex}.wav")
         script = os.path.join(WORKSPACE, "python-services", "voice_service.py")
 
         cmd = [sys.executable, script, "--mode", "tts", "--text", text, "--output", output_path, "--lang", lang]
@@ -102,7 +104,9 @@ def voice_tts():
 
         response: dict = {
             "ok": True,
-            "audio_url": "/api/voice/tts-audio",
+            "audio_url": "/api/voice/tts-audio?" + urlencode({
+                "file": pathlib.Path(output_path).relative_to(pathlib.Path(WORKSPACE)/"output/voix").as_posix(),
+            }),
             "phonemes": phonemes,
             "engine": engine,
             "voice": voice_name,
@@ -128,6 +132,17 @@ def serve_tts_audio():
     # RECENTE au lieu d un nom fige. L ancienne version lisait `tts_out.wav`,
     # ce qui n avait de sens que tant qu une synthese ecrasait la precedente.
     racine_voix = os.path.join(WORKSPACE, "output", "voix")
+    if "file" in request.args:
+        root = pathlib.Path(racine_voix).resolve()
+        raw = request.args.get("file", "")
+        try:
+            path = (root/raw).resolve()
+            if (not raw or "\\" in raw or "\x00" in raw or not path.is_relative_to(root)
+                    or path.suffix.lower() != ".wav" or not path.is_file()):
+                return jsonify({"error": "Fichier audio TTS introuvable"}), 404
+        except (OSError, ValueError, RuntimeError):
+            return jsonify({"error": "Fichier audio TTS introuvable"}), 404
+        return send_file(path, mimetype="audio/wav", conditional=True)
     candidats = []
     for base, _dirs, fichiers in os.walk(racine_voix):
         for f in fichiers:
@@ -952,5 +967,4 @@ def voice_personas():
         {"id": "phantom-sharp", "label": "Phantom · tranchante","module": "cyber",      "edge_voice_fr": "fr-FR-AlainNeural",   "edge_voice_en": "en-US-EricNeural"},
     ]
     return jsonify({"ok": True, "personas": personas, "default": "lyra-soft"})
-
 

@@ -286,7 +286,7 @@ def admin_restart_bridge():
 def three_d_motion_compile():
     """POST { "motion": <aurora.motion.v1 dict> } → compiled instructions."""
     try:
-        services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "python-services")
+        services_dir = os.path.join(WORKSPACE, "python-services")
         if services_dir not in sys.path:
             sys.path.insert(0, services_dir)
         import motion_baker as _mb  # noqa: WPS433
@@ -324,7 +324,7 @@ def three_d_motion_resolve_prompt():
     TRELLIS.2 + Blender pipeline.
     """
     try:
-        services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "python-services")
+        services_dir = os.path.join(WORKSPACE, "python-services")
         if services_dir not in sys.path:
             sys.path.insert(0, services_dir)
         import motion_parser as _mp  # noqa: WPS433
@@ -348,7 +348,7 @@ def three_d_motion_resolve_prompt():
 def three_d_motion_parser_self_test():
     """v77zw: GET → runs motion_parser.--self-test as a subprocess."""
     try:
-        services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "python-services")
+        services_dir = os.path.join(WORKSPACE, "python-services")
         proc = subprocess.run(
             [sys.executable, os.path.join(services_dir, "motion_parser.py"), "--self-test"],
             capture_output=True, text=True, timeout=30,
@@ -369,7 +369,7 @@ def three_d_motion_self_test():
     """GET → runs motion_baker.--self-test as a subprocess and returns the
     OK/FAIL line."""
     try:
-        services_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "python-services")
+        services_dir = os.path.join(WORKSPACE, "python-services")
         proc = subprocess.run(
             [sys.executable, os.path.join(services_dir, "motion_baker.py"), "--self-test"],
             capture_output=True, text=True, timeout=30,
@@ -383,6 +383,14 @@ def three_d_motion_self_test():
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+def _three_d_path_is_allowed(candidate: str, repo_root: str) -> bool:
+    """Resolve symlinks and compare path components, not string prefixes."""
+    try:
+        return pathlib.Path(candidate).resolve().is_relative_to(pathlib.Path(repo_root).resolve())
+    except (OSError, ValueError, RuntimeError):
+        return False
 
 
 @vite_bp.route("/api/3d/regression-suite", methods=["POST"])
@@ -421,7 +429,7 @@ def three_d_regression_suite():
     if not isinstance(mesh_map, dict):
         return jsonify({"ok": False, "error": "'mesh_map' must be an object"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve_mesh_arg(p: str) -> str | None:
@@ -432,7 +440,7 @@ def three_d_regression_suite():
             candidate = os.path.normpath(os.path.join(workspace, raw))
         else:
             candidate = os.path.normpath(raw)
-        if not candidate.startswith(repo_root):
+        if not _three_d_path_is_allowed(candidate, repo_root):
             return None
         if not os.path.isfile(candidate):
             return None
@@ -515,7 +523,7 @@ def three_d_mesh_sharpen():
     if not mesh or not output:
         return jsonify({"ok": False, "error": "missing 'mesh' or 'output'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str, must_exist: bool = True) -> str | None:
@@ -523,7 +531,7 @@ def three_d_mesh_sharpen():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         if must_exist and not os.path.isfile(cand):
             return None
@@ -594,13 +602,17 @@ def three_d_run_pipeline():
             images.append(value)
     if not prompt or not run_id:
         return jsonify({"ok": False, "error": "missing 'prompt' or 'run_id'"}), 400
+    if run_id in {".", ".."} or any(char in run_id for char in ("/", "\\", "\x00")):
+        return jsonify({"ok": False, "error": "run_id must be a single directory name"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     script_path = os.path.join(workspace, "python-services", "aurora_3d_pipeline.py")
     if not os.path.isfile(script_path):
         return jsonify({"ok": False, "error": "aurora_3d_pipeline.py not found"}), 500
 
     _gen_dir = os.path.join(workspace, "output", "3d", "generations", run_id)
+    if not _three_d_path_is_allowed(_gen_dir, workspace):
+        return jsonify({"ok": False, "error": "generation directory escapes workspace"}), 400
     os.makedirs(_gen_dir, exist_ok=True)
     cmd = [sys.executable, script_path, "--prompt", prompt, "--run-id", run_id,
            "--output-dir", _gen_dir,
@@ -691,12 +703,12 @@ def three_d_compose_scene():
     if not actor_glb or not target_glb or not instruction:
         return jsonify({"ok": False, "error": "missing 'actor_glb', 'target_glb' or 'instruction'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str) -> str | None:
         cand = os.path.normpath(p if os.path.isabs(p) else os.path.join(workspace, p))
-        if not cand.startswith(repo_root) or not os.path.isfile(cand):
+        if not _three_d_path_is_allowed(cand, repo_root) or not os.path.isfile(cand):
             return None
         return cand
 
@@ -741,8 +753,9 @@ def three_d_compose_scene():
             "stderr": (proc.stderr or b"").decode("utf-8", errors="replace")[-400:],
             "stdout": stdout_text[-800:],
         }), 500
-    status = 200 if result.get("ok") else 500
-    return jsonify({"ok": bool(result.get("ok")), "scene": result,
+    succeeded = proc.returncode == 0 and result.get("ok") is True
+    status = 200 if succeeded else 500
+    return jsonify({"ok": succeeded, "scene": result,
                     "output": out_path, "returncode": proc.returncode}), status
 
 
@@ -1486,7 +1499,7 @@ def three_d_run_index():
     kind = (request.args.get("kind") or "").strip() or None
     score_flag = request.args.get("score", "").strip() in ("1", "true", "yes")
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     script_path = os.path.join(workspace, "python-services", "mesh_run_index.py")
     if not os.path.isfile(script_path):
         return jsonify({"ok": False, "error": "mesh_run_index.py not found"}), 500
@@ -1526,7 +1539,7 @@ def three_d_score_history():
     run_id = (request.args.get("run_id") or "").strip()
     limit = request.args.get("limit", "").strip()
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     script_path = os.path.join(workspace, "python-services", "score_history.py")
     if not os.path.isfile(script_path):
         return jsonify({"ok": False, "error": "score_history.py not found"}), 500
@@ -1581,7 +1594,7 @@ def three_d_mesh_compare():
     if not left or not right:
         return jsonify({"ok": False, "error": "missing 'left' or 'right'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str) -> str | None:
@@ -1589,7 +1602,7 @@ def three_d_mesh_compare():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         return cand if os.path.isfile(cand) else None
 
@@ -1637,7 +1650,7 @@ def three_d_viewer_html():
     if not mesh or not output:
         return jsonify({"ok": False, "error": "missing 'mesh' or 'output'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str, must_exist: bool = True) -> str | None:
@@ -1645,7 +1658,7 @@ def three_d_viewer_html():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         if must_exist and not os.path.isfile(cand):
             return None
@@ -1789,7 +1802,7 @@ def three_d_auto_rescue():
             "error": "missing 'mesh', 'reference', 'prompt', or 'output_dir'",
         }), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str, must_exist: bool = True) -> str | None:
@@ -1797,7 +1810,7 @@ def three_d_auto_rescue():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         if must_exist and not os.path.isfile(cand):
             return None
@@ -1859,7 +1872,7 @@ def three_d_bake_colors():
     if not mesh or not reference or not output:
         return jsonify({"ok": False, "error": "missing 'mesh', 'reference', or 'output'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str, must_exist: bool = True) -> str | None:
@@ -1867,7 +1880,7 @@ def three_d_bake_colors():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         if must_exist and not os.path.isfile(cand):
             return None
@@ -1923,7 +1936,7 @@ def three_d_color_diagnostic():
     if not reference or not mesh:
         return jsonify({"ok": False, "error": "missing 'reference' or 'mesh'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     repo_root = os.path.normpath(os.path.dirname(workspace))
 
     def resolve(p: str) -> str | None:
@@ -1931,7 +1944,7 @@ def three_d_color_diagnostic():
             cand = os.path.normpath(os.path.join(workspace, p))
         else:
             cand = os.path.normpath(p)
-        if not cand.startswith(repo_root):
+        if not _three_d_path_is_allowed(cand, repo_root):
             return None
         return cand if os.path.isfile(cand) else None
 
@@ -1989,13 +2002,13 @@ def three_d_auto_validate():
     if pipeline not in ("trellis2", "dreamgaussian", "procedural", "mesh_postprocess"):
         return jsonify({"ok": False, "error": f"invalid pipeline '{pipeline}'"}), 400
 
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     if not os.path.isabs(mesh_path):
         candidate = os.path.normpath(os.path.join(workspace, mesh_path))
     else:
         candidate = os.path.normpath(mesh_path)
     repo_root = os.path.normpath(os.path.dirname(workspace))
-    if not candidate.startswith(repo_root):
+    if not _three_d_path_is_allowed(candidate, repo_root):
         return jsonify({"ok": False, "error": "mesh_path escapes workspace"}), 400
     if not os.path.isfile(candidate):
         return jsonify({"ok": False, "error": f"mesh not found: {candidate}"}), 404
@@ -2042,13 +2055,13 @@ def three_d_mesh_score():
 
     # Resolve relative paths against application/ root for safety. Absolute
     # paths are accepted but must be inside the workspace.
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     if not os.path.isabs(mesh_path):
         candidate = os.path.normpath(os.path.join(workspace, mesh_path))
     else:
         candidate = os.path.normpath(mesh_path)
     repo_root = os.path.normpath(os.path.dirname(workspace))
-    if not candidate.startswith(repo_root):
+    if not _three_d_path_is_allowed(candidate, repo_root):
         return jsonify({"ok": False, "error": "mesh_path escapes workspace"}), 400
     if not os.path.isfile(candidate):
         return jsonify({"ok": False, "error": f"mesh not found: {candidate}"}), 404
@@ -2282,20 +2295,22 @@ def three_d_motion_intent():
     data = request.get_json(silent=True) or {}
     prompt = (data.get("prompt") or "").strip()
     custom_motion_text = (data.get("custom_motion_text") or "").strip() or None
-    model_pref = (data.get("model") or "gemma3:27b").strip()
+    model_pref = (data.get("model") or "").strip()
     if not prompt:
         return jsonify({"ok": False, "error": "missing 'prompt' in body"}), 400
     if len(prompt) > 4000:
         return jsonify({"ok": False, "error": "prompt too long (>4000 chars)"}), 400
 
     script_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.realpath(WORKSPACE),
         "python-services", "motion_intent_classifier.py",
     )
     if not os.path.isfile(script_path):
         return jsonify({"ok": False, "error": "motion_intent_classifier.py not found"}), 500
 
-    cmd = [sys.executable, script_path, "--prompt", prompt, "--model", model_pref]
+    cmd = [sys.executable, script_path, "--prompt", prompt]
+    if model_pref:
+        cmd.extend(["--model", model_pref])
     if custom_motion_text:
         cmd.extend(["--custom", custom_motion_text])
 
@@ -2349,12 +2364,15 @@ def three_d_custom_motion():
 
     # Step 1: classify
     classifier = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.realpath(WORKSPACE),
         "python-services", "motion_intent_classifier.py",
     )
+    classify_cmd = [sys.executable, classifier, "--prompt", prompt, "--custom", custom]
+    if data.get("model"):
+        classify_cmd.extend(["--model", str(data["model"])])
     try:
         proc = subprocess.run(
-            [sys.executable, classifier, "--prompt", prompt, "--custom", custom],
+            classify_cmd,
             capture_output=True, text=True, timeout=180, check=False,
         )
     except subprocess.TimeoutExpired:
@@ -2377,7 +2395,7 @@ def three_d_custom_motion():
         with open(intent_tmp, "w", encoding="utf-8") as f:
             json.dump(intent, f)
         baker = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
+            os.path.realpath(WORKSPACE),
             "python-services", "motion_intent_baker.py",
         )
         try:
@@ -2392,6 +2410,12 @@ def three_d_custom_motion():
                 bake_result = json.loads(bproc.stdout)
             except json.JSONDecodeError:
                 bake_result = {"ok": False, "raw": bproc.stdout[-400:]}
+            if not isinstance(bake_result, dict):
+                bake_result = {"ok": False, "error": "bake result must be a JSON object"}
+            if bproc.returncode != 0:
+                bake_result.update(ok=False, returncode=bproc.returncode,
+                                   error=bake_result.get("error") or "baker process failed",
+                                   stderr=(bproc.stderr or "")[-400:])
         except subprocess.TimeoutExpired:
             bake_result = {"ok": False, "error": "bake timed out"}
 
@@ -2444,15 +2468,18 @@ def three_d_auto_motion_bake():
 
     # Step 1: classify (no custom-motion text — the prompt itself is the input)
     classifier = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.realpath(WORKSPACE),
         "python-services", "motion_intent_classifier.py",
     )
     if not os.path.isfile(classifier):
         return jsonify({"ok": False, "error": "motion_intent_classifier.py not found"}), 500
 
+    classify_cmd = [sys.executable, classifier, "--prompt", prompt]
+    if data.get("model"):
+        classify_cmd.extend(["--model", str(data["model"])])
     try:
         proc = subprocess.run(
-            [sys.executable, classifier, "--prompt", prompt],
+            classify_cmd,
             capture_output=True, text=True, timeout=180, check=False,
         )
     except subprocess.TimeoutExpired:
@@ -2509,7 +2536,7 @@ def three_d_auto_motion_bake():
         return jsonify({"ok": False, "error": f"intent write failed: {exc}"}), 500
 
     baker = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
+        os.path.realpath(WORKSPACE),
         "python-services", "motion_intent_baker.py",
     )
     bake_result = None
@@ -2526,6 +2553,12 @@ def three_d_auto_motion_bake():
         except json.JSONDecodeError:
             bake_result = {"ok": False, "raw": (bproc.stdout or "")[-400:],
                            "stderr": (bproc.stderr or "")[-400:]}
+        if not isinstance(bake_result, dict):
+            bake_result = {"ok": False, "error": "bake result must be a JSON object"}
+        if bproc.returncode != 0:
+            bake_result.update(ok=False, returncode=bproc.returncode,
+                               error=bake_result.get("error") or "baker process failed",
+                               stderr=(bproc.stderr or "")[-400:])
     except subprocess.TimeoutExpired:
         bake_result = {"ok": False, "error": "bake timed out"}
 

@@ -116,7 +116,8 @@ class DurableStoreTests(unittest.TestCase):
         def publish(kind,payload):
             self.dispatched.append((kind,payload))
             return True
-        register_mission_routes(bp,auth,workspace=self.folder.name,model_default=lambda:'test:local',publish=publish,store=self.store,**hooks)
+        model_default = hooks.pop('model_default', lambda: 'test:local')
+        register_mission_routes(bp,auth,workspace=self.folder.name,model_default=model_default,publish=publish,store=self.store,**hooks)
         app.register_blueprint(bp)
         return app
 
@@ -131,6 +132,23 @@ class DurableStoreTests(unittest.TestCase):
         conflicting = client.post('/api/cli/mission/start',headers=headers,json={**self.payload,'request':'Other task'})
         self.assertEqual(conflicting.status_code,409)
 
+    def test_default_model_failure_does_not_accept_or_dispatch_a_mission(self):
+        def unavailable():
+            raise ValueError('No installed model fits the observed server capacity')
+        client = self.app(model_default=unavailable).test_client()
+        headers = {'Authorization': 'Bearer test-key'}
+        reply = client.post('/api/cli/mission/start', headers=headers,
+                            json={**self.payload, 'model': ''})
+        self.assertEqual(reply.status_code, 503)
+        self.assertEqual(reply.get_json()['error_kind'], 'model_unavailable')
+        self.assertEqual(self.store.list(), [])
+        self.assertEqual(self.dispatched, [])
+        # An explicit model remains the user's choice and does not call the
+        # failing automatic selector.
+        reply = client.post('/api/cli/mission/start', headers=headers, json=self.payload)
+        self.assertEqual(reply.status_code, 200)
+        self.assertEqual(len(self.dispatched), 1)
+
     def test_http_sse_survives_bridge_recreation_and_validates_cursor(self):
         client = self.app().test_client()
         headers = {'Authorization':'Bearer test-key'}
@@ -144,6 +162,33 @@ class DurableStoreTests(unittest.TestCase):
         self.assertNotIn('id: 1\n',text)
         self.assertIn('mission_complete',text)
         self.assertEqual(client.get(f'/api/cli/mission/{mid}/stream',headers={**headers,'Last-Event-ID':'99'}).status_code,409)
+
+    def test_json_polling_replays_after_reconstruction_and_preserves_batches(self):
+        client = self.app().test_client()
+        headers = {'Authorization':'Bearer test-key'}
+        mid = client.post('/api/cli/mission/start',headers=headers,json=self.payload).get_json()['mission_id']
+        for index in range(257):
+            self.store.append(mid,{'type':'tool_result','event_id':str(index),'ok':True})
+        self.store.append(mid,{'type':'mission_complete','event_id':'done','result':'Done'})
+        self.assertEqual(len(self.dispatched),1)
+        client = self.app().test_client()
+        path = f'/api/cli/mission/{mid}/events?wait=0'
+        first = client.get(path,headers=headers).get_json()
+        self.assertEqual(len(first['events']),256)
+        self.assertEqual(first['cursor'],256)
+        self.assertFalse(first['terminal'])
+        second = client.get(path,headers={**headers,'Last-Event-ID':'256'}).get_json()
+        self.assertEqual([row['id'] for row in second['events']],[257,258])
+        self.assertEqual(second['events'][-1]['event']['type'],'mission_complete')
+        self.assertTrue(second['terminal'])
+        self.assertEqual(len(self.dispatched),0)
+        self.assertEqual(client.get(path).status_code,401)
+        for cursor,status in (('-1',400),('invalid',400),('999',409)):
+            with self.subTest(cursor=cursor):
+                self.assertEqual(client.get(path,headers={**headers,'Last-Event-ID':cursor}).status_code,status)
+        for wait in ('-1','21','invalid'):
+            with self.subTest(wait=wait):
+                self.assertEqual(client.get(f'/api/cli/mission/{mid}/events?wait={wait}',headers=headers).status_code,400)
 
     def test_resume_starts_after_previous_terminal_event(self):
         client = self.app().test_client()

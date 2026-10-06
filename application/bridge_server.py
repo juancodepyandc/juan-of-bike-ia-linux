@@ -194,33 +194,84 @@ COMFYUI_PATH = _find_comfyui_path()
 COMFYUI_PORT = 8188
 _comfyui_process: subprocess.Popen | None = None
 _comfyui_lock = threading.Lock()
+_comfyui_log_thread: threading.Thread | None = None
+_comfyui_start_result = {"state": "not_started", "ready": False}
+_COMFYUI_LOG_BYTES = 16384
 
 
-def _comfyui_is_ready() -> bool:
+def _capture_comfyui_output(process, log_path):
+    """Drain the child pipe and keep only the latest bounded startup/runtime log."""
+    tail = b""
+    stream = process.stdout
+    try:
+        read = getattr(stream, "read1", stream.read)
+        while chunk := read(4096):
+            tail = (tail + chunk)[-_COMFYUI_LOG_BYTES:]
+            try:
+                with open(log_path, "wb") as log:
+                    log.write(tail)
+            except OSError:
+                # Still drain the pipe so an unavailable log never blocks ComfyUI.
+                pass
+    finally:
+        stream.close()
+
+
+def _comfyui_start_diagnostics():
+    """Last observed launch outcome; this is not a workflow/GPU readiness proof."""
+    return dict(_comfyui_start_result)
+
+
+def _record_comfyui_start(state, *, ready=False, error=None, returncode=None, log_path=None):
+    global _comfyui_start_result
+    result = {"state": state, "ready": ready}
+    if returncode is not None:
+        result["returncode"] = returncode
+    if log_path is not None:
+        result["log_path"] = str(log_path)
+    if error:
+        tail = ""
+        if log_path is not None:
+            try:
+                with open(log_path, "rb") as log:
+                    log.seek(0, os.SEEK_END)
+                    log.seek(max(0, log.tell() - 4096))
+                    tail = log.read(4096).decode("utf-8", errors="replace").strip()
+            except OSError:
+                pass
+        result["error"] = error + (" — " + tail if tail else "")
+        result["log_tail"] = tail
+    _comfyui_start_result = result
+
+
+def _comfyui_is_ready(timeout=6) -> bool:
     # 6s timeout instead of 2s so we don't incorrectly report ComfyUI as down
     # while it is busy loading FLUX models or mid-generation. A shorter timeout
     # made the whole pipeline falsely think ComfyUI was unreachable and drown
     # the user in "ComfyUI local ne repond pas" loops.
     try:
-        r = requests.get(f"http://127.0.0.1:{COMFYUI_PORT}/system_stats", timeout=6)
+        r = requests.get(f"http://127.0.0.1:{COMFYUI_PORT}/system_stats", timeout=timeout)
         return r.status_code == 200
     except Exception:
         return False
 
 
 def _start_comfyui() -> bool:
-    """Lance ComfyUI si pas deja en cours. Retourne True quand pret (max 60s)."""
-    global _comfyui_process
+    """Launch once and observe readiness for at most 60s after process creation."""
+    global _comfyui_process, _comfyui_log_thread
 
     if _comfyui_is_ready():
+        _record_comfyui_start("ready", ready=True)
         return True
 
     with _comfyui_lock:
         if _comfyui_is_ready():
+            _record_comfyui_start("ready", ready=True)
             return True
 
         comfyui_dir = pathlib.Path(COMFYUI_PATH) if COMFYUI_PATH else None
         if not comfyui_dir or not (comfyui_dir / "main.py").exists():
+            _record_comfyui_start("missing_installation", error="ComfyUI introuvable : main.py absent.")
             return False
 
         python_exe = comfyui_dir / "venv" / "Scripts" / "python.exe"  # Windows
@@ -231,23 +282,42 @@ def _start_comfyui() -> bool:
 
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         from comfy_runtime import memory_args
-        _comfyui_process = subprocess.Popen(
-            [str(python_exe), str(comfyui_dir / "main.py"),
-             "--listen", "127.0.0.1", "--port", str(COMFYUI_PORT),
-             *memory_args(comfyui_dir)],
-            cwd=str(comfyui_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-        )
+        log_path = comfyui_dir / "aurora_bridge_startup.log"
+        if _comfyui_process is None or _comfyui_process.poll() is not None:
+            try:
+                log_path.write_bytes(b"")
+                _comfyui_process = subprocess.Popen(
+                    [str(python_exe), "-u", str(comfyui_dir / "main.py"),
+                     "--listen", "127.0.0.1", "--port", str(COMFYUI_PORT),
+                     *memory_args(comfyui_dir)],
+                    cwd=str(comfyui_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    creationflags=creationflags,
+                )
+            except (OSError, ValueError) as exc:
+                _record_comfyui_start("launch_failed", error=f"Impossible de lancer ComfyUI : {exc}", log_path=log_path)
+                return False
+            _comfyui_log_thread = threading.Thread(
+                target=_capture_comfyui_output, args=(_comfyui_process, log_path), daemon=True)
+            _comfyui_log_thread.start()
 
-        for _ in range(60):
-            time.sleep(1)
-            if _comfyui_is_ready():
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            code = _comfyui_process.poll()
+            if code is not None:
+                if _comfyui_log_thread is not None:
+                    _comfyui_log_thread.join(timeout=1)
+                _record_comfyui_start("process_exited", returncode=code, log_path=log_path,
+                    error=f"ComfyUI a quitté pendant le démarrage (code {code}).")
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if _comfyui_is_ready(timeout=min(6, remaining)):
+                _record_comfyui_start("ready", ready=True, log_path=log_path)
                 return True
-            if _comfyui_process.poll() is not None:
-                return False  # processus quitte de lui-meme
-
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+        _record_comfyui_start("startup_timeout", log_path=log_path,
+            error="ComfyUI ne répond pas après 60 secondes de démarrage ; le processus est encore actif.")
         return False
 
 
@@ -648,27 +718,85 @@ def _ext_rate_ok(key_hash):
     return True
 
 
-def _ext_default_model():
-    try:
-        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=6)
-        models = r.json().get("models", []) if r.ok else []
-        candidates = []
-        for m in models:
-            if not isinstance(m, dict):
-                continue
-            name = m.get("name", "")
-            if "embed" in name.lower():
-                continue
+_EXT_DEFAULT_MODEL_INFO = {}
+
+
+def _ext_default_model_diagnostics():
+    return dict(_EXT_DEFAULT_MODEL_INFO)
+
+
+def _ext_default_model(models=None, *, resources=None):
+    """Choose an installed default using a coarse weight-size resource screen.
+
+    Disk bytes are not measured resident memory. Passing this screen is not
+    proof of fit, available RAM, loading latency or generation performance.
+    Explicit per-request model choices bypass this function entirely.
+    """
+    global _EXT_DEFAULT_MODEL_INFO
+    _EXT_DEFAULT_MODEL_INFO = {"selection": "unavailable", "scope": "No default model selected."}
+    if models is None:
+        try:
+            r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=6)
+        except requests.RequestException as exc:
+            raise ValueError(f"Impossible de choisir un modèle : inventaire Ollama indisponible ({exc}).") from exc
+        if not r.ok:
+            raise ValueError("Impossible de choisir un modèle : inventaire Ollama indisponible.")
+        models = r.json().get("models", [])
+    if not isinstance(models, list):
+        raise ValueError("Inventaire Ollama invalide : models doit être une liste.")
+    installed = [m for m in models if isinstance(m, dict) and isinstance(m.get("name"), str) and m["name"].strip()]
+    override = os.environ.get("AURORA_DEFAULT_MODEL", "").strip()
+    if override:
+        if not any(m["name"] == override for m in installed):
+            raise ValueError("AURORA_DEFAULT_MODEL n'est pas installé dans Ollama : " + override)
+        _EXT_DEFAULT_MODEL_INFO = {"model": override, "selection": "explicit_environment",
+                                   "scope": "Explicit installed model; memory fit and latency are not verified."}
+        return override
+    if resources is not None:
+        if not isinstance(resources, dict):
+            raise ValueError("Observed model resources must be an object.")
+        ram, vram = resources.get("ram_total_bytes"), resources.get("nvidia_vram_bytes", 0)
+        if (ram is not None and (type(ram) is not int or ram <= 0)) or type(vram) is not int or vram < 0:
+            raise ValueError("Observed RAM/VRAM bytes must be valid nonnegative measurements.")
+    else:
+        ram = None
+        try:
+            measured = psutil.virtual_memory().total
+            if type(measured) is int and measured > 0:
+                ram = measured
+        except (OSError, ValueError, RuntimeError):
+            pass
+        vram = 0
+        try:
+            probe = subprocess.run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                                   capture_output=True, text=True, timeout=2, check=True)
+            totals = [int(line.strip()) for line in probe.stdout.splitlines() if line.strip()]
+            if totals and all(total > 0 for total in totals):
+                vram = sum(totals) * 1024 ** 2
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    capacity = ram + vram if ram is not None else None
+    candidates, excluded = [], []
+    for model in installed:
+        name, size = model["name"], model.get("size")
+        if "embed" in name.lower():
+            continue
+        if capacity is not None and type(size) is int and size > capacity:
+            excluded.append({"name": name, "weight_bytes": size})
+        else:
             candidates.append(name)
-        for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "qwen3-coder:30b", "orcarouter", "qwen3-vl:8b"):
-            for n in candidates:
-                if pref.lower() in n.lower():
-                    return n
-        if candidates:
-            return candidates[0]
-    except Exception:
-        pass
-    return "qwen3-coder-next:q4_K_M"
+    _EXT_DEFAULT_MODEL_INFO = {"selection": "automatic", "ram_total_bytes": ram,
+        "nvidia_vram_bytes": vram, "coarse_capacity_bytes": capacity, "excluded": excluded,
+        "scope": "Declared disk weights are only a coarse resource screen, not measured resident memory or proof of fit/latency. Unknown sizes are not certified."}
+    if not candidates:
+        raise ValueError("Aucun modèle de conversation installé ne passe le contrôle de ressources ; choisissez un modèle explicitement ou installez un modèle adapté.")
+    for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "qwen3-coder:30b", "orcarouter", "qwen3-vl:8b"):
+        match = next((name for name in candidates if pref.lower() in name.lower()), None)
+        if match:
+            _EXT_DEFAULT_MODEL_INFO["model"] = match
+            return match
+    _EXT_DEFAULT_MODEL_INFO["model"] = candidates[0]
+    return candidates[0]
 
 
 # --- gestion de clé (LOCAL only) — plusieurs clés actives possibles
@@ -746,7 +874,11 @@ def ext_ping():
         return _ext_cors(jsonify({"ok": False, "error": err})), 401
     if not _ext_origin_for(rec):
         return jsonify({"ok": False, "error": "origin non autorisé pour cette clé"}), 403
-    return _ext_cors(jsonify({"ok": True, "model": _ext_default_model()}), rec)
+    try:
+        model = _ext_default_model()
+    except ValueError as exc:
+        return _ext_cors(jsonify({"ok": False, "error": str(exc)}), rec), 503
+    return _ext_cors(jsonify({"ok": True, "model": model}), rec)
 
 
 @app.route("/api/ext/chat", methods=["POST", "OPTIONS"])
@@ -786,8 +918,12 @@ def ext_chat():
         "concise, utile, chaleureuse et directe. Si on te demande quelque chose qui "
         "sort du contexte du site, réponds quand même utilement."
     )
+    try:
+        model = str(body.get("model") or "").strip() or _ext_default_model()
+    except ValueError as exc:
+        return _ext_cors(jsonify({"ok": False, "error": str(exc)}), rec), 503
     payload = {
-        "model": str(body.get("model") or "").strip() or _ext_default_model(),
+        "model": model,
         "messages": [{"role": "system", "content": system}] + clean,
         "stream": False,
         "options": {"temperature": max(0.0, min(1.5, float(body.get("temperature", 0.7) or 0.7)))},
@@ -819,20 +955,47 @@ _EXT_3D_SOEURS = ("3d-validation",)  # racinesadditionnelles servies au visualis
 _EXT_3D_MIN_SCORE = 70  # seuil de "rendu correct" — sinon retry auto
 
 
-def _ext_3d_pick_glb(run_id):
-    """Trouve le .glb produit pour run_id dans output/3d/."""
-    try:
-        cands = []
-        for fn in os.listdir(_EXT_3D_DIR):
-            if fn.endswith(".glb") and run_id in fn:
-                cands.append(fn)
-        if not cands:
-            return None
-        # préfère le *_mesh.glb / le plus récent
-        cands.sort(key=lambda f: (0 if "mesh" in f else 1, -os.path.getmtime(os.path.join(_EXT_3D_DIR, f))))
-        return cands[0]
-    except Exception:
+def _ext_3d_pick_glb(run_id, result):
+    """Deliver only the declared GLB from this successful, isolated run."""
+    if (not isinstance(result, dict) or result.get("ok") is not True
+            or result.get("run_id") != run_id or not isinstance(result.get("final_mesh"), str)):
         return None
+    if run_id in {".", ".."} or any(char in run_id for char in ("/", "\\", "\x00")):
+        return None
+    try:
+        root = pathlib.Path(_EXT_3D_DIR).resolve()
+        run_root = (root / run_id).resolve()
+        candidate = pathlib.Path(result["final_mesh"])
+        if not candidate.is_absolute():
+            candidate = pathlib.Path(WORKSPACE) / candidate
+        candidate = candidate.resolve()
+        if (not run_root.is_relative_to(root) or not candidate.is_relative_to(run_root)
+                or candidate.suffix.lower() != ".glb" or not candidate.is_file()
+                or candidate.stat().st_size == 0):
+            return None
+        return candidate.relative_to(root).as_posix()
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
+def _ext_3d_pipeline_result(stdout):
+    """Decode a complete final JSON object, including indented multiline output."""
+    decoder = json.JSONDecoder()
+    starts, offset = [], 0
+    for line in stdout.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith("{"):
+            starts.append(offset + len(line) - len(stripped))
+        offset += len(line)
+    for start in reversed(starts):
+        try:
+            value, end = decoder.raw_decode(stdout, start)
+        except ValueError:
+            continue
+        # A JSON progress excerpt followed by other text is not the result.
+        if isinstance(value, dict) and not stdout[end:].strip():
+            return value
+    return None
 
 
 def _ext_3d_score(audit):
@@ -857,7 +1020,7 @@ def _ext_3d_worker(job_id):
     job = _EXT_3D_JOBS.get(job_id)
     if not job:
         return
-    workspace = os.path.dirname(os.path.abspath(__file__))
+    workspace = os.path.realpath(WORKSPACE)
     script_path = os.path.join(workspace, "python-services", "aurora_3d_pipeline.py")
     if not os.path.isfile(script_path):
         job["state"] = "failed"; job["error"] = "aurora_3d_pipeline.py introuvable"; job["finished"] = time.time()
@@ -869,6 +1032,13 @@ def _ext_3d_worker(job_id):
         job["step"] = ("synthèse référence → TRELLIS.2 → post-traitement / rescue" if attempt == 1
                        else "rendu insuffisant — nouvelle passe automatique")
         run_id = job["run_id"] if attempt == 1 else (job["run_id"] + f"_r{attempt}")
+        # External requests allocate fresh run IDs. Never treat an older run
+        # directory as this invocation's delivery, including after a restart.
+        if os.path.lexists(os.path.join(_EXT_3D_DIR, run_id)):
+            job["state"] = "failed"
+            job["error"] = "Le dossier du run existe déjà ; reprise explicite nécessaire avant toute livraison."
+            job["finished"] = time.time()
+            return
         cmd = [sys.executable, script_path, "--prompt", job["prompt"], "--run-id", run_id,
                "--output-dir", _EXT_3D_DIR, "--purpose", "visual_preview"]
         if job.get("subject_kind"):
@@ -887,21 +1057,18 @@ def _ext_3d_worker(job_id):
         except subprocess.TimeoutExpired:
             job["state"] = "failed"; job["error"] = "pipeline timeout (40 min)"; job["finished"] = time.time()
             return
-        audit = None
-        if proc.returncode == 0:
-            try:
-                audit = json.loads(proc.stdout.decode("utf-8", errors="replace"))
-            except Exception:
-                audit = None
-        else:
+        audit = _ext_3d_pipeline_result((proc.stdout or b"").decode("utf-8", errors="replace"))
+        if proc.returncode != 0:
             job["last_stderr"] = (proc.stderr or b"").decode("utf-8", errors="replace")[-400:]
-        glb = _ext_3d_pick_glb(run_id) or (_ext_3d_pick_glb(job["run_id"]) if attempt == 1 else None)
+        if isinstance(audit, dict) and audit.get("error"):
+            job["last_stderr"] = str(audit["error"])[-400:]
+        glb = _ext_3d_pick_glb(run_id, audit) if proc.returncode == 0 else None
         score = _ext_3d_score(audit)
         job["audit"] = audit
         job["score"] = score
         if glb and (score is None or score >= _EXT_3D_MIN_SCORE):
             job["glb"] = glb
-            job["glb_url"] = f"/api/3d/file/{glb}"  # servi par la route fichiers 3D existante
+            job["glb_url"] = "/api/3d/file/" + quote(glb, safe="/")
             job["state"] = "done"
             job["finished"] = time.time()
             return
@@ -916,7 +1083,7 @@ def _ext_3d_worker(job_id):
                             if glb else ("aucun GLB produit après %d passes" % attempt
                                          + (" — cause: " + _stderr_reel[-300:] if _stderr_reel else "")))
             if glb:
-                job["glb"] = glb; job["glb_url"] = f"/api/3d/file/{glb}"  # on l'expose quand même (best effort)
+                job["glb"] = glb; job["glb_url"] = "/api/3d/file/" + quote(glb, safe="/")
             job["finished"] = time.time()
             return
         # else loop → nouvelle passe
@@ -1027,7 +1194,12 @@ def ext_do():
         return _ext_cors(jsonify({"error": "champ 'request' (ta demande en langage naturel) requis"}), rec), 400
     forced = str(body.get("kind") or "").strip().lower()
     kind = forced if forced in ("chat", "code", "mesh3d", "image", "video", "sim", "other") else None
-    model = _ext_default_model()
+    model = None
+    if kind in (None, "chat", "code"):
+        try:
+            model = str(body.get("model") or "").strip() or _ext_default_model()
+        except ValueError as exc:
+            return _ext_cors(jsonify({"ok": False, "error": str(exc)}), rec), 503
     # 1) classification (sauf si forcée)
     if not kind:
         try:
@@ -1278,7 +1450,8 @@ def sync_tunnel_url_to_gist():
 
 
 if __name__ == "__main__":
-    sync_tunnel_url_to_gist()
+    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "1").strip().lower() not in {"0", "false", "no"}:
+        sync_tunnel_url_to_gist()
     print("=" * 60)
     print("  BRIDGE AURORA — Port 3001")
     print("=" * 60)
@@ -1309,12 +1482,12 @@ if __name__ == "__main__":
     print("  SELF-WATCH       = ON  (auto re-exec sur changement de bridge_server.py)")
     # v82ld — fire-and-forget warmup of qwen3:14b so the first extract-structured
     # request doesn t pay the ~11s cold-load. Daemon thread, never blocks boot.
-    _start_ollama_warmup_once("qwen3:14b")
-    print("  WARMUP           = qwen3:14b (background, non-blocking)")
-    # v82ld — best-effort conditional pull of qwen3-vl:8b for vision extract.
-    # Skips silently on low VRAM / no GPU / no Ollama / already installed.
-    _start_qwen3vl_pull_once("qwen3-vl:8b")
-    print("  QWEN3-VL PULL    = conditional (skip if low VRAM / already installed)")
+    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}:
+        _start_ollama_warmup_once("qwen3:14b")
+        print("  WARMUP           = qwen3:14b (background, non-blocking)")
+        # Best-effort conditional pull; disabled together with the warmup.
+        _start_qwen3vl_pull_once("qwen3-vl:8b")
+        print("  QWEN3-VL PULL    = conditional (skip if low VRAM / already installed)")
     # v82le — log the adaptive vision-picker decision once, so the user can see
     # which vision model the bridge would pick if extract-structured were
     # called with an image right now. Pure observability, zero side effects.

@@ -1,4 +1,5 @@
 mod commands;
+mod runtime_logs;
 use reqwest;
 use tauri::Manager;
 

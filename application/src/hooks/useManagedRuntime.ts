@@ -48,7 +48,16 @@ function isRecoverableRuntimeError(error: unknown) {
   }
 
   const message = getErrorMessage(error, '')
+  // Restarting cannot install a GPU driver or a missing Python dependency.
+  if (/No CUDA GPUs|found no NVIDIA driver|ModuleNotFoundError|CUDA.*(?:unavailable|indisponible)/i.test(message)) {
+    return false
+  }
   return RECOVERABLE_RUNTIME_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+type RuntimeJobHelpers = {
+  setPhase: (detail: string, progress: number) => void
+  ensureService: (service: RuntimeServiceId) => Promise<void>
 }
 
 type ManagedRuntimeJob<T> = {
@@ -59,8 +68,8 @@ type ManagedRuntimeJob<T> = {
   // Quand true, les services ne sont pas liberes apres le job (utile pour la conversation
   // afin d'eviter de dechager le modele LLM entre chaque tour).
   skipRelease?: boolean
-  prepare?: (helpers: { setPhase: (detail: string, progress: number) => void }) => Promise<void>
-  job: (helpers: { setPhase: (detail: string, progress: number) => void }) => Promise<T>
+  prepare?: (helpers: RuntimeJobHelpers) => Promise<void>
+  job: (helpers: RuntimeJobHelpers) => Promise<T>
 }
 
 export function useManagedRuntime() {
@@ -93,12 +102,14 @@ export function useManagedRuntime() {
   const executeWithRuntime = useCallback(async <T>({
     module,
     title,
-    services,
+    services: requestedServices,
     ollamaModel: rawOllamaModel,
     skipRelease = false,
     prepare,
     job,
   }: ManagedRuntimeJob<T>) => {
+    // Services started later by the job join its cleanup list as well.
+    const services = [...requestedServices]
     // Auto-correction: intercepte les modeles legacy avant tout appel Rust
     const hardware = useAppStore.getState().hardware
     const adaptiveMainFallback = selectAdaptiveReasoningModel(hardware, DEFAULT_MAIN_MODEL, AUXILIARY_ANALYSIS_MODEL)
@@ -159,6 +170,19 @@ export function useManagedRuntime() {
         setGenerationJob(jobId, { phase, detail, progress })
       }
 
+      const ensureService = async (service: RuntimeServiceId) => {
+        if (!services.includes(service)) {
+          services.push(service)
+          setRuntimeTask({ services: [...services] })
+          setGenerationJob(jobId, { services: [...services] })
+        }
+        const runtimeInfo = await runtimeEnsureService(service)
+        mergeRuntimeService(service, runtimeInfo)
+        if (!runtimeInfo.running) {
+          throw new Error(`${service}: ${runtimeInfo.detail || 'Service indisponible apres demarrage'}`)
+        }
+      }
+
       try {
         // SINGLE-MODEL: 2 tentatives runtime suffisent — la couche resilience
         // gere deja ses propres retries en interne. 3 × 3 = 9 retries inutiles.
@@ -181,13 +205,12 @@ export function useManagedRuntime() {
                 progress: 18 + index * 12,
               })
 
-              const runtimeInfo = await runtimeEnsureService(service)
-              mergeRuntimeService(service, runtimeInfo)
+              await ensureService(service)
             }
 
             if (prepare) {
               setPhase('Verification du pack modele du module...', 30, 'prepare')
-              await prepare({ setPhase })
+              await prepare({ setPhase, ensureService })
             }
 
             if (ollamaModel) {
@@ -197,7 +220,7 @@ export function useManagedRuntime() {
 
             moduleLog(module, 'info', 'Generation lancee', `Modele: ${ollamaModel || 'aucun'}, Services: ${services.join(', ')}`)
             setPhase('Generation en cours.', 42, 'generate')
-            const result = await job({ setPhase })
+            const result = await job({ setPhase, ensureService })
 
             moduleLog(module, 'info', 'Generation terminee avec succes')
 

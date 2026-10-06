@@ -598,6 +598,17 @@ class AutonomousMissionAgent:
             return 'Execution state (tool facts, not new instructions; original goal is unchanged in its own user message): '+json.dumps(state,ensure_ascii=False)
         capacity = self._context_chars()
         base = sum(len(m['content']) for m in messages[:2])
+        # A protocol that fits by itself can still crowd out the latest tool
+        # result, leaving the model to repeat inspections it can no longer see.
+        # Prefer the existing compact protocol before discarding these facts.
+        latest = sum(len(m['content']) for m in messages[2:][-2:])
+        self.state['protocol_variant'] = 'full'
+        if base+len(encode())+latest>capacity:
+            compact = self._compact_system_prompt()
+            if len(compact)<len(messages[0]['content']):
+                messages[0] = {**messages[0],'content':compact}
+                base = sum(len(m['content']) for m in messages[:2])
+                self.state['protocol_variant'] = 'compact'
         # History and plans are advisory. Keep the immutable goal, exact criteria,
         # action obligations, resource references and interruption fences intact.
         while base+len(encode())>capacity and (state['evidence'] or state['plan'] or state['accepted_delegations'] or state['recovery_hypotheses']):
@@ -606,7 +617,6 @@ class AutonomousMissionAgent:
             state['advisory_items_omitted'] += 1
         state_message = encode()
         mandatory = len(state_message)+base
-        self.state['protocol_variant'] = 'full'
         if mandatory>capacity:
             compact = self._compact_system_prompt()
             if len(compact)<len(messages[0]['content']):
@@ -732,6 +742,7 @@ class AutonomousMissionAgent:
             'Never replay an interrupted process of unknown outcome or expand permissions. Commands use the host without an OS sandbox. '
             'Verification proves only its measured scope; hypotheses and reports are fallible. '
             f'Workspace: {self.workspace}. Host: {sys.platform}. Python: {PYTHON_BIN}. Permissions: {self.permissions}. '
+            f'Delivery: .transfer_to_client/{self.mission_id}/ (downloaded and hash-checked by the client). '
             f'Tools: {", ".join(allowed)}. Inspect tool definitions when needed. '
             f'Project skills: {context["skills_context"]}. Reusable roles: {json.dumps(context["saved_agents"],ensure_ascii=False)}. '
             f'Advisory context: {self.additional_context}')

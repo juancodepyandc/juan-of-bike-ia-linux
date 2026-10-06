@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, Response, send_file, current_app,
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
-from bridge_server import COMFYUI_PATH, _comfyui_is_ready, _start_comfyui
+from bridge_server import COMFYUI_PATH, _comfyui_is_ready, _start_comfyui, _comfyui_start_diagnostics
 
 comfy_life_bp = Blueprint('comfy_life_bp', __name__)
 
@@ -13,18 +13,15 @@ comfy_life_bp = Blueprint('comfy_life_bp', __name__)
 @comfy_life_bp.route("/api/comfyui/status", methods=["GET"])
 def comfyui_status():
     running = _comfyui_is_ready()
-    return jsonify({"ok": True, "running": running, "port": COMFYUI_PORT})
+    return jsonify({"ok": True, "running": running, "port": COMFYUI_PORT,
+                    "startup": _comfyui_start_diagnostics()})
 
 
 @comfy_life_bp.route("/api/comfyui/start", methods=["POST"])
 def comfyui_start():
-    if not COMFYUI_PATH:
-        return jsonify({
-            "ok": False, "ready": False,
-            "error": "ComfyUI non detecte — verifiez que modele/comfyui/comfyui existe dans AuroraIA-v2.",
-        })
     ready = _start_comfyui()
-    return jsonify({"ok": ready, "ready": ready, "port": COMFYUI_PORT})
+    diagnostics = _comfyui_start_diagnostics()
+    return jsonify({**diagnostics, "ok": ready, "ready": ready, "port": COMFYUI_PORT})
 
 
 @comfy_life_bp.route("/api/comfyui/image")
@@ -60,4 +57,3 @@ def comfyui_image():
         )
     except Exception as e:
         return jsonify({"error": f"ComfyUI image non accessible: {e}"}), 504
-

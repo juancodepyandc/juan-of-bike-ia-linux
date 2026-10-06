@@ -8,9 +8,24 @@ import os
 import time
 
 import aiohttp
-from .runtime_policy import model_options
+from .runtime_policy import model_options, positive_env
 
 logger = logging.getLogger("AuroraAGI.Gateway")
+
+
+class ModelReadTimeout(asyncio.TimeoutError):
+    """A model transport deadline, distinct from the client-to-bridge link."""
+
+
+def _model_timeout(exc, model, timeout, received_chars):
+    phase = (f'apres {received_chars} caracteres de reponse' if received_chars
+             else 'avant le premier bloc de reponse')
+    return ModelReadTimeout(
+        f'Ollama: delai de lecture depasse pour le modele {model} {phase} '
+        f'(limite entre blocs: {timeout.sock_read}s). '
+        'Verifier le serveur Ollama, la RAM et le pilote GPU; choisir un modele '
+        'adapte au serveur ou regler explicitement AURORA_MODEL_READ_TIMEOUT. '
+        f'Cause: {type(exc).__name__}: {exc}')
 
 
 class LLMGateway:
@@ -20,7 +35,7 @@ class LLMGateway:
 
     def timeout(self):
         return aiohttp.ClientTimeout(total=None, sock_connect=10,
-                                    sock_read=int(os.environ.get('AURORA_MODEL_READ_TIMEOUT', '300')))
+                                    sock_read=positive_env('AURORA_MODEL_READ_TIMEOUT', 300))
 
     async def get_available_models(self) -> list[str]:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
@@ -69,34 +84,39 @@ class LLMGateway:
             payload['format'] = response_format
         started, last_flush = time.monotonic(), time.monotonic()
         complete, received, pending = False, False, ''
-        async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
-            response.raise_for_status()
-            async for line in response.content:
-                if not line.strip():
-                    continue
-                data = json.loads(line)
-                if data.get('error'):
-                    raise RuntimeError(str(data['error']))
-                if data.get('done'):
-                    complete = True
-                    if on_metrics:
-                        measured = {key: data[key] for key in (
-                            'total_duration', 'load_duration', 'prompt_eval_count',
-                            'prompt_eval_duration', 'eval_count', 'eval_duration') if key in data}
-                        measured.update(model=selected, wall_seconds=time.monotonic()-started,
-                                        options=payload['options'])
-                        if measured.get('eval_duration', 0) > 0:
-                            measured['tokens_per_second'] = measured.get('eval_count', 0) * 1e9 / measured['eval_duration']
-                        result = on_metrics(measured)
-                        if inspect.isawaitable(result):
-                            await result
-                content = data.get('message', {}).get('content', '')
-                received = received or bool(content.strip())
-                pending += content
-                # Coalesce small fragments before durable logging and terminal redraws.
-                if pending and (len(pending) >= 128 or time.monotonic()-last_flush >= .05):
-                    yield pending
-                    pending, last_flush = '', time.monotonic()
+        received_chars = 0
+        try:
+            async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
+                response.raise_for_status()
+                async for line in response.content:
+                    if not line.strip():
+                        continue
+                    data = json.loads(line)
+                    if data.get('error'):
+                        raise RuntimeError(str(data['error']))
+                    if data.get('done'):
+                        complete = True
+                        if on_metrics:
+                            measured = {key: data[key] for key in (
+                                'total_duration', 'load_duration', 'prompt_eval_count',
+                                'prompt_eval_duration', 'eval_count', 'eval_duration') if key in data}
+                            measured.update(model=selected, wall_seconds=time.monotonic()-started,
+                                            options=payload['options'])
+                            if measured.get('eval_duration', 0) > 0:
+                                measured['tokens_per_second'] = measured.get('eval_count', 0) * 1e9 / measured['eval_duration']
+                            result = on_metrics(measured)
+                            if inspect.isawaitable(result):
+                                await result
+                    content = data.get('message', {}).get('content', '')
+                    received = received or bool(content.strip())
+                    received_chars += len(content)
+                    pending += content
+                    # Coalesce small fragments before durable logging and terminal redraws.
+                    if pending and (len(pending) >= 128 or time.monotonic()-last_flush >= .05):
+                        yield pending
+                        pending, last_flush = '', time.monotonic()
+        except asyncio.TimeoutError as exc:
+            raise _model_timeout(exc, selected, session.timeout, received_chars) from exc
         if pending:
             yield pending
         if not complete or not received:

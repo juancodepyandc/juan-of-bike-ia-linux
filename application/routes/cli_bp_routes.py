@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, Response, send_file, current_app, abort, g, stream_with_context
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
-from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL, _ext_load, _ext_save, _ext_auth, _ext_default_model, _comfyui_is_ready
+from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL, _ext_load, _ext_save, _ext_auth, _ext_default_model, _ext_default_model_diagnostics, _comfyui_is_ready
 import secrets as _secrets
 import time as _time
 import hashlib as _hashlib
@@ -265,9 +265,12 @@ def cli_doctor():
     checks.append({"name": "Authentification", "ok": True, "detail": g.cli_key_rec.get("label", "")})
     # Ollama
     ollama_ok = False
+    observed_models = []
     try:
         r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
         ollama_ok = r.ok
+        if r.ok:
+            observed_models = r.json().get("models", [])
     except Exception:
         pass
     checks.append({"name": "Ollama", "ok": ollama_ok, "detail": f"{OLLAMA_URL}"})
@@ -275,12 +278,33 @@ def cli_doctor():
     checks.append({"name": "ComfyUI", "ok": _comfyui_is_ready(), "detail": f"{COMFYUI_URL}"})
     # GPU
     gpu_ok = False
+    vram_bytes = 0
     try:
-        subprocess.check_output(["nvidia-smi"], timeout=5)
-        gpu_ok = True
+        memory = subprocess.check_output(["nvidia-smi", "--query-gpu=memory.total",
+            "--format=csv,noheader,nounits"], timeout=5, text=True)
+        capacities = [int(line.strip()) for line in memory.splitlines() if line.strip().isdigit()]
+        vram_bytes = max(capacities, default=0) * 1024 ** 2
+        gpu_ok = vram_bytes > 0
     except Exception:
         pass
     checks.append({"name": "GPU", "ok": gpu_ok})
+    ram_total, ram_available = None, None
+    try:
+        memory = psutil.virtual_memory()
+        ram_total, ram_available = memory.total, memory.available
+    except Exception:
+        pass
+    hardware = {"ram_gb": round(ram_total / 1024 ** 3, 1) if ram_total else None,
+                "ram_available_gb": round(ram_available / 1024 ** 3, 1) if ram_available is not None else None,
+                "vram_total_gb": round(vram_bytes / 1024 ** 3, 1)}
+    selected_model, model_error = "", ""
+    try:
+        selected_model = _ext_default_model(models=observed_models,
+            resources={"ram_total_bytes": ram_total, "nvidia_vram_bytes": vram_bytes})
+    except (ValueError, TypeError) as exc:
+        model_error = str(exc)
+    checks.append({"name": "Modèle de mission", "ok": bool(selected_model),
+                   "detail": selected_model or model_error or "aucun modèle sélectionné"})
     # Tunnel
     tun = ""
     try:
@@ -309,8 +333,12 @@ def cli_doctor():
     # Streaming (le transport SSE est le flux mission ; sa readiness dépend du daemon)
     checks.append({"name": "Streaming SSE de bout en bout", "ok": None, "status": "unverified",
                    "detail": "nécessite une mission réelle depuis le client ; aucun flux testé par ce diagnostic"})
-    ready = ollama_ok and daemon_ok
-    return jsonify({"ok": ready, "ready": ready, "gpu_ready": gpu_ok, "checks": checks})
+    ready = ollama_ok and daemon_ok and bool(selected_model)
+    models = [{"name": item.get("name", ""), "size": item.get("size", 0)}
+              for item in observed_models if isinstance(item, dict)] if isinstance(observed_models, list) else []
+    return jsonify({"ok": ready, "ready": ready, "gpu_ready": gpu_ok, "checks": checks,
+                    "hardware": hardware, "default_model": selected_model, "models": models,
+                    "model_selection": _ext_default_model_diagnostics()})
 
 
 # --- Sessions ---
@@ -398,7 +426,13 @@ def cli_chat():
     """Streaming chat via SSE. Proxies to Ollama with streaming."""
     data = request.get_json(silent=True) or {}
     messages = data.get("messages", [])
-    model = data.get("model") or _ext_default_model()
+    try:
+        model = data.get("model") or _ext_default_model()
+        if not model:
+            raise ValueError("Aucun modèle de conversation sélectionné")
+    except (ValueError, requests.RequestException) as exc:
+        return jsonify({"ok": False, "error_kind": "model_unavailable",
+                        "error": str(exc) or "Modèle de conversation indisponible"}), 503
     session_id = data.get("session_id")
     workspace = data.get("workspace", WORKSPACE)
 
@@ -424,25 +458,35 @@ def cli_chat():
                 json={"model": model, "messages": full_messages, "stream": True},
                 stream=True, timeout=300,
             )
+            r.raise_for_status()
             full_response = ""
+            complete = False
             for line in r.iter_lines():
                 if not line:
                     continue
                 try:
                     chunk = json.loads(line)
+                    if chunk.get("error"):
+                        raise RuntimeError(str(chunk["error"]))
                     token = chunk.get("message", {}).get("content", "")
                     if token:
                         full_response += token
                         yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
                     if chunk.get("done"):
+                        complete = True
                         yield f"data: {json.dumps({'type': 'done', 'model': model, 'total_duration': chunk.get('total_duration', 0)})}\n\n"
                 except json.JSONDecodeError:
                     continue
+            if not complete:
+                raise RuntimeError("Ollama a interrompu la conversation avant le resultat final")
             # Save to session if provided
             if session_id:
                 _cli_session_append_message(session_id, messages[-1] if messages else {}, {"role": "assistant", "content": full_response})
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        finally:
+            if 'r' in locals():
+                r.close()
 
     return Response(stream_with_context(generate()), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -610,6 +654,13 @@ def cli_dynamic_agents_list():
 @_cli_auth_required
 def cli_dynamic_agent_create():
     data = request.get_json(silent=True) or {}
+    try:
+        model = data.get("model") or _ext_default_model()
+        if not model:
+            raise ValueError("Aucun modèle d'agent sélectionné")
+    except (ValueError, requests.RequestException) as exc:
+        return jsonify({"ok": False, "error_kind": "model_unavailable",
+                        "error": str(exc) or "Modèle d'agent indisponible"}), 503
     agent = {
         "id": "dyn_" + _secrets.token_hex(6),
         "name": data.get("name", "Agent"),
@@ -617,7 +668,7 @@ def cli_dynamic_agent_create():
         "type": data.get("type", "temporary"),
         "created_at": datetime.datetime.utcnow().isoformat() + "Z",
         "created_by": data.get("mission_id", "manual"),
-        "model": data.get("model") or _ext_default_model(),
+        "model": model,
         "system_prompt": data.get("system_prompt", ""),
         "tools": data.get("tools", []),
         "permissions": data.get("permissions", "STANDARD"),

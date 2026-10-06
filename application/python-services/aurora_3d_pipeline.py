@@ -325,7 +325,74 @@ def trellis_python() -> str:
     return sys.executable
 
 
-_TRELLIS_AVAIL_CACHE: dict = {}
+_NEURAL_AVAIL_CACHE: dict = {}
+
+
+def hunyuan_python() -> str:
+    """Use the application's engine environment, as for TRELLIS."""
+    env_py = os.environ.get("AURORA_HUNYUAN_PY")
+    if env_py and os.path.isfile(env_py):
+        return env_py
+    venv_py = REPO_ROOT / "application" / ".venv" / "bin" / "python"
+    return str(venv_py) if venv_py.is_file() else sys.executable
+
+
+def neural_engine_readiness(engine: str) -> dict:
+    """Probe imports and CUDA in the interpreter that will execute the engine.
+
+    No weights are loaded. A short-lived cache avoids repeating expensive
+    imports within a run while allowing a repaired driver to be detected.
+    """
+    if engine not in {"trellis", "hunyuan3d"}:
+        return {"available": False, "engine": engine,
+                "error": f"Moteur neural inconnu : {engine}"}
+    py = trellis_python() if engine == "trellis" else hunyuan_python()
+    key = (engine, py, os.environ.get("AURORA_TRELLIS_ROOT"))
+    cached = _NEURAL_AVAIL_CACHE.get(key)
+    if cached and time.monotonic() - cached[0] < 15:
+        return dict(cached[1])
+    engine_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
+    code = """import importlib, json, sys
+result = {'available': False}
+try:
+    import torch
+    if not torch.cuda.is_available():
+        raise RuntimeError('CUDA indisponible : aucun GPU CUDA utilisable dans ce Python; verifier le pilote NVIDIA avec nvidia-smi')
+    torch.cuda.init()
+    sys.path.insert(0, sys.argv[1])
+    if sys.argv[2] == 'trellis':
+        wrapper = importlib.import_module('aurora_trellis_wrapper')
+        result['available'] = bool(wrapper.is_available())
+        result['error'] = wrapper.import_error() if not result['available'] else None
+    else:
+        from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+        from hy3dgen.texgen import Hunyuan3DPaintPipeline
+        wrapper = importlib.import_module('aurora_hunyuan_wrapper')
+        result['available'] = bool(wrapper.is_available())
+        result['error'] = None if result['available'] else 'Hunyuan3D indisponible dans ce Python'
+except Exception as exc:
+    result['error'] = type(exc).__name__ + ': ' + str(exc)
+print('AURORA_3D_READINESS:' + json.dumps(result))
+"""
+    result = {"available": False, "engine": engine, "python": py}
+    try:
+        proc = subprocess.run([py, "-c", code, engine_dir, engine],
+                              capture_output=True, text=True, timeout=60)
+        payload = next((line[len("AURORA_3D_READINESS:"):]
+                        for line in reversed((proc.stdout or "").splitlines())
+                        if line.startswith("AURORA_3D_READINESS:")), None)
+        if payload is not None:
+            result.update(json.loads(payload))
+            result["available"] = bool(result.get("available")) and proc.returncode == 0
+        else:
+            result["error"] = (proc.stderr or proc.stdout or
+                               f"Sonde terminee avec le code {proc.returncode}")[-600:]
+    except subprocess.TimeoutExpired:
+        result["error"] = "Verification des dependances et de CUDA expiree apres 60 secondes"
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = f"{type(exc).__name__}: {exc}"
+    _NEURAL_AVAIL_CACHE[key] = (time.monotonic(), dict(result))
+    return result
 
 
 def trellis_is_available() -> bool:
@@ -334,23 +401,32 @@ def trellis_is_available() -> bool:
     Un import in-process repondait selon le python COURANT (celui de ComfyUI
     depuis l'app) et donnait donc une reponse fausse pour le sous-process reel.
     """
-    py = trellis_python()
-    if py in _TRELLIS_AVAIL_CACHE:
-        return _TRELLIS_AVAIL_CACHE[py]
-    ok = False
-    try:
-        _dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
-        r = subprocess.run(
-            [py, "-c",
-             "import sys; sys.path.insert(0, %r);"
-             "import aurora_trellis_wrapper as t;"
-             "print('TRELLIS_OK' if t.is_available() else 'TRELLIS_NO')" % _dir],
-            capture_output=True, text=True, timeout=180)
-        ok = "TRELLIS_OK" in (r.stdout or "")
-    except Exception:  # noqa: BLE001
-        ok = False
-    _TRELLIS_AVAIL_CACHE[py] = ok
-    return ok
+    return bool(neural_engine_readiness("trellis")["available"])
+
+
+def check_neural_runtime(engine: str = "auto") -> dict:
+    """Inspect reconstruction engines only; no LLM, weights or generation."""
+    choice = os.environ.get("AURORA_3D_ENGINE", engine or "auto").strip().lower()
+    names = [choice] if choice in {"trellis", "hunyuan3d"} else ["trellis", "hunyuan3d"]
+    engines = {name: neural_engine_readiness(name) for name in names}
+    ready = any(item.get("available") for item in engines.values())
+    remote = None
+    if not ready and choice == "auto" and os.environ.get("AURORA_MESHY", "1") == "1":
+        try:
+            import meshy_client
+            # joignable checks for configured credentials before sending a
+            # read-only service request; it never starts a reconstruction.
+            remote = meshy_client.joignable()
+        except Exception as exc:  # noqa: BLE001
+            remote = {"ok": False, "motif": f"{type(exc).__name__}: {exc}"}
+        ready = bool(remote.get("ok"))
+    error = None
+    if not ready:
+        reasons = "; ".join(f"{name}: {item.get('error') or 'indisponible'}"
+                            for name, item in engines.items())
+        error = f"Generation 3D neurale indisponible — {reasons}"
+    return {"ok": bool(ready), "engines": engines, "engine": choice,
+            "remote": remote, "error": error}
 
 
 def _reexec_under_mem_scope() -> None:
@@ -3130,6 +3206,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                     "stage": "scene_orchestrator", "ok": bool(_sc.get("ok")),
                     "plan": _sc.get("plan"), "upright": _sc.get("upright"),
                 })
+                _sc["schema"] = "aurora.pipeline.v1"
+                _sc["run_id"] = run_id
                 _sc["final_mesh"] = _sc.get("scene_glb")
                 return _sc
         except Exception as _sce:  # noqa: BLE001
@@ -3160,6 +3238,8 @@ def run_pipeline(prompt: str, run_id: str, *,
         "kind_rescued": bool(kind_refine and kind_refine.get("changed")),
         "kind_rescue_reason": (kind_refine or {}).get("reason"),
     })
+    _engine_choice = os.environ.get("AURORA_3D_ENGINE", engine or "auto").lower()
+    _character_request = kind in {"character", "humanoid", "quadruped", "creature"}
 
     # Stage 0.5 — consult router (routePipeline mirror) BEFORE committing
     # to FLUX -> Hunyuan3D. iter14: if the router selects procedural or
@@ -3196,18 +3276,15 @@ def run_pipeline(prompt: str, run_id: str, *,
         # produit une PLANCHE PLATE texturee (ex: une "carte mere" = photo plaquee sur un plan),
         # alors que TRELLIS donne du vrai 3D coherent sur perso/creature/objet technique. Le
         # procedural ne reste utile que si TRELLIS est indispo.
-        _trellis_avail = False
-        try:
-            _tp_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
-            if _tp_dir not in sys.path:
-                sys.path.insert(0, _tp_dir)
-            import aurora_trellis_wrapper as _tp  # noqa: WPS433
-            _trellis_avail = _tp.is_available()
-        except Exception:  # noqa: BLE001
-            _trellis_avail = False
+        # Probe the engine interpreter and its driver, not just imports in the
+        # current (possibly ComfyUI) Python. A missing GPU must leave valid
+        # procedural object routes usable.
+        _trellis_avail = trellis_is_available() if routing.get("pipeline") == "procedural" else False
         _should_procedural = (
             routing.get("pipeline") == "procedural"
             and not _trellis_avail
+            and _engine_choice == "auto"
+            and not _character_request
             and routing.get("procedural_template") not in ("motherboard_layout",)
         )
         if _trellis_avail and routing.get("pipeline") == "procedural" and not _should_procedural:
@@ -3447,6 +3524,22 @@ def run_pipeline(prompt: str, run_id: str, *,
             audit.append({"stage": "photogrammetry_fallback",
                           "to": "ai_generation",
                           "reason": photo_res.get("error")})
+
+    # Only the neural branch requires CUDA. Fail before synthesising references
+    # when no reconstruction engine can run; do not replace a character with a
+    # procedural scaffold because the NVIDIA driver is unavailable.
+    _existing_mesh = output_dir / f"{run_id}_mesh.glb"
+    if not (not force and _existing_mesh.is_file() and _existing_mesh.stat().st_size > 1000):
+        _runtime = check_neural_runtime(_engine_choice)
+        _engine_readiness = _runtime["engines"]
+        audit.append({"stage": "neural_preflight", **_runtime})
+        if not _runtime["ok"]:
+            return {"ok": False, "schema": "aurora.pipeline.v1",
+                    "error": _runtime["error"],
+                    "error_code": "neural_engine_unavailable", "run_id": run_id,
+                    "prompt": prompt, "kind": kind, "pipeline": "ai_generation",
+                    "engine": _engine_choice, "readiness": _engine_readiness,
+                    "audit_trail": audit}
 
     # Decide multi-view (None means auto).
     # v83-3dloop: l'utilisateur veut systematiquement du 360° (faces avant ET
@@ -4112,7 +4205,6 @@ def run_pipeline(prompt: str, run_id: str, *,
         # - TRELLIS.2   : personnages organiques, creatures, modeles tournants
         # Chaque moteur dispose d'un repli automatique sur l'autre en cas d'echec.
         _shape_ok = False
-        _engine_choice = os.environ.get("AURORA_3D_ENGINE", engine or "auto").lower()
         _is_tech_or_planar = any(k in (prompt or "").lower() for k in [
             "motherboard", "carte mere", "carte mère", "pcb", "gpu", "electronic", "circuit",
             "hardware", "component", "chipset", "console", "keyboard", "device", "gadget", "phone",
@@ -4188,11 +4280,15 @@ def run_pipeline(prompt: str, run_id: str, *,
                               "motif": _service.get("motif")})
 
         def _run_hunyuan3d_engine(front_ref_path: Path, out_mesh_path: Path, prompt_str: str, audit_list: list, octree_res: int = 512, steps: int = 30) -> dict:
+            readiness = neural_engine_readiness("hunyuan3d")
+            if not readiness.get("available"):
+                return {"ok": False, "error": readiness.get("error"),
+                        "readiness": readiness}
             _hy_dir = str(REPO_ROOT / "application" / "python-services" / "aurora_hunyuan")
             _hy_wrapper = str(Path(_hy_dir) / "aurora_hunyuan_wrapper.py")
             print(f"PROGRESS:shape:Atlas sculpte le volume ({octree_res} res, {steps} passes) puis les matieres...", flush=True)
             _free_gpu_before_shape(audit_list)
-            _hy_cmd = [sys.executable, _hy_wrapper, str(front_ref_path), str(out_mesh_path), "--octree", str(octree_res), "--steps", str(steps), "--device", "cuda"]
+            _hy_cmd = [hunyuan_python(), _hy_wrapper, str(front_ref_path), str(out_mesh_path), "--octree", str(octree_res), "--steps", str(steps), "--device", "cuda"]
             _timeout = int(os.environ.get("AURORA_HUNYUAN_TIMEOUT_S", "3600"))
             try:
                 _p = subprocess.run(_hy_cmd, capture_output=True, text=True, timeout=_timeout)
@@ -5801,7 +5897,9 @@ def run_pipeline(prompt: str, run_id: str, *,
     if not final_acceptance.get("acceptance_ok", False):
         failures = final_acceptance.get("hard_failures") or [final_acceptance.get("error") or "final acceptance failed"]
         historical_fallback = None
-        if _should_try_historical_person_fallback(prompt, kind, final_acceptance):
+        if (os.environ.get("AURORA_HISTORICAL_PERSON_FALLBACK") == "1"
+                and _engine_choice == "auto"
+                and _should_try_historical_person_fallback(prompt, kind, final_acceptance)):
             historical_fallback = _run_historical_person_fallback(
                 prompt, kind, motion_prompt, run_id, output_dir, audit,
                 final_delivery_mesh, final_acceptance,
@@ -6273,13 +6371,11 @@ def render_pretty(result: dict) -> str:
 
 
 def main() -> int:
-    # ANTI-GEL: tout le pipeline (et ses sous-process) sous plafond memoire cgroup.
-    # Une etape qui deborde meurt proprement — le PC ne gele jamais (thrash swap).
-    _reexec_under_mem_scope()
-    _freeze_sentinel()
     parser = argparse.ArgumentParser(description="Aurora 3D end-to-end pipeline")
-    parser.add_argument("--prompt", required=True)
-    parser.add_argument("--run-id", required=True, dest="run_id")
+    parser.add_argument("--prompt")
+    parser.add_argument("--run-id", dest="run_id")
+    parser.add_argument("--check-runtime", action="store_true", dest="check_runtime",
+                        help="Inspect neural engine imports and CUDA without loading weights or generating; no prompt/run-id required")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), dest="output_dir")
     grp = parser.add_mutually_exclusive_group()
     grp.add_argument("--multi-view", action="store_true",
@@ -6330,6 +6426,16 @@ def main() -> int:
                         help="Select 3D neural generation engine: hunyuan3d (ideal for electronics, hardware, detailed relief, complex textures), trellis (single-image organic/character), or auto (intelligent routing)")
     parser.add_argument("--pretty", action="store_true")
     args = parser.parse_args()
+    if args.check_runtime:
+        sys.stdout.write(json.dumps(check_neural_runtime(args.engine), ensure_ascii=True) + "\n")
+        # This inspector executed successfully even when the engines are down.
+        # Consumers must inspect JSON ok, as for the doctor command.
+        return 0
+    if not args.prompt or not args.run_id:
+        parser.error("--prompt and --run-id are required for generation")
+    # ANTI-GEL applies to generation, never to the read-only runtime inspector.
+    _reexec_under_mem_scope()
+    _freeze_sentinel()
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except (AttributeError, ValueError):

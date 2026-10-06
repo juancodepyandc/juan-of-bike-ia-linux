@@ -1,23 +1,28 @@
 """Actual HTTP streaming against a temporary Ollama protocol fixture, no inference."""
+import asyncio
 import json
 import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
-from agi_core.llm_gateway import LLMGateway
+import aiohttp
+from agi_core.llm_gateway import LLMGateway, ModelReadTimeout
 from agi_core.mission_agent import AutonomousMissionAgent
 
 
 class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.received,self.lines = [],[]
+        self.delay_before_headers, self.delay_after_lines = 0, 0
         async def chat(request):
             self.received.append(await request.json())
+            await asyncio.sleep(self.delay_before_headers)
             response = web.StreamResponse(headers={'Content-Type':'application/x-ndjson'})
             await response.prepare(request)
             for line in self.lines:
                 await response.write((json.dumps(line)+'\n').encode())
+            await asyncio.sleep(self.delay_after_lines)
             await response.write_eof()
             return response
         app = web.Application()
@@ -47,6 +52,26 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('format',self.received[0])
         self.assertEqual(metrics[0]['tokens_per_second'],20)
         self.assertEqual(metrics[0]['prompt_eval_count'],23)
+
+    async def test_model_timeout_before_first_block_names_server_and_model(self):
+        self.delay_before_headers = .12
+        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.03)):
+            with self.assertRaisesRegex(ModelReadTimeout, 'Ollama:.*fixture:local.*avant le premier bloc'):
+                _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local')]
+
+    async def test_model_timeout_mid_answer_is_not_a_successful_completion(self):
+        self.lines = [{'message': {'content': 'partial'}}]
+        self.delay_after_lines = .12
+        metrics = []
+        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.03)):
+            with self.assertRaisesRegex(ModelReadTimeout, 'apres 7 caracteres'):
+                _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local', on_metrics=metrics.append)]
+        self.assertEqual(metrics, [])
+
+    async def test_zero_read_timeout_cannot_disable_deadline_by_accident(self):
+        with patch.dict('os.environ', {'AURORA_MODEL_READ_TIMEOUT': '0'}):
+            with self.assertRaisesRegex(ValueError, 'AURORA_MODEL_READ_TIMEOUT'):
+                self.gateway.timeout()
 
     async def test_mission_action_uses_structured_output_over_real_transport(self):
         self.lines = [{'message':{'content':'{"tool":"finish","args":{"message":"Done"}}'}}, {'done':True}]

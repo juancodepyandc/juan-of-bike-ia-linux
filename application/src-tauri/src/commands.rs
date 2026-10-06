@@ -2544,21 +2544,24 @@ pub async fn runtime_ensure_service(
 
             let stdout_log = Path::new(&comfy_dir).join("comfyui_stdout.log");
             let stderr_log = Path::new(&comfy_dir).join("comfyui_stderr.log");
+            let stdout_offset = crate::runtime_logs::log_offset(&stdout_log);
+            let stderr_offset = crate::runtime_logs::log_offset(&stderr_log);
             let stdout_handle = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(stdout_log)
+                .open(&stdout_log)
                 .ok();
             let stderr_handle = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(stderr_log)
+                .open(&stderr_log)
                 .ok();
 
             let mut command = StdCommand::new(&python_path);
             let main_py = Path::new(&comfy_dir).join("main.py");
             let main_py = main_py.to_string_lossy().to_string();
             command.args([
+                "-u",
                 main_py.as_str(),
                 "--listen",
                 "127.0.0.1",
@@ -2609,13 +2612,16 @@ pub async fn runtime_ensure_service(
                     return Ok(inspect_runtime_service(&state, "comfyui").await);
                 }
 
-                if child
+                if let Some(status) = child
                     .try_wait()
                     .map_err(|e| format!("ComfyUI startup check failed: {}", e))?
-                    .is_some()
                 {
-                    emit_runtime_progress(&app_handle, "comfyui", "error", 100, "ComfyUI a quitte pendant le demarrage.").await;
-                    return Err("ComfyUI a quitte pendant le demarrage.".to_string());
+                    let reason = format!("ComfyUI a quitte pendant le demarrage ({status}).");
+                    let detail = crate::runtime_logs::comfy_startup_error(
+                        Path::new(&comfy_dir), stdout_offset, stderr_offset, &reason,
+                    );
+                    emit_runtime_progress(&app_handle, "comfyui", "error", 100, &detail).await;
+                    return Err(detail);
                 }
 
                 let progress = 20 + (((step + 1) as f32 / 90.0) * 70.0) as u8;
@@ -2630,8 +2636,17 @@ pub async fn runtime_ensure_service(
                 tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
             }
 
-            emit_runtime_progress(&app_handle, "comfyui", "error", 100, "ComfyUI n a pas fini de demarrer.").await;
-            Err("ComfyUI ne repond pas apres le lancement.".to_string())
+            // This process was started by this attempt; do not leave an
+            // untracked instance running after a failed startup deadline.
+            let reason = match child.kill() {
+                Ok(()) => { let _ = child.wait(); "ComfyUI ne repond pas apres le lancement; processus arrete.".to_string() }
+                Err(error) => format!("ComfyUI ne repond pas apres le lancement; arret du processus {pid} impossible: {error}"),
+            };
+            let detail = crate::runtime_logs::comfy_startup_error(
+                Path::new(&comfy_dir), stdout_offset, stderr_offset, &reason,
+            );
+            emit_runtime_progress(&app_handle, "comfyui", "error", 100, &detail).await;
+            Err(detail)
         }
         _ => Err(format!("Service runtime inconnu: {}", service)),
     }
