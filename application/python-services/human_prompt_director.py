@@ -55,8 +55,7 @@ def detect_category(raw_text: str) -> str:
     # 3. Photo-Realistic default
     return "photo_realistic"
 
-def direct_prompt(raw_input: str) -> Dict[str, Any]:
-    cat = detect_category(raw_input)
+def _style_prompt(raw_input: str, cat: str) -> Dict[str, Any]:
     subj = raw_input.strip(" ,.-;")
     
     if cat == "photo_realistic":
@@ -154,6 +153,17 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             ]
         }
 
+    elif cat == "game_asset_3d_prop":
+        return {
+            "category": cat, "title": f"Asset 3D - {subj[:32]}",
+            "human_prompt": f"A detailed game prop render of {subj}. Clear readable geometry, coherent materials and clean contours. Preserve the requested view and setting.",
+            "negative_prompt": "blurry, cut off edges, watermark, deformed geometry",
+            "aspect_ratio": "1:1", "width": 1024, "height": 1024,
+            "steps": 50, "guidance": 4.5, "suggested_directory": "game_assets",
+            "game_asset_meta": {"asset_type": "3d_prop"},
+            "quality_checklist": ["Géométrie et matières lisibles", "Vue et sujet conformes à la demande"],
+        }
+
     elif cat == "game_asset_icon_ui":
         return {
             "category": "game_asset_icon_ui",
@@ -231,12 +241,14 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
         }
 
     elif cat == "stylized_anime_ghibli":
+        named_style = bool(re.search(r"\b(ghibli|shinkai|makoto)\b", raw_input, re.I))
         return {
             "category": "stylized_anime_ghibli",
-            "title": f"Style Anime Ghibli - {subj[:32]}",
-            "human_prompt": (f"A gorgeous anime key visual of {subj}, inspired by classic Studio Ghibli and Makoto Shinkai films. Delicate "
-                             "precise linework, luminous hand-painted watercolor-like environment art, crisp cel-shaded character colors, "
-                             "vibrant atmospheric sky with volumetric clouds, and warm nostalgic sunlight filtering through the scene."),
+            "title": f"Style Anime - {subj[:32]}",
+            "human_prompt": (f"An anime illustration of {subj}. Delicate precise linework, crisp cel-shaded colors, "
+                             "clean contours and carefully drawn anatomy. "
+                             + ("Hand-painted environment details in the requested animation style. " if named_style else "")
+                             + "Preserve the requested subject, setting, colors and composition."),
             "negative_prompt": "photorealistic, realistic skin pores, 3d CGI render, western cartoon, dark gritty, muddy textures, watermark",
             "aspect_ratio": "3:2",
             "width": 1216,
@@ -246,8 +258,8 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             "suggested_directory": "stylized",
             "quality_checklist": [
                 "Lignes épurées et cel-shading soigné",
-                "Arrière-plan peint riche et lumineux",
-                "Atmosphère poétique et chaleureuse"
+                "Sujet, décor et cadrage conformes à la demande",
+                "Style demandé sans ajout d'un autre artiste"
             ]
         }
 
@@ -356,4 +368,75 @@ def direct_prompt(raw_input: str) -> Dict[str, Any]:
             ]
         }
 
-    return direct_prompt("photo_realistic")
+    raise ValueError(f"Unsupported image category: {cat}")
+
+
+# Keep the existing category identifiers used by manifests and clients.
+_FOREGROUND_STYLES = {
+    "photo_realistic": "A detailed photograph with natural materials and accurate colors",
+    "game_asset_pixel_art": "A crisp pixel art sprite with readable pixel clusters",
+    "game_asset_isometric": "A clean orthographic isometric illustration",
+    "game_asset_icon_ui": "A crisp inventory icon with a clearly readable silhouette",
+    "game_asset_texture": "An evenly lit orthographic texture",
+    "game_asset_3d_prop": "A detailed game prop render with readable geometry",
+    "stylized_pixar_3d": "A polished stylized 3D animation render",
+    "stylized_anime_ghibli": "An anime illustration with precise linework and crisp cel-shaded colors",
+    "stylized_manga_ink": "A monochrome manga illustration with clean ink contours and screentones",
+    "stylized_cyberpunk": "A cyberpunk illustration with neon accents on the subject",
+    "stylized_oil_painting": "An oil painting with visible brushwork and textured pigments",
+    "stylized_watercolor": "A watercolor illustration with delicate transparent washes",
+    "concept_art_production": "A detailed production concept illustration",
+}
+
+
+def _uniform_background(raw_input: str) -> Optional[str]:
+    """Recognise explicit solid colors; do not infer transparency or a setting."""
+    text = strip_accents(raw_input.lower())
+    colors = {
+        "white": "white|blanc|blanche", "black": "black|noir|noire",
+        "gray": "gray|grey|gris|grise", "blue": "blue|bleu|bleue",
+        "green": "green|vert|verte", "red": "red|rouge",
+    }
+    for color, words in colors.items():
+        pattern = (rf"\b(?:(?:(?:plain|solid|uniform|clean)\s+)*(?:{words})\s+background"
+                   rf"|fond\s+(?:(?:uni|uniforme)\s+)?(?:{words})(?:\s+uni)?)\b")
+        for match in re.finditer(pattern, text):
+            prefix = text[max(0, match.start() - 32):match.start()]
+            if re.search(r"\b(?:sans|pas de|no|not|avoid|without)\s+(?:(?:a|any|un|de)\s+)?$", prefix):
+                continue
+            return color
+    return None
+
+
+def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[str, Any]:
+    cat = force_category or detect_category(raw_input)
+    if cat not in _FOREGROUND_STYLES:
+        raise ValueError(f"Unsupported image category: {cat}")
+    # The former prop category had no template and silently lost the user's brief.
+    spec = _style_prompt(raw_input, cat)
+    spec["category"] = cat
+    background = _uniform_background(raw_input)
+    if background:
+        spec["human_prompt"] = (
+            f"{_FOREGROUND_STYLES[cat]}. Subject and requested details: {raw_input.strip()}. "
+            f"Use a plain solid {background} background throughout the frame. "
+            "Keep the requested subject fully visible. Preserve all requested features, objects, colors and pose."
+        )
+        spec["quality_checklist"] = [
+            f"Fond {background} uni conforme à la demande",
+            "Sujet, objets, couleurs et pose conformes au texte original",
+            "Cadrage et visibilité conformes à la demande",
+        ]
+        spec["requested_background"] = background
+    text = strip_accents(raw_input.lower())
+    full_body = bool(re.search(r"\b(full[- ]body|head[- ]to[- ]toe|en pied|corps entier)\b", text))
+    explicit_ratio = re.search(r"\b(1\s*:\s*1|2\s*:\s*3|3\s*:\s*2|16\s*:\s*9|9\s*:\s*16)\b", text)
+    dimensions = {"1:1": (1024, 1024), "2:3": (832, 1216), "3:2": (1216, 832),
+                  "16:9": (1344, 768), "9:16": (768, 1344)}
+    ratio = re.sub(r"\s", "", explicit_ratio.group()) if explicit_ratio else None
+    if ratio is None and full_body and not re.search(r"\b(landscape|horizontal|panorami\w*|wide[- ]screen)\b", text):
+        ratio = "2:3"
+    if ratio:
+        spec["width"], spec["height"] = dimensions[ratio]
+        spec["aspect_ratio"] = ratio
+    return spec

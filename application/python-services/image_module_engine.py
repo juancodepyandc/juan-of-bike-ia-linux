@@ -35,7 +35,7 @@ from typing import Dict, Any, Optional, Tuple, List
 from PIL import Image, ImageOps, ImageFilter
 import numpy as np
 
-from human_prompt_director import direct_prompt, detect_category
+from human_prompt_director import direct_prompt, strip_accents
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BASE_OUTPUT_DIR = REPO_ROOT / "application" / "output" / "image"
@@ -52,10 +52,14 @@ def slugify(text: str) -> str:
 
 def resolve_main_folder(category: str, raw_text: str = "") -> str:
     c = category.lower()
-    t = raw_text.lower()
+    t = strip_accents(raw_text.lower())
     if "edit" in c or "retouche" in t or "inpaint" in t:
         return "edits"
-    if any(k in c or k in t for k in ["asset", "coffre", "chest", "tresor", "trésor", "potion", "prop", "sprite", "pixel", "isometric", "icon", "texture", "sol_pave", "weapon", "arme", "bouclier", "shield"]):
+    if c.startswith("game_asset_"):
+        return "assets"
+    if re.search(r"\b(character|personnage|personne|portrait|avatar|warrior|guerrier|guerriere|samourai|woman|man|femme|homme|girl|boy|axolotl|axolote)\b", t):
+        return "perso"
+    if any(k in c or k in t for k in ["asset", "coffre", "chest", "tresor", "potion", "prop", "sprite", "pixel", "isometric", "icon", "texture", "sol_pave", "weapon", "arme", "bouclier", "shield"]):
         return "assets"
     if any(k in c or k in t for k in ["perso", "portrait", "visage", "guerrier", "guerriere", "samourai", "samouraï", "femme", "homme", "personne", "ingenieur", "ingénieure", "artisan", "horloger", "dragon", "duel", "avatar", "manga", "pixar"]):
         return "perso"
@@ -314,10 +318,8 @@ def generate_image_manifest(
 ) -> Dict[str, Any]:
     start_time = time.time()
     
-    spec = direct_prompt(raw_prompt)
+    spec = direct_prompt(raw_prompt, force_category=force_category)
     spec["steps"] = 28
-    if force_category:
-        spec["category"] = force_category
         
     category = spec["category"]
     main_cat = resolve_main_folder(category, raw_prompt)
