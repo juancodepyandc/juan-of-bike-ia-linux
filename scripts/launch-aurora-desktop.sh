@@ -36,5 +36,9 @@ if [ ! -x "$APP_BIN" ]; then
 fi
 
 echo
+if [ -n "$(python3 "$ROOT_DIR/scripts/launch_runtime.py" process-ids native)" ]; then
+  echo "L'application native AuroraIA est déjà ouverte."
+  exit 0
+fi
 echo "Ouverture de l'application native AuroraIA..."
 exec "$APP_BIN"

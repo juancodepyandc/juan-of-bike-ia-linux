@@ -64,13 +64,15 @@ class LauncherReuseTests(unittest.TestCase):
             FIXTURE_LAUNCH_LOG=str(self.launch_log), FIXTURE_SLEEP_LOG=str(self.sleep_log),
             FIXTURE_BUS_COUNTER=str(self.directory / "bus-counter"))
 
-    def run_functions(self, body, *, http=None, bus=None, child_exit=1):
+    def run_functions(self, body, *, http=None, bus=None, child_exit=1, service_active=False):
         env = dict(self.env, FIXTURE_HTTP_BODY=json.dumps(http),
-                   FIXTURE_BUS_STATES=json.dumps(bus or [False]), FIXTURE_CHILD_EXIT=str(child_exit))
+                   FIXTURE_BUS_STATES=json.dumps(bus or [False]), FIXTURE_CHILD_EXIT=str(child_exit),
+                   FIXTURE_SERVICE_EXIT='0' if service_active else '1')
         functions = "\n".join(shell_function(name) for name in
-                              ("bridge_is_running", "daemon_is_running", "run_agi_supervisor"))
+                              ("bridge_is_running", "daemon_is_running", "wait_for_protocol", "run_agi_supervisor"))
         script = "set -euo pipefail\n" + functions + "\n" + textwrap.dedent("""
             sleep() { printf 'sleep\\n' >> "$FIXTURE_SLEEP_LOG"; }
+            systemctl() { return "$FIXTURE_SERVICE_EXIT"; }
         """) + "\n" + body
         return subprocess.run(["bash", "-c", script], env=env, capture_output=True,
                               text=True, timeout=10)
@@ -128,6 +130,15 @@ class LauncherReuseTests(unittest.TestCase):
         self.assertEqual(self.launches(), [])
         self.assertIn("Bridge existant réutilisé", result.stdout)
         self.assertIn("Démon AGI existant réutilisé", result.stdout)
+
+    def test_start_fragment_waits_for_active_services_without_spawning(self):
+        fragment = SOURCE.split('echo "[3/5] Bridge Python"', 1)[1].split('echo "[4/5]', 1)[0]
+        result = self.run_functions(fragment + "\nwait", http={"ok": True, "service": "aurora-bridge"},
+                                    bus=[False, True], service_active=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.launches(), [])
+        self.assertIn("protocole vérifié", result.stdout)
+        self.assertEqual(self.sleep_log.read_text().splitlines(), ["sleep"])
 
 
 if __name__ == "__main__":

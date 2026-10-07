@@ -21,9 +21,19 @@ HOST="${URL#https://}"
 HOST="${HOST%%/*}"
 HEALTH_URL="${URL%/}/api/health"
 
+is_aurora_health() {
+  python3 -c 'import json, sys
+try:
+    data = json.load(sys.stdin)
+    ready = isinstance(data, dict) and data.get("ok") is True and data.get("service") == "aurora-bridge"
+except (ValueError, OSError):
+    ready = False
+sys.exit(0 if ready else 1)'
+}
+
 try_request() {
   # Cas normal : le resolv.conf local sait deja resoudre trycloudflare.com.
-  if curl -fsS -m 5 -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+  if curl -fsS -m 5 "$HEALTH_URL" 2>/dev/null | is_aurora_health; then
     return 0
   fi
 
@@ -33,7 +43,7 @@ try_request() {
   if command -v dig >/dev/null 2>&1; then
     while IFS= read -r edge_ip; do
       [[ "$edge_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
-      if curl -fsS -m 5 --resolve "$HOST:443:$edge_ip" -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+      if curl -fsS -m 5 --resolve "$HOST:443:$edge_ip" "$HEALTH_URL" 2>/dev/null | is_aurora_health; then
         return 0
       fi
     done < <(dig +short @1.1.1.1 "$HOST" A 2>/dev/null)
@@ -42,7 +52,7 @@ try_request() {
     # standard pour extraire les IPv4 de la reponse JSON.
     while IFS= read -r edge_ip; do
       [[ "$edge_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
-      if curl -fsS -m 5 --resolve "$HOST:443:$edge_ip" -o /dev/null "$HEALTH_URL" 2>/dev/null; then
+      if curl -fsS -m 5 --resolve "$HOST:443:$edge_ip" "$HEALTH_URL" 2>/dev/null | is_aurora_health; then
         return 0
       fi
     done < <(
