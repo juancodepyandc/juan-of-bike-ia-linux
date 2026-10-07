@@ -72,7 +72,7 @@ class PromptContractTests(unittest.TestCase):
     def test_subject_folder_does_not_classify_character_by_carried_weapon(self):
         # Load just this pure routing function: CI deliberately needs no Pillow/NumPy.
         import ast
-        source = ast.parse((SERVICES / "image_module_engine.py").read_text())
+        source = ast.parse((SERVICES / "image_module_engine.py").read_text(encoding="utf-8"))
         function = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == "resolve_main_folder")
         import re
         namespace = {"re": re, "strip_accents": self.director.strip_accents}

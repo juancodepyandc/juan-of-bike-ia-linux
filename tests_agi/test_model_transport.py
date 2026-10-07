@@ -54,16 +54,18 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(metrics[0]['prompt_eval_count'],23)
 
     async def test_model_timeout_before_first_block_names_server_and_model(self):
-        self.delay_before_headers = .12
-        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.03)):
+        self.delay_before_headers = .8
+        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.3)):
             with self.assertRaisesRegex(ModelReadTimeout, 'Ollama:.*fixture:local.*avant le premier bloc'):
                 _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local')]
 
     async def test_model_timeout_mid_answer_is_not_a_successful_completion(self):
         self.lines = [{'message': {'content': 'partial'}}]
-        self.delay_after_lines = .12
+        self.delay_after_lines = .8
         metrics = []
-        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.03)):
+        # Leave room for Windows socket scheduling before the first block;
+        # the deliberate stall still exceeds the read deadline substantially.
+        with patch.object(self.gateway, 'timeout', return_value=aiohttp.ClientTimeout(total=None, sock_read=.3)):
             with self.assertRaisesRegex(ModelReadTimeout, 'apres 7 caracteres'):
                 _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local', on_metrics=metrics.append)]
         self.assertEqual(metrics, [])
