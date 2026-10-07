@@ -58,7 +58,9 @@ class EnvironmentDiscovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info['nearest_existing_parent'], str(self.workspace))
         with self.assertRaises(FileNotFoundError) as failure:
             await self.agent._execute('inspect_csv', {'path':target})
-        self.assertIn(str(self.workspace), str(failure.exception))
+        context,_ = json.JSONDecoder().raw_decode(str(failure.exception).split(': ',1)[1])
+        self.assertEqual(context['workspace'], str(self.workspace))
+        self.assertEqual(context['path'], str(self.workspace/target))
         self.assertIn('inspect_path', str(failure.exception))
         self.assertFalse((self.workspace/target).exists())
         with self.assertRaises(PermissionError):
