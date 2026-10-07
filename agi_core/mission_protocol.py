@@ -21,6 +21,7 @@ CHECK_SCHEMA = {'anyOf':[
     object_args({'kind':{'const':'text'},'path':TEXT,'equals':TEXT,'contains':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'json'},'path':TEXT,'equals':{'description':'Expected complete JSON value; object key sets and values must match exactly.'},
                  'keys':{**STRINGS,'description':'The exact complete object key set; extra or missing keys fail. For expression-only checks omit keys unless the complete output format must also be checked. Structural proof only; does not prove calculations or constraints.'},
+                 'exact_keys':{**STRINGS,'description':'The complete set of ALL keys in the object. Extra or missing fields FAIL. Omit this for checking some field types or value relations; use types or expressions instead.'},
                  'types':{'type':'object','additionalProperties':{'type':'string','enum':['integer','number','string','boolean','object','array','null']},'description':'Field types only; not proof of calculations or value relations.'},
                  'expressions':{**NONEMPTY_STRINGS,'description':'Boolean predicates evaluated on the actual saved JSON named data. Supports field/array subscripts, numeric arithmetic, comparisons and boolean logic. No calls or attributes. For expression-only checks omit keys unless the complete output format must also be checked; supplied keys is always exact. Use actual request parameters for relations; use command assertions for complex or optimality proofs.'},
                  'criterion':TEXT},('kind','path')),
@@ -166,7 +167,11 @@ def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None,
             concrete = []
             for branch in checks:
                 kind = branch['properties']['kind']['const']
-                expectations = {'text':('equals','contains'),'json':('equals','keys','types','expressions')}.get(kind)
+                if kind == 'json':
+                    # Keep legacy keys in stored/external checks, but expose a
+                    # less ambiguous name to new model proposals.
+                    branch['properties'].pop('keys',None)
+                expectations = {'text':('equals','contains'),'json':('equals','exact_keys','types','expressions')}.get(kind)
                 if expectations:
                     for field in expectations:
                         variant = deepcopy(branch)
@@ -255,8 +260,8 @@ def validate_checks(checks, criteria=()):
                 raise ValueError('CSV delimiter must be one character')
         if check['kind']=='text' and not {'equals','contains'}&check.keys():
             raise ValueError('Text verification requires equals or contains')
-        if check['kind']=='json' and not {'equals','keys','types','expressions'}&check.keys():
-            raise ValueError('JSON verification requires equals, keys, types or expressions')
+        if check['kind']=='json' and not {'equals','keys','exact_keys','types','expressions'}&check.keys():
+            raise ValueError('JSON verification requires equals, exact_keys, types or expressions')
         if check['kind']=='json' and 'expressions' in check:
             for expression in check['expressions']:
                 parse_json_expression(expression)

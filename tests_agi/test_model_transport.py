@@ -59,6 +59,16 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ModelReadTimeout, 'Ollama:.*fixture:local.*avant le premier bloc'):
                 _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local')]
 
+    async def test_per_mission_context_crosses_http_for_actions_and_review(self):
+        self.lines = [{'message':{'content':'Observed'}},{'done':True}]
+        gateway = LLMGateway(self.gateway.ollama_url,context_tokens=8192)
+        with patch.dict('os.environ',{'AURORA_MODEL_OPTIONS':'{"temperature":0.2,"num_ctx":4096}'}):
+            _ = [c async for c in gateway.chat_chunks([],'fixture:local')]
+            await gateway.generate('Review','Evidence','fixture:local')
+            _ = [c async for c in self.gateway.chat_chunks([],'fixture:local')]
+        self.assertEqual([p['options']['num_ctx'] for p in self.received],[8192,8192,4096])
+        self.assertTrue(all(p['options']['temperature']==0.2 for p in self.received))
+
     async def test_model_timeout_mid_answer_is_not_a_successful_completion(self):
         self.lines = [{'message': {'content': 'partial'}}]
         self.delay_after_lines = .8

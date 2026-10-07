@@ -92,7 +92,8 @@ async def main():
                     mission_id=mission_id, request_text=payload.get("request"),
                     workspace=payload.get("workspace"), model=payload.get("model"),
                     permissions=payload.get("permissions"), memory_module=brain.memory,
-                    history=payload.get("history"), store=store, lease_owner=lease_owner)
+                    history=payload.get("history"), store=store, lease_owner=lease_owner,
+                    context_tokens=payload.get("context_tokens"))
         except asyncio.CancelledError:
             await publish(mission_id,"mission_complete",lease_owner=lease_owner,stopped=True,result="Mission arrêtée ; état conservé pour reprise.")
             raise

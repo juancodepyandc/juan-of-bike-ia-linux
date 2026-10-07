@@ -39,9 +39,18 @@ class RuntimePolicy:
         )
 
 
-def model_options():
+def validate_context_tokens(value):
+    """Validate an explicit per-mission context request, never coerce JSON types."""
+    if value is not None and (type(value) is not int or not 1024 <= value <= 131072):
+        raise ValueError("context_tokens must be an integer from 1024 to 131072")
+    return value
+
+
+def model_options(context_tokens=None):
     """By default use the installed model's native settings, including context."""
     options = json.loads(os.environ.get("AURORA_MODEL_OPTIONS", "{}"))
     if not isinstance(options, dict) or any(not isinstance(v, (int, float, bool, str)) for v in options.values()):
         raise ValueError("AURORA_MODEL_OPTIONS must contain scalar Ollama options")
+    if validate_context_tokens(context_tokens) is not None:
+        options['num_ctx'] = context_tokens
     return options

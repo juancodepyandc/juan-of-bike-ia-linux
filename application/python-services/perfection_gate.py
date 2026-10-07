@@ -154,9 +154,11 @@ def audit_trous(glb: str) -> dict:
     return {"bords_ouverts": bords, "etanche": bords == 0}
 
 
-def reboucher(glb: str, cotes_max: int = 64) -> dict:
+def reboucher(glb: str, cotes_max: int = 64, *, timeout: int = 1800) -> dict:
     script = (
-        "import bpy, sys\n"
+        "import bpy, bmesh, sys\n"
+        f"sys.path.insert(0, {str(PS)!r})\n"
+        "from mesh_boundary_repair import repair_small_boundary_holes\n"
         "glb = sys.argv[-1]\n"
         "bpy.ops.wm.read_factory_settings(use_empty=True)\n"
         "bpy.ops.import_scene.gltf(filepath=glb)\n"
@@ -169,7 +171,9 @@ def reboucher(glb: str, cotes_max: int = 64) -> dict:
         "    bpy.ops.object.mode_set(mode='EDIT')\n"
         "    bpy.ops.mesh.select_all(action='SELECT')\n"
         "    bpy.ops.mesh.remove_doubles(threshold=0.0004)\n"
-        "    bpy.ops.mesh.fill_holes(sides=%d)\n"
+        "    bm = bmesh.from_edit_mesh(o.data)\n"
+        "    print('REPAIR_BOUNDARIES', repair_small_boundary_holes(bm, %d), flush=True)\n"
+        "    bmesh.update_edit_mesh(o.data, loop_triangles=False, destructive=True)\n"
         "    bpy.ops.object.mode_set(mode='OBJECT')\n"
         "bpy.ops.object.select_all(action='SELECT')\n"
         "bpy.ops.export_scene.gltf(filepath=glb, export_animations=True,\n"
@@ -177,7 +181,7 @@ def reboucher(glb: str, cotes_max: int = 64) -> dict:
         "print('REBOUCHE_OK')\n" % cotes_max)
     from neural_process import run_neural_process
     r = run_neural_process([_blender(), "-b", "--python-expr", script, "--", glb],
-                           timeout=1800, progress_stage="geometrie",
+                           timeout=timeout, progress_stage="geometrie",
                            progress_label="Reparation des bords du maillage en cours")
     return {"ok": r.returncode == 0 and "REBOUCHE_OK" in (r.stdout or "")}
 
@@ -452,10 +456,16 @@ def porte_structure(glb: str) -> dict:
     print("PORTE: audit des trous (anime)...", flush=True)
     t0 = audit_trous(glb)
     if t0.get("bords_ouverts", 0) > 200:
-        if reboucher(glb).get("ok"):
-            t1 = audit_trous(glb)
+        repair = reparer_trous_sans_perte(glb, t0)
+        if repair.get("ok"):
+            t1 = repair['after']
             reparations.append("trous: %s -> %s bords ouverts"
                                % (t0.get("bords_ouverts"), t1.get("bords_ouverts")))
+        else:
+            reparations.append('rebouchage refuse: ' + str(repair.get('error')))
+            if not repair.get('original_preserved'):
+                return {'parfait': False, 'score': 0, 'reparations': reparations,
+                        'defauts': ['Restauration impossible; original sauvegarde: ' + str(repair.get('retained_backup'))]}
     print("PORTE: orientation espace brut (anime)...", flush=True)
     o = orienter_face_viewer(glb)
     if o.get("ok") and o.get("yaw"):

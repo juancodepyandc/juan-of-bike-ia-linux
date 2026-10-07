@@ -149,6 +149,34 @@ class DurableStoreTests(unittest.TestCase):
         self.assertEqual(reply.status_code, 200)
         self.assertEqual(len(self.dispatched), 1)
 
+    def test_explicit_context_is_durable_idempotent_and_reused_on_resume(self):
+        client = self.app().test_client()
+        headers = {'Authorization':'Bearer test-key','Idempotency-Key':'context-request'}
+        payload = {**self.payload,'context_tokens':8192}
+        first = client.post('/api/cli/mission/start',headers=headers,json=payload).get_json()
+        mid = first['mission_id']
+        self.assertEqual(self.store.get(mid)['payload']['context_tokens'],8192)
+        self.assertEqual(self.dispatched[0][1]['context_tokens'],8192)
+        self.assertEqual(client.post('/api/cli/mission/start',headers=headers,json=payload).get_json()['mission_id'],mid)
+        self.assertEqual(client.post('/api/cli/mission/start',headers=headers,
+                                    json={**payload,'context_tokens':16384}).status_code,409)
+        self.store.append(mid,{'type':'error','message':'fixture interruption'})
+        resumed = client.post(f'/api/cli/mission/{mid}/resume',headers={'Authorization':'Bearer test-key'})
+        self.assertEqual(resumed.status_code,200)
+        self.assertEqual(self.dispatched[-1][1]['context_tokens'],8192)
+        status = client.get(f'/api/cli/mission/{mid}/status',headers={'Authorization':'Bearer test-key'}).get_json()
+        self.assertEqual(status['context_tokens'],8192)
+
+    def test_invalid_context_is_rejected_without_acceptance(self):
+        client = self.app().test_client()
+        for value in (True, '8192', 8192.0, 0, -1, 1023, 131073, {}, []):
+            with self.subTest(value=value):
+                reply = client.post('/api/cli/mission/start',headers={'Authorization':'Bearer test-key'},
+                                    json={**self.payload,'context_tokens':value})
+                self.assertEqual(reply.status_code,400)
+        self.assertEqual(self.store.list(),[])
+        self.assertEqual(self.dispatched,[])
+
     def test_http_sse_survives_bridge_recreation_and_validates_cursor(self):
         client = self.app().test_client()
         headers = {'Authorization':'Bearer test-key'}

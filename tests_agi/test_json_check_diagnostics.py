@@ -105,9 +105,22 @@ class JSONCheckDiagnostics(unittest.IsolatedAsyncioTestCase):
         branches=schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
         for branch in branches:
             if branch['properties']['kind']['const']!='json':continue
-            description=branch['properties']['keys']['description']
+            self.assertNotIn('keys',branch['properties'])
+            description=branch['properties']['exact_keys']['description']
             self.assertIn('complete',description)
-            self.assertIn('omit keys',description)
+            self.assertIn('Omit',description)
         for prompt in (self.agent._system_prompt(),self.agent._compact_system_prompt()):
-            self.assertIn('exact complete',prompt)
-            self.assertIn('omit keys',prompt)
+            self.assertIn('complete set of ALL',prompt)
+            self.assertIn('omit exact_keys',prompt)
+
+    async def test_canonical_exact_keys_preserves_legacy_strictness_and_failure_feedback(self):
+        data={'rows':5,'sum':163}
+        complete=await self.verify(data,exact_keys=['rows','sum'])
+        self.assertTrue(complete['passed'])
+        partial=await self.verify(data,exact_keys=['rows'],expressions=['data["rows"] == 5'])
+        self.assertFalse(partial['passed'])
+        self.assertEqual(partial['checks'][0]['exact_keys_result']['unexpected'],['sum'])
+        self.agent._record_verification(partial,1)
+        self.assertIn('sum',self.agent.state['verification_failures'][0]['detail'])
+        conflicting=await self.verify(data,exact_keys=['rows','sum'],keys=['rows'])
+        self.assertFalse(conflicting['passed'])

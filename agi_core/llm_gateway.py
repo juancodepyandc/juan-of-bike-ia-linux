@@ -8,7 +8,7 @@ import os
 import time
 
 import aiohttp
-from .runtime_policy import model_options, positive_env
+from .runtime_policy import model_options, positive_env, validate_context_tokens
 
 logger = logging.getLogger("AuroraAGI.Gateway")
 
@@ -29,9 +29,10 @@ def _model_timeout(exc, model, timeout, received_chars):
 
 
 class LLMGateway:
-    def __init__(self, ollama_url: str | None = None):
+    def __init__(self, ollama_url: str | None = None, *, context_tokens=None):
         self.ollama_url = (ollama_url or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip('/')
         self.default_model = os.environ.get("AURORA_DEFAULT_MODEL", "qwen3-coder-next:q4_K_M")
+        self.context_tokens = validate_context_tokens(context_tokens)
 
     def timeout(self):
         return aiohttp.ClientTimeout(total=None, sock_connect=10,
@@ -79,7 +80,8 @@ class LLMGateway:
                     yield chunk
             return
         selected = await self.resolve_model(model)
-        payload = {'model': selected, 'messages': messages, 'stream': True, 'options': model_options()}
+        payload = {'model': selected, 'messages': messages, 'stream': True,
+                   'options': model_options(self.context_tokens)}
         if response_format is not None:
             payload['format'] = response_format
         started, last_flush = time.monotonic(), time.monotonic()

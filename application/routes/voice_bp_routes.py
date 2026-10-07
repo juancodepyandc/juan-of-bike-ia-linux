@@ -113,9 +113,14 @@ def voice_tts():
         }
         # Expose le MP4 talking-video via une route dediee (meme mecanique que tts-audio)
         if talking_video_path and os.path.isfile(talking_video_path):
-            # Stocker le path absolu dans une variable globale pour que /tts-video le serve
-            app.config["_last_talking_video_path"] = talking_video_path
-            response["video_url"] = "/api/voice/tts-video"
+            # Snapshot par synthese, comme le WAV, meme si le moteur renvoie un cache.
+            video_path = pathlib.Path(output_path).with_suffix('.mp4')
+            if pathlib.Path(talking_video_path).resolve() != video_path.resolve():
+                shutil.copyfile(talking_video_path, video_path)
+            current_app.config["_last_talking_video_path"] = str(video_path)
+            response["video_url"] = "/api/voice/tts-video?" + urlencode({
+                "file": video_path.relative_to(pathlib.Path(WORKSPACE)/"output/voix").as_posix(),
+            })
             response["video_cached"] = talking_video_cached
 
         return jsonify(response)
@@ -163,7 +168,18 @@ def serve_tts_audio():
 @voice_bp.route("/api/voice/tts-video")
 def serve_tts_video():
     """Sert le dernier MP4 talking-video (SadTalker) genere en parallele du TTS."""
-    video_path = app.config.get("_last_talking_video_path")
+    if "file" in request.args:
+        root = pathlib.Path(WORKSPACE, "output", "voix").resolve()
+        raw = request.args.get("file", "")
+        try:
+            path = (root/raw).resolve()
+            if (not raw or "\\" in raw or "\x00" in raw or not path.is_relative_to(root)
+                    or path.suffix.lower() != ".mp4" or not path.is_file()):
+                return jsonify({"error": "MP4 talking-video introuvable"}), 404
+        except (OSError, ValueError, RuntimeError):
+            return jsonify({"error": "MP4 talking-video introuvable"}), 404
+        return send_file(path, mimetype="video/mp4", conditional=True)
+    video_path = current_app.config.get("_last_talking_video_path")
     if not video_path or not os.path.isfile(video_path):
         return jsonify({"error": "Aucun MP4 talking-video disponible"}), 404
     return send_file(video_path, mimetype="video/mp4", conditional=True)
@@ -228,7 +244,7 @@ def talking_head_idle():
                 try:
                     result = json.loads(line)
                     if result.get("ok"):
-                        app.config["_last_idle_video_path"] = out_path
+                        current_app.config["_last_idle_video_path"] = out_path
                         return jsonify({"ok": True, "video_url": "/api/voice/idle-video", "cached": result.get("cached", False)})
                     return jsonify({"ok": False, "error": result.get("error", "idle failed")}), 500
                 except json.JSONDecodeError:
@@ -241,7 +257,7 @@ def talking_head_idle():
 @voice_bp.route("/api/voice/idle-video")
 def serve_idle_video():
     """Sert le dernier MP4 idle genere."""
-    p = app.config.get("_last_idle_video_path")
+    p = current_app.config.get("_last_idle_video_path")
     if not p or not os.path.isfile(p):
         return jsonify({"error": "Aucun MP4 idle disponible"}), 404
     return send_file(p, mimetype="video/mp4", conditional=True)
@@ -967,4 +983,3 @@ def voice_personas():
         {"id": "phantom-sharp", "label": "Phantom · tranchante","module": "cyber",      "edge_voice_fr": "fr-FR-AlainNeural",   "edge_voice_en": "en-US-EricNeural"},
     ]
     return jsonify({"ok": True, "personas": personas, "default": "lyra-soft"})
-

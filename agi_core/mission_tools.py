@@ -297,7 +297,7 @@ class MissionTools:
             inventory = await asyncio.to_thread(self.inventory)
             status = {'os':platform.system(),'architecture':platform.machine(),'python':platform.python_version(),
                       'cpu_count':os.cpu_count(),'disk_free_bytes':disk.free,'model':a.model,
-                      'permissions':a.permissions,'limits':asdict(a.policy),'model_options':model_options(),
+                      'permissions':a.permissions,'limits':asdict(a.policy),'model_options':model_options(a.context_tokens),
                       'goal':a.request_text,'plan':a.state['plan'],'verified':a.state['verified'],
                       'source_tools':sum(t['origin']!='builtin' for t in inventory),
                       'builtin_tools':sum(t['origin']=='builtin' for t in inventory),'availability':'individual engines must still be probed'}
@@ -415,12 +415,14 @@ class MissionTools:
                             item['observed'] = actual[:a.policy.output_chars]
                             item['truncated'] = len(actual)>a.policy.output_chars
                         else:
-                            if not {'equals','keys','types','expressions'}&check.keys():
-                                raise ValueError('JSON verification requires equals, keys, types or expressions')
+                            if not {'equals','keys','exact_keys','types','expressions'}&check.keys():
+                                raise ValueError('JSON verification requires equals, exact_keys, types or expressions')
                             actual = strict_json(actual)
                             item['passed'] = 'equals' not in check or same_json(actual,check['equals'])
-                            if 'keys' in check:
-                                keys = check['keys']
+                            for key_field in ('keys','exact_keys'):
+                                if key_field not in check:
+                                    continue
+                                keys = check[key_field]
                                 if not isinstance(keys,list) or not all(isinstance(k,str) for k in keys) or len(set(keys))!=len(keys):
                                     raise ValueError('JSON keys must be a list of distinct strings')
                                 requested = set(keys)
@@ -433,7 +435,7 @@ class MissionTools:
                                           if observed is None else
                                           'JSON keys requires the exact complete object key set; missing keys: '+json.dumps(missing,ensure_ascii=False)+
                                           '; unexpected keys: '+json.dumps(unexpected,ensure_ascii=False)+'.')
-                                item['keys_result'] = {'passed':keys_passed,'requested':list(keys),
+                                item[key_field+'_result'] = {'passed':keys_passed,'requested':list(keys),
                                     'observed':sorted(observed) if observed is not None else None,
                                     'missing':missing,'unexpected':unexpected,'reason':reason}
                                 item['passed'] &= keys_passed

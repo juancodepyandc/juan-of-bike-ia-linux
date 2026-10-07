@@ -46,6 +46,17 @@ class DelegationExecution(unittest.IsolatedAsyncioTestCase):
     async def prove(self, **fields):
         return await self.agent.tools.execute('verify',{'checks':[{'kind':'delegation',**fields}]})
 
+    async def test_context_override_is_inherited_by_generic_and_named_workers(self):
+        parent = AutonomousMissionAgent('context','Inspect',str(self.root),'fixture:local',context_tokens=8192)
+        seen = []
+        async def observe(child):
+            seen.append((child.context_tokens,child.gateway.context_tokens))
+            return {'status':'fixture'}
+        with patch.object(parent,'_worker_report',side_effect=observe):
+            await parent._run_sub_agent('Inspect only')
+            await parent._spawn_task('Inspect only','NamedRole')
+        self.assertEqual(seen,[(8192,8192),(8192,8192)])
+
     async def test_definition_and_generic_worker_do_not_prove_named_role_execution(self):
         definition=await self.agent.tools.execute('verify',{'checks':[{'kind':'agent','name':'NamedRole'}]})
         self.assertTrue(definition['passed'])

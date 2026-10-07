@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from flask import Response, jsonify, request, stream_with_context
 from agi_core.mission_store import MissionStore, TERMINAL
+from agi_core.runtime_policy import validate_context_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
             notify(on_completed,item)
         value = {'id':item['id'],'status':item['status'],'request':item['payload']['request'],
                  'model':item['payload'].get('model',''),'workspace':item['payload'].get('workspace',''),
+                 'context_tokens':item['payload'].get('context_tokens'),
                  'started_at':item['created'],'finished_at':item['finished'],
                  'elapsed_seconds':max(0,(item['finished'] or time.time())-item['created']),
                  'steps':item['steps'],'files_changed':item['files'],'errors':item['errors'],
@@ -66,6 +68,10 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
         level = data.get('permissions','AUTONOMOUS')
         if level not in {'SAFE','STANDARD','AUTONOMOUS','FULL'}:
             return jsonify(ok=False,error='unknown permission level'),400
+        try:
+            context_tokens = validate_context_tokens(data.get('context_tokens'))
+        except ValueError as exc:
+            return jsonify(ok=False,error=str(exc)),400
         key = request.headers.get('Idempotency-Key') or data.get('idempotency_key','')
         if key and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}',key):
             return jsonify(ok=False,error='invalid idempotency key'),400
@@ -92,6 +98,8 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
                    'permissions':level,'model':selected_model,
                    'requested_model':data.get('model',''),
                    'session_id':session_id,'history':history or []}
+        if context_tokens is not None:
+            payload['context_tokens'] = context_tokens
         try:
             item, created = store.create(payload,key)
         except ValueError as exc:

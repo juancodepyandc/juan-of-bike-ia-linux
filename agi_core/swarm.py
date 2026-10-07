@@ -20,7 +20,7 @@ class SwarmSupervisor:
         })
         
     async def run_mission(self, mission_id, request_text, workspace, model, permissions,
-                          memory_module=None, history=None, store=None, lease_owner=None):
+                          memory_module=None, history=None, store=None, lease_owner=None, context_tokens=None):
         """One execution loop keeps the user's objective distinct from advice."""
         selected = await llm.resolve_model(model)
         context = []
@@ -34,7 +34,8 @@ class SwarmSupervisor:
                                "\n".join(str(v)[:2000] for v in memories[:3]))
         agent = AutonomousMissionAgent(
             mission_id, request_text, workspace, selected, permissions,
-            store=store, lease_owner=lease_owner, advisory_context="\n\n".join(context))
+            store=store, lease_owner=lease_owner, advisory_context="\n\n".join(context),
+            context_tokens=context_tokens)
         result = await agent.run()
         if memory_module and result and agent.state['status'] == 'completed':
             await memory_module.embed_experience(

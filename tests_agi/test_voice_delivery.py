@@ -82,3 +82,23 @@ class VoiceDeliveryTests(unittest.TestCase):
         self.assertNotEqual(observed[0][0], observed[1][0])
         self.assertEqual([data for _, data in observed], [b'first audio', b'second audio'])
         self.assertTrue(all(not path.exists() for path, _ in observed))
+
+    def test_talking_video_urls_keep_distinct_snapshots_of_a_reused_engine_path(self):
+        cache = self.workspace/'engine-cache.mp4'
+        def synthesize(argv, **kwargs):
+            self.synthesize(argv,**kwargs)
+            cache.write_bytes(argv[argv.index('--text')+1].encode())
+            return json.dumps({'ok':True,'talking_video':str(cache),'talking_video_cached':True}).encode()
+        with patch.object(VOICE.subprocess,'check_output',side_effect=synthesize):
+            first = self.client.post('/api/voice/tts',json={'text':'first video'}).json
+            second = self.client.post('/api/voice/tts',json={'text':'second video'}).json
+        self.assertTrue(first['ok'] and second['ok'])
+        self.assertNotEqual(first['video_url'],second['video_url'])
+        self.assertEqual(self.client.get(first['video_url']).data,b'first video')
+        self.assertEqual(self.client.get(second['video_url']).data,b'second video')
+        for value in ('../engine-cache.mp4','/etc/passwd','test/missing.mp4','test/legacy.wav'):
+            self.assertEqual(self.client.get('/api/voice/tts-video',query_string={'file':value}).status_code,404)
+
+    def test_missing_video_routes_return_404_without_undefined_application(self):
+        self.assertEqual(self.client.get('/api/voice/tts-video').status_code,404)
+        self.assertEqual(self.client.get('/api/voice/idle-video').status_code,404)
