@@ -50,6 +50,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(check['properties']['criterion']['enum'],[criterion])
 
     async def test_declared_delegation_cannot_be_replaced_by_an_unrelated_role_check(self):
+        self.agent.state['plan'] = []  # This scenario accepts its first plan through run().
         self.agent.request_text = 'Audit the data with spawn_agent and verify the result'
         self.result_file({'rows':3,'sum':25})
         check = {**self.check,'criterion':'Result exists'}
@@ -117,6 +118,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Read only',seen[0].additional_context)
 
     async def test_identical_or_conflicting_skill_creation_preserves_validations_and_bytes(self):
+        self.agent.state['plan'] = []
         skill_path = '.aurora/skills/Audit/SKILL.md'
         criterion = 'Skill exists'
         args = {'name':'Audit','description':'CSV audit','instructions':'Première\r\nligne'}
@@ -160,6 +162,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(conflict['passed'] or conflict['changed'])
 
     async def test_parent_inference_retains_acceptance_facts_before_large_worker_reports(self):
+        self.agent.state['plan'] = []
         self.agent.policy = RuntimePolicy(output_chars=2000,request_audit=False)
         check = {**self.check,'criterion':'Measured result'}
         replies = iter([
@@ -300,6 +303,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(first['checks'][0]['observed_sha256'],second['checks'][0]['observed_sha256'])
 
     async def test_parent_uses_acceptance_checks_even_when_model_review_would_approve(self):
+        self.agent.state['plan'] = []
         criterion = 'Saved aggregates match the source'
         check = {**self.check,'criterion':criterion}
         replies = iter([
@@ -322,6 +326,7 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertIn(check,self.agent.state['output_checks'])
 
     async def test_successful_delegation_validation_marks_criterion_after_worker_effects(self):
+        self.agent.state['plan'] = []
         self.agent.request_text = 'Audit with spawn_agent and inspect_csv, then verify the saved output'
         criterion = 'Measured result'
         check = {**self.check,'criterion':criterion}

@@ -43,6 +43,7 @@ CHECK_SCHEMA = {'anyOf':[
 ARG_SCHEMAS = {
     'inspect_runtime':object_args({}),
     'set_plan':object_args({'steps':NONEMPTY_STRINGS,'criteria':NONEMPTY_STRINGS},('steps','criteria')),
+    'revise_plan':object_args({'steps':NONEMPTY_STRINGS,'reason':TEXT,'evidence_ids':NONEMPTY_STRINGS},('steps','reason','evidence_ids')),
     'list_files':object_args({'path':TEXT}),
     'inspect_path':object_args({'path':TEXT},('path',)),
     'read_file':object_args({'path':TEXT,'offset':INTEGER,'limit':INTEGER},('path',)),
@@ -53,7 +54,7 @@ ARG_SCHEMAS = {
     'inspect_tool':object_args({'name':TEXT},('name',)),
     'run_tool':object_args({'name':TEXT,'argv':STRINGS},('name',)),
     'create_tool':object_args({'name':TEXT,'code':TEXT},('name','code')),
-    'generate_image':object_args({'prompt':TEXT,'folder':TEXT},('prompt',)),
+    'generate_image':object_args({'prompt':TEXT,'folder':TEXT,'regenerate':{'type':'boolean'}},('prompt',)),
     'search_web':object_args({'query':TEXT,'refresh':{'type':'boolean'}},('query',)),
     'fetch_url':object_args({'url':TEXT},('url',)),
     'spawn_agent':object_args({'task':TEXT,'tasks':NONEMPTY_STRINGS,'agent':TEXT,
@@ -67,11 +68,14 @@ ARG_SCHEMAS = {
 ARG_SCHEMAS['run_command']['oneOf'] = [{'required':['argv']},{'required':['command']}]
 ARG_SCHEMAS['spawn_agent']['oneOf'] = [{'required':['task']},{'required':['tasks']}]
 ARG_SCHEMAS['set_plan']['properties']['required_tools'] = {'type':'array','items':{'type':'string','enum':[
-    name for name in ARG_SCHEMAS if name not in {'set_plan','verify','finish'}]}}
+    name for name in ARG_SCHEMAS if name not in {'set_plan','revise_plan','verify','finish'}]}}
 
 CHECK_FIELDS = {branch['properties']['kind']['const']:set(branch['properties']) for branch in CHECK_SCHEMA['anyOf']}
 
 TOOL_DESCRIPTIONS = {
+    'set_plan':'Accept the initial plan and measurable criteria once. An existing plan cannot erase progress or replace acceptance criteria.',
+    'revise_plan':'Adapt remaining steps to fresh actual tool evidence; cite its IDs and explain the reason. Acceptance criteria, verified results and required tools are preserved. A revision is not execution progress.',
+    'generate_image':'Generate a reference image in a unique delivery directory. An identical prompt and folder reuse the unchanged saved file. Use regenerate=true only when a new variation is necessary; file integrity is not visual validation.',
     'inspect_runtime':'Observe the current server workspace, delivery directory, tool directories and resources. Source presence does not prove engine readiness.',
     'inspect_path':'Observe whether an actual workspace path exists, its type and its nearest existing parent. Use this for unknown paths or binary assets before selecting a format-specific tool.',
     'list_files':'List an existing directory with actual absolute and workspace-relative paths. Omit path to inspect the workspace; do not invent Documents or a home directory.',
@@ -164,8 +168,8 @@ def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None,
         args = deepcopy(ARG_SCHEMAS[name])
         if name=='set_plan':
             args['required'].append('required_tools')
-            names = [n for n in selected if n not in {'set_plan','verify','finish'}
-                     and (required_tool_names is None or n in required_tool_names)]
+            candidates = selected if required_tool_names is None else required_tool_names
+            names = [n for n in candidates if n in ARG_SCHEMAS and n not in {'set_plan','revise_plan','verify','finish'}]
             args['properties']['required_tools'] = ({'type':'array','items':{'type':'string','enum':names}} if names else {'const':[]})
         if name in {'verify','spawn_agent'}:
             checks = args['properties']['checks']['items']['anyOf']

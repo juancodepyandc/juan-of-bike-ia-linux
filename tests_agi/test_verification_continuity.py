@@ -190,8 +190,8 @@ class VerificationContinuity(unittest.IsolatedAsyncioTestCase):
                                  'required_tools':['run_command','run_tool','inspect_csv']})
         self.assertEqual(plan['required_tools'],[])
         self.assertEqual(plan['optional_tools'],['run_command','run_tool','inspect_csv'])
-        self.agent.request_text = 'Create a role with create_agent, then use spawn_agent for the audit'
-        plan = self.agent._plan({'steps':['Delegate'],'criteria':['Audited'],
+        other = AutonomousMissionAgent('other','Create a role with create_agent, then use spawn_agent for the audit',str(self.root),'fixture:local')
+        plan = other._plan({'steps':['Delegate'],'criteria':['Audited'],
                                  'required_tools':['create_agent','spawn_agent','inspect_csv']})
         self.assertEqual(plan['required_tools'],['create_agent','spawn_agent'])
         self.assertEqual(plan['optional_tools'],['inspect_csv'])

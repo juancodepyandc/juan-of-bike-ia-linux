@@ -152,18 +152,29 @@ class MissionTools:
                     continue
                 name = path.relative_to(root).as_posix()
                 try:
-                    doc = ast.get_docstring(ast.parse(path.read_text(encoding='utf-8'))) or ''
+                    tree = ast.parse(path.read_text(encoding='utf-8'))
+                    doc = ast.get_docstring(tree) or ''
                 except (OSError, ValueError, SyntaxError, UnicodeError):
                     continue
+                cli_arguments = [value.value for node in ast.walk(tree)
+                                 if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='add_argument'
+                                 for value in node.args if isinstance(value,ast.Constant) and isinstance(value.value,str)]
+                has_main_guard = any(isinstance(node,ast.If) and isinstance(node.test,ast.Compare)
+                                     and isinstance(node.test.left,ast.Name) and node.test.left.id=='__name__'
+                                     and len(node.test.ops)==1 and isinstance(node.test.ops[0],ast.Eq)
+                                     and len(node.test.comparators)==1 and isinstance(node.test.comparators[0],ast.Constant)
+                                     and node.test.comparators[0].value=='__main__' for node in tree.body)
                 items.append({'name': name, 'origin': origin, 'description': doc[:300],
                               'path':str(path.resolve()),
+                              'cli_arguments':cli_arguments,'has_main_guard':has_main_guard,
                               'availability': 'source_present_not_runtime_verified'})
         if query:
             tokens = self.query_tokens(query)
             def score(item):
                 text = item['name']+' '+item['description']
                 return (40 if query.casefold() in text.casefold() else 0)+3*len(tokens & self.query_tokens(item['name']))+len(tokens & self.query_tokens(item['description']))
-            items = sorted((item for item in items if score(item)),key=lambda item:-score(item))
+            items = sorted((item for item in items if score(item)),
+                           key=lambda item:(not bool(item.get('cli_arguments') and item.get('has_main_guard')),-score(item)))
         return items if limit is None else items[:limit]
 
     def path_info(self, path):

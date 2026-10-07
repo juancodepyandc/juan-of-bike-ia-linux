@@ -131,6 +131,7 @@ class DelegationExecution(unittest.IsolatedAsyncioTestCase):
         worker.assert_not_awaited()
 
     async def test_request_audit_rejects_generic_worker_then_accepts_actual_requested_role(self):
+        self.agent.state['plan'] = []  # The streamed scenario accepts its initial plan.
         self.agent.policy=replace(self.agent.policy,request_audit=True)
         self.agent.request_text='Use NamedRole with spawn_agent to compute input.csv into summary.json and prove the actual named-role execution and source aggregates.'
         data_criterion='Saved data matches the source'
