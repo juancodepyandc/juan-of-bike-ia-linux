@@ -165,7 +165,8 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(change=change):
                     agent=AutonomousMissionAgent('phase','Delegate and verify',workspace,'fixture:local')
                     agent.gateway=self.gateway
-                    agent.state.update(criteria=['Actual result'],verified=['Actual result'],required_tools=['spawn_agent'],
+                    agent.state.update(plan=['Delegate and verify the saved result'],
+                                       criteria=['Actual result'],verified=['Actual result'],required_tools=['spawn_agent'],
                                        executed_tools=['spawn_agent'],last_change=2,last_verify=3)
                     agent.state.update(change)
                     _=[c async for c in agent._chat_chunks([{'role':'user','content':'Needs work'}])]
