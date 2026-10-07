@@ -55,6 +55,13 @@ class PromptContractTests(unittest.TestCase):
         self.assertEqual(result["aspect_ratio"], "16:9")
         self.assertGreater(result["width"], result["height"])
 
+    def test_animal_full_body_does_not_imply_an_upright_portrait(self):
+        result = self.director.direct_prompt("Pink axolotl, full body, long tail, plain white background")
+        self.assertEqual(result["aspect_ratio"], "1:1")
+        closeup = self.director.direct_prompt("Close-up portrait of a woman on a solid black background")
+        self.assertIn("Close-up", closeup["human_prompt"])
+        self.assertNotIn("fully visible", closeup["human_prompt"])
+
     def test_forced_category_controls_prompt_and_invalid_category_is_rejected(self):
         result = self.director.direct_prompt("A red fox", force_category="stylized_watercolor")
         self.assertEqual(result["category"], "stylized_watercolor")

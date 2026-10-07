@@ -5,7 +5,8 @@ import subprocess
 import time
 
 
-def run_neural_process(command, *, env=None, timeout=10800, heartbeat=30):
+def run_neural_process(command, *, env=None, timeout=10800, heartbeat=30,
+                       progress_stage="shape", progress_label="Calcul neuronal en cours"):
     started = time.monotonic()
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True) as process:
@@ -20,7 +21,7 @@ def run_neural_process(command, *, env=None, timeout=10800, heartbeat=30):
                 except subprocess.TimeoutExpired:
                     if time.monotonic() - started >= timeout:
                         raise
-                    print(f"PROGRESS:shape:Calcul neuronal en cours ({int(time.monotonic() - started)} s)",
+                    print(f"PROGRESS:{progress_stage}:{progress_label} ({int(time.monotonic() - started)} s)",
                           flush=True)
         except BaseException:
             process.kill()

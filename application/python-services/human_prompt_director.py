@@ -420,7 +420,7 @@ def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[
         spec["human_prompt"] = (
             f"{_FOREGROUND_STYLES[cat]}. Subject and requested details: {raw_input.strip()}. "
             f"Use a plain solid {background} background throughout the frame. "
-            "Keep the requested subject fully visible. Preserve all requested features, objects, colors and pose."
+            "Follow the requested framing and viewpoint. Preserve all requested features, objects, colors and pose."
         )
         spec["quality_checklist"] = [
             f"Fond {background} uni conforme à la demande",
@@ -434,7 +434,8 @@ def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[
     dimensions = {"1:1": (1024, 1024), "2:3": (832, 1216), "3:2": (1216, 832),
                   "16:9": (1344, 768), "9:16": (768, 1344)}
     ratio = re.sub(r"\s", "", explicit_ratio.group()) if explicit_ratio else None
-    if ratio is None and full_body and not re.search(r"\b(landscape|horizontal|panorami\w*|wide[- ]screen)\b", text):
+    upright_character = bool(re.search(r"\b(character|personnage|personne|woman|man|femme|homme|girl|boy)\b", text))
+    if ratio is None and full_body and upright_character and not re.search(r"\b(landscape|horizontal|panorami\w*|wide[- ]screen)\b", text):
         ratio = "2:3"
     if ratio:
         spec["width"], spec["height"] = dimensions[ratio]

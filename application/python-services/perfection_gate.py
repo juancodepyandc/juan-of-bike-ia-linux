@@ -175,9 +175,53 @@ def reboucher(glb: str, cotes_max: int = 64) -> dict:
         "bpy.ops.export_scene.gltf(filepath=glb, export_animations=True,\n"
         "                          export_animation_mode='ACTIONS')\n"
         "print('REBOUCHE_OK')\n" % cotes_max)
-    r = subprocess.run([_blender(), "-b", "--python-expr", script, "--", glb],
-                       capture_output=True, text=True, timeout=1800)
-    return {"ok": "REBOUCHE_OK" in (r.stdout or "")}
+    from neural_process import run_neural_process
+    r = run_neural_process([_blender(), "-b", "--python-expr", script, "--", glb],
+                           timeout=1800, progress_stage="geometrie",
+                           progress_label="Reparation des bords du maillage en cours")
+    return {"ok": r.returncode == 0 and "REBOUCHE_OK" in (r.stdout or "")}
+
+
+def reparer_trous_sans_perte(glb: str, avant: dict) -> dict:
+    """Retain the exact input on failure, timeout or increased open boundaries."""
+    import shutil
+    path = Path(glb)
+    backup = None
+    backup_ready = False
+    retain_backup = False
+    repair_attempted = False
+    restored = False
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.stem + '.repair-',
+                                         suffix='.glb', delete=False) as stream:
+            backup = Path(stream.name)
+        shutil.copy2(path, backup)
+        backup_ready = True
+        repair_attempted = True
+        result = reboucher(glb)
+        if not result.get('ok'):
+            raise RuntimeError('Blender repair failed')
+        after = audit_trous(glb)
+        if after['bords_ouverts'] > avant['bords_ouverts']:
+            raise RuntimeError('Repair increased open boundaries')
+        return {'ok': True, 'before': avant, 'after': after}
+    except Exception as exc:
+        restore_error = None
+        if backup_ready:
+            try:
+                os.replace(backup, path)
+                restored = True
+            except OSError as error:
+                restore_error = str(error)
+                retain_backup = True
+        return {'ok': False, 'before': avant, 'original_restored': restored,
+                'original_preserved': not repair_attempted or restored,
+                'error': str(exc), 'restore_error': restore_error,
+                'retained_backup': str(backup) if restore_error else None}
+    finally:
+        # A failed restore must leave a recoverable original on disk.
+        if backup is not None and not retain_backup:
+            backup.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------- orientation ----
@@ -641,18 +685,24 @@ def preuves(glb: str, dossier_run: str, etiquette: str = "livrable") -> dict:
     return mesures
 
 
-def porte(glb: str, reference: str | None, contexte: str = "") -> dict:
+def porte(glb: str, reference: str | None, contexte: str = "", *, repair_geometry: bool = True) -> dict:
     """Repare (trous, orientation, gouttieres) puis JUGE. Ne ment jamais."""
     reparations = []
     print("PORTE: audit des trous...", flush=True)
     t0 = audit_trous(glb)
     # seuil: quelques bords soudes residuels sont invisibles; un vrai trou
     # visible en compte des dizaines groupes.
-    if t0.get("bords_ouverts", 0) > 200:
-        if reboucher(glb).get("ok"):
-            t1 = audit_trous(glb)
+    if repair_geometry and t0.get("bords_ouverts", 0) > 200:
+        repair = reparer_trous_sans_perte(glb, t0)
+        if repair.get("ok"):
+            t1 = repair['after']
             reparations.append("trous: %s -> %s bords ouverts"
                                % (t0.get("bords_ouverts"), t1.get("bords_ouverts")))
+        else:
+            reparations.append('rebouchage refuse: ' + str(repair.get('error')))
+            if not repair.get('original_preserved'):
+                return {'parfait': False, 'score': 0, 'reparations': reparations,
+                        'defauts': ['Restauration impossible; original sauvegarde: ' + str(repair.get('retained_backup'))]}
     print("PORTE: orientation espace brut...", flush=True)
     o = orienter_face_viewer(glb)
     if o.get("ok") and o.get("yaw"):
