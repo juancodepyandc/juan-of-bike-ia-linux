@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import ast
+import codecs
 from copy import deepcopy
 import csv
 import hashlib
@@ -14,11 +15,16 @@ import tempfile
 from pathlib import Path
 import re
 import time
+import unicodedata
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
 from agi_core.mission_protocol import ARG_SCHEMAS, CHECK_FIELDS, PURE_CHECKS, TOOL_DESCRIPTIONS, validate_checks
 from agi_core.json_predicates import evaluate_json_expression
+
+
+class TextFormatError(ValueError):
+    """A text-only operation was selected for another input format."""
 
 
 def digest_file(path):
@@ -119,7 +125,12 @@ class MissionTools:
                 return target
         raise FileNotFoundError(name)
 
-    def inventory(self, query=''):
+    @staticmethod
+    def query_tokens(text):
+        normalized = unicodedata.normalize('NFKD',text.casefold()).encode('ascii','ignore').decode()
+        return {word for word in re.findall(r'[a-z0-9]+',normalized) if len(word)>2 or any(c.isdigit() for c in word)}
+
+    def inventory(self, query='', *, limit=100):
         items = []
         for name,schema in ARG_SCHEMAS.items():
             try:
@@ -127,9 +138,8 @@ class MissionTools:
             except PermissionError:
                 continue
             description = TOOL_DESCRIPTIONS.get(name,'Built-in mission protocol tool: '+name)
-            if not query or query.casefold() in (name+' '+description).casefold():
-                items.append({'name':name,'origin':'builtin','description':description,
-                              'availability':'permitted_protocol_tool','invocation':'direct JSON tool call'})
+            items.append({'name':name,'origin':'builtin','description':description,
+                          'availability':'permitted_protocol_tool','invocation':'direct JSON tool call'})
         for origin, root in [('workspace', Path(self.agent.workspace)/'.aurora/tools'), ('application', self.services)]:
             if not root.exists():
                 continue
@@ -145,25 +155,78 @@ class MissionTools:
                     doc = ast.get_docstring(ast.parse(path.read_text(encoding='utf-8'))) or ''
                 except (OSError, ValueError, SyntaxError, UnicodeError):
                     continue
-                if query and query.casefold() not in (name+' '+doc).casefold():
-                    continue
                 items.append({'name': name, 'origin': origin, 'description': doc[:300],
+                              'path':str(path.resolve()),
                               'availability': 'source_present_not_runtime_verified'})
-                if len(items) >= 100:
-                    return items
-        return items
+        if query:
+            tokens = self.query_tokens(query)
+            def score(item):
+                text = item['name']+' '+item['description']
+                return (40 if query.casefold() in text.casefold() else 0)+3*len(tokens & self.query_tokens(item['name']))+len(tokens & self.query_tokens(item['description']))
+            items = sorted((item for item in items if score(item)),key=lambda item:-score(item))
+        return items if limit is None else items[:limit]
+
+    def path_info(self, path):
+        root = Path(self.agent.workspace).resolve()
+        parent = path
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        # Confined missions must not list ancestors outside their workspace.
+        observable = self.agent.permissions=='FULL' or parent.is_relative_to(root)
+        info = {'path':str(path),'exists':path.exists(),'type':'directory' if path.is_dir() else 'file' if path.is_file() else 'missing',
+                'workspace':str(root),'relative_path':path.relative_to(root).as_posix() if path.is_relative_to(root) else None,
+                'nearest_existing_parent':str(parent) if observable else None}
+        if path.is_file():
+            info['bytes'] = path.stat().st_size
+            with path.open('rb') as stream:
+                sample = stream.read(8192)
+            try:
+                codecs.getincrementaldecoder('utf-8')().decode(sample,final=info['bytes']<=len(sample))
+                info['content_kind'] = 'binary' if b'\x00' in sample else 'utf8_text_candidate'
+            except UnicodeError:
+                info['content_kind'] = 'binary_or_non_utf8'
+        if not path.exists() and observable and parent.is_dir():
+            info['parent_entries'] = [p.name for p in sorted(parent.iterdir())[:40]]
+        return info
+
+    def require_path(self, path, *, directory=False):
+        if not path.exists():
+            raise FileNotFoundError('Path does not exist: '+json.dumps(self.path_info(path),ensure_ascii=False)+
+                                    '; inspect_path or list_files on the observed parent, or create the requested output before reading it')
+        if directory and not path.is_dir():
+            raise NotADirectoryError('list_files needs an existing directory; use inspect_path for '+str(path))
+        if not directory and not path.is_file():
+            raise IsADirectoryError('A file is required: '+str(path))
+
+    @staticmethod
+    def require_text(raw, path):
+        if b'\x00' in raw:
+            raise TextFormatError('Binary input cannot be inspected as UTF-8 text or CSV: '+str(path)+'; use inspect_path and discover a tool for its actual format')
+        try:
+            return raw.decode('utf-8-sig')
+        except UnicodeError as exc:
+            raise TextFormatError('Input is not UTF-8 text: '+str(path)+'; discover a tool for its actual format or encoding') from exc
 
     def read(self, path, offset, limit):
         # Hash exactly the bytes observed, including CRLF/non-ASCII. Never scan
         # a large file merely to attach a hash to a bounded excerpt.
+        self.require_path(path)
         with path.open('rb') as stream:
             raw = stream.read(limit*4+1)
+        if b'\x00' in raw:
+            self.require_text(raw,path)
+        try:
+            codecs.getincrementaldecoder('utf-8')().decode(raw,final=len(raw)<=limit*4)
+            encoding_status = 'utf8_excerpt; full file encoding not validated beyond the bounded read'
+        except UnicodeError:
+            encoding_status = 'non_utf8_lossy_excerpt; choose an appropriate encoding tool before interpreting content'
         if len(raw)<=limit*4:
             text = raw.decode('utf-8',errors='replace')
             content = text[offset:offset+limit]
             return {'path':str(path),'content':content,'next_offset':offset+len(content),
+                    'encoding_status':encoding_status,
                     'truncated':len(text)>offset+limit,'sha256':hashlib.sha256(raw).hexdigest()}
-        with path.open(encoding='utf-8', errors='replace') as stream:
+        with path.open(encoding='utf-8',errors='replace') as stream:
             remaining = offset
             while remaining:
                 consumed = stream.read(min(remaining, 8192))
@@ -171,15 +234,17 @@ class MissionTools:
                     break
                 remaining -= len(consumed)
             text = stream.read(limit+1)
-        return {'path':str(path), 'content':text[:limit], 'next_offset':offset+min(len(text),limit), 'truncated':len(text)>limit}
+        return {'path':str(path), 'content':text[:limit], 'next_offset':offset+min(len(text),limit),
+                'encoding_status':encoding_status,'truncated':len(text)>limit}
 
     def inspect_csv(self, path, columns, delimiter):
         if not isinstance(columns,list) or not all(isinstance(c,str) for c in columns) or len(set(columns))!=len(columns):
             raise ValueError('integer_columns must contain distinct column names')
         if not isinstance(delimiter,str) or len(delimiter)!=1:
             raise ValueError('CSV delimiter must be one character')
+        self.require_path(path)
         raw = read_verification_bytes(path,self.agent.policy.output_chars*4)
-        reader = csv.DictReader(io.StringIO(raw.decode('utf-8-sig'),newline=''),delimiter=delimiter)
+        reader = csv.DictReader(io.StringIO(self.require_text(raw,path),newline=''),delimiter=delimiter)
         names = reader.fieldnames
         if not names or any(not n for n in names) or len(set(names))!=len(names):
             raise ValueError('CSV must have distinct nonempty header names')
@@ -262,6 +327,8 @@ class MissionTools:
                 flags.append({'arguments':[n.value for n in node.args if isinstance(n, ast.Constant) and isinstance(n.value, str)],
                               'options':{k.arg:ast.unparse(k.value) for k in node.keywords}})
         return {'path':str(path), 'description':ast.get_docstring(tree), 'cli_arguments':flags,
+                'execution_directory':self.agent.workspace,'runtime_paths':self.agent._runtime_paths(),
+                'invocation':'run_tool with this script name and observed CLI arguments; set output arguments explicitly for the requested destination',
                 'source':source[:self.agent.policy.output_chars], 'truncated':len(source)>self.agent.policy.output_chars}
 
     async def fetch(self, url, *, extract_html=True, max_chars=None):
@@ -293,12 +360,17 @@ class MissionTools:
             import platform, shutil
             from dataclasses import asdict
             from .runtime_policy import model_options
-            disk = shutil.disk_usage(a.workspace)
+            ancestor = Path(a.workspace)
+            while not ancestor.exists() and ancestor != ancestor.parent:
+                ancestor = ancestor.parent
+            disk = shutil.disk_usage(ancestor)
             inventory = await asyncio.to_thread(self.inventory)
             status = {'os':platform.system(),'architecture':platform.machine(),'python':platform.python_version(),
                       'cpu_count':os.cpu_count(),'disk_free_bytes':disk.free,'model':a.model,
                       'permissions':a.permissions,'limits':asdict(a.policy),'model_options':model_options(a.context_tokens),
                       'goal':a.request_text,'plan':a.state['plan'],'verified':a.state['verified'],
+                      'runtime_paths':a._runtime_paths(),'workspace_exists':Path(a.workspace).is_dir(),
+                      'tools':inventory,
                       'source_tools':sum(t['origin']!='builtin' for t in inventory),
                       'builtin_tools':sum(t['origin']=='builtin' for t in inventory),'availability':'individual engines must still be probed'}
             try:
@@ -308,6 +380,8 @@ class MissionTools:
             except ImportError:
                 status['memory'] = {'status':'measurement_unavailable'}
             return status
+        if name == 'inspect_path':
+            return await asyncio.to_thread(self.path_info,a._file_path(args['path']))
         if name == 'read_file':
             path = a._file_path(args.get('path', ''))
             offset = max(0, int(args.get('offset', 0)))
@@ -318,7 +392,12 @@ class MissionTools:
                                            args.get('integer_columns',[]),args.get('delimiter',','))
         if name == 'list_files':
             root = a._file_path(args.get('path', '.'))
-            return await asyncio.to_thread(lambda: [{'name':p.name,'directory':p.is_dir()} for p in sorted(root.iterdir())[:200]])
+            def listing():
+                self.require_path(root,directory=True)
+                return [{'name':p.name,'directory':p.is_dir(),'path':str(p),
+                         'relative_path':p.relative_to(a.workspace).as_posix() if p.is_relative_to(a.workspace) else None}
+                        for p in sorted(root.iterdir())[:200]]
+            return await asyncio.to_thread(listing)
         if name == 'write_file':
             path = a._file_path(args.get('path', ''))
             content = args.get('content', '')
@@ -348,7 +427,7 @@ class MissionTools:
             argv = args.get('argv', [])
             if not isinstance(argv, list) or not all(isinstance(v, str) for v in argv):
                 raise ValueError('argv must be a list of strings matching inspect_tool')
-            return await a._run_process([self.python, str(path), *argv], cwd=path.parent,return_details=True)
+            return await a._run_process([self.python, str(path), *argv], cwd=a.workspace,return_details=True)
         if name == 'create_tool':
             tool_name = args.get('name', '')
             if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', tool_name):
@@ -366,6 +445,11 @@ class MissionTools:
             query = args.get('query', '').strip()
             if not query:
                 raise ValueError('A research query is required')
+            key = ' '.join(query.casefold().split())
+            cache = a.state.setdefault('research_cache',{})
+            if key in cache and not args.get('refresh',False):
+                return {**deepcopy(cache[key]),'cached':True,
+                        'next_step':'Consult a returned source with fetch_url or act using inspected local tools; repeating links does not generate an artifact'}
             from urllib.parse import urlencode
             page = await self.fetch('https://html.duckduckgo.com/html/?'+urlencode({'q':query}),
                                     extract_html=False, max_chars=1024*1024)
@@ -373,7 +457,12 @@ class MissionTools:
             parser.feed(page['content'])
             if not parser.links:
                 raise RuntimeError('Search returned no usable links; use another query or fetch a known source')
-            return {'query':query,'results':parser.links[:10], 'source_status':'links_only_not_consulted', 'retrieved_at':page['retrieved_at']}
+            result = {'query':query,'results':[{'url':link['url'],'title':link['title'][:300]} for link in parser.links[:10]],
+                      'source_status':'links_only_not_consulted','retrieved_at':page['retrieved_at']}
+            cache[key] = deepcopy(result)
+            while len(cache)>8:
+                cache.pop(next(iter(cache)))
+            return result
         if name == 'verify':
             checks = args.get('checks')
             if not isinstance(checks, list) or not checks:

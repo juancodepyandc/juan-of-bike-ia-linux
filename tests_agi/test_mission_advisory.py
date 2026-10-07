@@ -39,7 +39,10 @@ class MissionAdvisory(unittest.IsolatedAsyncioTestCase):
         state = next(m for m in messages if m['content'].startswith('Execution state'))
         facts = json.loads(state['content'].split(': ', 1)[1])
         self.assertEqual(facts['runtime'], {'workspace':str(self.root),
-            'delivery_directory':str(self.root/'.transfer_to_client/current')})
+            'delivery_directory':str(self.root/'.transfer_to_client/current'),
+            'application_tools_directory':str(self.agent.tools.services.resolve()),
+            'workspace_tools_directory':str(self.root/'.aurora/tools'),
+            'script_execution_directory':str(self.root)})
 
     def test_history_uses_only_budget_remaining_after_latest_observation(self):
         self.agent.advisory_context = self.old*1000
