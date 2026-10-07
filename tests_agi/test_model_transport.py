@@ -50,6 +50,7 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(''.join(chunks),'Observed answer')
         self.assertEqual(self.received[0]['options'],{})
         self.assertNotIn('format',self.received[0])
+        self.assertNotIn('think',self.received[0])
         self.assertEqual(metrics[0]['tokens_per_second'],20)
         self.assertEqual(metrics[0]['prompt_eval_count'],23)
 
@@ -155,6 +156,7 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             _=[c async for c in agent._chat_chunks([{'role':'user','content':'Verified state'}])]
         tools=[b['properties']['tool']['const'] for b in self.received[0]['format']['oneOf']]
         self.assertEqual(tools,['finish'])
+        self.assertIs(self.received[0]['think'],False)
 
     async def test_work_decoding_remains_available_for_missing_or_rejected_proofs(self):
         self.lines=[{'message':{'content':'{"tool":"inspect_runtime","args":{}}'}},{'done':True}]
@@ -173,6 +175,17 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
                     tools=[b['properties']['tool']['const'] for b in self.received[-1]['format']['oneOf']]
                     self.assertIn('write_file',tools)
                     self.assertIn('verify',tools)
+                    self.assertNotIn('think',self.received[-1])
+
+    async def test_reasoning_only_exhaustion_reports_cause_without_exposing_trace(self):
+        self.lines=[{'message':{'thinking':'fixture internal reasoning'}},
+                    {'done':True,'done_reason':'length','eval_count':12}]
+        metrics=[]
+        with self.assertRaisesRegex(RuntimeError,'complete answer.*done_reason=.*length.*answer_chars=0') as failure:
+            _=[c async for c in self.gateway.chat_chunks([],'fixture:local',on_metrics=metrics.append)]
+        self.assertEqual(metrics[0]['thinking_chars'],len('fixture internal reasoning'))
+        self.assertEqual(metrics[0]['done_reason'],'length')
+        self.assertNotIn('fixture internal reasoning',str(failure.exception))
 
     async def test_context_window_uses_the_selected_loaded_runner(self):
         self.assertEqual(await self.gateway.running_context_window('fixture:local'),4096)

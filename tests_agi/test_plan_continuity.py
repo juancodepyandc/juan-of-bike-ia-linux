@@ -1,6 +1,7 @@
 """Observed replanning and repeated generation must preserve actual progress."""
 from copy import deepcopy
 import asyncio
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -86,13 +87,33 @@ class PlanContinuity(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(next(iter(self.agent.state['resources'].values()))['path'],first['path'])
 
     async def test_inspected_script_paths_remain_available_after_history_compaction(self):
+        self.agent.state['verified'] = []  # Inspecting an exporter is a work turn.
         self.agent.tools.services = self.root/'services'
         self.agent.tools.services.mkdir()
         (self.agent.tools.services/'export.py').write_text('import argparse\np=argparse.ArgumentParser()\np.add_argument("--output-dir")\n')
         info = await self.agent._execute('inspect_tool',{'name':'export.py'})
         self.agent.state['messages'] = [{'role':'system','content':self.agent._compact_system_prompt()},{'role':'user','content':self.agent.request_text}]
-        self.assertIn(info['path'],str(self.agent._messages()))
+        message = next(m['content'] for m in self.agent._messages() if m['content'].startswith('Execution state'))
+        state = json.loads(message[message.index('{'):])
+        self.assertEqual(state['known_resources'][0]['path'],info['path'])
         self.assertIn('--output-dir',str(self.agent._messages()))
+
+    async def test_completion_prompt_keeps_measured_outputs_without_restarting_discovery(self):
+        self.agent.state['check_proofs'] = {'Requested asset conforms':[{
+            'check':{'kind':'file','path':'saved.asset','criterion':'Requested asset conforms'},'observed_sha256':'actual measured digest'}]}
+        self.agent.state['messages'] = [{'role':'system','content':self.agent._system_prompt()},
+                                        {'role':'user','content':self.agent.request_text}]
+        self.agent.state['environment'] = {'source_tools':[{'name':'unneeded_exporter.py'}]}
+        messages = self.agent._messages()
+        self.assertLess(len(messages[0]['content']),1500)
+        state_message = next(m['content'] for m in messages if m['content'].startswith('Execution state'))
+        state = json.loads(state_message[state_message.index('{'):])
+        self.assertEqual(state['execution_phase'],'completion_proposal')
+        self.assertEqual(state['available_source_tools'],[])
+        self.assertEqual(state['verified_outputs'][0]['path'],'saved.asset')
+        self.assertEqual(state['verified_outputs'][0]['observed_sha256'],'actual measured digest')
+        self.assertIn('independently audit',messages[0]['content'])
+        self.assertEqual(messages[1]['content'],self.agent.request_text)
 
     async def test_interrupted_generation_cannot_bypass_replay_guard_with_a_new_directory(self):
         self.agent.tools.services = self.root/'services'

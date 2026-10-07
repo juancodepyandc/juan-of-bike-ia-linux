@@ -72,11 +72,11 @@ class LLMGateway:
             logger.debug('Running model context window unavailable',exc_info=True)
         return None
 
-    async def chat_chunks(self, messages, model=None, *, session=None, on_metrics=None, response_format=None):
+    async def chat_chunks(self, messages, model=None, *, session=None, on_metrics=None, response_format=None, thinking=None):
         if session is None:
             async with aiohttp.ClientSession(timeout=self.timeout()) as client:
                 async for chunk in self.chat_chunks(messages, model, session=client, on_metrics=on_metrics,
-                                                    response_format=response_format):
+                                                    response_format=response_format,thinking=thinking):
                     yield chunk
             return
         selected = await self.resolve_model(model)
@@ -84,9 +84,12 @@ class LLMGateway:
                    'options': model_options(self.context_tokens)}
         if response_format is not None:
             payload['format'] = response_format
+        if thinking is not None:
+            payload['think'] = thinking
         started, last_flush = time.monotonic(), time.monotonic()
         complete, received, pending = False, False, ''
         received_chars = 0
+        thinking_chars, done_reason = 0, None
         try:
             async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
                 response.raise_for_status()
@@ -96,14 +99,17 @@ class LLMGateway:
                     data = json.loads(line)
                     if data.get('error'):
                         raise RuntimeError(str(data['error']))
+                    thinking_chars += len(data.get('message',{}).get('thinking',''))
                     if data.get('done'):
                         complete = True
+                        done_reason = data.get('done_reason')
                         if on_metrics:
                             measured = {key: data[key] for key in (
                                 'total_duration', 'load_duration', 'prompt_eval_count',
                                 'prompt_eval_duration', 'eval_count', 'eval_duration') if key in data}
                             measured.update(model=selected, wall_seconds=time.monotonic()-started,
-                                            options=payload['options'])
+                                            options=payload['options'],done_reason=done_reason,
+                                            thinking_chars=thinking_chars,think=payload.get('think'))
                             if measured.get('eval_duration', 0) > 0:
                                 measured['tokens_per_second'] = measured.get('eval_count', 0) * 1e9 / measured['eval_duration']
                             result = on_metrics(measured)
@@ -122,7 +128,9 @@ class LLMGateway:
         if pending:
             yield pending
         if not complete or not received:
-            raise RuntimeError('Model stream ended without a complete answer')
+            raise RuntimeError('Model stream ended without a complete answer'
+                               +f' (done_reason={done_reason!r}, thinking_chars={thinking_chars}, answer_chars={received_chars}). '
+                               'Existing tool outputs are preserved; inspect the model context/output budget before resuming.')
 
     async def generate_stream(self, system_prompt: str, user_prompt: str, on_token, model=None, *, response_format=None) -> str:
         answer = ''
