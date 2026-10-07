@@ -17,6 +17,10 @@ class ModelReadTimeout(asyncio.TimeoutError):
     """A model transport deadline, distinct from the client-to-bridge link."""
 
 
+class ModelIncompleteAnswer(RuntimeError):
+    """No usable model answer; retrying an unchanged budget is not a repair."""
+
+
 def _model_timeout(exc, model, timeout, received_chars):
     phase = (f'apres {received_chars} caracteres de reponse' if received_chars
              else 'avant le premier bloc de reponse')
@@ -128,7 +132,7 @@ class LLMGateway:
         if pending:
             yield pending
         if not complete or not received:
-            raise RuntimeError('Model stream ended without a complete answer'
+            raise ModelIncompleteAnswer('Model stream ended without a complete answer'
                                +f' (done_reason={done_reason!r}, thinking_chars={thinking_chars}, answer_chars={received_chars}). '
                                'Existing tool outputs are preserved; inspect the model context/output budget before resuming.')
 

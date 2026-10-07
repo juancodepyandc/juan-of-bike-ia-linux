@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import aiohttp
 from agi_core.bus import global_bus
-from agi_core.llm_gateway import LLMGateway
+from agi_core.llm_gateway import LLMGateway, ModelIncompleteAnswer
 from agi_core.mission_tools import MissionTools, digest_file
 from agi_core.mission_protocol import CHECK_FIELDS, PURE_CHECKS, tool_response_schema, validate_args, validate_checks
 from agi_core.runtime_policy import RuntimePolicy
@@ -1571,6 +1571,8 @@ class AutonomousMissionAgent:
                             if self.state['criteria'] and self.policy.request_audit and not await self._completion_audit_current():
                                 try:
                                     audit_call = await self._propose_completion_audit()
+                                except ModelIncompleteAnswer:
+                                    raise  # Preserve outputs; an unchanged context cannot repair exhaustion.
                                 except (ValueError,RuntimeError,PermissionError,aiohttp.ClientError) as exc:
                                     self.state['messages'].append({'role':'user','content':'Independent request checks could not be generated: '+str(exc)})
                                     await self._emit('request_audit_rejected',{'error':str(exc),'effects':False})
