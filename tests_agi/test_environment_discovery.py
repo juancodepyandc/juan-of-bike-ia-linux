@@ -14,7 +14,7 @@ from agi_core.mission_tools import TextFormatError
 class EnvironmentDiscovery(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.folder = tempfile.TemporaryDirectory()
-        self.root = Path(self.folder.name)
+        self.root = Path(self.folder.name).resolve()
         self.workspace = self.root/'requested-output'
         self.workspace.mkdir()
         self.services = self.root/'services'
