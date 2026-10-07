@@ -252,7 +252,7 @@ def build_comfy_flux_workflow(
     return apply_validated_workflow(workflow)
 
 
-def submit_comfy_prompt(workflow: Dict[str, Any]) -> Optional[str]:
+def submit_comfy_prompt(workflow: Dict[str, Any]) -> str:
     unload_ollama_memory()
     try:
         data = json.dumps({"prompt": workflow}).encode("utf-8")
@@ -263,16 +263,25 @@ def submit_comfy_prompt(workflow: Dict[str, Any]) -> Optional[str]:
         )
         with urllib.request.urlopen(req, timeout=20) as resp:
             res = json.loads(resp.read().decode("utf-8"))
-            return res.get("prompt_id")
+        prompt_id = res.get("prompt_id")
+        if not isinstance(prompt_id, str) or not prompt_id:
+            raise RuntimeError(f"ComfyUI rejected the workflow: {json.dumps(res, ensure_ascii=False)[:2000]}")
+        return prompt_id
+    except urllib.error.HTTPError as exc:
+        detail = exc.read(16384).decode("utf-8", errors="replace")
+        raise RuntimeError(f"ComfyUI queue HTTP {exc.code}: {detail[:2500]}") from exc
     except Exception as exc:
-        print(f"[ComfyUI] Queue error: {exc}")
-        return None
+        raise RuntimeError(f"ComfyUI queue error: {exc}") from exc
 
 def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1800) -> bytes:
     """Follow the submitted job and reject failed or incomplete image output."""
     deadline = time.monotonic() + timeout_s
     failures = 0
+    next_notice = time.monotonic() + 30
     while time.monotonic() < deadline:
+        if time.monotonic() >= next_notice:
+            print(f"[ComfyUI] Monitoring job {prompt_id}; no completed image observed yet.", flush=True)
+            next_notice = time.monotonic() + 30
         try:
             req = urllib.request.Request(f"{COMFY_BASE}/history/{prompt_id}")
             with urllib.request.urlopen(req, timeout=5) as resp:

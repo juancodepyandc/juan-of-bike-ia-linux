@@ -19,7 +19,7 @@ from uuid import uuid4
 import aiohttp
 from agi_core.bus import global_bus
 from agi_core.llm_gateway import LLMGateway
-from agi_core.mission_tools import MissionTools
+from agi_core.mission_tools import MissionTools, digest_file
 from agi_core.mission_protocol import CHECK_FIELDS, PURE_CHECKS, tool_response_schema, validate_args, validate_checks
 from agi_core.runtime_policy import RuntimePolicy
 
@@ -160,14 +160,7 @@ class AutonomousMissionAgent:
                         'effective_context_chars':self._context_chars(),
                         'protocol_variant':self.state.get('protocol_variant','full')}
             await self._emit('model_metrics', {**data,'execution_phase':'completion_proposal' if completion else 'work'})
-        from agi_core.mission_protocol import ARG_SCHEMAS
-        allowed = []
-        for name in ARG_SCHEMAS:
-            try:
-                self._require_tool(name)
-                allowed.append(name)
-            except PermissionError:
-                pass
+        allowed = self._available_tools()
         missing = [c for c in self.state['criteria'] if c not in self.state['verified']]
         if completion:
             # Propose a conclusion for the existing audit/review pipeline. This
@@ -177,6 +170,20 @@ class AutonomousMissionAgent:
                                                     response_format=tool_response_schema(missing or self.state['criteria'],allowed,
                                                         required_tool_names=self._explicit_tool_names(),allow_delegation_checks=not self.depth)):
             yield chunk
+
+    def _available_tools(self):
+        """Constrain decoding to the same prerequisites as the executor."""
+        from agi_core.mission_protocol import ARG_SCHEMAS
+        allowed = []
+        for name in ARG_SCHEMAS:
+            try:
+                self._require_tool(name)
+            except PermissionError:
+                continue
+            if not self.state['plan'] and name in CHANGE_TOOLS:
+                continue
+            allowed.append(name)
+        return allowed
 
     def _completion_candidate_ready(self):
         return bool(self.state['criteria'] and not self.state.get('completion_review_gap')
@@ -215,6 +222,7 @@ class AutonomousMissionAgent:
         self._require_tool('run_command')
         env = os.environ.copy()
         env['PATH'] = str(Path(PYTHON_BIN).parent)+os.pathsep+env.get('PATH','')
+        env['PYTHONUNBUFFERED'] = '1'
         identity = self._command_identity(command,cwd or self.workspace,env['PATH'])
         interrupted = self.state.get('interrupted_processes',[])
         if any(self._same_interrupted_process(identity,old,env['PATH']) for old in interrupted):
@@ -267,6 +275,13 @@ class AutonomousMissionAgent:
         except asyncio.CancelledError:
             observed['result']['status'] = 'interrupted_outcome_unknown'
             raise  # Keep the process identity for explicit checkpoint recovery.
+        except asyncio.TimeoutError as exc:
+            observed['result']['status'] = 'timed_out'
+            if identity not in self.state.setdefault('interrupted_processes',[]):
+                self.state['interrupted_processes'].append(identity)
+            self.state.pop('pending_process',None)
+            raise RuntimeError(f'Command timed out after {self.policy.command_seconds}s; partial outputs may exist. '
+                               f'Inspect them and any external job before retrying. Last output: {observed["result"]["output"][-2000:]}') from exc
         except Exception:
             observed['result']['status'] = 'failed'
             self.state.pop('pending_process',None)
@@ -546,9 +561,13 @@ class AutonomousMissionAgent:
             if not prompt:
                 raise ValueError('An image prompt is required')
             await self._run_process([PYTHON_BIN,str(APPLICATION_DIR/'python-services/image_module_engine.py'),prompt,'--output-dir',str(target)])
-            if not (target/'image.png').is_file():
+            image = target/'image.png'
+            if not image.is_file():
                 raise RuntimeError('Image generation produced no master image')
-            return {'path':str(target/'image.png'),'delivery':'pending_verification'}
+            digest = await asyncio.to_thread(digest_file,image)
+            return {'path':str(image),'bytes':image.stat().st_size,'sha256':digest,
+                    'metadata_path':str(target/'metadata.json'),'delivery':'pending_verification',
+                    'scope':'Generated file presence and integrity only; visual conformity still requires inspection'}
         return await self.tools.execute(name,args)
 
     @staticmethod
@@ -583,6 +602,8 @@ class AutonomousMissionAgent:
     def _messages(self):
         messages = [self.state['messages'][0],{'role':'user','content':self.request_text},*self.state['messages'][2:]]
         state = {'runtime':self._runtime_paths(),
+                              'execution_phase':'work' if self.state['plan'] else 'planning',
+                              'prerequisite':'set_plan with measurable criteria before any action' if not self.state['plan'] else None,
                               'criteria':[{'criterion':c,'verified':c in self.state['verified']} for c in self.state['criteria']],
                               'required_tools':self.state.get('required_tools',[]),'executed_tools':self.state.get('executed_tools',[]),
                               'known_resources':list(self.state.get('resources',{}).values()),
@@ -591,10 +612,15 @@ class AutonomousMissionAgent:
                                                         'process_started':e['result']['process_started'],
                                                         'output':self._excerpt(e['result']['output'],600)}
                                                        for e in self.state.get('process_observations',[])
-                                                       if e['result']['status']=='interrupted_outcome_unknown'],
+                                                       if e['result']['status'] in {'interrupted_outcome_unknown','timed_out'}],
                               'evidence':[{'id':e['id'],'tool':e['tool'],'ok':e['ok']} for e in self.state['evidence'][-40:]],
                               'plan':self.state['plan'],
                               'verification_failures':self.state.get('verification_failures',[]),
+                              'latest_tool_failure':next(({'id':e['id'],'tool':e['tool'],
+                                  'action_number':e.get('action_number'),
+                                  'scope':'Historical failure; newer observations may show its cause was resolved',
+                                  'result':self._excerpt(json.dumps(e['result'],ensure_ascii=False),600)}
+                                  for e in reversed(self.state['evidence']) if not e['ok']),None),
                               'recovery_hypotheses':[{'hypothesis':r['hypothesis'],'expected_observation':r['expected_observation'],
                                   'status':r['status'],'scope':'Unverified model hypothesis; only actual checks prove their measured scope'}
                                   for r in self.state.get('recoveries',[])[-1:] if 'hypothesis' in r],
@@ -782,7 +808,7 @@ class AutonomousMissionAgent:
     async def _review_completion(self, message):
         """Grounded model judgment, with one recheck of rejected/invalid verdicts."""
         observations = list(self.state['evidence'])+[e for e in self.state.get('process_observations',[])
-                                                   if e['result']['status']=='interrupted_outcome_unknown']
+                                                   if e['result']['status'] in {'interrupted_outcome_unknown','timed_out'}]
         observations += [{'id':r['execution_id'],'tool':'delegation_execution','ok':r['passed'],'result':r}
                          for r in self._delegation_observations()]
         if self.state.get('output_revalidation'):
@@ -858,18 +884,12 @@ class AutonomousMissionAgent:
 
     async def _recover_stagnation(self, stalled_actions):
         """Ask for a distinct experiment in fresh context, with no effects here."""
-        from agi_core.mission_protocol import ARG_SCHEMAS
         from agi_core.mission_recovery import (bounded_recovery_payload,
             recovery_response_schema, validate_recovery)
-        allowed = []
-        for name in ARG_SCHEMAS:
-            if name == 'set_plan':
-                continue  # A diagnosis must not erase failed acceptance criteria.
-            try:
-                self._require_tool(name)
-                allowed.append(name)
-            except PermissionError:
-                pass
+        # Planning is the remedy when no plan was ever accepted. Once one
+        # exists, a diagnosis must not erase its failed acceptance criteria.
+        allowed = [name for name in self._available_tools()
+                   if name != 'set_plan' or not self.state['plan']]
         recent = list(self.state['evidence'])
         if not recent or self.state.get('recovery_attempts_used',0) >= self.policy.recovery_attempts:
             return None
@@ -1436,12 +1456,15 @@ class AutonomousMissionAgent:
                     await self._emit('tool_start',{'tool':name,'worker':worker})
                     try:
                         result = await self._execute(name,args)
-                        ok = not isinstance(result,dict) or result.get('passed',True)
+                        ok = not isinstance(result,dict) or (not result.get('error') and
+                            all(result.get(key,True) for key in ('passed','ok','success')))
                     except Exception as exc:
-                        result, ok = {'error':str(exc) or type(exc).__name__}, False
+                        result, ok = {'error':str(exc) or type(exc).__name__,
+                                      'exception_type':type(exc).__name__}, False
                     number = self.state['action_count']+1
                     self.state['action_count'] = number
                     evidence = {'id':'ev_'+uuid4().hex[:12],'tool':name,'ok':ok,'result':result,
+                                'action_number':number,
                                 'elapsed_seconds':time.monotonic()-started}
                     self.state['evidence'].append(evidence)
                     self.state['evidence'] = self.state['evidence'][-64:]
@@ -1484,7 +1507,10 @@ class AutonomousMissionAgent:
                                        '; all planned criteria and required tools verified. Propose finish for an original-goal review.\n')
                         progress = ('Verification progress: '+json.dumps({'unverified':missing,'verified':self.state['verified'],
                                                                          'pending_tools':pending_tools},ensure_ascii=False)+instruction)
-                    signature = hashlib.sha256(json.dumps(_stable_observation([name,args,result,
+                    # Varying a filename/prompt cannot resolve an unchanged
+                    # prerequisite or execution error. Count that same cause.
+                    observation = [name,result['error']] if not ok and isinstance(result,dict) and result.get('error') else [name,args,result]
+                    signature = hashlib.sha256(json.dumps(_stable_observation([*observation,
                         {k:self.state.get(k,[]) for k in ('criteria','verified','required_tools','executed_tools')}]),
                         sort_keys=True,ensure_ascii=False).encode()).hexdigest()
                     repeated = repeated+1 if signature in seen_signatures else 0
