@@ -117,6 +117,14 @@ class AutonomousMissionAgent:
             raise PermissionError('File path escapes the mission workspace')
         return target
 
+    def _prepare_workspace(self):
+        self._assert_owned()
+        root = Path(self.workspace)
+        if root.exists() and not root.is_dir():
+            raise NotADirectoryError('Mission workspace is not a directory: '+str(root))
+        root.mkdir(parents=True,exist_ok=True)
+        self.state.get('environment',{})['workspace_exists'] = True
+
     async def _save(self):
         if self.store:
             saved = await asyncio.to_thread(self.store.save_checkpoint, self.mission_id, self.state, self._lease_owner)
@@ -503,6 +511,8 @@ class AutonomousMissionAgent:
             raise ValueError('Every check must name an exact current criterion: '+json.dumps(self.state['criteria'],ensure_ascii=False))
         if name in PLANNED_TOOLS and not self.state['plan']:
             raise ValueError('Set a plan and measurable acceptance criteria before executing actions')
+        if name in CHANGE_TOOLS:
+            self._prepare_workspace()
         if name == 'set_plan':
             result = self._plan(args)
             await self._emit('plan', result)
@@ -603,6 +613,7 @@ class AutonomousMissionAgent:
     def _messages(self):
         messages = [self.state['messages'][0],{'role':'user','content':self.request_text},*self.state['messages'][2:]]
         state = {'runtime':self._runtime_paths(),
+                              'workspace_exists':self.state.get('environment',{}).get('workspace_exists'),
                               'execution_phase':'work' if self.state['plan'] else 'planning',
                               'prerequisite':'set_plan with measurable criteria before any action' if not self.state['plan'] else None,
                               'criteria':[{'criterion':c,'verified':c in self.state['verified']} for c in self.state['criteria']],

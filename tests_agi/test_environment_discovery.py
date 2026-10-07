@@ -109,6 +109,24 @@ class EnvironmentDiscovery(unittest.IsolatedAsyncioTestCase):
                     await self.agent._execute(tool, args)
             fetch.assert_not_awaited()
 
+    async def test_requested_workspace_is_initialized_only_after_an_accepted_action_plan(self):
+        destination = self.root/'new-project'/'results'
+        self.agent.workspace = str(destination)
+        (self.services/'export.py').write_text('from pathlib import Path\nPath("asset.bin").write_bytes(b"saved in requested workspace")\n')
+        await self.agent._observe_environment()
+        self.assertFalse(destination.exists())
+        self.assertFalse(self.agent.state['environment']['workspace_exists'])
+        with self.assertRaisesRegex(ValueError, 'Set a plan'):
+            await self.agent._execute('run_tool', {'name':'export.py'})
+        self.assertFalse(destination.exists())
+        await self.agent._execute('set_plan', {'steps':['Export into the requested new workspace'],
+                                               'criteria':['The export is present in the requested workspace']})
+        self.assertFalse(destination.exists())
+        await self.agent._execute('run_tool', {'name':'export.py'})
+        self.assertEqual((destination/'asset.bin').read_bytes(), b'saved in requested workspace')
+        self.assertFalse((self.services/'asset.bin').exists())
+        self.assertTrue(self.agent.state['environment']['workspace_exists'])
+
     def search_page(self, order=('one','two')):
         return {'content':''.join('<a class="result__a" href="https://example.org/'+word+'">'+word+'</a>' for word in order),
                 'retrieved_at':123.0}
