@@ -3,6 +3,7 @@ import '../styles/aurora-v4.css'
 import { useAppStore } from '../stores/appStore.ts'
 import type { ModuleId } from '../types/app.ts'
 import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
+import HelpFab from './HelpFab.tsx'
 
 type ShellModuleId = ModuleId | 'cowork' | 'voice'
 
@@ -230,6 +231,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '14px 0',
         background: 'rgba(5,7,13,.55)', backdropFilter: 'blur(20px)',
         borderRight: '1px solid rgba(255,255,255,.09)',
+        overflowY: 'auto',
       }}>
         {DOCK.map((entry) => (
           <DockOrb
@@ -240,6 +242,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           />
         ))}
         <div style={{ flex: 1 }} />
+        <HelpFab docked />
         <div style={{ width: 30, height: 1, background: 'rgba(255,255,255,.1)', margin: '7px 0', flexShrink: 0 }} />
         <button
           type="button"

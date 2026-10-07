@@ -71,7 +71,6 @@ import { useDeviceKind } from './utils/device.ts'
 import {
   DEFAULT_CODE_MODEL,
   DEFAULT_MAIN_MODEL,
-  DEFAULT_VISION_MODEL,
   selectAdaptivePrimaryModel,
   selectAdaptiveVisionModel,
 } from './config/models.ts'
@@ -280,8 +279,6 @@ export default function App() {
     setFocusMode,
     setHardware,
     setInstalledModels,
-    setMainModel,
-    setVisionModel,
     setProfile,
     setServices,
     setRuntimeServices,
@@ -744,9 +741,7 @@ export default function App() {
         if (cancelled) return
         setHardware(hw)
         const safeMain = selectAdaptivePrimaryModel(hw)
-        if (safeMain !== DEFAULT_MAIN_MODEL) setMainModel(safeMain)
         const safeVision = selectAdaptiveVisionModel(hw)
-        if (safeVision !== DEFAULT_VISION_MODEL) setVisionModel(safeVision)
         const sig = buildMachineSignature(hw)
         if (profile) {
           const known = profile.knownMachineSignatures || []
@@ -933,7 +928,7 @@ export default function App() {
       <Suspense fallback={null}><LAZY_API_EMBED_PANEL /></Suspense>
       <KeyboardCheatsheet />
       <ScrollToTop />
-      <HelpFab />
+      {readUiSkin() !== 'aurora_v4' && <HelpFab />}
       <ConnectionIndicator />
       <VoiceQuickToggle />
       <AuroraCommandPalette

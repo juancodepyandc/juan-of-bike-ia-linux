@@ -21,6 +21,7 @@ import {
   detectBestMainModel,
   selectCodeModelForHardware,
   selectAdaptiveVisionModel,
+  selectAdaptivePrimaryModel,
   resolveConfiguredModel,
   selectAdaptiveReasoningModel,
   shouldPromoteToPrimaryMainModel,
@@ -170,8 +171,12 @@ interface AppState {
   addAvatar: (entry: AvatarEntry) => void
   removeAvatar: (id: string) => void
   setMainModel: (m: string) => void
+  mainModelAutomatic: boolean
+  setMainModelAutomatic: () => void
   setCodeModel: (m: string) => void
   setVisionModel: (m: string) => void
+  visionModelAutomatic: boolean
+  setVisionModelAutomatic: () => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -186,7 +191,13 @@ export const useAppStore = create<AppState>()(
       toggleFocusMode: () => set((state) => ({ focusMode: !state.focusMode })),
 
       hardware: null,
-      setHardware: (hw) => set({ hardware: hw }),
+      setHardware: (hw) => set((state) => ({
+        hardware: hw,
+        mainModel: state.mainModelAutomatic
+          ? (state.installedModels.length ? detectBestMainModel(state.installedModels) : selectAdaptivePrimaryModel(hw))
+          : state.mainModel,
+        visionModel: state.visionModelAutomatic ? selectAdaptiveVisionModel(hw) : state.visionModel,
+      })),
       services: { ollama: false, comfyui: false },
       setServices: (s) => set({ services: s }),
       checkingConfig: false,
@@ -442,17 +453,17 @@ export const useAppStore = create<AppState>()(
       installedModels: [],
       setInstalledModels: (m) => set((state) => {
         const bestMain = detectBestMainModel(m)
-        const userExplicitlyChose = state.mainModel !== DEFAULT_MAIN_MODEL
-          && state.mainModel !== selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL)
         return {
           installedModels: m,
-          mainModel: userExplicitlyChose ? state.mainModel : bestMain,
+          mainModel: state.mainModelAutomatic ? bestMain : state.mainModel,
           codeModel: selectCodeModelForHardware(state.hardware, m, state.codeModel),
         }
       }),
       mainModel: selectAdaptiveReasoningModel(null, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL),
+      mainModelAutomatic: true,
       codeModel: selectCodeModelForHardware(null),
       visionModel: VISION_HIGH_QUALITY_MODEL,  // qwen3-vl:30b par defaut (qualite max)
+      visionModelAutomatic: true,
       // Avatar
       selectedAvatarId: 'aurora-procedural',
       avatarList: [
@@ -500,19 +511,28 @@ export const useAppStore = create<AppState>()(
         selectedAvatarId: s.selectedAvatarId === id ? 'aurora-procedural' : s.selectedAvatarId,
       })),
       setMainModel: (m) => set((state) => ({
+        mainModelAutomatic: false,
         mainModel: resolveConfiguredModel(
           m,
           selectAdaptiveReasoningModel(state.hardware, DEFAULT_MAIN_MODEL, MAIN_FALLBACK_MODEL),
         ),
       })),
+      setMainModelAutomatic: () => set((state) => ({
+        mainModelAutomatic: true,
+        mainModel: state.installedModels.length ? detectBestMainModel(state.installedModels) : selectAdaptivePrimaryModel(state.hardware),
+      })),
       setCodeModel: (m) => set((state) => ({
         codeModel: selectCodeModelForHardware(state.hardware, state.installedModels, m),
       })),
-      setVisionModel: (m) => set({ visionModel: m }),
+      setVisionModel: (m) => set({ visionModel: m, visionModelAutomatic: false }),
+      setVisionModelAutomatic: () => set((state) => ({
+        visionModelAutomatic: true,
+        visionModel: selectAdaptiveVisionModel(state.hardware),
+      })),
     }),
     {
       name: 'juan-bike-app-store',
-      version: 8,
+      version: 9,
       migrate: (persistedState) => {
         const state = (persistedState ?? {}) as Partial<AppState> & { profile?: UserProfile | null }
 
@@ -521,7 +541,9 @@ export const useAppStore = create<AppState>()(
           DEFAULT_MAIN_MODEL,
           MAIN_FALLBACK_MODEL,
         )
-        const mainModel = shouldPromoteToPrimaryMainModel(state.mainModel)
+        const mainModelAutomatic = state.mainModelAutomatic ?? (!state.mainModel || state.mainModel === DEFAULT_MAIN_MODEL)
+        const visionModelAutomatic = state.visionModelAutomatic ?? (!state.visionModel || state.visionModel === DEFAULT_VISION_MODEL)
+        const mainModel = mainModelAutomatic && shouldPromoteToPrimaryMainModel(state.mainModel)
           ? safeMainFallback
           : resolveConfiguredModel(state.mainModel, safeMainFallback)
         const codeModel = selectCodeModelForHardware(
@@ -529,17 +551,15 @@ export const useAppStore = create<AppState>()(
           state.installedModels ?? [],
           state.codeModel,
         )
-        const visionModel = selectAdaptiveVisionModel(
-          state.hardware || state.profile?.hardware || null,
-          state.visionModel,
-          { preferQuality: true },
-        )
+        const visionModel = visionModelAutomatic
+          ? selectAdaptiveVisionModel(state.hardware || state.profile?.hardware || null, state.visionModel, { preferQuality: true })
+          : resolveConfiguredModel(state.visionModel, DEFAULT_VISION_MODEL)
 
         const profile = state.profile
           ? {
               ...state.profile,
               preferAdminMode: state.profile.preferAdminMode ?? true,
-              preferredMainModel: shouldPromoteToPrimaryMainModel(state.profile.preferredMainModel)
+              preferredMainModel: mainModelAutomatic && shouldPromoteToPrimaryMainModel(state.profile.preferredMainModel)
                 ? safeMainFallback
                 : resolveConfiguredModel(state.profile.preferredMainModel, safeMainFallback),
               preferredCodeModel: selectCodeModelForHardware(
@@ -547,19 +567,19 @@ export const useAppStore = create<AppState>()(
                 state.installedModels ?? [],
                 state.profile.preferredCodeModel,
               ),
-              preferredVisionModel: selectAdaptiveVisionModel(
-                state.hardware || state.profile?.hardware || null,
-                state.profile.preferredVisionModel,
-                { preferQuality: true },
-              ),
+              preferredVisionModel: visionModelAutomatic
+                ? selectAdaptiveVisionModel(state.hardware || state.profile?.hardware || null, state.profile.preferredVisionModel, { preferQuality: true })
+                : resolveConfiguredModel(state.profile.preferredVisionModel, visionModel),
             }
           : state.profile
 
         return {
           ...state,
           mainModel,
+          mainModelAutomatic,
           codeModel,
           visionModel,
+          visionModelAutomatic,
           profile,
           runtimeTask: sanitizeRuntimeTaskForPersistence(state.runtimeTask),
           generationJobs: sanitizeGenerationJobsForPersistence(state.generationJobs),
@@ -570,8 +590,10 @@ export const useAppStore = create<AppState>()(
         sidebarCollapsed: state.sidebarCollapsed,
         profile: state.profile,
         mainModel: state.mainModel,
+        mainModelAutomatic: state.mainModelAutomatic,
         codeModel: state.codeModel,
         visionModel: state.visionModel,
+        visionModelAutomatic: state.visionModelAutomatic,
         selectedAvatarId: state.selectedAvatarId,
         avatarList: state.avatarList,
         focusMode: state.focusMode,

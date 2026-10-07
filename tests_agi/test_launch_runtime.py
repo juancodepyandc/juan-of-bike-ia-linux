@@ -1,6 +1,7 @@
 """Launch reuse must preserve other processes and detect changed source/artifacts."""
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 import pytest
 
@@ -71,3 +72,20 @@ def test_native_cache_detects_rust_and_embedded_bundle_changes(tmp_path):
     source.write_text('rust')
     bundle.write_text('changed web')
     assert not runtime.build_is_current('native', tmp_path, cache)
+
+
+def test_web_cache_invalidates_when_embedded_git_identity_changes(tmp_path):
+    app = tmp_path / 'application'
+    (app / 'dist').mkdir(parents=True)
+    (app / 'dist/index.html').write_text('compiled', encoding='utf-8')
+    def git(*args):
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True,
+                              capture_output=True, text=True)
+    git('init', '--initial-branch=main')
+    identity = ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid']
+    git(*identity, 'commit', '--allow-empty', '-m', 'first')
+    cache = tmp_path / 'web.json'
+    runtime.mark_build('web', tmp_path, cache)
+    assert runtime.build_is_current('web', tmp_path, cache)
+    git(*identity, 'commit', '--allow-empty', '-m', 'second')
+    assert not runtime.build_is_current('web', tmp_path, cache)

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 
 
@@ -66,12 +67,26 @@ def build_state(kind: str, root: Path) -> dict:
                                          'vite.config.ts', 'tsconfig.json', 'tsconfig.app.json', 'tsconfig.node.json')]
     if kind == 'web':
         return {'inputs': fingerprint(web_inputs, root), 'output': fingerprint([app / 'dist'], root),
+                'git': git_identity(root),
                 'present': (app / 'dist/index.html').is_file()}
     native_inputs = [app / 'src-tauri' / name for name in ('src', 'capabilities', 'Cargo.toml', 'Cargo.lock',
                                                          'build.rs', 'tauri.conf.json')]
     binary = app / 'src-tauri/target/release/juan-of-bike-ia'
     return {'inputs': fingerprint(native_inputs + [app / 'dist'], root),
             'output': fingerprint([binary], root), 'present': binary.is_file() and os.access(binary, os.X_OK)}
+
+
+def git_identity(root: Path) -> dict | None:
+    """Vite embeds HEAD and branch; a cached bundle must identify that build."""
+    if not (root / '.git').exists():
+        return None
+    try:
+        def read(*args):
+            return subprocess.run(['git', '-C', str(root), *args], check=True,
+                                  capture_output=True, text=True, timeout=5).stdout.strip()
+        return {'commit': read('rev-parse', 'HEAD'), 'branch': read('rev-parse', '--abbrev-ref', 'HEAD')}
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def build_is_current(kind: str, root: Path, cache: Path) -> bool:

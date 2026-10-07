@@ -407,7 +407,7 @@ export default function ConversationView() {
     failRun,
     resetRun,
   } = useChatStore()
-  const { hardware, mainModel, installedModels, setMainModel, runtimeServices, services, visionModel } = useAppStore()
+  const { hardware, mainModel, installedModels, setMainModel, mainModelAutomatic, setMainModelAutomatic, runtimeServices, services, visionModel } = useAppStore()
   const { trackGeneration, completeGeneration, failGeneration } = useGenerationTrackerStore()
   const recovery = useGenerationRecovery('conversation')
   const { executeWithRuntime } = useManagedRuntime()
@@ -1240,10 +1240,12 @@ export default function ConversationView() {
               <div className="mt-3">
                 <label className="block text-[10px] text-aurora-text-dim mb-1">Modele LLM</label>
                 <select
-                  value={mainModel}
-                  onChange={(e) => setMainModel(e.target.value)}
+                  aria-label="Modèle LLM"
+                  value={mainModelAutomatic ? '__auto__' : mainModel}
+                  onChange={(e) => e.target.value === '__auto__' ? setMainModelAutomatic() : setMainModel(e.target.value)}
                   className="w-full rounded-lg border border-white/10 bg-white/[0.06] px-2 py-1.5 text-xs text-aurora-text outline-none focus:border-aurora-accent"
                 >
+                  <option value="__auto__">Automatique ({mainModel})</option>
                   {installedModels.map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}

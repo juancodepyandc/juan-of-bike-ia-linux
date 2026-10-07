@@ -186,6 +186,10 @@ export default function SettingsPanel() {
   const installedModels = useAppStore((s) => s.installedModels)
   const setMainModel    = useAppStore((s) => s.setMainModel)
   const setVisionModel  = useAppStore((s) => s.setVisionModel)
+  const mainModelAutomatic = useAppStore((s) => s.mainModelAutomatic)
+  const visionModelAutomatic = useAppStore((s) => s.visionModelAutomatic)
+  const setMainModelAutomatic = useAppStore((s) => s.setMainModelAutomatic)
+  const setVisionModelAutomatic = useAppStore((s) => s.setVisionModelAutomatic)
 
   const clearChat  = useChatStore((s) => s.clearMessages)
   const chatLen    = useChatStore((s) => s.messages.length)
@@ -287,7 +291,8 @@ export default function SettingsPanel() {
             <>
               <div className="sp-sec">
                 <label className="sp-label">Modèle principal</label>
-                <select className="sp-select" value={mainModel} onChange={(e) => setMainModel(e.target.value)}>
+                <select aria-label="Modèle principal" className="sp-select" value={mainModelAutomatic ? '__auto__' : mainModel} onChange={(e) => e.target.value === '__auto__' ? setMainModelAutomatic() : setMainModel(e.target.value)}>
+                  <option value="__auto__">Automatique ({mainModel})</option>
                   <option value={mainModel}>{mainModel} (actuel)</option>
                   {installedModels.filter((m) => m !== mainModel).map((m) => (
                     <option key={m} value={m}>{m}</option>
@@ -297,7 +302,8 @@ export default function SettingsPanel() {
               </div>
               <div className="sp-sec">
                 <label className="sp-label">Modèle vision</label>
-                <select className="sp-select" value={visionModel} onChange={(e) => setVisionModel(e.target.value)}>
+                <select aria-label="Modèle vision" className="sp-select" value={visionModelAutomatic ? '__auto__' : visionModel} onChange={(e) => e.target.value === '__auto__' ? setVisionModelAutomatic() : setVisionModel(e.target.value)}>
+                  <option value="__auto__">Automatique ({visionModel})</option>
                   <option value={visionModel}>{visionModel} (actuel)</option>
                   {installedModels.filter((m) => /vl|vision/i.test(m) && m !== visionModel).map((m) => (
                     <option key={m} value={m}>{m}</option>
