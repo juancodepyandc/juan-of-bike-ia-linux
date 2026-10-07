@@ -123,7 +123,7 @@ class AutonomousMissionAgent:
         if root.exists() and not root.is_dir():
             raise NotADirectoryError('Mission workspace is not a directory: '+str(root))
         root.mkdir(parents=True,exist_ok=True)
-        self.state.get('environment',{})['workspace_exists'] = True
+        self.state.setdefault('environment',{})['workspace_exists'] = True
 
     async def _save(self):
         if self.store:
