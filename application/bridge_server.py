@@ -609,6 +609,7 @@ def _admin_ok() -> bool:
 # extension valide ne sont fournis, on refuse. En local (loopback sans XFF)
 # on reste permissif pour ne pas casser l'UI ni le workflow.
 _SENSITIVE_PREFIXES = (
+    "/api/3d/engineering",
     "/api/command/",
     "/api/python/",
     "/api/fs/write-",

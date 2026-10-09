@@ -42,6 +42,7 @@ psutil>=5.9.0
 
 # 3D generation
 trimesh>=4.3.0
+manifold3d>=3.2,<4
 
 # Bridge server
 flask>=3.0.0

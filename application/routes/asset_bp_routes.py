@@ -5,6 +5,9 @@ from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMF
 
 asset_bp = Blueprint('asset_bp', __name__)
 
+from application.engineering_api import register_engineering_routes
+register_engineering_routes(asset_bp, WORKSPACE)
+
 # =====================================================================
 #  Asset serving — pour telecharger les images generees sur le tel
 # =====================================================================
