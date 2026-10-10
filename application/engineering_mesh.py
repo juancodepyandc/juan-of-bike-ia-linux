@@ -46,6 +46,9 @@ def settings(raw):
     for key, low, high in [('clearance_mm', 0.01, 2), ('wall_mm', 0.5, 20),
                            ('pin_diameter_mm', 1, 30), ('pin_depth_mm', 2, 60), ('margin_mm', 0, 30)]:
         p[key] = number(profile.get(key), key, low, high)
+    p['color_capability'] = profile.get('color_capability', 'single')
+    if p['color_capability'] not in {'single', 'multi'}:
+        raise ValueError('color_capability : single ou multi requis.')
     p['keyed_pins'] = profile.get('keyed_pins', True)
     if type(p['keyed_pins']) is not bool:
         raise ValueError('keyed_pins doit être un booléen.')
@@ -63,6 +66,10 @@ def settings(raw):
     cuts = raw.get('cuts_mm', [])
     if not isinstance(cuts, list) or len(cuts) > 15:
         raise ValueError('Maximum 15 plans de découpe.')
+    view_up_axis = raw.get('view_up_axis', 'z')
+    if view_up_axis not in {'x', 'y', 'z'}:
+        raise ValueError('Verticale du modèle : x, y ou z requis.')
+    result['view_up_axis'] = view_up_axis
     result.update(profile=p, axis=axis, cuts_mm=[number(v, 'Position de coupe (mm)', 0.01, 1999.99) for v in cuts])
     zones = raw.get('protected_zones_mm', [])
     centers = raw.get('connector_centers_mm', [])
@@ -85,7 +92,17 @@ def settings(raw):
         if not isinstance(pair, list) or len(pair) != 2:
             raise ValueError('Deux centres de raccord par jonction requis.')
         parsed_centers.append([vector(v) for v in pair])
-    result.update(protected_zones_mm=parsed_zones, connector_centers_mm=parsed_centers)
+    filaments = raw.get('piece_filaments', [])
+    if not isinstance(filaments, list) or len(filaments) > 64:
+        raise ValueError('Maximum 64 affectations de filament.')
+    import re
+    for filament in filaments:
+        if (not isinstance(filament, dict) or not isinstance(filament.get('name'), str)
+            or not filament['name'].strip() or len(filament['name']) > 100
+            or not isinstance(filament.get('color'), str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', filament['color'])):
+            raise ValueError('Filament : nom non vide et couleur #RRGGBB requis.')
+    result.update(protected_zones_mm=parsed_zones, connector_centers_mm=parsed_centers,
+                  piece_filaments=[{'name': f['name'].strip(), 'color': f['color'].lower()} for f in filaments])
     return result
 
 
@@ -185,6 +202,61 @@ def connector_positions(adjacent, cut, axis, config):
     return pair
 
 
+def section_volume(mesh, axis):
+    """Exact polygonal cross-section area, including holes and branches."""
+    from manifold3d import Manifold, Mesh
+    oriented = mesh.copy()
+    oriented.apply_transform(trimesh.geometry.align_vectors(np.eye(3)[axis], [0,0,1]))
+    volume = Manifold(Mesh(np.asarray(oriented.vertices,dtype=np.float32),
+                           np.asarray(oriented.faces,dtype=np.uint32)))
+    return volume
+
+
+def seam_area(mesh, axis, cut):
+    return float(section_volume(mesh,axis).slice(float(cut)).area())
+
+
+def automatic_cuts(mesh, axis, count, usable, config):
+    profile = config['profile']
+    if count == 1:
+        return []
+    length = float(mesh.extents[axis]); cuts = []; previous = 0
+    section = section_volume(mesh,axis)
+    minimum = 2*profile['pin_depth_mm'] + profile['wall_mm'] + 0.01
+    for index in range(1, count):
+        remaining = count-index
+        low = max(previous+minimum, length-remaining*usable[axis])
+        high = min(previous+usable[axis], length-remaining*minimum)
+        if low > high:
+            raise ValueError('Volume utile insuffisant pour les logements et les parois.')
+        balanced = length*index/count
+        candidates = sorted(set([float(np.clip(balanced, low, high)), *np.linspace(low, high, 17)]))
+        scored = [(float(section.slice(float(cut)).area()), abs(cut-balanced), cut) for cut in candidates]
+        # Smaller seam first; a uniform section keeps a balanced cut. Restrict
+        # to 5 ranked planes and verify the real pair of sockets before choosing.
+        reference = max((area for area,_,_ in scored if math.isfinite(area)),default=1)
+        ranked = sorted(scored,key=lambda item: (item[0]/max(reference,1e-9)+.15*item[1]/length,item[1]))
+        chosen = None
+        for area,_,cut in ranked[:5]:
+            if not math.isfinite(area) or area <= 0:
+                continue
+            adjacent=[]
+            for lo,hi in [(previous,cut),(cut,min(length,cut+usable[axis]))]:
+                lower,upper=mesh.bounds[0]-1,mesh.bounds[1]+1
+                lower[axis],upper[axis]=lo,hi
+                box=trimesh.creation.box(upper-lower,trimesh.transformations.translation_matrix((upper+lower)/2))
+                adjacent.append(solid(boolean('intersection',[mesh,box]),'Coupe candidate'))
+            try:
+                connector_positions(adjacent,cut,axis,config)
+            except ValueError:
+                continue
+            chosen=cut;break
+        if chosen is None:
+            raise ValueError('Aucune coupe candidate avec deux raccords vérifiés. Choisir des plans ou modifier les contraintes.')
+        cuts.append(chosen); previous=chosen
+    return cuts
+
+
 def cut_plan(mesh, config):
     p = config['profile']
     usable = np.array(p['bed_mm']) - 2 * p['margin_mm']
@@ -198,7 +270,7 @@ def cut_plan(mesh, config):
         count = math.ceil(length / usable[axis])
         if count > 16:
             raise ValueError('Découpe limitée à 16 pièces.')
-        cuts = [length * i / count for i in range(1, count)]
+        cuts = automatic_cuts(mesh, axis, count, usable, config)
     if len(set(cuts)) != len(cuts) or any(not 0 < v < length for v in cuts):
         raise ValueError('Les coupes doivent être distinctes et à l’intérieur du modèle, depuis son minimum sur l’axe.')
     depths = np.diff([0, *cuts, length])
@@ -362,6 +434,11 @@ def export_package(source, output, raw):
             import colorsys
             palette = [[int(v*255) for v in colorsys.hsv_to_rgb((i*0.61803398875)%1,0.6,0.95)]+[255]
                        for i in range(len(pieces))]
+            filaments = config.get('piece_filaments', [])
+            if filaments and len(filaments) != len(pieces):
+                raise ValueError(f'Fournir un filament par pièce : {len(pieces)} pièces, {len(filaments)} affectations.')
+            if filaments:
+                palette = [[int(f['color'][k:k+2],16) for k in (1,3,5)]+[255] for f in filaments]
             for i, part in enumerate(pieces):
                 name = f'piece_{i+1:02}'
                 part.visual.face_colors = palette[i % len(palette)]
@@ -375,6 +452,7 @@ def export_package(source, output, raw):
                                         'watertight': bool(printable.is_volume), 'print_to_assembly_translation_mm': (-shift).tolist(),
                                         'print_to_assembly_matrix_mm': trimesh.transformations.translation_matrix(-shift).tolist(),
                                         'explosion_translation_mm': delta.tolist(), 'color_rgba': palette[i],
+                                        'filament': filaments[i] if filaments else None,
                                         'socket_removed_volume_fraction': 1-float(part.volume)/part.metadata['source_cut_volume_mm3']})
             for i, pin in enumerate(pins):
                 name = f'pin_{i+1:02}'
@@ -413,10 +491,18 @@ def export_package(source, output, raw):
                 textured.scaled(0.001).export(output/'exploded_textured.glb')
             shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'), output/'viewer.html')
             shutil.copytree(Path(__file__).with_name('engineering_viewer_assets'),output/'viewer_assets')
-            report.update(joints=joints, cut_axis='xyz'[axis], cuts_mm=cuts, piece_count=len(pieces), pin_count=len(pins),
+            cross_sections = section_volume(mesh,axis) if cuts else None
+            report.update(view_up_axis=config['view_up_axis'], joints=joints, cut_axis='xyz'[axis], cuts_mm=cuts, piece_count=len(pieces), pin_count=len(pins),
                           textured_assembly_available=has_texture, exploded_gap_mm=gap,
                           protected_zones_mm=config.get('protected_zones_mm', []),
                           viewer_file='viewer.html',
+                          cut_selection='explicit_planes' if config['cuts_mm'] else 'sampled_seam_area_with_verified_sockets',
+                          seam_area_mm2=[float(cross_sections.slice(float(c)).area()) for c in cuts],
+                          fabrication={'color_capability': config['profile']['color_capability'],
+                                       'separate_filament_parts': bool(filaments),
+                                       'filament_plan': [{'part': f'piece_{i+1:02}', **f} for i,f in enumerate(filaments)],
+                                       'texture_is_not_print_color': True,
+                                       'instructions': 'Imprimer les pièces séparément avec leur filament, puis assembler avec les pions appariés.' if filaments else 'Couleurs du viewer : repères de pièces, pas des couleurs de filament. Une texture ne définit pas une séparation volumique.'},
                           checks={'closed_pieces': True, 'source_cut_volume_preserved': True,
                                   'pins_without_mesh_interference': True, 'fits_declared_build_volume': True,
                                   'all_cut_interfaces_connected': True, 'wall_envelopes_verified': True,

@@ -228,3 +228,55 @@ def test_keyed_pair_cannot_be_swapped_and_chamfers_have_declared_dimensions():
     for changes in [dict(keyed_pins='yes'),dict(lead_in_mm=3),dict(lead_in_mm=2),dict(clearance_mm=.6)]:
         c=config();c['profile'].update(changes)
         with pytest.raises(ValueError):settings(c)
+
+
+def test_auto_cut_prefers_verified_narrow_seam_over_geometric_middle():
+    profile=[[0,0],[45,0],[65,100],[25,145],[25,165],[65,210],[55,310],[20,360],[0,360]]
+    mesh=trimesh.creation.revolve(profile,sections=64)
+    c=config(axis='z',cuts_mm=[]);c['profile']['bed_mm']=[220,220,250];c['profile']['margin_mm']=5
+    parts,pins,joints,axis,cuts=build_assembly(mesh,settings(c))
+    from application.engineering_mesh import seam_area
+    assert 145 <= cuts[0] <= 165 and cuts[0] != pytest.approx(180)
+    assert seam_area(mesh,axis,cuts[0]) < seam_area(mesh,axis,180)*.65
+    assert len(parts)==2 and len(pins)==2 and all(p.is_volume for p in parts)
+    assert all((p.extents <= [210,210,240]).all() for p in parts)
+    assert joints[0]['baseline_mm']>25
+
+
+def test_seam_area_subtracts_holes_instead_of_counting_their_surface():
+    from application.engineering_mesh import seam_area
+    outside=trimesh.creation.cylinder(radius=20,height=100,sections=64)
+    inside=trimesh.creation.cylinder(radius=10,height=110,sections=64)
+    ring=trimesh.boolean.difference([outside,inside],engine='manifold')
+    ring.apply_translation(-ring.bounds[0])
+    assert seam_area(ring,2,50)==pytest.approx((20**2-10**2)*32*np.sin(2*np.pi/64),rel=1e-6)
+
+
+def test_single_filament_parts_keep_geometry_and_verified_anchors(tmp_path):
+    source=tmp_path/'source.stl';box().export(source)
+    c=config(piece_filaments=[{'name':'PLA ivoire','color':'#eee5d3'},{'name':'PLA bleu','color':'#245caa'}])
+    c['profile']['color_capability']='single'
+    report=export_package(source,tmp_path/'colours',c)
+    assert report['fabrication']['separate_filament_parts']
+    assert report['fabrication']['color_capability']=='single'
+    assert report['parts'][0]['filament']['name']=='PLA ivoire'
+    assert report['parts'][1]['color_rgba']==[36,92,170,255]
+    assert report['pin_count']==2 and report['checks']['wall_envelopes_verified']
+    assert report['fabrication']['texture_is_not_print_color'] is True
+    for entry in report['parts']:
+        assert trimesh.load_mesh(tmp_path/'colours'/entry['file']).is_volume
+    bad=config(piece_filaments=[{'name':'Only one','color':'#eeeeee'}])
+    with pytest.raises(ValueError,match='un filament par pièce'):export_package(source,tmp_path/'bad',bad)
+
+
+@pytest.mark.parametrize('filaments',[[{'name':'','color':'#ffffff'}],[{'name':'PLA','color':'red'}],{},[{'name':'PLA','color':12}]])
+def test_invalid_filament_plans_rejected(filaments):
+    with pytest.raises(ValueError,match='Filament|affectation'):settings(config(piece_filaments=filaments))
+
+
+def test_auto_cut_at_exact_build_limit_never_samples_outside_feasible_range():
+    mesh=trimesh.creation.box([420,60,40]);mesh.apply_translation(-mesh.bounds[0])
+    c=config(axis='x',cuts_mm=[],size_mm=420);c['profile']['bed_mm']=[220,220,250];c['profile']['margin_mm']=5
+    pieces,pins,joints,axis,cuts=build_assembly(mesh,settings(c))
+    assert cuts==[210] and len(pieces)==2 and len(pins)==2
+    assert all(np.all(p.extents<=[210,210,240]) for p in pieces)

@@ -2438,6 +2438,9 @@ export default function ModelView() {
   // Tauri runtimes since onPythonProgress already abstracts the source.
   const [phaseSnapshot, setPhaseSnapshot] = useState<{ label: string; percent: number }>({ label: '', percent: 0 })
   const [error, setError] = useState<string | null>(null)
+  const [workspace, setWorkspace] = useState<'model' | 'assembly'>('model')
+  const importedOriginalUrl = useRef<string | null>(null)
+  useEffect(() => () => { if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current) }, [])
   const [modelUrl, setModelUrl] = useState<string | null>(null)
   const [viewerFullscreen, setViewerFullscreen] = useState(false)
   const [viewerWebUrl, setViewerWebUrl] = useState<string | null>(null)
@@ -5010,7 +5013,12 @@ export default function ModelView() {
   }, [generate, latestUserPrompt, prompt, selectedMotionPreset])
 
   return (
-    <div data-model-view="true" className="relative min-h-full flex flex-col">
+    <><nav aria-label="Espace 3D" className="flex gap-2 px-3 py-3"><button type="button" aria-pressed={workspace === 'model'} className="min-h-11 rounded-xl border border-aurora-border px-4 text-sm" onClick={() => setWorkspace('model')}>Modèle original / génération</button><button type="button" aria-pressed={workspace === 'assembly'} className="min-h-11 rounded-xl border border-aurora-border px-4 text-sm" onClick={() => setWorkspace('assembly')}>Assemblage / impression</button></nav>
+    {workspace === 'model' && <label className="mx-3 mb-3 block text-xs text-aurora-text-muted">Ouvrir un modèle dans le viewer original
+      <input type="file" accept=".glb" className="block mt-2 w-full min-h-11" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 120 * 1024 * 1024) { setError('GLB limité à 120 Mo.'); return } if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current); importedOriginalUrl.current = URL.createObjectURL(file); setModelUrl(importedOriginalUrl.current); setError(null) }} />
+    </label>}
+    <div hidden={workspace !== 'assembly'} className="p-3 sm:p-6"><EngineeringExportPanel modelUrl={modelUrl} assemblyOnly active={workspace === 'assembly'} /></div>
+    {workspace === 'model' && <div data-model-view="true" className="relative min-h-full flex flex-col">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 aurora-mesh opacity-35" />
         <div className="absolute -top-40 -right-20 h-80 w-80 rounded-full bg-indigo-500/15 blur-3xl" />
@@ -5508,7 +5516,7 @@ export default function ModelView() {
               ) : referenceImageUrl ? <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116] p-6"><div className="max-w-xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.4rem] gradient-accent text-white"><ImageIcon size={26} /></div><p className="mt-4 text-sm text-aurora-text">La référence est prête. L'agent Poly sculpte la géométrie 3D et le viewer l'affichera dès la fin de la génération.</p><img src={referenceImageUrl} alt="Reference en attente du mesh" className="mt-5 max-h-[60vh] rounded-[1.6rem] border border-aurora-border/35 shadow-2xl" /></div></div> : <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116]"><div className="text-center"><div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[1.8rem] border border-aurora-border bg-aurora-surface-2"><Box size={40} className="text-aurora-text-dim" /></div><p className="mt-4 text-sm text-aurora-text-muted">Decris le but, choisis un preset sur la droite si besoin, puis laisse le module construire une reference propre avant la reconstruction.</p></div></div>}
             </div>
             <div className="space-y-4">
-              <EngineeringExportPanel modelUrl={modelUrl} />
+              <EngineeringExportPanel modelUrl={modelUrl} onAssemblyRequested={() => setWorkspace('assembly')} />
               <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Actions / Mouvement</p>
                 <p className="mt-2 text-sm text-aurora-text">{uiIntent ? 'Les boutons affinent la prochaine generation et verrouillent la vue quand la lecture du mouvement doit rester claire.' : 'Ecris un prompt pour faire apparaitre des presets de pose ou d etude mecanique adaptes.'}</p>
@@ -5696,6 +5704,6 @@ export default function ModelView() {
           </div>
         </div>
       )}
-    </div>
+    </div>}</>
   )
 }
