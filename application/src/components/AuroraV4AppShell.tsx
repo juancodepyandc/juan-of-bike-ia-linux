@@ -179,8 +179,21 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
   return (
     <div style={{ position: 'fixed', inset: 0, color: '#E6EAF5', fontFamily: "'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif" }}>
       <AuroraBackdrop />
+      <style>{`
+        @media (max-width: 700px) {
+          .aurora-v4-header { height: calc(56px + env(safe-area-inset-top)) !important; padding: env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) 0 max(12px,env(safe-area-inset-left)) !important; gap: 10px !important; }
+          .aurora-v4-search { flex: 1 !important; min-width: 44px; min-height: 44px; justify-content: center; }
+          .aurora-v4-search .search-label, .aurora-v4-search kbd, .aurora-v4-model, .aurora-v4-local, .aurora-v4-mascot { display: none !important; }
+          .aurora-v4-header-actions { gap: 4px !important; }
+          .aurora-v4-header-actions button { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+          .aurora-v4-dock { top: auto !important; right: 0; bottom: 0; width: auto !important; height: calc(64px + env(safe-area-inset-bottom)); flex-direction: row !important; gap: 8px !important; padding: 8px max(12px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)) !important; overflow-x: auto; overflow-y: hidden !important; border-top: 1px solid rgba(255,255,255,.09); }
+          .aurora-v4-dock > div { display: none; }
+          .aurora-v4-main { left: 0 !important; top: calc(56px + env(safe-area-inset-top)) !important; bottom: calc(64px + env(safe-area-inset-bottom)) !important; overscroll-behavior: contain; }
+          .aurora-v4-greeting { display: none !important; }
+        }
+      `}</style>
 
-      <header style={{
+      <header className="aurora-v4-header" style={{
         position: 'fixed', top: 0, left: 0, right: 0, height: 52, zIndex: 40,
         display: 'flex', alignItems: 'center', gap: 16, padding: '0 18px',
         background: 'rgba(5,7,13,.65)', backdropFilter: 'blur(24px)',
@@ -196,6 +209,8 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
         </div>
         <button
           type="button"
+          aria-label="Rechercher ou commander"
+          className="aurora-v4-search"
           onClick={() => window.dispatchEvent(new CustomEvent('aurora:open-command-palette'))}
           style={{
             flex: '0 1 380px', fontSize: 12.5, color: '#5A6377', border: '1px solid rgba(255,255,255,.1)',
@@ -203,12 +218,12 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
             display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'inherit', textAlign: 'left',
           }}
         >
-          <span>⌕</span> Rechercher ou commander…
+          <span aria-hidden="true">⌕</span><span className="search-label">Rechercher ou commander…</span>
           <kbd style={{ marginLeft: 'auto', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10, border: '1px solid rgba(255,255,255,.14)', borderRadius: 5, padding: '1px 6px', color: '#8B93A7' }}>Ctrl K</kbd>
         </button>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: '#8B93A7' }}>
-          <span style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5, color: '#8B5CF6' }}>{mainModel || 'modèle local'}</span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="aurora-v4-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: '#8B93A7' }}>
+          <span className="aurora-v4-model" style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5, color: '#8B5CF6' }}>{mainModel || 'modèle local'}</span>
+          <span className="aurora-v4-local" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <b style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', boxShadow: '0 0 8px #4ADE80' }} />
             local
           </span>
@@ -220,13 +235,13 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           >
             <svg viewBox="0 0 24 24" width={17} height={17} style={{ stroke: '#2DD4BF', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round' }} dangerouslySetInnerHTML={{ __html: ICONS.voice }} />
           </button>
-          <span style={{ width: 32, height: 32, display: 'flex', filter: 'drop-shadow(0 0 10px rgba(139,92,246,.4))' }}>
+          <span className="aurora-v4-mascot" style={{ width: 32, height: 32, display: 'flex', filter: 'drop-shadow(0 0 10px rgba(139,92,246,.4))' }}>
             <AuroraMascot module={activeFx} size={32} />
           </span>
         </div>
       </header>
 
-      <nav style={{
+      <nav className="aurora-v4-dock" aria-label="Modules Aurora" style={{
         position: 'fixed', left: 0, top: 52, bottom: 0, width: 68, zIndex: 35,
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '14px 0',
         background: 'rgba(5,7,13,.55)', backdropFilter: 'blur(20px)',
@@ -258,7 +273,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
         </button>
       </nav>
 
-      <main style={{
+      <main className="aurora-v4-main" style={{
         position: 'fixed', top: 52, left: 68, right: 0, bottom: 0, zIndex: 10,
         overflow: 'auto',
       }}>
@@ -266,7 +281,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
       </main>
 
       {greet && (
-        <div style={{
+        <div className="aurora-v4-greeting" style={{
           position: 'fixed', right: 22, bottom: 20, zIndex: 50,
           display: 'flex', alignItems: 'flex-end', gap: 10, pointerEvents: 'none',
           animation: 'aurora-v4-greet .5s cubic-bezier(.22,1,.36,1)',
