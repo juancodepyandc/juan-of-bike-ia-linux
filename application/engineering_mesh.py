@@ -46,6 +46,15 @@ def settings(raw):
     for key, low, high in [('clearance_mm', 0.01, 2), ('wall_mm', 0.5, 20),
                            ('pin_diameter_mm', 1, 30), ('pin_depth_mm', 2, 60), ('margin_mm', 0, 30)]:
         p[key] = number(profile.get(key), key, low, high)
+    p['keyed_pins'] = profile.get('keyed_pins', True)
+    if type(p['keyed_pins']) is not bool:
+        raise ValueError('keyed_pins doit être un booléen.')
+    p['lead_in_mm'] = number(profile.get('lead_in_mm', 0.2), 'Chanfrein d’entrée (mm)', 0, 2)
+    small_radius = p['pin_diameter_mm']/2 * (0.8 if p['keyed_pins'] else 1)
+    if p['lead_in_mm'] >= min(small_radius, p['pin_depth_mm']/2):
+        raise ValueError('Chanfrein trop grand pour le diamètre ou la profondeur des pions.')
+    if p['keyed_pins'] and p['clearance_mm'] >= p['pin_diameter_mm']*0.1:
+        raise ValueError('Jeu trop grand pour le détrompage : réduire le jeu ou désactiver keyed_pins.')
     if min(p['bed_mm']) <= 2 * p['margin_mm']:
         raise ValueError('Marge supérieure au volume utile.')
     axis = raw.get('axis', 'auto')
@@ -55,6 +64,28 @@ def settings(raw):
     if not isinstance(cuts, list) or len(cuts) > 15:
         raise ValueError('Maximum 15 plans de découpe.')
     result.update(profile=p, axis=axis, cuts_mm=[number(v, 'Position de coupe (mm)', 0.01, 1999.99) for v in cuts])
+    zones = raw.get('protected_zones_mm', [])
+    centers = raw.get('connector_centers_mm', [])
+    if not isinstance(zones, list) or len(zones) > 32 or not isinstance(centers, list) or len(centers) > 63:
+        raise ValueError('Maximum 32 zones protégées et 63 paires de positions.')
+    def vector(v):
+        if not isinstance(v, list) or len(v) != 3:
+            raise ValueError('Coordonnées X, Y, Z en mm requises.')
+        return [number(x, 'Coordonnée (mm)', 0, 2000) for x in v]
+    parsed_zones = []
+    for zone in zones:
+        if not isinstance(zone, list) or len(zone) != 2:
+            raise ValueError('Zone protégée : [[xmin,ymin,zmin],[xmax,ymax,zmax]].')
+        low, high = map(vector, zone)
+        if any(a >= b for a, b in zip(low, high)):
+            raise ValueError('Zone protégée : minimum strictement inférieur au maximum.')
+        parsed_zones.append([low, high])
+    parsed_centers = []
+    for pair in centers:
+        if not isinstance(pair, list) or len(pair) != 2:
+            raise ValueError('Deux centres de raccord par jonction requis.')
+        parsed_centers.append([vector(v) for v in pair])
+    result.update(protected_zones_mm=parsed_zones, connector_centers_mm=parsed_centers)
     return result
 
 
@@ -72,12 +103,86 @@ def boolean(operation, meshes):
     return result
 
 
-def cylinder(radius, length, center, axis):
-    mesh = trimesh.creation.cylinder(radius=radius, height=length, sections=48)
+def cylinder(radius, length, center, axis, *, envelope=False):
+    # Circumscribe verification envelopes: the polygon must contain the
+    # declared circular wall, including between polygon vertices.
+    mesh = trimesh.creation.cylinder(radius=radius/math.cos(math.pi/48) if envelope else radius,
+                                    height=length, sections=48)
     direction = np.eye(3)[axis]
     mesh.apply_transform(trimesh.geometry.align_vectors([0, 0, 1], direction))
     mesh.apply_translation(center)
     return mesh
+
+
+def revolved(profile, center, axis):
+    mesh = trimesh.creation.revolve(np.array(profile), sections=48)
+    mesh.apply_transform(trimesh.geometry.align_vectors([0,0,1],np.eye(3)[axis]))
+    mesh.apply_translation(center)
+    return solid(mesh, 'Raccord chanfreiné')
+
+
+def socket(radius, depth, lead, center, axis):
+    if not lead:
+        return cylinder(radius,2*depth,center,axis)
+    return revolved([[0,-depth],[radius,-depth],[radius,-lead],[radius+lead,0],
+                     [radius,lead],[radius,depth],[0,depth]],center,axis)
+
+
+def alignment_pin(radius, length, lead, center, axis):
+    if not lead:
+        return cylinder(radius,length,center,axis)
+    h = length/2
+    if lead >= h:
+        raise ValueError('Chanfrein incompatible avec la longueur disponible du pion.')
+    return revolved([[0,-h],[radius-lead,-h],[radius,-h+lead],[radius,h-lead],
+                     [radius-lead,h],[0,h]],center,axis)
+
+
+def connector_positions(adjacent, cut, axis, config):
+    """Rank verified placements, rather than taking the first grid hits."""
+    p = config['profile']; depth = p['pin_depth_mm']
+    wall_radius = p['pin_diameter_mm']/2 + p['clearance_mm'] + p['lead_in_mm'] + p['wall_mm']
+    transverse = [i for i in range(3) if i != axis]
+    bounds = np.array([np.maximum(adjacent[0].bounds[0], adjacent[1].bounds[0]),
+                       np.minimum(adjacent[0].bounds[1], adjacent[1].bounds[1])])
+    prescribed = config.get('_prescribed_pair')
+    if prescribed:
+        candidates = [np.array(c, dtype=float) for c in prescribed]
+        if any(abs(c[axis]-cut) > 1e-5 for c in candidates):
+            raise ValueError('Les centres imposés doivent appartenir au plan de coupe.')
+    else:
+        ranges = [np.linspace(bounds[0,i]+wall_radius+0.01, bounds[1,i]-wall_radius-0.01, 9)
+                  for i in transverse]
+        if any(bounds[1,i]-bounds[0,i] <= 2*wall_radius for i in transverse):
+            raise ValueError(f'Coupe {cut:g} mm : deux raccords avec la paroi demandée ne tiennent pas.')
+        candidates = []
+        for a in ranges[0]:
+            for b in ranges[1]:
+                c = np.zeros(3); c[axis] = cut; c[transverse] = [a,b]; candidates.append(c)
+    zones = [trimesh.creation.box(np.array(hi)-lo,
+             trimesh.transformations.translation_matrix((np.array(hi)+lo)/2))
+             for lo,hi in config.get('protected_zones_mm', [])]
+    valid = []
+    for center in candidates:
+        shell = cylinder(wall_radius, 2*(depth+p['wall_mm']), center, axis, envelope=True)
+        if any(not boolean('intersection', [shell, zone]).is_empty for zone in zones):
+            continue
+        for part in adjacent:
+            envelope = boolean('intersection', [shell, part])
+            if abs(envelope.volume-shell.volume/2) > max(1e-4, shell.volume*1e-6):
+                break
+        else:
+            valid.append(center)
+    minimum = 2*wall_radius + 1
+    pairs = [(a,b) for i,a in enumerate(valid) for b in valid[i+1:]
+             if np.linalg.norm(a-b) >= minimum]
+    if not pairs or (prescribed and len(valid) != 2):
+        raise ValueError(f'Coupe {cut:g} mm : deux raccords avec la paroi demandée ne tiennent pas ou une zone protégée est touchée. Modifier les contraintes.')
+    # Maximise the rotation-constraining baseline; tie-break by centred pair.
+    middle = (bounds[0]+bounds[1])/2
+    pair = max(pairs, key=lambda pair: (round(float(np.linalg.norm(pair[0]-pair[1])), 6),
+                                      -float(np.linalg.norm((pair[0]+pair[1])/2-middle))))
+    return pair
 
 
 def cut_plan(mesh, config):
@@ -110,76 +215,93 @@ def build_assembly(mesh, config):
     axis, cuts, usable = cut_plan(mesh, config)
     p = config['profile']
     bounds = mesh.bounds.copy()
-    pieces = []
-    for lo, hi in zip([0, *cuts], [*cuts, mesh.extents[axis]]):
+    pieces, slabs = [], []
+    for slab, (lo, hi) in enumerate(zip([0, *cuts], [*cuts, mesh.extents[axis]])):
         low, high = bounds[0] - 1, bounds[1] + 1
         low[axis], high[axis] = lo, hi
         box = trimesh.creation.box(high-low, trimesh.transformations.translation_matrix((high+low)/2))
-        part = solid(boolean('intersection', [mesh, box]), 'Pièce découpée')
-        # A disconnected slice could produce unretained islands. Refuse it.
-        if len(part.split()) != 1:
-            raise ValueError('Une coupe produit plusieurs morceaux détachés. Déplacer la coupe ou séparer les objets avant export.')
-        pieces.append(part)
+        clipped = solid(boolean('intersection', [mesh, box]), 'Pièce découpée')
+        fragments = sorted(clipped.split(), key=lambda part: tuple(part.bounds[0]))
+        ids = []
+        for part in fragments:
+            solid(part, 'Fragment découpé')
+            part.metadata['slab'] = slab
+            part.metadata['source_cut_volume_mm3'] = float(part.volume)
+            ids.append(len(pieces)); pieces.append(part)
+        slabs.append(ids)
+    if len(pieces) > 64:
+        raise ValueError('Maximum 64 pièces après séparation des branches.')
     expected = sum(part.volume for part in pieces)
     if abs(expected - mesh.volume) > max(1e-3, mesh.volume * 1e-5):
         raise ValueError('La découpe ne conserve pas le volume source.')
     joints, pins = [], []
     radius = p['pin_diameter_mm']/2
-    hole_radius = radius + p['clearance_mm']  # radial, not diameter
-    wall_radius = hole_radius + p['wall_mm']
     depth = p['pin_depth_mm']
-    transverse = [i for i in range(3) if i != axis]
+    interfaces = []
+    epsilon = max(0.001, float(mesh.extents.max())*1e-5)
     for index, cut in enumerate(cuts):
-        positions = []
-        ranges = [np.linspace(bounds[0, i] + wall_radius, bounds[1, i] - wall_radius, 7)
-                  for i in transverse]
-        candidates = [(a, b) for a in ranges[0] for b in ranges[1]]
-        # Deterministic, favour wide separation to constrain rotation.
-        for a, b in candidates:
-            center = np.zeros(3); center[axis] = cut
-            center[transverse] = [a, b]
-            if positions and min(np.linalg.norm(center-c) for c in positions) < 2*wall_radius + 1:
-                continue
-            shell = cylinder(wall_radius, 2*(depth+p['wall_mm']), center, axis)
-            outside = boolean('difference', [shell, mesh])
-            if not outside.is_empty and abs(outside.volume) > max(1e-4, shell.volume*1e-6):
-                continue
-            # Check both adjacent pieces, including earlier joint cavities.
-            hole = cylinder(hole_radius, 2*depth, center, axis)
-            removed = []
-            for part in pieces[index:index+2]:
-                envelope = boolean('intersection', [shell, part])
-                if abs(envelope.volume-shell.volume/2) > max(1e-3, shell.volume*1e-5):
-                    break
-                overlap = boolean('intersection', [hole, part])
-                removed.append(overlap.volume if not overlap.is_empty else 0)
-            if len(removed) != 2 or any(abs(v-hole.volume/2) > max(1e-3, hole.volume*1e-5) for v in removed):
-                continue
-            positions.append(center)
-            if len(positions) == 2:
+        for left in slabs[index]:
+            for right in slabs[index+1]:
+                # Shift the right closed solid slightly into the left one to
+                # measure a real contact, including each branch of a cut.
+                moved = pieces[right].copy()
+                delta = np.zeros(3); delta[axis] = -epsilon
+                moved.apply_translation(delta)
+                contact = boolean('intersection', [pieces[left], moved])
+                if not contact.is_empty and contact.volume > 1e-5:
+                    interfaces.append((left,right,cut,float(contact.volume/epsilon)))
+    if len(interfaces) > 63:
+        raise ValueError('Maximum 63 jonctions.')
+    prescribed = config.get('connector_centers_mm', [])
+    if prescribed and len(prescribed) != len(interfaces):
+        raise ValueError('Fournir une paire de centres pour chaque jonction, dans l’ordre des coupes puis des fragments.')
+    if len(mesh.split()) == 1:
+        reached = {0}
+        while True:
+            next_nodes = {n for left,right,*_ in interfaces for n in (left,right) if left in reached or right in reached}
+            expanded = reached | next_nodes
+            if expanded == reached:
                 break
-        if len(positions) != 2:
-            raise ValueError(f'Coupe {cut:g} mm : deux raccords avec la paroi demandée ne tiennent pas. Changer coupe, diamètre, profondeur ou paroi.')
-        for center in positions:
-            hole = cylinder(hole_radius, 2*depth, center, axis)
-            for j in [index, index+1]:
+            reached = expanded
+        if len(reached) != len(pieces):
+            raise ValueError('Une pièce issue de la découpe ne possède pas de jonction vérifiable ; changer les coupes.')
+    for index, (left,right,cut,contact_area) in enumerate(interfaces):
+        joint_config = dict(config)
+        if prescribed:
+            joint_config['_prescribed_pair'] = prescribed[index]
+        positions = connector_positions([pieces[left],pieces[right]], cut, axis, joint_config)
+        for slot, center in enumerate(positions):
+            pin_radius = radius * (0.8 if p['keyed_pins'] and slot else 1)
+            bore_radius = pin_radius + p['clearance_mm']
+            hole = socket(bore_radius, depth, p['lead_in_mm'], center, axis)
+            for j in [left, right]:
+                metadata = dict(pieces[j].metadata)
                 pieces[j] = solid(boolean('difference', [pieces[j], hole]), 'Logement de pion')
+                pieces[j].metadata.update(metadata)
                 if len(pieces[j].split()) != 1:
                     raise ValueError('Un logement détache de la matière ; raccord refusé.')
             # End clearance avoids a pin bottoming out before faces meet.
-            pin = cylinder(radius, 2*depth - 2*p['clearance_mm'], center, axis)
+            pin = alignment_pin(pin_radius, 2*depth - 2*p['clearance_mm'], p['lead_in_mm'], center, axis)
             if pin.extents[axis] <= 0:
                 raise ValueError('Jeu axial incompatible avec la longueur du pion.')
-            for piece in pieces[index:index+2]:
+            for piece in pieces:
+                if np.any(pin.bounds[1] < piece.bounds[0]) or np.any(piece.bounds[1] < pin.bounds[0]):
+                    continue
                 collision = boolean('intersection', [piece, pin])
                 if not collision.is_empty and abs(collision.volume) > 1e-4:
                     raise ValueError('Interférence détectée entre pion et pièce.')
             pins.append(pin)
-            joints.append({'id': f'J{len(joints)+1:02}', 'pieces': [index+1, index+2],
+            joints.append({'id': f'J{len(joints)+1:02}', 'pieces': [left+1, right+1], 'interface': index+1,
+                           'estimated_contact_area_before_sockets_mm2': contact_area,
                            'center_mm': center.tolist(), 'axis': 'xyz'[axis],
-                           'pin_diameter_mm': 2*radius, 'hole_diameter_mm': 2*hole_radius,
+                           'pin_diameter_mm': 2*pin_radius, 'hole_diameter_mm': 2*bore_radius,
+                           'keyed_pair': p['keyed_pins'], 'lead_in_mm': p['lead_in_mm'],
+                           'socket_entry_diameter_mm': 2*(bore_radius+p['lead_in_mm']),
                            'depth_each_side_mm': depth, 'radial_clearance_mm': p['clearance_mm'],
-                           'minimum_wall_envelope_mm': p['wall_mm']})
+                           'minimum_wall_envelope_mm': p['wall_mm'],
+                           'baseline_mm': float(np.linalg.norm(positions[0]-positions[1])),
+                           'placement': 'prescribed_verified' if config.get('connector_centers_mm') else 'maximum_verified_baseline',
+                           'protected_zones_checked': len(config.get('protected_zones_mm', []))})
     for part in pieces:
         if np.any(part.extents > usable + 1e-4):
             raise ValueError('Une pièce ne tient pas dans le volume utile avec cette orientation.')
@@ -201,12 +323,19 @@ def export_package(source, output, raw):
     mesh = scene.to_mesh()
     if mesh.is_empty or len(mesh.faces) > 2_000_000 or not np.isfinite(mesh.vertices).all() or mesh.extents.max() <= 0:
         raise ValueError('Maillage invalide ou supérieur à deux millions de faces.')
+    # UV/normal seams can duplicate a closed surface's positions in glTF.
+    # Weld only coincident geometry for volume checks; original UV seams are
+    # independently retained by the property-bearing texture export.
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
     scale = config['size_mm'] / float(mesh.extents.max())
+    source_transform = np.eye(4); source_transform[:3,:3] *= scale
+    source_transform[:3,3] = -mesh.bounds[0]*scale
     mesh.apply_translation(-mesh.bounds[0]); mesh.apply_scale(scale)
     output.mkdir(parents=True, exist_ok=False)
     report = {'schema': 'aurora.print-assembly.v1', 'units': 'mm', 'mode': config['mode'],
               'coordinate_units': {'stl': 'mm', 'glb': 'm', 'manifest': 'mm'},
               'source_sha256': hashlib.sha256(original).hexdigest(), 'source_to_mm_scale': scale,
+              'source_to_assembly_matrix_mm': source_transform.tolist(),
               'dimensions_mm': mesh.extents.tolist(), 'source_watertight': bool(mesh.is_watertight),
               'source_volume_valid': bool(mesh.is_volume), 'profile': config.get('profile'),
               'physical_fit_validated': False, 'parts': [], 'joints': []}
@@ -230,7 +359,9 @@ def export_package(source, output, raw):
             pieces, pins, joints, axis, cuts = build_assembly(mesh, config)
             assembled = trimesh.Scene(); exploded = trimesh.Scene()
             gap = max(20, 2*config['profile']['pin_depth_mm']+4, config['size_mm']*0.12)
-            palette = [[127,183,255,255], [77,213,164,255], [255,209,102,255]]
+            import colorsys
+            palette = [[int(v*255) for v in colorsys.hsv_to_rgb((i*0.61803398875)%1,0.6,0.95)]+[255]
+                       for i in range(len(pieces))]
             for i, part in enumerate(pieces):
                 name = f'piece_{i+1:02}'
                 part.visual.face_colors = palette[i % len(palette)]
@@ -238,27 +369,58 @@ def export_package(source, output, raw):
                 printable = part.copy(); printable.apply_translation(shift)
                 printable.export(output/(name+'.stl'))
                 assembled.add_geometry(part, node_name=name, geom_name=name)
-                spread = part.copy(); delta = np.zeros(3); delta[axis] = i * gap
+                spread = part.copy(); delta = np.zeros(3); delta[axis] = part.metadata['slab'] * gap
                 spread.apply_translation(delta); exploded.add_geometry(spread, node_name=name, geom_name=name)
                 report['parts'].append({'id': name, 'file': name+'.stl', 'dimensions_mm': printable.extents.tolist(),
-                                        'watertight': bool(printable.is_volume), 'print_to_assembly_translation_mm': (-shift).tolist()})
+                                        'watertight': bool(printable.is_volume), 'print_to_assembly_translation_mm': (-shift).tolist(),
+                                        'print_to_assembly_matrix_mm': trimesh.transformations.translation_matrix(-shift).tolist(),
+                                        'explosion_translation_mm': delta.tolist(), 'color_rgba': palette[i],
+                                        'socket_removed_volume_fraction': 1-float(part.volume)/part.metadata['source_cut_volume_mm3']})
             for i, pin in enumerate(pins):
                 name = f'pin_{i+1:02}'
                 pin.visual.face_colors = [255,106,61,255]
-                printed = cylinder(config['profile']['pin_diameter_mm']/2,
-                                   2*config['profile']['pin_depth_mm']-2*config['profile']['clearance_mm'], [0, 0, 0], 2)
+                printed = alignment_pin(joints[i]['pin_diameter_mm']/2,
+                                   2*config['profile']['pin_depth_mm']-2*config['profile']['clearance_mm'],
+                                   joints[i]['lead_in_mm'], [0, 0, 0], 2)
                 printed.apply_translation(-printed.bounds[0]); printed.export(output/(name+'.stl'))
                 assembled.add_geometry(pin, node_name=name, geom_name=name)
                 spread = pin.copy(); delta = np.zeros(3)
-                delta[axis] = (joints[i]['pieces'][0]-1+0.5)*gap
+                delta[axis] = (pieces[joints[i]['pieces'][0]-1].metadata['slab']+0.5)*gap
                 spread.apply_translation(delta); exploded.add_geometry(spread, node_name=name, geom_name=name)
+                transform = trimesh.geometry.align_vectors([0,0,1],np.eye(3)[axis])
+                transform[:3,3] = np.array(joints[i]['center_mm'])-transform[:3,:3]@printed.centroid
                 report['parts'].append({'id': name, 'file': name+'.stl', 'dimensions_mm': printed.extents.tolist(),
-                                        'watertight': True, 'joint': joints[i]['id']})
+                                        'watertight': True, 'joint': joints[i]['id'], 'color_rgba': [255,106,61,255],
+                                        'print_to_assembly_matrix_mm': transform.tolist(), 'explosion_translation_mm': delta.tolist()})
             assembled.scaled(0.001).export(output/'assembled.glb')
             exploded.scaled(0.001).export(output/'exploded.glb')
+            has_texture = any(g.visual.kind == 'texture' for g in scene.geometry.values())
+            if has_texture:
+                from application.engineering_texture import textured_pieces
+                textured = trimesh.Scene()
+                groups = textured_pieces(scene, scale, pieces, joints, axis)
+                for i, geometries in enumerate(groups):
+                    for k, geometry in enumerate(geometries):
+                        name = f'piece_{i+1:02}_surface_{k:02}'
+                        textured.add_geometry(geometry, node_name=name, geom_name=name)
+                for i,pin in enumerate(pins):
+                    textured.add_geometry(pin.copy(), node_name=f'pin_{i+1:02}', geom_name=f'pin_{i+1:02}')
+                textured.scaled(0.001).export(output/'assembled_textured.glb')
+                for name,geometry in textured.geometry.items():
+                    delta = np.array(next(part['explosion_translation_mm'] for part in report['parts']
+                                         if part['id'] == '_'.join(name.split('_')[:2])))
+                    geometry.apply_translation(delta)
+                textured.scaled(0.001).export(output/'exploded_textured.glb')
+            shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'), output/'viewer.html')
+            shutil.copytree(Path(__file__).with_name('engineering_viewer_assets'),output/'viewer_assets')
             report.update(joints=joints, cut_axis='xyz'[axis], cuts_mm=cuts, piece_count=len(pieces), pin_count=len(pins),
+                          textured_assembly_available=has_texture, exploded_gap_mm=gap,
+                          protected_zones_mm=config.get('protected_zones_mm', []),
+                          viewer_file='viewer.html',
                           checks={'closed_pieces': True, 'source_cut_volume_preserved': True,
-                                  'pins_without_mesh_interference': True, 'fits_declared_build_volume': True})
+                                  'pins_without_mesh_interference': True, 'fits_declared_build_volume': True,
+                                  'all_cut_interfaces_connected': True, 'wall_envelopes_verified': True,
+                                  'protected_zones_respected': True})
     (output/'assembly.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     (output/'READ_ME.txt').write_text(
         'Aurora — géométrie / texture / assemblage\n'
@@ -266,17 +428,29 @@ def export_package(source, output, raw):
         'textured_original.glb conserve exactement le fichier et les unités d’origine ; aucune nouvelle texture.\n'
         'piece_NN.stl : pièces au sol dans leur orientation de découpe. pin_NN.stl : pions séparés verticaux.\n'
         'assembled.glb : positions finales. exploded.glb : ordre des pièces. assembly.json : cotes et raccords.\n'
+        'viewer.html : viewer interactif autonome ; ouvrir via jobia view3d archive.zip.\n'
+        'Le CLI ouvre le viewer après assemblage ; --viewer textured démarre en vue éclatée texturée.\n'
+        'Textures des surfaces originales et UV conservés ; nouvelles faces de coupe/logement neutres.\n'
+        'Contraintes optionnelles protected_zones_mm : boîtes [minimum XYZ, maximum XYZ].\n'
+        'connector_centers_mm : une paire XYZ par jonction, ordre des coupes puis des fragments.\n'
+        'Toutes ces coordonnées utilisent le modèle final en mm, minimum ramené à zéro.\n'
         'Le jeu est radial : diamètre du logement = diamètre du pion + 2 × jeu.\n'
-        'Deux pions par jonction guident le placement. Ajuster le profil sur un essai imprimé avant la série.\n'
+        'Deux pions par jonction/branche guident le placement ; les placements valides sont comparés.\n'
+        'Détrompage activé par défaut : second diamètre à 80 % du premier ; chanfrein par défaut 0,2 mm.\n'
+        'Renseigner les zones fonctionnelles interdites : elles ne peuvent pas être devinées par le moteur.\n'
+        'Ajuster le profil sur un essai imprimé avant la série.\n'
         'Les contrôles de maillage ne certifient ni résistance, supports, retrait matière, ni précision de fabrication.\n', encoding='utf-8')
     archive = output.with_suffix('.zip')
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
-        for file in sorted(output.iterdir()):
-            z.write(file, file.name)
+        for file in sorted(output.rglob('*')):
+            if file.is_file():
+                z.write(file, file.relative_to(output).as_posix())
     return report
 
 
 if __name__ == '__main__':
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True); parser.add_argument('--output', required=True)
     parser.add_argument('--settings', required=True)

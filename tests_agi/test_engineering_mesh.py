@@ -29,16 +29,22 @@ def test_real_closed_cut_and_paired_holes_without_pin_interference(axis):
     assert cuts == [60] and actual_axis == 'xyz'.index(axis)
     assert len(pieces) == len(pins) == len(joints) == 2
     assert all(p.is_volume and len(p.split()) == 1 for p in pieces)
-    assert all(j['hole_diameter_mm'] == pytest.approx(5.4) for j in joints)
+    assert [j['hole_diameter_mm'] for j in joints] == pytest.approx([5.4,4.4])
     assert np.linalg.norm(np.array(joints[0]['center_mm']) - joints[1]['center_mm']) > 9
     for pin in pins:
         assert pin.extents[actual_axis] == pytest.approx(15.6)
         for piece in pieces:
             overlap = trimesh.boolean.intersection([piece, pin], engine='manifold')
             assert overlap.is_empty or overlap.volume < 1e-4
-    # Independently account for the removed polygonal cylindrical bore volume.
-    hole = trimesh.creation.cylinder(radius=2.7, height=16, sections=48)
-    assert sum(p.volume for p in pieces) == pytest.approx(mesh.volume - 2*hole.volume, abs=0.02)
+    # Independently integrate the cylindrical bore and two conical lead-ins.
+    n=48
+    def socket_volume(r):
+        lead=.2
+        cylindrical=2*8*r*r
+        conical_extra=2*lead*((r*r+r*(r+lead)+(r+lead)**2)/3-r*r)
+        return (cylindrical+conical_extra)*n*np.sin(2*np.pi/n)/2
+    assert sum(p.volume for p in pieces) == pytest.approx(mesh.volume-socket_volume(2.7)-socket_volume(2.2),abs=.02)
+
 
 
 def test_real_stl_export_profile_coordinates_volume_and_source_preserved(tmp_path):
@@ -110,3 +116,115 @@ def test_texture_original_bytes_and_geometry_separate(tmp_path):
 @pytest.mark.parametrize('value', [True, float('nan'),float('inf'),0,5000,'200'])
 def test_invalid_scale_never_enters_engine(value):
     with pytest.raises(ValueError): settings(config(size_mm=value))
+
+
+def test_ranked_pair_is_widely_separated_and_prescribed_pair_is_verified():
+    parts,pins,joints,*_=build_assembly(box(),settings(config()))
+    assert joints[0]['baseline_mm'] > 55
+    assert joints[0]['placement']=='maximum_verified_baseline'
+    pair=[[60,20,15],[60,40,25]]
+    _,_,manual,*_=build_assembly(box(),settings(config(connector_centers_mm=[pair])))
+    assert [j['center_mm'] for j in manual]==pair
+    assert all(j['placement']=='prescribed_verified' for j in manual)
+    for bad in [[[60,1,1],[60,40,25]],[[59,20,15],[60,40,25]],[[60,20,15],[60,21,15]]]:
+        with pytest.raises(ValueError):
+            build_assembly(box(),settings(config(connector_centers_mm=[bad])))
+    with pytest.raises(ValueError,match='chaque jonction'):
+        build_assembly(box(),settings(config(cuts_mm=[],connector_centers_mm=[pair],
+                                           profile={**config()['profile'],'bed_mm':[150]*3})))
+
+
+def test_protected_functional_zone_moves_automatic_positions_and_rejects_manual():
+    zone=[[[49,0,0],[71,15,15]]]
+    _,_,joints,*_=build_assembly(box(),settings(config(protected_zones_mm=zone)))
+    assert all(not (j['center_mm'][1]<15 and j['center_mm'][2]<15) for j in joints)
+    assert all(j['protected_zones_checked']==1 for j in joints)
+    with pytest.raises(ValueError,match='zone protégée'):
+        build_assembly(box(),settings(config(protected_zones_mm=zone,
+            connector_centers_mm=[[[60,6,6],[60,45,25]]])))
+    with pytest.raises(ValueError,match='zone protégée'):
+        build_assembly(box(),settings(config(protected_zones_mm=[[[40,0,0],[80,60,40]]])))
+
+
+def branched_mesh():
+    # Fork: one connected left trunk, two detached right arms after the cut.
+    trunk=trimesh.creation.box([40,80,30]);trunk.apply_translation([20,40,15])
+    lower=trimesh.creation.box([100,30,30]);lower.apply_translation([70,15,15])
+    upper=lower.copy();upper.apply_translation([0,50,0])
+    return trimesh.boolean.union([trunk,lower,upper],engine='manifold')
+
+
+def test_every_branch_receives_its_own_verified_connector_pair(tmp_path):
+    c=config();c['profile']['bed_mm']=[100]*3
+    mesh=branched_mesh()
+    parts,pins,joints,*_=build_assembly(mesh,settings(c))
+    assert len(parts)==3 and len(pins)==4
+    assert {tuple(j['pieces']) for j in joints}=={(1,2),(1,3)}
+    assert all(len([j for j in joints if i in j['pieces']])>=2 for i in [1,2,3])
+    assert all(part.is_volume for part in parts)
+    for pin in pins:
+        for part in parts:
+            hit=trimesh.boolean.intersection([part,pin],engine='manifold')
+            assert hit.is_empty or hit.volume<1e-4
+    mesh.export(tmp_path/'fork.stl');report=export_package(tmp_path/'fork.stl',tmp_path/'fork',c)
+    assert report['piece_count']==3
+    # Print-to-assembly transforms reproduce the real pin centroids and axes.
+    for part in report['parts']:
+        loaded=trimesh.load_mesh(tmp_path/'fork'/part['file'])
+        loaded.apply_transform(part['print_to_assembly_matrix_mm'])
+        if part['id'].startswith('pin'):
+            joint=next(j for j in report['joints'] if j['id']==part['joint'])
+            assert loaded.centroid==pytest.approx(joint['center_mm'],abs=1e-5)
+
+
+def test_textured_boolean_preserves_uv_seams_materials_and_neutral_caps(tmp_path):
+    from PIL import Image
+    mesh=box()
+    # Duplicate every triangle's corners: glTF UV seams are not open geometry.
+    original=mesh.triangles.reshape((-1,3))
+    faces=np.arange(len(original)).reshape((-1,3))
+    uv=original[:,1:]/[60,40]
+    mesh=trimesh.Trimesh(original,faces,process=False)
+    mesh.visual=trimesh.visual.texture.TextureVisuals(uv=uv,image=Image.new('RGB',(4,4),'red'))
+    source=tmp_path/'uv-seams.glb';mesh.export(source);before=source.read_bytes()
+    report=export_package(source,tmp_path/'assembly',config())
+    assert report['textured_assembly_available'] and source.read_bytes()==before
+    loaded=trimesh.load_scene(tmp_path/'assembly/assembled_textured.glb')
+    textured=[g for g in loaded.geometry.values() if g.visual.kind=='texture']
+    neutral=[g for n,g in loaded.geometry.items() if n.startswith('piece') and g.visual.kind!='texture']
+    assert len(textured)==2 and neutral
+    for g in textured:
+        assert g.visual.material.baseColorTexture.getpixel((0,0))[:3]==(255,0,0)
+        # Original linear UV field remains correct at newly interpolated vertices.
+        assert g.visual.uv==pytest.approx(g.vertices[:,1:]*1000/[60,40],abs=1e-5)
+    assert loaded.to_mesh().extents==pytest.approx([.12,.06,.04],abs=1e-5)
+    exploded=trimesh.load_scene(tmp_path/'assembly/exploded_textured.glb')
+    assert exploded.to_mesh().extents[0]>.12
+    with zipfile.ZipFile((tmp_path/'assembly').with_suffix('.zip')) as archive:
+        assert {'viewer.html','viewer_assets/build/three.core.min.js','viewer_assets/addons/loaders/GLTFLoader.js'}<=set(archive.namelist())
+
+
+@pytest.mark.parametrize('rules', [
+    {'protected_zones_mm':[[[0,0,0],[0,1,1]]]},
+    {'connector_centers_mm':[[[60,20,15]]]},
+    {'protected_zones_mm':[[[0,0,float('nan')],[1,1,1]]]},
+])
+def test_invalid_constraints_never_enter_geometry_engine(rules):
+    with pytest.raises(ValueError):settings(config(**rules))
+
+
+def test_keyed_pair_cannot_be_swapped_and_chamfers_have_declared_dimensions():
+    parts,pins,joints,*_=build_assembly(box(),settings(config()))
+    assert [j['pin_diameter_mm'] for j in joints]==[5,4]
+    assert all(j['keyed_pair'] and j['lead_in_mm']==.2 for j in joints)
+    swapped=pins[0].copy();swapped.apply_translation(np.array(joints[1]['center_mm'])-joints[0]['center_mm'])
+    # Independent boolean check: the large pin collides with the small socket.
+    overlap=trimesh.boolean.intersection([parts[0],swapped],engine='manifold')
+    assert overlap.volume>1
+    c=config();c['profile'].update(keyed_pins=False,lead_in_mm=0)
+    _,pins,joints,*_=build_assembly(box(),settings(c))
+    assert [j['pin_diameter_mm'] for j in joints]==[5,5]
+    assert all(not j['keyed_pair'] and j['lead_in_mm']==0 for j in joints)
+    for changes in [dict(keyed_pins='yes'),dict(lead_in_mm=3),dict(lead_in_mm=2),dict(clearance_mm=.6)]:
+        c=config();c['profile'].update(changes)
+        with pytest.raises(ValueError):settings(c)

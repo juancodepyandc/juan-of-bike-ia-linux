@@ -4,15 +4,17 @@ import { getBridgeUrl, isCloudRuntime } from '../utils/runtime'
 type Profile = {
   name: string; process: 'FDM' | 'resin'; bed_mm: [number, number, number]
   clearance_mm: number; wall_mm: number; pin_diameter_mm: number; pin_depth_mm: number; margin_mm: number
+  keyed_pins?: boolean; lead_in_mm?: number
 }
 type Report = {
   dimensions_mm: number[]; source_watertight: boolean; size_applied: boolean
   piece_count?: number; pin_count?: number; cuts_mm?: number[]; cut_axis?: string
+  textured_assembly_available?: boolean
 }
 type ExportResult = { ok: boolean; state: string; error?: string; report?: Report; download_url?: string }
 const STORAGE = 'aurora.printProfiles.v1'
 const initial: Profile = { name: '', process: 'FDM', bed_mm: [220, 220, 250], clearance_mm: 0.2,
-  wall_mm: 2, pin_diameter_mm: 5, pin_depth_mm: 8, margin_mm: 5 }
+  wall_mm: 2, pin_diameter_mm: 5, pin_depth_mm: 8, margin_mm: 5, keyed_pins: true, lead_in_mm: 0.2 }
 
 function profilesOnDevice(): Profile[] {
   try {
@@ -37,6 +39,7 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
   const [size, setSize] = useState(200)
   const [axis, setAxis] = useState('auto')
   const [cuts, setCuts] = useState('')
+  const [constraints, setConstraints] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -60,9 +63,12 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
   function saveProfile() {
     const ranges = [[profile.clearance_mm, 0.01, 2], [profile.wall_mm, 0.5, 20],
       [profile.pin_diameter_mm, 1, 30], [profile.pin_depth_mm, 2, 60], [profile.margin_mm, 0, 30]]
-    if (!profile.name.trim() || profile.bed_mm.some((v) => !Number.isFinite(v) || v < 10 || v > 2000)
+    if ((profile.keyed_pins !== undefined && typeof profile.keyed_pins !== 'boolean') || !profile.name.trim() || profile.bed_mm.some((v) => !Number.isFinite(v) || v < 10 || v > 2000)
       || ranges.some(([v, low, high]) => !Number.isFinite(v) || v < low || v > high)
-      || Math.min(...profile.bed_mm) <= 2 * profile.margin_mm) {
+      || Math.min(...profile.bed_mm) <= 2 * profile.margin_mm
+      || !Number.isFinite(profile.lead_in_mm ?? 0.2) || (profile.lead_in_mm ?? 0.2) < 0 || (profile.lead_in_mm ?? 0.2) > 2
+      || (profile.lead_in_mm ?? 0.2) >= Math.min(profile.pin_diameter_mm * ((profile.keyed_pins ?? true) ? 0.4 : 0.5), profile.pin_depth_mm / 2)
+      || ((profile.keyed_pins ?? true) && profile.clearance_mm >= profile.pin_diameter_mm * 0.1)) {
       setError('Donner un nom et des dimensions/jeux valides au profil.'); return
     }
     const saved = { ...profile, name: profile.name.trim() }
@@ -92,7 +98,11 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
         if (modelUrl.toLowerCase().includes('.obj')) filename = 'model.obj'
       }
       const body = new FormData(); body.append('mesh', source, filename)
-      body.append('settings', JSON.stringify({ mode, size_mm: size, profile, axis, cuts_mm: parsedCuts }))
+      const rules = mode === 'assembly' && constraints.trim() ? JSON.parse(constraints) : {}
+      if (!rules || typeof rules !== 'object' || Array.isArray(rules)
+        || Object.keys(rules).some((k) => !['protected_zones_mm', 'connector_centers_mm'].includes(k)))
+        throw new Error('Contraintes JSON : protected_zones_mm et connector_centers_mm uniquement.')
+      body.append('settings', JSON.stringify({ mode, size_mm: size, profile, axis, cuts_mm: parsedCuts, ...rules }))
       const response = await fetch(`${getBridgeUrl()}/api/3d/engineering`, { method: 'POST', body, headers: authHeaders, signal: controller.signal })
       const accepted = await response.json()
       if (!response.ok || !accepted.ok) throw new Error(accepted.error || 'Export refusé.')
@@ -162,7 +172,9 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
             try {
               if (selected.size > 100_000) throw new Error('Profil JSON trop volumineux.')
               const candidate: Profile = JSON.parse(await selected.text())
-              if (typeof candidate?.name !== 'string' || !['FDM', 'resin'].includes(candidate.process)
+              if ((candidate?.keyed_pins !== undefined && typeof candidate.keyed_pins !== 'boolean')
+                || (candidate?.lead_in_mm !== undefined && (typeof candidate.lead_in_mm !== 'number' || !Number.isFinite(candidate.lead_in_mm)))
+                || typeof candidate?.name !== 'string' || !['FDM', 'resin'].includes(candidate.process)
                 || !Array.isArray(candidate.bed_mm) || candidate.bed_mm.length !== 3
                 || [...candidate.bed_mm, candidate.clearance_mm, candidate.wall_mm, candidate.pin_diameter_mm,
                     candidate.pin_depth_mm, candidate.margin_mm].some((v) => typeof v !== 'number' || !Number.isFinite(v)))
@@ -189,6 +201,12 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
           <input type="number" step="0.05" min={0} value={profile[key]} aria-label={label} className={inputClass}
             onChange={(e) => setProfile({ ...profile, [key]: e.target.valueAsNumber })} />
         </label>)}</div>
+        <label className="block text-xs text-aurora-text-muted">Chanfrein d’entrée et des pions (mm)
+          <input type="number" min={0} max={2} step="0.05" className={inputClass} value={profile.lead_in_mm ?? 0.2}
+            onChange={(e) => setProfile({ ...profile, lead_in_mm: e.target.valueAsNumber })} />
+        </label>
+        <label className="block text-xs text-aurora-text-muted"><input type="checkbox" checked={profile.keyed_pins ?? true}
+          onChange={(e) => setProfile({ ...profile, keyed_pins: e.target.checked })} /> Détrompage : deux diamètres de pions par jonction</label>
         <p className="text-[11px] leading-relaxed text-aurora-text-dim">Valeurs initiales à adapter : vérifier le volume constructeur et calibrer le jeu avec un essai imprimé. Un profil peut représenter une imprimante, une matière et un réglage.</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded-lg border border-aurora-border px-3 py-1.5 text-xs text-aurora-text" onClick={saveProfile}>Enregistrer le profil</button>
@@ -210,7 +228,12 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
         <label className="block text-xs text-aurora-text-muted">Plans de coupe (mm depuis le minimum de l’axe)
           <input aria-label="Plans de coupe mm" value={cuts} onChange={(e) => setCuts(e.target.value)} placeholder="Automatique, ou 60 ; 120" className={inputClass} />
         </label>
-        <p className="text-[11px] text-aurora-text-dim">Coupes planes fermées, deux pions séparés par jonction et logements appariés. Taille, paroi et interférences contrôlées. Aucune réparation automatique d’un maillage ouvert.</p>
+        <details className="text-xs text-aurora-text-muted"><summary>Zones protégées et positions imposées</summary>
+          <p className="mt-2">Coordonnées en mm après mise à l’échelle, origine au minimum du modèle. protected_zones_mm : liste de boîtes [minimum XYZ, maximum XYZ]. connector_centers_mm : une paire de centres XYZ par jonction, dans l’ordre des coupes puis des fragments. Les positions imposées subissent les mêmes contrôles.</p>
+          <textarea aria-label="Contraintes d’assemblage JSON" rows={5} className={inputClass} value={constraints}
+            placeholder={'{"protected_zones_mm": [[[50, 0, 0], [70, 15, 15]]]}'} onChange={(e) => setConstraints(e.target.value)} />
+        </details>
+        <p className="text-[11px] text-aurora-text-dim">Deux pions par jonction, placements comparés pour maximiser leur écartement. Paroi locale, zones protégées, profondeur et interférences contrôlées. Les fonctions mécaniques du modèle doivent être renseignées par ses contraintes.</p>
       </>}
       <button onClick={() => void prepare()} disabled={!file && !modelUrl} className="w-full rounded-xl bg-aurora-accent px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">
         Préparer {mode === 'assembly' ? 'les pièces et raccords' : mode === 'textured' ? 'la version texturée' : 'la géométrie pure'}
@@ -223,8 +246,13 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
       <p>{result.report.size_applied ? `Dimensions : ${result.report.dimensions_mm.map((v) => v.toFixed(2)).join(' × ')} mm.` : 'GLB original conservé ; taille inchangée.'}</p>
       {exportedMode === 'assembly' ? <>
         <p>{result.report.piece_count} pièce(s), {result.report.pin_count} pion(s). Axe {result.report.cut_axis?.toUpperCase()} ; coupes {result.report.cuts_mm?.join(' ; ') || 'inutiles : modèle dans le volume utile'}.</p>
-        <div className="flex gap-3">{(['assembled', 'exploded'] as const).map((view) => <a key={view} target="_blank" rel="noreferrer" className="text-aurora-accent"
-          href={`${getBridgeUrl()}/aurora_viewer.html?focus=1&file=${encodeURIComponent(`api/asset/output/engineering/${jobId}/package/${view}.glb`)}`}>{view === 'assembled' ? 'Vue assemblée' : 'Vue éclatée'}</a>)}</div>
+        <div className="flex flex-wrap gap-3">
+          <a target="_blank" rel="noreferrer" className="text-aurora-accent"
+            href={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html`}>Assemblage par couleurs</a>
+          <a target="_blank" rel="noreferrer" className="text-aurora-accent"
+            href={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html?exploded=1${result.report.textured_assembly_available ? '&appearance=textured' : ''}`}>
+            {result.report.textured_assembly_available ? 'Éclaté texturé' : 'Éclaté par couleurs'}</a>
+        </div>
         <p className="text-aurora-text-muted">Vérifications numériques réussies. L’ajustement physique et la résistance restent à vérifier sur les impressions.</p>
       </> : exportedMode === 'geometry' && <p className="text-aurora-text-muted">{result.report.source_watertight ? 'Maillage fermé.' : 'Maillage ouvert : cette géométrie nécessite une réparation avant assemblage.'}</p>}
       <button onClick={() => void download()} className="rounded-lg border border-aurora-accent px-3 py-2 text-aurora-accent">Télécharger le ZIP</button>
