@@ -69,9 +69,9 @@ export default function EngineeringExportPanel({ modelUrl }: { modelUrl: string 
       || !Number.isFinite(profile.lead_in_mm ?? 0.2) || (profile.lead_in_mm ?? 0.2) < 0 || (profile.lead_in_mm ?? 0.2) > 2
       || (profile.lead_in_mm ?? 0.2) >= Math.min(profile.pin_diameter_mm * ((profile.keyed_pins ?? true) ? 0.4 : 0.5), profile.pin_depth_mm / 2)
       || ((profile.keyed_pins ?? true) && profile.clearance_mm >= profile.pin_diameter_mm * 0.1)) {
-      setError('Donner un nom et des dimensions/jeux valides au profil.'); return
+      setError('Vérifier le nom, le volume, le jeu et le chanfrein du profil. Avec détrompage, le jeu radial doit rester inférieur à 10 % du diamètre du pion.'); return
     }
-    const saved = { ...profile, name: profile.name.trim() }
+    const saved = { ...profile, name: profile.name.trim(), keyed_pins: profile.keyed_pins ?? true, lead_in_mm: profile.lead_in_mm ?? 0.2 }
     const next = [...profiles.filter((p) => p.name !== saved.name), saved].slice(-30)
     try {
       localStorage.setItem(STORAGE, JSON.stringify(next)); setProfiles(next); setProfile(saved)
