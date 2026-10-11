@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as RKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { useDeviceKind } from '../utils/device.ts'
 import MarkdownPro from '../components/MarkdownPro.tsx'
 import SourcesPanel from '../components/chat/SourcesPanel.tsx'
 import { MediaStrip } from '../components/chat/MediaEmbed.tsx'
@@ -366,6 +367,7 @@ function AttachmentRow({ attachments, onRemove }: {
 }
 
 export default function AuroraV4ConversationView() {
+  const phone = useDeviceKind().kind !== 'desktop'
   const L = useChatViewLogic()
   const transcriptRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -591,6 +593,8 @@ export default function AuroraV4ConversationView() {
   const usageTone = usage?.level === 'danger' ? '#F87171' : usage?.level === 'warn' ? '#FBBF24' : undefined
   const tip = getDailyTip('chat')
 
+  const [toolbarOpen, setToolbarOpen] = useState(false)
+  const [composerToolsOpen, setComposerToolsOpen] = useState(false)
   return (
     <div
       {...drop.bind}
@@ -703,7 +707,7 @@ export default function AuroraV4ConversationView() {
         </div>
       )}
 
-      <header style={{
+      <header className="v4c-header" style={{
         display: 'flex',
         alignItems: 'center',
         gap: 14,
@@ -771,6 +775,8 @@ export default function AuroraV4ConversationView() {
             ~{usage.tokens}t · {(usage.ratio * 100).toFixed(0)}%
           </Chip>
         )}
+        <button type="button" className="v4c-toolbar-toggle" aria-expanded={toolbarOpen} aria-controls="v4c-chat-actions" onClick={() => setToolbarOpen((open) => !open)}>Actions</button>
+        <div id="v4c-chat-actions" className={`v4c-toolbar${toolbarOpen ? ' is-open' : ''}`}>
         <GhostBtn
           active={threadSearchOpen}
           title="Chercher dans la conversation (Ctrl+F)"
@@ -819,6 +825,7 @@ export default function AuroraV4ConversationView() {
         <GhostBtn danger title="Effacer toute la conversation" onClick={L.clearAll}>
           <Ic name="trash" />
         </GhostBtn>
+        </div>
       </header>
 
       <section className="v4c-glass" style={{
@@ -901,7 +908,7 @@ export default function AuroraV4ConversationView() {
 
         <div ref={transcriptRef} className="v4c-scroll" style={{ flex: 1, overflowY: 'auto', padding: '18px 22px 24px' }}>
           {L.messages.length === 0 && !L.isStreaming && (
-            <div style={{ textAlign: 'center', padding: '56px 20px 42px', maxWidth: 600, margin: '0 auto' }}>
+            <div className="v4c-welcome" style={{ textAlign: 'center', padding: '56px 20px 42px', maxWidth: 600, margin: '0 auto' }}>
               <div style={{ position: 'relative', display: 'inline-flex', marginBottom: 28, animation: 'v4c-in .6s cubic-bezier(.22,1,.36,1) both' }}>
                 <span style={{
                   position: 'absolute',
@@ -989,9 +996,9 @@ export default function AuroraV4ConversationView() {
                 {WELCOME[L.who]}
               </div>
               <div style={{ fontSize: 12.5, color: '#8B93A7', animation: 'v4c-in .55s cubic-bezier(.22,1,.36,1) .2s both' }}>
-                Écris à Aurora ci-dessous — Ctrl+Entrée pour envoyer, / pour les commandes.
+                {phone ? 'Écris ton message ou joins un fichier pour commencer.' : 'Écris à Aurora ci-dessous — Ctrl+Entrée pour envoyer, / pour les commandes.'}
               </div>
-              {tip && (
+              {tip && !phone && (
                 <div style={{
                   marginTop: 26,
                   display: 'inline-block',
@@ -1313,7 +1320,7 @@ export default function AuroraV4ConversationView() {
         )}
       </section>
 
-      <section className="v4c-glass" style={{
+      <section className="v4c-glass v4c-composer" style={{
         ...GLASS,
         padding: 14,
         boxShadow: '0 18px 44px -28px rgba(0,0,0,.6)',
@@ -1405,7 +1412,7 @@ export default function AuroraV4ConversationView() {
               onKeyDown={onComposerKeyDown}
               onFocus={() => setComposerFocus(true)}
               onBlur={() => setComposerFocus(false)}
-              placeholder={L.who === 'natsu'
+              placeholder={phone ? "Votre message…" : L.who === 'natsu'
                 ? "Balance ton défi — / pour les commandes, Ctrl+Entrée pour envoyer…"
                 : "Dis-moi ce que tu veux invoquer — / pour les commandes, Ctrl+Entrée pour envoyer…"}
               rows={2}
@@ -1433,7 +1440,7 @@ export default function AuroraV4ConversationView() {
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               <GhostBtn title="Joindre un fichier (texte, pdf, docx, image)" onClick={() => fileInputRef.current?.click()}>
-                <Ic name="clip" /> Joindre
+                <Ic name="clip" /> <span className="v4c-attach-label">Joindre</span>
               </GhostBtn>
               <VoicePushToTalk
                 onTranscript={(text) => L.setDraft(L.draft.trim() ? `${L.draft} ${text}` : text)}
@@ -1441,6 +1448,8 @@ export default function AuroraV4ConversationView() {
                 size={30}
                 variant="glass"
               />
+              <button type="button" className="v4c-composer-toggle" aria-expanded={composerToolsOpen} aria-controls="v4c-composer-options" onClick={() => setComposerToolsOpen((open) => !open)}>Options</button>
+              <span id="v4c-composer-options" className={`v4c-composer-options${composerToolsOpen ? ' is-open' : ''}`}>
               <GhostBtn active={L.voiceOpen} title="Copilote vocal plein écran" onClick={L.openVoice}>
                 <Ic name="radio" /> Voix live
               </GhostBtn>
@@ -1454,8 +1463,9 @@ export default function AuroraV4ConversationView() {
               >
                 <Ic name={L.narrationOn ? 'vol' : 'volx'} /> Narration
               </GhostBtn>
+              </span>
               <span style={{ flex: 1 }} />
-              <span aria-hidden="true" style={{
+              <span className="v4c-keyhint" aria-hidden="true" style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 5,

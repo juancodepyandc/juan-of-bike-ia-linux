@@ -1849,3 +1849,40 @@ html[data-ui-skin="aurora_v4"] [data-code-view="true"] .overflow-y-auto {
   scrollbar-width: thin;
   scrollbar-color: rgba(34, 211, 238, 0.25) transparent;
 }
+
+/* Phone navigation and composer share the current Aurora OS design. */
+.v4c-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.v4c-toolbar-toggle, .v4c-composer-toggle { display: none; }
+.v4c-composer-options { display: contents; }
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
+  .v4c-root { padding: 12px !important; gap: 10px !important; }
+  .v4c-header { gap: 8px !important; padding-bottom: 8px !important; }
+  .v4c-header > .v4c-float { display: none !important; }
+  .v4c-header > span[title] { display: none !important; }
+  .v4c-header h1 { font-size: 20px !important; }
+  .v4c-header > div:first-of-type { max-width: calc(100% - 85px); }
+  .v4c-header > div:first-of-type > div:last-child { font-size: 9px !important; letter-spacing: .04em !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .v4c-toolbar-toggle, .v4c-composer-toggle { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 12px; color: #cdbdff; background: #8b5cf61a; border: 1px solid #8b5cf640; border-radius: 12px; font: inherit; font-size: 12px; }
+  .v4c-toolbar { display: none; }
+  .v4c-toolbar.is-open { display: flex; width: 100%; padding-top: 6px; }
+  .v4c-scroll { min-height: 0; padding: 14px !important; }
+  .v4c-welcome { padding: 18px 4px !important; }
+  .v4c-welcome > div:first-child { margin-bottom: 16px !important; }
+  .v4c-composer { padding: 10px !important; flex-shrink: 0; }
+  .v4c-composer textarea, .aurora-v4-main input, .aurora-v4-main select { font-size: 16px !important; }
+  .v4c-composer .v4c-ghost, .v4c-composer .v4c-primary, .v4c-toolbar .v4c-ghost { min-height: 44px; }
+  .v4c-composer-options { display: none; }
+  .v4c-composer-options.is-open { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; order: 3; }
+  .v4c-keyhint { display: none !important; }
+  .v4c-composer button[aria-label="Dicter dans le message"] { min-width: 44px; min-height: 44px; }
+  .av4img-grid { grid-template-columns: minmax(0,1fr) !important; }
+}
+
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
+  html[data-ui-skin="aurora_v4"] .aurora-voice-quick-toggle { display: none !important; }
+  .v4c-header { display: grid !important; grid-template-columns: minmax(0,1fr) auto; }
+  .v4c-header > span { display: none !important; }
+  .v4c-header > div:first-of-type { max-width: 100%; min-width: 0; }
+  .v4c-toolbar { grid-column: 1 / -1; }
+  .v4c-attach-label { display: none; }
+}

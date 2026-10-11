@@ -23,7 +23,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:info": "tauri info",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test:mobile": "node scripts/mobile-navigation.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",

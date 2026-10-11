@@ -79,6 +79,7 @@ export default function VoiceQuickToggle() {
 
   return (
     <div
+      className="aurora-voice-quick-toggle"
       style={{
         position: 'fixed', right: 12, bottom: 12, zIndex: 9999,
         display: 'flex', gap: 6, alignItems: 'center',

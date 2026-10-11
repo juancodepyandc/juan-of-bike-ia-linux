@@ -622,6 +622,14 @@ Les familles Aurora V1, V3, V4 et Manga coexistent dans `src/views/` et `src/com
 
 `hooks/useTauri.ts` est une couche essentielle : commandes Tauri, accès Ollama/ComfyUI, requêtes bridge, progrès Python et adaptation de transport. Le nom ne signifie pas « réservé au natif ». Le code possède aussi une adaptation Node pour éviter qu’un timeout HTTP générique interrompe une commande longue correctement autorisée.
 
+### 6.1.1 Navigation mobile V4 corrigée (11 octobre 2026)
+
+Une reproduction avec le véritable user-agent Pixel 7 montre que `ShellRouter` réservait V4 aux ordinateurs ; le téléphone sélectionné V4 ouvrait pourtant `MobileGrimoire`. Les précédents essais à petite résolution avec user-agent ordinateur ne couvraient pas cette branche. V4 utilise désormais le même hôte persistant sur téléphone, tablette et ordinateur. Les choix explicites V1/V3 restent disponibles.
+
+Sur écran compact, une barre fixe Chat/Image/3D/Modules remplace la navigation globale par swipe et molette horizontale, retirée pour laisser les gestes au navigateur et aux viewers. Le menu des modules est un dialogue modal avec fermeture, focus natif et défilement en paysage. Le chat réduit ses actions secondaires à deux menus, agrandit les contrôles et utilise des indications adaptées au téléphone. Le bouton vocal flottant est masqué dans ce mode car la commande vocale reste dans l’en-tête ; il ne recouvre plus Modules. Les zones sûres des appareils sont prises en compte.
+
+Validation : `npm run check` et `AURORA_TEST_URL=<tunnel actif> npm run test:mobile`. Le test versionné `application/scripts/mobile-navigation.mjs` utilise les profils Chromium Pixel 7, iPhone 13, iPad Mini et Desktop Chrome : routage V4, navigation vers les modules, conservation du brouillon, absence de changement sur gestes horizontaux, dialogue, cibles tactiles et paysage. Il ne valide ni Safari réel, ni le clavier virtuel physique, ni toutes les générations. Captures et journaux privés : `~/maintenance-aurora-2026-10-11/mobile-redesign/`. Le bundle web reconstruit est servi par le bridge public ; `aurora-live` conserve la publication de l’adresse et de la santé du bridge, distincte de la qualité de génération.
+
 ### 6.2 État et persistance
 
 `stores/appStore.ts` gère navigation, matériel, services, travaux, profils, modèles et packs d’assets. Les stores de chat, historique par module, Cowork, apprentissage et brouillons ont leurs propres responsabilités. Les blobs d’images passent notamment par `utils/blobStore.ts`; une URL `blob:` seule n’est pas une référence durable ni transférable à un autre client.

@@ -570,138 +570,8 @@ export default function App() {
     }
   }, [setActiveModule])
 
-  // v82n8 : swipe ONLY blocks at touchstart when target is in a
-  // HORIZONTAL scroller (so Code preview h-scroll still works). The
-  // vertical-scroller guard is GONE — vertical motion is rejected at
-  // touchend by dx/dy ratio. User reported v82n7 was hijacking content
-  // scrolls : "quand je swippe ça me change de module, pas du tout un
-  // défilement". Plus the wheel listener now requires a STRONG
-  // horizontal impulse (300px / 200ms) to avoid trackpad scroll on
-  // long pages firing module switches.
-  useEffect(() => {
-    const SWIPE_ORDER: ModuleId[] = [
-      'conversation', 'image', 'code', 'drawing', '3d', 'cyber', 'learning',
-    ]
-    const gesture = { active: false, startX: 0, startY: 0, startT: 0, multi: false }
-    const isInEditable = (target: EventTarget | null) => {
-      const el = target as HTMLElement | null
-      if (!el) return false
-      if (el.isContentEditable) return true
-      const tag = el.tagName?.toLowerCase()
-      if (tag === 'textarea' || tag === 'input' || tag === 'select') return true
-      // Buttons + closest editable ancestors so typing isn't hijacked.
-      return !!el.closest?.('textarea, input, select, [contenteditable="true"]')
-    }
-    // v82n8 : ONLY horizontal-scroller guard (vertical-scroller guard
-    // was removed in v82n7 because it blocked all 1-finger swipes —
-    // every module has some overflow-y ancestor). The horizontal one
-    // is necessary so the Code preview's whiteSpace:pre overflow:auto
-    // can be h-scrolled by touch instead of switching module.
-    const isInHorizontalScroller = (target: EventTarget | null) => {
-      let el = target as HTMLElement | null
-      while (el && el !== document.body) {
-        const cs = window.getComputedStyle(el)
-        const ovX = cs.overflowX
-        if ((ovX === 'auto' || ovX === 'scroll') && el.scrollWidth > el.clientWidth + 4) {
-          return true
-        }
-        el = el.parentElement
-      }
-      return false
-    }
-    const switchByDelta = (dx: number) => {
-      const cur = useAppStore.getState().activeModule
-      const idx = SWIPE_ORDER.indexOf(cur)
-      if (idx === -1) return
-      // dx > 0 → swipe right → previous module ; dx < 0 → next module
-      const next = SWIPE_ORDER[idx + (dx < 0 ? 1 : -1)]
-      if (!next) return // edges of carousel — no wrap
-      setActiveModule(next)
-    }
-    const onStart = (e: TouchEvent) => {
-      if (e.touches.length === 0) return
-      if (isInEditable(e.target)) {
-        gesture.active = false
-        return
-      }
-      const t0 = e.touches[0]
-      const t1 = e.touches[1]
-      const x = t1 ? (t0.clientX + t1.clientX) / 2 : t0.clientX
-      const y = t1 ? (t0.clientY + t1.clientY) / 2 : t0.clientY
-      gesture.active = true
-      gesture.startX = x
-      gesture.startY = y
-      gesture.startT = Date.now()
-      gesture.multi = e.touches.length >= 2
-      // v82n8 : 1-finger inside horizontal scroller → don't activate so
-      // native h-scroll wins (Code preview, wide tables, etc).
-      if (!gesture.multi && isInHorizontalScroller(e.target)) {
-        gesture.active = false
-      }
-    }
-    const onEnd = (e: TouchEvent) => {
-      if (!gesture.active) return
-      gesture.active = false
-      const ct = e.changedTouches
-      if (ct.length === 0) return
-      const endX = ct.length >= 2 ? (ct[0].clientX + ct[1].clientX) / 2 : ct[0].clientX
-      const endY = ct.length >= 2 ? (ct[0].clientY + ct[1].clientY) / 2 : ct[0].clientY
-      const dx = endX - gesture.startX
-      const dy = endY - gesture.startY
-      const dur = Date.now() - gesture.startT
-      if (dur > 1200) return
-      const MIN = 60 // v82n7 : 80 → 60, more responsive
-      if (Math.abs(dx) < MIN) return
-      // Strong horizontal dominance required so a slight diagonal scroll
-      // doesn't accidentally switch module.
-      if (Math.abs(dx) < Math.abs(dy) * 1.4) return
-      switchByDelta(dx)
-    }
-    // v82n8 : trackpad 2-finger horizontal swipe — STRICTER impulse
-    // detection so reading horizontal scroll inside content (like the
-    // Code preview pre tag) doesn't fire module switch.
-    //   - threshold 320px in 200ms (was 180/300)
-    //   - |deltaY| < 15 cutoff (was 40)
-    //   - skip when target is in a horizontal scroller (let it scroll)
-    let wheelAcc = 0
-    let wheelStart = 0
-    let wheelDecay: number | null = null
-    const onWheel = (e: WheelEvent) => {
-      if (isInEditable(e.target)) return
-      // Horizontal scroll inside a scrollable container → leave it alone.
-      if (isInHorizontalScroller(e.target)) {
-        wheelAcc = 0
-        return
-      }
-      const now = Date.now()
-      if (now - wheelStart > 200) {
-        wheelAcc = 0
-        wheelStart = now
-      }
-      // Any vertical motion at all resets the accumulator — strict so
-      // diagonal scroll doesn't accumulate into a switch.
-      if (Math.abs(e.deltaY) > 15) {
-        wheelAcc = 0
-        return
-      }
-      wheelAcc += e.deltaX
-      if (Math.abs(wheelAcc) >= 320) {
-        switchByDelta(-wheelAcc) // wheel deltaX > 0 = scroll right = "go forward" in carousel
-        wheelAcc = 0
-      }
-      if (wheelDecay) window.clearTimeout(wheelDecay)
-      wheelDecay = window.setTimeout(() => { wheelAcc = 0 }, 250) as unknown as number
-    }
-    window.addEventListener('touchstart', onStart, { passive: true })
-    window.addEventListener('touchend', onEnd, { passive: true })
-    window.addEventListener('wheel', onWheel, { passive: true })
-    return () => {
-      window.removeEventListener('touchstart', onStart)
-      window.removeEventListener('touchend', onEnd)
-      window.removeEventListener('wheel', onWheel)
-      if (wheelDecay) window.clearTimeout(wheelDecay)
-    }
-  }, [setActiveModule])
+  // Module navigation uses explicit controls. Touch and trackpad gestures
+  // belong to browser history, scrolling and the canvas viewers.
 
   useEffect(() => {
     let cancelled = false
@@ -1393,7 +1263,7 @@ function ShellRouter(props: ShellRouterProps) {
   const [subModuleOpen, setSubModuleOpen] = useState<ModuleId | null>(null)
 
   useEffect(() => {
-    if (!isSmall) return
+    if (!isSmall || readUiSkin() === 'aurora_v4') return
     const NATIVE_MOBILE: ModuleId[] = ['conversation', 'learning', 'voice']
     if (NATIVE_MOBILE.includes(props.activeModule)) {
       setSubModuleOpen(null)
@@ -1403,35 +1273,36 @@ function ShellRouter(props: ShellRouterProps) {
     setSubModuleOpen(props.activeModule)
   }, [props.activeModule, isSmall])
 
+  const skin = readUiSkin()
+  if (skin === 'aurora_v4') {
+    return (
+      <Suspense fallback={
+        <div style={{
+          position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#05070D', color: '#8B93A7', fontSize: 14,
+        }}>Aurora OS s'éveille…</div>
+      }>
+        <LAZY_V4_SHELL
+          activeModule={props.activeModule}
+          onActivateModule={(id) => {
+            if (id === 'cowork') {
+              useCoworkStore.getState().open()
+              return
+            }
+            if (id === 'voice') {
+              props.openVoiceOverlay?.()
+              return
+            }
+            props.setActiveModule(id as ModuleId)
+          }}
+        >
+          <PersistentModuleHost active={props.activeModule} render={props.renderModule} />
+        </LAZY_V4_SHELL>
+      </Suspense>
+    )
+  }
+
   if (!isSmall) {
-    const skin = readUiSkin()
-    if (skin === 'aurora_v4') {
-      return (
-        <Suspense fallback={
-          <div style={{
-            position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: '#05070D', color: '#8B93A7', fontSize: 14,
-          }}>Aurora OS s'éveille…</div>
-        }>
-          <LAZY_V4_SHELL
-            activeModule={props.activeModule}
-            onActivateModule={(id) => {
-              if (id === 'cowork') {
-                useCoworkStore.getState().open()
-                return
-              }
-              if (id === 'voice') {
-                props.openVoiceOverlay?.()
-                return
-              }
-              props.setActiveModule(id as ModuleId)
-            }}
-          >
-            <PersistentModuleHost active={props.activeModule} render={props.renderModule} />
-          </LAZY_V4_SHELL>
-        </Suspense>
-      )
-    }
     if (skin === 'aurora_v1') {
       return (
         <AuroraV1AppShell

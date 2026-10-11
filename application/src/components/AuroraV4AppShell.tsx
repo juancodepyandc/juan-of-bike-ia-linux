@@ -4,6 +4,7 @@ import { useAppStore } from '../stores/appStore.ts'
 import type { ModuleId } from '../types/app.ts'
 import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
 import HelpFab from './HelpFab.tsx'
+import { isCloudRuntime } from '../utils/runtime.ts'
 
 type ShellModuleId = ModuleId | 'cowork' | 'voice'
 
@@ -164,6 +165,16 @@ function DockOrb({ entry, active, onClick }: { entry: { id: ShellModuleId; fx: F
 }
 
 export default function AuroraV4AppShell({ activeModule, onActivateModule, children }: Props) {
+  const [modulesOpen, setModulesOpen] = useState(false)
+  const modulesDialog = useRef<HTMLDialogElement>(null)
+  const activeEntry = DOCK.find((entry) => entry.id === activeModule) ?? DOCK[0]
+  useEffect(() => {
+    const dialog = modulesDialog.current
+    if (!dialog) return
+    if (modulesOpen && !dialog.open) dialog.showModal()
+    if (!modulesOpen && dialog.open) dialog.close()
+  }, [modulesOpen])
+  const activate = (id: ShellModuleId) => { setModulesOpen(false); onActivateModule(id) }
   const mainModel = useAppStore((s) => s.mainModel)
   const [greet, setGreet] = useState<FxModule | null>(null)
   const greetTimer = useRef<number | null>(null)
@@ -180,16 +191,35 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
     <div style={{ position: 'fixed', inset: 0, color: '#E6EAF5', fontFamily: "'Inter','Segoe UI Variable','Segoe UI',system-ui,sans-serif" }}>
       <AuroraBackdrop />
       <style>{`
-        @media (max-width: 700px) {
-          .aurora-v4-header { height: calc(56px + env(safe-area-inset-top)) !important; padding: env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) 0 max(12px,env(safe-area-inset-left)) !important; gap: 10px !important; }
-          .aurora-v4-search { flex: 1 !important; min-width: 44px; min-height: 44px; justify-content: center; }
+        .aurora-v4-mobile-nav, .aurora-v4-mobile-context { display: none; }
+        .aurora-v4-modules-sheet { position: fixed; inset: 0; margin: auto; overflow: auto; box-sizing: border-box; color: #E6EAF5; background: linear-gradient(155deg,#151b30,#090d18); border: 1px solid #363e56; border-radius: 24px; width: min(540px,calc(100% - 24px)); max-height: calc(100dvh - 32px); padding: 20px; box-shadow: 0 24px 80px #0009; }
+        .aurora-v4-modules-sheet::backdrop { background: #02050dbb; backdrop-filter: blur(8px); }
+        .aurora-v4-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+        .aurora-v4-sheet-head h2 { margin: 0; font-size: 21px; font-weight: 750; }
+        .aurora-v4-sheet-head p { margin: 4px 0 0; color: #a4aec6; font-size: 12px; }
+        .aurora-v4-sheet-head button { min-width: 44px; min-height: 44px; border-radius: 14px; color: #e6eaf5; background: #ffffff09; border: 1px solid #ffffff20; }
+        .aurora-v4-module-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+        .aurora-v4-module-grid button { display: flex; align-items: center; gap: 12px; min-height: 66px; padding: 12px; border-radius: 16px; border: 1px solid #ffffff16; background: #ffffff04; color: #e6eaf5; font: inherit; text-align: left; cursor: pointer; }
+        .aurora-v4-module-grid button[aria-current=page] { background: #8b5cf622; border-color: #a58aff; }
+        .aurora-v4-module-grid svg { flex-shrink: 0; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+        .aurora-v4-module-grid span { font-size: 14px; font-weight: 650; }
+        .aurora-v4-mobile-nav button:focus-visible, .aurora-v4-module-grid button:focus-visible { outline: 2px solid #c4b5fd; outline-offset: 2px; }
+        @media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
+          .aurora-v4-header { height: calc(62px + env(safe-area-inset-top)) !important; padding: env(safe-area-inset-top) max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left)) !important; gap: 12px !important; }
+          .aurora-v4-mobile-context { display: block; font-size: 11px; font-weight: 450; color: #a4aec6; letter-spacing: 0; margin-top: 2px; }
+          .aurora-v4-search { flex: 0 0 44px !important; min-width: 44px; height: 44px; padding: 0 !important; justify-content: center; margin-left: auto; color: #c4cce0 !important; }
           .aurora-v4-search .search-label, .aurora-v4-search kbd, .aurora-v4-model, .aurora-v4-local, .aurora-v4-mascot { display: none !important; }
-          .aurora-v4-header-actions { gap: 4px !important; }
-          .aurora-v4-header-actions button { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
-          .aurora-v4-dock { top: auto !important; right: 0; bottom: 0; width: auto !important; height: calc(64px + env(safe-area-inset-bottom)); flex-direction: row !important; gap: 8px !important; padding: 8px max(12px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)) !important; overflow-x: auto; overflow-y: hidden !important; border-top: 1px solid rgba(255,255,255,.09); }
-          .aurora-v4-dock > div { display: none; }
-          .aurora-v4-main { left: 0 !important; top: calc(56px + env(safe-area-inset-top)) !important; bottom: calc(64px + env(safe-area-inset-bottom)) !important; overscroll-behavior: contain; }
+          .aurora-v4-header-actions { gap: 4px !important; margin-left: 0 !important; }
+          .aurora-v4-header-actions button { width: 44px; height: 44px; align-items: center; justify-content: center; }
+          .aurora-v4-dock { display: none !important; }
+          .aurora-v4-mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; padding: 8px max(12px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background: #080c17f5; backdrop-filter: blur(20px); border-top: 1px solid #ffffff15; }
+          .aurora-v4-mobile-nav button { min-width: 0; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 16px; color: #9da8c1; background: transparent; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+          .aurora-v4-mobile-nav button[aria-current=page], .aurora-v4-mobile-nav button[aria-expanded=true] { color: #dccfff; background: #8b5cf622; border-color: #8b5cf640; }
+          .aurora-v4-mobile-nav svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+          .aurora-v4-main { left: 0 !important; top: calc(62px + env(safe-area-inset-top)) !important; bottom: calc(72px + env(safe-area-inset-bottom)) !important; overflow-x: hidden !important; }
+          .aurora-v4-main > [data-aurora-module] { min-width: 0; }
           .aurora-v4-greeting { display: none !important; }
+          .aurora-v4-modules-sheet { inset: auto 0 calc(12px + env(safe-area-inset-bottom)); margin: 0 auto; padding: 18px; }
         }
       `}</style>
 
@@ -205,7 +235,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
             background: 'linear-gradient(135deg,#22D3EE,#8B5CF6)', color: '#0A0F1E', fontSize: 13,
             boxShadow: '0 4px 18px rgba(139,92,246,.5)',
           }}>✦</span>
-          Aurora
+          <span>Aurora<span className="aurora-v4-mobile-context">{activeEntry.label}</span></span>
         </div>
         <button
           type="button"
@@ -218,22 +248,25 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
             display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'inherit', textAlign: 'left',
           }}
         >
-          <span aria-hidden="true">⌕</span><span className="search-label">Rechercher ou commander…</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span className="search-label">Rechercher ou commander…</span>
           <kbd style={{ marginLeft: 'auto', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10, border: '1px solid rgba(255,255,255,.14)', borderRadius: 5, padding: '1px 6px', color: '#8B93A7' }}>Ctrl K</kbd>
         </button>
         <div className="aurora-v4-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: '#8B93A7' }}>
           <span className="aurora-v4-model" style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5, color: '#8B5CF6' }}>{mainModel || 'modèle local'}</span>
           <span className="aurora-v4-local" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <b style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', boxShadow: '0 0 8px #4ADE80' }} />
-            local
+            {isCloudRuntime() ? 'PC distant' : 'Local'}
           </span>
           <button
             type="button"
             aria-label="Mode vocal"
-            onClick={() => onActivateModule('voice')}
+            onClick={() => activate('voice')}
             style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex' }}
           >
             <svg viewBox="0 0 24 24" width={17} height={17} style={{ stroke: '#2DD4BF', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round' }} dangerouslySetInnerHTML={{ __html: ICONS.voice }} />
+          </button>
+          <button type="button" aria-label="Paramètres" onClick={() => window.dispatchEvent(new CustomEvent('aurora:open-settings'))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: '#a4aec6' }}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: ICONS.settings }} />
           </button>
           <span className="aurora-v4-mascot" style={{ width: 32, height: 32, display: 'flex', filter: 'drop-shadow(0 0 10px rgba(139,92,246,.4))' }}>
             <AuroraMascot module={activeFx} size={32} />
@@ -253,7 +286,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
             key={entry.id}
             entry={entry}
             active={entry.id === activeModule}
-            onClick={() => onActivateModule(entry.id)}
+            onClick={() => activate(entry.id)}
           />
         ))}
         <div style={{ flex: 1 }} />
@@ -272,6 +305,29 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           <svg viewBox="0 0 24 24" width={20} height={20} style={{ stroke: '#8B93A7', fill: 'none', strokeWidth: 1.7, strokeLinecap: 'round' }} dangerouslySetInnerHTML={{ __html: ICONS.settings }} />
         </button>
       </nav>
+
+      <nav className="aurora-v4-mobile-nav" aria-label="Navigation mobile">
+        {(['conversation', 'image', '3d'] as const).map((id) => {
+          const entry = DOCK.find((item) => item.id === id)!
+          return <button key={id} type="button" aria-current={activeModule === id ? 'page' : undefined} onClick={() => activate(id)}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS[entry.fx] }} />
+            <span>{id === 'conversation' ? 'Chat' : entry.label}</span>
+          </button>
+        })}
+        <button type="button" aria-label="Tous les modules" aria-expanded={modulesOpen} aria-controls="aurora-mobile-modules" aria-haspopup="dialog" aria-current={!['conversation','image','3d'].includes(activeModule) ? 'page' : undefined} onClick={() => setModulesOpen(true)}>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
+          <span>Modules</span>
+        </button>
+      </nav>
+      <dialog ref={modulesDialog} id="aurora-mobile-modules" className="aurora-v4-modules-sheet" aria-labelledby="aurora-modules-title" onCancel={() => setModulesOpen(false)} onClose={() => setModulesOpen(false)} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) setModulesOpen(false) }}>
+        <div className="aurora-v4-sheet-head"><div><h2 id="aurora-modules-title">Votre espace Aurora</h2><p>Choisissez ce que vous voulez faire.</p></div><button type="button" aria-label="Fermer les modules" onClick={() => setModulesOpen(false)}>✕</button></div>
+        <div className="aurora-v4-module-grid">
+          {DOCK.map((entry) => <button key={entry.id} type="button" aria-current={entry.id === activeModule ? 'page' : undefined} onClick={() => activate(entry.id)}>
+            <svg aria-hidden="true" viewBox="0 0 24 24" style={{ color: FX_AGENTS[entry.fx].accent }} dangerouslySetInnerHTML={{ __html: ICONS[entry.fx] }} /><span>{entry.label}</span>
+          </button>)}
+          <button type="button" onClick={() => { setModulesOpen(false); window.dispatchEvent(new CustomEvent('aurora:open-settings')) }}><svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS.settings }}/><span>Paramètres</span></button>
+        </div>
+      </dialog>
 
       <main className="aurora-v4-main" style={{
         position: 'fixed', top: 52, left: 68, right: 0, bottom: 0, zIndex: 10,
