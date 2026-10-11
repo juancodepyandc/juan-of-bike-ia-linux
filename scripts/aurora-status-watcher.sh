@@ -12,7 +12,6 @@ TUNNEL_CHECKER="$ROOT_DIR/scripts/verify-tunnel-url.sh"
 URL_FILE="$ROOT_DIR/tunnel.txt"
 LEGACY_URL_FILE="$ROOT_DIR/tunnel_url.txt"
 CF_LOG="${TMPDIR:-/tmp}/auroraia/cloudflared.log"
-LAST_STATE=""
 LAST_URL=""
 cleanup(){ bash "$PUB" auto >/dev/null 2>&1 || true; exit 0; }
 trap cleanup TERM INT HUP
@@ -24,23 +23,16 @@ while true; do
     if bash "$TUNNEL_CHECKER" "$URL" 15 >/dev/null; then
       printf '%s\n' "$URL" > "$URL_FILE"
       printf '%s\n' "$URL" > "$LEGACY_URL_FILE"
+      STATE=open  # the new public URL was verified in this cycle
       LAST_URL="$URL"
-      LAST_STATE=""   # forcer la republication avec la nouvelle adresse
     else
       echo "[watcher] tunnel non joignable; nouvel essai dans 60 s."
     fi
   fi
-  if [ "$STATE" = "open" ] && [ ! -s "${AURORA_LIVE_REPO:-$ROOT_DIR/../aurora-live}/tunnel.txt" ]; then
-    LAST_STATE=""
-  fi
-  if true; then  # heartbeat + retry failed pushes, even without a state change
-    if bash "$PUB" "$STATE"; then
-      LAST_STATE="$STATE"
-    else
-      # Ne pas memoriser l'etat : le prochain cycle retentera le push vers
-      # aurora-live si le reseau ou GitHub etait momentanement indisponible.
-      echo "[watcher] publication aurora-live echouee; nouvel essai dans 60 s."
-    fi
+  # Retry every cycle, including a previously failed push. The publisher
+  # coalesces unchanged heartbeats for four minutes.
+  if ! bash "$PUB" "$STATE"; then
+    echo "[watcher] publication aurora-live echouee; nouvel essai dans 60 s."
   fi
   sleep 60
 done

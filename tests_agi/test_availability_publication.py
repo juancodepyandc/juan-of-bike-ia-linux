@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.skipif(os.name != 'posix' or not shutil.which('bash') or not shutil.which('git'), reason='Bash launcher integration; portable monitor tested separately on all OS')
-def test_failed_push_is_retried_even_when_files_unchanged(tmp_path):
+@pytest.mark.parametrize("concurrent_update", [False, True])
+def test_failed_push_is_retried_even_when_files_unchanged(tmp_path, concurrent_update):
     def git(repo, *args):
         return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
     remote = tmp_path / 'remote.git'
@@ -38,7 +39,19 @@ def test_failed_push_is_retried_even_when_files_unchanged(tmp_path):
     assert first.returncode != 0
     committed = git(live, 'rev-parse', 'HEAD').stdout
     hook.unlink()
+    if concurrent_update:
+        other = tmp_path / 'external-monitor'
+        subprocess.run(['git', 'clone', str(remote), str(other)], check=True, capture_output=True)
+        git(other, 'config', 'user.name', 'external monitor')
+        git(other, 'config', 'user.email', 'external@example.invalid')
+        (other / 'README.md').write_text('<!--STATUS-->new external check<!--/STATUS-->')
+        git(other, 'add', 'README.md')
+        git(other, 'commit', '-m', 'external update')
+        git(other, 'push', 'origin', 'main')
     second = subprocess.run(['bash', str(publisher), 'closed'], env=env, capture_output=True)
     assert second.returncode == 0, second.stderr.decode()
-    assert git(live, 'rev-parse', 'HEAD').stdout == committed
-    assert git(remote, 'rev-parse', 'main').stdout == committed
+    head = git(live, 'rev-parse', 'HEAD').stdout
+    if not concurrent_update:
+        assert head == committed
+    assert git(remote, 'rev-parse', 'main').stdout == head
+    assert (live / 'README.md').read_text() == '<!--STATUS-->offline<!--/STATUS-->'
