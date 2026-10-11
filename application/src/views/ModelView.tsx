@@ -5017,7 +5017,7 @@ export default function ModelView() {
     {workspace === 'model' && <label className="mx-3 mb-3 block text-xs text-aurora-text-muted">Ouvrir un modèle dans le viewer original
       <input type="file" accept=".glb" className="block mt-2 w-full min-h-11" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 120 * 1024 * 1024) { setError('GLB limité à 120 Mo.'); return } if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current); importedOriginalUrl.current = URL.createObjectURL(file); setModelUrl(importedOriginalUrl.current); setError(null) }} />
     </label>}
-    <div hidden={workspace !== 'assembly'} className="p-3 sm:p-6"><EngineeringExportPanel modelUrl={modelUrl} assemblyOnly active={workspace === 'assembly'} /></div>
+    <div hidden={workspace !== 'assembly'} className="p-3 sm:p-6"><EngineeringExportPanel modelUrl={modelUrl} objectiveHint={prompt} assemblyOnly active={workspace === 'assembly'} /></div>
     {workspace === 'model' && <div data-model-view="true" className="relative min-h-full flex flex-col">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 aurora-mesh opacity-35" />

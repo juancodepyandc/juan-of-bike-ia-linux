@@ -641,6 +641,9 @@ def export_package(source, output, raw):
     if config['mode'] == 'assembly':
         report['print_plates'] = print_plates(output, report)
         report['fabrication']['slicing_required'] = True
+        from application.engineering_project import write_assembly_dossier
+        write_assembly_dossier(report,assembled,output)
+        report['dossier_files'] = ['DOSSIER.md','DOSSIER.html','representation.svg']
     (output/'assembly.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     (output/'READ_ME.txt').write_text(
         'Aurora — géométrie / texture / assemblage\n'

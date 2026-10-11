@@ -23,7 +23,8 @@ def register_engineering_routes(bp, workspace):
     def owner():
         # Requests arrive through the bridge's existing sensitive-route guard.
         # Retained jobs are additionally separated by the supplied credential.
-        return hashlib.sha256(request.headers.get('Authorization', '').encode()).hexdigest()
+        from application.device_pairing import request_identity
+        return hashlib.sha256(request_identity(workspace).encode()).hexdigest()
 
     def save_receipt(job_id, job):
         receipt = {k:v for k,v in job.items() if k != 'directory'}

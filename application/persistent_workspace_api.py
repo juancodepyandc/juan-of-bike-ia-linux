@@ -17,18 +17,18 @@ def register_workspace_routes(bp, workspace, *, local, admin, extension, node):
     child = None
 
     def headers():
-        # Always authorize here, including frame/downloads. Not just the create POST.
-        if not local() and not admin() and not extension()[0]:
-            return None
-        credential = request.headers.get('Authorization', '')
-        if not local() and not credential.lower().startswith('bearer '):
-            return None
+        # Paired devices explicitly approved on this PC share its workspace.
+        is_local=local(); is_admin=admin(); ext_ok,record,_=extension()
+        if not is_local and not is_admin and not ext_ok: return None
+        credential=request.headers.get('Authorization','')
+        owner=hashlib.sha256((credential or 'local-workspace').encode()).hexdigest()
+        if not credential and ext_ok and record.get('workspace_owner'): owner=record['workspace_owner']
         try:
             token = (state / 'token').read_text().strip()
         except OSError:
             token = ''
         return {'X-Aurora-Workspace-Token': token,
-                'X-Aurora-Workspace-Owner': hashlib.sha256((credential or 'local-workspace').encode()).hexdigest()}
+                'X-Aurora-Workspace-Owner': owner}
 
     def ensure():
         nonlocal child
@@ -77,7 +77,7 @@ def register_workspace_routes(bp, workspace, *, local, admin, extension, node):
     def workspace_gateway(file_id=None):
         authenticated = headers()
         if authenticated is None:
-            return jsonify(ok=False, error='Clé Aurora requise pour retrouver votre espace sur le PC.'), 403
+            return jsonify(ok=False, error='forbidden_public', detail='Connectez cet appareil depuis votre PC Aurora.'), 403
         if request.content_length and request.content_length > 170 * 1024 * 1024:
             return jsonify(ok=False, error='Fichiers trop volumineux.'), 413
         try:

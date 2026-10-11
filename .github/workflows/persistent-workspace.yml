@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'application/persistent_workspace*'
+      - 'application/device_*'
       - 'application/scripts/*persistent-workspace.mjs'
       - 'application/package*.json'
       - 'application/src/utils/bridgeAuth.ts'

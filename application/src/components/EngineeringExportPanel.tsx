@@ -1,6 +1,7 @@
-import { bridgeFetch as fetch, readBridgeKey, saveBridgeKey } from '../utils/bridgeAuth.ts'
+import EngineeringDesignPanel from './EngineeringDesignPanel.tsx'
+import { bridgeFetch as fetch } from '../utils/bridgeAuth.ts'
 import { useEffect, useRef, useState } from 'react'
-import { getBridgeUrl, isCloudRuntime } from '../utils/runtime'
+import { getBridgeUrl } from '../utils/runtime'
 
 type Profile = {
   name: string; process: 'FDM' | 'resin'; bed_mm: [number, number, number]
@@ -34,7 +35,7 @@ function selectedOnDevice(): Profile {
   catch { return profiles[0] || initial }
 }
 
-export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false, active = true, onAssemblyRequested }: { modelUrl: string | null; assemblyOnly?: boolean; active?: boolean; onAssemblyRequested?: () => void }) {
+export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false, active = true, onAssemblyRequested, objectiveHint = '' }: { objectiveHint?: string; modelUrl: string | null; assemblyOnly?: boolean; active?: boolean; onAssemblyRequested?: () => void }) {
   const [mode, setMode] = useState<'geometry' | 'textured' | 'assembly'>(assemblyOnly ? 'assembly' : 'geometry')
   const [profiles, setProfiles] = useState<Profile[]>(profilesOnDevice)
   const [profile, setProfile] = useState<Profile>(selectedOnDevice)
@@ -54,7 +55,6 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [message, setMessage] = useState('')
   const [result, setResult] = useState<ExportResult | null>(null)
   const [jobId, setJobId] = useState('')
-  const [accessKey, setAccessKey] = useState(readBridgeKey)
   const requestRef = useRef<AbortController | null>(null)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestRef.current?.abort() } }, [])
@@ -135,7 +135,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   async function download() {
     if (!result?.download_url) return
     try {
-      const response = await fetch(`${getBridgeUrl()}${result.download_url}`, {})
+      const response = await fetch(`${getBridgeUrl()}${result.download_url}`)
       if (!response.ok) throw new Error('Archive indisponible.')
       const url = URL.createObjectURL(await response.blob())
       const a = document.createElement('a'); a.href = url; a.download = `aurora-${exportedMode}-${jobId}.zip`; a.click()
@@ -145,12 +145,10 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
 
   return <section className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4" aria-label={assemblyOnly ? "Préparation d’assemblage" : "Versions 3D et assemblage"}>
     <h3 className="text-sm font-semibold text-aurora-text">{assemblyOnly ? "Assemblage — assemblé / éclaté" : "Versions 3D / Assemblage"}</h3>
+    {assemblyOnly && active && <EngineeringDesignPanel profile={profile} objectiveHint={objectiveHint} />}
     <p className="mt-2 text-xs text-aurora-text-muted">Préparer le modèle existant pour le visuel ou l’impression, sans relancer sa génération.</p>
     <details open={!result || !assemblyOnly}><summary hidden={!assemblyOnly} className="mt-3 min-h-11 cursor-pointer text-sm">Préparer les pièces et le profil imprimante</summary>
     <fieldset disabled={busy} className="mt-3 space-y-3 disabled:opacity-60">
-      {isCloudRuntime() && <label className="block text-xs text-aurora-text-muted">Clé d’accès au serveur distant
-        <input type="password" autoComplete="off" value={accessKey} onChange={(e) => { setAccessKey(e.target.value); saveBridgeKey(e.target.value) }} className={inputClass} />
-      </label>}
       {!assemblyOnly && <div className="grid grid-cols-3 gap-1">
         {([['geometry', 'Géométrie pure'], ['textured', 'Texture'], ['assembly', 'Assemblage']] as const).map(([value, label]) =>
           <button key={value} type="button" aria-pressed={mode === value} onClick={() => value === 'assembly' && onAssemblyRequested ? onAssemblyRequested() : setMode(value)}

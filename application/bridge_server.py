@@ -610,6 +610,7 @@ def _admin_ok() -> bool:
 # on reste permissif pour ne pas casser l'UI ni le workflow.
 _SENSITIVE_PREFIXES = (
     "/api/3d/engineering",
+    "/api/3d/design",
     "/api/command/",
     "/api/python/",
     "/api/fs/write-",
@@ -667,6 +668,11 @@ def _ext_get_raw_key():
 
 def _ext_auth():
     """→ (ok: bool, record: dict|None, err: str|None)"""
+    from application.device_pairing import device_auth
+    if not request.headers.get('Authorization'):
+        device = device_auth(WORKSPACE)
+        if device:
+            return True, device, None
     raw = _ext_get_raw_key()
     if not raw:
         return False, None, "clé manquante (Authorization: Bearer <clé>)"

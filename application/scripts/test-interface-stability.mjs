@@ -37,11 +37,11 @@ try{
    if(path==='/workspace')return route.fulfill({contentType:'text/html',body:portal})
    const data=route.request().postDataJSON()
    if(path.endsWith('/action'))actions.push(data)
-   let body={ok:true,id:'same-session'}
+   let body={ok:true,id:'same-session',connected:path==='/api/devices/session'}
    if(path.endsWith('/frame')){polls++;body={...body,image,viewport:{width:390,height:630},controls:[{id:'1',frame:'1',label:'Module actif',x:10,y:10,width:100,height:44}],tabs:[],assets:[],downloads:[],canvases:[]}}
    await route.fulfill({contentType:'application/json',body:JSON.stringify(body)})
   })
-  await page.goto('http://127.0.0.1:3030/workspace');await page.locator('#key').fill('fixture-key');await page.locator('#connect').click()
+  await page.goto('http://127.0.0.1:3030/workspace');
   await page.waitForFunction(()=>document.querySelector('#controls button'))
   const original=page.viewportSize();await page.setViewportSize({...original,height:original.height-90});await page.waitForTimeout(700)
   assert.equal(actions.filter(a=>a.type==='resize').length,1,'Browser toolbar must not resize remote session')

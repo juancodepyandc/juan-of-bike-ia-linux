@@ -13,6 +13,11 @@ from bridge_server import _request_is_local_loopback, _admin_ok, _ext_auth, reso
 register_workspace_routes(asset_bp, WORKSPACE, local=_request_is_local_loopback,
                           admin=_admin_ok, extension=_ext_auth, node=resolve_node_exe)
 
+from application.device_pairing import register_device_routes
+register_device_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback)
+from application.engineering_design_api import register_design_routes
+from bridge_server import _ext_default_model
+register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=_ext_default_model)
 
 # =====================================================================
 #  Asset serving — pour telecharger les images generees sur le tel
