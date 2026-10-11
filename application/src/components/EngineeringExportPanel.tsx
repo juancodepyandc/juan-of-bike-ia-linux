@@ -67,7 +67,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [exportedMode, setExportedMode] = useState(mode)
   const inputClass = 'mt-1 w-full rounded-lg border border-aurora-border/50 bg-aurora-surface-2 px-2 py-1.5 text-xs text-aurora-text'
 
-  useEffect(() => { viewerRef.current?.contentWindow?.postMessage({ type: 'aurora-assembly-view', exploded: previewExploded }, window.location.origin) }, [previewExploded])
+  useEffect(() => { viewerRef.current?.contentWindow?.postMessage({ type: 'aurora-assembly-view', exploded: previewExploded }, viewerRef.current ? new URL(viewerRef.current.src).origin : window.location.origin) }, [previewExploded])
 
   function saveProfile() {
     const ranges = [[profile.clearance_mm, 0.01, 2], [profile.wall_mm, 0.5, 20],
@@ -288,7 +288,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
     {busy && <p role="status" className="mt-3 text-xs text-aurora-accent">Préparation et contrôles des pièces…</p>}
     {message && <p role="status" className="mt-3 text-xs text-aurora-accent">{message}</p>}
     {error && <p role="alert" className="mt-3 text-xs text-red-400">{error}</p>}
-    {assemblyOnly && active && result?.report && <div className="mt-4"><div className="flex gap-2 mb-3"><button type="button" aria-pressed={!previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(false)}>Vue assemblée</button><button type="button" aria-pressed={previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(true)}>Vue éclatée</button></div><iframe title="Viewer d’assemblage" ref={viewerRef} onLoad={() => viewerRef.current?.contentWindow?.postMessage({type:"aurora-assembly-view",exploded:previewExploded},window.location.origin)} className="w-full h-[75dvh] min-h-[360px] rounded-xl border border-aurora-border" src={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html`} /></div>}
+    {assemblyOnly && active && result?.report && <div className="mt-4"><div className="flex gap-2 mb-3"><button type="button" aria-pressed={!previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(false)}>Vue assemblée</button><button type="button" aria-pressed={previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(true)}>Vue éclatée</button></div><iframe title="Viewer d’assemblage" ref={viewerRef} onLoad={() => viewerRef.current?.contentWindow?.postMessage({type:"aurora-assembly-view",exploded:previewExploded},viewerRef.current ? new URL(viewerRef.current.src).origin : window.location.origin)} className="w-full h-[75dvh] min-h-[360px] rounded-xl border border-aurora-border" src={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html`} /></div>}
     {result?.report && <div className="mt-3 space-y-2 text-xs text-aurora-text">
       <p>{result.report.size_applied ? `Dimensions : ${result.report.dimensions_mm.map((v) => v.toFixed(2)).join(' × ')} mm.` : 'GLB original conservé ; taille inchangée.'}</p>
       {exportedMode === 'assembly' ? <>
