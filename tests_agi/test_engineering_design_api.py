@@ -20,6 +20,7 @@ def test_durable_idempotent_owned_mission_and_invalid_delivery(tmp_path):
     assert result['state']=='incomplete' and not result['ready']
     assert c.get('/api/3d/design/'+item['id']+'/download',headers=headers).status_code==404
     assert c.get('/api/3d/design/'+item['id']).status_code==403
+    assert c.post('/api/3d/design/'+item['id']+'/simulate',json={}).status_code==403
 
 
 def test_delivery_checks_actual_geometry_and_changed_archive(tmp_path):
@@ -38,6 +39,11 @@ def test_delivery_checks_actual_geometry_and_changed_archive(tmp_path):
     path='/api/3d/design/'+d['id']
     assert c.get(path).json['ready']
     assert c.get(path+'/download').status_code==200
+    simulation=c.post(path+'/simulate',json={})
+    assert simulation.status_code==200 and simulation.json['dof']==0
+    assert simulation.json['collisions']==[]
+    assert c.post(path+'/simulate',json=[]).status_code==400
+    assert c.post(path+'/simulate',json={'values':{'fake':1}}).status_code==400
     trimesh.creation.box([30,15,10]).export(folder/'printable'/'piece_01.stl')
     assert not c.get(path).json['ready']
 

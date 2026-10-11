@@ -67,6 +67,10 @@ def build_project(spec, root='.', *, require_sources=False):
     blockers=spec.get('blockers',[]);assumptions=spec.get('assumptions',[])
     if not all(isinstance(v,list) and all(isinstance(x,str) for x in v) for v in [blockers,assumptions]): raise ValueError('Assumptions and blockers must be explicit text lists.')
     report={'schema':'aurora.engineering-project.v1','title':title,'objective':objective,'units':'mm','parts':measured,'bom':checked_bom,'assembly_steps':steps,'constraints':spec.get('constraints',[]),'assumptions':assumptions,'blockers':blockers,'design_tests':spec.get('tests',[]),'feasibility':'requires_resolution' if blockers else 'prototype_requires_physical_validation','physical_fit_validated':False,'measured_checks':{'closed_volumes':True,'printer_fit':True,'rigid_placements':True,'references_resolved':True},'sources':spec.get('sources',[])}
+    from application.engineering_motion import validate_joints
+    id_map={p['design_id']:p['id'] for p in measured}
+    motion=[{**j,'parent':id_map.get(j.get('parent'),j.get('parent')),'child':id_map.get(j.get('child'),j.get('child'))} for j in spec.get('mechanism_joints',[])]
+    report['mechanism_joints']=validate_joints(measured,motion)
     filament_plan=[]
     for part,source in zip(measured,parts):
         color=source.get('filament_color','#eeeeee')
@@ -87,6 +91,8 @@ def build_project(spec, root='.', *, require_sources=False):
     lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
     lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
     lines += ['','![Projection des pièces réellement produites](representation.svg)','','## Montage']+[f"{i+1}. {step['instruction']}" for i,step in enumerate(steps)]
+    lines += ['','## Mobilité et vérification géométrique', 'Articulations définies dans le repère mondial au repos ; limites et position initiale explicites. Sans articulation déclarée, aucune animation fonctionnelle.', 'Contrôle de pénétration des solides à la position demandée uniquement. Contacts, efforts, friction, déformations, flexion des câbles et trajectoires continues restent à valider.']
+    lines += ['- '+json.dumps(j,ensure_ascii=False) for j in report['mechanism_joints']]
     lines += ['','## Tests']+['- Géométrie mesurée : volumes fermés, dimensions dans le volume utile, transformations rigides et références résolues.','- Les autres résultats sont déclarés par le concepteur : consulter leurs scripts et preuves. Aucun succès mécanique ou électrique n’est déduit de la seule validité du STL.']
     lines += ['- '+json.dumps(t,ensure_ascii=False) for t in report['design_tests']]
     lines += ['','## Points bloquants ou restant à valider']+['- '+x for x in blockers or ['Ajustement imprimé, efforts, matière, fixations et composants achetés à vérifier avec leurs fiches techniques.']]
@@ -100,6 +106,7 @@ def build_project(spec, root='.', *, require_sources=False):
     if measured:
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
         mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates']}
+        manifest['mechanism_joints']=report['mechanism_joints']
         (root/'assembly.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
         shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'),root/'viewer.html')
         shutil.copytree(Path(__file__).with_name('engineering_viewer_assets'),root/'viewer_assets',dirs_exist_ok=True)

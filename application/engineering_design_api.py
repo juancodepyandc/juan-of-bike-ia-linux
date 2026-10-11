@@ -18,6 +18,7 @@ Décompose les fonctions, interfaces, éléments fixes/mobiles, transmissions, �
 L'utilisateur peut imposer des composants. Respecte leurs fiches techniques, leurs dimensions et leurs limites ; cherche des sources primaires si nécessaire. Sinon, propose toi-même les composants, fixations, fils/câbles et matières nécessaires, avec quantités et spécifications utiles (diamètre, longueur, tension, courant, couple, section, tolérance, etc. uniquement lorsque pertinent).
 Procède avec des hypothèses explicites raisonnables plutôt que demander chaque choix. Si une inconnue rend une conclusion impossible ou un objectif techniquement irréalisable, démontre le blocage et propose une alternative compatible, sans prétendre avoir fabriqué une solution impossible.
 Utilise les outils : établis un plan et des critères mesurables, produis du code paramétrique, exécute des calculs et des tests adaptés, consulte les preuves et corrige les défauts. Ne confonds pas un calcul à paramètres supposés et une mesure réelle ; aucune certification mécanique, électrique ou ajustement imprimé ne peut être inventée.
+Pour les mécanismes, renseigner mechanism_joints : id, parent/child (IDs des pièces), kind fixed/revolute/prismatic/helical, axis et origin_mm dans le repère mondial au repos, limits et home (degrés ou mm), pitch_mm pour une vis hélicoïdale. Ne pas inventer de mobilité pour des fixations statiques. Les boucles fermées, efforts, câbles flexibles et déformations doivent être signalés comme nécessitant un solveur supplémentaire.
 Livrables : design.py reproductible, tests.py exécuté (peut appeler des scripts supplémentaires), pièces STL fermées en mm, placements rigides, project_spec.json, archive engineering-project.zip avec dossier de montage (MD et HTML imprimable PDF), nomenclature, représentation des géométries et viewer.
 Produis réellement les maillages (sommets/faces, par exemple avec trimesh/manifold installés) et exporte les STL sur disque. Une description JSON de primitive, un dictionnaire de cotes ou un message de succès ne constitue jamais une pièce. Les tests doivent charger et mesurer les fichiers réellement exportés, pas tester seulement des valeurs recopiées.
 La bibliothèque fabrication.py est un module Python local, pas un outil agent. Pour créer les scripts, utilise les outils réels write_file et run_command avec le Python indiqué ; consulte list_tools si tu ignores un outil, n'invente pas de nom d'outil. Elle est disponible pour vérifier et empaqueter les pièces réellement produites. spec peut être un dictionnaire Python ou le chemin local project_spec.json. Utilise build_project(spec, '.') pour produire le dossier et l'archive. Corrige les pièces qui ne tiennent pas dans l'imprimante (orientation ou découpe), ne remplace pas le profil fourni. Des exigences irréalisables peuvent produire un dossier de faisabilité avec blockers et aucune pièce.
@@ -61,7 +62,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         complete=False; report=None
         if item['status'] in {'completed','failed','stopped','blocked','interrupted'}:
             try:
-                report=json.loads(report_path.read_text())
+                report=json.loads(report_path.read_text(encoding='utf-8'))
                 parts=report.get('parts',[])
                 if report.get('schema')!='aurora.engineering-project.v1' or not isinstance(parts,list) or len(parts)>64:raise ValueError('schema')
                 paths=[archive,report_path,folder/'DOSSIER.md',folder/'DOSSIER.html',folder/'representation.svg']
@@ -161,6 +162,18 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
         rec=receipt(did)
         return (jsonify(response(rec)),200) if rec else (jsonify(ok=False,error='Projet introuvable.'),404)
+    @bp.route('/api/3d/design/<did>/simulate',methods=['POST'])
+    def simulate_design(did):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        rec=receipt(did)
+        if not rec or not response(rec).get('artifacts_available'):return jsonify(ok=False,error='Géométrie vérifiée indisponible.'),404
+        from application.engineering_motion import simulate
+        try:
+            report=json.loads((root/did/'project.json').read_text(encoding='utf-8'))
+            data=request.get_json(silent=True)
+            if not isinstance(data,dict):raise ValueError('Objet de paramètres requis.')
+            return jsonify(simulate(report,root/did,data.get('values',{})))
+        except (ValueError,TypeError,KeyError) as exc:return jsonify(ok=False,error=str(exc)),400
     @bp.route('/api/3d/design/<did>/resume',methods=['POST'])
     def resume_design(did):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
