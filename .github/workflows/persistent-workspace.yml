@@ -1,0 +1,36 @@
+name: Persistent workspace contracts
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'application/persistent_workspace*'
+      - 'application/scripts/*persistent-workspace.mjs'
+      - 'application/package*.json'
+      - '.github/workflows/persistent-workspace.yml'
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: application/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:workspace

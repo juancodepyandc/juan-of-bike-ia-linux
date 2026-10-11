@@ -4,7 +4,7 @@ import { useAppStore } from '../stores/appStore.ts'
 import type { ModuleId } from '../types/app.ts'
 import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
 import HelpFab from './HelpFab.tsx'
-import { isCloudRuntime } from '../utils/runtime.ts'
+import { getBridgeUrl, isCloudRuntime } from '../utils/runtime.ts'
 
 type ShellModuleId = ModuleId | 'cowork' | 'voice'
 
@@ -265,6 +265,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           >
             <svg viewBox="0 0 24 24" width={17} height={17} style={{ stroke: '#2DD4BF', fill: 'none', strokeWidth: 1.8, strokeLinecap: 'round' }} dangerouslySetInnerHTML={{ __html: ICONS.voice }} />
           </button>
+          {!new URLSearchParams(window.location.search).has('persistent-worker') && <a aria-label="Espace persistant sur le PC" title="Générer sur le PC et revenir plus tard" href={`${getBridgeUrl()}/workspace`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44, color: '#c4b5fd' }}><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 21h8M12 16v5"/></svg></a>}
           <button type="button" aria-label="Paramètres" onClick={() => window.dispatchEvent(new CustomEvent('aurora:open-settings'))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: '#a4aec6' }}>
             <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: ICONS.settings }} />
           </button>
@@ -327,6 +328,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           </button>)}
           <button type="button" onClick={() => { setModulesOpen(false); window.dispatchEvent(new CustomEvent('aurora:open-settings')) }}><svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS.settings }}/><span>Paramètres</span></button>
         </div>
+      {!new URLSearchParams(window.location.search).has('persistent-worker') && <a href={`${getBridgeUrl()}/workspace`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 48, marginTop: 14, borderRadius: 14, background: '#8b5cf633', color: '#ded0ff', textDecoration: 'none', fontSize: 13 }}>Générer sur le PC et revenir plus tard</a>}
       </dialog>
 
       <main className="aurora-v4-main" style={{

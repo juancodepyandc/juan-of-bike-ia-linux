@@ -48,7 +48,7 @@ def _req_start():
 @app.after_request
 def _req_log(response):
     duration_ms = round((time.perf_counter() - g.start_time) * 1000)
-    if not request.path.startswith("/api/python/progress"):
+    if not request.path.startswith(("/api/python/progress", "/api/workspace-session/frame")):
         # ASCII-only arrow: bridge stdout can be redirected to a file whose
         # default encoding is cp1252 on Windows, which cannot encode "->".
         print(f"[bridge] {request.method} {request.path} -> {response.status_code} ({duration_ms}ms)", flush=True)

@@ -8,6 +8,12 @@ asset_bp = Blueprint('asset_bp', __name__)
 from application.engineering_api import register_engineering_routes
 register_engineering_routes(asset_bp, WORKSPACE)
 
+from application.persistent_workspace_api import register_workspace_routes
+from bridge_server import _request_is_local_loopback, _admin_ok, _ext_auth, resolve_node_exe
+register_workspace_routes(asset_bp, WORKSPACE, local=_request_is_local_loopback,
+                          admin=_admin_ok, extension=_ext_auth, node=resolve_node_exe)
+
+
 # =====================================================================
 #  Asset serving — pour telecharger les images generees sur le tel
 # =====================================================================

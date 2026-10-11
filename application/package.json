@@ -24,7 +24,9 @@
     "tauri:build": "tauri build",
     "tauri:info": "tauri info",
     "tauri": "tauri",
-    "test:mobile": "node scripts/mobile-navigation.mjs"
+    "test:mobile": "node scripts/mobile-navigation.mjs",
+    "workspace:serve": "node scripts/persistent-workspace.mjs",
+    "test:workspace": "node scripts/test-persistent-workspace.mjs"
   },
   "dependencies": {
     "@codemirror/lang-css": "^6.3.1",
