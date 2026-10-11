@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Surveille le bridge expose par le tunnel (127.0.0.1:3001) ET l'adresse du
-# tunnel; publie sur le repo aurora-live a chaque changement d'etat OU d'URL.
+# Surveille le bridge via son tunnel PUBLIC et son adresse ; publie les
+# changements et retente les pushes refusés à chaque cycle.
 # 31/07: l'URL n'etait publiee qu'UNE fois au demarrage — a chaque relance de
 # l'app le tunnel change d'adresse et GitHub gardait l'ancienne (constate:
 # fichier phi-match-... vs tunnel reel characterization-...). Le watcher
@@ -16,7 +16,7 @@ LAST_URL=""
 cleanup(){ bash "$PUB" auto >/dev/null 2>&1 || true; exit 0; }
 trap cleanup TERM INT HUP
 while true; do
-  # Cible = bridge :3001 (ce que le tunnel expose), pas l'UI Vite :1420.
+  # Vérifier le trajet public complet, pas seulement un processus local.
   if bash "$TUNNEL_CHECKER" "$(cat "$URL_FILE" 2>/dev/null)" 1 >/dev/null 2>&1; then STATE=open; else STATE=closed; fi
   URL="$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -1)"
   if [ -n "$URL" ] && [ "$URL" != "$LAST_URL" ]; then
