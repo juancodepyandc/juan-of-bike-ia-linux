@@ -61,3 +61,23 @@ def test_invalid_settings_are_rejected_before_job(client,settings):
     response=client.post('/api/3d/engineering',data={
         'mesh':(io.BytesIO(b'fixture'),'source.glb'),'settings':json.dumps(settings)})
     assert response.status_code==400 and not response.get_json()['ok']
+
+
+def test_completed_export_survives_new_bridge_and_owner_remains_private(client,tmp_path):
+    raw=trimesh.creation.box([120,60,40]).export(file_type='stl')
+    headers={'Authorization':'Bearer durable-fixture'}
+    accepted=client.post('/api/3d/engineering',headers=headers,data={'mesh':(io.BytesIO(raw),'source.stl'),'settings':json.dumps(config())})
+    job=accepted.get_json()['job_id'];before=finish(client,job,headers)
+    app=Flask('new_bridge');bp=Blueprint('reloaded',__name__)
+    register_engineering_routes(bp,tmp_path);app.register_blueprint(bp);reloaded=app.test_client()
+    response=reloaded.get('/api/3d/engineering/'+job,headers=headers)
+    after=response.get_json()
+    assert response.status_code==200 and after['state']=='done'
+    assert before['archive_sha256']==after['archive_sha256']
+    downloaded=reloaded.get(after['download_url'],headers=headers)
+    assert downloaded.status_code==200 and hashlib.sha256(downloaded.data).hexdigest()==after['archive_sha256']
+    assert reloaded.get('/api/3d/engineering/'+job,headers={'Authorization':'Bearer wrong'}).status_code==404
+    assert not (tmp_path/'output'/'engineering'/job/'receipt.json').exists()
+    import os
+    if os.name == 'posix':
+        assert (tmp_path/'.aurora'/'engineering-receipts'/(job+'.json')).stat().st_mode & 0o777 == 0o600

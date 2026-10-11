@@ -49,7 +49,7 @@ def textured_source(scene, scale):
     return result, materials
 
 
-def textured_pieces(scene, scale, pieces, joints, axis):
+def textured_pieces(scene, scale, pieces, joints, axis, components=()):
     from manifold3d import Mesh, Manifold
     source, materials = textured_source(scene, scale)
     from application.engineering_mesh import socket
@@ -57,6 +57,13 @@ def textured_pieces(scene, scale, pieces, joints, axis):
     def volume(mesh):
         return Manifold(Mesh(np.asarray(mesh.vertices, dtype=np.float32),
                              np.asarray(mesh.faces, dtype=np.uint32)))
+    for component in components:
+        low,high = np.array(component['seat_bounds_mm'],dtype=float)
+        access_axis = 'xyz'.index(component['access_axis'])
+        if component['access_side'] == 'positive': high[access_axis] += 1
+        else: low[access_axis] -= 1
+        cavity = trimesh.creation.box(high-low,trimesh.transformations.translation_matrix((high+low)/2))
+        source = source - volume(cavity)
     # Replay cuts on the property-bearing source. Intersecting two identical
     # outside surfaces would make material provenance ambiguous.
     previews = []

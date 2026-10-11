@@ -101,6 +101,29 @@ def settings(raw):
             or not filament['name'].strip() or len(filament['name']) > 100
             or not isinstance(filament.get('color'), str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', filament['color'])):
             raise ValueError('Filament : nom non vide et couleur #RRGGBB requis.')
+    components = raw.get('components', [])
+    if not isinstance(components, list) or len(components) > 24:
+        raise ValueError('Maximum 24 composants.')
+    parsed_components = []
+    for component in components:
+        if not isinstance(component, dict) or component.get('kind') not in {'sensor','motor','other'}:
+            raise ValueError('Composant : sensor, motor ou other requis.')
+        name = component.get('name')
+        if not isinstance(name,str) or not name.strip() or len(name) > 100:
+            raise ValueError('Référence du composant requise.')
+        bounds = component.get('bounds_mm')
+        if not isinstance(bounds,list) or len(bounds) != 2:
+            raise ValueError('Composant : bounds_mm [minimum XYZ, maximum XYZ] requis.')
+        low,high = map(vector,bounds)
+        if any(a >= b for a,b in zip(low,high)):
+            raise ValueError('Dimensions de composant strictement positives requises.')
+        axis = component.get('access_axis','z'); side = component.get('access_side','positive')
+        if axis not in {'x','y','z'} or side not in {'positive','negative'}:
+            raise ValueError('Axe et côté d’accès du composant invalides.')
+        parsed_components.append({'name':name.strip(),'kind':component['kind'],'bounds_mm':[low,high],
+                                  'clearance_mm':number(component.get('clearance_mm',.3),'Jeu composant (mm)',.01,2),
+                                  'access_axis':axis,'access_side':side})
+    result['components'] = parsed_components
     result.update(protected_zones_mm=parsed_zones, connector_centers_mm=parsed_centers,
                   piece_filaments=[{'name': f['name'].strip(), 'color': f['color'].lower()} for f in filaments])
     return result
@@ -238,6 +261,8 @@ def automatic_cuts(mesh, axis, count, usable, config):
         ranked = sorted(scored,key=lambda item: (item[0]/max(reference,1e-9)+.15*item[1]/length,item[1]))
         chosen = None
         for area,_,cut in ranked[:5]:
+            if any(lo[axis] < cut < hi[axis] for lo,hi in config.get('_component_zones',[])):
+                continue
             if not math.isfinite(area) or area <= 0:
                 continue
             adjacent=[]
@@ -267,12 +292,15 @@ def cut_plan(mesh, config):
     length = float(mesh.extents[axis])
     cuts = sorted(config['cuts_mm'])
     if not cuts:
-        count = math.ceil(length / usable[axis])
+        count = max(math.ceil(length / usable[axis]), len(config.get('piece_filaments',[])))
         if count > 16:
             raise ValueError('Découpe limitée à 16 pièces.')
         cuts = automatic_cuts(mesh, axis, count, usable, config)
     if len(set(cuts)) != len(cuts) or any(not 0 < v < length for v in cuts):
         raise ValueError('Les coupes doivent être distinctes et à l’intérieur du modèle, depuis son minimum sur l’axe.')
+    for cut in cuts:
+        if any(lo[axis] < cut < hi[axis] for lo,hi in config.get('_component_zones',[])):
+            raise ValueError('Un plan de coupe traverse un logement de composant ; déplacer le plan ou le composant.')
     depths = np.diff([0, *cuts, length])
     required = [p['pin_depth_mm'] + p['wall_mm']] * len(depths)
     for i in range(1, len(depths)-1):
@@ -382,6 +410,107 @@ def build_assembly(mesh, config):
     return pieces, pins, joints, axis, cuts
 
 
+def component_seats(mesh, config):
+    """Create dimensioned open box seats with measured wall envelopes.
+
+    Supplied bounds are final mm, not inferred dimensions from a model name.
+    This is packaging geometry, not an actuator/strength/electrical design.
+    """
+    components = config.get('components', [])
+    if not components: return mesh, []
+    solid(mesh,'Maillage pour composants')
+    wall = config['profile']['wall_mm']; reserved = []; cavities = []; reports = []
+    for component in components:
+        low,high = np.array(component['bounds_mm'],dtype=float)
+        axis = 'xyz'.index(component['access_axis']); positive = component['access_side'] == 'positive'
+        low -= component['clearance_mm']; high += component['clearance_mm']
+        if np.any(low < mesh.bounds[0]+wall) or np.any(high > mesh.bounds[1]-wall):
+            raise ValueError(f"{component['name']} : logement trop proche du bord pour la paroi demandée.")
+        low[axis] = low[axis] if positive else mesh.bounds[0,axis]
+        high[axis] = mesh.bounds[1,axis] if positive else high[axis]
+        envelope_low,envelope_high = low-wall,high+wall
+        envelope_high[axis] = high[axis] if positive else envelope_high[axis]
+        envelope_low[axis] = envelope_low[axis] if positive else low[axis]
+        envelope = trimesh.creation.box(envelope_high-envelope_low,trimesh.transformations.translation_matrix((envelope_high+envelope_low)/2))
+        missing = boolean('difference',[envelope,mesh])
+        if not missing.is_empty and missing.volume > max(1e-4,envelope.volume*1e-6):
+            raise ValueError(f"{component['name']} : paroi ou chemin d’accès incomplet dans cette géométrie.")
+        for prior in reserved:
+            collision = boolean('intersection',[envelope,prior])
+            if not collision.is_empty and collision.volume > 1e-4:
+                raise ValueError('Logements de composants trop proches ou chemins d’accès en collision.')
+        reserved.append(envelope)
+        config['protected_zones_mm'].append([envelope_low.tolist(),envelope_high.tolist()])
+        config.setdefault('_component_zones',[]).append([envelope_low.tolist(),envelope_high.tolist()])
+        cavity_low,cavity_high = low.copy(),high.copy()
+        if positive: cavity_high[axis] += 1
+        else: cavity_low[axis] -= 1
+        cavities.append(trimesh.creation.box(cavity_high-cavity_low,trimesh.transformations.translation_matrix((cavity_high+cavity_low)/2)))
+        reports.append({**component,'seat_bounds_mm':[low.tolist(),high.tolist()],
+                        'wall_envelope_mm':wall,'access_path_verified':True,
+                        'mounting_fasteners_defined':False,'electrical_and_load_validation':False})
+    result = solid(boolean('difference',[mesh,*cavities]),'Logements de composants')
+    if len(result.split()) != len(mesh.split()):
+        raise ValueError('Les logements détachent de la matière ; changer leur disposition.')
+    return result,reports
+
+
+def print_plates(output, report):
+    """Deterministic shelf packing, separated by filament on single-tool printers.
+
+    Uses bounding footprints, a conservative gap and only a 90° Z rotation.
+    Placement does not replace slicing, support analysis or extrusion settings.
+    """
+    profile = report['profile']
+    bed = np.array(profile['bed_mm'], dtype=float)
+    margin = profile['margin_mm']; gap = max(3.0, margin)
+    assignments = {f['part']: f for f in report['fabrication']['filament_plan']}
+    groups = {}
+    for part in report['parts']:
+        filament = assignments.get(part['id'])
+        key = (filament['name'], filament['color']) if filament else ('Non affecté', '#ff6a3d' if part['id'].startswith('pin_') else '#eeeeee')
+        groups.setdefault(key, []).append(part)
+    plates = []
+    for (name, color), parts in groups.items():
+        bins = []
+        for part in sorted(parts, key=lambda p: (-p['dimensions_mm'][0]*p['dimensions_mm'][1], p['id'])):
+            mesh = trimesh.load_mesh(output/part['file'])
+            filament = assignments.get(part['id'])
+            mesh.visual.face_colors = [int(color[k:k+2],16) for k in (1,3,5)]+[255] if filament else part.get('color_rgba',[238,238,238,255])
+            options = [(False, mesh.extents[0], mesh.extents[1]), (True, mesh.extents[1], mesh.extents[0])]
+            placed = None
+            for plate in bins:
+                for rotated, w, h in options:
+                    x, y, row = plate['cursor']
+                    if x+w > bed[0]-margin:
+                        x, y, row = margin, y+row+gap, 0
+                    if x+w <= bed[0]-margin+1e-5 and y+h <= bed[1]-margin+1e-5:
+                        placed = (plate, rotated, x, y, w, h, row); break
+                if placed: break
+            if not placed:
+                fitting = [(rotated,w,h) for rotated,w,h in options if w <= bed[0]-2*margin+1e-5 and h <= bed[1]-2*margin+1e-5]
+                if not fitting: raise ValueError('Une pièce ne tient pas sur une plaque avec sa marge.')
+                rotated,w,h = min(fitting, key=lambda o: (o[2],o[1]))
+                plate = {'cursor': [margin,margin,0], 'scene': trimesh.Scene(), 'meshes': [], 'parts': []}; bins.append(plate)
+                placed = (plate,rotated,margin,margin,w,h,0)
+            plate,rotated,x,y,w,h,row = placed
+            matrix = trimesh.transformations.rotation_matrix(math.pi/2 if rotated else 0, [0,0,1])
+            printed = mesh.copy(); printed.apply_transform(matrix)
+            matrix[:3,3] = [x,y,0]-printed.bounds[0]
+            printed = mesh.copy(); printed.apply_transform(matrix)
+            if printed.bounds[1,2] > bed[2]-2*margin+1e-4: raise ValueError('Hauteur de plaque incompatible.')
+            plate['scene'].add_geometry(printed, node_name=part['id'], geom_name=part['id'])
+            plate['meshes'].append(printed)
+            plate['parts'].append({'id':part['id'],'print_to_plate_matrix_mm':matrix.tolist(), 'bounds_mm':printed.bounds.tolist()})
+            plate['cursor'] = [x+w+gap,y,max(row,h)]
+        for plate in bins:
+            pid = f'plate_{len(plates)+1:02}'
+            plate['scene'].scaled(.001).export(output/(pid+'.glb'))
+            trimesh.util.concatenate(plate['meshes']).export(output/(pid+'.stl'))
+            plates.append({'id':pid,'file':pid+'.stl','preview_file':pid+'.glb','filament':{'name':name,'color':color},'bed_mm':bed.tolist(),'parts':plate['parts']})
+    return plates
+
+
 def export_package(source, output, raw):
     config = settings(raw)
     source, output = Path(source), Path(output)
@@ -428,6 +557,8 @@ def export_package(source, output, raw):
         metric_mesh.export(output/'geometry.glb')
         report['size_applied'] = True
         if config['mode'] == 'assembly':
+            mesh, hardware = component_seats(mesh, config)
+            report['components'] = hardware
             pieces, pins, joints, axis, cuts = build_assembly(mesh, config)
             assembled = trimesh.Scene(); exploded = trimesh.Scene()
             gap = max(20, 2*config['profile']['pin_depth_mm']+4, config['size_mm']*0.12)
@@ -476,7 +607,7 @@ def export_package(source, output, raw):
             if has_texture:
                 from application.engineering_texture import textured_pieces
                 textured = trimesh.Scene()
-                groups = textured_pieces(scene, scale, pieces, joints, axis)
+                groups = textured_pieces(scene, scale, pieces, joints, axis, hardware)
                 for i, geometries in enumerate(groups):
                     for k, geometry in enumerate(geometries):
                         name = f'piece_{i+1:02}_surface_{k:02}'
@@ -507,12 +638,18 @@ def export_package(source, output, raw):
                                   'pins_without_mesh_interference': True, 'fits_declared_build_volume': True,
                                   'all_cut_interfaces_connected': True, 'wall_envelopes_verified': True,
                                   'protected_zones_respected': True})
+    if config['mode'] == 'assembly':
+        report['print_plates'] = print_plates(output, report)
+        report['fabrication']['slicing_required'] = True
     (output/'assembly.json').write_text(json.dumps(report, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     (output/'READ_ME.txt').write_text(
         'Aurora — géométrie / texture / assemblage\n'
         'STL et manifeste : millimètres. GLB de géométrie/assemblage : mètres selon la convention glTF.\n'
         'textured_original.glb conserve exactement le fichier et les unités d’origine ; aucune nouvelle texture.\n'
         'piece_NN.stl : pièces au sol dans leur orientation de découpe. pin_NN.stl : pions séparés verticaux.\n'
+        'plate_NN.stl / plate_NN.glb : disposition sur les plaques par filament ; tranchage et supports à préparer.\n'
+        'Les plaques conservent les pièces séparées ; les transformations sont enregistrées dans print_plates.\n'
+        'Les logements de composants utilisent les cotes fournies, sans dimensionnement des efforts ni fixations.\n'
         'assembled.glb : positions finales. exploded.glb : ordre des pièces. assembly.json : cotes et raccords.\n'
         'viewer.html : viewer interactif autonome ; ouvrir via jobia view3d archive.zip.\n'
         'Le CLI ouvre le viewer après assemblage ; --viewer textured démarre en vue éclatée texturée.\n'

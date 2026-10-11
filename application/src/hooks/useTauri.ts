@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch } from '../utils/bridgeAuth.ts'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type {
@@ -1308,13 +1309,17 @@ export async function runPythonScript(scriptPath: string, args: string[], option
                 forgetJobId(options.resumeKey)
               }
             } else {
-              forgetJobId(options.resumeKey)
+              throw new Error('Réponse de suivi invalide. Le travail conservé n’est pas relancé.')
             }
-          } else {
+          } else if (r.status === 404) {
             forgetJobId(options.resumeKey)
+          } else {
+            throw new Error(`Suivi temporairement indisponible (${r.status}). Le travail conservé n’est pas relancé.`)
           }
-        } catch {
-          forgetJobId(options.resumeKey)
+        } catch (error) {
+          // An authentication or transport failure is not evidence that the
+          // accepted job vanished. Keep its identifier and prevent replay.
+          throw error
         }
       }
     }

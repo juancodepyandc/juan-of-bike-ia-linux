@@ -280,3 +280,61 @@ def test_auto_cut_at_exact_build_limit_never_samples_outside_feasible_range():
     pieces,pins,joints,axis,cuts=build_assembly(mesh,settings(c))
     assert cuts==[210] and len(pieces)==2 and len(pins)==2
     assert all(np.all(p.extents<=[210,210,240]) for p in pieces)
+
+
+def test_single_tool_color_plan_creates_real_separate_solids_and_plates(tmp_path):
+    source=tmp_path/'color-box.stl';box().export(source)
+    c=config(cuts_mm=[]);c['profile']['bed_mm']=[150]*3
+    c['piece_filaments']=[{'name':'PLA blanc','color':'#ffffff'},{'name':'PLA bleu','color':'#245caa'}]
+    report=export_package(source,tmp_path/'color-package',c)
+    assert report['piece_count']==2 and report['pin_count']==2
+    assert len(report['print_plates'])==3  # white, blue, separate unassigned pins
+    assert report['fabrication']['separate_filament_parts']
+    seen=set()
+    for plate in report['print_plates']:
+        solids=trimesh.load_mesh(tmp_path/'color-package'/plate['file'])
+        assert solids.is_volume
+        for entry in plate['parts']:
+            assert entry['id'] not in seen;seen.add(entry['id'])
+            low,high=np.array(entry['bounds_mm'])
+            assert np.all(low[:2]>=2-1e-4) and np.all(high[:2]<=148+1e-4)
+        for i,a in enumerate(plate['parts']):
+            for b in plate['parts'][i+1:]:
+                alo,ahi=np.array(a['bounds_mm']);blo,bhi=np.array(b['bounds_mm'])
+                assert np.any(ahi[:2]<=blo[:2]) or np.any(bhi[:2]<=alo[:2])
+    assert seen=={p['id'] for p in report['parts']}
+
+
+def test_dimensioned_motor_seat_has_access_clearance_and_preserved_cut_interface(tmp_path):
+    from application.engineering_mesh import component_seats
+    c=config(components=[{'name':'Moteur aux cotes mesurees','kind':'motor','bounds_mm':[[10,15,10],[30,35,25]],'clearance_mm':.3,'access_axis':'z'}])
+    parsed=settings(c);shaped,components=component_seats(box(),parsed)
+    assert shaped.is_volume and len(shaped.split())==1
+    assert shaped.volume==pytest.approx(box().volume-20.6*20.6*30.3,abs=.1)
+    assert components[0]['access_path_verified']
+    assert not components[0]['electrical_and_load_validation']
+    pieces,pins,*_=build_assembly(shaped,parsed)
+    assert len(pieces)==2 and len(pins)==2
+    c['cuts_mm']=[20]
+    with pytest.raises(ValueError,match='traverse un logement'):
+        build_assembly(shaped,settings({**c,'_component_zones':[]} ) | {'_component_zones':parsed['_component_zones']})
+
+
+@pytest.mark.parametrize('bounds,match',[([[1,1,1],[10,10,10]],'trop proche'),([[10,10,10],[10,20,20]],'strictement positives')])
+def test_unmanufacturable_component_seat_refused(bounds,match):
+    from application.engineering_mesh import component_seats
+    c=config(components=[{'name':'Capteur','kind':'sensor','bounds_mm':bounds}])
+    with pytest.raises(ValueError,match=match):component_seats(box(),settings(c))
+
+
+def test_textured_motor_seat_matches_printable_piece_volume(tmp_path):
+    from PIL import Image
+    mesh=box()
+    mesh.visual=trimesh.visual.texture.TextureVisuals(uv=np.zeros((len(mesh.vertices),2)),image=Image.new('RGB',(4,4),'blue'))
+    source=tmp_path/'hardware.glb';mesh.export(source)
+    c=config(components=[{'name':'Capteur mesuré','kind':'sensor','bounds_mm':[[10,15,10],[30,35,25]],'clearance_mm':.3,'access_axis':'z'}])
+    report=export_package(source,tmp_path/'hardware-package',c)
+    assert report['textured_assembly_available'] and report['components'][0]['access_path_verified']
+    textured=trimesh.load_scene(tmp_path/'hardware-package'/'assembled_textured.glb')
+    assembled=trimesh.load_scene(tmp_path/'hardware-package'/'assembled.glb')
+    assert abs(textured.to_mesh().volume)==pytest.approx(abs(assembled.to_mesh().volume),abs=1e-8)

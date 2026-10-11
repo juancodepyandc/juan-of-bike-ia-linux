@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch, readBridgeKey, saveBridgeKey } from '../utils/bridgeAuth.ts'
 import { useEffect, useRef, useState } from 'react'
 import { getBridgeUrl, isCloudRuntime } from '../utils/runtime'
 
@@ -6,6 +7,7 @@ type Profile = {
   clearance_mm: number; wall_mm: number; pin_diameter_mm: number; pin_depth_mm: number; margin_mm: number
   keyed_pins?: boolean; lead_in_mm?: number; color_capability?: 'single' | 'multi'
 }
+type ComponentSeat = { name: string; kind: 'sensor' | 'motor' | 'other'; bounds_mm: [number[], number[]]; clearance_mm: number; access_axis: string; access_side: string }
 type Report = {
   dimensions_mm: number[]; source_watertight: boolean; size_applied: boolean
   piece_count?: number; pin_count?: number; cuts_mm?: number[]; cut_axis?: string
@@ -43,6 +45,8 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [filaments, setFilaments] = useState('')
   const [previewExploded, setPreviewExploded] = useState(false)
   const filamentRows: { name: string; color: string }[] = (() => { try { const plan = JSON.parse(filaments || '[]'); return Array.isArray(plan) && plan.every((f) => typeof f?.name === 'string' && typeof f?.color === 'string') ? plan : [] } catch { return [] } })()
+  const [components, setComponents] = useState<ComponentSeat[]>([])
+  const viewerRef = useRef<HTMLIFrameElement | null>(null)
   const [constraints, setConstraints] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
@@ -50,8 +54,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [message, setMessage] = useState('')
   const [result, setResult] = useState<ExportResult | null>(null)
   const [jobId, setJobId] = useState('')
-  const [accessKey, setAccessKey] = useState('')
-  const authHeaders = accessKey ? { Authorization: `Bearer ${accessKey}` } : undefined
+  const [accessKey, setAccessKey] = useState(readBridgeKey)
   const requestRef = useRef<AbortController | null>(null)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestRef.current?.abort() } }, [])
@@ -63,6 +66,8 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   // A finished package keeps its own profile/variant even when the form changes.
   const [exportedMode, setExportedMode] = useState(mode)
   const inputClass = 'mt-1 w-full rounded-lg border border-aurora-border/50 bg-aurora-surface-2 px-2 py-1.5 text-xs text-aurora-text'
+
+  useEffect(() => { viewerRef.current?.contentWindow?.postMessage({ type: 'aurora-assembly-view', exploded: previewExploded }, window.location.origin) }, [previewExploded])
 
   function saveProfile() {
     const ranges = [[profile.clearance_mm, 0.01, 2], [profile.wall_mm, 0.5, 20],
@@ -107,13 +112,13 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
         || Object.keys(rules).some((k) => !['protected_zones_mm', 'connector_centers_mm'].includes(k)))
         throw new Error('Contraintes JSON : protected_zones_mm et connector_centers_mm uniquement.')
       const pieceFilaments = mode === 'assembly' && filaments.trim() ? JSON.parse(filaments) : []
-      body.append('settings', JSON.stringify({ mode, size_mm: size, profile, axis, view_up_axis: upAxis, cuts_mm: parsedCuts, piece_filaments: pieceFilaments, ...rules }))
-      const response = await fetch(`${getBridgeUrl()}/api/3d/engineering`, { method: 'POST', body, headers: authHeaders, signal: controller.signal })
+      body.append('settings', JSON.stringify({ mode, size_mm: size, profile, axis, view_up_axis: upAxis, cuts_mm: parsedCuts, piece_filaments: pieceFilaments, components, ...rules }))
+      const response = await fetch(`${getBridgeUrl()}/api/3d/engineering`, { method: 'POST', body, signal: controller.signal })
       const accepted = await response.json()
       if (!response.ok || !accepted.ok) throw new Error(accepted.error || 'Export refusé.')
       setJobId(accepted.job_id); setExportedMode(mode)
       while (!controller.signal.aborted) {
-        const poll = await fetch(`${getBridgeUrl()}/api/3d/engineering/${accepted.job_id}`, { headers: authHeaders, signal: controller.signal })
+        const poll = await fetch(`${getBridgeUrl()}/api/3d/engineering/${accepted.job_id}`, { signal: controller.signal })
         const status: ExportResult = await poll.json()
         if (!poll.ok || !status.ok || status.state === 'error') throw new Error(status.error || 'Export échoué.')
         if (status.state === 'done') { if (mounted.current) setResult(status); return }
@@ -130,7 +135,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   async function download() {
     if (!result?.download_url) return
     try {
-      const response = await fetch(`${getBridgeUrl()}${result.download_url}`, { headers: authHeaders })
+      const response = await fetch(`${getBridgeUrl()}${result.download_url}`, {})
       if (!response.ok) throw new Error('Archive indisponible.')
       const url = URL.createObjectURL(await response.blob())
       const a = document.createElement('a'); a.href = url; a.download = `aurora-${exportedMode}-${jobId}.zip`; a.click()
@@ -144,7 +149,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
     <details open={!result || !assemblyOnly}><summary hidden={!assemblyOnly} className="mt-3 min-h-11 cursor-pointer text-sm">Préparer les pièces et le profil imprimante</summary>
     <fieldset disabled={busy} className="mt-3 space-y-3 disabled:opacity-60">
       {isCloudRuntime() && <label className="block text-xs text-aurora-text-muted">Clé d’accès au serveur distant
-        <input type="password" autoComplete="off" value={accessKey} onChange={(e) => setAccessKey(e.target.value)} className={inputClass} />
+        <input type="password" autoComplete="off" value={accessKey} onChange={(e) => { setAccessKey(e.target.value); saveBridgeKey(e.target.value) }} className={inputClass} />
       </label>}
       {!assemblyOnly && <div className="grid grid-cols-3 gap-1">
         {([['geometry', 'Géométrie pure'], ['textured', 'Texture'], ['assembly', 'Assemblage']] as const).map(([value, label]) =>
@@ -173,7 +178,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
           <select className={inputClass} value={profile.color_capability ?? 'single'} onChange={(e) => setProfile({ ...profile, color_capability: e.target.value as 'single' | 'multi' })}><option value="single">Un filament à la fois</option><option value="multi">Plusieurs couleurs prises en charge</option></select>
         </label>
         {(profile.color_capability ?? 'single') === 'single' && <details className="text-xs text-aurora-text-muted"><summary className="min-h-11">Pièces imprimées séparément par couleur</summary>
-          <p className="mt-2">Prévoir les coupes aux limites des éléments colorés, puis affecter un filament à chaque pièce. Les pions et logements sont contrôlés comme pour toute découpe. Une texture ne peut pas définir automatiquement des volumes séparables.</p>
+          <p className="mt-2">Affectez un filament à chaque pièce. Sans plans imposés, le nombre de filaments demande au moins autant de pièces, avec des coupes et raccords vérifiés. Pour placer les couleurs sur des éléments précis (yeux, doigts), fournissez leurs limites géométriques et des plans adaptés. Les pions et logements sont contrôlés comme pour toute découpe. Une texture ne peut pas définir automatiquement des volumes séparables.</p>
           <p className="mt-2">Une ligne par pièce, dans l’ordre du manifeste.</p>
           {filamentRows.map((f, index) => <div key={index} className="mt-3 rounded-lg border border-aurora-border p-2">
             <label className="block">Filament de la pièce {index + 1}<input aria-label={`Filament de la pièce ${index + 1}`} className={inputClass} value={f.name} maxLength={100} onChange={(e) => setFilaments(JSON.stringify(filamentRows.map((row, i) => i === index ? { ...row, name: e.target.value } : row)))} /></label>
@@ -256,6 +261,19 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
         <label className="block text-xs text-aurora-text-muted">Plans de coupe (mm depuis le minimum de l’axe)
           <input aria-label="Plans de coupe mm" value={cuts} onChange={(e) => setCuts(e.target.value)} placeholder="Automatique, ou 60 ; 120" className={inputClass} />
         </label>
+        <details className="text-xs text-aurora-text-muted"><summary className="min-h-11">Capteurs, moteurs et logements</summary>
+          <p>Renseignez les cotes réelles et la position dans le modèle final en mm. Le logement est ouvert du côté choisi ; parois, accès, collisions et raccords sont vérifiés. Les fixations, efforts et connexions électriques restent à définir.</p>
+          {components.map((component, index) => <div key={index} className="mt-3 rounded-lg border border-aurora-border p-3">
+            <label>Référence du composant<input aria-label={`Référence du composant ${index + 1}`} className={inputClass} value={component.name} onChange={e => setComponents(components.map((c,i) => i === index ? {...c,name:e.target.value} : c))}/></label>
+            <label>Type<select className={inputClass} value={component.kind} onChange={e => setComponents(components.map((c,i) => i === index ? {...c,kind:e.target.value as ComponentSeat['kind']} : c))}><option value="sensor">Capteur</option><option value="motor">Moteur</option><option value="other">Autre</option></select></label>
+            {[0,1].map(bound => <div key={bound}><p>{bound === 0 ? 'Position minimale XYZ' : 'Position maximale XYZ'} (mm)</p><div className="grid grid-cols-3 gap-2">{['X','Y','Z'].map((axis,k) => <label key={axis}>{axis}<input type="number" min="0" step="0.1" aria-label={`Composant ${index+1} ${bound===0?'minimum':'maximum'} ${axis}`} className={inputClass} value={component.bounds_mm[bound][k]} onChange={e => setComponents(components.map((c,i) => {if(i!==index)return c;const bounds=c.bounds_mm.map(v=>[...v]) as ComponentSeat['bounds_mm'];bounds[bound][k]=e.target.valueAsNumber;return {...c,bounds_mm:bounds}}))}/></label>)}</div></div>)}
+            <label>Jeu par côté (mm)<input type="number" min="0.01" max="2" step="0.05" className={inputClass} value={component.clearance_mm} onChange={e=>setComponents(components.map((c,i)=>i===index?{...c,clearance_mm:e.target.valueAsNumber}:c))}/></label>
+            <label>Axe d’insertion<select className={inputClass} value={component.access_axis} onChange={e=>setComponents(components.map((c,i)=>i===index?{...c,access_axis:e.target.value}:c))}>{['x','y','z'].map(axis=><option key={axis} value={axis}>{axis.toUpperCase()}</option>)}</select></label>
+            <label>Côté d’accès<select className={inputClass} value={component.access_side} onChange={e=>setComponents(components.map((c,i)=>i===index?{...c,access_side:e.target.value}:c))}><option value="positive">Positif (+)</option><option value="negative">Négatif (−)</option></select></label>
+            <button type="button" className="min-h-11" onClick={()=>setComponents(components.filter((_,i)=>i!==index))}>Retirer ce composant</button>
+          </div>)}
+          <button type="button" className="min-h-11 rounded-lg border border-aurora-border px-3" disabled={components.length>=24} onClick={()=>setComponents([...components,{name:'',kind:'sensor',bounds_mm:[[0,0,0],[0,0,0]],clearance_mm:.3,access_axis:'z',access_side:'positive'}])}>Ajouter un composant dimensionné</button>
+        </details>
         <details className="text-xs text-aurora-text-muted"><summary>Zones protégées et positions imposées</summary>
           <p className="mt-2">Coordonnées en mm après mise à l’échelle, origine au minimum du modèle. protected_zones_mm : liste de boîtes [minimum XYZ, maximum XYZ]. connector_centers_mm : une paire de centres XYZ par jonction, dans l’ordre des coupes puis des fragments. Les positions imposées subissent les mêmes contrôles.</p>
           <textarea aria-label="Contraintes d’assemblage JSON" rows={5} className={inputClass} value={constraints}
@@ -270,7 +288,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
     {busy && <p role="status" className="mt-3 text-xs text-aurora-accent">Préparation et contrôles des pièces…</p>}
     {message && <p role="status" className="mt-3 text-xs text-aurora-accent">{message}</p>}
     {error && <p role="alert" className="mt-3 text-xs text-red-400">{error}</p>}
-    {assemblyOnly && active && result?.report && <div className="mt-4"><div className="flex gap-2 mb-3"><button type="button" aria-pressed={!previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(false)}>Vue assemblée</button><button type="button" aria-pressed={previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(true)}>Vue éclatée</button></div><iframe title="Viewer d’assemblage" className="w-full h-[75dvh] min-h-[360px] rounded-xl border border-aurora-border" src={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html${previewExploded ? '?exploded=1' : ''}`} /></div>}
+    {assemblyOnly && active && result?.report && <div className="mt-4"><div className="flex gap-2 mb-3"><button type="button" aria-pressed={!previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(false)}>Vue assemblée</button><button type="button" aria-pressed={previewExploded} className="min-h-11 rounded-lg border border-aurora-border px-3" onClick={() => setPreviewExploded(true)}>Vue éclatée</button></div><iframe title="Viewer d’assemblage" ref={viewerRef} onLoad={() => viewerRef.current?.contentWindow?.postMessage({type:"aurora-assembly-view",exploded:previewExploded},window.location.origin)} className="w-full h-[75dvh] min-h-[360px] rounded-xl border border-aurora-border" src={`${getBridgeUrl()}/api/asset/output/engineering/${jobId}/package/viewer.html`} /></div>}
     {result?.report && <div className="mt-3 space-y-2 text-xs text-aurora-text">
       <p>{result.report.size_applied ? `Dimensions : ${result.report.dimensions_mm.map((v) => v.toFixed(2)).join(' × ')} mm.` : 'GLB original conservé ; taille inchangée.'}</p>
       {exportedMode === 'assembly' ? <>

@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch } from '../utils/bridgeAuth.ts'
 /**
  * Thin client for the bridge's async Python job endpoints.
  *
