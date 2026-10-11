@@ -9,9 +9,11 @@ RECOVERY_FIELDS = {'request_quote', 'evidence_ids', 'hypothesis',
                    'expected_observation', 'next_action'}
 
 
-def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *, allow_delegation_checks=True):
+def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *, allow_delegation_checks=True, request_excerpt=None):
+    quote={'type':'string'}
+    if request_excerpt:quote['enum']=[request_excerpt]
     return {'type': 'object', 'properties': {
-        'request_quote': {'type': 'string'},
+        'request_quote': quote,
         'evidence_ids': {'type': 'array', 'minItems': 1,
                          'items': {'type': 'string', 'enum': list(evidence_ids)}},
         'hypothesis': {'type': 'string'},
@@ -62,6 +64,7 @@ def bounded_recovery_payload(agent, observations, stalled_actions, instructions)
              'executed_tools': agent.state.get('executed_tools', []),
              'known_resources': list(agent.state.get('resources', {}).values()),
              'interrupted_processes': agent.state.get('interrupted_processes', []),
+             'previous_diagnoses': [{k:r.get(k) for k in ('hypothesis','expected_observation','next_action','status','action_ok','evidence_id')} for r in agent.state.get('recoveries',[])[-4:]],
              'stalled_actions': stalled_actions,
              'observations': [], 'observations_omitted': len(observations)}
     capacity = agent._context_chars() - len(instructions)

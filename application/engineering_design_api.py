@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import socket
@@ -18,13 +19,16 @@ Décompose les fonctions, interfaces, éléments fixes/mobiles, transmissions, �
 L'utilisateur peut imposer des composants. Respecte leurs fiches techniques, leurs dimensions et leurs limites ; cherche des sources primaires si nécessaire. Sinon, propose toi-même les composants, fixations, fils/câbles et matières nécessaires, avec quantités et spécifications utiles (diamètre, longueur, tension, courant, couple, section, tolérance, etc. uniquement lorsque pertinent).
 Procède avec des hypothèses explicites raisonnables plutôt que demander chaque choix. Si une inconnue rend une conclusion impossible ou un objectif techniquement irréalisable, démontre le blocage et propose une alternative compatible, sans prétendre avoir fabriqué une solution impossible.
 Utilise les outils : établis un plan et des critères mesurables, produis du code paramétrique, exécute des calculs et des tests adaptés, consulte les preuves et corrige les défauts. Ne confonds pas un calcul à paramètres supposés et une mesure réelle ; aucune certification mécanique, électrique ou ajustement imprimé ne peut être inventée.
-Pour les mécanismes, renseigner mechanism_joints : id, parent/child (IDs des pièces), kind fixed/revolute/prismatic/helical, axis et origin_mm dans le repère mondial au repos, limits et home (degrés ou mm), pitch_mm pour une vis hélicoïdale. Ne pas inventer de mobilité pour des fixations statiques. Les boucles fermées, efforts, câbles flexibles et déformations doivent être signalés comme nécessitant un solveur supplémentaire.
+Pour les mécanismes, renseigner mechanism_joints : id, parent/child (IDs des pièces), kind fixed/revolute/prismatic/helical, axis et origin_mm dans le repère mondial au repos, limits et home (degrés ou mm), pitch_mm pour une vis hélicoïdale. Ne pas inventer de mobilité pour des fixations statiques. Une boucle fermée peut être représentée par un arbre de joints et closure_constraints (liste) : kind coincident ou distance, parent/child, parent_anchor_mm et child_anchor_mm dans les repères locaux des STL sources, distance_mm si pertinent. Déclarer passive=true sur les articulations résolues et tester convergence, singularités, branches et limites ; une absence de convergence ne prouve pas une impossibilité physique. Les efforts, câbles flexibles et déformations demandent des données et un solveur adaptés.
 Livrables : design.py reproductible, tests.py exécuté (peut appeler des scripts supplémentaires), pièces STL fermées en mm, placements rigides, project_spec.json, archive engineering-project.zip avec dossier de montage (MD et HTML imprimable PDF), nomenclature, représentation des géométries et viewer.
 Produis réellement les maillages (sommets/faces, par exemple avec trimesh/manifold installés) et exporte les STL sur disque. Une description JSON de primitive, un dictionnaire de cotes ou un message de succès ne constitue jamais une pièce. Les tests doivent charger et mesurer les fichiers réellement exportés, pas tester seulement des valeurs recopiées.
 La bibliothèque fabrication.py est un module Python local, pas un outil agent. Pour créer les scripts, utilise les outils réels write_file et run_command avec le Python indiqué ; consulte list_tools si tu ignores un outil, n'invente pas de nom d'outil. Elle est disponible pour vérifier et empaqueter les pièces réellement produites. spec peut être un dictionnaire Python ou le chemin local project_spec.json. Utilise build_project(spec, '.') pour produire le dossier et l'archive. Corrige les pièces qui ne tiennent pas dans l'imprimante (orientation ou découpe), ne remplace pas le profil fourni. Des exigences irréalisables peuvent produire un dossier de faisabilité avec blockers et aucune pièce.
 La forme de spec est : units='mm', title, objective, bed_mm, margin_mm, printer_name, constraints (liste texte), assumptions (liste texte), blockers (liste texte), parts (liste de {id,name,file STL local,assembly_matrix_mm matrice rigide 4x4,color_rgba pour le repérage,filament et filament_color=#RRGGBB facultatifs pour la matière/couleur physique}), bom (liste de {name,quantity entier,specification texte détaillé,part_ids}), assembly_steps (liste de {instruction,part_ids}), tests (liste avec résultats et fichiers de preuves), sources (liste).
 La validité automatique de la bibliothèque porte sur les solides, leurs dimensions et références ; elle ne vérifie pas les promesses de résistance ni de comportement. Teste indépendamment les contraintes propres au projet. N'ajoute pas systématiquement un moteur, un capteur ou un câble à un projet qui n'en a pas besoin. Si plusieurs couleurs sont souhaitées sur une imprimante monocolore, conçois des pièces séparées par couleur et des interfaces de montage justifiées, sans supposer une impression multicolore en un seul bloc.
 N'utilise pas de services payants, ne contacte personne, ne publie rien, ne lis aucune clé, ne modifie aucun autre projet et n'installe pas de logiciels système. Travail limité à ce dossier. Les prérequis nécessaires doivent être identifiés comme tels si absents.
+Les helpers engineering_motion.simulate, path_sample et evaluate_motion_case(report, root, from_values, to_values, start_sample=0, sample_batch=32) permettent des essais géométriques et des trajectoires échantillonnées ; evaluate_motion_case fournit une couverture reprenable par lots : poursuivre next_sample jusqu’à complete, agréger toutes les erreurs et vérifier la couverture avant toute approbation ; enregistrer les valeurs, résidus et collisions réellement calculés dans un JSON de preuve. Pour comparer les emplacements de fixations, engineering_connections.rank_fastening_locations(parts, root, candidates, views) calcule l’occlusion sur les STL : candidates={id,kind screw/glue/clip/insert/interlock,part_ids,surface_samples_mm en coordonnées assemblage,tool_envelope_file optionnel STL en coordonnées assemblage}, views={direction vers l’observateur,weight}. Comparer de vraies positions et enveloppes d’accès, puis produire les logements retenus dans le CAD ; aucune résistance ne découle de ce classement. Ces modules Python sont importables depuis le dossier de fabrication.
+Pour les fixations, comparer des alternatives pertinentes (colle, vis cachées, inserts, clips, emboîtements selon le projet). Privilégier lignes naturelles, dessous, intérieur ou surfaces peu visibles, sans sacrifier résistance, accès de l’outil, démontage requis, épaisseur des parois et tolérances. Justifier le choix avec géométrie, fiches techniques et tests ; ne pas déclarer une résistance d’adhésif sans surface, matière et données. Réserver les passages et dégagements de vis, câbles et pièces mobiles.
+Après une défaillance, conserver erreur et preuves, formuler une hypothèse, faire un essai discriminant, modifier la cause puis rejouer les mêmes critères. Réviser la méthode ou déléguer des sous-ensembles si nécessaire ; ne pas abandonner un projet à cause de sa catégorie ni remplacer une vraie preuve par un message de succès.
 Vérifie les octets de l'archive et les critères avant de conclure ; indique les limites techniques restantes.
 '''
 
@@ -45,7 +49,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
     verified={}
     def owner():
         device=device_auth(workspace)
-        if device and not request.headers.get('Authorization'):return device['workspace_owner']
+        if device:return device['workspace_owner']
         identity=request_identity(workspace) or 'local-workspace'
         return hashlib.sha256(identity.encode()).hexdigest()
     def allowed():return local() or extension()[0]
@@ -64,7 +68,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             try:
                 report=json.loads(report_path.read_text(encoding='utf-8'))
                 parts=report.get('parts',[])
-                if report.get('schema')!='aurora.engineering-project.v1' or not isinstance(parts,list) or len(parts)>64:raise ValueError('schema')
+                if report.get('schema')!='aurora.engineering-project.v1' or not isinstance(parts,list) or len(parts)>int(os.environ.get('AURORA_ENGINEERING_MAX_PARTS','512')):raise ValueError('schema')
                 paths=[archive,report_path,folder/'DOSSIER.md',folder/'DOSSIER.html',folder/'representation.svg']
                 for part in parts:
                     path=(folder/part['file']).resolve()
@@ -167,12 +171,18 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
         rec=receipt(did)
         if not rec or not response(rec).get('artifacts_available'):return jsonify(ok=False,error='Géométrie vérifiée indisponible.'),404
-        from application.engineering_motion import simulate
+        from application.engineering_motion import simulate,path_sample
         try:
             report=json.loads((root/did/'project.json').read_text(encoding='utf-8'))
             data=request.get_json(silent=True)
             if not isinstance(data,dict):raise ValueError('Objet de paramètres requis.')
-            return jsonify(simulate(report,root/did,data.get('values',{})))
+            path=data.get('path');values=data.get('values',{});metadata=None
+            if path is not None:
+                if not isinstance(path,dict):raise ValueError('Trajet invalide.')
+                values,metadata=path_sample(report['parts'],report.get('mechanism_joints',[]),path.get('from',{}),path.get('to',{}),path.get('sample',0))
+            result=simulate(report,root/did,values,cursor=data.get('cursor',0))
+            if metadata:result['path']=metadata
+            return jsonify(result)
         except (ValueError,TypeError,KeyError) as exc:return jsonify(ok=False,error=str(exc)),400
     @bp.route('/api/3d/design/<did>/resume',methods=['POST'])
     def resume_design(did):

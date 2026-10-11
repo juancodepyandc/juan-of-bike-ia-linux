@@ -1055,8 +1055,16 @@ class AutonomousMissionAgent:
         allowed = [name for name in self._available_tools()
                    if name != 'set_plan' or not self.state['plan']]
         recent = list(self.state['evidence'])
-        if not recent or self.state.get('recovery_attempts_used',0) >= self.policy.recovery_attempts:
-            return None
+        if not recent:return None
+        # Failed formatting is not a lifetime diagnosis quota. Renew it only after
+        # measured new criterion verification; merely renaming or rewriting outputs is insufficient.
+        verified=set(self.state.get('verified',[]))
+        baseline=set(self.state.get('recovery_verified_baseline',[]))
+        if verified-baseline:
+            self.state['recovery_budget_start']=self.state.get('recovery_attempts_used',0)
+            self.state['recovery_verified_baseline']=sorted(verified)
+        budget_start=self.state.get('recovery_budget_start',0)
+        if self.state.get('recovery_attempts_used',0)-budget_start >= self.policy.recovery_attempts:return None
         # Read current source/deliverable bytes instead of treating stale writes
         # or earlier failures as the current state. Permission checks still apply.
         paths = []
@@ -1092,7 +1100,7 @@ class AutonomousMissionAgent:
             'Quote the original request exactly in request_quote and cite actual supplied evidence_ids. '
             'Give one concise hypothesis explaining the failure or wasted work, expected_observation describing how the next experiment could test it, '
             'and next_action as one permitted {tool,args} object. Choose a different action from stalled_actions. '
-            'Compare actual failures with the original specification and current files. Repair a demonstrated cause before repeating its failed test; '
+            'Compare actual failures with the original specification and current files. Review previous_diagnoses and their observed results: reject or revise a disproved hypothesis, and select a discriminating test before another repair. Repair a demonstrated cause before repeating its failed test; '
             'Evaluate conditional obligations as implications; an inapplicable branch is not a missing output. Preserve a correct result while fixing its verification or delivery. '
             'do not weaken a correct test, erase criteria, invent measurements or modify protected inputs to hide an error. '
             'Known resources already exist: inspect or verify them rather than recreating them. If all obligations are actually verified, propose finish. '
@@ -1104,7 +1112,7 @@ class AutonomousMissionAgent:
         if self.depth:
             instructions += ' This is a worker: test and repair its delegated task outputs. Parent delegation proofs are unavailable until this worker returns.'
         feedback = ''
-        while self.state.get('recovery_attempts_used',0) < self.policy.recovery_attempts:
+        while self.state.get('recovery_attempts_used',0)-budget_start < self.policy.recovery_attempts:
             self._assert_owned()
             attempt = self.state.get('recovery_attempts_used',0)+1
             self.state['recovery_attempts_used'] = attempt
@@ -1115,7 +1123,7 @@ class AutonomousMissionAgent:
                 prompt = instructions+feedback
                 value = bounded_recovery_payload(self,observations,stalled_actions,prompt)
                 schema = recovery_response_schema(self.state['criteria'],allowed,
-                    [e['id'] for e in value['observations']],self._explicit_tool_names(),allow_delegation_checks=not self.depth)
+                    [e['id'] for e in value['observations']],self._explicit_tool_names(),allow_delegation_checks=not self.depth,request_excerpt=self.request_text[:1200])
                 reply = await self.gateway.generate(prompt,json.dumps(value,ensure_ascii=False),self.model,
                                                     response_format=schema)
                 proposal = validate_recovery(reply,self.request_text,value['observations'],allowed,
@@ -1498,6 +1506,8 @@ class AutonomousMissionAgent:
                     saved['messages'].append({'role':'user','content':
                         'Interrupted while executing this action. Its outcome is UNKNOWN. Inspect current files/state before reissuing a side effect: '+json.dumps(saved['pending'],ensure_ascii=False)})
                 saved['iteration'] = 0  # Explicit resume grants a new execution budget.
+                saved['recovery_budget_start'] = 0
+                saved['recovery_verified_baseline'] = []
                 saved['recovery_attempts_used'] = 0
                 if saved['messages'] and saved['messages'][0]['role']=='system':
                     saved['messages'][0]['content'] = self._system_prompt()

@@ -1,12 +1,16 @@
 """Constrained forward kinematics and measured solid penetration, in millimetres."""
 from pathlib import Path
 import math
+import hashlib
+import json
+import os
+from functools import lru_cache
 import numpy as np
 import trimesh
 
 
 def validate_joints(parts, joints):
-    if not isinstance(joints,list) or len(joints)>64:raise ValueError('At most 64 mechanism joints required.')
+    if not isinstance(joints,list) or len(joints)>int(os.environ.get('AURORA_ENGINEERING_MAX_PARTS','512')):raise ValueError('Mechanism exceeds configured capacity.')
     ids={p['id'] for p in parts};children=set();names=set();result=[]
     for j in joints:
         if not isinstance(j,dict):raise ValueError('Joint object required.')
@@ -49,26 +53,116 @@ def poses(parts,joints,values=None):
     return current
 
 
-def simulate(report,root,values=None):
-    parts=report['parts'];joints=report.get('mechanism_joints',[]);transforms=poses(parts,joints,values);meshes={};root=Path(root).resolve()
-    total_faces=0
+def solve_closures(parts,joints,values,constraints):
+    """Numerical closure of a declared spanning tree; residuals remain explicit."""
+    if not constraints:return poses(parts,joints,values),dict(values or {}),{'required':False,'converged':True,'max_residual_mm':0.0}
+    ids={p['id'] for p in parts}
+    if not isinstance(constraints,list) or len(constraints)>128:raise ValueError('Invalid closure constraints.')
+    for c in constraints:
+        if not isinstance(c,dict) or c.get('kind') not in {'coincident','distance'} or c.get('parent') not in ids or c.get('child') not in ids:raise ValueError('Closure requires known parts and coincident/distance anchors.')
+        for key in ['parent_anchor_mm','child_anchor_mm']:
+            anchor=np.asarray(c.get(key),dtype=float)
+            if anchor.shape!=(3,) or not np.isfinite(anchor).all():raise ValueError('Finite closure anchors required in each printable part local frame.')
+        if c['kind']=='distance' and (not math.isfinite(float(c.get('distance_mm',-1))) or float(c.get('distance_mm',-1))<0):raise ValueError('Finite nonnegative closure distance required.')
+    joints=validate_joints(parts,joints);passive=[j for j in joints if j.get('passive') and j['dof']]
+    commands=dict(values or {});q=np.array([float(commands.get(j['id'],j['home'])) for j in passive])
+    limits=np.array([j['limits'] for j in passive]);q=np.clip(q,limits[:,0],limits[:,1]) if passive else q
+    def evaluate(x):
+        trial={**commands,**{j['id']:float(v) for j,v in zip(passive,x)}};transforms=poses(parts,joints,trial);residual=[]
+        for c in constraints:
+            a=trimesh.transformations.transform_points([c['parent_anchor_mm']],transforms[c['parent']])[0]
+            b=trimesh.transformations.transform_points([c['child_anchor_mm']],transforms[c['child']])[0]
+            residual.extend((a-b).tolist() if c['kind']=='coincident' else [float(np.linalg.norm(a-b))-float(c['distance_mm'])])
+        return np.asarray(residual),transforms,trial
+    iterations=0
+    for iterations in range(80):
+        residual,transforms,trial=evaluate(q)
+        if np.max(np.abs(residual))<=1e-4 or not passive:break
+        columns=[]
+        for i,j in enumerate(passive):
+            step=max(1e-5,(j['limits'][1]-j['limits'][0])*1e-6);shift=q.copy();shift[i]=min(q[i]+step,j['limits'][1])
+            if shift[i]==q[i]:shift[i]=max(q[i]-step,j['limits'][0])
+            columns.append((evaluate(shift)[0]-residual)/(shift[i]-q[i]) if shift[i]!=q[i] else np.zeros_like(residual))
+        jacobian=np.array(columns).T
+        update=np.linalg.lstsq(jacobian.T@jacobian+np.eye(len(q))*1e-6,-jacobian.T@residual,rcond=None)[0]
+        changed=False
+        for scale in [1,.5,.25,.125,.0625]:
+            candidate=np.clip(q+scale*update,limits[:,0],limits[:,1])
+            if np.linalg.norm(evaluate(candidate)[0])<np.linalg.norm(residual):q=candidate;changed=True;break
+        if not changed:break
+    residual,transforms,trial=evaluate(q);maximum=float(np.max(np.abs(residual)))
+    return transforms,trial,{'required':True,'converged':maximum<=1e-4,'max_residual_mm':maximum,'iterations':iterations+1,'scope':'Numerical closure at this pose; singularities and other branches are not certified.'}
+
+
+@lru_cache(maxsize=1024)
+def _bounds(path, size, modified):
+    bounds=trimesh.load_mesh(path).bounds.copy()
+    digest=hashlib.sha256()
+    with open(path,'rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+    return bounds,digest.hexdigest()
+
+
+def simulate(report,root,values=None,*,cursor=0,batch_size=None):
+    """Bounded collision batches, resumable without substituting invented geometry."""
+    parts=report['parts'];joints=report.get('mechanism_joints',[]);transforms,resolved,closure=solve_closures(parts,joints,values,report.get('closure_constraints',[]));root=Path(root).resolve()
+    batch_size=batch_size or int(os.environ.get('AURORA_SIMULATION_PAIR_BATCH','128'))
+    if type(cursor)!=int or cursor<0 or type(batch_size)!=int or not 1<=batch_size<=1024:raise ValueError('Invalid collision batch.')
+    paths={};bounds={};versions=[]
     for p in parts:
         path=(root/p['file']).resolve()
         if not path.is_relative_to(root):raise ValueError('Part path outside project.')
-        mesh=trimesh.load_mesh(path);total_faces+=len(mesh.faces)
-        if total_faces>300000:raise ValueError('Simulation interactive limitée à 300 000 faces ; fournir une géométrie de collision simplifiée et documentée.')
-        mesh.apply_transform(transforms[p['id']]);meshes[p['id']]=mesh
-    collisions=[];uncertain=[];keys=list(meshes);checked=0
+        stat=path.stat();box,digest=_bounds(str(path),stat.st_size,stat.st_mtime_ns)
+        versions.append([p['id'],digest]);low,high=box
+        corners=np.array([[x,y,z] for x in [low[0],high[0]] for y in [low[1],high[1]] for z in [low[2],high[2]]])
+        world=trimesh.transformations.transform_points(corners,transforms[p['id']])
+        bounds[p['id']]=np.array([world.min(axis=0),world.max(axis=0)]);paths[p['id']]=path
+    candidates=[];keys=list(paths)
     for i,a in enumerate(keys):
         for b in keys[i+1:]:
-            ma,mb=meshes[a],meshes[b]
-            if np.any(np.minimum(ma.bounds[1],mb.bounds[1])-np.maximum(ma.bounds[0],mb.bounds[0])<=0):continue
-            if checked>=128:
-                uncertain.append([a,b]);continue
-            checked+=1
-            try:
-                overlap=trimesh.boolean.intersection([ma,mb],engine='manifold');volume=float(overlap.volume)
-                if not math.isfinite(volume):raise ValueError('Nonfinite intersection')
-                if volume>1e-5:collisions.append({'parts':[a,b],'penetration_mm3':volume})
-            except Exception:uncertain.append([a,b])
-    return {'transforms_mm':{k:v.tolist() for k,v in transforms.items()},'collisions':collisions,'uncertain_pairs':uncertain,'dof':sum(j['dof'] for j in validate_joints(parts,joints)),'scope':'Current pose only; no continuous collision, forces, friction, cable flex or deformation validation.','collision_status':'uncertain' if uncertain else 'penetration' if collisions else 'no_penetration_at_this_pose'}
+            ba,bb=bounds[a],bounds[b]
+            if np.all(np.minimum(ba[1],bb[1])-np.maximum(ba[0],bb[0])>0):candidates.append([a,b])
+    if cursor>len(candidates):raise ValueError('Cursor outside collision sequence.')
+    collisions=[];uncertain=[]
+    for a,b in candidates[cursor:cursor+batch_size]:
+        try:
+            ma=trimesh.load_mesh(paths[a]);mb=trimesh.load_mesh(paths[b])
+            ma.apply_transform(transforms[a]);mb.apply_transform(transforms[b])
+            overlap=trimesh.boolean.intersection([ma,mb],engine='manifold');volume=float(overlap.volume)
+            if not math.isfinite(volume):raise ValueError('Nonfinite intersection')
+            if volume>1e-5:collisions.append({'parts':[a,b],'penetration_mm3':volume})
+        except Exception:uncertain.append([a,b])
+    next_cursor=min(cursor+batch_size,len(candidates));complete=next_cursor==len(candidates)
+    fingerprint=hashlib.sha256(json.dumps([versions,{k:v.tolist() for k,v in transforms.items()}],sort_keys=True).encode()).hexdigest()
+    return {'geometry_sha256':dict(versions),'resolved_values':resolved,'closure':closure,'transforms_mm':{k:v.tolist() for k,v in transforms.items()},'collisions':collisions,'uncertain_pairs':uncertain,'dof':sum(j['dof'] for j in validate_joints(parts,joints)),'scope':'Sampled pose only; no continuous collision, forces, friction, cable flex or deformation validation.','collision_status':'kinematically_invalid' if not closure['converged'] else 'uncertain' if uncertain else 'penetration' if collisions else 'no_penetration_at_this_pose' if complete and cursor==0 else 'pending','collision_batch':{'cursor':cursor,'next_cursor':next_cursor,'candidate_pairs':len(candidates),'complete':complete,'fingerprint':fingerprint}}
+
+
+def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step_mm=1):
+    joints=validate_joints(parts,joints)
+    poses(parts,joints,start);poses(parts,joints,target)
+    if type(index)!=int or index<0 or not all(math.isfinite(float(v)) and float(v)>0 for v in [angular_step_deg,linear_step_mm]):raise ValueError('Invalid motion sampling parameters.')
+    active=[j for j in joints if j['dof'] and not j.get('passive')]
+    samples=max([1]+[math.ceil(abs(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))/(linear_step_mm if j['kind']=='prismatic' else angular_step_deg)) for j in active])
+    if index>samples:raise ValueError('Sample outside planned motion.')
+    values={j['id']:float(start.get(j['id'],j['home']))+(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))*index/samples for j in active}
+    return values,{'sample':index,'last_sample':samples,'angular_step_deg':angular_step_deg,'linear_step_mm':linear_step_mm,'continuous_collision_validated':False,'trajectory':'Linear interpolation of commanded coordinates; passive coordinates solved at each sample.'}
+
+
+def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=32):
+    """Executable test of intended travel, with resumable coverage and real results."""
+    if type(sample_batch)!=int or not 1<=sample_batch<=256:raise ValueError('Invalid sample batch.')
+    results=[];last=start_sample;fingerprint=None
+    for index in range(start_sample,start_sample+sample_batch):
+        values,coverage=path_sample(report['parts'],report.get('mechanism_joints',[]),start,target,index)
+        collisions=[];uncertain=[];cursor=0;fingerprint=None
+        while True:
+            result=simulate(report,root,values,cursor=cursor)
+            collisions.extend(result['collisions']);uncertain.extend(result['uncertain_pairs'])
+            if fingerprint is not None and fingerprint!=result['collision_batch']['fingerprint']:raise ValueError('Geometry changed during verification.')
+            fingerprint=result['collision_batch']['fingerprint'];cursor=result['collision_batch']['next_cursor']
+            if result['collision_batch']['complete']:break
+        results.append({'sample':index,'values':result['resolved_values'],'closure':result['closure'],'collisions':collisions,'uncertain_pairs':uncertain,'geometry_pose_fingerprint':fingerprint,'geometry_sha256':result['geometry_sha256']})
+        last=coverage['last_sample']
+        if index==last:break
+    complete=results[-1]['sample']==last
+    return {'samples':results,'next_sample':results[-1]['sample']+1,'last_sample':last,'complete':complete,'batch_passed':all(r['closure']['converged'] and not r['collisions'] and not r['uncertain_pairs'] for r in results),'continuous_collision_validated':False,'scope':'Measured sampled geometry only; combine every batch and verify coverage before declaring sampled travel clear.'}

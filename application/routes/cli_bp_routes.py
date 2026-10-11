@@ -151,6 +151,9 @@ def cli_register():
     if not isinstance(device_name, str) or len(device_name) > 128:
         return jsonify({"ok": False, "error": "device_name must be a string of at most 128 characters"}), 400
         
+    if getattr(g,'cli_key_rec',{}).get('workspace_owner'):
+        # Keep device revocation authoritative; never duplicate its secret into legacy keys.
+        return jsonify(ok=True,message='Appareil approuvé sur le PC',device=device_name)
     try:
         # Ensure it registers properly in the JSON store used by _ext_auth
         import hashlib

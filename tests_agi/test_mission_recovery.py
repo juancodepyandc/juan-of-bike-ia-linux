@@ -85,6 +85,31 @@ class MissionRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertIn('evidence_id', record)
         self.agent._review_completion.assert_awaited_once()
 
+    async def test_new_measured_criterion_progress_renews_diagnosis_and_keeps_previous_results(self):
+        second='Additional result exists and is measured'
+        check={'kind':'command','criterion':second,'argv':[sys.executable,'-c',
+            'from pathlib import Path; assert Path("result.txt").read_text()=="verified"']}
+        self.agent.policy=replace(self.agent.policy,recovery_attempts=1)
+        calls=[]
+        async def generate(system,payload,model,**kwargs):
+            value=json.loads(payload);calls.append(value)
+            self.assertEqual(kwargs['response_format']['properties']['request_quote']['enum'],[self.agent.request_text[:1200]])
+            if len(calls)==1:
+                action=call('write_file',path='length.py',content='def length(a,b):\n    if a > b: raise ValueError("reversed")\n    return b-a\n')
+            else:
+                self.assertTrue(value['previous_diagnoses'][0]['action_ok'])
+                action=call('write_file',path='result.txt',content='verified')
+            return self.proposal(value,action)
+        replies=[call('set_plan',steps=['Repair and measure both outputs'],criteria=[self.criterion,second]),call('read_file',path='length.py')]
+        replies += [call('verify',checks=[self.check])]*3
+        replies += [call('verify',checks=[self.check])]+[call('verify',checks=[check])]*3
+        replies += [call('verify',checks=[self.check,check]),call('finish',message='Two failures repaired and measured')]
+        result,_=await self.play(replies,generate,steps=20)
+        self.assertEqual(result,'Two failures repaired and measured')
+        self.assertEqual(len(calls),2)
+        self.assertEqual(self.agent.state['recovery_attempts_used'],2)
+        self.assertEqual((self.root/'result.txt').read_text(),'verified')
+
     async def test_repair_hypothesis_alone_never_verifies_a_criterion_or_completes(self):
         async def generate(system, payload, model, **kwargs):
             return self.proposal(json.loads(payload), call('read_file', path='input.json'))

@@ -7,7 +7,7 @@ from application.device_pairing import register_device_routes,device_auth,COOKIE
 @pytest.fixture
 def app(tmp_path):
     app=Flask(__name__);bp=Blueprint('devices',__name__)
-    register_device_routes(bp,tmp_path,local=lambda:not __import__('flask').request.headers.get('X-Forwarded-For'))
+    register_device_routes(bp,tmp_path,local=lambda:not __import__('flask').request.headers.get('X-Forwarded-For'),notifier=lambda identity:None)
     @bp.route('/probe',methods=['GET','POST'])
     def probe():return jsonify(connected=bool(device_auth(tmp_path)))
     app.register_blueprint(bp);return app
@@ -52,3 +52,36 @@ def test_code_alone_cannot_claim_and_requests_are_limited(app):
     assert client.post('/api/devices/claim',json={'code':'123456'},headers=PUBLIC).status_code==400
     for i in range(5):assert client.post('/api/devices/pair',json={'name':'Phone'},headers=PUBLIC).status_code==200
     assert client.post('/api/devices/pair',json={'name':'Phone'},headers=PUBLIC).status_code==429
+
+
+def test_cli_bearer_is_revocable_and_never_returned_for_browser(app,tmp_path):
+    phone=app.test_client();pc=app.test_client()
+    pending=phone.post('/api/devices/pair',json={'name':'CLI ordinateur','transport':'cli'},headers=PUBLIC,base_url='https://aurora.test').json
+    pc.post('/api/devices/manage',json={'action':'approve','code':pending['code']},headers=LOCAL)
+    result=phone.post('/api/devices/claim',json={'claim':pending['claim']},headers=PUBLIC,base_url='https://aurora.test').json
+    headers={'X-Forwarded-For':'203.0.113.1','Authorization':'Bearer '+result['credential']}
+    fresh=app.test_client()
+    assert fresh.post('/probe',headers=headers,base_url='https://aurora.test').json['connected']
+    device=pc.get('/api/devices/manage').json['devices'][0]
+    assert result['credential'] not in (tmp_path/'.aurora/devices.json').read_text()
+    pc.post('/api/devices/manage',json={'action':'revoke','id':device['id']},headers=LOCAL)
+    assert not fresh.get('/probe',headers=headers,base_url='https://aurora.test').json['connected']
+    _,_,_,browser=pair(app)
+    assert 'credential' not in browser.json
+
+
+def test_native_challenge_unicode_input_does_not_kill_future_approval(tmp_path,monkeypatch):
+    import application.desktop_pairing as desktop
+    captured={}
+    class FakeDesktop:
+        def __init__(self,lookup,approve,decline):captured.update(lookup=lookup,approve=approve,decline=decline)
+        def request(self,identity):captured['identity']=identity
+    monkeypatch.setattr(desktop,'DesktopApproval',FakeDesktop)
+    application=Flask(__name__);bp=Blueprint('native',__name__)
+    register_device_routes(bp,tmp_path,local=lambda:False)
+    application.register_blueprint(bp);c=application.test_client()
+    pending=c.post('/api/devices/pair',json={'name':'CLI','transport':'cli'},headers=PUBLIC).json
+    assert not captured['approve'](captured['identity'],'éééééé')
+    assert not c.post('/api/devices/claim',json={'claim':pending['claim']},headers=PUBLIC).json['connected']
+    assert captured['approve'](captured['identity'],pending['code'])
+    assert c.post('/api/devices/claim',json={'claim':pending['claim']},headers=PUBLIC).json['connected']

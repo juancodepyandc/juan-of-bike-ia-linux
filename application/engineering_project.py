@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import os
 import re
 from pathlib import Path
 import shutil
@@ -21,7 +22,7 @@ def build_project(spec, root='.', *, require_sources=False):
     title=spec.get('title'); objective=spec.get('objective')
     if not isinstance(title,str) or not title.strip() or not isinstance(objective,str) or not objective.strip(): raise ValueError('Title and objective required.')
     parts=spec.get('parts',[]);bom=spec.get('bom',[]);steps=spec.get('assembly_steps',[])
-    if not all(isinstance(v,list) for v in [parts,bom,steps]) or len(parts)>64 or len(bom)>200: raise ValueError('Bounded parts, BOM and assembly steps required.')
+    if not all(isinstance(v,list) for v in [parts,bom,steps]) or len(parts)>int(os.environ.get('AURORA_ENGINEERING_MAX_PARTS','512')) or len(bom)>200: raise ValueError('Bounded parts, BOM and assembly steps required.')
     if require_sources and parts and any(not (root/name).is_file() for name in ['design.py','tests.py']): raise ValueError('Create design.py and tests.py before packaging; execute the geometry and tests, then rebuild the archive.')
     if not parts and not spec.get('blockers'): raise ValueError('Provide actual parts or explain infeasibility with blockers.')
     bed=np.asarray(spec.get('bed_mm',[220,220,250]),dtype=float)
@@ -53,7 +54,7 @@ def build_project(spec, root='.', *, require_sources=False):
         printable_dir=root/'printable';printable_dir.mkdir(exist_ok=True)
         print_path=printable_dir/(node+'.stl');printable.export(print_path)
         print_transform=transform @ trimesh.transformations.translation_matrix(mesh.bounds[0])
-        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':float(mesh.volume),'watertight':True,'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist()})
+        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':float(mesh.volume),'watertight':True,'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist(),'source_origin_mm':mesh.bounds[0].tolist()})
         source_files.extend([path,print_path])
     checked_bom=[]
     for item in bom:
@@ -71,6 +72,21 @@ def build_project(spec, root='.', *, require_sources=False):
     id_map={p['design_id']:p['id'] for p in measured}
     motion=[{**j,'parent':id_map.get(j.get('parent'),j.get('parent')),'child':id_map.get(j.get('child'),j.get('child'))} for j in spec.get('mechanism_joints',[])]
     report['mechanism_joints']=validate_joints(measured,motion)
+    report['closure_constraints']=[{**c,'parent':id_map.get(c.get('parent'),c.get('parent')),'child':id_map.get(c.get('child'),c.get('child'))} for c in spec.get('closure_constraints',[])]
+    by_id={p['id']:p for p in measured}
+    for closure in report['closure_constraints']:
+        for side in ['parent','child']:
+            part=by_id.get(closure.get(side))
+            anchor=closure.get(side+'_anchor_mm')
+            if part and isinstance(anchor,list) and len(anchor)==3:closure[side+'_anchor_mm']=(np.asarray(anchor,dtype=float)-np.asarray(part['source_origin_mm'])).tolist()
+    from application.engineering_motion import solve_closures
+    _,_,report['closure_at_home']=solve_closures(measured,report['mechanism_joints'],{},report['closure_constraints'])
+    if not report['closure_at_home']['converged']:raise ValueError('The declared mechanism does not close at home; inspect residual and revise its geometry or constraints.')
+    report['fastening_assessment']=[]
+    if spec.get('fastening_candidates'):
+        from application.engineering_connections import rank_fastening_locations
+        proposals=[{**c,'part_ids':[id_map.get(ref,ref) for ref in c.get('part_ids',[])]} for c in spec['fastening_candidates']]
+        report['fastening_assessment']=rank_fastening_locations(measured,root,proposals,spec.get('assembly_views',[]))
     filament_plan=[]
     for part,source in zip(measured,parts):
         color=source.get('filament_color','#eeeeee')
@@ -91,6 +107,8 @@ def build_project(spec, root='.', *, require_sources=False):
     lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
     lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
     lines += ['','![Projection des pièces réellement produites](representation.svg)','','## Montage']+[f"{i+1}. {step['instruction']}" for i,step in enumerate(steps)]
+    lines += ['','## Discrétion et accès des fixations']+['- '+json.dumps(c,ensure_ascii=False) for c in report['fastening_assessment']]
+    if not report['fastening_assessment']:lines.append('Aucune comparaison géométrique des emplacements de fixation fournie ; discrétion non vérifiée.')
     lines += ['','## Mobilité et vérification géométrique', 'Articulations définies dans le repère mondial au repos ; limites et position initiale explicites. Sans articulation déclarée, aucune animation fonctionnelle.', 'Contrôle de pénétration des solides à la position demandée uniquement. Contacts, efforts, friction, déformations, flexion des câbles et trajectoires continues restent à valider.']
     lines += ['- '+json.dumps(j,ensure_ascii=False) for j in report['mechanism_joints']]
     lines += ['','## Tests']+['- Géométrie mesurée : volumes fermés, dimensions dans le volume utile, transformations rigides et références résolues.','- Les autres résultats sont déclarés par le concepteur : consulter leurs scripts et preuves. Aucun succès mécanique ou électrique n’est déduit de la seule validité du STL.']
@@ -107,6 +125,7 @@ def build_project(spec, root='.', *, require_sources=False):
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
         mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates']}
         manifest['mechanism_joints']=report['mechanism_joints']
+        manifest['closure_constraints']=report['closure_constraints']
         (root/'assembly.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
         shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'),root/'viewer.html')
         shutil.copytree(Path(__file__).with_name('engineering_viewer_assets'),root/'viewer_assets',dirs_exist_ok=True)
@@ -115,6 +134,7 @@ def build_project(spec, root='.', *, require_sources=False):
     (root/'project_spec.json').write_text(json.dumps(portable,ensure_ascii=False,indent=2),encoding='utf-8')
     included=[root/'DOSSIER.md',root/'DOSSIER.html',root/'representation.svg',root/'project.json',*source_files]
     included += [p for p in [root/'assembled.glb',root/'exploded.glb',root/'viewer.html',root/'assembly.json',root/'design.py',root/'tests.py',root/'project_spec.json'] if p.is_file()]
+    included += [(root/c['tool_envelope_file']).resolve() for c in report['fastening_assessment'] if c.get('tool_envelope_file')]
     included += [root/p[key] for p in report['print_plates'] for key in ['file','preview_file']]
     included += list((root/'viewer_assets').rglob('*')) if (root/'viewer_assets').exists() else []
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as bundle:

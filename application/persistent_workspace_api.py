@@ -22,7 +22,7 @@ def register_workspace_routes(bp, workspace, *, local, admin, extension, node):
         if not is_local and not is_admin and not ext_ok: return None
         credential=request.headers.get('Authorization','')
         owner=hashlib.sha256((credential or 'local-workspace').encode()).hexdigest()
-        if not credential and ext_ok and record.get('workspace_owner'): owner=record['workspace_owner']
+        if ext_ok and (record or {}).get('workspace_owner'): owner=record['workspace_owner']
         try:
             token = (state / 'token').read_text().strip()
         except OSError:

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from flask import jsonify, request, send_file
 
 COOKIE = 'aurora_device'
+BEARER_PREFIX = 'aurora_device:'
 LOCK = threading.RLock()
 
 
@@ -31,10 +32,13 @@ def _save(workspace, data):
 
 
 def device_auth(workspace):
-    raw=request.cookies.get(COOKIE,'')
+    authorization=request.headers.get('Authorization','')
+    bearer=authorization.startswith('Bearer '+BEARER_PREFIX)
+    if authorization and not bearer:return None
+    raw=authorization[len('Bearer '+BEARER_PREFIX):] if bearer else request.cookies.get(COOKIE,'')
     if not raw: return None
     # Browser cookies may authorize mutations only from this origin.
-    if request.method not in {'GET','HEAD','OPTIONS'}:
+    if not bearer and request.method not in {'GET','HEAD','OPTIONS'}:
         origin=urlparse(request.headers.get('Origin',''))
         if origin.netloc.lower()!=request.host.lower() or origin.scheme not in {'http','https'}: return None
     digest=hashlib.sha256(raw.encode()).hexdigest()
@@ -46,14 +50,30 @@ def device_auth(workspace):
 
 
 def request_identity(workspace):
-    credential=request.headers.get('Authorization','')
-    if credential: return credential
     device=device_auth(workspace)
+    credential=request.headers.get('Authorization','')
+    if credential and not device:return credential
     return 'device:'+device['id'] if device else ''
 
 
-def register_device_routes(bp,workspace,*,local):
+def register_device_routes(bp,workspace,*,local,notifier=None):
     pending={}; rates={}
+    def lookup(identity):
+        with LOCK:
+            item=pending.get(identity)
+            return dict(item) if item and item['expires']>time.time() else None
+    def approve(identity,code):
+        with LOCK:
+            item=pending.get(identity)
+            if item and item['expires']>time.time() and isinstance(code,str) and len(code)==6 and code.isascii() and code.isdigit() and hmac.compare_digest(item['code'],code):
+                item['approved']=True
+                return True
+            return False
+    def decline(identity):
+        with LOCK:pending.pop(identity,None)
+    if notifier is None:
+        from application.desktop_pairing import DesktopApproval
+        notifier=DesktopApproval(lookup,approve,decline).request
     def local_manager():
         if not local(): return False
         if request.method in {'GET','HEAD'}: return True
@@ -82,6 +102,8 @@ def register_device_routes(bp,workspace,*,local):
         if not isinstance(data,dict): return jsonify(ok=False,error='Paramètres invalides.'),400
         name=data.get('name','Mon téléphone')
         if not isinstance(name,str) or not 1<=len(name.strip())<=80: return jsonify(ok=False,error='Nom d’appareil requis (80 caractères maximum).'),400
+        transport=data.get('transport','browser')
+        if transport not in {'browser','cli'}:return jsonify(ok=False,error='Transport invalide.'),400
         # No client-chosen code, no approval through the public tunnel.
         ip=hashlib.sha256((request.headers.get('X-Forwarded-For') or request.remote_addr or '').encode()).hexdigest()
         with LOCK:
@@ -89,8 +111,10 @@ def register_device_routes(bp,workspace,*,local):
             if len(pending)>=20 or len(rates.get(ip,[]))>=5: return jsonify(ok=False,error='Trop de demandes. Réessayez dans une minute.'),429
             secret=secrets.token_urlsafe(32); code=str(secrets.randbelow(900000)+100000)
             while any(p['code']==code for p in pending.values()): code=str(secrets.randbelow(900000)+100000)
-            pending[hashlib.sha256(secret.encode()).hexdigest()]={'code':code,'name':name.strip(),'expires':time.time()+300,'approved':False}
+            identity=hashlib.sha256(secret.encode()).hexdigest()
+            pending[identity]={'code':code,'name':name.strip(),'expires':time.time()+300,'approved':False,'transport':transport}
             rates.setdefault(ip,[]).append(time.time())
+        notifier(identity)
         return jsonify(ok=True,claim=secret,code=code,expires_in=300)
     @bp.route('/api/devices/claim',methods=['POST'])
     def claim():
@@ -104,7 +128,7 @@ def register_device_routes(bp,workspace,*,local):
                 'name':item['name'],'created':time.time(),'expires':time.time()+180*86400,'revoked':False,
                 'workspace_owner':hashlib.sha256(b'local-workspace').hexdigest()}
             store=_load(workspace);store.setdefault('devices',[]).append(device);_save(workspace,store);del pending[digest]
-        response=jsonify(ok=True,connected=True,name=device['name'])
+        response=jsonify(ok=True,connected=True,name=device['name'],**({'credential':BEARER_PREFIX+raw} if item.get('transport')=='cli' else {}))
         response.set_cookie(COOKIE,raw,max_age=180*86400,httponly=True,secure=not local(),samesite='Strict',path='/')
         response.headers['Cache-Control']='no-store'
         return response

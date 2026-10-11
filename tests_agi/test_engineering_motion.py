@@ -46,3 +46,50 @@ def test_actual_solid_penetration(tmp_path):
     assert collision['collision_status']=='penetration'
     assert collision['collisions'][0]['penetration_mm3']==pytest.approx(8)
     assert simulate(report,tmp_path,{'hinge':-8})['collisions']==[]  # touching faces ≠ penetration
+
+
+def test_passive_closure_solved_from_measured_constraints():
+    from application.engineering_motion import solve_closures
+    js=[joint('prismatic',axis=[1,0,0],limits=[-10,0],passive=True)]
+    closure=[{'kind':'coincident','parent':'base','child':'arm','parent_anchor_mm':[2,0,0],'child_anchor_mm':[0,0,0]}]
+    transforms,values,proof=solve_closures(parts(),js,{},closure)
+    assert proof['converged'] and values['hinge']==pytest.approx(-8,abs=1e-4)
+    assert np.allclose(transforms['arm'][:3,3],[2,0,0],atol=1e-4)
+    js[0]['limits']=[-2,0]
+    _,_,proof=solve_closures(parts(),js,{},closure)
+    assert not proof['converged'] and proof['max_residual_mm']>5
+
+
+def test_collision_batches_resume_without_fabricating_a_clear_verdict(tmp_path):
+    ps=[]
+    for i in range(4):
+        name='p'+str(i);trimesh.creation.box([2,2,2]).export(tmp_path/(name+'.stl'))
+        ps.append({'id':name,'file':name+'.stl','assembly_matrix_mm':np.eye(4).tolist()})
+    report={'parts':ps};a=simulate(report,tmp_path,batch_size=2)
+    b=simulate(report,tmp_path,cursor=2,batch_size=2);c=simulate(report,tmp_path,cursor=4,batch_size=2)
+    assert not a['collision_batch']['complete'] and c['collision_batch']['complete']
+    assert a['collision_batch']['fingerprint']==b['collision_batch']['fingerprint']==c['collision_batch']['fingerprint']
+    assert len(a['collisions']+b['collisions']+c['collisions'])==6
+
+
+def test_sampled_path_exposes_intermediate_collision_without_canned_animation(tmp_path):
+    from application.engineering_motion import path_sample
+    for name in ['base','arm']:trimesh.creation.box([2,2,2]).export(tmp_path/(name+'.stl'))
+    js=[joint('prismatic',axis=[1,0,0],limits=[-20,0])];report={'parts':parts(),'mechanism_joints':js}
+    assert simulate(report,tmp_path,{'hinge':0})['collisions']==[]
+    assert simulate(report,tmp_path,{'hinge':-20})['collisions']==[]
+    values,metadata=path_sample(parts(),js,{}, {'hinge':-20},10)
+    assert metadata['last_sample']==20 and not metadata['continuous_collision_validated']
+    assert simulate(report,tmp_path,values)['collisions'][0]['penetration_mm3']==pytest.approx(8)
+
+
+def test_motion_case_batches_cover_full_intended_travel(tmp_path):
+    from application.engineering_motion import evaluate_motion_case
+    for name in ['base','arm']:trimesh.creation.box([2,2,2]).export(tmp_path/(name+'.stl'))
+    js=[joint('prismatic',axis=[1,0,0],limits=[-20,0])];report={'parts':parts(),'mechanism_joints':js}
+    first=evaluate_motion_case(report,tmp_path,{}, {'hinge':-20},sample_batch=8)
+    second=evaluate_motion_case(report,tmp_path,{}, {'hinge':-20},start_sample=first['next_sample'],sample_batch=8)
+    third=evaluate_motion_case(report,tmp_path,{}, {'hinge':-20},start_sample=second['next_sample'],sample_batch=8)
+    assert not first['complete'] and third['complete']
+    assert [r['sample'] for b in [first,second,third] for r in b['samples']]==list(range(21))
+    assert not second['batch_passed'] and any(r['collisions'] for r in second['samples'])
