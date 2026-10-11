@@ -14,11 +14,11 @@ LEGACY_URL_FILE="$ROOT_DIR/tunnel_url.txt"
 CF_LOG="${TMPDIR:-/tmp}/auroraia/cloudflared.log"
 LAST_STATE=""
 LAST_URL=""
-cleanup(){ bash "$PUB" closed >/dev/null 2>&1 || true; exit 0; }
+cleanup(){ bash "$PUB" auto >/dev/null 2>&1 || true; exit 0; }
 trap cleanup TERM INT HUP
 while true; do
   # Cible = bridge :3001 (ce que le tunnel expose), pas l'UI Vite :1420.
-  if curl -s -m 5 -o /dev/null "http://127.0.0.1:3001/api/health" 2>/dev/null; then STATE=open; else STATE=closed; fi
+  if bash "$TUNNEL_CHECKER" "$(cat "$URL_FILE" 2>/dev/null)" 1 >/dev/null 2>&1; then STATE=open; else STATE=closed; fi
   URL="$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -1)"
   if [ -n "$URL" ] && [ "$URL" != "$LAST_URL" ]; then
     if bash "$TUNNEL_CHECKER" "$URL" 15 >/dev/null; then
@@ -33,7 +33,7 @@ while true; do
   if [ "$STATE" = "open" ] && [ ! -s "${AURORA_LIVE_REPO:-$ROOT_DIR/../aurora-live}/tunnel.txt" ]; then
     LAST_STATE=""
   fi
-  if [ "$STATE" != "$LAST_STATE" ]; then
+  if true; then  # heartbeat + retry failed pushes, even without a state change
     if bash "$PUB" "$STATE"; then
       LAST_STATE="$STATE"
     else

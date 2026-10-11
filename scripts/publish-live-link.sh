@@ -1,65 +1,36 @@
 #!/usr/bin/env bash
-# Publie l'ETAT du studio dans le repo aurora-live (README, section <!--STATUS-->) et pousse sur GitHub :
-#  - OUVERT  : affiche l'adresse publique en cours (tunnel Cloudflare)
-#  - FERME   : affiche une page maintenance + contacts
-# Mode : "open" | "closed" | "auto" (auto = teste si le bridge, cible du
-# tunnel, repond sur 127.0.0.1:3001). Defaut auto.
+# Publish only a verified public bridge; failed pushes remain retryable.
 set -euo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LIVE_REPO="${AURORA_LIVE_REPO:-$ROOT_DIR/../aurora-live}"
-URL_FILE="$ROOT_DIR/tunnel.txt"
-LIVE_TUNNEL_FILE="$LIVE_REPO/tunnel.txt"
 MODE="${1:-auto}"
-
-[ -d "$LIVE_REPO/.git" ] || { echo "[publish] $LIVE_REPO absent"; exit 0; }
-
-if [ "$MODE" = "auto" ]; then
-  # Le tunnel route vers le bridge :3001 (pas l'UI Vite :1420). C'est lui qui
-  # rend l'URL publique joignable ; s'il tombe, éviter de publier 'open'.
-  if curl -s -m 5 -o /dev/null "http://127.0.0.1:3001/api/health" 2>/dev/null; then MODE="open"; else MODE="closed"; fi
+case "$MODE" in auto|open|closed) ;; *) echo '[publish] invalid mode' >&2; exit 2 ;; esac
+[ -d "$LIVE_REPO/.git" ] || { echo '[publish] discovery repository missing' >&2; exit 1; }
+# Serialize local publishers, including shutdown vs watcher. flock is optional
+# only because this compatibility entry is for Bash; the monitor is portable.
+exec 9>"$LIVE_REPO/.git/aurora-publish.lock"
+if command -v flock >/dev/null 2>&1; then flock -w 30 9 || exit 1; fi
+cd "$LIVE_REPO"
+# Push previously committed state first. Do not silently lose a failed push.
+git fetch -q origin main
+git -c user.name="Aurora availability" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" rebase -X theirs origin/main
+URL="$(tr -d '[:space:]' < "$ROOT_DIR/tunnel.txt")"
+# Use the existing public-DNS fallback locally, and strict JSON service check.
+if [ "$MODE" != closed ]; then
+  if ! bash "$ROOT_DIR/scripts/verify-tunnel-url.sh" "$URL" 1 >/dev/null 2>&1; then MODE=closed; fi
 fi
-
-STAMP="$(date '+%Y-%m-%d %H:%M')"
-if [ "$MODE" = "open" ] && [ -f "$URL_FILE" ] && [ -s "$URL_FILE" ]; then
-  URL="$(tr -d '[:space:]' < "$URL_FILE")"
-  if [[ ! "$URL" =~ ^https://[a-z0-9-]+\.trycloudflare\.com/?$ ]]; then
-    echo "[publish] URL de tunnel invalide: $URL" >&2
-    exit 1
-  fi
-  BLOCK="🟢 **Ouvert !** Accès en direct : **[$URL]($URL)**
-
-_Mis à jour le $STAMP. Le lien n'est valable que quand mon PC est allumé._"
-  TUNNEL_CONTENT="$URL"$'\n'
-  MSG="Studio ouvert — $STAMP"
-else
-  BLOCK="🔴 **Fermé pour le moment** — en maintenance / réparation, ou simplement éteint.
-
-Pour toute question ou plus d'infos, contactez-moi : Snap \`jrabuteau.py\` · Instagram \`world_of_juan23\` · Mail \`rabuteaujuandavid@gmail.com\`.
-
-_Mis à jour le $STAMP._"
-  # Un telephone qui lit le fichier brut ne doit jamais recuperer une URL
-  # perimee apres l'arret du studio.
-  TUNNEL_CONTENT=""
-  MSG="Studio ferme — $STAMP"
+# closed never probes; auto/open independently verify the public endpoint.
+python3 - "$LIVE_REPO" "$MODE" "$URL" <<'PYTHON'
+import importlib.util, pathlib, sys
+repo, mode, url = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('status_check', pathlib.Path(repo) / 'status_check.py')
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module.update(repo, mode, url, checker=lambda _: mode != 'closed'))
+PYTHON
+git add -- README.md tunnel.txt status.json
+if ! git diff --cached --quiet -- README.md tunnel.txt status.json; then
+  git -c user.name='Juan Rabuteau' -c user.email='rabuteaujuandavid@gmail.com' commit --only -q -m 'Verify Aurora public availability' -- README.md tunnel.txt status.json
 fi
-
-python3 - "$LIVE_REPO/README.md" "$LIVE_TUNNEL_FILE" "$BLOCK" "$TUNNEL_CONTENT" <<'PY'
-import sys, re
-path, tunnel_path, block, tunnel_content = sys.argv[1:]
-s = open(path, encoding="utf-8").read()
-s = re.sub(r"<!--STATUS-->.*?<!--/STATUS-->",
-          "<!--STATUS-->\n%s\n<!--/STATUS-->" % block, s, flags=re.S)
-open(path, "w", encoding="utf-8").write(s)
-open(tunnel_path, "w", encoding="utf-8").write(tunnel_content)
-PY
-
-cd "$LIVE_REPO" || exit 0
-git add -- README.md tunnel.txt
-if git diff --cached --quiet -- README.md tunnel.txt; then
-  echo "[publish] etat inchange ($MODE)"
-else
-  git -c user.name="Juan Rabuteau" -c user.email="rabuteaujuandavid@gmail.com" \
-    commit --only -q -m "$MSG" -- README.md tunnel.txt
-  git push -q origin main && echo "[publish] etat publie: $MODE" || echo "[publish] push echoue"
-fi
+git push -q origin main
+echo '[publish] state published'
