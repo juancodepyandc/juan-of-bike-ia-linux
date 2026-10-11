@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch } from '../../utils/bridgeAuth.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../../stores/appStore.ts'
 import { useCodeStreamStore } from '../../stores/codeStreamStore.ts'

@@ -335,6 +335,24 @@ class ComfyStartup(unittest.TestCase):
         self.assertEqual(BRIDGE._comfyui_start_diagnostics()['state'], 'startup_timeout')
 
 
+class LocalDeviceApprovalBoundary(unittest.TestCase):
+    def test_forwarded_loopback_and_cloudflare_headers_never_authorize_local_control(self):
+        for headers in ({'X-Forwarded-For':'127.0.0.1'},{'X-Forwarded-For':'::1'},{'CF-Ray':'proxy'},{'CF-Connecting-IP':'127.0.0.1'},{'Forwarded':'for=127.0.0.1'},{'X-Forwarded-Host':'localhost'},{'Origin':'https://untrusted.test'}):
+            with BRIDGE.app.test_request_context('/devices',headers=headers,environ_base={'REMOTE_ADDR':'127.0.0.1'}):
+                self.assertFalse(BRIDGE._request_is_local_loopback())
+        with BRIDGE.app.test_request_context('/devices',base_url='http://localhost',environ_base={'REMOTE_ADDR':'127.0.0.1'}):
+            self.assertTrue(BRIDGE._request_is_local_loopback())
+        with BRIDGE.app.test_request_context('/devices',base_url='https://public.test',environ_base={'REMOTE_ADDR':'127.0.0.1'}):
+            self.assertFalse(BRIDGE._request_is_local_loopback())
+
+    def test_sensitive_guard_checks_nonlocal_requests_even_without_xff(self):
+        with patch.object(BRIDGE,'_admin_ok',return_value=False), patch.object(BRIDGE,'_ext_auth',return_value=(False,None,'missing')):
+            with BRIDGE.app.test_request_context('/api/python/run-async',method='POST',base_url='https://public.test',headers={'CF-Ray':'proxy'},environ_base={'REMOTE_ADDR':'127.0.0.1'}):
+                self.assertEqual(BRIDGE._req_sensitive_guard()[1],403)
+            with BRIDGE.app.test_request_context('/api/python/run-async',method='POST',base_url='http://localhost',environ_base={'REMOTE_ADDR':'127.0.0.1'}):
+                self.assertIsNone(BRIDGE._req_sensitive_guard())
+
+
 class ModelSelection(unittest.TestCase):
     def setUp(self):
         self.models = [{'name':'qwen3-coder-next:q4_K_M','size':51_700_000_000},
@@ -372,6 +390,14 @@ class ModelSelection(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Aucun modèle'):
             BRIDGE._ext_default_model(self.models[:1],resources={'ram_total_bytes':30*1024**3,'nvidia_vram_bytes':0})
         self.assertNotIn('model',BRIDGE._ext_default_model_diagnostics())
+
+    def test_engineering_routes_to_installed_coder_without_changing_general_default(self):
+        models=[{'name':'deepseek-r1:32b','size':19_000_000_000},{'name':'qwen3-coder:30b','size':18_000_000_000}]
+        resources={'ram_total_bytes':30*1024**3,'nvidia_vram_bytes':0}
+        self.assertEqual(BRIDGE._ext_default_model(models,resources=resources),'deepseek-r1:32b')
+        self.assertEqual(BRIDGE._ext_default_model(models,resources=resources,task='engineering'),'qwen3-coder:30b')
+        with patch.dict(os.environ,{'AURORA_DEFAULT_MODEL':'deepseek-r1:32b'}):
+            self.assertEqual(BRIDGE._ext_default_model(models,resources=resources,task='engineering'),'deepseek-r1:32b')
 
     def test_external_default_failure_returns_explained_503(self):
         with patch.object(BRIDGE,'_ext_auth',return_value=(True,{'origin':'','label':'fixture'},'')), \

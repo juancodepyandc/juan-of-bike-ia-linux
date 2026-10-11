@@ -17,7 +17,14 @@ from application.device_pairing import register_device_routes
 register_device_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback)
 from application.engineering_design_api import register_design_routes
 from bridge_server import _ext_default_model
-register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=_ext_default_model)
+register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=lambda:_ext_default_model(task="engineering"))
+
+from application.asset_access import public_generated_asset
+
+def _asset_read_allowed(candidate):
+    manager=globals().get('_storage_manager')
+    cold=manager.cold_root if manager is not None and manager.cold_mounted() else None
+    return public_generated_asset(candidate,WORKSPACE,COMFYUI_PATH,cold) or _request_is_local_loopback() or _admin_ok() or _ext_auth()[0]
 
 # =====================================================================
 #  Asset serving — pour telecharger les images generees sur le tel
@@ -121,9 +128,13 @@ def serve_asset(filepath):
         os.path.join(WORKSPACE, "output", normalized),
         filepath,  # chemin absolu direct
     ]
+    denied=False
     for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return send_file(candidate)
+        if not candidate:continue
+        resolved=pathlib.Path(candidate).resolve()
+        if not _asset_read_allowed(resolved):denied=True;continue
+        if resolved.is_file():return send_file(resolved)
+    if denied:return jsonify(error='forbidden_public',detail='Connectez cet appareil pour accéder à ce fichier.'),403
     abort(404)
 
 
@@ -136,9 +147,12 @@ def download_asset(filepath):
         os.path.join(WORKSPACE, "temp", filepath),
         filepath,
     ]
+    denied=False
     for candidate in candidates:
-        if os.path.isfile(candidate):
-            return send_file(candidate, as_attachment=True, download_name=os.path.basename(candidate))
+        resolved=pathlib.Path(candidate).resolve()
+        if not _asset_read_allowed(resolved):denied=True;continue
+        if resolved.is_file():return send_file(resolved,as_attachment=True,download_name=resolved.name)
+    if denied:return jsonify(error='forbidden_public',detail='Connectez cet appareil pour accéder à ce fichier.'),403
     abort(404)
 
 

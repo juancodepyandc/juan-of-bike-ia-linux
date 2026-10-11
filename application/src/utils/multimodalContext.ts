@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch } from './bridgeAuth.ts'
 import { fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, ollamaChat, runPythonScript } from '../hooks/useTauri.ts'
 import type { ModuleId } from '../types/app.ts'
 import { isTauriRuntime, getBridgeUrl } from './runtime.ts'

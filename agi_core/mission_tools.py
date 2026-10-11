@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import time
 import unicodedata
+import zipfile
 from urllib.parse import parse_qs, urljoin, urlsplit
 
 import aiohttp
@@ -224,6 +225,24 @@ class MissionTools:
         self.require_path(path)
         with path.open('rb') as stream:
             raw = stream.read(limit*4+1)
+        if raw.startswith((b'PK\x03\x04',b'PK\x05\x06')):
+            with zipfile.ZipFile(path) as archive:
+                entries=archive.infolist()
+                total=sum(entry.file_size for entry in entries)
+                bounded=len(entries)<=1024 and total<=128*1024*1024 and path.stat().st_size<=128*1024*1024
+                encrypted=any(entry.flag_bits & 1 for entry in entries)
+                verified=bounded and not encrypted
+                bad=archive.testzip() if verified else None
+                info={'format':'zip','member_count':len(entries),'uncompressed_bytes':total,
+                      'integrity_verified':verified and bad is None,'bad_member':bad,
+                      'scope':'ZIP structure/CRC only; no extraction, execution or engineering certification',
+                      'members':[{'name':entry.filename,'bytes':entry.file_size,'compressed_bytes':entry.compress_size} for entry in entries[:200]],
+                      'members_truncated':len(entries)>200}
+                if not verified:info['limit_reason']='Encrypted archive or inspection exceeds 1024 members / 128 MiB.'
+                if path.stat().st_size<=128*1024*1024:info['sha256']=digest_file(path)
+            text=json.dumps(info,ensure_ascii=False)
+            return {'path':str(path),'content':text[offset:offset+limit],'next_offset':offset+min(max(0,len(text)-offset),limit),
+                    'encoding_status':'zip_metadata_not_text','truncated':len(text)>offset+limit}
         if b'\x00' in raw:
             self.require_text(raw,path)
         try:

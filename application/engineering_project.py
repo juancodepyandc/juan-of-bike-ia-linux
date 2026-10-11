@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import math
+import re
 from pathlib import Path
 import shutil
 import zipfile
@@ -10,19 +11,24 @@ import numpy as np
 import trimesh
 
 
-def build_project(spec, root='.'):
+def build_project(spec, root='.', *, require_sources=False):
     root=Path(root).resolve()
+    if isinstance(spec,(str,Path)):
+        source=(root/spec).resolve()
+        if not source.is_relative_to(root) or source.suffix.lower()!='.json' or not source.is_file() or source.stat().st_size>2*1024*1024:raise ValueError('Project JSON must exist inside the project and be at most 2 MiB.')
+        spec=json.loads(source.read_text(encoding='utf-8'))
     if not isinstance(spec,dict) or spec.get('units')!='mm': raise ValueError('Project object with units=mm required.')
     title=spec.get('title'); objective=spec.get('objective')
     if not isinstance(title,str) or not title.strip() or not isinstance(objective,str) or not objective.strip(): raise ValueError('Title and objective required.')
     parts=spec.get('parts',[]);bom=spec.get('bom',[]);steps=spec.get('assembly_steps',[])
     if not all(isinstance(v,list) for v in [parts,bom,steps]) or len(parts)>64 or len(bom)>200: raise ValueError('Bounded parts, BOM and assembly steps required.')
+    if require_sources and parts and any(not (root/name).is_file() for name in ['design.py','tests.py']): raise ValueError('Create design.py and tests.py before packaging; execute the geometry and tests, then rebuild the archive.')
     if not parts and not spec.get('blockers'): raise ValueError('Provide actual parts or explain infeasibility with blockers.')
     bed=np.asarray(spec.get('bed_mm',[220,220,250]),dtype=float)
     if bed.shape!=(3,) or not np.isfinite(bed).all() or np.any(bed<10): raise ValueError('Finite build volume required.')
     margin=float(spec.get('margin_mm',5));usable=bed-2*margin
     if not math.isfinite(margin) or margin<0 or np.any(usable<=0): raise ValueError('Invalid build margin.')
-    scene=trimesh.Scene();exploded=trimesh.Scene();measured=[];ids=set();source_files=[]
+    scene=trimesh.Scene();exploded=trimesh.Scene();measured=[];ids=set();source_files=[];cursor=None
     for index,part in enumerate(parts):
         if not isinstance(part,dict) or not isinstance(part.get('id'),str) or part['id'] in ids: raise ValueError('Unique part IDs required.')
         ids.add(part['id']);path=(root/str(part.get('file',''))).resolve()
@@ -32,11 +38,16 @@ def build_project(spec, root='.'):
         if np.any(mesh.extents>usable+1e-4): raise ValueError(f"{part['id']}: does not fit the declared printer; redesign, orient or split it.")
         transform=np.asarray(part.get('assembly_matrix_mm',np.eye(4).tolist()),dtype=float)
         if transform.shape!=(4,4) or not np.isfinite(transform).all() or not np.allclose(transform[3],[0,0,0,1]) or not np.allclose(transform[:3,:3].T@transform[:3,:3],np.eye(3),atol=1e-6) or not np.isclose(np.linalg.det(transform[:3,:3]),1): raise ValueError('Rigid placement matrices required; no hidden scaling.')
-        color=part.get('color_rgba',[120,180,240,255])
-        if not isinstance(color,list) or len(color)!=4 or any(type(c)!=int or not 0<=c<=255 for c in color): raise ValueError('RGBA bytes required.')
+        palette=[[120,180,240,255],[245,170,90,255],[110,210,165,255],[200,145,235,255],[240,130,150,255],[225,215,100,255]]
+        color=part.get('color_rgba',palette[index%len(palette)])
+        if isinstance(color,list) and len(color)==4 and all(type(c) in {int,float} and math.isfinite(c) and 0<=c<=1 for c in color):color=[round(c*255) for c in color]
+        if not isinstance(color,list) or len(color)!=4 or any(type(c)!=int or not 0<=c<=255 for c in color): raise ValueError('RGBA bytes or normalized RGBA values required.')
         mesh.visual.face_colors=color;placed=mesh.copy();placed.apply_transform(transform)
         node=f'piece_{index+1:02}';scene.add_geometry(placed,node_name=node,geom_name=node)
-        displacement=np.array([max(bed)*.18*(index+1),0,0]);spread=placed.copy();spread.apply_translation(displacement)
+        gap=max(10.,max(bed)*.08)
+        offset=0. if cursor is None else max(gap*index,cursor-placed.bounds[0,0])
+        displacement=np.array([offset,0,0]);spread=placed.copy();spread.apply_translation(displacement)
+        cursor=float(spread.bounds[1,0]+gap)
         exploded.add_geometry(spread,node_name=node,geom_name=node)
         printable=mesh.copy();printable.apply_translation(-mesh.bounds[0])
         printable_dir=root/'printable';printable_dir.mkdir(exist_ok=True)
@@ -56,12 +67,25 @@ def build_project(spec, root='.'):
     blockers=spec.get('blockers',[]);assumptions=spec.get('assumptions',[])
     if not all(isinstance(v,list) and all(isinstance(x,str) for x in v) for v in [blockers,assumptions]): raise ValueError('Assumptions and blockers must be explicit text lists.')
     report={'schema':'aurora.engineering-project.v1','title':title,'objective':objective,'units':'mm','parts':measured,'bom':checked_bom,'assembly_steps':steps,'constraints':spec.get('constraints',[]),'assumptions':assumptions,'blockers':blockers,'design_tests':spec.get('tests',[]),'feasibility':'requires_resolution' if blockers else 'prototype_requires_physical_validation','physical_fit_validated':False,'measured_checks':{'closed_volumes':True,'printer_fit':True,'rigid_placements':True,'references_resolved':True},'sources':spec.get('sources',[])}
+    filament_plan=[]
+    for part,source in zip(measured,parts):
+        color=source.get('filament_color','#eeeeee')
+        if not isinstance(color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',color):raise ValueError('Physical filament color must be #RRGGBB.')
+        filament_plan.append({'part':part['id'],'name':str(source.get('filament') or 'Matière/couleur à confirmer'),'color':color.lower()})
+    report['filament_plan']=filament_plan
+    if measured:
+        from application.engineering_mesh import print_plates
+        plate_report={'profile':{'bed_mm':bed.tolist(),'margin_mm':margin},'parts':measured,'fabrication':{'filament_plan':filament_plan}}
+        report['print_plates']=print_plates(root,plate_report)
+    else:report['print_plates']=[]
     lines=[f'# {title}',objective,'','## État','Résoudre les blocages avant fabrication.' if blockers else 'Prototype géométriquement vérifié. Validation mécanique, électrique et essai physique nécessaires.','','## Contraintes et hypothèses']
     lines += ['- '+str(v) for v in [*report['constraints'],*assumptions]]
     lines += ['','## Architecture et composants','| Élément | Quantité | Spécification / dimensions | Pièces concernées |','|---|---:|---|---|']
     def cell(value):return str(value).replace('|','\\|').replace('\n',' ')
     lines += [f"| {cell(i['name'])} | {i['quantity']} | {cell(i['specification'])} | {cell(', '.join(i.get('part_ids',[])))} |" for i in checked_bom]
     lines += ['','## Pièces imprimables']+[f"- {p['name']} ({p['design_id']}) : {' × '.join(f'{v:.2f}' for v in p['dimensions_mm'])} mm ; volume {p['volume_mm3']:.2f} mm³ ; fichier `{p['file']}`." for p in measured]
+    lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
+    lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
     lines += ['','![Projection des pièces réellement produites](representation.svg)','','## Montage']+[f"{i+1}. {step['instruction']}" for i,step in enumerate(steps)]
     lines += ['','## Tests']+['- Géométrie mesurée : volumes fermés, dimensions dans le volume utile, transformations rigides et références résolues.','- Les autres résultats sont déclarés par le concepteur : consulter leurs scripts et preuves. Aucun succès mécanique ou électrique n’est déduit de la seule validité du STL.']
     lines += ['- '+json.dumps(t,ensure_ascii=False) for t in report['design_tests']]
@@ -75,17 +99,20 @@ def build_project(spec, root='.'):
     (root/'project.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if measured:
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
-        mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[]}
+        mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates']}
         (root/'assembly.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
         shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'),root/'viewer.html')
         shutil.copytree(Path(__file__).with_name('engineering_viewer_assets'),root/'viewer_assets',dirs_exist_ok=True)
     archive=root/'engineering-project.zip'
+    portable={**spec,'parts':[{**part,'file':(root/part['file']).resolve().relative_to(root).as_posix()} for part in parts]}
+    (root/'project_spec.json').write_text(json.dumps(portable,ensure_ascii=False,indent=2),encoding='utf-8')
     included=[root/'DOSSIER.md',root/'DOSSIER.html',root/'representation.svg',root/'project.json',*source_files]
     included += [p for p in [root/'assembled.glb',root/'exploded.glb',root/'viewer.html',root/'assembly.json',root/'design.py',root/'tests.py',root/'project_spec.json'] if p.is_file()]
+    included += [root/p[key] for p in report['print_plates'] for key in ['file','preview_file']]
     included += list((root/'viewer_assets').rglob('*')) if (root/'viewer_assets').exists() else []
-    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as zip:
+    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in dict.fromkeys(included):
-            if path.is_file():zip.write(path,path.relative_to(root))
+            if path.is_file():bundle.write(path,path.relative_to(root))
     return report
 
 
@@ -118,6 +145,8 @@ def write_assembly_dossier(report,scene,root):
     lines += ['','## Montage']
     for joint in report['joints']:
         lines.append(f"- {joint['id']} : joindre les pièces {' ↔ '.join(map(str,joint['pieces']))}, pion Ø{joint['pin_diameter_mm']:.2f} mm, logement Ø{joint['hole_diameter_mm']:.2f} mm, profondeur {joint['depth_each_side_mm']:.2f} mm/côté, centre XYZ {' / '.join(f'{v:.2f}' for v in joint['center_mm'])} mm.")
+    lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
+    lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
     lines += ['','![Projection du modèle réellement livré](representation.svg)','','## Vérifications et limites','Les contrôles géométriques portent sur la fermeture des pièces, le volume utile, les logements, parois et interférences des pions.','Le jeu doit être calibré par impression. La résistance, les fixations des composants et leurs connexions électriques ne sont pas validées par cet export de maillage.','Pour concevoir ces fonctions, utiliser la conception par objectif : l’agent doit déterminer les composants, effectuer ses calculs et documenter ses preuves.']
     (root/'DOSSIER.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     svg=projection_svg(scene);(root/'representation.svg').write_text(svg,encoding='utf-8')

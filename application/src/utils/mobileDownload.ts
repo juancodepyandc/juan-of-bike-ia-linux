@@ -1,3 +1,4 @@
+import { bridgeFetch as fetch } from './bridgeAuth.ts'
 import { getBridgeUrl, isTauriRuntime } from './runtime.ts'
 import { safeParseJson } from './errors.ts'
 

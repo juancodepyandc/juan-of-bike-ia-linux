@@ -79,6 +79,22 @@ class EnvironmentDiscovery(unittest.IsolatedAsyncioTestCase):
         table = await self.agent._execute('inspect_csv', {'path':'table.data','integer_columns':['count']})
         self.assertEqual(table['integer_columns']['count']['sum'], 4)
 
+    async def test_zip_inspection_checks_crc_without_extracting_or_decoding_binary(self):
+        import zipfile
+        with zipfile.ZipFile(self.workspace/'project.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr('project.json','{"units":"mm"}')
+            archive.writestr('../not_extracted.bin',b'BINARY\x00\xff')
+        result=await self.agent._execute('read_file',{'path':'project.zip'})
+        info=json.loads(result['content'])
+        self.assertEqual(result['encoding_status'],'zip_metadata_not_text')
+        self.assertTrue(info['integrity_verified'])
+        self.assertEqual(info['member_count'],2)
+        self.assertFalse((self.root/'not_extracted.bin').exists())
+        with zipfile.ZipFile(self.workspace/'large.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
+            for index in range(1025):archive.writestr(str(index),b'x')
+        bounded=await self.agent._execute('read_file',{'path':'large.zip'})
+        self.assertFalse(json.loads(bounded['content'])['integrity_verified'])
+
     async def test_non_utf8_diagnostic_excerpt_preserves_bytes_but_cannot_be_used_as_csv(self):
         (self.workspace/'unknown-encoding.txt').write_bytes(b'text\r\n\xff')
         observed = await self.agent._execute('read_file', {'path':'unknown-encoding.txt'})

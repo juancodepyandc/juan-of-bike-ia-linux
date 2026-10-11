@@ -553,16 +553,22 @@ def _request_is_local_loopback() -> bool:
     public). cloudflared connecte localement (remote_addr == 127.0.0.1) MAIS
     définit le header X-Forwarded-For avec l'IP réelle du client distant →
     toute présence d'un XFF non-bouclé = trafic du tunnel = NON local."""
-    xff = request.headers.get("X-Forwarded-For", "").strip()
-    if xff:
-        first = xff.split(",")[0].strip().lower().split(":")[0]
-        if first in ("", "unknown"):
-            return False
-        if first in ("127.0.0.1", "::1", "localhost"):
-            return True
+    # Forwarded traffic cannot become local by supplying a loopback XFF.
+    # Cloudflare preserves client-provided forwarding values in some paths.
+    if any(request.headers.get(header) for header in (
+            "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
+            "Forwarded", "CF-Connecting-IP", "CF-Ray", "CF-Visitor")):
         return False
+    host = urlparse("http://" + request.host).hostname
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        return False
+    origin=request.headers.get("Origin", "")
+    if origin:
+        parsed=urlparse(origin)
+        if parsed.scheme not in {"http","https","tauri","asset"} or parsed.hostname not in {"localhost","127.0.0.1","::1","tauri.localhost"}:
+            return False
     ra = (request.remote_addr or "").lower()
-    return ra in ("127.0.0.1", "::1", "localhost") or ra.startswith("::ffff:127.")
+    return ra in ("127.0.0.1", "::1") or ra.startswith("::ffff:127.")
 
 
 def _admin_ok() -> bool:
@@ -611,11 +617,10 @@ def _admin_ok() -> bool:
 _SENSITIVE_PREFIXES = (
     "/api/3d/engineering",
     "/api/3d/design",
+    "/api/upload",
     "/api/command/",
     "/api/python/",
-    "/api/fs/write-",
-    "/api/fs/remove-",
-    "/api/fs/mkdir",
+    "/api/fs/",
     "/api/3d/auto-motion-bake",
     "/api/web/extract",
     "/api/web/download",
@@ -633,7 +638,7 @@ def _req_sensitive_guard():
     if not any(p.startswith(prefix) for prefix in _SENSITIVE_PREFIXES):
         return None
     # Local loopback (sans XFF) → route vers l'UI/native : permet.
-    if not request.headers.get("X-Forwarded-For"):
+    if _request_is_local_loopback():
         return None
     # Via tunnel : token admin OU clé extension valide exigés.
     if _admin_ok():
@@ -644,7 +649,7 @@ def _req_sensitive_guard():
             return None
     except Exception:
         pass
-    return jsonify({"error": "forbidden_public", "détail": "route sensible, token admin ou clé extension requis depuis le tunnel"}), 403
+    return jsonify({"error": "forbidden_public", "détail": "Connectez cet appareil à Aurora et validez son code sur le PC pour accéder à cette fonction."}), 403
 
 
 def _ext_get_raw_key():
@@ -732,7 +737,7 @@ def _ext_default_model_diagnostics():
     return dict(_EXT_DEFAULT_MODEL_INFO)
 
 
-def _ext_default_model(models=None, *, resources=None):
+def _ext_default_model(models=None, *, resources=None, task="general"):
     """Choose an installed default using a coarse weight-size resource screen.
 
     Disk bytes are not measured resident memory. Passing this screen is not
@@ -797,6 +802,13 @@ def _ext_default_model(models=None, *, resources=None):
         "scope": "Declared disk weights are only a coarse resource screen, not measured resident memory or proof of fit/latency. Unknown sizes are not certified."}
     if not candidates:
         raise ValueError("Aucun modèle de conversation installé ne passe le contrôle de ressources ; choisissez un modèle explicitement ou installez un modèle adapté.")
+    if task == "engineering":
+        # Task routing uses installed names, not an invented capability score.
+        coding = [name for name in candidates if any(tag in name.lower() for tag in ("coder", "codestral", "starcoder", "codegemma"))]
+        if coding:
+            candidates = coding
+        _EXT_DEFAULT_MODEL_INFO["task"] = task
+        _EXT_DEFAULT_MODEL_INFO["routing"] = "Installed coding-family name heuristic; no quality or physical engineering guarantee."
     for pref in ("qwen3-coder-next:q4_K_M", "qwen-cyber:latest", "deepseek-r1:32b", "qwen3-coder:30b", "orcarouter", "qwen3-vl:8b"):
         match = next((name for name in candidates if pref.lower() in name.lower()), None)
         if match:

@@ -19,10 +19,16 @@ def test_generic_actual_parts_report_docs_figure_and_normalized_printable_zip(tm
         mesh=trimesh.load_mesh(tmp_path/part['file']);assert mesh.is_volume
         assert mesh.bounds[0]==pytest.approx([0,0,0],abs=1e-5)
     text=(tmp_path/'DOSSIER.md').read_text();assert '1,75 mm' in text and 'Socle' in text
+    assert result['parts'][0]['color_rgba']!=result['parts'][1]['color_rgba']
+    assert result['print_plates'] and len(result['print_plates'][0]['parts'])==2
+    assert trimesh.load_mesh(tmp_path/result['print_plates'][0]['file']).is_volume
     assert '<polygon' in (tmp_path/'representation.svg').read_text()
     with zipfile.ZipFile(tmp_path/'engineering-project.zip') as z:
         assert z.testzip() is None and {'DOSSIER.md','DOSSIER.html','project.json','representation.svg','viewer.html','printable/piece_01.stl'}<=set(z.namelist())
     loaded=trimesh.load_scene(tmp_path/'assembled.glb')
+    exploded=trimesh.load_scene(tmp_path/'exploded.glb')
+    bounds=sorted([mesh.bounds for mesh in exploded.geometry.values()],key=lambda b:b[0,0])
+    assert bounds[1][0,0]-bounds[0][1,0]>=.0099
     assert loaded.to_mesh().extents[0]==pytest.approx(.045,abs=1e-6)
 
 @pytest.mark.parametrize('change,match',[({'units':'cm'},'units'),({'bom':[{'name':'Vis','quantity':1,'specification':''}]},'specification'),({'parts':[{'id':'bad','file':'../outside.stl'}]},'inside'),({'assembly_steps':[{'instruction':'Monter','part_ids':['unknown']}]},'existing')])
@@ -34,3 +40,28 @@ def test_infeasibility_produces_dossier_without_fake_parts(tmp_path):
     report=build_project({'units':'mm','title':'Étude','objective':'Objectif nécessitant une source d’énergie absente','parts':[],'bom':[],'assembly_steps':[],'blockers':['Aucune source d’énergie disponible.']},tmp_path)
     assert report['feasibility']=='requires_resolution'
     assert not (tmp_path/'assembled.glb').exists() and (tmp_path/'DOSSIER.md').is_file()
+
+
+def test_physical_color_plan_separate_from_visual_part_colors(tmp_path):
+    files(tmp_path);plan=spec()
+    plan['parts'][0].update(filament='PLA rouge',filament_color='#ff0000')
+    plan['parts'][1].update(filament='PLA bleu',filament_color='#0000ff')
+    report=build_project(plan,tmp_path)
+    assert len(report['print_plates'])==2
+    assert {p['filament']['color'] for p in report['print_plates']}=={'#ff0000','#0000ff'}
+
+
+def test_project_json_file_input_and_scope_guard(tmp_path):
+    files(tmp_path);(tmp_path/'input.json').write_text(json.dumps(spec()))
+    assert build_project('input.json',tmp_path)['parts']
+    with pytest.raises(ValueError,match='inside'):
+        build_project('../outside.json',tmp_path)
+
+
+def test_normalized_cad_color_and_required_reproducible_sources(tmp_path):
+    files(tmp_path);plan=spec();plan['parts'][0]['color_rgba']=[.8,.2,.2,1.]
+    with pytest.raises(ValueError,match='design.py'):
+        build_project(plan,tmp_path,require_sources=True)
+    (tmp_path/'design.py').write_text('import trimesh\n')
+    (tmp_path/'tests.py').write_text('assert True\n')
+    assert build_project(plan,tmp_path,require_sources=True)['parts'][0]['color_rgba']==[204,51,51,255]
