@@ -6,6 +6,9 @@ on:
       - 'application/persistent_workspace*'
       - 'application/scripts/*persistent-workspace.mjs'
       - 'application/package*.json'
+      - 'application/src/utils/uiSkin.ts'
+      - 'application/src/utils/buildRecovery.ts'
+      - 'application/scripts/test-interface-stability.mjs'
       - '.github/workflows/persistent-workspace.yml'
   pull_request:
   workflow_dispatch:
@@ -34,3 +37,4 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:workspace
+      - run: node scripts/test-interface-stability.mjs

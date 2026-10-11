@@ -16,6 +16,7 @@ export const CHUNK_ERR_RE =
 
 const RECOVER_COUNT_KEY = 'aurora_recover_n'
 let recovering = false
+let bootHealthy = false
 
 export function isChunkError(input: unknown): boolean {
   if (!input) return false
@@ -30,6 +31,23 @@ export function isChunkError(input: unknown): boolean {
 
 export function recoverFromStaleBuild(why: string): void {
   if (recovering || typeof window === 'undefined') return
+  if (bootHealthy || document.getElementById('root')?.childElementCount) {
+    // A loaded module may own an in-flight pipeline. Never reload it silently.
+    if (!document.getElementById('aurora-build-recovery-notice')) {
+      const notice = document.createElement('div')
+      notice.id = 'aurora-build-recovery-notice'
+      notice.setAttribute('role', 'status')
+      notice.style.cssText = 'position:fixed;bottom:calc(80px + env(safe-area-inset-bottom));left:12px;right:12px;z-index:2147483647;padding:14px;border-radius:14px;background:#141b2f;color:#e6eaf5;font:14px system-ui;box-shadow:0 4px 24px #0008'
+      notice.append('Une partie de l’interface ne peut pas être chargée. Votre page reste ouverte. ')
+      const button = document.createElement('button')
+      button.textContent = 'Recharger quand le travail est terminé'
+      button.style.cssText = 'min-height:44px;margin-top:8px;color:inherit;background:#8b5cf633;border:1px solid #8b5cf6;border-radius:10px;padding:8px'
+      button.onclick = () => reloadFresh()
+      notice.append(button)
+      document.body.append(notice)
+    }
+    return
+  }
   let n = 0
   try { n = Number(window.sessionStorage.getItem(RECOVER_COUNT_KEY) || 0) } catch { /* private mode */ }
   if (n >= 2) {
@@ -60,7 +78,9 @@ export function recoverFromStaleBuild(why: string): void {
 /** Appelé une fois que l'app a monté et tourne depuis quelques secondes : le
  *  boot est sain → on désarme le compteur de recovery. */
 export function markBootHealthy(): void {
-  try { window.sessionStorage.removeItem(RECOVER_COUNT_KEY) } catch { /* noop */ }
+  bootHealthy = true
+  // Keep the retry budget across reloads; mounting a fallback is not proof
+  // that every lazy chunk is healthy.
 }
 
 /** Recharge la page en forçant un re-fetch de `index.html` (cache-buster `?_t`)
