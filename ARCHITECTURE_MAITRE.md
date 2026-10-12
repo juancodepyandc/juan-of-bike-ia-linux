@@ -4498,6 +4498,8 @@ Les blocs ci-dessous sont des définitions littérales. Leur inclusion ici n’o
 
 ### Validation complémentaire du 13 octobre 2026 : style, progression et résultat réel
 
+Le contrôle du viewer utilise une scène réelle asymétrique et un moteur logiciel Chromium déterministe pour éviter la dépendance au GPU occupé par la génération. La comparaison des pixels attend le rendu après le geste, avec un délai borné ; elle reste obligatoire sur quatre formats d’écran.
+
 Le pipeline distingue désormais le style visuel « animé » d’une demande de mouvement. Les sorties PROGRESS des processus d’entité sont transmises pendant leur exécution plutôt qu’à leur terminaison. Les estimations des missions CLI sont regroupées par domaine. Validation locale : 26 tests ciblés génération/routage/style/progression/projets/sources/couleurs réussis ; test du workspace détaché, reconnexion concurrente, absence de rejeu et isolation réussi. Les deux avertissements trimesh observés portent sur des calculs intermédiaires de volumes dégénérés ; les solides livrés dans les tests sont vérifiés séparément.
 
 La mission réelle `mis_d4f206b263de42b9` n’est pas livrée : le processus précédent a atteint son délai de 3600 secondes après des refus erronés exigeant une animation pour « style animé ». Aucun GLB n’est présent dans son dossier de livraison au contrôle. L’état `outcome_unknown` interdit un rejeu automatique sans examiner aussi les tâches externes. Ces corrections ne constituent ni une validation esthétique du sujet demandé, ni une certification mécanique ou d’impression. Le plafond mémoire d’un processus ne garantit pas l’absence de gel du PC.
