@@ -96,6 +96,22 @@ def test_motion_case_batches_cover_full_intended_travel(tmp_path):
     assert not second['batch_passed'] and any(r['collisions'] for r in second['samples'])
 
 
+def test_passive_branch_continuation_survives_batch_boundary(tmp_path):
+    from application.engineering_motion import path_sample,evaluate_motion_case
+    for name in ['base','arm']:trimesh.creation.box([2,2,2]).export(tmp_path/(name+'.stl'))
+    js=[joint('prismatic',axis=[1,0,0],limits=[-20,0],passive=True)]
+    report={'parts':parts(),'mechanism_joints':js,'closure_constraints':[
+        {'kind':'distance','parent':'base','child':'arm','parent_anchor_mm':[0,0,0],'child_anchor_mm':[0,0,0],'distance_mm':5}]}
+    # Two valid branches exist at q=-5 and q=-15. Preserve the requested branch.
+    first=evaluate_motion_case(report,tmp_path,{'hinge':-15},{},sample_batch=1)
+    assert first['samples'][0]['values']['hinge']==pytest.approx(-15,abs=1e-4)
+    second=evaluate_motion_case(report,tmp_path,{}, {},start_sample=first['next_sample'],sample_batch=1,continuation_values=first['continuation_values'])
+    assert second['complete'] and second['batch_passed']
+    assert second['samples'][0]['values']['hinge']==pytest.approx(-15,abs=1e-4)
+    with pytest.raises(ValueError):path_sample(parts(),js,{}, {},0,seed={'hinge':-100})
+    with pytest.raises(ValueError):path_sample(parts(),js,{}, {},0,seed={'hinge':float('nan')})
+
+
 def test_arbitrary_compound_joint_uses_ordered_axes_without_dummy_parts():
     compound={'id':'socket','kind':'compound','parent':'base','child':'arm','coordinates':[
         {'id':'yaw','kind':'revolute','axis':[0,0,1],'origin_mm':[0,0,0],'limits':[-90,90],'home':0},

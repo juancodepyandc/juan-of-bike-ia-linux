@@ -175,7 +175,7 @@ def simulate(report,root,values=None,*,cursor=0,batch_size=None):
     return {'assumed_envelopes':[p['id'] for p in parts if p.get('geometry_basis')=='assumed_envelope'],'geometry_sha256':dict(versions),'resolved_values':resolved,'closure':closure,'transforms_mm':{k:v.tolist() for k,v in transforms.items()},'collisions':collisions,'uncertain_pairs':uncertain,'declared_coordinates':sum(j['dof'] for j in validate_joints(parts,joints)),'dof':closure.get('local_dof',sum(j['dof'] for j in validate_joints(parts,joints))),'scope':'Sampled pose only; no continuous collision, forces, friction, cable flex or deformation validation.','collision_status':'kinematically_invalid' if not closure['converged'] else 'uncertain' if uncertain else 'penetration' if collisions else 'no_penetration_at_this_pose' if complete and cursor==0 else 'pending','collision_batch':{'cursor':cursor,'next_cursor':next_cursor,'candidate_pairs':len(candidates),'complete':complete,'fingerprint':fingerprint}}
 
 
-def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step_mm=1):
+def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step_mm=1,seed=None):
     joints=validate_joints(parts,joints)
     poses(parts,joints,start);poses(parts,joints,target)
     if type(index)!=int or index<0 or not all(math.isfinite(float(v)) and float(v)>0 for v in [angular_step_deg,linear_step_mm]):raise ValueError('Invalid motion sampling parameters.')
@@ -183,17 +183,19 @@ def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step
     samples=max([1]+[math.ceil(abs(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))/(linear_step_mm if j['kind']=='prismatic' else angular_step_deg)) for j in active])
     if index>samples:raise ValueError('Sample outside planned motion.')
     values={j['id']:float(start.get(j['id'],j['home']))+(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))*index/samples for j in active}
+    if seed is not None and not isinstance(seed,dict):raise ValueError('Invalid continuation values.')
+    continuation=start if seed is None else seed
+    values.update({j['id']:float(continuation.get(j['id'],start.get(j['id'],j['home']))) for j in coordinates(joints) if j.get('passive')})
+    poses(parts,joints,values)  # Continuation must obey the same finite joint limits.
     return values,{'sample':index,'last_sample':samples,'angular_step_deg':angular_step_deg,'linear_step_mm':linear_step_mm,'continuous_collision_validated':False,'trajectory':'Linear interpolation of commanded coordinates; passive coordinates solved at each sample.'}
 
 
-def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=32):
+def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=32,continuation_values=None):
     """Executable test of intended travel, with resumable coverage and real results."""
     if type(sample_batch)!=int or not 1<=sample_batch<=256:raise ValueError('Invalid sample batch.')
-    results=[];last=start_sample;fingerprint=None;seed={}
+    results=[];last=start_sample;fingerprint=None;seed=continuation_values
     for index in range(start_sample,start_sample+sample_batch):
-        values,coverage=path_sample(report['parts'],report.get('mechanism_joints',[]),start,target,index)
-        passive={j['id'] for j in coordinates(validate_joints(report['parts'],report.get('mechanism_joints',[]))) if j.get('passive')}
-        values.update({k:v for k,v in seed.items() if k in passive})
+        values,coverage=path_sample(report['parts'],report.get('mechanism_joints',[]),start,target,index,seed=seed)
         collisions=[];uncertain=[];cursor=0;fingerprint=None
         while True:
             result=simulate(report,root,values,cursor=cursor)
@@ -206,4 +208,4 @@ def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=
         last=coverage['last_sample']
         if index==last:break
     complete=results[-1]['sample']==last
-    return {'samples':results,'next_sample':results[-1]['sample']+1,'last_sample':last,'complete':complete,'batch_passed':all(r['closure']['converged'] and not r['collisions'] and not r['uncertain_pairs'] for r in results),'continuous_collision_validated':False,'scope':'Measured sampled geometry only; combine every batch and verify coverage before declaring sampled travel clear.'}
+    return {'samples':results,'next_sample':results[-1]['sample']+1,'continuation_values':seed,'last_sample':last,'complete':complete,'batch_passed':all(r['closure']['converged'] and not r['collisions'] and not r['uncertain_pairs'] for r in results),'continuous_collision_validated':False,'scope':'Measured sampled geometry only; continue with returned values, combine every batch and verify coverage. Numerical branch continuation is not a physical or continuous-collision guarantee.'}
