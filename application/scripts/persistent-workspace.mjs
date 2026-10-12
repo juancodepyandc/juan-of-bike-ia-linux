@@ -22,7 +22,7 @@ const viewport = input => ({ width:Math.max(320,Math.min(1600,Math.round(Number(
 function validOwner(value) { return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) }
 function checkedNavigation(input){
   if(!input||!['conversation','image','code','video','drawing','3d','learning','cyber'].includes(input.module))throw Object.assign(new Error('Module invalide.'),{status:400})
-  const settings=Object.fromEntries(Object.entries(input.settings||{}).filter(([key,value])=>['aurora.printProfiles.v1','aurora.printProfiles.v1.selected','aurora.engineering-objective.v1.selected'].includes(key)&&typeof value==='string'&&value.length<=200000))
+  const settings=Object.fromEntries(Object.entries(input.settings||{}).filter(([key,value])=>['aurora.printProfiles.v1','aurora.printProfiles.v1.selected','aurora.engineering-objective.v1.selected','aurora.engineering-objective.v1.source'].includes(key)&&typeof value==='string'&&value.length<=200000))
   return {settings,origin,entry:crypto.randomUUID(),module:input.module,workspace:input.workspace==='assembly'?'assembly':'model',skin:['aurora_v4','aurora_v1','aurora_v3'].includes(input.skin)?input.skin:'aurora_v4',draft:input.draft&&typeof input.draft.goal==='string'?{goal:input.draft.goal.slice(0,12000),constraints:String(input.draft.constraints||'').slice(0,8000)}:null}
 }
 function applyNavigation(input){

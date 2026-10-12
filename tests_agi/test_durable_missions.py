@@ -274,6 +274,35 @@ class DurableStoreTests(unittest.TestCase):
 
 
 class VerifiedExecutionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_inspected_real_script_requires_plan_before_more_discovery(self):
+        self.agent.state['evidence'].append({'id':'ev_inspected','tool':'inspect_tool','ok':True,'result':{'path':str(self.root/'actual.py')}})
+        assert self.agent._available_tools()==['set_plan']
+        self.agent.state['plan']=['Probe the inspected engine and generate the original requested subject']
+        self.agent.state['criteria']=['The actual saved output satisfies the request']
+        assert 'run_tool' in self.agent._available_tools()
+        assert 'inspect_tool' in self.agent._available_tools()
+
+    async def test_context_growth_preserves_goal_without_tool_replay(self):
+        from types import SimpleNamespace
+        self.agent.state.update(context_window=1024,context_chars_per_token=4,max_reply_tokens=200)
+        self.agent.state['messages']=[{'role':'system','content':self.agent._system_prompt()},{'role':'user','content':self.agent.request_text}]
+        with patch('psutil.virtual_memory',return_value=SimpleNamespace(available=16*1024**3)):
+            messages=await self.agent._execution_messages()
+        assert messages[1]['content']==self.agent.request_text
+        assert 1024<self.agent.gateway.context_tokens<=8192
+        assert self.agent.state['context_request_pending']
+        assert self.agent.state['action_count']==0
+
+    async def test_context_growth_stops_when_memory_cannot_support_it(self):
+        from types import SimpleNamespace
+        from agi_core.mission_agent import ContextCapacityError
+        self.agent.state.update(context_window=1024,context_chars_per_token=4,max_reply_tokens=200)
+        self.agent.state['messages']=[{'role':'system','content':self.agent._system_prompt()},{'role':'user','content':self.agent.request_text}]
+        with patch('psutil.virtual_memory',return_value=SimpleNamespace(available=0)):
+            with self.assertRaises(ContextCapacityError):await self.agent._execution_messages()
+        assert self.agent.gateway.context_tokens is None
+        assert self.agent.state['action_count']==0
+
     async def asyncSetUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)

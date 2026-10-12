@@ -25,6 +25,7 @@ $('toggle-controls').onclick=()=>showControls(!main.classList.contains('controls
 async function run(){
 const response=await fetch('./assembly.json');if(!response.ok)throw Error('Manifeste inaccessible.');
 const report=await response.json();if(report.mode!=='assembly')throw Error('Dossier d’assemblage requis.');
+if(report.textured_assembly_available===false){const option=$('appearance').querySelector('option[value="textured"]');option.disabled=true;option.textContent='Textures non fournies';}
 $('summary').textContent=`${report.piece_count} pièces · ${report.pin_count} pions · ${report.profile.name}\n${report.dimensions_mm.map(v=>v.toFixed(2)).join(' × ')} mm`;
 $('fabrication').textContent=report.fabrication?.instructions||'Couleurs : repères de pièces, pas des filaments.';
 const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setPixelRatio(Math.min(devicePixelRatio,mobile.matches?1.5:2));renderer.setClearColor(0x131b29);renderer.toneMapping=THREE.ACESFilmicToneMapping;stage.appendChild(renderer.domElement);

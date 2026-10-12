@@ -566,10 +566,8 @@ def _generate_object(desc: str, run_id: str, output_dir: Path,
                 _cmd += ["--motion-prompt", motion]
             for _im in (imgs or []):
                 _cmd += ["--image", str(_im)]
-            _p = subprocess.run(_cmd, capture_output=True, text=True, timeout=7200)
-            for _l in (_p.stdout or "").splitlines():
-                if _l.startswith("PROGRESS:") or _l.startswith("SCENE_ORCH"):
-                    print(_l, flush=True)
+            from scene_process import run_entity
+            _p = run_entity(_cmd,timeout=7200,on_progress=lambda line:print(line,flush=True))
             
             # Find the first line that starts precisely with "{" (the start of the JSON block)
             _lines = (_p.stdout or "").splitlines()

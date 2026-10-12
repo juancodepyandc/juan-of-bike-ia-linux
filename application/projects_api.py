@@ -2,12 +2,46 @@
 import os
 import hashlib
 import re
-from flask import jsonify,request
+from flask import jsonify,request,send_file
+from pathlib import Path
+import json
+import struct
+from urllib.parse import quote
 from agi_core.mission_store import MissionStore
+from agi_core.mission_routing import mission_module
 
 
 def register_project_routes(bp,*,allowed,store=None):
     store=store or MissionStore()
+    def delivery(item):
+        return (Path(item['payload']['workspace'])/'.transfer_to_client'/item['id']).resolve()
+    def complete_glb(path):
+        try:
+            with path.open('rb') as stream:header=stream.read(12)
+            magic,version,size=struct.unpack('<4sII',header)
+            return magic==b'glTF' and version==2 and size>=28 and size==path.stat().st_size
+        except (OSError,ValueError,struct.error):return False
+    def assemblies(item):
+        if not item['payload'].get('workspace'):return []
+        root=delivery(item);result=[]
+        for manifest in sorted(root.rglob('assembly.json'))[:30]:
+            if not manifest.resolve().is_relative_to(root):continue
+            try:
+                report=json.loads(manifest.read_text(encoding='utf-8'))
+                if report.get('mode')!='assembly' or not report.get('parts') or report.get('piece_count')!=len(report['parts']):continue
+                directory=manifest.parent.relative_to(root).as_posix()
+                prefix='' if directory=='.' else directory+'/'
+                result.append({'directory':directory,'name':report.get('profile',{}).get('name','Assemblage'),'url':'/api/projects/'+item['id']+'/assembly/'+quote(prefix)+'viewer.html'})
+            except (OSError,ValueError,TypeError):continue
+        return result
+    def outputs(item):
+        if not item['payload'].get('workspace'):return []
+        root=delivery(item)
+        if not root.is_dir():return []
+        manufacturing={a['directory'] for a in assemblies(item)}
+        return [{'name':p.relative_to(root).as_posix(),'url':'/api/projects/'+item['id']+'/files/'+quote(p.relative_to(root).as_posix())}
+                for p in sorted(root.rglob('*.glb'))[:30] if p.is_file() and p.resolve().is_relative_to(root)
+                and complete_glb(p) and p.parent.relative_to(root).as_posix() not in manufacturing]
     @bp.route('/api/projects',methods=['GET'])
     def projects():
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
@@ -17,8 +51,63 @@ def register_project_routes(bp,*,allowed,store=None):
             title=payload.get('project_title') or payload.get('request','')
             if 'OBJECTIF UTILISATEUR :\n' in title:title=title.split('OBJECTIF UTILISATEUR :\n',1)[1].split('\nCONTRAINTES FOURNIES',1)[0]
             did=(item.get('idem') or '').removeprefix('design:') if (item.get('idem') or '').startswith('design:') else None
-            items.append({'id':item['id'],'design_id':did,'title':title[:160],'module':payload.get('module'),'status':item['status'],'created':item['created'],'started_at':item['started_at'],'finished_at':item['finished'],'steps':item['steps'],'criteria_count':len(checkpoint.get('criteria',[])),'verified_count':len(checkpoint.get('verified',[])),'scheduling':store.scheduling(item['id'])})
+            meshes=outputs(item) if mission_module(payload)=='3d' else []
+            items.append({'id':item['id'],'design_id':did,'title':title[:160],'module':mission_module(payload),'assemblies':assemblies(item) if mission_module(payload)=='3d' else [],'meshes':meshes,'viewer_url':'/api/projects/'+item['id']+'/viewer/viewer.html' if meshes else None,'status':item['status'],'result':item.get('result'),'resumable':payload.get('project_kind')!='frontend' and item['status'] in {'failed','stopped','blocked','interrupted'},'created':item['created'],'started_at':item['started_at'],'finished_at':item['finished'],'steps':item['steps'],'criteria_count':len(checkpoint.get('criteria',[])),'verified_count':len(checkpoint.get('verified',[])),'scheduling':store.scheduling(item['id'])})
         return jsonify(ok=True,projects=items,concurrency=int(os.environ.get('AURORA_CONCURRENT_MISSIONS','1')),scope='Durable project admission; the pipeline executor retains its own outputs and checkpoints.')
+
+    @bp.route('/api/projects/<mid>/resume',methods=['POST'])
+    def resume_project(mid):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item=store.get(mid)
+        if not item:return jsonify(ok=False,error='Projet introuvable.'),404
+        if item['payload'].get('project_kind')=='frontend':return jsonify(ok=False,error='Vérifier les résultats et le contrôleur PC de ce pipeline avant reprise.'),409
+        try:item,_=store.resume(mid)
+        except ValueError as e:return jsonify(ok=False,error=str(e)),409
+        store.enqueue(mid)
+        from application.engineering_design_api import publish
+        publish('mission.start',{'mission_id':mid,**item['payload']})
+        return jsonify(ok=True,id=mid,status=store.get(mid)['status']),202
+
+    @bp.route('/api/projects/<mid>/files/<path:name>',methods=['GET'])
+    def project_file(mid,name):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item=store.get(mid)
+        if not item or not item['payload'].get('workspace'):return jsonify(ok=False,error='Fichier introuvable.'),404
+        root=delivery(item)
+        path=(root/name).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in {'.glb','.gltf','.bin','.png','.jpg','.jpeg','.webp','.stl','.zip','.md','.pdf','.json'}:return jsonify(ok=False,error='Fichier introuvable.'),404
+        return send_file(path,conditional=True,max_age=0)
+
+    @bp.route('/api/projects/<mid>/viewer/<path:name>',methods=['GET'])
+    def project_viewer(mid,name):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item=store.get(mid)
+        if not item or not item['payload'].get('workspace'):return jsonify(ok=False,error='Projet introuvable.'),404
+        base=Path(__file__).parent
+        if name=='viewer.html':return send_file(base/'project_viewer.html',max_age=0)
+        if name=='meshes.json':return jsonify(meshes=outputs(item),status=item['status'],title=(item['payload'].get('project_title') or item['payload'].get('request',''))[:500])
+        if name.startswith('viewer_assets/'):
+            assets=(base/'engineering_viewer_assets').resolve();path=(assets/name.removeprefix('viewer_assets/')).resolve()
+            if path.is_relative_to(assets) and path.is_file():return send_file(path,max_age=3600)
+        return jsonify(ok=False,error='Ressource introuvable.'),404
+
+    @bp.route('/api/projects/<mid>/assembly/<path:name>',methods=['GET'])
+    def project_assembly(mid,name):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item=store.get(mid)
+        if not item or not item['payload'].get('workspace'):return jsonify(ok=False,error='Projet introuvable.'),404
+        base=Path(__file__).parent
+        if 'viewer_assets/' in name:
+            assets=(base/'engineering_viewer_assets').resolve();path=(assets/name.split('viewer_assets/',1)[1]).resolve()
+            if path.is_relative_to(assets) and path.is_file():return send_file(path,max_age=3600)
+            return jsonify(ok=False,error='Ressource introuvable.'),404
+        root=delivery(item);path=(root/name).resolve()
+        if not path.is_relative_to(root):return jsonify(ok=False,error='Ressource introuvable.'),404
+        directory=path.parent.relative_to(root).as_posix()
+        if not any(a['directory']=='.' or directory==a['directory'] or directory.startswith(a['directory']+'/') for a in assemblies(item)):return jsonify(ok=False,error='Assemblage indisponible.'),404
+        if path.name=='viewer.html':return send_file(base/'engineering_viewer.html',max_age=0)
+        if path.is_file() and path.suffix.lower() in {'.glb','.json','.stl','.png','.jpg','.webp'}:return send_file(path,conditional=True,max_age=0)
+        return jsonify(ok=False,error='Ressource introuvable.'),404
 
     @bp.route('/api/projects/admission',methods=['POST'])
     def admit():

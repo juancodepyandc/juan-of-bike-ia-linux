@@ -15,6 +15,10 @@ on:
       - 'application/src/stores/forgeQueueStore.ts'
       - 'application/src/utils/projectAdmission.ts'
       - 'application/scripts/test-forge-admission.mjs'
+      - 'application/project_viewer.html'
+      - 'application/projects_api.py'
+      - 'application/scripts/test-project-viewer.mjs'
+      - 'tests_agi/project_viewer_fixture.py'
       - '.github/workflows/persistent-workspace.yml'
   pull_request:
   workflow_dispatch:
@@ -41,8 +45,13 @@ jobs:
           cache: npm
           cache-dependency-path: application/package-lock.json
       - run: npm ci
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install flask numpy trimesh
       - run: npx playwright install --with-deps chromium
       - run: npm run test:workspace
       - run: node scripts/test-interface-stability.mjs
       - run: node scripts/test-bridge-auth.mjs
       - run: node scripts/test-forge-admission.mjs
+      - run: node scripts/test-project-viewer.mjs

@@ -68,6 +68,20 @@ MOTION_RE = re.compile(
     r"clignote|blink|pulse|pulsing|chase|chenillard|led|rgb|oled|screen|[ée]cran)\b",
     re.IGNORECASE,
 )
+VISUAL_STYLE_RE = re.compile(
+    r"\b(?:style\s+(?:(?:dessin|film)\s+)?anim[ée]e?|(?:en\s+)?dessin\s+anim[ée]e?|"
+    r"(?:animated|animation|anime|cartoon)\s+(?:art\s+)?style|style\s+(?:anime|cartoon|animation))\b",
+    re.IGNORECASE,
+)
+
+def motion_requested(prompt: str, motion_prompt: str | None = None) -> bool:
+    """A visual style modifier is not an action; keep actions outside it."""
+    if (motion_prompt or '').strip():return True
+    text=VISUAL_STYLE_RE.sub(' ',prompt or '')
+    # "anime" as an art genre is distinct from the French imperative
+    # "anime ce/cet/cette...". Explicit motion_prompt remains authoritative.
+    text=re.sub(r'\banime\b(?!\s+(?:ce|cet|cette|ces|le|la|les|un|une)\b)',' ',text,flags=re.IGNORECASE)
+    return bool(MOTION_RE.search(text)) and not NO_MOTION_RE.search(text)
 LOCOMOTION_RE = re.compile(
     r"\b(marche|marcher|walk|walks|walking|court|courir|run|runs|running|"
     r"jog|jogging|sprint|sprinting|deambule|d[Ã©e]ambule|stride|stroll)\b",
@@ -122,7 +136,7 @@ def prompt_expectations(prompt: str, expected_kind: str = "generic", motion_prom
     text = " ".join(part for part in [prompt or "", motion_prompt or ""] if part).strip()
     printable_only = bool(PRINTABLE_ONLY_RE.search(text)) and not TEXTURE_RE.search(text)
     wants_realism = bool(REALISM_RE.search(text))
-    wants_motion = bool((motion_prompt or "").strip()) or (bool(MOTION_RE.search(text)) and not NO_MOTION_RE.search(text))
+    wants_motion = motion_requested(prompt,motion_prompt)
     wants_texture = (
         not printable_only
         and not NO_TEXTURE_RE.search(text)

@@ -445,7 +445,7 @@ def _reexec_under_mem_scope() -> None:
     AURORA_MEM_SCOPE_DISABLE=1.
     """
     if os.environ.get("AURORA_MEM_SCOPED") == "1":
-        print("PROGRESS:memoire:plafond memoire actif (scope systemd) — le PC ne peut plus geler",
+        print("PROGRESS:memoire:plafond memoire actif (scope systemd) — protection du processus, sans garantie contre tout gel du PC",
               flush=True)
         return
     if os.environ.get("AURORA_MEM_SCOPE_DISABLE") == "1":
@@ -5588,8 +5588,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                       "reason": "la posture est posee par un squelette en aval"})
     if _motion_locale and not motion_prompt and prompt and prompt.strip():
         try:
-            from mesh_acceptance_gate import MOTION_RE as _MRE, NO_MOTION_RE as _NMRE
-            if _MRE.search(prompt) and not _NMRE.search(prompt):
+            from mesh_acceptance_gate import motion_requested
+            if motion_requested(prompt):
                 motion_prompt = prompt
                 _motion_derive = True
                 print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{prompt[:80]}'", flush=True)

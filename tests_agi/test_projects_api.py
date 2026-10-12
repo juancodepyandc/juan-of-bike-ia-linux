@@ -90,3 +90,52 @@ def test_expired_unknown_execution_survives_reopen_without_second_executor(tmp_p
     # Only the original executor may report the actual outcome, even after reconnect.
     assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'failed','executor':'a'*32}).status_code==200
     assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['granted']
+
+
+def test_legacy_cli_3d_has_resume_and_authenticated_mesh_viewer(tmp_path,monkeypatch):
+    from pathlib import Path
+    import trimesh
+    c,store=make(tmp_path)
+    item=store.create({'request':'Une figurine 3D','workspace':str(tmp_path),'model':'fixture'})[0]
+    store.append(item['id'],{'type':'error','message':'Observed missing tool'})
+    folder=tmp_path/'.transfer_to_client'/item['id'];folder.mkdir(parents=True)
+    trimesh.creation.icosphere().export(folder/'actual.glb')
+    (folder/'private.py').write_text('private')
+    (folder/'unfinished.glb').write_bytes(b'partially written output')
+    (folder/'escape.glb').symlink_to(tmp_path/'outside.glb')
+    (tmp_path/'outside.glb').write_bytes(b'outside')
+    project=c.get('/api/projects').json['projects'][0]
+    assert project['module']=='3d' and project['resumable']
+    assert len(project['meshes'])==1
+    assert c.get(project['meshes'][0]['url']).status_code==200
+    assert c.get(project['viewer_url']).status_code==200
+    assert c.get('/api/projects/'+item['id']+'/files/private.py').status_code==404
+    assert c.get('/api/projects/'+item['id']+'/files/escape.glb').status_code==404
+    monkeypatch.setattr('application.engineering_design_api.publish',lambda *args:True)
+    assert c.post('/api/projects/'+item['id']+'/resume',json={}).status_code==202
+    assert store.get(item['id'])['status']=='queued'
+    assert c.post('/api/projects/'+item['id']+'/resume',json={}).status_code==409
+    denied,_=make(tmp_path,False)
+    assert denied.get(project['viewer_url']).status_code==403
+    assert denied.get(project['meshes'][0]['url']).status_code==403
+    assert denied.post('/api/projects/'+item['id']+'/resume',json={}).status_code==403
+
+
+def test_cli_assembly_and_plate_views_are_separate_from_original(tmp_path):
+    import json
+    import trimesh
+    c,store=make(tmp_path)
+    item=store.create({'request':'Figurine 3D imprimable','workspace':str(tmp_path),'model':'fixture'})[0]
+    root=tmp_path/'.transfer_to_client'/item['id'];folder=root/'manufacturing';folder.mkdir(parents=True)
+    mesh=trimesh.creation.box()
+    mesh.export(root/'original.glb');mesh.export(folder/'assembled.glb');mesh.export(folder/'plate-1.glb')
+    (folder/'assembly.json').write_text(json.dumps({'mode':'assembly','piece_count':2,'parts':[{'id':'one'},{'id':'two'}],'profile':{'name':'Single filament'}}))
+    (folder/'textures').mkdir();(folder/'textures'/'color.png').write_bytes(b'fixture')
+    project=c.get('/api/projects').json['projects'][0]
+    assert [m['name'] for m in project['meshes']]==['original.glb']
+    assembly=project['assemblies'][0]['url']
+    assert c.get(assembly).status_code==200
+    assert b'Assemblage 3D' in c.get(assembly).data
+    assert c.get(assembly.replace('viewer.html','plate-1.glb')).status_code==200
+    assert c.get(assembly.replace('viewer.html','textures/color.png')).status_code==200
+    assert c.get(assembly.replace('viewer.html','../../outside.py')).status_code==404

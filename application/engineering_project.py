@@ -147,6 +147,13 @@ def build_project(spec, root='.', *, require_sources=False):
     included += [(root/c['tool_envelope_file']).resolve() for c in report['fastening_assessment'] if c.get('tool_envelope_file')]
     included += [root/p[key] for p in report['print_plates'] for key in ['file','preview_file']]
     included += list((root/'viewer_assets').rglob('*')) if (root/'viewer_assets').exists() else []
+    assets=spec.get('source_assets',[])
+    if not isinstance(assets,list) or len(assets)>100:raise ValueError('Bounded source assets list required.')
+    for name in assets:
+        if not isinstance(name,str):raise ValueError('Source asset paths must be text.')
+        path=(root/name).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.suffix.lower() not in {'.glb','.stl','.obj','.png','.jpg','.jpeg','.webp','.json','.md','.pdf'}:raise ValueError('Source assets must be actual data files inside the project.')
+        included.append(path)
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as bundle:
         for path in dict.fromkeys(included):
             if path.is_file():bundle.write(path,path.relative_to(root))

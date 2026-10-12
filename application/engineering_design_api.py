@@ -10,6 +10,7 @@ import socket
 import sys
 import threading
 import zipfile
+import struct
 from flask import jsonify, request, send_file
 from agi_core.mission_store import MissionStore
 from application.device_pairing import request_identity,device_auth
@@ -142,20 +143,40 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             if not isinstance(bed,list) or len(bed)!=3 or any(type(v) not in {int,float} or not math.isfinite(v) or not 10<=v<=2000 for v in bed) or type(margin) not in {int,float} or not math.isfinite(margin) or margin<0 or 2*margin>=min(bed):
                 return jsonify(ok=False,error='Volume utile ou marge imprimante invalide.'),400
         did='design_'+hashlib.sha256((owner()+':'+request_id).encode()).hexdigest()[:32]
-        fingerprint=hashlib.sha256(json.dumps({k:data.get(k) for k in ['objective','constraints','profile']},sort_keys=True).encode()).hexdigest()
+        fingerprint_data={k:data.get(k) for k in ['objective','constraints','profile']}
+        source=data.get('source')
+        if source is not None:
+            if not isinstance(source,dict) or not re.fullmatch(r'mis_[a-f0-9]{16}',str(source.get('mission_id',''))) or not isinstance(source.get('file'),str):return jsonify(ok=False,error='Référence au modèle source invalide.'),400
+            fingerprint_data['source']={k:source[k] for k in ['mission_id','file']}
+        fingerprint=hashlib.sha256(json.dumps(fingerprint_data,sort_keys=True).encode()).hexdigest()
         with lock:
             old=receipt(did)
             if old:
                 if old.get('fingerprint')!=fingerprint:return jsonify(ok=False,error='Cette demande a déjà été utilisée pour un autre objectif.'),409
                 return jsonify(response(old)),200
+            source_bytes=None
+            if source is not None:
+                parent=store.get(source['mission_id'])
+                if not parent or not parent['payload'].get('workspace'):return jsonify(ok=False,error='Projet source introuvable.'),404
+                delivery=(Path(parent['payload']['workspace'])/'.transfer_to_client'/parent['id']).resolve()
+                file=(delivery/source['file']).resolve()
+                if not file.is_relative_to(delivery) or file.suffix.lower()!='.glb' or not file.is_file() or file.stat().st_size>120*1024*1024:return jsonify(ok=False,error='Maillage source indisponible ou hors du dossier du projet.'),400
+                source_bytes=file.read_bytes()
+                if len(source_bytes)<28:return jsonify(ok=False,error='Maillage source encore incomplet.'),409
+                magic,version,size=struct.unpack('<4sII',source_bytes[:12])
+                if magic!=b'glTF' or version!=2 or size!=len(source_bytes):return jsonify(ok=False,error='Maillage source encore incomplet ou invalide.'),409
             try:model=model_default()
             except ValueError as e:return jsonify(ok=False,error=str(e)),503
             folder=root/did;folder.mkdir(parents=True,exist_ok=True)
+            source_note=''
+            if source_bytes is not None:
+                (folder/'source.glb').write_bytes(source_bytes)
+                source_note='\nMODÈLE SOURCE IMMUTABLE : source.glb, SHA256 '+hashlib.sha256(source_bytes).hexdigest()+'. Préserver sa silhouette et son apparence ; ce modèle doit être utilisé, pas remplacé par des primitives. Inspecter les couleurs et régions réelles. engineering_color_parts.py peut dériver des inserts fermés depuis une palette mesurée ; vérifier ensuite épaisseurs locales, jeux, trajectoires d’insertion et fixation. Inclure source.glb et les preuves dans source_assets du dossier final. Choisir la taille physique selon les contraintes et le profil, et documenter cette décision.'
             repo=Path(__file__).resolve().parents[1]
             seed='import sys\nsys.path.insert(0, '+repr(str(repo))+')\nfrom application.engineering_project import build_project as _build_project\ndef build_project(spec, root="."):\n    return _build_project(spec, root, require_sources=True)\n'
             (folder/'fabrication.py').write_text(seed,encoding='utf-8')
             (folder/'OBJECTIF.json').write_text(json.dumps({'objective':data['objective'],'constraints':constraints,'profile':profile},ensure_ascii=False,indent=2),encoding='utf-8')
-            text=CONTRACT+'\nOBJECTIF UTILISATEUR :\n'+data['objective']+'\nCONTRAINTES FOURNIES :\n'+(constraints or 'Aucune pièce imposée : déterminer les éléments nécessaires.')+'\nPROFIL IMPRIMANTE :\n'+json.dumps(profile,ensure_ascii=False)+'\nPython disponible pour géométrie et tests : '+sys.executable+'\nDossier de travail : '+str(folder)
+            text=CONTRACT+'\nOBJECTIF UTILISATEUR :\n'+data['objective']+'\nCONTRAINTES FOURNIES :\n'+(constraints or 'Aucune pièce imposée : déterminer les éléments nécessaires.')+'\nPROFIL IMPRIMANTE :\n'+json.dumps(profile,ensure_ascii=False)+source_note+'\nPython disponible pour géométrie et tests : '+sys.executable+'\nDossier de travail : '+str(folder)
             payload={'request':text,'workspace':str(folder),'permissions':'AUTONOMOUS','model':model,'requested_model':'','session_id':'','history':[],'context_tokens':8192,'project_kind':'engineering','project_title':data['objective'][:160]}
             item,created=store.create(payload,'design:'+did,queued=True)
             rec={'id':did,'owner':owner(),'mission_id':item['id'],'fingerprint':fingerprint,'profile':profile,'objective':data['objective'],'request_id':request_id}

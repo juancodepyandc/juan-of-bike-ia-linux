@@ -137,7 +137,9 @@ class MissionStore:
             active=[self._get(db,r['id']) for r in db.execute("SELECT id FROM missions WHERE status IN ('queued','running','stopping') ORDER BY created,id")]
             def family(p):
                 if p.get('project_kind')=='frontend':return 'frontend:'+p.get('module','unknown')
-                return 'engineering' if p.get('project_kind')=='engineering' or 'engineering-design' in p.get('workspace','') else 'mission'
+                from agi_core.mission_routing import mission_module
+                kind='engineering' if p.get('project_kind')=='engineering' or 'engineering-design' in p.get('workspace','') else 'mission'
+                return kind+':'+(mission_module(p) or 'unspecified')
             def estimate(job):
                 rows=db.execute("SELECT payload,started_at,finished FROM missions WHERE status='completed' AND started_at IS NOT NULL AND finished>started_at ORDER BY finished DESC LIMIT 100").fetchall()
                 durations=[r['finished']-r['started_at'] for r in rows if (lambda p:p.get('model')==job['payload'].get('model') and family(p)==family(job['payload']))(json.loads(r['payload']))][:20]

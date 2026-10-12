@@ -21,6 +21,7 @@ class RuntimePolicy:
     context_chars: int = 60000
     recovery_attempts: int = 2
     request_audit: bool = True
+    auto_context_max_tokens: int = 8192
 
     @classmethod
     def from_env(cls):
@@ -36,6 +37,7 @@ class RuntimePolicy:
             context_chars=positive_env("AURORA_CONTEXT_CHARS", 60000),
             recovery_attempts=positive_env("AURORA_RECOVERY_ATTEMPTS", 2, allow_zero=True),
             request_audit=audit=='1',
+            auto_context_max_tokens=positive_env('AURORA_AUTO_CONTEXT_MAX_TOKENS',8192,allow_zero=True),
         )
 
 

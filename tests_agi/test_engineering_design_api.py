@@ -3,6 +3,23 @@ from agi_core.mission_store import MissionStore
 from application.engineering_design_api import register_design_routes
 
 
+def test_existing_cli_mesh_is_snapshotted_for_engineering_not_reinvented(tmp_path):
+    import trimesh
+    app=Flask(__name__);bp=Blueprint('source_design',__name__);store=MissionStore(tmp_path/'source.sqlite3');calls=[]
+    parent=store.create({'request':'Figurine 3D','workspace':str(tmp_path),'model':'fixture'})[0]
+    delivery=tmp_path/'.transfer_to_client'/parent['id'];delivery.mkdir(parents=True)
+    trimesh.creation.icosphere().export(delivery/'original.glb');before=(delivery/'original.glb').read_bytes()
+    register_design_routes(bp,tmp_path,local=lambda:True,extension=lambda:(False,None,None),model_default=lambda:'fixture',store=store,dispatch=lambda *args:calls.append(args) or True)
+    app.register_blueprint(bp);c=app.test_client()
+    data={'objective':'Préparer les couleurs et les interfaces internes de ce modèle.','request_id':'source-request-123','source':{'mission_id':parent['id'],'file':'original.glb'}}
+    r=c.post('/api/3d/design',json=data);assert r.status_code==202
+    folder=tmp_path/'output'/'engineering-design'/r.json['id']
+    assert (folder/'source.glb').read_bytes()==before
+    assert 'MODÈLE SOURCE IMMUTABLE' in store.get(r.json['mission_id'])['payload']['request']
+    assert c.post('/api/3d/design',json=data).json['id']==r.json['id'] and len(calls)==1
+    assert c.post('/api/3d/design',json={**data,'request_id':'bad-source-request','source':{'mission_id':parent['id'],'file':'../../private.glb'}}).status_code==400
+
+
 def test_durable_idempotent_owned_mission_and_invalid_delivery(tmp_path):
     app=Flask(__name__);bp=Blueprint('design',__name__);store=MissionStore(tmp_path/'missions.sqlite3');calls=[]
     register_design_routes(bp,tmp_path,local=lambda:False,extension=lambda:(request.headers.get('Authorization')=='Bearer owner',None,None),model_default=lambda:'fixture-model',store=store,dispatch=lambda event,payload:calls.append((event,payload)) or True)

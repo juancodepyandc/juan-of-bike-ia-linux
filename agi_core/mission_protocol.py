@@ -55,6 +55,7 @@ ARG_SCHEMAS = {
     'run_tool':object_args({'name':TEXT,'argv':STRINGS},('name',)),
     'create_tool':object_args({'name':TEXT,'code':TEXT},('name','code')),
     'generate_image':object_args({'prompt':TEXT,'folder':TEXT,'regenerate':{'type':'boolean'}},('prompt',)),
+    'generate_3d':object_args({'prompt':TEXT},('prompt',)),
     'search_web':object_args({'query':TEXT,'refresh':{'type':'boolean'}},('query',)),
     'fetch_url':object_args({'url':TEXT},('url',)),
     'spawn_agent':object_args({'task':TEXT,'tasks':NONEMPTY_STRINGS,'agent':TEXT,
@@ -73,6 +74,7 @@ ARG_SCHEMAS['set_plan']['properties']['required_tools'] = {'type':'array','items
 CHECK_FIELDS = {branch['properties']['kind']['const']:set(branch['properties']) for branch in CHECK_SCHEMA['anyOf']}
 
 TOOL_DESCRIPTIONS = {
+    'generate_3d':'Run the actual local 3D pipeline for the exact subject in a durable delivery directory. Identical requests reuse unchanged results. Engine acceptance is diagnostic, not visual or mechanical certification.',
     'set_plan':'Accept the initial plan and measurable criteria once. An existing plan cannot erase progress or replace acceptance criteria.',
     'revise_plan':'Adapt remaining steps to fresh actual tool evidence; cite its IDs and explain the reason. Acceptance criteria, verified results and required tools are preserved. A revision is not execution progress.',
     'generate_image':'Generate a reference image in a unique delivery directory. An identical prompt and folder reuse the unchanged saved file. Use regenerate=true only when a new variation is necessary; file integrity is not visual validation.',
@@ -161,11 +163,17 @@ def normalize_audit_checks(checks, criteria):
     return result
 
 
-def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True):
+def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True, available_script_names=None, generation_prompt=None):
     selected = list(ARG_SCHEMAS) if allowed is None else [name for name in ARG_SCHEMAS if name in allowed]
     alternatives = []
     for name in selected:
         args = deepcopy(ARG_SCHEMAS[name])
+        if name=='generate_3d' and generation_prompt is not None:args['properties']['prompt']={'const':generation_prompt}
+        if name in {'inspect_tool','run_tool'} and available_script_names is not None:
+            scripts = sorted(set(available_script_names))
+            names = scripts + (selected if name=='inspect_tool' else [])
+            if not names:continue
+            args['properties']['name'] = {'type':'string','enum':sorted(set(names))}
         if name=='set_plan':
             args['required'].append('required_tools')
             candidates = selected if required_tool_names is None else required_tool_names
