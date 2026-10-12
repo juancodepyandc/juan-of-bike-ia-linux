@@ -59,6 +59,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import LyraCharacter from './voice/LyraCharacter.tsx'
 import remarkGfm from 'remark-gfm'
+const remarkPlugins = [remarkGfm]
 import { isTauriRuntime } from '../utils/runtime.ts'
 import { runAction } from '../services/coworkExecutor.ts'
 import {
@@ -3204,7 +3205,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
             <CoworkLiveActivity events={turn.technical ?? []} />
           ) : turn.content ? (
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={remarkPlugins}
               components={{
                 code({ className, children, ...props }) {
                   const isInline = !className

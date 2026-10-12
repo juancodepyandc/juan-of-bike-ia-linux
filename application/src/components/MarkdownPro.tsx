@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+const remarkPlugins = [remarkGfm]
 import { InlineMath, BlockMath } from 'react-katex'
 import 'katex/dist/katex.min.css'
 import { MarkdownImage } from './chat/MediaEmbed.tsx'
@@ -175,7 +176,7 @@ function MarkdownProBase({ content, idPrefix = 'md', className }: Props) {
 
   return (
     <div className={className}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} components={components}>
         {content}
       </ReactMarkdown>
     </div>
