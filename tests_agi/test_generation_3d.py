@@ -18,7 +18,7 @@ def test_typed_generation_has_exact_prompt_and_reuses_actual_file(tmp_path):
     async def run(argv,**kwargs):
         calls.append(argv);target=Path(argv[argv.index('--output-dir')+1]);path=target/'actual.glb'
         trimesh.creation.icosphere().export(path)
-        record={'run_id':argv[argv.index('--run-id')+1],'schema':'aurora.pipeline.v1','final_mesh':str(path),'acceptance':{'scope':'fixture'}}
+        record={'ok':True,'run_id':argv[argv.index('--run-id')+1],'schema':'aurora.pipeline.v1','final_mesh':str(path),'acceptance':{'scope':'fixture'}}
         (target/'audit.json').write_text(json.dumps(record))
         return {'output':json.dumps(record)}
     a._run_process=run
@@ -58,3 +58,16 @@ def test_entity_mesh_cannot_be_delivered_as_complete_scene(tmp_path):
     with pytest.raises(RuntimeError,match='matches this scene'):
         asyncio.run(execute_generation(a,{'prompt':a.request_text}))
     assert next(iter(a.state['generation_3d_attempts'].values()))['status']=='failed'
+
+
+def test_rejected_scene_with_partial_mesh_is_not_a_delivery(tmp_path):
+    a=agent(tmp_path);script=tmp_path/'engine.py';script.write_text('# boundary')
+    a.tools.script=lambda name:script
+    async def run(argv,**kwargs):
+        target=Path(argv[argv.index('--output-dir')+1]);path=target/'partial.glb'
+        trimesh.creation.icosphere().export(path)
+        return {'output':json.dumps({'ok':False,'run_id':argv[argv.index('--run-id')+1],'final_mesh':str(path),'error':'missing component'})}
+    a._run_process=run
+    with pytest.raises(RuntimeError,match='missing component'):
+        asyncio.run(execute_generation(a,{'prompt':a.request_text}))
+    assert not a.state.get('resources')

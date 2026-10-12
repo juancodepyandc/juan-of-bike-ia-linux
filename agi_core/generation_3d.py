@@ -55,6 +55,9 @@ async def execute_generation(agent,args):
     if report is None:
         attempts[signature]['status']='failed'
         raise RuntimeError('No final audit matches this scene run; an entity mesh cannot certify the whole requested scene.')
+    if report.get('ok') is not True:
+        attempts[signature]['status']='failed'
+        raise RuntimeError('The engine rejected or did not validate this scene: '+str(report.get('error','no positive engine verdict')))
     file=Path(report['final_mesh']).resolve()
     if not file.is_relative_to(target) or not file.is_file() or file.suffix.lower()!='.glb':
         attempts[signature]['status']='failed';raise ValueError('Final mesh is outside this mission delivery directory.')
