@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+const remarkPlugins = [remarkGfm]
 import {
   Activity,
   Boxes,
@@ -1113,7 +1114,7 @@ function Bubble({ turn, onNotion }: { turn: ChatTurn; onNotion: (n: string) => v
                 onNotion(n)
               }
             }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={remarkPlugins}>
                 {turn.content.replace(/\[\[([^[\]\n]{2,80})\]\]/g, (_m, l: string) => `[${l.trim()}](cowork://explain/${encodeURIComponent(l.trim())})`)}
               </ReactMarkdown>
             </div>
