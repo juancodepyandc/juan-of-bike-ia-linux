@@ -39,11 +39,15 @@ import {
   toAssetUrl,
 } from '../hooks/useTauri.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
+import AuroraAgentMascot from '../components/AuroraAgentMascot.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
 import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
 import { useStudioDiagnostics } from '../hooks/useStudioDiagnostics.ts'
 import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
 import { extractComfyPromptId, waitForComfyResult } from '../utils/comfyui.ts'
+import { ImageProgressOverlay } from '../components/ImageProgressOverlay.tsx'
+import { analyzeImageContext } from '../services/imageContextAnalyzer.ts'
+export type AgentState = 'idle' | 'thinking' | 'working' | 'done'
 import { prepareTaskIntelligence } from '../services/taskIntelligence.ts'
 import { analyzeImage } from '../services/visionService.ts'
 import { getErrorMessage } from '../utils/errors.ts'
@@ -284,7 +288,15 @@ export default function ImageView() {
   const [height, setHeight] = useState(1024)
   const [steps, setSteps] = useState(28)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [agentState, setAgentState] = useState<AgentState>('idle')
   const [progress, setProgress] = useState('')
+  const [phaseLabel, setPhaseLabel] = useState('')
+  const [phasePercent, setPhasePercent] = useState(0)
+
+  const setPhase = (label: string, percent: number) => {
+    setPhaseLabel(label)
+    setPhasePercent(percent)
+  }
   const [error, setError] = useState<string | null>(null)
   const [images, setImages] = useState<GeneratedImage[]>([])
   const [selectedImage, setSelectedImage] = useState<GeneratedImage | null>(null)
@@ -539,7 +551,26 @@ export default function ImageView() {
             ].join('\n')
             : promptWithHistory
 
-          const taskContext = await prepareTaskIntelligence({
+
+          // ANALYSE SÉMANTIQUE (LLM) : Refonte du Contexte Image
+          setAgentState('thinking')
+          setProgress('Analyse sémantique (LLM)...')
+          setPhase('Analyse sémantique (LLM)...', 40)
+
+          const sessionHistory = getRecentMessages('image', 5).map(m => ({ role: m.role, content: m.content || '' }))
+
+          let semanticAnalysis = { masterPrompt: referenceAwarePrompt, intent: 'new_idea' }
+          try {
+            semanticAnalysis = await analyzeImageContext(sessionHistory, referenceAwarePrompt)
+            console.log('Analyse Sémantique LLM terminée :', semanticAnalysis)
+          } catch (err) {
+            console.error('Erreur analyzeImageContext:', err)
+          }
+
+          // Remplacement du prompt courant par le masterPrompt issu du LLM
+          const finalPromptForTask = semanticAnalysis.masterPrompt
+
+const taskContext = await prepareTaskIntelligence({
             module: 'image',
             prompt: referenceAwarePrompt,
             model: visionModel,
@@ -655,6 +686,7 @@ export default function ImageView() {
 
           pushMessage('image', { role: 'user', content: currentPrompt })
 
+          setAgentState('working')
           setProgress(activeReference ? 'Construction du workflow FLUX d edition...' : 'Construction du workflow FLUX...')
           setPhase(activeReference ? 'Construction du workflow FLUX d edition...' : 'Construction du workflow FLUX...', 52)
           const workflow = createFluxWorkflow({
@@ -785,6 +817,7 @@ export default function ImageView() {
             ].filter(Boolean).join(' '),
             images: storage === 'workspace' && savedOutputPath ? [savedOutputPath] : undefined,
           })
+          setAgentState('done')
           setProgress('Image generee, chargement de la galerie puis liberation des ressources...')
           setPhase('Image chargee, liberation des ressources...', 94)
           if (storage === 'workspace' && savedOutputPath) {
@@ -806,6 +839,7 @@ export default function ImageView() {
       setError(getErrorMessage(generationError, 'Le module image a echoue sans detail exploitable.'))
       setProgress('')
     } finally {
+      setAgentState('idle')
       setIsGenerating(false)
       setGenPct(0)
       abortRef.current = null
@@ -916,6 +950,10 @@ export default function ImageView() {
         currentModule="image"
         onUsePrompt={(p) => setPrompt(p)}
       />
+
+      <div className="flex flex-col items-center justify-center py-4 bg-aurora-surface-2/40 rounded-[1.4rem] border border-aurora-border/30 mb-4 mx-6">
+        <AuroraAgentMascot moduleId="image" state={agentState} size={140} />
+      </div>
       <StudioHero
         icon={ImageIcon}
         eyebrow="Studio image"
@@ -933,6 +971,7 @@ export default function ImageView() {
           },
         ]}
       />
+
 
       <div className="grid gap-3 px-2 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-4 2xl:grid-cols-[23rem_minmax(0,1fr)]">
         <div className="2xl:sticky 2xl:top-4 self-start w-full overflow-y-auto overscroll-contain scroll-shell max-h-[60vh] sm:max-h-[calc(100vh-12rem)] rounded-[1.4rem] sm:rounded-[1.8rem] border border-aurora-border/40 bg-aurora-surface/55 p-3 sm:p-4 space-y-3 sm:space-y-4">
@@ -1063,6 +1102,14 @@ export default function ImageView() {
           />
 
           <ModuleAssetPackCard pack={assetPack} />
+          {/* Nouveau feedback de progression flottant */}
+          <ImageProgressOverlay
+            active={isGenerating}
+            progress={progress}
+            phaseLabel={phaseLabel}
+            phasePercent={phasePercent}
+          />
+
           <ConnectorRecommendationsPanel module="image" compact />
 
           <CompositionAdvisorCard width={width} height={height} />
