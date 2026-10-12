@@ -123,6 +123,7 @@ export default defineConfig(async () => ({
     ],
   },
   build: {
+    emptyOutDir: false, // Keep immutable chunks used by PC sessions during updates.
     chunkSizeWarningLimit: 900,
     rollupOptions: {
       output: {

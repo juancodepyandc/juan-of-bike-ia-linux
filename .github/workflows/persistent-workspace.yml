@@ -12,6 +12,9 @@ on:
       - 'application/src/utils/uiSkin.ts'
       - 'application/src/utils/buildRecovery.ts'
       - 'application/scripts/test-interface-stability.mjs'
+      - 'application/src/stores/forgeQueueStore.ts'
+      - 'application/src/utils/projectAdmission.ts'
+      - 'application/scripts/test-forge-admission.mjs'
       - '.github/workflows/persistent-workspace.yml'
   pull_request:
   workflow_dispatch:
@@ -42,3 +45,4 @@ jobs:
       - run: npm run test:workspace
       - run: node scripts/test-interface-stability.mjs
       - run: node scripts/test-bridge-auth.mjs
+      - run: node scripts/test-forge-admission.mjs

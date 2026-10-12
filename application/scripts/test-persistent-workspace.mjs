@@ -31,6 +31,8 @@ try{
  assert((await call('/action',{type:'files',files:[{name:'source.txt',mimeType:'text/plain',data:Buffer.from('fixture').toString('base64')}]})).data.ok)
 
  await call('/action',{type:'control',id:frame.controls.find(c=>c.label==='Générer').id})
+ const handoff=await call('/session',{width:390,height:700,navigation:{module:'3d',workspace:'assembly',skin:'aurora_v4',draft:{goal:'But transféré',constraints:'Dimensions'},settings:{'aurora.printProfiles.v1.selected':'Imprimante QA','secret-key':'must not be copied'}}});assert.equal(handoff.data.id,one.data.id)
+ assert.equal((await call('/session',{navigation:{module:'../unsafe'}})).response.status,400)
  // No phone/controller requests while the PC continues the asynchronous pipeline.
  await new Promise(r=>setTimeout(r,1800))
  assert.equal((await call('/session',{width:390,height:700})).data.id,one.data.id)

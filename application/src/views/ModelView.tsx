@@ -2438,7 +2438,9 @@ export default function ModelView() {
   // Tauri runtimes since onPythonProgress already abstracts the source.
   const [phaseSnapshot, setPhaseSnapshot] = useState<{ label: string; percent: number }>({ label: '', percent: 0 })
   const [error, setError] = useState<string | null>(null)
-  const [workspace, setWorkspace] = useState<'model' | 'assembly'>('model')
+  const [workspace, setWorkspace] = useState<'model' | 'assembly'>(()=>{try{return localStorage.getItem('aurora.3d.workspace')==='assembly'?'assembly':'model'}catch{return 'model'}})
+  useEffect(()=>{try{localStorage.setItem('aurora.3d.workspace',workspace)}catch{}},[workspace])
+  useEffect(()=>{const navigate=(event:Event)=>{const d=(event as CustomEvent).detail;if(d?.module==='3d'&&['model','assembly'].includes(d.workspace))setWorkspace(d.workspace)};window.addEventListener('aurora:navigate',navigate);return()=>window.removeEventListener('aurora:navigate',navigate)},[])
   const importedOriginalUrl = useRef<string | null>(null)
   useEffect(() => () => { if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current) }, [])
   const [modelUrl, setModelUrl] = useState<string | null>(null)

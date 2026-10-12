@@ -19,6 +19,9 @@ from application.engineering_design_api import register_design_routes
 from bridge_server import _ext_default_model
 register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=lambda:_ext_default_model(task="engineering"))
 
+from application.projects_api import register_project_routes
+register_project_routes(asset_bp,allowed=lambda:_request_is_local_loopback() or _admin_ok() or _ext_auth()[0])
+
 from application.asset_access import public_generated_asset
 
 def _asset_read_allowed(candidate):

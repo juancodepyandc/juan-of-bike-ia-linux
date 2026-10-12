@@ -20,6 +20,23 @@ function frameId(frame){if(!frameIds.has(frame))frameIds.set(frame,String(++next
 const origin = process.env.AURORA_WORKSPACE_ORIGIN || 'http://127.0.0.1:3001'
 const viewport = input => ({ width:Math.max(320,Math.min(1600,Math.round(Number(input?.width)||390))), height:Math.max(320,Math.min(1600,Math.round(Number(input?.height)||780))) })
 function validOwner(value) { return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) }
+function checkedNavigation(input){
+  if(!input||!['conversation','image','code','video','drawing','3d','learning','cyber'].includes(input.module))throw Object.assign(new Error('Module invalide.'),{status:400})
+  const settings=Object.fromEntries(Object.entries(input.settings||{}).filter(([key,value])=>['aurora.printProfiles.v1','aurora.printProfiles.v1.selected','aurora.engineering-objective.v1.selected'].includes(key)&&typeof value==='string'&&value.length<=200000))
+  return {settings,origin,entry:crypto.randomUUID(),module:input.module,workspace:input.workspace==='assembly'?'assembly':'model',skin:['aurora_v4','aurora_v1','aurora_v3'].includes(input.skin)?input.skin:'aurora_v4',draft:input.draft&&typeof input.draft.goal==='string'?{goal:input.draft.goal.slice(0,12000),constraints:String(input.draft.constraints||'').slice(0,8000)}:null}
+}
+function applyNavigation(input){
+  if(location.origin!==input.origin||localStorage.getItem('aurora.workspace.applied-entry')===input.entry)return
+  localStorage.setItem('aurora.workspace.applied-entry',input.entry)
+  const previous=JSON.parse(localStorage.getItem('juan-bike-app-store')||'{"state":{},"version":9}')
+  if(!previous.state||typeof previous.state!=='object')previous.state={}
+  previous.state.activeModule=input.module;localStorage.setItem('juan-bike-app-store',JSON.stringify(previous))
+  localStorage.setItem('aurora.3d.workspace',input.workspace)
+  localStorage.setItem('aurora-ui-skin',input.skin);localStorage.setItem('aurora-ui-skin-choice',input.skin)
+  for(const [key,value] of Object.entries(input.settings||{}))localStorage.setItem(key,value)
+  if(input.draft)localStorage.setItem('aurora.engineering-objective.v1',JSON.stringify(input.draft))
+  window.dispatchEvent(new CustomEvent('aurora:navigate',{detail:input}))
+}
 async function session(owner, size) {
   if (sessions.has(owner)) return sessions.get(owner)
   if(sessions.size >= 3) throw Object.assign(new Error('Trois espaces sont déjà ouverts sur le PC.'), { status:429 })
@@ -37,7 +54,7 @@ async function createSession(owner,size) {
   await fs.mkdir(directory,{recursive:true,mode:0o700})
   let saved
   try { saved=JSON.parse(await fs.readFile(path.join(directory,'storage.json'),'utf8')) } catch {}
-  const context=await browser.newContext({ ...devices['Pixel 7'], viewport:viewport(size), deviceScaleFactor:2, storageState:saved, acceptDownloads:true })
+  const context=await browser.newContext({ ...(Number(size?.width)>900?devices['Desktop Chrome']:devices['Pixel 7']), viewport:viewport(size), deviceScaleFactor:2, storageState:saved, acceptDownloads:true })
   const s={id:crypto.randomUUID(),context,active:null,pages:new Map(),downloads:[],directory,chooser:null,chain:Promise.resolve(),createdAt:new Date().toISOString()}
   let nextTab=0
   context.on('page',page=>{
@@ -50,9 +67,13 @@ async function createSession(owner,size) {
     page.on('close',()=>{s.pages.delete(id);if(s.active===id)s.active=[...s.pages.keys()].at(-1)||null})
     // External windows get no service token and no caller credentials.
   })
+  if(size?.navigation)await context.addInitScript(applyNavigation,checkedNavigation(size.navigation))
+  try {
   const page=await context.newPage()
   await page.goto(origin+'/?persistent-worker=1',{waitUntil:'domcontentloaded',timeout:30_000})
+  await page.waitForFunction(()=>!document.getElementById('root')||document.getElementById('root').children.length>0,{},{timeout:15_000})
   return s
+  }catch(error){await context.close().catch(()=>{});throw error}
 }
 function active(s) { const page=s.pages.get(s.active);if(!page||page.isClosed())throw Object.assign(new Error('Onglet fermé. Reconnectez l’espace.'),{status:409});return page }
 async function focusState(s) {
@@ -115,7 +136,8 @@ async function assets(page) {
 async function snapshot(s) {
   const page=active(s)
   const jpeg=await page.screenshot({type:'jpeg',quality:85,timeout:10_000})
-  return {id:s.id,createdAt:s.createdAt,image:jpeg.toString('base64'),viewport:page.viewportSize(),...await geometry(page),assets:await assets(page),active:s.active,tabs:await Promise.all([...s.pages].map(async([id,p])=>({id,title:await p.title().catch(()=> 'Aurora')}))),downloads:s.downloads,focus:await focusState(s)}
+  const interfaceReady=await page.evaluate(()=>!document.getElementById('root')||document.getElementById('root').children.length>0);
+  return {interfaceReady,id:s.id,createdAt:s.createdAt,image:jpeg.toString('base64'),viewport:page.viewportSize(),...await geometry(page),assets:await assets(page),active:s.active,tabs:await Promise.all([...s.pages].map(async([id,p])=>({id,title:await p.title().catch(()=> 'Aurora')}))),downloads:s.downloads,focus:await focusState(s)}
 }
 async function action(s,data) {
   const page=active(s)
@@ -186,7 +208,7 @@ const server=http.createServer(async(req,res)=>{
     const owner=req.headers['x-aurora-workspace-owner']
     if(!validOwner(owner))throw Object.assign(new Error('Session non authentifiée.'),{status:403})
     const data=req.method==='POST'?await body(req):{}
-    if(url.pathname==='/session'&&req.method==='POST'){const s=await session(owner,data);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,id:s.id,createdAt:s.createdAt}));return}
+    if(url.pathname==='/session'&&req.method==='POST'){if(data.navigation)data.navigation=checkedNavigation(data.navigation);const existed=sessions.has(owner);const s=await session(owner,data);if(existed&&data.navigation){const run=()=>active(s).evaluate(applyNavigation,data.navigation);const result=s.chain.then(run,run);s.chain=result.catch(()=>{});await result}res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,id:s.id,createdAt:s.createdAt}));return}
     const pending=sessions.get(owner)
     if(!pending)throw Object.assign(new Error('Reconnectez l’espace persistant.'),{status:404})
     const s=await pending

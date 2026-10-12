@@ -16,15 +16,26 @@ def validate_joints(parts, joints):
         if not isinstance(j,dict):raise ValueError('Joint object required.')
         name=j.get('id');parent=j.get('parent');child=j.get('child');kind=j.get('kind')
         if not isinstance(name,str) or not name or name in names or parent not in ids or child not in ids or parent==child or child in children:raise ValueError('Unique joints, known parts and one parent per child required.')
-        if kind not in {'fixed','revolute','prismatic','helical'}:raise ValueError('Unsupported joint; closed loops and free bodies need a separate solver.')
+        if kind not in {'fixed','revolute','prismatic','helical','compound'}:raise ValueError('Unsupported joint; closed loops and free bodies need a separate solver.')
         names.add(name);children.add(child)
+        if kind=='compound':
+            coords=j.get('coordinates')
+            if not isinstance(coords,list) or not 1<=len(coords)<=6:raise ValueError('Compound joints require one to six declared coordinates.')
+            controls=[];seen=set()
+            for c in coords:
+                if not isinstance(c,dict) or not isinstance(c.get('id'),str) or not c['id'] or c['id'] in seen or c.get('kind') not in {'revolute','prismatic','helical'} or 'axis' not in c:raise ValueError('Unique coordinate names, physical motion type and explicit axes required.')
+                seen.add(c['id']);local_id=c.get('coordinate_id',c['id'])
+                if not isinstance(local_id,str) or not local_id:raise ValueError('Invalid coordinate name.')
+                controls.extend(validate_joints(parts,[{**c,'coordinate_id':local_id,'id':name+':'+local_id,'parent':parent,'child':child,'origin_mm':c.get('origin_mm',j.get('origin_mm',[0,0,0])),'passive':c.get('passive',j.get('passive',False))}]))
+            result.append({**j,'coordinates':controls,'dof':sum(c['dof'] for c in controls)})
+            continue
         axis=np.asarray(j.get('axis',[0,0,1]),dtype=float);origin=np.asarray(j.get('origin_mm',[0,0,0]),dtype=float)
         if axis.shape!=(3,) or origin.shape!=(3,) or not np.isfinite(axis).all() or not np.isfinite(origin).all() or np.linalg.norm(axis)<1e-8:raise ValueError('Finite origin and nonzero joint axis required.')
         limits=np.asarray(j.get('limits',[0,0] if kind=='fixed' else []),dtype=float);home=float(j.get('home',0))
         if limits.shape!=(2,) or not np.isfinite(limits).all() or limits[0]>limits[1] or not math.isfinite(home) or not limits[0]<=home<=limits[1]:raise ValueError('Finite joint limits containing home required.')
         pitch=float(j.get('pitch_mm',0))
         if not math.isfinite(pitch) or kind=='helical' and pitch==0:raise ValueError('Helical joints require a nonzero finite pitch.')
-        result.append({**j,'axis':(axis/np.linalg.norm(axis)).tolist(),'origin_mm':origin.tolist(),'limits':limits.tolist(),'home':home,'pitch_mm':pitch,'unit':'mm' if kind=='prismatic' else 'deg','dof':0 if kind=='fixed' else 1})
+        result.append({**j,'axis':(axis/np.linalg.norm(axis)).tolist(),'origin_mm':origin.tolist(),'limits':limits.tolist(),'home':home,'pitch_mm':pitch,'unit':'mm' if kind=='prismatic' else 'deg','dof':0 if kind=='fixed' or limits[0]==limits[1] else 1})
     parents={j['child']:j['parent'] for j in result}
     for child in parents:
         visited=set();node=child
@@ -34,19 +45,26 @@ def validate_joints(parts, joints):
     return result
 
 
+def coordinates(joints):
+    return [c for j in joints for c in (j['coordinates'] if j['kind']=='compound' else [j])]
+
+
 def poses(parts,joints,values=None):
     joints=validate_joints(parts,joints);values=values or {}
-    if not isinstance(values,dict) or set(values)-{j['id'] for j in joints}:raise ValueError('Unknown joint control.')
+    if not isinstance(values,dict) or set(values)-{j['id'] for j in coordinates(joints)}:raise ValueError('Unknown joint control.')
     rest={p['id']:np.asarray(p['assembly_matrix_mm'],dtype=float) for p in parts};current={};bychild={j['child']:j for j in joints}
     def resolve(node):
         if node in current:return current[node]
         j=bychild.get(node)
         if not j:current[node]=rest[node];return current[node]
-        q=float(values.get(j['id'],j['home']))
-        if not math.isfinite(q) or not j['limits'][0]<=q<=j['limits'][1] or j['kind']=='fixed' and q!=j['home']:raise ValueError('Joint value outside its allowed travel.')
-        parent=j['parent'];delta=q-j['home'];motion=np.eye(4)
-        if j['kind'] in {'revolute','helical'}:motion=trimesh.transformations.rotation_matrix(math.radians(delta),j['axis'],j['origin_mm'])
-        if j['kind'] in {'prismatic','helical'}:motion[:3,3]+=np.asarray(j['axis'])*(delta if j['kind']=='prismatic' else delta*j['pitch_mm']/360)
+        parent=j['parent'];motion=np.eye(4)
+        for c in coordinates([j]):
+            q=float(values.get(c['id'],c['home']))
+            if not math.isfinite(q) or not c['limits'][0]<=q<=c['limits'][1] or c['kind']=='fixed' and q!=c['home']:raise ValueError('Joint value outside its allowed travel.')
+            delta=q-c['home'];step=np.eye(4)
+            if c['kind'] in {'revolute','helical'}:step=trimesh.transformations.rotation_matrix(math.radians(delta),c['axis'],c['origin_mm'])
+            if c['kind'] in {'prismatic','helical'}:step[:3,3]+=np.asarray(c['axis'])*(delta if c['kind']=='prismatic' else delta*c['pitch_mm']/360)
+            motion=motion@step
         current[node]=resolve(parent)@np.linalg.inv(rest[parent])@motion@rest[node]
         return current[node]
     for node in rest:resolve(node)
@@ -64,7 +82,7 @@ def solve_closures(parts,joints,values,constraints):
             anchor=np.asarray(c.get(key),dtype=float)
             if anchor.shape!=(3,) or not np.isfinite(anchor).all():raise ValueError('Finite closure anchors required in each printable part local frame.')
         if c['kind']=='distance' and (not math.isfinite(float(c.get('distance_mm',-1))) or float(c.get('distance_mm',-1))<0):raise ValueError('Finite nonnegative closure distance required.')
-    joints=validate_joints(parts,joints);passive=[j for j in joints if j.get('passive') and j['dof']]
+    joints=validate_joints(parts,joints);passive=[j for j in coordinates(joints) if j.get('passive') and j['dof']]
     commands=dict(values or {});q=np.array([float(commands.get(j['id'],j['home'])) for j in passive])
     limits=np.array([j['limits'] for j in passive]);q=np.clip(q,limits[:,0],limits[:,1]) if passive else q
     def evaluate(x):
@@ -91,7 +109,27 @@ def solve_closures(parts,joints,values,constraints):
             if np.linalg.norm(evaluate(candidate)[0])<np.linalg.norm(residual):q=candidate;changed=True;break
         if not changed:break
     residual,transforms,trial=evaluate(q);maximum=float(np.max(np.abs(residual)))
-    return transforms,trial,{'required':True,'converged':maximum<=1e-4,'max_residual_mm':maximum,'iterations':iterations+1,'scope':'Numerical closure at this pose; singularities and other branches are not certified.'}
+    free=[j for j in coordinates(joints) if j['dof']];rank=None
+    if len(free)<=64:
+        columns=[]
+        def constraint_error(pose):
+            values=[]
+            for c in constraints:
+                a=trimesh.transformations.transform_points([c['parent_anchor_mm']],pose[c['parent']])[0]
+                b=trimesh.transformations.transform_points([c['child_anchor_mm']],pose[c['child']])[0]
+                values.extend((a-b).tolist() if c['kind']=='coincident' else [float(np.linalg.norm(a-b))-float(c['distance_mm'])])
+            return np.asarray(values)
+        for j in free:
+            value=float(trial.get(j['id'],j['home']));span=j['limits'][1]-j['limits'][0];step=max(1e-5,span*1e-6)
+            low=max(j['limits'][0],value-step);high=min(j['limits'][1],value+step)
+            r0=constraint_error(poses(parts,joints,{**trial,j['id']:low}));r1=constraint_error(poses(parts,joints,{**trial,j['id']:high}))
+            columns.append((r1-r0)/(high-low)*span)
+        matrix=np.asarray(columns).T
+        if columns:
+            singular=np.linalg.svd(matrix,compute_uv=False);rank=int(np.count_nonzero(singular>max(1e-8,float(singular.max())*1e-6)))
+        else:rank=0
+    return transforms,trial,{'required':True,'converged':maximum<=1e-4,'max_residual_mm':maximum,'iterations':iterations+1,'local_constraint_rank_estimate':rank,'local_dof':len(free)-rank if rank is not None else None,'scope':'Numerical local mobility of ideal declared joints; singularities, other branches and physical compliance are not certified.'}
+
 
 
 @lru_cache(maxsize=1024)
@@ -134,14 +172,14 @@ def simulate(report,root,values=None,*,cursor=0,batch_size=None):
         except Exception:uncertain.append([a,b])
     next_cursor=min(cursor+batch_size,len(candidates));complete=next_cursor==len(candidates)
     fingerprint=hashlib.sha256(json.dumps([versions,{k:v.tolist() for k,v in transforms.items()}],sort_keys=True).encode()).hexdigest()
-    return {'geometry_sha256':dict(versions),'resolved_values':resolved,'closure':closure,'transforms_mm':{k:v.tolist() for k,v in transforms.items()},'collisions':collisions,'uncertain_pairs':uncertain,'dof':sum(j['dof'] for j in validate_joints(parts,joints)),'scope':'Sampled pose only; no continuous collision, forces, friction, cable flex or deformation validation.','collision_status':'kinematically_invalid' if not closure['converged'] else 'uncertain' if uncertain else 'penetration' if collisions else 'no_penetration_at_this_pose' if complete and cursor==0 else 'pending','collision_batch':{'cursor':cursor,'next_cursor':next_cursor,'candidate_pairs':len(candidates),'complete':complete,'fingerprint':fingerprint}}
+    return {'assumed_envelopes':[p['id'] for p in parts if p.get('geometry_basis')=='assumed_envelope'],'geometry_sha256':dict(versions),'resolved_values':resolved,'closure':closure,'transforms_mm':{k:v.tolist() for k,v in transforms.items()},'collisions':collisions,'uncertain_pairs':uncertain,'declared_coordinates':sum(j['dof'] for j in validate_joints(parts,joints)),'dof':closure.get('local_dof',sum(j['dof'] for j in validate_joints(parts,joints))),'scope':'Sampled pose only; no continuous collision, forces, friction, cable flex or deformation validation.','collision_status':'kinematically_invalid' if not closure['converged'] else 'uncertain' if uncertain else 'penetration' if collisions else 'no_penetration_at_this_pose' if complete and cursor==0 else 'pending','collision_batch':{'cursor':cursor,'next_cursor':next_cursor,'candidate_pairs':len(candidates),'complete':complete,'fingerprint':fingerprint}}
 
 
 def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step_mm=1):
     joints=validate_joints(parts,joints)
     poses(parts,joints,start);poses(parts,joints,target)
     if type(index)!=int or index<0 or not all(math.isfinite(float(v)) and float(v)>0 for v in [angular_step_deg,linear_step_mm]):raise ValueError('Invalid motion sampling parameters.')
-    active=[j for j in joints if j['dof'] and not j.get('passive')]
+    active=[j for j in coordinates(joints) if j['dof'] and not j.get('passive')]
     samples=max([1]+[math.ceil(abs(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))/(linear_step_mm if j['kind']=='prismatic' else angular_step_deg)) for j in active])
     if index>samples:raise ValueError('Sample outside planned motion.')
     values={j['id']:float(start.get(j['id'],j['home']))+(float(target.get(j['id'],j['home']))-float(start.get(j['id'],j['home'])))*index/samples for j in active}
@@ -151,9 +189,11 @@ def path_sample(parts,joints,start,target,index,*,angular_step_deg=5,linear_step
 def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=32):
     """Executable test of intended travel, with resumable coverage and real results."""
     if type(sample_batch)!=int or not 1<=sample_batch<=256:raise ValueError('Invalid sample batch.')
-    results=[];last=start_sample;fingerprint=None
+    results=[];last=start_sample;fingerprint=None;seed={}
     for index in range(start_sample,start_sample+sample_batch):
         values,coverage=path_sample(report['parts'],report.get('mechanism_joints',[]),start,target,index)
+        passive={j['id'] for j in coordinates(validate_joints(report['parts'],report.get('mechanism_joints',[]))) if j.get('passive')}
+        values.update({k:v for k,v in seed.items() if k in passive})
         collisions=[];uncertain=[];cursor=0;fingerprint=None
         while True:
             result=simulate(report,root,values,cursor=cursor)
@@ -161,6 +201,7 @@ def evaluate_motion_case(report,root,start,target,*,start_sample=0,sample_batch=
             if fingerprint is not None and fingerprint!=result['collision_batch']['fingerprint']:raise ValueError('Geometry changed during verification.')
             fingerprint=result['collision_batch']['fingerprint'];cursor=result['collision_batch']['next_cursor']
             if result['collision_batch']['complete']:break
+        seed=result['resolved_values']
         results.append({'sample':index,'values':result['resolved_values'],'closure':result['closure'],'collisions':collisions,'uncertain_pairs':uncertain,'geometry_pose_fingerprint':fingerprint,'geometry_sha256':result['geometry_sha256']})
         last=coverage['last_sample']
         if index==last:break

@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { acquireProject } from '../utils/projectAdmission.ts'
 import { useAppStore } from '../stores/appStore.ts'
 import { useModuleLogStore } from '../stores/moduleLogStore.ts'
 import type { ModuleId, RuntimeServiceId } from '../types/app.ts'
@@ -136,7 +137,12 @@ export function useManagedRuntime() {
       history: [],
     })
 
+    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>setGenerationJob(jobId,{detail}));
+    void admission.catch(()=>{})
     const runQueuedJob = async () => {
+      const release=await admission;
+      let outcome:'completed'|'failed'='failed';
+      let generationStarted=false;
       const startedAt = Date.now()
 
       setGenerationJob(jobId, {
@@ -220,6 +226,7 @@ export function useManagedRuntime() {
 
             moduleLog(module, 'info', 'Generation lancee', `Modele: ${ollamaModel || 'aucun'}, Services: ${services.join(', ')}`)
             setPhase('Generation en cours.', 42, 'generate')
+            generationStarted=true;
             const result = await job({ setPhase, ensureService })
 
             moduleLog(module, 'info', 'Generation terminee avec succes')
@@ -259,6 +266,7 @@ export function useManagedRuntime() {
               error: null,
             })
 
+            outcome='completed';
             return result
           } catch (error) {
             if (!effectiveSkipRelease) {
@@ -276,7 +284,7 @@ export function useManagedRuntime() {
 
             const isAbort = error instanceof Error && error.name === 'AbortError'
             const message = getErrorMessage(error, 'Erreur runtime inconnue.')
-            const shouldRetry = !isAbort && attempt < MAX_ATTEMPTS - 1 && isRecoverableRuntimeError(error)
+            const shouldRetry = !generationStarted && !isAbort && attempt < MAX_ATTEMPTS - 1 && isRecoverableRuntimeError(error)
 
             moduleLog(module, shouldRetry ? 'retry' : 'error', message, `Tentative ${attempt + 1}/${MAX_ATTEMPTS}, Recoverable: ${shouldRetry}`)
 
@@ -322,13 +330,16 @@ export function useManagedRuntime() {
           }
         }
 
-        throw new Error('Le runtime n a pas pu terminer la generation apres 3 tentatives.')
+        throw new Error('La préparation du runtime reste en échec ; diagnostic et résultats conservés pour reprise.')
       } finally {
+        await release(outcome).catch(()=>{setGenerationJob(jobId,{detail:'Résultat conservé ; synchronisation avec la file du PC à vérifier.'})});
         pruneGenerationJobs()
       }
     }
 
     const queuedRun = runtimeExecutionQueue.then(runQueuedJob).catch((err: unknown) => {
+      const existing=useAppStore.getState().generationJobs.find(j=>j.id===jobId);
+      if(existing?.status==='queued'){const cancelled=err instanceof Error&&err.name==='AbortError';setGenerationJob(jobId,{status:cancelled?'cancelled':'error',phase:cancelled?'done':'error',error:cancelled?null:String(err),detail:cancelled?'Attente annulée.':'Admission interrompue ; consulter la file du PC.',finishedAt:Date.now()})}
       // Absorb the error in the queue chain to prevent unhandled rejection,
       // but re-throw so the caller's await still receives the error.
       throw err

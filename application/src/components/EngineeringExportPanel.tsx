@@ -39,6 +39,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [mode, setMode] = useState<'geometry' | 'textured' | 'assembly'>(assemblyOnly ? 'assembly' : 'geometry')
   const [profiles, setProfiles] = useState<Profile[]>(profilesOnDevice)
   const [profile, setProfile] = useState<Profile>(selectedOnDevice)
+  useEffect(()=>{const navigate=(event:Event)=>{if((event as CustomEvent).detail?.module==='3d'){setProfiles(profilesOnDevice());setProfile(selectedOnDevice())}};window.addEventListener('aurora:navigate',navigate);return()=>window.removeEventListener('aurora:navigate',navigate)},[])
   const [size, setSize] = useState(200)
   const [axis, setAxis] = useState('auto')
   const [upAxis, setUpAxis] = useState('z')

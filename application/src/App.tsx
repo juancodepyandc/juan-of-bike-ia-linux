@@ -284,6 +284,7 @@ export default function App() {
     setRuntimeServices,
     setWizardVisible,
   } = useAppStore()
+  useEffect(()=>{const navigate=(event:Event)=>{const d=(event as CustomEvent).detail;if(d&&['conversation','image','code','video','drawing','3d','learning','cyber'].includes(d.module))setActiveModule(d.module)};window.addEventListener('aurora:navigate',navigate);return()=>window.removeEventListener('aurora:navigate',navigate)},[setActiveModule])
   const [bootWasRunning, setBootWasRunning] = useState(false)
   const [bootVisible, setBootVisible] = useState(true)
   const [hostPrivileges, setHostPrivileges] = useState<HostPrivilegeStatus | null>(null)

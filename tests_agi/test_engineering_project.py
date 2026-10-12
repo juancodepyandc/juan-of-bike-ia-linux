@@ -65,3 +65,16 @@ def test_normalized_cad_color_and_required_reproducible_sources(tmp_path):
     (tmp_path/'design.py').write_text('import trimesh\n')
     (tmp_path/'tests.py').write_text('assert True\n')
     assert build_project(plan,tmp_path,require_sources=True)['parts'][0]['color_rgba']==[204,51,51,255]
+
+
+def test_purchased_component_envelope_is_not_printed_or_forced_into_bed(tmp_path):
+    import trimesh
+    from application.engineering_project import build_project
+    trimesh.creation.box([20,20,10]).export(tmp_path/'bracket.stl')
+    trimesh.creation.box([500,20,20]).export(tmp_path/'component.stl')
+    spec={'units':'mm','title':'Component integration','objective':'Test physical roles','parts':[{'id':'bracket','file':'bracket.stl'},{'id':'component','file':'component.stl','manufacturing':'purchased','geometry_basis':'assumed_envelope','source_reference':'QA fixture; dimensions must be confirmed'}],'bom':[{'name':'Component','quantity':1,'specification':'QA envelope 500 × 20 × 20 mm, not a fabrication model','part_ids':['component']}]}
+    report=build_project(spec,tmp_path)
+    assert report['parts'][1]['file'].startswith('components/')
+    assert len(report['filament_plan'])==1
+    assert all(p['id']!='piece_02' for plate in report['print_plates'] for p in plate['parts'])
+    assert 'exclu des plaques' in (tmp_path/'DOSSIER.md').read_text(encoding='utf-8')

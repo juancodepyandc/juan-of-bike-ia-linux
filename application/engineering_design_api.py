@@ -19,12 +19,12 @@ Décompose les fonctions, interfaces, éléments fixes/mobiles, transmissions, �
 L'utilisateur peut imposer des composants. Respecte leurs fiches techniques, leurs dimensions et leurs limites ; cherche des sources primaires si nécessaire. Sinon, propose toi-même les composants, fixations, fils/câbles et matières nécessaires, avec quantités et spécifications utiles (diamètre, longueur, tension, courant, couple, section, tolérance, etc. uniquement lorsque pertinent).
 Procède avec des hypothèses explicites raisonnables plutôt que demander chaque choix. Si une inconnue rend une conclusion impossible ou un objectif techniquement irréalisable, démontre le blocage et propose une alternative compatible, sans prétendre avoir fabriqué une solution impossible.
 Utilise les outils : établis un plan et des critères mesurables, produis du code paramétrique, exécute des calculs et des tests adaptés, consulte les preuves et corrige les défauts. Ne confonds pas un calcul à paramètres supposés et une mesure réelle ; aucune certification mécanique, électrique ou ajustement imprimé ne peut être inventée.
-Pour les mécanismes, renseigner mechanism_joints : id, parent/child (IDs des pièces), kind fixed/revolute/prismatic/helical, axis et origin_mm dans le repère mondial au repos, limits et home (degrés ou mm), pitch_mm pour une vis hélicoïdale. Ne pas inventer de mobilité pour des fixations statiques. Une boucle fermée peut être représentée par un arbre de joints et closure_constraints (liste) : kind coincident ou distance, parent/child, parent_anchor_mm et child_anchor_mm dans les repères locaux des STL sources, distance_mm si pertinent. Déclarer passive=true sur les articulations résolues et tester convergence, singularités, branches et limites ; une absence de convergence ne prouve pas une impossibilité physique. Les efforts, câbles flexibles et déformations demandent des données et un solveur adaptés.
+Pour les mécanismes, renseigner mechanism_joints : id, parent/child (IDs des pièces), kind fixed/revolute/prismatic/helical, axis et origin_mm dans le repère mondial au repos, limits et home (degrés ou mm), pitch_mm pour une vis hélicoïdale. Pour une articulation à plusieurs degrés, utiliser kind compound avec coordinates ordonnées : chaque coordonnée a id, kind revolute/prismatic/helical, axis, origin_mm, limits, home, passive si nécessaire. Le produit ordonné des transformations calcule une rotule, un plan ou une liaison spatiale selon les axes effectivement fournis, sans pièces virtuelles imprimables ni animation prédéfinie. Les commandes utilisent joint_id:coordinate_id. Ne pas inventer de mobilité pour des fixations statiques. Une boucle fermée peut être représentée par un arbre de joints et closure_constraints (liste) : kind coincident ou distance, parent/child, parent_anchor_mm et child_anchor_mm dans les repères locaux des STL sources, distance_mm si pertinent. Déclarer passive=true sur les articulations résolues et tester convergence, singularités, branches et limites ; une absence de convergence ne prouve pas une impossibilité physique. Les efforts, câbles flexibles et déformations demandent des données et un solveur adaptés.
 Livrables : design.py reproductible, tests.py exécuté (peut appeler des scripts supplémentaires), pièces STL fermées en mm, placements rigides, project_spec.json, archive engineering-project.zip avec dossier de montage (MD et HTML imprimable PDF), nomenclature, représentation des géométries et viewer.
 Produis réellement les maillages (sommets/faces, par exemple avec trimesh/manifold installés) et exporte les STL sur disque. Une description JSON de primitive, un dictionnaire de cotes ou un message de succès ne constitue jamais une pièce. Les tests doivent charger et mesurer les fichiers réellement exportés, pas tester seulement des valeurs recopiées.
 La bibliothèque fabrication.py est un module Python local, pas un outil agent. Pour créer les scripts, utilise les outils réels write_file et run_command avec le Python indiqué ; consulte list_tools si tu ignores un outil, n'invente pas de nom d'outil. Elle est disponible pour vérifier et empaqueter les pièces réellement produites. spec peut être un dictionnaire Python ou le chemin local project_spec.json. Utilise build_project(spec, '.') pour produire le dossier et l'archive. Corrige les pièces qui ne tiennent pas dans l'imprimante (orientation ou découpe), ne remplace pas le profil fourni. Des exigences irréalisables peuvent produire un dossier de faisabilité avec blockers et aucune pièce.
-La forme de spec est : units='mm', title, objective, bed_mm, margin_mm, printer_name, constraints (liste texte), assumptions (liste texte), blockers (liste texte), parts (liste de {id,name,file STL local,assembly_matrix_mm matrice rigide 4x4,color_rgba pour le repérage,filament et filament_color=#RRGGBB facultatifs pour la matière/couleur physique}), bom (liste de {name,quantity entier,specification texte détaillé,part_ids}), assembly_steps (liste de {instruction,part_ids}), tests (liste avec résultats et fichiers de preuves), sources (liste).
-La validité automatique de la bibliothèque porte sur les solides, leurs dimensions et références ; elle ne vérifie pas les promesses de résistance ni de comportement. Teste indépendamment les contraintes propres au projet. N'ajoute pas systématiquement un moteur, un capteur ou un câble à un projet qui n'en a pas besoin. Si plusieurs couleurs sont souhaitées sur une imprimante monocolore, conçois des pièces séparées par couleur et des interfaces de montage justifiées, sans supposer une impression multicolore en un seul bloc.
+La forme de spec est : units='mm', title, objective, bed_mm, margin_mm, printer_name, constraints (liste texte), assumptions (liste texte), blockers (liste texte), parts (liste de {id,name,file STL local,assembly_matrix_mm matrice rigide 4x4,color_rgba pour le repérage,manufacturing print ou purchased,geometry_basis manufacturer_cad/measured/assumed_envelope et source_reference obligatoires pour un composant acheté,filament et filament_color=#RRGGBB facultatifs pour la matière/couleur physique}), bom (liste de {name,quantity entier,specification texte détaillé,part_ids}), assembly_steps (liste de {instruction,part_ids}), tests (liste avec résultats et fichiers de preuves), sources (liste).
+La validité automatique de la bibliothèque porte sur les solides, leurs dimensions et références ; elle ne vérifie pas les promesses de résistance ni de comportement. Teste indépendamment les contraintes propres au projet. Les composants achetés avec enveloppe CAD participent aux collisions et à la vue d’assemblage, mais sont exclus des plaques et des contraintes de taille de l’imprimante ; les référencer dans bom. Les enveloppes supposées sont des hypothèses, jamais une mesure validée. N'ajoute pas systématiquement un moteur, un capteur ou un câble à un projet qui n'en a pas besoin. Si plusieurs couleurs sont souhaitées sur une imprimante monocolore, conçois des pièces séparées par couleur et des interfaces de montage justifiées, sans supposer une impression multicolore en un seul bloc.
 N'utilise pas de services payants, ne contacte personne, ne publie rien, ne lis aucune clé, ne modifie aucun autre projet et n'installe pas de logiciels système. Travail limité à ce dossier. Les prérequis nécessaires doivent être identifiés comme tels si absents.
 Les helpers engineering_motion.simulate, path_sample et evaluate_motion_case(report, root, from_values, to_values, start_sample=0, sample_batch=32) permettent des essais géométriques et des trajectoires échantillonnées ; evaluate_motion_case fournit une couverture reprenable par lots : poursuivre next_sample jusqu’à complete, agréger toutes les erreurs et vérifier la couverture avant toute approbation ; enregistrer les valeurs, résidus et collisions réellement calculés dans un JSON de preuve. Pour comparer les emplacements de fixations, engineering_connections.rank_fastening_locations(parts, root, candidates, views) calcule l’occlusion sur les STL : candidates={id,kind screw/glue/clip/insert/interlock,part_ids,surface_samples_mm en coordonnées assemblage,tool_envelope_file optionnel STL en coordonnées assemblage}, views={direction vers l’observateur,weight}. Comparer de vraies positions et enveloppes d’accès, puis produire les logements retenus dans le CAD ; aucune résistance ne découle de ce classement. Ces modules Python sont importables depuis le dossier de fabrication.
 Pour les fixations, comparer des alternatives pertinentes (colle, vis cachées, inserts, clips, emboîtements selon le projet). Privilégier lignes naturelles, dessous, intérieur ou surfaces peu visibles, sans sacrifier résistance, accès de l’outil, démontage requis, épaisseur des parois et tolérances. Justifier le choix avec géométrie, fiches techniques et tests ; ne pas déclarer une résistance d’adhésif sans surface, matière et données. Réserver les passages et dégagements de vis, câbles et pièces mobiles.
@@ -68,6 +68,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             try:
                 report=json.loads(report_path.read_text(encoding='utf-8'))
                 parts=report.get('parts',[])
+                if not isinstance(report.get('bom',[]),list) or any(not isinstance(entry,dict) for entry in report.get('bom',[])):raise ValueError('BOM schema')
                 if report.get('schema')!='aurora.engineering-project.v1' or not isinstance(parts,list) or len(parts)>int(os.environ.get('AURORA_ENGINEERING_MAX_PARTS','512')):raise ValueError('schema')
                 paths=[archive,report_path,folder/'DOSSIER.md',folder/'DOSSIER.html',folder/'representation.svg']
                 for part in parts:
@@ -93,16 +94,23 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                             name=path.relative_to(folder.resolve()).as_posix() if path.is_absolute() else path.relative_to(folder).as_posix()
                             if name not in bundle.namelist() or bundle.read(name)!=path.read_bytes():raise ValueError('changed dossier or source')
                         for part in parts:
+                            role=part.get('manufacturing','print')
+                            if role not in {'print','purchased'}:raise ValueError('manufacturing role')
+                            if role=='purchased' and (part.get('geometry_basis') not in {'manufacturer_cad','measured','assumed_envelope'} or not isinstance(part.get('source_reference'),str) or not part['source_reference'].strip() or not any(part.get('design_id') in entry.get('part_ids',[]) for entry in report.get('bom',[]))):raise ValueError('purchased component provenance')
                             path=(folder/part['file']).resolve()
                             if part['file'] not in bundle.namelist() or bundle.read(part['file'])!=path.read_bytes():raise ValueError('changed part')
                             mesh=trimesh.load_mesh(path)
-                            if not mesh.is_volume or not np.isfinite(mesh.vertices).all() or not np.allclose(mesh.extents,part['dimensions_mm'],atol=1e-4) or np.any(mesh.extents>usable+1e-4) or not np.isclose(mesh.volume,part['volume_mm3'],rtol=1e-4):raise ValueError('actual geometry')
+                            if not mesh.is_volume or not np.isfinite(mesh.vertices).all() or not np.allclose(mesh.extents,part['dimensions_mm'],atol=1e-4) or (part.get('manufacturing','print')=='print' and np.any(mesh.extents>usable+1e-4)) or not np.isclose(mesh.volume,part['volume_mm3'],rtol=1e-4):raise ValueError('actual geometry')
                             matrix=np.asarray(part['assembly_matrix_mm'],dtype=float)
                             if matrix.shape!=(4,4) or not np.isfinite(matrix).all() or not np.allclose(matrix[3],[0,0,0,1]) or not np.allclose(matrix[:3,:3].T@matrix[:3,:3],np.eye(3),atol=1e-6) or not np.isclose(np.linalg.det(matrix[:3,:3]),1):raise ValueError('rigid placement')
+                    from application.engineering_motion import validate_joints,solve_closures,coordinates
+                    joints=validate_joints(parts,report.get('mechanism_joints',[]))
+                    _,homes,closure=solve_closures(parts,joints,{},report.get('closure_constraints',[]))
+                    if not closure['converged'] or any(abs(homes.get(j['id'],j['home'])-j['home'])>1e-4 for j in coordinates(joints)):raise ValueError('rest mechanism coherence')
                     verified[rec['id']]=signature
                 complete=True
             except (OSError,ValueError,KeyError,TypeError,zipfile.BadZipFile):pass
-        result={'ok':True,'id':rec['id'],'mission_id':item['id'],'state':item['status'],'objective':rec.get('objective',''),'request_id':rec.get('request_id',''),'result':item.get('result',''),'steps':item['steps'],'errors':item['errors'],'ready':complete and item['status']=='completed','artifacts_available':complete,'partial':complete and item['status']!='completed'}
+        result={'ok':True,'id':rec['id'],'mission_id':item['id'],'state':item['status'],'objective':rec.get('objective',''),'request_id':rec.get('request_id',''),'result':item.get('result',''),'steps':item['steps'],'errors':item['errors'],'scheduling':store.scheduling(item['id']),'ready':complete and item['status']=='completed','artifacts_available':complete,'partial':complete and item['status']!='completed'}
         if item['status']=='completed' and not complete:result.update(state='incomplete',error='Le dossier vérifiable manque. Consulter le résultat et reprendre la mission.')
         if complete:
             result['report']=report
@@ -140,13 +148,6 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             if old:
                 if old.get('fingerprint')!=fingerprint:return jsonify(ok=False,error='Cette demande a déjà été utilisée pour un autre objectif.'),409
                 return jsonify(response(old)),200
-            # One active engineering mission per owner protects resources without replay.
-            for path in private.glob('design_*.json'):
-                try:
-                    previous=json.loads(path.read_text());item=store.get(previous['mission_id'])
-                    if previous['owner']==owner() and item and item['status'] in {'planning','running','stopping'}:
-                        return jsonify(ok=False,error='Un projet est déjà en cours.',id=previous['id']),409
-                except (OSError,ValueError,KeyError):pass
             try:model=model_default()
             except ValueError as e:return jsonify(ok=False,error=str(e)),503
             folder=root/did;folder.mkdir(parents=True,exist_ok=True)
@@ -155,11 +156,11 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             (folder/'fabrication.py').write_text(seed,encoding='utf-8')
             (folder/'OBJECTIF.json').write_text(json.dumps({'objective':data['objective'],'constraints':constraints,'profile':profile},ensure_ascii=False,indent=2),encoding='utf-8')
             text=CONTRACT+'\nOBJECTIF UTILISATEUR :\n'+data['objective']+'\nCONTRAINTES FOURNIES :\n'+(constraints or 'Aucune pièce imposée : déterminer les éléments nécessaires.')+'\nPROFIL IMPRIMANTE :\n'+json.dumps(profile,ensure_ascii=False)+'\nPython disponible pour géométrie et tests : '+sys.executable+'\nDossier de travail : '+str(folder)
-            payload={'request':text,'workspace':str(folder),'permissions':'AUTONOMOUS','model':model,'requested_model':'','session_id':'','history':[],'context_tokens':8192}
-            item,created=store.create(payload,'design:'+did)
+            payload={'request':text,'workspace':str(folder),'permissions':'AUTONOMOUS','model':model,'requested_model':'','session_id':'','history':[],'context_tokens':8192,'project_kind':'engineering','project_title':data['objective'][:160]}
+            item,created=store.create(payload,'design:'+did,queued=True)
             rec={'id':did,'owner':owner(),'mission_id':item['id'],'fingerprint':fingerprint,'profile':profile,'objective':data['objective'],'request_id':request_id}
             path=private/(did+'.json');path.write_text(json.dumps(rec));path.chmod(0o600)
-            if created and not dispatch('mission.start',{'mission_id':item['id'],**payload}):store.append(item['id'],{'type':'error','message':'Daemon indisponible ; demande conservée pour reprise explicite.'})
+            if created:dispatch('mission.start',{'mission_id':item['id'],**payload})
             return jsonify(response(rec)),202
     @bp.route('/api/3d/design/<did>',methods=['GET'])
     def status_design(did):
@@ -191,9 +192,9 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         if not rec:return jsonify(ok=False,error='Projet introuvable.'),404
         try:item,_cursor=store.resume(rec['mission_id'])
         except ValueError as e:return jsonify(ok=False,error=str(e)),409
+        store.enqueue(item['id'])
         if not dispatch('mission.start',{'mission_id':item['id'],**item['payload']}):
-            store.append(item['id'],{'type':'error','message':'Daemon indisponible ; demande conservée pour reprise explicite.'})
-            return jsonify(ok=False,error='Daemon indisponible. La demande reste conservée et peut être reprise.'),503
+            return jsonify(response(rec)),202
         return jsonify(response(rec))
     @bp.route('/api/3d/design/<did>/download',methods=['GET'])
     @bp.route('/api/3d/design/<did>/dossier',methods=['GET'])

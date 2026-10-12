@@ -52,7 +52,9 @@ async def main():
 
     store = MissionStore()
     owner = uuid4().hex
-    slots = asyncio.Semaphore(positive_env("AURORA_CONCURRENT_MISSIONS", 1))
+    from agi_core.mission_scheduler import schedule_queue
+    capacity = positive_env("AURORA_CONCURRENT_MISSIONS", 1)
+    queue_wake = asyncio.Event()
     cancelling = set()
 
     def cancel(task):
@@ -72,7 +74,7 @@ async def main():
         task = asyncio.current_task()
         heartbeat = None
         try:
-            if not await asyncio.to_thread(store.claim,mission_id,lease_owner):
+            if not await asyncio.to_thread(store.claim,mission_id,lease_owner,serialize=True):
                 return
             async def renew():
                 while True:
@@ -86,14 +88,13 @@ async def main():
                             cancel(task)
                         return
             heartbeat = asyncio.create_task(renew())
-            async with slots:
-                await brain.stop_background_work()
-                await brain.swarm.run_mission(
-                    mission_id=mission_id, request_text=payload.get("request"),
-                    workspace=payload.get("workspace"), model=payload.get("model"),
-                    permissions=payload.get("permissions"), memory_module=brain.memory,
-                    history=payload.get("history"), store=store, lease_owner=lease_owner,
-                    context_tokens=payload.get("context_tokens"))
+            await brain.stop_background_work()
+            await brain.swarm.run_mission(
+                mission_id=mission_id, request_text=payload.get("request"),
+                workspace=payload.get("workspace"), model=payload.get("model"),
+                permissions=payload.get("permissions"), memory_module=brain.memory,
+                history=payload.get("history"), store=store, lease_owner=lease_owner,
+                context_tokens=payload.get("context_tokens"))
         except asyncio.CancelledError:
             await publish(mission_id,"mission_complete",lease_owner=lease_owner,stopped=True,result="Mission arrêtée ; état conservé pour reprise.")
             raise
@@ -113,13 +114,9 @@ async def main():
             # Execute the accepted durable payload, never a conflicting replay.
             accepted = await asyncio.to_thread(store.get,mission_id)
             if accepted:
-                old = missions.get(mission_id)
-                if old is not None:
-                    if accepted['status'] != 'planning' or accepted['owner'] is not None:
-                        return
-                    cancel(old)
-                    await asyncio.gather(old,return_exceptions=True)
-                missions[mission_id] = asyncio.create_task(execute_mission({"mission_id":mission_id,**accepted['payload']}))
+                old=missions.get(mission_id)
+                if old is not None and not old.done():return
+                if await asyncio.to_thread(store.enqueue,mission_id):queue_wake.set()
 
     async def on_mission_stop(payload):
         task = missions.get(payload.get("mission_id"))
@@ -132,7 +129,8 @@ async def main():
     # Lancement du bus IPC et de la boucle du cerveau
     await asyncio.gather(
         global_bus.start_server(),
-        brain.run_continuous_loop()
+        brain.run_continuous_loop(),
+        schedule_queue(store,missions,capacity,execute_mission,queue_wake)
     )
 
 if __name__ == "__main__":

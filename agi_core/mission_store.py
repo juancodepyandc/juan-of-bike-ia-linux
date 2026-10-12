@@ -43,6 +43,8 @@ class MissionStore:
                     payload TEXT NOT NULL, updated REAL NOT NULL
                 );
             """)
+            if 'started_at' not in {row['name'] for row in db.execute('PRAGMA table_info(missions)')}:
+                db.execute('ALTER TABLE missions ADD COLUMN started_at REAL')
             if 'replay_from' not in {row['name'] for row in db.execute('PRAGMA table_info(missions)')}:
                 db.execute('ALTER TABLE missions ADD COLUMN replay_from INTEGER NOT NULL DEFAULT 0')
         if os.name != "nt":
@@ -67,7 +69,7 @@ class MissionStore:
         finally:
             db.close()
 
-    def create(self, payload: dict, idempotency_key: str = "") -> tuple[dict, bool]:
+    def create(self, payload: dict, idempotency_key: str = "", *, queued=False) -> tuple[dict, bool]:
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         fingerprint_data = {key: value for key,value in payload.items() if key != 'history'}
         if 'requested_model' in fingerprint_data:
@@ -83,7 +85,7 @@ class MissionStore:
                     return self._get(db, old["id"]), False
             mid = "mis_" + uuid4().hex[:16]
             db.execute("INSERT INTO missions(id,payload,status,created,idem,fingerprint) VALUES(?,?,?,?,?,?)",
-                       (mid, canonical, "planning", now, idempotency_key or None, fingerprint))
+                       (mid, canonical, "queued" if queued else "planning", now, idempotency_key or None, fingerprint))
             return self._get(db, mid), True
 
     def _get(self, db, mid):
@@ -107,6 +109,48 @@ class MissionStore:
         with self.connect() as db:
             ids = db.execute("SELECT id FROM missions ORDER BY created DESC LIMIT ?", (min(max(int(limit), 1), 200),)).fetchall()
             return [self._get(db, row[0]) for row in ids]
+
+    def enqueue(self, mid):
+        with self.connect(write=True) as db:
+            return db.execute("UPDATE missions SET status='queued' WHERE id=? AND status IN ('planning','queued') AND owner IS NULL",(mid,)).rowcount==1
+
+    def queued(self,limit=200):
+        with self.connect() as db:
+            ids=db.execute("SELECT id FROM missions WHERE status='queued' AND json_extract(payload,'$.project_kind') IS NOT 'frontend' ORDER BY created,id LIMIT ?",(limit,)).fetchall()
+            return [self._get(db,r['id']) for r in ids]
+
+    def cancel_queued(self,mid):
+        with self.connect(write=True) as db:
+            changed=db.execute("UPDATE missions SET status='stopped',finished=?,result='Annulé avant démarrage' WHERE id=? AND status='queued' AND owner IS NULL AND started_at IS NULL",(time.time(),mid)).rowcount
+            if changed:
+                seq=db.execute('SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE mission=?',(mid,)).fetchone()[0]
+                event={'type':'mission_complete','stopped':True,'result':'Annulé avant démarrage','ts':time.time()};uid=uuid4().hex;event['event_id']=uid
+                db.execute('INSERT INTO events VALUES(?,?,?,?)',(mid,seq,uid,json.dumps(event)))
+            return bool(changed)
+
+    def scheduling(self,mid):
+        """Measured history, never an invented estimate of model reasoning."""
+        import statistics
+        with self.connect() as db:
+            item=self._get(db,mid)
+            if not item:return {}
+            active=[self._get(db,r['id']) for r in db.execute("SELECT id FROM missions WHERE status IN ('queued','running','stopping') ORDER BY created,id")]
+            def family(p):
+                if p.get('project_kind')=='frontend':return 'frontend:'+p.get('module','unknown')
+                return 'engineering' if p.get('project_kind')=='engineering' or 'engineering-design' in p.get('workspace','') else 'mission'
+            def estimate(job):
+                rows=db.execute("SELECT payload,started_at,finished FROM missions WHERE status='completed' AND started_at IS NOT NULL AND finished>started_at ORDER BY finished DESC LIMIT 100").fetchall()
+                durations=[r['finished']-r['started_at'] for r in rows if (lambda p:p.get('model')==job['payload'].get('model') and family(p)==family(job['payload']))(json.loads(r['payload']))][:20]
+                if len(durations)<3:return None,len(durations)
+                return statistics.median(durations),len(durations)
+            own,n=estimate(item);elapsed=max(0,(item['finished'] or time.time())-item['started_at']) if item['started_at'] else 0
+            ahead=[j for j in active if j['id']!=mid and (j['status'] in {'running','stopping'} or (j['created'],j['id'])<(item['created'],item['id']))]
+            if item['status'] not in {'queued','running','stopping'}:ahead=[]
+            waits=[]
+            for job in ahead:
+                total,_=estimate(job);used=max(0,time.time()-job['started_at']) if job['started_at'] else 0
+                waits.append(max(0,total-used) if total is not None and used<total else None)
+            return {'queue_position':1+sum(j['status']=='queued' for j in ahead) if item['status']=='queued' else 0,'ahead_count':len(ahead),'elapsed_seconds':elapsed,'wait_seconds':sum(waits) if all(v is not None for v in waits) else None,'estimated_duration_seconds':own,'remaining_seconds':own-elapsed if own is not None and elapsed<own and item['status']=='running' else None,'estimate_sample_count':n,'estimate_basis':'Median of completed same-model/same-family runs; variable project complexity, no guarantee.' if own is not None else 'Insufficient measured comparable runs.'}
 
     def append(self, mid: str, event: dict) -> int | None:
         event = dict(event)
@@ -143,12 +187,17 @@ class MissionStore:
                 "SELECT seq,payload FROM events WHERE mission=? AND seq>? ORDER BY seq LIMIT ?",
                 (mid, after, limit)).fetchall()]
 
-    def claim(self, mid: str, owner: str, seconds=45) -> bool:
+    def claim(self, mid: str, owner: str, seconds=45, *, serialize=False) -> bool:
         with self.connect(write=True) as db:
             mission = self._get(db, mid)
             if not mission or mission["status"] in TERMINAL or ((mission["lease"] or 0) > time.time()):
                 return False
-            db.execute("UPDATE missions SET owner=?,lease=?,status='running' WHERE id=?", (owner, time.time()+seconds, mid))
+            if serialize:
+                capacity=int(os.environ.get('AURORA_CONCURRENT_MISSIONS','1'))
+                occupied=db.execute("SELECT COUNT(*) FROM missions WHERE id<>? AND status IN ('running','stopping') AND (lease>? OR json_extract(payload,'$.project_kind')='frontend')",(mid,time.time())).fetchone()[0]
+                earlier=db.execute("SELECT COUNT(*) FROM missions WHERE status='queued' AND (created<? OR (created=? AND id<?))",(mission['created'],mission['created'],mid)).fetchone()[0]
+                if occupied>=capacity or (capacity==1 and earlier):return False
+            db.execute("UPDATE missions SET owner=?,lease=?,status='running',started_at=COALESCE(started_at,?) WHERE id=?", (owner, time.time()+seconds,time.time(), mid))
             return True
 
     def renew(self, mid, owner, seconds=45):
@@ -169,7 +218,7 @@ class MissionStore:
                 item['payload']['model'] = model
                 db.execute('UPDATE missions SET payload=? WHERE id=?',
                            (json.dumps(item['payload'],ensure_ascii=False),mid))
-            db.execute("UPDATE missions SET status='planning',created=?,finished=NULL,result=NULL,owner=NULL,lease=NULL,replay_from=? WHERE id=?",
+            db.execute("UPDATE missions SET status='planning',created=?,finished=NULL,result=NULL,owner=NULL,lease=NULL,started_at=NULL,replay_from=? WHERE id=?",
                        (time.time(), cursor, mid))
             return item, cursor
 

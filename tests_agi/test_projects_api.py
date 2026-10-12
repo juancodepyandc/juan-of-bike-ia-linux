@@ -1,0 +1,92 @@
+from flask import Flask,Blueprint
+from agi_core.mission_store import MissionStore
+from application.projects_api import register_project_routes
+
+
+def make(tmp_path,allowed=True):
+    app=Flask(__name__);bp=Blueprint('projects',__name__);store=MissionStore(tmp_path/'projects.sqlite3');register_project_routes(bp,allowed=lambda:allowed,store=store);app.register_blueprint(bp);return app.test_client(),store
+
+
+def test_public_admission_and_history_forbidden(tmp_path):
+    c,_=make(tmp_path,False)
+    assert c.get('/api/projects').status_code==403
+    assert c.post('/api/projects/admission',json={}).status_code==403
+
+
+def test_all_managed_modules_share_admission_with_engineering_and_keep_fifo(tmp_path):
+    c,store=make(tmp_path);payload={'request_id':'request-one','title':'Image contrôlée','module':'image','model':'fixture'}
+    first=c.post('/api/projects/admission',json=payload).json
+    assert c.post('/api/projects/admission',json=payload).json['id']==first['id']
+    second=c.post('/api/projects/admission',json={**payload,'request_id':'request-two','module':'video'}).json
+    assert c.post('/api/projects/'+first['id']+'/admission',json={}).json['status']=='running'
+    assert c.post('/api/projects/'+second['id']+'/admission',json={}).json['status']=='queued'
+    engineering=store.create({'request':'Engineering','model':'fixture','project_kind':'engineering'},queued=True)[0]
+    assert not store.claim(engineering['id'],'daemon',serialize=True)
+    assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'completed'}).json['status']=='completed'
+    assert not store.claim(engineering['id'],'daemon',serialize=True)  # Older queued video goes first.
+    assert c.post('/api/projects/'+second['id']+'/admission',json={}).json['status']=='running'
+    assert c.post('/api/projects/'+second['id']+'/finish',json={'status':'failed'}).json['status']=='failed'
+    assert store.claim(engineering['id'],'daemon',serialize=True)
+    assert all(m['payload'].get('project_kind')!='frontend' for m in store.queued())
+    assert len(c.get('/api/projects').json['projects'])==3
+
+
+def test_conflicting_idempotence_and_nonfrontend_finish_are_rejected(tmp_path):
+    c,store=make(tmp_path);payload={'request_id':'request-one','title':'Project','module':'3d'}
+    c.post('/api/projects/admission',json=payload)
+    assert c.post('/api/projects/admission',json={**payload,'title':'Changed'}).status_code==409
+    mission=store.create({'request':'Actual mission','model':'fixture'},queued=True)[0]
+    assert c.post('/api/projects/'+mission['id']+'/finish',json={'status':'completed'}).status_code==404
+    assert c.post('/api/projects/admission',json={'request_id':'invalid','title':'P','module':'unknown'}).status_code==400
+
+
+def test_cancel_is_atomic_before_start_and_never_releases_running_work(tmp_path):
+    c,store=make(tmp_path)
+    first=c.post('/api/projects/admission',json={'request_id':'request-one','title':'P','module':'image'}).json
+    assert c.post('/api/projects/'+first['id']+'/cancel',json={}).status_code==200
+    assert c.post('/api/projects/'+first['id']+'/admission',json={}).json['status']=='stopped'
+    second=c.post('/api/projects/admission',json={'request_id':'request-two','title':'P2','module':'image'}).json
+    assert c.post('/api/projects/'+second['id']+'/admission',json={}).json['status']=='running'
+    assert c.post('/api/projects/'+second['id']+'/cancel',json={}).status_code==409
+    assert store.get(second['id'])['status']=='running'
+
+
+def test_repeated_ticket_never_grants_two_frontend_executors(tmp_path):
+    c,store=make(tmp_path);p=c.post('/api/projects/admission',json={'request_id':'request-same','title':'P','module':'3d'}).json
+    url='/api/projects/'+p['id']+'/admission'
+    assert c.post(url,json={'executor':'a'*32}).json['granted']
+    assert not c.post(url,json={'executor':'b'*32}).json['granted']
+    assert c.post('/api/projects/'+p['id']+'/finish',json={'status':'completed','executor':'b'*32}).status_code==409
+    assert store.get(p['id'])['status']=='running'
+    assert c.post('/api/projects/'+p['id']+'/finish',json={'status':'completed','executor':'a'*32}).status_code==200
+
+
+def test_finish_requires_execution_and_preserves_terminal_outcome(tmp_path):
+    c,store=make(tmp_path)
+    p=c.post('/api/projects/admission',json={'request_id':'request-final','title':'P','module':'image'}).json
+    finish='/api/projects/'+p['id']+'/finish'
+    assert c.post(finish,json={'status':'completed'}).status_code==409
+    assert store.get(p['id'])['status']=='queued'
+    assert c.post('/api/projects/'+p['id']+'/admission',json={'executor':'a'*32}).json['granted']
+    assert c.post(finish,json={'status':'completed','executor':'a'*32}).status_code==200
+    assert c.post(finish,json={'status':'completed','executor':'a'*32}).status_code==200
+    assert c.post(finish,json={'status':'failed','executor':'a'*32}).status_code==409
+    assert store.get(p['id'])['status']=='completed'
+
+
+def test_expired_unknown_execution_survives_reopen_without_second_executor(tmp_path):
+    c,store=make(tmp_path)
+    first=c.post('/api/projects/admission',json={'request_id':'request-expired','title':'P','module':'image'}).json
+    assert c.post('/api/projects/'+first['id']+'/admission',json={'executor':'a'*32}).json['granted']
+    # Simulate a lost controller / PC restart after the pipeline started.
+    import sqlite3
+    with sqlite3.connect(store.path) as db:
+        db.execute('UPDATE missions SET lease=0 WHERE id=?',(first['id'],))
+    c,reopened=make(tmp_path)
+    assert reopened.get(first['id'])['status']=='interrupted'
+    assert not c.post('/api/projects/'+first['id']+'/admission',json={'executor':'b'*32}).json['granted']
+    second=c.post('/api/projects/admission',json={'request_id':'request-after','title':'P2','module':'video'}).json
+    assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['status']=='queued'
+    # Only the original executor may report the actual outcome, even after reconnect.
+    assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'failed','executor':'a'*32}).status_code==200
+    assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['granted']

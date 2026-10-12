@@ -27,3 +27,10 @@ def test_cancel_and_expiry_fail_closed():
     popup=DesktopApproval(lambda i:item,lambda *a:approved.append(a),declined.append,prompt=lambda *a:None)
     popup.request('cancel');popup.queue.join();assert declined==['cancel'] and not approved
     item['expires']=time.time()-1;popup.request('expired');popup.queue.join();assert declined==['cancel']
+
+
+def test_external_approval_closes_prompt_without_revoking_pending_claim():
+    item={'name':'Appareil','expires':time.time()+10,'approved':False};declined=[]
+    def prompt(*a):item['approved']=True;return None
+    popup=DesktopApproval(lambda i:item,lambda *a:False,declined.append,prompt=prompt)
+    popup.request('external');popup.queue.join();assert item['approved'] and not declined

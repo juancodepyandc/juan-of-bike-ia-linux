@@ -1058,7 +1058,7 @@ class AutonomousMissionAgent:
         if not recent:return None
         # Failed formatting is not a lifetime diagnosis quota. Renew it only after
         # measured new criterion verification; merely renaming or rewriting outputs is insufficient.
-        verified=set(self.state.get('verified',[]))
+        verified=set(self.state.get('verified',[]))|set(self.state.get('recovery_measured_milestones',[]))
         baseline=set(self.state.get('recovery_verified_baseline',[]))
         if verified-baseline:
             self.state['recovery_budget_start']=self.state.get('recovery_attempts_used',0)
@@ -1668,6 +1668,7 @@ class AutonomousMissionAgent:
                     verification = result if name=='verify' else result.get('verification') if name=='spawn_agent' and ok else None
                     if isinstance(verification,dict) and isinstance(verification.get('checks'),list):
                         self._record_verification(verification,number)
+                        self.state['recovery_measured_milestones']=sorted(set(self.state.get('recovery_measured_milestones',[]))|set(self.state['verified']))
                     if audit_dispatch:
                         self.state['request_audit'] = {'passed':ok and result['passed'],'number':number,
                             'criteria':list(self.state['criteria']),'checks':args['checks'],

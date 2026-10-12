@@ -52,11 +52,12 @@ def test_resume_when_daemon_offline_retains_retryable_state(tmp_path):
     app=Flask(__name__);bp=Blueprint('offline',__name__);store=MissionStore(tmp_path/'missions.sqlite3');availability=iter([False,False,True])
     register_design_routes(bp,tmp_path,local=lambda:True,extension=lambda:(False,None,None),model_default=lambda:'fixture',store=store,dispatch=lambda *a:next(availability))
     app.register_blueprint(bp);c=app.test_client();d=c.post('/api/3d/design',json={'objective':'Projet durable','request_id':'offline-123'}).json
-    assert d['state']=='failed'
+    assert d['state']=='queued'
     path='/api/3d/design/'+d['id']
-    assert c.post(path+'/resume',json={}).status_code==503
-    assert c.get(path).json['state']=='failed'
-    assert c.post(path+'/resume',json={}).status_code==200
+    assert c.post(path+'/resume',json={}).status_code==409
+    assert c.get(path).json['state']=='queued'
+    other=c.post('/api/3d/design',json={'objective':'Second projet','request_id':'offline-456'}).json
+    assert other['state']=='queued' and other['scheduling']['queue_position']==2
     assert c.get(path).json['mission_id']==d['mission_id']
 
 

@@ -36,7 +36,10 @@ def build_project(spec, root='.', *, require_sources=False):
         if not path.is_relative_to(root) or path.suffix.lower()!='.stl' or not path.is_file(): raise ValueError('Part STL must exist inside the project.')
         mesh=trimesh.load_mesh(path)
         if not mesh.is_volume or not np.isfinite(mesh.vertices).all() or len(mesh.faces)>2_000_000: raise ValueError('Each printable part must be a closed valid solid.')
-        if np.any(mesh.extents>usable+1e-4): raise ValueError(f"{part['id']}: does not fit the declared printer; redesign, orient or split it.")
+        manufacturing=part.get('manufacturing','print')
+        if manufacturing not in {'print','purchased'}:raise ValueError('Part manufacturing must be print or purchased.')
+        if manufacturing=='purchased' and (part.get('geometry_basis') not in {'manufacturer_cad','measured','assumed_envelope'} or not isinstance(part.get('source_reference'),str) or not part['source_reference'].strip()):raise ValueError('Purchased component requires geometry provenance and a reference; never silently print a motor, sensor or fixing.')
+        if manufacturing=='print' and np.any(mesh.extents>usable+1e-4): raise ValueError(f"{part['id']}: does not fit the declared printer; redesign, orient or split it.")
         transform=np.asarray(part.get('assembly_matrix_mm',np.eye(4).tolist()),dtype=float)
         if transform.shape!=(4,4) or not np.isfinite(transform).all() or not np.allclose(transform[3],[0,0,0,1]) or not np.allclose(transform[:3,:3].T@transform[:3,:3],np.eye(3),atol=1e-6) or not np.isclose(np.linalg.det(transform[:3,:3]),1): raise ValueError('Rigid placement matrices required; no hidden scaling.')
         palette=[[120,180,240,255],[245,170,90,255],[110,210,165,255],[200,145,235,255],[240,130,150,255],[225,215,100,255]]
@@ -51,10 +54,10 @@ def build_project(spec, root='.', *, require_sources=False):
         cursor=float(spread.bounds[1,0]+gap)
         exploded.add_geometry(spread,node_name=node,geom_name=node)
         printable=mesh.copy();printable.apply_translation(-mesh.bounds[0])
-        printable_dir=root/'printable';printable_dir.mkdir(exist_ok=True)
+        printable_dir=root/('printable' if manufacturing=='print' else 'components');printable_dir.mkdir(exist_ok=True)
         print_path=printable_dir/(node+'.stl');printable.export(print_path)
         print_transform=transform @ trimesh.transformations.translation_matrix(mesh.bounds[0])
-        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':float(mesh.volume),'watertight':True,'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist(),'source_origin_mm':mesh.bounds[0].tolist()})
+        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':float(mesh.volume),'watertight':True,'manufacturing':manufacturing,'geometry_basis':part.get('geometry_basis','generated_printable'),'source_reference':part.get('source_reference'),'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist(),'source_origin_mm':mesh.bounds[0].tolist()})
         source_files.extend([path,print_path])
     checked_bom=[]
     for item in bom:
@@ -63,12 +66,14 @@ def build_project(spec, root='.', *, require_sources=False):
         if not isinstance(references,list) or any(ref not in ids for ref in references): raise ValueError('BOM references an unknown part.')
         if not isinstance(item.get('specification'),str) or not item['specification'].strip(): raise ValueError('BOM technical specification required; dimensions, ratings or reference cannot be silently omitted.')
         checked_bom.append({**item,'validation':'proposed; verify manufacturer data and fit before purchase'})
+    purchased={p['design_id'] for p in measured if p['manufacturing']=='purchased'}
+    if purchased-{ref for i in checked_bom for ref in i.get('part_ids',[])}:raise ValueError('Every purchased component must be referenced by the BOM.')
     for step in steps:
         if not isinstance(step,dict) or not isinstance(step.get('instruction'),str) or any(ref not in ids for ref in step.get('part_ids',[])): raise ValueError('Assembly steps must reference existing parts.')
     blockers=spec.get('blockers',[]);assumptions=spec.get('assumptions',[])
     if not all(isinstance(v,list) and all(isinstance(x,str) for x in v) for v in [blockers,assumptions]): raise ValueError('Assumptions and blockers must be explicit text lists.')
     report={'schema':'aurora.engineering-project.v1','title':title,'objective':objective,'units':'mm','parts':measured,'bom':checked_bom,'assembly_steps':steps,'constraints':spec.get('constraints',[]),'assumptions':assumptions,'blockers':blockers,'design_tests':spec.get('tests',[]),'feasibility':'requires_resolution' if blockers else 'prototype_requires_physical_validation','physical_fit_validated':False,'measured_checks':{'closed_volumes':True,'printer_fit':True,'rigid_placements':True,'references_resolved':True},'sources':spec.get('sources',[])}
-    from application.engineering_motion import validate_joints
+    from application.engineering_motion import validate_joints,coordinates
     id_map={p['design_id']:p['id'] for p in measured}
     motion=[{**j,'parent':id_map.get(j.get('parent'),j.get('parent')),'child':id_map.get(j.get('child'),j.get('child'))} for j in spec.get('mechanism_joints',[])]
     report['mechanism_joints']=validate_joints(measured,motion)
@@ -80,7 +85,8 @@ def build_project(spec, root='.', *, require_sources=False):
             anchor=closure.get(side+'_anchor_mm')
             if part and isinstance(anchor,list) and len(anchor)==3:closure[side+'_anchor_mm']=(np.asarray(anchor,dtype=float)-np.asarray(part['source_origin_mm'])).tolist()
     from application.engineering_motion import solve_closures
-    _,_,report['closure_at_home']=solve_closures(measured,report['mechanism_joints'],{},report['closure_constraints'])
+    _,resolved_home,report['closure_at_home']=solve_closures(measured,report['mechanism_joints'],{},report['closure_constraints'])
+    if any(abs(resolved_home.get(j['id'],j['home'])-j['home'])>1e-4 for j in coordinates(report['mechanism_joints'])):raise ValueError('The declared rest assembly requires different passive positions. Revise the actual rest matrices and joint frames using the calculated closure, then rerun; packaging cannot silently replace the declared assembly.')
     if not report['closure_at_home']['converged']:raise ValueError('The declared mechanism does not close at home; inspect residual and revise its geometry or constraints.')
     report['fastening_assessment']=[]
     if spec.get('fastening_candidates'):
@@ -89,13 +95,15 @@ def build_project(spec, root='.', *, require_sources=False):
         report['fastening_assessment']=rank_fastening_locations(measured,root,proposals,spec.get('assembly_views',[]))
     filament_plan=[]
     for part,source in zip(measured,parts):
+        if part['manufacturing']!='print':continue
         color=source.get('filament_color','#eeeeee')
         if not isinstance(color,str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',color):raise ValueError('Physical filament color must be #RRGGBB.')
         filament_plan.append({'part':part['id'],'name':str(source.get('filament') or 'Matière/couleur à confirmer'),'color':color.lower()})
     report['filament_plan']=filament_plan
-    if measured:
+    printed=[p for p in measured if p['manufacturing']=='print']
+    if printed:
         from application.engineering_mesh import print_plates
-        plate_report={'profile':{'bed_mm':bed.tolist(),'margin_mm':margin},'parts':measured,'fabrication':{'filament_plan':filament_plan}}
+        plate_report={'profile':{'bed_mm':bed.tolist(),'margin_mm':margin},'parts':printed,'fabrication':{'filament_plan':filament_plan}}
         report['print_plates']=print_plates(root,plate_report)
     else:report['print_plates']=[]
     lines=[f'# {title}',objective,'','## État','Résoudre les blocages avant fabrication.' if blockers else 'Prototype géométriquement vérifié. Validation mécanique, électrique et essai physique nécessaires.','','## Contraintes et hypothèses']
@@ -103,7 +111,8 @@ def build_project(spec, root='.', *, require_sources=False):
     lines += ['','## Architecture et composants','| Élément | Quantité | Spécification / dimensions | Pièces concernées |','|---|---:|---|---|']
     def cell(value):return str(value).replace('|','\\|').replace('\n',' ')
     lines += [f"| {cell(i['name'])} | {i['quantity']} | {cell(i['specification'])} | {cell(', '.join(i.get('part_ids',[])))} |" for i in checked_bom]
-    lines += ['','## Pièces imprimables']+[f"- {p['name']} ({p['design_id']}) : {' × '.join(f'{v:.2f}' for v in p['dimensions_mm'])} mm ; volume {p['volume_mm3']:.2f} mm³ ; fichier `{p['file']}`." for p in measured]
+    lines += ['','## Pièces imprimables']+[f"- {p['name']} ({p['design_id']}) : {' × '.join(f'{v:.2f}' for v in p['dimensions_mm'])} mm ; volume {p['volume_mm3']:.2f} mm³ ; fichier `{p['file']}`." for p in printed]
+    lines += ['','## Composants achetés et enveloppes']+[f"- {p['name']} : géométrie {p['geometry_basis']} (provenance déclarée), référence {p['source_reference']}, fichier `{p['file']}` ; exclu des plaques d’impression." for p in measured if p['manufacturing']=='purchased']
     lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
     lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
     lines += ['','![Projection des pièces réellement produites](representation.svg)','','## Montage']+[f"{i+1}. {step['instruction']}" for i,step in enumerate(steps)]
@@ -125,6 +134,7 @@ def build_project(spec, root='.', *, require_sources=False):
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
         mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates']}
         manifest['mechanism_joints']=report['mechanism_joints']
+        manifest['motion_controls']=coordinates(report['mechanism_joints'])
         manifest['closure_constraints']=report['closure_constraints']
         (root/'assembly.json').write_text(json.dumps(manifest,ensure_ascii=False),encoding='utf-8')
         shutil.copyfile(Path(__file__).with_name('engineering_viewer.html'),root/'viewer.html')

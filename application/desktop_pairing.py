@@ -34,6 +34,21 @@ def ask_code(name, timeout, *, platform=None, run=subprocess.run):
     return (result.stdout.strip() or None) if result.returncode==0 else None
 
 
+def _cancellable_run(command,*,pending,input=None,capture_output=True,text=True,timeout=300):
+    process=subprocess.Popen(command,stdin=subprocess.PIPE if input is not None else None,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=text)
+    deadline=time.monotonic()+timeout
+    try:
+        while True:
+            if not pending() or time.monotonic()>=deadline:
+                process.kill();out,err=process.communicate();return subprocess.CompletedProcess(command,1,out,err)
+            try:
+                out,err=process.communicate(input=input,timeout=min(.3,max(.01,deadline-time.monotonic())))
+                return subprocess.CompletedProcess(command,process.returncode,out,err)
+            except subprocess.TimeoutExpired:input=None
+    finally:
+        if process.poll() is None:process.kill();process.communicate()
+
+
 class DesktopApproval:
     def __init__(self, lookup, approve, decline, *, prompt=ask_code):
         self.lookup=lookup;self.approve=approve;self.decline=decline;self.prompt=prompt
@@ -55,10 +70,18 @@ class DesktopApproval:
                 if remaining<=0:continue
                 name=item['name']
                 while remaining>0:
-                    try:code=self.prompt(name,remaining)
+                    try:
+                        if self.prompt is ask_code:
+                            def pending():
+                                current=self.lookup(identity)
+                                return bool(current and not current['approved'] and current['expires']>time.time())
+                            code=self.prompt(name,remaining,run=lambda command,**kwargs:_cancellable_run(command,pending=pending,**kwargs))
+                        else:code=self.prompt(name,remaining)
                     except (OSError,subprocess.SubprocessError):break  # Headless desktop: local manager remains available.
                     if code is None:
-                        self.decline(identity);break
+                        current=self.lookup(identity)
+                        if current and not current['approved']:self.decline(identity)
+                        break
                     if code and self.approve(identity,code):break
                     item=self.lookup(identity)
                     if not item or item['approved']:break
