@@ -56,7 +56,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import LyraCharacter from './voice/LyraCharacter.tsx'
 import remarkGfm from 'remark-gfm'
 const remarkPlugins = [remarkGfm]
@@ -3191,6 +3191,33 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
     [turn.content, displayedLength],
   )
 
+  // ⚡ Bolt: Memoize components object to prevent ReactMarkdown from re-rendering
+  // 📊 Impact: Prevents continuous re-renders of Markdown during rapid chat updates.
+  const markdownComponents = useMemo<Components>(() => ({
+    code({ className, children, ...props }) {
+      const isInline = !className
+      return isInline
+        ? <code className="px-1 py-0.5 rounded bg-black/40 text-violet-200 text-[12px]" {...props}>{children}</code>
+        : <code className={className} {...props}>{children}</code>
+    },
+    a({ children, href, ...props }) {
+      if (href?.startsWith('cowork://explain/')) {
+        const notion = safeDecodeURIComponent(href.slice('cowork://explain/'.length))
+        return (
+          <button
+            type="button"
+            className="inline-flex items-center rounded-full border border-violet-400/25 bg-violet-500/10 px-2 py-0.5 text-[12px] font-medium text-violet-200 hover:bg-violet-500/20 hover:text-violet-100"
+            onClick={() => onQuickPrompt?.(buildExplainNotionPrompt(notion))}
+            title={`Expliquer: ${notion}`}
+          >
+            {children}
+          </button>
+        )
+      }
+      return <a target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline" href={href} {...props}>{children}</a>
+    },
+  }), [onQuickPrompt])
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
       <div className={`max-w-[88%] flex flex-col gap-1.5`}>
@@ -3206,30 +3233,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
           ) : turn.content ? (
             <ReactMarkdown
               remarkPlugins={remarkPlugins}
-              components={{
-                code({ className, children, ...props }) {
-                  const isInline = !className
-                  return isInline
-                    ? <code className="px-1 py-0.5 rounded bg-black/40 text-violet-200 text-[12px]" {...props}>{children}</code>
-                    : <code className={className} {...props}>{children}</code>
-                },
-                a({ children, href, ...props }) {
-                  if (href?.startsWith('cowork://explain/')) {
-                    const notion = safeDecodeURIComponent(href.slice('cowork://explain/'.length))
-                    return (
-                      <button
-                        type="button"
-                        className="inline-flex items-center rounded-full border border-violet-400/25 bg-violet-500/10 px-2 py-0.5 text-[12px] font-medium text-violet-200 hover:bg-violet-500/20 hover:text-violet-100"
-                        onClick={() => onQuickPrompt?.(buildExplainNotionPrompt(notion))}
-                        title={`Expliquer: ${notion}`}
-                      >
-                        {children}
-                      </button>
-                    )
-                  }
-                  return <a target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline" href={href} {...props}>{children}</a>
-                },
-              }}
+              components={markdownComponents}
             >{visibleMarkdown}</ReactMarkdown>
           ) : (
             <span className="text-white/40 italic">(reponse vide)</span>
