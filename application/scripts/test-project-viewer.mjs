@@ -5,10 +5,11 @@ import {fileURLToPath} from 'node:url'
 import {chromium,devices} from 'playwright'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
 const server=spawn(process.env.PYTHON||(process.platform==='win32'?'python':'python3'),[path.join(root,'tests_agi/project_viewer_fixture.py')],{cwd:root,env:{...process.env,PYTHONPATH:[root,process.env.PYTHONPATH].filter(Boolean).join(path.delimiter)}})
-server.stderr.on('data',()=>{})
+let fixtureErrors=''
+server.stderr.on('data',chunk=>{fixtureErrors=(fixtureErrors+chunk.toString()).slice(-6000)})
 let browser
 try{
- const url=await new Promise((resolve,reject)=>{let buffer='';const timeout=setTimeout(()=>reject(Error('Fixture startup timed out')),30000);server.stdout.on('data',chunk=>{buffer+=chunk;const line=buffer.split('\n')[0];try{const data=JSON.parse(line);clearTimeout(timeout);resolve(data.url)}catch{}});server.once('exit',code=>{clearTimeout(timeout);reject(Error('Fixture exited: '+code))})})
+ const url=await new Promise((resolve,reject)=>{let buffer='';const timeout=setTimeout(()=>reject(Error('Fixture startup timed out')),30000);server.stdout.on('data',chunk=>{buffer+=chunk;const line=buffer.split('\n')[0];try{const data=JSON.parse(line);clearTimeout(timeout);resolve(data.url)}catch{}});server.once('exit',code=>{clearTimeout(timeout);reject(Error('Fixture exited: '+code+'\n'+fixtureErrors))})})
  browser=await chromium.launch({headless:true,args:["--use-angle=swiftshader","--enable-unsafe-swiftshader"]})
  for(const device of ['Pixel 7','iPhone 13','iPad Mini','Desktop Chrome']){
   const context=await browser.newContext({...devices[device]});const page=await context.newPage(),errors=[]

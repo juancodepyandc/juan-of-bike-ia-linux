@@ -13,10 +13,10 @@ with TemporaryDirectory(prefix='aurora-project-viewer-') as temp:
     mission=store.create({'request':'Inspection de géométrie 3D contrôlée','workspace':str(root),'model':'QA-no-inference'})[0]
     folder=root/'.transfer_to_client'/mission['id'];folder.mkdir(parents=True)
     scene=trimesh.Scene()
-    sphere=trimesh.creation.icosphere(subdivisions=2);sphere.visual.face_colors=[170,70,160,255]
-    torus=trimesh.creation.torus(major_radius=1.3,minor_radius=.15);torus.visual.face_colors=[80,170,220,255]
+    sphere=trimesh.creation.icosphere(subdivisions=2);sphere.visual.vertex_colors=[170,70,160,255]
+    torus=trimesh.creation.torus(major_radius=1.3,minor_radius=.15);torus.visual.vertex_colors=[80,170,220,255]
     scene.add_geometry(sphere,node_name='closed-sphere');scene.add_geometry(torus,node_name='closed-torus')
-    marker=trimesh.creation.box(extents=[.4,.5,.7]);marker.apply_translation([1.6,.4,.3]);marker.visual.face_colors=[240,160,40,255]
+    marker=trimesh.creation.box(extents=[.4,.5,.7]);marker.apply_translation([1.6,.4,.3]);marker.visual.vertex_colors=[240,160,40,255]
     scene.add_geometry(marker,node_name='asymmetric-inspection-marker')
     scene.export(folder/'measured.glb')
     store.append(mission['id'],{'type':'mission_complete','result':'Controlled geometry fixture'})
