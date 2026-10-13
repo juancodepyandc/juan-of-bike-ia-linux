@@ -12,6 +12,7 @@ import type { AvatarEntry } from '../types/app.ts'
 import { runForgePipeline, type ForgeResult, type ForgeResume, type ForgeStepId } from '../services/characterForge.ts'
 import { useAppStore } from './appStore.ts'
 import { acquireProject } from '../utils/projectAdmission.ts'
+import { cancelPythonJob } from '../services/pythonJobClient.ts'
 
 export type QueueStatus = 'queued' | 'running' | 'done' | 'error'
 
@@ -66,9 +67,14 @@ export const useForgeQueueStore = create<ForgeQueueState>()(
         void get()._tick()
         return id
       },
-      cancel: (id) => set((s) => ({
-        jobs: s.jobs.map((j) => (j.id === id && j.status === 'queued' ? { ...j, status: 'error', error: 'Annulé' } : j)),
-      })),
+      cancel: (id) => set((s) => {
+        const job = s.jobs.find(j => j.id === id)
+        if (job?.status === 'running' && job.artifacts?.referenceJobId) void cancelPythonJob(job.artifacts?.referenceJobId)
+        if (job?.status === 'running' && job.artifacts?.layersJobId) void cancelPythonJob(job.artifacts?.layersJobId)
+        return {
+        jobs: s.jobs.map((j) => (j.id === id && (j.status === 'queued' || j.status === 'running') ? { ...j, status: 'error', error: 'Annulé' } : j)),
+      }
+      }),
       remove: (id) => set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) })),
       saveJob: (id, entry) => {
         set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, saved: true } : j)) }))

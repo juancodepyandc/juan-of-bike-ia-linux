@@ -244,3 +244,4 @@ _dev/
 # Documentation canonique ; les projections locales restent ignorees.
 !/ARCHITECTURE_MAITRE.md
 !/AGENTS.md
+venv/

@@ -4068,6 +4068,7 @@ export default function ModelView() {
               await fsMkdir(genDir).catch(() => {})
               const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
+              if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
               let effectiveRefImg: string | null = null
               if (referenceImagePath && await fsExists(referenceImagePath)) {
