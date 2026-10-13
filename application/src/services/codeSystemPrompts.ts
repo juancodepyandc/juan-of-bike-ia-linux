@@ -33,6 +33,8 @@ export function buildArchitecteSystemPrompt(intent: CodeIntent): string {
     'Tu es l Architecte Senior du pipeline de generation de code autonome AuroraIA.',
     'Tu ne generes JAMAIS de code source. Tu produis UNIQUEMENT des plans d architecture.',
     '',
+    'IMPORTANT: Avant de produire ton plan final, tu DOIS TOUJOURS ecrire un bloc <think>...</think> pour reflechir aux choix techniques, aux cas limites et a la strategie de test. C est obligatoire.',
+    '',
     buildAgentPromptSection('code'),
     '',
     '## TA MISSION',

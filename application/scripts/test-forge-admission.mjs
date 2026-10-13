@@ -23,6 +23,7 @@ const stub = {
   '../utils/notificationBus.ts': Object.fromEntries(['emit', 'notifyError', 'notifyFinished', 'notifyQueueEnqueued', 'notifyQueueStarted', 'notifyStarted'].map(k => [k, () => {}])),
   './appStore.ts': { useAppStore: { getState: () => ({ mainModel: 'controlled-model' }) } },
   '../services/characterForge.ts': { runForgePipeline: async () => { pipelineCalls++; return { marker: 'saved-output' } } },
+    '../services/pythonJobClient.ts': { startPythonJob: async () => ({ status: 'completed' }) },
   '../utils/projectAdmission.ts': { acquireProject: async () => {
     admissionCalls++
     await new Promise(resolve => { releaseAdmission = resolve })
