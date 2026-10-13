@@ -5297,7 +5297,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     elif _optimize_textured_mesh is not None:
         try:
             opt_out = str(output_dir / f"{run_id}_mesh_opt.glb")
-            opt_res = _optimize_textured_mesh(rescue["final_mesh"], opt_out, kind)
+            opt_res = _optimize_textured_mesh(final_mesh_path, opt_out, kind)
             audit.append({"stage": "optimize_textured_mesh", **opt_res})
             if opt_res.get("ok") and opt_res.get("changed") and Path(opt_out).is_file():
                 final_mesh_path = opt_out

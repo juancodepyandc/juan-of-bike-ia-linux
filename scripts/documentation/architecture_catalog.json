@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2161,
- "source_lines": 720916,
+ "source_files": 2162,
+ "source_lines": 721006,
  "static_route_declarations": 634,
  "by_repository": {
-  "AuroraIA": 2002,
+  "AuroraIA": 2003,
   "aurora-remote-cli": 155,
   "aurora-live": 4
  },
@@ -1874,7 +1874,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "23f2dcf23dea9b7ee9db4ec2b39b90d26666bc69b48d4b6eb98c8ba5ce3d04f0",
+   "sha256": "39dab6f6c8ece6fddba01cf0dcefca1e0e87490d6369d971ac4c184724cf0cac",
    "lines": 6526,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -3816,8 +3816,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/mesh_taubin.py",
-   "sha256": "a9fc0c6eec0f21f16fa1d587436468519dcf72b8846fd0dbe3f9d0f5d7086ec7",
-   "lines": 127,
+   "sha256": "5bdf201dda995c4bfc8a008a18f56166b2e8f6eef7844627aade6d4df95b9d02",
+   "lines": 136,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -4080,8 +4080,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/optimize_textured_mesh.py",
-   "sha256": "e76671cadf556786dd0f3a0013d421c9819804b29c3feacd818261b6b99b4247",
-   "lines": 329,
+   "sha256": "26ff11a7ee7580992aadd39614d7da6e5669edd99260cedf6893ff5c72a320bb",
+   "lines": 338,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -18950,6 +18950,14 @@
    "path": "tests_agi/test_mesh_repair_preservation.py",
    "sha256": "34fc8441b2aff4dab05df4b618811df240b5e093232b7643cbb538ea143fee46",
    "lines": 69,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_mesh_taubin_normals.py",
+   "sha256": "5568cf5846b6a9c96d4729715c02259163144a82bdc246b8bd5887bbbc1ce6eb",
+   "lines": 72,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

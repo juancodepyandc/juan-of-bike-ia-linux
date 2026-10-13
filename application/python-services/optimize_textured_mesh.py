@@ -120,6 +120,18 @@ def _weld_fragmented(glb_path: str, out_glb: str, log: list[dict[str, Any]]) -> 
     return True
 
 
+def _preserved_texture_visual(original, uv, image):
+    """Keep authored PBR response when only topology/UV storage changes."""
+    import trimesh
+    material = getattr(getattr(original, "visual", None), "material", None)
+    if material is not None:
+        material = material.copy()
+    else:
+        material = trimesh.visual.material.PBRMaterial(
+            baseColorTexture=image, metallicFactor=0.0, roughnessFactor=0.85)
+    return trimesh.visual.TextureVisuals(uv=uv, material=material)
+
+
 def _decimate_uv_preserving(
     glb_path: str, out_glb: str, target_faces: int, log: list[dict[str, Any]]
 ) -> bool:
@@ -167,11 +179,8 @@ def _decimate_uv_preserving(
             if uv is None:
                 log.append({"stage": "decimate", "skipped": True, "reason": "decimated mesh lost UVs"})
                 return False
-            mat = trimesh.visual.material.PBRMaterial(
-                baseColorTexture=img, metallicFactor=0.0, roughnessFactor=0.85
-            )
-            dm.visual = trimesh.visual.TextureVisuals(uv=uv, material=mat, image=img)
-            dm.export(out_glb)
+            dm.visual = _preserved_texture_visual(_orig, uv, img)
+            dm.export(out_glb, include_normals=True)
 
         if _reduced:
             log.append({"stage": "decimate", "ok": True, "faces_before": before,

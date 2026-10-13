@@ -73,9 +73,14 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
             filter_taubin(welded, lamb=lamb, nu=nu, iterations=max(1, int(iterations)))
             vw_s = np.asarray(welded.vertices, dtype=float)
             mesh.vertices = vw_s[inverse]
+            # UV islands retain separate vertices, but a smooth surface must
+            # share shading normals across those islands as well as positions.
+            # Computing on the split mesh creates specular seams and facets.
+            smooth_normals = np.asarray(welded.vertex_normals)[inverse].copy()
         else:
             # already welded (no twins) -> smooth in place
             filter_taubin(mesh, lamb=lamb, nu=nu, iterations=max(1, int(iterations)))
+            smooth_normals = np.asarray(mesh.vertex_normals).copy()
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"taubin failed: {exc}"}
 
@@ -90,9 +95,13 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
     # per-vertex UVs still map 1:1; trimesh keeps mesh.visual but we re-assert it).
     if visual is not None:
         mesh.visual = visual
+    if not np.all(np.isfinite(smooth_normals)):
+        return {"ok": False, "error": "Invalid shading normals after smoothing"}
+    mesh.vertex_normals = smooth_normals
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        mesh.export(out_path)
+        mesh.export(out_path, **({"include_normals": True}
+                                if out_path.suffix.lower() in {".glb", ".gltf"} else {}))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"export failed: {exc}"}
 
