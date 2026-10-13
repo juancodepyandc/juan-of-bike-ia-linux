@@ -18,7 +18,7 @@ import type { SaveDialogData } from '../components/SaveDialog.tsx'
 import SessionSwitcher from '../components/SessionSwitcher.tsx'
 import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
-import { clearResumableJob, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript, toAssetUrl } from '../hooks/useTauri.ts'
+import { clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
@@ -254,9 +254,10 @@ async function generateSyntheticView(
   filenamePrefix: string,
   referenceSeed: { filename: string; denoise?: number } | null,
   ensureComfy: () => Promise<void>,
-  vramGuard?: { ollamaModelsToEvict: string[] },
+  vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal },
 ): Promise<Blob> {
   // Start the image service only when this route actually renders an image.
+  vramGuard?.signal?.throwIfAborted()
   await ensureComfy()
   // Enforce single-entity, single-view constraint at FLUX prompt level
   const antiSplitSuffix = ', THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE, NEVER split into panels, NEVER show side-by-side views, NEVER generate a multi-view composite, the ENTIRE canvas is ONE continuous single-angle image of ONE subject, no mirror copies, no turnaround sheet'
@@ -279,12 +280,14 @@ async function generateSyntheticView(
   if (vramGuard) {
     await freeGpuBeforeFlux(vramGuard.ollamaModelsToEvict)
   }
+  vramGuard?.signal?.throwIfAborted()
   const queueResult = await comfyuiQueuePrompt(workflow)
   const promptId = extractComfyPromptId(queueResult)
 
   const imageResult = await new Promise<{ filename: string; subfolder: string }>((resolve, reject) => {
     let attempts = 0
     const poll = setInterval(async () => {
+      if (vramGuard?.signal?.aborted) { clearInterval(poll); void comfyuiCancelPrompt(promptId).catch(() => {}); reject(vramGuard.signal.reason); return }
       attempts += 1
       // FLUX.2 Q4: ~9 min MESUREES par rendu (chargement 19 Go compris).
       // L'ancien seuil de 240 s datait de FLUX.1 et tuait la generation en
@@ -340,7 +343,7 @@ async function generateAndVerifySyntheticViews({
   frontSeedFilename: string | null
   setPhase: (message: string, progress: number) => void
   ensureComfy: () => Promise<void>
-  vramGuard?: { ollamaModelsToEvict: string[] }
+  vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal }
 }): Promise<ThreeDViewAssignment[]> {
   const syntheticAssignments = plan.assignments.filter((a) => a.sourceKind === 'synthetic')
   if (syntheticAssignments.length === 0) return plan.assignments
@@ -485,12 +488,14 @@ async function runReferenceWorkflow({
   phaseStart?: number
   label?: string
   ensureComfy: () => Promise<void>
-  vramGuard?: { ollamaModelsToEvict: string[] }
+  vramGuard?: { ollamaModelsToEvict: string[]; signal?: AbortSignal }
 }) {
+  vramGuard?.signal?.throwIfAborted()
   await ensureComfy()
   if (vramGuard) {
     await freeGpuBeforeFlux(vramGuard.ollamaModelsToEvict)
   }
+  vramGuard?.signal?.throwIfAborted()
   const queueResult = await comfyuiQueuePrompt(workflow)
   const promptId = extractComfyPromptId(queueResult)
   setPhase(label, phaseStart)
@@ -499,6 +504,7 @@ async function runReferenceWorkflow({
     let attempts = 0
     if (pollRef.current) clearInterval(pollRef.current)
     pollRef.current = setInterval(async () => {
+      if (vramGuard?.signal?.aborted) { clearInterval(pollRef.current!); pollRef.current = null; void comfyuiCancelPrompt(promptId).catch(() => {}); reject(vramGuard.signal.reason); return }
       attempts += 1
       setPhase(`${label} (${attempts}s)`, Math.min(78, phaseStart + Math.round((attempts / 300) * 8)))
       if (attempts > 300) {
@@ -3146,22 +3152,25 @@ export default function ModelView() {
   }, [pushMessage])
 
   const stopRequestedRef = useRef(false)
+  const generationAbortRef = useRef<AbortController | null>(null)
   const stopGeneration = useCallback(async () => {
     stopRequestedRef.current = true
+    generationAbortRef.current?.abort(new DOMException("Generation annulée.", "AbortError"))
     try {
-      const info = await peekResumableJob('model')
+      const info = await peekResumableJob('model_ia') || await peekResumableJob('model')
       if (info?.jobId) {
         const { getBridgeUrl: _gb } = await import('../utils/runtime')
         await fetch(`${_gb()}/api/python/cancel/${info.jobId}`, { method: 'POST' }).catch(() => null)
       }
     } catch { /* meme sans jobId on coupe le suivi */ }
     clearResumableJob('model')
+    clearResumableJob('model_ia')
     unlistenRef.current?.()
     unlistenRef.current = null
-    setIsGenerating(false)
+    // Keep the generation reservation until its asynchronous chain exits.
     setPendingJobBanner(null)
     setPhaseSnapshot({ label: '', percent: 0 })
-    setProgress('Generation arretee proprement.')
+    setProgress('Arrêt demandé au PC ; attente de la fin des processus et du nettoyage…')
     emitGenerationFx('3d', { active: false })
   }, [])
 
@@ -3175,15 +3184,24 @@ export default function ModelView() {
   }, [stopGeneration])
 
   const generate = useCallback(async (promptOverride?: string) => {
-    stopRequestedRef.current = false
     const imageJointe = contextFiles.find(estImage)
     // Sans texte mais AVEC une image: le sujet vient de l'image. On envoie un
     // prompt minimal neutre; le pipeline analyse la photo (vision) et n'a rien
     // a demander a l'utilisateur — l'information est deja dans l'image.
     const basePrompt = (promptOverride ?? prompt).trim()
       || (imageJointe ? 'reproduire fidelement le sujet de la photo fournie' : '')
-    if (!basePrompt || isGenerating) return
+    if (!basePrompt || isGenerating || generationAbortRef.current) return
     if (diagnostics.blockingReason) { setError(diagnostics.blockingReason); return }
+    stopRequestedRef.current = false
+    const controller = new AbortController()
+    generationAbortRef.current = controller
+    let cleanupRoot: string | undefined
+    const runPythonScript = async (...params: Parameters<typeof runPythonScriptBase>) => {
+      controller.signal.throwIfAborted()
+      const result = await runPythonScriptBase(params[0], params[1], { ...params[2], signal: controller.signal, cleanupRoot })
+      controller.signal.throwIfAborted()
+      return result
+    }
     const currentPrompt = basePrompt
     const conversationHistory = getRecentMessages('3d', 6)
     setIsGenerating(true)
@@ -3365,6 +3383,8 @@ export default function ModelView() {
           const runId = `juan_bike_${Date.now()}`
           const active3dSession = useModuleHistoryStore.getState().getActiveSession('3d')
           const runPaths = buildThreeDRunOutputPaths(workspacePath, active3dSession, runId, prompt)
+          cleanupRoot = runPaths.root
+          controller.signal.throwIfAborted()
           const outputDir = runPaths.models
           await Promise.all([
             fsMkdir(runPaths.conversationDir),
@@ -3608,7 +3628,7 @@ export default function ModelView() {
                   `${runId}_front_synth`,
                   null,  // No seed for front — it IS the anchor
                   ensureComfy,
-                  { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
+                  { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
                 )
                 // Stage the front view for seeding other views
                 const frontPath = `${runPaths.references}/${runId}_front_synth_seed.png`
@@ -3647,7 +3667,7 @@ export default function ModelView() {
               frontSeedFilename,
               setPhase,
               ensureComfy,
-              vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
+              vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
             })
 
             resolvedViewPlan = { ...referenceViewPlan, assignments: verifiedAssignments }
@@ -3767,7 +3787,7 @@ export default function ModelView() {
                   phaseStart: 25,
                   label,
                   ensureComfy,
-                  vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
+                  vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
                 })
               }
               renderRefBlobRef.current = renderReferenceBlob
@@ -4270,7 +4290,7 @@ export default function ModelView() {
             // l'utilisateur retombe sur l'ancien vrac et croit que la
             // reorganisation n'existe pas. Best-effort, sans bloquer l'erreur.
             try {
-              void runPythonScript(`${workspacePath}/python-services/livraison_organisee.py`,
+              await runPythonScript(`${workspacePath}/python-services/livraison_organisee.py`,
                 ['--run-dir', runPaths.root, '--run-id', runId])
             } catch { /* rangement best-effort */ }
             const reason = auroraFailReason ? `${auroraFailReason} — ` : ''
@@ -4602,7 +4622,7 @@ export default function ModelView() {
                   phaseStart: 86,
                   label: `Reference corrigee (passage ${correctionAttempt})...`,
                   ensureComfy,
-                  vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])) },
+                  vramGuard: { ollamaModelsToEvict: Array.from(new Set([visionModel, AUXILIARY_ANALYSIS_MODEL])), signal: controller.signal },
                 })
                 const correctedRefPath = `${runPaths.references}/${runId}_reference_corr${correctionAttempt}.png`
                 await fsWriteBinary(correctedRefPath, Array.from(new Uint8Array(await correctedRefBlob.arrayBuffer())))
@@ -4989,6 +5009,15 @@ export default function ModelView() {
       }
       setViewerFullscreen(true)
     } catch (generationError) {
+      if (controller.signal.aborted) {
+        if (activeTrackerIdRef.current) {
+          failGeneration(activeTrackerIdRef.current, "Annulée par l’utilisateur")
+          activeTrackerIdRef.current = null
+        }
+        setProgress("Génération annulée. Nettoyage du dossier demandé au PC.")
+        setError(null)
+        return
+      }
       if (activeTrackerIdRef.current) {
         failGeneration(activeTrackerIdRef.current, getErrorMessage(generationError))
         activeTrackerIdRef.current = null
@@ -4996,6 +5025,23 @@ export default function ModelView() {
       setError(getErrorMessage(generationError, 'Le module 3D a echoue sans detail exploitable.'))
       setProgress('')
     } finally {
+      if (controller.signal.aborted && cleanupRoot) {
+        const { getBridgeUrl } = await import('../utils/runtime')
+        let cleaned = false
+        for (let attempt = 0; attempt < 30; attempt++) {
+          try {
+            const response = await fetch(`${getBridgeUrl()}/api/python/cleanup-run`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ root: cleanupRoot }),
+            })
+            if (response.ok) { cleaned = true; break }
+            if (response.status !== 409) break
+          } catch { break }
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+        setProgress(cleaned ? 'Génération arrêtée ; dossier et fichiers temporaires supprimés.' : 'Arrêt demandé ; nettoyage non confirmé par le PC.')
+      }
+      generationAbortRef.current = null
       setIsGenerating(false)
       // v77zag: clear the live progress snapshot so the overlay disappears.
       setPhaseSnapshot({ label: '', percent: 0 })

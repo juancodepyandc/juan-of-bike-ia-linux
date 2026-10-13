@@ -188,16 +188,16 @@ def _terminate_job_process(job_id: str, *, force: bool = False) -> bool:
     """Termine le groupe complet d'un job, y compris ses workers diffusers."""
     with _python_jobs_lock:
         proc = _python_job_processes.get(job_id)
-    if proc is None or proc.poll() is not None:
+    if proc is None:
         return False
     try:
         if os.name == "posix":
             import signal as _signal
-            os.killpg(os.getpgid(proc.pid), _signal.SIGKILL if force else _signal.SIGTERM)
-        elif force:
-            proc.kill()
+            os.killpg(proc.pid, _signal.SIGKILL if force else _signal.SIGTERM)
         else:
-            proc.terminate()
+            # Windows has no POSIX group TERM. Kill the tree while the parent
+            # is still alive; terminating only it loses its children's identity.
+            subprocess.run(['taskkill', '/PID', str(proc.pid), '/T', '/F'], capture_output=True, timeout=10, check=True)
         return True
     except ProcessLookupError:
         return False
@@ -235,6 +235,11 @@ def _finalize_cancelled_job(job_id: str, script_path: str, started_at: float) ->
         "finishedAt": time.time(),
         "cancelledAt": time.time(),
     }
+    with _python_jobs_lock:
+        cleanup_root = _python_jobs.get(job_id, {}).get('cleanupRoot')
+    if cleanup_root:
+        from application.generation_cleanup import remove_cancelled_run
+        state['cleanup'] = remove_cancelled_run(WORKSPACE, cleanup_root)
     _persist_job_state(job_id, state)
     with _python_jobs_lock:
         previous = _python_jobs.get(job_id, {})
@@ -365,6 +370,14 @@ def _is_3d_generation_active() -> bool:
 
 
 def _run_python_job(job_id: str, script_path: str, args: list[str]):
+    with _python_jobs_lock:
+        if _python_jobs.get(job_id, {}).get('cancelRequested'):
+            _finalize = True
+        else:
+            _finalize = False
+    if _finalize:
+        _finalize_cancelled_job(job_id, script_path, time.time())
+        return
     run_env = _build_python_env()
     _est_3d = "aurora_3d_pipeline" in str(script_path)
     _est_video_gpu = _is_video_gpu_job(script_path)
@@ -378,6 +391,8 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
             _t_attente = time.time()
             while not _video_gpu_queue.wait_until_idle(timeout=15):
                 with _python_jobs_lock:
+                    if _python_jobs.get(job_id, {}).get('cancelRequested'):
+                        break
                     if job_id in _python_jobs:
                         _python_jobs[job_id]["step"] = "en attente: rendu video GPU en cours"
                 if time.time() - _t_attente > 7200:
@@ -385,6 +400,12 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
         except Exception:  # noqa: BLE001
             pass
         _AURORA_3D_EN_COURS.set()
+        with _python_jobs_lock:
+            cancelled_while_waiting = bool(_python_jobs.get(job_id, {}).get('cancelRequested'))
+        if cancelled_while_waiting:
+            _AURORA_3D_EN_COURS.clear()
+            _finalize_cancelled_job(job_id, script_path, time.time())
+            return
     stdout_lines: list[str] = []
     # 31/07 (mesure: bridge a 24,6 Go, machine a 1 Go libre): la retention 4 h
     # des jobs gardait TOUT le stdout en RAM — les barres de progression
@@ -577,6 +598,9 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
             )
         with _python_jobs_lock:
             _python_job_processes[job_id] = proc
+            cancelled_before_spawn = _python_jobs.get(job_id, {}).get('cancelRequested', False)
+        if cancelled_before_spawn:
+            _terminate_job_process(job_id, force=True)
     except Exception as spawn_err:
         if _video_slot_acquired:
             _video_gpu_queue.release(job_id)
@@ -685,7 +709,11 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
     finally:
         if _est_3d:
             _AURORA_3D_EN_COURS.clear()
-        was_cancelled = _video_gpu_queue.is_cancelled(job_id) if _est_video_gpu else False
+        with _python_jobs_lock:
+            was_cancelled = bool(_python_jobs.get(job_id, {}).get('cancelRequested'))
+        was_cancelled = was_cancelled or (_video_gpu_queue.is_cancelled(job_id) if _est_video_gpu else False)
+        if was_cancelled:
+            _terminate_job_process(job_id, force=True)
         if proc.poll() is None:
             _terminate_job_process(job_id, force=not was_cancelled)
             try:
@@ -786,22 +814,32 @@ def _run_python_job(job_id: str, script_path: str, args: list[str]):
         final_state["storage"] = storage_result
     if was_cancelled:
         final_state["cancelledAt"] = time.time()
+        with _python_jobs_lock:
+            cleanup_root = _python_jobs.get(job_id, {}).get('cleanupRoot')
+        if cleanup_root:
+            from application.generation_cleanup import remove_cancelled_run
+            final_state['cleanup'] = remove_cancelled_run(WORKSPACE, cleanup_root)
     # Find the job dir (cinema convention) and write status.json.
     _persist_job_state(job_id, final_state)
 
     with _python_jobs_lock:
         previous = _python_jobs.get(job_id, {})
-        _python_jobs[job_id] = {**previous, **{
-            "status": "cancelled" if was_cancelled else "done",
-            "output": "\n".join(stdout_lines),
-            "error": error_message,
-            "exitCode": -15 if was_cancelled else exit_code,
-            "script": os.path.basename(script_path),
-            "startedAt": start_ts,
-            "finishedAt": time.time(),
-            **({"storage": storage_result} if storage_result is not None else {}),
-            **({"cancelledAt": time.time()} if was_cancelled else {}),
-        }}
+        late_cancel = bool(previous.get("cancelRequested")) and not was_cancelled
+        if not late_cancel:
+            _python_jobs[job_id] = {**previous, **{
+                "status": "cancelled" if was_cancelled else "done",
+                "output": "\n".join(stdout_lines),
+                "error": error_message,
+                "exitCode": -15 if was_cancelled else exit_code,
+                "script": os.path.basename(script_path),
+                "startedAt": start_ts,
+                "finishedAt": time.time(),
+                **({"storage": storage_result} if storage_result is not None else {}),
+                **({"cancelledAt": time.time()} if was_cancelled else {}),
+                **({'cleanup': final_state['cleanup']} if 'cleanup' in final_state else {}),
+            }}
+    if late_cancel:
+        _finalize_cancelled_job(job_id, script_path, start_ts)
 
 
 def _gc_old_jobs():
@@ -836,6 +874,8 @@ def python_run_async():
     data = request.get_json(silent=True) or {}
     script_path = _resolve_script_path(data.get("scriptPath", ""))
     args = data.get("args", []) or []
+    from application.generation_cleanup import owned_run_root
+    cleanup_root = owned_run_root(WORKSPACE, data.get('cleanupRoot'), args)
 
     # Reject unknown scripts with a proper JSON 404 so the frontend doesn't
     # interpret an HTML fallback page as "endpoint missing" and silently
@@ -852,6 +892,7 @@ def python_run_async():
             "status": "running",
             "startedAt": time.time(),
             "script": os.path.basename(script_path),
+            "cleanupRoot": cleanup_root,
         }
     _queue_video_job(job_id, script_path)
     t = threading.Thread(target=_run_python_job, args=(job_id, script_path, args), daemon=True)
@@ -1230,6 +1271,22 @@ def python_job_status(job_id: str):
 def python_job_cancel(job_id: str):
     """Annule un job Python video, actif ou encore dans la file GPU."""
     return _cancel_video_job_response(job_id)
+
+
+@python_bp.route('/api/python/cleanup-run', methods=['POST'])
+def cleanup_cancelled_generation():
+    from application.generation_cleanup import owned_run_root, remove_cancelled_run
+    candidate = (request.get_json(silent=True) or {}).get('root')
+    root = owned_run_root(WORKSPACE, candidate, ['--output-dir', candidate])
+    if root is None:
+        return jsonify(ok=False, error='Invalid dedicated generation directory.'), 400
+    with _python_jobs_lock:
+        if any(job.get('cleanupRoot') == root and
+               (jid in _python_job_processes or not job.get('finishedAt'))
+               for jid, job in _python_jobs.items()):
+            return jsonify(ok=False, error='Generation workers are still stopping.'), 409
+    result = remove_cancelled_run(WORKSPACE, root)
+    return jsonify(ok=result['removed'], **result), (200 if result['removed'] else 409)
 
 
 @python_bp.route("/api/python/run", methods=["POST"])

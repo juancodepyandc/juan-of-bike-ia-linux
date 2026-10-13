@@ -854,6 +854,13 @@ export async function comfyuiInterrupt(): Promise<boolean> {
   return false
 }
 
+export async function comfyuiCancelPrompt(promptId: string): Promise<void> {
+  await comfyFetch('/queue', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delete: [promptId] }) }, 'ComfyUI cancel queued prompt')
+  await comfyFetch('/interrupt', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt_id: promptId }) }, 'ComfyUI cancel active prompt')
+}
+
 /**
  * Evict an Ollama model from VRAM immediately by issuing a zero-length generate
  * with keep_alive=0. Used before long FLUX sequences to avoid the vision /
@@ -1224,6 +1231,8 @@ function forgetJobId(key: string) {
 }
 
 export interface RunPythonOptions {
+  signal?: AbortSignal
+  cleanupRoot?: string
   /**
    * When set, the jobId is persisted to localStorage under this key so a
    * reload/backgrounding mid-generation can transparently reattach to the
@@ -1272,7 +1281,8 @@ export function clearResumableJob(resumeKey: string) {
 }
 
 export async function runPythonScript(scriptPath: string, args: string[], options: RunPythonOptions = {}) {
-  if (isTauriRuntime()) {
+  options.signal?.throwIfAborted()
+  if (isTauriRuntime() && !options.signal) {
     return desktopInvoke<string>('run_python_script', { scriptPath, args })
   }
 
@@ -1280,7 +1290,7 @@ export async function runPythonScript(scriptPath: string, args: string[], option
   // longer than Cloudflare's 100s tunnel timeout and fails with HTTP 524.
   // Async path: spawn → job_id → poll every 2.5s (each poll is < 100ms so it
   // never times out, no matter how long the subprocess takes).
-  const useAsync = isCloudRuntime()
+  const useAsync = isCloudRuntime() || !!options.signal
   let result: { output: string; error: string; exitCode: number } | null = null
 
   if (useAsync) {
@@ -1326,13 +1336,15 @@ export async function runPythonScript(scriptPath: string, args: string[], option
 
     // Spawn a new job only if we didn't resume a done/running one.
     if (!result && !jobId) {
+      options.signal?.throwIfAborted()
       const spawnResp = await fetch(`${base}/api/python/run-async`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scriptPath, args }),
+        body: JSON.stringify({ scriptPath, args, cleanupRoot: options.cleanupRoot }),
       })
 
       if (spawnResp.status === 404) {
+        if (options.signal) throw new Error('Le bridge doit prendre en charge les tâches annulables ; génération non démarrée.')
         // Older bridge build without /run-async — fall back to sync endpoint.
         console.warn('[runPythonScript] /api/python/run-async absent du bridge — fallback sur /api/python/run sync (timeout Cloudflare possible sur jobs > 100s).')
         result = await cloudInvoke<{ output: string; error: string; exitCode: number }>('/api/python/run', { scriptPath, args })
@@ -1350,6 +1362,11 @@ export async function runPythonScript(scriptPath: string, args: string[], option
           if (!spawnData.jobId) throw new Error('Bridge n a pas retourne de jobId pour le job Python.')
           jobId = spawnData.jobId
           if (options.resumeKey) rememberJobId(options.resumeKey, jobId)
+          if (options.signal?.aborted) {
+            await fetch(`${base}/api/python/cancel/${jobId}`, { method: 'POST' })
+            if (options.resumeKey) forgetJobId(options.resumeKey)
+            options.signal.throwIfAborted()
+          }
         }
       }
     }
@@ -1361,6 +1378,8 @@ export async function runPythonScript(scriptPath: string, args: string[], option
     // job frozen only when there is NO progress for 12 consecutive minutes
     // AND the total runtime exceeds a hard safety cap of 2 hours.
     if (!result && jobId) {
+      const cancelJob = () => { void fetch(`${base}/api/python/cancel/${jobId}`, { method: 'POST' }).catch(() => {}) }
+      options.signal?.addEventListener('abort', cancelJob, { once: true })
       const pollIntervalMs = 2500
       const startedAt = Date.now()
       const hardCapMs = options.maxWaitMs ?? 120 * 60 * 1000
@@ -1387,7 +1406,9 @@ export async function runPythonScript(scriptPath: string, args: string[], option
 
       try {
         while (true) {
+          options.signal?.throwIfAborted()
           await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+          options.signal?.throwIfAborted()
 
           // Wrap the poll fetch so a transient "Load failed" (Safari on
           // backgrounding, Wi-Fi blip, tunnel reconnect) doesn't tank the
@@ -1444,6 +1465,7 @@ export async function runPythonScript(scriptPath: string, args: string[], option
           }
         }
       } finally {
+        options.signal?.removeEventListener('abort', cancelJob)
         // Whether we finished cleanly or blew up, the persisted jobId is no
         // longer useful — a future call should start fresh.
         if (options.resumeKey) forgetJobId(options.resumeKey)

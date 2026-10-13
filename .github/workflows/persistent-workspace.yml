@@ -9,6 +9,9 @@ on:
       - 'application/package*.json'
       - 'application/src/utils/bridgeAuth.ts'
       - 'application/scripts/test-bridge-auth.mjs'
+      - 'application/src/hooks/useTauri.ts'
+      - 'application/src/views/ModelView.tsx'
+      - 'application/scripts/test-generation-cancel.mjs'
       - 'application/src/utils/uiSkin.ts'
       - 'application/src/utils/buildRecovery.ts'
       - 'application/scripts/test-interface-stability.mjs'
@@ -58,6 +61,7 @@ jobs:
       - run: npm run test:workspace
       - run: node scripts/test-interface-stability.mjs
       - run: node scripts/test-bridge-auth.mjs
+      - run: node scripts/test-generation-cancel.mjs
       - run: node scripts/test-forge-admission.mjs
       - run: node scripts/test-project-viewer.mjs
       - run: node scripts/test-engineering-insertion-viewer.mjs
