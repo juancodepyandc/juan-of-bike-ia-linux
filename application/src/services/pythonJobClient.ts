@@ -219,3 +219,14 @@ export async function isBridgeReachable(timeoutMs = 3000): Promise<boolean> {
     return false
   }
 }
+
+export async function cancelPythonJob(jobId: string): Promise<boolean> {
+  if (jobId.startsWith('tauri:')) return false
+  const base = baseUrl()
+  try {
+    const resp = await fetch(`${base}/api/python/cancel/${jobId}`, { method: 'POST' })
+    return resp.ok
+  } catch {
+    return false
+  }
+}
