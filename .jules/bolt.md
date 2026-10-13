@@ -1,3 +1,6 @@
 ## 2026-10-12 - Prevent isolated generation split in 3D pipeline
 **Learning:** The pipeline defaults to orchestrating scenes, parsing the prompt into multiple objects when possible. A user explicitly requesting a single base block without an assembly context had their subject split into disconnected meshes because the 3D intent mapper wasn't appending the proper flag to the pipeline configuration.
 **Action:** When a user expresses intent for `referenceFraming === 'isolated_subject'` and `subjectKind !== 'assembly'`, we must proactively inject `--no-scene` into `auroraArgs` passed to `python-services/aurora_3d_pipeline.py`.
+## 2026-10-13 - Memoize objects passed as props to React components to prevent unnecessary re-renders
+**Learning:** Passing an inline object (like `components={{...}}`) directly as a prop to a React component (like `ReactMarkdown`) creates a new object on every render. Because the object reference changes, the child component will re-render even if the actual content hasn't changed. This is particularly problematic in chat views where messages are appended over time or animated.
+**Action:** Use `useMemo` to wrap such objects, ensuring referential equality across renders unless dependencies change.
