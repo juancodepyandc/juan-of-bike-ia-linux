@@ -232,6 +232,38 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         if not dispatch('mission.start',{'mission_id':item['id'],**item['payload']}):
             return jsonify(response(rec)),202
         return jsonify(response(rec))
+
+    @bp.route('/api/3d/design/<did>/stop',methods=['POST'])
+    def stop_design(did):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        rec=receipt(did)
+        if not rec:return jsonify(ok=False,error='Projet introuvable.'),404
+        item = store.get(rec['mission_id'])
+        if not item: return jsonify(ok=False,error='Mission introuvable.'),404
+        if item['status'] in {'completed','failed','stopped','blocked'}: return jsonify(ok=True,status=item['status'])
+        if item['status']=='interrupted' or item['owner'] is None:
+            store.append(item['id'],{'type':'mission_complete','stopped':True,'result':'Interrupted mission stopped; checkpoint retained'})
+            dispatch('mission.stop',{'mission_id':item['id']})
+            return jsonify(ok=True,status='stopped')
+        store.stop_requested(item['id'])
+        delivered = dispatch('mission.stop',{'mission_id':item['id']})
+        return jsonify(ok=True,status='stopping',signal_delivered=delivered),202
+
+    @bp.route('/api/3d/design/<did>/delete',methods=['POST'])
+    def delete_design(did):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        rec=receipt(did)
+        if not rec:return jsonify(ok=False,error='Projet introuvable.'),404
+        item = store.get(rec['mission_id'])
+        if not item: return jsonify(ok=False,error='Mission introuvable.'),404
+        if item['status'] == 'queued':
+            store.cancel_queued(item['id'])
+        # Also clean up receipt file
+        path = private / (did + '.json')
+        if path.exists():
+            path.unlink()
+        return jsonify(ok=True)
+
     @bp.route('/api/3d/design/<did>/download',methods=['GET'])
     @bp.route('/api/3d/design/<did>/dossier',methods=['GET'])
     def file_design(did):
