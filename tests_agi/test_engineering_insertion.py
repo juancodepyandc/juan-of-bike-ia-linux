@@ -82,3 +82,23 @@ def test_cli_compares_actual_paths_and_writes_reusable_proof(tmp_path):
     assert any(c['status']=='blocked' for c in proof['candidates'])
     clear=[c for c in proof['candidates'] if c['status']=='clear']
     assert np.linalg.norm(proof['selected']['translation_mm'])==min(np.linalg.norm(c['translation_mm']) for c in clear)
+
+
+def test_degenerate_surface_faces_cannot_propose_a_zero_length_insertion():
+    from application.engineering_insertion import insertion_directions
+    mesh=trimesh.creation.box();mesh.vertices[0]=mesh.vertices[1]
+    assert np.any(mesh.area_faces==0)
+    assert all(np.isclose(np.linalg.norm(direction),1.) for direction in insertion_directions(mesh))
+
+
+def test_large_world_coordinates_do_not_erase_a_thin_collision(tmp_path):
+    report=assembly(tmp_path,[('moving',trimesh.creation.box([1,1,1]),[0,0,0]),
+                              ('wall',trimesh.creation.box([.01,2,2]),[3,0,0])])
+    local=evaluate_insertion(report,tmp_path,'moving',[10,0,0])
+    for part in report['parts']:
+        for axis in range(3):part['assembly_matrix_mm'][axis][3]+=400_000_000
+    distant=evaluate_insertion(report,tmp_path,'moving',[10,0,0])
+    assert local['status']==distant['status']=='blocked'
+    assert distant['blocked_by'][0]['swept_envelope_intersection_mm3']==pytest.approx(local['blocked_by'][0]['swept_envelope_intersection_mm3'],abs=1e-8)
+    assert distant['verification_precision']=='float64'
+    assert distant['verification_origin_mm']==[400_000_000]*3

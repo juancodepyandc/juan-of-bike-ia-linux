@@ -11,7 +11,8 @@ def test_catalog_reads_indexed_sources_without_publishing_unstaged_drafts_or_wei
     subprocess.run(['git','init','--quiet',str(tmp_path)],check=True)
     (tmp_path/'service.py').write_text('raise RuntimeError("must not import")\n')
     (tmp_path/'model.safetensors').write_bytes(b'weights')
-    subprocess.run(['git','add','service.py','model.safetensors'],cwd=tmp_path,check=True)
+    (tmp_path/'status.json').write_text('{"online":true}')
+    subprocess.run(['git','add','service.py','model.safetensors','status.json'],cwd=tmp_path,check=True)
     (tmp_path/'service.py').write_text('private unstaged draft\n')
     assert list(catalog.indexed_sources(tmp_path))==[('service.py',b'raise RuntimeError("must not import")\n')]
 

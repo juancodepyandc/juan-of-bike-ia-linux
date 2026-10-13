@@ -118,7 +118,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             result['report']=report
             result['download_url']=f"/api/3d/design/{rec['id']}/download"
             result['dossier_url']=f"/api/3d/design/{rec['id']}/dossier"
-            if (folder/'viewer.html').is_file(): result['viewer_url']=f"/api/asset/output/engineering-design/{rec['id']}/viewer.html"
+            if (folder/'viewer.html').is_file(): result['viewer_url']=f"/api/3d/design/{rec['id']}/viewer/viewer.html"
         return result
     @bp.route('/api/3d/design',methods=['GET'])
     def list_designs():
@@ -189,6 +189,20 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
         rec=receipt(did)
         return (jsonify(response(rec)),200) if rec else (jsonify(ok=False,error='Projet introuvable.'),404)
+    @bp.route('/api/3d/design/<did>/viewer/<path:name>',methods=['GET'])
+    def design_viewer(did,name):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        rec=receipt(did)
+        if not rec or not response(rec).get('artifacts_available'):return jsonify(ok=False,error='Géométrie vérifiée indisponible.'),404
+        software=Path(__file__).resolve().parent
+        if name=='viewer.html':return send_file(software/'engineering_viewer.html',max_age=0)
+        if name.startswith('viewer_assets/'):
+            base=(software/'engineering_viewer_assets').resolve();path=(base/name.removeprefix('viewer_assets/')).resolve()
+            if not path.is_relative_to(base) or not path.is_file():return '',404
+            return send_file(path,max_age=0)
+        folder=(root/did).resolve();path=(folder/name).resolve()
+        if not path.is_relative_to(folder) or not path.is_file() or path.suffix.lower() not in {'.json','.glb','.stl','.bin','.png','.jpg','.jpeg','.webp'}:return '',404
+        return send_file(path,max_age=0)
     @bp.route('/api/3d/design/<did>/simulate',methods=['POST'])
     def simulate_design(did):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
@@ -241,7 +255,10 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         item = store.get(rec['mission_id'])
         if not item: return jsonify(ok=False,error='Mission introuvable.'),404
         if item['status'] in {'completed','failed','stopped','blocked'}: return jsonify(ok=True,status=item['status'])
-        if item['status']=='interrupted' or item['owner'] is None:
+        if item['status']=='queued':
+            if store.cancel_queued(item['id']):return jsonify(ok=True,status='stopped')
+            item=store.get(item['id'])  # The worker may have claimed it atomically.
+        if item['status']=='interrupted':
             store.append(item['id'],{'type':'mission_complete','stopped':True,'result':'Interrupted mission stopped; checkpoint retained'})
             dispatch('mission.stop',{'mission_id':item['id']})
             return jsonify(ok=True,status='stopped')
@@ -257,7 +274,10 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
         item = store.get(rec['mission_id'])
         if not item: return jsonify(ok=False,error='Mission introuvable.'),404
         if item['status'] == 'queued':
-            store.cancel_queued(item['id'])
+            if not store.cancel_queued(item['id']):
+                return jsonify(ok=False,error='La mission a démarré. Arrêter son exécution avant de retirer le projet.'),409
+        elif item['status'] not in {'completed','failed','stopped','blocked','interrupted'}:
+            return jsonify(ok=False,error='Arrêter la mission avant de retirer le projet ; ses calculs et preuves doivent rester accessibles.'),409
         # Also clean up receipt file
         path = private / (did + '.json')
         if path.exists():

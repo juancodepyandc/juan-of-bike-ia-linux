@@ -16,6 +16,7 @@ import subprocess
 
 ROOT=Path(__file__).resolve().parents[2]
 DESTINATION=ROOT/'scripts/documentation/architecture_catalog.json'
+GENERATED_STATE={'scripts/documentation/architecture_catalog.json','status.json'}
 SUFFIXES={'.py','.ts','.tsx','.js','.mjs','.cjs','.rs','.sh','.html','.css','.scss','.toml','.yml','.yaml','.json','.c','.cpp','.h','.cu'}
 EXCLUDE_PREFIXES=('.secrets/','.aurora/','modele/','models/','node_modules/','application/node_modules/',
                   'application/output/','application/.transfer_to_client/','application/.venv/',
@@ -29,7 +30,7 @@ def indexed_sources(root, ref=None):
         if not entry:continue
         metadata,name=entry.split(b'\t',1);fields=metadata.split();path=name.decode('utf-8')
         mode=fields[0].decode();oid=fields[2 if ref else 1].decode()
-        if mode not in {'100644','100755'} or Path(path).suffix not in SUFFIXES or path.startswith(EXCLUDE_PREFIXES) or path=='scripts/documentation/architecture_catalog.json':continue
+        if mode not in {'100644','100755'} or Path(path).suffix not in SUFFIXES or path.startswith(EXCLUDE_PREFIXES) or path in GENERATED_STATE:continue
         if not ref and fields[2]!=b'0':raise ValueError('Resolve Git index conflicts before cataloguing sources')
         objects.append((path,oid))
     # One Git process, not one subprocess per source. Only blob bytes are read.

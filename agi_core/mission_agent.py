@@ -196,6 +196,11 @@ class AutonomousMissionAgent:
                 self._require_tool(name)
             except PermissionError:
                 continue
+            if name == 'generate_3d':
+                try:
+                    self.tools.script('aurora_3d_pipeline.py')
+                except FileNotFoundError:
+                    continue  # Discover an actual alternative instead of advertising an absent engine.
             if not self.state['plan'] and name in PLANNED_TOOLS:
                 continue
             if (name=='set_plan' and self.state['plan']) or (name=='revise_plan' and not self.state['plan']):
@@ -207,10 +212,6 @@ class AutonomousMissionAgent:
             return ['set_plan'] if 'set_plan' in allowed else allowed
         from agi_core.mission_routing import direct_3d_generation
         if self.state['plan'] and 'generate_3d' in allowed and direct_3d_generation(self.request_text) and not self._explicit_tool_names() and not self.state.get('generation_3d_attempts'):
-            try:
-                self.tools.script('aurora_3d_pipeline.py')
-            except FileNotFoundError:
-                return allowed  # Continue real discovery when this deployment has no engine.
             root=Path(self.workspace)/'.transfer_to_client'/self.mission_id
             if not any(root.rglob('*.glb')):return ['generate_3d']
         return allowed
@@ -298,17 +299,26 @@ class AutonomousMissionAgent:
         self.state['process_observations'] = self.state['process_observations'][-64:]
         async def consume():
             decoder, tail = codecs.getincrementaldecoder('utf-8')(errors='replace'), ''
+            from agi_core.process_progress import EngineProgress
+            progress=EngineProgress()
             emitted = 0
             while chunk := await proc.stdout.read(4096):
                 text = decoder.decode(chunk)
                 tail = (tail+text)[-self.policy.output_chars:]
                 observed['result']['output'] = tail
+                message=progress.feed(text)
                 if emitted < self.policy.output_chars:
                     visible = text[:self.policy.output_chars-emitted]
                     await self._emit('command_output', {'content':visible})
                     emitted += len(visible)
-            tail += decoder.decode(b'', final=True)
+                if emitted>=self.policy.output_chars and message:
+                    await self._emit('command_output',{'content':message+'\n','kind':'engine_progress'})
+            final_text=decoder.decode(b'', final=True)
+            tail=(tail+final_text)[-self.policy.output_chars:]
             code = await proc.wait()
+            message=progress.feed(final_text,final=True)
+            if emitted>=self.policy.output_chars and message:
+                await self._emit('command_output',{'content':message+'\n','kind':'engine_progress'})
             observed['result'].update(exit_code=code,output=tail)
             if code!=expected_exit_code:
                 raise RuntimeError(f'Command failed (exit {code}): {tail[-2000:]}')

@@ -163,6 +163,7 @@ class EnvironmentDiscovery(unittest.IsolatedAsyncioTestCase):
     async def test_reworded_queries_and_reordered_links_do_not_hide_stagnation(self):
         self.agent.policy = replace(self.agent.policy, stall_attempts=2, recovery_attempts=0, max_steps=10)
         await self.agent._execute('set_plan', {'steps':['Find the missing technique'], 'criteria':['A source has been consulted']})
+        self.assertNotIn('generate_3d',self.agent._available_tools())
         calls = iter({'tool':'search_web','args':{'query':f'new wording {i}'}} for i in range(10))
         async def chunks(messages):
             yield json.dumps(next(calls))

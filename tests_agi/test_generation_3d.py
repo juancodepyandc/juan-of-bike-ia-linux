@@ -73,8 +73,8 @@ def test_rejected_scene_with_partial_mesh_is_not_a_delivery(tmp_path):
     assert not a.state.get('resources')
 
 
-@pytest.mark.parametrize('tamper', [False, True])
-def test_unknown_generation_reconciles_only_matching_completed_bytes_without_replay(tmp_path, tamper):
+@pytest.mark.parametrize(('previous_status','tamper'), [('outcome_unknown',False),('outcome_unknown',True),('failed',False)])
+def test_unknown_generation_reconciles_only_matching_completed_bytes_without_replay(tmp_path, previous_status, tamper):
     from agi_core.operation_receipts import write_receipt
     a=agent(tmp_path);script=tmp_path/'engine.py';script.write_text('# changed software')
     a.tools.script=lambda name:script
@@ -83,7 +83,7 @@ def test_unknown_generation_reconciles_only_matching_completed_bytes_without_rep
     run_id='saved_scene_run'
     report={'ok':True,'run_id':run_id,'final_mesh':str(path)}
     write_receipt(target,run_id,a.request_text,'previous_engine_sha',report,[path])
-    a.state['generation_3d_attempts']={'old':{'status':'outcome_unknown','prompt':a.request_text,
+    a.state['generation_3d_attempts']={'old':{'status':previous_status,'prompt':a.request_text,
         'directory':str(target),'run_id':run_id,'producer_sha256':'previous_engine_sha'}}
     if tamper:path.write_bytes(b'changed GLB')
     async def no_replay(*args,**kwargs):raise AssertionError('Unknown actions must not be replayed')
@@ -94,5 +94,29 @@ def test_unknown_generation_reconciles_only_matching_completed_bytes_without_rep
     else:
         result=asyncio.run(execute_generation(a,{'prompt':a.request_text}))
         assert result['recovered'] and result['reused']
+        assert result['changed'] is False
         assert not result['physical_fit_validated']
         assert a.state['generation_3d_attempts']['old']['status']=='completed'
+
+
+@pytest.mark.parametrize('corrupt_receipt', [False, True])
+def test_terminal_receipt_survives_truncated_stdout_and_cannot_be_bypassed(tmp_path, corrupt_receipt):
+    from agi_core.operation_receipts import write_receipt,sha256_file,receipt_path
+    a=agent(tmp_path);script=tmp_path/'engine.py';script.write_text('# producer')
+    a.tools.script=lambda name:script
+    async def run(argv,**kwargs):
+        target=Path(argv[argv.index('--output-dir')+1]);path=target/'complete.glb'
+        trimesh.creation.box().export(path);run_id=argv[argv.index('--run-id')+1]
+        report={'ok':True,'run_id':run_id,'final_mesh':str(path)}
+        write_receipt(target,run_id,a.request_text,sha256_file(script),report,[path])
+        if corrupt_receipt:
+            receipt=receipt_path(target,run_id);data=json.loads(receipt.read_text());data['producer_sha256']='wrong producer';receipt.write_text(json.dumps(data))
+        return {'output':json.dumps(report) if corrupt_receipt else 'Only truncated progress survived'}
+    a._run_process=run
+    if corrupt_receipt:
+        with pytest.raises(RuntimeError,match='receipt is invalid'):
+            asyncio.run(execute_generation(a,{'prompt':a.request_text}))
+        assert not a.state.get('resources')
+    else:
+        result=asyncio.run(execute_generation(a,{'prompt':a.request_text}))
+        assert result['status']=='completed' and not result['physical_fit_validated']

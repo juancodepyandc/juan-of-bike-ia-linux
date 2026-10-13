@@ -19,9 +19,11 @@ def main():
     parser.add_argument('--part',required=True)
     parser.add_argument('--output',required=True)
     args=parser.parse_args();manifest=Path(args.manifest).resolve()
-    report=json.loads(manifest.read_text(encoding='utf-8'));results=[];index=0
+    report=json.loads(manifest.read_text(encoding='utf-8'));results=[];index=0;assembly_sha256=None
     while True:
         result=evaluate_insertion(report,manifest.parent,args.part,direction_index=index)
+        if assembly_sha256 is not None and assembly_sha256!=result['assembly_sha256']:raise ValueError('Geometry changed between candidate directions')
+        assembly_sha256=result['assembly_sha256']
         results.append(result)
         print('PROGRESS:assemblage:direction %d/%d — %s'%(index+1,result['direction_count'],result['status']),flush=True)
         index+=1

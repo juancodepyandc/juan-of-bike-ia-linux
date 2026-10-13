@@ -1,6 +1,6 @@
 # Aurora — document maître d’architecture, d’exploitation et d’amélioration
 
-**Référence documentaire unique. Mise à jour ciblée : 12 octobre 2026. Inventaire initial : 24 septembre 2026. Langue : français.**
+**Référence documentaire unique. Mise à jour ciblée : 13 octobre 2026. Inventaire initial : 24 septembre 2026. Langue : français.**
 
 Ce fichier réunit AuroraIA, Aurora Remote CLI et le dépôt de découverte `aurora-live`. Le mode « standard » désigne ici l’application native Tauri et son interface web habituelle ; il ne faut pas le confondre avec le niveau de permissions CLI `STANDARD`.
 
@@ -36,11 +36,19 @@ Lire [AGENTS.md](AGENTS.md) pour les règles de travail. Commencer par les secti
 
 Trois dépôts voisins : `AuroraIA/`, `aurora-remote-cli/`, `aurora-live/`. Les chemins sans préfixe de dépôt sont relatifs à AuroraIA. `../aurora-remote-cli/` contient le client Python ; `../aurora-live/` publie un état et une adresse, pas le moteur IA.
 
-La cartographie couvre **1 967 fichiers source/configuration/script et 654 710 lignes**  dont 1 926 fichiers dans AuroraIA et 41 dans le CLI. C’est une cartographie mécanique, **pas une affirmation de lecture sémantique de chaque ligne**. Les points d’entrée, transports, principaux orchestrateurs, registres, modèles, configurations et chemins de stockage ont été examinés directement. L’inventaire retient les fichiers Git et les nouveaux fichiers applicatifs visibles ; il exclut poids, caches, dépendances téléchargées, sorties, bases et secrets.
+La cartographie initiale du 24 septembre couvrait **1 967 fichiers source/configuration/script et 654 710 lignes**  dont 1 926 fichiers dans AuroraIA et 41 dans le CLI. C’est une cartographie mécanique, **pas une affirmation de lecture sémantique de chaque ligne**. Les points d’entrée, transports, principaux orchestrateurs, registres, modèles, configurations et chemins de stockage ont été examinés directement. L’inventaire retient les fichiers Git et les nouveaux fichiers applicatifs visibles ; il exclut poids, caches, dépendances téléchargées, sorties, bases et secrets.
 
-Le parseur trouve **598 décorateurs de routes** dans cet ensemble, qui inclut aussi tests, outils et sauvegardes. Le bridge principal en définit **14** et les **26 fichiers de blueprints en définissent 280**. Ces 294 déclarations ne prouvent pas que 294 routes sont actives : l’enregistrement des blueprints peut échouer, et certains services enregistrent leurs routes autrement. Ne jamais réutiliser le nombre historique « 237 routes » sans préciser sa date et sa méthode.
+Le parseur initial trouvait **598 décorateurs de routes** dans cet ensemble, qui inclut aussi tests, outils et sauvegardes. Le bridge principal en définit **14** et les **26 fichiers de blueprints en définissent 280**. Ces 294 déclarations ne prouvent pas que 294 routes sont actives : l’enregistrement des blueprints peut échouer, et certains services enregistrent leurs routes autrement. Ne jamais réutiliser le nombre historique « 237 routes » sans préciser sa date et sa méthode.
 
-Les modifications locales préexistantes ont été prises en compte telles qu’elles étaient sur disque. Elles ne sont ni annulées ni présentées comme des modifications de cette consolidation. Le manifeste `scripts/documentation/source_inventory.json` contient les empreintes du code examiné. Le relevé initial de 1 939 fichiers a été complété par les sources HTML, C/C++/CUDA et configurations de déploiement. Les scripts de documentation ajoutés par la consolidation sont hors de ce relevé applicatif.
+Dans la consolidation initiale, les modifications locales préexistantes avaient été prises en compte telles qu’elles étaient sur disque. Elles ne sont ni annulées ni présentées comme des modifications de cette consolidation. Le manifeste `scripts/documentation/source_inventory.json` contient les empreintes du code examiné. Le relevé initial de 1 939 fichiers a été complété par les sources HTML, C/C++/CUDA et configurations de déploiement. Les scripts de documentation ajoutés par la consolidation sont hors de ce relevé applicatif.
+
+### 1.1.1 Inventaire courant et frontière de l’audit, 13 octobre 2026
+
+Le catalogue actuel est [scripts/documentation/architecture_catalog.json](scripts/documentation/architecture_catalog.json). Le relevé indexé de cette évolution contient **2161 sources, 720909 lignes et 634 déclarations de routes littérales** : AuroraIA 2002, aurora-remote-cli 155, aurora-live 4. Il couvre les sources indexées Git du dépôt principal et les sources `origin/main` des dépôts voisins disponibles. Il relève chemins, lignes, empreintes et déclarations HTTP Python littérales (fixtures de test comprises), **sans importer ni exécuter les services**. Les brouillons non indexés, poids, secrets, dépendances installées, livraisons et état généré `aurora-live/status.json` sont exclus. Les sources vendoriées suivies par Git peuvent être comptées ; le nombre de lignes n’est donc pas une mesure du code original ni de la qualité.
+
+Le manifeste `source_inventory.json` et les comptes de la section 19 restent l’inventaire historique de septembre. Le nouveau contrôle détecte les ajouts et suppressions aussi bien que les changements, ce que l’ancien relevé d’empreintes ne couvrait pas. `doc_master.py --check-code` utilise désormais le catalogue courant lorsqu’il existe. **Le contrôle porte sur l’index Git**, pas sur des modifications locales non indexées ; une correction à publier doit être indexée avant ce contrôle. Les dépôts voisins absents sont signalés comme non contrôlés ; ils ne sont pas simulés.
+
+La cartographie des fonctionnalités qui suit décrit toutes les familles applicatives repérées. Elle ne prétend pas qu’une lecture mécanique révèle chaque comportement implicite, qu’un type UI correspond à un module visible ou que chaque route est enregistrée au démarrage. Les déclarations dynamiques, payloads, politiques d’accès et moteurs réellement chargés demandent les contrôles de domaine et de runtime.
 
 ### 1.2 Niveaux de certitude à employer
 
@@ -502,6 +510,68 @@ flowchart TD
 
 Le nom AGI dans le code désigne des classes et un daemon. Il ne prouve ni une intelligence générale, ni une autonomie sans limite, ni une capacité fiable d’auto-réparation. De même, les mots « validé », « expert » et les notes historiques doivent être rattachés à des critères mesurables.
 
+### 2.1 Architecture actuelle des parcours persistants
+
+```mermaid
+flowchart LR
+  Phone[Téléphone / tablette] --> Pair[Appairage et approbation sur le PC]
+  Terminal[CLI local ou distant] --> Pair
+  Pair --> Gate[Bridge : identité et admission]
+  Native[Tauri / React natif] --> Gate
+  Gate --> Queue[SQLite : missions, FIFO, baux, événements, checkpoints]
+  Phone --> Control[Contrôleur de l’espace distant]
+  Control --> PCBrowser[Navigateur persistant du PC :3034]
+  PCBrowser --> TS[Pipelines React / TypeScript]
+  Native --> TS
+  TS --> Gate
+  Queue --> Agent[Daemon : outils disponibles, plan, exécution, preuves, revue]
+  Agent --> Dispatch[Dispatch typé 3D si demande et moteur présents]
+  Dispatch --> Neural[Pipeline 3D / scènes / moteurs]
+  Agent --> Other[Autres outils et services]
+  Neural --> Receipt[Reçu terminal atomique et fichiers empreintés]
+  Receipt --> Reconcile[Réconciliation sans rejeu du calcul]
+  Reconcile --> Agent
+  Agent --> Delivery[Livraison vérifiée du projet]
+  Delivery --> Original[Viewer du modèle original]
+  Original --> Manufacturing[Source immuable et profil imprimante]
+  Manufacturing --> CAD[Conception paramétrique, pièces, BOM, essais, dossier]
+  CAD --> Assembly[Viewer assemblage / éclaté / plaques]
+  Assembly --> Sweep[Contrôle d’insertion continue des STL réels]
+```
+
+Le journal des missions décide de l’admission et conserve le suivi ; le navigateur PC conserve l’exécution des pipelines frontend quand le téléphone quitte la page. Le moteur 3D conserve son résultat terminal indépendamment de stdout. Ces trois persistances ont des propriétaires différents : un reçu de moteur ne termine pas automatiquement une mission, et un navigateur fermé n’est pas une preuve d’annulation du moteur.
+
+La commande de génération 3D transmet l’objectif original au moteur disponible. Elle ne remplace pas les demandes de CAD explicite, de développement d’un viewer ou de logiciel. L’absence du script de moteur laisse la découverte et la recherche ouvertes ; elle ne déclenche pas une boucle de tentatives sur un outil absent. Les entités, formes et cinématiques proviennent de la demande, des contraintes et des données produites ; aucun projet de figurine ou de robot prédéfini n’est introduit par ces améliorations.
+
+### 2.2 Catalogue fonctionnel transversal
+
+| Famille | Capacités et responsabilités repérées | Sources principales / limite à vérifier |
+|---|---|---|
+| Dialogue | Intention, complexité, contexte, streaming, recherche, réponses vérifiées, ton, mémoire et cache | `conversationOrchestrator.ts`, `intentRouter.ts`, `realityAnalyzer.ts`, `conversationMemory.ts` ; conformité et citations nécessitent des essais sémantiques |
+| Code | Objectif, plan, préflight, génération de fichiers, corrections, runners, assets, build, validation et livraison | `codeOrchestrator.ts`, familles `codePipeline*`, `codeValidation*`, `codeSandbox*`, `codeDelivery*` ; construire n’est pas prouver la demande satisfaite |
+| Images | Références, synthèse et édition, workflow ComfyUI, seed, palette, galerie, métadonnées, sortie master et dérivés | `useImageViewLogic.ts`, `image_module_engine.py`, `comfyJobMonitor.ts` ; métriques d’image distinctes de la fidélité au sujet |
+| Dessin | Croquis, couleurs, courbes, mise en page, interprétation et explications structurées | `useDrawingViewLogic.ts`, services `drawing*` ; structure et vérité de l’explication sont deux contrôles |
+| Character Forge | Chaîne de création entre modules, admission, file, étapes, persistance des résultats et de l’issue inconnue | `characterForge.ts`, `forgeQueueStore.ts`, `projectAdmission.ts` ; reprise frontend via l’espace PC, pas rejeu aveugle d’étapes |
+| 3D visuelle | Prompt fidèle, références, routage, scène multi-entités, géométrie, textures, réparation, rendus multi-vues et gates | `aurora_3d_pipeline.py`, `scene_orchestrator.py`, `mesh_acceptance_gate.py` ; pas de réussite d’une scène complète avec la seule première entité |
+| Fabrication 3D | Profils nommés, taille et volume utile, découpe, pièces par couleur, interfaces, fixations, plaques et export | `engineering_mesh.py`, `engineering_color_parts.py`, `engineering_connections.py` ; parois locales, jeu, résistance et imprimerie réelle restent des obligations distinctes |
+| Conception d’ingénierie | Objectif et composants imposés ou choisis, CAD reproductible, STL, placements, BOM, sources, tests, dossier MD/HTML/PDF imprimable et ZIP | `engineering_design_api.py`, `engineering_project.py` ; hypothèses, enveloppes supposées et blockers visibles, aucune certification automatique |
+| Assemblage et mouvement | Vue originale séparée, assemblé, éclaté, plaques, coordonnées, liaisons simples/composées, fermeture numérique et collisions | `project_viewer.html`, `engineering_viewer.html`, `engineering_motion.py` ; mouvements fonctionnels échantillonnés, insertion droite désormais contrôlée continûment sous les limites déclarées |
+| Voix | Microphone, transcription, nettoyage, synthèse, prononciation, lecture et lipsync | `voice_service.py`, `VoiceCopilotView.tsx` ; permissions HTTPS, latence et intelligibilité à mesurer séparément |
+| Academy / Learning | Recherche, ressources, cours, quiz, explications, vérifications numériques et sémantiques, parcours | services `learning/`, `learningResearch.ts`, `learningSemanticEval.ts` ; un oracle de calcul ne prouve pas la pédagogie |
+| Simulation | Scènes, import/export, états, contraintes et pas physiques reproductibles | services `simulator/` ; distinguer rendu, cinématique, dynamique et matériel mesuré |
+| Cyber | Analyse, explication, laboratoire et opérations du module sous permissions | `services/cyber/`, `python-services/cyber/` ; cible et autorisation attachées à l’exécution |
+| Cowork / recherche | Fichiers, extraction documentaire, contexte projet, planification, dépendances, recherche web, navigation et actions | `coworkOrchestrator.ts`, services `cowork*`, routes Cowork/recherche/actions ; connecteur déclaré distinct d’un connecteur utilisé et vérifié |
+| Agents, skills, MCP | Rôles persistants, contexte, découverte d’outils, permissions, délégation bornée, traces et critères | `agent_registry.py`, `agi_core/context.py`, `mission_agent.py`, `mission_protocol.py` ; skills de développement, profils UI et agents runtime distincts |
+| Missions et reprise | Demande immuable, plan, critères, preuves, baux, événements, reprise, diagnostic de stagnation, file et estimation mesurée | `mission_store.py`, `mission_recovery.py`, `runtime_policy.py` ; effets externes inconnus conservés, pas de garantie exactement une fois sur tout shell |
+| Accès et mobilité | Appairage PC/téléphone/CLI, validation sur le PC, tunnel, découverte GitHub, reconnexion et espace PC | `device_pairing.py`, `persistent_workspace.py`, `persistent-workspace.mjs`, CLI transport ; URL présente distincte d’une disponibilité du moteur |
+| Livraison et visualisation | Artefacts confinés au projet, hash, ZIP, sources, viewer tactile, modes séparés, reprise des résultats | `cli_artifacts.py`, `projects_api.py`, `engineering_project.py` ; octets téléchargés et inspection sémantique sont deux preuves |
+| Modèles et ressources | Inventaire, options réellement appliquées, contexte mesuré, ajustement borné, mémoire, modèle/adapter audité et inférence | `llm_gateway.py`, `runtime_policy.py`, `auto_rl/`, registres ; choisir par qualité et budget observés, pas par la seule taille du modèle |
+| Entraînement / évaluation | Préférences, campagnes, audits, corpus, seeds, registre, adaptateurs et contrôle d’intégration | `auto_rl/`, `kaggle_sync/` ; aucune campagne coûteuse ni remplacement de poids lancé par cet audit |
+| Exploitation multi-OS | Lanceurs, services, readiness, empreintes de builds, santé, diagnostics, logs, conventions de chemins et publication d’état | `start-aurora.sh`, `scripts/launch_runtime.py`, scripts tunnel/live, CLI ; CI Windows/macOS distincte d’un essai physique du popup natif sur ces OS |
+| Variantes historiques | Identifiants Vidéo/Manga, anciens skins et extensions peuvent subsister dans types, imports ou moteurs | vérifier `types/app.ts`, navigation, graphe d’imports et services avant suppression ; présence du type `video` ne prouve pas une vue active |
+
+Les paramètres, routes et commandes individuelles sont indexés dans le catalogue mécanique et les sections 7–19. Cette table est l’index fonctionnel : les sources citées sous `services/`, `hooks/` ou `views/` sont dans `application/src/`, les moteurs dans `application/python-services/`, sauf chemin complet indiqué. Les composants actuellement déclarés dans `ModuleId` comprennent conversation, image, code, video, drawing, 3d, learning, voice et cyber ; Cowork/Forge/ingénierie sont aussi des parcours et overlays. L’union de types n’est pas le menu de navigation.
+
 <a id="composants"></a>
 ## 3. Composants, processus et données
 
@@ -529,7 +599,8 @@ Le nom AGI dans le code désigne des classes et un daemon. Il ne prouve ni une i
 | 8188 | ComfyUI | `aurora-comfyui`, localhost, Python de son venv |
 | 11434 | Ollama | Service système `ollama` ; modèles locaux |
 | 11435 | Inférence des modèles audités | `aurora-trained-models` lance `python -m auto_rl.serve` |
-| 3009 | Viewer HTTP de fichiers | `aurora-viewer` ; ne remplace pas le bridge ni le bus |
+| 3009 | Viewer HTTP de fichiers | `aurora-viewer` ; ne remplace pas les viewers propriétaires servis par le bridge ni le bus |
+| 3034 | Espace navigateur persistant du PC | `aurora-workspace` ; protocole interne authentifié, contrôleur téléphone via le bridge |
 
 `start-aurora.sh` et les unités systemd constituent deux mécanismes de lancement. Le script peut tenter de relancer des services déjà présents. Ses variables d’environnement n’affectent pas rétroactivement le processus Ollama lancé par systemd. Une supervision unique avec dépendances, readiness et versions observables est une amélioration prioritaire.
 
@@ -567,12 +638,12 @@ Les anciens plans Pronote/ENT décrivent collecte du DOM, authentification utili
 | Conversation | `conversationOrchestrator.ts` : intention, recherche, génération, vérification selon le parcours | Même orchestration frontend sous réserve des transports et capacités navigateur | `chat_stream` ou mission autonome ; ne pas supposer une équivalence au pipeline UI |
 | Code | `codeOrchestrator.ts`, sandbox, corrections et critères de livraison | Même pipeline ou runners Node via bridge selon l’entrée | Boucle de mission `agi_core`, outils, contrôles explicites et revue LLM de conclusion |
 | Image | `useImageViewLogic.ts`, workflows FLUX, références, retouches | API/ComfyUI via bridge, reprise partielle des états | Outil `generate_image` et moteur Python ; contrat différent de la galerie UI |
-| 3D | Planification TS, pipeline Python, viewer Three.js | Flux d’assets et API ; latence et chemins distants à prendre en compte | Scripts/outils accessibles ; pas de preuve de parité automatique avec toutes les étapes UI |
+| 3D | Planification TS, pipeline Python, viewer Three.js | Assets propriétaires, source séparée des assemblages, espace PC persistant | Dispatch `generate_3d` vers le pipeline local pour demandes visuelles explicites ; CAD et ingénierie restent des parcours distincts, sans parité automatique de toutes les étapes UI |
 | Voix | Microphone, rendu, overlay, STT/TTS | Permissions navigateur, HTTPS et transport requis | Capacités disponibles par outils ; pas une réplique de l’overlay vocal |
-| Progression | Événements frontend, polling, streams | Dépend des proxys et du type de tunnel | SSE avec curseur et reprise limitée |
+| Progression | Événements frontend, polling, streams | Contrôle du workspace PC ; transport adapté au tunnel | Événements durables avec curseur, SSE local ou suivi JSON distant ; progression réelle des moteurs conservée après saturation des logs |
 | Arrêt / reprise | AbortController et contrats propres aux moteurs | Déconnexion réseau distincte d’une annulation | Demande d’arrêt via bridge et bus ; journal SQLite, checkpoint et reprise explicite du même objectif |
 | Modèle par défaut | Config TypeScript et sélection adaptative | Config frontend + réalité des modèles serveur | `_ext_default_model()` et `LLMGateway` peuvent choisir un autre modèle |
-| Connexion | Accès hôte/local selon la surface | Auth et exposition à vérifier route par route | Clé Bearer existante requise sur `/api/cli/*` |
+| Connexion | Accès local et approbation des appareils sur le PC | Appairage et session d’appareil ; protection à vérifier route par route | Appairage PC puis Bearer délivré au client ; pas de clé à copier manuellement dans le parcours normal |
 
 **Conclusion d’architecture :** même machine et mêmes poids ne signifient pas même chemin logiciel, mêmes paramètres, mêmes garanties ou même résultat. L’objectif d’amélioration est un contrat partagé et une parité mesurée, pas une simple égalité de noms dans les menus.
 
@@ -610,6 +681,43 @@ Les travaux ci-dessous sont des **propositions**, pas des correctifs exécutés 
 3. Aligner modèles, profils mémoire et chemins de génération entre interface et CLI.
 4. Mesurer la qualité réelle avec un corpus commun ; optimiser après attribution du temps à la file, au chargement, à l’inférence et au transfert.
 5. Consolider supervision, build, stockage et observabilité ; supprimer seulement les branches réellement remplacées et testées.
+
+### 5.1 Choix d’architecture réalisés le 13 octobre et alternatives comparées
+
+« Meilleure solution » signifie ici le choix retenu pour un PC local, une file GPU, une utilisation gratuite sans service supplémentaire, des clients intermittents et des résultats vérifiables. Ce n’est pas une supériorité universelle ni un benchmark contre tous les produits. L’ordre des critères est : préserver la demande et les données, éviter le faux succès et le rejeu inconnu, produire une preuve, borner le coût, puis optimiser la latence.
+
+| Problème mesuré | Alternatives pertinentes | Choix développé et raison | Compromis / critère de validation |
+|---|---|---|---|
+| Fin de génération perdue après déconnexion, délai ou perte de stdout | Relancer automatiquement ; rester bloqué indéfiniment ; ajouter un orchestrateur distribué ; réconcilier un reçu terminal | Reçu atomique indépendant du transport et réconciliation par demande, ID, version du producteur et hashes des artefacts. Il conserve le calcul fini et évite une nouvelle génération sans installer un broker | Hashing et petit fichier supplémentaires ; pas d’attestation signée ni de preuve sémantique. Crash de remplacement, mauvais ID, fichiers altérés et issue négative testés ; zéro appel au moteur lors d’une reprise valide |
+| Modèle 3D disponible ou absent selon le déploiement | Forcer le même outil sur toute machine ; laisser le LLM inventer un nom ; basculer selon la présence réelle | Dispatch typé seulement si le script existe, le plan est accepté et la demande est une génération visuelle explicite. Sinon découverte normale | Présence du script distincte de sa readiness CUDA. Test d’environnement sans moteur et stagnation de recherche conservé |
+| Collision entre deux positions libres | Tester seulement les extrémités ; diminuer arbitrairement le pas ; collision continue exacte généralisée ; enveloppe conservatrice | Enveloppe convexe de la pièce aux deux extrémités d’une translation. Elle contient tout le volume balayé : disjointe, elle permet un verdict continu dans ce modèle ; si la pièce est concave et l’enveloppe intersecte, verdict indéterminé | Pas de rotation, de déformation ni de jeu certifié. Plus conservateur qu’un solveur exact de solides concaves. Contre-exemple réel de paroi 0,01 mm détecté malgré deux extrémités libres ; faux refus de concavité évité |
+| Choisir une insertion sans emplacement ou mouvement prédéfini | Une direction fixe ; quelques poses animées ; recherche géométrique de candidats | Axes et normales dominantes des faces réelles, comparaison bornée et trajet confirmé le plus court parmi les directions testées | Jusqu’à 12 directions, pas d’optimum global ni de preuve qu’un trajet tournant est impossible. Hashes, matrices, couverture des lots et critère de sélection conservés |
+| Précision perdue pour des placements éloignés | Calcul mondial float32 ; recentrage seul ; précision double avec repère local et statuts contrôlés | Recentrage numérique sans modifier le CAD, entrée Manifold64, refus des erreurs et du dépassement de précision. Le contrôle garde les hashes et placements originaux | Contre-exemple mesuré : une paroi de 0,01 mm à un décalage de 400 000 000 mm donnait 0 mm³ avec la conversion float32 mondiale ; le nouveau calcul retrouve environ 0,01 mm³ comme près de l’origine. Ce n’est pas une mesure de précision d’imprimante |
+| Catalogue documentaire périmé | Copier des listes à la main ; remplacer aveuglément les anciens hashes ; catalogue versionné issu de Git | Catalogue des sources indexées et des déclarations littérales, détectant ajouts/suppressions/changements ; historique de septembre conservé | N’exécute pas les services et exclut les brouillons. Déclarations dynamiques et politiques restent à lire/tester ; tests prouvent absence d’imports et exclusion de poids/brouillons |
+| Nouveau modèle plus volumineux envisagé alors que le parcours échoue | Augmenter les poids en espérant corriger l’orchestration ; corriger le contrat et mesurer le modèle ensuite | Correction de la cause observable : faux besoin d’animation, outil réellement disponible, conservation du résultat et contrôles géométriques | Aucun gain universel de qualité sémantique annoncé ; remplacer un modèle demande un corpus comparatif sur les tâches, RAM/VRAM et latence réelles |
+
+SQLite fournit des transactions atomiques ; un fichier de résultat et des effets externes ne deviennent pas pour autant une transaction unique. Temporal est une option pertinente pour des workflows distribués ; sa documentation demande aussi de traiter l’idempotence des Activities. Un changement de plateforme ne dispense donc pas du contrat de l’effet réel. Le choix local ci-dessus est une décision adaptée à ce déploiement, pas une mesure prouvant Temporal moins performant. Sources primaires : [SQLite — Atomic Commit](https://www.sqlite.org/atomiccommit.html), [Temporal — Activity definition et idempotence](https://github.com/temporalio/documentation/blob/main/docs/encyclopedia/activities/activity-definition.mdx). Les opérations de coque convexe et d’intersection utilisées sont celles documentées par [Manifold](https://manifoldcad.org/docs/html/classmanifold_1_1_manifold.html) ; leur existence ne certifie pas l’ajustement d’une pièce imprimée.
+
+### 5.2 Développer davantage l’IA : besoins, méthode et preuves attendues
+
+| Priorité | Capacité absente ou encore limitée | Développement adapté / alternative à éviter | Preuve requise avant de la déclarer opérationnelle |
+|---|---|---|---|
+| P0 | Reprise propre des moteurs autres que la 3D | Adapter le reçu commun aux manifests Image, Forge, Code et Voix avec identités des étapes et artefacts ; conserver les adaptateurs de moteur, plutôt qu’un simple bouton « retry » global | Couper le contrôleur et le worker avant/après chaque commit ; retrouver les octets sans répéter un effet accepté ; garder l’inconnu sans reçu |
+| P0 | Contrat de résultat partagé entre tous les parcours | Un état de projet et des obligations séparées : technique, sémantique, fabrication, physique ; adaptateurs frontend/CLI vers le même contrat plutôt qu’une réécriture générale en une fois | Même demande et fichiers d’entrée, mêmes obligations et hashes accessibles depuis PC/téléphone/CLI ; état de build et moteur effectivement chargé visibles |
+| P0 | Placement réellement fabricable des interfaces | Calculer les parois locales, volume disponible, accès outil, jeu, trajet, démontabilité et occlusion depuis les maillages et caractéristiques de fabrication ; réviser les coupes en conservant la source | Solides fermés, pas de pénétration, épaisseur locale vérifiée, outil introduisible et contraintes respectées. Essais de calibration requis pour ajustement réel |
+| P1 | Couleurs fines ou petits détails UV pouvant être manqués | Échantillonnage adaptatif des textures et raffinement des régions de surface ; distinguer couleur de repérage, texture et filament. Comparer palette, surfaces et coût de montage | Corpus avec yeux, bandes, motifs et régions fines ; fidélité multi-vues et conservation de volume ; source jamais remplacée par un objet simplifié sans accord |
+| P1 | Recherche de séquence d’assemblage | Graphe des dépendances, dépose inverse, insertion, accès des vis, composants non imprimables et câbles ; employer le contrôle développé comme primitive du planificateur | Séquence couvrant toutes les pièces, absence de pénétration à chaque étape et preuve du passage des outils. Une vue éclatée seule n’est pas une séquence |
+| P1 | Solides concaves ou insertion avec rotation | Décomposition conservatrice affinée / convexes multiples, puis solveur continu adapté aux rotations et articulations ; refinements déclenchés par une incertitude réelle | Contre-exemples inter-échantillons, trajectoires complexes, couverture et budgets ; ne jamais convertir le dépassement de budget en succès ou impossibilité |
+| P1 | Comparaison fiable de modèles et de prompts | Corpus aveugle par domaine : objets, relations, quantités, sources, contraintes, code, français, calculs ; budget contextuel et matériel fixés | Répétitions, seeds lorsque disponibles, taux d’échec, qualité annotée, mémoire, temps à froid/chaud, p50/p95 ; poids différents évalués avec le même contrat |
+| P1 | Ordonnanceur ressources entièrement commun | Réservations GPU/RAM par étape et décharge vérifiée, admission durable, coûts mesurés ; pas une multiplication de générations simultanées sur une seule VRAM | Scénarios LLM + vision + Comfy + 3D, mémoire/p95/file mesurés, absence de double admission ; le plafond mémoire ne garantit pas l’absence de gel système |
+| P1 | Estimation de durée trop pauvre pour projets complexes | Historique par moteur/modèle/domaine et par étape, intervalles et confiance, charge réelle ; estimation révisée pendant le travail | Calibration sur missions réelles, erreurs mesurées et inconnus affichés ; pas de compte à rebours inventé lors du premier projet |
+| P1 | Réparation guidée par le résultat de l’essai | Réutiliser `mission_recovery` : hypothèse liée à l’objectif, preuve d’échec, essai discriminant, correction ciblée et recontrôle identique ; ne pas seulement changer la formulation du prompt | Régressions où répéter la même observation ne compte pas comme progrès ; budget, alternative et cause conservés ; pas d’abandon selon une catégorie de projet |
+| P1 | Fournitures réellement compatibles avec la mécanique/électronique | Dimensions et fiches primaires, calculs courant/couple/section, interface mécanique, accès et nomenclature sourcée ; enveloppe supposée tant qu’aucun CAD mesuré ne la remplace | Compatibilité chiffrée, marges et incertitudes, sources datées, essais appropriés. Aucun moteur/capteur imposé à tous les projets |
+| P1 | Dossier entièrement reproductible hors machine | Archiver sources, contraintes, versions, inputs, preuves, scripts, modèles exportés et montage ; chemins portables et vérification des contenus | Réexécuter les tests depuis l’archive dans un environnement propre ; comparer géométrie, BOM et hashes ; pas de chemins absolus cassés après nettoyage |
+| P2 | Relecture sémantique trop dépendante du générateur | Séparer contrôles déterministes et revue multi-vues appropriée au domaine ; confronter la sortie au cahier des charges, pas seulement à une note | Corpus externe à la génération ; quantités, relations, identité, texte et dimensions détectés indépendamment ; défauts expliqués et corrigés |
+| P2 | Superviser durablement les builds et tous les OS | Identité du build chargé et diagnostics de readiness par surface ; install neuve et vraie fenêtre d’appairage sur chaque OS | CI des contrats + essais GUI physiques ; tunnel stable, mises à jour sans casser missions actives, erreurs exploitables |
+
+Ces lignes restent des **propositions tant que leurs preuves ne sont pas produites**. Les reçus 3D, le suivi de progression borné, le contrôle d’insertion droite, son outil CLI, son endpoint et son bouton viewer sont développés dans cette évolution. Le module mathématique ne remplace ni CAD paramétrique intelligent, ni recherche de tous les montages possibles, ni essais physiques. L’IA doit pouvoir affiner une hypothèse et rechercher une autre méthode sans inventer une approbation lorsque les données ou le solveur manquent.
 
 <a id="interface"></a>
 ## 6. Interface et état
@@ -764,6 +872,22 @@ Mesure de cadrage, contre un premier relevé trompeur : un contrôle « un pixel
 
 Invariance du rendu à l'indexation : les percentiles de cadrage sont calculés sur les **positions uniques** des sommets, et non sur la liste brute. Sans cela le cadrage dépendait du découpage en triangles : souder des sommets dupliqués déplace les percentiles, donc la caméra, donc les rendus et le score CLIP, alors que la surface est inchangée au 1e-9. Le rendu doit être une fonction de la forme, pas de l'indexation. Mesuré, le passage de l'ancien cadrage au nouveau vaut **+0,00099** de clip moyen (+0,38 %) sur le même maillage, soit une bascule neutre à légèrement favorable et non un décalage de référence pénalisant. Conséquence à retenir : deux artefacts de même forme mais de maillage différent ne doivent plus être comparés sur des scores rendus avec des versions antérieures du cadrage.
 
+### 7.5.1 Contrôle continu d’insertion des pièces réelles
+
+Implémentation : `application/engineering_insertion.py`, outil `application/python-services/engineering_insertion_path.py`, endpoint propriétaire `POST /api/3d/design/<id>/insertion`, et action du viewer « Vérifier l’insertion de la pièce inspectée ». Aucun paramètre de projet ou cinématique préfabriquée n’est ajouté au formulaire utilisateur.
+
+Le viewer en ligne est servi par le logiciel via `/api/3d/design/<id>/viewer/`, avec contrôle du propriétaire et des artefacts ; il ne dépend plus de la copie HTML ancienne du dossier. Les projets livrés bénéficient ainsi du contrôle d’insertion sans modifier leur ZIP, leurs sources ni leurs preuves. Les assets logiciels viennent du répertoire de confiance et les fichiers de données restent confinés au projet ; les scripts de conception ne sont pas exposés par ce viewer. Les anciens chemins restent compatibles avec le viewer exporté.
+
+Le contrôleur charge les STL du dossier, vérifie volumes fermés, vertices finis, transformations rigides et références confinées. Il calcule l’enveloppe convexe des sommets assemblés et translatés. Pour toute translation intermédiaire, chaque sommet est un segment entre ces extrémités ; la pièce est donc contenue dans cette enveloppe. L’intersection volumique Manifold porte sur les obstacles réels. Le calcul utilise `Mesh64` en double précision et un repère temporaire situé sur la pièce mobile, sans changer les placements archivés ni la direction mondiale. Le seuil de pénétration déclaré est `1e-5 mm³`, avec un budget de tolérance linéaire du backend de `1e-6 mm` ; dépasser ce budget donne un résultat indéterminé à affiner, pas un chemin libre ni une impossibilité physique. Un solide devenu vide ou un statut backend erroné est refusé. Le repère de calcul est conservé dans la preuve ; les contacts ne sont pas des preuves d’ajustement imprimé.
+
+Si l’enveloppe ne pénètre aucun obstacle après **tous** les lots, le chemin de translation est contrôlé continûment dans ce modèle. Si la pièce mobile est convexe, cette enveloppe est son volume balayé exact pour une translation droite ; une intersection positive donne un obstacle. Pour une pièce concave, l’intersection de l’enveloppe ne prouve pas celle de la pièce : le résultat reste `inconclusive`. Un solveur en erreur n’est jamais transformé en chemin libre. Les empreintes incluent fichiers, placements et translation ; l’agrégateur refuse un changement entre lots. Un dernier lot clair ne peut effacer l’obstacle rencontré dans un lot antérieur.
+
+Pour les scènes comportant de nombreuses pièces, la mémoire ne retient pas tous les maillages simultanément : pièce mobile, enveloppe, obstacle courant et métadonnées de bornes. Le broad phase parcourt les pièces réelles, puis les intersections chargent les obstacles candidats. Le coût de parcours et des relectures reste proportionnel aux données ; aucun gain de latence sur une scène volumineuse non testée n’est annoncé. La géométrie et son hash sont calculés depuis les mêmes octets STL. Une identité d’assemblage commune interdit de comparer des directions obtenues avec des fichiers ou placements différents.
+
+Les directions comparées viennent des axes et normales des plus grandes faces, jusqu’à 12 candidats ; le déplacement est calculé pour sortir du volume des pièces fourni. Le choix est le plus court **parmi les candidats confirmés**, pas un optimum global. La translation inverse donne le même trajet géométrique d’insertion. Cette vérification suppose les autres pièces au repos et présentes ; elle ne valide pas une séquence de montage, les fixations déjà posées, une rotation, l’accès d’un outil, la flexion d’un câble, les efforts ou le retrait matière. Les enveloppes de composants achetés supposées restent identifiées. La nomenclature et les blockers physiques ne sont pas supprimés par le succès de ce calcul.
+
+Pour l’IA et le CLI : `python engineering_insertion_path.py --manifest project.json --part piece_01 --output insertion-proof.json`. Le manifeste définit la pièce réelle : `piece_01` n’est que la syntaxe d’un ID de fichier, pas un modèle de projet. L’outil conserve tous les candidats, leurs raisons, hashes et preuve retenue ; inclure ce JSON dans `source_assets` du dossier de fabrication. L’API et le viewer traitent les obstacles par lots de 32. Réviser les interfaces, la décomposition ou l’ordre de montage lorsqu’aucune direction n’est confirmée ; ne pas déduire une impossibilité physique de cette seule recherche bornée.
+
 ### 7.6 Voix
 
 Frontend : `VoiceCopilotView`, overlays par skin et services vocaux. Backend : `routes/voice_bp_routes.py` et `python-services/voice_service.py`. Le STT configuré actuellement est faster-whisper large-v3-turbo ; le TTS principal est Kokoro-82M, avec des chemins et secours supplémentaires dans le service. Les anciennes mentions de Voxtral/Fish ne décrivent pas nécessairement le chemin actif.
@@ -865,6 +989,18 @@ Les missions terminées ont une rétention configurable (`AURORA_MISSION_RETENTI
 Paramètres explicites : `AURORA_MODEL_OPTIONS` (objet JSON d'options Ollama), `AURORA_DEFAULT_MODEL`, `AURORA_MISSION_MAX_STEPS` (128, 0 désactive cette borne), `AURORA_COMMAND_TIMEOUT`, `AURORA_STALL_ATTEMPTS`, `AURORA_PARALLEL_WORKERS`, `AURORA_CONCURRENT_MISSIONS`, `AURORA_TOOL_OUTPUT_CHARS`, `AURORA_CONTEXT_CHARS`. Ce sont des budgets et réglages, pas des mesures de qualité. `AURORA_BACKGROUND_ANALYSIS=1` active les diagnostics de fond facultatifs ; ils ne modifient pas automatiquement le code et n'effacent plus le journal de crash.
 
 Sur la mémoire de conversation (`conversationMemory.ts`, couvert par les mesures 19/42/43) : le dédoublonnage compare le `contentHash` `kind::text` **byte-identique après `trim()`** — une variante de casse ou d’accent crée une entrée distincte, et c’est un choix documenté, pas un bug. `touch()` incrémente `usageCount` et pose `lastUsedAt` ; `removeMemory()` retire l’entrée et rééquilibre la fréquence documentaire ; le rappel pondère importance × BM25 avec rabais de fraîcheur (demi-vie 14 jours) et l’élagage respecte les entrées épinglées.
+
+### 9.4 Résultats terminaux persistants et reprise sans nouvelle génération
+
+`agi_core/operation_receipts.py` définit `aurora.operation-receipt.v1`, un contrat Python standard indépendant d’Ollama, Flask et du bus. Le producteur écrit résultat terminal explicite, ID d’opération, SHA-256 de la demande, empreinte du script producteur capturée avant le calcul, chemins confinés, tailles et SHA-256 des fichiers. L’empreinte du producteur porte sur le script appelé, pas sur tous ses imports, poids et nodes : l’identité complète du runtime reste une amélioration à réaliser. Le fichier est limité à 8 MiB. Écriture temporaire, flush/fsync, remplacement atomique, puis fsync du répertoire sur POSIX : pas de fichier JSON terminal à moitié remplacé. La tenue réelle d’une panne électrique dépend aussi du filesystem et du matériel. Ce mécanisme ne constitue pas une transaction globale entre SQLite, les fichiers et des moteurs externes.
+
+La CLI du pipeline 3D persiste ce résultat avant son affichage final, même avec stdout indenté ou un tampon de consommateur tronqué. `agi_core/generation_3d.py` peut réconcilier un état `started`/`outcome_unknown`, ou un processus sorti en erreur après son commit de résultat, seulement si le reçu positif correspond à l’objectif et au run sauvegardé, lie réellement le GLB final et conserve ses octets. Le maillage doit contenir des surfaces finies. Une version logicielle différente au moment de la reprise ne force pas à refaire un rendu correctement produit par la version précédente ; cette version reste attachée à son résultat. Les étapes et critères de la mission continuent d’être contrôlés par l’agent.
+
+Aucun PID mort, file ComfyUI vide, score isolé ou fichier partiel ne suffit. Un reçu négatif, absent, modifié, d’une autre entité ou d’une autre demande conserve le blocage de rejeu. Les checkpoints anciens dépourvus de l’identité du producteur ne sont pas rétroactivement validés. La mission historique de loutre conserve donc son statut d’échec et d’issue de génération à examiner : aucune nouvelle sortie neuronale de cette loutre n’a été produite par les tests de cette évolution.
+
+Le suivi générique des sous-processus conserve également les lignes `PROGRESS:`/`SCENE_ORCH:` après épuisement du budget de logs : `process_progress.py` reconnaît les fragments, limite la ligne à 512 caractères, regroupe la dernière progression au plus une fois par seconde lors des lectures et émet la fin restante. Le résultat conservé pour le modèle reste borné par `output_chars` ; stdout n’est pas accumulé sans limite. C’est de la télémétrie déclarée par le programme, pas une preuve de qualité ou de fin de mission. Les programmes sans ce protocole gardent leurs logs bornés et leur état de processus, sans progression inventée.
+
+Les hashes lient les octets ; ce ne sont pas des signatures ni une preuve contre un agent disposant de droits d’écriture sur tout le workspace. Le contrat distingue completion du moteur, résultat technique, conformité de la demande et ajustement physique. Il est générique, mais son intégration automatique est actuellement **3D seulement** : Image, Voix, Code et Forge nécessitent leurs adaptateurs et tests de coupure, et ne sont pas déclarés corrigés par analogie.
 
 <a id="cli"></a>
 ## 10. CLI, connexion, événements et livraison
@@ -1126,6 +1262,14 @@ Les tests existent dans `application/src/__tests__/`, `application/test_cli_miss
 | Academy | Exactitude vérifiable, adaptation au niveau, absence de correction inventée |
 | CLI/tunnel | Même tâche exécutée, progression reçue, reprise sans doublon, artefacts vérifiés |
 
+### 17.2.1 Contrôles de l’évolution architecture / insertion du 13 octobre
+
+Observation locale : 536 tests et 206 sous-tests réussis dans la suite complète `tests_agi tests_auto_rl`, avec quatre avertissements trimesh portant sur des volumes intermédiaires. Après les derniers contrôles de cycle de vie, 26 tests ciblés reçus/génération/catalogue/insertion/API réussis. La compilation TypeScript/Vite réussit. Les viewers original et assemblage/insertion passent en Chromium avec les formats émulés Pixel 7, iPhone 13, iPad Mini et Desktop Chrome (ce n’est pas un essai physique Safari/iOS) ; le second appelle effectivement Flask, charge les STL/GLB empaquetés, compare au moins six directions et conserve la limite d’ajustement physique dans son message.
+
+Les contrôles géométriques utilisent des fichiers générés déterministes : paroi inter-échantillons, solide concave, trou réel d’un tore, placement rigide et changement de contenu. Ce sont des tests du calcul et de l’intégration, pas une nouvelle génération neuronale, ni des mesures de la beauté de la loutre historique. L’environnement Python vierge du viewer original confirme ses dépendances déclarées. La matrice CI couvre Linux, Windows et macOS ; son résultat de cette évolution doit être consulté avant de la dire entièrement verte. Les anciennes exécutions ont révélé un moteur absent forcé en test et un démarrage de fixture macOS expiré ; la sélection du moteur et le diagnostic/parser de démarrage ont été corrigés. Les journaux détaillés restent dans le dossier privé de maintenance.
+
+Le cycle de vie d’ingénierie refuse désormais de retirer la référence d’un projet actif. Un arrêt en file est atomique ; si un worker gagne la course d’admission, la demande devient un vrai signal d’arrêt, pas un événement de succès inventé. Le retrait d’un projet terminé masque son entrée sans détruire ses fichiers ni ses preuves. Le retrait et la reprise par d’autres clients restent des opérations distinctes : ce contrôle ne constitue pas une transaction atomique globale fichiers/base/clients.
+
 ### 17.3 Audits historiques conservés
 
 Les cycles `audit/cycle-01`, `cycle-01-resilience`, `cycle-02-media` contiennent des preuves JSON/CSV, captures et journaux qui restent en place. Leurs quatre rapports Markdown sont archivés et synthétisés ici. Leurs scores étaient provisoires et leurs tests parfois simulés : ne pas en déduire une note actuelle de l’IA.
@@ -1167,6 +1311,12 @@ python3 scripts/documentation/doc_master.py --check-code
 Le contrôle des sources détecte les modifications des fichiers indexés ; il ne revendique pas la découverte automatique de toute nouvelle source non indexée. Après évolution, revoir les sections concernées, ajouter les nouveaux fichiers au manifeste et régénérer leurs entrées d’index. Ne pas actualiser les empreintes simplement pour faire disparaître une alerte.
 
 Le bloc `STATUS` du README `aurora-live` appartient à l’automatisation d’état : le générateur le conserve. Ne pas y recopier une URL périmée depuis l’archive. Les exports de définition conservent leur frontmatter ; les 76 instructions existantes ne sont pas remplacées par des résumés qui en changeraient le comportement.
+
+### 18.3.1 Actualiser le catalogue courant sans publier les brouillons
+
+Après revue des sources et édition des sections métier, indexer seulement les fichiers autorisés de l’évolution. Exécuter `python3 scripts/documentation/architecture_catalog.py --write`, puis indexer `architecture_catalog.json` ; `python3 scripts/documentation/doc_master.py --check-code` contrôle ce même index. Les sources de `origin/main` des dépôts voisins sont utilisées si elles existent. Elles ne forment pas une transaction commune avec le dépôt principal : contrôler leur révision avant de mettre à jour le relevé. Le catalogue lui-même est exclu du hash de ses entrées pour éviter une référence récursive.
+
+Les tests `test_architecture_catalog.py` démontrent que le code n’est pas importé, les poids ne sont pas lus et les modifications non indexées d’un fichier ne remplacent pas le blob public. `test_operation_receipts.py`, `test_generation_3d.py` et `test_engineering_insertion.py` portent les nouveaux contrats. Les scripts navigateur contrôlent les GLB réels et les appels de l’API d’insertion sur quatre formats. Le manifeste historique n’est pas remplacé silencieusement par un relevé courant pour masquer ses écarts.
 
 ### 18.4 Règle pour une future IA
 

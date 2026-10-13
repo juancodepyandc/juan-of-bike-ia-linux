@@ -57,6 +57,13 @@ def test_delivery_checks_actual_geometry_and_changed_archive(tmp_path):
     path='/api/3d/design/'+d['id']
     assert c.get(path).json['ready']
     assert c.get(path+'/download').status_code==200
+    viewer=c.get(path).json['viewer_url']
+    (folder/'viewer.html').write_text('<script>throw Error("legacy renderer must not execute")</script>')
+    rendered=c.get(viewer)
+    assert rendered.status_code==200 and b'legacy renderer' not in rendered.data
+    assert 'Vérifier l’insertion'.encode() in rendered.data
+    assert c.get(viewer.removesuffix('viewer.html')+'design.py').status_code==404
+    assert c.get(viewer.removesuffix('viewer.html')+'assembled.glb').status_code==200
     simulation=c.post(path+'/simulate',json={})
     assert simulation.status_code==200 and simulation.json['dof']==0
     assert simulation.json['collisions']==[]
@@ -81,6 +88,40 @@ def test_resume_when_daemon_offline_retains_retryable_state(tmp_path):
     other=c.post('/api/3d/design',json={'objective':'Second projet','request_id':'offline-456'}).json
     assert other['state']=='queued' and other['scheduling']['queue_position']==2
     assert c.get(path).json['mission_id']==d['mission_id']
+
+
+def test_stop_and_delete_preserve_active_work_and_retained_proofs(tmp_path):
+    app=Flask(__name__);bp=Blueprint('lifecycle',__name__);store=MissionStore(tmp_path/'lifecycle.sqlite3');calls=[]
+    register_design_routes(bp,tmp_path,local=lambda:True,extension=lambda:(False,None,None),model_default=lambda:'fixture',store=store,dispatch=lambda *args:calls.append(args) or True)
+    app.register_blueprint(bp);client=app.test_client()
+    item=client.post('/api/3d/design',json={'objective':'Conserver les preuves','request_id':'lifecycle-test-123'}).json
+    path='/api/3d/design/'+item['id'];folder=tmp_path/'output/engineering-design'/item['id']
+    proof=folder/'evidence.json';proof.write_text('{"actual":"retained"}')
+    assert store.claim(item['mission_id'],'real-worker')
+    assert client.post(path+'/delete',json={}).status_code==409
+    assert client.get(path).json['state']=='running' and proof.is_file()
+    stopped=client.post(path+'/stop',json={})
+    assert stopped.status_code==202 and store.get(item['mission_id'])['status']=='stopping'
+    assert calls[-1][0]=='mission.stop'
+    store.append(item['mission_id'],{'type':'mission_complete','stopped':True,'result':'Stopped by actual worker'})
+    assert client.post(path+'/delete',json={}).status_code==200
+    assert client.get(path).status_code==404 and proof.is_file()
+
+
+def test_queue_claim_race_does_not_fabricate_a_finished_stop(tmp_path):
+    from unittest.mock import patch
+    app=Flask(__name__);bp=Blueprint('claim_race',__name__);store=MissionStore(tmp_path/'race.sqlite3');calls=[]
+    register_design_routes(bp,tmp_path,local=lambda:True,extension=lambda:(False,None,None),model_default=lambda:'fixture',store=store,dispatch=lambda *args:calls.append(args) or True)
+    app.register_blueprint(bp);client=app.test_client()
+    item=client.post('/api/3d/design',json={'objective':'Traiter la concurrence','request_id':'queue-claim-test-123'}).json
+    def claimed(mid):
+        assert store.claim(mid,'worker-that-claimed')
+        return False
+    with patch.object(store,'cancel_queued',side_effect=claimed):
+        response=client.post('/api/3d/design/'+item['id']+'/stop',json={})
+    assert response.status_code==202
+    assert store.get(item['mission_id'])['status']=='stopping'
+    assert not any(event.get('type')=='mission_complete' for _,event in store.events(item['mission_id']))
 
 
 def test_verified_prototype_available_without_claiming_mission_success(tmp_path):
