@@ -76,6 +76,10 @@ def atomic_write(path: Path, data: bytes) -> None:
 
 
 def check_code() -> int:
+    if (ROOT/'scripts/documentation/architecture_catalog.json').is_file():
+        from architecture_catalog import check_catalog
+        print('Checking the current Git-index catalog; unstaged drafts are excluded. The September inventory remains historical.')
+        return check_catalog()
     snapshot = json.loads(INVENTORY.read_text(encoding="utf-8"))
     changed = []
     for item in snapshot["files"]:

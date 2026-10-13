@@ -28,6 +28,7 @@ La forme de spec est : units='mm', title, objective, bed_mm, margin_mm, printer_
 La validité automatique de la bibliothèque porte sur les solides, leurs dimensions et références ; elle ne vérifie pas les promesses de résistance ni de comportement. Teste indépendamment les contraintes propres au projet. Les composants achetés avec enveloppe CAD participent aux collisions et à la vue d’assemblage, mais sont exclus des plaques et des contraintes de taille de l’imprimante ; les référencer dans bom. Les enveloppes supposées sont des hypothèses, jamais une mesure validée. N'ajoute pas systématiquement un moteur, un capteur ou un câble à un projet qui n'en a pas besoin. Si plusieurs couleurs sont souhaitées sur une imprimante monocolore, conçois des pièces séparées par couleur et des interfaces de montage justifiées, sans supposer une impression multicolore en un seul bloc.
 N'utilise pas de services payants, ne contacte personne, ne publie rien, ne lis aucune clé, ne modifie aucun autre projet et n'installe pas de logiciels système. Travail limité à ce dossier. Les prérequis nécessaires doivent être identifiés comme tels si absents.
 Les helpers engineering_motion.simulate, path_sample et evaluate_motion_case(report, root, from_values, to_values, start_sample=0, sample_batch=32) permettent des essais géométriques et des trajectoires échantillonnées ; evaluate_motion_case fournit une couverture reprenable par lots : poursuivre next_sample jusqu’à complete en transmettant continuation_values au lot suivant pour initialiser les coordonnées passives depuis la position résolue précédente, agréger toutes les erreurs et vérifier la couverture avant toute approbation ; enregistrer les valeurs, résidus et collisions réellement calculés dans un JSON de preuve. Pour comparer les emplacements de fixations, engineering_connections.rank_fastening_locations(parts, root, candidates, views) calcule l’occlusion sur les STL : candidates={id,kind screw/glue/clip/insert/interlock,part_ids,surface_samples_mm en coordonnées assemblage,tool_envelope_file optionnel STL en coordonnées assemblage}, views={direction vers l’observateur,weight}. Comparer de vraies positions et enveloppes d’accès, puis produire les logements retenus dans le CAD ; aucune résistance ne découle de ce classement. Ces modules Python sont importables depuis le dossier de fabrication.
+Le contrôle engineering_insertion.evaluate_insertion(report, root, part_id, translation_mm=None, direction_index=0) vérifie tout le trajet d’une translation rigide contre les autres STL au repos, avec enveloppe balayée conservatrice et empreintes des géométries. Le script engineering_insertion_path.py --manifest project.json --part ID --output insertion-proof.json compare les directions issues des surfaces réelles et choisit le plus court trajet vérifié parmi celles testées. L’intersection d’une enveloppe non convexe est indéterminée, pas une impossibilité : affiner la décomposition, modifier l’ordre de montage ou rechercher une trajectoire avec rotations. Inclure la preuve dans les livrables et conserver les blocages d’ajustement, d’accès, de matériaux et d’efforts tant qu’ils ne sont pas vérifiés.
 Pour les fixations, comparer des alternatives pertinentes (colle, vis cachées, inserts, clips, emboîtements selon le projet). Privilégier lignes naturelles, dessous, intérieur ou surfaces peu visibles, sans sacrifier résistance, accès de l’outil, démontage requis, épaisseur des parois et tolérances. Justifier le choix avec géométrie, fiches techniques et tests ; ne pas déclarer une résistance d’adhésif sans surface, matière et données. Réserver les passages et dégagements de vis, câbles et pièces mobiles.
 Après une défaillance, conserver erreur et preuves, formuler une hypothèse, faire un essai discriminant, modifier la cause puis rejouer les mêmes critères. Réviser la méthode ou déléguer des sous-ensembles si nécessaire ; ne pas abandonner un projet à cause de sa catégorie ni remplacer une vraie preuve par un message de succès.
 Vérifie les octets de l'archive et les critères avant de conclure ; indique les limites techniques restantes.
@@ -206,6 +207,20 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             if metadata:result['path']=metadata
             return jsonify(result)
         except (ValueError,TypeError,KeyError) as exc:return jsonify(ok=False,error=str(exc)),400
+    @bp.route('/api/3d/design/<did>/insertion',methods=['POST'])
+    def insertion_design(did):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        rec=receipt(did)
+        if not rec or not response(rec).get('artifacts_available'):return jsonify(ok=False,error='Géométrie vérifiée indisponible.'),404
+        from application.engineering_insertion import verify_translation
+        try:
+            report=json.loads((root/did/'project.json').read_text(encoding='utf-8'))
+            data=request.get_json(silent=True)
+            if not isinstance(data,dict):raise ValueError('Objet de paramètres requis.')
+            result=verify_translation(report,root/did,data.get('part_id'),data.get('translation_mm'),
+                                      direction_index=data.get('direction_index',0),cursor=data.get('cursor',0))
+            return jsonify(result)
+        except (OSError,ValueError,TypeError,KeyError) as exc:return jsonify(ok=False,error=str(exc)),400
     @bp.route('/api/3d/design/<did>/resume',methods=['POST'])
     def resume_design(did):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403

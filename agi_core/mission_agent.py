@@ -207,6 +207,10 @@ class AutonomousMissionAgent:
             return ['set_plan'] if 'set_plan' in allowed else allowed
         from agi_core.mission_routing import direct_3d_generation
         if self.state['plan'] and 'generate_3d' in allowed and direct_3d_generation(self.request_text) and not self._explicit_tool_names() and not self.state.get('generation_3d_attempts'):
+            try:
+                self.tools.script('aurora_3d_pipeline.py')
+            except FileNotFoundError:
+                return allowed  # Continue real discovery when this deployment has no engine.
             root=Path(self.workspace)/'.transfer_to_client'/self.mission_id
             if not any(root.rglob('*.glb')):return ['generate_3d']
         return allowed

@@ -38,6 +38,7 @@ def test_durable_idempotent_owned_mission_and_invalid_delivery(tmp_path):
     assert c.get('/api/3d/design/'+item['id']+'/download',headers=headers).status_code==404
     assert c.get('/api/3d/design/'+item['id']).status_code==403
     assert c.post('/api/3d/design/'+item['id']+'/simulate',json={}).status_code==403
+    assert c.post('/api/3d/design/'+item['id']+'/insertion',json={}).status_code==403
 
 
 def test_delivery_checks_actual_geometry_and_changed_archive(tmp_path):
@@ -61,6 +62,10 @@ def test_delivery_checks_actual_geometry_and_changed_archive(tmp_path):
     assert simulation.json['collisions']==[]
     assert c.post(path+'/simulate',json=[]).status_code==400
     assert c.post(path+'/simulate',json={'values':{'fake':1}}).status_code==400
+    insertion=c.post(path+'/insertion',json={'part_id':'piece_01'})
+    assert insertion.status_code==200 and insertion.json['continuous_collision_validated']
+    assert not insertion.json['physical_fit_validated']
+    assert c.post(path+'/insertion',json={'part_id':'invented'}).status_code==400
     trimesh.creation.box([30,15,10]).export(folder/'printable'/'piece_01.stl')
     assert not c.get(path).json['ready']
 

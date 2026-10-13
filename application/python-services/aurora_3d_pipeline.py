@@ -6440,6 +6440,13 @@ def main() -> int:
     if args.prompt:
         os.environ.setdefault("AURORA_PROMPT_ORIGINAL", args.prompt)
 
+    # Persist the terminal result before stdout: the consumer may disconnect,
+    # time out, or lose its final output buffer after the engine has finished.
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from agi_core.operation_receipts import sha256_file, write_receipt
+    _producer_sha256 = sha256_file(Path(__file__))
+
     for _essai in range(1, _essais_max + 1):
         result = run_pipeline(
             args.prompt, args.run_id,
@@ -6503,6 +6510,11 @@ def main() -> int:
                 _rd.mkdir(parents=True, exist_ok=True)
         except Exception as _pe:  # noqa: BLE001
             print("PROGRESS:perfection:purge impossible (%r)" % (_pe,), flush=True)
+    try:
+        write_receipt(Path(args.output_dir), args.run_id, args.prompt, _producer_sha256,
+                      result, [result['final_mesh']] if result.get('ok') and result.get('final_mesh') else [])
+    except (OSError, ValueError, TypeError) as exc:
+        print("PROGRESS:livraison:recu durable non ecrit (%s) — la reprise devra verifier les sorties" % exc, flush=True)
     if args.pretty:
         sys.stdout.write(render_pretty(result))
     else:

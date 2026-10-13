@@ -9,7 +9,19 @@ let fixtureErrors=''
 server.stderr.on('data',chunk=>{fixtureErrors=(fixtureErrors+chunk.toString()).slice(-6000)})
 let browser
 try{
- const url=await new Promise((resolve,reject)=>{let buffer='';const timeout=setTimeout(()=>reject(Error('Fixture startup timed out')),30000);server.stdout.on('data',chunk=>{buffer+=chunk;const line=buffer.split('\n')[0];try{const data=JSON.parse(line);clearTimeout(timeout);resolve(data.url)}catch{}});server.once('exit',code=>{clearTimeout(timeout);reject(Error('Fixture exited: '+code+'\n'+fixtureErrors))})})
+ const url=await new Promise((resolve,reject)=>{
+  let buffer='',diagnostics='';const timeout=setTimeout(()=>reject(Error('Fixture startup timed out\n'+diagnostics+'\n'+fixtureErrors)),60000)
+  server.stdout.on('data',chunk=>{
+   buffer+=chunk;let boundary
+   while((boundary=buffer.indexOf('\n'))!==-1){
+    const line=buffer.slice(0,boundary);buffer=buffer.slice(boundary+1)
+    try{const data=JSON.parse(line);if(typeof data.url==='string'){clearTimeout(timeout);resolve(data.url);return}}catch{}
+    diagnostics=(diagnostics+line+'\n').slice(-3000)
+   }
+  })
+  server.once('error',error=>{clearTimeout(timeout);reject(error)})
+  server.once('exit',code=>{clearTimeout(timeout);reject(Error('Fixture exited: '+code+'\n'+fixtureErrors))})
+ })
  browser=await chromium.launch({headless:true,args:["--use-angle=swiftshader","--enable-unsafe-swiftshader"]})
  for(const device of ['Pixel 7','iPhone 13','iPad Mini','Desktop Chrome']){
   const context=await browser.newContext({...devices[device]});const page=await context.newPage(),errors=[]

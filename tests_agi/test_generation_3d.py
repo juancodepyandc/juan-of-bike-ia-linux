@@ -71,3 +71,28 @@ def test_rejected_scene_with_partial_mesh_is_not_a_delivery(tmp_path):
     with pytest.raises(RuntimeError,match='missing component'):
         asyncio.run(execute_generation(a,{'prompt':a.request_text}))
     assert not a.state.get('resources')
+
+
+@pytest.mark.parametrize('tamper', [False, True])
+def test_unknown_generation_reconciles_only_matching_completed_bytes_without_replay(tmp_path, tamper):
+    from agi_core.operation_receipts import write_receipt
+    a=agent(tmp_path);script=tmp_path/'engine.py';script.write_text('# changed software')
+    a.tools.script=lambda name:script
+    target=tmp_path/'.transfer_to_client'/a.mission_id/'old_generation';target.mkdir(parents=True)
+    path=target/'scene.glb';trimesh.creation.icosphere().export(path)
+    run_id='saved_scene_run'
+    report={'ok':True,'run_id':run_id,'final_mesh':str(path)}
+    write_receipt(target,run_id,a.request_text,'previous_engine_sha',report,[path])
+    a.state['generation_3d_attempts']={'old':{'status':'outcome_unknown','prompt':a.request_text,
+        'directory':str(target),'run_id':run_id,'producer_sha256':'previous_engine_sha'}}
+    if tamper:path.write_bytes(b'changed GLB')
+    async def no_replay(*args,**kwargs):raise AssertionError('Unknown actions must not be replayed')
+    a._run_process=no_replay
+    if tamper:
+        with pytest.raises(RuntimeError,match='unknown outcome'):
+            asyncio.run(execute_generation(a,{'prompt':a.request_text}))
+    else:
+        result=asyncio.run(execute_generation(a,{'prompt':a.request_text}))
+        assert result['recovered'] and result['reused']
+        assert not result['physical_fit_validated']
+        assert a.state['generation_3d_attempts']['old']['status']=='completed'

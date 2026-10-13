@@ -52,6 +52,22 @@ async function checkMotion(pathCheck=false){
 }
 for(const joint of report.motion_controls||mechanism){motionValues[joint.id]=joint.home;if(!joint.dof)continue;const label=document.createElement('label'),input=document.createElement('input'),output=document.createElement('output');label.append(document.createTextNode(joint.id+' · '+joint.kind+' '),output,input);input.type='range';input.min=joint.limits[0];input.max=joint.limits[1];input.step='any';input.value=joint.home;output.textContent=joint.home+' '+joint.unit;input.oninput=()=>{output.textContent=input.value+' '+joint.unit};input.onchange=()=>{motionValues[joint.id]=Number(input.value);checkMotion()};input.disabled=!designMatch||!!joint.passive;input.dataset.passive=String(!!joint.passive);motionInputs.push(input);$('motion-controls').append(label);}
 if(designMatch){const button=document.createElement('button');button.textContent=mechanism.some(j=>j.dof)?'Vérifier cette position':'Vérifier l’assemblage';button.onclick=()=>checkMotion(false);motionInputs.push(button);$('motion-controls').append(button)}
+if(designMatch){const button=document.createElement('button');button.textContent='Vérifier l’insertion de la pièce inspectée';button.onclick=async()=>{
+ if(selectedPlate())return;const partId=selected||report.parts[0]?.id;if(!partId)return;
+ $('explode').value='0';update();const sequence=++motionEpoch;button.disabled=true;const candidates=[];
+ try{let direction=0,count=1;
+  do{let cursor=0,fingerprint=null,blocked=[],uncertain=[],result;
+   do{if(sequence!==motionEpoch)return;const response=await fetch('/api/3d/design/'+designMatch[1]+'/insertion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({part_id:partId,direction_index:direction,cursor})});if(!response.ok)throw Error('Vérification d’insertion indisponible ('+response.status+').');result=await response.json();if(sequence!==motionEpoch)return;
+    if(fingerprint&&fingerprint!==result.batch.fingerprint)throw Error('La géométrie a changé pendant le contrôle.');fingerprint=result.batch.fingerprint;blocked.push(...result.blocked_by);uncertain.push(...result.uncertain_pairs);cursor=result.batch.next_cursor;
+    $('motion-status').textContent=partId+' · direction '+(direction+1)+' / '+result.direction_count+' · '+cursor+' / '+result.batch.candidate_pairs+' obstacles vérifiés';
+   }while(!result.batch.complete);
+   count=result.direction_count;if(!blocked.length&&!uncertain.length)candidates.push(result);direction++;
+  }while(direction<count);
+  if(sequence!==motionEpoch)return;candidates.sort((a,b)=>a.translation_mm.reduce((s,v)=>s+v*v,0)-b.translation_mm.reduce((s,v)=>s+v*v,0));const best=candidates[0];
+  $('motion-status').textContent=best?partId+' · trajet droit sans pénétration entre les volumes fournis : '+best.translation_mm.map(v=>v.toFixed(2)).join(', ')+' mm. Trajet le plus court parmi '+count+' directions comparées. Ajustement, efforts et ordre de montage non validés.':'Aucun trajet droit confirmé parmi '+count+' directions. Réviser l’ordre de montage, décomposer les enveloppes ou tester un trajet avec rotations ; cela ne prouve pas une impossibilité.';
+  document.body.dataset.insertionStatus=best?'clear_path_found':'requires_revision';
+ }catch(error){if(sequence===motionEpoch)$('motion-status').textContent=error.message}finally{button.disabled=!!selectedPlate()}
+};motionInputs.push(button);$('motion-controls').append(button)}
 if(mechanism.some(j=>j.dof)&&designMatch){const button=document.createElement('button');button.textContent='Tester le mouvement depuis le repos';button.onclick=()=>checkMotion(true);motionInputs.push(button);$('motion-controls').append(button)}
 if(mechanism.some(j=>j.dof)&&!designMatch)$('motion-status').textContent='Articulations incluses dans le dossier. Ouvrir le viewer depuis Aurora pour calculer positions et intersections.';
 const bedGroup=new THREE.Group();scene.add(bedGroup);
