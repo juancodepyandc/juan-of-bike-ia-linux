@@ -11,6 +11,7 @@ let releaseAdmission
 let pipelineCalls = 0
 let admissionCalls = 0
 const finishes = []
+const cancelledJobs = []
 const stub = {
   zustand: { create: () => (init) => {
     let state
@@ -23,6 +24,7 @@ const stub = {
   '../utils/notificationBus.ts': Object.fromEntries(['emit', 'notifyError', 'notifyFinished', 'notifyQueueEnqueued', 'notifyQueueStarted', 'notifyStarted'].map(k => [k, () => {}])),
   './appStore.ts': { useAppStore: { getState: () => ({ mainModel: 'controlled-model' }) } },
   '../services/characterForge.ts': { runForgePipeline: async () => { pipelineCalls++; return { marker: 'saved-output' } } },
+  '../services/pythonJobClient.ts': { cancelPythonJob: async id => { cancelledJobs.push(id) } },
   '../utils/projectAdmission.ts': { acquireProject: async () => {
     admissionCalls++
     await new Promise(resolve => { releaseAdmission = resolve })
@@ -52,4 +54,9 @@ assert.equal(pipelineCalls, 1)
 store.setState({ jobs: [{ id: 'legacy', status: 'queued', startedAt: 1, prompt: 'Legacy interrupted', model: 'controlled-model' }] })
 exports.attachForgeQueueBootstrap()
 assert.equal(store.getState().jobs[0].status, 'error', 'old persisted running-to-queued jobs are not replayed')
+store.setState({ jobs: [{ id: 'cancel-active', status: 'running', artifacts: { referenceJobId: 'reference-operation', layersJobId: 'layers-operation' } }] })
+store.getState().cancel('cancel-active')
+assert.deepEqual(cancelledJobs, ['reference-operation', 'layers-operation'], 'stop targets both known server operations')
+assert.equal(store.getState().jobs[0].status, 'error')
+assert.equal(store.getState().jobs[0].artifacts.layersJobId, 'layers-operation', 'stop retains operation identity')
 console.log('Forge admission, duplicate ticks, retained outputs and interrupted reload: passed')

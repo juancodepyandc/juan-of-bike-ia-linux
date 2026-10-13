@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2161,
- "source_lines": 720909,
+ "source_lines": 720916,
  "static_route_declarations": 634,
  "by_repository": {
   "AuroraIA": 2002,
@@ -10032,8 +10032,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-forge-admission.mjs",
-   "sha256": "e642ab7e381a4838fb1fc535bd9a080b746a9d67ee499615d911905ec81a23dc",
-   "lines": 55
+   "sha256": "e53ff3b27afc1c9d397a2bc42f25567bcb4386c0904082feb3aea771e9c2151d",
+   "lines": 62
   },
   {
    "repo": "AuroraIA",
