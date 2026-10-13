@@ -67,3 +67,17 @@ def register_project_routes(bp,*,allowed,store=None):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
         if not store.cancel_queued(mid):return jsonify(ok=False,error='Le projet a déjà démarré. Utilisez son module pour contrôler son arrêt.'),409
         return jsonify(ok=True,status='stopped')
+
+    @bp.route('/api/projects/<mid>',methods=['DELETE'])
+    def delete_project(mid):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item = store.get(mid)
+        if not item: return jsonify(ok=False,error='Projet introuvable.'),404
+        # We can only delete if it's already terminal, but let's allow it in terminal states
+        if item['status'] not in {'completed','failed','stopped','blocked','interrupted'}:
+            return jsonify(ok=False,error='Impossible de supprimer un projet en cours.'),409
+        # Currently the backend doesn't have a strict delete feature for missions, but we can purge the UI by removing it from the DB.
+        with store.connect(write=True) as db:
+            db.execute("DELETE FROM events WHERE mission=?", (mid,))
+            db.execute("DELETE FROM missions WHERE id=?", (mid,))
+        return jsonify(ok=True)
