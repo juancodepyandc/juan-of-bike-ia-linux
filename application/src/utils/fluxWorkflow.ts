@@ -839,6 +839,7 @@ export interface Flux2WorkflowOptions {
   steps: number
   filenamePrefix: string
   seed?: number | null
+  referenceImageFilename?: string
   negativePrompt?: string
 }
 
@@ -852,11 +853,11 @@ export interface Flux2WorkflowOptions {
 export function createFlux2Workflow(options: Flux2WorkflowOptions): Record<string, unknown> {
   const {
     prompt, width, height, steps, filenamePrefix,
-    seed: seedOpt = null,
+    seed: seedOpt = null, referenceImageFilename,
     negativePrompt = 'cropped, cut off, out of frame, partial view, close-up, truncated body, missing limbs, blurry, low detail',
   } = options
   const seed = seedOpt ?? Math.floor(Math.random() * 2 ** 32)
-  return {
+  const workflow: Record<string, unknown> = {
     // Modeles depuis la configuration — JAMAIS de nom en dur: ce graphe
     // demandait encore 'flux2_dev_fp8mixed' (le fichier tronque supprime) via
     // UNETLoader, alors que le poids reel est un .gguf que seul
@@ -878,4 +879,14 @@ export function createFlux2Workflow(options: Flux2WorkflowOptions): Record<strin
     '8': { class_type: 'VAEDecode', inputs: { samples: ['31', 0], vae: ['10', 0] } },
     '9': { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: filenamePrefix } },
   }
+  if (referenceImageFilename) {
+    workflow['55'] = { class_type: 'LoadImage', inputs: { image: referenceImageFilename.replaceAll(String.fromCharCode(92), '/').split('/').pop()! } }
+    workflow['59'] = { class_type: 'ImageScaleToTotalPixels', inputs: { image: ['55', 0], upscale_method: 'lanczos', megapixels: Math.min(1.5, width * height / 1000000), resolution_steps: 1 } }
+    workflow['56'] = { class_type: 'VAEEncode', inputs: { pixels: ['59', 0], vae: ['10', 0] } }
+    workflow['57'] = { class_type: 'ReferenceLatent', inputs: { conditioning: ['6', 0], latent: ['56', 0] } }
+    workflow['58'] = { class_type: 'ReferenceLatent', inputs: { conditioning: ['33', 0], latent: ['56', 0] } }
+    workflow['26'] = { class_type: 'CFGGuider', inputs: { model: ['12', 0], positive: ['57', 0], negative: ['58', 0], cfg: 5.0 } }
+  }
+  return workflow
+
 }

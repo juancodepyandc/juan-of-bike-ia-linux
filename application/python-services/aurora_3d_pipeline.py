@@ -5748,7 +5748,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     # NO spatial op (blur/dilate/CLAHE), so it can't reveal atlas UV islands.
     # Opt-in via AURORA_NATIVE_PRECISION=1 (auto-set by --max-precision).
     # Skipped silently if the mesh has no baseColorTexture (procedural, etc.).
-    if os.environ.get("AURORA_NATIVE_PRECISION") == "1":
+    if os.environ.get("AURORA_LIGHT_PLASTIC_PRECISION") == "1":
         try:
             import native_texture_precision as _prec
             _prec_out = str(output_dir / f"{run_id}_final_precision.glb")
@@ -5772,7 +5772,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                           "error": repr(exc)})
     else:
         audit.append({"stage": "native_texture_precision", "skipped": True,
-                      "reason": "AURORA_NATIVE_PRECISION=0 (opt-in)"})
+                      "reason": "Original albedo preserved: global light-plastic correction is not a general material enhancement."})
 
     # VISAGE : le generateur re-echantillonne sa reference a 518 px -> sur un cadrage
     # plein-pied la tete n'y fait plus que ~55 px, et il ne peut pas sculpter des yeux

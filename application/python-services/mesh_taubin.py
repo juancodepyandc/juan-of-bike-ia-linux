@@ -91,6 +91,17 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
     if ext0 > 0 and (ext1 > ext0 * 1.5 or ext1 < ext0 * 0.5):
         return {"ok": False, "error": f"bbox blew up {ext0:.3f}->{ext1:.3f} (reverted)"}
 
+    # Detect triangle foldovers before exporting: preserving UVs alone cannot
+    # prevent a smoothed surface from crossing itself locally.
+    before_tri = v0[faces]
+    after_tri = v1[faces]
+    before_cross = np.cross(before_tri[:, 1] - before_tri[:, 0], before_tri[:, 2] - before_tri[:, 0])
+    after_cross = np.cross(after_tri[:, 1] - after_tri[:, 0], after_tri[:, 2] - after_tri[:, 0])
+    valid = np.linalg.norm(before_cross, axis=1) > max(ext0 ** 2 * 1e-14, 1e-20)
+    flipped = int(np.count_nonzero(valid & (np.einsum('ij,ij->i', before_cross, after_cross) <= 0)))
+    if flipped:
+        return {"ok": False, "error": "Smoothing folds or collapses original triangles; source retained", "folded_triangles": flipped}
+
     # Re-attach the original visual (filter_taubin keeps vertex order/count, so the
     # per-vertex UVs still map 1:1; trimesh keeps mesh.visual but we re-assert it).
     if visual is not None:

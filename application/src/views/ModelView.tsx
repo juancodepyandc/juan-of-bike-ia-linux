@@ -1,3 +1,5 @@
+import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
+import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
@@ -42,6 +44,7 @@ import { getErrorMessage } from '../utils/errors.ts'
 import { useGenerationTrackerStore } from '../stores/generationTrackerStore.ts'
 import { useGenerationRecovery } from '../hooks/useGenerationRecovery.ts'
 import RecoveryBanner from '../components/RecoveryBanner.tsx'
+import { classifyImageEditRequest } from '../services/imageConversationContract.ts'
 import { createFlux2Workflow, type FluxStyle } from '../utils/fluxWorkflow.ts'
 import { prepareContextFiles, type PreparedContextFile } from '../utils/multimodalContext.ts'
 import { pickPrimaryPreparedImage, stageBlobToComfyInput } from '../utils/referenceMedia.ts'
@@ -269,6 +272,7 @@ async function generateSyntheticView(
   // (c'etait aussi l'origine de "Could not find schema for aten::matmul").
   const workflow = createFlux2Workflow({
     prompt: safePrompt,
+    referenceImageFilename: referenceSeed?.filename,
     width,
     height,
     steps,
@@ -399,7 +403,7 @@ async function generateAndVerifySyntheticViews({
         )
 
         // Verify the generated view
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(await blob.arrayBuffer())))
+        const base64 = binaryBase64(new Uint8Array(await blob.arrayBuffer()))
         // Build a minimal strategy for verification
         const verificationStrategy = {
           needsMultiview: true,
@@ -3205,6 +3209,8 @@ export default function ModelView() {
       controller.signal.throwIfAborted()
       return result
     }
+    let photoReferenceEdited = false
+    let photoEditSeedFilename: string | undefined
     const currentPrompt = basePrompt
     const conversationHistory = getRecentMessages('3d', 6)
     setIsGenerating(true)
@@ -3255,19 +3261,8 @@ export default function ModelView() {
           // discard the history. This prevents "Système courroie poulie" stuck
           // in a session from polluting a fresh "guerrier elfique" intent
           // analysis. Otherwise keep the history (refinement / continuation).
-          const promptStems = new Set(currentPrompt.toLowerCase().split(/\W+/).filter(w => w.length >= 4))
-          const historyStems = new Set(
-            conversationHistory.flatMap(m => m.content.toLowerCase().split(/\W+/)).filter(w => w.length >= 4)
-          )
-          const sharedStemCount = [...promptStems].filter(s => historyStems.has(s)).length
-          const isContinuityOrEdit = EDIT_INTENT.test(currentPrompt) || /^(couleur|mati[eè]re|taille|texture|ajoute|modifie)\b/i.test(currentPrompt)
-          const subjectShifted = conversationHistory.length > 0 && sharedStemCount < 2 && !isContinuityOrEdit
-          const effectiveHistory = subjectShifted ? [] : conversationHistory
-          if (subjectShifted) {
-            console.warn('[ModelView] Subject shift detected, discarding conversation history to prevent contamination')
-          }
-          const conversationContext = buildConversationContext(effectiveHistory)
-          let workingPrompt = conversationContext ? `${currentPrompt}\n\nContexte conversation 3D recente:\n${conversationContext}` : currentPrompt
+          const effectiveHistory = retainThreeDRequirements(currentPrompt, conversationHistory, EDIT_INTENT.test(currentPrompt))
+          let workingPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
           let historyPrompt = currentPrompt
           const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: message.role, content: message.content })) })
           setDetectedIntent(intent)
@@ -3755,7 +3750,9 @@ export default function ModelView() {
             // Origine 'user' = la photo est intouchable; la pose et les
             // modifications se font en aval (MV-Adapter / mesh), pas en
             // reecrivant la reference.
-            const shouldRegenerateReference = referenceSeedOrigin !== 'user'
+            const editTraits = classifyImageEditRequest(currentPrompt, Boolean(referenceSeed))
+            const editUserPhoto = referenceSeedOrigin === 'user' && (editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
+            const shouldRegenerateReference = editUserPhoto || referenceSeedOrigin !== 'user'
               && (!referenceSeed || EDIT_INTENT.test(currentPrompt) || shouldRefineReferenceSeed(intent, activeMotionPreset, referenceSupportPlan, Boolean(referenceSeed), referenceSeedOrigin, currentPrompt))
             if (!shouldRegenerateReference && referenceSeed) {
               if (referenceSupportPlan.externalReference && referenceSeedOrigin !== 'user') {
@@ -3779,7 +3776,8 @@ export default function ModelView() {
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
                 const workflow = createFlux2Workflow({
-                  prompt: promptText,
+                  prompt: editUserPhoto ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${workingPrompt}` : promptText,
+                  referenceImageFilename: referenceSeed?.filename,
                   width: referenceWorkflow.width,
                   height: referenceWorkflow.height,
                   steps: stepsOverride,
@@ -3799,6 +3797,7 @@ export default function ModelView() {
               baseRefPromptRef.current = baseReferencePrompt
 
               let imageBlob = await renderReferenceBlob(baseReferencePrompt)
+              if (editUserPhoto) { photoReferenceEdited = true; photoEditSeedFilename = referenceSeed?.filename }
               let referenceAssessment = await verifyGeneratedReferenceVisual({
                 prompt: currentPrompt,
                 model: visionModel,
@@ -4091,7 +4090,7 @@ export default function ModelView() {
                 ? genDir.slice(workspacePath.length + 1)
                 : genDir
               await fsMkdir(genDir).catch(() => {})
-              const auroraArgs = ['--prompt', currentPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
+              const auroraArgs = ['--prompt', workingPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
@@ -4113,7 +4112,7 @@ export default function ModelView() {
                 referenceImagePath = effectiveRefImg
                 setReferenceImageUrl(toAssetUrl(effectiveRefImg))
               }
-              for (const img of preparedImages) {
+              for (const img of preparedImages.filter(() => !photoReferenceEdited)) {
                 if (img.stagedPath && !seenImgs.has(img.stagedPath) && await fsExists(img.stagedPath)) {
                   auroraArgs.push('--image', img.stagedPath)
                   seenImgs.add(img.stagedPath)
@@ -4458,7 +4457,7 @@ export default function ModelView() {
                 if (screenshotResult.ok && screenshotResult.screenshots.length > 0) {
                   const shotPath = screenshotResult.screenshots[0].path
                   const shotBytes = await fsReadBinary(shotPath)
-                  meshScreenshotBase64 = btoa(String.fromCharCode(...new Uint8Array(shotBytes)))
+                  meshScreenshotBase64 = binaryBase64(shotBytes)
                   correctionLog.push(`Mesh screenshot captured: ${shotPath}`)
                 }
               } catch {
@@ -4467,15 +4466,15 @@ export default function ModelView() {
               let refBase64: string | null = null
               try {
                 const refBytes = await fsReadBinary(activeReferenceImagePath)
-                refBase64 = btoa(String.fromCharCode(...new Uint8Array(refBytes)))
+                refBase64 = binaryBase64(refBytes)
               } catch { }
 
               setProgress(`Verification fidelite mesh (passage ${correctionAttempt + 1})...`)
               setPhase('Matériaux & zones — comparaison mesh reel vs référence...', 74)
               meshFidelityResult = await verify3DMeshFidelity({
-                meshScreenshotBase64: meshScreenshotBase64 || refBase64 || '',
+                meshScreenshotBase64: meshScreenshotBase64 || '',
                 referenceImageBase64: meshScreenshotBase64 ? refBase64 : null,
-                prompt: currentPrompt,
+                prompt: workingPrompt,
                 intent,
                 model: visionModel,
               })
@@ -4484,6 +4483,7 @@ export default function ModelView() {
               meshFidelityResult = null
             }
 
+            if (!meshFidelityResult) meshFidelitySummary = "Fidélité non vérifiée : observation 3D indisponible ; la photo ne remplace pas le modèle à inspecter."
             // ── Step D: Decide whether to continue auto-correction ──
             if (!meshFidelityResult || meshFidelityResult.passed) {
               // QA PASS — exit the loop
@@ -4576,7 +4576,7 @@ export default function ModelView() {
             // fidelite baissait — le mesh final ne ressemblait plus a la
             // photo jointe, en silence. Reference d'origine utilisateur =
             // seule la reconstruction se corrige, jamais la reference.
-            if (correctionStrategy.shouldRetryReference && preparedImages.length === 0) {
+            if (correctionStrategy.shouldRetryReference && (preparedImages.length === 0 || photoReferenceEdited)) {
               setProgress(`Auto-correction reference (passage ${correctionAttempt})...`)
               setPhase(`Re-generation de la reference avec corrections ciblees...`, 85 + correctionAttempt)
               const correctionLines = correctionStrategy.referenceCorrections
@@ -4615,6 +4615,7 @@ export default function ModelView() {
               const correctedRefWorkflow = resolveReferenceWorkflow(intent, hardware, false, currentPrompt, referenceSupportPlan)
               const extraSteps = correctionStrategy.escalation === 'maximum' ? 12 : correctionStrategy.escalation === 'strong' ? 8 : 4
               const correctedWorkflow = createFlux2Workflow({
+                referenceImageFilename: photoEditSeedFilename,
                 prompt: buildReferencePrompt(correctedRefPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt),
                 width: correctedRefWorkflow.width,
                 height: correctedRefWorkflow.height,
@@ -4904,7 +4905,7 @@ export default function ModelView() {
               `${workspacePath}/python-services/mesh_acceptance_gate.py`,
               [
                 '--mesh', activeMeshPath,
-                '--prompt', currentPrompt,
+                '--prompt', workingPrompt,
                 '--kind', acceptanceKindForIntent(intent),
               ],
               { resumeKey: 'model' },
@@ -4948,6 +4949,8 @@ export default function ModelView() {
               session_title: active3dSession.title,
               run_id: runId,
               prompt: currentPrompt,
+              effective_request: workingPrompt,
+              request_fidelity: meshFidelityResult?.passed ? 'verified_by_vision' : meshFidelityResult ? 'noncompliant_or_unverified' : 'unverified',
               reference_image: referenceImagePath,
               final_mesh: activeMeshPath,
               model_url: toAssetUrl(activeMeshPath),

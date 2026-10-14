@@ -11,6 +11,13 @@ on:
       - 'application/scripts/test-bridge-auth.mjs'
       - 'application/src/hooks/useTauri.ts'
       - 'application/src/views/ModelView.tsx'
+      - 'application/src/services/threeDIntent.ts'
+      - 'application/src/utils/fluxWorkflow.ts'
+      - 'application/src/utils/binaryBase64.ts'
+      - 'application/src/utils/threeDConversationContext.ts'
+      - 'application/src/services/compoundScene.ts'
+      - 'application/scripts/test-fidelity-inspection.mjs'
+      - 'application/scripts/test-flux-reference-conditioning.mjs'
       - 'application/scripts/test-generation-cancel.mjs'
       - 'application/src/utils/uiSkin.ts'
       - 'application/src/utils/buildRecovery.ts'
@@ -65,6 +72,8 @@ jobs:
       - run: node scripts/test-interface-stability.mjs
       - run: node scripts/test-bridge-auth.mjs
       - run: node scripts/test-generation-cancel.mjs
+      - run: node scripts/test-fidelity-inspection.mjs
+      - run: node scripts/test-flux-reference-conditioning.mjs
       - run: node scripts/test-project-admission-cancel.mjs
       - run: node scripts/test-forge-admission.mjs
       - run: node scripts/test-project-viewer.mjs

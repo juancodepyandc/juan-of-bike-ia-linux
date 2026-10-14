@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2167,
- "source_lines": 721451,
+ "source_files": 2172,
+ "source_lines": 721646,
  "static_route_declarations": 635,
  "by_repository": {
-  "AuroraIA": 2008,
+  "AuroraIA": 2013,
   "aurora-remote-cli": 155,
   "aurora-live": 4
  },
@@ -33,8 +33,8 @@
   {
    "repo": "AuroraIA",
    "path": ".github/workflows/persistent-workspace.yml",
-   "sha256": "a6abd9b5b79281a48319aa3f5eb03a742a8e2511ab4a64b5b4196c4a1c8189c6",
-   "lines": 71
+   "sha256": "9970c32ad9c62ba73a8899635d913aa2d6da5613502cfea3cd8badc581c47145",
+   "lines": 80
   },
   {
    "repo": "AuroraIA",
@@ -1882,7 +1882,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "312f022cf160406291315c0166bb1725f64521fb88da2d4e45013f6dc0b1503e",
+   "sha256": "aaa2958dc0dee750217c9c56d28edd97b68d7efa6582f7d607a868f12221946d",
    "lines": 6526,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -3034,8 +3034,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/faithful_scene_prompt.py",
-   "sha256": "d03c752715f93aebbc83b449d1f6614175f50181a40c00f73a53d1ba2119c0d0",
-   "lines": 641,
+   "sha256": "b5736f0f0e747d92c1ef04dbb1047e733b2c016319f94e3af84a163dd3a46c2c",
+   "lines": 653,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -3824,8 +3824,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/mesh_taubin.py",
-   "sha256": "5bdf201dda995c4bfc8a008a18f56166b2e8f6eef7844627aade6d4df95b9d02",
-   "lines": 136,
+   "sha256": "08aa49793289b4c5a16d85726205462fbcbd32cb8288e802d489e079d22454bf",
+   "lines": 147,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -10047,6 +10047,18 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/scripts/test-fidelity-inspection.mjs",
+   "sha256": "4162ec6b864426c71fe837a293f210b3718ed8556d1f6195fd979e2ea2f3b10a",
+   "lines": 38
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/scripts/test-flux-reference-conditioning.mjs",
+   "sha256": "08e2ca76fcf6ff9f14590d597f426cd61e85c9ce6a226624ee902503aaae1323",
+   "lines": 24
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/scripts/test-forge-admission.mjs",
    "sha256": "e53ff3b27afc1c9d397a2bc42f25567bcb4386c0904082feb3aea771e9c2151d",
    "lines": 62
@@ -12364,8 +12376,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/compoundScene.ts",
-   "sha256": "d8658de1587e79f0cff54192019b0b2e934c389ca74afffe9bfe770752082d98",
-   "lines": 136
+   "sha256": "102b0afc96547e5d7279c93a1fabcd7392c4ec4624cc8442e02c0277aed938d6",
+   "lines": 146
   },
   {
    "repo": "AuroraIA",
@@ -13390,8 +13402,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDIntent.ts",
-   "sha256": "65122403baf87fbe9dd3c6cf1f34bd14e79e32a204038bcdfbc5eaae6bbb29fc",
-   "lines": 2612
+   "sha256": "4d1bf12a2c4800d12263f0cc5e4f1b51646c3b2a8930deae8fdceae5432eab3f",
+   "lines": 2618
   },
   {
    "repo": "AuroraIA",
@@ -13743,6 +13755,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/utils/binaryBase64.ts",
+   "sha256": "133c6c74b196f139a0f24c438a5326c5fdd9e7a83140880f9a4b052c189d9433",
+   "lines": 9
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/utils/blobStore.ts",
    "sha256": "efba22d1ab5e79577fe0fe67d073ebabffb4a43ab9db8ae53a56bb17e5bff764",
    "lines": 115
@@ -13828,8 +13846,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/utils/fluxWorkflow.ts",
-   "sha256": "3b5403f1e0d3a011af65e7c596450b59bdd39976009642fc7a0f9208f5d55cfb",
-   "lines": 881
+   "sha256": "c09d672e1f45ab17200356e07b0ec2788db37be35102ba6d6dfa44c29fbc75d7",
+   "lines": 892
   },
   {
    "repo": "AuroraIA",
@@ -14016,6 +14034,12 @@
    "path": "application/src/utils/theme.ts",
    "sha256": "fc470e6ea2a6ae9f3d25cb97099afc77324b5e8d8e26626f95667d337a641a9c",
    "lines": 42
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/utils/threeDConversationContext.ts",
+   "sha256": "7a1953e10debeecf981423f02b9ffba3791eca9e13ab7dad5411229ababbb546",
+   "lines": 16
   },
   {
    "repo": "AuroraIA",
@@ -14290,8 +14314,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "e5cd01c9eed43dc6f719cb4225ef5c373636f11d158327a5e30798bd28cae2de",
-   "lines": 5766
+   "sha256": "fafd9a166f0b1ca342425235c83881406c5e24fb717d65dd40af0a1730754d69",
+   "lines": 5769
   },
   {
    "repo": "AuroraIA",
@@ -19000,8 +19024,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_mesh_taubin_normals.py",
-   "sha256": "5568cf5846b6a9c96d4729715c02259163144a82bdc246b8bd5887bbbc1ce6eb",
-   "lines": 72,
+   "sha256": "9977804198fe6e9923236ec6a836b230f6704f1fb44788b7b7bb5c78994db7bf",
+   "lines": 86,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -19162,6 +19186,14 @@
    "path": "tests_agi/test_rule_discovery.py",
    "sha256": "a638c4b4d1c07c8e5a2f7d0035a0d8ad62e3cfe8a26b6b6c60d61cd6085e3b58",
    "lines": 184,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_scene_exclusions.py",
+   "sha256": "e6d7189f2e4c0c4fc57d2ef7253f2784fccf917e482245c4309dd3a2c9c94315",
+   "lines": 32,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

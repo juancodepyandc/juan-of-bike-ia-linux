@@ -349,6 +349,16 @@ def _detect_identity(prompt: str) -> dict | None:
     return None
 
 
+def _excluded_mention(text: str, start: int) -> bool:
+    clause = re.split(r"[;,.!?\n]", text[:start])[-1]
+    negatives = list(re.finditer(r"\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas de)\b", clause, re.I))
+    positives = list(re.finditer(r"\b(?:avec|with|mais|but)\b", clause, re.I))
+    if not negatives or (positives and positives[-1].start() > negatives[-1].start()):
+        return False
+    tail = clause[negatives[-1].end():]
+    return not re.match(r"\s+(?:changer|modifier|changing|modifying|altering|toucher|touching)\b", tail, re.I)
+
+
 def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
     """Decompose a prompt into requested facets.
 
@@ -370,6 +380,8 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
     for family, pattern in _FACET_PATTERNS:
         seen: list[str] = []
         for m in pattern.finditer(text):
+            if _excluded_mention(text, m.start()):
+                continue
             snippet = m.group(0).strip().lower()
             if snippet not in seen:
                 seen.append(snippet)
@@ -479,7 +491,7 @@ def compose_faithful_prompt(prompt: str, *, subject_kind: str | None = None,
     # character is reconstructed from an isolated reference, so scene facets are
     # reframed as atmosphere ON the subject instead of separate background
     # geometry. SCENE mode (machines, dioramas, products) keeps real backgrounds.
-    isolated = (subject_kind or "").lower() in _ISOLATED_KINDS
+    isolated = (subject_kind or "").lower() in _ISOLATED_KINDS and not any(f in analysis["facets"] for f in ("decor", "mechanical", "fluids"))
     instructions = _FACET_INSTRUCTION_ISOLATED if isolated else _FACET_INSTRUCTION_SCENE
     mode = "isolated_character" if isolated else "scene"
 

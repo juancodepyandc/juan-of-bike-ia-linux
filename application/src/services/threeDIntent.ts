@@ -1963,21 +1963,23 @@ You are a FLUX diffusion model prompt engineer. Your job is to convert a user's 
 
 CRITICAL RULES:
 - Output ONLY the visual description, nothing else, no explanations, no markdown
-- English only, maximum 120 words
+- English only. Include EVERY explicit requirement; do not shorten the description by dropping constraints.
 - Use comma-separated descriptive phrases (FLUX prompt style), NOT sentences or paragraphs
 - Describe the EXACT PHYSICAL APPEARANCE of the subject: shape, materials, colors, textures, proportions, distinctive features
 - The CURRENT USER REQUEST defines the subject and required changes. Preserve unusual colors, fantasy anatomy, proportions and combinations exactly; do not normalize them to a common real-world variant.
 - Product identity knowledge describes the unmodified baseline only. Explicit user changes override baseline color, material, shape and style. Never carry a previous subject into an independent new request.
 - NEVER substitute with a different product, component, or object. If the user asks for a cable, describe a CABLE, not a case
 - NEVER describe a generic version — describe the SPECIFIC product/character/object named
-- Include: solid black studio background, single isolated subject, THREE-QUARTER front view (not flat front-on), clean edge separation
+- Explicit exclusions override default clothing, accessories, anatomy or product features. Translate "without", "remove", "entirely" and other scope words precisely. Never turn an exclusion into an addition.
+- Preserve the exact requested body pose, orientation, framing and outfit. Camera view and body pose are different constraints. Use a three-quarter camera view ONLY when no view is specified; never replace a requested pose with a neutral pose.
+- Use solid black studio background only when no background is specified; keep clean edge separation.
 - CRITICAL FOR 3D RECONSTRUCTION: the image MUST show DEPTH and VOLUME — show the object at a slight angle so 3 faces are visible (front + one side + top or bottom)
-- NEVER generate a flat front-on view — TRELLIS.2 needs depth cues to reconstruct proper 3D geometry
+- Depth cues are a reconstruction preference, not permission to override the requested camera view or body pose.
 - The object MUST look like a real physical 3D product photograph, not a flat icon or diagram
 - Ensure strong lighting contrast to reveal surface depth, edges, bevels, recesses, and protruding features
 - Do NOT use primitive block-in shapes, cubes, spheres, cylinders or toy placeholders unless the user explicitly asked for a primitive. The reference must contain the real silhouette and real part structure of the requested subject.
 - Texture is part of fidelity: show material grain, fabric weave, brushed metal, glass transparency, skin pores, rubber, wood grain, emission or paint finish when relevant. Avoid flat single-color surfaces and avoid a 2D image pasted onto a simple block.
-- For characters: describe PRECISE hairstyle shape, detailed costume geometry, EXACT body proportions (slim/muscular/etc), face features (eye shape, nose, jawline), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. Characters MUST look PHOTOREALISTIC unless anime is explicitly requested — sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry. NEVER produce a blobby/cartoony/marshmallow character.
+- For characters: describe only the requested outfit and accessories; excluded clothing must remain absent even when it belongs to a known character design. Describe PRECISE hairstyle shape, explicitly requested costume geometry, EXACT body proportions (slim/muscular/etc), face features (eye shape, nose, jawline), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. Characters MUST look PHOTOREALISTIC unless anime is explicitly requested — sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry. NEVER produce a blobby/cartoony/marshmallow character.
 - For products: describe exact shape, connector types, materials, size proportions, surface finish, ALL fine details (USB ports, buttons, screws, ventilation holes, fan grilles, mesh patterns)
 - For PC cases: MUST include tempered glass panel, mesh front pattern, USB/audio ports on top I/O panel, PCIe slots at rear, PSU shroud, rubber feet, power button, fan positions, cable routing holes
 - For mechanical parts: describe geometry, moving vs fixed parts, materials, surface qualities
@@ -2009,7 +2011,7 @@ FLUX visual description:`
   const fluxTimeout = setTimeout(() => fluxAbort.abort(), FLUX_PROMPT_TIMEOUT_MS)
 
   try {
-    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal, num_predict: 350, num_ctx: 4096 })
+    const response = await ollamaGenerate(model, fluxPromptRequest, { signal: fluxAbort.signal, num_predict: 1200, num_ctx: 8192 })
     clearTimeout(fluxTimeout)
     const text = (response?.response || '').trim()
     const cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '').replace(/<think>[\s\S]*$/g, '').trim()
@@ -2327,8 +2329,8 @@ export function buildMeshCorrectionStrategy({
     shouldRetryReference = shouldRetryReference || fidelity.missingDetails.length >= 3
     shouldRetryMesh = true
     referenceCorrections.push(
-      `The reference image MUST prominently show these details: ${detailsList.join(', ')}`,
-      `Increase lighting contrast to reveal fine surface features, holes, ports, and connectors`,
+      `Resolve each mismatch against the original user request: ${prompt}. Observed mismatches: ${detailsList.join('; ')}. An unwanted element must be removed, never added.`,
+      `Make the explicitly requested features observable with neutral lighting; do not invent marks, holes or accessories.`,
     )
     meshCorrections.push(
       `The 3D mesh is missing these details: ${detailsList.join(', ')}`,
@@ -2493,7 +2495,7 @@ export function buildMeshCorrectionStrategy({
   // geometry is genuinely excellent (grade A + score >= 90) so that a mesh
   // stuck at 75% never bails out just because the loop ran for a while.
   const shouldContinue = fidelity.score < 95 || !fidelity.passed
-  const diminishingReturns = attemptNumber >= 5
+  const diminishingReturns = fidelity.passed && attemptNumber >= 5
     && meshGeometryGrade === 'A'
     && fidelity.score >= 90
 
@@ -2531,6 +2533,7 @@ export async function verify3DMeshFidelity({
   intent: ThreeDIntent
   model: string
 }): Promise<MeshFidelityVerification> {
+  if (!meshScreenshotBase64) return { score: 0, passed: false, missingDetails: ['Rendu du modèle 3D indisponible : demande non vérifiée.'], artifacts: [], suggestions: ['Capturer le vrai modèle avant comparaison.'], notes: 'La photo ne constitue pas une preuve du modèle.', failureCategory: 'missing_details' }
   const productDetails = intent.referencePromptAdditions
     .filter((l) => /^(CRITICAL DETAILS|Visual description:|The .+ is a)/i.test(l))
     .slice(0, 4)
@@ -2553,8 +2556,11 @@ Scoring guidelines:
 - 0-39: Wrong object or completely broken
 
 What to check:
+- Enumerate every explicit request clause: subject, complete/full-body scope, pose, camera view, outfit, colors, requested additions AND required removals.
+- Any forbidden element still present is a fidelity failure, even if it is typical of the reference or baseline object. A beautiful mesh matching a noncompliant reference still fails the USER REQUEST.
+- Pose, outfit and all exclusions must be checked individually; hidden or cropped requirements are unverifiable, never assumed satisfied.
 - Overall shape matches the request (is it the right object?)
-- Fine details: USB ports, fans, ventilation holes, screws, buttons, connectors, mesh patterns, panel textures, light guides, cable combs
+- Fine details: only those actually requested or visible on the retained reference. Do not require hardware features on organic subjects, or excluded baseline clothing/accessories.
 - Proportions: correct relative sizes of components
 - Artifacts: melted surfaces, merged parts, floating geometry, impossible topology
 - Surface quality: clean edges vs. blobby/melted surfaces
@@ -2596,12 +2602,12 @@ Keep suggestions to actionable corrections for the NEXT regeneration attempt.`,
       const parsed = JSON.parse(match[0]) as Partial<MeshFidelityVerification>
       return {
         score: parsed.score ?? 50,
-        passed: parsed.passed ?? (parsed.score ?? 50) >= 95,
+        passed: parsed.passed === true && Number.isFinite(parsed.score) && (parsed.score ?? 0) >= 95 && Array.isArray(parsed.missingDetails) && parsed.missingDetails.length === 0 && Array.isArray(parsed.artifacts) && parsed.artifacts.length === 0,
         missingDetails: parsed.missingDetails ?? [],
         artifacts: parsed.artifacts ?? [],
         suggestions: parsed.suggestions ?? [],
         notes: parsed.notes ?? '',
-        failureCategory: parsed.failureCategory ?? 'none',
+        failureCategory: parsed.failureCategory ?? (parsed.missingDetails?.length ? 'missing_details' : parsed.artifacts?.length ? 'geometry_artifacts' : 'none'),
       }
     }
   } catch {

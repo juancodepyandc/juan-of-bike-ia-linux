@@ -70,3 +70,17 @@ def test_decimation_material_transfer_preserves_reflection_and_normal_maps():
     assert np.array_equal(np.asarray(new.material.baseColorTexture), np.asarray(image))
     new.material.roughnessFactor = .9
     assert original.visual.material.roughnessFactor == .25
+
+
+def test_folded_smoothing_is_not_exported_and_source_stays_intact(tmp_path,monkeypatch):
+    import trimesh.smoothing
+    source,output=tmp_path/'source.glb',tmp_path/'candidate.glb'
+    trimesh.creation.icosphere(subdivisions=1).export(source)
+    payload=source.read_bytes()
+    def fold(mesh,**kwargs):
+        vertices=mesh.vertices.copy();vertices[:,0]*=-1;mesh.vertices=vertices
+        return mesh
+    monkeypatch.setattr(trimesh.smoothing,'filter_taubin',fold)
+    result=module.taubin_smooth(source,output)
+    assert not result['ok'] and result['folded_triangles']>0
+    assert not output.exists() and source.read_bytes()==payload

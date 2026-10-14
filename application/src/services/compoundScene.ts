@@ -93,15 +93,25 @@ const ISOLATED_INSTRUCTION: Record<string, (s: string) => string> = {
  * opts.isolated → ON-SUBJECT atmosphere phrasing for a riggable character
  * (scene facets become styling/lighting, not separate background geometry).
  */
+function excludedMention(text: string, start: number): boolean {
+  const clause = text.slice(0, start).split(/[;,.!?\n]/).at(-1) || ''
+  const negatives = [...clause.matchAll(/\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas de)\b/gi)]
+  const positives = [...clause.matchAll(/\b(?:avec|with|mais|but)\b/gi)]
+  const negative = negatives.at(-1), positive = positives.at(-1)
+  if (!negative || (positive && positive.index! > negative.index!)) return false
+  return !/^\s+(?:changer|modifier|changing|modifying|altering|toucher|touching)\b/i.test(clause.slice(negative.index! + negative[0].length))
+}
+
 export function buildCompoundSceneContract(prompt: string, motionText = '', opts: { isolated?: boolean } = {}): string {
   const text = `${prompt} ${motionText}`.trim()
-  const isolated = Boolean(opts.isolated)
+  const standalone = COMPOUND_FACET_PATTERNS.some(({family,rx}) => ['decor','mechanical','fluids'].includes(family) && [...text.matchAll(new RegExp(rx, 'gi'))].some(m=>!excludedMention(text,m.index!)))
+  const isolated = Boolean(opts.isolated) && !standalone
   const lines: string[] = []
   const families: string[] = []
 
   const hasIdentity = hasNamedIdentitySignal(prompt)
   for (const { family, rx, instruction } of COMPOUND_FACET_PATTERNS) {
-    const hits = uniqueLower(text.match(new RegExp(rx, 'gi')) || [])
+    const hits = uniqueLower([...text.matchAll(new RegExp(rx, 'gi'))].filter(m=>!excludedMention(text,m.index!)).map(m=>m[0]))
     if (hits.length > 0) {
       families.push(family)
       const render = (isolated && ISOLATED_INSTRUCTION[family]) || instruction
