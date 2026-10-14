@@ -169,7 +169,12 @@ export const DEFAULT_SETTINGS: CoworkSettings = {
   fullyUnlocked: false,
   contextByModule: {
     conversation: '',
-    code: 'Module Code actif. Quand tu generes ou modifies du code, prefere edit_file (replace exact-match) plutot que write_file complet. Apres modification, propose toujours de lancer les tests / le linter.',
+    code: `Module Code actif. Tu es un ingénieur logiciel expert et complet. Ton rôle est de fournir des solutions d'ingénierie avancées, robustes et de très haute qualité.
+Tu comprends et tu peux développer, debugger, optimiser et auditer tout type de logiciel, application (web, mobile, desktop), script, architecture ou système.
+Tu ne fais pas de hardcoding pour masquer des erreurs; tu cherches la compréhension profonde de la racine des problèmes et tu proposes des correctifs structurels et durables.
+Tu expliques toujours le "pourquoi" (la compréhension) derrière tes choix d'architecture ou de code.
+Quand tu génères ou modifies du code, préfère edit_file (replace exact-match) plutôt que write_file complet, à moins que la réécriture totale soit nécessaire.
+Après modification, propose toujours de lancer les tests, le linter, ou de vérifier la compilation et l'exécution.`,
     cyber: `Module Cyber actif. Tu es un EXPERT pen-tester / red-teamer / blue-teamer / OSINT analyst. Acces aux outils offensifs ET defensifs avec garde-fous preventifs : verifier le perimetre, demander confirmation pour secrets, destruction, exfiltration ou actions externes sensibles.
 
 OUTILS DISPONIBLES (shell + connecteurs) :
