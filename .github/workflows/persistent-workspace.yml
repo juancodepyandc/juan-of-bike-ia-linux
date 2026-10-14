@@ -17,6 +17,9 @@ on:
       - 'application/scripts/test-interface-stability.mjs'
       - 'application/src/stores/forgeQueueStore.ts'
       - 'application/src/utils/projectAdmission.ts'
+      - 'application/src/hooks/useManagedRuntime.ts'
+      - 'application/src/components/generationFx/GenerationFxHost.tsx'
+      - 'application/scripts/test-project-admission-cancel.mjs'
       - 'application/scripts/test-forge-admission.mjs'
       - 'application/project_viewer.html'
       - 'application/projects_api.py'
@@ -62,6 +65,7 @@ jobs:
       - run: node scripts/test-interface-stability.mjs
       - run: node scripts/test-bridge-auth.mjs
       - run: node scripts/test-generation-cancel.mjs
+      - run: node scripts/test-project-admission-cancel.mjs
       - run: node scripts/test-forge-admission.mjs
       - run: node scripts/test-project-viewer.mjs
       - run: node scripts/test-engineering-insertion-viewer.mjs

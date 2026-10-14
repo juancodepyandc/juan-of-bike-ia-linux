@@ -109,7 +109,7 @@ function phaseIndexFor(module: FxModule, entry: FxEntry, now: number): { idx: nu
     }
   }
 
-  return { idx, simProg: Math.max(0, Math.min(1, simProg)) }
+  return { idx, simProg: module === '3d' && typeof entry.progress !== 'number' ? 0 : Math.max(0, Math.min(1, simProg)) }
 }
 
 function FxCanvas({ module, entry }: { module: FxModule; entry: FxEntry }) {
@@ -461,7 +461,7 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
             {module.toUpperCase()} · {agent.name.toUpperCase()} TRAVAILLE
           </span>
           <span style={{ fontSize: 22, fontWeight: 700, color: agent.accent, textShadow: `0 0 18px ${agent.accent}88` }}>
-            {Math.floor(simProg * 100)}%
+            {module === '3d' && typeof entry.progress !== 'number' ? 'Progression non mesurée' : `${Math.floor(simProg * 100)}%`}
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${scene.phases.length}, minmax(0, 1fr))`, gap: 6, marginBottom: 10 }}>
@@ -515,6 +515,12 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
             )
           })}
         </div>
+        {module === '3d' && Boolean(entry.logLines?.length) && (
+          <div role="log" aria-label="Actions réelles de la génération 3D" style={{ fontSize: 12, lineHeight: 1.5, marginTop: 10, overflowWrap: 'anywhere' }}>
+            <strong>Actions en cours / derniers événements</strong>
+            {entry.logLines!.slice(-3).map((line, index) => <div key={index}>{line.slice(0, 600)}</div>)}
+          </div>
+        )}
         {entry.phase && (
           <div style={{ fontSize: 11, color: '#B7C0D4', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             <span style={{ color: agent.accent }}>›</span> {entry.phase}
@@ -560,7 +566,7 @@ function MiniPill({ module, entry, onClick }: { module: FxModule; entry: FxEntry
         </span>
       ) : (
         <span style={{ fontSize: 11, fontFamily: "'Cascadia Code',Consolas,monospace", color: agent.accent }}>
-          {Math.floor(simProg * 100)}%
+          {module === '3d' && typeof entry.progress !== 'number' ? 'Progression non mesurée' : `${Math.floor(simProg * 100)}%`}
         </span>
       )}
     </button>

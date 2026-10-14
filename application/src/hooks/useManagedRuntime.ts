@@ -62,6 +62,8 @@ type RuntimeJobHelpers = {
 }
 
 type ManagedRuntimeJob<T> = {
+  signal?: AbortSignal
+  onWaiting?: (detail: string) => void
   module: ModuleId
   title: string
   services: RuntimeServiceId[]
@@ -103,6 +105,8 @@ export function useManagedRuntime() {
   const executeWithRuntime = useCallback(async <T>({
     module,
     title,
+    signal,
+    onWaiting,
     services: requestedServices,
     ollamaModel: rawOllamaModel,
     skipRelease = false,
@@ -137,7 +141,7 @@ export function useManagedRuntime() {
       history: [],
     })
 
-    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>setGenerationJob(jobId,{detail}));
+    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>{setGenerationJob(jobId,{detail});onWaiting?.(detail)},signal);
     void admission.catch(()=>{})
     const runQueuedJob = async () => {
       const release=await admission;
@@ -172,6 +176,7 @@ export function useManagedRuntime() {
         progress: number,
         phase: ManagedRuntimePhase = 'prepare',
       ) => {
+        onWaiting?.(detail)
         setRuntimeTask({ phase, detail, progress })
         setGenerationJob(jobId, { phase, detail, progress })
       }
@@ -195,6 +200,7 @@ export function useManagedRuntime() {
         const MAX_ATTEMPTS = 2
         for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
           try {
+            signal?.throwIfAborted()
             if (attempt > 0) {
               const backoffMs = 2500 // 2.5s — laisse Ollama charger le modele
               moduleLog(module, 'retry', `Tentative ${attempt + 1}/${MAX_ATTEMPTS}`, `Backoff: ${backoffMs}ms`)

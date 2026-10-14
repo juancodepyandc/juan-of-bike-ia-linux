@@ -152,7 +152,7 @@ class MissionStore:
             for job in ahead:
                 total,_=estimate(job);used=max(0,time.time()-job['started_at']) if job['started_at'] else 0
                 waits.append(max(0,total-used) if total is not None and used<total else None)
-            return {'queue_position':1+sum(j['status']=='queued' for j in ahead) if item['status']=='queued' else 0,'ahead_count':len(ahead),'elapsed_seconds':elapsed,'wait_seconds':sum(waits) if all(v is not None for v in waits) else None,'estimated_duration_seconds':own,'remaining_seconds':own-elapsed if own is not None and elapsed<own and item['status']=='running' else None,'estimate_sample_count':n,'estimate_basis':'Median of completed same-model/same-family runs; variable project complexity, no guarantee.' if own is not None else 'Insufficient measured comparable runs.'}
+            return {'queue_position':1+sum(j['status']=='queued' for j in ahead) if item['status']=='queued' else 0,'ahead_count':len(ahead),'blockers':[{'id':j['id'],'status':j['status'],'title':str(j['payload'].get('project_title') or j['payload'].get('request','Projet'))[:160],'elapsed_seconds':max(0,time.time()-(j['started_at'] or j['created']))} for j in ahead],'elapsed_seconds':elapsed,'wait_seconds':sum(waits) if all(v is not None for v in waits) else None,'estimated_duration_seconds':own,'remaining_seconds':own-elapsed if own is not None and elapsed<own and item['status']=='running' else None,'estimate_sample_count':n,'estimate_basis':'Median of completed same-model/same-family runs; variable project complexity, no guarantee.' if own is not None else 'Insufficient measured comparable runs.'}
 
     def append(self, mid: str, event: dict) -> int | None:
         event = dict(event)

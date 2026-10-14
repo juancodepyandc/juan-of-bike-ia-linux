@@ -3222,6 +3222,8 @@ export default function ModelView() {
       await executeWithRuntime({
         module: '3d',
         title: 'Generation 3D',
+        signal: controller.signal,
+        onWaiting: detail => { setProgress(detail); setPhaseSnapshot({ label: detail, percent: 0 }) },
         services: ['ollama'],
         prepare: async ({ setPhase }) => {
           const preview = previewThreeDIntent(currentPrompt)

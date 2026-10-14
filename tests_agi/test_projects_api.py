@@ -87,6 +87,8 @@ def test_expired_unknown_execution_survives_reopen_without_second_executor(tmp_p
     assert not c.post('/api/projects/'+first['id']+'/admission',json={'executor':'b'*32}).json['granted']
     second=c.post('/api/projects/admission',json={'request_id':'request-after','title':'P2','module':'video'}).json
     assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['status']=='queued'
+    blockers=reopened.scheduling(second['id'])['blockers']
+    assert blockers[0]['id']==first['id'] and blockers[0]['status']=='interrupted'
     # Only the original executor may report the actual outcome, even after reconnect.
     assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'failed','executor':'a'*32}).status_code==200
     assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['granted']
