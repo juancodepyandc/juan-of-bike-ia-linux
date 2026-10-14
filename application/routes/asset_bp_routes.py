@@ -27,6 +27,22 @@ def _frontend_workers_idle():
             if _python_job_processes or any(j.get('status') in {'queued','running'} or
                     (j.get('cancelRequested') and not j.get('finishedAt')) for j in _python_jobs.values()):
                 return False
+        # The job registry disappears on bridge restart; detached workers do not.
+        services = pathlib.Path(WORKSPACE, 'python-services').resolve()
+        for process in psutil.process_iter(['pid','cmdline','status']):
+            if process.info['pid'] == os.getpid() or process.info['status'] == psutil.STATUS_ZOMBIE:
+                continue
+            args = process.info['cmdline'] or []
+            if not args or not pathlib.Path(args[0]).name.lower().startswith('python'):
+                continue
+            for arg in args[1:]:
+                if arg.endswith('.py'):
+                    try:
+                        script = pathlib.Path(arg)
+                        if not script.is_absolute():script = pathlib.Path(process.cwd()) / script
+                        if script.resolve().is_relative_to(services):return False
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                        return False
         queue = requests.get(COMFYUI_URL + '/queue', timeout=3).json()
         return not queue.get('queue_running') and not queue.get('queue_pending')
     except Exception:

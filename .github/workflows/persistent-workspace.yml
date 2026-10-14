@@ -11,6 +11,7 @@ on:
       - 'application/scripts/test-bridge-auth.mjs'
       - 'application/src/hooks/useTauri.ts'
       - 'application/src/views/ModelView.tsx'
+      - 'application/src/components/ProjectsPanel.tsx'
       - 'application/src/services/threeDIntent.ts'
       - 'application/src/utils/fluxWorkflow.ts'
       - 'application/src/utils/binaryBase64.ts'

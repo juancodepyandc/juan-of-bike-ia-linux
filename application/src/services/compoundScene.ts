@@ -94,10 +94,10 @@ const ISOLATED_INSTRUCTION: Record<string, (s: string) => string> = {
  * (scene facets become styling/lighting, not separate background geometry).
  */
 function excludedMention(text: string, start: number): boolean {
-  const clause = text.slice(0, start).split(/[;,.!?\n]/).at(-1) || ''
+  const clause = text.slice(0, start).split(/[;,.!?\n]/).slice(-1)[0] || ''
   const negatives = [...clause.matchAll(/\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas de)\b/gi)]
   const positives = [...clause.matchAll(/\b(?:avec|with|mais|but)\b/gi)]
-  const negative = negatives.at(-1), positive = positives.at(-1)
+  const negative = negatives[negatives.length - 1], positive = positives[positives.length - 1]
   if (!negative || (positive && positive.index! > negative.index!)) return false
   return !/^\s+(?:changer|modifier|changing|modifying|altering|toucher|touching)\b/i.test(clause.slice(negative.index! + negative[0].length))
 }

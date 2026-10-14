@@ -128,6 +128,25 @@ class MissionStore:
                 db.execute('INSERT INTO events VALUES(?,?,?,?)',(mid,seq,uid,json.dumps(event)))
             return bool(changed)
 
+    def reconcile_idle_frontend(self):
+        """Close expired reservations only after the caller has verified workers idle.
+
+        Never touches queued requests, live leases, daemon missions or files.
+        The lease predicate is checked again under the write transaction.
+        """
+        now = time.time()
+        with self.connect(write=True) as db:
+            rows = db.execute("SELECT id FROM missions WHERE status IN ('running','stopping') AND COALESCE(lease,0)<? AND json_extract(payload,'$.project_kind')='frontend'", (now,)).fetchall()
+            for row in rows:
+                mid = row['id']
+                result = 'Contrôleur interrompu ; absence de calcul vérifiée sur le PC, réservation libérée. Résultats existants conservés.'
+                db.execute("UPDATE missions SET status='stopped',finished=?,result=?,owner=NULL,lease=NULL WHERE id=?", (now,result,mid))
+                seq = db.execute('SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE mission=?',(mid,)).fetchone()[0]
+                uid = uuid4().hex
+                event = {'type':'mission_complete','stopped':True,'result':result,'event_id':uid,'ts':now,'reconciled':True}
+                db.execute('INSERT INTO events VALUES(?,?,?,?)',(mid,seq,uid,json.dumps(event,ensure_ascii=False)))
+            return [row['id'] for row in rows]
+
     def scheduling(self,mid):
         """Measured history, never an invented estimate of model reasoning."""
         import statistics

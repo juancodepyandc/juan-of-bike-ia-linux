@@ -378,6 +378,7 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         onClick={() => window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))}
         style={{
           position: 'absolute', top: 14, right: 16, zIndex: 5,
+          maxWidth: 'calc(50% - 24px)', minHeight: 44,
           pointerEvents: 'auto', cursor: 'pointer',
           padding: '7px 14px', borderRadius: 999,
           border: '1px solid rgba(248,113,113,.5)', background: 'rgba(127,29,29,.35)',
@@ -386,6 +387,13 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         }}
       >
         ■ Arreter la generation
+      </button>
+      <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('aurora:projects'))}
+        style={{ position: 'absolute', top: 14, left: 16, zIndex: 5, minHeight: 44,
+          maxWidth: 'calc(50% - 24px)',
+          padding: '8px 14px', borderRadius: 16, border: '1px solid #a78bfa88',
+          background: '#171228', color: '#e9ddff', cursor: 'pointer' }}>
+        Projets et file d’attente
       </button>
       <FxCanvas module={module} entry={entry} />
       {!entry.reveal && entry.refs && entry.refs.length > 0 && (

@@ -6,13 +6,26 @@ from flask import jsonify,request,send_file
 from pathlib import Path
 import json
 import struct
+import time
 from urllib.parse import quote
 from agi_core.mission_store import MissionStore
 from agi_core.mission_routing import mission_module
 
 
-def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: True):
+def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
     store=store or MissionStore()
+    def reconcile():
+        # An expired UI lease is not proof that its detached subprocess stopped.
+        with store.connect() as db:
+            expired = db.execute("SELECT 1 FROM missions WHERE status IN ('running','stopping') AND COALESCE(lease,0)<? AND json_extract(payload,'$.project_kind')='frontend' LIMIT 1", (time.time(),)).fetchone()
+        if expired and work_idle():
+            return store.reconcile_idle_frontend()
+        return []
+
+    @bp.route('/api/projects/reconcile',methods=['POST'])
+    def reconcile_projects():
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        return jsonify(ok=True,released=reconcile())
     def delivery(item):
         return (Path(item['payload']['workspace'])/'.transfer_to_client'/item['id']).resolve()
     def complete_glb(path):
@@ -112,6 +125,7 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: True):
     @bp.route('/api/projects/admission',methods=['POST'])
     def admit():
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        reconcile()
         data=request.get_json(silent=True)
         if not isinstance(data,dict) or not re.fullmatch(r'[a-zA-Z0-9_-]{8,150}',str(data.get('request_id',''))) or data.get('module') not in {'conversation','image','code','video','drawing','3d','learning','cyber','voice'} or not isinstance(data.get('title'),str) or not 1<=len(data['title'])<=500:return jsonify(ok=False,error='Demande de calcul invalide.'),400
         payload={'project_kind':'frontend','request':data['title'],'project_title':data['title'],'module':data['module'],'model':str(data.get('model',''))[:200]}
@@ -122,6 +136,7 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: True):
     @bp.route('/api/projects/<mid>/admission',methods=['POST'])
     def claim_admission(mid):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        reconcile()
         item=store.get(mid)
         if not item or item['payload'].get('project_kind')!='frontend':return jsonify(ok=False,error='Projet introuvable.'),404
         data=request.get_json(silent=True) or {}

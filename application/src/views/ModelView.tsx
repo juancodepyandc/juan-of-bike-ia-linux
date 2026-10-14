@@ -3256,15 +3256,11 @@ export default function ModelView() {
           const preparedContext = contextFiles.length > 0 ? await prepareContextFiles(contextFiles) : []
           const preparedViews = resolvePreparedReferenceViews(preparedContext)
           const primaryPreparedImage = preparedViews.primary ?? pickPrimaryPreparedImage(preparedContext)
-          // v77zao: subject-shift guard — if the new prompt's main subject does
-          // NOT overlap with the conversation history (>= 2 word stems shared),
-          // discard the history. This prevents "Système courroie poulie" stuck
-          // in a session from polluting a fresh "guerrier elfique" intent
-          // analysis. Otherwise keep the history (refinement / continuation).
+          // Preserve user requirements for a continuation; discard unrelated subjects.
           const effectiveHistory = retainThreeDRequirements(currentPrompt, conversationHistory, EDIT_INTENT.test(currentPrompt))
           let workingPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
           let historyPrompt = currentPrompt
-          const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: message.role, content: message.content })) })
+          const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: 'user' as const, content: message.content })) })
           setDetectedIntent(intent)
           setLastAnalyzedPrompt(currentPrompt)
           const activeMotionPreset = resolveSelectedMotionPreset(intent, selectedMotionPresetId)
@@ -3729,7 +3725,7 @@ export default function ModelView() {
             referenceSeedForWorkflow = true
             referenceVerificationSummary = `Reference multivue directe retenue: ${materializedViewPlan.summary}.`
           } else {
-            const autoReusePath = !primaryPreparedImage?.stagedPath && EDIT_INTENT.test(currentPrompt) ? lastReferenceImagePathRef.current : null
+            const autoReusePath = !primaryPreparedImage?.stagedPath && effectiveHistory.length > 0 ? lastReferenceImagePathRef.current : null
             let referenceSeedOrigin: ReferenceSeedOrigin = primaryPreparedImage?.stagedPath ? 'user' : null
             let referenceSeed: { stagedPath: string; filename: string } | null = primaryPreparedImage?.stagedPath ? { stagedPath: primaryPreparedImage.stagedPath, filename: primaryPreparedImage.name } : null
             if (!referenceSeed && autoReusePath && comfyuiPath) {
@@ -3744,15 +3740,10 @@ export default function ModelView() {
               referenceSeedOrigin = 'external'
             }
             referenceSeedForWorkflow = Boolean(referenceSeed)
-            // 30/07 (audit): un preset de pose ou un mot d'edition
-            // (« ajoute une epee ») envoyait la reference en regeneration
-            // FLUX TEXTE pure — l'identite de la photo etait reinventee.
-            // Origine 'user' = la photo est intouchable; la pose et les
-            // modifications se font en aval (MV-Adapter / mesh), pas en
-            // reecrivant la reference.
+            // Apply edits to supplied and resumed references with image conditioning.
             const editTraits = classifyImageEditRequest(currentPrompt, Boolean(referenceSeed))
-            const editUserPhoto = referenceSeedOrigin === 'user' && (editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
-            const shouldRegenerateReference = editUserPhoto || referenceSeedOrigin !== 'user'
+            const editReferenceSeed = Boolean(referenceSeed) && (editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || editTraits.decorChange || editTraits.addedCharacter || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
+            const shouldRegenerateReference = editReferenceSeed || referenceSeedOrigin !== 'user'
               && (!referenceSeed || EDIT_INTENT.test(currentPrompt) || shouldRefineReferenceSeed(intent, activeMotionPreset, referenceSupportPlan, Boolean(referenceSeed), referenceSeedOrigin, currentPrompt))
             if (!shouldRegenerateReference && referenceSeed) {
               if (referenceSupportPlan.externalReference && referenceSeedOrigin !== 'user') {
@@ -3776,7 +3767,7 @@ export default function ModelView() {
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
                 const workflow = createFlux2Workflow({
-                  prompt: editUserPhoto ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${workingPrompt}` : promptText,
+                  prompt: editReferenceSeed ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${workingPrompt}. Final authority: ${currentPrompt}. Do not restore excluded features from the reference or any default design.` : `${promptText}\nComplete user requirements: ${workingPrompt}\nFinal authority: ${currentPrompt}. User exclusions override default appearance, reference details and inferred constraints.`,
                   referenceImageFilename: referenceSeed?.filename,
                   width: referenceWorkflow.width,
                   height: referenceWorkflow.height,
@@ -3797,7 +3788,7 @@ export default function ModelView() {
               baseRefPromptRef.current = baseReferencePrompt
 
               let imageBlob = await renderReferenceBlob(baseReferencePrompt)
-              if (editUserPhoto) { photoReferenceEdited = true; photoEditSeedFilename = referenceSeed?.filename }
+              if (editReferenceSeed) { photoReferenceEdited = true; photoEditSeedFilename = referenceSeed?.filename }
               let referenceAssessment = await verifyGeneratedReferenceVisual({
                 prompt: currentPrompt,
                 model: visionModel,

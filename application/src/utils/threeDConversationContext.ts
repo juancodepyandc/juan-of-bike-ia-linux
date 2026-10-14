@@ -5,10 +5,12 @@ function anchor(text: string): string | undefined {
 }
 export function retainThreeDRequirements(prompt: string, history: Message[], explicitEdit = false): Message[] {
   const users = history.filter(message => message.role === 'user')
-  const previous = users.at(-1)
+  const previous = users[users.length - 1]
   if (!previous) return []
   const sameSubject = Boolean(anchor(prompt) && anchor(prompt) === anchor(previous.content))
-  return sameSubject || explicitEdit ? users.slice(-4) : []
+  const normalized = prompt.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()
+  const exclusionEdit = /^(?:sans\s+(?!changer\b|modifier\b|toucher\b)|without\s+(?!changing\b|modifying\b)|pas de\s|no\s)/.test(normalized)
+  return sameSubject || explicitEdit || exclusionEdit ? users.slice(-4) : []
 }
 export function composeThreeDRequirements(prompt: string, history: Message[]): string {
   if (!history.length) return prompt

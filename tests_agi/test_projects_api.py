@@ -3,14 +3,15 @@ from agi_core.mission_store import MissionStore
 from application.projects_api import register_project_routes
 
 
-def make(tmp_path,allowed=True):
-    app=Flask(__name__);bp=Blueprint('projects',__name__);store=MissionStore(tmp_path/'projects.sqlite3');register_project_routes(bp,allowed=lambda:allowed,store=store);app.register_blueprint(bp);return app.test_client(),store
+def make(tmp_path,allowed=True,idle=True):
+    app=Flask(__name__);bp=Blueprint('projects',__name__);store=MissionStore(tmp_path/'projects.sqlite3');register_project_routes(bp,allowed=lambda:allowed,store=store,work_idle=lambda:idle);app.register_blueprint(bp);return app.test_client(),store
 
 
 def test_public_admission_and_history_forbidden(tmp_path):
     c,_=make(tmp_path,False)
     assert c.get('/api/projects').status_code==403
     assert c.post('/api/projects/admission',json={}).status_code==403
+    assert c.post('/api/projects/reconcile').status_code==403
 
 
 def test_all_managed_modules_share_admission_with_engineering_and_keep_fifo(tmp_path):
@@ -82,7 +83,7 @@ def test_expired_unknown_execution_survives_reopen_without_second_executor(tmp_p
     import sqlite3
     with sqlite3.connect(store.path) as db:
         db.execute('UPDATE missions SET lease=0 WHERE id=?',(first['id'],))
-    c,reopened=make(tmp_path)
+    c,reopened=make(tmp_path,idle=False)
     assert reopened.get(first['id'])['status']=='interrupted'
     assert not c.post('/api/projects/'+first['id']+'/admission',json={'executor':'b'*32}).json['granted']
     second=c.post('/api/projects/admission',json={'request_id':'request-after','title':'P2','module':'video'}).json
@@ -171,3 +172,59 @@ def test_stop_does_not_release_reservation_before_workers_exit(tmp_path):
     assert store.get(item['id'])['status']=='running'
     idle[0]=True
     assert c.post(path,json={'status':'stopped','executor':'a'*32}).json['status']=='stopped'
+
+
+def test_idle_reconciliation_releases_only_expired_frontend_and_preserves_evidence(tmp_path):
+    c,store=make(tmp_path)
+    stale=store.create({'project_kind':'frontend','request':'Old','module':'3d'},queued=True)[0]
+    live=store.create({'project_kind':'frontend','request':'Live','module':'image'},queued=True)[0]
+    daemon=store.create({'request':'Daemon','model':'fixture'},queued=True)[0]
+    assert store.claim(stale['id'],'stale',90)
+    assert store.claim(live['id'],'live',90)
+    assert store.claim(daemon['id'],'daemon',90)
+    with store.connect(write=True) as db:
+        db.execute('UPDATE missions SET lease=0 WHERE id IN (?,?)',(stale['id'],daemon['id']))
+    evidence=tmp_path/'source.glb';evidence.write_bytes(b'original evidence')
+    response=c.post('/api/projects/admission',json={'request_id':'request-reconcile','title':'Next','module':'3d'})
+    assert response.status_code==200
+    assert store.get(stale['id'])['status']=='stopped'
+    assert store.get(stale['id'])['owner'] is None
+    assert store.get(live['id'])['status']=='running'
+    assert store.get(daemon['id'])['status']=='interrupted'
+    assert evidence.read_bytes()==b'original evidence'
+    assert len([e for _,e in store.events(stale['id']) if e.get('reconciled')])==1
+    c.post('/api/projects/'+response.json['id']+'/admission',json={'executor':'a'*32})
+    assert len(store.events(stale['id']))==1
+    assert c.post('/api/projects/'+stale['id']+'/finish',json={'status':'completed','executor':'b'*32}).status_code==409
+
+
+def test_waiting_request_proceeds_automatically_when_orphan_workers_exit(tmp_path):
+    app=Flask(__name__);bp=Blueprint('recovery',__name__);store=MissionStore(tmp_path/'recovery.sqlite3');idle=[False]
+    register_project_routes(bp,allowed=lambda:True,store=store,work_idle=lambda:idle[0]);app.register_blueprint(bp);c=app.test_client()
+    stale=store.create({'project_kind':'frontend','request':'Old','module':'3d'},queued=True)[0]
+    store.claim(stale['id'],'lost',90)
+    with store.connect(write=True) as db:db.execute('UPDATE missions SET lease=0 WHERE id=?',(stale['id'],))
+    pending=c.post('/api/projects/admission',json={'request_id':'request-wait-recovery','title':'Next','module':'3d'}).json
+    url='/api/projects/'+pending['id']+'/admission'
+    assert c.post(url,json={'executor':'a'*32}).json['status']=='queued'
+    assert store.get(stale['id'])['status']=='interrupted'
+    idle[0]=True
+    assert c.post(url,json={'executor':'a'*32}).json['granted']
+    assert store.get(stale['id'])['status']=='stopped'
+
+
+def test_reconciliation_rechecks_lease_and_does_not_close_a_new_owner(tmp_path):
+    store=MissionStore(tmp_path/'lease.sqlite3')
+    stale=store.create({'project_kind':'frontend','request':'Old','module':'3d'},queued=True)[0]
+    store.claim(stale['id'],'old',90)
+    with store.connect(write=True) as db:db.execute('UPDATE missions SET lease=0 WHERE id=?',(stale['id'],))
+    def idle():
+        # Lease changed between the initial expired check and reconciliation.
+        assert store.claim(stale['id'],'new-owner',90)
+        return True
+    app=Flask(__name__);bp=Blueprint('lease_projects',__name__)
+    register_project_routes(bp,allowed=lambda:True,store=store,work_idle=idle);app.register_blueprint(bp)
+    response=app.test_client().post('/api/projects/reconcile')
+    assert response.json['released']==[]
+    assert store.get(stale['id'])['owner']=='new-owner'
+    assert store.get(stale['id'])['status']=='running'
