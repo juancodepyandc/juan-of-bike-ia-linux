@@ -11,7 +11,7 @@ from agi_core.mission_store import MissionStore
 from agi_core.mission_routing import mission_module
 
 
-def register_project_routes(bp,*,allowed,store=None):
+def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: True):
     store=store or MissionStore()
     def delivery(item):
         return (Path(item['payload']['workspace'])/'.transfer_to_client'/item['id']).resolve()
@@ -140,7 +140,7 @@ def register_project_routes(bp,*,allowed,store=None):
         item=store.get(mid)
         if not item or item['payload'].get('project_kind')!='frontend':return jsonify(ok=False,error='Projet introuvable.'),404
         data=request.get_json(silent=True) or {}
-        if not isinstance(data,dict) or data.get('status') not in {'completed','failed'}:return jsonify(ok=False,error='Résultat invalide.'),400
+        if not isinstance(data,dict) or data.get('status') not in {'completed','failed','stopped'}:return jsonify(ok=False,error='Résultat invalide.'),400
         executor=data.get('executor')
         if executor is not None and (not isinstance(executor,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{16,100}',executor)):return jsonify(ok=False,error='Exécutant invalide.'),400
         if item['status'] in {'completed','failed','stopped','blocked'}:
@@ -148,7 +148,9 @@ def register_project_routes(bp,*,allowed,store=None):
             return jsonify(ok=False,error='Ce projet possède déjà un résultat final conservé.'),409
         token='frontend-'+(hashlib.sha256(executor.encode()).hexdigest() if isinstance(executor,str) else mid)
         if not item['owner'] or item['owner']!=token:return jsonify(ok=False,error='Ce calcul appartient à un autre exécutant ou n’a pas démarré. Ne pas le rejouer.'),409
-        store.append(mid,{'type':'mission_complete' if data['status']=='completed' else 'error','result':'Le pipeline a terminé.' if data['status']=='completed' else 'Pipeline en erreur ; consulter ses preuves.'})
+        if data['status']=='stopped' and not work_idle():
+            return jsonify(ok=False,error='Les processus terminent encore leur arrêt.',code='workers_stopping'),409
+        store.append(mid,{'type':'error' if data['status']=='failed' else 'mission_complete','stopped':data['status']=='stopped','result':'Arrêt confirmé ; place libérée.' if data['status']=='stopped' else 'Le pipeline a terminé.' if data['status']=='completed' else 'Pipeline en erreur ; consulter ses preuves.'})
         return jsonify(ok=True,status=store.get(mid)['status'])
 
     @bp.route('/api/projects/<mid>/cancel',methods=['POST'])

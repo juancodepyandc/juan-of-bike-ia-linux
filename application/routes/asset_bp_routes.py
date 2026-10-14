@@ -20,7 +20,18 @@ from bridge_server import _ext_default_model
 register_design_routes(asset_bp,WORKSPACE,local=_request_is_local_loopback,extension=_ext_auth,model_default=lambda:_ext_default_model(task="engineering"))
 
 from application.projects_api import register_project_routes
-register_project_routes(asset_bp,allowed=lambda:_request_is_local_loopback() or _admin_ok() or _ext_auth()[0])
+def _frontend_workers_idle():
+    try:
+        from routes.python_bp_routes import _python_jobs, _python_jobs_lock, _python_job_processes
+        with _python_jobs_lock:
+            if _python_job_processes or any(j.get('status') in {'queued','running'} or
+                    (j.get('cancelRequested') and not j.get('finishedAt')) for j in _python_jobs.values()):
+                return False
+        queue = requests.get(COMFYUI_URL + '/queue', timeout=3).json()
+        return not queue.get('queue_running') and not queue.get('queue_pending')
+    except Exception:
+        return False
+register_project_routes(asset_bp,allowed=lambda:_request_is_local_loopback() or _admin_ok() or _ext_auth()[0],work_idle=_frontend_workers_idle)
 
 from application.asset_access import public_generated_asset
 

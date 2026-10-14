@@ -141,3 +141,33 @@ def test_cli_assembly_and_plate_views_are_separate_from_original(tmp_path):
     assert c.get(assembly.replace('viewer.html','plate-1.glb')).status_code==200
     assert c.get(assembly.replace('viewer.html','textures/color.png')).status_code==200
     assert c.get(assembly.replace('viewer.html','../../outside.py')).status_code==404
+
+
+def test_stop_running_admission_releases_queue_and_is_idempotent(tmp_path):
+    c,store=make(tmp_path)
+    first=c.post('/api/projects/admission',json={'request_id':'request-stop-active','title':'P','module':'3d'}).json
+    second=c.post('/api/projects/admission',json={'request_id':'request-stop-next','title':'Next','module':'3d'}).json
+    executor='a'*32
+    assert c.post('/api/projects/'+first['id']+'/admission',json={'executor':executor}).json['granted']
+    assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['status']=='queued'
+    path='/api/projects/'+first['id']+'/finish'
+    assert c.post(path,json={'status':'stopped','executor':'b'*32}).status_code==409
+    assert c.post(path,json={'status':'stopped','executor':executor}).json['status']=='stopped'
+    assert c.post(path,json={'status':'stopped','executor':executor}).json['status']=='stopped'
+    assert c.post(path,json={'status':'completed','executor':executor}).status_code==409
+    assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['granted']
+
+
+def test_stop_does_not_release_reservation_before_workers_exit(tmp_path):
+    app=Flask(__name__);bp=Blueprint('stop_projects',__name__);store=MissionStore(tmp_path/'stop.sqlite3')
+    idle=[False]
+    register_project_routes(bp,allowed=lambda:True,store=store,work_idle=lambda:idle[0])
+    app.register_blueprint(bp);c=app.test_client()
+    item=c.post('/api/projects/admission',json={'request_id':'request-workers','title':'P','module':'3d'}).json
+    c.post('/api/projects/'+item['id']+'/admission',json={'executor':'a'*32})
+    path='/api/projects/'+item['id']+'/finish'
+    response=c.post(path,json={'status':'stopped','executor':'a'*32})
+    assert response.status_code==409 and response.json['code']=='workers_stopping'
+    assert store.get(item['id'])['status']=='running'
+    idle[0]=True
+    assert c.post(path,json={'status':'stopped','executor':'a'*32}).json['status']=='stopped'
