@@ -40,6 +40,7 @@ def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
         for mesh in graph.get("meshes", []):
             for primitive in mesh.get("primitives", []):
                 primitive.pop("material", None)
+                primitive.get("attributes", {}).pop("COLOR_0", None)
         for key in ("materials", "textures", "images", "samplers"):
             graph.pop(key, None)
 

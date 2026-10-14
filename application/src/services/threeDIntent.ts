@@ -1972,6 +1972,7 @@ CRITICAL RULES:
 - NEVER substitute with a different product, component, or object. If the user asks for a cable, describe a CABLE, not a case
 - NEVER describe a generic version — describe the SPECIFIC product/character/object named
 - Explicit exclusions override default clothing, accessories, anatomy or product features. Translate "without", "remove", "entirely" and other scope words precisely. Never turn an exclusion into an addition.
+- Do not add any lettering, labels, logos, signatures, watermark, caption or "3D print" branding unless the user explicitly requests that text. Text present on an external example is not permission to reproduce it.
 - Preserve the exact requested body pose, orientation, framing and outfit. Camera view and body pose are different constraints. Use a three-quarter camera view ONLY when no view is specified; never replace a requested pose with a neutral pose.
 - Use solid black studio background only when no background is specified; keep clean edge separation.
 - CRITICAL FOR 3D RECONSTRUCTION: the image MUST show DEPTH and VOLUME — show the object at a slight angle so 3 faces are visible (front + one side + top or bottom)
@@ -2566,6 +2567,7 @@ What to check:
 - Artifacts: melted surfaces, merged parts, floating geometry, impossible topology
 - Surface quality: clean edges vs. blobby/melted surfaces
 - Structural coherence: parts that should be separate are separate, no merged geometry
+- Unrequested text, logos, signatures and watermarks are artifacts even if they occur in a reference example. If text was requested, check its exact wording and placement.
 
 failureCategory must be the PRIMARY reason for any score below 75:
 - "wrong_subject": the mesh is a completely different object than requested

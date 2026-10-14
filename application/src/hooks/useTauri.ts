@@ -1491,7 +1491,8 @@ export async function runPythonScript(scriptPath: string, args: string[], option
     .join('\n')
     .trim()
   if (result.exitCode !== 0 && filteredError) {
-    throw new Error(`Script echoue (code ${result.exitCode}): ${filteredError.slice(0, 1200)}`)
+    throw Object.assign(new Error(`Script echoue (code ${result.exitCode}): ${filteredError.slice(0, 1200)}`),
+      { output: result.output, exitCode: result.exitCode })
   }
   return result.output
 }

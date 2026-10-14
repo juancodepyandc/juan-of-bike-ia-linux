@@ -14,6 +14,13 @@ on:
       - 'application/src/components/ProjectsPanel.tsx'
       - 'application/src/stores/moduleHistoryStore.ts'
       - 'application/scripts/test-history-cleanup.mjs'
+      - 'application/scripts/test-python-result.mjs'
+      - 'application/scripts/test-material-channels.mjs'
+      - 'application/scripts/test-model-delivery-recovery.mjs'
+      - 'application/src/utils/recoverModelDelivery.ts'
+      - 'application/src/utils/pythonResult.ts'
+      - 'application/src/utils/materialChannels.ts'
+      - 'application/src/services/referenceVisualResearch.ts'
       - 'application/src/services/taskIntelligence.ts'
       - 'application/src/services/threeDIntent.ts'
       - 'application/src/utils/fluxWorkflow.ts'
@@ -78,6 +85,9 @@ jobs:
       - run: node scripts/test-generation-cancel.mjs
       - run: node scripts/test-fidelity-inspection.mjs
       - run: node scripts/test-history-cleanup.mjs
+      - run: node scripts/test-python-result.mjs
+      - run: node scripts/test-material-channels.mjs
+      - run: node scripts/test-model-delivery-recovery.mjs
       - run: node scripts/test-flux-reference-conditioning.mjs
       - run: node scripts/test-project-admission-cancel.mjs
       - run: node scripts/test-forge-admission.mjs

@@ -41,7 +41,18 @@ export type ReferenceVisualAssessment = {
   cluttered: boolean
   exactEnough: boolean
   wrongSubject?: boolean
+  unrequestedText?: boolean
+  obscured?: boolean
+  requestMismatch?: boolean
   notes: string
+}
+
+export function canUseVisualReference(assessment: ReferenceVisualAssessment | null, minimumScore: number, metadataFallback = false) {
+  if (!assessment) return metadataFallback
+  return assessment.usable === true && assessment.exactEnough === true
+    && !assessment.pixelated && !assessment.cluttered && !assessment.wrongSubject
+    && !assessment.unrequestedText && !assessment.obscured && !assessment.requestMismatch
+    && Number.isFinite(assessment.score) && assessment.score >= minimumScore
 }
 
 function uniqueStrings(values: string[]) {
@@ -294,13 +305,16 @@ async function assessCandidate(
           '/no_think',
           'You evaluate whether an image is a strong visual reference for a generation request.',
           'Return only valid JSON with this exact shape:',
-          '{"usable":true,"score":0,"pixelated":false,"cluttered":false,"exactEnough":true,"wrongSubject":false,"notes":"..."}',
+          '{"usable":true,"score":0,"pixelated":false,"cluttered":false,"exactEnough":true,"wrongSubject":false,"unrequestedText":false,"obscured":false,"requestMismatch":false,"notes":"..."}',
           'MOST CRITICAL CHECK: Is this image showing the CORRECT subject? If the user asks for a cable and the image shows a PC case, wrongSubject=true and score=0.',
           'If the user asks for a Strimer cable and the image shows a tower/case/motherboard, wrongSubject=true and score=0.',
           'If the user asks for a character and the image shows a completely different character, wrongSubject=true and score=0.',
           'wrongSubject=true immediately means usable=false and exactEnough=false regardless of image quality.',
           'Usable means the image is focused on the EXACT requested subject and can improve fidelity.',
           'Reject images that are too cluttered, too low-res, visibly pixelated, collages, memes, screenshots with UI, or clearly the wrong subject.',
+          'Set unrequestedText=true for lettering, logos, signatures, watermarks, captions or print branding not explicitly requested. Text in an example does not authorize copying it.',
+          'Set obscured=true for unrequested blur patches, mosaics or opaque overlays hiding requested details. Do not guess the hidden surface. Requested artistic blur is not a defect.',
+          'Set requestMismatch=true if the actual outfit, exclusions, body scope, color or pose contradict any explicit user requirement, even when the base subject is recognizable. Explain the exact mismatch in notes.',
           'If strict identity is requested, reject images showing another character, another product variant, or another main subject even if the art style looks similar.',
           'If extra subjects are not allowed, reject group shots, mascot companions, host devices, full environments, or parasite objects that dominate the requested element.',
           'If the request is about anime or an existing fictional character, clean official art or clean illustration is acceptable.',
@@ -505,7 +519,7 @@ export async function findBestReferenceVisual({
         if (!blob) continue
         const assessment = await assessCandidate(prompt, model, candidate, blob, profile)
         const strongTextReference = candidateLooksStrongTextReference(candidate, profile)
-        if ((!assessment?.usable || !assessment.exactEnough || assessment.pixelated || assessment.cluttered || assessment.score < minimumScore) && !strongTextReference) {
+        if (!canUseVisualReference(assessment, minimumScore, strongTextReference)) {
           continue
         }
 
@@ -572,7 +586,7 @@ export async function findMultipleReferenceVisuals({
         if (!blob) continue
         const assessment = await assessCandidate(prompt, model, candidate, blob, profile)
         const strongTextReference = candidateLooksStrongTextReference(candidate, profile)
-        if ((!assessment?.usable || !assessment.exactEnough || assessment.pixelated || assessment.cluttered || assessment.score < minimumScore) && !strongTextReference) {
+        if (!canUseVisualReference(assessment, minimumScore, strongTextReference)) {
           continue
         }
 

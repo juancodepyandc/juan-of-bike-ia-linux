@@ -461,6 +461,7 @@ ${isVideo ? '- MOTION COMPLETION: when the prompt names an action (écrase, saut
 ${isVideo ? '- Describe motion, dynamics and temporal flow' : isThreeD ? '- Describe a single clean studio reference for later 3D reconstruction, with isolated subject, faithful structure and readable part separation' : '- Describe visual composition, style, lighting and materials'}
 - Include all explicit colors, positions and spatial relationships
 - Explicit user changes and exclusions override canonical costume, usual anatomy, reference details and supporting knowledge. Do not restore an excluded feature or invent clothing as a substitute. Preserve every explicit scope and pose requirement.
+- Add no text, labels, signatures, logos, captions or print branding unless explicitly requested by the user. Supporting examples do not authorize reproducing their watermark or caption.
 ${isImage ? '- Unless pixel art, sprites or voxel style are explicitly requested, forbid pixelation, compression noise, mosaic artifacts and low-resolution upscale look' : ''}
 ${isImage ? '- If the subject is an existing character, person, object or component, use the supporting context to preserve recognizable traits instead of inventing a nearby approximation' : ''}
 ${isImage ? '- Preserve iconic hairstyle, silhouette, costume cues, connector layout, proportions and known dimensions whenever the supporting context provides them' : ''}

@@ -1,5 +1,8 @@
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
+import { parsePythonResult } from '../utils/pythonResult.ts'
+import { materialChannels } from '../utils/materialChannels.ts'
+import { recoverModelDelivery } from '../utils/recoverModelDelivery.ts'
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
@@ -35,7 +38,7 @@ import EngineeringExportPanel from '../components/EngineeringExportPanel.tsx'
 import { analyzeThreeDIntent, buildFluxVisualDescription, buildMeshCorrectionStrategy, detectMotionVerbHint, inferPbrProfile, previewThreeDIntent, verify3DMeshFidelity, type PbrProfile, type ThreeDIntent, type ThreeDMotionPreset, type ThreeDPipeline, type ThreeDPipelineRouting, type MeshFidelityVerification, type MeshCorrectionStrategy } from '../services/threeDIntent.ts'
 import { runProceduralModeling, runAutoRig, runMeshValidation, runMeshCleanup, renderMeshScreenshot, type BlenderScriptResult, type MeshValidationReport } from '../services/blenderBridge.ts'
 import { runAutoRigFromPrompt } from '../services/motionPipeline.ts'
-import { verifyGeneratedReferenceVisual } from '../services/referenceVisualResearch.ts'
+import { verifyGeneratedReferenceVisual, canUseVisualReference } from '../services/referenceVisualResearch.ts'
 import { useAppStore } from '../stores/appStore.ts'
 import { useModuleHistoryStore, type ConversationSession } from '../stores/moduleHistoryStore.ts'
 import { usePromptLibraryStore } from '../stores/promptLibraryStore.ts'
@@ -164,13 +167,7 @@ function buildColorLoadOutputDir(workspacePath: string, meshPath: string) {
 }
 
 function parseLastJsonLine(output: string) {
-  const lines = output.split('\n').map((line) => line.trim()).filter(Boolean)
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      return JSON.parse(lines[index]) as ModelGenerationResult
-    } catch {}
-  }
-  return null
+  return parsePythonResult<ModelGenerationResult>(output)
 }
 
 function buildConversationContext(history: Array<{ role: 'user' | 'assistant'; content: string }>) {
@@ -1718,6 +1715,7 @@ function InteractiveModel({
           // dictated by the inferred profile. Replacing the array slot keeps
           // any future material swap logic working.
           const physical = new MeshPhysicalMaterial({
+            ...materialChannels(std, Boolean(mesh.geometry.getAttribute('color'))),
             color: std.color ?? new Color('#ffffff'),
             map: std.map ?? null,
             normalMap: std.normalMap ?? null,
@@ -2430,6 +2428,7 @@ export default function ModelView() {
   const diagnostics = useStudioDiagnostics({ requiresTauri: true, requiresOllama: true, requiredFiles: [{ label: 'Pipeline Atlas', relativePath: 'python-services/aurora_3d_pipeline.py' }] })
   const { executeWithRuntime } = useManagedRuntime()
   const { pushMessage, getRecentMessages } = useModuleHistoryStore()
+  const active3dSessionId = useModuleHistoryStore(s => s.activeSessionId['3d'])
   const { trackGeneration, completeGeneration, failGeneration } = useGenerationTrackerStore()
   const recovery = useGenerationRecovery('3d')
   const activeTrackerIdRef = useRef<string | null>(null)
@@ -2613,7 +2612,7 @@ export default function ModelView() {
   useEffect(() => {
     let alive = true
     const tick = async () => {
-      const info = await peekResumableJob('model')
+      const info = await peekResumableJob('model_ia') || await peekResumableJob('model')
       if (!alive) return
       setPendingJobBanner(info)
       if (info && info.status === 'running' && !unlistenRef.current) {
@@ -3086,6 +3085,26 @@ export default function ModelView() {
   useEffect(() => {
     let alive = true
     void (async () => {
+      const session = useModuleHistoryStore.getState().getActiveSession('3d')
+      if (findSessionAssets(session).meshPath) return
+      try {
+        const { fsListDir, fsReadText } = await import('../hooks/useTauri.ts')
+        const recovered = await recoverModelDelivery(await getWorkspacePath(), session.id, { list: fsListDir, text: fsReadText, exists: fsExists })
+        if (!alive || !recovered || generationAbortRef.current || useModuleHistoryStore.getState().activeSessionId['3d'] !== session.id) return
+        lastMeshPathRef.current = recovered.mesh
+        setModelUrl(toAssetUrl(recovered.mesh))
+        if (recovered.reference) { lastReferenceImagePathRef.current = recovered.reference; setReferenceImageUrl(toAssetUrl(recovered.reference)) }
+        const label = recovered.engineOk === false ? `Maillage existant retrouvé ; validation échouée : ${recovered.error || 'voir le journal'}` : 'Maillage existant retrouvé ; fidélité visuelle à vérifier.'
+        setProgress(label)
+        pushMessage('3d', { role: 'assistant', content: label, images: [recovered.mesh] })
+      } catch { /* An unavailable PC never authorizes replay or history deletion. */ }
+    })()
+    return () => { alive = false }
+  }, [active3dSessionId, hydrateSession, pushMessage])
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
       const sessions = useModuleHistoryStore.getState().getModuleSessions('3d')
       const roots = sessions.map(session => {
         const paths = session.messages.flatMap(message => message.images || [])
@@ -3158,14 +3177,7 @@ export default function ModelView() {
       const bridge = _gb()
       const resp = await fetch(`${bridge}/api/python/job/${jobId}`)
       const job = await resp.json()
-      const lignes = String(job?.output || '').split('\n')
-      let resultat: Record<string, unknown> | null = null
-      for (let i = lignes.length - 1; i >= 0; i -= 1) {
-        const l = lignes[i].trim()
-        if (l.startsWith('{') && l.includes('"ok"')) {
-          try { resultat = JSON.parse(l); break } catch { /* ligne partielle */ }
-        }
-      }
+      const resultat = parsePythonResult<Record<string, unknown>>(String(job?.output || ''))
       if (!resultat) { setError('Resultat introuvable dans le job — voir le dossier du run.'); return }
       const mesh = String((resultat.final_mesh as string) || (resultat.rigged_mesh as string) || '')
       if (resultat.ok && mesh) {
@@ -3179,6 +3191,7 @@ export default function ModelView() {
         setError(`La generation s'est terminee en echec: ${String(resultat.error || 'motif inconnu').slice(0, 200)}`)
       }
       clearResumableJob('model')
+      clearResumableJob('model_ia')
       setPendingJobBanner(null)
     } catch (e) {
       setError(`Recuperation impossible: ${e instanceof Error ? e.message : String(e)}`)
@@ -3829,14 +3842,7 @@ export default function ModelView() {
                 label: referenceSupportPlan.searchProfile.subjectLabel || 'Generated 3D reference',
               })
               const minimumReferenceScore = resolveReferenceMinimumScore(referenceSupportPlan)
-              const isReferenceAccepted = (assessment: Awaited<ReturnType<typeof verifyGeneratedReferenceVisual>> | null) => Boolean(
-                assessment?.usable
-                && assessment.exactEnough
-                && !assessment.pixelated
-                && !assessment.cluttered
-                && !assessment.wrongSubject
-                && assessment.score >= minimumReferenceScore
-              )
+              const isReferenceAccepted = (assessment: Awaited<ReturnType<typeof verifyGeneratedReferenceVisual>> | null) => canUseVisualReference(assessment, minimumReferenceScore)
 
               if (!isReferenceAccepted(referenceAssessment)) {
                 setProgress('Auto-correction de la reference 3D (tentative 1)...')
@@ -3894,20 +3900,17 @@ export default function ModelView() {
               }
 
               if (!isReferenceAccepted(referenceAssessment) && !(referenceSupportPlan.externalReference && referenceSupportPlan.searchProfile.strictIdentity)) {
-                // v77zaq: hard mismatch should ONLY block when the SUBJECT itself
-                // is wrong, never when only materials/colors drifted. Fantasy
-                // prompts ("quartz body + obsidian panel + rose gold lotus
-                // fans") routinely fail material checks but the subject (PC
-                // case) is correctly rendered — reconstruction can still proceed
-                // because Hunyuan3D shape doesn't depend on FLUX colors and the
-                // texture pass + viewer's PbrProfile inference will recolor.
+                // A recognizable subject does not excuse concrete violations
+                // of the requested outfit, pose, exclusions or text policy.
                 const wrongSubject = Boolean(referenceAssessment?.wrongSubject)
-                const hardMismatch = wrongSubject && (
+                const hardMismatch = Boolean(referenceAssessment?.unrequestedText || referenceAssessment?.obscured || referenceAssessment?.requestMismatch) || wrongSubject && (
                   referenceSupportPlan.searchProfile.strictIdentity
                   || isCharacterLike(intent)
                   || (intent.systemClass === 'pc_cabling' && intent.referenceFraming === 'isolated_subject')
                 )
                 if (hardMismatch) {
+                  await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await imageBlob.arrayBuffer())))
+                  setReferenceImageUrl(toAssetUrl(referenceImagePath))
                   throw new Error(`La reference 3D reste insuffisamment fidele apres auto-correction: ${referenceAssessment?.notes || 'mauvais sujet ou trop de parasites'}`)
                 }
                 if (!wrongSubject) {
@@ -4099,6 +4102,7 @@ export default function ModelView() {
           // ── AI GENERATION PIPELINE (default + fallback) ──
           let auroraAttempted = false
           let auroraFailReason = ''
+          let producedButRejected = ''
           if (!result) {
             // Voie principale: pipeline Aurora complet (TRELLIS.2-4B natif MIT, branche
             // qualite native, materiaux par zones). DreamGaussian ne sert plus que de
@@ -4195,9 +4199,15 @@ export default function ModelView() {
               setProgress('Liberation des modeles Ollama avant la reconstruction 3D...')
               try { await freeGpuBeforeFlux([]) } catch { /* jamais bloquant */ }
               const auroraOutput = await runPythonScript(`${workspacePath}/python-services/aurora_3d_pipeline.py`, auroraArgs, { resumeKey: 'model_ia' })
-              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; source_web?: { site?: string; url?: string; title?: string } } | null
+              const parsedAurora = parseLastJsonLine(auroraOutput) as unknown as { ok?: boolean; error?: string; textured?: boolean; is_scene?: boolean; final_mesh?: string; scene_glb?: string; composants?: Record<string, { desc?: string; glb?: string; refus?: string | null }> | null; refuses?: { role: string; motif: string }[] | null; orphelins?: { objet: string; appui_manquant: string }[] | null; composition?: { objet: string; liaison?: string; sur?: string; ok: boolean }[] | null; livraison?: Record<string, string> | null; source_web?: { site?: string; url?: string; title?: string } } | null
               if (parsedAurora?.source_web) {
                 setDiscoveredSourceWeb(parsedAurora.source_web)
+              }
+              const deliveredReference = parsedAurora?.livraison?.reference_face
+              if (deliveredReference && await fsExists(deliveredReference)) {
+                referenceImagePath = deliveredReference
+                lastReferenceImagePathRef.current = deliveredReference
+                setReferenceImageUrl(toAssetUrl(deliveredReference))
               }
               // 27/09 (retour Juan: « aucune scene ... je sais pas ou est
               // l'image de reference »): le message n'annoncait ni la scene,
@@ -4243,6 +4253,8 @@ export default function ModelView() {
               let existingMeshPath: string | null = null
               for (const candidate of [
                 candidateMesh,
+                `${runPaths.root}/modele/modele_couleurs.glb`,
+                `${runPaths.root}/mouvement/mouvement_couleurs.glb`,
                 `${genDir}/${runId}_final_materials.glb`,
                 `${genDir}/${runId}_matte.glb`,
                 `${genDir}/${runId}_mesh.glb`,
@@ -4255,7 +4267,10 @@ export default function ModelView() {
                 }
               }
 
-              if (existingMeshPath) {
+              if (existingMeshPath && parsedAurora?.ok === false) {
+                setModelUrl(toAssetUrl(existingMeshPath))
+                producedButRejected = `Maillage produit et conservé, mais conformité non validée : ${parsedAurora.error || 'voir le journal du run'}. Fichier : ${existingMeshPath}`
+              } else if (existingMeshPath) {
                 const finalRel = existingMeshPath.startsWith(`${workspacePath}/`)
                   ? existingMeshPath.slice(workspacePath.length + 1)
                   : existingMeshPath
@@ -4271,6 +4286,7 @@ export default function ModelView() {
                   license: 'MIT',
                   shape_model: 'Atlas',
                   shape_input_mode: 'single_view',
+                  textured: parsedAurora?.textured,
                 } as ModelGenerationResult
               } else {
                 try {
@@ -4301,6 +4317,12 @@ export default function ModelView() {
               // ligne SENTINELLE — l'utilisateur croyait a un bug TRELLIS
               // alors que la protection anti-gel venait de lui sauver son PC.
               const excMsg = auroraExc instanceof Error ? auroraExc.message : String(auroraExc)
+              const failed = parsePythonResult<{ final_mesh?: string; livraison?: Record<string, string>; error?: string }>((auroraExc as { output?: string })?.output || '')
+              const preview = failed?.livraison?.modele_couleurs || failed?.final_mesh
+              if (preview?.startsWith(runPaths.root + '/') && preview.endsWith('.glb') && await fsExists(preview)) {
+                setModelUrl(toAssetUrl(preview))
+                producedButRejected = `Maillage produit et conservé, mais validation échouée : ${failed?.error || excMsg}. Fichier : ${preview}`
+              }
               const sentinelle = excMsg.split('\n').reverse().find((l) => l.includes('SENTINELLE ANTI-GEL'))
               auroraFailReason = sentinelle
                 ? `Protection anti-gel: ${sentinelle.replace(/^.*SENTINELLE ANTI-GEL/, 'SENTINELLE ANTI-GEL')}`
@@ -4310,6 +4332,7 @@ export default function ModelView() {
               if (auroraWatch !== undefined) window.clearInterval(auroraWatch)
             }
           }
+          if (producedButRejected) throw new Error(producedButRejected)
           // TRELLIS-ONLY: si TRELLIS a ete tente et n'a rien rendu, on N'enchaine PAS
           // sur DreamGaussian (2e gros modele apres coup = risque de gel, et
           // l'utilisateur veut pouvoir s'en passer). Echec propre.

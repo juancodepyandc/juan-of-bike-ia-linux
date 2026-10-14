@@ -172,11 +172,11 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
     _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
     is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
     if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)):
-        _base_cues = ("full body entirely visible, complete figure inside the frame with "
-                      "generous empty margin on all sides, head and feet fully visible, "
-                      "all limbs visible and separated, standing neutral pose, "
-                      "three-quarter view, no limb hidden behind the body, no cropping, "
-                      "feet on the ground, sharp detailed face, clear detailed eyes")
+        _base_cues = ("preserve the exact requested pose, orientation and framing, "
+                      "show the entire figure only when requested or framing is unspecified, "
+                      "do not replace a specified pose by standing neutral, "
+                      "resolve visible anatomy without inventing hidden structures, "
+                      "sharp detailed face, clear detailed eyes")
         if _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
             _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
         else:
@@ -184,7 +184,7 @@ def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
         if "full body entirely visible" not in out:
             out = out.rstrip(",.") + ", " + _pose_cues
 
-    return out
+    return out + ", no lettering, labels, logos, signatures, watermarks or 3D print branding unless explicitly requested by the user; reference branding is not a user request"
 
 
 def _a_de_la_couleur(glb: str) -> bool:
@@ -219,6 +219,9 @@ def _a_de_la_couleur(glb: str) -> bool:
                     return True
                 if max(_r, _g, _b) < 0.72 or max(_r, _g, _b) > 1.05:
                     return True  # marron/bleu/rouge/gris fonce, pas blanc pur
+        if any('COLOR_0' in primitive.get('attributes', {})
+               for mesh in _doc.get('meshes', []) for primitive in mesh.get('primitives', [])):
+            return True  # Vertex colors are real color, even without a texture image.
         return False
     except Exception:  # noqa: BLE001
         return True  # doute -> traiter comme couleur
@@ -5047,11 +5050,12 @@ def run_pipeline(prompt: str, run_id: str, *,
                     if _fid_character and not _use_researched:
                         audit.append({"stage": "texture_fidelity", "skipped": True,
                                       "reason": "personnage: texture TRELLIS.2 native conservee (protection visage/yeux)"})
+                    _needs_reference_color = not _a_de_la_couleur(str(mesh_path))
                     if (os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1"
                             and front_ref.is_file()
-                            and not _keep_native
-                            and not (_fid_character and not _use_researched)
-                            and (_use_researched or not multi_view)):
+                            and (not _keep_native or _needs_reference_color)
+                            and (not (_fid_character and not _use_researched) or _needs_reference_color)
+                            and (_use_researched or not multi_view or _needs_reference_color)):
                         try:
                             print("PROGRESS:texture_fidelity:projection de la photo de reference sur la face avant...", flush=True)
                             _fid_out = output_dir / f"{run_id}_mesh_fidelity.glb"
@@ -6223,6 +6227,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         "rescued_mesh": rescue["final_mesh"],
         "final_mesh": str(final_mesh_path if not rigged_mesh else rigged_mesh),
         "livraison": (livraison.get("livraison") if isinstance(livraison, dict) else None),
+        "textured": _a_de_la_couleur(str(final_mesh_path if not rigged_mesh else rigged_mesh)),
         "initial_score": rescue["initial_score"],
         "final_score": rescue["final_score"],
         "score_delta": rescue["score_delta"],
@@ -6499,9 +6504,9 @@ def main() -> int:
                     _sc = _m.group(1)
                 _arch = _rd.parent / ("essais_" + args.run_id)
                 _arch.mkdir(parents=True, exist_ok=True)
-                for _cand in _rd.glob("*_matte.glb"):
-                    _shu.copyfile(_cand, _arch / ("essai%d_score%s.glb"
-                                                  % (_essai, _sc)))
+                for _cand in _rd.glob("*.glb"):
+                    _shu.copyfile(_cand, _arch / ("essai%d_score%s_%s"
+                                                  % (_essai, _sc, _cand.name)))
                 # la REFERENCE part avec l'essai: sans elle, aucun juge ne
                 # peut re-evaluer l'archive (paye: archive muette).
                 for _cand in _rd.glob("*_reference.png"):
@@ -6510,15 +6515,21 @@ def main() -> int:
                 _rd.mkdir(parents=True, exist_ok=True)
         except Exception as _pe:  # noqa: BLE001
             print("PROGRESS:perfection:purge impossible (%r)" % (_pe,), flush=True)
+    if not result.get("ok"):
+        from pipeline_delivery import preserve_failed_mesh
+        result = preserve_failed_mesh(result, args.output_dir, args.run_id)
     try:
-        write_receipt(Path(args.output_dir), args.run_id, args.prompt, _producer_sha256,
-                      result, [result['final_mesh']] if result.get('ok') and result.get('final_mesh') else [])
+        _receipt_root = Path(args.output_dir)
+        if _receipt_root.name in {'work','models'} and _receipt_root.parent.name == args.run_id:
+            _receipt_root = _receipt_root.parent
+        write_receipt(_receipt_root, args.run_id, args.prompt, _producer_sha256,
+                      result, [result['final_mesh']] if result.get('final_mesh') and Path(result['final_mesh']).is_file() else [])
     except (OSError, ValueError, TypeError) as exc:
         print("PROGRESS:livraison:recu durable non ecrit (%s) — la reprise devra verifier les sorties" % exc, flush=True)
     if args.pretty:
         sys.stdout.write(render_pretty(result))
     else:
-        sys.stdout.write(json.dumps(result, indent=2, ensure_ascii=True) + "\n")
+        sys.stdout.write(json.dumps(result, ensure_ascii=True) + "\n")
     return 0 if result.get("ok") else 1
 
 
