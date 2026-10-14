@@ -3084,6 +3084,36 @@ export default function ModelView() {
   }, [hydrateSession])
 
   useEffect(() => {
+    let alive = true
+    void (async () => {
+      const sessions = useModuleHistoryStore.getState().getModuleSessions('3d')
+      const roots = sessions.map(session => {
+        const paths = session.messages.flatMap(message => message.images || [])
+        const directories = [...new Set(paths.map(path => path.replaceAll(String.fromCharCode(92), '/')
+          .match(/^(.*\/output\/3d\/conversations\/[^/]+)\/juan_bike_\d+\//)?.[1]).filter((root): root is string => Boolean(root)))]
+        return { id: session.id, directories }
+      }).filter(item => item.directories.length > 0)
+      if (!roots.length) return
+      try {
+        const { getBridgeUrl } = await import('../utils/runtime')
+        const response = await fetch(`${getBridgeUrl()}/api/python/conversation-state`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ roots: [...new Set(roots.flatMap(item => item.directories))].slice(0, 50) }),
+        })
+        if (!response.ok) return
+        const result = await response.json()
+        if (!alive || result.ok !== true) return
+        for (const item of roots) {
+          if (!item.directories.every(root => result.presence?.[root] === false)) continue
+          useModuleHistoryStore.getState().deleteSession(item.id)
+        }
+        hydrateSession(useModuleHistoryStore.getState().getActiveSession('3d'))
+      } catch { /* Offline or unavailable storage is not evidence of deletion. */ }
+    })()
+    return () => { alive = false }
+  }, [hydrateSession])
+
+  useEffect(() => {
     if (selectedMotionPresetId && !resolveSelectedMotionPreset(uiIntent, selectedMotionPresetId)) {
       setSelectedMotionPresetId(null)
     }
@@ -3203,6 +3233,7 @@ export default function ModelView() {
     const controller = new AbortController()
     generationAbortRef.current = controller
     let cleanupRoot: string | undefined
+    let cleanupSessionId: string | undefined
     const runPythonScript = async (...params: Parameters<typeof runPythonScriptBase>) => {
       controller.signal.throwIfAborted()
       const result = await runPythonScriptBase(params[0], params[1], { ...params[2], signal: controller.signal, cleanupRoot })
@@ -3380,6 +3411,7 @@ export default function ModelView() {
           const active3dSession = useModuleHistoryStore.getState().getActiveSession('3d')
           const runPaths = buildThreeDRunOutputPaths(workspacePath, active3dSession, runId, prompt)
           cleanupRoot = runPaths.root
+          cleanupSessionId = active3dSession.id
           controller.signal.throwIfAborted()
           const outputDir = runPaths.work
           await Promise.all([
@@ -5036,7 +5068,20 @@ export default function ModelView() {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ root: cleanupRoot }),
             })
-            if (response.ok) { cleaned = true; break }
+            if (response.ok) {
+              const result = await response.json()
+              cleaned = result.removed === true
+              if (cleaned && result.conversationRemoved && cleanupSessionId) {
+                useModuleHistoryStore.getState().deleteSession(cleanupSessionId)
+              }
+              if (cleaned) {
+                lastReferenceImagePathRef.current = null
+                lastMeshPathRef.current = null
+                setModelUrl(null)
+                setReferenceImageUrl(null)
+              }
+              break
+            }
             if (response.status !== 409) break
           } catch { break }
           await new Promise(resolve => setTimeout(resolve, 1000))

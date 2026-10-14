@@ -12,6 +12,9 @@ on:
       - 'application/src/hooks/useTauri.ts'
       - 'application/src/views/ModelView.tsx'
       - 'application/src/components/ProjectsPanel.tsx'
+      - 'application/src/stores/moduleHistoryStore.ts'
+      - 'application/scripts/test-history-cleanup.mjs'
+      - 'application/src/services/taskIntelligence.ts'
       - 'application/src/services/threeDIntent.ts'
       - 'application/src/utils/fluxWorkflow.ts'
       - 'application/src/utils/binaryBase64.ts'
@@ -74,6 +77,7 @@ jobs:
       - run: node scripts/test-bridge-auth.mjs
       - run: node scripts/test-generation-cancel.mjs
       - run: node scripts/test-fidelity-inspection.mjs
+      - run: node scripts/test-history-cleanup.mjs
       - run: node scripts/test-flux-reference-conditioning.mjs
       - run: node scripts/test-project-admission-cancel.mjs
       - run: node scripts/test-forge-admission.mjs

@@ -202,13 +202,14 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
   const additions = [
     'preserve the requested character identity exactly; do not invent a gender-swapped variant',
     'face must be sharp and readable with clear eyes, nose, jawline and expression, never blurry or melted',
-    'hair shape, costume silhouette, colors and accessories must match the reference rather than becoming generic',
-    'use distinct material/color zones for skin, hair, clothing and accessories so the viewer can inspect texture fidelity',
+    'preserve hair shape, colors and identity from the reference, except every explicit user change; remove excluded clothing or accessories even if present in the reference or canonical design',
+    'use distinct material/color zones for the requested surfaces only; do not invent clothing or accessories to create material zones',
   ]
   if (requiresHumanFidelityPrompt(prompt, purpose, subjectKind)) {
     additions.push(
       'human fidelity is mandatory: reject mannequin, toy, chibi, marshmallow, blob or generic avatar substitutions',
-      'skin, hair, eyes, clothing folds and accessories need texture-bearing detail, not flat single-color material zones',
+      'skin, hair, eyes and only requested clothing/accessories need texture-bearing detail, not flat single-color material zones',
+      'all visible hands need coherent anatomy and individually resolved fingers according to the requested anatomy and reference; preserve the requested pose and do not invent hidden structures as verified detail',
     )
   }
   if (hasHandFidelitySignal(prompt) || hasDanceOrGestureSignal(prompt)) {

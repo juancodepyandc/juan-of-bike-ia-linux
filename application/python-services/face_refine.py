@@ -502,7 +502,13 @@ if not mask.any():
 # Decodage du signe: l'encodage est enc = d*0.5 + 0.5 (pour tenir dans [0,1] avec
 # le signe), donc d = (enc - 0.5) * 2. Sans le facteur 2 on ne reinjecte que la
 # moitie du differentiel.
-delta = (acc_c / np.maximum(acc_w, 1e-6) - 0.5) * 2.0
+def decode_weighted_delta(colors, weights):
+    # A denominator floor biases neutral 0.5 samples towards black at UV edges.
+    # Uncovered texels stay neutral; any positive weight is normalized exactly.
+    encoded = np.divide(colors, weights, out=np.full_like(colors, 0.5), where=weights > 0)
+    return (encoded - 0.5) * 2.0
+
+delta = decode_weighted_delta(acc_c, acc_w)
 
 # `Image.pixels` rend le buffer BRUT: pour un atlas 8 bits c'est du sRGB ENCODE, et
 # le differentiel a ete calcule dans CE MEME espace (les rendus sont des PNG sRGB) ->

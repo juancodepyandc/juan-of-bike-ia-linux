@@ -1291,6 +1291,16 @@ def cleanup_cancelled_generation():
     return jsonify(ok=result['removed'], **result), (200 if result['removed'] else 409)
 
 
+@python_bp.route('/api/python/conversation-state', methods=['POST'])
+def generation_conversation_state():
+    from application.generation_cleanup import conversation_presence
+    data=request.get_json(silent=True) or {}
+    roots=data.get('roots') if isinstance(data,dict) else None
+    if not isinstance(roots,list) or len(roots)>50 or any(not isinstance(root,str) for root in roots):
+        return jsonify(ok=False,error='Invalid conversation roots.'),400
+    return jsonify(ok=True,presence={root:conversation_presence(WORKSPACE,root) for root in roots})
+
+
 @python_bp.route("/api/python/run", methods=["POST"])
 def python_run():
     """Synchronous path — kept for Tauri / local browser modes where the

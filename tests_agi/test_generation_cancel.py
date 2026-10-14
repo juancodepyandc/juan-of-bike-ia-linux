@@ -86,3 +86,30 @@ def test_cancel_before_spawn_never_starts_process_and_cleans_run(tmp_path):
     assert not n['_python_job_processes']
     assert n['_python_jobs']['test']['status'] == 'cancelled'
     assert not run.exists()
+
+
+def test_cleanup_removes_empty_conversation_parent_but_preserves_other_contents(tmp_path):
+    parent=tmp_path/'output/3d/conversations/topic'
+    run=parent/'juan_bike_123';run.mkdir(parents=True)
+    result=remove_cancelled_run(tmp_path,str(run))
+    assert result['removed'] and result['conversationRemoved']
+    assert not parent.exists()
+    assert remove_cancelled_run(tmp_path,str(run))['conversationRemoved']
+    run.mkdir(parents=True);evidence=parent/'retained.json';evidence.write_text('preserved')
+    result=remove_cancelled_run(tmp_path,str(run))
+    assert result['removed'] and not result['conversationRemoved']
+    assert evidence.read_text()=='preserved'
+
+
+def test_missing_conversation_is_not_inferred_from_unavailable_storage(tmp_path):
+    from application.generation_cleanup import conversation_presence
+    base=tmp_path/'output/3d/conversations';missing=base/'deleted'
+    assert conversation_presence(tmp_path,str(missing)) is None
+    base.mkdir(parents=True)
+    assert conversation_presence(tmp_path,str(missing)) is False
+    missing.mkdir()
+    assert conversation_presence(tmp_path,str(missing)) is True
+    assert conversation_presence(tmp_path,str(tmp_path)) is None
+    if os.name!='nt':
+        linked=base/'linked';linked.symlink_to(missing,target_is_directory=True)
+        assert conversation_presence(tmp_path,str(linked)) is None

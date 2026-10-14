@@ -4,6 +4,21 @@ import re
 import shutil
 
 
+def conversation_presence(workspace, candidate):
+    """Missing is meaningful only while the verified output root is available."""
+    base = Path(workspace).absolute() / 'output' / '3d' / 'conversations'
+    try:
+        path = Path(candidate)
+        if not base.is_dir() or base.resolve() != base or path.resolve() != path.absolute():
+            return None
+        relative = path.relative_to(base)
+        if len(relative.parts) != 1 or relative.name in {'.','..'} or path.is_symlink():
+            return None
+        return path.exists()
+    except (OSError,ValueError,TypeError):
+        return None
+
+
 def owned_run_root(workspace, candidate, args):
     if not candidate:
         return None
@@ -32,6 +47,14 @@ def remove_cancelled_run(workspace, candidate):
     try:
         if Path(root).exists():
             shutil.rmtree(root)
-        return {'removed': True}
+        parent = Path(root).parent
+        conversation_removed = not parent.exists()
+        if not conversation_removed:
+            try:
+                parent.rmdir()  # Atomic: never remove another run or other contents.
+                conversation_removed = True
+            except OSError:
+                pass
+        return {'removed': True, 'conversationRemoved': conversation_removed}
     except OSError as exc:
         return {'removed': False, 'error': str(exc)}

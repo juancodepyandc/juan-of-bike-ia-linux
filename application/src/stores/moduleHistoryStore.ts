@@ -134,7 +134,9 @@ export const useModuleHistoryStore = create<ModuleHistoryState>()(
             }
           }
 
-          return { sessions: remaining, activeSessionId: newActive }
+          const replacement = remaining.find(s => s.id === newActive[session.module])
+          return { sessions: remaining, activeSessionId: newActive,
+            histories: { ...state.histories, [session.module]: replacement?.messages ?? [] } }
         })
       },
 
