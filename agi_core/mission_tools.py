@@ -386,6 +386,110 @@ class MissionTools:
 
     async def execute(self, name, args):
         a = self.agent
+
+        if name == 'run_mcp_tool':
+            import json, asyncio, subprocess, os, time
+            from agi_core.context import discover_mcp
+
+            server_name = args.get('server_name')
+            tool_name = args.get('tool_name')
+            tool_args = args.get('args', {})
+
+            servers = discover_mcp(a.workspace)
+            server_cfg = next((s for s in servers if s['name'] == server_name), None)
+
+            if not server_cfg:
+                return {'status': 'error', 'message': f"MCP Server '{server_name}' not found or not configured."}
+
+            cmd = [server_cfg.get('command')] + server_cfg.get('args', [])
+            env = os.environ.copy()
+            env.update(server_cfg.get('env', {}))
+
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    env=env,
+                    cwd=a.workspace,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                # First, send initialization
+                init_id = "init_" + str(time.time()).replace('.', '')
+                init_request = {
+                    "jsonrpc": "2.0",
+                    "id": init_id,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {},
+                        "clientInfo": {
+                            "name": "aurora-agi",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+
+                # Second, send the actual tool call
+                call_id = "call_" + str(time.time()).replace('.', '')
+                call_request = {
+                    "jsonrpc": "2.0",
+                    "id": call_id,
+                    "method": "tools/call",
+                    "params": {
+                        "name": tool_name,
+                        "arguments": tool_args
+                    }
+                }
+
+                # MCP requires initialized notification before regular requests
+                initialized_notification = {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/initialized"
+                }
+
+                nl = chr(10)
+                request_bytes = (json.dumps(init_request) + nl + json.dumps(initialized_notification) + nl + json.dumps(call_request) + nl).encode('utf-8')
+
+                stdout, stderr = await process.communicate(input=request_bytes)
+
+                if process.returncode != 0 and not stdout:
+                    return {'status': 'error', 'message': f"Server crashed with exit code {process.returncode}: {stderr.decode('utf-8', errors='replace')}"}
+
+                try:
+                    responses = stdout.decode('utf-8', errors='replace').strip().split(nl)
+                    call_response_data = None
+                    init_error = None
+
+                    for line in responses:
+                        if line.strip():
+                            try:
+                                response_data = json.loads(line)
+                                if "jsonrpc" in response_data:
+                                    if response_data.get("id") == init_id and "error" in response_data:
+                                        init_error = response_data["error"]
+                                    elif response_data.get("id") == call_id or (response_data.get("result") and not response_data.get("id") == init_id):
+                                        call_response_data = response_data
+                            except json.JSONDecodeError:
+                                continue
+
+                    if init_error:
+                        return {'status': 'error', 'message': f"Failed to initialize MCP server: {init_error}"}
+
+                    if not call_response_data:
+                        return {'status': 'error', 'message': 'No valid JSON-RPC tool call response from server.', 'raw_stdout': stdout.decode('utf-8', errors='replace')}
+
+                    if 'error' in call_response_data:
+                        return {'status': 'error', 'message': call_response_data['error']}
+
+                    return {'status': 'success', 'result': call_response_data.get('result')}
+
+                except Exception as parse_e:
+                    return {'status': 'error', 'message': f"Failed to parse server response: {str(parse_e)}"}
+
+            except Exception as e:
+                return {'status': 'error', 'message': f"Failed to run MCP server: {str(e)}"}
         if name == 'inspect_runtime':
             import platform, shutil
             from dataclasses import asdict
