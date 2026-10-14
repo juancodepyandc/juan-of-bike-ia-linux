@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2166,
- "source_lines": 721392,
+ "source_files": 2167,
+ "source_lines": 721451,
  "static_route_declarations": 635,
  "by_repository": {
-  "AuroraIA": 2007,
+  "AuroraIA": 2008,
   "aurora-remote-cli": 155,
   "aurora-live": 4
  },
@@ -1882,7 +1882,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "39dab6f6c8ece6fddba01cf0dcefca1e0e87490d6369d971ac4c184724cf0cac",
+   "sha256": "312f022cf160406291315c0166bb1725f64521fb88da2d4e45013f6dc0b1503e",
    "lines": 6526,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -3672,8 +3672,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/livraison_organisee.py",
-   "sha256": "c88f1e790b6af4e780626434aa825aa659ff5c3f197c1f5a276d2ddd2322d34c",
-   "lines": 361,
+   "sha256": "5452ab0c46863cbba6bee44fa1df410e80d7999be435d8173607736de60f42ef",
+   "lines": 363,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -8887,8 +8887,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/python_bp_routes.py",
-   "sha256": "f8f422f93c01cf5a084dea1d6d624b3bc88422a1affdfe1014c1c7e0a5ef0c5b",
-   "lines": 1370,
+   "sha256": "2a7f82cc8701b5ac80c0910529350ad42984ec64d832324b312a900c0a7496c3",
+   "lines": 1372,
    "http_routes": [
     {
      "path": "/api/python/run-async",
@@ -8896,7 +8896,7 @@
       "POST"
      ],
      "handler": "python_run_async",
-     "line": 868
+     "line": 869
     },
     {
      "path": "/api/ping",
@@ -8905,7 +8905,7 @@
       "HEAD"
      ],
      "handler": "python_bridge_ping",
-     "line": 904
+     "line": 906
     },
     {
      "path": "/api/health",
@@ -8913,7 +8913,7 @@
       "GET"
      ],
      "handler": "python_bridge_health",
-     "line": 913
+     "line": 915
     },
     {
      "path": "/api/conformance",
@@ -8922,7 +8922,7 @@
       "POST"
      ],
      "handler": "aurora_conformance",
-     "line": 946
+     "line": 948
     },
     {
      "path": "/api/architecture",
@@ -8931,7 +8931,7 @@
       "POST"
      ],
      "handler": "aurora_architecture",
-     "line": 1050
+     "line": 1052
     },
     {
      "path": "/api/expertise",
@@ -8940,7 +8940,7 @@
       "POST"
      ],
      "handler": "aurora_expertise",
-     "line": 1074
+     "line": 1076
     },
     {
      "path": "/api/tunnel/url",
@@ -8948,7 +8948,7 @@
       "GET"
      ],
      "handler": "tunnel_url",
-     "line": 1168
+     "line": 1170
     },
     {
      "path": "/api/python/job/<job_id>",
@@ -8956,7 +8956,7 @@
       "GET"
      ],
      "handler": "python_job_status",
-     "line": 1253
+     "line": 1255
     },
     {
      "path": "/api/python/cancel/<job_id>",
@@ -8964,7 +8964,7 @@
       "POST"
      ],
      "handler": "python_job_cancel",
-     "line": 1271
+     "line": 1273
     },
     {
      "path": "/api/python/cleanup-run",
@@ -8972,7 +8972,7 @@
       "POST"
      ],
      "handler": "cleanup_cancelled_generation",
-     "line": 1277
+     "line": 1279
     },
     {
      "path": "/api/python/run",
@@ -8980,7 +8980,7 @@
       "POST"
      ],
      "handler": "python_run",
-     "line": 1293
+     "line": 1295
     },
     {
      "path": "/api/command/run",
@@ -8988,7 +8988,7 @@
       "POST"
      ],
      "handler": "command_run",
-     "line": 1319
+     "line": 1321
     },
     {
      "path": "/api/command/spawn",
@@ -8996,7 +8996,7 @@
       "POST"
      ],
      "handler": "command_spawn",
-     "line": 1342
+     "line": 1344
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10054,8 +10054,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-generation-cancel.mjs",
-   "sha256": "af5a134183ff75a5ee6435de7cc4f9163bcddf912a30397f28416edb3230df7a",
-   "lines": 25
+   "sha256": "a603f9b1a9934586606b588bc38f2fc387ec018896535f68b488e8f316f6824a",
+   "lines": 37
   },
   {
    "repo": "AuroraIA",
@@ -10120,8 +10120,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src-tauri/capabilities/main.json",
-   "sha256": "57521b14b7603ab939f8b0628d528b26d4e82e66bacb2479220a2ad1d10fcf8c",
-   "lines": 66
+   "sha256": "03d5093b8d9698e8a67793022c49894d2bfbd6af4659d535b85281db5dba6db8",
+   "lines": 73
   },
   {
    "repo": "AuroraIA",
@@ -10150,8 +10150,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src-tauri/tauri.conf.json",
-   "sha256": "bc94f8e25b65e731f1d537fd77e485af6494515b9f72e2f1e9677b7511f17660",
-   "lines": 92
+   "sha256": "0632ab5f6030ae9c6a138106c9427e98c4ebb0bfcab0e5ed526090988ea41dff",
+   "lines": 96
   },
   {
    "repo": "AuroraIA",
@@ -10942,8 +10942,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/hooks/useTauri.ts",
-   "sha256": "1aafaf6dc6f3870461e225e9d7d10bb775fb5ce723174f4fe3a27258f2fd7bd5",
-   "lines": 1906
+   "sha256": "7b4ba76792ac1d4eef9163261799a182a0a333495f65f47036b84e9036e408e7",
+   "lines": 1910
   },
   {
    "repo": "AuroraIA",
@@ -13390,8 +13390,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDIntent.ts",
-   "sha256": "dcf190989330d6ca43ab80bfffbc8a102410c59e95a8da3bc03adc1774d1b952",
-   "lines": 2611
+   "sha256": "65122403baf87fbe9dd3c6cf1f34bd14e79e32a204038bcdfbc5eaae6bbb29fc",
+   "lines": 2612
   },
   {
    "repo": "AuroraIA",
@@ -14290,8 +14290,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "50578bf665f8b28670bd9298b34c43f87a08968bab60bc750b2bacfaaabffb4f",
-   "lines": 5760
+   "sha256": "e5cd01c9eed43dc6f719cb4225ef5c373636f11d158327a5e30798bd28cae2de",
+   "lines": 5766
   },
   {
    "repo": "AuroraIA",
@@ -18808,6 +18808,14 @@
    "path": "tests_agi/test_delegation_execution.py",
    "sha256": "db95c71475bdf340590a00669e882a2c7d204ce810458cab22f5821ec7bc0a5b",
    "lines": 224,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_delivery_layout.py",
+   "sha256": "6362936d66adc849acc6ef2bbfaeace3570495b03bb3effc4ee086327ec99db4",
+   "lines": 21,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

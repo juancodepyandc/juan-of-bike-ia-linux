@@ -1296,6 +1296,7 @@ export async function runPythonScript(scriptPath: string, args: string[], option
   if (useAsync) {
     const base = getBridgeUrl() // '' in cloud, relative paths via Vite proxy
     let jobId: string | null = null
+    const fingerprint = options.resumeKey ? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([scriptPath, args.map(String)]))))).map(n=>n.toString(16).padStart(2,'0')).join('') : null
 
     // Resume path: if a previous tab left an in-flight job, try to reattach
     // instead of spawning a duplicate. Done → return cached output. Still
@@ -1308,8 +1309,11 @@ export async function runPythonScript(scriptPath: string, args: string[], option
           if (r.ok) {
             const ct = r.headers.get('content-type') || ''
             if (!ct.includes('text/html')) {
-              const d = await r.json() as { status?: string; output?: string; error?: string; exitCode?: number }
-              if (d.status === 'done') {
+              const d = await r.json() as { status?: string; output?: string; error?: string; exitCode?: number; requestFingerprint?: string }
+              if (d.requestFingerprint !== fingerprint) {
+                if (d.status === 'queued' || d.status === 'running') throw new Error('Une autre commande 3D est encore active. Arrêtez-la avant de lancer cette demande ; son résultat ne sera pas réutilisé.')
+                forgetJobId(options.resumeKey)
+              } else if (d.status === 'done') {
                 forgetJobId(options.resumeKey)
                 result = { output: d.output ?? '', error: d.error ?? '', exitCode: d.exitCode ?? 0 }
               } else if (d.status === 'queued' || d.status === 'running') {

@@ -1966,7 +1966,8 @@ CRITICAL RULES:
 - English only, maximum 120 words
 - Use comma-separated descriptive phrases (FLUX prompt style), NOT sentences or paragraphs
 - Describe the EXACT PHYSICAL APPEARANCE of the subject: shape, materials, colors, textures, proportions, distinctive features
-- If product identity knowledge is provided below, that is the ABSOLUTE TRUTH about what this product looks like — use it as your primary source
+- The CURRENT USER REQUEST defines the subject and required changes. Preserve unusual colors, fantasy anatomy, proportions and combinations exactly; do not normalize them to a common real-world variant.
+- Product identity knowledge describes the unmodified baseline only. Explicit user changes override baseline color, material, shape and style. Never carry a previous subject into an independent new request.
 - NEVER substitute with a different product, component, or object. If the user asks for a cable, describe a CABLE, not a case
 - NEVER describe a generic version — describe the SPECIFIC product/character/object named
 - Include: solid black studio background, single isolated subject, THREE-QUARTER front view (not flat front-on), clean edge separation

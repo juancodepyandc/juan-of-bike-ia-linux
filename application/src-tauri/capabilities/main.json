@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
-  "description": "Mode liberté totale : fenetre principale autorisée à exec shell, lire/écrire tout fichier, ouvrir URLs, gérer process, sans restriction de chemin. Aucun garde-fou applicatif — env local privé de Juan.",
+  "description": "Mode libert\u00e9 totale : fenetre principale autoris\u00e9e \u00e0 exec shell, lire/\u00e9crire tout fichier, ouvrir URLs, g\u00e9rer process, sans restriction de chemin. Aucun garde-fou applicatif \u2014 env local priv\u00e9 de Juan.",
   "windows": [
     "main"
   ],
@@ -62,6 +62,12 @@
           "path": "$HOME/Desktop/**"
         }
       ]
-    }
+    },
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-start-dragging"
   ]
 }

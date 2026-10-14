@@ -5163,7 +5163,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             _record_pipeline_dispatch(run_id, prompt, started_at_iso, status="blocked",
                                       verdict="3d engines failed: %s" % str(_tr_err)[:150])
             try:
-                _jd = (output_dir.parent if output_dir.name == "models" else output_dir) / "journal"
+                _jd = (output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir) / "journal"
                 _jd.mkdir(parents=True, exist_ok=True)
                 (_jd / "audit.json").write_text(
                     json.dumps(audit, ensure_ascii=False, indent=1, default=str),
@@ -6129,7 +6129,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                 audit.append({"stage": "atlas_dilate", "ok": False,
                               "error": repr(_de)})
             from livraison_organisee import organiser as _organiser
-            _run_root = output_dir.parent if output_dir.name == "models" else output_dir
+            _run_root = output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir
             livraison = _organiser(
                 _run_root, run_id,
                 # 30/07 (audit): on emballait final_mesh_path, FIGE avant la
@@ -6201,7 +6201,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     # l'utilisateur. Regle « tout teste doit etre emis sur conversation »:
     # le journal complet est ecrit dans journal/audit.json a CHAQUE fin de run.
     try:
-        _jdir2 = (output_dir.parent if output_dir.name == "models" else output_dir) / "journal"
+        _jdir2 = (output_dir.parent if output_dir.name in {"models", "work"} and output_dir.parent.name == run_id else output_dir) / "journal"
         _jdir2.mkdir(parents=True, exist_ok=True)
         (_jdir2 / "audit.json").write_text(
             json.dumps(audit, ensure_ascii=False, indent=1, default=str),

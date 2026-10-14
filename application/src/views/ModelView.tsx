@@ -50,7 +50,7 @@ import { readUiSkin } from '../utils/uiSkin.ts'
 
 const AURORA_V4_SKIN = readUiSkin() === 'aurora_v4'
 const COLORS = ['#ff6a3d', '#37c7bf', '#ffd166', '#4dd5a4', '#7fb7ff']
-const EDIT_INTENT = /(?:^|\b)(ajoute|ajouter|enleve|enlever|retire|retirer|supprime|supprimer|change|changer|modifie|modifier|remplace|remplacer|mets|met|mettre|rajoute|rajouter|deplace|deplacer|transforme|transformer|ameliore|ameliorer|corrige|corriger|plus fin|plus epais|plus large|plus haut|sans le|sans la|sans les|avec un|avec une|avec des|garde|conserve|preserve|same object|same part|meme objet|meme piece)/i
+const EDIT_INTENT = /(?:^|\b)(ajoute|ajouter|enleve|enlever|retire|retirer|supprime|supprimer|change|changer|modifie|modifier|remplace|remplacer|rajoute|rajouter|deplace|deplacer|transforme|transformer|ameliore|ameliorer|corrige|corriger|plus fin|plus epais|plus large|plus haut|sans le|sans la|sans les|garde|conserve|preserve|same object|same part|meme objet|meme piece)/i
 type GeoChild = Object3D & { geometry?: { dispose?: () => void } }
 type Mat = { dispose?: () => void }
 type MatChild = Object3D & { material?: Mat | Mat[] }
@@ -3155,6 +3155,9 @@ export default function ModelView() {
   const generationAbortRef = useRef<AbortController | null>(null)
   const stopGeneration = useCallback(async () => {
     stopRequestedRef.current = true
+    setViewerFullscreen(false)
+    setViewerWebUrl(null)
+    setSaveDialogData(null)
     generationAbortRef.current?.abort(new DOMException("Generation annulée.", "AbortError"))
     try {
       const info = await peekResumableJob('model_ia') || await peekResumableJob('model')
@@ -3257,7 +3260,7 @@ export default function ModelView() {
             conversationHistory.flatMap(m => m.content.toLowerCase().split(/\W+/)).filter(w => w.length >= 4)
           )
           const sharedStemCount = [...promptStems].filter(s => historyStems.has(s)).length
-          const isContinuityOrEdit = EDIT_INTENT.test(currentPrompt) || /^(et|puis|aussi|maintenant|fais|pose|couleur|mati[eè]re|taille|texture|ajoute|modifie)\b/i.test(currentPrompt)
+          const isContinuityOrEdit = EDIT_INTENT.test(currentPrompt) || /^(couleur|mati[eè]re|taille|texture|ajoute|modifie)\b/i.test(currentPrompt)
           const subjectShifted = conversationHistory.length > 0 && sharedStemCount < 2 && !isContinuityOrEdit
           const effectiveHistory = subjectShifted ? [] : conversationHistory
           if (subjectShifted) {
@@ -3387,7 +3390,7 @@ export default function ModelView() {
           const runPaths = buildThreeDRunOutputPaths(workspacePath, active3dSession, runId, prompt)
           cleanupRoot = runPaths.root
           controller.signal.throwIfAborted()
-          const outputDir = runPaths.models
+          const outputDir = runPaths.work
           await Promise.all([
             fsMkdir(runPaths.conversationDir),
             fsMkdir(runPaths.root),
@@ -4083,7 +4086,7 @@ export default function ModelView() {
             try {
               setProgress('Atlas construit en qualite maximale...')
               setPhase('Sculpture 3D — géométrie native et maillage...', 50)
-              const genDir = outputDir
+              const genDir = runPaths.work
               const genRel = genDir.startsWith(`${workspacePath}/`)
                 ? genDir.slice(workspacePath.length + 1)
                 : genDir
@@ -4235,6 +4238,8 @@ export default function ModelView() {
                   ? existingMeshPath.slice(workspacePath.length + 1)
                   : existingMeshPath
                 const { getBridgeUrl: _gbu } = await import('../utils/runtime')
+                controller.signal.throwIfAborted()
+                if (!existingMeshPath.toLowerCase().endsWith(".glb") || !existingMeshPath.startsWith(runPaths.root + "/")) throw new Error("Le moteur ne fournit pas de modèle GLB lié à cette demande.")
                 setViewerWebUrl(`${_gbu()}/aurora_viewer.html?file=${finalRel.split('/').map(encodeURIComponent).join('/')}`)
                 result = {
                   ok: true,
@@ -5009,6 +5014,7 @@ export default function ModelView() {
         completeGeneration(activeTrackerIdRef.current, {})
         activeTrackerIdRef.current = null
       }
+      controller.signal.throwIfAborted()
       setViewerFullscreen(true)
     } catch (generationError) {
       if (controller.signal.aborted) {

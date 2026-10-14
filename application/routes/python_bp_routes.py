@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, Response, send_file, current_app, abort, g, stream_with_context
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
+import hashlib
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
 from bridge_server import COMFYUI_PATH, _find_comfyui_path, resolve_node_exe
 from routes.python_prog_bp_routes import _emit_progress
@@ -893,6 +894,7 @@ def python_run_async():
             "startedAt": time.time(),
             "script": os.path.basename(script_path),
             "cleanupRoot": cleanup_root,
+            "requestFingerprint": hashlib.sha256(json.dumps([str(data.get("scriptPath", "")), [str(a) for a in args]], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(),
         }
     _queue_video_job(job_id, script_path)
     t = threading.Thread(target=_run_python_job, args=(job_id, script_path, args), daemon=True)

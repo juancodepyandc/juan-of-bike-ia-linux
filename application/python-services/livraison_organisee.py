@@ -105,13 +105,14 @@ def organiser(run_dir: str | Path, run_id: str, *,
     d_prompt = run_dir / "prompt"
     d_ref = run_dir / "reference"
     d_modele = run_dir / "modele"
+    d_apercus = run_dir / "apercus"
     d_mouv = run_dir / "mouvement"
     d_journal = run_dir / "journal"
     d_travail = run_dir / "travail"
     # mouvement/ n'existe QUE si une animation a ete produite (option cochee):
     # un dossier vide pour un modele statique est du bruit.
     avec_mouvement = bool(rigged_mesh and Path(rigged_mesh).is_file())
-    dossiers = [d_prompt, d_ref, d_modele, d_journal, d_travail]
+    dossiers = [d_prompt, d_ref, d_modele, d_apercus, d_journal, d_travail]
     if avec_mouvement:
         dossiers.append(d_mouv)
     for d in dossiers:
@@ -211,10 +212,10 @@ def organiser(run_dir: str | Path, run_id: str, *,
                 _mv(src, d_ref / src.name)
 
     # 3) Planches argile / geometrie a cote de leur GLB
-    cibles_planches = [(run_id + "_GEOMETRIE.png", d_modele / "GEOMETRIE.png")]
+    cibles_planches = [(run_id + "_GEOMETRIE.png", d_apercus / "GEOMETRIE.png")]
     if avec_mouvement:
         cibles_planches.append((run_id + "_MOUVEMENT_GEOMETRIE.png",
-                                d_mouv / "MOUVEMENT_GEOMETRIE.png"))
+                                d_apercus / "MOUVEMENT_GEOMETRIE.png"))
     for motif, dst in cibles_planches:
         for base in (run_dir, run_dir / "models"):
             if not base.is_dir():
@@ -223,8 +224,8 @@ def organiser(run_dir: str | Path, run_id: str, *,
             if src.is_file():
                 _mv(src, dst)
     for src in list(run_dir.rglob("*_GEOMETRIE.png")):
-        if src.is_file() and not str(src).startswith(str(d_modele)) and not str(src).startswith(str(d_mouv)):
-            _mv(src, d_modele / "GEOMETRIE.png")
+        if src.is_file() and d_apercus not in src.parents and not str(src).startswith(str(d_mouv)):
+            _mv(src, d_apercus / "GEOMETRIE.png")
     src_frames = run_dir / (run_id + "_MOUVEMENT_GEOMETRIE_frames")
     if src_frames.is_dir() and avec_mouvement:
         try:
@@ -286,7 +287,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
                 # jamais aux 6 dossiers de livraison.
                 if base == run_dir and src.name in (
                         "prompt", "reference", "modele", "mouvement",
-                        "journal", "travail", "models", "work", "rescue",
+                        "journal", "travail", "apercus", "models", "work", "rescue",
                         "motion", "prompts", "audits"):
                     continue
                 try:
@@ -299,7 +300,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
                 continue
             if base == run_dir and src.parent == run_dir and src.name in (
                     "prompt", "reference", "modele", "mouvement",
-                    "journal", "travail"):
+                    "journal", "travail", "apercus"):
                 continue
             _mv(src, d_travail / src.name)
     # dossiers desormais vides -> retires
@@ -317,12 +318,13 @@ def organiser(run_dir: str | Path, run_id: str, *,
         _lignes = [
             "prompt/     votre demande",
             "reference/  les images RETENUES (face, cote, dos)",
-            "modele/     modele_couleurs.glb + modele_geometrie.glb (sans couleurs) + planche GEOMETRIE.png",
+            "modele/     modele_couleurs.glb + modele_geometrie.glb (sans couleurs)",
         ]
         if avec_mouvement:
             _lignes.append("mouvement/  pareil, avec l'animation "
                            "(+ instants argile, + composite si demande)")
         _lignes += [
+            "apercus/    images de présentation, sans les mélanger aux modèles",
             "journal/    ce qui s'est passe (audit)",
             "travail/    intermediaires — supprimable sans perdre la livraison",
         ]
@@ -343,7 +345,7 @@ def organiser(run_dir: str | Path, run_id: str, *,
     return {"ok": not errors, "error": "; ".join(errors) if errors else None,
             "livraison": livraison, "deplaces": len(deplaces),
             "arborescence": ["prompt/", "reference/", "modele/", "mouvement/",
-                             "journal/", "travail/"]}
+                             "journal/", "travail/", "apercus/"]}
 
 
 if __name__ == "__main__":
