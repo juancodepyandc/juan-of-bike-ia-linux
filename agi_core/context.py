@@ -141,10 +141,14 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
         for a in registered:
             if (isinstance(a, dict) and a.get("type") == "saved"
                     and a.get("name") == name and isinstance(a.get("role", ""), str)):
+                raw_tools = a.get("preferred_tools") or a.get("tools") or []
                 return {
                     "name": a.get("name", ""),
                     "role": a.get("role", "")[:8000],
+                    "domain": str(a.get("domain", ""))[:200],
                     "permissions": a.get("permissions", "STANDARD"),
+                    "preferred_tools": [t for t in raw_tools if isinstance(t, str)] if isinstance(raw_tools, list) else [],
+                    "verification_focus": str(a.get("verification_focus", ""))[:2000],
                     "origin": "saved",
                 }
     for official in discover_official_agents():
@@ -328,10 +332,21 @@ def load_context(workspace: str) -> dict:
     active = [c.get("service") for c in connections
               if isinstance(c, dict) and c.get("active") and isinstance(c.get("service"), str)] if isinstance(connections, list) else []
     registered = _read_json(data_dir() / "dynamic_agents.json").get("agents", [])
-    saved = [{"name": a.get("name", ""), "role": a.get("role", "")[:8000],
-              "permissions": a.get("permissions", "STANDARD")}
-             for a in registered if isinstance(a, dict) and a.get("type") == "saved"
-             and isinstance(a.get("role", ""), str)] if isinstance(registered, list) else []
+    saved = [
+        {
+            "name": a.get("name", ""),
+            "role": a.get("role", "")[:8000],
+            "domain": str(a.get("domain", ""))[:200],
+            "permissions": a.get("permissions", "STANDARD"),
+            "preferred_tools": [
+                t for t in (a.get("preferred_tools") or a.get("tools") or [])
+                if isinstance(t, str)
+            ] if isinstance(a.get("preferred_tools") or a.get("tools"), list) else [],
+            "verification_focus": str(a.get("verification_focus", ""))[:2000],
+        }
+        for a in registered if isinstance(a, dict) and a.get("type") == "saved"
+        and isinstance(a.get("role", ""), str)
+    ] if isinstance(registered, list) else []
     official = discover_official_agents()
     # Configured MCP tools are declarations, not evidence of executability.
     public_servers = [{"name": s["name"], "tools": [t.get("name", "") for t in s["tools"]
@@ -391,18 +406,28 @@ def _registry_lock(root: Path):
         os.close(fd)
 
 
-def create_agent(name: str, role: str, model: str, permissions: str, mission_id: str) -> dict:
+def create_agent(name: str, role: str, model: str, permissions: str, mission_id: str, *,
+                 preferred_tools: list[str] | None = None, verification_focus: str = "",
+                 domain: str = "") -> dict:
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
     with _registry_lock(root):
-        return _create_agent(name, role, model, permissions, mission_id)
+        return _create_agent(name, role, model, permissions, mission_id,
+                             preferred_tools=preferred_tools,
+                             verification_focus=verification_focus,
+                             domain=domain)
 
 
-def _create_agent(name: str, role: str, model: str, permissions: str, mission_id: str) -> dict:
+def _create_agent(name: str, role: str, model: str, permissions: str, mission_id: str, *,
+                  preferred_tools: list[str] | None = None, verification_focus: str = "",
+                  domain: str = "") -> dict:
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name):
         raise ValueError("Invalid agent name")
     if not isinstance(role, str) or not role.strip() or len(role) > 8000:
         raise ValueError("A bounded agent role is required")
+    clean_tools = [t.strip() for t in (preferred_tools or []) if isinstance(t, str) and t.strip()][:32]
+    clean_focus = str(verification_focus or "").strip()[:2000]
+    clean_domain = str(domain or "").strip()[:200]
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
     target = root / "dynamic_agents.json"
@@ -416,7 +441,9 @@ def _create_agent(name: str, role: str, model: str, permissions: str, mission_id
              "system_prompt": role, "type": "saved", "model": model,
              "permissions": permissions, "created_by": mission_id,
              "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-             "status": "idle", "tools": [], "runtime_seconds": 0, "results": []}
+             "status": "idle", "tools": clean_tools, "preferred_tools": clean_tools,
+             "verification_focus": clean_focus, "domain": clean_domain,
+             "runtime_seconds": 0, "results": []}
     agents.append(agent)
     fd, temp = tempfile.mkstemp(prefix=".agents-", dir=root)
     try:

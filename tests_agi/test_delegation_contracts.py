@@ -347,3 +347,29 @@ class DelegationContracts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.agent.state['last_change'],self.agent.state['last_verify'])
         self.assertEqual(self.agent.state['output_checks'],[check])
         self.assertEqual(set(self.agent.state['executed_tools']),{'spawn_agent','inspect_csv'})
+
+    async def test_dynamic_agent_specialization_propagates_to_spawned_worker(self):
+        seen = []
+        async def child_run(child, *, worker=False):
+            seen.append(child)
+            child.state['status'] = 'blocked'
+            return 'Observed worker context'
+        with patch.dict(os.environ, {'AURORA_DATA_DIR': str(self.root / 'runtime')}):
+            res = await self.agent._execute('create_agent', {
+                'name': 'csv_auditor',
+                'role': 'Audit CSV files and verify sums',
+                'preferred_tools': ['inspect_csv', 'read_file'],
+                'verification_focus': 'Exact integer row counts and column sums',
+                'domain': 'data_engineering',
+            })
+            self.assertTrue(res['changed'])
+            with patch.object(AutonomousMissionAgent, 'run', child_run):
+                await self.agent._execute('spawn_agent', {
+                    'task': 'Audit input.csv',
+                    'agent': 'csv_auditor',
+                    'checks': [self.check],
+                })
+        self.assertEqual(len(seen), 1)
+        self.assertIn('Exact integer row counts and column sums', seen[0].additional_context)
+        self.assertIn('inspect_csv, read_file', seen[0].additional_context)
+

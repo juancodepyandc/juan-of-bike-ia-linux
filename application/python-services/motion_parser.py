@@ -219,6 +219,10 @@ PARALLEL_SEPARATOR_RX = re.compile(
     r"\s+(?:en\s+m[eê]me\s+temps\s+que|while|tout\s+en|en\s+|whilst)\s+",
     re.I,
 )
+OPEN_ACTION_CLAUSE_RX = re.compile(
+    r"\b(?:qui\s+(?:s['’\s])?(?:ouvre|ferme|d[eé]ploie|plie|replie|[eé]tend|[eé]tire|abaisse|l[eè]ve|soul[eè]ve|bascule|pivote|coulisse|glisse|[eé]clot|contracte|dilate|articule|bouge|anime|oscille|ondule|flotte|descend|monte)|en\s+train\s+de\s+(?:s['’\s])?[a-zà-ÿ]{4,}|mouvement\s*(?:de|:)\s*[a-zà-ÿ]{3,}|animation\s*(?:de|:)\s*[a-zà-ÿ]{3,}|(?:that|which)\s+(?:is\s+)?(?:opening|closing|deploying|unfolding|folding|extending|retracting|lowering|raising|tilting|pivoting|sliding|gliding|blooming|expanding|contracting|articulating|moving)|(?:opening|closing|deploying|unfolding|extending|retracting|lowering|raising|pivoting|sliding)\s+(?:its|the|slowly|quickly|gently|wide|open|shut|up|down))\b",
+    re.I,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +303,8 @@ def parse_custom_motion_prompt(prompt: str,
 
     has_any = any(s["presetId"] is not None for s in sequenced)
     has_separator = len(sequential_segments) > 1 or PARALLEL_SEPARATOR_RX.search(cleaned)
-    if not has_any and not has_separator:
+    has_open_action = bool(OPEN_ACTION_CLAUSE_RX.search(cleaned))
+    if not has_any and not has_separator and not has_open_action:
         return None
 
     # v77zw: when there's a single segment (no "puis"/"then" separator), the
@@ -360,8 +365,9 @@ def parse_custom_motion_prompt(prompt: str,
                 "source_target": seg["segment"][:120],
                 "modifiers": effective,
             })
-            total_duration += 1.5
-            parts.append(seg["segment"])
+            total_duration += 1.5 / max(0.1, effective["speedMul"])
+            tag = " (" + ",".join(effective["matched"]) + ")" if effective["matched"] else ""
+            parts.append(seg["segment"] + tag)
 
     if not primitives:
         return None

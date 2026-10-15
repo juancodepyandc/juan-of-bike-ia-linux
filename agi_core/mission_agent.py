@@ -465,7 +465,17 @@ class AutonomousMissionAgent:
                 self._remember_resource('agent',existing['name'],{'permissions':existing['permissions']})
                 return {**existing,'changed':False,'passed':matches,
                         **({} if matches else {'error':'Agent already exists with another definition; inspect it instead of recreating it'})}
-            saved = await asyncio.to_thread(create_agent,args['name'],args['role'],self.model,self.permissions,self.mission_id)
+            saved = await asyncio.to_thread(
+                create_agent,
+                args['name'],
+                args['role'],
+                self.model,
+                self.permissions,
+                self.mission_id,
+                preferred_tools=args.get('preferred_tools'),
+                verification_focus=args.get('verification_focus', ''),
+                domain=args.get('domain', ''),
+            )
             self._remember_resource('agent',saved['name'],{'permissions':saved['permissions']})
             return {**saved,'changed':True}
         raise ValueError('Unknown extension tool')
@@ -528,9 +538,11 @@ class AutonomousMissionAgent:
         narrowed = levels[min(levels.index(self.permissions),levels.index(requested))]
         focus = (f"Verification focus: {definition['verification_focus']}\n"
                  if definition.get('verification_focus') else '')
+        preferred = (f"Preferred tools for this role: {', '.join(definition['preferred_tools'])}\n"
+                     if definition.get('preferred_tools') else '')
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1, context_tokens=self.context_tokens,
-                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n{focus}"
+                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n{focus}{preferred}"
                                            'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned

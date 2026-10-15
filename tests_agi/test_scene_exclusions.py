@@ -90,3 +90,51 @@ def test_scene_orchestrator_strips_diagnostics_and_debout_defaults_to_attente():
     )
     assert cleaned == "un chevalier debout"
 
+
+def test_open_vocabulary_multi_entity_scene_and_single_subject_preservation():
+    # Open-vocabulary multi-object requests outside fixed dictionary lists must be recognized as compound scenes
+    table_scene = module.compose_faithful_prompt(
+        "une table en bois avec deux chaises et une théière posée sur un plateau",
+        subject_kind="object",
+    )
+    assert table_scene["analysis"]["compound"] is True
+    assert "secondary_subjects" in table_scene["analysis"]["families"]
+    assert "MULTI-ELEMENT FIDELITY CONTRACT" in table_scene["prompt"]
+
+    warrior_scene = module.compose_faithful_prompt(
+        "un guerrier tenant une épée à côté d'un coffre",
+        subject_kind="character",
+    )
+    assert warrior_scene["analysis"]["compound"] is True
+
+    # Single-object requests with abstract attributes or studio backdrops remain non-compound
+    single_attr = module.compose_faithful_prompt(
+        "une lampe design avec finition mate et silhouette épurée sur fond neutre",
+        subject_kind="product",
+    )
+    assert single_attr["analysis"]["compound"] is False
+
+
+def test_motion_parser_supports_open_custom_actions():
+    mp_path = Path(__file__).resolve().parents[1] / "application/python-services/motion_parser.py"
+    mp_spec = importlib.util.spec_from_file_location("motion_parser_test", mp_path)
+    mp_mod = importlib.util.module_from_spec(mp_spec)
+    mp_spec.loader.exec_module(mp_mod)
+
+    # Open-ended French reflexive/progressive action outside hardcoded VERB_TO_PRESET
+    drawbridge = mp_mod.parse_custom_motion_prompt("un pont-levis qui s'abaisse lentement")
+    assert drawbridge is not None
+    assert drawbridge["primitives"][0]["kind"] == "custom_pose"
+    assert drawbridge["primitives"][0]["modifiers"]["speedMul"] < 1.0
+
+    # Open-ended English participle action outside hardcoded VERB_TO_PRESET
+    chest = mp_mod.parse_custom_motion_prompt("a treasure chest opening slowly")
+    assert chest is not None
+    assert chest["primitives"][0]["kind"] == "custom_pose"
+
+    # Pure static noun phrase without action remains None
+    assert mp_mod.parse_custom_motion_prompt("une chaise en bois") is None
+
+
+
+

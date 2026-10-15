@@ -355,7 +355,50 @@ _STUDIO_BACKDROP_RE = re.compile(
     re.IGNORECASE,
 )
 
-_TRUE_SCENE_FACETS = {"decor", "mechanical", "fluids", "luminous"}
+_TRUE_SCENE_FACETS = {"decor", "mechanical", "fluids", "luminous", "secondary_subjects"}
+
+_NON_ENTITY_NOUNS = {
+    "fond", "arriere-plan", "arrière-plan", "background", "backdrop",
+    "eclairage", "éclairage", "lumiere", "lumière", "lighting", "light",
+    "style", "rendu", "render", "rendering", "vue", "view", "angle",
+    "camera", "caméra", "pose", "posture", "attitude", "expression",
+    "sourire", "smile", "regard", "gaze", "texture", "textures",
+    "materiau", "matériau", "materiaux", "matériaux", "material", "materials",
+    "couleur", "couleurs", "color", "colors", "teinte", "finition", "finish",
+    "surface", "surfaces", "detail", "détail", "details", "détails",
+    "precision", "précision", "tolerance", "tolérance", "symetrie", "symétrie",
+    "symmetry", "ombre", "ombres", "shadow", "shadows", "reflet", "reflets",
+    "reflection", "reflections", "qualite", "qualité", "quality",
+    "effet", "effets", "effect", "effects", "mouvement", "motion",
+    "animation", "rotation", "silhouette", "contour", "contours",
+    "bord", "bords", "edge", "edges", "ratio", "dimension", "dimensions",
+    "echelle", "échelle", "scale", "forme", "shape", "aspect", "look",
+}
+
+_SECONDARY_ENTITY_RE = re.compile(
+    r"\b(?:"
+    r"(?:pos[eé]e?s?|plac[eé]e?s?|assis(?:e)?|debout|couch[eé]e?s?|allong[eé]e?s?|endormi(?:e)?s?)\s+sur\s+(?:un|une|le|la|les|des|son|sa|ses|deux|trois)|"
+    r"plant[eé]e?s?\s+dans\s+(?:un|une|le|la|les|des)|"
+    r"[aà]\s+c[oô]t[eé]\s+(?:d['’]un|d['’]une|du|de\s+la|des|de\s+deux|de\s+trois)|"
+    r"(?:devant|derri[eè]re|sous)\s+(?:un|une|le|la|les|des|deux|trois)|"
+    r"entour[eé]e?s?\s+(?:de|d['’]|par\s+des)|"
+    r"accompagn[eé]e?s?\s+(?:d['’]un|d['’]une|de\s+deux|de\s+trois|des)|"
+    r"(?:tenant|portant)\s+(?:un|une|des|le|la|son|sa|ses|deux|trois)|"
+    r"avec\s+(?:un|une|des|deux|trois|quatre|plusieurs)|"
+    r"(?:resting|placed|sitting|standing|lying|sleeping)\s+on\s+(?:a|an|the|his|her|their|two|three)|"
+    r"planted\s+in\s+(?:a|an|the)|"
+    r"(?:next\s+to|beside|in\s+front\s+of|behind|under)\s+(?:a|an|the|two|three)|"
+    r"(?:surrounded|accompanied)\s+by|"
+    r"(?:holding|carrying)\s+(?:a|an|the|his|her|their|two|three)|"
+    r"with\s+(?:a|an|two|three|four|several|multiple)"
+    r")\s+([a-zA-ZÀ-ÿ0-9_-]{3,}(?:\s+[a-zA-ZÀ-ÿ0-9_-]{2,}){0,2})",
+    re.IGNORECASE,
+)
+
+_TRAILING_STOPWORDS_RE = re.compile(
+    r"\s+\b(?:et|ou|qui|que|sur|dans|avec|sans|en|de|du|des|au|aux|and|or|with|without|on|in|of|to|from)\b.*$",
+    re.IGNORECASE,
+)
 
 
 def _is_studio_backdrop(text: str, start: int, end: int) -> bool:
@@ -376,6 +419,27 @@ def _excluded_mention(text: str, start: int) -> bool:
     return not re.match(r"\s+(?:changer|modifier|changing|modifying|altering|toucher|touching)\b", tail, re.I)
 
 
+def _extract_secondary_subjects(text: str) -> list[str]:
+    """Open-vocabulary detector for companion objects / multi-entity scenes
+    that do not rely on a hardcoded noun list."""
+    seen: list[str] = []
+    for m in _SECONDARY_ENTITY_RE.finditer(text):
+        if _excluded_mention(text, m.start()):
+            continue
+        if _is_studio_backdrop(text, m.start(), m.end()):
+            continue
+        noun_part = _TRAILING_STOPWORDS_RE.sub("", m.group(1)).strip().lower()
+        tokens = [t for t in re.split(r"\s+", noun_part) if t]
+        if not tokens:
+            continue
+        if any(tok in _NON_ENTITY_NOUNS for tok in tokens):
+            continue
+        full_snip = _TRAILING_STOPWORDS_RE.sub("", m.group(0)).strip().lower()
+        if full_snip and full_snip not in seen:
+            seen.append(full_snip)
+    return seen
+
+
 def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
     """Decompose a prompt into requested facets.
 
@@ -384,7 +448,7 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
           "identity": {name, basis} | None,
           "facets": { family: [matched snippets...] },
           "families": [family, ...],            # families that fired, in order
-          "compound": bool,                     # >= 2 families with at least one scene/apparatus/effect facet
+          "compound": bool,                     # >= 2 families with at least one scene/apparatus/effect facet, or explicit secondary_subjects
         }
     """
     text = prompt or ""
@@ -407,16 +471,22 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
         if seen:
             facets[family] = seen
 
-    families = [fam for fam, _ in _FACET_PATTERNS if fam in facets]
+    secondary = _extract_secondary_subjects(text)
+    if secondary:
+        facets["secondary_subjects"] = secondary
+
+    ordered_families = [fam for fam, _ in _FACET_PATTERNS] + ["secondary_subjects"]
+    families = [fam for fam in ordered_families if fam in facets]
 
     # "compound" decides whether we inject the MULTI-ELEMENT FIDELITY CONTRACT.
     # Intrinsic subject attributes alone (identity + motion, materials + motion,
     # identity + materials) describe a SINGLE subject, not a multi-element scene.
     # Require at least one true scene/apparatus/effect facet (decor, mechanical,
-    # fluids, luminous) alongside another facet (or identity).
+    # fluids, luminous, secondary_subjects) alongside another facet (or identity),
+    # OR an explicit secondary subject relation (which already pairs primary + secondary).
     family_count = len(families) + (1 if identity else 0)
     has_scene_facet = any(fam in _TRUE_SCENE_FACETS for fam in families)
-    compound = family_count >= 2 and has_scene_facet
+    compound = (family_count >= 2 and has_scene_facet) or ("secondary_subjects" in facets)
 
     return {
         "schema": "aurora.faithful_scene.v1",
@@ -451,6 +521,9 @@ _FACET_INSTRUCTION_SCENE = {
               "as volumetric water/steam/smoke/spray, never dropped",
     "luminous": "the luminous / emissive elements ({snips}) must glow with strong "
                 "saturated emissive color and cast visible light, not flat paint",
+    "secondary_subjects": "all explicitly requested companion objects and secondary subjects ({snips}) "
+                          "must be rendered in their specified spatial relationship with full 3D geometry, "
+                          "never dropped or collapsed into a single object",
     "motion": "the motion ({snips}) must be expressed through pose and part "
               "orientation so the action reads clearly in the still reference",
     "materials": "the named materials ({snips}) must read as distinct PBR surfaces "
@@ -469,6 +542,8 @@ _FACET_INSTRUCTION_ISOLATED = {
     "luminous": "the luminous / emissive elements ({snips}) must LIGHT the subject — "
                 "coloured rim-light and glowing reflections on the materials — emissive "
                 "on the figure, not as a detached background object",
+    "secondary_subjects": "any requested companion item or prop ({snips}) held by, worn by or "
+                          "directly supporting the subject must be rendered as readable geometry",
     "motion": "the motion ({snips}) must be expressed through pose and part orientation "
               "so the action reads clearly",
     "materials": "the named materials ({snips}) must read as distinct PBR surfaces with "

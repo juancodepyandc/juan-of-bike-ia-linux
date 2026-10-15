@@ -812,7 +812,8 @@ const VERB_TO_PRESET: { rx: RegExp; presetId: string }[] = [
   // v80u: quadruped_jump precedes character.jump to win on "four-legged jump" / "chien qui saute"
   { rx: /\b(quadruped(?:e)? saute|quadruped jump|four-legged leap|chien qui saute|cat jumping|saut quadrupede)\b/i, presetId: 'creature.quadruped_jump' },
   { rx: /\b(saute|sauter|jump|jumping|jumps|leap|leaps|leaping|bond|bondis|bondit|hop|hops|hopping|spring|springs|springing)\b/i, presetId: 'character.jump' },
-  { rx: /\b(coup de pied|kick|kicks|kicking|donne un coup de pied|footstrike|round[\s-]?house)\b/i, presetId: 'character.kick' },
+  { rx: /\b(coup de pied|kick|kicks|kicking|donne un coup de pied|footstrike|round[\s-]?house|coup de tatane|balaie|balayage)\b/i, presetId: 'character.kick' },
+  { rx: /\b(attaque|attaquer|attaquant|assaut|assaillir|assaille|offensive|frappe|frapper|frappant|cogne|cogner|ass[eè]ne|assener|percute|percuter|se bat|se battre|combat|combattre|combattant|bagarre|duel|affronte|affronter|riposte|riposter|contre[- ]attaque|attack|attacks|attacking|strike|strikes|striking|fight|fights|fighting)\b/i, presetId: 'character.punch' },
   { rx: /\b(coup de poing|punch|punches|punching|jab|cross|hook|uppercut|donne un coup de poing|frappe du poing)\b/i, presetId: 'character.punch' },
   { rx: /\b(s assoit|s'assoit|s asseoit|assis|assoit|sit|sits|sitting|seated|s installer|prend place|takes a seat)\b/i, presetId: 'character.sit' },
   { rx: /\b(s agenouille|s'agenouille|agenouille|kneel|kneeling|kneels|se baisse|s accroupit|accroupi|crouch|crouches|crouching|squat|squats|squatting)\b/i, presetId: 'character.kneel' },
@@ -841,6 +842,7 @@ const VERB_TO_PRESET: { rx: RegExp; presetId: string }[] = [
   { rx: /\b(vole|voler|volant|volante|volants|fly|flying|flies|battement[s]?\s+(?:d['’]|des?\s+|d\s+)?ailes?|flapping\s+wings?|wings?\s+flap(?:ping|s)?|plane|planes|planing|soar|soars|soaring|sustentation)\b/i, presetId: 'creature.flap_fly' },
   { rx: /\b(serpente|slither|slithers|slithering|onduler|ondule|ondulant|wriggle|wriggles|wriggling|squirm|squirms)\b/i, presetId: 'creature.slither' },
   { rx: /\b(rode|r[oô]der|rodeur|prowl|prowling|stalk|stalking|sneak|sneaks|sneaking|creep|creeps|creeping)\b/i, presetId: 'creature.prowl' },
+  { rx: /\b(se rue|se ruer|se pr[eé]cipite|se pr[eé]cipiter|fonce sur|charge (?:l|vers|sur|contre)|charges? (?:at|towards|into))/i, presetId: 'character.run_cycle' },
   { rx: /\b(galop|galope|galoper|gallop|galloping|gallops|charge|charges|charging|fonce a quatre pattes)\b/i, presetId: 'creature.quadruped_run' },
   { rx: /\b(trotte|trotter|trot|trotting|trots|amble quadrupede|patte par patte)\b/i, presetId: 'creature.quadruped_walk' },
   { rx: /\b(remue queue|remuer la queue|wag tail|tail wag|wagging|tail wagging|frétille|fretille la queue)\b/i, presetId: 'creature.tail_wag' },
@@ -877,6 +879,8 @@ const SEQUENCE_SEPARATOR_RX =
   /\s+(?:puis|then|et\s+ensuite|et\s+apres|et\s+apr[eè]s|after\s+that|next|ensuite|et\s+puis|and\s+then)\s+/i
 const PARALLEL_SEPARATOR_RX =
   /\s+(?:en\s+m[eê]me\s+temps\s+que|while|tout\s+en|en\s+|whilst)\s+/i
+const OPEN_ACTION_CLAUSE_RX =
+  /\b(?:qui\s+(?:s['’\s])?(?:ouvre|ferme|d[eé]ploie|plie|replie|[eé]tend|[eé]tire|abaisse|l[eè]ve|soul[eè]ve|bascule|pivote|coulisse|glisse|[eé]clot|contracte|dilate|articule|bouge|anime|oscille|ondule|flotte|descend|monte)|en\s+train\s+de\s+(?:s['’\s])?[a-zà-ÿ]{4,}|mouvement\s*(?:de|:)\s*[a-zà-ÿ]{3,}|animation\s*(?:de|:)\s*[a-zà-ÿ]{3,}|(?:that|which)\s+(?:is\s+)?(?:opening|closing|deploying|unfolding|folding|extending|retracting|lowering|raising|tilting|pivoting|sliding|gliding|blooming|expanding|contracting|articulating|moving)|(?:opening|closing|deploying|unfolding|extending|retracting|lowering|raising|pivoting|sliding)\s+(?:its|the|slowly|quickly|gently|wide|open|shut|up|down))\b/i
 
 // v77zv: motion modifiers. A segment like "marche rapidement" or "danse
 // joyeusement et fortement" applies multipliers to the resolved preset's
@@ -1086,11 +1090,12 @@ export function parseCustomMotionPrompt(
   }
 
   // If the entire prompt yielded zero matches AND there is no sequence /
-  // parallel separator, this isn't a motion description — let the caller fall
-  // back to the static motion-verb hint detector.
+  // parallel separator AND no open action/articulation clause, this isn't a
+  // motion description — let the caller fall back to the static detector.
   const hasAnyMatch = sequenced.some((s) => s.presetId !== null)
   const hasSeparator = sequentialSegments.length > 1 || PARALLEL_SEPARATOR_RX.test(cleaned)
-  if (!hasAnyMatch && !hasSeparator) return null
+  const hasOpenAction = OPEN_ACTION_CLAUSE_RX.test(cleaned)
+  if (!hasAnyMatch && !hasSeparator && !hasOpenAction) return null
 
   const primitives: KinematicPrimitive[] = []
   let totalDuration = 0
@@ -1153,13 +1158,21 @@ export function parseCustomMotionPrompt(
       parts.push(preset.label + tag)
       directiveParts.push(preset.promptDirective)
     } else {
-      // Unknown verb segment — emit a custom_pose with the literal text.
-      primitives.push({
-        kind: 'custom_pose',
-        description: seg.segment,
-      })
-      totalDuration += 1.5
-      parts.push(seg.segment)
+      // Unknown verb segment — emit a custom_pose with the literal text + modifiers.
+      primitives.push(
+        applyModifiersToPrimitive(
+          {
+            kind: 'custom_pose',
+            description: seg.segment,
+            amplitude: 1.0,
+            frequency_hz: 1.0,
+          },
+          effective,
+        ),
+      )
+      totalDuration += 1.5 / Math.max(0.1, effective.speedMul)
+      const tag = effective.matched.length > 0 ? ` (${effective.matched.join(',')})` : ''
+      parts.push(seg.segment + tag)
       directiveParts.push(`Then perform: "${seg.segment}" (interpret literally and faithfully).`)
     }
   }
@@ -1170,7 +1183,9 @@ export function parseCustomMotionPrompt(
     id: 'custom.parsed',
     label: parts.join(' → '),
     description: `Sequence parsee depuis le prompt: ${parts.join(' puis ')}`,
-    appliesTo: { subjectKind: ['character', 'creature'] },
+    appliesTo: {
+      subjectKind: ['character', 'creature', 'mechanism', 'vehicle', 'object', 'assembly', 'body_part'],
+    },
     primitives,
     promptDirective: directiveParts.join(' Then ').slice(0, 1500),
     duration_seconds: Math.max(totalDuration, 0.5),

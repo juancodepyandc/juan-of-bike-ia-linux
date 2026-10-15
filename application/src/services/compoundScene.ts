@@ -78,10 +78,33 @@ const ISOLATED_INSTRUCTION: Record<string, (s: string) => string> = {
   mechanical: (s) => `any mechanical apparatus (${s}) worn by, held by or attached to the subject must be real geometry; standalone machinery in the scene is conveyed only as reflection/lighting, not as separate parts`,
   fluids: (s) => `the fluid/atmospheric elements (${s}) must appear ON and AROUND the subject itself, not as a separate volumetric background`,
   luminous: (s) => `the luminous/emissive elements (${s}) must LIGHT the subject — coloured rim-light and glowing reflections on the materials — emissive on the figure, not as a detached background object`,
+  secondary_subjects: (s) => `any requested companion item or prop (${s}) held by, worn by or directly supporting the subject must be rendered as readable geometry`,
 }
 
 const STUDIO_BACKDROP_RX = /\b(?:(?:white|black|plain|neutral|solid|studio|clean|isolated|empty|transparent|uni|blanc|noir|neutre|clair|gris|vide|isole|isol[ée])\s+(?:studio\s+)?(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)|(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)\s+(?:uni\s+)?(?:blanc|noir|uni|neutre|clair|gris|vide|isole|isol[ée]|white|black|plain|neutral|solid|studio|transparent))\b/i
-const TRUE_SCENE_FACETS = new Set(['decor', 'mechanical', 'fluids', 'luminous'])
+const TRUE_SCENE_FACETS = new Set(['decor', 'mechanical', 'fluids', 'luminous', 'secondary_subjects'])
+
+const NON_ENTITY_NOUNS = new Set([
+  'fond', 'arriere-plan', 'arrière-plan', 'background', 'backdrop',
+  'eclairage', 'éclairage', 'lumiere', 'lumière', 'lighting', 'light',
+  'style', 'rendu', 'render', 'rendering', 'vue', 'view', 'angle',
+  'camera', 'caméra', 'pose', 'posture', 'attitude', 'expression',
+  'sourire', 'smile', 'regard', 'gaze', 'texture', 'textures',
+  'materiau', 'matériau', 'materiaux', 'matériaux', 'material', 'materials',
+  'couleur', 'couleurs', 'color', 'colors', 'teinte', 'finition', 'finish',
+  'surface', 'surfaces', 'detail', 'détail', 'details', 'détails',
+  'precision', 'précision', 'tolerance', 'tolérance', 'symetrie', 'symétrie',
+  'symmetry', 'ombre', 'ombres', 'shadow', 'shadows', 'reflet', 'reflets',
+  'reflection', 'reflections', 'qualite', 'qualité', 'quality',
+  'effet', 'effets', 'effect', 'effects', 'mouvement', 'motion',
+  'animation', 'rotation', 'silhouette', 'contour', 'contours',
+  'bord', 'bords', 'edge', 'edges', 'ratio', 'dimension', 'dimensions',
+  'echelle', 'échelle', 'scale', 'forme', 'shape', 'aspect', 'look',
+])
+
+const SECONDARY_ENTITY_RX = /\b(?:(?:pos[eé]e?s?|plac[eé]e?s?|assis(?:e)?|debout|couch[eé]e?s?|allong[eé]e?s?|endormi(?:e)?s?)\s+sur\s+(?:un|une|le|la|les|des|son|sa|ses|deux|trois)|plant[eé]e?s?\s+dans\s+(?:un|une|le|la|les|des)|[aà]\s+c[oô]t[eé]\s+(?:d['’]un|d['’]une|du|de\s+la|des|de\s+deux|de\s+trois)|(?:devant|derri[eè]re|sous)\s+(?:un|une|le|la|les|des|deux|trois)|entour[eé]e?s?\s+(?:de|d['’]|par\s+des)|accompagn[eé]e?s?\s+(?:d['’]un|d['’]une|de\s+deux|de\s+trois|des)|(?:tenant|portant)\s+(?:un|une|des|le|la|son|sa|ses|deux|trois)|avec\s+(?:un|une|des|deux|trois|quatre|plusieurs)|(?:resting|placed|sitting|standing|lying|sleeping)\s+on\s+(?:a|an|the|his|her|their|two|three)|planted\s+in\s+(?:a|an|the)|(?:next\s+to|beside|in\s+front\s+of|behind|under)\s+(?:a|an|the|two|three)|(?:surrounded|accompanied)\s+by|(?:holding|carrying)\s+(?:a|an|the|his|her|their|two|three)|with\s+(?:a|an|two|three|four|several|multiple))\s+([a-zA-ZÀ-ÿ0-9_-]{3,}(?:\s+[a-zA-ZÀ-ÿ0-9_-]{2,}){0,2})/gi
+
+const TRAILING_STOPWORDS_RX = /\s+\b(?:et|ou|qui|que|sur|dans|avec|sans|en|de|du|des|au|aux|and|or|with|without|on|in|of|to|from)\b.*$/i
 
 function isStudioBackdropMention(text: string, start: number, end: number): boolean {
   const window = text.slice(Math.max(0, start - 32), Math.min(text.length, end + 32))
@@ -95,6 +118,25 @@ function excludedMention(text: string, start: number): boolean {
   const negative = negatives[negatives.length - 1], positive = positives[positives.length - 1]
   if (!negative || (positive && positive.index! > negative.index!)) return false
   return !/^\s+(?:changer|modifier|changing|modifying|altering|toucher|touching)\b/i.test(clause.slice(negative.index! + negative[0].length))
+}
+
+export function extractSecondarySubjects(text: string): string[] {
+  const seen: string[] = []
+  for (const m of text.matchAll(SECONDARY_ENTITY_RX)) {
+    const start = m.index ?? 0
+    const end = start + m[0].length
+    if (excludedMention(text, start)) continue
+    if (isStudioBackdropMention(text, start, end)) continue
+    const nounPart = (m[1] || '').replace(TRAILING_STOPWORDS_RX, '').trim().toLowerCase()
+    const tokens = nounPart.split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+    if (tokens.some((tok) => NON_ENTITY_NOUNS.has(tok))) continue
+    const fullSnip = m[0].replace(TRAILING_STOPWORDS_RX, '').trim().toLowerCase()
+    if (fullSnip && !seen.includes(fullSnip)) {
+      seen.push(fullSnip)
+    }
+  }
+  return seen
 }
 
 export function buildCompoundSceneContract(prompt: string, motionText = '', opts: { isolated?: boolean } = {}): string {
@@ -118,9 +160,20 @@ export function buildCompoundSceneContract(prompt: string, motionText = '', opts
     }
   }
 
+  const secondaryHits = extractSecondarySubjects(text)
+  if (secondaryHits.length > 0) {
+    families.push('secondary_subjects')
+    const snips = secondaryHits.slice(0, 4).join(', ')
+    const render = isolated
+      ? ISOLATED_INSTRUCTION.secondary_subjects
+      : (s: string) => `all explicitly requested companion objects and secondary subjects (${s}) must be rendered in their specified spatial relationship with full 3D geometry, never dropped or collapsed into a single object`
+    lines.push(render(snips))
+  }
+
   const familyCount = families.length + (hasIdentity ? 1 : 0)
   const hasSceneFacet = families.some((f) => TRUE_SCENE_FACETS.has(f))
-  if (familyCount < 2 || !hasSceneFacet || lines.length === 0) return ''
+  const isCompound = (familyCount >= 2 && hasSceneFacet) || secondaryHits.length > 0
+  if (!isCompound || lines.length === 0) return ''
 
   const identityLine = hasIdentity
     ? 'the requested named identity must be preserved exactly — recognizable face and silhouette, no generic look-alike, no gender swap; '

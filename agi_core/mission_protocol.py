@@ -63,7 +63,7 @@ ARG_SCHEMAS = {
     'fetch_url':object_args({'url':TEXT},('url',)),
     'spawn_agent':object_args({'task':TEXT,'tasks':NONEMPTY_STRINGS,'agent':TEXT,
                              'checks':{'type':'array','items':CHECK_SCHEMA,'minItems':1}},('checks',)),
-    'create_agent':object_args({'name':TEXT,'role':TEXT},('name','role')),
+    'create_agent':object_args({'name':TEXT,'role':TEXT,'preferred_tools':STRINGS,'verification_focus':TEXT,'domain':TEXT},('name','role')),
     'create_skill':object_args({'name':TEXT,'description':TEXT,'instructions':TEXT},('name','description','instructions')),
     'list_skills':object_args({}),
     'verify':object_args({'checks':{'type':'array','items':CHECK_SCHEMA,'minItems':1}},('checks',)),

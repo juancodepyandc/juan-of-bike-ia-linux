@@ -341,7 +341,7 @@ export function detectMotionVerbHint(prompt: string): ThreeDMotionVerbHint {
   if (/\b(vole|voler|fly|flying|flies|hover|hovering|float|floating|drone|helicop|helicopter|fusee|rocket|levite|levitating)\b/i.test(normalized)) return 'flying'
   if (/\b(roule|rouler|rolling|rolls|drives|driving|advance|advancing|cruising|move forward|avance|mobile)\b/i.test(normalized)) return 'rolling'
   if (/\b(tourne|tourner|spin|spins|spinning|rotat|whirl|twirl|gire|girar|ventilateur|fan(?:s)? running|helice|propeller|whirling)\b/i.test(normalized)) return 'rotating'
-  if (/\b(en mouvement|en marche|in motion|moving|motion study|kinematic|en action|fonctionne|fonctionnement|en service|in operation|active|active state)\b/i.test(normalized)) return 'mechanism'
+  if (/\b(en mouvement|en marche|in motion|moving|motion study|kinematic|en action|fonctionne|fonctionnement|en service|in operation|active|active state|qui\s+(?:s['’\s])?(?:ouvre|ferme|d[eé]ploie|plie|replie|[eé]tend|[eé]tire|abaisse|l[eè]ve|soul[eè]ve|bascule|pivote|coulisse|glisse|[eé]clot|contracte|dilate|articule)|(?:that|which)\s+(?:is\s+)?(?:opening|closing|deploying|unfolding|folding|extending|retracting|lowering|raising|tilting|pivoting|sliding))\b/i.test(normalized)) return 'mechanism'
   return null
 }
 
@@ -1878,9 +1878,11 @@ function buildKinematicsBlockForIntent(intent: ThreeDIntent, prompt: string): st
   }
   const mappedSubject = subjectMap[intent.subjectKind]
   const mappedSystem = systemMap[intent.systemClass] ?? 'generic'
-  if (!mappedSubject && mappedSystem === 'generic') return ''
+  const customMotion = parseCustomMotionPrompt(prompt, intent.subjectKind)
+  if (!mappedSubject && mappedSystem === 'generic' && !customMotion && intent.motionReadiness === 'static_only') {
+    return ''
+  }
 
-  const customMotion = parseCustomMotionPrompt(prompt)
   return buildKinematicsDirectiveBlock(
     { subjectKind: mappedSubject ?? 'object', systemClass: mappedSystem },
     customMotion,
