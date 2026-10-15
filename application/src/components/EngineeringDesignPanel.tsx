@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { bridgeFetch, readBridgeKey } from '../utils/bridgeAuth.ts'
 import { duration } from './ProjectsPanel.tsx'
 import { getBridgeUrl } from '../utils/runtime.ts'
+import { HolographicSplatLoader } from './HolographicSplatLoader.tsx'
+import {
+  synthesizeThreeDMasterPrompt,
+  startOrUpdateThreeDMission,
+  completeThreeDMission,
+} from '../services/threeDSubAgentsOrchestrator.ts'
 
 type TelemetryMilestone = { id: string; label: string; done: boolean; active: boolean }
 type TelemetryCriterion = { index: number; text: string; status: string }
@@ -168,6 +174,8 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
   const [viewerExploded, setViewerExploded] = useState(false)
   const [activeStepIndex, setActiveStepIndex] = useState<number>(-1)
   const [inspectedPartId, setInspectedPartId] = useState<string>('')
+  const [clockNow, setClockNow] = useState<number>(() => Date.now())
+  const lastSchedulingSyncAtRef = useRef<number>(Date.now())
   const viewerIframeRef = useRef<HTMLIFrameElement | null>(null)
   const mounted = useRef(true)
   const preferred = useRef<string>((() => {
@@ -186,8 +194,30 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
       } catch {
         /* ignore storage restrictions */
       }
+      if (['queued', 'planning', 'running'].includes(current.state)) {
+        startOrUpdateThreeDMission({
+          rawPrompt: current.objective || goal || 'Projet CAO multi-pièces',
+          phasePercent: current.telemetry?.progress_pct || 8,
+          phaseLabel: current.telemetry?.phase || 'Conception CAO multi-pièces en cours...',
+          mode: 'engineering_cad',
+          stlCount: current.telemetry?.stl_count ?? 0,
+          verifiedCriteriaCount: current.telemetry?.verified_count ?? 0,
+          totalCriteriaCount: current.telemetry?.criteria_count ?? 0,
+        })
+      } else if (['completed', 'failed', 'stopped'].includes(current.state)) {
+        completeThreeDMission({
+          viewerUrl: current.viewer_url ? getBridgeUrl() + current.viewer_url : null,
+        })
+      }
     }
-  }, [current])
+  }, [current, goal])
+
+  useEffect(() => {
+    if (!current || !['queued', 'planning', 'running'].includes(current.state)) return
+    setClockNow(Date.now())
+    const id = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [current?.id, current?.state])
 
   const pending = useRef<RequestPayload | null>(savedRequest())
   const [unconfirmed, setUnconfirmed] = useState(Boolean(pending.current))
@@ -254,6 +284,8 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
       try {
         const d = await api()
         if (mounted.current) {
+          lastSchedulingSyncAtRef.current = Date.now()
+          setClockNow(Date.now())
           setDeviceConnected(true)
           setProjects(d.projects)
           if (pending.current && d.projects.some((p: Design) => p.request_id === pending.current?.request_id)) {
@@ -287,13 +319,20 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
         /* ignore background poll network error */
       }
     }
+    const onVisible = () => {
+      if (!document.hidden) void session()
+    }
     void session()
     const timer = setInterval(() => {
       void session()
     }, 4000)
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
     return () => {
       mounted.current = false
       clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
     }
   }, [])
 
@@ -302,6 +341,8 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     setError('')
     try {
       const d = await api()
+      lastSchedulingSyncAtRef.current = Date.now()
+      setClockNow(Date.now())
       setDeviceConnected(true)
       setProjects(d.projects)
       setCurrent((c) =>
@@ -331,6 +372,8 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     remember(data)
     try {
       const d = await api('', data)
+      lastSchedulingSyncAtRef.current = Date.now()
+      setClockNow(Date.now())
       setDeviceConnected(true)
       setCurrent(d)
       setProjects((p) => [d, ...p.filter((x) => x.id !== d.id)])
@@ -348,7 +391,10 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     setBusy(true)
     setError('')
     try {
-      setCurrent(await api('/' + current.id + '/resume', {}))
+      const updated = await api('/' + current.id + '/resume', {})
+      lastSchedulingSyncAtRef.current = Date.now()
+      setClockNow(Date.now())
+      setCurrent(updated)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Reprise interrompue.')
     } finally {
@@ -363,6 +409,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     try {
       await api('/' + current.id + '/stop', {})
       setCurrent({ ...current, state: 'stopping' })
+      completeThreeDMission()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Arrêt refusé.')
     } finally {
@@ -378,6 +425,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
       await api('/' + current.id + '/delete', {})
       setProjects((p) => p.filter((x) => x.id !== current.id))
       setCurrent(null)
+      completeThreeDMission()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Suppression refusée.')
     } finally {
@@ -439,6 +487,19 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     })
   }
 
+  function applyStructuredMasterPrompt(seedInput?: string) {
+    const structured = synthesizeThreeDMasterPrompt(
+      seedInput || goal.trim() || 'main robotisée anthropomorphe 5 doigts articulés 15 DDL'
+    )
+    setGoal(`${structured.subjectTitle} — ${structured.kinematicChainSummary}`)
+    setConstraints(
+      [
+        `ENVELOPPE & CINÉMATIQUE (${structured.dimensionalEnvelopeMm.join(' × ')} mm · ${structured.degreesOfFreedom} DDL) :`,
+        ...structured.inferredConstraints.map((s) => `• ${s}`),
+      ].join('\n')
+    )
+  }
+
   const status: Record<string, string> = {
     queued: 'Projet dans la file d’attente',
     planning: 'L’IA prépare son plan',
@@ -457,6 +518,15 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
   const bomList = draft?.bom?.length ? draft.bom : current?.report?.bom || []
   const assumptionsList = draft?.assumptions?.length ? draft.assumptions : current?.report?.assumptions || []
   const blockersList = draft?.blockers?.length ? draft.blockers : current?.report?.blockers || []
+  const localTickDeltaSec =
+    current && ['running', 'planning'].includes(current.state)
+      ? Math.max(0, Math.floor((clockNow - lastSchedulingSyncAtRef.current) / 1000))
+      : 0
+  const liveElapsedSeconds = (current?.scheduling?.elapsed_seconds ?? 0) + localTickDeltaSec
+  const liveRemainingSeconds =
+    current?.scheduling?.remaining_seconds != null
+      ? Math.max(0, current.scheduling.remaining_seconds - localTickDeltaSec)
+      : null
 
   return (
     <section className="mb-5 rounded-2xl border border-aurora-border bg-aurora-surface/80 p-4 text-aurora-text" aria-label="Conception par objectif">
@@ -509,9 +579,30 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
           className={field}
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          placeholder="Ce que le projet doit accomplir, ses dimensions, ses mécanismes (engrenages, charnières, boîtier, support articulé) et son usage…"
+          placeholder="Ce que le projet doit accomplir, ses dimensions, ses mécanismes (main robotisée, engrenages, charnières, boîtier, support articulé) et son usage…"
         />
       </label>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || unconfirmed}
+          onClick={() => applyStructuredMasterPrompt()}
+          className="rounded-xl border border-aurora-accent/50 bg-aurora-accent/15 px-3 py-1.5 text-xs font-semibold text-aurora-accent hover:bg-aurora-accent/25 disabled:opacity-40"
+          title="Structure automatiquement une demande libre (même sans contrainte) en Prompt Maître d’ingénierie CAO multi-pièces (5 Sous-Agents)"
+        >
+          ⚡ Structurer en Prompt Maître (5 Sous-Agents)
+        </button>
+        <button
+          type="button"
+          disabled={busy || unconfirmed}
+          onClick={() => applyStructuredMasterPrompt('main robotisée anthropomorphe 5 doigts articulés 15 DDL')}
+          className="rounded-xl border border-aurora-border/70 bg-aurora-surface-2 px-3 py-1.5 text-xs text-aurora-text-muted hover:border-aurora-accent hover:text-aurora-text disabled:opacity-40"
+          title="Remplit l’objectif et les contraintes complètes d’une main robotisée 5 doigts (15 DDL) imprimable et assemblable"
+        >
+          🤖 Preset : Main robotisée 15 DDL (CAO + Assemblage)
+        </button>
+      </div>
 
       <details className="mt-3" open={Boolean(constraints.trim())}>
         <summary className="min-h-11 cursor-pointer text-sm font-medium">
@@ -601,6 +692,27 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
               </span>
             )}
           </div>
+
+          {['queued', 'planning', 'running'].includes(current.state) && (
+            <div className="mt-3">
+              <HolographicSplatLoader
+                active
+                prompt={current.objective || goal || 'Projet CAO multi-pièces'}
+                phasePercent={telemetry?.progress_pct ?? 10}
+                phaseLabel={telemetry?.phase || status[current.state] || current.state}
+                serverElapsedSeconds={liveElapsedSeconds}
+                serverRemainingSeconds={liveRemainingSeconds}
+                stlCount={telemetry?.stl_count ?? 0}
+                verifiedCriteriaCount={telemetry?.verified_count ?? 0}
+                totalCriteriaCount={telemetry?.criteria_count ?? 0}
+                mode="engineering_cad"
+                onApplyMasterPrompt={(formattedPrompt, inferredConstraints) => {
+                  setGoal(formattedPrompt)
+                  setConstraints(inferredConstraints)
+                }}
+              />
+            </div>
+          )}
 
           {telemetry && (
             <div className="mt-3 space-y-3">
@@ -700,7 +812,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
             <p className="mt-2 text-aurora-text-muted">
               {current.state === 'queued'
                 ? `Position ${current.scheduling.queue_position} · attente ${duration(current.scheduling.wait_seconds)} · durée indicative ${duration(current.scheduling.estimated_duration_seconds)}`
-                : `Écoulé ${duration(current.scheduling.elapsed_seconds)} · restant ${duration(current.scheduling.remaining_seconds)}`}
+                : `Écoulé ${duration(liveElapsedSeconds)} · restant ${duration(liveRemainingSeconds)}`}
             </p>
           )}
 

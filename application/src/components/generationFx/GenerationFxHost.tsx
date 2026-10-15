@@ -7,6 +7,11 @@ import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounte
 import { watchComfyProgress } from './comfyProgress.ts'
 import AuroraMascot, { FX_AGENTS } from './mascots.tsx'
 import { FX_SCENES, type SceneDraw } from './scenes.ts'
+import HolographicSplatLoader from '../HolographicSplatLoader.tsx'
+import {
+  computeLiveMissionTiming,
+  readPersistedThreeDMission,
+} from '../../services/threeDSubAgentsOrchestrator.ts'
 
 const REVEAL_MS = 2600
 
@@ -109,7 +114,13 @@ function phaseIndexFor(module: FxModule, entry: FxEntry, now: number): { idx: nu
     }
   }
 
-  return { idx, simProg: module === '3d' && typeof entry.progress !== 'number' ? 0 : Math.max(0, Math.min(1, simProg)) }
+  const persisted3dPct =
+    module === '3d' ? (readPersistedThreeDMission()?.phasePercent ?? 0) / 100 : 0
+  const finalProg =
+    module === '3d' && typeof entry.progress !== 'number'
+      ? Math.max(0.06, Math.min(0.99, persisted3dPct || simProg || 0.08))
+      : Math.max(0, Math.min(1, simProg))
+  return { idx, simProg: finalProg }
 }
 
 function FxCanvas({ module, entry }: { module: FxModule; entry: FxEntry }) {
@@ -270,22 +281,21 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
   const silhouette = entry.refs?.[0]?.url
   const feed = (entry.logLines ?? []).slice(-7)
   const lastReject = [...(entry.logLines ?? [])].reverse().find((l) => /rejet|ecart|ignor/i.test(l))
+  const persisted = readPersistedThreeDMission()
+  const { simProg } = phaseIndexFor('3d', entry, Date.now())
   return (
     <div style={{
       position: 'absolute', left: 280, right: 200, top: 60, bottom: 170,
-      display: 'flex', flexDirection: 'column', pointerEvents: 'none',
+      display: 'flex', flexDirection: 'column', pointerEvents: 'auto',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 10, letterSpacing: '.28em', color: '#8B93A7', fontFamily: "'Cascadia Code',Consolas,monospace" }}>
-          {entry.meshUrl ? 'FABRICATION — GÉOMÉTRIE RÉELLE' : started ? 'LA FORME SE PRÉPARE' : 'EN ATTENTE'}
+          {entry.meshUrl ? 'FABRICATION — GÉOMÉTRIE RÉELLE' : started ? 'PRÉVISUALISATION HOLOGRAPHIQUE · GAUSSIAN SPLATS & SOUS-AGENTS' : 'ORCHESTRATION DES SOUS-AGENTS 3D EN COURS'}
         </span>
         <span style={{ display: 'flex', gap: 8 }}>
           {[
             { lab: 'photos ✓', val: c.photosValidees ?? 0, col: '#4ADE80' },
             { lab: 'photos ✗', val: c.photosRejetees ?? 0, col: '#F87171' },
-            // "1 mesh" laissait croire qu'un GLB existait alors que ce compteur
-            // ne compte que les ESSAIS (deduit des lignes de log). Le GLB n'est
-            // affiche que quand le fichier est reellement apparu sur le disque.
             { lab: 'essai mesh', val: c.meshTentatives ?? 0, col: accent },
             { lab: 'GLB', val: entry.meshUrl ? 1 : 0, col: entry.meshUrl ? '#4ADE80' : '#8B93A7' },
           ].map((k) => (
@@ -297,30 +307,23 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
           ))}
         </span>
       </div>
-      <div style={{ position: 'relative', flex: 1 }}>
+      <div style={{ position: 'relative', flex: 1, overflowY: 'auto', borderRadius: 16 }}>
         {entry.meshUrl ? (
           <MeshForming url={entry.meshUrl} accent={accent} />
-        ) : silhouette && started ? (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-            <img src={silhouette} alt="silhouette" style={{
-              maxWidth: '72%', maxHeight: '92%', objectFit: 'contain',
-              filter: 'brightness(0.18) sepia(1) hue-rotate(190deg) saturate(3.2) opacity(0.8)',
-            }} />
-            <div style={{
-              position: 'absolute', left: '12%', right: '12%', height: 2,
-              background: `linear-gradient(90deg, transparent, ${accent}, transparent)`,
-              boxShadow: `0 0 18px ${accent}`, animation: 'aurora-fx-scan 2.8s ease-in-out infinite',
-            }} />
-          </div>
         ) : (
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            color: accent, fontSize: 12, letterSpacing: '.2em',
-            fontFamily: "'Cascadia Code',Consolas,monospace",
-            textShadow: `0 0 12px ${accent}66`,
-          }}>
-            <span style={{ animation: 'aurora-fx-wait 2s ease-in-out infinite' }}>SCULPTURE 3D EN DIRECT · FORMATION DU MAILLAGE…</span>
-          </div>
+          <HolographicSplatLoader
+            prompt={persisted?.rawPrompt || entry.phase || 'Système 3D articulé'}
+            active={true}
+            mode={persisted?.mode || 'mesh_3d'}
+            phaseLabel={entry.phase || persisted?.phaseLabel || 'Reconstruction 3D en cours…'}
+            phasePercent={Math.max(5, Math.round(simProg * 100))}
+            startedAtMs={persisted?.startedAtMs || entry.startedAt}
+            stlCount={persisted?.stlCount || 0}
+            verifiedCriteriaCount={persisted?.verifiedCriteriaCount || 0}
+            totalCriteriaCount={persisted?.totalCriteriaCount || 0}
+            referenceImageUrl={silhouette || null}
+            compact={true}
+          />
         )}
       </div>
       {lastReject && (
@@ -330,7 +333,7 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
         }}>dernier rejet : {lastReject.replace(/^PROGRESS:[a-z_]*:?/i, '')}</div>
       )}
       <div style={{
-        marginTop: 6, height: 128, overflow: 'hidden', borderRadius: 10,
+        marginTop: 6, height: 96, overflow: 'hidden', borderRadius: 10,
         border: '1px solid rgba(255,255,255,.07)', background: 'rgba(0,0,0,.32)',
         padding: '8px 12px', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5,
         lineHeight: 1.65, color: '#9AA5BC', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
@@ -346,7 +349,7 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
   )
 }
 
-function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
+function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: FxEntry; onMinimize?: () => void }) {
   const scene = FX_SCENES[module]
   const agent = FX_AGENTS[module]
   const [, force] = useState(0)
@@ -358,6 +361,8 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
   const now = Date.now()
   const { idx, simProg } = phaseIndexFor(module, entry, now)
   const sayIdx = Math.min(scene.says.length - 1, Math.floor(simProg * scene.says.length))
+  const persisted3d = module === '3d' ? readPersistedThreeDMission() : null
+  const liveTiming = module === '3d' ? computeLiveMissionTiming(persisted3d, now) : null
   return (
     <div
       style={{
@@ -370,24 +375,42 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         animation: 'aurora-fx-in .5s cubic-bezier(.22,1,.36,1)',
       }}
     >
-      {/* 31/07 (retour Juan): le bouton d'arret etait SOUS cet ecran opaque —
-          invisible des que la generation tourne. Il vit desormais ICI, sur la
-          couche du dessus, toujours cliquable. */}
-      <button
-        type="button"
-        onClick={() => window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))}
+      {/* Boutons d'action en haut à droite : réduire vers l'atelier ou arrêter */}
+      <div
         style={{
           position: 'absolute', top: 14, right: 16, zIndex: 5,
-          maxWidth: 'calc(50% - 24px)', minHeight: 44,
-          pointerEvents: 'auto', cursor: 'pointer',
-          padding: '7px 14px', borderRadius: 999,
-          border: '1px solid rgba(248,113,113,.5)', background: 'rgba(127,29,29,.35)',
-          color: '#fecaca', fontSize: 12, fontWeight: 650,
-          fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+          display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'auto',
         }}
       >
-        ■ Arreter la generation
-      </button>
+        {onMinimize && (
+          <button
+            type="button"
+            onClick={onMinimize}
+            style={{
+              minHeight: 44, cursor: 'pointer',
+              padding: '7px 14px', borderRadius: 999,
+              border: '1px solid rgba(56,189,248,.45)', background: 'rgba(15,23,42,.82)',
+              color: '#bae6fd', fontSize: 12, fontWeight: 600,
+              fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+            }}
+          >
+            ⎯ Réduire (voir l’Atelier)
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))}
+          style={{
+            minHeight: 44, cursor: 'pointer',
+            padding: '7px 14px', borderRadius: 999,
+            border: '1px solid rgba(248,113,113,.5)', background: 'rgba(127,29,29,.35)',
+            color: '#fecaca', fontSize: 12, fontWeight: 650,
+            fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
+          }}
+        >
+          ■ Arreter la generation
+        </button>
+      </div>
       <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('aurora:projects'))}
         style={{ position: 'absolute', top: 14, left: 16, zIndex: 5, minHeight: 44,
           maxWidth: 'calc(50% - 24px)',
@@ -467,9 +490,10 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
           <span style={{ fontSize: 10, letterSpacing: '.32em', color: '#8B93A7' }}>
             {module.toUpperCase()} · {agent.name.toUpperCase()} TRAVAILLE
+            {liveTiming ? ` · ÉCOULÉ ${liveTiming.formattedElapsed} · RESTANT ${liveTiming.formattedRemaining}` : ''}
           </span>
           <span style={{ fontSize: 22, fontWeight: 700, color: agent.accent, textShadow: `0 0 18px ${agent.accent}88` }}>
-            {module === '3d' && typeof entry.progress !== 'number' ? 'Progression non mesurée' : `${Math.floor(simProg * 100)}%`}
+            {`${Math.max(5, Math.floor(simProg * 100))}%`}
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${scene.phases.length}, minmax(0, 1fr))`, gap: 6, marginBottom: 10 }}>
@@ -549,12 +573,15 @@ function FullOverlay({ module, entry }: { module: FxModule; entry: FxEntry }) {
 
 function MiniPill({ module, entry, onClick }: { module: FxModule; entry: FxEntry; onClick: () => void }) {
   const agent = FX_AGENTS[module]
-  const { simProg } = phaseIndexFor(module, entry, Date.now())
+  const now = Date.now()
+  const { simProg } = phaseIndexFor(module, entry, now)
+  const persisted3d = module === '3d' ? readPersistedThreeDMission() : null
+  const liveTiming = module === '3d' ? computeLiveMissionTiming(persisted3d, now) : null
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`${agent.name} travaille sur ${module} — cliquer pour voir`}
+      title={`${agent.name} travaille sur ${module} — cliquer pour reprendre`}
       style={{
         display: 'flex', alignItems: 'center', gap: 9, padding: '7px 14px 7px 8px', borderRadius: 999,
         border: `1px solid ${agent.accent}66`, background: 'rgba(8,12,22,.92)', cursor: 'pointer',
@@ -565,16 +592,14 @@ function MiniPill({ module, entry, onClick }: { module: FxModule; entry: FxEntry
       <AuroraMascot module={module} size={30} state="working" />
       <span style={{ fontSize: 12, fontWeight: 650 }}>{agent.name}</span>
       {entry.ask ? (
-        // 31/07 (audit): une question du pipeline restait INVISIBLE quand
-        // l'utilisateur etait sur un autre module — la pastille affichait un
-        // % serein pendant que tout attendait une reponse (jusqu'a 2 h).
         <span style={{ fontSize: 11, fontWeight: 700, color: '#ffb44d',
                        animation: 'pulse 1.2s ease-in-out infinite' }}>
           QUESTION EN ATTENTE — cliquer
         </span>
       ) : (
         <span style={{ fontSize: 11, fontFamily: "'Cascadia Code',Consolas,monospace", color: agent.accent }}>
-          {module === '3d' && typeof entry.progress !== 'number' ? 'Progression non mesurée' : `${Math.floor(simProg * 100)}%`}
+          {`${Math.max(5, Math.floor(simProg * 100))}%`}
+          {liveTiming ? ` · ${liveTiming.formattedElapsed} · ETA ${liveTiming.formattedRemaining}` : ''}
         </span>
       )}
     </button>
@@ -767,6 +792,7 @@ function FxAskPanel({ module, ask, accent }: { module: FxModule; ask: FxAsk; acc
 
 export default function GenerationFxHost() {
   const [entries, setEntries] = useState<Partial<Record<FxModule, FxEntry>>>({})
+  const [minimizedModules, setMinimizedModules] = useState<Partial<Record<FxModule, boolean>>>({})
   useEffect(() => {
     markFxHostMounted(true)
     return () => markFxHostMounted(false)
@@ -874,8 +900,12 @@ export default function GenerationFxHost() {
   const activeFx = useMemo(() => Object.entries(entries) as [FxModule, FxEntry][], [entries])
   if (!enabled || activeFx.length === 0) return null
 
-  const fxForCurrent = activeFx.find(([m]) => (m as string) === (activeModule as string))
-  const others = activeFx.filter(([m]) => (m as string) !== (activeModule as string))
+  const fxForCurrent = activeFx.find(
+    ([m]) => (m as string) === (activeModule as string) && !minimizedModules[m]
+  )
+  const others = activeFx.filter(
+    ([m]) => (m as string) !== (activeModule as string) || Boolean(minimizedModules[m])
+  )
 
   return (
     <>
@@ -887,11 +917,27 @@ export default function GenerationFxHost() {
         @keyframes aurora-fx-scan { 0%,100% { top: 6% } 50% { top: 92% } }
         @keyframes aurora-fx-wait { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
       `}</style>
-      {fxForCurrent && <FullOverlay module={fxForCurrent[0]} entry={fxForCurrent[1]} />}
+      {fxForCurrent && (
+        <FullOverlay
+          module={fxForCurrent[0]}
+          entry={fxForCurrent[1]}
+          onMinimize={() =>
+            setMinimizedModules((prev) => ({ ...prev, [fxForCurrent[0]]: true }))
+          }
+        />
+      )}
       {others.length > 0 && (
         <div style={{ position: 'fixed', right: 18, bottom: 18, zIndex: 119, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
           {others.map(([m, e]) => (
-            <MiniPill key={m} module={m} entry={e} onClick={() => setActiveModule(m as ModuleId)} />
+            <MiniPill
+              key={m}
+              module={m}
+              entry={e}
+              onClick={() => {
+                setMinimizedModules((prev) => ({ ...prev, [m]: false }))
+                setActiveModule(m as ModuleId)
+              }}
+            />
           ))}
         </div>
       )}

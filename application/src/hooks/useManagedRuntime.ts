@@ -63,7 +63,7 @@ type RuntimeJobHelpers = {
 
 type ManagedRuntimeJob<T> = {
   signal?: AbortSignal
-  onWaiting?: (detail: string) => void
+  onWaiting?: (detail: string, progress?: number) => void
   module: ModuleId
   title: string
   services: RuntimeServiceId[]
@@ -176,7 +176,7 @@ export function useManagedRuntime() {
         progress: number,
         phase: ManagedRuntimePhase = 'prepare',
       ) => {
-        onWaiting?.(detail)
+        onWaiting?.(detail, progress)
         setRuntimeTask({ phase, detail, progress })
         setGenerationJob(jobId, { phase, detail, progress })
       }

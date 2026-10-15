@@ -322,6 +322,44 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             for mid, mlabel, done in raw_ms
         ]
 
+        sub_agents = [
+            {
+                'id': 'agent-kinematics',
+                'codename': 'AGENT-01 · ATLAS-KINEMATICS',
+                'role': 'Architecte Cinématique & DDL',
+                'status': 'done' if (has_design_py or pct >= 20) else ('running' if status in {'queued', 'planning', 'running'} else 'pending'),
+                'progress_pct': 100 if (has_design_py or pct >= 20) else min(95, max(15, pct * 4)),
+            },
+            {
+                'id': 'agent-cad-geometry',
+                'codename': 'AGENT-02 · MECANO-CAD',
+                'role': 'Ingénieur CAO Paramétrique & Tolérances',
+                'status': 'done' if (stl_count > 0 or pct >= 55) else ('running' if (has_design_py or pct >= 20) else 'pending'),
+                'progress_pct': 100 if (stl_count > 0 or pct >= 55) else (min(95, max(10, int((pct - 18) * 2.5))) if pct >= 18 else 0),
+            },
+            {
+                'id': 'agent-gaussian-splat',
+                'codename': 'AGENT-03 · GAUSSIAN-SCULPT',
+                'role': 'Spécialiste Splats Holographiques & Maillages STL',
+                'status': 'done' if (has_tests_py and stl_count > 0) or pct >= 72 else ('running' if stl_count > 0 or pct >= 45 else 'pending'),
+                'progress_pct': 100 if ((has_tests_py and stl_count > 0) or pct >= 72) else (min(95, max(15, int((pct - 40) * 3))) if pct >= 40 else 0),
+            },
+            {
+                'id': 'agent-materials-pbr',
+                'codename': 'AGENT-04 · SHADER-PBR',
+                'role': 'Ingénieur Matériaux, BOM & Assemblage',
+                'status': 'done' if (has_project_json or complete or pct >= 88) else ('running' if (has_tests_py or pct >= 68) else 'pending'),
+                'progress_pct': 100 if (has_project_json or complete or pct >= 88) else (min(95, max(15, int((pct - 65) * 4))) if pct >= 65 else 0),
+            },
+            {
+                'id': 'agent-qa-assembly',
+                'codename': 'AGENT-05 · QA-ASSEMBLY',
+                'role': 'Contrôleur Qualité, Cinématique & Dossier Scellé',
+                'status': 'done' if complete else ('running' if (has_project_json or pct >= 85) else 'pending'),
+                'progress_pct': 100 if complete else (min(95, max(15, int((pct - 82) * 5))) if pct >= 82 else 0),
+            },
+        ]
+
         return {
             'phase': phase,
             'progress_pct': pct,
@@ -332,6 +370,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             'workspace_files': workspace_files,
             'stl_count': stl_count,
             'milestones': milestones_list,
+            'sub_agents': sub_agents,
             'draft_summary': draft_summary,
             'profile_summary': {
                 'name': str(profile.get('name') or 'Imprimante standard'),

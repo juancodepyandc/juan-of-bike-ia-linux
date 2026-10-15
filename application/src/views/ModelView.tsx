@@ -13,6 +13,13 @@ import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3,
 import type { Texture } from 'three'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
 import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay.tsx'
+import { HolographicSplatLoader } from '../components/HolographicSplatLoader.tsx'
+import {
+  startOrUpdateThreeDMission,
+  completeThreeDMission,
+  readPersistedThreeDMission,
+  synthesizeThreeDMasterPrompt,
+} from '../services/threeDSubAgentsOrchestrator.ts'
 import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
 import ContextFilesField from '../components/ContextFilesField.tsx'
 import SubjectSelectPanel from '../components/SubjectSelectPanel.tsx'
@@ -2634,6 +2641,8 @@ export default function ModelView() {
   // but the bridge still has a 3D job running from the previous session,
   // surface a banner so the user knows their generation didn't vanish.
   const [pendingJobBanner, setPendingJobBanner] = useState<{ jobId: string; status: 'queued' | 'running' | 'done' } | null>(null)
+  const recovererResultatRef = useRef<((jobId: string) => Promise<void>) | null>(null)
+  const autoRecoveredJobIdRef = useRef<string | null>(null)
   // v77zah: auto-reattach the live overlay when the user navigates back to
   // ModelView while a 3D job is still running on the PC. Without this the
   // generation looks "arrêtée" because the overlay's host component was
@@ -2642,17 +2651,36 @@ export default function ModelView() {
   // line as if the user had never left.
   useEffect(() => {
     let alive = true
+    const persistedOnMount = readPersistedThreeDMission()
+    if (persistedOnMount?.rawPrompt && !prompt.trim()) {
+      setPrompt(persistedOnMount.rawPrompt)
+    }
     const tick = async () => {
       if (generationAbortRef.current) return // The live controller owns its own UI and result.
       const info = await peekResumableJob('model_ia') || await peekResumableJob('model')
       if (!alive) return
       setPendingJobBanner(info)
-      if (info && info.status === 'running' && !unlistenRef.current) {
+      const persisted = readPersistedThreeDMission()
+      if (info && (info.status === 'running' || info.status === 'queued') && !unlistenRef.current) {
         // Job still running, our listener is unarmed → reconnect.
+        const restoredPct = persisted?.phasePercent && persisted.phasePercent > 5 ? persisted.phasePercent : 60
+        const restoredLabel = persisted?.phaseLabel || 'Reconnexion à la génération 3D en cours sur le PC...'
         setIsGenerating(true)
+        setProgress(restoredLabel)
         setPhaseSnapshot({
-          label: 'Reconnexion a la generation en cours sur le PC...',
-          percent: 60,
+          label: restoredLabel,
+          percent: restoredPct,
+        })
+        startOrUpdateThreeDMission({
+          rawPrompt: persisted?.rawPrompt || prompt || 'Projet 3D complexe en cours',
+          phasePercent: restoredPct,
+          phaseLabel: restoredLabel,
+          mode: 'mesh_3d',
+        })
+        emitGenerationFx('3d', {
+          active: true,
+          phase: restoredLabel,
+          progress: restoredPct / 100,
         })
         try {
           unlistenRef.current = await onPythonProgress((message) => {
@@ -2663,6 +2691,17 @@ export default function ModelView() {
             setProgress(detail)
             const phaseProgress = stage === 'install' ? 82 : stage === 'device' || stage === 'bg' || stage === 'asset_scan' ? 84 : stage === 'asset_download' || stage === 'shape_fallback' || stage === 'shape_load' ? 86 : stage === 'shape_run' || stage === 'gaussian' ? 90 : stage === 'texture_load' || stage === 'texture_run' || stage === 'texture_retry' || stage === 'texture_warn' || stage === 'mesh_extract' ? 92 : stage === 'export' || stage === 'export_fallback' ? 95 : stage === 'procedural' ? 88 : stage === 'sfm' || stage === 'photogrammetry' ? 87 : stage === 'validate' ? 94 : stage === 'rig' ? 93 : 88
             setPhaseSnapshot({ label: detail, percent: phaseProgress })
+            startOrUpdateThreeDMission({
+              rawPrompt: readPersistedThreeDMission()?.rawPrompt || prompt || 'Projet 3D complexe en cours',
+              phasePercent: phaseProgress,
+              phaseLabel: detail,
+              mode: 'mesh_3d',
+            })
+            emitGenerationFx('3d', {
+              active: true,
+              phase: detail,
+              progress: phaseProgress / 100,
+            })
           })
         } catch {
           // Bridge unreachable — overlay will surface the inactivity warning.
@@ -2671,12 +2710,17 @@ export default function ModelView() {
       if (info && info.status === 'done') {
         setIsGenerating(false)
         setPhaseSnapshot({ label: '', percent: 0 })
+        completeThreeDMission()
         unlistenRef.current?.()
         unlistenRef.current = null
+        if (autoRecoveredJobIdRef.current !== info.jobId && recovererResultatRef.current) {
+          autoRecoveredJobIdRef.current = info.jobId
+          void recovererResultatRef.current(info.jobId)
+        }
       }
     }
     void tick()
-    const id = window.setInterval(tick, 5_000)
+    const id = window.setInterval(tick, 3_000)
     return () => { alive = false; window.clearInterval(id) }
   }, [])
 
@@ -3221,9 +3265,17 @@ export default function ModelView() {
         if (root) for (const relative of ['journal/manifest.json', 'audits/manifest.json']) {
           try { manifest = JSON.parse(await fsReadText(`${root}/${relative}`)); break } catch { /* Try the other layout. */ }
         }
-        if (manifest?.session_id !== useModuleHistoryStore.getState().getActiveSession('3d').id) throw new Error('Ce résultat appartient à une autre conversation ; ouvre sa session pour le récupérer.')
+        if (manifest?.session_id && manifest.session_id !== useModuleHistoryStore.getState().getActiveSession('3d').id) {
+          try {
+            useModuleHistoryStore.getState().switchSession('3d', manifest.session_id)
+          } catch {
+            // Keep current session if switching is unavailable
+          }
+        }
         lastMeshPathRef.current = mesh
-        setModelUrl(toAssetUrl(mesh))
+        const resolvedUrl = toAssetUrl(mesh)
+        setModelUrl(resolvedUrl)
+        completeThreeDMission({ meshUrl: resolvedUrl })
         setViewerWebUrl(null)
         setViewerFullscreen(true)
         const label = resultat.ok === false ? `Maillage retrouvé, validation échouée : ${String(resultat.error || 'voir le journal')}` : 'Modèle retrouvé après reconnexion ; conformité visuelle à vérifier.'
@@ -3240,6 +3292,7 @@ export default function ModelView() {
       setError(`Recuperation impossible: ${e instanceof Error ? e.message : String(e)}`)
     }
   }, [pushMessage])
+  recovererResultatRef.current = recovererResultat
 
   const stopRequestedRef = useRef(false)
   const generationAbortRef = useRef<AbortController | null>(null)
@@ -3258,6 +3311,7 @@ export default function ModelView() {
     } catch { /* meme sans jobId on coupe le suivi */ }
     clearResumableJob('model')
     clearResumableJob('model_ia')
+    completeThreeDMission()
     unlistenRef.current?.()
     unlistenRef.current = null
     // Keep the generation reservation until its asynchronous chain exits.
@@ -3306,7 +3360,16 @@ export default function ModelView() {
     const requestedMotion = motionEnabledRef.current
     setIsGenerating(true)
     setError(null)
-    setProgress('Analyse de la demande 3D...')
+    const initLabel = 'Analyse de la demande 3D par les 5 sous-agents...'
+    setProgress(initLabel)
+    setPhaseSnapshot({ label: initLabel, percent: 2 })
+    startOrUpdateThreeDMission({
+      rawPrompt: currentPrompt,
+      phasePercent: 2,
+      phaseLabel: initLabel,
+      mode: 'mesh_3d',
+      startedAtMs: Date.now(),
+    })
 
     // Tracker la generation pour recovery apres refresh
     activeTrackerIdRef.current = trackGeneration({
@@ -3323,7 +3386,21 @@ export default function ModelView() {
         module: '3d',
         title: 'Generation 3D',
         signal: controller.signal,
-        onWaiting: detail => { setProgress(detail); setPhaseSnapshot({ label: detail, percent: 0 }) },
+        onWaiting: (detail, progressPct) => {
+          setProgress(detail)
+          setPhaseSnapshot((prev) => {
+            const nextPct = typeof progressPct === 'number' && progressPct > 0
+              ? Math.max(prev.percent, progressPct)
+              : Math.max(prev.percent, 2)
+            startOrUpdateThreeDMission({
+              rawPrompt: currentPrompt,
+              phasePercent: nextPct,
+              phaseLabel: detail,
+              mode: 'mesh_3d',
+            })
+            return { label: detail, percent: nextPct }
+          })
+        },
         services: ['ollama'],
         prepare: async ({ setPhase }) => {
           setPhase('Compréhension du lien avec le projet précédent...', 1)
@@ -5165,7 +5242,9 @@ export default function ModelView() {
           )
 
           lastMeshPathRef.current = activeMeshPath
-          setModelUrl(toAssetUrl(activeMeshPath))
+          const finalAssetUrl = toAssetUrl(activeMeshPath)
+          setModelUrl(finalAssetUrl)
+          completeThreeDMission({ meshUrl: finalAssetUrl })
           setViewerWebUrl(null)
           setWorkspace('model')
           // v71: persist le rapport qualite mesh pour le bouton 'Inspecter mesh'.
@@ -5217,9 +5296,11 @@ export default function ModelView() {
         completeGeneration(activeTrackerIdRef.current, {})
         activeTrackerIdRef.current = null
       }
+      completeThreeDMission()
       controller.signal.throwIfAborted()
       setViewerFullscreen(true)
     } catch (generationError) {
+      completeThreeDMission()
       if (controller.signal.aborted) {
         if (activeTrackerIdRef.current) {
           failGeneration(activeTrackerIdRef.current, "Annulée par l’utilisateur")
@@ -5347,7 +5428,33 @@ export default function ModelView() {
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl gradient-accent text-white"><Sparkles size={18} /></div>
               </div>
             </div>
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ex: piece mecanique imprimable pour charniere de boitier, 42 mm, symetrique, deux points de fixation, prototype propre" rows={6} className="mt-4 w-full resize-none rounded-2xl border border-aurora-border bg-aurora-bg/60 px-3 py-3 text-sm text-aurora-text outline-none transition-colors focus:border-aurora-accent/45" />
+            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ex: main robotisée anthropomorphe 5 doigts articulés, ou pièce mécanique imprimable pour charnière de boîtier 42 mm" rows={6} className="mt-4 w-full resize-none rounded-2xl border border-aurora-border bg-aurora-bg/60 px-3 py-3 text-sm text-aurora-text outline-none transition-colors focus:border-aurora-accent/45" />
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={() => {
+                  const structured = synthesizeThreeDMasterPrompt(prompt.trim() || 'main robotisée anthropomorphe 5 doigts articulés')
+                  setPrompt(structured.formattedMasterPrompt)
+                }}
+                className="rounded-xl border border-aurora-accent/45 bg-aurora-accent/15 px-2.5 py-1.5 text-[11px] font-semibold text-aurora-accent-light hover:bg-aurora-accent/25 transition-colors disabled:opacity-40"
+                title="Transforme une demande libre ou sans contrainte en Prompt Maître d'ingénierie 3D structuré pour les 5 sous-agents"
+              >
+                ⚡ Structurer en Prompt Maître (5 Sous-Agents)
+              </button>
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={() => {
+                  const structured = synthesizeThreeDMasterPrompt('main robotisée anthropomorphe 5 doigts articulés 15 DDL')
+                  setPrompt(structured.formattedMasterPrompt)
+                }}
+                className="rounded-xl border border-aurora-border/50 bg-aurora-surface/80 px-2.5 py-1.5 text-[11px] text-aurora-text-muted hover:text-aurora-text hover:border-aurora-accent/35 transition-colors disabled:opacity-40"
+                title="Charge le Prompt Maître complet d'une main robotisée 5 doigts (15 DDL) avec prévisualisation Splats Holographiques"
+              >
+                🤖 Preset : Main robotisée 15 DDL
+              </button>
+            </div>
             <div className="mt-2 flex items-center gap-2">
               <VoicePushToTalk
                 onTranscript={(text) => setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text))}
@@ -5787,7 +5894,33 @@ export default function ModelView() {
                     </div>
                   )}
                 </div>
-              ) : referenceImageUrl ? <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116] p-6"><div className="max-w-xl text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[1.4rem] gradient-accent text-white"><ImageIcon size={26} /></div><p className="mt-4 text-sm text-aurora-text">La référence est prête. L'agent Poly sculpte la géométrie 3D et le viewer l'affichera dès la fin de la génération.</p><img src={referenceImageUrl} alt="Reference en attente du mesh" className="mt-5 max-h-[60vh] rounded-[1.6rem] border border-aurora-border/35 shadow-2xl" /></div></div> : <div className="grid h-full place-items-center rounded-[1.8rem] border border-aurora-border/35 bg-[#091116]"><div className="text-center"><div className="mx-auto flex h-24 w-24 items-center justify-center rounded-[1.8rem] border border-aurora-border bg-aurora-surface-2"><Box size={40} className="text-aurora-text-dim" /></div><p className="mt-4 text-sm text-aurora-text-muted">Decris le but, choisis un preset sur la droite si besoin, puis laisse le module construire une reference propre avant la reconstruction.</p></div></div>}
+              ) : (
+                <div className="h-full space-y-3">
+                  <HolographicSplatLoader
+                    active={isGenerating}
+                    prompt={prompt.trim() || readPersistedThreeDMission()?.rawPrompt || 'main robotisée anthropomorphe 5 doigts articulés'}
+                    phasePercent={
+                      isGenerating
+                        ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 4)
+                        : prompt.trim()
+                          ? 38
+                          : 22
+                    }
+                    phaseLabel={
+                      isGenerating
+                        ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Orchestration 3D par les 5 sous-agents...'
+                        : prompt.trim()
+                          ? 'Prévisualisation Splats Holographiques 3D & Répartition des 5 Sous-Agents prête'
+                          : 'Aperçu Splats Holographiques 3D — Saisis un projet ou structure un Prompt Maître'
+                    }
+                    startedAtMs={isGenerating ? readPersistedThreeDMission()?.startedAtMs : undefined}
+                    mode="mesh_3d"
+                    referenceImageUrl={referenceImageUrl}
+                    onApplyMasterPrompt={(formattedPrompt) => setPrompt(formattedPrompt)}
+                    onStop={isGenerating ? () => void stopGeneration() : undefined}
+                  />
+                </div>
+              )}
             </div>
             <div className="space-y-4">
               <EngineeringExportPanel modelUrl={modelUrl} onAssemblyRequested={() => setWorkspace('assembly')} />

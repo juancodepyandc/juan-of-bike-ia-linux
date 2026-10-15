@@ -190,6 +190,9 @@ def test_design_telemetry_and_assembly_steps_enrichment(tmp_path):
     assert tel['draft_summary']['joint_count']==1
     assert tel['draft_summary']['dof']==1
     assert tel['draft_summary']['bom'][0]['name']=='Vis CHC M3x16'
+    assert len(tel['sub_agents'])==5
+    assert [a['id'] for a in tel['sub_agents']]==['agent-kinematics','agent-cad-geometry','agent-gaussian-splat','agent-materials-pbr','agent-qa-assembly']
+    assert all(a['status']=='done' and a['progress_pct']==100 for a in tel['sub_agents'])
     assembly_manifest=json.loads((folder/'assembly.json').read_text())
     assert assembly_manifest['title']=='Bras articulé M3'
     assert len(assembly_manifest['bom'])==1

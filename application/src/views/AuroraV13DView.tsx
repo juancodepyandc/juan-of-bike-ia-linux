@@ -22,6 +22,11 @@ import { useFileDrop } from '../hooks/useFileDrop.ts'
 import { getDailyTip } from '../utils/dailyTip.ts'
 import LyraCharacter from '../components/voice/LyraCharacter.tsx'
 import FavoriteButton from '../components/FavoriteButton.tsx'
+import { peekResumableJob } from '../hooks/useTauri.ts'
+import {
+  readPersistedThreeDMission,
+  startOrUpdateThreeDMission,
+} from '../services/threeDSubAgentsOrchestrator.ts'
 
 const ModelView = lazy(() => import('./ModelView'))
 
@@ -70,10 +75,47 @@ const PIPELINE: Array<[string, 'done' | 'running' | 'queued']> = [
 ]
 
 export default function AuroraV13DView() {
-  const [live, setLive] = useState(false)
+  const [live, setLive] = useState(() => {
+    const persisted = readPersistedThreeDMission()
+    return Boolean(persisted?.active || persisted?.completedMeshUrl || persisted?.completedViewerUrl)
+  })
   const [t, setT] = useState(0)
   const model = useModelViewLogic()
   const threeDStreak = useModuleStreak('3d')
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const info = (await peekResumableJob('model_ia')) || (await peekResumableJob('model'))
+        if (alive && info && ['queued', 'running', 'done'].includes(info.status)) {
+          setLive(true)
+        }
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const enterStudio = () => {
+    if (model.prompt.trim()) {
+      const existing = readPersistedThreeDMission()
+      if (!existing?.active) {
+        startOrUpdateThreeDMission({
+          rawPrompt: model.prompt.trim(),
+          phasePercent: 0,
+          phaseLabel: 'Brief 3D prêt dans l’atelier',
+          mode: 'mesh_3d',
+          active: false,
+        })
+      }
+    }
+    setLive(true)
+  }
+
   // v82fq : drop zone 3D → enrichit le prompt selon le type de fichier.
   // - Texte : injecte le contenu pour décrire l'objet à modéliser.
   // - Image : ajoute un hint "(Image source: nom)" qui bias le router
@@ -234,7 +276,7 @@ export default function AuroraV13DView() {
         </div>
 
         {/* Enter button overlay */}
-        <button type="button" onClick={() => setLive(true)}
+        <button type="button" onClick={enterStudio}
           style={{
             position: 'absolute', top: '50%', left: '50%',
             transform: 'translate(-50%, calc(50% + 240px))',
@@ -534,7 +576,7 @@ export default function AuroraV13DView() {
           )}
         </div>
 
-        <button type="button" onClick={() => setLive(true)}
+        <button type="button" onClick={enterStudio}
           style={{
             marginTop: 4, padding: '12px 20px',
             background: 'var(--ember-500, #ff6a3d)', color: '#0a0a0a',
