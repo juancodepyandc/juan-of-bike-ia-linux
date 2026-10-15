@@ -94,7 +94,7 @@ class InputStore:
                 raise ValueError('Input directory escapes workspace')
             target = directory/receipt
             self._retain(target,content,digest)
-            manifest.append(dict(client_label=label,server_path=str(target),bytes=len(content),sha256=digest))
+            manifest.append(dict(client_label=label,server_path=target.as_posix(),bytes=len(content),sha256=digest))
         return manifest
 
 

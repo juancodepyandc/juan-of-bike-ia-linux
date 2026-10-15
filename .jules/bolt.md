@@ -4,3 +4,11 @@
 ## 2026-10-15 - ReactMarkdown re-renders
 **Learning:** `ReactMarkdown` takes a `components` prop to customize rendering. If this prop is defined inline within the component (e.g., `<ReactMarkdown components={{...}}>`), it will fail referential equality checks on every render, causing the entire Markdown tree to needlessly re-render.
 **Action:** When passing complex objects like component maps to external libraries, wrap them in `useMemo` (e.g., `const markdownComponents = useMemo(() => ({...}), [deps])`) to preserve object reference and avoid unnecessary rerenders.
+
+## 2026-10-15 - subprocess stdin resource leaks in Python 3.10-3.13 causing CI hangs
+**Learning:** When using `subprocess.Popen` to interact with an MCP server (e.g. `call_mcp_stdio`), it's critical to explicitly `proc.stdin.close()` before calling `proc.terminate()` or `proc.wait()`. Failing to close the standard input pipe leads to the child process deadlocking or waiting indefinitely for input in older Python versions (and Windows runners), causing CI check runners to eventually hit the exit code 1 or timeout.
+**Action:** In `finally` blocks that manage `subprocess.Popen`, explicitly check `proc.stdin` and safely call `.close()` on it before proceeding to `proc.terminate()`.
+
+## 2026-10-15 - pathlib.Path.as_posix() in assertions for Windows compatibility
+**Learning:** Hardcoding `str(Path(...))` or expecting specific string representations in tests for filesystem paths will break on Windows due to the backslash `\` directory separator, whereas Linux uses `/`. The test `test_real_input_transfers_before_dispatch_and_same_key_never_dispatches_twice` was failing because the manifest contained posix path strings (as produced by our application using `target.as_posix()`), but the test expected `str(target)` which resulted in backslashes on Windows CI.
+**Action:** When serializing paths to JSON or comparing path strings in tests that must run cross-platform, consistently use `Path.as_posix()` rather than `str(Path(...))` to normalize to forward slashes.

@@ -239,6 +239,11 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
         except Exception:
             pass
         try:
+            if proc is not None and proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
+        except Exception:
+            pass
+        try:
             if proc is not None and proc.poll() is None:
                 proc.terminate()
                 try:
