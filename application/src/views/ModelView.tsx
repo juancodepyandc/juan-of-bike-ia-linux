@@ -1,3 +1,4 @@
+import { planThreeDEdit, readThreeDSourceContext, sourceRig, type SourceContext } from '../utils/threeDEditPlan.ts'
 import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelation.ts'
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
@@ -24,7 +25,7 @@ import type { SaveDialogData } from '../components/SaveDialog.tsx'
 import SessionSwitcher from '../components/SessionSwitcher.tsx'
 import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
-import { ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
+import { fsReadText, ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
@@ -918,24 +919,12 @@ export function _meshRank(filePath: string): number {
 
 export function findSessionAssets(session: ConversationSession) {
   let referencePath: string | null = null
-  const meshCandidates: string[] = []
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    for (const filePath of [...(session.messages[index].images || [])].reverse()) {
-      const lower = filePath.toLowerCase()
-      if (/\.(glb|gltf|obj)$/.test(lower)) meshCandidates.push(filePath)
-      else if (!referencePath && /\.(png|jpg|jpeg|webp)$/.test(lower)) referencePath = filePath
-    }
-  }
-  // Pick the highest-priority mesh; ties broken by message recency (we walked
-  // newest-first so meshCandidates is already newest-first per stage).
   let meshPath: string | null = null
-  let bestRank = -1
-  for (const cand of meshCandidates) {
-    const r = _meshRank(cand)
-    if (r > bestRank) {
-      bestRank = r
-      meshPath = cand
-    }
+  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+    const paths = session.messages[index].images || []
+    if (!referencePath) referencePath = [...paths].reverse().find(path => /\.(png|jpg|jpeg|webp)$/i.test(path)) || null
+    // Recency wins between revisions; rank only alternative outputs of one message.
+    if (!meshPath) meshPath = [...paths].filter(path => /\.(glb|gltf|obj)$/i.test(path)).sort((a,b) => _meshRank(b)-_meshRank(a))[0] || null
   }
   return { referencePath, meshPath }
 }
@@ -3272,6 +3261,8 @@ export default function ModelView() {
     const conversationHistory = getRecentMessages('3d', 30)
     const existingMesh = lastMeshPathRef.current
     let relation: ThreeDRelation | null = null
+    let sourceContext: SourceContext | null = null
+    const requestedMotion = motionEnabledRef.current
     setIsGenerating(true)
     setError(null)
     setProgress('Analyse de la demande 3D...')
@@ -3295,13 +3286,14 @@ export default function ModelView() {
         services: ['ollama'],
         prepare: async ({ setPhase }) => {
           setPhase('Compréhension du lien avec le projet précédent...', 1)
+          if (existingMesh) sourceContext = await readThreeDSourceContext(existingMesh, fsReadText)
           try {
             relation = await resolveThreeDRelation(currentPrompt, conversationHistory, Boolean(existingMesh), async instruction => {
               const reply = await ollamaGenerate(activeOllamaModel, instruction, { signal: controller.signal, num_predict: 2048, num_ctx: 8192 })
               return reply?.response || ''
-            })
+            }, sourceContext?.description)
           } catch (error) { controller.signal.throwIfAborted(); console.warn('3D relation unavailable', error) }
-          if (existingMesh && relation && relation.mesh_edit !== 'none' && !contextFiles.length) return
+          if (planThreeDEdit(Boolean(existingMesh), relation, requestedMotion, contextFiles.length > 0).articulate) return
           const preview = previewThreeDIntent(currentPrompt)
           const characterRequest = ['character', 'creature', 'body_part'].includes(preview.subjectKind)
           const geometricRoute = !characterRequest && ['procedural', 'photogrammetry'].includes(preview.pipelineRouting.pipeline)
@@ -3325,7 +3317,11 @@ export default function ModelView() {
           const primaryPreparedImage = preparedViews.primary ?? pickPrimaryPreparedImage(preparedContext)
           // Preserve user requirements for a continuation; discard unrelated subjects.
           const effectiveHistory = relation?.continuation === false ? [] : retainThreeDRequirements(currentPrompt, conversationHistory, relation?.continuation || EDIT_INTENT.test(currentPrompt))
+          const editPlan = planThreeDEdit(Boolean(existingMesh), relation, requestedMotion, contextFiles.length > 0)
+          const rigSubject = sourceRig(sourceContext, relation)
           let workingPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
+          if (editPlan.continuation && sourceContext?.description) workingPrompt = `Existing source subject (preserve identity and unspecified features; newest changes override):\n${sourceContext.description}\n\n${workingPrompt}`
+          workingPrompt += requestedMotion ? '\nAnimation is enabled: produce the requested movement, preserving any requested held posture.' : '\nAnimation is explicitly OFF: render the requested pose/action as a STATIC result. Pose, appearance and scene changes still apply. Do not add temporal animation.'
           let historyPrompt = currentPrompt
           const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: 'user' as const, content: message.content })) })
           setDetectedIntent(intent)
@@ -3414,7 +3410,7 @@ export default function ModelView() {
               }
             } catch { /* resolveur indisponible -> la question sera posee */ }
           }
-          if (!(existingMesh && relation && relation.mesh_edit !== 'none') && !clarificationDejaResolue && !aUneImage && intent.needsClarification && intent.clarificationQuestion) {
+          if (!editPlan.continuation && !clarificationDejaResolue && !aUneImage && intent.needsClarification && intent.clarificationQuestion) {
             setPhase('Analyse — clarification nécessaire', 12)
             // v77zh: surface the categorised options as quick-pick buttons so
             // the user clicks instead of typing — character anatomy, mechanism
@@ -3479,6 +3475,14 @@ export default function ModelView() {
               session_title: active3dSession.title,
               run_id: runId,
               prompt: currentPrompt,
+              effective_request: workingPrompt,
+              subject_kind: intent.subjectKind,
+              source_subject_kind: editPlan.continuation ? sourceContext?.subjectKind : intent.subjectKind,
+              rig_subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : undefined,
+              subject_description: editPlan.continuation ? sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory) : currentPrompt,
+              source_mesh: editPlan.continuation ? existingMesh : null,
+              edit_route: editPlan.articulate ? 'articulate' : editPlan.reconstructFromSource ? 'conditioned_reconstruction' : 'generation',
+              motion_enabled: requestedMotion,
               directories: {
                 references: runPaths.references,
                 prompts: runPaths.prompts,
@@ -3491,28 +3495,38 @@ export default function ModelView() {
               created_at: new Date().toISOString(),
             }, null, 2)),
           )
-          if (existingMesh && relation && relation.mesh_edit !== 'none' && !contextFiles.length) {
+          if (existingMesh && editPlan.articulate) {
             setPhase('Articulations — adaptation du GLB existant à la demande...', 35)
             const output = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
               '--input', existingMesh, '--run-root', runPaths.root, '--run-id', runId,
               '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
-              '--mode', motionEnabledRef.current ? 'animation' : 'static_pose',
-              '--subject', intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind,
+              '--mode', editPlan.mode, '--subject', rigSubject,
+              '--source-description', sourceContext?.description || effectiveHistory.map(m => m.content).join('\n'),
             ], { resumeKey: 'model_ia' })
             const derived = parseLastJsonLine(output)
             if (!derived?.ok || !derived.path) throw new Error(String(derived?.error || 'Adaptation articulaire non produite ; modèle original conservé.'))
             const path = String(derived.path)
             lastMeshPathRef.current = path
             setModelUrl(toAssetUrl(path))
+            setViewerWebUrl(null)
             pushMessage('3d', { role: 'user', content: currentPrompt, threeDContext: 'continuation' })
             pushMessage('3d', { role: 'assistant', content: 'GLB existant réutilisé. Déformation articulaire mesurée ; conformité de la pose, contacts et collisions à vérifier.', images: [path] })
             setProgress('Version dérivée livrée ; modèle initial conservé. Contrôles dans journal/joint-plan.json.')
             setPhase('Version articulée chargée', 100)
             return
           }
+          let sourceRenderPath: string | null = null
+          if (existingMesh && editPlan.reconstructFromSource && !primaryPreparedImage) {
+            setPhase('Modification — rendu du modèle existant comme référence...', 18)
+            const rendered = await renderMeshScreenshot({ meshPath: existingMesh, outputPath: `${runPaths.references}/${runId}_source.png`, views: ['front_3q'], signal: controller.signal, cleanupRoot: runPaths.root })
+            controller.signal.throwIfAborted()
+            sourceRenderPath = rendered.ok ? rendered.screenshots[0]?.path || null : null
+            if (!sourceRenderPath && lastReferenceImagePathRef.current && await fsExists(lastReferenceImagePathRef.current)) sourceRenderPath = lastReferenceImagePathRef.current
+            if (!sourceRenderPath) throw new Error('Impossible de lire une référence du modèle existant ; modification non lancée pour préserver son identité. ' + (rendered.error || ''))
+          }
           let referenceImagePath = `${runPaths.references}/${runId}_reference.png`
           const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: workingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 5, phaseSpan: 10 })
-          if (!clarificationDejaResolue && !aUneImage && taskContext.clarificationQuestion) {
+          if (!editPlan.continuation && !clarificationDejaResolue && !aUneImage && taskContext.clarificationQuestion) {
             setPhase('Analyse — clarification utilisateur', 12)
             const viaFx2 = fxAsk<string | null>('3d', {
               id: `clar2-${Date.now()}`,
@@ -3766,7 +3780,7 @@ export default function ModelView() {
           }
 
           const materializedViewPlan = await materializeViewPlan(resolvedViewPlan, runPaths.references, runId)
-          const directMultiView = resolvedViewPlan.shouldUseMultiview && materializedViewPlan.assignments.length >= 2 && Boolean(materializedViewPlan.primaryPath)
+          const directMultiView = !editPlan.continuation && resolvedViewPlan.shouldUseMultiview && materializedViewPlan.assignments.length >= 2 && Boolean(materializedViewPlan.primaryPath)
           // detect a real-world dimension hint in the prompt so the FIRST mesh
           // ships at the requested size — no Sauvetage click required. Applied
           // as a post-process after generation (see dimensionHintForGen usage below).
@@ -3812,7 +3826,7 @@ export default function ModelView() {
             referenceSeedForWorkflow = true
             referenceVerificationSummary = `Reference multivue directe retenue: ${materializedViewPlan.summary}.`
           } else {
-            const autoReusePath = !primaryPreparedImage?.stagedPath && effectiveHistory.length > 0 ? lastReferenceImagePathRef.current : null
+            const autoReusePath = !primaryPreparedImage?.stagedPath ? sourceRenderPath || (effectiveHistory.length > 0 ? lastReferenceImagePathRef.current : null) : null
             let referenceSeedOrigin: ReferenceSeedOrigin = primaryPreparedImage?.stagedPath ? 'user' : null
             let referenceSeed: { stagedPath: string; filename: string } | null = primaryPreparedImage?.stagedPath ? { stagedPath: primaryPreparedImage.stagedPath, filename: primaryPreparedImage.name } : null
             if (!referenceSeed && autoReusePath && comfyuiPath) {
@@ -3829,7 +3843,7 @@ export default function ModelView() {
             referenceSeedForWorkflow = Boolean(referenceSeed)
             // Apply edits to supplied and resumed references with image conditioning.
             const editTraits = classifyImageEditRequest(currentPrompt, Boolean(referenceSeed))
-            const editReferenceSeed = Boolean(referenceSeed) && (relation?.reference_edit || editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || editTraits.decorChange || editTraits.addedCharacter || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
+            const editReferenceSeed = Boolean(referenceSeed) && (editPlan.reconstructFromSource || relation?.reference_edit || editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || editTraits.decorChange || editTraits.addedCharacter || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
             const shouldRegenerateReference = editReferenceSeed || referenceSeedOrigin !== 'user'
               && (!referenceSeed || EDIT_INTENT.test(currentPrompt) || shouldRefineReferenceSeed(intent, activeMotionPreset, referenceSupportPlan, Boolean(referenceSeed), referenceSeedOrigin, currentPrompt))
             if (!shouldRegenerateReference && referenceSeed) {
@@ -4775,7 +4789,7 @@ export default function ModelView() {
           // n'etait plus celui que la porte avait juge. Le pipeline TRELLIS
           // possede son propre mouvement et ses portes: aucun post-traitement
           // UI par-dessus.
-          if (motionEnabledRef.current && intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'Atlas' && !isCharacter) {
+          if (requestedMotion && intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'Atlas' && !isCharacter && !editPlan.continuation) {
             const rigSubject: 'humanoid' | 'creature' | 'vehicle' | 'mechanism' | 'mechanical' | 'pendulum' | 'product' = isCharacter
               ? (intent.subjectKind === 'creature' ? 'creature' : 'humanoid')
               : isVehicle
@@ -4926,14 +4940,15 @@ export default function ModelView() {
 
           // ── v82nu iter8.A: AUTO motion-intent gate ────────────────────────
           let autoMotionSummary = ''
-          if (!motionEnabledRef.current) {
+          if (!requestedMotion) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
-          } else if (isCharacter) {
+          } else if (editPlan.continuation || isCharacter) {
             setPhase('Animation — plan sur le squelette réel...', 90)
             const motionOutput = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
               '--input', activeMeshPath, '--output', `${runPaths.motion}/${runId}_requested.glb`,
               '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
-              '--subject', intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind,
+              '--subject', editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
+              '--source-description', sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
             ], { resumeKey: 'model_ia' })
             const motion = parseLastJsonLine(motionOutput)
             if (!motion?.ok || !motion.path) throw new Error(String(motion?.error || 'Animation demandée non produite ; modèle initial conservé.'))
@@ -4996,6 +5011,7 @@ export default function ModelView() {
                 '--mesh', activeMeshPath,
                 '--prompt', workingPrompt,
                 '--kind', acceptanceKindForIntent(intent),
+                ...(!requestedMotion ? ['--ignore-motion'] : []),
               ],
               { resumeKey: 'model' },
             )
@@ -5039,6 +5055,10 @@ export default function ModelView() {
               run_id: runId,
               prompt: currentPrompt,
               effective_request: workingPrompt,
+              subject_kind: intent.subjectKind,
+              source_mesh: editPlan.continuation ? existingMesh : null,
+              source_reference: sourceRenderPath,
+              motion_enabled: requestedMotion,
               request_fidelity: meshFidelityResult?.passed ? 'verified_by_vision' : meshFidelityResult ? 'noncompliant_or_unverified' : 'unverified',
               reference_image: referenceImagePath,
               final_mesh: activeMeshPath,
@@ -5057,6 +5077,7 @@ export default function ModelView() {
 
           lastMeshPathRef.current = activeMeshPath
           setModelUrl(toAssetUrl(activeMeshPath))
+          setViewerWebUrl(null)
           // v71: persist le rapport qualite mesh pour le bouton 'Inspecter mesh'.
           setMeshQualityReport({
             grade: result.mesh_geometry_grade,

@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2189,
- "source_lines": 722916,
+ "source_files": 2192,
+ "source_lines": 723087,
  "static_route_declarations": 637,
  "by_repository": {
-  "AuroraIA": 2030,
+  "AuroraIA": 2033,
   "aurora-remote-cli": 155,
   "aurora-live": 4
  },
@@ -1890,8 +1890,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "1a9083e846ab08cd6f53cde66403cd4b8602a54d87a020393a17b943ac3b7966",
-   "lines": 6543,
+   "sha256": "cd2cfdc4a3b16a9aef00fecee0af421405a3997b0aa73d64724f19c95d665fb2",
+   "lines": 6544,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7086,8 +7086,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/semantic_animation.py",
-   "sha256": "b64933495f292d4c8bdbc2064d1cda21d02a0a3ed92cd441619103e70c2ba11c",
-   "lines": 310,
+   "sha256": "dd87b52febf8ab5917be53291fb98a15e22de61b6be0c2f320d217791a406657",
+   "lines": 346,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -10075,6 +10075,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/scripts/test-3d-edit-plan.mjs",
+   "sha256": "4c6f51ccfdf27cc1ee2c9d6f0a954e72a74b88b70dd660915b67dcdabc933b11",
+   "lines": 30
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/scripts/test-3d-relation.mjs",
    "sha256": "529767e42e90f3fb470286aa6436864443513a4edb11c20cb8a0e963e7c70001",
    "lines": 20
@@ -11096,8 +11102,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/blenderBridge.ts",
-   "sha256": "94776e436af044969923d7681e2ccd9244f72a890b9915404e5d779290e25a92",
-   "lines": 297
+   "sha256": "6e821217dca5efacc9de0464f72bfaf62a63cd2e339bec2c1629bb9df248e630",
+   "lines": 300
   },
   {
    "repo": "AuroraIA",
@@ -14137,8 +14143,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/utils/threeDEditPlan.ts",
+   "sha256": "c7392959371915958b8a0aa32506c078d53eb8f71aa509cdf4a7a0f4ea37585c",
+   "lines": 27
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/utils/threeDRelation.ts",
-   "sha256": "a008abadfee6d7b4a8a1281943545e4d5656a30979a347fffe9c8baf5f728f4d",
+   "sha256": "f70c649663d515a748b218e6dcf20ac8bc30033fb0daf1fdfc5a0902d6fdd498",
    "lines": 14
   },
   {
@@ -14414,8 +14426,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "56fd4f4adb9f27c9897a304900bd5cc3cb9ca29bd085e62ea2ed760819cbf559",
-   "lines": 5871
+   "sha256": "98d5ead422e683f5adfc4d2f5d02ff1848f9d845f07d67cdf12202342e079aa3",
+   "lines": 5892
   },
   {
    "repo": "AuroraIA",
@@ -18921,6 +18933,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_deferred_motion_acceptance.py",
+   "sha256": "a14b92ea1b8aa21aa7b04483d0e7a959f3a08133cdb76ce82a480a4982e87bcd",
+   "lines": 17,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_delegation_contracts.py",
    "sha256": "7d90a57163a7db3f87f6581236d1c523da60d47b621b7a123d0491240b750f28",
    "lines": 349,
@@ -19332,8 +19352,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_semantic_animation.py",
-   "sha256": "8016270875653148337259cc82c90686b224f1f40b73c1bf50facd41bbc4fe20",
-   "lines": 113,
+   "sha256": "863cc1b1ae4060abc3ee94ca6cd53a067734cf9515d45bb54067a775a77f59ea",
+   "lines": 149,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

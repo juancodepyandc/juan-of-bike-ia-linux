@@ -271,10 +271,13 @@ export async function renderMeshScreenshot({
   meshPath,
   outputPath,
   views = ['front_3q'],
+  signal, cleanupRoot,
 }: {
   meshPath: string
   outputPath: string
   views?: string[]
+  signal?: AbortSignal
+  cleanupRoot?: string
 }): Promise<MeshScreenshotResult> {
   try {
     const workspacePath = await getWorkspacePath()
@@ -282,7 +285,7 @@ export async function renderMeshScreenshot({
       '--mesh', meshPath,
       '--output', outputPath,
       '--views', views.join(','),
-    ])
+    ], { signal, cleanupRoot })
     const result = parseJsonFromOutput(output)
     if (result?.ok && Array.isArray(result.screenshots)) {
       return {

@@ -111,3 +111,39 @@ def test_provider_error_is_reported_without_fake_motion_retry(motion,monkeypatch
     payload={'response':json.dumps({'error':{'type':'llm_call_failed','message':'Operation not allowed'}})}
     monkeypatch.setattr(motion.urllib.request,'urlopen',lambda *a,**kw:io.StringIO(json.dumps(payload)))
     with pytest.raises(RuntimeError,match='Operation not allowed'):motion.model_json('fixture','system',{})
+
+
+def test_rigid_object_without_skin_has_measured_animation(motion,tmp_path):
+    doc,binary=skin(motion)
+    doc.pop('skins');doc['nodes']=[{'name':'rigid-object','mesh':0}];doc['scenes']=[{'nodes':[0]}]
+    primitive=doc['meshes'][0]['primitives'][0]
+    primitive['attributes'].pop('JOINTS_0');primitive['attributes'].pop('WEIGHTS_0')
+    p=plan();p['tracks']=[{'node':0,'path':'translation','samples':[[0,[0,0,0]],[2,[.3,0,0]]]}]
+    source=tmp_path/'rigid.glb';motion.glb_io.save(source,doc,binary)
+    result=motion.animate_existing(source,tmp_path/'rigid-motion.glb','translate existing object','fixture',subject='none',planner=lambda *a:p)
+    assert result['measurements']['temporal_displacement']==pytest.approx(.3)
+    out,blob=motion.glb_io.load(result['path'])
+    assert out['meshes']==doc['meshes'] and out['materials']==doc['materials']
+    assert bytes(blob[:len(binary)])==bytes(binary)
+
+
+def test_auto_anatomy_reads_original_description_not_posture(motion,tmp_path,monkeypatch):
+    doc,binary=skin(motion);doc.pop('skins');doc['nodes']=[{'name':'object','mesh':0}];doc['scenes']=[{'nodes':[0]}]
+    source=tmp_path/'object.glb';motion.glb_io.save(source,doc,binary);calls=[]
+    def classify(model,system,data):
+        calls.append(data)
+        return {'rig_subject':'rigid'}
+    monkeypatch.setattr(motion,'model_json',classify)
+    p=plan();p['tracks']=[{'node':0,'path':'translation','samples':[[0,[0,0,0]],[2,[.3,0,0]]]}]
+    motion.animate_existing(source,tmp_path/'object-motion.glb','new requested movement','fixture',subject='auto',planner=lambda *a:p,source_description='mechanical test object')
+    assert calls==[{'source_description':'mechanical test object','mesh_nodes':1}]
+
+
+@pytest.mark.parametrize('angles',[[0,0,1.57079632679],[3.14159265359,0,0],[.2,-.4,.3]])
+def test_imported_matrix_transform_remains_equivalent(motion,angles):
+    node={'translation':[1,2,3],'scale':[2,1,-3],'rotation':motion.delta_quat(angles).tolist()}
+    matrix=motion.transform(node)
+    original={'nodes':[{'matrix':matrix.T.ravel().tolist()}]}
+    converted=motion.canonical_trs(original)
+    assert 'matrix' in original['nodes'][0] and 'matrix' not in converted['nodes'][0]
+    assert np.allclose(motion.transform(converted['nodes'][0]),matrix,atol=1e-7)

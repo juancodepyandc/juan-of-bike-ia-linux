@@ -1699,6 +1699,7 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
     """Final deterministic gate: texture/silhouette/motion acceptance."""
     try:
         from mesh_acceptance_gate import evaluate_acceptance  # noqa: WPS433
+        _require_motion = False if os.environ.get("AURORA_MOTION_LOCALE") == "0" else None
         # STATIQUE-ONLY (26/07): le livrable statique ne danse pas — le volet
         # MOUVEMENT se juge sur le fichier ANIME voisin (*_RIGGED.glb) quand
         # il existe. Sans cela, le statique etait condamne pour "no animation
@@ -1714,8 +1715,8 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
                 _rig = next(iter(sorted(
                     Path(mesh_path).parent.glob("*_RIGGED.glb"))), None)
                 if _rig is not None and _rig.is_file():
-                    _stat = evaluate_acceptance(mesh_path, prompt, kind, None)
-                    _mot = evaluate_acceptance(_rig, prompt, kind, motion_prompt)
+                    _stat = evaluate_acceptance(mesh_path, prompt, kind, None, require_motion=_require_motion)
+                    _mot = evaluate_acceptance(_rig, prompt, kind, motion_prompt, require_motion=_require_motion)
                     _hf_mot = [h for h in (_mot.get("hard_failures") or [])
                                if any(k in h.lower() for k in
                                       ("motion", "anim", "macarena", "floss",
@@ -1727,7 +1728,7 @@ def run_final_acceptance(mesh_path: str | Path, prompt: str, kind: str,
                         verdict["hard_failures"] = (
                             list(_stat.get("hard_failures") or []) + _hf_mot)
                     return verdict
-        return evaluate_acceptance(mesh_path, prompt, kind, motion_prompt)
+        return evaluate_acceptance(mesh_path, prompt, kind, motion_prompt, require_motion=_require_motion)
     except Exception as exc:  # noqa: BLE001
         return {
             "ok": False,

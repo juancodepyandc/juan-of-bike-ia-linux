@@ -56,11 +56,35 @@ def world_matrices(nodes):
     return [world(i) for i in range(len(nodes))],parents
 
 
+def canonical_trs(doc):
+    """Convert equivalent affine node matrices before emitting glTF TRS channels."""
+    doc=copy.deepcopy(doc)
+    for node in doc.get('nodes',[]):
+        if 'matrix' not in node:continue
+        matrix=transform(node);basis=matrix[:3,:3];scale=np.linalg.norm(basis,axis=0)
+        if np.any(scale<1e-12):raise ValueError('Collapsed transform cannot be animated')
+        rotation=basis/scale
+        if np.linalg.det(rotation)<0:
+            axis=int(np.argmax(scale));scale[axis]*=-1;rotation[:,axis]*=-1
+        if not np.allclose(rotation.T@rotation,np.eye(3),atol=1e-6):raise ValueError('Sheared transform requires geometry conversion before animation')
+        trace=float(np.trace(rotation));q=np.zeros(4)
+        if trace>0:
+            k=math.sqrt(trace+1)*2;q[3]=k/4
+            q[:3]=[(rotation[2,1]-rotation[1,2])/k,(rotation[0,2]-rotation[2,0])/k,(rotation[1,0]-rotation[0,1])/k]
+        else:
+            i=int(np.argmax(np.diag(rotation)));j=(i+1)%3;k=(i+2)%3
+            factor=math.sqrt(max(0,1+rotation[i,i]-rotation[j,j]-rotation[k,k]))*2
+            q[i]=factor/4;q[j]=(rotation[j,i]+rotation[i,j])/factor;q[k]=(rotation[k,i]+rotation[i,k])/factor;q[3]=(rotation[k,j]-rotation[j,k])/factor
+        node.pop('matrix');node['translation']=matrix[:3,3].tolist();node['scale']=scale.tolist();node['rotation']=(q/np.linalg.norm(q)).tolist()
+    return doc
+
+
 def skeleton_context(doc,blob=None):
-    joints={j for s in doc.get('skins',[]) for j in s.get('joints',[])}
-    if not joints:raise ValueError('No skin joints; rigging is required before joint planning')
+    skinned=bool(doc.get('skins'))
+    joints={j for skin in doc.get('skins',[]) for j in skin.get('joints',[])} if skinned else {i for i,node in enumerate(doc.get('nodes',[])) if 'mesh' in node}
+    if not joints:raise ValueError('No geometric nodes available for transform planning')
     influence={}
-    if blob is not None:
+    if blob is not None and skinned:
         for mesh_node in doc['nodes']:
             if 'mesh' not in mesh_node or 'skin' not in mesh_node:continue
             joint_nodes=doc['skins'][mesh_node['skin']]['joints']
@@ -80,7 +104,7 @@ def skeleton_context(doc,blob=None):
     return [{'node':i,'name':doc['nodes'][i].get('name',str(i)),'parent':parents.get(i),
              'world_position':world[i][:3,3].round(6).tolist(),'local_axes_world':world[i][:3,:3].round(6).tolist(),
              'translation':doc['nodes'][i].get('translation',[0,0,0]),'rotation_xyzw':doc['nodes'][i].get('rotation',[0,0,0,1]),
-             'is_skin_joint':i in joints,'weighted_vertices':influence.get(i) if blob is not None else None} for i in sorted(allowed)]
+             'is_skin_joint':skinned and i in joints,'rigid_mesh':not skinned and 'mesh' in doc['nodes'][i],'weighted_vertices':influence.get(i) if blob is not None and skinned else None} for i in sorted(allowed)]
 
 
 SYSTEM="""Compute a pose/motion plan for the supplied ACTUAL skeleton and COMPLETE final user request. Return a JSON object with:
@@ -171,8 +195,15 @@ def posed_nodes(doc,plan,t):
 
 def skin_samples(doc,blob,nodes):
     worlds,_=world_matrices(nodes);points=[]
-    for mesh_node in doc['nodes']:
-        if 'mesh' not in mesh_node or 'skin' not in mesh_node:continue
+    for node_index,mesh_node in enumerate(doc['nodes']):
+        if 'mesh' not in mesh_node:continue
+        if 'skin' not in mesh_node:
+            if doc.get('skins'):continue
+            for primitive in doc['meshes'][mesh_node['mesh']]['primitives']:
+                vertices=glb_io.accessor(doc,blob,primitive['attributes']['POSITION'])
+                indices=np.linspace(0,len(vertices)-1,min(512,len(vertices)),dtype=int)
+                points.append((worlds[node_index]@np.c_[vertices[indices],np.ones(len(indices))].T).T[:,:3])
+            continue
         skin=doc['skins'][mesh_node['skin']];joints=skin['joints']
         inverse=glb_io.accessor(doc,blob,skin['inverseBindMatrices']).reshape(-1,4,4).transpose(0,2,1) if 'inverseBindMatrices' in skin else np.tile(np.eye(4),(len(joints),1,1))
         matrices=np.array([worlds[j]@inverse[i] for i,j in enumerate(joints)])
@@ -185,11 +216,12 @@ def skin_samples(doc,blob,nodes):
             if joint_indices.max()>=len(joints):raise ValueError('Invalid skin weight joint index')
             transformed=np.einsum('nvij,nj->nvi',matrices[joint_indices],v)
             points.append((transformed*weights[:,:,None]).sum(axis=1)[:,:3])
-    if not points:raise ValueError('No skin-weighted geometry to verify')
+    if not points:raise ValueError('No bound or rigid geometry to verify')
     return np.concatenate(points)
 
 
 def compile_plan(doc,blob,plan,mode='animation'):
+    doc=canonical_trs(doc)
     duration=validate_plan(plan,doc,blob)
     rest=skin_samples(doc,blob,doc['nodes']);times=sorted({float(s[0]) for track in plan['tracks'] for s in track['samples']}|{duration*.5})
     checked_times=list(times)
@@ -220,17 +252,20 @@ def compile_plan(doc,blob,plan,mode='animation'):
             animation['channels'].append({'sampler':sampler,'target':{'node':track['node'],'path':path}})
         out['animations']=[animation]
     out.setdefault('buffers',[{}])[0]['byteLength']=len(binary)
-    return out,binary,{'pose_displacement':pose_delta,'temporal_displacement':maximum,'sampled_vertices':len(rest),'checked_times':checked_times,'physical_validation':False}
+    return out,binary,{'pose_displacement':pose_delta,'temporal_displacement':maximum,'sampled_vertices':len(rest),'checked_times':checked_times,'geometry_kind':'skinned' if doc.get('skins') else 'rigid','physical_validation':False}
 
 
-def animate_existing(source,output,prompt,model,mode='animation',subject='humanoid',planner=None,reviewer=None):
+def animate_existing(source,output,prompt,model,mode='animation',subject='humanoid',planner=None,reviewer=None,source_description=None):
     source=Path(source).resolve();output=Path(output).resolve()
     if source==output:raise ValueError('The source model must remain unchanged')
     output.parent.mkdir(parents=True,exist_ok=True)
     original_hash=file_hash(source)
     doc,blob=glb_io.load(source);rigged_source=source
-    if not doc.get('skins'):
-        if subject not in {'humanoid','creature','quadruped'}:raise ValueError('No articulated skin in this object; an appropriate structural rig is required, original model preserved')
+    if not doc.get('skins') and subject=='auto':
+        anatomy=model_json(model,'Identify the ORIGINAL source object structure from its description, not a new pose or action. Return JSON only with rig_subject: humanoid, quadruped, or rigid. A human/elf retains humanoid anatomy in every posture. An inanimate object with an existing mesh hierarchy can receive rigid transforms; do not invent an animal skeleton. No pose presets.',{'source_description':source_description or '', 'mesh_nodes':sum('mesh' in n for n in doc.get('nodes',[]))})
+        subject=anatomy.get('rig_subject')
+        if subject not in {'humanoid','quadruped','rigid'}:raise ValueError('Source anatomy interpretation unavailable; original model preserved')
+    if not doc.get('skins') and subject in {'humanoid','creature','quadruped'}:
         command=[sys.executable,str(Path(__file__).with_name('blender_bridge.py')),'--mode','rig','--mesh',str(source),'--rig-system','rigify','--subject-kind',subject,'--style','realistic','--output-dir',str(output.parent),'--run-id',output.stem+'_rig']
         print('PROGRESS:rig:construction du squelette, sans mouvement prédéfini',flush=True)
         run=subprocess.run(command,capture_output=True,text=True,check=False)
@@ -243,6 +278,7 @@ def animate_existing(source,output,prompt,model,mode='animation',subject='humano
         result=next((r for r in reversed(records) if r.get('ok') and r.get('outputPath')),None)
         if not result:raise RuntimeError('Rigging did not produce an animatable skin: '+(run.stderr or run.stdout)[-800:])
         rigged_source=Path(result['outputPath']);doc,blob=glb_io.load(rigged_source)
+    doc=canonical_trs(doc)
     context=skeleton_context(doc,blob)
     print('PROGRESS:animation:planification sur les articulations réelles du GLB',flush=True)
     attempts=[]
@@ -268,14 +304,14 @@ def animate_existing(source,output,prompt,model,mode='animation',subject='humano
     return report
 
 
-def deliver_existing(source,run_root,run_id,prompt,model,mode,subject='humanoid',planner=None):
+def deliver_existing(source,run_root,run_id,prompt,model,mode,subject='humanoid',planner=None,source_description=None):
     """Keep the input intact and publish a separate, recoverable derived run."""
     import shutil
     root=Path(run_root).resolve();source=Path(source).resolve()
     if source.is_relative_to(root):raise ValueError('Derived run must not contain its source')
     producer_hash=file_hash(__file__)
     work=root/'work';work.mkdir(parents=True,exist_ok=True)
-    report=animate_existing(source,work/'requested.glb',prompt,model,mode,subject,planner)
+    report=animate_existing(source,work/'requested.glb',prompt,model,mode,subject,planner,source_description=source_description)
     from livraison_organisee import organiser
     if mode=='animation':
         retained=work/'source.glb';shutil.copy2(source,retained)
@@ -297,11 +333,11 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--input',required=True);parser.add_argument('--output');parser.add_argument('--run-root');parser.add_argument('--run-id')
     parser.add_argument('--prompt',required=True);parser.add_argument('--model',required=True)
-    parser.add_argument('--mode',choices=['animation','static_pose'],default='animation');parser.add_argument('--subject',default='humanoid')
+    parser.add_argument('--mode',choices=['animation','static_pose'],default='animation');parser.add_argument('--subject',default='auto');parser.add_argument('--source-description')
     args=parser.parse_args()
     try:
-        if args.run_root and args.run_id:result=deliver_existing(args.input,args.run_root,args.run_id,args.prompt,args.model,args.mode,args.subject)
-        elif args.output:result=animate_existing(args.input,args.output,args.prompt,args.model,args.mode,args.subject)
+        if args.run_root and args.run_id:result=deliver_existing(args.input,args.run_root,args.run_id,args.prompt,args.model,args.mode,args.subject,source_description=args.source_description)
+        elif args.output:result=animate_existing(args.input,args.output,args.prompt,args.model,args.mode,args.subject,source_description=args.source_description)
         else:raise ValueError('Output or dedicated run root and ID required')
     except Exception as exc:result={'ok':False,'error':str(exc),'source_preserved':True}
     print(json.dumps(result,ensure_ascii=False));return 0 if result['ok'] else 1
