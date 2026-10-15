@@ -115,6 +115,55 @@ export function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string;
     { path: 'style.css', role: 'feuille de style', language: 'css' },
     { path: 'script.js', role: 'interactivite', language: 'javascript' },
   ]
+  if (pt === 'multi_system') {
+    return [
+      { path: 'architecture/contracts.json', role: 'contrat inter-systemes FFI/IPC', language: 'json' },
+      { path: 'core_native/kernel.c', role: 'noyau natif haute performance', language: 'c' },
+      { path: 'core_native/fast_ops.asm', role: 'routines assembleur x86_64', language: 'assembly' },
+      { path: 'orchestrator/main.py', role: 'orchestrateur et verificateur polyglotte', language: 'python' },
+      { path: 'tests/test_multi_system.py', role: 'tests de bout en bout multi-systeme', language: 'python' },
+      { path: 'README.md', role: 'architecture et protocole de build', language: 'markdown' },
+    ]
+  }
+  if (pt === 'system_asm' || langs.includes('assembly')) {
+    return [
+      { path: 'src/main.asm', role: 'programme assembleur x86_64 principal', language: 'assembly' },
+      { path: 'src/abi_contracts.inc', role: 'constantes registres et conventions ABI', language: 'assembly' },
+      { path: 'harness/verify_asm.py', role: 'harnais de verification ABI et registres', language: 'python' },
+      { path: 'Makefile', role: 'regles d assemblage NASM/GAS et edition de liens', language: 'makefile' },
+      { path: 'README.md', role: 'documentation ABI et architecture', language: 'markdown' },
+    ]
+  }
+  if (pt === 'cli_swift' || langs.includes('swift')) {
+    return [
+      { path: 'Package.swift', role: 'manifeste Swift Package Manager', language: 'swift' },
+      { path: 'Sources/App/main.swift', role: 'point d entree Swift et acteurs', language: 'swift' },
+      { path: 'Sources/App/Domain.swift', role: 'domaine type et logique metier Swift', language: 'swift' },
+      { path: 'Tests/AppTests/AppTests.swift', role: 'tests unitaires Swift', language: 'swift' },
+      { path: 'README.md', role: 'documentation du package Swift', language: 'markdown' },
+    ]
+  }
+  if (pt === 'cli_rust' || langs.includes('rust')) {
+    return [
+      { path: 'Cargo.toml', role: 'manifeste Cargo', language: 'toml' },
+      { path: 'src/main.rs', role: 'point d entree Rust', language: 'rust' },
+      { path: 'src/lib.rs', role: 'bibliotheque et tests unitaires Rust', language: 'rust' },
+    ]
+  }
+  if (pt === 'cli_cpp' || langs.includes('cpp') || langs.includes('c')) {
+    return [
+      { path: 'src/main.cpp', role: 'point d entree C++', language: 'cpp' },
+      { path: 'include/engine.hpp', role: 'en-tete et contrats', language: 'cpp' },
+      { path: 'Makefile', role: 'regles de compilation', language: 'makefile' },
+    ]
+  }
+  if (pt === 'cli_go' || langs.includes('go')) {
+    return [
+      { path: 'go.mod', role: 'module Go', language: 'go' },
+      { path: 'main.go', role: 'point d entree Go', language: 'go' },
+      { path: 'main_test.go', role: 'tests Go', language: 'go' },
+    ]
+  }
   if (pt.startsWith('spa_') || pt.startsWith('ssr_') || pt.startsWith('fullstack_')) {
     return [
       { path: 'index.html', role: 'html entry', language: 'html' },
@@ -124,7 +173,10 @@ export function defaultFilesForIntent(intent: CodeIntent): Array<{ path: string;
     ]
   }
   if (langs.includes('python') || pt.startsWith('api_') || pt.startsWith('cli')) {
-    return [{ path: 'main.py', role: 'point d entree', language: 'python' }]
+    return [
+      { path: 'main.py', role: 'point d entree', language: 'python' },
+      { path: 'test_main.py', role: 'tests unitaires', language: 'python' },
+    ]
   }
   // Repli generique universel: une page web statique (cas le plus courant +
   // toujours affichable dans le viewer). Couvre static_web, game_web, unknown...

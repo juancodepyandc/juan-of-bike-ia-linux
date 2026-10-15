@@ -35,13 +35,13 @@ const VALID_PROJECT_TYPES = new Set<CodeProjectType>([
   'ssr_nextjs', 'ssr_nuxt', 'ssr_remix',
   'api_express', 'api_fastapi', 'api_django', 'api_flask', 'api_spring', 'api_gin', 'api_actix', 'api_dotnet',
   'fullstack_mern', 'fullstack_nextjs', 'fullstack_django', 'fullstack_rails',
-  'cli_node', 'cli_python', 'cli_rust', 'cli_go', 'cli_cpp',
+  'cli_node', 'cli_python', 'cli_rust', 'cli_go', 'cli_cpp', 'cli_swift',
   'desktop_electron', 'desktop_tauri', 'desktop_app',
   'mobile_rn', 'mobile_flutter', 'mobile_ios', 'mobile_android',
   'library_npm', 'library_pypi', 'library_crate',
   'game_web', 'game_unity', 'engine_3d', 'ide',
   'embedded_esp32', 'embedded_arduino', 'compiler', 'os_kernel', 'distributed_system',
-  'system_c', 'system_cpp', 'system_rust', 'data_python', 'devops_docker', 'script', 'unknown',
+  'system_c', 'system_cpp', 'system_rust', 'system_asm', 'multi_system', 'data_python', 'devops_docker', 'script', 'unknown',
 ])
 
 function extractContent(response: unknown) {

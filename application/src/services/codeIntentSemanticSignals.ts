@@ -80,6 +80,31 @@ export const SEMANTIC_PROJECT_SIGNALS: CodeSemanticProjectSignal[] = [
     frameworks: ['react', 'codemirror'],
     features: ['editor', 'workspace', 'preview'],
   },
+  {
+    projectType: 'system_asm',
+    keywords: ['assembleur x86', 'assembleur arm64', 'nasm', 'gnu assembler', 'syscall linux', 'routine assembleur', 'programme assembleur', 'simd avx'],
+    languages: ['assembly', 'c'],
+    frameworks: ['gcc', 'nasm'],
+    features: ['low-level', 'abi-system-v', 'self-test'],
+  },
+  {
+    projectType: 'cli_swift',
+    keywords: ['package.swift', 'swift package', 'programme swift', 'outil swift', 'acteur swift', 'concurrence swift', 'swift cli'],
+    languages: ['swift'],
+    frameworks: ['swiftpm'],
+    features: ['swift-concurrency', 'strict-typing', 'self-test'],
+  },
+  {
+    projectType: 'multi_system',
+    keywords: [
+      'multi-systeme', 'multi systeme', 'multi-system', 'multi system',
+      'architecture multi', 'polyglotte', 'polyglot', 'hybride',
+      'pont ffi', 'ctypes', 'inter-processus', 'ipc',
+    ],
+    languages: ['python', 'c'],
+    frameworks: [],
+    features: ['multi-system', 'ipc-ffi', 'integration-tests'],
+  },
 ]
 
 export function matchSemanticProjectSignal(normalizedPrompt: string): CodeSemanticProjectSignal | null {

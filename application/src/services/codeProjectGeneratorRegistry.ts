@@ -79,6 +79,39 @@ const GENERATORS: Partial<Record<CodeProjectType, ProjectGenerator>> = {
     qualityBar: ['editeur utilisable', 'arborescence fichiers', 'preview/logs si demande'],
     instructions: ['Utilise CodeMirror si possible', 'Raccourcis clavier de base', 'Etat workspace persistant'],
   },
+  system_asm: {
+    projectType: 'system_asm',
+    label: 'Programme Systeme Assembleur (x86_64 / ARM64)',
+    requiredFiles: ['main.s', 'README.md'],
+    qualityBar: ['respect ABI System V AMD64', 'alignement pile 16 octets avant call', 'code de sortie 0 verifie'],
+    instructions: [
+      'Utilise la syntaxe GAS (.intel_syntax noprefix ou AT&T propre) ou NASM (.asm) compilable via gcc -no-pie',
+      'Ajoute .section .note.GNU-stack,"",@progbits en fin de fichier .s',
+      'Affiche un resultat deterministe sur stdout et retourne 0 depuis main',
+    ],
+  },
+  cli_swift: {
+    projectType: 'cli_swift',
+    label: 'Systeme / CLI Swift Moderne',
+    requiredFiles: ['Package.swift', 'Sources/main.swift', 'README.md'],
+    qualityBar: ['compile avec swift build / swiftc', 'typage fort sans force-unwrap dangereux', 'auto-test integre'],
+    instructions: [
+      'Structure avec Package.swift (swift-tools-version: 5.9) et Sources/main.swift',
+      'Privilégie struct, enum, protocol et actor si concurrence',
+      'Inclus une verification deterministe des resultats en sortie',
+    ],
+  },
+  multi_system: {
+    projectType: 'multi_system',
+    label: 'Architecture Multi-Systemes Polyglotte',
+    requiredFiles: ['verify_system.py', 'README.md'],
+    qualityBar: ['chaque sous-systeme compile/s execute', 'contrat IPC/FFI explicite', 'verification bout-en-bout'],
+    instructions: [
+      'Separe clairement les couches (ex: moteur natif ASM/C/Rust/Swift + orchestrateur Python/TS/Go)',
+      'Fournis un script d integration verify_system.py qui compile/teste chaque brique et verifie le flux inter-systemes',
+      'Resous tous les chemins relativement au dossier du projet',
+    ],
+  },
 }
 
 export function getProjectGeneratorForType(projectType: CodeProjectType) {

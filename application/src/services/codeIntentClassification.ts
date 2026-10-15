@@ -205,15 +205,39 @@ export function classifyCodeIntent(prompt: string, context?: CodeIntentContext):
     }
   }
 
-  // Step 5: detect language signals if no framework found
-  if (projectType === 'unknown') {
-    for (const [keyword, signal] of Object.entries(LANGUAGE_SIGNALS)) {
-      if (containsSignal(lower, keyword)) {
-        projectType = signal.projectType
-        languages.push(...signal.languages)
-        break
+  // Step 5: detect language signals and polyglot / multi-system combinations
+  const detectedLangSignals: Array<{ projectType: CodeProjectType; languages: string[] }> = []
+  for (const [keyword, signal] of Object.entries(LANGUAGE_SIGNALS)) {
+    if (containsSignal(lower, keyword)) {
+      detectedLangSignals.push(signal)
+      for (const lang of signal.languages) {
+        if (!languages.includes(lang)) languages.push(lang)
       }
     }
+  }
+  if (projectType === 'unknown' && detectedLangSignals.length > 0) {
+    projectType = detectedLangSignals[0].projectType
+  }
+
+  const explicitMultiSystem =
+    /\b(multi[-\s]?syst[eè]mes?|multi[-\s]?langages?|polyglottes?|polyglot|architecture\s+hybride|pont\s+ffi|inter[-\s]?processus|ipc\b|ctypes\b|cffi\b)\b/i.test(lower)
+  const distinctCoreLangs = [...new Set(languages)].filter(
+    (l) => !['html', 'css', 'yaml', 'json', 'sql', 'bash', 'powershell'].includes(l),
+  )
+  const hasLowLevelAndHighLevel =
+    distinctCoreLangs.some((l) => ['assembly', 'c', 'cpp', 'rust', 'zig', 'swift'].includes(l))
+    && distinctCoreLangs.some((l) => ['python', 'typescript', 'javascript', 'go', 'swift'].includes(l))
+    && distinctCoreLangs.length >= 2
+
+  if (
+    !userExplicitlyAskedWeb
+    && projectType !== 'os_kernel'
+    && projectType !== 'compiler'
+    && projectType !== 'desktop_tauri'
+    && (explicitMultiSystem || (hasLowLevelAndHighLevel && distinctCoreLangs.length >= 2))
+  ) {
+    projectType = 'multi_system'
+    if (!features.includes('multi-system')) features.push('multi-system')
   }
 
   // v89b: a NEGATED backend mention ("sans backend", "no backend", "pas de

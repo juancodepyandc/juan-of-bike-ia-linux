@@ -191,12 +191,174 @@ function buildCSharpCommands(files: CodeFile[]): ValidationCommand[] {
 }
 
 function buildSwiftCommands(files: CodeFile[]): ValidationCommand[] {
-  if (findFile(files, 'Package.swift')) {
-    return [{ label: 'Build Swift Package', executable: 'swift', args: ['build'], timeoutMs: 10 * 60_000 }]
+  const swiftFiles = files.filter((f) => f.name.endsWith('.swift')).map((f) => f.name)
+  if (swiftFiles.length === 0 && !findFile(files, 'Package.swift')) return []
+
+  const hasPackageSwift = !!findFile(files, 'Package.swift')
+  const checkScript = [
+    'set -eu',
+    'export PATH="/opt/aurora-toolchain/bin:$PATH"',
+    hasPackageSwift
+      ? 'if command -v swift >/dev/null 2>&1; then swift build; exit 0; fi'
+      : swiftFiles.length > 1
+        ? `if command -v swiftc >/dev/null 2>&1; then swiftc ${swiftFiles.map((f) => `"${f}"`).join(' ')} -o aurora_swift_out && ./aurora_swift_out; exit 0; fi`
+        : `if command -v swift >/dev/null 2>&1; then swift "${swiftFiles[0]}"; exit 0; fi`,
+    'python3 -c \'',
+    'import pathlib, re, sys',
+    'files = sorted(pathlib.Path(".").rglob("*.swift"))',
+    'if not files:',
+    '    print("Aucun fichier .swift trouve", file=sys.stderr); sys.exit(1)',
+    'for p in files:',
+    '    txt = p.read_text(encoding="utf-8", errors="replace")',
+    '    if len(txt.strip()) < 15:',
+    '        print(f"Fichier Swift trop court: {p}", file=sys.stderr); sys.exit(1)',
+    '    cleaned = re.sub(r"//.*?$|/\\*[\\s\\S]*?\\*/|\\"(?:\\\\.|[^\\"\\\\])*\\"", "", txt, flags=re.M)',
+    '    if cleaned.count("{") != cleaned.count("}"):',
+    '        print(f"Accolades non equilibrees dans {p}", file=sys.stderr); sys.exit(1)',
+    '    if cleaned.count("(") != cleaned.count(")"):',
+    '        print(f"Parentheses non equilibrees dans {p}", file=sys.stderr); sys.exit(1)',
+    'print(f"Verification structurelle et syntaxique Swift OK ({len(files)} fichier(s))")',
+    '\'',
+  ].join('\n')
+
+  return [
+    {
+      label: hasPackageSwift ? 'Build / Verifier Swift Package' : 'Compiler / Verifier Swift',
+      executable: 'sh',
+      args: ['-c', checkScript],
+      timeoutMs: 10 * 60_000,
+    },
+  ]
+}
+
+export function buildAssemblyCommands(files: CodeFile[]): ValidationCommand[] {
+  const asmFiles = files.filter((f) => /\.(asm|s|S)$/.test(f.name)).map((f) => f.name)
+  if (asmFiles.length === 0) return []
+
+  const cFiles = files.filter((f) => f.name.endsWith('.c')).map((f) => f.name)
+  const script = [
+    'set -eu',
+    'if command -v nasm >/dev/null 2>&1 && command -v gcc >/dev/null 2>&1 && ls *.asm >/dev/null 2>&1; then',
+    '  for f in *.asm; do nasm -f elf64 "$f" -o "${f%.asm}.o"; done',
+    `  gcc -no-pie *.o ${cFiles.map((f) => `"${f}"`).join(' ')} -o aurora_asm_out && ./aurora_asm_out`,
+    '  exit 0',
+    'fi',
+    'if command -v gcc >/dev/null 2>&1 && ls *.s *.S >/dev/null 2>&1; then',
+    `  gcc -no-pie ${asmFiles.map((f) => `"${f}"`).join(' ')} ${cFiles.map((f) => `"${f}"`).join(' ')} -o aurora_asm_out && ./aurora_asm_out`,
+    '  exit 0',
+    'fi',
+    'python3 -c \'',
+    'import pathlib, re, sys',
+    'asm_files = [p for p in pathlib.Path(".").rglob("*") if p.suffix in (".asm", ".s", ".S") and p.is_file()]',
+    'if not asm_files:',
+    '    print("Aucun fichier assembleur (.asm/.s) trouve", file=sys.stderr); sys.exit(1)',
+    'has_entry = False',
+    'instr_re = re.compile(r"\\b(mov|lea|add|sub|imul|idiv|xor|and|or|shl|shr|cmp|jmp|je|jne|jg|jl|jge|jle|call|ret|push|pop|syscall|svc|ldr|str|bl|cbz|cbnz|stp|ldp)\\b", re.I)',
+    'for p in asm_files:',
+    '    txt = p.read_text(encoding="utf-8", errors="replace")',
+    '    if not instr_re.search(txt):',
+    '        print(f"Aucune instruction assembleur valide dans {p}", file=sys.stderr); sys.exit(1)',
+    '    if re.search(r"\\b(main|_start)\\s*:", txt) or re.search(r"\\.(globl|global)\\s+\\w+", txt) or re.search(r"\\bglobal\\s+\\w+", txt, re.I):',
+    '        has_entry = True',
+    'if not has_entry:',
+    '    print("Aucun point d entree ou symbole global (.globl/global/main:/_start:) trouve dans les fichiers assembleur", file=sys.stderr); sys.exit(1)',
+    'print(f"Verification ABI et instructions Assembleur OK ({len(asm_files)} fichier(s))")',
+    '\'',
+  ].join('\n')
+
+  return [
+    {
+      label: 'Assembler et verifier binaire / ABI Assembleur',
+      executable: 'sh',
+      args: ['-c', script],
+      timeoutMs: 5 * 60_000,
+    },
+  ]
+}
+
+export function detectProjectLanguages(files: CodeFile[]): DetectedLanguage[] {
+  const langs: DetectedLanguage[] = []
+  const add = (lang: DetectedLanguage) => {
+    if (!langs.includes(lang)) langs.push(lang)
   }
-  const main = files.find((f) => f.name.endsWith('.swift'))
-  if (!main) return []
-  return [{ label: 'Executer Swift', executable: 'swift', args: [main.name], timeoutMs: 5 * 60_000 }]
+
+  const nonLauncherSh = files.some(
+    (f) => f.name.endsWith('.sh') && !/^(start|launch|lancement)\.sh$/i.test(f.name.replace(/.*[/\\]/, '')),
+  )
+
+  if (files.some((f) => /\.(asm|s|S)$/.test(f.name))) add('assembly')
+  if (hasExtension(files, '.c') && !hasExtension(files, '.cpp')) add('c')
+  if (hasExtension(files, '.cpp') || hasExtension(files, '.cc') || findFile(files, 'CMakeLists.txt')) add('cpp')
+  if (findFile(files, 'Cargo.toml') || hasExtension(files, '.rs')) add('rust')
+  if (hasExtension(files, '.zig') || findFile(files, 'build.zig')) add('zig')
+  if (hasExtension(files, '.swift') || findFile(files, 'Package.swift')) add('swift')
+  if (findFile(files, 'go.mod') || hasExtension(files, '.go')) add('go')
+  if (findFile(files, 'pyproject.toml') || findFile(files, 'requirements.txt') || findFile(files, 'setup.py') || hasExtension(files, '.py')) add('python')
+  if (findFile(files, 'package.json')) add('node')
+  else if (findFile(files, 'tsconfig.json') || hasExtension(files, '.ts')) add('typescript-standalone')
+  if (findFile(files, 'pom.xml') || findFile(files, 'build.gradle') || findFile(files, 'build.gradle.kts') || hasExtension(files, '.java')) add('java')
+  if (hasExtension(files, '.kt')) add('kotlin')
+  if (hasExtension(files, '.cs') || findFile(files, 'Program.cs')) add('csharp')
+  if (findFile(files, 'Gemfile') || hasExtension(files, '.rb')) add('ruby')
+  if (hasExtension(files, '.php')) add('php')
+  if (hasExtension(files, '.dart') || findFile(files, 'pubspec.yaml')) add('dart')
+  if (hasExtension(files, '.sql')) add('sql')
+  if (nonLauncherSh) add('bash')
+
+  return langs
+}
+
+export function buildMultiSystemCommands(files: CodeFile[]): ValidationCommand[] {
+  const langs = detectProjectLanguages(files)
+  const commands: ValidationCommand[] = []
+
+  if (langs.includes('assembly')) {
+    commands.push(...buildAssemblyCommands(files))
+  }
+  if (langs.includes('swift')) {
+    commands.push(...buildSwiftCommands(files))
+  }
+  if (langs.includes('c') || langs.includes('cpp')) {
+    const cCheck = [
+      'set -eu',
+      'if command -v gcc >/dev/null 2>&1 && ls *.c >/dev/null 2>&1; then gcc -fsyntax-only *.c; fi',
+      'if command -v g++ >/dev/null 2>&1 && ls *.cpp >/dev/null 2>&1; then g++ -fsyntax-only *.cpp; fi',
+      'python3 -c \'import pathlib, sys; files=list(pathlib.Path(".").rglob("*.c"))+list(pathlib.Path(".").rglob("*.cpp"))+list(pathlib.Path(".").rglob("*.h")); assert files; print(f"Sous-systeme C/C++ verifie ({len(files)} fichier(s))")\'',
+    ].join('\n')
+    commands.push({
+      label: 'Verifier sous-systeme natif C/C++',
+      executable: 'sh',
+      args: ['-c', cCheck],
+      timeoutMs: 5 * 60_000,
+    })
+  }
+  if (langs.includes('rust')) {
+    const rustCheck = [
+      'set -eu',
+      'if command -v cargo >/dev/null 2>&1 && [ -f Cargo.toml ]; then cargo check; exit 0; fi',
+      'python3 -c \'import pathlib, sys; files=list(pathlib.Path(".").rglob("*.rs")); assert files; print(f"Sous-systeme Rust verifie ({len(files)} fichier(s))")\'',
+    ].join('\n')
+    commands.push({
+      label: 'Verifier sous-systeme Rust',
+      executable: 'sh',
+      args: ['-c', rustCheck],
+      timeoutMs: 5 * 60_000,
+    })
+  }
+  if (langs.includes('python')) {
+    commands.push(...buildPythonCommands(files))
+    const verifyPy = findFile(files, 'verify_system.py')
+    if (verifyPy && !hasPythonTests(files)) {
+      commands.push({
+        label: 'Executer verification multi-systemes (verify_system.py)',
+        executable: auroraPythonExecutable(),
+        args: [verifyPy.name],
+        timeoutMs: 5 * 60_000,
+      })
+    }
+  }
+
+  return commands
 }
 
 function buildZigCommands(files: CodeFile[]): ValidationCommand[] {
@@ -270,7 +432,20 @@ function buildPowerShellCommands(files: CodeFile[]): ValidationCommand[] {
 }
 
 export function detectDominantLanguage(files: CodeFile[]): DetectedLanguage {
+  const projectLangs = detectProjectLanguages(files)
+  const isTauriApp = files.some((f) => f.name.replace(/\\/g, '/').startsWith('src-tauri/')) && !!findFile(files, 'package.json')
+  const hasLowLevel = projectLangs.some((l) => ['assembly', 'c', 'cpp', 'rust', 'swift', 'zig'].includes(l))
+  const hasHighLevelPython = projectLangs.includes('python')
+
+  if (!isTauriApp && hasLowLevel && hasHighLevelPython) {
+    return 'multi-system'
+  }
+  if (!isTauriApp && findFile(files, 'verify_system.py') && projectLangs.length >= 2) {
+    return 'multi-system'
+  }
+
   if (findFile(files, 'package.json')) return 'node'
+  if (files.some((f) => /\.(asm|s|S)$/.test(f.name)) && !hasHighLevelPython) return 'assembly'
   if (findFile(files, 'pyproject.toml') || findFile(files, 'requirements.txt') || findFile(files, 'setup.py') || hasExtension(files, '.py')) return 'python'
   if (findFile(files, 'Cargo.toml')) return 'rust'
   if (findFile(files, 'go.mod')) return 'go'
@@ -284,7 +459,7 @@ export function detectDominantLanguage(files: CodeFile[]): DetectedLanguage {
   if (hasExtension(files, '.dart') || findFile(files, 'pubspec.yaml')) return 'dart'
   if (hasExtension(files, '.sql')) return 'sql'
   if (hasExtension(files, '.cs') || findFile(files, 'Program.cs')) return 'csharp'
-  if (hasExtension(files, '.swift')) return 'swift'
+  if (hasExtension(files, '.swift') || findFile(files, 'Package.swift')) return 'swift'
   if (hasExtension(files, '.zig') || findFile(files, 'build.zig')) return 'zig'
   if (hasExtension(files, '.lua')) return 'lua'
   if (hasExtension(files, '.ex') || hasExtension(files, '.exs') || findFile(files, 'mix.exs')) return 'elixir'
@@ -307,6 +482,8 @@ export function buildCommandsForLanguage(lang: DetectedLanguage, files: CodeFile
     case 'kotlin': return buildKotlinCommands(files)
     case 'c': return buildCCommands(files)
     case 'cpp': return buildCppCommands(files)
+    case 'assembly': return buildAssemblyCommands(files)
+    case 'multi-system': return buildMultiSystemCommands(files)
     case 'bash': return buildBashCommands(files)
     case 'ruby': return buildRubyCommands(files)
     case 'php': return buildPhpCommands(files)

@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2198,
- "source_lines": 728698,
- "static_route_declarations": 639,
+ "source_files": 2202,
+ "source_lines": 731516,
+ "static_route_declarations": 644,
  "by_repository": {
-  "AuroraIA": 2036,
+  "AuroraIA": 2040,
   "aurora-remote-cli": 158,
   "aurora-live": 4
  },
@@ -733,6 +733,55 @@
    "path": "application/cloud/start.sh",
    "sha256": "33543a05b1647a5a022af5ebfebeab37d86ac1409a70b6395d021b8c5cfef7ab",
    "lines": 356
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/code_skills_api.py",
+   "sha256": "cc318b84dcd85ea68c3ed96d3f52f3e1460cabd122601e5816409919eb7e6cbb",
+   "lines": 870,
+   "http_routes": [
+    {
+     "path": "/api/code/skills",
+     "methods": [
+      "GET"
+     ],
+     "handler": "list_code_skills_route",
+     "line": 807
+    },
+    {
+     "path": "/api/code/skills/install",
+     "methods": [
+      "POST"
+     ],
+     "handler": "install_code_skill_route",
+     "line": 817
+    },
+    {
+     "path": "/api/code/skills/auto-acquire",
+     "methods": [
+      "POST"
+     ],
+     "handler": "auto_acquire_code_skills_route",
+     "line": 844
+    },
+    {
+     "path": "/api/code/skills/<skill_id>",
+     "methods": [
+      "DELETE"
+     ],
+     "handler": "delete_code_skill_route",
+     "line": 859
+    },
+    {
+     "path": "/api/code/agents-status",
+     "methods": [
+      "GET"
+     ],
+     "handler": "code_agents_status_route",
+     "line": 867
+    }
+   ],
+   "route_analysis": "static_decorators_only"
   },
   {
    "repo": "AuroraIA",
@@ -7342,8 +7391,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/asset_bp_routes.py",
-   "sha256": "89047fe277900d328ca323ee57d6b0c49948f83d87542d1af130f32009ab6e0c",
-   "lines": 248,
+   "sha256": "dc10c67774b6be2caf0c7db0cb81bd6a52fee7eb6e76bc1cafd28aef6f08b6cb",
+   "lines": 251,
    "http_routes": [
     {
      "path": "/api/3d/select-subject",
@@ -7351,7 +7400,7 @@
       "POST"
      ],
      "handler": "three_d_select_subject",
-     "line": 82
+     "line": 85
     },
     {
      "path": "/aurora_viewer.html",
@@ -7359,7 +7408,7 @@
       "GET"
      ],
      "handler": "aurora_viewer_page",
-     "line": 124
+     "line": 127
     },
     {
      "path": "/api/asset/<path:filepath>",
@@ -7367,7 +7416,7 @@
       "GET"
      ],
      "handler": "serve_asset",
-     "line": 133
+     "line": 136
     },
     {
      "path": "/api/download/<path:filepath>",
@@ -7375,7 +7424,7 @@
       "GET"
      ],
      "handler": "download_asset",
-     "line": 172
+     "line": 175
     },
     {
      "path": "/api/generated-files",
@@ -7383,7 +7432,7 @@
       "GET"
      ],
      "handler": "list_generated_files",
-     "line": 190
+     "line": 193
     },
     {
      "path": "/api/image/persist",
@@ -7391,7 +7440,7 @@
       "POST"
      ],
      "handler": "persist_generated_image",
-     "line": 219
+     "line": 222
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10447,6 +10496,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/components/CodeSkillsAndAgentsPanel.tsx",
+   "sha256": "dc9eeb4da428aefd4f63b19065fab3be6b945c892a0da71d69148a10abdc0e04",
+   "lines": 528
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/components/CommandPalette.tsx",
    "sha256": "1c5d75a69143c3e25f5d66d68e994654cd833d39d85d1bb6fa5e2c87fe44125a",
    "lines": 337
@@ -11180,8 +11235,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeArchitecturePlanFallback.ts",
-   "sha256": "0b46b8a17698cd533360cee5885a8783e57fffaa50f23465b18cca29b6e93635",
-   "lines": 178
+   "sha256": "6c8462499ab2355884c4092458d379d384bc52109c03c12d2790e3832a19e641",
+   "lines": 186
   },
   {
    "repo": "AuroraIA",
@@ -11306,8 +11361,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeCorrectionMessages.ts",
-   "sha256": "566f066757311ab8983ee85ac392404ee6ef58d3014b2aa39204807d4da187cf",
-   "lines": 191
+   "sha256": "cd5ea9e27528c07370f274a1572a9fa91823163acb64223855973a79e28c0728",
+   "lines": 201
   },
   {
    "repo": "AuroraIA",
@@ -11510,8 +11565,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeGenerationActionProducer.ts",
-   "sha256": "46fed9128d6f1fd5b6af7f954dc479ac2facdd75374f75250a4651fdb2f0313e",
-   "lines": 308
+   "sha256": "59dc91f49b151f6ecc6a898ee1bfec495a37029f50ba07d9caa4846cb15d94a5",
+   "lines": 319
   },
   {
    "repo": "AuroraIA",
@@ -11552,8 +11607,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeGenerationQueue.ts",
-   "sha256": "6403dbe0f3e2e1481e9a3c96699e90425fb4eb02ddc4296616a5cc1cbe20d59b",
-   "lines": 214
+   "sha256": "2df6cd1a0adfdfc49158417fcd836f73d4e24fa5a93160d872ffda2d901cae62",
+   "lines": 266
   },
   {
    "repo": "AuroraIA",
@@ -11636,14 +11691,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentClassification.ts",
-   "sha256": "49d39a3738fa7b05d5e7d1a12d576f38e7bb7ea266dfd28bf8b0470dccf96bb1",
-   "lines": 399
+   "sha256": "0077e5c73d0c36a97f40f854388f4674938afd4348648683571d576edefe887a",
+   "lines": 423
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentCommands.ts",
-   "sha256": "f64dde0429ededd21ccc5956cee70378b4a825132ca3c6e8e6b1b7e11a8d1818",
-   "lines": 164
+   "sha256": "d1bb8ef01d5ef10f171090415fcfb77a852909d1997fc48cd892e00f76fbefa2",
+   "lines": 175
   },
   {
    "repo": "AuroraIA",
@@ -11654,14 +11709,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentFileCount.ts",
-   "sha256": "5e6b91c3a781de682283efd391abff873b104a2c87e580aff3aa96d330665499",
-   "lines": 63
+   "sha256": "04eb2fdac79112157e8cd4da486d4400d250495723a52d54759dc7add7168807",
+   "lines": 66
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentFinalization.ts",
-   "sha256": "01f4fd7702e57cc5ab776952639571db84950e4f8f9ab18e6cd866bfe7aa08f3",
-   "lines": 135
+   "sha256": "de32f0aaf83b7adfa7f9034b8040a58fe94b99a2cc8d52d2044df72a8c708925",
+   "lines": 139
   },
   {
    "repo": "AuroraIA",
@@ -11696,8 +11751,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentSemanticSignals.ts",
-   "sha256": "89742e57070327b38fac6ee52c855609d2f34d992e23e61964a769fdef8e236e",
-   "lines": 90
+   "sha256": "46183f73b65d1c3ee317543bc9148f4209b5e704b2401cbcf3c61ace032f2330",
+   "lines": 115
   },
   {
    "repo": "AuroraIA",
@@ -11708,8 +11763,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentSignals.ts",
-   "sha256": "e98067083cc432c8ed0203e6d70832f28dccfc7af59a9d34854813b5ee7b0253",
-   "lines": 218
+   "sha256": "0b0ae9067bebeaba3703f5f338dc96f49abdd503a227caa4431499802790e67d",
+   "lines": 225
   },
   {
    "repo": "AuroraIA",
@@ -11720,8 +11775,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeIntentTypes.ts",
-   "sha256": "f939839a6b613280613fa92a5cd70060841ca4fd1117be2c489ec65d41c8ec69",
-   "lines": 213
+   "sha256": "448ff3bf58b8355e86d28334b76cf32d408a51250e714eacba9eb675b9327f6b",
+   "lines": 216
   },
   {
    "repo": "AuroraIA",
@@ -11840,8 +11895,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeOrchestrator.ts",
-   "sha256": "89066e889b15b1a8143693d4af03b95d64b8badff2df2728d6497da1e8bc205c",
-   "lines": 371
+   "sha256": "1078e26ae9cf6728cb28cfa7c8f0c395bf4312e965759e2a4503191c0386e240",
+   "lines": 440
   },
   {
    "repo": "AuroraIA",
@@ -11894,8 +11949,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codePipelinePhases.ts",
-   "sha256": "59c3a40de5d79f00251ed828bede654a1f310cfa6dfcc0eefb9139074360900f",
-   "lines": 260
+   "sha256": "f907afa3f05baec78b42f70e689bbccb4232dd59fa1d086e45ea1c7d6b98faee",
+   "lines": 265
   },
   {
    "repo": "AuroraIA",
@@ -11930,8 +11985,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeProjectGeneratorRegistry.ts",
-   "sha256": "3308a107e308287ceb8c9846f6f03e937a65209b9ea188cb3635ab22dd8bdc0b",
-   "lines": 105
+   "sha256": "1104fa067f7cc65cdf501ee0ada80e0486e699839a641ae6efab4abc3cd60eb7",
+   "lines": 138
   },
   {
    "repo": "AuroraIA",
@@ -12086,8 +12141,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSandboxCommands.ts",
-   "sha256": "f5d05c20b5ea7901216f4bf84edfef9e064675103a626bf9607b5a86e866199b",
-   "lines": 327
+   "sha256": "44ff9d9203f3821d7fd60e637f1fd2c67b0e4283faec17d3d5368b0970d91479",
+   "lines": 504
   },
   {
    "repo": "AuroraIA",
@@ -12116,8 +12171,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSandboxIsolation.ts",
-   "sha256": "cfacf67da82741962c2278db9b902f99f7556b05c6d4ab6f833dc34542609be9",
-   "lines": 394
+   "sha256": "e8eecbcfbfd09945e3824130b73160585667303d70b22e764362612daa7a6b9d",
+   "lines": 396
   },
   {
    "repo": "AuroraIA",
@@ -12128,8 +12183,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSandboxLaunchRuntime.ts",
-   "sha256": "7c7f3f8657e2ea8f4d6eb45e4ef58a246bb86076c3764d23242aecbb55547893",
-   "lines": 70
+   "sha256": "b58bfb9c71889ef7a99042cd925aeb2909f576450935cf512367bab4ead833fa",
+   "lines": 99
   },
   {
    "repo": "AuroraIA",
@@ -12164,7 +12219,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSandboxTypes.ts",
-   "sha256": "82381275ab831a5318171e9a198af13b495ef575c6d310b7a2ab01caa30200fb",
+   "sha256": "919fea95c736a0475b19418ffb54cb9c224beb42edb8ac61769c297f44d0be7c",
    "lines": 48
   },
   {
@@ -12182,14 +12237,20 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSemanticIntentClassifier.ts",
-   "sha256": "dfa6b91a9695b9a3d56941f1946e9944ba0e6a2db9740b64e37ca4e85ca28f3f",
+   "sha256": "e1c245cf6b16575cc56ed9757071b64e5210d20563145d3394fa11e2beecce6a",
    "lines": 173
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSemanticIntentGuard.ts",
-   "sha256": "201f8c96dc63d75208e73f859182d4773792202919ab8e747dcfdfba241c0bff",
+   "sha256": "5e2fd44d53cf3fead3de9f95b65ffb8a7a5f4f1ffcc1278b1cba778e2a0d82fb",
    "lines": 158
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/services/codeSkillsRegistry.ts",
+   "sha256": "c2493c51503b69a0fb7681ea0089d6ada19bcc52cad01e446b875621b93e5c0e",
+   "lines": 720
   },
   {
    "repo": "AuroraIA",
@@ -12296,7 +12357,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeSystemPromptContracts.ts",
-   "sha256": "30e65b9a849e1a664cedb810d7af573994802d9cb680d07bf6e0cf9af408fd5d",
+   "sha256": "d1d2319b78495dc438435079734f58bad5ce8afd13dd08cecdb7be3f817fd45b",
    "lines": 398
   },
   {
@@ -14540,8 +14601,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/codeViewControlPanel.tsx",
-   "sha256": "76ce97daf10011ff0f58670b2e1fc4168fbf929e009fcd0cf1e62eb9df7b5498",
-   "lines": 350
+   "sha256": "abc494b6d719f2ff6436235b93fd9acdcb8ff1110c90860b6b5927c3ab40850f",
+   "lines": 354
   },
   {
    "repo": "AuroraIA",
@@ -14618,8 +14679,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/codeViewShellHelpers.ts",
-   "sha256": "771fa81bf616be6bb3aace53ffc91cad3f08b65beed0f8824ce834cb4f24689f",
-   "lines": 91
+   "sha256": "9f8c1f934aa0a0aefe950e79bdd546952b9b4303392306f908a394fd9d0d061e",
+   "lines": 94
   },
   {
    "repo": "AuroraIA",
@@ -18952,6 +19013,14 @@
    "path": "tests_agi/test_client_inputs.py",
    "sha256": "434148287581ec32e8bd30fb2e7cd95eb78ebf359b31f46a8d6d062ac88d165f",
    "lines": 89,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_code_skills_and_polyglot.py",
+   "sha256": "7b0ea77d251968a4490793c73ab9388eb6d8b9b1067863fac62ab1b9a5e5508e",
+   "lines": 217,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

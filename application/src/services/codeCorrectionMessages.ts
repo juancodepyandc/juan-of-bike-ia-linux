@@ -18,6 +18,10 @@ import {
 } from './codeQualityGates.ts'
 import { isTypeScriptCompatibilityFailure } from './codeProjectValidation.ts'
 import { clipText } from './codePipelineRuntime.ts'
+import {
+  buildActiveSkillsPromptBlock,
+  selectAndSynthesizeSkillsSync,
+} from './codeSkillsRegistry.ts'
 
 export function buildCorrectionMessages({
   prompt,
@@ -56,6 +60,11 @@ export function buildCorrectionMessages({
     ].join('\n'))
     .join('\n\n')
 
+  const activeSkillsBlock = buildActiveSkillsPromptBlock(
+    selectAndSynthesizeSkillsSync(prompt, intent).activeSkills,
+    2500,
+  )
+
   const systemLines = [
     buildAuditeurSystemPrompt(),
     '',
@@ -72,6 +81,7 @@ export function buildCorrectionMessages({
     'Ajoute ou corrige les fichiers de configuration locaux obligatoires quand ils manquent, au lieu d heriter implicitement d un dossier parent.',
     'Conserve les fichiers qui n ont pas besoin de changer.',
     'Interdiction de faire passer la validation en supprimant une fonctionnalite, un test, une doc, un script, un export public ou un endpoint existant.',
+    ...(activeSkillsBlock ? ['', activeSkillsBlock] : []),
   ]
 
   if (/package\.json|json valide|actual JSON|EJSONPARSE|JSONParseError/i.test(validationResult.summary + '\n' + failingSteps)) {

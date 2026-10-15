@@ -47,6 +47,12 @@ import {
 import { invalidateModelResidencyCache } from './codeModelResidency.ts'
 import { createFileStateCapture } from './codeFileStateCapture.ts'
 import { buildInterruptedDelivery, buildInterruptedResult } from './codeInterruptedDelivery.ts'
+import {
+  ensureSkillsForIntentAndPrompt,
+  learnSkillFromCompletedProject,
+  resolveActiveSubAgentRolesForIntent,
+} from './codeSkillsRegistry.ts'
+import { useAgentRuntimeStore } from '../stores/agentRuntimeStore.ts'
 import type {
   CodeFile,
   CodeOrchestrationResult,
@@ -203,6 +209,28 @@ async function runFullPipeline({
     signal,
   })
 
+  // Phase 1.2: Acquisition et auto-installation des skills pertinents (.aurora/skills)
+  const { activeSkills, newlyInstalled } = await ensureSkillsForIntentAndPrompt(reformulatedEnriched, intent)
+  const subAgentRoles = resolveActiveSubAgentRolesForIntent(intent)
+  const activeSubAgentNames = subAgentRoles.filter((r) => r.active).map((r) => r.title)
+  try {
+    const runtimeStore = useAgentRuntimeStore.getState()
+    runtimeStore.setAgentRuntime('code', {
+      state: 'planning',
+      progress: 10,
+      activeTool: 'runtime',
+      detail: `Architecte Systeme (${intent.projectType}, [${intent.languages.join(', ')}]) · ${activeSkills.length} skill(s) actif(s)${newlyInstalled.length > 0 ? ` (+${newlyInstalled.length} auto-installe)` : ''}`,
+    })
+    if (newlyInstalled.length > 0) {
+      setPhase(
+        `Auto-installation de ${newlyInstalled.length} skill(s) specialise(s): ${newlyInstalled.map((s) => s.title).join(', ')}...`,
+        7,
+      )
+    }
+  } catch {
+    // Non-bloquant en environnement de test sans store UI
+  }
+
   // Phase 1.5: Deterministic + model-assisted preflight before any code generation
   const preflightReport = await runPreflightPhase(
     prompt,
@@ -261,6 +289,16 @@ async function runFullPipeline({
     architecturePlan,
     model: selectModel('planning', intent, 0, configuredCodeModel, modelRouting),
   })
+  try {
+    useAgentRuntimeStore.getState().setAgentRuntime('code', {
+      state: 'working',
+      progress: 35,
+      activeTool: 'module',
+      detail: `Generation WS3 (${activeSubAgentNames.join(' + ')}) · [${intent.languages.join(', ')}]`,
+    })
+  } catch {
+    // Non-bloquant
+  }
   const fullContent = await runInitialAgenticGeneration({
     prompt: reformulatedEnriched,
     intent,
@@ -323,6 +361,17 @@ async function runFullPipeline({
 
   onFilesUpdate(initialFiles, initialNotes)
 
+  try {
+    useAgentRuntimeStore.getState().setAgentRuntime('code', {
+      state: 'verifying',
+      progress: 72,
+      activeTool: 'runtime',
+      detail: `Auditeur Sandbox: verification deterministe et auto-correction (${initialFiles.length} fichier(s))`,
+    })
+  } catch {
+    // Non-bloquant
+  }
+
   // Phase 4+5: Validation + auto-correction loop
   const validationResult = await runValidationAndCorrectionLoop(
     prompt,
@@ -347,6 +396,26 @@ async function runFullPipeline({
   })
   setPhase(`Projet ${intent.projectType} livre avec succes (score: ${delivery.score}/100).`, 100)
 
+  const finalPhase = deliveryPhase(validationResult)
+  // Auto-apprentissage post-run: capitalise le patron d architecture en skill reutilisable
+  void learnSkillFromCompletedProject({
+    prompt: reformulatedEnriched,
+    intent,
+    files: delivery.files,
+    sandboxOk: Boolean(validationResult.sandboxResult?.ok),
+    correctionPassesCount: validationResult.correctionLog.length,
+  })
+  try {
+    useAgentRuntimeStore.getState().setAgentRuntime('code', {
+      state: finalPhase === 'done' ? 'done' : 'error',
+      progress: 100,
+      activeTool: null,
+      detail: `Livre: ${delivery.files.length} fichier(s) (${intent.projectType}, score ${delivery.score}/100)`,
+    })
+  } catch {
+    // Non-bloquant
+  }
+
   return {
     files: delivery.files,
     notes: delivery.notes,
@@ -359,7 +428,7 @@ async function runFullPipeline({
     // le score, jamais sur ce verdict (cf. isDeliveryRunnable).
     // Validation EMPECHEE = pas un verdict de qualite (run 1151, cf.
     // codeInfrastructureFailure). Travail existant, non valide: `interrupted`.
-    phase: deliveryPhase(validationResult),
+    phase: finalPhase,
     architecturePlan,
     totalAttempts: validationResult.totalAttempts,
     finalScore: delivery.score,

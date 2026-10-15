@@ -68,6 +68,8 @@ const LANGUAGE_IMAGES: Partial<Record<DetectedLanguage, string>> = {
   java: 'docker.io/library/eclipse-temurin:21',
   c: 'docker.io/library/gcc:14',
   cpp: 'docker.io/library/gcc:14',
+  assembly: 'docker.io/library/python:3.12-slim',
+  'multi-system': 'docker.io/library/python:3.12-slim',
 }
 
 type CommandRunner = typeof runWorkspaceCommand

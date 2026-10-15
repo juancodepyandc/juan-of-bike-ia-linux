@@ -59,6 +59,35 @@ export function generateLaunchSh(files: CodeFile[], lang: DetectedLanguage): Cod
     case 'cpp':
       script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\ng++ -o out *.cpp && ./out'
       break
+    case 'assembly':
+      script = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'if ls *.asm >/dev/null 2>&1 && command -v nasm >/dev/null 2>&1; then',
+        '  for f in *.asm; do nasm -f elf64 "$f" -o "${f%.asm}.o"; done',
+        '  gcc -no-pie *.o -o out && ./out',
+        'elif ls *.s *.S >/dev/null 2>&1; then',
+        '  gcc -no-pie *.s -o out 2>/dev/null && ./out || (as *.s -o out.o && ld out.o -o out && ./out)',
+        'fi',
+      ].join('\n')
+      break
+    case 'swift':
+      script = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'if [ -f Package.swift ]; then swift run; else swiftc $(find . -name "*.swift") -o out && ./out; fi',
+      ].join('\n')
+      break
+    case 'multi-system':
+      script = [
+        '#!/usr/bin/env bash',
+        'set -euo pipefail',
+        'cd "$(dirname "$0")"',
+        'if [ -f verify_system.py ]; then python3 verify_system.py; elif [ -f main.py ]; then python3 main.py; elif [ -f Makefile ]; then make; fi',
+      ].join('\n')
+      break
     case 'typescript-standalone':
       script = '#!/usr/bin/env bash\nset -euo pipefail\ncd "$(dirname "$0")"\nnpx ts-node index.ts'
       break

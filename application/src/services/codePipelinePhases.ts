@@ -162,12 +162,17 @@ export async function runPlanningPhase(
   // bloc, le prompt invite le modele a choisir "la stack la plus moderne" et il
   // repond Next.js sur une intention static_web.
   const projectTypeContract = buildProjectTypeStackContract(intent)
+  const { buildActiveSkillsPromptBlock, selectAndSynthesizeSkillsSync } = await import('./codeSkillsRegistry.ts')
+  const { activeSkills } = selectAndSynthesizeSkillsSync(prompt, intent)
+  const activeSkillsBlock = buildActiveSkillsPromptBlock(activeSkills, 3200)
   const planPrompt = [
     buildArchitecteSystemPrompt(intent),
     '',
     '---',
     '',
     projectTypeContract,
+    '',
+    activeSkillsBlock,
     '',
     buildArchitecturePlanningPrompt(prompt, intent),
     generatorBlock,

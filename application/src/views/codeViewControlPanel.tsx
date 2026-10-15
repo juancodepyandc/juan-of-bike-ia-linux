@@ -1,6 +1,7 @@
 import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import { BookOpen, Bot, Loader2, ScanSearch, Sparkles, Workflow } from 'lucide-react'
 import CodeCorrectionLog from '../components/CodeCorrectionLog.tsx'
+import CodeSkillsAndAgentsPanel from '../components/CodeSkillsAndAgentsPanel.tsx'
 import ContextFilesField from '../components/ContextFilesField.tsx'
 import VoicePushToTalk from '../components/VoicePushToTalk.tsx'
 import ModuleAssetPackCard from '../components/ModuleAssetPackCard.tsx'
@@ -151,11 +152,6 @@ export function CodeViewControlPanel({
                   onClick={() => setPromptLibraryOpen(true)}
                   title="Bibliotheque de prompts"
                   className="flex h-8 w-8 items-center justify-center rounded-xl transition-all duration-200 hover:scale-105"
-                  style={{
-                    border: '1px solid var(--line, color-mix(in srgb, var(--ft-ink, #1a140d) 20%, transparent))',
-                    background: 'var(--bg-card, color-mix(in srgb, var(--ft-paper-3, #faf3de) 70%, transparent))',
-                    color: 'var(--fg-dim, color-mix(in srgb, var(--ft-ink, #1a140d) 60%, transparent))',
-                  }}
                 >
                   <BookOpen size={14} />
                 </button>
@@ -174,7 +170,7 @@ export function CodeViewControlPanel({
             <textarea
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Ex: Dashboard React multi-page avec auth JWT, CRUD utilisateurs, graphiques recharts, dark mode, responsive. Ou: API FastAPI complete avec PostgreSQL, JWT, Docker."
+              placeholder="Ex: Architecture multi-système C/Assembleur x86_64 + Orchestrateur Python, Package Swift 6 avec acteurs, Compilateur/VM Rust, ou Dashboard React + API FastAPI."
               rows={7}
               className="relative mt-4 w-full resize-none rounded-2xl px-3.5 py-3 text-sm outline-none transition-all duration-200"
               style={{
@@ -192,6 +188,14 @@ export function CodeViewControlPanel({
               <span className="text-[11px] text-aurora-text-dim">Dicte ton brief — la transcription s'ajoute à la fin.</span>
             </div>
           </div>
+
+          {/* Escouade Agents, Langages Maîtres & Skills Auto-Installables */}
+          <CodeSkillsAndAgentsPanel
+            prompt={prompt}
+            intent={intent}
+            isGenerating={isGenerating}
+            onSelectBlueprintPrompt={(bp) => setPrompt(bp)}
+          />
 
           {/* Brief guide */}
           <div

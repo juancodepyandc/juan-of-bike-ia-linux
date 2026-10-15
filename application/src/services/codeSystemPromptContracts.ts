@@ -110,7 +110,7 @@ type NonVisualFamily = 'systems' | 'backend_api' | 'data_ml' | 'cli_script' | 'l
 
 function classifyNonVisualFamily(intent: CodeIntent): NonVisualFamily {
   const t = intent.projectType
-  if (t === 'system_c' || t === 'system_cpp' || t === 'system_rust' || t === 'cli_rust' || t === 'cli_cpp' || t === 'cli_go') return 'systems'
+  if (t === 'system_c' || t === 'system_cpp' || t === 'system_rust' || t === 'system_asm' || t === 'multi_system' || t === 'cli_rust' || t === 'cli_cpp' || t === 'cli_go' || t === 'cli_swift') return 'systems'
   if (t === 'api_express' || t === 'api_fastapi' || t === 'api_django' || t === 'api_flask' || t === 'api_spring' || t === 'api_gin' || t === 'api_actix' || t === 'api_dotnet') return 'backend_api'
   if (t === 'data_python') return 'data_ml'
   if (t === 'cli_node' || t === 'cli_python' || t === 'script') return 'cli_script'

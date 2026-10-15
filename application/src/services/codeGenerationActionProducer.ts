@@ -20,6 +20,10 @@ import {
   buildCodeIncrementalPatchScope,
   formatCodeIncrementalPatchScope,
 } from './codeIncrementalPatchScope.ts'
+import {
+  buildActiveSkillsPromptBlock,
+  selectAndSynthesizeSkillsSync,
+} from './codeSkillsRegistry.ts'
 
 export type CodeGenerationActionModelClient = (
   model: string,
@@ -155,6 +159,12 @@ export function buildCodeGenerationActionMessages(args: {
         target: { path: args.item.path, language: args.item.language, role: args.item.role },
       })
     : ''
+  const activeSkillsBlock = args.intent
+    ? buildActiveSkillsPromptBlock(
+        selectAndSynthesizeSkillsSync(args.prompt, args.intent).activeSkills,
+        2800,
+      )
+    : ''
   return [
     {
       role: 'system',
@@ -167,6 +177,7 @@ export function buildCodeGenerationActionMessages(args: {
         'N utilise write_file sur un fichier existant que si le prompt demande explicitement une reecriture complete de ce fichier.',
         'Pour un fichier required, l action finale doit rendre le fichier present et complet.',
         ...(qualityContract ? ['', qualityContract] : []),
+        ...(activeSkillsBlock ? ['', activeSkillsBlock] : []),
       ].join('\n'),
     },
     userMessage,
@@ -209,7 +220,7 @@ function extractRawFileContent(raw: string): string | null {
   // page affiche {"actions":[{"kind":"write_file"...}]} en texte). Ce cas doit
   // etre parse comme des actions, pas traite en code brut.
   if (/"kind"\s*:\s*"(write_file|read_file|apply_patch|run_command)"/.test(text)) return null
-  const looksLikeCode = /[<{};=]|function|const |import |export |def |class |<!doctype|<html|<div|=>/i.test(text)
+  const looksLikeCode = /[<{};=]|function|const |import |export |def |class |<!doctype|<html|<div|=>|\b(section|global|mov|syscall|ret|push|pop|func|struct|actor|package|fn|impl)\b|^# |\bPHONY\b/im.test(text)
   return looksLikeCode ? text : null
 }
 

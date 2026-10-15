@@ -99,6 +99,14 @@ export function getBuildCommand(projectType: CodeProjectType): string | null {
     case 'system_cpp':
     case 'cli_cpp':
       return 'cmake --build build'
+    case 'system_c':
+      return 'gcc -O2 -Wall main.c -o app'
+    case 'system_asm':
+      return 'gcc -no-pie main.s -o app'
+    case 'cli_swift':
+      return 'swift build'
+    case 'multi_system':
+      return 'python3 verify_system.py'
     default: return null
   }
 }
@@ -157,6 +165,9 @@ export function getTestCommand(projectType: CodeProjectType): string | null {
       return 'go test ./...'
     case 'api_spring': return 'mvn test'
     case 'api_dotnet': return 'dotnet test'
+    case 'system_asm': return './app'
+    case 'cli_swift': return 'swift test'
+    case 'multi_system': return 'python3 verify_system.py'
     default: return null
   }
 }

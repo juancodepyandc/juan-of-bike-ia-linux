@@ -49,6 +49,9 @@ def _frontend_workers_idle():
         return False
 register_project_routes(asset_bp,allowed=lambda:_request_is_local_loopback() or _admin_ok() or _ext_auth()[0],work_idle=_frontend_workers_idle)
 
+from application.code_skills_api import register_code_skills_routes
+register_code_skills_routes(asset_bp, WORKSPACE, allowed=lambda: _request_is_local_loopback() or _admin_ok() or _ext_auth()[0])
+
 from application.asset_access import public_generated_asset
 
 def _asset_read_allowed(candidate):

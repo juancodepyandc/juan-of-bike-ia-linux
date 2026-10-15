@@ -50,6 +50,7 @@ function consolePreviewProject(projectType: CodeProjectType): boolean {
     || projectType === 'compiler'
     || projectType === 'os_kernel'
     || projectType === 'distributed_system'
+    || projectType === 'multi_system'
 }
 
 function resolvePreviewType(projectType: CodeProjectType, fallback: PreviewType): PreviewType {
@@ -90,6 +91,9 @@ export function finalizeCodeIntentClassification({
     || complexity === 'enterprise'
     || uniqueFeatures.length >= 3
     || wholeProductRequest
+    || projectType === 'multi_system'
+    || projectType === 'compiler'
+    || projectType === 'os_kernel'
   const assetPlan = classifyCodeAssetPlan(prompt)
   if (assetPlan.wants3D && !uniqueFeatures.includes('3d')) uniqueFeatures.push('3d')
 

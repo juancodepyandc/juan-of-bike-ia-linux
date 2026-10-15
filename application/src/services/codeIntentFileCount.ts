@@ -33,6 +33,9 @@ export function estimateFileCount(complexity: CodeComplexity, projectType: CodeP
     compiler: 2.0,
     os_kernel: 2.2,
     distributed_system: 2.1,
+    system_asm: 1.4,
+    cli_swift: 1.5,
+    multi_system: 2.2,
     engine_3d: 2.0,
     ide: 2.2,
   }
@@ -41,8 +44,8 @@ export function estimateFileCount(complexity: CodeComplexity, projectType: CodeP
 }
 
 export function isWholeProductRequest(normalizedLower: string): boolean {
-  return /\b(app|application|logiciel|outil|plateforme|dashboard|tableau de bord|studio|crm|erp|saas|marketplace|backoffice|admin)\b/i.test(normalizedLower)
-    && /\b(complet|complete|entiere|entier|professionnel|pro|client|production|mvp|fonctionnalites|workflow|tunnel|ui|interface|module)\b/i.test(normalizedLower)
+  return /\b(app|application|logiciel|outil|plateforme|dashboard|tableau de bord|studio|crm|erp|saas|marketplace|backoffice|admin|multi-?systeme|polyglotte)\b/i.test(normalizedLower)
+    && /\b(complet|complete|entiere|entier|professionnel|pro|client|production|mvp|fonctionnalites|workflow|tunnel|ui|interface|module|orchestrateur)\b/i.test(normalizedLower)
 }
 
 export function minimumFileCountForIntent(projectType: CodeProjectType, features: string[], wholeProduct: boolean): number {
@@ -55,7 +58,7 @@ export function minimumFileCountForIntent(projectType: CodeProjectType, features
   if (projectType === 'desktop_app') return wholeProduct ? 14 : 8
   if (projectType === 'mobile_rn' || projectType === 'mobile_flutter' || projectType === 'mobile_ios' || projectType === 'mobile_android') return wholeProduct ? 10 : 6
   if (projectType.startsWith('embedded_')) return wholeProduct ? 8 : 5
-  if (projectType === 'compiler' || projectType === 'os_kernel' || projectType === 'distributed_system') return wholeProduct ? 16 : 8
+  if (projectType === 'compiler' || projectType === 'os_kernel' || projectType === 'distributed_system' || projectType === 'multi_system') return wholeProduct ? 10 : 5
   if (projectType === 'engine_3d' || projectType === 'ide') return wholeProduct ? 14 : 8
   if (projectType.startsWith('api_') || projectType.startsWith('fullstack_') || projectType.startsWith('ssr_')) return wholeProduct ? 10 : 6
   if (projectType.startsWith('cli_') || projectType.startsWith('system_') || projectType === 'data_python') return wholeProduct ? 5 : 3

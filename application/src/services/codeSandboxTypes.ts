@@ -41,7 +41,7 @@ export type AutoInstallSpec = {
 
 export type DetectedLanguage =
   | 'node' | 'python' | 'rust' | 'go'
-  | 'java' | 'c' | 'cpp' | 'bash' | 'ruby' | 'php'
+  | 'java' | 'c' | 'cpp' | 'assembly' | 'multi-system' | 'bash' | 'ruby' | 'php'
   | 'typescript-standalone' | 'sql' | 'dart' | 'kotlin'
   | 'csharp' | 'swift' | 'zig' | 'lua' | 'elixir'
   | 'haskell' | 'scala' | 'r' | 'powershell'
