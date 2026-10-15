@@ -1,16 +1,17 @@
-type Message = { role: string; content: string }
+type Message = { role: string; content: string; threeDContext?: 'new' | 'continuation' }
 const FUNCTION_WORDS = new Set('un une le la les de du des en et a avec sans pour dans au aux une fais faire genere generer generation cree creer creerait modele model objet object 3d representation figurine personnage entièrement entier entire full create generate make please stp the a an of with without for'.normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(' '))
 function anchor(text: string): string | undefined {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().split(/[^\p{L}\p{N}]+/u).find(word => word.length > 2 && !FUNCTION_WORDS.has(word) && !/^\d+$/.test(word))
 }
 export function retainThreeDRequirements(prompt: string, history: Message[], explicitEdit = false): Message[] {
-  const users = history.filter(message => message.role === 'user')
+  let users = history.filter(message => message.role === 'user')
+  for (let i = users.length - 1; i >= 0; i--) { if (users[i].threeDContext === 'new') { users = users.slice(i); break } }
   const previous = users[users.length - 1]
   if (!previous) return []
   const sameSubject = Boolean(anchor(prompt) && anchor(prompt) === anchor(previous.content))
   const normalized = prompt.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()
   const exclusionEdit = /^(?:sans\s+(?!changer\b|modifier\b|toucher\b)|without\s+(?!changing\b|modifying\b)|pas de\s|no\s)/.test(normalized)
-  return sameSubject || explicitEdit || exclusionEdit ? users.slice(-4) : []
+  return sameSubject || explicitEdit || exclusionEdit ? users : []
 }
 export function composeThreeDRequirements(prompt: string, history: Message[]): string {
   if (!history.length) return prompt

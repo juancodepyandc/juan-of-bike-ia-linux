@@ -35,7 +35,7 @@ export async function recoverModelDelivery(workspace: string, sessionId: string,
         try { report = parsePythonResult<Report>(await files.text(`${run.root}/${path}`)); if (report) break } catch { /* Try next layout. */ }
       }
     }
-    const mesh = report?.livraison?.scene_couleurs || report?.livraison?.modele_couleurs || report?.final_mesh || `${run.root}/modele/modele_couleurs.glb`
+    const mesh = report?.livraison?.mouvement_couleurs || report?.livraison?.scene_couleurs || report?.livraison?.modele_couleurs || report?.final_mesh || `${run.root}/modele/modele_couleurs.glb`
     if (!mesh.startsWith(run.root + '/') || mesh.includes('/../') || !mesh.endsWith('.glb') || !await files.exists(mesh)) continue
     const reference = report?.livraison?.reference_face || `${run.root}/reference/face.png`
     return { mesh, reference: reference.startsWith(run.root + '/') && !reference.includes('/../') && await files.exists(reference) ? reference : null,

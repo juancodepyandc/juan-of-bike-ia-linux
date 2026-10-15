@@ -695,14 +695,14 @@ def preuves(glb: str, dossier_run: str, etiquette: str = "livrable") -> dict:
     return mesures
 
 
-def porte(glb: str, reference: str | None, contexte: str = "", *, repair_geometry: bool = True) -> dict:
+def porte(glb: str, reference: str | None, contexte: str = "", *, repair_geometry: bool = True, preserve_native: bool = False) -> dict:
     """Repare (trous, orientation, gouttieres) puis JUGE. Ne ment jamais."""
     reparations = []
     print("PORTE: audit des trous...", flush=True)
     t0 = audit_trous(glb)
     # seuil: quelques bords soudes residuels sont invisibles; un vrai trou
     # visible en compte des dizaines groupes.
-    if repair_geometry and t0.get("bords_ouverts", 0) > 200:
+    if repair_geometry and not preserve_native and t0.get("bords_ouverts", 0) > 200:
         repair = reparer_trous_sans_perte(glb, t0)
         if repair.get("ok"):
             t1 = repair['after']
@@ -713,33 +713,36 @@ def porte(glb: str, reference: str | None, contexte: str = "", *, repair_geometr
             if not repair.get('original_preserved'):
                 return {'parfait': False, 'score': 0, 'reparations': reparations,
                         'defauts': ['Restauration impossible; original sauvegarde: ' + str(repair.get('retained_backup'))]}
-    print("PORTE: orientation espace brut...", flush=True)
-    o = orienter_face_viewer(glb)
-    if o.get("ok") and o.get("yaw"):
-        reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
-    try:
-        # ILOTS PARASITES (mesure 06/08, Happy): sur un atlas a dizaines de
-        # milliers d'ilots, les charts degeneres (< 1 texel d'aire) sont
-        # ecrases par xatlas sur UN SEUL texel arbitraire — des milliers de
-        # patchs 3D sans rapport echantillonnent alors la MEME couleur au
-        # hasard (mouchetures). atlas_dilate ne corrige que les gouttieres
-        # NOIRES; ceci est un defaut different (deja peint, mais au hasard),
-        # deja outille (texture_despeckle_atlas.py) mais jamais branche ici.
-        from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
-        dsp, _verdict = _reparation_texture_sure(
-            glb, lambda _e, _s: _dspk_atlas(_e, _s), "despeckle_atlas")
-        if dsp.get("ok") and dsp.get("islands_purged"):
-            reparations.append("%d ilot(s) parasite(s) — %s"
-                               % (dsp["islands_purged"], _verdict))
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        from atlas_dilate import dilater
-        d = dilater(glb)
-        if d.get("ok"):
-            reparations.append("gouttieres atlas dilatees")
-    except Exception:  # noqa: BLE001
-        pass
+    if not preserve_native:
+        print("PORTE: orientation espace brut...", flush=True)
+        o = orienter_face_viewer(glb)
+        if o.get("ok") and o.get("yaw"):
+            reparations.append("orientation: yaw %s applique (buffers)" % o["yaw"])
+        try:
+            # ILOTS PARASITES (mesure 06/08, Happy): sur un atlas a dizaines de
+            # milliers d'ilots, les charts degeneres (< 1 texel d'aire) sont
+            # ecrases par xatlas sur UN SEUL texel arbitraire — des milliers de
+            # patchs 3D sans rapport echantillonnent alors la MEME couleur au
+            # hasard (mouchetures). atlas_dilate ne corrige que les gouttieres
+            # NOIRES; ceci est un defaut different (deja peint, mais au hasard),
+            # deja outille (texture_despeckle_atlas.py) mais jamais branche ici.
+            from texture_despeckle_atlas import despeckle_glb as _dspk_atlas
+            dsp, _verdict = _reparation_texture_sure(
+                glb, lambda _e, _s: _dspk_atlas(_e, _s), "despeckle_atlas")
+            if dsp.get("ok") and dsp.get("islands_purged"):
+                reparations.append("%d ilot(s) parasite(s) — %s"
+                                   % (dsp["islands_purged"], _verdict))
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from atlas_dilate import dilater
+            d = dilater(glb)
+            if d.get("ok"):
+                reparations.append("gouttieres atlas dilatees")
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        reparations.append("Contrôle non destructif : géométrie, orientation et atlas natifs conservés")
     # PREUVES DANS LE RUN (jamais dans un dossier temporaire)
     try:
         _run = Path(glb).parent

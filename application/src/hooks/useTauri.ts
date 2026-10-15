@@ -1247,7 +1247,7 @@ export interface RunPythonOptions {
   resumeKey?: string
   /** Plafond absolu du suivi. Les rendus video premium peuvent durer une nuit. */
   maxWaitMs?: number
-  /** Delai sans aucun evenement PROGRESS avant de considerer le job fige. */
+  /** Legacy caller hint; silence alone cannot prove a server job stopped. */
   stalledTimeoutMs?: number
 }
 
@@ -1255,14 +1255,13 @@ export interface RunPythonOptions {
  * the bridge. Modules use this on mount to decide whether to show a "Reprendre
  * la generation" banner. Returns null when nothing is pending. */
 export async function peekResumableJob(resumeKey: string): Promise<{ jobId: string; status: 'queued' | 'running' | 'done' } | null> {
-  if (isTauriRuntime()) return null
   const persisted = recallJobId(resumeKey)
   if (!persisted) return null
   try {
     const r = await fetch(`${getBridgeUrl()}/api/python/job/${persisted}`)
-    if (!r.ok) { forgetJobId(resumeKey); return null }
+    if (!r.ok) { if (r.status === 404) forgetJobId(resumeKey); return null }
     const ct = r.headers.get('content-type') || ''
-    if (ct.includes('text/html')) { forgetJobId(resumeKey); return null }
+    if (ct.includes('text/html')) return null
     const d = await r.json() as { status?: string }
     if (d.status === 'queued' || d.status === 'running' || d.status === 'done') {
       return { jobId: persisted, status: d.status }
@@ -1378,17 +1377,16 @@ export async function runPythonScript(scriptPath: string, args: string[], option
     // Shared poll loop — drives both fresh spawn and resumed jobId.
     // HEARTBEAT-BASED watchdog instead of an absolute deadline. The prior
     // 15-min absolute timeout killed perfectly valid Wan 2.2 A14B Q6_K
-    // premium runs (which legitimately take 20-40 min). We now consider a
-    // job frozen only when there is NO progress for 12 consecutive minutes
-    // AND the total runtime exceeds a hard safety cap of 2 hours.
+    // premium runs (which legitimately take 20-40 min).
+    // Silent stages remain live while the server owns the job. A client
+    // deadline suspends following; only a terminal response forgets its ID.
     if (!result && jobId) {
       const cancelJob = () => { void fetch(`${base}/api/python/cancel/${jobId}`, { method: 'POST' }).catch(() => {}) }
       options.signal?.addEventListener('abort', cancelJob, { once: true })
       const pollIntervalMs = 2500
       const startedAt = Date.now()
       const hardCapMs = options.maxWaitMs ?? 120 * 60 * 1000
-      const stalledThresholdMs = options.stalledTimeoutMs ?? 12 * 60 * 1000
-      let lastProgressAt = Date.now()
+      let terminal = false
       let lastProgressCursor = 0
       let transientFetchFails = 0
       const TRANSIENT_FAIL_LIMIT = 24 // ~60s of silence before we bail
@@ -1420,7 +1418,7 @@ export async function runPythonScript(scriptPath: string, args: string[], option
           // missed one poll. Only bail after many consecutive misses.
           let pollResp: Response | null = null
           try {
-            pollResp = await fetch(`${base}/api/python/job/${jobId}`)
+            pollResp = await fetch(`${base}/api/python/job/${jobId}`, { signal: AbortSignal.timeout(15000) })
           } catch {
             transientFetchFails += 1
             if (transientFetchFails > TRANSIENT_FAIL_LIMIT) {
@@ -1438,10 +1436,12 @@ export async function runPythonScript(scriptPath: string, args: string[], option
             if (!pollCt.includes('text/html')) {
               const data = await pollResp.json() as { status?: string; output?: string; error?: string; exitCode?: number }
               if (data.status === 'done') {
+                terminal = true
                 result = { output: data.output ?? '', error: data.error ?? '', exitCode: data.exitCode ?? -1 }
                 break
               }
               if (data.status === 'cancelled') {
+                terminal = true
                 throw new Error(data.error || 'Job annulé.')
               }
             }
@@ -1450,29 +1450,20 @@ export async function runPythonScript(scriptPath: string, args: string[], option
           const newCursor = await readProgressCursor()
           if (newCursor > lastProgressCursor) {
             lastProgressCursor = newCursor
-            lastProgressAt = Date.now()
           }
 
           const now = Date.now()
           const totalElapsed = now - startedAt
-          const sinceProgress = now - lastProgressAt
 
           if (totalElapsed > hardCapMs) {
-            throw new Error(`Script Python depasse le plafond de securite (${Math.round(hardCapMs / 60000)} min). Abandonne.`)
+            throw new Error(`Script Python depasse le plafond de securite (${Math.round(hardCapMs / 60000)} min). Suivi suspendu ; calcul conservé sur le PC, rechargeable sans seconde exécution.`)
           }
-          if (sinceProgress > stalledThresholdMs) {
-            throw new Error(
-              `Script Python fige (aucun progres depuis ${Math.round(sinceProgress / 60000)} min). `
-              + `Temps total ecoule ${Math.round(totalElapsed / 60000)} min. `
-              + 'Verifie la VRAM/RAM libre — si la carte est saturee a 99 %+ sans avancer, tente une resolution plus basse.',
-            )
-          }
+
         }
       } finally {
         options.signal?.removeEventListener('abort', cancelJob)
-        // Whether we finished cleanly or blew up, the persisted jobId is no
-        // longer useful — a future call should start fresh.
-        if (options.resumeKey) forgetJobId(options.resumeKey)
+        // Unknown/network timeout is not completion: retain the same job for refresh.
+        if (terminal && options.resumeKey) forgetJobId(options.resumeKey)
       }
     }
   } else {

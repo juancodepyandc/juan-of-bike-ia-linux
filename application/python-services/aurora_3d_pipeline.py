@@ -4150,6 +4150,8 @@ def run_pipeline(prompt: str, run_id: str, *,
     mesh_path = output_dir / f"{run_id}_mesh.glb"
 
     def _native_ok(_mp):
+        if os.environ.get('AURORA_NATIVE_PRECISION') == '1':
+            return True  # Maximum precision retains native geometry/UVs, including before rigging.
         _mp = str(_mp or "").strip().lower()
         if not _mp:
             return True
@@ -5298,7 +5300,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     if _keep_native:
         audit.append({"stage": "optimize_textured_mesh", "skipped": True,
                       "reason": "mesh natif conserve (decimation prouvee destructrice des UV natifs)"})
-    elif _optimize_textured_mesh is not None:
+    elif _optimize_textured_mesh is not None and not _texture_du_service:
         try:
             opt_out = str(output_dir / f"{run_id}_mesh_opt.glb")
             opt_res = _optimize_textured_mesh(final_mesh_path, opt_out, kind)
@@ -5786,7 +5788,7 @@ def run_pipeline(prompt: str, run_id: str, *,
     # detecteur les donne sur la reference ET sur un rendu ortho du mesh), puis par
     # flot optique. Mesure dans le vrai viewer: nettete du visage +90%/+60%/+125%.
     # No-op silencieux si aucun visage n'est detecte (objet, animal, vehicule...).
-    if os.environ.get("AURORA_FACE_REFINE", "1") == "1":
+    if os.environ.get("AURORA_FACE_REFINE") == "1" and not _texture_du_service:
         try:
             _fr_script = str(REPO_ROOT / "application" / "python-services" / "face_refine.py")
             _fr_out = str(output_dir / f"{run_id}_face.glb")
@@ -6024,7 +6026,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             from perfection_gate import audit_trous as _audit_trous, reparer_trous_sans_perte as _safe_repair
             _before_geometry = _audit_trous(str(final_delivery_mesh))
             _bords = int(_before_geometry.get("bords_ouverts", 0) or 0)
-            if _bords > 200:
+            if _bords > 200 and not (_keep_native or _texture_du_service):
                 print("PROGRESS:geometrie:rebouchage - %d aretes de bord detectees"
                       % _bords, flush=True)
                 _geometry_repair_attempted = True
@@ -6040,7 +6042,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             else:
                 audit.append({"stage": "reparation_geometrique", "ok": True,
                               "bords_ouverts_avant": _bords,
-                              "note": "maillage deja ferme, aucune reparation"})
+                              "note": "original conserve" if (_keep_native or _texture_du_service) else "maillage deja ferme, aucune reparation"})
         except Exception as _rge:
             audit.append({"stage": "reparation_geometrique", "ok": False,
                           "error": repr(_rge)})
@@ -6083,7 +6085,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                         _v = _porte_struct(str(_cible))
                     else:
                         _v = _porte(str(_cible), _ref_juge, contexte=prompt,
-                                    repair_geometry=not _geometry_repair_attempted)
+                                    repair_geometry=not (_geometry_repair_attempted or _keep_native or _texture_du_service),
+                                    preserve_native=bool(_keep_native or _texture_du_service))
                     audit.append({"stage": "perfection_gate",
                                   "fichier": Path(str(_cible)).name, **_v})
                     print("PROGRESS:perfection:%s — score %s, %s"
@@ -6124,7 +6127,7 @@ def run_pipeline(prompt: str, run_id: str, *,
             try:
                 from atlas_dilate import dilater as _dilater
                 for _g in (final_mesh_path, rigged_mesh):
-                    if _g and Path(str(_g)).is_file():
+                    if _g and Path(str(_g)).is_file() and not (_keep_native or _texture_du_service):
                         _dr = _dilater(str(_g))
                         audit.append({"stage": "atlas_dilate",
                                       "fichier": Path(str(_g)).name,
@@ -6339,6 +6342,7 @@ def main() -> int:
     parser.add_argument("--no-scene", action="store_true", help="Desactive scene orchestrator pour eviter la recursion")
     parser.add_argument("--force", action="store_true",
                         help="Re-run all stages even when intermediate files exist")
+    parser.add_argument("--defer-motion", action="store_true", help="Keep reconstruction static; caller owns subsequent articulation")
     parser.add_argument("--motion-prompt", default=None, dest="motion_prompt",
                         help="Optional motion description (e.g. 'le perso marche', "
                              "'engrenages tournent'). When provided, runs motion_parser "
@@ -6439,6 +6443,8 @@ def main() -> int:
     else:
         mv = None  # auto
 
+    if args.defer_motion:
+        os.environ["AURORA_MOTION_LOCALE"] = "0"
     _essais_max = int(os.environ.get("AURORA_PERFECTION_ESSAIS", "4"))
     if args.motion_prompt:
         os.environ.setdefault("AURORA_MOTION_ORIGINAL", args.motion_prompt)

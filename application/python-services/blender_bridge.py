@@ -3258,10 +3258,13 @@ def _scale_metarig_to_mesh(metarig, mesh_obj):
         height, shoulder, width, depth, center = _measure_mesh_dimensions(mesh_obj)
         if height <= 0:
             return None
-        # Default basic_human metarig is ~1.85 m tall. Aim for the actual mesh.
-        target_scale = height / 1.85
+        # Measure the actual metarig; full and basic skeletons differ in size.
+        endpoints = [p.z for b in metarig.data.bones for p in (b.head_local, b.tail_local)]
+        low, high = min(endpoints), max(endpoints)
+        if high <= low: raise RuntimeError("Degenerate metarig bounds")
+        target_scale = height / (high - low)
         metarig.scale = (target_scale, target_scale, target_scale)
-        metarig.location = center
+        metarig.location = center - Vector((0, 0, low * target_scale))
         return {
             "mesh_height": float(height),
             "mesh_width": float(width),
@@ -3346,13 +3349,18 @@ if rig_system == "rigify" and subject_kind == "humanoid":
     metarig.name = "metarig_human"
 
     try:
-        from rigify.metarigs.Basic import basic_human
-        basic_human.create(metarig)
+        from rigify.metarigs import human
+        human.create(metarig)
     except ImportError:
-        print(json.dumps({"ok": False, "error": "Rigify basic_human metarig not available."}))
+        print(json.dumps({"ok": False, "error": "Rigify full human metarig not available."}))
         sys.exit(0)
 
+    bpy.ops.object.mode_set(mode="OBJECT")
     scale_report = _scale_metarig_to_mesh(metarig, mesh_obj)
+    bpy.ops.object.select_all(action="DESELECT")
+    metarig.select_set(True)
+    bpy.context.view_layer.objects.active = metarig
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
     bpy.ops.object.mode_set(mode="POSE")
     bpy.ops.pose.rigify_generate()
@@ -3365,17 +3373,22 @@ if rig_system == "rigify" and subject_kind == "humanoid":
 
     if rig_obj:
         rig_bones = len(rig_obj.data.bones)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        bpy.ops.object.select_all(action="DESELECT")
         mesh_obj.select_set(True)
         rig_obj.select_set(True)
         bpy.context.view_layer.objects.active = rig_obj
-        try:
-            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
-        except Exception:
-            pass
+        services_dir = os.environ.get("AURORA_PYTHON_SERVICES")
+        if services_dir and services_dir not in sys.path: sys.path.insert(0, services_dir)
+        from rig_skin_binding import bind_verified
+        binding_report = bind_verified(mesh_obj, rig_obj)
+        if not any(m.type == "ARMATURE" and m.object == rig_obj for m in mesh_obj.modifiers):
+            raise RuntimeError("Rig binding did not attach the mesh to the generated armature")
+        bpy.data.objects.remove(metarig, do_unlink=True)
 
-        # Promote FK chains to IK and add a default breathing animation.
+        # A rig-only request must export its rest state, without stock motion.
         ik_constraints_applied = _add_ik_constraints(rig_obj)
-        breathing = _enable_breathing_action(rig_obj)
+        breathing = _enable_breathing_action(rig_obj) if test_action else False
 
         if test_action == "applaud":
             # Quick clap test: rotate both upper arms inward over 1 s, back to
@@ -3473,18 +3486,29 @@ elif rig_system == "rigify" and subject_kind in {"creature", "quadruped"}:
         except ImportError:
             print(json.dumps({"ok": False, "error": "Rigify quadruped metarig not available."}))
             sys.exit(0)
+    bpy.ops.object.mode_set(mode="OBJECT")
     _scale_metarig_to_mesh(metarig, mesh_obj)
+    bpy.ops.object.select_all(action="DESELECT")
+    metarig.select_set(True)
+    bpy.context.view_layer.objects.active = metarig
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     bpy.ops.object.mode_set(mode="POSE")
     try:
         bpy.ops.pose.rigify_generate()
         for obj in bpy.context.scene.objects:
             if obj.type == "ARMATURE" and obj != metarig:
                 rig_bones = len(obj.data.bones)
+                bpy.ops.object.mode_set(mode="OBJECT")
+                bpy.ops.object.select_all(action="DESELECT")
                 mesh_obj.select_set(True)
                 obj.select_set(True)
                 bpy.context.view_layer.objects.active = obj
-                bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+                services_dir = os.environ.get("AURORA_PYTHON_SERVICES")
+                if services_dir and services_dir not in sys.path: sys.path.insert(0, services_dir)
+                from rig_skin_binding import bind_verified
+                binding_report = bind_verified(mesh_obj, obj)
                 ik_constraints_applied = _add_ik_constraints(obj)
+                bpy.data.objects.remove(metarig, do_unlink=True)
                 break
     except Exception:
         pass
@@ -3771,8 +3795,10 @@ _export_kw = dict(
     export_animations=True,
     export_skins=True,
     export_yup=True,
-    export_apply=True,
-    export_draco_mesh_compression_enable=True,
+    export_apply=False,
+    # Rig-only GLBs remain readable for measured joint planning, without
+    # lossy position/UV quantization or a Draco decode dependency.
+    export_draco_mesh_compression_enable=bool(test_action or aurora_motion_path),
     export_draco_mesh_compression_level=6,
     export_draco_position_quantization=14,
     export_draco_normal_quantization=10,

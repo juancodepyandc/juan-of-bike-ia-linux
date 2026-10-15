@@ -90,7 +90,10 @@ def test_expired_unknown_execution_survives_reopen_without_second_executor(tmp_p
     assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['status']=='queued'
     blockers=reopened.scheduling(second['id'])['blockers']
     assert blockers[0]['id']==first['id'] and blockers[0]['status']=='interrupted'
-    # Only the original executor may report the actual outcome, even after reconnect.
+    # A client error cannot release work still running after reconnect.
+    assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'failed','executor':'a'*32}).status_code==409
+    c,reopened=make(tmp_path,idle=True)
+    # Only the original executor may report the actual outcome once idle.
     assert c.post('/api/projects/'+first['id']+'/finish',json={'status':'failed','executor':'a'*32}).status_code==200
     assert c.post('/api/projects/'+second['id']+'/admission',json={'executor':'b'*32}).json['granted']
 
@@ -228,3 +231,12 @@ def test_reconciliation_rechecks_lease_and_does_not_close_a_new_owner(tmp_path):
     assert response.json['released']==[]
     assert store.get(stale['id'])['owner']=='new-owner'
     assert store.get(stale['id'])['status']=='running'
+
+
+def test_failed_client_cannot_release_a_still_running_worker(tmp_path):
+    c,store=make(tmp_path,idle=False)
+    item=c.post('/api/projects/admission',json={'request_id':'follow-lost','title':'P','module':'3d'}).json
+    c.post('/api/projects/'+item['id']+'/admission',json={'executor':'a'*32})
+    response=c.post('/api/projects/'+item['id']+'/finish',json={'status':'failed','executor':'a'*32})
+    assert response.status_code==409 and response.json['code']=='workers_stopping'
+    assert store.get(item['id'])['status']=='running'

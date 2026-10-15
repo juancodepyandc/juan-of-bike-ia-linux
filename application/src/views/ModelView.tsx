@@ -1,3 +1,4 @@
+import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelation.ts'
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
 import { binaryBase64 } from '../utils/binaryBase64.ts'
 import { parsePythonResult } from '../utils/pythonResult.ts'
@@ -23,7 +24,7 @@ import type { SaveDialogData } from '../components/SaveDialog.tsx'
 import SessionSwitcher from '../components/SessionSwitcher.tsx'
 import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
-import { clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
+import { ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
@@ -2514,8 +2515,8 @@ export default function ModelView() {
   // Bouton MOUVEMENT : ON = on bake une vraie animation (le classifieur choisit laquelle),
   // OFF = mesh statique (la pose de génération, ex. "Caine en train de tomber" reste figée).
   // Lu via un ref dans generate() (useCallback) pour éviter une closure obsolète.
-  const [motionEnabled, setMotionEnabled] = useState(true)
-  const motionEnabledRef = useRef(true)
+  const [motionEnabled, setMotionEnabled] = useState(false)
+  const motionEnabledRef = useRef(false)
   const toggleMotion = useCallback(() => setMotionEnabled((v) => { motionEnabledRef.current = !v; return !v }), [])
   const [animationSpeed, setAnimationSpeed] = useState(1)
   const [animationClips, setAnimationClips] = useState<AnimationClip[]>([])
@@ -2612,6 +2613,7 @@ export default function ModelView() {
   useEffect(() => {
     let alive = true
     const tick = async () => {
+      if (generationAbortRef.current) return // The live controller owns its own UI and result.
       const info = await peekResumableJob('model_ia') || await peekResumableJob('model')
       if (!alive) return
       setPendingJobBanner(info)
@@ -3086,8 +3088,9 @@ export default function ModelView() {
     let alive = true
     void (async () => {
       const session = useModuleHistoryStore.getState().getActiveSession('3d')
-      if (findSessionAssets(session).meshPath) return
+      const recordedMesh = findSessionAssets(session).meshPath
       try {
+        if (recordedMesh && await fsExists(recordedMesh)) return
         const { fsListDir, fsReadText } = await import('../hooks/useTauri.ts')
         const recovered = await recoverModelDelivery(await getWorkspacePath(), session.id, { list: fsListDir, text: fsReadText, exists: fsExists })
         if (!alive || !recovered || generationAbortRef.current || useModuleHistoryStore.getState().activeSessionId['3d'] !== session.id) return
@@ -3179,16 +3182,26 @@ export default function ModelView() {
       const job = await resp.json()
       const resultat = parsePythonResult<Record<string, unknown>>(String(job?.output || ''))
       if (!resultat) { setError('Resultat introuvable dans le job — voir le dossier du run.'); return }
-      const mesh = String((resultat.final_mesh as string) || (resultat.rigged_mesh as string) || '')
-      if (resultat.ok && mesh) {
-        const wsp = await getWorkspacePath()
-        const rel = mesh.startsWith(`${wsp}/`) ? mesh.slice(wsp.length + 1) : mesh
-        setViewerWebUrl(`${bridge}/aurora_viewer.html?file=${rel.split('/').map(encodeURIComponent).join('/')}`)
+      const delivery = resultat.livraison as Record<string, string> | undefined
+      const mesh = String(delivery?.mouvement_couleurs || delivery?.scene_couleurs || delivery?.modele_couleurs || resultat.final_mesh || resultat.path || resultat.rigged_mesh || '')
+      if (mesh && await fsExists(mesh)) {
+        const root = mesh.replaceAll(String.fromCharCode(92), '/').match(/^(.*\/juan_bike_\d+)\//)?.[1]
+        const { fsReadText } = await import('../hooks/useTauri.ts')
+        let manifest: { session_id?: string } | null = null
+        if (root) for (const relative of ['journal/manifest.json', 'audits/manifest.json']) {
+          try { manifest = JSON.parse(await fsReadText(`${root}/${relative}`)); break } catch { /* Try the other layout. */ }
+        }
+        if (manifest?.session_id !== useModuleHistoryStore.getState().getActiveSession('3d').id) throw new Error('Ce résultat appartient à une autre conversation ; ouvre sa session pour le récupérer.')
+        lastMeshPathRef.current = mesh
+        setModelUrl(toAssetUrl(mesh))
+        setViewerWebUrl(null)
         setViewerFullscreen(true)
-        setProgress(`Generation terminee — modele recupere (${rel.split('/').pop()})`)
-        pushMessage('3d', { role: 'assistant', content: `Generation retrouvee apres reconnexion. Modele: ${rel}`, images: [mesh] })
+        const label = resultat.ok === false ? `Maillage retrouvé, validation échouée : ${String(resultat.error || 'voir le journal')}` : 'Modèle retrouvé après reconnexion ; conformité visuelle à vérifier.'
+        setProgress(label)
+        if (resultat.ok === false) setError(label)
+        pushMessage('3d', { role: 'assistant', content: label, images: [mesh] })
       } else {
-        setError(`La generation s'est terminee en echec: ${String(resultat.error || 'motif inconnu').slice(0, 200)}`)
+        setError(`La génération s'est terminée sans fichier récupérable : ${String(resultat.error || 'voir le dossier du run').slice(0, 200)}`)
       }
       clearResumableJob('model')
       clearResumableJob('model_ia')
@@ -3256,7 +3269,9 @@ export default function ModelView() {
     let photoReferenceEdited = false
     let photoEditSeedFilename: string | undefined
     const currentPrompt = basePrompt
-    const conversationHistory = getRecentMessages('3d', 6)
+    const conversationHistory = getRecentMessages('3d', 30)
+    const existingMesh = lastMeshPathRef.current
+    let relation: ThreeDRelation | null = null
     setIsGenerating(true)
     setError(null)
     setProgress('Analyse de la demande 3D...')
@@ -3279,6 +3294,14 @@ export default function ModelView() {
         onWaiting: detail => { setProgress(detail); setPhaseSnapshot({ label: detail, percent: 0 }) },
         services: ['ollama'],
         prepare: async ({ setPhase }) => {
+          setPhase('Compréhension du lien avec le projet précédent...', 1)
+          try {
+            relation = await resolveThreeDRelation(currentPrompt, conversationHistory, Boolean(existingMesh), async instruction => {
+              const reply = await ollamaGenerate(activeOllamaModel, instruction, { signal: controller.signal, num_predict: 2048, num_ctx: 8192 })
+              return reply?.response || ''
+            })
+          } catch (error) { controller.signal.throwIfAborted(); console.warn('3D relation unavailable', error) }
+          if (existingMesh && relation && relation.mesh_edit !== 'none' && !contextFiles.length) return
           const preview = previewThreeDIntent(currentPrompt)
           const characterRequest = ['character', 'creature', 'body_part'].includes(preview.subjectKind)
           const geometricRoute = !characterRequest && ['procedural', 'photogrammetry'].includes(preview.pipelineRouting.pipeline)
@@ -3301,7 +3324,7 @@ export default function ModelView() {
           const preparedViews = resolvePreparedReferenceViews(preparedContext)
           const primaryPreparedImage = preparedViews.primary ?? pickPrimaryPreparedImage(preparedContext)
           // Preserve user requirements for a continuation; discard unrelated subjects.
-          const effectiveHistory = retainThreeDRequirements(currentPrompt, conversationHistory, EDIT_INTENT.test(currentPrompt))
+          const effectiveHistory = relation?.continuation === false ? [] : retainThreeDRequirements(currentPrompt, conversationHistory, relation?.continuation || EDIT_INTENT.test(currentPrompt))
           let workingPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
           let historyPrompt = currentPrompt
           const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: 'user' as const, content: message.content })) })
@@ -3391,7 +3414,7 @@ export default function ModelView() {
               }
             } catch { /* resolveur indisponible -> la question sera posee */ }
           }
-          if (!clarificationDejaResolue && !aUneImage && intent.needsClarification && intent.clarificationQuestion) {
+          if (!(existingMesh && relation && relation.mesh_edit !== 'none') && !clarificationDejaResolue && !aUneImage && intent.needsClarification && intent.clarificationQuestion) {
             setPhase('Analyse — clarification nécessaire', 12)
             // v77zh: surface the categorised options as quick-pick buttons so
             // the user clicks instead of typing — character anatomy, mechanism
@@ -3468,6 +3491,25 @@ export default function ModelView() {
               created_at: new Date().toISOString(),
             }, null, 2)),
           )
+          if (existingMesh && relation && relation.mesh_edit !== 'none' && !contextFiles.length) {
+            setPhase('Articulations — adaptation du GLB existant à la demande...', 35)
+            const output = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
+              '--input', existingMesh, '--run-root', runPaths.root, '--run-id', runId,
+              '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
+              '--mode', motionEnabledRef.current ? 'animation' : 'static_pose',
+              '--subject', intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind,
+            ], { resumeKey: 'model_ia' })
+            const derived = parseLastJsonLine(output)
+            if (!derived?.ok || !derived.path) throw new Error(String(derived?.error || 'Adaptation articulaire non produite ; modèle original conservé.'))
+            const path = String(derived.path)
+            lastMeshPathRef.current = path
+            setModelUrl(toAssetUrl(path))
+            pushMessage('3d', { role: 'user', content: currentPrompt, threeDContext: 'continuation' })
+            pushMessage('3d', { role: 'assistant', content: 'GLB existant réutilisé. Déformation articulaire mesurée ; conformité de la pose, contacts et collisions à vérifier.', images: [path] })
+            setProgress('Version dérivée livrée ; modèle initial conservé. Contrôles dans journal/joint-plan.json.')
+            setPhase('Version articulée chargée', 100)
+            return
+          }
           let referenceImagePath = `${runPaths.references}/${runId}_reference.png`
           const taskContext = await prepareTaskIntelligence({ module: '3d', prompt: workingPrompt, model: visionModel, files: preparedContext, setPhase, phaseBase: 5, phaseSpan: 10 })
           if (!clarificationDejaResolue && !aUneImage && taskContext.clarificationQuestion) {
@@ -3621,7 +3663,7 @@ export default function ModelView() {
           // Override the distilled prompt with the direct FLUX-native description
           taskContext.generationPrompt = fluxVisualPrompt
 
-          pushMessage('3d', { role: 'user', content: historyPrompt })
+          pushMessage('3d', { role: 'user', content: historyPrompt, threeDContext: effectiveHistory.length ? 'continuation' : 'new' })
           const comfyuiPath = runtimeServices.comfyui.path
 
           // Autonomous synthetic view generation + per-view verification
@@ -3787,7 +3829,7 @@ export default function ModelView() {
             referenceSeedForWorkflow = Boolean(referenceSeed)
             // Apply edits to supplied and resumed references with image conditioning.
             const editTraits = classifyImageEditRequest(currentPrompt, Boolean(referenceSeed))
-            const editReferenceSeed = Boolean(referenceSeed) && (editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || editTraits.decorChange || editTraits.addedCharacter || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
+            const editReferenceSeed = Boolean(referenceSeed) && (relation?.reference_edit || editTraits.removalOrReplace || editTraits.outfitEdit || editTraits.poseEdit || editTraits.decorChange || editTraits.addedCharacter || /\b(nue?|naked|nude|topless|shirtless)\b/i.test(currentPrompt))
             const shouldRegenerateReference = editReferenceSeed || referenceSeedOrigin !== 'user'
               && (!referenceSeed || EDIT_INTENT.test(currentPrompt) || shouldRefineReferenceSeed(intent, activeMotionPreset, referenceSupportPlan, Boolean(referenceSeed), referenceSeedOrigin, currentPrompt))
             if (!shouldRegenerateReference && referenceSeed) {
@@ -4117,7 +4159,7 @@ export default function ModelView() {
                 ? genDir.slice(workspacePath.length + 1)
                 : genDir
               await fsMkdir(genDir).catch(() => {})
-              const auroraArgs = ['--prompt', workingPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision']
+              const auroraArgs = ['--prompt', workingPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
@@ -4366,7 +4408,7 @@ export default function ModelView() {
 
           }
 
-          if (!result?.ok || !result.path) throw new Error(result?.error || 'Aucun pipeline n a produit de mesh exploitable.')
+          if (!result?.ok || !result.path) throw new Error(result?.error || auroraFailReason || 'Aucun pipeline n a produit de mesh exploitable.')
 
           if (dimensionHintForGen || wantsSymmetryEnforced) {
             const scaledPath = `${outputDir}/${runId}_scaled.glb`
@@ -4733,7 +4775,7 @@ export default function ModelView() {
           // n'etait plus celui que la porte avait juge. Le pipeline TRELLIS
           // possede son propre mouvement et ses portes: aucun post-traitement
           // UI par-dessus.
-          if (intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'Atlas') {
+          if (motionEnabledRef.current && intent.pipelineRouting.blenderRequired && wantsRig && result.shape_model !== 'Atlas' && !isCharacter) {
             const rigSubject: 'humanoid' | 'creature' | 'vehicle' | 'mechanism' | 'mechanical' | 'pendulum' | 'product' = isCharacter
               ? (intent.subjectKind === 'creature' ? 'creature' : 'humanoid')
               : isVehicle
@@ -4755,17 +4797,6 @@ export default function ModelView() {
             setProgress(rigLabel)
             setPhase('Animation — ' + rigLabel, 88)
             try {
-              // v75: pick the most relevant test_action based on prompt.
-              // 'walk' beats 'applaud' as default because almost every
-              // character request implies "should be able to move" not
-              // "should clap once". Keywords override.
-              const promptLower = currentPrompt.toLowerCase()
-              const humanoidAction = /\b(idle|debout|standing|attente|stand)\b/i.test(promptLower)
-                ? 'idle'
-                : /\b(applaudir|clap|applaud|claps)\b/i.test(promptLower)
-                  ? 'applaud'
-                  : 'walk'
-
               // v78: when rigging a vehicle or mechanism, ask the Aurora
               // extension for realistic physical params (density, friction,
               // angular velocity) so the bake uses calibrated mass and the
@@ -4807,7 +4838,7 @@ export default function ModelView() {
                   rigSystem: 'rigify',
                   subjectKind: rigSubject,
                   style: /\b(anime|manga)\b/i.test(currentPrompt) ? 'anime' : 'realistic',
-                  testAction: rigSubject === 'humanoid' ? humanoidAction : '',
+                  testAction: '',
                   outputDir,
                   runId,
                   physics: physicsOverrides,
@@ -4897,6 +4928,18 @@ export default function ModelView() {
           let autoMotionSummary = ''
           if (!motionEnabledRef.current) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
+          } else if (isCharacter) {
+            setPhase('Animation — plan sur le squelette réel...', 90)
+            const motionOutput = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
+              '--input', activeMeshPath, '--output', `${runPaths.motion}/${runId}_requested.glb`,
+              '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
+              '--subject', intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind,
+            ], { resumeKey: 'model_ia' })
+            const motion = parseLastJsonLine(motionOutput)
+            if (!motion?.ok || !motion.path) throw new Error(String(motion?.error || 'Animation demandée non produite ; modèle initial conservé.'))
+            activeMeshPath = String(motion.path)
+            result.path = activeMeshPath
+            autoMotionSummary = 'Animation sur articulations réelles ; déformation mesurée, contacts et collisions non certifiés.'
           } else try {
             const { getBridgeUrl } = await import('../utils/runtime')
             const bridge = getBridgeUrl()
@@ -5159,7 +5202,7 @@ export default function ModelView() {
       />
       {pendingJobBanner && pendingJobBanner.status === 'done' && (
         <div className="mx-4 mt-3 rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-2.5 text-[12px] text-emerald-100">
-          <div className="font-semibold mb-0.5">✅ Une generation s est terminee pendant votre absence</div>
+          <div className="font-semibold mb-0.5">Calcul terminé pendant votre absence — résultat à vérifier</div>
           <button
             type="button"
             onClick={() => void recovererResultat(pendingJobBanner.jobId)}
@@ -5171,7 +5214,7 @@ export default function ModelView() {
         <div className="mx-4 mt-3 rounded-xl border border-amber-400/40 bg-amber-500/10 px-4 py-2.5 text-[12px] text-amber-100">
           <div className="font-semibold mb-0.5">⏳ Generation 3D en cours sur le PC</div>
           <p className="text-amber-200/80 leading-relaxed">
-            L onglet a ete recharge pendant une generation ({pendingJobBanner.status === 'queued' ? 'en file' : 'en cours'}, jobId <code className="font-mono">{pendingJobBanner.jobId.slice(0, 10)}…</code>). Le PC continue le rendu. Relance &laquo; Generer &raquo; avec le meme prompt pour recuperer le mesh, ou
+            L onglet a ete recharge pendant une generation ({pendingJobBanner.status === 'queued' ? 'en file' : 'en cours'}, jobId <code className="font-mono">{pendingJobBanner.jobId.slice(0, 10)}…</code>). Le PC continue le calcul. Le suivi se reconnecte sans relancer de génération. Tu peux attendre le résultat ou
             <button
               type="button"
               onClick={() => void stopGeneration()}

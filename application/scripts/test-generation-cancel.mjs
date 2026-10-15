@@ -35,3 +35,22 @@ assert.equal(spawns,2,'different completed request starts fresh instead of retur
 third.abort(new DOMException('Cancelled','AbortError'));releaseSpawn()
 await assert.rejects(fresh,e=>e.name==='AbortError')
 console.log('Different completed command cannot supply an unrelated cached subject')
+// A long, silent but explicitly running worker must not become a failed mesh.
+let tick=0,polls=0,finished=false
+state.clear()
+sandbox.Date={now:()=>tick}
+sandbox.setTimeout=cb=>setTimeout(()=>{tick+=13*60*1000;cb()},1)
+sandbox.fetch=async url=>{
+ if(url.endsWith('/run-async'))return new Response(JSON.stringify({jobId:'silent-live'}),{headers:{'Content-Type':'application/json'}})
+ if(url.includes('/progress?'))return new Response(JSON.stringify({cursor:0}),{headers:{'Content-Type':'application/json'}})
+ if(url.endsWith('/job/silent-live')){polls++;return new Response(JSON.stringify(polls<3?{status:'running'}:{status:'done',output:'mesh completed',exitCode:0}),{headers:{'Content-Type':'application/json'}})}
+ throw Error(url)
+}
+assert.equal(await sandbox.runPythonScript('fixture.py',[],{signal:new AbortController().signal,resumeKey:'model_ia'}),'mesh completed')
+assert.equal(polls,3)
+assert(!state.has('model_ia'))
+// A caller deadline preserves the handle for refresh rather than spawning again.
+state.clear();tick=0;polls=0
+await assert.rejects(sandbox.runPythonScript('fixture.py',[],{signal:new AbortController().signal,resumeKey:'model_ia',maxWaitMs:1000}),/Suivi suspendu/)
+assert.equal(state.get('model_ia'),'silent-live')
+console.log('Live job survives >12 min of silence; unknown deadline retains its persisted job handle')

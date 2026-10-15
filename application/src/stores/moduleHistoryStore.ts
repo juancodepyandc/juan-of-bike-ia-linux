@@ -4,6 +4,7 @@ import type { ModuleId } from '../types/app.ts'
 import { inferTitle } from '../utils/titleInference.ts'
 
 export interface ModuleHistoryMessage {
+  threeDContext?: 'new' | 'continuation'
   role: 'user' | 'assistant'
   content: string
   images?: string[]

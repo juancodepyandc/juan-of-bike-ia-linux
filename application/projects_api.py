@@ -163,7 +163,7 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
             return jsonify(ok=False,error='Ce projet possède déjà un résultat final conservé.'),409
         token='frontend-'+(hashlib.sha256(executor.encode()).hexdigest() if isinstance(executor,str) else mid)
         if not item['owner'] or item['owner']!=token:return jsonify(ok=False,error='Ce calcul appartient à un autre exécutant ou n’a pas démarré. Ne pas le rejouer.'),409
-        if data['status']=='stopped' and not work_idle():
+        if data['status'] in {'stopped','failed'} and not work_idle():
             return jsonify(ok=False,error='Les processus terminent encore leur arrêt.',code='workers_stopping'),409
         store.append(mid,{'type':'error' if data['status']=='failed' else 'mission_complete','stopped':data['status']=='stopped','result':'Arrêt confirmé ; place libérée.' if data['status']=='stopped' else 'Le pipeline a terminé.' if data['status']=='completed' else 'Pipeline en erreur ; consulter ses preuves.'})
         return jsonify(ok=True,status=store.get(mid)['status'])
