@@ -12,3 +12,7 @@
 ## 2026-10-15 - pathlib.Path.as_posix() in assertions for Windows compatibility
 **Learning:** Hardcoding `str(Path(...))` or expecting specific string representations in tests for filesystem paths will break on Windows due to the backslash `\` directory separator, whereas Linux uses `/`. The test `test_real_input_transfers_before_dispatch_and_same_key_never_dispatches_twice` was failing because the manifest contained posix path strings (as produced by our application using `target.as_posix()`), but the test expected `str(target)` which resulted in backslashes on Windows CI.
 **Action:** When serializing paths to JSON or comparing path strings in tests that must run cross-platform, consistently use `Path.as_posix()` rather than `str(Path(...))` to normalize to forward slashes.
+
+## 2026-10-15 - fix sys reference inside subprocess cleanup finally block
+**Learning:** Adding `import sys` inside a `finally` block creates an `UnboundLocalError` if the `try` block crashes early before the import is executed or another `import sys` previously defined gets shadowed by the late import.
+**Action:** Import `sys` at the top of the function if it will be needed inside the `finally` block or other conditional branches.
