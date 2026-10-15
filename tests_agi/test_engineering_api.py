@@ -81,3 +81,32 @@ def test_completed_export_survives_new_bridge_and_owner_remains_private(client,t
     import os
     if os.name == 'posix':
         assert (tmp_path/'.aurora'/'engineering-receipts'/(job+'.json')).stat().st_mode & 0o777 == 0o600
+
+
+def test_inspect_endpoint_reports_dimensions_watertight_and_cut_recommendations(client):
+    raw=trimesh.creation.box([120,60,40]).export(file_type='stl')
+    res=client.post('/api/3d/engineering/inspect',data={
+        'mesh':(io.BytesIO(raw),'source.stl'),
+        'settings':json.dumps(config(size_mm=120)),
+    })
+    assert res.status_code==200
+    data=res.get_json()
+    assert data['ok'] is True
+    assert data['watertight'] is True
+    assert data['dimensions_mm']==[120.0,60.0,40.0]
+    assert data['fits_without_cut'] is False
+    assert data['single_axis_cut_feasible'] is True
+    assert data['recommended_axis']=='x'
+    assert data['estimated_piece_count']==2
+    assert data['estimated_pin_count']==2
+    assert len(data['balanced_cuts_mm'])==1
+    res_multi=client.post('/api/3d/engineering/inspect',data={
+        'mesh':(io.BytesIO(raw),'source.stl'),
+        'settings':json.dumps(config(size_mm=240)),
+    })
+    multi=res_multi.get_json()
+    assert multi['single_axis_cut_feasible'] is False
+    assert multi['exceeded_axes']==['x','y','z']
+
+
+

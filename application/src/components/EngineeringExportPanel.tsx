@@ -15,6 +15,37 @@ type Report = {
   textured_assembly_available?: boolean; fabrication?: { instructions: string; filament_plan: { part: string; name: string; color: string }[] }
 }
 type ExportResult = { ok: boolean; state: string; error?: string; report?: Report; download_url?: string }
+type MeshInspection = {
+  ok: boolean
+  watertight: boolean
+  is_volume: boolean
+  dimensions_mm: number[]
+  raw_dimensions: number[]
+  scale_factor: number
+  volume_mm3: number | null
+  face_count: number
+  vertex_count: number
+  connected_components: number
+  has_texture: boolean
+  usable_bed_mm: number[]
+  axis_ratios: Record<string, number>
+  exceeded_axes: string[]
+  fits_without_cut: boolean
+  single_axis_cut_feasible: boolean
+  recommended_axis: string
+  estimated_piece_count: number
+  estimated_pin_count: number
+  balanced_cuts_mm: number[]
+  min_transverse_section_mm: number
+  min_middle_slab_mm: number
+  min_end_slab_mm: number
+  max_no_cut_size_mm: number
+  max_single_axis_size_mm: number
+  ready_for_assembly: boolean
+  blockers: string[]
+  warnings: string[]
+}
+
 const STORAGE = 'aurora.printProfiles.v1'
 const initial: Profile = { name: '', process: 'FDM', bed_mm: [220, 220, 250], clearance_mm: 0.2,
   wall_mm: 2, pin_diameter_mm: 5, pin_depth_mm: 8, margin_mm: 5, keyed_pins: true, lead_in_mm: 0.2, color_capability: 'single' }
@@ -37,6 +68,7 @@ function selectedOnDevice(): Profile {
 
 export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false, active = true, onAssemblyRequested, objectiveHint = '' }: { objectiveHint?: string; modelUrl: string | null; assemblyOnly?: boolean; active?: boolean; onAssemblyRequested?: () => void }) {
   const [mode, setMode] = useState<'geometry' | 'textured' | 'assembly'>(assemblyOnly ? 'assembly' : 'geometry')
+  const [subTab, setSubTab] = useState<'all' | 'design' | 'slicer'>('all')
   const [profiles, setProfiles] = useState<Profile[]>(profilesOnDevice)
   const [profile, setProfile] = useState<Profile>(selectedOnDevice)
   useEffect(()=>{const navigate=(event:Event)=>{if((event as CustomEvent).detail?.module==='3d'){setProfiles(profilesOnDevice());setProfile(selectedOnDevice())}};window.addEventListener('aurora:navigate',navigate);return()=>window.removeEventListener('aurora:navigate',navigate)},[])
@@ -52,6 +84,8 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const [constraints, setConstraints] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [busy, setBusy] = useState(false)
+  const [inspecting, setInspecting] = useState(false)
+  const [inspection, setInspection] = useState<MeshInspection | null>(null)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [result, setResult] = useState<ExportResult | null>(null)
@@ -69,6 +103,46 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
   const inputClass = 'mt-1 w-full rounded-lg border border-aurora-border/50 bg-aurora-surface-2 px-2 py-1.5 text-xs text-aurora-text'
 
   useEffect(() => { viewerRef.current?.contentWindow?.postMessage({ type: 'aurora-assembly-view', exploded: previewExploded }, viewerRef.current ? new URL(viewerRef.current.src).origin : window.location.origin) }, [previewExploded])
+
+  async function resolveMeshSource(signal?: AbortSignal): Promise<{ source: Blob | File; filename: string }> {
+    let filename = file?.name || (modelUrl?.toLowerCase().includes('.stl') ? 'model.stl' : 'model.glb')
+    if (file) return { source: file, filename }
+    if (!modelUrl) throw new Error('Charger un maillage existant ou générer un modèle avant export.')
+    const fetched = await fetch(modelUrl, signal ? { signal } : undefined)
+    if (!fetched.ok) throw new Error('Le maillage affiché ne peut pas être lu.')
+    const source = await fetched.blob()
+    if (modelUrl.toLowerCase().includes('.obj')) filename = 'model.obj'
+    return { source, filename }
+  }
+
+  async function inspectCurrentMesh() {
+    if (!file && !modelUrl) return
+    if (!Number.isFinite(size) || size < 1 || size > 2000) return
+    setInspecting(true)
+    setError('')
+    try {
+      const { source, filename } = await resolveMeshSource()
+      const body = new FormData()
+      body.append('mesh', source, filename)
+      body.append('settings', JSON.stringify({ mode, size_mm: size, profile, axis, view_up_axis: upAxis }))
+      const response = await fetch(`${getBridgeUrl()}/api/3d/engineering/inspect`, { method: 'POST', body })
+      const data = await response.json()
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Diagnostic géométrique indisponible.')
+      if (mounted.current) setInspection(data as MeshInspection)
+    } catch (e) {
+      if (mounted.current) setError(e instanceof Error ? e.message : 'Diagnostic interrompu.')
+    } finally {
+      if (mounted.current) setInspecting(false)
+    }
+  }
+
+  useEffect(() => {
+    if (file) {
+      void inspectCurrentMesh()
+    } else {
+      setInspection(null)
+    }
+  }, [file])
 
   function saveProfile() {
     const ranges = [[profile.clearance_mm, 0.01, 2], [profile.wall_mm, 0.5, 20],
@@ -97,16 +171,7 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
       const parsedCuts = cuts.trim() ? cuts.split(';').map((v) => Number(v.trim().replace(',', '.'))) : []
       if (!Number.isFinite(size) || size < 1 || size > 2000 || parsedCuts.some((v) => !Number.isFinite(v) || v <= 0))
         throw new Error('Taille et positions de coupe valides requises (séparer les coupes par « ; »).')
-      let source: Blob | File
-      let filename = file?.name || (modelUrl?.toLowerCase().includes('.stl') ? 'model.stl' : 'model.glb')
-      if (file) source = file
-      else {
-        if (!modelUrl) throw new Error('Charger un maillage existant ou générer un modèle avant export.')
-        const fetched = await fetch(modelUrl, { signal: controller.signal })
-        if (!fetched.ok) throw new Error('Le maillage affiché ne peut pas être lu.')
-        source = await fetched.blob()
-        if (modelUrl.toLowerCase().includes('.obj')) filename = 'model.obj'
-      }
+      const { source, filename } = await resolveMeshSource(controller.signal)
       const body = new FormData(); body.append('mesh', source, filename)
       const rules = mode === 'assembly' && constraints.trim() ? JSON.parse(constraints) : {}
       if (!rules || typeof rules !== 'object' || Array.isArray(rules)
@@ -144,11 +209,46 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
     } catch (e) { setError(e instanceof Error ? e.message : 'Téléchargement échoué.') }
   }
 
+  const usableBed = profile.bed_mm.map((v) => Math.max(0, v - 2 * profile.margin_mm))
+
   return <section className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4" aria-label={assemblyOnly ? "Préparation d’assemblage" : "Versions 3D et assemblage"}>
-    <h3 className="text-sm font-semibold text-aurora-text">{assemblyOnly ? "Assemblage — assemblé / éclaté" : "Versions 3D / Assemblage"}</h3>
-    {assemblyOnly && active && <EngineeringDesignPanel profile={profile} objectiveHint={objectiveHint} />}
+    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+      <div>
+        <h3 className="text-sm font-semibold text-aurora-text">{assemblyOnly ? "Assemblage — assemblé / éclaté" : "Versions 3D / Assemblage"}</h3>
+        <p className="text-xs text-aurora-text-muted">
+          Profil actif : <strong>{profile.name || 'Standard FDM'}</strong> ({profile.process}) · Plateau utile {usableBed.join(' × ')} mm · Jeu {profile.clearance_mm} mm · Pions Ø{profile.pin_diameter_mm}×{profile.pin_depth_mm} mm
+        </p>
+      </div>
+      {assemblyOnly && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Parcours d’ingénierie et d’assemblage">
+          {([
+            ['all', 'Vue combinée'],
+            ['design', '1. Conception Projet Multi-Pièces'],
+            ['slicer', '2. Découpe & Pions d’un Maillage'],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={subTab === key}
+              onClick={() => setSubTab(key)}
+              className={`min-h-9 rounded-lg border px-2.5 py-1 text-xs ${
+                subTab === key
+                  ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent'
+                  : 'border-aurora-border text-aurora-text-muted'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+
+    {assemblyOnly && active && subTab !== 'slicer' && <EngineeringDesignPanel profile={profile} objectiveHint={objectiveHint} />}
+
+    <div hidden={assemblyOnly && subTab === 'design'}>
     <p className="mt-2 text-xs text-aurora-text-muted">Préparer le modèle existant pour le visuel ou l’impression, sans relancer sa génération.</p>
-    <details open={!result || !assemblyOnly}><summary hidden={!assemblyOnly} className="mt-3 min-h-11 cursor-pointer text-sm">Préparer les pièces et le profil imprimante</summary>
+    <details open={!result || !assemblyOnly || subTab === 'slicer'}><summary hidden={!assemblyOnly} className="mt-3 min-h-11 cursor-pointer text-sm font-semibold">Préparer les pièces et le profil imprimante</summary>
     <fieldset disabled={busy} className="mt-3 space-y-3 disabled:opacity-60">
       {!assemblyOnly && <div className="grid grid-cols-3 gap-1">
         {([['geometry', 'Géométrie pure'], ['textured', 'Texture'], ['assembly', 'Assemblage']] as const).map(([value, label]) =>
@@ -158,8 +258,78 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
       <label className="block text-xs text-aurora-text-muted">Maillage GLB / STL / OBJ
         <input type="file" accept=".glb,.stl,.obj" className="mt-1 w-full text-xs" onChange={(e) => setFile(e.target.files?.[0] || null)} />
       </label>
-      <p className="text-[11px] text-aurora-text-dim">{file ? `Source : ${file.name}` : modelUrl ? 'Source : modèle affiché.' : 'Importer un maillage pour commencer.'}</p>
-      {file && modelUrl && <button className="text-xs text-aurora-accent" onClick={() => setFile(null)}>Utiliser le modèle affiché</button>}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-aurora-text-dim">{file ? `Source : ${file.name}` : modelUrl ? 'Source : modèle affiché.' : 'Importer un maillage pour commencer.'}</p>
+        <div className="flex flex-wrap gap-2">
+          {file && modelUrl && <button type="button" className="text-xs text-aurora-accent" onClick={() => setFile(null)}>Utiliser le modèle affiché</button>}
+          {(file || modelUrl) && (
+            <button
+              type="button"
+              disabled={inspecting || busy}
+              onClick={() => void inspectCurrentMesh()}
+              className="rounded-lg border border-aurora-border px-2.5 py-1 text-xs text-aurora-accent hover:border-aurora-accent disabled:opacity-40"
+            >
+              {inspecting ? 'Analyse géométrique…' : 'Analyser la géométrie et la compatibilité plateau'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {inspection && (
+        <div className="rounded-xl border border-aurora-border/70 bg-aurora-surface-2/70 p-3 text-xs space-y-2" aria-label="Diagnostic de précision géométrique">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <strong className="text-aurora-text">Diagnostic géométrique & précision plateau</strong>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${inspection.watertight ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/15 text-amber-300 border border-amber-500/40'}`}>
+              {inspection.watertight ? 'Volume fermé (manifold) ✓' : 'Maillage ouvert — réparation requise ⚠'}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-aurora-text-muted">
+            <p>Dimensions à l’échelle : <strong className="text-aurora-text">{inspection.dimensions_mm.map((v) => v.toFixed(2)).join(' × ')} mm</strong></p>
+            <p>Volume utile imprimante : <strong className="text-aurora-text">{inspection.usable_bed_mm.map((v) => v.toFixed(1)).join(' × ')} mm</strong></p>
+            <p>Topologie : {inspection.face_count} faces · {inspection.connected_components} composant(s){inspection.volume_mm3 ? ` · ${(inspection.volume_mm3 / 1000).toFixed(2)} cm³` : ''}</p>
+            <p>Exigences raccords : section ≥ {inspection.min_transverse_section_mm.toFixed(1)} mm · tranche ≥ {inspection.min_end_slab_mm.toFixed(1)} mm</p>
+          </div>
+          {inspection.fits_without_cut ? (
+            <p className="text-emerald-300">
+              ✓ Le modèle rentre entièrement sur le plateau sans découpe (taille max sans coupe : {inspection.max_no_cut_size_mm.toFixed(1)} mm).
+            </p>
+          ) : inspection.single_axis_cut_feasible ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-aurora-accent/40 bg-aurora-accent/10 p-2 text-aurora-text">
+              <span>
+                Découpe recommandée sur l’axe <strong>{inspection.recommended_axis.toUpperCase()}</strong> : {inspection.estimated_piece_count} pièce(s), {inspection.estimated_pin_count} pion(s) · coupe(s) à <strong>{inspection.balanced_cuts_mm.map((v) => v.toFixed(1)).join(' ; ')} mm</strong>.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setAxis(inspection.recommended_axis)
+                  setCuts(inspection.balanced_cuts_mm.map((v) => v.toFixed(2)).join(' ; '))
+                }}
+                className="rounded-lg border border-aurora-accent px-2.5 py-1 text-xs font-semibold text-aurora-accent"
+              >
+                Appliquer l’axe et les coupes recommandés
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-amber-200">
+              <span>
+                Dépassement sur plusieurs axes ({inspection.exceeded_axes.join(', ')}). Taille max pour une découpe sur un seul axe : <strong>{inspection.max_single_axis_size_mm.toFixed(1)} mm</strong>.
+              </span>
+              {inspection.max_single_axis_size_mm >= 1 && (
+                <button
+                  type="button"
+                  onClick={() => setSize(Math.max(1, Math.floor(inspection.max_single_axis_size_mm)))}
+                  className="rounded-lg border border-amber-400 px-2.5 py-1 text-xs font-semibold text-amber-200"
+                >
+                  Adapter la dimension à {Math.max(1, Math.floor(inspection.max_single_axis_size_mm))} mm
+                </button>
+              )}
+            </div>
+          )}
+          {inspection.blockers.map((b, i) => <p key={i} className="text-red-300">• {b}</p>)}
+          {inspection.warnings.map((w, i) => <p key={i} className="text-amber-300">• {w}</p>)}
+        </div>
+      )}
+
       {mode === 'textured' ? <p className="text-xs text-aurora-text-muted">GLB original : matériaux, textures, animations et unités conservés. Les textures absentes ne sont pas inventées.</p>
         : <label className="block text-xs text-aurora-text-muted">Plus grande dimension finale (mm)
           <input aria-label="Dimension finale mm" type="number" min={1} max={2000} value={size} onChange={(e) => setSize(e.target.valueAsNumber)} className={inputClass} />
@@ -304,5 +474,6 @@ export default function EngineeringExportPanel({ modelUrl, assemblyOnly = false,
       </> : exportedMode === 'geometry' && <p className="text-aurora-text-muted">{result.report.source_watertight ? 'Maillage fermé.' : 'Maillage ouvert : cette géométrie nécessite une réparation avant assemblage.'}</p>}
       <button onClick={() => void download()} className="rounded-lg border border-aurora-accent px-3 py-2 text-aurora-accent">Télécharger le ZIP</button>
     </div>}
+    </div>
   </section>
 }

@@ -16,8 +16,8 @@
   }
  },
  "source_files": 2198,
- "source_lines": 727018,
- "static_route_declarations": 638,
+ "source_lines": 728698,
+ "static_route_declarations": 639,
  "by_repository": {
   "AuroraIA": 2036,
   "aurora-remote-cli": 158,
@@ -843,16 +843,24 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_api.py",
-   "sha256": "50f76a3ef9618d0c42b755251cdda23540d2ba5eefd3b7740162e2e70ad5f4c5",
-   "lines": 146,
+   "sha256": "b276751ba9d455079861c465ff09e20df51b50f3ea554393ec81468b22c5ffa4",
+   "lines": 164,
    "http_routes": [
+    {
+     "path": "/api/3d/engineering/inspect",
+     "methods": [
+      "POST"
+     ],
+     "handler": "inspect_export",
+     "line": 67
+    },
     {
      "path": "/api/3d/engineering",
      "methods": [
       "POST"
      ],
      "handler": "create_export",
-     "line": 67
+     "line": 85
     },
     {
      "path": "/api/3d/engineering/<job_id>",
@@ -860,7 +868,7 @@
       "GET"
      ],
      "handler": "job_status",
-     "line": 132
+     "line": 150
     },
     {
      "path": "/api/3d/engineering/<job_id>/download",
@@ -868,7 +876,7 @@
       "GET"
      ],
      "handler": "download",
-     "line": 142
+     "line": 160
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -892,8 +900,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_design_api.py",
-   "sha256": "c0fffbecd371f2fd837e854ed39f923a1a6c1baf2577b12585f1b92fad5afe7a",
-   "lines": 294,
+   "sha256": "43f1d02201b838a91a68369010b26b40495fc275acfc8ba7b14fd7c28784f2dd",
+   "lines": 580,
    "http_routes": [
     {
      "path": "/api/3d/design",
@@ -901,7 +909,7 @@
       "GET"
      ],
      "handler": "list_designs",
-     "line": 124
+     "line": 410
     },
     {
      "path": "/api/3d/design",
@@ -909,7 +917,7 @@
       "POST"
      ],
      "handler": "start_design",
-     "line": 132
+     "line": 418
     },
     {
      "path": "/api/3d/design/<did>",
@@ -917,7 +925,7 @@
       "GET"
      ],
      "handler": "status_design",
-     "line": 188
+     "line": 474
     },
     {
      "path": "/api/3d/design/<did>/viewer/<path:name>",
@@ -925,7 +933,7 @@
       "GET"
      ],
      "handler": "design_viewer",
-     "line": 193
+     "line": 479
     },
     {
      "path": "/api/3d/design/<did>/simulate",
@@ -933,7 +941,7 @@
       "POST"
      ],
      "handler": "simulate_design",
-     "line": 207
+     "line": 493
     },
     {
      "path": "/api/3d/design/<did>/insertion",
@@ -941,7 +949,7 @@
       "POST"
      ],
      "handler": "insertion_design",
-     "line": 225
+     "line": 511
     },
     {
      "path": "/api/3d/design/<did>/resume",
@@ -949,7 +957,7 @@
       "POST"
      ],
      "handler": "resume_design",
-     "line": 239
+     "line": 525
     },
     {
      "path": "/api/3d/design/<did>/stop",
@@ -957,7 +965,7 @@
       "POST"
      ],
      "handler": "stop_design",
-     "line": 251
+     "line": 537
     },
     {
      "path": "/api/3d/design/<did>/delete",
@@ -965,7 +973,7 @@
       "POST"
      ],
      "handler": "delete_design",
-     "line": 270
+     "line": 556
     },
     {
      "path": "/api/3d/design/<did>/download",
@@ -973,7 +981,7 @@
       "GET"
      ],
      "handler": "file_design",
-     "line": 289
+     "line": 575
     },
     {
      "path": "/api/3d/design/<did>/dossier",
@@ -981,7 +989,7 @@
       "GET"
      ],
      "handler": "file_design",
-     "line": 289
+     "line": 575
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -997,8 +1005,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_mesh.py",
-   "sha256": "8400fa10dcb0b8a29310efbc219250aaee8f3c743793c7fc8b145334c4cd2839",
-   "lines": 692,
+   "sha256": "8170177d567a4d0064fc263cb73885dd2b314da515fabc9013b3fdc4d7c4450c",
+   "lines": 833,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1013,8 +1021,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_project.py",
-   "sha256": "6f55bba2fdd85a08a3d53d549b09462380fea74d71619bddc7057e487ba66cbe",
-   "lines": 197,
+   "sha256": "4e7061c6e40cfe9323b2a5a46690b470090679feaf344a3d3c4fe583a33c6370",
+   "lines": 199,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1029,8 +1037,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_viewer.html",
-   "sha256": "acb83d496280ce3f222afc4b65f668c34ad7ed6299ff3335ffa6816a629043c0",
-   "lines": 99
+   "sha256": "6b29727e86250886776dd9336c8190c257ba2f4c73278491a3ded12ed34f9145",
+   "lines": 107
   },
   {
    "repo": "AuroraIA",
@@ -1311,8 +1319,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/project_viewer.html",
-   "sha256": "ea5098b2936b428a65ba9aa5bf73e84cd5571621352568424230ac93901f39f3",
-   "lines": 18
+   "sha256": "6e90bfb470424605f52112fa9ef4eb8f21ef47cbf2a937ebd8e2a34f4f9c7e51",
+   "lines": 19
   },
   {
    "repo": "AuroraIA",
@@ -10500,14 +10508,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/EngineeringDesignPanel.tsx",
-   "sha256": "b525c3ceacf4769ebd8b4271bae743d9e0d5ad80b980ec23078abaee9f7c7ba9",
-   "lines": 49
+   "sha256": "3e1e06182a3c9d789ba681210586b7a44ff8c5fc30e684add4b2438e7b5b0789",
+   "lines": 1015
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/EngineeringExportPanel.tsx",
-   "sha256": "55b3422302095dac02874267891928e65d2bfd35ad147a2f2df53d4786f2ee6f",
-   "lines": 308
+   "sha256": "96a419d001ab11db5068fef65e38545109fa455ea6689761b5d5ff168b3bc514",
+   "lines": 479
   },
   {
    "repo": "AuroraIA",
@@ -10638,8 +10646,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/ProjectsPanel.tsx",
-   "sha256": "bc82eb93a7501cfcdcbd9c96d46d921063fcadd5902cab9b59ff24ba60921a9e",
-   "lines": 25
+   "sha256": "35ad138bb4072a90746b334052474db575444ad6e5eeac4e64d1b1d3772dfd9e",
+   "lines": 26
   },
   {
    "repo": "AuroraIA",
@@ -14442,7 +14450,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "24cd6a8900d397dd30c160a37ec44092274bc87f93ddc73aa2cc550fbdd01b11",
+   "sha256": "1eba673cf59b38496b8540b71783274dd8cf6617c27175adf9ce0c1486589e9d",
    "lines": 5983
   },
   {
@@ -19024,8 +19032,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_engineering_api.py",
-   "sha256": "8bc1d35fdb3819ce26a03bb2a34af2761fdf15d3a71aae85a740fb3780e9c72c",
-   "lines": 83,
+   "sha256": "b1c24eb403b6e2246aa91efaf2a71aac355e99bf69b43d9ac6990f0886587811",
+   "lines": 112,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -19048,8 +19056,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_engineering_design_api.py",
-   "sha256": "22142cc6856633fdadf5ad6da9238bd9a247f7c6b5e0c76ead1c0b873c855976",
-   "lines": 140,
+   "sha256": "90f4ab554cc9336d83f9652bff538b1f6ffdc56eeb7e96d51aae77fe5ededc65",
+   "lines": 197,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

@@ -63,6 +63,24 @@ def register_engineering_routes(bp, workspace):
             jobs[job_id].update(state='done' if result.get('ok') else 'error', result=result)
             save_receipt(job_id,jobs[job_id])
 
+    @bp.route('/api/3d/engineering/inspect', methods=['POST'])
+    def inspect_export():
+        upload = request.files.get('mesh')
+        suffix = Path(upload.filename or '').suffix.lower() if upload else ''
+        if not upload or suffix not in {'.glb', '.stl', '.obj'}:
+            return jsonify(ok=False, error='Joindre un maillage GLB, STL ou OBJ.'), 400
+        try:
+            raw_settings = json.loads(request.form.get('settings', '{}'))
+            if not isinstance(raw_settings, dict):
+                raise ValueError('Paramètres JSON invalides.')
+            data = upload.stream.read(120 * 1024 * 1024 + 1)
+            from application.engineering_mesh import inspect_mesh
+            return jsonify(inspect_mesh(data, suffix, raw_settings)), 200
+        except (ValueError, TypeError) as exc:
+            return jsonify(ok=False, error=f'Inspection invalide : {exc}'), 400
+        except Exception:
+            return jsonify(ok=False, error='Ce maillage ne peut pas être inspecté.'), 400
+
     @bp.route('/api/3d/engineering', methods=['POST'])
     def create_export():
         upload = request.files.get('mesh')

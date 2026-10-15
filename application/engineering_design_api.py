@@ -61,6 +61,291 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             rec=json.loads((private/(did+'.json')).read_text())
             return rec if rec['owner']==owner() else None
         except (OSError,ValueError,KeyError,TypeError):return None
+    def _build_telemetry(item, folder, rec, complete, verified_report):
+        cp = {}
+        try:
+            cp = store.checkpoint(item['id']) or {}
+        except Exception:
+            cp = {}
+        raw_criteria = cp.get('criteria') if isinstance(cp.get('criteria'), list) else []
+        raw_verified = cp.get('verified') if isinstance(cp.get('verified'), dict) else {}
+        criteria_list = []
+        for idx, c in enumerate(raw_criteria[:24]):
+            if isinstance(c, dict):
+                cid = str(c.get('id') or f'C{idx+1}')
+                desc = str(c.get('description') or c.get('label') or cid)[:240]
+            else:
+                cid = f'C{idx+1}'
+                desc = str(c)[:240]
+            proof = raw_verified.get(cid) or raw_verified.get(desc)
+            criteria_list.append({
+                'index': idx,
+                'id': cid,
+                'text': desc,
+                'description': desc,
+                'status': 'verified' if bool(proof) else 'pending',
+                'verified': bool(proof),
+                'proof': str(proof)[:200] if proof else None,
+            })
+
+        recent_actions = []
+        try:
+            events = store.events(item['id'], limit=120)
+        except Exception:
+            events = []
+        for seq, ev in events:
+            if not isinstance(ev, dict):
+                continue
+            kind = ev.get('type', '')
+            ts = ev.get('ts')
+            if kind in {'plan_ready', 'plan'}:
+                detail = str(ev.get('summary') or '')[:180]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'plan', 'type': kind, 'label': 'Plan d’ingénierie établi', 'detail': detail, 'summary': f"Plan d’ingénierie établi {detail}".strip(), 'ts': ts})
+            elif kind in {'tool_call', 'tool_start', 'action'}:
+                tool = str(ev.get('tool') or ev.get('name') or 'outil')
+                arg_preview = ''
+                args = ev.get('args') or ev.get('input')
+                if isinstance(args, dict):
+                    arg_preview = str(args.get('path') or args.get('file') or args.get('command') or args.get('cmd') or '')[:120]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'tool', 'type': 'tool', 'label': f'Outil : {tool}', 'detail': arg_preview, 'summary': f"{tool} {arg_preview}".strip(), 'ts': ts})
+            elif kind == 'criterion_verified':
+                cid = str(ev.get('criterion') or ev.get('id') or ev.get('index') or '')
+                detail = str(ev.get('proof') or '')[:160]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'check', 'type': kind, 'label': f'Critère vérifié : {cid}', 'detail': detail, 'summary': f"Critère vérifié ({cid}) {detail}".strip(), 'ts': ts})
+            elif kind == 'step_start':
+                step_num = ev.get('step') or seq
+                detail = str(ev.get('thought') or ev.get('summary') or '')[:160]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'step', 'type': kind, 'label': f'Étape {step_num}', 'detail': detail, 'summary': f"Étape {step_num} : {detail}".strip(), 'ts': ts})
+            elif kind == 'error':
+                detail = str(ev.get('message') or ev.get('error') or '')[:200]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'error', 'type': 'error', 'label': 'Alerte / erreur détectée', 'detail': detail, 'summary': detail, 'ts': ts})
+            elif kind == 'mission_complete':
+                label = 'Mission terminée' if not ev.get('stopped') else 'Mission arrêtée'
+                detail = str(ev.get('result') or '')[:180]
+                recent_actions.append({'index': seq, 'seq': seq, 'kind': 'done', 'type': kind, 'label': label, 'detail': detail, 'summary': f"{label} — {detail}".strip(' —'), 'ts': ts})
+
+        workspace_files = []
+        stl_count = 0
+        has_design_py = False
+        has_tests_py = False
+        has_spec_json = False
+        has_project_json = False
+        has_dossier = False
+        if folder.is_dir():
+            try:
+                for p in sorted(folder.rglob('*')):
+                    if not p.is_file():
+                        continue
+                    rel = p.relative_to(folder).as_posix()
+                    if rel.startswith('viewer_assets/') or rel in {'fabrication.py', 'OBJECTIF.json'}:
+                        continue
+                    ext = p.suffix.lower()
+                    if ext == '.stl':
+                        stl_count += 1
+                    if rel == 'design.py':
+                        has_design_py = True
+                    elif rel == 'tests.py':
+                        has_tests_py = True
+                    elif rel == 'project_spec.json':
+                        has_spec_json = True
+                    elif rel == 'project.json':
+                        has_project_json = True
+                    elif rel in {'DOSSIER.md', 'DOSSIER.html'}:
+                        has_dossier = True
+                    if ext in {'.py', '.json', '.stl', '.glb', '.md', '.html', '.svg', '.zip'} and len(workspace_files) < 32:
+                        workspace_files.append(rel)
+            except OSError:
+                pass
+
+        active_doc = verified_report
+        if not isinstance(active_doc, dict) and folder.is_dir():
+            for candidate in ('project.json', 'project_spec.json'):
+                cpath = folder / candidate
+                if cpath.is_file():
+                    try:
+                        loaded = json.loads(cpath.read_text(encoding='utf-8'))
+                        if isinstance(loaded, dict):
+                            active_doc = loaded
+                            break
+                    except Exception:
+                        pass
+
+        draft_summary = None
+        if isinstance(active_doc, dict):
+            raw_parts = active_doc.get('parts') if isinstance(active_doc.get('parts'), list) else []
+            raw_bom = active_doc.get('bom') if isinstance(active_doc.get('bom'), list) else []
+            raw_joints = active_doc.get('mechanism_joints') if isinstance(active_doc.get('mechanism_joints'), list) else (
+                active_doc.get('joints') if isinstance(active_doc.get('joints'), list) else []
+            )
+            raw_steps = active_doc.get('assembly_steps') if isinstance(active_doc.get('assembly_steps'), list) else []
+            raw_plates = active_doc.get('print_plates') if isinstance(active_doc.get('print_plates'), list) else []
+            parts_preview = []
+            for pt in raw_parts[:24]:
+                if not isinstance(pt, dict):
+                    continue
+                dims = pt.get('dimensions_mm')
+                mfg = str(pt.get('manufacturing') or pt.get('source') or 'print')
+                parts_preview.append({
+                    'id': str(pt.get('id') or pt.get('design_id') or ''),
+                    'name': str(pt.get('name') or pt.get('id') or ''),
+                    'file': str(pt.get('file') or ''),
+                    'source': mfg,
+                    'manufacturing': mfg,
+                    'dimensions_mm': [round(float(x), 2) for x in dims[:3]] if isinstance(dims, list) and len(dims) == 3 and all(isinstance(x, (int, float)) for x in dims) else None,
+                    'volume_mm3': round(float(pt['volume_mm3']), 2) if isinstance(pt.get('volume_mm3'), (int, float)) else None,
+                    'watertight': pt.get('watertight') if isinstance(pt.get('watertight'), bool) else None,
+                    'filament': str(pt['filament']) if pt.get('filament') else None,
+                    'color_rgba': pt.get('color_rgba') if isinstance(pt.get('color_rgba'), list) else None,
+                })
+            joints_preview = []
+            dof_sum = 0
+            for j in raw_joints[:24]:
+                if not isinstance(j, dict):
+                    continue
+                jtype = str(j.get('kind') or j.get('type') or 'fixed')
+                jdof = int(j['dof']) if isinstance(j.get('dof'), int) else (0 if jtype == 'fixed' else 1)
+                dof_sum += jdof
+                lims = j.get('limits') if 'limits' in j else j.get('limits_deg')
+                joints_preview.append({
+                    'id': str(j.get('id') or ''),
+                    'type': jtype,
+                    'parent': str(j.get('parent') or ''),
+                    'child': str(j.get('child') or ''),
+                    'limits': [float(lims[0]), float(lims[1])] if isinstance(lims, (list, tuple)) and len(lims) == 2 and all(isinstance(x, (int, float)) for x in lims) else None,
+                })
+            bom_preview = [
+                {
+                    'name': str(b.get('name') or ''),
+                    'quantity': int(b.get('quantity', 1)) if isinstance(b.get('quantity'), int) else 1,
+                    'specification': str(b.get('specification') or ''),
+                }
+                for b in raw_bom[:32]
+                if isinstance(b, dict) and b.get('name')
+            ]
+            steps_preview = []
+            for s in raw_steps[:32]:
+                if isinstance(s, str) and s.strip():
+                    steps_preview.append(s.strip())
+                elif isinstance(s, dict):
+                    txt = str(s.get('instruction') or s.get('description') or '').strip()
+                    if txt:
+                        steps_preview.append(txt)
+            printed_cnt = sum(1 for p in raw_parts if isinstance(p, dict) and (p.get('manufacturing') or p.get('source') or 'print') == 'print')
+            purchased_cnt = sum(1 for p in raw_parts if isinstance(p, dict) and (p.get('manufacturing') or p.get('source')) == 'purchased')
+            draft_summary = {
+                'title': str(active_doc.get('title') or rec.get('objective', '')[:80]),
+                'feasibility': str(active_doc.get('feasibility') or ('verified_deliverable' if complete else 'in_progress')),
+                'units': str(active_doc.get('units') or 'mm'),
+                'part_count': len(raw_parts),
+                'printable_count': printed_cnt,
+                'printed_part_count': printed_cnt,
+                'purchased_count': purchased_cnt,
+                'purchased_part_count': purchased_cnt,
+                'bom_count': len(raw_bom),
+                'joint_count': len(raw_joints),
+                'dof': dof_sum,
+                'dof_total': dof_sum,
+                'assembly_step_count': len(steps_preview),
+                'plate_count': len(raw_plates),
+                'parts': parts_preview,
+                'parts_preview': parts_preview,
+                'joints': joints_preview,
+                'bom': bom_preview,
+                'assembly_steps': steps_preview,
+                'assumptions': [str(a)[:240] for a in (active_doc.get('assumptions') or [])[:12] if isinstance(a, str)],
+                'blockers': [str(b)[:240] for b in (active_doc.get('blockers') or [])[:12] if isinstance(b, str)],
+                'measured_checks': active_doc.get('measured_checks') if isinstance(active_doc.get('measured_checks'), dict) else None,
+                'simulations': {},
+            }
+
+        status = item['status']
+        if complete and status == 'completed':
+            phase = 'Dossier d’ingénierie complet et géométries vérifiées'
+            pct = 100
+        elif status == 'queued':
+            phase = 'En file d’attente d’exécution sur le PC'
+            pct = 8
+        elif status == 'planning':
+            phase = 'Analyse de l’objectif et structuration du plan CAO'
+            pct = 15
+        elif status == 'running':
+            if has_project_json and has_dossier:
+                phase = 'Validation finale des maillages, cinématique et archive'
+                pct = 90
+            elif has_tests_py and stl_count > 0:
+                phase = f'Exécution des tests géométriques et tolérances ({stl_count} STL générés)'
+                pct = 72
+            elif has_design_py and stl_count > 0:
+                phase = f'Génération paramétrique des solides ({stl_count} STL sur disque)'
+                pct = 55
+            elif has_design_py:
+                phase = 'Écriture du script CAO paramétrique (design.py)'
+                pct = 38
+            else:
+                phase = 'Recherche dimensionnelle, choix des interfaces et architecture'
+                pct = max(20, min(35, 18 + int(item.get('steps', 0)) * 3))
+        elif status == 'completed' and not complete:
+            phase = 'Dossier incomplet — reprise recommandée pour sceller les preuves'
+            pct = 82
+        elif status in {'interrupted', 'stopped'}:
+            phase = 'Exécution mise en pause — preuves conservées, reprise disponible'
+            pct = 60 if stl_count > 0 else 25
+        elif status == 'blocked':
+            phase = 'Contrainte physique bloquante identifiée dans le dossier'
+            pct = 85
+        else:
+            phase = 'Alerte d’exécution — reprise disponible sur le dernier point de contrôle'
+            pct = 50 if stl_count > 0 else 20
+
+        verified_count = sum(1 for c in criteria_list if c['verified'])
+        profile = rec.get('profile') if isinstance(rec.get('profile'), dict) else {}
+        bed = profile.get('bed_mm') if isinstance(profile.get('bed_mm'), list) and len(profile.get('bed_mm')) == 3 else [220, 220, 250]
+        margin = float(profile.get('margin_mm', 5)) if isinstance(profile.get('margin_mm'), (int, float)) else 5.0
+        usable = [round(float(b) - 2 * margin, 2) for b in bed]
+
+        raw_ms = [
+            ('plan', 'Plan CAO', bool(criteria_list or item.get('steps', 0) > 0 or has_design_py)),
+            ('cad_script', 'Script design.py', has_design_py),
+            ('stl_meshes', 'Solides STL', stl_count > 0),
+            ('tests', 'Tests géométriques', has_tests_py),
+            ('manifest', 'Manifeste & BOM', has_project_json or has_spec_json),
+            ('verified_package', 'Dossier scellé', complete),
+        ]
+        first_pending = next((mid for mid, _, done in raw_ms if not done), None)
+        milestones_list = [
+            {
+                'id': mid,
+                'label': mlabel,
+                'done': done,
+                'active': (not done) and (mid == first_pending) and status in {'queued', 'planning', 'running'},
+            }
+            for mid, mlabel, done in raw_ms
+        ]
+
+        return {
+            'phase': phase,
+            'progress_pct': pct,
+            'criteria': criteria_list,
+            'criteria_count': len(criteria_list),
+            'verified_count': verified_count,
+            'recent_actions': recent_actions[-8:],
+            'workspace_files': workspace_files,
+            'stl_count': stl_count,
+            'milestones': milestones_list,
+            'draft_summary': draft_summary,
+            'profile_summary': {
+                'name': str(profile.get('name') or 'Imprimante standard'),
+                'process': str(profile.get('process') or 'FDM'),
+                'bed_mm': bed,
+                'usable_bed_mm': usable,
+                'margin_mm': margin,
+                'clearance_mm': float(profile.get('clearance_mm', 0.2)) if isinstance(profile.get('clearance_mm'), (int, float)) else 0.2,
+                'wall_mm': float(profile.get('wall_mm', 2.0)) if isinstance(profile.get('wall_mm'), (int, float)) else 2.0,
+                'pin_diameter_mm': float(profile.get('pin_diameter_mm', 5.0)) if isinstance(profile.get('pin_diameter_mm'), (int, float)) else 5.0,
+                'color_capability': str(profile.get('color_capability') or 'single'),
+            },
+        }
+
     def response(rec):
         item=store.get(rec['mission_id'])
         if not item:return {'ok':False,'error':'Mission introuvable.'}
@@ -112,7 +397,8 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                     verified[rec['id']]=signature
                 complete=True
             except (OSError,ValueError,KeyError,TypeError,zipfile.BadZipFile):pass
-        result={'ok':True,'id':rec['id'],'mission_id':item['id'],'state':item['status'],'objective':rec.get('objective',''),'request_id':rec.get('request_id',''),'result':item.get('result',''),'steps':item['steps'],'errors':item['errors'],'scheduling':store.scheduling(item['id']),'ready':complete and item['status']=='completed','artifacts_available':complete,'partial':complete and item['status']!='completed'}
+        telemetry=_build_telemetry(item,folder,rec,complete,report if complete else None)
+        result={'ok':True,'id':rec['id'],'mission_id':item['id'],'state':item['status'],'objective':rec.get('objective',''),'constraints':rec.get('constraints',''),'profile':rec.get('profile',{}),'request_id':rec.get('request_id',''),'result':item.get('result',''),'steps':item['steps'],'errors':item['errors'],'scheduling':store.scheduling(item['id']),'ready':complete and item['status']=='completed','artifacts_available':complete,'partial':complete and item['status']!='completed','telemetry':telemetry}
         if item['status']=='completed' and not complete:result.update(state='incomplete',error='Le dossier vérifiable manque. Consulter le résultat et reprendre la mission.')
         if complete:
             result['report']=report
@@ -180,7 +466,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
             text=CONTRACT+'\nOBJECTIF UTILISATEUR :\n'+data['objective']+'\nCONTRAINTES FOURNIES :\n'+(constraints or 'Aucune pièce imposée : déterminer les éléments nécessaires.')+'\nPROFIL IMPRIMANTE :\n'+json.dumps(profile,ensure_ascii=False)+source_note+'\nPython disponible pour géométrie et tests : '+sys.executable+'\nDossier de travail : '+str(folder)
             payload={'request':text,'workspace':str(folder),'permissions':'AUTONOMOUS','model':model,'requested_model':'','session_id':'','history':[],'context_tokens':8192,'project_kind':'engineering','project_title':data['objective'][:160]}
             item,created=store.create(payload,'design:'+did,queued=True)
-            rec={'id':did,'owner':owner(),'mission_id':item['id'],'fingerprint':fingerprint,'profile':profile,'objective':data['objective'],'request_id':request_id}
+            rec={'id':did,'owner':owner(),'mission_id':item['id'],'fingerprint':fingerprint,'profile':profile,'objective':data['objective'],'constraints':constraints,'request_id':request_id}
             path=private/(did+'.json');path.write_text(json.dumps(rec));path.chmod(0o600)
             if created:dispatch('mission.start',{'mission_id':item['id'],**payload})
             return jsonify(response(rec)),202

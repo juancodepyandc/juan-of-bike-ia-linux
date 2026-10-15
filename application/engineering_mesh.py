@@ -511,6 +511,147 @@ def print_plates(output, report):
     return plates
 
 
+def inspect_mesh(raw_bytes: bytes, suffix: str, raw_config: dict) -> dict:
+    """Fast deterministic pre-flight geometric and printer-fit inspection in millimetres."""
+    suffix = suffix.lower()
+    if suffix not in {'.glb', '.stl', '.obj'}:
+        raise ValueError('Formats GLB, STL ou OBJ requis.')
+    if not raw_bytes or len(raw_bytes) > 120 * 1024 * 1024:
+        raise ValueError('Maillage vide ou limité à 120 Mo.')
+    size_mm = number((raw_config or {}).get('size_mm', 200), 'Dimension maximale (mm)', 1, 2000)
+    raw_profile = (raw_config or {}).get('profile') if isinstance(raw_config, dict) else None
+    profile_cfg = {
+        'name': str((raw_profile or {}).get('name') or 'Profil standard')[:100],
+        'process': (raw_profile or {}).get('process') if (raw_profile or {}).get('process') in {'FDM', 'resin'} else 'FDM',
+        'bed_mm': [220.0, 220.0, 250.0],
+        'margin_mm': 5.0,
+        'clearance_mm': 0.2,
+        'wall_mm': 2.0,
+        'pin_diameter_mm': 5.0,
+        'pin_depth_mm': 8.0,
+        'keyed_pins': True,
+        'lead_in_mm': 0.2,
+        'color_capability': 'single',
+    }
+    if isinstance(raw_profile, dict):
+        if isinstance(raw_profile.get('bed_mm'), list) and len(raw_profile['bed_mm']) == 3:
+            try:
+                profile_cfg['bed_mm'] = [number(v, 'Volume utile (mm)', 10, 2000) for v in raw_profile['bed_mm']]
+            except ValueError:
+                pass
+        for k, lo, hi in [
+            ('margin_mm', 0, 30),
+            ('clearance_mm', 0.01, 2),
+            ('wall_mm', 0.5, 20),
+            ('pin_diameter_mm', 1, 30),
+            ('pin_depth_mm', 2, 60),
+            ('lead_in_mm', 0, 2),
+        ]:
+            if k in raw_profile:
+                try:
+                    profile_cfg[k] = number(raw_profile[k], k, lo, hi)
+                except ValueError:
+                    pass
+        if isinstance(raw_profile.get('keyed_pins'), bool):
+            profile_cfg['keyed_pins'] = raw_profile['keyed_pins']
+        if raw_profile.get('color_capability') in {'single', 'multi'}:
+            profile_cfg['color_capability'] = raw_profile['color_capability']
+
+    scene = trimesh.load_scene(io.BytesIO(raw_bytes), file_type=suffix[1:], resolver=None)
+    has_texture = any(getattr(g.visual, 'kind', None) == 'texture' for g in scene.geometry.values())
+    mesh = scene.to_mesh()
+    if mesh.is_empty or len(mesh.faces) > 2_000_000 or not np.isfinite(mesh.vertices).all() or mesh.extents.max() <= 0:
+        raise ValueError('Maillage invalide ou supérieur à deux millions de faces.')
+    raw_extents = [round(float(v), 4) for v in mesh.extents.tolist()]
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
+    scale = float(size_mm) / float(mesh.extents.max())
+    mesh.apply_translation(-mesh.bounds[0])
+    mesh.apply_scale(scale)
+
+    dims = [round(float(v), 3) for v in mesh.extents.tolist()]
+    usable = [round(float(b - 2 * profile_cfg['margin_mm']), 3) for b in profile_cfg['bed_mm']]
+    ratios = [round(dims[i] / max(usable[i], 1e-6), 3) for i in range(3)]
+    exceeded = ['xyz'[i] for i in range(3) if dims[i] > usable[i] + 1e-4]
+
+    req_axis = (raw_config or {}).get('axis', 'auto') if isinstance(raw_config, dict) else 'auto'
+    rec_idx = int(np.argmax(np.array(dims) / np.maximum(np.array(usable), 1e-6))) if req_axis not in {'x', 'y', 'z'} else 'xyz'.index(req_axis)
+    rec_axis = 'xyz'[rec_idx]
+    other_exceeded = ['xyz'[i] for i in range(3) if i != rec_idx and dims[i] > usable[i] + 1e-4]
+
+    filaments = (raw_config or {}).get('piece_filaments', []) if isinstance(raw_config, dict) else []
+    min_pieces = max(1, math.ceil(dims[rec_idx] / max(usable[rec_idx], 1.0)), len(filaments) if isinstance(filaments, list) else 0)
+    balanced_cuts = [round(dims[rec_idx] * k / min_pieces, 2) for k in range(1, min_pieces)] if min_pieces > 1 else []
+
+    wall_radius = profile_cfg['pin_diameter_mm'] / 2.0 + profile_cfg['clearance_mm'] + profile_cfg['lead_in_mm'] + profile_cfg['wall_mm']
+    min_transverse_mm = round(2.0 * wall_radius, 2)
+    min_middle_slab_mm = round(2.0 * profile_cfg['pin_depth_mm'] + profile_cfg['wall_mm'], 2)
+    min_end_slab_mm = round(profile_cfg['pin_depth_mm'] + profile_cfg['wall_mm'], 2)
+
+    # Calculate max size_mm where at most 1 axis exceeds usable bed
+    unit_extents = np.array(dims) / max(float(size_mm), 1e-6)
+    axis_limits = sorted([usable[i] / max(unit_extents[i], 1e-9) for i in range(3)])
+    max_no_cut_size_mm = round(float(axis_limits[0]), 1)
+    max_single_axis_size_mm = round(float(axis_limits[1]), 1)
+
+    transverse_axes = [i for i in range(3) if i != rec_idx]
+    transverse_ok = all(dims[i] > min_transverse_mm for i in transverse_axes)
+
+    blockers = []
+    warnings = []
+    if not mesh.is_volume:
+        blockers.append('Maillage ouvert ou non-manifold : une réparation géométrique est requise avant découpe booléenne.')
+    if other_exceeded:
+        blockers.append(
+            f"Dépassement multi-axes ({', '.join(a.upper() for a in exceeded)}) : sur l'axe {rec_axis.upper()}, "
+            f"{', '.join(a.upper() for a in other_exceeded)} dépasse encore le volume utile ({usable[0]:.0f}×{usable[1]:.0f}×{usable[2]:.0f} mm). "
+            f"Réduire la dimension maximale à ≤ {max_single_axis_size_mm:.1f} mm ou utiliser « Concevoir un projet avec l'IA » pour une décomposition multi-axes."
+        )
+    if min_pieces > 1 and not transverse_ok:
+        blockers.append(
+            f"Section transversale trop étroite pour 2 pions (minimum requis : {min_transverse_mm:.2f} mm avec pion Ø{profile_cfg['pin_diameter_mm']:g} mm et paroi {profile_cfg['wall_mm']:g} mm)."
+        )
+    if min_pieces > 16:
+        blockers.append(f'Découpe estimée à {min_pieces} pièces (limite : 16 pièces).')
+    if not blockers and min_pieces == 1:
+        warnings.append(f"Le modèle ({dims[0]:.1f} × {dims[1]:.1f} × {dims[2]:.1f} mm) tient en 1 seule pièce dans le volume utile ({usable[0]:.0f} × {usable[1]:.0f} × {usable[2]:.0f} mm) sans découpe.")
+
+    try:
+        parts_split = len(mesh.split())
+    except Exception:
+        parts_split = 1
+
+    return {
+        'ok': True,
+        'raw_extents': raw_extents,
+        'dimensions_mm': dims,
+        'scale_factor': round(scale, 6),
+        'watertight': bool(mesh.is_watertight),
+        'is_volume': bool(mesh.is_volume),
+        'volume_mm3': round(float(mesh.volume), 2) if mesh.is_volume else None,
+        'face_count': int(len(mesh.faces)),
+        'vertex_count': int(len(mesh.vertices)),
+        'connected_components': int(parts_split),
+        'has_texture': bool(has_texture),
+        'usable_bed_mm': usable,
+        'axis_ratios': ratios,
+        'exceeded_axes': exceeded,
+        'fits_without_cut': len(exceeded) == 0,
+        'single_axis_cut_feasible': len(other_exceeded) == 0,
+        'recommended_axis': rec_axis,
+        'estimated_piece_count': int(min_pieces),
+        'estimated_pin_count': int(max(0, (min_pieces - 1) * 2)),
+        'balanced_cuts_mm': balanced_cuts,
+        'min_transverse_section_mm': min_transverse_mm,
+        'min_middle_slab_mm': min_middle_slab_mm,
+        'min_end_slab_mm': min_end_slab_mm,
+        'max_no_cut_size_mm': max_no_cut_size_mm,
+        'max_single_axis_size_mm': max_single_axis_size_mm,
+        'ready_for_assembly': len(blockers) == 0 and bool(mesh.is_volume),
+        'blockers': blockers,
+        'warnings': warnings,
+    }
+
+
 def export_package(source, output, raw):
     config = settings(raw)
     source, output = Path(source), Path(output)

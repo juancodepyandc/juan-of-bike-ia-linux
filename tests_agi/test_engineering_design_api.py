@@ -138,3 +138,60 @@ def test_verified_prototype_available_without_claiming_mission_success(tmp_path)
     assert result['state']=='failed' and not result['ready']
     assert result['artifacts_available'] and result['partial']
     assert c.get(path+'/download').status_code==200
+
+
+def test_design_telemetry_and_assembly_steps_enrichment(tmp_path):
+    import json
+    import trimesh
+    from application.engineering_project import build_project
+    app=Flask(__name__);bp=Blueprint('telemetry_design',__name__);store=MissionStore(tmp_path/'telemetry.sqlite3')
+    register_design_routes(bp,tmp_path,local=lambda:True,extension=lambda:(False,None,None),model_default=lambda:'fixture',store=store,dispatch=lambda *a:True)
+    app.register_blueprint(bp);c=app.test_client()
+    d=c.post('/api/3d/design',json={
+        'objective':'Mécanisme articulé 2 pièces avec visserie M3',
+        'constraints':'Jeu 0,25 mm',
+        'profile':{'name':'Prusa MK4','process':'FDM','bed_mm':[250,210,220],'clearance_mm':0.2,'wall_mm':2.0,'margin_mm':5.0},
+        'request_id':'telemetry-req-1',
+    }).json
+    assert 'telemetry' in d
+    assert d['telemetry']['profile_summary']['name']=='Prusa MK4'
+    folder=tmp_path/'output'/'engineering-design'/d['id']
+    trimesh.creation.box([30,20,10]).export(folder/'base.stl')
+    trimesh.creation.box([20,10,8]).export(folder/'arm.stl')
+    (folder/'design.py').write_text('import trimesh\n')
+    (folder/'tests.py').write_text('assert True\n')
+    build_project({
+        'units':'mm',
+        'title':'Bras articulé M3',
+        'objective':'Mécanisme articulé 2 pièces',
+        'parts':[
+            {'id':'base','name':'Socle fixe','file':'base.stl'},
+            {'id':'arm','name':'Bras mobile','file':'arm.stl','assembly_matrix_mm':[[1,0,0,0],[0,1,0,0],[0,0,1,15],[0,0,0,1]]},
+        ],
+        'mechanism_joints':[
+            {'id':'pivot_1','type':'revolute','parent':'base','child':'arm','axis':[0,0,1],'origin_mm':[0,0,15],'limits_deg':[-90,90]},
+        ],
+        'bom':[{'name':'Vis CHC M3x16','quantity':2,'specification':'ISO 4762','part_ids':['base','arm']}],
+        'assembly_steps':[
+            {'description':'Poser le socle sur l’établi','part_ids':['base']},
+            {'instruction':'Assembler le bras mobile sur le pivot avec les vis M3','part_ids':['base','arm']},
+        ],
+        'assumptions':['PLA 20 % remplissage gyroid'],
+    },folder)
+    store.append(d['mission_id'],{'type':'plan','criteria':['Cotes plateau vérifiées','Cinématique sans collision']})
+    store.append(d['mission_id'],{'type':'criterion_verified','index':0})
+    store.append(d['mission_id'],{'type':'mission_complete','result':'Projet validé'})
+    res=c.get('/api/3d/design/'+d['id']).json
+    assert res['ready'] is True
+    tel=res['telemetry']
+    assert tel['progress_pct']==100
+    assert tel['stl_count']>=2
+    assert tel['draft_summary']['part_count']==2
+    assert tel['draft_summary']['joint_count']==1
+    assert tel['draft_summary']['dof']==1
+    assert tel['draft_summary']['bom'][0]['name']=='Vis CHC M3x16'
+    assembly_manifest=json.loads((folder/'assembly.json').read_text())
+    assert assembly_manifest['title']=='Bras articulé M3'
+    assert len(assembly_manifest['bom'])==1
+    assert assembly_manifest['assembly_steps'][1]['resolved_part_ids']==['piece_01','piece_02']
+

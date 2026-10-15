@@ -68,6 +68,7 @@ def build_project(spec, root='.', *, require_sources=False):
         checked_bom.append({**item,'validation':'proposed; verify manufacturer data and fit before purchase'})
     purchased={p['design_id'] for p in measured if p['manufacturing']=='purchased'}
     if purchased-{ref for i in checked_bom for ref in i.get('part_ids',[])}:raise ValueError('Every purchased component must be referenced by the BOM.')
+    steps=[{**s,'instruction':s['description']} if isinstance(s,dict) and not isinstance(s.get('instruction'),str) and isinstance(s.get('description'),str) else s for s in steps]
     for step in steps:
         if not isinstance(step,dict) or not isinstance(step.get('instruction'),str) or any(ref not in ids for ref in step.get('part_ids',[])): raise ValueError('Assembly steps must reference existing parts.')
     blockers=spec.get('blockers',[]);assumptions=spec.get('assumptions',[])
@@ -75,7 +76,8 @@ def build_project(spec, root='.', *, require_sources=False):
     report={'schema':'aurora.engineering-project.v1','title':title,'objective':objective,'units':'mm','parts':measured,'bom':checked_bom,'assembly_steps':steps,'constraints':spec.get('constraints',[]),'assumptions':assumptions,'blockers':blockers,'design_tests':spec.get('tests',[]),'feasibility':'requires_resolution' if blockers else 'prototype_requires_physical_validation','physical_fit_validated':False,'measured_checks':{'closed_volumes':True,'printer_fit':True,'rigid_placements':True,'references_resolved':True},'sources':spec.get('sources',[])}
     from application.engineering_motion import validate_joints,coordinates
     id_map={p['design_id']:p['id'] for p in measured}
-    motion=[{**j,'parent':id_map.get(j.get('parent'),j.get('parent')),'child':id_map.get(j.get('child'),j.get('child'))} for j in spec.get('mechanism_joints',[])]
+    raw_joints=spec.get('mechanism_joints') if 'mechanism_joints' in spec else spec.get('joints',[])
+    motion=[{**j,'kind':j.get('kind') or j.get('type'),**({'limits':j.get('limits_deg') if 'limits_deg' in j else j.get('limits_mm')} if 'limits' not in j and ('limits_deg' in j or 'limits_mm' in j) else {}),'parent':id_map.get(j.get('parent'),j.get('parent')),'child':id_map.get(j.get('child'),j.get('child'))} if isinstance(j,dict) else j for j in raw_joints]
     report['mechanism_joints']=validate_joints(measured,motion)
     report['closure_constraints']=[{**c,'parent':id_map.get(c.get('parent'),c.get('parent')),'child':id_map.get(c.get('child'),c.get('child'))} for c in spec.get('closure_constraints',[])]
     by_id={p['id']:p for p in measured}
@@ -132,7 +134,7 @@ def build_project(spec, root='.', *, require_sources=False):
     (root/'project.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if measured:
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
-        mesh=scene.to_mesh();manifest={'mode':'assembly','piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates']}
+        mesh=scene.to_mesh();manifest={'mode':'assembly','title':title,'objective':objective,'piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates'],'bom':checked_bom,'assembly_steps':[{**s,'resolved_part_ids':[id_map.get(r,r) for r in s.get('part_ids',[])]} for s in steps],'assumptions':assumptions,'blockers':blockers}
         manifest['mechanism_joints']=report['mechanism_joints']
         manifest['motion_controls']=coordinates(report['mechanism_joints'])
         manifest['closure_constraints']=report['closure_constraints']
