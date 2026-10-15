@@ -37,7 +37,7 @@ export function hasNamedIdentitySignal(prompt: string): boolean {
 export const COMPOUND_FACET_PATTERNS: Array<{ family: string; rx: RegExp; instruction: (snips: string) => string }> = [
   {
     family: 'decor',
-    rx: /\b(decor|d[ée]cor|sc[èe]ne|scene|environnement|environment|background|arri[èe]re[\s-]?plan|paysage|landscape|cityscape|ruelle|all[ée]e|alley|rue|street|ville|city|cit[ée]|n[ée]o[\s-]?tokyo|rooftop|toit|for[êe]t|forest|d[ée]sert|desert|jungle|int[ée]rieur|interior|pi[èe]ce|room|chambre|atelier|workshop|temple|ru[ie]nes?|ruins?|grotte|cave|cavern|sous\s+la\s+pluie|in\s+the\s+rain|night\s+city|ville\s+nocturne)\b/i,
+    rx: /\b(decor|d[ée]cor|sc[èe]ne|scene|environnement|environment|background|arri[èe]re[\s-]?plan|paysage|landscape|cityscape|ruelle|all[ée]e|alley|rue|street|ville|city|cit[ée]|n[ée]o[\s-]?tokyo|rooftop|toit|for[êe]t|forest|d[ée]sert|desert|jungle|int[ée]rieur|interior|pi[èe]ce\s+de\s+vie|dans\s+une\s+pi[èe]ce|room|chambre|atelier|workshop|temple|ru[ie]nes?|ruins?|grotte|cave|cavern|sous\s+la\s+pluie|in\s+the\s+rain|night\s+city|ville\s+nocturne)\b/i,
     instruction: (s) => `the surrounding decor/environment (${s}) must be present and readable around the subject, not replaced by a plain studio backdrop`,
   },
   {
@@ -68,34 +68,29 @@ export const COMPOUND_FACET_PATTERNS: Array<{ family: string; rx: RegExp; instru
   },
   {
     family: 'materials',
-    rx: /\b(m[ée]tal|metal|chrome|acier|steel|cuivre|copper|or\b|gold|argent|silver|aluminium|aluminum|titane|titanium|cuir|leather|verre|glass|cristal|crystal|plastique|plastic|bois|wood|pierre|stone|marbre|marble|b[ée]ton|concrete|tissu|fabric|soie|silk|fourrure|fur|[ée]cailles?|scales?|caoutchouc|rubber|c[ée]ramique|ceramic|carbone|carbon)\b/i,
+    rx: /\b(m[ée]tal|metal|chrome|acier|steel|cuivre|copper|en\s+or\b|d['’]or\b|gold|argent|silver|aluminium|aluminum|titane|titanium|cuir|leather|verre|glass|cristal|crystal|plastique|plastic|bois|wood|pierre|stone|marbre|marble|b[ée]ton|concrete|tissu|fabric|soie|silk|fourrure|fur|[ée]cailles?|scales?|caoutchouc|rubber|c[ée]ramique|ceramic|carbone|carbon)\b/i,
     instruction: (s) => `the named materials (${s}) must read as distinct PBR surfaces with correct metalness/roughness`,
   },
 ]
 
-// ISOLATED-CHARACTER overrides (mirror of _FACET_INSTRUCTION_ISOLATED in
-// faithful_scene_prompt.py). A riggable character is reconstructed from an
-// isolated reference, so scene facets are reframed as atmosphere ON the subject
-// rather than separate background geometry — the rig-vs-scene conflict only
-// surfaces when you actually run the pipeline. Families absent here (motion,
-// materials) use the default SCENE instruction unchanged.
 const ISOLATED_INSTRUCTION: Record<string, (s: string) => string> = {
-  decor: (s) => `the scene setting (${s}) must appear ONLY as coloured rim-light and atmospheric tint ON the subject against a PLAIN white studio background — NO street, buildings, walls or environment scenery behind the subject (a clean isolated subject is mandatory for 3D reconstruction)`,
+  decor: (s) => `the scene setting (${s}) must appear ONLY as coloured rim-light and atmospheric tint ON the subject against a PLAIN white studio background — no environment scenery behind the subject (a clean isolated subject is mandatory for 3D reconstruction)`,
   mechanical: (s) => `any mechanical apparatus (${s}) worn by, held by or attached to the subject must be real geometry; standalone machinery in the scene is conveyed only as reflection/lighting, not as separate parts`,
-  fluids: (s) => `the fluid/atmospheric elements (${s}) must appear ON and AROUND the subject — rain-soaked surfaces, dripping water, steam haze hugging the figure — not as a separate volumetric background`,
-  luminous: (s) => `the luminous/emissive elements (${s}) must LIGHT the subject — coloured rim-light and glowing reflections on the materials — emissive on the figure, not a detached neon sign`,
+  fluids: (s) => `the fluid/atmospheric elements (${s}) must appear ON and AROUND the subject itself, not as a separate volumetric background`,
+  luminous: (s) => `the luminous/emissive elements (${s}) must LIGHT the subject — coloured rim-light and glowing reflections on the materials — emissive on the figure, not as a detached background object`,
 }
 
-/**
- * Build a MULTI-ELEMENT FIDELITY CONTRACT for compound prompts. Returns '' for
- * simple/single-facet requests (no-op, identical policy to the Python composer).
- *
- * opts.isolated → ON-SUBJECT atmosphere phrasing for a riggable character
- * (scene facets become styling/lighting, not separate background geometry).
- */
+const STUDIO_BACKDROP_RX = /\b(?:(?:white|black|plain|neutral|solid|studio|clean|isolated|empty|transparent|uni|blanc|noir|neutre|clair|gris|vide|isole|isol[ée])\s+(?:studio\s+)?(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)|(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)\s+(?:uni\s+)?(?:blanc|noir|uni|neutre|clair|gris|vide|isole|isol[ée]|white|black|plain|neutral|solid|studio|transparent))\b/i
+const TRUE_SCENE_FACETS = new Set(['decor', 'mechanical', 'fluids', 'luminous'])
+
+function isStudioBackdropMention(text: string, start: number, end: number): boolean {
+  const window = text.slice(Math.max(0, start - 32), Math.min(text.length, end + 32))
+  return STUDIO_BACKDROP_RX.test(window)
+}
+
 function excludedMention(text: string, start: number): boolean {
   const clause = text.slice(0, start).split(/[;,.!?\n]/).slice(-1)[0] || ''
-  const negatives = [...clause.matchAll(/\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas de)\b/gi)]
+  const negatives = [...clause.matchAll(/\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas\s+de|pas\s+d['’]|aucun[e]?|ni|jamais\s+de|zero|zéro)\b/gi)]
   const positives = [...clause.matchAll(/\b(?:avec|with|mais|but)\b/gi)]
   const negative = negatives[negatives.length - 1], positive = positives[positives.length - 1]
   if (!negative || (positive && positive.index! > negative.index!)) return false
@@ -104,14 +99,18 @@ function excludedMention(text: string, start: number): boolean {
 
 export function buildCompoundSceneContract(prompt: string, motionText = '', opts: { isolated?: boolean } = {}): string {
   const text = `${prompt} ${motionText}`.trim()
-  const standalone = COMPOUND_FACET_PATTERNS.some(({family,rx}) => ['decor','mechanical','fluids'].includes(family) && [...text.matchAll(new RegExp(rx, 'gi'))].some(m=>!excludedMention(text,m.index!)))
+  const standalone = COMPOUND_FACET_PATTERNS.some(({family,rx}) => ['decor','mechanical','fluids'].includes(family) && [...text.matchAll(new RegExp(rx, 'gi'))].some(m=>!excludedMention(text,m.index!) && !(family === 'decor' && isStudioBackdropMention(text, m.index!, m.index! + m[0].length))))
   const isolated = Boolean(opts.isolated) && !standalone
   const lines: string[] = []
   const families: string[] = []
 
   const hasIdentity = hasNamedIdentitySignal(prompt)
   for (const { family, rx, instruction } of COMPOUND_FACET_PATTERNS) {
-    const hits = uniqueLower([...text.matchAll(new RegExp(rx, 'gi'))].filter(m=>!excludedMention(text,m.index!)).map(m=>m[0]))
+    const hits = uniqueLower(
+      [...text.matchAll(new RegExp(rx, 'gi'))]
+        .filter((m) => !excludedMention(text, m.index!) && !(family === 'decor' && isStudioBackdropMention(text, m.index!, m.index! + m[0].length)))
+        .map((m) => m[0]),
+    )
     if (hits.length > 0) {
       families.push(family)
       const render = (isolated && ISOLATED_INSTRUCTION[family]) || instruction
@@ -120,7 +119,8 @@ export function buildCompoundSceneContract(prompt: string, motionText = '', opts
   }
 
   const familyCount = families.length + (hasIdentity ? 1 : 0)
-  if (familyCount < 2 || lines.length === 0) return ''
+  const hasSceneFacet = families.some((f) => TRUE_SCENE_FACETS.has(f))
+  if (familyCount < 2 || !hasSceneFacet || lines.length === 0) return ''
 
   const identityLine = hasIdentity
     ? 'the requested named identity must be preserved exactly — recognizable face and silhouette, no generic look-alike, no gender swap; '
@@ -144,3 +144,4 @@ export function buildCompoundSceneContract(prompt: string, motionText = '', opts
     + '.'
   )
 }
+

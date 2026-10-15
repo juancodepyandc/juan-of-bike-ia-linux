@@ -1199,6 +1199,12 @@ export function buildKinematicsDirectiveBlock(
     ].join('\n')
   }
 
+  // Do not force mid-cycle/apex action poses onto generic characters, creatures,
+  // vehicles or objects when the user did not request any motion in the prompt.
+  if (!query.systemClass || query.systemClass === 'generic') {
+    return ''
+  }
+
   const presets = selectKinematicPresets(query)
   if (presets.length === 0) return ''
 
@@ -1208,7 +1214,6 @@ export function buildKinematicsDirectiveBlock(
     `- Subject: ${query.subjectKind}, system: ${query.systemClass}`,
     `- ${presets.length} bakeable motion preset(s) available, top suggestions:`,
     ...top.map((p) => `  • ${p.id}: ${p.description}`),
-    '- Reference image must depict the most informative kinematic frame (mid-cycle for loops, apex for ballistic actions).',
     '- All moving parts must be readable; static parts must remain anchored.',
   ].join('\n')
 }

@@ -133,58 +133,48 @@ BRAND_VISUAL_CUES = (
 )
 
 
-def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
-                        subject_kind: str | None = None,
-                        objet_isole: bool = False) -> str:
-    """Build the faithful FLUX prompt for the CLI/tunnel/extension path.
+_UI_DIAGNOSTIC_SPLIT_RE = re.compile(
+    r"\n+(?:Animation is (?:explicitly OFF|enabled):|"
+    r"Intent 3D detecte:|"
+    r"Preset d action ou mouvement selectionne:|"
+    r"Contraintes 3D prioritaires:|"
+    r"Contraintes de mouvement ou articulation:|"
+    r"Sous-ensembles mobiles a (?:rendre lisibles|separer visuellement):|"
+    r"Sous-ensembles fixes ou ancrages|"
+    r"Priorites de detail 3D:|"
+    r"Recherche technique prioritaire:|"
+    r"Risques a respecter:|"
+    r"Verification multi-vues requise:|"
+    r"Notes de reference:)",
+    re.IGNORECASE,
+)
 
-    Two layers, both keep the user's verbatim intent at the front:
-      1. Brand-specific visual cues (X870E Hero, ROG, Strimer, ...) — append a
-         stronger signal for recognisable products.
-      2. Faithful-scene MULTI-ELEMENT FIDELITY CONTRACT — for COMPOUND requests
-         (celebrity + decor + mechanical + fluids + luminous + motion, etc.) we
-         append one explicit MUST-render line per detected facet so FLUX cannot
-         silently drop the secondary elements. This is what brings the CLI path
-         up to the React UI's fidelity (buildFluxVisualDescription); without it
-         the tunnel/extension path honored compound requests only approximately.
-    """
-    out = prompt.strip()
-    appended = []
-    for pattern, cues in BRAND_VISUAL_CUES:
-        if pattern.search(out):
-            appended.append(cues.lstrip(", "))
-    if appended:
-        # Avoid duplicate appending if the cues already appear in the prompt.
-        # Cheap check: if "isolated white background" is already there, skip.
-        joined = ", ".join(appended)
-        if joined.split(",")[0].strip().lower() not in out.lower():
-            out = out.rstrip(",.") + ", " + joined
 
-    _kind_l = (subject_kind or "").lower()
-    _creature_re = re.compile(
-        r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
-        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
-        r"homme|femme|man|woman|personne|person|humain|human|garcon|fille|enfant|child|"
-        r"boy|girl|adulte|soldat|soldier)\b", re.I)
-    _animal_re = re.compile(
-        r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|creature|"
-        r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
-    _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
-    is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
-    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)):
-        _base_cues = ("preserve the exact requested pose, orientation and framing, "
-                      "show the entire figure only when requested or framing is unspecified, "
-                      "do not replace a specified pose by standing neutral, "
-                      "resolve visible anatomy without inventing hidden structures, "
-                      "sharp detailed face, clear detailed eyes")
-        if _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
-            _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
-        else:
-            _pose_cues = _base_cues + ", detailed realistic skin, detailed hands"
-        if "full body entirely visible" not in out:
-            out = out.rstrip(",.") + ", " + _pose_cues
-
-    return out + ", no lettering, labels, logos, signatures, watermarks or 3D print branding unless explicitly requested by the user; reference branding is not a user request"
+def _strip_internal_ui_diagnostics(prompt: str) -> str:
+    """Retire les blocs de diagnostic interne ajoutes par l'interface avant de
+    soumettre le prompt au decoupage de scene, au classifieur ou a FLUX.
+    Conserve les precisions utilisateur explicites ("Precision 3D utilisateur:")."""
+    raw = (prompt or "").strip()
+    if not raw:
+        return ""
+    m = _UI_DIAGNOSTIC_SPLIT_RE.search(raw)
+    if not m:
+        return raw
+    clean_head = raw[:m.start()].strip()
+    tail = raw[m.start():]
+    extras: list[str] = []
+    for pat in (
+        r"Precision 3D utilisateur:\s*(.+)",
+        r"Precision utilisateur:\s*(.+)",
+        r"Mouvement nomme\s+\"[^\"]+\"\s+compris[^:]*:\s*(.+)",
+    ):
+        for hit in re.finditer(pat, tail, flags=re.IGNORECASE):
+            val = hit.group(1).strip()
+            if val and val not in clean_head:
+                extras.append(val)
+    if extras:
+        return (clean_head + "\n" + "\n".join(extras)).strip()
+    return clean_head or raw
 
 
 def _a_de_la_couleur(glb: str) -> bool:
@@ -225,6 +215,57 @@ def _a_de_la_couleur(glb: str) -> bool:
         return False
     except Exception:  # noqa: BLE001
         return True  # doute -> traiter comme couleur
+
+
+def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
+                        subject_kind: str | None = None,
+                        objet_isole: bool = False) -> str:
+    """Build the faithful FLUX prompt for the CLI/tunnel/extension path.
+
+    Three layers, keeping the user's verbatim intent at the front:
+      1. Brand-specific visual cues (X870E Hero, ROG, Strimer, ...) — append a
+         stronger signal for recognisable products.
+      2. Faithful-scene MULTI-ELEMENT FIDELITY CONTRACT — for genuinely COMPOUND
+         requests, append one explicit MUST-render line per detected facet.
+      3. Strict isolation guard (`objet_isole=True`) when generating a single
+         entity of a multi-object scene so scene lighting never spawns extra
+         objects in the frame.
+    """
+    out = _strip_internal_ui_diagnostics(prompt).strip()
+    appended = []
+    for pattern, cues in BRAND_VISUAL_CUES:
+        if pattern.search(out):
+            appended.append(cues.lstrip(", "))
+    if appended:
+        # Avoid duplicate appending if the cues already appear in the prompt.
+        # Cheap check: if "isolated white background" is already there, skip.
+        joined = ", ".join(appended)
+        if joined.split(",")[0].strip().lower() not in out.lower():
+            out = out.rstrip(",.") + ", " + joined
+
+    _kind_l = (subject_kind or "").lower()
+    _creature_re = re.compile(
+        r"\b(personnage|character|creature|animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|"
+        r"oiseau|bird|robot|humanoid|hero|heros|guerrier|knight|chevalier|monstre|monster|"
+        r"homme|femme|man|woman|personne|person|humain|human|garcon|fille|enfant|child|"
+        r"boy|girl|adulte|soldat|soldier)\b", re.I)
+    _animal_re = re.compile(
+        r"\b(animal|renard|fox|dragon|chat|cat|chien|dog|loup|wolf|oiseau|bird|creature|"
+        r"monstre|monster|lion|tigre|tiger|ours|bear|cheval|horse|lapin|rabbit)\b", re.I)
+    _non_organic_kinds = {"motherboard", "pc_tower", "computer", "product", "vehicle", "gadget", "architecture"}
+    is_hardware = bool(re.search(r"\b(motherboard|mainboard|carte\s+m[èe]re|x870e|x670e|x670|z890|z790|b850|b650)\b", out, re.I))
+    if (_kind_l in {"character", "creature", "humanoid", "quadruped"} or (_creature_re.search(out) and _kind_l not in _non_organic_kinds and not is_hardware)):
+        _base_cues = ("preserve the exact requested pose, orientation and framing, "
+                      "show the entire figure only when requested or framing is unspecified, "
+                      "do not replace a specified pose by standing neutral, "
+                      "resolve visible anatomy without inventing hidden structures, "
+                      "sharp detailed face, clear detailed eyes")
+        if _kind_l in {"creature", "quadruped"} or _animal_re.search(out):
+            _pose_cues = _base_cues + ", tail fully visible, highly detailed natural fur"
+        else:
+            _pose_cues = _base_cues + ", detailed realistic skin, detailed hands"
+        if "full body entirely visible" not in out:
+            out = out.rstrip(",.") + ", " + _pose_cues
 
     # Layer 2 — faithful-scene contract (compound prompts only; no-op otherwise).
     # JAMAIS pour un objet SEUL d'une scene. L'orchestrateur genere une entite
@@ -269,7 +310,9 @@ def _a_de_la_couleur(glb: str) -> bool:
             "lumieres) teinte la lumiere mais AUCUNE source lumineuse, aucun "
             "tube, aucun meuble ni accessoire ne doit apparaitre dans le "
             "cadre, et le fond n'est jamais sombre.")
-    return out
+
+    return out + ", no lettering, labels, logos, signatures, watermarks or 3D print branding unless explicitly requested by the user; reference branding is not a user request"
+
 
 
 def _record_pipeline_dispatch(run_id: str, prompt: str, started_at: str, *,
@@ -3062,6 +3105,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                  allow_scene: bool = True,
                  engine: str = "auto",
                  _vlm_retry: bool = False) -> dict:
+    prompt = _strip_internal_ui_diagnostics(prompt)
     if not prompt.strip():
         return {"ok": False, "error": "empty prompt"}
     if not run_id.strip():

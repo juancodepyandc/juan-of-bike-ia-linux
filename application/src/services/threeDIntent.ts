@@ -2474,8 +2474,17 @@ export function buildMeshCorrectionStrategy({
     : 'maximum'
 
   if (escalation === 'strong') {
+    const isHardwareOrMech = (
+      intent.subjectKind === 'product'
+      || intent.subjectKind === 'mechanical_part'
+      || intent.subjectKind === 'assembly'
+      || intent.subjectKind === 'electrical_system'
+      || intent.systemClass !== 'generic'
+    )
     referenceCorrections.push(
-      'Use MAXIMUM detail in the reference: every port, every hole, every button must be individually visible',
+      isHardwareOrMech
+        ? 'Use MAXIMUM detail in the reference: every port, every hole, every button must be individually visible'
+        : 'Use MAXIMUM detail in the reference: all requested anatomical, costume and surface features must be individually visible and sharply separated',
       'Increase lighting from multiple angles to eliminate shadows that hide detail',
     )
     meshCorrections.push(

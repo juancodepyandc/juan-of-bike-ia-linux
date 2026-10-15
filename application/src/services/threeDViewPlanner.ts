@@ -430,17 +430,18 @@ function buildViewGenerationDirectives(
     : ''
 
   // Hard anti-blob rules for logos, displays, connectors, fan blades, etc.
-  // The user reported integrated OLED screens being swallowed into the block
-  // above and fan blades being rendered as lumpy spheres, which is exactly
-  // the failure mode Hunyuan3D exhibits when the reference does not clearly
-  // separate those features. We bake the separation into every view prompt.
-  const fineDetailRules = [
-    'any integrated display/OLED/LCD panel must stay a DISTINCT FLAT RECTANGULAR surface — NEVER merge it into the surrounding heatsink or housing block',
-    'engraved or printed logos and model numbers must read as SURFACE DETAIL with readable typography — NEVER replace them with smooth or blobby geometry',
-    'fans must show each individual blade as a SEPARATE volume with visible gaps between blades — NEVER collapse blades into a single disc or sphere cluster',
-    'connectors, ports and headers must keep their exact pin count and keying shape — NEVER round them into featureless nubs',
-    'small features (screws, screw heads, vents, indicator LEDs, capacitors) stay as INDIVIDUALLY resolvable shapes, never merged with neighbouring geometry',
-  ]
+  // Scoped strictly to hardware / mechanical / product subjects so characters,
+  // creatures and organic subjects never receive instructions about OLED panels,
+  // heatsinks, fans, screws or capacitors.
+  const isHardwareOrProduct = isMechanical || isCable || intent.subjectKind === 'product' || intent.subjectKind === 'electrical_system' || intent.subjectKind === 'vehicle'
+  const fineDetailRules = isHardwareOrProduct
+    ? [
+        'when present on the subject, any integrated display/OLED/LCD panel must stay a DISTINCT FLAT RECTANGULAR surface — NEVER merge it into the surrounding housing block',
+        'when present on the subject, fans must show each individual blade as a SEPARATE volume with visible gaps between blades — NEVER collapse blades into a single disc or sphere cluster',
+        'when present on the subject, connectors, ports and headers must keep their exact pin count and keying shape — NEVER round them into featureless nubs',
+        'when present on the subject, small features (screws, vents, indicator LEDs) stay as INDIVIDUALLY resolvable shapes, never merged with neighbouring geometry',
+      ]
+    : []
 
   const overlayBlock = [
     paletteLine,
@@ -487,13 +488,12 @@ function buildViewGenerationDirectives(
       ...subjectBlock,
       'full body visible from head to feet without any cropping',
       'arms slightly away from body for clean 3D reconstruction silhouette',
-      'neutral or relaxed standing pose, same pose across all views',
-      'SAME proportions, SAME height, SAME costume, SAME hairstyle in every view',
-      'SAME accessories in every view: gloves, wristbands, belts, boots, scarf/collar/cape must never appear/disappear between views',
+      'consistent pose across all views matching the user request',
+      'SAME proportions, SAME height, SAME requested outfit, SAME hairstyle in every view',
+      'preserve only the clothing and accessories actually requested or present in the reference — NEVER invent unrequested capes, backpacks, belts, gloves, wristbands or headgear',
       'hands visible and outside pockets in every view; never hide a hand inside clothing because it breaks rigging and texture projection',
       'strict turnaround sheet logic across separate images: only the camera angle changes, never the identity, clothing, pose language, gender, body type or material zones',
-      'PHOTOREALISTIC rendering by default — sharp fabric folds, visible skin texture, realistic hair strands NOT blobby masses, anatomically correct proportions',
-      'NEVER produce a blobby, marshmallow, or cartoon-like character unless anime style is explicitly requested',
+      'sharp fabric folds, visible surface texture, clean hair geometry NOT blobby masses, anatomically correct proportions',
       'precise finger separation, clear knuckle definition, realistic joint articulation',
       'clothing must show proper draping, folds, seams and material texture — NOT smooth featureless surfaces',
     ]
@@ -501,14 +501,14 @@ function buildViewGenerationDirectives(
       `FRONT VIEW: ${subjectLabel} facing the camera directly`,
       ...characterBase,
       'face fully visible and recognizable',
-      'costume front details, belt, buttons, accessories visible',
+      'requested front outfit and surface details clearly visible',
       'eyes looking toward camera',
     ].join('. ')
     directives.back = [
       `BACK VIEW: ${subjectLabel} seen from directly behind, back of character facing camera`,
       ...characterBase,
-      'BACK OF HEAD visible: hair rear, ponytail, braid or hair texture from behind',
-      'costume rear details: cape, backpack, belt back, any rear accessories',
+      'BACK OF HEAD visible: rear hair or head structure seen from behind',
+      'rear of the requested outfit clearly visible without adding unrequested backpacks or capes',
       'NO FACE VISIBLE — the camera is behind the character',
       'same exact body proportions and pose as the front view',
     ].join('. ')

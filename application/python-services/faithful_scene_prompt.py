@@ -64,7 +64,7 @@ _FACET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"banni[èe]res?|banderoles?|enseignes?|"
         r"n[ée]o[\s-]?tokyo|cyberpunk\s+city|rooftop|toit|"
         r"for[êe]t|forest|d[ée]sert|desert|jungle|"
-        r"int[ée]rieur|interior|pi[èe]ce|room|chambre|atelier|workshop|"
+        r"int[ée]rieur|interior|pi[èe]ce\s+de\s+vie|dans\s+une\s+pi[èe]ce|room|chambre|atelier|workshop|"
         r"temple|ru[ie]nes?|ruins?|grotte|cave|cavern|"
         r"sous\s+la\s+pluie|in\s+the\s+rain|night\s+city|ville\s+nocturne)\b",
         re.IGNORECASE,
@@ -127,7 +127,7 @@ _FACET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     )),
     ("materials", re.compile(
         r"\b(m[ée]tal|metal|chrome|acier|steel|fer|iron|cuivre|copper|"
-        r"or\b|gold|argent|silver|aluminium|aluminum|titane|titanium|"
+        r"en\s+or\b|d['’]or\b|gold|argent|silver|aluminium|aluminum|titane|titanium|"
         r"cuir|leather|verre|glass|cristal|crystal|plastique|plastic|"
         r"bois|wood|pierre|stone|marbre|marble|b[ée]ton|concrete|"
         r"tissu|fabric|soie|silk|fourrure|fur|[ée]cailles?|scales?|"
@@ -349,9 +349,26 @@ def _detect_identity(prompt: str) -> dict | None:
     return None
 
 
+_STUDIO_BACKDROP_RE = re.compile(
+    r"\b(?:(?:white|black|plain|neutral|solid|studio|clean|isolated|empty|transparent|uni|blanc|noir|neutre|clair|gris|vide|isole|isol[ée])\s+(?:studio\s+)?(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)|"
+    r"(?:background|arri[èe]re[\s-]?plan|fond|d[ée]cor)\s+(?:uni\s+)?(?:blanc|noir|uni|neutre|clair|gris|vide|isole|isol[ée]|white|black|plain|neutral|solid|studio|transparent))\b",
+    re.IGNORECASE,
+)
+
+_TRUE_SCENE_FACETS = {"decor", "mechanical", "fluids", "luminous"}
+
+
+def _is_studio_backdrop(text: str, start: int, end: int) -> bool:
+    window = text[max(0, start - 32):min(len(text), end + 32)]
+    return bool(_STUDIO_BACKDROP_RE.search(window))
+
+
 def _excluded_mention(text: str, start: int) -> bool:
     clause = re.split(r"[;,.!?\n]", text[:start])[-1]
-    negatives = list(re.finditer(r"\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas de)\b", clause, re.I))
+    negatives = list(re.finditer(
+        r"\b(?:sans|without|excluding|exclude|remove|retire|supprime|enleve|enlève|no|pas\s+de|pas\s+d['’]|aucun[e]?|ni|jamais\s+de|zero|zéro)\b",
+        clause, re.I,
+    ))
     positives = list(re.finditer(r"\b(?:avec|with|mais|but)\b", clause, re.I))
     if not negatives or (positives and positives[-1].start() > negatives[-1].start()):
         return False
@@ -367,7 +384,7 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
           "identity": {name, basis} | None,
           "facets": { family: [matched snippets...] },
           "families": [family, ...],            # families that fired, in order
-          "compound": bool,                     # >= 2 families -> compound scene
+          "compound": bool,                     # >= 2 families with at least one scene/apparatus/effect facet
         }
     """
     text = prompt or ""
@@ -382,6 +399,8 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
         for m in pattern.finditer(text):
             if _excluded_mention(text, m.start()):
                 continue
+            if family == "decor" and _is_studio_backdrop(text, m.start(), m.end()):
+                continue
             snippet = m.group(0).strip().lower()
             if snippet not in seen:
                 seen.append(snippet)
@@ -390,11 +409,14 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
 
     families = [fam for fam, _ in _FACET_PATTERNS if fam in facets]
 
-    # "compound" decides whether we inject the contract. Identity counts as a
-    # family for this purpose because "celebrity + decor" must be protected even
-    # if only one _FACET_PATTERNS family fired.
+    # "compound" decides whether we inject the MULTI-ELEMENT FIDELITY CONTRACT.
+    # Intrinsic subject attributes alone (identity + motion, materials + motion,
+    # identity + materials) describe a SINGLE subject, not a multi-element scene.
+    # Require at least one true scene/apparatus/effect facet (decor, mechanical,
+    # fluids, luminous) alongside another facet (or identity).
     family_count = len(families) + (1 if identity else 0)
-    compound = family_count >= 2
+    has_scene_facet = any(fam in _TRUE_SCENE_FACETS for fam in families)
+    compound = family_count >= 2 and has_scene_facet
 
     return {
         "schema": "aurora.faithful_scene.v1",
@@ -417,8 +439,7 @@ def detect_facets(prompt: str, motion_prompt: str | None = None) -> dict:
 #   * SCENE mode (non-isolated subjects: machines, dioramas, products) — keep the
 #     decor/fluids as real background geometry.
 #   * ISOLATED-CHARACTER mode (character/humanoid to be rigged) — express the same
-#     scene facets as atmosphere ON the subject (rain-wet leather, neon rim-light,
-#     steam hugging the figure). The mood is honored without breaking the rig.
+#     scene facets as atmosphere ON the subject. The mood is honored without breaking the rig.
 _FACET_INSTRUCTION_SCENE = {
     "decor": "the surrounding decor / environment ({snips}) must be present and "
              "readable behind and around the subject, not replaced by a plain studio backdrop; "
@@ -438,17 +459,16 @@ _FACET_INSTRUCTION_SCENE = {
 _FACET_INSTRUCTION_ISOLATED = {
     "decor": "the scene setting ({snips}) must appear ONLY as coloured rim-light and "
              "atmospheric tint ON the subject against a PLAIN white studio background — "
-             "NO street, buildings, walls or environment scenery behind the subject "
+             "no environment scenery behind the subject "
              "(a clean isolated subject is mandatory for 3D reconstruction)",
     "mechanical": "any mechanical apparatus ({snips}) worn by, held by or attached to "
                   "the subject must be real geometry; standalone machinery in the scene "
                   "is conveyed only as reflection/lighting, not as separate parts",
     "fluids": "the fluid / atmospheric elements ({snips}) must appear ON and AROUND the "
-              "subject — rain-soaked surfaces, dripping water, steam haze hugging the "
-              "figure — not as a separate volumetric background",
+              "subject itself, not as a separate volumetric background",
     "luminous": "the luminous / emissive elements ({snips}) must LIGHT the subject — "
                 "coloured rim-light and glowing reflections on the materials — emissive "
-                "on the figure, not a detached neon sign",
+                "on the figure, not as a detached background object",
     "motion": "the motion ({snips}) must be expressed through pose and part orientation "
               "so the action reads clearly",
     "materials": "the named materials ({snips}) must read as distinct PBR surfaces with "

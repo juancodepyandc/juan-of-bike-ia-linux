@@ -106,23 +106,47 @@ def _relation_selon_le_texte(prompt: str, rel: str) -> str:
     return rel
 
 
-def decouper_en_objets(prompt: str, essais: int = 3) -> Dict[str, Any]:
-    """Decoupe, en REESSAYANT tant que la scene n'est pas reconnue.
+_UI_DIAG_SPLIT_RE = re.compile(
+    r"\n+(?:Animation is (?:explicitly OFF|enabled):|"
+    r"Intent 3D detecte:|"
+    r"Preset d action ou mouvement selectionne:|"
+    r"Contraintes 3D prioritaires:|"
+    r"Contraintes de mouvement ou articulation:|"
+    r"Sous-ensembles mobiles a (?:rendre lisibles|separer visuellement):|"
+    r"Sous-ensembles fixes ou ancrages|"
+    r"Priorites de detail 3D:|"
+    r"Recherche technique prioritaire:|"
+    r"Risques a respecter:|"
+    r"Verification multi-vues requise:|"
+    r"Notes de reference:)",
+    re.IGNORECASE,
+)
 
-    Un decoupage rate ne coute rien (appel local), mais son ECHEC coute une
-    generation payante pour rien: le pipeline retombe alors sur "un seul
-    objet" et fabrique un bloc fusionne a partir d'un prompt qui en decrit
-    huit. Mesure du 27/08: le gros modele a rendu une erreur 500, le repli a
-    repondu a cote, et toute la scene est partie en UNE geometrie de 70 Mo
-    inexploitable. Rejouer le meme appel a suffi (8 entites au coup suivant).
-    """
-    dernier = {"is_scene": False}
+
+def _strip_ui_diagnostics(prompt: str) -> str:
+    raw = (prompt or "").strip()
+    if not raw:
+        return ""
+    m = _UI_DIAG_SPLIT_RE.search(raw)
+    if not m:
+        return raw
+    return raw[:m.start()].strip() or raw
+
+
+def decouper_en_objets(prompt: str, essais: int = 3) -> Dict[str, Any]:
+    """Decoupe le prompt en entites, en reessayant uniquement si l'appel LLM a
+    echoue ou rendu une reponse vide. Un verdict valide a 1 seul objet est
+    accepte immediatement sans forcer un decoupage artificiel."""
+    prompt = _strip_ui_diagnostics(prompt)
+    dernier: Dict[str, Any] = {"is_scene": False}
     for _ in range(max(1, essais)):
         dernier = _decouper_une_fois(prompt)
         if dernier.get("is_scene") or not (prompt or "").strip():
             return dernier
-        print("SCENE_ORCH: decoupage sans scene (%d entite(s)) — nouvel essai"
-              % len(dernier.get("objets") or []), file=sys.stderr)
+        if not dernier.get("error") and len(dernier.get("objets") or []) == 1:
+            return dernier
+        print("SCENE_ORCH: decoupage sans reponse exploitable (%d entite(s), err=%r) — nouvel essai"
+              % (len(dernier.get("objets") or []), dernier.get("error")), file=sys.stderr)
     return dernier
 
 
@@ -135,12 +159,12 @@ def _decouper_une_fois(prompt: str) -> Dict[str, Any]:
     generation. Le champ `appui` dit sur quoi chaque objet repose, ce qui
     donne l'ordre de composition sans le deviner.
     """
-    prompt = (prompt or "").strip()
+    prompt = _strip_ui_diagnostics(prompt)
     if not prompt:
         return {"is_scene": False}
     q = (
         "Tu analyses un prompt de generation 3D. Enumere CHAQUE objet physique "
-        "distinct qu'il decrit, un par un. Reponds UNIQUEMENT en JSON strict:\n"
+        "autonome et distinct qu'il decrit, un par un. Reponds UNIQUEMENT en JSON strict:\n"
         '{"objets": [{"role": "<mot unique, minuscules, sans accent: personnage, '
         'chaise, bureau, ecrans, mug, lampe...>", "desc": "<description de CET '
         'objet SEUL, autonome, dans la langue du prompt, sans mentionner les '
@@ -148,13 +172,18 @@ def _decouper_une_fois(prompt: str) -> Dict[str, Any]:
         'de l objet sur lequel il repose, ou \'sol\'>"}, ...], '
         '"style": "<ambiance, eclairage et style de rendu de la scene, ou vide>"}\n'
         "Regles STRICTES:\n"
-        "- un objet par entree; ne regroupe JAMAIS deux objets dans une meme desc;\n"
+        "- un objet par entree; ne regroupe JAMAIS deux meubles/sujets distincts dans une meme desc;\n"
         "- `desc` doit pouvoir etre generee seule: 'un bureau en bois', pas "
         "'son bureau avec un mug';\n"
         "- une personne assise sur une chaise = DEUX objets (personnage, chaise);\n"
         "- un ecran pose sur un bureau = DEUX objets, appui='bureau';\n"
+        "- les vetements, armures, chaussures, chapeaux, coiffures, parties du corps, "
+        "composants integres d'une meme machine, materiaux, couleurs, poses ou "
+        "exclusions negatives ('sans ...', 'pas de ...', 'ni ...', 'without ...') "
+        "NE SONT JAMAIS des objets separes;\n"
         "- n'invente aucun objet absent du prompt;\n"
-        "- si le prompt ne decrit QU'UN seul objet, rends {\"objets\": [un seul]}.\n"
+        "- si le prompt ne decrit QU'UN seul sujet (meme avec habits, matiere ou pose), "
+        "rends {\"objets\": [un seul]}.\n"
         "Prompt: " + prompt
     )
     data, err = {}, None
@@ -684,10 +713,10 @@ DETAIL_POSE = {
 }
 
 
-# "debout" ne veut pas dire IMMOBILE: un personnage debout dans une scene
-# vivante marche. L'action reste surchargeable par AURORA_ACTION_<pose>.
+# Un personnage simplement debout reste en posture d'attente ("attente") sauf
+# si la demande indique explicitement qu'il marche. Surchargeable par AURORA_ACTION_<pose>.
 ACTIONS_PAR_POSE = {"assis": "assis_chaise_homme", "allonge": "attente",
-                    "debout": "marche"}
+                    "debout": "attente"}
 T_POSE = ("debout en T-pose, bras tendus a l'horizontale de part et d'autre du "
           "corps, mains ouvertes doigts ecartes, jambes droites et legerement "
           "ecartees, corps entier, face a la camera, photorealiste")
@@ -737,7 +766,10 @@ def _poser_le_personnage(entite: dict, projet: Path) -> dict:
     meshy_client.reporter_le_materiau(entite["glb"], rig["glb"])
     rapport["rige"] = rig["glb"]
 
-    action = ACTIONS_PAR_POSE.get(entite.get("pose") or "", "attente")
+    pose_key = entite.get("pose") or ""
+    action = os.environ.get(f"AURORA_ACTION_{pose_key.upper()}") or ACTIONS_PAR_POSE.get(pose_key, "attente")
+    if pose_key == "debout" and re.search(r"\b(march[ae]\w*|walk\w*)\b", str(entite.get("desc") or ""), re.IGNORECASE):
+        action = "marche"
     ani = meshy_client.animer(rig["tache"], action,
                               mouvement / "mouvement_couleurs.glb",
                               progression=dire)

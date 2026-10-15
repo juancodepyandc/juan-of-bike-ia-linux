@@ -565,6 +565,11 @@ function buildReferencePrompt(
   )
   const otherAdditions = intent.referencePromptAdditions.filter((line) => !identityLines.includes(line))
 
+  const isHardwareOrMechanical = intent.subjectKind === 'mechanical_part'
+    || intent.subjectKind === 'assembly'
+    || intent.purpose === 'mechanical_part'
+    || ['pc_cooling', 'pc_cabling', 'lighting_fixture', 'Display_module', 'vehicle_drivetrain', 'belt_drive', 'hinge_linkage'].includes(intent.systemClass)
+
   return [
     prompt,
 
@@ -587,33 +592,29 @@ function buildReferencePrompt(
     '- THIS IMAGE MUST SHOW EXACTLY ONE ENTITY FROM ONE SINGLE ANGLE',
     '- CRITICAL: Show the subject at a THREE-QUARTER ANGLE (slightly rotated) so that 3 faces are visible (front + one side + top)',
     '- NEVER generate a flat front-on view — depth cues are required for proper 3D reconstruction',
-    '- The image must look like a professional 3D product photograph with visible DEPTH, VOLUME and SHADOWS',
-    '- Strong directional lighting to reveal all surface details: edges, bevels, recesses, holes, buttons, ports',
+    '- The image must look like a professional 3D studio photograph with visible DEPTH, VOLUME and SHADOWS',
+    isHardwareOrMechanical
+      ? '- Strong directional lighting to reveal all surface details: edges, bevels, recesses, holes, buttons, ports'
+      : '- Clean directional studio lighting to reveal silhouette, volume, contours and surface relief clearly',
     '- Do not use cube/block/sphere/cylinder placeholders or basic primitives unless the user explicitly asked for that primitive',
     '- Material fidelity is mandatory: show real texture cues and distinct material zones, not a flat 2D picture pasted onto a simple block',
-    '- If motion is requested, make the moving parts visually separate and riggable; whole-object rotation is not a substitute for wheels, limbs, fans, gears, LEDs, screens or hinges moving',
+    (intent.motionReadiness === 'rig_candidate' || intent.motionReadiness === 'articulated')
+      ? (isHardwareOrMechanical
+        ? '- Make the moving mechanical parts visually separate and articulated'
+        : '- Keep articulated limbs or moving parts clearly separated and readable without self-occlusion')
+      : '',
     '- NEVER split the image into multiple panels or side-by-side views',
     '- NEVER render left and right views on the same image',
     '- NEVER generate a multi-view composite or turnaround sheet',
     '- the ENTIRE canvas is ONE continuous single-angle photograph of ONE subject',
     '- no mirror copies, no duplicated subjects, no tiled views',
-    `- purpose: ${intent.purpose}`,
-    `- subject kind: ${intent.subjectKind}`,
-    `- system class: ${intent.systemClass}`,
-    `- representation goal: ${intent.representationGoal}`,
-    `- reference framing: ${intent.referenceFraming}`,
-    referenceSupport ? `- reference mode: ${referenceSupport.referenceMode}` : '',
-    referenceSupport ? `- dimension strategy: ${referenceSupport.dimensionStrategy}` : '',
     referenceSupport?.searchProfile.subjectLabel ? `- exact subject label: ${referenceSupport.searchProfile.subjectLabel}` : '',
     referenceSupport?.searchProfile.requiredElements.length ? `- required visible elements: ${referenceSupport.searchProfile.requiredElements.join(', ')}` : '',
     referenceSupport?.searchProfile.forbiddenElements.length ? `- forbidden parasite elements: ${referenceSupport.searchProfile.forbiddenElements.join(', ')}` : '',
     intent.movingPartsFocus.length > 0 ? `- moving parts focus: ${intent.movingPartsFocus.join(', ')}` : '',
     intent.anchoredPartsFocus.length > 0 ? `- anchored parts focus: ${intent.anchoredPartsFocus.join(', ')}` : '',
     ...otherAdditions.map((item) => `- ${item}`),
-    ...intent.meshConstraints.slice(0, 4).map((item) => `- ${item}`),
-    ...intent.motionGuidance.slice(0, 3).map((item) => `- ${item}`),
     ...(referenceSupport?.dimensionNotes || []).map((item) => `- researched dimensions: ${item}`),
-    ...(referenceSupport?.sourceNotes || []).map((item) => `- ${item}`),
     forceBlackBackdrop
       ? '- background: solid black studio backdrop unless the user explicitly requested another background'
       : '',
@@ -3319,9 +3320,9 @@ export default function ModelView() {
           const effectiveHistory = relation?.continuation === false ? [] : retainThreeDRequirements(currentPrompt, conversationHistory, relation?.continuation || EDIT_INTENT.test(currentPrompt))
           const editPlan = planThreeDEdit(Boolean(existingMesh), relation, requestedMotion, contextFiles.length > 0)
           const rigSubject = sourceRig(sourceContext, relation)
-          let workingPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
-          if (editPlan.continuation && sourceContext?.description) workingPrompt = `Existing source subject (preserve identity and unspecified features; newest changes override):\n${sourceContext.description}\n\n${workingPrompt}`
-          workingPrompt += requestedMotion ? '\nAnimation is enabled: produce the requested movement, preserving any requested held posture.' : '\nAnimation is explicitly OFF: render the requested pose/action as a STATIC result. Pose, appearance and scene changes still apply. Do not add temporal animation.'
+          let userRequirementsPrompt = composeThreeDRequirements(currentPrompt, effectiveHistory)
+          if (editPlan.continuation && sourceContext?.description) userRequirementsPrompt = `Existing source subject (preserve identity and unspecified features; newest changes override):\n${sourceContext.description}\n\n${userRequirementsPrompt}`
+          let workingPrompt = userRequirementsPrompt + (requestedMotion ? '\nAnimation is enabled: produce the requested movement, preserving any requested held posture.' : '\nAnimation is explicitly OFF: render the requested pose/action as a STATIC result. Pose, appearance and scene changes still apply. Do not add temporal animation.')
           let historyPrompt = currentPrompt
           const intent = await analyzeThreeDIntent({ prompt: workingPrompt, model: visionModel, files: preparedContext, conversationHistory: effectiveHistory.map((message) => ({ role: 'user' as const, content: message.content })) })
           setDetectedIntent(intent)
@@ -3395,15 +3396,16 @@ export default function ModelView() {
           // sienne ("pose statique nommee 6-7 ?") sans que le resolveur n'ait
           // jamais tourne. Avec la memoire des mouvements appris, ce passage
           // est instantane pour un mouvement deja connu.
-          if (nomDeMouvementRx.test(workingPrompt)) {
+          if (nomDeMouvementRx.test(userRequirementsPrompt)) {
             setPhase('Analyse — mouvement nommé détecté...', 8)
             try {
               const wsp = await getWorkspacePath()
-              const trOut = await runPythonScript(`${wsp}/python-services/motion_trend_resolver.py`, ['--prompt', workingPrompt])
+              const trOut = await runPythonScript(`${wsp}/python-services/motion_trend_resolver.py`, ['--prompt', userRequirementsPrompt])
               const trLine = trOut.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('{')).pop()
               const tr = trLine ? JSON.parse(trLine) as { named_move?: boolean; name?: string; description_en?: string; source?: string } : null
               if (tr?.named_move && tr.description_en) {
                 workingPrompt = `${workingPrompt}\n\nMouvement nomme "${tr.name}" compris (${tr.source}): ${tr.description_en}`
+                userRequirementsPrompt = `${userRequirementsPrompt}\n\nMouvement nomme "${tr.name}" compris (${tr.source}): ${tr.description_en}`
                 historyPrompt = `${historyPrompt}\n\nMouvement compris: ${tr.name}`
                 clarificationDejaResolue = true
                 setPhase(`Analyse — mouvement "${tr.name}" compris`, 10)
@@ -3436,7 +3438,7 @@ export default function ModelView() {
               onRespond: resolve,
             }))
             setClarification(null)
-            if (userAnswer) { workingPrompt = `${workingPrompt}\n\nPrecision 3D utilisateur: ${userAnswer}`; historyPrompt = `${historyPrompt}\n\nPrecision: ${userAnswer}` }
+            if (userAnswer) { workingPrompt = `${workingPrompt}\n\nPrecision 3D utilisateur: ${userAnswer}`; userRequirementsPrompt = `${userRequirementsPrompt}\n\nPrecision 3D utilisateur: ${userAnswer}`; historyPrompt = `${historyPrompt}\n\nPrecision: ${userAnswer}` }
           }
           const workspacePath = await getWorkspacePath()
           const runId = `juan_bike_${Date.now()}`
@@ -3475,7 +3477,8 @@ export default function ModelView() {
               session_title: active3dSession.title,
               run_id: runId,
               prompt: currentPrompt,
-              effective_request: workingPrompt,
+              effective_request: userRequirementsPrompt,
+              diagnostic_envelope: workingPrompt,
               subject_kind: intent.subjectKind,
               source_subject_kind: editPlan.continuation ? sourceContext?.subjectKind : intent.subjectKind,
               rig_subject: editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : undefined,
@@ -3536,7 +3539,7 @@ export default function ModelView() {
             })
             const userAnswer = viaFx2 !== null ? await viaFx2 : await new Promise<string | null>((resolve) => setClarification({ question: taskContext.clarificationQuestion!, onRespond: resolve, onAttachImage: (f) => setContextFiles((prev) => [...prev, f]) }))
             setClarification(null)
-            if (userAnswer) { taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nPrecision utilisateur: ${userAnswer}`; taskContext.generationPrompt = `${taskContext.generationPrompt}\n\nUser clarification: ${userAnswer}`; historyPrompt = `${historyPrompt}\n\nPrecision: ${userAnswer}` }
+            if (userAnswer) { taskContext.enrichedPrompt = `${taskContext.enrichedPrompt}\n\nPrecision utilisateur: ${userAnswer}`; taskContext.generationPrompt = `${taskContext.generationPrompt}\n\nUser clarification: ${userAnswer}`; userRequirementsPrompt = `${userRequirementsPrompt}\n\nPrecision utilisateur: ${userAnswer}`; historyPrompt = `${historyPrompt}\n\nPrecision: ${userAnswer}` }
           }
           const referenceSupportPlan = await prepareThreeDReferenceSupport({
             prompt: currentPrompt,
@@ -3868,7 +3871,7 @@ export default function ModelView() {
               const baseReferencePrompt = buildReferencePrompt(taskContext.generationPrompt, intent, activeMotionPreset, referenceSupportPlan, referenceViewPlan, currentPrompt)
               const renderReferenceBlob = async (promptText: string, stepsOverride = referenceWorkflow.steps, label = 'Rendu de la reference en cours...') => {
                 const workflow = createFlux2Workflow({
-                  prompt: editReferenceSeed ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${workingPrompt}. Final authority: ${currentPrompt}. Do not restore excluded features from the reference or any default design.` : `${promptText}\nComplete user requirements: ${workingPrompt}\nFinal authority: ${currentPrompt}. User exclusions override default appearance, reference details and inferred constraints.`,
+                  prompt: editReferenceSeed ? `Edit the supplied reference image. Preserve the subject identity and all unspecified features. Apply every requested change, including required removals, pose, outfit and full-body scope. Requested changes override the reference. ${promptText} Original request: ${userRequirementsPrompt}. Final authority: ${currentPrompt}. Do not restore excluded features from the reference or any default design.` : `${promptText}\nComplete user requirements: ${userRequirementsPrompt}\nFinal authority: ${currentPrompt}. User exclusions override default appearance, reference details and inferred constraints.`,
                   referenceImageFilename: referenceSeed?.filename,
                   width: referenceWorkflow.width,
                   height: referenceWorkflow.height,
@@ -4173,7 +4176,7 @@ export default function ModelView() {
                 ? genDir.slice(workspacePath.length + 1)
                 : genDir
               await fsMkdir(genDir).catch(() => {})
-              const auroraArgs = ['--prompt', workingPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion']
+              const auroraArgs = ['--prompt', userRequirementsPrompt, '--run-id', runId, '--output-dir', genDir, '--purpose', intent.purpose, '--max-precision', '--defer-motion']
               if (referenceConfirmEnabled) auroraArgs.push('--confirm-ref')
               if (intent.referenceFraming === 'isolated_subject' && intent.subjectKind !== 'assembly') auroraArgs.push('--no-scene')
               const seenImgs = new Set<string>()
@@ -4576,7 +4579,7 @@ export default function ModelView() {
               meshFidelityResult = await verify3DMeshFidelity({
                 meshScreenshotBase64: meshScreenshotBase64 || '',
                 referenceImageBase64: meshScreenshotBase64 ? refBase64 : null,
-                prompt: workingPrompt,
+                prompt: userRequirementsPrompt,
                 intent,
                 model: visionModel,
               })

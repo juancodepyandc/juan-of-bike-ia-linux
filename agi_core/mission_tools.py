@@ -267,6 +267,77 @@ class MissionTools:
         return {'path':str(path), 'content':text[:limit], 'next_offset':offset+min(len(text),limit),
                 'encoding_status':encoding_status,'truncated':len(text)>limit}
 
+    def search_code(self, root_or_file, query, *, regex=False, case_sensitive=False, file_pattern='', max_results=40):
+        import fnmatch
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError('A nonempty search query is required')
+        flags = 0 if case_sensitive else re.IGNORECASE
+        try:
+            pattern = re.compile(query if regex else re.escape(query), flags)
+        except re.error as exc:
+            raise ValueError(f'Invalid search regex: {exc}') from exc
+        cap = min(max(1, int(max_results or 40)), 100)
+        ws_root = Path(self.agent.workspace).resolve()
+        if not root_or_file.exists():
+            raise FileNotFoundError('Search path does not exist: '+str(root_or_file))
+        candidates = []
+        if root_or_file.is_file():
+            candidates.append(root_or_file)
+        else:
+            skip_dirs = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.transfer_to_client'}
+            for dirpath, dirnames, filenames in os.walk(root_or_file, followlinks=False):
+                dirnames[:] = sorted(d for d in dirnames if d not in skip_dirs and not d.startswith('.'))
+                for fname in sorted(filenames):
+                    if fname.startswith('.'):
+                        continue
+                    if file_pattern and not fnmatch.fnmatch(fname, file_pattern):
+                        continue
+                    candidates.append(Path(dirpath) / fname)
+                    if len(candidates) >= 2000:
+                        break
+                if len(candidates) >= 2000:
+                    break
+        matches = []
+        total_matches = 0
+        files_searched = 0
+        for candidate in candidates:
+            try:
+                resolved = candidate.resolve()
+                if self.agent.permissions != 'FULL' and not resolved.is_relative_to(ws_root):
+                    continue
+                size = resolved.stat().st_size
+                if size == 0 or size > 2 * 1024 * 1024:
+                    continue
+                with resolved.open('rb') as stream:
+                    sample = stream.read(4096)
+                if b'\x00' in sample:
+                    continue
+                text = resolved.read_text(encoding='utf-8', errors='replace')
+            except OSError:
+                continue
+            files_searched += 1
+            rel = resolved.relative_to(ws_root).as_posix() if resolved.is_relative_to(ws_root) else str(resolved)
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if pattern.search(line):
+                    total_matches += 1
+                    if len(matches) < cap:
+                        matches.append({
+                            'path': str(resolved),
+                            'relative_path': rel,
+                            'line': lineno,
+                            'content': line.strip()[:240],
+                        })
+        return {
+            'query': query,
+            'regex': bool(regex),
+            'case_sensitive': bool(case_sensitive),
+            'files_searched': files_searched,
+            'total_matches': total_matches,
+            'matches': matches,
+            'truncated': total_matches > len(matches),
+            'scope': 'UTF-8 workspace text search; no file mutation or execution',
+        }
+
     def inspect_csv(self, path, columns, delimiter):
         if not isinstance(columns,list) or not all(isinstance(c,str) for c in columns) or len(set(columns))!=len(columns):
             raise ValueError('integer_columns must contain distinct column names')
@@ -417,6 +488,15 @@ class MissionTools:
             offset = max(0, int(args.get('offset', 0)))
             limit = min(max(1, int(args.get('limit', a.policy.output_chars))), a.policy.output_chars)
             return await asyncio.to_thread(self.read, path, offset, limit)
+        if name == 'search_code':
+            target = a._file_path(args.get('path', '.'))
+            return await asyncio.to_thread(
+                self.search_code, target, args.get('query', ''),
+                regex=bool(args.get('regex', False)),
+                case_sensitive=bool(args.get('case_sensitive', False)),
+                file_pattern=args.get('file_pattern', ''),
+                max_results=int(args.get('max_results', 40)),
+            )
         if name == 'inspect_csv':
             return await asyncio.to_thread(self.inspect_csv,a._file_path(args.get('path','')),
                                            args.get('integer_columns',[]),args.get('delimiter',','))
@@ -469,6 +549,13 @@ class MissionTools:
             with path.open('x', encoding='utf-8') as stream:
                 stream.write(code)
             return {'path':str(path), 'syntax':'valid', 'execution':'not_yet_tested'}
+        if name == 'list_mcp_tools':
+            from agi_core.context import probe_mcp_tools
+            probe = bool(args.get('probe', False)) and a.permissions != 'SAFE'
+            return await asyncio.to_thread(probe_mcp_tools, a.workspace, args.get('server', ''), probe=probe)
+        if name == 'call_mcp_tool':
+            from agi_core.context import invoke_mcp_tool
+            return await asyncio.to_thread(invoke_mcp_tool, a.workspace, args['server'], args['tool'], args.get('arguments', {}))
         if name == 'fetch_url':
             return await self.fetch(args.get('url', ''))
         if name == 'search_web':
@@ -583,12 +670,16 @@ class MissionTools:
                         item.update(await asyncio.to_thread(self.verify_csv_json,check))
                     elif kind == 'agent':
                         validate_checks([check])
-                        from agi_core.context import load_context
-                        context = await asyncio.to_thread(load_context,a.workspace)
-                        agent = next((role for role in context['saved_agents'] if role['name']==check['name']),None)
+                        from agi_core.context import load_context, resolve_agent
+                        context = await asyncio.to_thread(load_context, a.workspace)
+                        agent = next((r for r in context.get('saved_agents', []) if r.get('name') == check['name']), None)
+                        if agent is None:
+                            agent = next((r for r in context.get('official_agents_list', []) if r.get('name') == check['name']), None)
+                        if agent is None:
+                            agent = await asyncio.to_thread(resolve_agent, check['name'], a.workspace)
                         item.update(passed=agent is not None,observed=agent,
                                     observed_sha256=hashlib.sha256(json.dumps(agent,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
-                                    scope='Saved role definition exists; this does not prove execution')
+                                    scope='Saved or official role definition exists; this does not prove execution')
                     elif kind == 'delegation':
                         validate_checks([check])
                         if a.depth:

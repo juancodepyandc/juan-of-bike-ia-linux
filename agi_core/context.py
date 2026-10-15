@@ -39,12 +39,15 @@ def _read_json(path: Path, *, strict: bool = False) -> dict:
 
 
 def _frontmatter(content: str) -> dict:
-    meta = {}
-    if not content.startswith("---\n"):
+    meta: dict = {}
+    if not content.startswith("---\n") and not content.startswith("---\r\n"):
         return meta
+    triggers: list[str] = []
+    in_triggers = False
     for line in content.split("---", 2)[1].splitlines():
         match = re.match(r"^(name|description):\s*(.*)$", line)
         if match:
+            in_triggers = False
             value = match[2].strip()
             try:
                 value = json.loads(value)
@@ -52,6 +55,16 @@ def _frontmatter(content: str) -> dict:
                 value = value.strip("'\"")
             if isinstance(value, str):
                 meta[match[1]] = value
+        elif re.match(r"^triggers:\s*$", line.strip()):
+            in_triggers = True
+        elif in_triggers and re.match(r"^\s*-\s+(.+)$", line):
+            raw_trigger = re.sub(r"^\s*-\s+", "", line).strip().strip("'\"")
+            if raw_trigger:
+                triggers.append(raw_trigger)
+        elif line.strip() and not line.startswith(" "):
+            in_triggers = False
+    if triggers:
+        meta["triggers"] = triggers
     return meta
 
 
@@ -105,6 +118,209 @@ def discover_mcp(workspace: str) -> list[dict]:
     return found
 
 
+def discover_official_agents() -> list[dict]:
+    try:
+        from application.agent_registry import list_agents
+    except ImportError:
+        try:
+            from agent_registry import list_agents
+        except ImportError:
+            return []
+    state = _read_json(data_dir() / "cli_agent_state.json")
+    disabled = state.get("disabled", [])
+    if not isinstance(disabled, list):
+        disabled = []
+    return [a for a in list_agents(disabled=disabled) if a.get("enabled", True)]
+
+
+def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
+    if not isinstance(name, str) or not name.strip():
+        return None
+    registered = _read_json(data_dir() / "dynamic_agents.json").get("agents", [])
+    if isinstance(registered, list):
+        for a in registered:
+            if (isinstance(a, dict) and a.get("type") == "saved"
+                    and a.get("name") == name and isinstance(a.get("role", ""), str)):
+                return {
+                    "name": a.get("name", ""),
+                    "role": a.get("role", "")[:8000],
+                    "permissions": a.get("permissions", "STANDARD"),
+                    "origin": "saved",
+                }
+    for official in discover_official_agents():
+        if official.get("name") == name:
+            return {
+                "name": official["name"],
+                "role": (official.get("role") or official.get("description") or "")[:8000],
+                "description": official.get("description", ""),
+                "domain": official.get("domain", ""),
+                "permissions": official.get("permissions", "STANDARD"),
+                "preferred_tools": official.get("preferred_tools", []),
+                "verification_focus": official.get("verification_focus", ""),
+                "origin": "official",
+            }
+    return None
+
+
+def call_mcp_stdio(server: dict, method: str, params: dict, *,
+                   timeout: float = 12.0, cwd: str | None = None) -> tuple[dict | None, str | None]:
+    """Run one JSON-RPC request against an MCP stdio server with a bounded wait."""
+    import select
+    import subprocess
+    command = server.get("command", "")
+    raw_args = server.get("args", [])
+    cmd = [command] + (list(raw_args) if isinstance(raw_args, list) else [])
+    if not cmd or not isinstance(cmd[0], str) or not cmd[0].strip():
+        return None, "MCP server command is empty"
+    raw_env = server.get("env", {})
+    env = {**os.environ, **(raw_env if isinstance(raw_env, dict) else {})}
+    proc = None
+    reader = None
+    try:
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=env, cwd=cwd or os.getcwd(),
+        )
+        reader = proc.stdout
+        if reader is None:
+            return None, "MCP stdout unavailable"
+        reader_fd = reader.fileno()
+        deadline = time.monotonic() + timeout
+
+        def send_rpc(mid: int, rpc_method: str, rpc_params: dict) -> None:
+            payload = json.dumps({"jsonrpc": "2.0", "id": mid, "method": rpc_method, "params": rpc_params}) + "\n"
+            if proc.stdin is None or proc.stdin.closed:
+                raise OSError("MCP stdin closed")
+            proc.stdin.write(payload.encode("utf-8"))
+            proc.stdin.flush()
+
+        send_rpc(1, "initialize", {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "aurora-agi", "version": "1.3.0"},
+        })
+        send_rpc(2, method, params)
+        buf = b""
+        while True:
+            while b"\n" in buf:
+                line, _, buf = buf.partition(b"\n")
+                try:
+                    msg = json.loads(line.decode("utf-8", errors="replace"))
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(msg, dict) and msg.get("id") == 2:
+                    if "error" in msg and isinstance(msg["error"], dict):
+                        return None, str(msg["error"].get("message") or msg["error"])
+                    return msg, None
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None, "MCP server timed out (no response)"
+            ready, _, _ = select.select([reader_fd], [], [], min(remaining, 2.0))
+            if not ready:
+                if proc.poll() is not None and not buf:
+                    return None, "MCP server exited before responding"
+                continue
+            chunk = os.read(reader_fd, 65536)
+            if not chunk:
+                return None, "MCP server closed while waiting for response"
+            buf += chunk
+            if len(buf) > 1_000_000:
+                return None, "MCP server response too large"
+    except OSError as exc:
+        return None, f"MCP request failed: {exc}"
+    finally:
+        try:
+            if reader is not None and not reader.closed:
+                reader.close()
+        except Exception:
+            pass
+        try:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+        except Exception:
+            pass
+
+
+def probe_mcp_tools(workspace: str, server_name: str = "", *, probe: bool = False,
+                    timeout: float = 10.0) -> dict:
+    servers = discover_mcp(workspace)
+    if server_name:
+        servers = [s for s in servers if s["name"] == server_name]
+        if not servers:
+            raise ValueError(f"MCP server '{server_name}' not found")
+    tools_out = []
+    errors = []
+    for srv in servers:
+        declared = [
+            {"server": srv["name"], "name": t.get("name", ""), "description": t.get("description", ""),
+             "schema": t.get("inputSchema", {}), "status": "configured_declaration"}
+            for t in srv.get("tools", []) if isinstance(t, dict) and t.get("name")
+        ]
+        if not probe or not srv.get("command"):
+            tools_out.extend(declared)
+            continue
+        resp, err = call_mcp_stdio(srv, "tools/list", {}, timeout=timeout, cwd=workspace)
+        if err or not isinstance(resp, dict):
+            errors.append({"server": srv["name"], "error": err or "empty response"})
+            tools_out.extend(declared)
+            continue
+        live_tools = resp.get("result", {}).get("tools", [])
+        if isinstance(live_tools, list):
+            for t in live_tools:
+                if isinstance(t, dict) and t.get("name"):
+                    tools_out.append({
+                        "server": srv["name"],
+                        "name": t.get("name", ""),
+                        "description": t.get("description", ""),
+                        "schema": t.get("inputSchema", {}),
+                        "status": "live_probed",
+                    })
+    return {
+        "servers": [s["name"] for s in servers],
+        "tools": tools_out,
+        "total": len(tools_out),
+        "errors": errors,
+        "scope": "Live stdio probe when probe=true and command is configured; otherwise static declarations",
+    }
+
+
+def invoke_mcp_tool(workspace: str, server_name: str, tool_name: str,
+                    arguments: dict | None = None, *, timeout: float = 12.0) -> dict:
+    if not isinstance(server_name, str) or not server_name.strip():
+        raise ValueError("MCP server name is required")
+    if not isinstance(tool_name, str) or not tool_name.strip():
+        raise ValueError("MCP tool name is required")
+    if arguments is not None and not isinstance(arguments, dict):
+        raise ValueError("MCP tool arguments must be a JSON object")
+    servers = discover_mcp(workspace)
+    srv = next((s for s in servers if s["name"] == server_name), None)
+    if not srv:
+        raise ValueError(f"MCP server '{server_name}' not found")
+    resp, err = call_mcp_stdio(
+        srv, "tools/call", {"name": tool_name, "arguments": arguments or {}},
+        timeout=timeout, cwd=workspace,
+    )
+    if err:
+        raise RuntimeError(err)
+    if not isinstance(resp, dict):
+        raise RuntimeError("Empty MCP response")
+    result = resp.get("result", {})
+    is_error = bool(isinstance(result, dict) and result.get("isError"))
+    if is_error:
+        raise RuntimeError(f"MCP tool '{tool_name}' returned error: {json.dumps(result, ensure_ascii=False)[:600]}")
+    return {
+        "server": server_name,
+        "tool": tool_name,
+        "result": result,
+        "scope": "MCP stdio tool response; verify any file or state side effects independently",
+    }
+
+
 def load_context(workspace: str) -> dict:
     skills = discover_skills(workspace)
     servers = discover_mcp(workspace)
@@ -116,6 +332,7 @@ def load_context(workspace: str) -> dict:
               "permissions": a.get("permissions", "STANDARD")}
              for a in registered if isinstance(a, dict) and a.get("type") == "saved"
              and isinstance(a.get("role", ""), str)] if isinstance(registered, list) else []
+    official = discover_official_agents()
     # Configured MCP tools are declarations, not evidence of executability.
     public_servers = [{"name": s["name"], "tools": [t.get("name", "") for t in s["tools"]
                        if isinstance(t, dict)]} for s in servers]
@@ -132,7 +349,8 @@ def load_context(workspace: str) -> dict:
             "skills_context": "\n\n".join(bodies), "mcp_servers": public_servers,
             "mcp_tools_count": sum(len(s["tools"]) for s in public_servers),
             "mcp_status": "configured_unverified", "connections": active,
-            "connections_count": len(active), "saved_agents": saved}
+            "connections_count": len(active), "saved_agents": saved,
+            "official_agents_list": official}
 
 
 def create_skill(workspace: str, name: str, description: str, instructions: str) -> str:

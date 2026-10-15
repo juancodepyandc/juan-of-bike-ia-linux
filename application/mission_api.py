@@ -10,14 +10,26 @@ from uuid import uuid4
 from flask import Response, jsonify, request, stream_with_context
 from agi_core.mission_store import MissionStore, TERMINAL
 from agi_core.runtime_policy import validate_context_tokens
+from application.cli_inputs import InputStore, reference_context
 
 logger = logging.getLogger(__name__)
 
 
 def register_mission_routes(blueprint, auth, *, workspace, model_default, publish,
                             history_loader=lambda _: [], on_accepted=lambda *_: None,
-                            on_completed=lambda *_: None, store=None):
+                            on_completed=lambda *_: None, store=None, input_store=None):
     store = store or MissionStore()
+    input_store = input_store or InputStore()
+
+    @blueprint.route('/api/cli/inputs',methods=['POST'])
+    @auth
+    def cli_input_upload():
+        try:
+            receipt = input_store.upload(request.get_json(silent=True),
+                                         input_store.scope(request.headers.get('Authorization','')))
+        except (ValueError, OSError) as exc:
+            return jsonify(ok=False,error=str(exc)),400
+        return jsonify(ok=True,**receipt)
 
     def notify(callback, *args):
         try:
@@ -98,6 +110,14 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
                    'permissions':level,'model':selected_model,
                    'requested_model':data.get('model',''),
                    'session_id':session_id,'history':history or []}
+        if data.get('references') is not None:
+            try:
+                manifest = input_store.materialize(data['references'],
+                    input_store.scope(request.headers.get('Authorization','')), payload['workspace'])
+            except (ValueError, OSError) as exc:
+                return jsonify(ok=False,error=str(exc)),400
+            payload['request'] += reference_context(manifest)
+            payload['input_manifest'] = manifest
         if context_tokens is not None:
             payload['context_tokens'] = context_tokens
         try:

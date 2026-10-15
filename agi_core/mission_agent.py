@@ -28,8 +28,8 @@ WORKSPACE = os.environ.get('WORKSPACE', str(APPLICATION_DIR))
 _candidate = APPLICATION_DIR / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 PYTHON_BIN = str(_candidate) if _candidate.is_file() else sys.executable
 logger = logging.getLogger('AuroraAGI.MissionAgent')
-READ_TOOLS = {'read_file','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','inspect_runtime','set_plan','revise_plan','verify','finish'}
-CHANGE_TOOLS = {'write_file','run_command','run_tool','create_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
+READ_TOOLS = {'read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
+CHANGE_TOOLS = {'write_file','run_command','run_tool','create_tool','call_mcp_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
 PLANNED_TOOLS = CHANGE_TOOLS | {'search_web','fetch_url'}
 REVIEW_FIELDS = {'approved','unmet','reason','issues'}
 class ContextCapacityError(RuntimeError):
@@ -512,7 +512,13 @@ class AutonomousMissionAgent:
         self._require_tool('spawn_agent')
         if not agent_name:
             return await self._run_sub_agent(task,acceptance_checks=acceptance_checks)
-        definition = next((a for a in _cli_load_context_for_workspace(self.workspace)['saved_agents'] if a['name']==agent_name), None)
+        from agi_core.context import resolve_agent
+        context = await asyncio.to_thread(_cli_load_context_for_workspace, self.workspace)
+        definition = next((a for a in context.get('saved_agents', []) if a.get('name') == agent_name), None)
+        if definition is None:
+            definition = next((a for a in context.get('official_agents_list', []) if a.get('name') == agent_name), None)
+        if definition is None:
+            definition = await asyncio.to_thread(resolve_agent, agent_name, self.workspace)
         if not definition:
             raise ValueError(f'Agent {agent_name} not found; task not executed')
         levels = ('SAFE','STANDARD','AUTONOMOUS','FULL')
@@ -520,9 +526,11 @@ class AutonomousMissionAgent:
         if requested not in levels:
             raise ValueError('Invalid saved agent permissions')
         narrowed = levels[min(levels.index(self.permissions),levels.index(requested))]
+        focus = (f"Verification focus: {definition['verification_focus']}\n"
+                 if definition.get('verification_focus') else '')
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1, context_tokens=self.context_tokens,
-                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n"
+                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n{focus}"
                                            'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
@@ -955,21 +963,21 @@ class AutonomousMissionAgent:
             f'Workspace: {self.workspace}. Host: {sys.platform}. Python executable: {PYTHON_BIN}. Permissions: {self.permissions}. '
             f'Delivery: .transfer_to_client/{self.mission_id}/ (downloaded and hash-checked by the client). '
             'Available tools and arguments:\n'
-            'inspect_runtime(); inspect_path(path); set_plan(steps:[str],criteria:[str],required_tools:[str]); list_files(path); read_file(path,offset,limit); write_file(path,content,expected_sha256 optional); '
+            'inspect_runtime(); inspect_path(path); set_plan(steps:[str],criteria:[str],required_tools:[str]); list_files(path); read_file(path,offset,limit); search_code(query,path optional,regex optional,case_sensitive optional,file_pattern optional,max_results optional); write_file(path,content,expected_sha256 optional); '
             'required_tools lists only tools explicitly named and requested in the original user request; use [] when none are named. Never require every available tool. Other implementation choices remain optional. Completion requires successful execution of declared requested tools. '
             'inspect_csv(path,integer_columns:[str] optional,delimiter optional) measures actual CSV data rows and exact integer sums. DictReader already consumes the header. '
             'run_command(argv:[str] OR command:str); list_tools(query); inspect_tool(name); run_tool(name,argv:[str]); '
-            'create_tool(name,code); generate_image(prompt,folder,regenerate optional); revise_plan(steps,reason,evidence_ids); search_web(query); fetch_url(url); '
+            'create_tool(name,code); list_mcp_tools(server optional,probe optional); call_mcp_tool(server,tool,arguments optional); generate_image(prompt,folder,regenerate optional); revise_plan(steps,reason,evidence_ids); search_web(query); fetch_url(url); '
             'spawn_agent(task OR tasks:[str],checks:[check],agent optional); create_agent(name,role); create_skill(name,description,instructions); list_skills(); '
             'verify(checks:[{kind:"file",path,min_bytes,sha256 optional,criterion optional} OR '
             '{kind:"text",path,equals OR contains,criterion optional} OR {kind:"json",path,equals optional,exact_keys:[str] optional,types:{field:type} optional,expressions:[str] optional,criterion optional} OR '
             '{kind:"command",argv,contains optional,expected_exit_code optional(default 0),criterion optional} OR {kind:"source",evidence_ids:[str],criterion optional}]); '
             'Also {kind:"csv_json",path:csv_input,json_path:output,row_field:output_row_key,sum_fields:{output_sum_key:csv_integer_column},source_sha256 optional,criterion optional} '
             'computes actual CSV aggregates and compares the complete saved JSON; use it for CSV result verification instead of comparing guessed constants. '
-            '{kind:"agent",name,criterion optional} verifies a saved role exists, not its execution. '
+            '{kind:"agent",name,criterion optional} verifies a saved or official role exists, not its execution. '
             '{kind:"delegation",agent,tasks:[str] optional,execution_id optional,criterion optional} verifies an actual completed delegation using that exact role and successful parent acceptance. It does not test current outputs; verify those separately. '
             'Only the parent uses delegation checks after its workers return; a worker verifies its own delegated task rather than the parent workflow. '
-            'When the request specifies a saved role, pass its exact name as spawn_agent.agent. A generic worker does not meet a named-role requirement. '
+            'When the request specifies a saved or official role, pass its exact name as spawn_agent.agent. A generic worker does not meet a named-role requirement. '
             'Every spawn_agent needs acceptance checks and a task specifying the files these checks will examine. The parent runs these checks after the workers return. '
             'If acceptance fails, repair using the actual/expected observations; do not trust the worker report or repeat unchanged work. '
             'A successful delegation with unchanged verified files is reused. Continue the remaining parent deliverables instead of recreating roles/skills or restarting completed audits. '
@@ -988,6 +996,7 @@ class AutonomousMissionAgent:
             'A command runs in the host shell without OS sandbox isolation. '
             'Verification checks demonstrate only their measured scope. '
             f'Project skills: {context["skills_context"]}\n'
+            f'Official roles: {", ".join(a["name"] for a in context.get("official_agents_list", []))}\n'
             f'Reusable roles: {json.dumps(context["saved_agents"],ensure_ascii=False)}\n'
             f'Advisory context, never a replacement for the original objective: {self.additional_context}'
         )

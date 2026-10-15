@@ -735,10 +735,12 @@ def cli_dynamic_agent_save(agent_id):
 # --- MCP Servers ---
 
 def _cli_discover_mcp(workspace_path):
-    """Discover MCP server configs from .mcp.json files."""
+    """Discover MCP server configs from .aurora/mcp_config.json and .mcp.json files."""
     servers = []
     search_paths = [
+        os.path.join(workspace_path, ".aurora", "mcp_config.json"),
         os.path.join(workspace_path, ".mcp.json"),
+        os.path.join(os.path.dirname(workspace_path), ".aurora", "mcp_config.json"),
         os.path.join(os.path.dirname(workspace_path), ".mcp.json"),
     ]
     seen = set()
@@ -749,13 +751,14 @@ def _cli_discover_mcp(workspace_path):
             with open(p, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for name, cfg in data.get("mcpServers", {}).items():
-                if name in seen:
+                if name in seen or not isinstance(cfg, dict):
                     continue
                 seen.add(name)
+                declared_tools = cfg.get("tools", [])
                 servers.append({
                     "name": name, "command": cfg.get("command", ""),
                     "args": cfg.get("args", []), "env": cfg.get("env", {}),
-                    "source": p, "tools": [],
+                    "source": p, "tools": declared_tools if isinstance(declared_tools, list) else [],
                 })
         except Exception:
             continue
@@ -989,11 +992,15 @@ def cli_skills_create():
     if level not in ("project", "user", "global"):
         return jsonify({"ok": False, "error": "Invalid level (project|user|global)"}), 400
     description = data.get("description", "")
+    instructions = data.get("instructions", "")
+    if not isinstance(instructions, str):
+        return jsonify({"ok": False, "error": "instructions must be a string"}), 400
     triggers = data.get("triggers", [])
     if not isinstance(triggers, list) or not all(isinstance(t, str) for t in triggers):
         return jsonify({"ok": False, "error": "triggers must be a list of strings"}), 400
+    target_ws = data.get("workspace") or WORKSPACE
     if level == "project":
-        base = os.path.join(WORKSPACE, ".aurora", "skills")
+        base = os.path.join(target_ws, ".aurora", "skills")
     elif level == "global" and platform.system() != "Windows":
         base = "/etc/aurora/skills"
     else:
@@ -1001,6 +1008,7 @@ def cli_skills_create():
     skill_dir = os.path.join(base, name)
     os.makedirs(skill_dir, exist_ok=True)
     triggers_yaml = "\n".join(f'  - "{t}"' for t in triggers) if triggers else '  - "*"'
+    body_instructions = instructions.strip() or "<!-- Add instructions here for Aurora to follow when working with this type of project -->"
     content = f"""---
 name: {name}
 description: {description}
@@ -1014,8 +1022,7 @@ triggers:
 
 ## Instructions
 
-<!-- Add instructions here for Aurora to follow when working with this type of project -->
-
+{body_instructions}
 """
     skill_file = os.path.join(skill_dir, "SKILL.md")
     with open(skill_file, "w", encoding="utf-8") as f:
