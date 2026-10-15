@@ -275,7 +275,20 @@ const vitesse = document.getElementById('vitesse');
 
 const param = new URLSearchParams(location.search).get('file');
 if (new URLSearchParams(location.search).get('focus') === '1') document.getElementById('panel').classList.add('cache');
-if (param) charge('/' + param.replace(/^\//, ''), decodeURIComponent(param.split('/').pop()));
+if (param) {
+  const cleanParam = param.replace(/^\/+/, '');
+  let resolvedUrl = '/' + cleanParam;
+  if (cleanParam.startsWith('api/')) {
+    resolvedUrl = '/' + cleanParam;
+  } else if (cleanParam.startsWith('output/3d/')) {
+    resolvedUrl = '/api/3d/file/' + cleanParam.slice('output/3d/'.length);
+  } else if (cleanParam.startsWith('application/output/3d/')) {
+    resolvedUrl = '/api/3d/file/' + cleanParam.slice('application/output/3d/'.length);
+  } else {
+    resolvedUrl = '/api/asset/' + cleanParam;
+  }
+  charge(resolvedUrl, decodeURIComponent(cleanParam.split('/').pop()));
+}
 listeGlb();
 
 renderer.setAnimationLoop(() => {

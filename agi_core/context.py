@@ -146,6 +146,9 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
                     "name": a.get("name", ""),
                     "role": a.get("role", "")[:8000],
                     "domain": str(a.get("domain", ""))[:200],
+                    "module": str(a.get("module") or a.get("domain") or "")[:200],
+                    "parent_agent": str(a.get("parent_agent", ""))[:80],
+                    "can_create_subagents": bool(a.get("can_create_subagents", True)),
                     "permissions": a.get("permissions", "STANDARD"),
                     "preferred_tools": [t for t in raw_tools if isinstance(t, str)] if isinstance(raw_tools, list) else [],
                     "verification_focus": str(a.get("verification_focus", ""))[:2000],
@@ -158,6 +161,9 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
                 "role": (official.get("role") or official.get("description") or "")[:8000],
                 "description": official.get("description", ""),
                 "domain": official.get("domain", ""),
+                "module": official.get("module") or official.get("domain") or "",
+                "parent_agent": official.get("parent_agent", ""),
+                "can_create_subagents": bool(official.get("can_create_subagents", True)),
                 "permissions": official.get("permissions", "STANDARD"),
                 "preferred_tools": official.get("preferred_tools", []),
                 "verification_focus": official.get("verification_focus", ""),
@@ -337,6 +343,9 @@ def load_context(workspace: str) -> dict:
             "name": a.get("name", ""),
             "role": a.get("role", "")[:8000],
             "domain": str(a.get("domain", ""))[:200],
+            "module": str(a.get("module") or a.get("domain") or "")[:200],
+            "parent_agent": str(a.get("parent_agent", ""))[:80],
+            "can_create_subagents": bool(a.get("can_create_subagents", True)),
             "permissions": a.get("permissions", "STANDARD"),
             "preferred_tools": [
                 t for t in (a.get("preferred_tools") or a.get("tools") or [])
@@ -408,26 +417,33 @@ def _registry_lock(root: Path):
 
 def create_agent(name: str, role: str, model: str, permissions: str, mission_id: str, *,
                  preferred_tools: list[str] | None = None, verification_focus: str = "",
-                 domain: str = "") -> dict:
+                 domain: str = "", module: str = "", parent_agent: str = "",
+                 can_create_subagents: bool = True) -> dict:
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
     with _registry_lock(root):
         return _create_agent(name, role, model, permissions, mission_id,
                              preferred_tools=preferred_tools,
                              verification_focus=verification_focus,
-                             domain=domain)
+                             domain=domain,
+                             module=module,
+                             parent_agent=parent_agent,
+                             can_create_subagents=can_create_subagents)
 
 
 def _create_agent(name: str, role: str, model: str, permissions: str, mission_id: str, *,
                   preferred_tools: list[str] | None = None, verification_focus: str = "",
-                  domain: str = "") -> dict:
+                  domain: str = "", module: str = "", parent_agent: str = "",
+                  can_create_subagents: bool = True) -> dict:
     if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name):
         raise ValueError("Invalid agent name")
     if not isinstance(role, str) or not role.strip() or len(role) > 8000:
         raise ValueError("A bounded agent role is required")
     clean_tools = [t.strip() for t in (preferred_tools or []) if isinstance(t, str) and t.strip()][:32]
     clean_focus = str(verification_focus or "").strip()[:2000]
-    clean_domain = str(domain or "").strip()[:200]
+    clean_domain = str(domain or module or "").strip()[:200]
+    clean_module = str(module or domain or "").strip()[:200]
+    clean_parent = str(parent_agent or "").strip()[:80]
     root = data_dir()
     root.mkdir(parents=True, exist_ok=True)
     target = root / "dynamic_agents.json"
@@ -443,6 +459,8 @@ def _create_agent(name: str, role: str, model: str, permissions: str, mission_id
              "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
              "status": "idle", "tools": clean_tools, "preferred_tools": clean_tools,
              "verification_focus": clean_focus, "domain": clean_domain,
+             "module": clean_module, "parent_agent": clean_parent,
+             "can_create_subagents": bool(can_create_subagents),
              "runtime_seconds": 0, "results": []}
     agents.append(agent)
     fd, temp = tempfile.mkstemp(prefix=".agents-", dir=root)
@@ -453,3 +471,65 @@ def _create_agent(name: str, role: str, model: str, permissions: str, mission_id
     finally:
         Path(temp).unlink(missing_ok=True)
     return agent
+
+
+def create_module_subagent(
+    module: str,
+    name: str,
+    role: str,
+    *,
+    model: str = "local",
+    permissions: str = "AUTONOMOUS",
+    mission_id: str = "module_factory",
+    parent_agent: str = "",
+    preferred_tools: list[str] | None = None,
+    verification_focus: str = "",
+) -> dict:
+    """Ensure a module-scoped sub-agent exists, creating it if absent or returning existing."""
+    clean_module = (module or "").strip().lower()
+    if not clean_module:
+        raise ValueError("Module name is required")
+    existing = resolve_agent(name)
+    if existing is not None:
+        return {**existing, "changed": False, "passed": True}
+    parent = parent_agent
+    if not parent:
+        try:
+            from application.agent_registry import get_module_agent
+        except ImportError:
+            try:
+                from agent_registry import get_module_agent
+            except ImportError:
+                get_module_agent = None
+        if get_module_agent is not None:
+            lead = get_module_agent(clean_module)
+            if lead:
+                parent = lead["name"]
+    created = create_agent(
+        name,
+        role,
+        model,
+        permissions,
+        mission_id,
+        preferred_tools=preferred_tools,
+        verification_focus=verification_focus,
+        domain=clean_module,
+        module=clean_module,
+        parent_agent=parent,
+        can_create_subagents=True,
+    )
+    return {**created, "changed": True, "passed": True}
+
+
+def list_agents_for_module(module: str | None = None, workspace: str | None = None) -> list[dict]:
+    """Return both official and dynamically created sub-agents belonging to a module."""
+    ctx = load_context(workspace or ".")
+    all_agents = list(ctx.get("official_agents_list", [])) + list(ctx.get("saved_agents", []))
+    if not module:
+        return all_agents
+    key = module.strip().lower()
+    return [
+        a for a in all_agents
+        if (a.get("module") or "").lower() == key or (a.get("domain") or "").lower() == key
+    ]
+

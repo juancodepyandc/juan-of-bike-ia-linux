@@ -177,15 +177,38 @@ def _strip_internal_ui_diagnostics(prompt: str) -> str:
     return clean_head or raw
 
 
-def _a_de_la_couleur(glb: str) -> bool:
-    """Un GLB porte-t-il une COULEUR reelle (et pas une metallicRoughness nue) ?
+def _a_une_texture_image(glb: str) -> bool:
+    """Verifie qu'un GLB possede une vraie baseColorTexture reliee a une image."""
+    try:
+        import json as _json
+        import struct as _st
+        with open(glb, "rb") as _f:
+            _h = _f.read(12)
+            if len(_h) < 12 or _h[:4] != b"glTF":
+                return False
+            _lg, _typ = _st.unpack("<II", _f.read(8))
+            if _typ != 0x4E4F534A:
+                return False
+            _doc = _json.loads(_f.read(_lg).decode("utf-8", "replace"))
+        if not _doc.get("textures") or not _doc.get("images"):
+            return False
+        for _m in _doc.get("materials", []):
+            _pbr = _m.get("pbrMetallicRoughness") or {}
+            if _pbr.get("baseColorTexture") is not None:
+                return True
+        return False
+    except Exception:  # noqa: BLE001
+        return False
 
-    TRELLIS/`to_glb` peut sortir un mesh dont le seul materiau a une texture
-    metallicRoughness sans baseColorTexture ni baseColorFactor: le viewer le
-    rend BLANC (mesure 26/09: scene loutre/fusil, saturation 8e-5). Tester la
-    simple existence d'une image ou d'un materiau suffit donc a croire un mesh
-    blanc "déjà texturé". Ici on exige un albedo exploitable : baseColorTexture
-    OU un baseColorFactor nettement non neutre.
+
+def _a_de_la_couleur(glb: str) -> bool:
+    """Un GLB porte-t-il une COULEUR reelle (et pas une metallicRoughness nue ou un gris neutre) ?
+
+    TRELLIS/`to_glb` ou les moteurs shape-only peuvent sortir un mesh dont le seul
+    materiau a une texture metallicRoughness sans baseColorTexture, ou un
+    baseColorFactor gris neutre uniforme [0.5, 0.5, 0.5]. Ici on exige un albedo
+    exploitable : baseColorTexture reelle, COLOR_0 par sommet, OU un
+    baseColorFactor chromatique (saturation > 0.04).
     """
     try:
         import json as _json
@@ -193,28 +216,44 @@ def _a_de_la_couleur(glb: str) -> bool:
         with open(glb, "rb") as _f:
             _h = _f.read(12)
             if len(_h) < 12 or _h[:4] != b"glTF":
-                return True  # doute -> on traite comme couleur
+                return False
             _lg, _typ = _st.unpack("<II", _f.read(8))
             if _typ != 0x4E4F534A:
-                return True
+                return False
             _doc = _json.loads(_f.read(_lg).decode("utf-8", "replace"))
+        has_images = bool(_doc.get("textures") and _doc.get("images"))
         for _m in _doc.get("materials", []):
             _pbr = _m.get("pbrMetallicRoughness") or {}
-            if _pbr.get("baseColorTexture"):
+            if _pbr.get("baseColorTexture") and has_images:
                 return True
             _fct = _pbr.get("baseColorFactor")
             if _fct and len(_fct) >= 3:
-                _r, _g, _b = _fct[0], _fct[1], _fct[2]
-                if abs(_r - _g) > 0.03 or abs(_g - _b) > 0.03 or max(_r, _g, _b) - min(_r, _g, _b) > 0.03:
+                _r, _g, _b = float(_fct[0]), float(_fct[1]), float(_fct[2])
+                if max(_r, _g, _b) - min(_r, _g, _b) > 0.04:
                     return True
-                if max(_r, _g, _b) < 0.72 or max(_r, _g, _b) > 1.05:
-                    return True  # marron/bleu/rouge/gris fonce, pas blanc pur
         if any('COLOR_0' in primitive.get('attributes', {})
                for mesh in _doc.get('meshes', []) for primitive in mesh.get('primitives', [])):
-            return True  # Vertex colors are real color, even without a texture image.
+            return True
         return False
     except Exception:  # noqa: BLE001
-        return True  # doute -> traiter comme couleur
+        return False
+
+
+def _explicit_material_requested(prompt: str, kind: str | None = None) -> bool:
+    """Detecte si le prompt demande explicitement une texture ou matiere PBR specifique."""
+    text = f"{prompt or ''} {kind or ''}".lower()
+    if re.search(
+        r"\b(texture[sd]?|textur[eé][es]?|mati[eè]res?|mat[eé]riaux?|materials?|pbr|"
+        r"bois|wood(?:en)?|ch[eê]ne|noyer|acajou|m[eé]tal(?:lique)?|metal(?:lic)?|"
+        r"acier|steel|fer|iron|chrome|chrom[eé]|or|gold|dor[eé]|cuivre|copper|bronze|laiton|"
+        r"verre|glass|cristal|crystal|eau|water|marbre|marble|pierre|stone|b[eé]ton|concrete|"
+        r"cuir|leather|tissu|fabric|velours|velvet|soie|silk|fourrure|fur|peluche|plush|laine|wool|"
+        r"carbone|carbon|n[eé]on|neon|led|rgb|bross[eé]|brushed|verni|laqu[eé]|clearcoat|rouill[eé]|rust)\b",
+        text,
+    ):
+        return True
+    return False
+
 
 
 def enhance_flux_prompt(prompt: str, *, motion_prompt: str | None = None,
@@ -5097,7 +5136,7 @@ def run_pipeline(prompt: str, run_id: str, *,
                     if _fid_character and not _use_researched:
                         audit.append({"stage": "texture_fidelity", "skipped": True,
                                       "reason": "personnage: texture TRELLIS.2 native conservee (protection visage/yeux)"})
-                    _needs_reference_color = not _a_de_la_couleur(str(mesh_path))
+                    _needs_reference_color = not _a_de_la_couleur(str(mesh_path)) or not _a_une_texture_image(str(mesh_path))
                     if (os.environ.get("AURORA_TEXTURE_FIDELITY", "1") == "1"
                             and front_ref.is_file()
                             and (not _keep_native or _needs_reference_color)
@@ -5265,17 +5304,20 @@ def run_pipeline(prompt: str, run_id: str, *,
 
     final_mesh_path = rescue["final_mesh"]
 
-    _a_reel = True  # comportement historique si impossible a verifier
+    _a_reel = False
     try:
-        _a_reel = _a_de_la_couleur(str(final_mesh_path))
+        _a_reel = _a_de_la_couleur(str(final_mesh_path)) and _a_une_texture_image(str(final_mesh_path))
     except Exception:  # noqa: BLE001
-        _a_reel = True
+        _a_reel = False
+    _mat_explicite = _explicit_material_requested(prompt, kind)
     _texture_du_service = bool(_a_reel)
     if _texture_du_service:
-        print("PROGRESS:matieres:texture livree finie — Atlas ne la retouche pas",
+        print("PROGRESS:matieres:texture livree finie — Atlas conserve l'albedo natif"
+              + (" et enrichit les canaux PBR demandes" if _mat_explicite else ""),
               flush=True)
         audit.append({"stage": "post_traitement_texture", "skipped": True,
-                      "reason": "texture finie fournie par le service"})
+                      "reason": "texture finie fournie par le service",
+                      "explicit_material_requested": _mat_explicite})
 
     # Stage 3.4 — MV-Adapter UV-aware re-texturing for hard-surface reproductions.
     # TRELLIS.2 / Hunyuan3D paint textures into the fragmented atlas that Marching
@@ -5415,7 +5457,7 @@ def run_pipeline(prompt: str, run_id: str, *,
 
     material_manifest_data = None
     material_intel_enabled = os.environ.get("AURORA_MATERIAL_INTEL", "1") == "1"
-    if material_intel_enabled and not _texture_du_service:
+    if material_intel_enabled and (not _texture_du_service or _mat_explicite):
         try:
             import material_intel_classifier as _matintel
             import material_manifest as _matman
@@ -5929,6 +5971,34 @@ def run_pipeline(prompt: str, run_id: str, *,
             retry["vlm_retry"] = True
             retry["original_prompt"] = prompt
             return retry
+    # Auto-correction texture/couleur avant l'acceptation finale: si le mesh
+    # livre est encore depourvu de couleur reelle (gris/blanc sans texture ni COLOR_0)
+    # alors qu'une reference visuelle existe, on projette la reference (texture_fidelity)
+    # puis on cuit les couleurs par sommet en repli pour ne jamais livrer un mesh nu.
+    try:
+        if Path(str(final_delivery_mesh)).is_file() and not _a_de_la_couleur(str(final_delivery_mesh)) and front_ref.is_file():
+            print("PROGRESS:matieres:auto-correction couleur/texture sur le mesh final...", flush=True)
+            _ac_fid_out = output_dir / f"{run_id}_autocorrect_fidelity.glb"
+            _ac_fid_script = str(REPO_ROOT / "application" / "python-services" / "texture_fidelity.py")
+            _ac_fp = subprocess.run(
+                [sys.executable, _ac_fid_script, "--mesh", str(final_delivery_mesh), "--photo", str(front_ref), "--output", str(_ac_fid_out)],
+                capture_output=True, text=True, timeout=1800, check=False,
+            )
+            if _ac_fid_out.is_file() and _ac_fid_out.stat().st_size > 1000 and _a_de_la_couleur(str(_ac_fid_out)):
+                final_delivery_mesh = str(_ac_fid_out)
+                audit.append({"stage": "autocorrection_texture", "ok": True, "method": "texture_fidelity", "output": str(_ac_fid_out)})
+            else:
+                from auto_rescue_mesh import bake as _ac_bake
+                _ac_baked_out = output_dir / f"{run_id}_autocorrect_baked.glb"
+                _ac_b = _ac_bake(Path(str(final_delivery_mesh)), front_ref, _ac_baked_out, kind)
+                if _ac_b.get("ok") and _ac_baked_out.is_file() and _ac_baked_out.stat().st_size > 1000:
+                    final_delivery_mesh = str(_ac_baked_out)
+                    audit.append({"stage": "autocorrection_texture", "ok": True, "method": "bake_vertex_colors", "output": str(_ac_baked_out)})
+                else:
+                    audit.append({"stage": "autocorrection_texture", "ok": False, "error": _ac_b.get("error")})
+    except Exception as _ace:  # noqa: BLE001
+        audit.append({"stage": "autocorrection_texture", "ok": False, "error": repr(_ace)})
+
     # l'acceptation ne juge le MOUVEMENT que s'il a ete DEMANDE (explicite ou
     # reellement decrit) — jamais sur une derive par copie du prompt.
     final_acceptance = run_final_acceptance(
@@ -5943,6 +6013,33 @@ def run_pipeline(prompt: str, run_id: str, *,
         "hard_failures": final_acceptance.get("hard_failures") or [],
         "suggested_fixes": final_acceptance.get("suggested_fixes") or [],
     })
+
+    if not final_acceptance.get("acceptance_ok", False):
+        # Passe d'auto-correction sur echec de la porte finale (auto_rescue + re-verification)
+        try:
+            print("PROGRESS:qualite:auto-correction suite au controle qualite final...", flush=True)
+            _retry_rescue_dir = output_dir / f"rescue_final_{run_id}"
+            _retry_rescue = auto_rescue(Path(str(final_delivery_mesh)), front_ref, prompt, _retry_rescue_dir)
+            if _retry_rescue.get("ok") and _retry_rescue.get("final_mesh") and Path(str(_retry_rescue["final_mesh"])).is_file():
+                _cand_mesh = str(_retry_rescue["final_mesh"])
+                _cand_acc = run_final_acceptance(
+                    _cand_mesh, prompt, kind,
+                    motion_prompt if not _motion_derive or rigged_mesh else None,
+                )
+                audit.append({
+                    "stage": "final_acceptance_self_correction",
+                    "ok": _cand_acc.get("ok", False),
+                    "acceptance_ok": _cand_acc.get("acceptance_ok", False),
+                    "engineer_grade": _cand_acc.get("engineer_grade"),
+                    "mesh": _cand_mesh,
+                })
+                if _cand_acc.get("acceptance_ok", False) or (
+                    float(_cand_acc.get("engineer_grade") or 0) > float(final_acceptance.get("engineer_grade") or 0)
+                ):
+                    final_delivery_mesh = _cand_mesh
+                    final_acceptance = _cand_acc
+        except Exception as _sc_exc:  # noqa: BLE001
+            audit.append({"stage": "final_acceptance_self_correction", "ok": False, "error": repr(_sc_exc)})
 
     elapsed = round(time.time() - started_at, 1)
     if not final_acceptance.get("acceptance_ok", False):

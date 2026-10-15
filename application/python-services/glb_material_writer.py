@@ -3,11 +3,145 @@ import io
 import json
 import os
 import shutil
+import struct
 import sys
 import tempfile
 from pathlib import Path
 
-import pygltflib
+try:
+    import pygltflib
+except ImportError:
+    class _GltfDict(dict):
+        def __init__(self, **kwargs):
+            super().__init__()
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+        def __getattr__(self, key):
+            if key.startswith("_"):
+                raise AttributeError(key)
+            return self.get(key, None)
+
+        def __setattr__(self, key, value):
+            if key.startswith("_"):
+                super().__setattr__(key, value)
+            elif value is None:
+                self.pop(key, None)
+            else:
+                self[key] = _wrap_gltf(value)
+
+    def _wrap_gltf(val):
+        if isinstance(val, _GltfDict):
+            return val
+        if isinstance(val, dict):
+            d = _GltfDict()
+            for k, v in val.items():
+                d[k] = _wrap_gltf(v)
+            return d
+        if isinstance(val, list):
+            return [_wrap_gltf(x) for x in val]
+        return val
+
+    class _BuiltinGLTF2:
+        def __init__(self):
+            self._doc = _GltfDict(
+                asset=_GltfDict(version="2.0"),
+                buffers=[],
+                bufferViews=[],
+                accessors=[],
+                images=[],
+                textures=[],
+                materials=[],
+                meshes=[],
+                nodes=[],
+                scenes=[],
+                animations=[],
+                extensionsUsed=[],
+                extras=_GltfDict(),
+            )
+            self._blob = b""
+
+        def __getattr__(self, key):
+            if key.startswith("_"):
+                raise AttributeError(key)
+            return self._doc.get(key, None)
+
+        def __setattr__(self, key, value):
+            if key.startswith("_"):
+                super().__setattr__(key, value)
+            else:
+                self._doc[key] = _wrap_gltf(value)
+
+        def binary_blob(self) -> bytes:
+            return self._blob
+
+        def set_binary_blob(self, blob: bytes) -> None:
+            self._blob = bytes(blob)
+
+        def load(self, path: str):
+            raw = Path(path).read_bytes()
+            if len(raw) < 20:
+                raise ValueError(f"Invalid GLB file: {path}")
+            magic, version, _total_len = struct.unpack_from("<III", raw, 0)
+            if magic != 0x46546C67:
+                raise ValueError(f"Not a GLB file (magic={magic:#x}): {path}")
+            offset = 12
+            json_dict = {}
+            blob = b""
+            while offset + 8 <= len(raw):
+                chunk_len, chunk_type = struct.unpack_from("<II", raw, offset)
+                offset += 8
+                chunk_data = raw[offset: offset + chunk_len]
+                offset += chunk_len
+                if chunk_type == 0x4E4F534A:
+                    json_dict = json.loads(chunk_data.decode("utf-8").rstrip(" \t\r\n\x00"))
+                elif chunk_type == 0x004E4942:
+                    blob = bytes(chunk_data)
+            self._doc = _wrap_gltf(json_dict)
+            for list_key in ("buffers", "bufferViews", "accessors", "images", "textures", "materials", "meshes", "nodes", "scenes", "animations", "extensionsUsed"):
+                if self._doc.get(list_key) is None:
+                    self._doc[list_key] = []
+            if not self._doc.materials:
+                self._doc.materials.append(_GltfDict(name="default", pbrMetallicRoughness=_GltfDict(baseColorFactor=[0.8, 0.8, 0.8, 1.0], metallicFactor=0.0, roughnessFactor=0.6)))
+                for mesh in self._doc.meshes:
+                    for prim in (mesh.get("primitives") or []):
+                        if prim.get("material") is None:
+                            prim["material"] = 0
+            self._blob = blob
+            return self
+
+        def save_binary(self, path: str) -> None:
+            doc_copy = json.loads(json.dumps(self._doc))
+            for k in list(doc_copy.keys()):
+                if doc_copy[k] == [] and k not in ("buffers", "bufferViews", "accessors", "meshes", "nodes", "scenes"):
+                    doc_copy.pop(k, None)
+            json_bytes = json.dumps(doc_copy, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            json_pad = (4 - (len(json_bytes) % 4)) % 4
+            json_chunk = json_bytes + (b" " * json_pad)
+            bin_bytes = bytes(self._blob or b"")
+            bin_pad = (4 - (len(bin_bytes) % 4)) % 4
+            bin_chunk = bin_bytes + (b"\x00" * bin_pad)
+            total_len = 12 + 8 + len(json_chunk) + (8 + len(bin_chunk) if bin_chunk else 0)
+            out = bytearray()
+            out.extend(struct.pack("<III", 0x46546C67, 2, total_len))
+            out.extend(struct.pack("<II", len(json_chunk), 0x4E4F534A))
+            out.extend(json_chunk)
+            if bin_chunk:
+                out.extend(struct.pack("<II", len(bin_chunk), 0x004E4942))
+                out.extend(bin_chunk)
+            Path(path).write_bytes(bytes(out))
+
+    class _BuiltinPygltflibModule:
+        GLTF2 = _BuiltinGLTF2
+        BufferView = _GltfDict
+        Image = _GltfDict
+        Texture = _GltfDict
+        TextureInfo = _GltfDict
+        OcclusionTextureInfo = _GltfDict
+        PbrMetallicRoughness = _GltfDict
+        Material = _GltfDict
+
+    pygltflib = _BuiltinPygltflibModule()  # type: ignore[assignment]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import material_manifest
@@ -158,13 +292,17 @@ def _apply_zone(g, zone, alpha_fallback, mask_cache):
             _ensure_used(g, EXT_EMISSIVE_STRENGTH)
         if mask_tex is not None:
             mat.emissiveTexture = pygltflib.TextureInfo(index=mask_tex)
-    if ("roughness" in ch or "metallic" in ch) and mask_tex is None:
+    if ("roughness" in ch or "metallic" in ch or "baseColor" in ch) and mask_tex is None:
         if mat.pbrMetallicRoughness is None:
             mat.pbrMetallicRoughness = pygltflib.PbrMetallicRoughness()
         if "roughness" in ch:
             mat.pbrMetallicRoughness.roughnessFactor = float(ch["roughness"])
         if "metallic" in ch:
             mat.pbrMetallicRoughness.metallicFactor = float(ch["metallic"])
+        if "baseColor" in ch and mat.pbrMetallicRoughness.baseColorTexture is None:
+            rgb = _rgb(ch["baseColor"])
+            if rgb is not None:
+                mat.pbrMetallicRoughness.baseColorFactor = [rgb[0], rgb[1], rgb[2], 1.0]
     flow = zone.get("flow")
     if flow and mask_tex is not None:
         extras = dict(getattr(mat, "extras", None) or {})

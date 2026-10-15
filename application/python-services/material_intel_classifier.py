@@ -116,6 +116,7 @@ CLASS_CHANNELS = {
     # that read KHR_materials_specular (flat) vs those that ignore it (F0 0.04).
     "skin": {"specular": 0.7, "roughness": 0.5, "metallic": 0.0,
              "roughness_zonal": {"forehead": 0.35, "nose": 0.3, "cheeks": 0.55, "body": 0.65}},
+    "wood": {"roughness": 0.72, "metallic": 0.0, "specular": 0.35},
     "stone": {"roughness": 0.9, "metallic": 0.0},
     "default": {"roughness": 0.6, "metallic": 0.0},
 }
@@ -123,27 +124,32 @@ CLASS_CHANNELS = {
 CLASS_ALIASES = {
     "carpaint": "car_paint", "car paint": "car_paint", "varnish": "car_paint",
     "lacquer": "car_paint", "clearcoat": "car_paint",
-    "cloth": "fabric", "textile": "fabric", "sheen": "fabric",
+    "cloth": "fabric", "textile": "fabric", "sheen": "fabric", "leather": "fabric", "cuir": "fabric",
     "metal_brushed": "brushed_metal", "brushed metal": "brushed_metal",
     "anisotropic_metal": "brushed_metal",
     "rock": "stone", "concrete": "stone", "marble": "stone",
+    "bois": "wood", "timber": "wood", "oak": "wood", "walnut": "wood", "mahogany": "wood",
+    "fur": "fibrous", "plush": "fibrous", "wool": "fibrous", "hair": "fibrous",
+    "canvas": "woven", "denim": "woven", "felt": "woven",
     "emissive": "led", "neon": "led", "rgb": "led",
     "flesh": "skin", "crystal": "glass", "liquid": "water",
 }
 
 CHANNEL_RANGES = {
     "transmission": (0.0, 1.0), "roughness": (0.0, 1.0), "metallic": (0.0, 1.0),
-    "sheen": (0.0, 1.0), "clearcoat": (0.0, 1.0), "clearcoat_roughness": (0.0, 1.0),
+    "sheen": (0.0, 1.0), "sheenRoughness": (0.0, 1.0), "sheen_roughness": (0.0, 1.0),
+    "clearcoat": (0.0, 1.0), "clearcoat_roughness": (0.0, 1.0),
     "anisotropy": (0.0, 1.0), "anisotropy_rotation": (0.0, 1.0),
     "specular": (0.0, 1.0), "ior": (1.0, 2.5),
     "emissive_strength": (0.0, 20.0), "attenuation_distance": (0.01, 100.0),
 }
 
-COLOR_CHANNELS = {"attenuation_color", "sheen_color", "emissive_color"}
+COLOR_CHANNELS = {"attenuation_color", "sheen_color", "emissive_color", "base_color"}
 
 CANONICAL_SCHEMA = "aurora.material-intel.v1"
 
 CANONICAL_LABELS = {
+    "fibrous": "fibrous", "woven": "woven", "wood": "wood",
     "glass": "glass", "water": "water", "fabric": "fabric",
     "car_paint": "paint_gloss", "brushed_metal": "brushed_metal",
     "metal": "metal", "led": "led", "skin": "skin", "stone": "stone",
@@ -153,10 +159,12 @@ CANONICAL_LABELS = {
 CANONICAL_CHANNEL_MAP = {
     "transmission": "transmission", "ior": "ior", "roughness": "roughness",
     "metallic": "metallic", "sheen": "sheen", "sheen_color": "sheenColor",
+    "sheenRoughness": "sheenRoughness", "sheen_roughness": "sheenRoughness",
     "clearcoat": "clearcoat", "clearcoat_roughness": "clearcoatRoughness",
     "anisotropy": "anisotropyStrength", "anisotropy_rotation": "anisotropy",
     "specular": "specular", "emissive_strength": "emissiveStrength",
     "emissive_color": "emissiveFactor", "attenuation_color": "attenuationColor",
+    "base_color": "baseColor",
 }
 
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -177,8 +185,9 @@ ZONE_PATTERNS = [
     ("brushed_metal", r"\b(brushed|bross[eé]e?s?)\b"),
     ("car_paint", r"\b(voitures?|cars?|automobiles?|carrosserie|bodywork|vernis|varnish(?:ed)?|laques?|laqu[eé]e?s?|lacquer(?:ed)?|clearcoat|supercar|roadster)\b"),
     ("metal", r"\b(m[eé]tal(?:lique)?s?|metal(?:lic)?|acier|steel|fer|iron|chrom[eé]?e?|chrome|aluminium|alu|inox|stainless|cuivre|copper|bronze|laiton|brass|gold|dor[eé]e?s?|argent[eé]?e?s?|silver|armures?|armou?r|chevaliers?|knights?|[eé]p[eé]es?|swords?|blades?|lames?|motherboards?|cartes?\s+m[eè]res?|heatsinks?|dissipateurs?|pcb|vrm)\b"),
+    ("wood", r"\b(bois|wood(?:en)?|ch[eê]ne|oak|noyer|walnut|acajou|mahogany|teck|teak|pin|pine|bambou|bamboo|parquet|planches?|planks?)\b"),
     ("skin", r"\b(peau|skin|visages?|face|portrait|chair|flesh)\b"),
-    ("stone", r"\b(pierres?|stones?|roches?|rocks?|granite?|marbre|marble|b[eé]ton|concrete|briques?|bricks?|pav[eé]s?|statues?)\b"),
+    ("stone", r"\b(pierres?|stones?|roches?|rocks?|granite?|marbre|marble|b[eé]ton|concrete|briques?|bricks?|pav[eé]s?|statues?|c[eé]ramique|ceramic|terracotta|terre\s+cuite)\b"),
 ]
 
 KIND_SKIN_RE = re.compile(r"\b(character|creature|humanoid|personnage|humain|human|avatar|portrait)\b")

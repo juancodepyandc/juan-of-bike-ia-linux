@@ -148,6 +148,23 @@ def _log_stage(run_id: str, mesh_path, kind: str, stage: str, score_obj: dict) -
         pass
 
 
+def _mesh_has_texture(p) -> bool:
+    try:
+        import trimesh as _tm
+        _m = p if hasattr(p, "visual") else _tm.load(str(p), process=False, force="mesh")
+        _v = getattr(_m, "visual", None)
+        _mat = getattr(_v, "material", None)
+        if _mat is None:
+            return False
+        _bct = getattr(_mat, "baseColorTexture", None)
+        _img = getattr(_mat, "image", None)
+        if _bct is not None or _img is not None:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 def auto_rescue(mesh_path: Path, reference_path: Path, prompt: str,
                 output_dir: Path, max_distortion: float = 0.30) -> dict:
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -184,24 +201,6 @@ def auto_rescue(mesh_path: Path, reference_path: Path, prompt: str,
 
     current_mesh = mesh_path
     current_score = initial_score
-
-    # v83-3dloop : si le mesh a DÉJÀ une texture (baseColorTexture / TextureVisuals)
-    # — typiquement la sortie du module Hunyuan paint —, NE PAS faire le re-bake
-    # vertex-color : il écrase une bonne texture 2048² couleur par une projection
-    # mono-vue sombre. (score_mesh.color_richness ne regarde que les vertex colors,
-    # pas les textures → il "échoue" à tort sur un mesh texturé.)
-    def _mesh_has_texture(p) -> bool:
-        try:
-            import trimesh as _tm
-            _m = _tm.load(str(p), process=False, force="mesh")
-            _v = getattr(_m, "visual", None); _mat = getattr(_v, "material", None)
-            return bool(
-                (_v is not None and _v.__class__.__name__ == "TextureVisuals")
-                or (getattr(_v, "uv", None) is not None)
-                or (_mat is not None and getattr(_mat, "baseColorTexture", None) is not None)
-            )
-        except Exception:
-            return False
 
     # Stage: color rescue
     if ("color_richness" in (current_score.get("failed_axes") or [])) and (not _mesh_has_texture(current_mesh)):

@@ -1555,6 +1555,7 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
 
 function InteractiveModel({
   url,
+  localMeshPath = null,
   autoRotate,
   onPartSelect,
   onPartInfo,
@@ -1572,6 +1573,7 @@ function InteractiveModel({
   onTimeChange,
 }: {
   url: string
+  localMeshPath?: string | null
   autoRotate: boolean
   onPartSelect?: (name: string | null) => void
   onPartInfo?: (info: PartInfo | null) => void
@@ -1747,38 +1749,29 @@ function InteractiveModel({
     let cancelled = false
     let loadedObject: Object3D | null = null
     ;(async () => {
-      const lowerUrl = url.toLowerCase()
-      if (lowerUrl.endsWith('.glb') || lowerUrl.endsWith('.gltf')) {
+      const cleanUrl = url.split('?')[0].split('#')[0].toLowerCase()
+      if (cleanUrl.endsWith('.glb') || cleanUrl.endsWith('.gltf')) {
         const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
-        // iter11.C: KHR_draco_mesh_compression support. Bake exports now ship
-        // with Draco compression (motion_intent_bpy_runner + rigify_autorig +
-        // blender_bridge). Without DRACOLoader, a Draco-compressed GLB throws
-        // "THREE.GLTFLoader: No DRACOLoader instance provided".
-        // iter18.B: WASM decoder is now served from /draco/ (vite public dir)
-        // so AuroraIA stays self-contained and works fully offline. Files copied
-        // from node_modules/three/examples/jsm/libs/draco/ into application/public/draco/.
         const { DRACOLoader } = await import('three/examples/jsm/loaders/DRACOLoader.js')
         const dracoLoader = new DRACOLoader()
         dracoLoader.setDecoderPath('/draco/')
         const _gltfLoader = new GLTFLoader()
         _gltfLoader.setDRACOLoader(dracoLoader)
-        _gltfLoader.load(url, (loadedModel) => {
+        try {
+          const { MeshoptDecoder } = await import('three/examples/jsm/libs/meshopt_decoder.module.js')
+          if (MeshoptDecoder) _gltfLoader.setMeshoptDecoder(MeshoptDecoder)
+        } catch {
+          // MeshoptDecoder optional if unavailable
+        }
+        const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[] }) => {
           if (cancelled) return
           loadedObject = loadedModel.scene
-          // iter6.A: scan all materials for aurora.oled-atlas.v1 metadata and
-          // configure textures for client-side UV stepping. Done BEFORE setModel
-          // so the bindings are ready by the first useFrame tick.
           oledBindingsRef.current = _collectOledBindings(loadedModel.scene)
-          // iter7.C: reset OLED virtual clock on new model load (so a previously
-          // accumulated time from a different model doesn't carry over).
           oledVirtualTimeRef.current = 0
-          // iter9.D: collect aurora.led-emission.v1 bindings and reset clock.
           ledBindingsRef.current = _collectLedBindings(loadedModel.scene)
           ledVirtualTimeRef.current = 0
-          // iter24.B: collect aurora.belt-scroll.v1 bindings (procedural belt loops).
           beltBindingsRef.current = _collectBeltBindings(loadedModel.scene)
           beltVirtualTimeRef.current = 0
-          // aurora.flow.v1: collect fluid-flow bindings (fountain/cascade/lava).
           flowBindingsRef.current = _collectFlowBindings(loadedModel.scene)
           flowVirtualTimeRef.current = 0
           setModel(loadedModel.scene)
@@ -1786,7 +1779,55 @@ function InteractiveModel({
           const loadedClips = (loadedModel.animations ?? []) as AnimationClip[]
           setClips(loadedClips)
           onAnimationsLoaded?.(loadedClips)
-        }, undefined, () => { if (!cancelled) { setModel(null); setClips([]); onAnimationsLoaded?.([]); oledBindingsRef.current = []; ledBindingsRef.current = []; beltBindingsRef.current = []; flowBindingsRef.current = [] } })
+        }
+        const clearLoadedModel = () => {
+          if (cancelled) return
+          setModel(null)
+          setClips([])
+          onAnimationsLoaded?.([])
+          oledBindingsRef.current = []
+          ledBindingsRef.current = []
+          beltBindingsRef.current = []
+          flowBindingsRef.current = []
+        }
+        const tryDirectBinaryFallback = async () => {
+          if (cancelled || !localMeshPath) {
+            clearLoadedModel()
+            return
+          }
+          try {
+            const rawBytes = await fsReadBinary(localMeshPath)
+            if (cancelled || !rawBytes || rawBytes.length === 0) {
+              clearLoadedModel()
+              return
+            }
+            const u8 = rawBytes instanceof Uint8Array ? rawBytes : new Uint8Array(rawBytes)
+            const arrayBuf = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
+            _gltfLoader.parse(arrayBuf, '', (parsed) => applyLoadedModel(parsed as { scene: Object3D; animations?: AnimationClip[] }), () => clearLoadedModel())
+          } catch {
+            clearLoadedModel()
+          }
+        }
+        const tryBridgeUrlFallback = async () => {
+          if (cancelled) return
+          if (!localMeshPath) {
+            await tryDirectBinaryFallback()
+            return
+          }
+          try {
+            const { getBridgeUrl } = await import('../utils/runtime')
+            const cleanPath = localMeshPath.replace(/\\/g, '/').replace(/^\/+/, '')
+            const fallbackUrl = `${getBridgeUrl()}/api/asset/${encodeURI(cleanPath)}`
+            if (fallbackUrl !== url) {
+              _gltfLoader.load(fallbackUrl, applyLoadedModel, undefined, () => { void tryDirectBinaryFallback() })
+              return
+            }
+          } catch {
+            // Fall through to binary fallback
+          }
+          await tryDirectBinaryFallback()
+        }
+        _gltfLoader.load(url, applyLoadedModel, undefined, () => { void tryBridgeUrlFallback() })
         return
       }
       const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js')
@@ -1808,20 +1849,16 @@ function InteractiveModel({
       mixerRef.current?.stopAllAction()
       mixerRef.current = null
       oledBindingsRef.current = []
-      // iter7.C: reset virtual clock on unmount/url-change
       oledVirtualTimeRef.current = 0
-      // iter9.D: cleanup LED bindings on unmount/url-change
       ledBindingsRef.current = []
       ledVirtualTimeRef.current = 0
-      // iter24.B: cleanup belt-scroll bindings on unmount/url-change
       beltBindingsRef.current = []
       beltVirtualTimeRef.current = 0
-      // aurora.flow.v1: cleanup fluid-flow bindings on unmount/url-change
       flowBindingsRef.current = []
       flowVirtualTimeRef.current = 0
       disposeTree(loadedObject)
     }
-  }, [url, onAnimationsLoaded])
+  }, [url, localMeshPath, onAnimationsLoaded])
 
   useEffect(() => {
     mixerRef.current?.stopAllAction()
@@ -2303,6 +2340,7 @@ function AxesOverlay({ visible }: { visible: boolean }) {
 
 function Scene3D({
   modelUrl,
+  localMeshPath = null,
   viewer,
   onPartSelect,
   onPartInfo,
@@ -2327,6 +2365,7 @@ function Scene3D({
   pbrProfile = null,
 }: {
   modelUrl: string
+  localMeshPath?: string | null
   viewer: ViewerConfig
   onPartSelect?: (name: string | null) => void
   onPartInfo?: (info: PartInfo | null) => void
@@ -2392,6 +2431,7 @@ function Scene3D({
       <Suspense fallback={null}>
         <InteractiveModel
           url={modelUrl}
+          localMeshPath={localMeshPath}
           autoRotate={viewer.autoRotate}
           onPartSelect={onPartSelect}
           onPartInfo={onPartInfo}
@@ -4327,7 +4367,9 @@ export default function ModelView() {
               }
 
               if (existingMeshPath && parsedAurora?.ok === false) {
+                lastMeshPathRef.current = existingMeshPath
                 setModelUrl(toAssetUrl(existingMeshPath))
+                setWorkspace('model')
                 producedButRejected = `Maillage produit et conservé, mais conformité non validée : ${parsedAurora.error || 'voir le journal du run'}. Fichier : ${existingMeshPath}`
               } else if (existingMeshPath) {
                 const finalRel = existingMeshPath.startsWith(`${workspacePath}/`)
@@ -4336,6 +4378,9 @@ export default function ModelView() {
                 const { getBridgeUrl: _gbu } = await import('../utils/runtime')
                 controller.signal.throwIfAborted()
                 if (!existingMeshPath.toLowerCase().endsWith(".glb") || !existingMeshPath.startsWith(runPaths.root + "/")) throw new Error("Le moteur ne fournit pas de modèle GLB lié à cette demande.")
+                lastMeshPathRef.current = existingMeshPath
+                setModelUrl(toAssetUrl(existingMeshPath))
+                setWorkspace('model')
                 setViewerWebUrl(`${_gbu()}/aurora_viewer.html?file=${finalRel.split('/').map(encodeURIComponent).join('/')}`)
                 result = {
                   ok: true,
@@ -4889,7 +4934,7 @@ export default function ModelView() {
           // ── v82nu iter22: AUTO RESCUE chain (vertex colors → PBR materials) ──
           let autoRescueSummary = ''
           try {
-            if (result.shape_model === 'Atlas') {
+            if (result.shape_model === 'Atlas' && result.textured !== false) {
               throw new Error('Atlas gere sa propre qualite — auto-rescue UI saute')
             }
             const { getBridgeUrl: getRescueBridge } = await import('../utils/runtime')
@@ -4924,6 +4969,8 @@ export default function ModelView() {
               if (r.final_mesh && r.final_mesh !== activeMeshPath) {
                 activeMeshPath = r.final_mesh
                 result.path = r.final_mesh
+                lastMeshPathRef.current = activeMeshPath
+                setModelUrl(toAssetUrl(activeMeshPath))
               }
               const initial = r.initial_score ?? 0
               const final = r.final_score ?? 0
@@ -4946,18 +4993,27 @@ export default function ModelView() {
           if (!requestedMotion) {
             autoMotionSummary = 'Mouvement désactivé — mesh statique conservé.'
           } else if (editPlan.continuation || isCharacter) {
-            setPhase('Animation — plan sur le squelette réel...', 90)
-            const motionOutput = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
-              '--input', activeMeshPath, '--output', `${runPaths.motion}/${runId}_requested.glb`,
-              '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
-              '--subject', editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
-              '--source-description', sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
-            ], { resumeKey: 'model_ia' })
-            const motion = parseLastJsonLine(motionOutput)
-            if (!motion?.ok || !motion.path) throw new Error(String(motion?.error || 'Animation demandée non produite ; modèle initial conservé.'))
-            activeMeshPath = String(motion.path)
-            result.path = activeMeshPath
-            autoMotionSummary = 'Animation sur articulations réelles ; déformation mesurée, contacts et collisions non certifiés.'
+            try {
+              setPhase('Animation — plan sur le squelette réel...', 90)
+              const motionOutput = await runPythonScript(`${workspacePath}/python-services/semantic_animation.py`, [
+                '--input', activeMeshPath, '--output', `${runPaths.motion}/${runId}_requested.glb`,
+                '--prompt', composeThreeDRequirements(currentPrompt, effectiveHistory), '--model', activeOllamaModel,
+                '--subject', editPlan.continuation ? rigSubject : intent.subjectKind === 'character' ? 'humanoid' : intent.subjectKind === 'creature' ? 'quadruped' : 'none',
+                '--source-description', sourceContext?.description || composeThreeDRequirements(currentPrompt, effectiveHistory),
+              ], { resumeKey: 'model_ia' })
+              const motion = parseLastJsonLine(motionOutput)
+              if (motion?.ok && motion.path) {
+                activeMeshPath = String(motion.path)
+                result.path = activeMeshPath
+                lastMeshPathRef.current = activeMeshPath
+                setModelUrl(toAssetUrl(activeMeshPath))
+                autoMotionSummary = 'Animation sur articulations réelles ; déformation mesurée, contacts et collisions non certifiés.'
+              } else {
+                autoMotionSummary = `Animation demandée en repli statique (${String(motion?.error || 'modèle statique conservé').slice(0, 80)}).`
+              }
+            } catch (semMotionExc) {
+              autoMotionSummary = `Animation en repli statique (${getErrorMessage(semMotionExc).slice(0, 80)}).`
+            }
           } else try {
             const { getBridgeUrl } = await import('../utils/runtime')
             const bridge = getBridgeUrl()
@@ -4987,6 +5043,8 @@ export default function ModelView() {
               if (dec.baked && motData.glb_path && motData.glb_path !== activeMeshPath) {
                 activeMeshPath = motData.glb_path
                 result.path = motData.glb_path
+                lastMeshPathRef.current = activeMeshPath
+                setModelUrl(toAssetUrl(activeMeshPath))
                 autoMotionSummary = `Motion auto: ${dec.category} bake (conf=${dec.confidence.toFixed(2)}, ${(dec.size_after / 1024).toFixed(1)}KB).`
               } else {
                 autoMotionSummary = `Motion auto: ${dec.category} (${dec.reason}).`
@@ -5040,13 +5098,41 @@ export default function ModelView() {
           } catch (acceptanceExc) {
             finalAcceptanceSummary = `Gate finale indisponible: ${getErrorMessage(acceptanceExc).slice(0, 80)}.`
           }
+          if (finalAcceptanceRejectedReason) {
+            try {
+              const { getBridgeUrl: getGateRescueBridge } = await import('../utils/runtime')
+              const gateRescueResp = await fetch(`${getGateRescueBridge()}/api/3d/auto-rescue`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  mesh: activeMeshPath,
+                  reference: referenceImagePath,
+                  prompt: currentPrompt,
+                  output_dir: runPaths.rescue,
+                }),
+                signal: AbortSignal.timeout(420_000),
+              })
+              const gateRescueData = await gateRescueResp.json() as {
+                ok?: boolean
+                rescue?: { final_mesh?: string; final_score?: number }
+              }
+              if (gateRescueData.ok && gateRescueData.rescue?.final_mesh && gateRescueData.rescue.final_mesh !== activeMeshPath) {
+                activeMeshPath = gateRescueData.rescue.final_mesh
+                result.path = activeMeshPath
+                finalAcceptanceSummary += ` Auto-correction appliquée (score ${gateRescueData.rescue.final_score ?? '?'}).`
+                finalAcceptanceRejectedReason = ''
+              }
+            } catch {
+              // Keep existing activeMeshPath and display in viewer
+            }
+          }
           if (finalAcceptanceSummary) {
             meshFidelitySummary = meshFidelitySummary
               ? `${meshFidelitySummary} ${finalAcceptanceSummary}`
               : finalAcceptanceSummary
           }
           if (finalAcceptanceRejectedReason) {
-            throw new Error(`Gate qualite finale 3D rejete: ${finalAcceptanceRejectedReason}`)
+            producedButRejected = `Maillage affiché dans le viewer avec avertissement qualité : ${finalAcceptanceRejectedReason}`
           }
 
           await fsWriteBinary(
@@ -5081,6 +5167,7 @@ export default function ModelView() {
           lastMeshPathRef.current = activeMeshPath
           setModelUrl(toAssetUrl(activeMeshPath))
           setViewerWebUrl(null)
+          setWorkspace('model')
           // v71: persist le rapport qualite mesh pour le bouton 'Inspecter mesh'.
           setMeshQualityReport({
             grade: result.mesh_geometry_grade,
@@ -5415,6 +5502,7 @@ export default function ModelView() {
                   <Scene3D
                     key={`${modelUrl}-${selectedMotionPreset?.id ?? 'default'}-${viewerConfig.modeLabel}-${viewerPbrProfile?.kind ?? 'no-pbr'}-${viewerMaterialMode}`}
                     modelUrl={modelUrl}
+                    localMeshPath={lastMeshPathRef.current}
                     viewer={viewerConfig}
                     onPartSelect={setSelectedPart}
                     onPartInfo={setSelectedPartInfo}

@@ -14,7 +14,7 @@ LABELS = {
     "screen", "smoke", "metal", "wood", "stone", "plastic", "paint_gloss",
 }
 
-COLOR_CHANNELS = {"attenuationColor", "sheenColor", "emissiveFactor"}
+COLOR_CHANNELS = {"attenuationColor", "sheenColor", "emissiveFactor", "baseColor"}
 
 CHANNEL_CLAMPS = {
     "sheenRoughness": (0.0, 1.0),

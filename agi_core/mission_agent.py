@@ -77,7 +77,7 @@ def _stable_observation(value):
 class AutonomousMissionAgent:
     def __init__(self, mission_id, request_text, workspace, model, permissions='AUTONOMOUS',
                  *, store=None, policy=None, additional_context='', advisory_context='', depth=0, lease_owner=None,
-                 context_tokens=None):
+                 context_tokens=None, agent_name='', module='', can_create_subagents=False):
         self.mission_id, self.request_text = mission_id, request_text
         self.workspace = str(Path(workspace or APPLICATION_DIR).expanduser().resolve())
         self.model, self.permissions = model, permissions or 'AUTONOMOUS'
@@ -86,6 +86,9 @@ class AutonomousMissionAgent:
         self._lease_owner = lease_owner or (accepted['owner'] if accepted else None)
         self._lease_guard = None
         self.additional_context, self.depth = additional_context, depth
+        self.agent_name = str(agent_name or '')
+        self.module = str(module or '')
+        self.can_create_subagents = bool(can_create_subagents)
         self.advisory_context = advisory_context
         self.gateway = LLMGateway(context_tokens=context_tokens)
         self.context_tokens = self.gateway.context_tokens
@@ -108,7 +111,7 @@ class AutonomousMissionAgent:
             raise PermissionError(f'{name} requires AUTONOMOUS or FULL permissions')
         if name == 'run_sudo_command':
             raise PermissionError('Root execution requires a separate authenticated administrator flow')
-        if name == 'spawn_agent' and self.depth:
+        if name == 'spawn_agent' and self.depth and not (self.can_create_subagents and self.depth < 2):
             raise PermissionError('Workers return their result to the parent instead of recursively spawning')
 
     def _file_path(self, raw):
@@ -460,11 +463,16 @@ class AutonomousMissionAgent:
         if name == 'create_agent':
             context = await asyncio.to_thread(_cli_load_context_for_workspace,self.workspace)
             existing = next((role for role in context['saved_agents'] if role['name']==args['name']),None)
+            if existing is None:
+                existing = next((role for role in context.get('official_agents_list', []) if role['name']==args['name']),None)
             if existing:
                 matches = existing['role']==args['role'] and existing['permissions']==self.permissions
                 self._remember_resource('agent',existing['name'],{'permissions':existing['permissions']})
                 return {**existing,'changed':False,'passed':matches,
                         **({} if matches else {'error':'Agent already exists with another definition; inspect it instead of recreating it'})}
+            effective_module = args.get('module') or self.module or args.get('domain', '')
+            effective_domain = args.get('domain') or effective_module
+            effective_parent = args.get('parent_agent') or self.agent_name
             saved = await asyncio.to_thread(
                 create_agent,
                 args['name'],
@@ -474,7 +482,10 @@ class AutonomousMissionAgent:
                 self.mission_id,
                 preferred_tools=args.get('preferred_tools'),
                 verification_focus=args.get('verification_focus', ''),
-                domain=args.get('domain', ''),
+                domain=effective_domain,
+                module=effective_module,
+                parent_agent=effective_parent,
+                can_create_subagents=True,
             )
             self._remember_resource('agent',saved['name'],{'permissions':saved['permissions']})
             return {**saved,'changed':True}
@@ -540,9 +551,13 @@ class AutonomousMissionAgent:
                  if definition.get('verification_focus') else '')
         preferred = (f"Preferred tools for this role: {', '.join(definition['preferred_tools'])}\n"
                      if definition.get('preferred_tools') else '')
+        child_module = str(definition.get('module') or definition.get('domain') or self.module or '')
+        child_can_subagent = bool(definition.get('can_create_subagents', True)) and (self.depth + 1) < 2
+        module_note = f"Module scope: {child_module}\n" if child_module else ""
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1, context_tokens=self.context_tokens,
-                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\nReusable role, subordinate to this task: {definition['role']}\n{focus}{preferred}"
+                                       agent_name=agent_name, module=child_module, can_create_subagents=child_can_subagent,
+                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\n{module_note}Reusable role, subordinate to this task: {definition['role']}\n{focus}{preferred}"
                                            'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned
@@ -1658,6 +1673,13 @@ class AutonomousMissionAgent:
                         self.state['messages'].append({'role':'user','content':'No action occurred. Return one valid JSON tool object or an explicit finish.'})
                         repeated += 1
                         if repeated >= self.policy.stall_attempts:
+                            if self.policy.recovery_attempts > 0 and self.state.get('evidence'):
+                                recovery_record = await self._recover_stagnation(stalled_actions)
+                                if recovery_record is not None:
+                                    recovery_call = recovery_record['next_action']
+                                    repeated, stalled_actions = 0, []
+                                    await self._save()
+                                    continue
                             raise RuntimeError('Repeated invalid model output; checkpoint retained for another model or resume')
                         await self._save()
                         continue
@@ -1674,6 +1696,13 @@ class AutonomousMissionAgent:
                             self.state['messages'].append({'role':'user','content':str(exc)})
                             repeated += 1
                             if repeated>=self.policy.stall_attempts:
+                                if self.policy.recovery_attempts > 0 and self.state.get('evidence'):
+                                    recovery_record = await self._recover_stagnation(stalled_actions)
+                                    if recovery_record is not None:
+                                        recovery_call = recovery_record['next_action']
+                                        repeated, stalled_actions = 0, []
+                                        await self._save()
+                                        continue
                                 raise RuntimeError('Repeated invalid completion arguments; work retained')
                             await self._save()
                             continue
@@ -1689,6 +1718,13 @@ class AutonomousMissionAgent:
                                 '. Required tools without successful execution: '+json.dumps(sorted(missing_tools),ensure_ascii=False)})
                             repeated += 1
                             if repeated >= self.policy.stall_attempts:
+                                if self.policy.recovery_attempts > 0 and self.state.get('evidence'):
+                                    recovery_record = await self._recover_stagnation(stalled_actions)
+                                    if recovery_record is not None:
+                                        recovery_call = recovery_record['next_action']
+                                        repeated, stalled_actions = 0, []
+                                        await self._save()
+                                        continue
                                 raise RuntimeError('Repeated unverified completion; work retained')
                             continue
                         if not blocked:
@@ -1711,6 +1747,13 @@ class AutonomousMissionAgent:
                                 self.state['messages'].append({'role':'user','content':'Current output checks failed: '+json.dumps(output_snapshot,ensure_ascii=False)})
                                 repeated += 1
                                 if repeated>=self.policy.stall_attempts:
+                                    if self.policy.recovery_attempts > 0 and self.state.get('evidence'):
+                                        recovery_record = await self._recover_stagnation(stalled_actions)
+                                        if recovery_record is not None:
+                                            recovery_call = recovery_record['next_action']
+                                            repeated, stalled_actions = 0, []
+                                            await self._save()
+                                            continue
                                     raise RuntimeError('Current outputs no longer satisfy the checks; work retained')
                                 await self._save()
                                 continue
@@ -1724,6 +1767,13 @@ class AutonomousMissionAgent:
                                 self.state['messages'].append({'role':'user','content':'Completion review found gaps: '+json.dumps(review,ensure_ascii=False)})
                                 repeated += 1
                                 if repeated >= self.policy.stall_attempts:
+                                    if self.policy.recovery_attempts > 0 and self.state.get('evidence'):
+                                        recovery_record = await self._recover_stagnation(stalled_actions)
+                                        if recovery_record is not None:
+                                            recovery_call = recovery_record['next_action']
+                                            repeated, stalled_actions = 0, []
+                                            await self._save()
+                                            continue
                                     raise RuntimeError('Completion review still finds gaps; work retained for resume')
                                 await self._save()
                                 continue
