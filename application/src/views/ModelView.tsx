@@ -1115,14 +1115,191 @@ function _applyMaxAnisotropyToModel(root: Object3D, maxAniso = 16): void {
   })
 }
 
+function _refineMeshPureGeometry(root: Object3D): { refinedMeshes: number; creaseEdgesLocked: number } {
+  let refinedMeshes = 0
+  let creaseEdgesLocked = 0
+
+  root.traverse((obj) => {
+    const mesh = obj as Mesh
+    if (!mesh.isMesh || !mesh.geometry) return
+    const geom = mesh.geometry
+    const posAttr = geom.getAttribute('position')
+    if (!posAttr || posAttr.count < 12 || posAttr.count > 180_000) return
+
+    // Ne pas altérer les maillages skinnés/morphés pour préserver les poids d'os
+    if (geom.morphAttributes?.position?.length || geom.getAttribute('skinIndex')) {
+      geom.computeVertexNormals()
+      return
+    }
+
+    const vCount = posAttr.count
+    const indexAttr = geom.getIndex()
+    const triCount = indexAttr ? Math.floor(indexAttr.count / 3) : Math.floor(vCount / 3)
+    if (triCount < 4) return
+
+    // Quantification spatiale pour souder virtuellement les sommets coïncidents
+    // et détecter les arêtes vives (angle dièdre > 32°, cos < 0.848)
+    const quantScale = 1e4
+    const keyOf = ( idx: number ) =>
+      `${Math.round(posAttr.getX(idx) * quantScale)},${Math.round(posAttr.getY(idx) * quantScale)},${Math.round(posAttr.getZ(idx) * quantScale)}`
+
+    const vertToCanon = new Int32Array(vCount)
+    const canonCoords: number[] = []
+    const keyMap = new Map<string, number>()
+
+    for (let i = 0; i < vCount; i += 1) {
+      const k = keyOf(i)
+      let c = keyMap.get(k)
+      if (c === undefined) {
+        c = canonCoords.length / 3
+        keyMap.set(k, c)
+        canonCoords.push(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i))
+      }
+      vertToCanon[i] = c
+    }
+
+    const cCount = canonCoords.length / 3
+    const neighbors: Array<Set<number>> = Array.from({ length: cCount }, () => new Set<number>())
+    const edgeFaces = new Map<string, number[]>()
+    const faceNormals = new Float32Array(triCount * 3)
+
+    const getIdx = (i: number) => (indexAttr ? indexAttr.getX(i) : i)
+
+    for (let f = 0; f < triCount; f += 1) {
+      const i0 = vertToCanon[getIdx(f * 3)]
+      const i1 = vertToCanon[getIdx(f * 3 + 1)]
+      const i2 = vertToCanon[getIdx(f * 3 + 2)]
+      if (i0 === i1 || i1 === i2 || i2 === i0) continue
+
+      neighbors[i0].add(i1)
+      neighbors[i0].add(i2)
+      neighbors[i1].add(i0)
+      neighbors[i1].add(i2)
+      neighbors[i2].add(i0)
+      neighbors[i2].add(i1)
+
+      const ax = canonCoords[i1 * 3] - canonCoords[i0 * 3]
+      const ay = canonCoords[i1 * 3 + 1] - canonCoords[i0 * 3 + 1]
+      const az = canonCoords[i1 * 3 + 2] - canonCoords[i0 * 3 + 2]
+      const bx = canonCoords[i2 * 3] - canonCoords[i0 * 3]
+      const by = canonCoords[i2 * 3 + 1] - canonCoords[i0 * 3 + 1]
+      const bz = canonCoords[i2 * 3 + 2] - canonCoords[i0 * 3 + 2]
+      let nx = ay * bz - az * by
+      let ny = az * bx - ax * bz
+      let nz = ax * by - ay * bx
+      const len = Math.hypot(nx, ny, nz) || 1
+      nx /= len
+      ny /= len
+      nz /= len
+      faceNormals[f * 3] = nx
+      faceNormals[f * 3 + 1] = ny
+      faceNormals[f * 3 + 2] = nz
+
+      const pairs: [number, number][] = [
+        [Math.min(i0, i1), Math.max(i0, i1)],
+        [Math.min(i1, i2), Math.max(i1, i2)],
+        [Math.min(i2, i0), Math.max(i2, i0)],
+      ]
+      for (const [u, v] of pairs) {
+        const ek = `${u}_${v}`
+        const list = edgeFaces.get(ek)
+        if (list) list.push(f)
+        else edgeFaces.set(ek, [f])
+      }
+    }
+
+    // Verrouillage des arêtes vives mécaniques (angle > 32° ou bord libre)
+    const lockedCanon = new Uint8Array(cCount)
+    edgeFaces.forEach((faces, ek) => {
+      const [uStr, vStr] = ek.split('_')
+      const u = Number(uStr)
+      const v = Number(vStr)
+      if (faces.length !== 2) {
+        lockedCanon[u] = 1
+        lockedCanon[v] = 1
+        return
+      }
+      const f0 = faces[0] * 3
+      const f1 = faces[1] * 3
+      const dot =
+        faceNormals[f0] * faceNormals[f1] +
+        faceNormals[f0 + 1] * faceNormals[f1 + 1] +
+        faceNormals[f0 + 2] * faceNormals[f1 + 2]
+      if (dot < 0.848) {
+        lockedCanon[u] = 1
+        lockedCanon[v] = 1
+        creaseEdgesLocked += 1
+      }
+    })
+
+    // Passe Taubin λ/μ sans retrait volumique (λ = +0.33, μ = -0.34) sur les surfaces courbes
+    const cur = new Float32Array(canonCoords)
+    const next = new Float32Array(canonCoords.length)
+    for (const factor of [0.33, -0.34]) {
+      for (let c = 0; c < cCount; c += 1) {
+        const c3 = c * 3
+        const nb = neighbors[c]
+        if (lockedCanon[c] || nb.size < 3) {
+          next[c3] = cur[c3]
+          next[c3 + 1] = cur[c3 + 1]
+          next[c3 + 2] = cur[c3 + 2]
+          continue
+        }
+        let sx = 0
+        let sy = 0
+        let sz = 0
+        nb.forEach((n) => {
+          sx += cur[n * 3]
+          sy += cur[n * 3 + 1]
+          sz += cur[n * 3 + 2]
+        })
+        const inv = 1 / nb.size
+        next[c3] = cur[c3] + factor * (sx * inv - cur[c3])
+        next[c3 + 1] = cur[c3 + 1] + factor * (sy * inv - cur[c3 + 1])
+        next[c3 + 2] = cur[c3 + 2] + factor * (sz * inv - cur[c3 + 2])
+      }
+      cur.set(next)
+    }
+
+    for (let i = 0; i < vCount; i += 1) {
+      const c3 = vertToCanon[i] * 3
+      posAttr.setXYZ(i, cur[c3], cur[c3 + 1], cur[c3 + 2])
+    }
+    posAttr.needsUpdate = true
+    geom.computeVertexNormals()
+    if (geom.getAttribute('uv') && geom.getIndex()) {
+      try {
+        geom.computeTangents()
+      } catch {
+        // Ignore tangent computation failure on non-indexed/degenerate UV islands
+      }
+    }
+    refinedMeshes += 1
+  })
+
+  return { refinedMeshes, creaseEdgesLocked }
+}
+
 function _upgradeModelTexturesTo8KPbr(
   root: Object3D,
-  maxGpuTexSize = 8192,
-): { upgradedMeshes: number; targetRes: number; channelsAdded: string[] } {
-  const targetRes = Math.min(8192, Math.max(2048, maxGpuTexSize || 8192))
+  maxGpuTexSize = 16384,
+): { upgradedMeshes: number; targetRes: number; channelsAdded: string[]; refinedMeshes: number; creaseEdgesLocked: number } {
+  let meshCount = 0
+  root.traverse((obj) => {
+    if ((obj as Mesh).isMesh) meshCount += 1
+  })
+  // Sonde la limite matérielle WebGL2 jusqu'à 16K (16384×16384) sur mono-mesh ou 8K (8192×8192) sur assemblage multi-pièces
+  const desiredMax = meshCount <= 2 ? 16384 : 8192
+  const targetRes = Math.min(desiredMax, Math.max(4096, maxGpuTexSize || 8192))
   const pbrDetailRes = Math.min(2048, targetRes)
   let upgradedMeshes = 0
   const channelsAdded = new Set<string>()
+
+  // 0. Raffinement Géométrie Pure (Taubin λ/μ sans retrait + verrouillage des arêtes vives > 32° + tangentes exactes)
+  const geomStats = _refineMeshPureGeometry(root)
+  if (geomStats.refinedMeshes > 0) {
+    channelsAdded.add(`Géométrie Pure Taubin (${geomStats.creaseEdgesLocked} arêtes vives verrouillées)`)
+  }
 
   root.traverse((obj) => {
     const mesh = obj as Mesh
@@ -1137,7 +1314,7 @@ function _upgradeModelTexturesTo8KPbr(
       // 1. Si aucune texture Albedo n'existe, génère une micro-texture procédurale haute définition
       let detailCanvas: HTMLCanvasElement
       if (srcImg && ('width' in srcImg) && srcImg.width > 0 && srcImg.height > 0) {
-        // Upscale progressif vers targetRes (8192x8192)
+        // Upscale progressif vers targetRes (8192x8192 ou 16384x16384)
         let curW = srcImg.width
         let curH = srcImg.height
         let curSource: CanvasImageSource = srcImg
@@ -1173,11 +1350,13 @@ function _upgradeModelTexturesTo8KPbr(
         mat.map = newMap
         channelsAdded.add(`Albedo ${targetRes}×${targetRes}`)
 
-        // Prépare un canvas 2048x2048 pour dériver Normal Map Sobel + Roughness Map PBR
+        // Prépare un canvas pbrDetailRes (2048×2048) avec accentuation Laplacienne 2-octaves pour dériver les cartes PBR
         detailCanvas = document.createElement('canvas')
         detailCanvas.width = pbrDetailRes
         detailCanvas.height = pbrDetailRes
         const dCtx = detailCanvas.getContext('2d')!
+        dCtx.imageSmoothingEnabled = true
+        dCtx.imageSmoothingQuality = 'high'
         dCtx.drawImage(curSource, 0, 0, pbrDetailRes, pbrDetailRes)
       } else {
         // Synthèse d'une carte de micro-grain PBR pour maillages procéduraux sans UV image
@@ -1190,7 +1369,7 @@ function _upgradeModelTexturesTo8KPbr(
         dCtx.fillRect(0, 0, 1024, 1024)
       }
 
-      // 2. Synthèse Normal Map Tangent-Space Sobel + Micro-Roughness Map PBR
+      // 2. Synthèse Multi-Scale Scharr+Sobel Normal Map + Roughness Map + Ambient Occlusion Cavity Map (aoMap)
       try {
         const w = detailCanvas.width
         const h = detailCanvas.height
@@ -1209,19 +1388,23 @@ function _upgradeModelTexturesTo8KPbr(
             const nCtx = normCanvas.getContext('2d')!
             const normImg = nCtx.createImageData(w, h)
             const nOut = normImg.data
-            const dz = 26.0
-            for (let y = 1; y < h - 1; y += 1) {
+            const dz = 24.0
+            for (let y = 2; y < h - 2; y += 1) {
               const row = y * w
-              for (let x = 1; x < w - 1; x += 1) {
+              for (let x = 2; x < w - 2; x += 1) {
                 const idx = row + x
-                const dx =
-                  (luma[idx - w + 1] + 2 * luma[idx + 1] + luma[idx + w + 1]) -
-                  (luma[idx - w - 1] + 2 * luma[idx - 1] + luma[idx + w - 1])
-                const dy =
-                  (luma[idx + w - 1] + 2 * luma[idx + w] + luma[idx + w + 1]) -
-                  (luma[idx - w - 1] + 2 * luma[idx - w] + luma[idx - w + 1])
-                const gx = dx * 0.125
-                const gy = dy * 0.125
+                // Noyau de Scharr 3×3 (erreur d'isotropie angulaire 3× plus faible que Sobel standard)
+                const scharrX =
+                  (3 * luma[idx - w + 1] + 10 * luma[idx + 1] + 3 * luma[idx + w + 1]) -
+                  (3 * luma[idx - w - 1] + 10 * luma[idx - 1] + 3 * luma[idx + w - 1])
+                const scharrY =
+                  (3 * luma[idx + w - 1] + 10 * luma[idx + w] + 3 * luma[idx + w + 1]) -
+                  (3 * luma[idx - w - 1] + 10 * luma[idx - w] + 3 * luma[idx - w + 1])
+                // Octave méso-échelle (rayon 2px) pour capter le relief structurel
+                const mesoX = (luma[idx + 2] - luma[idx - 2]) * 6.0
+                const mesoY = (luma[idx + 2 * w] - luma[idx - 2 * w]) * 6.0
+                const gx = scharrX * 0.03125 * 0.72 + mesoX * 0.28
+                const gy = scharrY * 0.03125 * 0.72 + mesoY * 0.28
                 const invLen = 1.0 / Math.sqrt(gx * gx + gy * gy + dz * dz)
                 const outIdx = idx * 4
                 nOut[outIdx] = Math.min(255, Math.max(0, Math.round((gx * invLen * 0.5 + 0.5) * 255)))
@@ -1238,8 +1421,8 @@ function _upgradeModelTexturesTo8KPbr(
             normalTex.flipY = baseTex?.flipY ?? false
             normalTex.needsUpdate = true
             mat.normalMap = normalTex
-            mat.normalScale = new Vector2(0.42, 0.42)
-            channelsAdded.add('Normal Map Sobel')
+            mat.normalScale = new Vector2(0.48, 0.48)
+            channelsAdded.add('Normal Map Multi-Octave Scharr')
           }
 
           if (!mat.roughnessMap) {
@@ -1256,7 +1439,7 @@ function _upgradeModelTexturesTo8KPbr(
                 const c = luma[idx]
                 const localAvg = (luma[idx - 1] + luma[idx + 1] + luma[idx - w] + luma[idx + w]) * 0.25
                 const microVar = Math.abs(c - localAvg)
-                const val = Math.min(242, Math.max(24, Math.round((255 - c) * 0.55 + microVar * 2.4)))
+                const val = Math.min(242, Math.max(20, Math.round((255 - c) * 0.52 + microVar * 2.6)))
                 const outIdx = idx * 4
                 rOut[outIdx] = val
                 rOut[outIdx + 1] = val
@@ -1274,6 +1457,46 @@ function _upgradeModelTexturesTo8KPbr(
             mat.roughnessMap = roughTex
             channelsAdded.add('Roughness Map PBR')
           }
+
+          if (!mat.aoMap) {
+            const aoCanvas = document.createElement('canvas')
+            aoCanvas.width = w
+            aoCanvas.height = h
+            const aoCtx = aoCanvas.getContext('2d')!
+            const aoImg = aoCtx.createImageData(w, h)
+            const aoOut = aoImg.data
+            for (let y = 2; y < h - 2; y += 1) {
+              const row = y * w
+              for (let x = 2; x < w - 2; x += 1) {
+                const idx = row + x
+                const c = luma[idx]
+                const ring1 = (luma[idx - 1] + luma[idx + 1] + luma[idx - w] + luma[idx + w]) * 0.25
+                const ring2 = (luma[idx - 2] + luma[idx + 2] + luma[idx - 2 * w] + luma[idx + 2 * w]) * 0.25
+                // Concavité locale : si le pixel est plus sombre que ses anneaux, creuser l'occlusion ambiante
+                const cavity = Math.max(0, (ring1 - c) * 1.8 + (ring2 - c) * 1.4)
+                const aoVal = Math.min(255, Math.max(38, Math.round(255 - cavity * 2.2)))
+                const outIdx = idx * 4
+                aoOut[outIdx] = aoVal
+                aoOut[outIdx + 1] = aoVal
+                aoOut[outIdx + 2] = aoVal
+                aoOut[outIdx + 3] = 255
+              }
+            }
+            aoCtx.putImageData(aoImg, 0, 0)
+            const aoTex = new CanvasTexture(aoCanvas)
+            aoTex.anisotropy = 16
+            aoTex.wrapS = RepeatWrapping
+            aoTex.wrapT = RepeatWrapping
+            aoTex.flipY = baseTex?.flipY ?? false
+            aoTex.needsUpdate = true
+            // Three.js utilise uv2 ou uv pour aoMap
+            if (mesh.geometry && mesh.geometry.getAttribute('uv') && !mesh.geometry.getAttribute('uv2')) {
+              mesh.geometry.setAttribute('uv2', mesh.geometry.getAttribute('uv'))
+            }
+            mat.aoMap = aoTex
+            mat.aoMapIntensity = 0.65
+            channelsAdded.add('AO Cavity Map')
+          }
         }
       } catch {
         // Ignore security/memory errors on tainted canvases
@@ -1288,6 +1511,8 @@ function _upgradeModelTexturesTo8KPbr(
     upgradedMeshes,
     targetRes,
     channelsAdded: Array.from(channelsAdded),
+    refinedMeshes: geomStats.refinedMeshes,
+    creaseEdgesLocked: geomStats.creaseEdgesLocked,
   }
 }
 
@@ -2895,15 +3120,15 @@ function InteractiveModel({
     if (onPartInfo) onPartInfo(_aggregatePartInfo(model))
   }, [selectAllToken, model, onPartSelect, onPartInfo])
 
-  // Super-Résolution 8K PBR (8192×8192 + Sobel Normal Map + Roughness PBR + Anisotropie 16×)
+  // Super-Résolution 8K/16K PBR + Géométrie Pure Taubin (Normal Map Scharr + Roughness + AO Cavity + Anisotropie 16×)
   useEffect(() => {
     if (!upscale8kToken || !model) return
-    const maxGpuTex = gl.capabilities.maxTextureSize || 8192
+    const maxGpuTex = gl.capabilities.maxTextureSize || 16384
     const res = _upgradeModelTexturesTo8KPbr(model, maxGpuTex)
     onPartSelect?.('all')
     onPartInfo?.(_aggregatePartInfo(model))
     onUpscale8kComplete?.(
-      `✨ Super-Résolution 8K PBR appliquée sur ${res.upgradedMeshes} sous-maillage(s) : ${res.channelsAdded.join(' + ')} (Anisotropie 16×)`,
+      `💎 Super-Résolution ${res.targetRes >= 16384 ? '16K' : '8K'} PBR + Géométrie Pure appliquée sur ${res.upgradedMeshes} sous-maillage(s) : ${res.channelsAdded.join(' + ')} (Anisotropie 16×)`,
     )
   }, [upscale8kToken, model, gl, onPartSelect, onPartInfo, onUpscale8kComplete])
 
@@ -6619,18 +6844,18 @@ export default function ModelView() {
                       onClick={() => {
                         if (!modelUrl || isUpscaling8k) return
                         setIsUpscaling8k(true)
-                        setColorLoadResult('Synthèse PBR 8K Ultra-HD (8192×8192 Albedo + Normal Map Sobel + Roughness + Anisotropie 16×) en cours...')
+                        setColorLoadResult('Synthèse PBR 8K/16K Ultra-Master (Albedo + Normal Map Multi-Octave Scharr + Roughness + AO Cavity + Géométrie Pure Taubin) en cours...')
                         setUpscale8kToken((v) => v + 1)
                       }}
                       disabled={!modelUrl || isUpscaling8k}
                       className={`pointer-events-auto inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${
-                        selectedPartInfo?.textureResolutionPx?.includes('8192')
+                        selectedPartInfo?.textureResolutionPx?.includes('8192') || selectedPartInfo?.textureResolutionPx?.includes('16384')
                           ? 'border-amber-400/60 bg-amber-500/20 text-amber-200'
                           : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40'
                       }`}
-                      title="Suréchantillonner les textures du modèle en 8K Ultra-HD (8192×8192) avec synthèse Normal Map Sobel + Roughness Map PBR + filtrage anisotrope 16×"
+                      title="Suréchantillonner les textures jusqu'en 16K/8K Ultra-Master avec Normal Map Multi-Octave Scharr + Roughness + AO Cavity Map + Raffinement Géométrie Pure Taubin (arêtes vives >32° verrouillées)"
                     >
-                      {isUpscaling8k ? '⟳ 8K PBR...' : '✨ 8K PBR'}
+                      {isUpscaling8k ? '⟳ 16K/8K PBR...' : '💎 8K/16K PBR + Géom. Pure'}
                     </button>
                     <button
                       onClick={() => setShowBones((v) => !v)}

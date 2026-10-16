@@ -230,6 +230,7 @@ export default function AuroraV3ImageView() {
           <PinBtn onClick={() => void I.upscaleCurrent(2)} disabled={I.upscaling}>↗ 2×</PinBtn>
           <PinBtn onClick={() => void I.upscaleCurrent(4)} disabled={I.upscaling}>↗ 4×</PinBtn>
           <PinBtn onClick={() => void I.upscaleCurrent(8)} disabled={I.upscaling} title="Super-Résolution 8K (8192px)">✨ 8K</PinBtn>
+          <PinBtn onClick={() => void I.upscaleCurrent(16)} disabled={I.upscaling} title="Super-Résolution 16K Ultra-Master (16384px)">💎 16K</PinBtn>
         </div>
       )}
 

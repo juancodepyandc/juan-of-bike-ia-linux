@@ -298,10 +298,17 @@ def build_comfy_flux_workflow(
             "class_type": "ImageUpscaleWithModel",
             "inputs": {"upscale_model": ["50", 0], "image": ["8", 0]},
         }
+        last_upscaled_node = "51"
+        if target_max_edge >= 16384:
+            workflow["51b"] = {
+                "class_type": "ImageUpscaleWithModel",
+                "inputs": {"upscale_model": ["50", 0], "image": ["51", 0]},
+            }
+            last_upscaled_node = "51b"
         workflow["52"] = {
             "class_type": "ImageScale",
             "inputs": {
-                "image": ["51", 0],
+                "image": [last_upscaled_node, 0],
                 "upscale_method": "lanczos",
                 "width": out_w,
                 "height": out_h,
@@ -382,6 +389,8 @@ def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1800) -> bytes:
 
 def _resolve_target_max_edge(raw_prompt: str, resolution: str = "auto") -> Optional[int]:
     res = (resolution or "auto").strip().lower()
+    if res in ("16k", "16384"):
+        return 16384
     if res in ("8k", "8192"):
         return 8192
     if res in ("4k", "4096"):
@@ -390,6 +399,8 @@ def _resolve_target_max_edge(raw_prompt: str, resolution: str = "auto") -> Optio
         return 2048
     if res in ("1k", "1024"):
         return None
+    if re.search(r"\b(16k|16384\s*px|16384x16384|ultra\s*master\s*16k)\b", raw_prompt or "", re.IGNORECASE):
+        return 16384
     if re.search(r"\b(8k|8192\s*px|8192x8192|ultra\s*hd\s*8k)\b", raw_prompt or "", re.IGNORECASE):
         return 8192
     if re.search(r"\b(4k|4096\s*px|4096x4096)\b", raw_prompt or "", re.IGNORECASE):
@@ -588,7 +599,7 @@ def generate_image_manifest(
             "width": w,
             "height": h,
             "aspect_ratio": spec["aspect_ratio"],
-            "target_resolution_tier": "8K" if max(w, h) >= 8192 else ("4K" if max(w, h) >= 4096 else "native")
+            "target_resolution_tier": "16K" if max(w, h) >= 16384 else ("8K" if max(w, h) >= 8192 else ("4K" if max(w, h) >= 4096 else "native"))
         },
         "generation_params": {
             "steps": spec["steps"],
@@ -676,7 +687,7 @@ if __name__ == "__main__":
     parser.add_argument("--category", type=str, default=None, help="Force category")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--output-dir", type=Path, default=None, help="Destination for this image package")
-    parser.add_argument("--resolution", type=str, default="auto", choices=["auto", "1k", "2k", "4k", "8k"], help="Target output resolution tier (up to 8K 8192x8192)")
+    parser.add_argument("--resolution", type=str, default="auto", choices=["auto", "1k", "2k", "4k", "8k", "16k"], help="Target output resolution tier (up to 16K 16384x16384)")
     parser.add_argument("--no-comfy", action="store_true", help="Disable ComfyUI live queue")
     args = parser.parse_args()
     

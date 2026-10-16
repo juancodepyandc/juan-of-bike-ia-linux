@@ -217,13 +217,13 @@ export default function MangaImageView() {
   }, [])
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [upscaling, setUpscaling] = useState(false)
-  const upscaleCurrent = async (scale: 2 | 4 | 8) => {
+  const upscaleCurrent = async (scale: 2 | 4 | 8 | 16) => {
     if (!current || upscaling) return
     setUpscaling(true)
     try {
       const mod = await import('../utils/upscaleImage')
       const { url, method } = await mod.upscaleAuto(current.url, scale)
-      const label = scale === 8 ? '8K' : `x${scale}`
+      const label = scale === 16 ? '16K' : scale === 8 ? '8K' : `x${scale}`
       try {
         const blob = await fetch(url).then((r) => r.blob())
         const newId = `${current.id}-${label}-${method}`
@@ -505,6 +505,12 @@ export default function MangaImageView() {
             <button type="button" className="mi-upscale is-eight" disabled={upscaling}
               onClick={() => void upscaleCurrent(8)} title="Super-Résolution 8K UHD (8192px)">
               {upscaling ? '…' : '✨ 8K'}
+            </button>
+          )}
+          {current && !generating && (
+            <button type="button" className="mi-upscale is-sixteen" disabled={upscaling}
+              onClick={() => void upscaleCurrent(16)} title="Super-Résolution 16K Ultra-Master (16384px)">
+              {upscaling ? '…' : '💎 16K'}
             </button>
           )}
           {current && !generating && (

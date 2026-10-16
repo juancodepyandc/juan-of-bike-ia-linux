@@ -43,7 +43,8 @@ import { isVisualProject } from './codeSystemPromptContracts.ts'
  *    faire d une palette de marque, et lui envoyer 1 600 tokens par appel est
  *    du contexte brule.
  */
-export const EXECUTOR_QUALITY_CONTRACT_MAX_CHARS = 16_000
+export const EXECUTOR_QUALITY_CONTRACT_MAX_CHARS = 18_500
+export const EXECUTOR_QUALITY_CONTRACT_BACKEND_MAX_CHARS = 8_500
 export const EXECUTOR_QUALITY_CONTRACT_CONFIG_MAX_CHARS = 1_200
 
 /** Coupe sur une frontiere de ligne: tronquer au milieu d une regle la rend fausse. */
@@ -58,6 +59,8 @@ const VISUAL_FILE_RE = /\.(html?|css|scss|sass|less|jsx?|tsx?|vue|svelte|astro)$
 const STYLE_FILE_RE = /\.(css|scss|sass|less)$/i
 const SCRIPT_FILE_RE = /\.(jsx?|tsx?|vue|svelte|astro)$/i
 const MARKUP_FILE_RE = /\.html?$/i
+const BACKEND_EXT_RE = /\.(py|rs|go|java|kt|cs|rb|php|sql|prisma|graphql|proto)$/i
+const BACKEND_PATH_RE = /(^|\/)(api|server|backend|routes?|controllers?|services?|repositories|db|database|models?|schema|middleware|workers?|handlers?|store|engine)(\/|\.|-|_|$)/i
 
 export type ExecutorContractTarget = {
   path: string
@@ -73,6 +76,8 @@ export type ExecutorContractTarget = {
 const CONFIG_BASENAME_RE =
   /(^|\/)(vite|vitest|rollup|webpack|next|nuxt|svelte|astro|tailwind|postcss|babel|jest|playwright|eslint|prettier|metro|capacitor)\.config\.[cm]?[jt]sx?$|(^|\/)\.?eslintrc\.[cm]?[jt]s$/i
 
+const PURE_CONFIG_FILE_RE = /\.(json|ya?ml|toml|ini|env|lock|md|txt)$/i
+
 /**
  * Fichier de configuration / metadonnees: aucune directive esthetique n a de
  * sens dessus, et l y injecter gaspille du contexte a chaque appel.
@@ -81,6 +86,15 @@ function isVisualTarget(target: ExecutorContractTarget): boolean {
   const p = target.path || ''
   if (CONFIG_BASENAME_RE.test(p)) return false
   return VISUAL_FILE_RE.test(p)
+}
+
+function isBackendOrServiceTarget(intent: CodeIntent, target: ExecutorContractTarget): boolean {
+  const p = target.path || ''
+  if (CONFIG_BASENAME_RE.test(p) || PURE_CONFIG_FILE_RE.test(p)) return false
+  if (BACKEND_EXT_RE.test(p) || BACKEND_PATH_RE.test(p)) return true
+  if (target.role && /backend|api|server|service|database|controller|worker|engine/i.test(target.role)) return true
+  if (!isVisualProject(intent.projectType) && /\.(ts|js|mjs|cjs)$/i.test(p)) return true
+  return false
 }
 
 /**
@@ -112,28 +126,70 @@ function buildDeliveryEssentials(intent: CodeIntent): string {
 }
 
 /**
- * Barre de qualite visuelle condensee. Version courte et haute densite du
- * contrat design complet: on garde les regles qui changent le rendu, on retire
- * la pedagogie.
+ * Barre de qualite visuelle condensee. S applique aussi aux composants
+ * `.tsx`/`.jsx`/`.vue`/`.svelte` ou 90% du layout et du style React/SPA est ecrit.
  */
 function buildVisualBar(target: ExecutorContractTarget): string {
   const lines = [
-    '## BARRE DE QUALITE VISUELLE — NIVEAU INGENIEUR PRODUIT SENIOR',
-    '- Reference: Linear / Vercel / Stripe / Arc / Apple. Un rendu type Bootstrap, theme WordPress ou tutoriel YouTube est un ECHEC et sera rejete.',
-    '- UN SEUL accent chromatique (un second uniquement en focus state ou dataviz). Couleurs en `oklch()`/`hsl()`, jamais `red`/`blue` nommes.',
-    '- Neutres: rampe teintee, jamais `#000` ni `#fff` purs sur les surfaces. Bordures `rgba(...,0.06-0.08)`, jamais `1px solid #ddd`.',
-    '- Typographie: display tendu ou serif italic, body 14-16px line-height 1.55-1.65, mono uppercase letter-spacing 0.08em pour les kickers. Echelle 12/14/16/20/28/40/56/72/96.',
+    '## BARRE DE QUALITE VISUELLE — NIVEAU INGENIEUR PRODUIT SENIOR (AWWWARDS / LINEAR / STRIPE / APPLE)',
+    '- Reference: Linear / Vercel / Stripe / Raycast / Apple. Un rendu plat, Bootstrap, theme WordPress ou tutoriel debutant est un ECHEC et sera rejete.',
+    '- UN SEUL accent chromatique (un second uniquement en focus state ou dataviz). Couleurs en `oklch()`/`hsl()` ou variables CSS `--color-*`, jamais `red`/`blue` nommes.',
+    '- Neutres: rampe teintee profonde (ex. `#090b10` -> `#11151f` -> `#181e2c`), jamais `#000` ni `#fff` purs sur les surfaces. Bordures speculaires `1px solid rgba(255,255,255,0.08)` + highlight interne `inset 0 1px 0 rgba(255,255,255,0.08)`.',
+    '- Typographie: display tendu ou serif editorial, body 14-16px line-height 1.55-1.65, mono uppercase letter-spacing 0.08em pour les kickers et metriques (`font-variant-numeric: tabular-nums`). Echelle 12/14/16/20/28/40/56/72/96.',
     '- Tracking negatif sur les gros titres (-0.04em au-dela de 56px). Mesure de ligne 60-70 caracteres sur la prose.',
   ]
-  if (STYLE_FILE_RE.test(target.path) || MARKUP_FILE_RE.test(target.path)) {
+  if (STYLE_FILE_RE.test(target.path) || MARKUP_FILE_RE.test(target.path) || SCRIPT_FILE_RE.test(target.path)) {
     lines.push(
-      '- Layout: grille 12 colonnes avec col-span ASYMETRIQUES (jamais `auto-fit` uniforme partout). Sections `padding-block: clamp(80px, 12vw, 160px)`.',
+      '- Layout architectural: grille Bento 12 colonnes avec col-span ASYMETRIQUES (ex. 7+5, 8+4, 4+4+4 — jamais une grille `auto-fit` monotone de cartes identiques). Sections `padding-block: clamp(80px, 10vw, 150px)`.',
       '- Espacement par tokens 4-base et `gap` sur le parent — jamais un `margin-top: 10px` arbitraire.',
-      '- Motion: easing tokens explicites (`cubic-bezier(0.16,1,0.3,1)`), 120-180ms en micro-hover, 240-360ms en reveal, hover scale 1.02 max, stagger 60-90ms.',
-      '- Aucun ecran 100% plat: au moins un effet de profondeur (parallax multi-couches, mesh gradient blur, chevauchement z-index avec ombres composites).',
+      '- Profondeur multi-couches obligatoire: mesh gradient radial floute en arriere-plan (`filter: blur(80px)`), surfaces glassmorphism (`backdrop-filter: blur(20px) saturate(160%)`), ombres composites multi-couches (`0 1px 2px rgba(0,0,0,0.35), 0 20px 48px -12px rgba(0,0,0,0.55)`).',
     )
   }
   return lines.join('\n')
+}
+
+/**
+ * Contrat de Motion Design & Choregraphie Physique.
+ * Corrige les interfaces statiques ou scolaires en imposant une vraie physique
+ * de ressort, des cascades d entree, un spotlight magnetique au pointeur et des
+ * boucles `requestAnimationFrame` fluides a 60/120 fps.
+ */
+function buildMotionDesignChoreographyContract(target: ExecutorContractTarget): string {
+  if (!VISUAL_FILE_RE.test(target.path)) return ''
+  return [
+    '## CONTRAT DE MOTION DESIGN & CHOREGRAPHIE PHYSIQUE (60/120 FPS)',
+    '- Courbes physiques obligatoires (JAMAIS `linear` ni `ease` par defaut sur l UI):',
+    '  • Reveal / Entree: `cubic-bezier(0.16, 1, 0.3, 1)` (380-560ms)',
+    '  • Micro-interaction / Hover / Press: `cubic-bezier(0.22, 1, 0.36, 1)` (150-220ms)',
+    '  • Ressort / Badge / Toggle: `cubic-bezier(0.34, 1.56, 0.64, 1)` (260-340ms)',
+    '- Choregraphie d entree en cascade (Staggered Reveal): chaque liste, grille Bento ou groupe de KPI anime son apparition avec `@keyframes auroraRevealUp` (`from { opacity: 0; transform: translate3d(0, 18px, 0) scale(0.985); } to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }`) et un delai progressif `animation-delay: calc(var(--stagger-index, 0) * 65ms)`.',
+    '- Micro-interactions magnetiques & Spotlight au pointeur: sur les cartes Bento / Hero, trace la position du curseur (`onMouseMove` -> `--mouse-x`, `--mouse-y`) pour afficher un halo speculaire radial (`radial-gradient(420px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255,255,255,0.08), transparent 70%)`) et une elevation subtile `transform: translateY(-3px) scale(1.01)`.',
+    '- Animations continues & Compteurs Temps Reel: utilise `requestAnimationFrame` avec interpolation amortie (`current += (target - current) * 0.12`) pour les compteurs numeriques, jauges, curseurs ou graphiques vivants — avec `cancelAnimationFrame` propre au demontage.',
+    '- Dataviz & SVG vivants: anime le trace des courbes SVG via `stroke-dasharray` / `stroke-dashoffset`, ajoute un `<linearGradient>` d aire sous la courbe et un point lumineux interactif au survol.',
+    '- Performance GPU & Accessibilite: n anime QUE `transform` (`translate3d`, `scale`, `rotate`) et `opacity` (zero reflow `top`/`left`/`width`/`height`). Respecte `@media (prefers-reduced-motion: reduce)`.',
+  ].join('\n')
+}
+
+/**
+ * Contrat d Ingenierie Backend, Performance & Architecture Robuste.
+ * Livre aux fichiers serveur, API, services metier, stores et fullstack.
+ */
+function buildBackendEngineeringContract(intent: CodeIntent, target: ExecutorContractTarget): string {
+  const isFullstackOrApiProject = /^(api_|fullstack_|ssr_)/.test(intent.projectType)
+  if (!isBackendOrServiceTarget(intent, target) && !isFullstackOrApiProject) {
+    return ''
+  }
+  return [
+    '## CONTRAT D INGENIERIE BACKEND, PERFORMANCE & ARCHITECTURE HAUTE FIABILITE',
+    '- Validation stricte aux frontieres: valide et type chaque payload entrant (parametres, query, body) avant toute logique metier. Retourne un statut HTTP precis (`400`/`422` validation, `401`/`403` auth, `404` ressource, `409` conflit, `500` interne) avec une enveloppe JSON uniforme `{ ok: boolean, data?: T, error?: { code: string, message: string, details?: unknown } }`.',
+    '- Zero erreur silencieuse: interdiction absolue des blocs `catch {}` vides. Journalise le contexte et propage une erreur structuree.',
+    '- Performance algorithmique & I/O non-bloquant:',
+    '  • Indexe les collections en memoire par `Map<Id, Entity>` / `Set` pour des lectures en O(1) (jamais de `.find()` imbriques en O(N^2) dans une boucle).',
+    '  • Execute les operations I/O independantes en parallele (`Promise.all` / `asyncio.gather`) avec timeout explicite (`AbortSignal.timeout`).',
+    '  • Pagine toute route de liste (`limit` borne, `offset` ou `cursor`, `total`) et supporte le tri/filtrage cote serveur.',
+    '  • Prevois un cache memoire (TTL ou LRU) ou memoisation sur les calculs lourds et agregations.',
+    '- Securite & Coherence des donnees: requetes SQL/base 100% parametrees (zero concatenation de chaines), assainissement des entrees, mutations atomiques/idempotentes, en-tetes CORS propres et endpoint de sante/telemetrie (`/api/health` ou equivalent) retournant latence et etat reel.',
+  ].join('\n')
 }
 
 /**
@@ -150,36 +206,8 @@ function buildInteractivityContract(): string {
   ].join('\n')
 }
 
-/**
- * Construit le contrat qualite compact injecte dans le prompt SYSTEME de
- * l executor WS3, pour le fichier en cours de production.
- *
- * Ordre de priorite si le budget sature (le verrouillage sujet passe en
- * premier: la fidelite de marque est une regle dure du module).
- */
-
 const TYPED_FILE_RE = /\.(tsx?|mtsx?)$/i
 
-/**
- * Contrat de TYPAGE, livre par fichier.
- *
- * MESURE: ces regles existaient deja dans `buildExpertEngineeringContractBlock`
- * — et n atteignaient JAMAIS l executor. WS3 appelle le modele une fois par
- * fichier avec `buildExecutorQualityContract`; le contrat ingenieur, lui, ne
- * transite que par `codeSystemPrompts`. Les consignes de typage etaient donc
- * ecrites, versionnees, testees... et jamais delivrees a ce qui ecrit le code.
- *
- * Sans cette verification j aurais conclu que « le modele ignore la consigne »,
- * en le blamant pour une regle qu il n avait jamais recue. Une regle non
- * delivree ne peut pas etre suivie — meme famille que les portes qui
- * condamnaient sans avoir mesure.
- *
- * Familles couvertes, mesurees sur les runs v130 a v132:
- *   TS7006 (12)  parametres de rappel non annotes
- *   TS2367 (6)   union declaree en anglais, comparee a des libelles francais
- *   TS2741/2739  composant rendu SANS les props que son interface exige
- *   TS2353       propriete passee en trop, absente de l interface
- */
 function typeContractBlock(): string[] {
   return [
     '## CONTRAT DE TYPAGE & FIABILITE (ce fichier)',
@@ -201,8 +229,13 @@ export function buildExecutorQualityContract(args: {
   const { intent, prompt, target } = args
   const visualProject = isVisualProject(intent.projectType)
   const visualTarget = visualProject && isVisualTarget(target)
+  const backendTarget = isBackendOrServiceTarget(intent, target)
   const budget = args.maxChars
-    ?? (visualTarget ? EXECUTOR_QUALITY_CONTRACT_MAX_CHARS : EXECUTOR_QUALITY_CONTRACT_CONFIG_MAX_CHARS)
+    ?? (visualTarget
+      ? EXECUTOR_QUALITY_CONTRACT_MAX_CHARS
+      : backendTarget
+        ? EXECUTOR_QUALITY_CONTRACT_BACKEND_MAX_CHARS
+        : EXECUTOR_QUALITY_CONTRACT_CONFIG_MAX_CHARS)
 
   const sections: string[] = []
 
@@ -219,25 +252,23 @@ export function buildExecutorQualityContract(args: {
   // par le budget — c est ce qui arrivait aux seuils typographiques.
   if (TYPED_FILE_RE.test(target.path)) sections.push(typeContractBlock().join('\n'))
 
-  // 3+4. Esthetique: uniquement sur un fichier reellement visuel.
+  // 2ter. Contrat Backend Haute Performance & Architecture (si fichier backend/service/API ou projet fullstack/api)
+  const backendContract = buildBackendEngineeringContract(intent, target)
+  if (backendContract) sections.push(backendContract)
+
+  // 3+4. Esthetique & Motion Design: sur tout fichier visuel (.html, .css, .tsx, .jsx, .vue, .svelte).
   if (visualTarget) {
-    // Le contrat typographique passe en tete des blocs esthetiques: le juge de
-    // rendu MESURE ces seuils (>= 48 px pour le hero, >= 4 tailles, police
-    // reellement chargee). Le laisser en fin de liste le faisait tronquer par
-    // le budget, donc noter un seuil jamais demande.
-    if (MARKUP_FILE_RE.test(target.path) || STYLE_FILE_RE.test(target.path)) {
+    if (MARKUP_FILE_RE.test(target.path) || STYLE_FILE_RE.test(target.path) || SCRIPT_FILE_RE.test(target.path)) {
       sections.push(typographyContractBlock().join('\n'))
     }
     sections.push(buildVisualBar(target))
+    const motionContract = buildMotionDesignChoreographyContract(target)
+    if (motionContract) sections.push(motionContract)
     const archetype = detectDesignArchetype(prompt, intent)
     const archetypeLines = archetypeBlock(archetype, intent)
     if (archetypeLines.length > 0) {
       sections.push([`## ARCHETYPE RETENU: ${archetype}`, ...archetypeLines].join('\n'))
     }
-    // Profondeur et dependances CDN: ces directives n etaient atteignables que
-    // par `buildDesignDirectives`, orphelin — donc jamais transmises. Elles
-    // portent les regles three.js concretes (renderer, lumieres, materiaux,
-    // nettoyage, perf) qui separent une scene 3D credible d un cube qui tourne.
     const depth = depthDirectivesBlock(intent)
     if (depth.length > 0) sections.push(depth.join('\n'))
     if (SCRIPT_FILE_RE.test(target.path) || MARKUP_FILE_RE.test(target.path)) {

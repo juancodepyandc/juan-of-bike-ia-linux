@@ -908,6 +908,9 @@ export default function AuroraV4ImageView() {
                       <OverlayBtn disabled={I.upscaling} onClick={() => void I.upscaleCurrent(8)} title="Super-Résolution 8K UHD (8192×8192 px — RealESRGAN + Lanczos)">
                         ✨ 8K
                       </OverlayBtn>
+                      <OverlayBtn disabled={I.upscaling} onClick={() => void I.upscaleCurrent(16)} title="Super-Résolution 16K Ultra-Master (16384×16384 px — Dual-Pass RealESRGAN + Pyramide Laplacienne 2 Octaves)">
+                        💎 16K
+                      </OverlayBtn>
                       <OverlayBtn onClick={() => { if (I.current) void imageAsReference(I.current) }} title="Utiliser cette image comme référence d'édition">
                         <Icon name="target" size={12} /> Réf
                       </OverlayBtn>

@@ -353,6 +353,10 @@ export default function AuroraV1ImageView() {
                         onClick={() => void I.upscaleCurrent(8)} title="Super-Résolution 8K UHD (8192px)">
                         ✨ 8K
                       </Btn>
+                      <Btn size="sm" disabled={I.upscaling}
+                        onClick={() => void I.upscaleCurrent(16)} title="Super-Résolution 16K Ultra-Master (16384px · Pyramide 2 Octaves)">
+                        💎 16K
+                      </Btn>
                     </div>
                   )}
                 </div>

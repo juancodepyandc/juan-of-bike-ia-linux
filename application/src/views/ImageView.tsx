@@ -888,14 +888,20 @@ const taskContext = await prepareTaskIntelligence({
 
   const [upscalingScale, setUpscalingScale] = useState<number | null>(null)
 
-  const handleUpscaleSelected = useCallback(async (scale: 2 | 4 | 8) => {
+  const handleUpscaleSelected = useCallback(async (scale: 2 | 4 | 8 | 16) => {
     if (!selectedImage || upscalingScale !== null) return
     setUpscalingScale(scale)
-    setProgress(scale === 8 ? 'Super-Résolution 8K UHD (8192×8192 px) en cours…' : `Super-Résolution ${scale}× en cours…`)
+    setProgress(
+      scale === 16
+        ? 'Super-Résolution 16K Ultra-Master (16384×16384 px · Pyramide 2 Octaves) en cours…'
+        : scale === 8
+          ? 'Super-Résolution 8K UHD (8192×8192 px) en cours…'
+          : `Super-Résolution ${scale}× en cours…`,
+    )
     try {
       const mod = await import('../utils/upscaleImage')
       const { url, method, width: outW, height: outH } = await mod.upscaleAuto(selectedImage.url, scale)
-      const label = scale === 8 ? '8K' : `x${scale}`
+      const label = scale === 16 ? '16K' : scale === 8 ? '8K' : `x${scale}`
       const upscaled: GeneratedImage = {
         ...selectedImage,
         id: `${selectedImage.id}-${label}-${Date.now()}`,
@@ -1436,6 +1442,14 @@ const taskContext = await prepareTaskIntelligence({
                     title="Super-Résolution 8K UHD (8192×8192 px — RealESRGAN + Lanczos)"
                   >
                     {upscalingScale === 8 ? '8K en cours…' : '✨ 8K (8192px)'}
+                  </button>
+                  <button
+                    onClick={() => void handleUpscaleSelected(16)}
+                    disabled={upscalingScale !== null}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-400/45 bg-amber-500/15 px-3 py-2 text-xs font-semibold text-amber-200 hover:bg-amber-500/25 disabled:opacity-50 transition-colors"
+                    title="Super-Résolution 16K Ultra-Master (16384×16384 px — Dual-Pass RealESRGAN + Pyramide Laplacienne 2 Octaves)"
+                  >
+                    {upscalingScale === 16 ? '16K en cours…' : '💎 16K (16384px)'}
                   </button>
                   <button
                     onClick={handleRegenerateSelected}

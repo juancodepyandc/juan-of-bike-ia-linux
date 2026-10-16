@@ -345,14 +345,20 @@ export function useImageViewLogic() {
 
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [upscaling, setUpscaling] = useState(false)
-  const upscaleCurrent = async (scale: 2 | 4 | 8) => {
+  const upscaleCurrent = async (scale: 2 | 4 | 8 | 16) => {
     if (!current || upscaling) return
     setUpscaling(true)
-    setNotice(scale === 8 ? 'Super-Résolution 8K UHD (8192px) en cours…' : `Super-Résolution ${scale}× en cours…`)
+    setNotice(
+      scale === 16
+        ? 'Super-Résolution 16K Ultra-Master (16384px · Pyramide 2 Octaves) en cours…'
+        : scale === 8
+          ? 'Super-Résolution 8K UHD (8192px) en cours…'
+          : `Super-Résolution ${scale}× en cours…`,
+    )
     try {
       const mod = await import('../utils/upscaleImage')
       const { url, method, width, height } = await mod.upscaleAuto(current.url, scale)
-      const label = scale === 8 ? '8K' : `x${scale}`
+      const label = scale === 16 ? '16K' : scale === 8 ? '8K' : `x${scale}`
       try {
         const blob = await fetch(url).then((r) => r.blob())
         const newId = `${current.id}-${label}-${method}`

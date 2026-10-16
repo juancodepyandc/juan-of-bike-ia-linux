@@ -35,17 +35,18 @@ export function computeDesignPolishReport(files: CodeFile[]): DesignPolishReport
   // d ajouter du CSS qu un projet Tailwind ne doit precisement pas ecrire.
   const tw = usesTailwind(files)
   const checks: Array<{ label: string; pattern: RegExp; points: number; tw?: RegExp }> = [
-    { label: 'CSS variables / design tokens (--color-*, --space-*, etc.)', pattern: /--[a-z-]+:\s*/i, points: 12, tw: /theme\s*:\s*\{[\s\S]*extend|colors\s*:\s*\{/ },
-    { label: 'police premium Google Fonts (Inter / Manrope / Satoshi / DM Sans / Space Grotesk / Plus Jakarta)', pattern: /inter|manrope|satoshi|dm sans|space grotesk|plus jakarta|bricolage|bangers/i, points: 10 },
-    { label: 'gradients (linear-gradient / radial-gradient / conic-gradient)', pattern: /(linear|radial|conic)-gradient/i, points: 12, tw: TW_GRADIENT },
-    { label: 'transitions explicites (transition: ... 250ms cubic-bezier)', pattern: /transition:\s*[^;]+\d+ms/i, points: 8, tw: /\btransition(?:-[a-z]+)?\b[\s\S]{0,40}\bduration-\d+/ },
-    { label: '@keyframes (animations CSS)', pattern: /@keyframes\s+\w+/i, points: 10, tw: /\banimate-[a-z0-9-]+\b/ },
-    { label: 'backdrop-filter blur (glassmorphism)', pattern: /backdrop-filter\s*:\s*blur/i, points: 10, tw: /\bbackdrop-blur(?:-[a-z]+)?\b/ },
+    { label: 'CSS variables / design tokens (--color-*, --space-*, etc.)', pattern: /--[a-z-]+:\s*/i, points: 10, tw: /theme\s*:\s*\{[\s\S]*extend|colors\s*:\s*\{/ },
+    { label: 'police premium Google Fonts (Inter / Manrope / Satoshi / DM Sans / Space Grotesk / Plus Jakarta)', pattern: /inter|manrope|satoshi|dm sans|space grotesk|plus jakarta|bricolage|bangers|syne|instrument|fraunces|jetbrains/i, points: 10 },
+    { label: 'gradients (linear-gradient / radial-gradient / conic-gradient)', pattern: /(linear|radial|conic)-gradient/i, points: 10, tw: TW_GRADIENT },
+    { label: 'transitions physiques (cubic-bezier / spring easing)', pattern: /cubic-bezier\s*\(|transition:\s*[^;]+\d+ms/i, points: 9, tw: /\btransition(?:-[a-z]+)?\b[\s\S]{0,40}\bduration-\d+/ },
+    { label: '@keyframes & choregraphie d entree (animations CSS / stagger / requestAnimationFrame)', pattern: /@keyframes\s+\w+|animation-delay|requestanimationframe|--stagger/i, points: 10, tw: /\banimate-[a-z0-9-]+\b|\bdelay-\d+/ },
+    { label: 'motion 3D / GPU compositing (translate3d / scale / perspective / spotlight --mouse-x)', pattern: /translate3d|translatey\(|scale\(|perspective\(|--mouse-x|stroke-dasharray/i, points: 7, tw: /\b(?:hover:|group-hover:)?(?:-?translate-[xy]-\d|scale-\d+)/ },
+    { label: 'backdrop-filter blur (glassmorphism)', pattern: /backdrop-filter\s*:\s*blur/i, points: 9, tw: /\bbackdrop-blur(?:-[a-z]+)?\b/ },
     { label: 'clamp() pour les tailles responsive', pattern: /clamp\s*\(/i, points: 8, tw: /\b(?:text|w|h|p|m)-\[clamp\(|\b(?:sm|md|lg|xl|2xl):[a-z-]+/ },
     { label: 'box-shadow multi-layer composite', pattern: /box-shadow\s*:[^;]*,[^;]*\d/i, points: 8, tw: /\bshadow-(?:md|lg|xl|2xl)\b/ },
-    { label: 'utilisation de var(--*) (variables CSS appliquees)', pattern: /var\(--[a-z]/i, points: 6, tw: /\b(?:bg|text|border)-[a-z]+-\d{2,3}\b/ },
-    { label: 'layout moderne grid ou flex', pattern: /display\s*:\s*(grid|flex)/i, points: 6, tw: /\b(?:grid|flex)\b[\s\S]{0,30}\b(?:grid-cols-\d|gap-\d|items-|justify-)/ },
-    { label: 'hover states (:hover {)', pattern: /:hover\s*\{/i, points: 5, tw: TW_HOVER },
+    { label: 'utilisation de var(--*) (variables CSS appliquees)', pattern: /var\(--[a-z]/i, points: 5, tw: /\b(?:bg|text|border)-[a-z]+-\d{2,3}\b/ },
+    { label: 'layout moderne grid ou flex', pattern: /display\s*:\s*(grid|flex)/i, points: 5, tw: /\b(?:grid|flex)\b[\s\S]{0,30}\b(?:grid-cols-\d|gap-\d|items-|justify-)/ },
+    { label: 'hover states (:hover {)', pattern: /:hover\s*\{/i, points: 4, tw: TW_HOVER },
   ]
 
   for (const { label, pattern, points, tw: twPattern } of checks) {
@@ -83,7 +84,7 @@ export function computeDesignPolishReport(files: CodeFile[]): DesignPolishReport
 export function buildDesignRetryHint(report: DesignPolishReport): string {
   const lines: string[] = [
     '═══════════════════════════════════════════════════════════',
-    'AUDIT DESIGN — ton output precedent est ENCORE TROP SCOLAIRE',
+    'AUDIT DESIGN & MOTION — ton output precedent est ENCORE TROP SCOLAIRE',
     `Score: ${report.score}/100 (seuil minimum: 70)`,
     '═══════════════════════════════════════════════════════════',
     '',
@@ -99,6 +100,10 @@ export function buildDesignRetryHint(report: DesignPolishReport): string {
     lines.push('')
   }
   lines.push(
+    'Exigences Motion Design & UI Senior :',
+    '  • Utilise des courbes physiques `cubic-bezier(0.16, 1, 0.3, 1)` (reveal) et `cubic-bezier(0.22, 1, 0.36, 1)` (hover).',
+    '  • Ajoute une choregraphie d entree en cascade (`@keyframes` + `animation-delay: calc(var(--stagger-index, 0) * 65ms)`).',
+    '  • Ajoute un spotlight speculaire au curseur (`--mouse-x`, `--mouse-y`) et une grille Bento 12 colonnes asymetrique.',
     'Refais le projet COMPLET avec TOUS ces points corriges.',
     'INTERDICTION absolue de relivrer du HTML qui ressemblerait a un tutoriel debutant.',
     '═══════════════════════════════════════════════════════════',
