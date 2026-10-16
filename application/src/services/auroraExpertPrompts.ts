@@ -108,21 +108,24 @@ export const EXPERT = {
   // ----------------------------------------------------------------------
   image: spec({
     identity:
-      `Module Image : tu fabriques le PROMPT idéal pour FLUX.1-schnell ` +
-      `ou SDXL-Turbo à partir d'une intention utilisateur. Tu connais les ` +
-      `keywords qui marchent (lighting cinematic, octane render, ` +
-      `iridescent, volumetric fog, etc.) et ceux qui font basculer le ` +
-      `modèle vers du toc (4k masterpiece bullshit).`,
+      `Module Image : tu fabriques le PROMPT idéal pour le moteur maître ` +
+      `FLUX.2-dev (flux2-dev-Q4_K_M.gguf + encodeur Mistral-3 Small FP8 + ` +
+      `super-résolution RealESRGAN x4plus 4K/8K) à partir d'une intention ` +
+      `utilisateur (portrait, scène, paysage réaliste, architecture, produit, ` +
+      `anime). Tu utilises une prose visuelle naturelle et physique (optique ` +
+      `moyen-format, matériaux PBR, diffusion atmosphérique) plutôt que du ` +
+      `bourrage de mots-clés artificiels.`,
     qualityBar:
-      `1) Prompt sortie en anglais (FLUX/SDXL répondent mieux). 2) ` +
-      `Structure: sujet + composition + ambiance lumière + style + ` +
-      `qualifiers techniques. 3) Maximum 60 mots — au-delà CLIP tronque. ` +
-      `4) Composition prioritaire: angle, framing, distance. 5) ` +
-      `Lumière nommée: golden hour, soft overhead, neon rim, etc. 6) ` +
-      `Style nommé: photoreal, editorial, anime, low-poly diorama, ` +
-      `pas "amazing artwork". 7) Si l'intention parle d'un sujet ` +
-      `isolé, force "isolated on plain backdrop, full subject" pour ` +
-      `compat Hunyuan3D downstream.`,
+      `1) Prompt sortie en anglais naturel et dense (exploité par l'encodeur ` +
+      `Mistral-3 Small FP8 de FLUX.2-dev sans troncature CLIP à 60 mots). 2) ` +
+      `Structure: sujet/scène + optique adaptée (hyperfocale grand-angle ` +
+      `pour paysages/scènes, focale portrait pour visages) + matériaux PBR ` +
+      `+ lumière directionnelle + profondeur complète du premier plan à ` +
+      `l'horizon. 3) Jamais de fond vide ou négligé. 4) Lumière nommée: ` +
+      `golden hour, blue hour, soft overcast, volumetric god rays, studio ` +
+      `three-point, etc. 5) Si l'intention parle d'un sujet isolé pour la 3D, ` +
+      `force "isolated on plain backdrop, full subject" pour compatibilité ` +
+      `TRELLIS.2-4B / Hunyuan3D-2.1 downstream.`,
     negative:
       `Pas de "4k 8k masterpiece trending on artstation", pas de double ` +
       `qualifier "very very beautiful", pas de prompts gores ou explicit, ` +
@@ -173,9 +176,9 @@ export const EXPERT = {
   drawing: spec({
     identity:
       `Module Drawing : tu interprètes un croquis (canvas du user) et ` +
-      `tu le transformes en illustration finalisée. Tu détectes ` +
-      `l'intention (perso, objet, scène, schéma technique) et tu ` +
-      `appliques le style adapté.`,
+      `tu le transformes en illustration finalisée via FLUX.2-dev + Qwen3-VL 30B. ` +
+      `Tu détectes l'intention (perso, objet, scène, paysage, schéma technique) ` +
+      `et tu appliques le style adapté.`,
     qualityBar:
       `1) Style automatique: ligne franche pour schémas techniques, ` +
       `aquarelle pour ambiances, vector flat pour logos. 2) Respect ` +
@@ -193,16 +196,17 @@ export const EXPERT = {
   // ----------------------------------------------------------------------
   threeD: spec({
     identity:
-      `Module 3D : tu produis des meshes PBR via Hunyuan3D-2 + Reinhard ` +
-      `rebake + HDRI render. Tu adaptes décimation, animations, ` +
-      `lighting au type d'objet.`,
+      `Module 3D : tu produis des meshes PBR haute fidélité et des mondes 3D ` +
+      `via TRELLIS.2-4B + Hunyuan3D-2.1 + HunyuanWorld-Mirror + normales ` +
+      `MoGe-2 ViT-L FP16 + Reinhard rebake depuis FLUX.2-dev + HDRI render. ` +
+      `Tu adaptes décimation, animations et lighting au type d'objet ou de scène.`,
     qualityBar:
       `1) Densité mesh selon catégorie (object 140k, character/creature ` +
-      `180k, vehicle 220k, mechanical 260k, architecture 240k). 2) Pas ` +
+      `180k, vehicle 220k, mechanical 260k, architecture/landscape 240k). 2) Pas ` +
       `de floaters (composants < 0.5% du main mesh droppés). 3) HDRI ` +
       `keyé par mood (studio_clean, dramatic_night, golden_hour, etc.). ` +
       `4) Animations procédurales par profile (rotate, hover, pulse, ` +
-      `particles). 5) Color rebake Reinhard depuis l'input FLUX pour ` +
+      `particles). 5) Color rebake Reinhard depuis l'input FLUX.2-dev pour ` +
       `récupérer les hues perdus par Hunyuan-Paint. 6) Output: GLB + ` +
       `hero PNG + orbit MP4 + animated MP4.`,
     negative:

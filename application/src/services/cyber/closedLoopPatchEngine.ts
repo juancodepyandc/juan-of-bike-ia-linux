@@ -13,7 +13,7 @@
 import { isPrivateOrLoopbackIp, validateUrlAgainstSsrf, verifyTimingSafeComparison, auditJwtVerificationPolicy } from './exploitPatchVerifier.ts'
 import { runEphemeralToolSandbox } from '../ephemeralToolRunner.ts'
 import { ollamaGenerate } from '../../hooks/useTauri.ts'
-import { resolveConfiguredModel, AUXILIARY_ANALYSIS_MODEL } from '../../config/models.ts'
+import { selectCyberModel } from '../../config/models.ts'
 import { useAppStore } from '../../stores/appStore.ts'
 
 export type VulnerabilityCategory =
@@ -182,8 +182,8 @@ export async function executeClosedLoopCodeRemediation(options: {
   testSuiteCode?: string
   modelOverride?: string
 }): Promise<PatchVerificationResult> {
-  const { mainModel } = useAppStore.getState()
-  const model = options.modelOverride || resolveConfiguredModel(mainModel, AUXILIARY_ANALYSIS_MODEL)
+  const { mainModel, installedModels } = useAppStore.getState()
+  const model = options.modelOverride || selectCyberModel(installedModels, mainModel)
   const logs: string[] = []
 
   logs.push(`Analyse du code vulnérable (${options.language.toUpperCase()}) pour ${options.cwe}...`)

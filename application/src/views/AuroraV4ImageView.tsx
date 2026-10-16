@@ -395,19 +395,17 @@ export default function AuroraV4ImageView() {
         </span>
         <div>
           <h1 className="av4img-gradsoft" style={{ margin: 0, fontSize: 23, fontWeight: 800, letterSpacing: '-0.02em', filter: `drop-shadow(0 0 16px ${ACCENT}38)` }}>Image</h1>
-          <TechLabel style={{ marginTop: 3 }}>flux · kontext · comfyui</TechLabel>
+          <TechLabel style={{ marginTop: 3 }}>flux.2-dev (20 go) · mistral-3 fp8 · realesrgan 8k · qwen3-vl 30b</TechLabel>
         </div>
         <span style={{ flex: 1 }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{
             ...monoTag,
-            color: I.editEngine === 'kontext' ? '#6EE7B7' : '#FBBF24',
-            borderColor: I.editEngine === 'kontext' ? 'rgba(110,231,183,.35)' : 'rgba(251,191,36,.3)',
+            color: '#6EE7B7',
+            borderColor: 'rgba(110,231,183,.35)',
           }}
-            title={I.editEngine === 'kontext'
-              ? 'Moteur d\'édition FLUX.1 Kontext détecté : les retouches modifient réellement l\'image'
-              : 'UNET Kontext absent : l\'édition retombe sur img2img, approximatif'}>
-            {I.editEngine === 'kontext' ? 'kontext · édition réelle' : 'img2img · approximatif'}
+            title="Pack maître actif : FLUX.2-dev (flux2-dev-Q4_K_M.gguf 20 Go) + Mistral-3 Small FP8 (18 Go) + Flux2Scheduler + CFGGuider + ReferenceLatent + RealESRGAN x4plus + Qwen3-VL 30B">
+            {I.editEngine === 'kontext' ? 'FLUX.2-dev · Kontext' : 'FLUX.2-dev · ReferenceLatent + 8K'}
           </span>
           <span style={monoTag}>{dim.w}×{dim.h} · 28 étapes</span>
           <span style={monoTag}>seed {I.seed || 'aléatoire'}</span>
@@ -716,10 +714,10 @@ export default function AuroraV4ImageView() {
                 ))}
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ ...mono, width: 52, flexShrink: 0 }}>format</span>
-              <div style={{ display: 'flex', gap: 6, flex: 1 }}>
-                {(['square', 'portrait', 'landscape'] as DimensionId[]).map((d) => (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+              <span style={{ ...mono, width: 52, flexShrink: 0, marginTop: 6 }}>format</span>
+              <div style={{ display: 'flex', gap: 6, flex: 1, flexWrap: 'wrap' }}>
+                {(['square', 'portrait', 'landscape', 'cinema', 'panorama', 'uhd_4k', 'master_8k', 'landscape_8k'] as DimensionId[]).map((d) => (
                   <Chip key={d} active={I.dimensions === d} disabled={I.generating}
                     onClick={() => I.setDimensions(d)} title={`${DIMENSIONS[d].w}×${DIMENSIONS[d].h}`}>
                     {DIMENSIONS[d].label}
@@ -885,9 +883,9 @@ export default function AuroraV4ImageView() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
                     {[
                       { step: 1, label: '1. IA Prompt' },
-                      { step: 2, label: '2. Référence' },
-                      { step: 3, label: '3. Diffusion' },
-                      { step: 4, label: '4. Kontext' },
+                      { step: 2, label: '2. Qwen3-VL 30B' },
+                      { step: 3, label: '3. FLUX.2-dev' },
+                      { step: 4, label: '4. RealESRGAN' },
                       { step: 5, label: '5. Livraison' },
                     ].map((s) => {
                       const activeStep = I.currentStep || 1

@@ -1309,14 +1309,14 @@ export const CONNECTORS: Record<ConnectorId, ConnectorMeta> = {
     ],
   },
   aurora_image: {
-    id: 'aurora_image', label: 'Module: Image (FLUX/SDXL interne)', category: 'media',
-    description: 'Génère une image depuis un prompt via FLUX.1-schnell ou SDXL-Turbo local.',
+    id: 'aurora_image', label: 'Module: Image (FLUX.2-dev + RealESRGAN 8K interne)', category: 'media',
+    description: 'Génère ou retouche une image haute précision via FLUX.2-dev (flux2-dev-Q4_K_M.gguf) + Mistral-3 Small FP8 + RealESRGAN x4plus 4K/8K local.',
     apiKeyLabel: 'n/a', apiKeyHelp: 'module local',
-    docUrl: 'https://huggingface.co/black-forest-labs/FLUX.1-schnell',
+    docUrl: 'https://huggingface.co/black-forest-labs/FLUX.2-dev',
     actions: [
-      { name: 'generate', description: 'text -> 1024x1024 PNG (params: prompt, model?, seed?)' },
-      { name: 'img2img', description: 'Modifie une image existante (params: prompt, image_path, strength?)' },
-      { name: 'enhance', description: 'Améliore saturation/contrast (params: image_path)' },
+      { name: 'generate', description: 'text -> PNG HD/4K/8K (params: prompt, model?, seed?)' },
+      { name: 'img2img', description: 'Modifie une image existante via ReferenceLatent FLUX.2-dev (params: prompt, image_path, strength?)' },
+      { name: 'enhance', description: 'Améliore saturation/contrast et super-résolution RealESRGAN (params: image_path)' },
     ],
   },
   aurora_voice: {
@@ -1538,18 +1538,18 @@ const SEMANTIC: Partial<Record<ConnectorId, SemanticOverride>> = {
 
   // === Internal Aurora modules ===
   aurora_code: {
-    purpose: 'Module Code interne : génération/refactor/fix/explication via qwen3-coder + Vite build + sandbox. Préfere ça à la génération inline pour tout besoin de code complet.',
+    purpose: 'Module Code interne : génération/refactor/fix/explication via qwen3-coder-next:q4_K_M + qwen3-coder:30b + deepseek-r1:32b + Vite build + sandbox.',
     whenToUse: ['ecris du code', 'genere une page', 'genere une app', 'refactor', 'fix bug', 'corrige', 'expliquer code', 'crée projet', 'site web', 'react vite', 'three.js scene', 'cli python', 'rest api', 'jeu canvas'],
     freeTier: 'gratuit (Ollama local)',
   },
   aurora_3d: {
-    purpose: 'Module 3D interne : génère mesh PBR (Hunyuan3D shape+paint), animations procédurales, render HDRI Cycles. Utiliser pour toute demande de "modèle 3D", "asset", "mesh", "scène 3D".',
-    whenToUse: ['modele 3d', 'mesh', '3d asset', 'glb', 'mtl', 'three.js mesh', 'object 3d', 'scene 3d', 'pbr', 'hunyuan'],
+    purpose: 'Module 3D interne : génère mesh PBR et scènes 3D (TRELLIS.2-4B + Hunyuan3D-2.1 + HunyuanWorld-Mirror + MoGe-2 Normal FP16), animations procédurales, render HDRI Cycles.',
+    whenToUse: ['modele 3d', 'mesh', '3d asset', 'glb', 'mtl', 'three.js mesh', 'object 3d', 'scene 3d', 'pbr', 'hunyuan', 'trellis'],
     freeTier: 'gratuit (modèles locaux)',
   },
   aurora_image: {
-    purpose: 'Module Image interne : génération d\'images via FLUX.1-schnell ou SDXL-Turbo local. Utiliser pour visuel 2D, illustrations, hero shots, références.',
-    whenToUse: ['image', 'illustration', 'logo', 'hero shot', 'visuel', 'photo style', 'flux', 'sdxl', 'render'],
+    purpose: 'Module Image interne : génération et édition d\'images haute précision via FLUX.2-dev (flux2-dev-Q4_K_M.gguf) + Mistral-3 Small FP8 + RealESRGAN 8K + Qwen3-VL 30B local. Utiliser pour portraits, scènes, paysages réalistes, architecture, hero shots et références.',
+    whenToUse: ['image', 'illustration', 'logo', 'hero shot', 'visuel', 'photo style', 'paysage', 'scene', 'flux', 'flux2', 'render'],
     freeTier: 'gratuit (modèles locaux)',
   },
   aurora_voice: {

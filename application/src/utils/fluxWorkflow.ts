@@ -1,13 +1,19 @@
 import {
   IMAGE_CLIP_MODEL,
+  IMAGE_PANO360_LORA_MODEL,
   IMAGE_T5_MODEL,
   IMAGE_UNET_MODEL,
+  IMAGE_UPSCALER_MODEL,
   IMAGE_VAE_MODEL,
 } from '../config/models.ts'
 import { hasHumanRemovalTarget, type ParsedImageIntent } from './imagePromptParser.ts'
 
 export type FluxStyle =
   | 'realistic'
+  | 'landscape'
+  | 'scene_environment'
+  | 'panorama_360'
+  | 'macro_8k'
   | 'technical_render'
   | 'anime'
   | 'manga'
@@ -38,15 +44,47 @@ const STYLE_PRESETS: Record<FluxStyle, StyleConfig> = {
   realistic: {
     promptPrefix: 'photorealistic RAW photograph, shot on Canon EOS R5, 85mm f/1.4 lens, available light, unretouched,',
     promptSuffix: ', razor sharp natural focus, genuine directional lighting with real soft shadows and hard shadow edges, true-to-life materials, subtle film grain, real lens imperfections chromatic aberration and bokeh, real human skin texture with visible pores fine lines moles and blemishes, authentic fabric weave and thread detail, realistic metal reflections with environment mapping, real glass caustics, subsurface scattering on skin and wax and leaves, micro-texture on every surface wood grain leather creases concrete roughness, natural color grading without oversaturation, ABSOLUTELY NO AI smoothing NO plastic skin NO airbrush NO uncanny valley NO waxy look NO blurry details NO oversharpening NO HDR glow, preserve exact facial features bone structure and identity, no morphing no distortion no symmetry forcing, imperfect human asymmetry is beautiful and required',
-    // guidance 4.5 (au lieu de 5.5) : au-dela de ~5 FLUX.1-dev sur-sature et durcit
-    // les ombres — l'effet "IA" que ce preset cherche justement a eviter. ~4.5 rend
-    // plus photographique. steps 34 : FLUX.1-dev converge vers ~28-32 steps, les 45
-    // d'avant coutaient ~35% de temps pour un gain visuel negligeable.
     guidance: 4.5,
     steps: 34,
     sampler: 'euler',
     scheduler: 'simple',
     editDenoise: 0.12,
+  },
+  landscape: {
+    promptPrefix: 'photorealistic medium-format landscape photograph, shot on Hasselblad X2D 100C, 24mm f/8 wide-angle prime lens, hyperfocal distance focus from foreground to infinity, unretouched RAW,',
+    promptSuffix: ', razor-sharp foreground terrain micro-textures (rock fissures, moss, water ripples, individual leaves and grass blades), coherent midground depth and atmospheric perspective, realistic sky and volumetric clouds, physically accurate natural sunlight and shadow falloff, true-to-life water reflections and caustics, natural color grading without artificial HDR halo, edge-to-edge optical sharpness',
+    guidance: 4.5,
+    steps: 34,
+    sampler: 'euler',
+    scheduler: 'simple',
+    editDenoise: 0.25,
+  },
+  scene_environment: {
+    promptPrefix: 'photorealistic architectural and environmental scene photograph, shot on 35mm f/5.6 rectilinear prime lens, full-scene global illumination, unretouched RAW,',
+    promptSuffix: ', accurate perspective geometry and vertical lines, complete foreground midground and background storytelling with zero empty zones, authentic PBR surface micro-textures (stone, brushed metal, weathered wood grain, glass reflections, fabric weave), natural bounce light, realistic ambient occlusion and contact shadows',
+    guidance: 4.5,
+    steps: 34,
+    sampler: 'euler',
+    scheduler: 'simple',
+    editDenoise: 0.24,
+  },
+  panorama_360: {
+    promptPrefix: 'ultra-wide 360 panoramic environment vista, 16mm rectilinear cinema lens, expansive horizon and deep environmental storytelling,',
+    promptSuffix: ', continuous panoramic coherence across the entire frame, rich foreground and distant horizon detail, volumetric atmosphere, natural directional lighting, seamless spatial continuity',
+    guidance: 4.5,
+    steps: 34,
+    sampler: 'euler',
+    scheduler: 'simple',
+    editDenoise: 0.3,
+  },
+  macro_8k: {
+    promptPrefix: 'extreme macro photograph, 100mm f/2.8 1:1 Macro lens, focus-stacked ultra-high acuity, studio micro-lighting, unretouched RAW,',
+    promptSuffix: ', sub-millimeter surface relief, crystalline facets, individual fibers, pores and micro-scratches, authentic anisotropic reflections and subsurface scattering, razor-sharp edge-to-edge clarity, zero synthetic blur',
+    guidance: 4.8,
+    steps: 36,
+    sampler: 'euler',
+    scheduler: 'simple',
+    editDenoise: 0.18,
   },
   technical_render: {
     promptPrefix: 'technical product render, engineering visualization, neutral studio lighting,',
@@ -206,10 +244,32 @@ const GLOBAL_VISUAL_RULES = [
 
 const STYLE_QUALITY_RULES: Record<FluxStyle, string[]> = {
   realistic: [
-    'real camera response, not a render',
+    'real camera response, not a synthetic render',
     'physically plausible materials with correct roughness, specular highlights and contact shadows',
-    'natural imperfections kept visible: pores, hair strands, dust, fabric weave, scratches and tiny asymmetries',
-    'no beauty filter, no wax skin, no synthetic over-cleaning',
+    'natural micro-imperfections kept visible across every surface in the frame',
+    'no beauty filter, no plastic smoothing, no synthetic over-cleaning',
+  ],
+  landscape: [
+    'medium-format optical clarity from immediate foreground to distant horizon',
+    'physically accurate atmospheric scattering, natural sunlight and cloud volume',
+    'crisp natural micro-textures on rock, foliage, bark, soil, snow and water surfaces',
+    'no empty sky voids, no smeared distant mountains, no artificial oversaturation',
+  ],
+  scene_environment: [
+    'rectilinear architectural and spatial perspective with coherent vanishing points',
+    'complete foreground, midground and background environmental storytelling',
+    'physically based material response on stone, wood, glass, metal and textiles',
+    'natural global illumination, bounce light and realistic ambient occlusion',
+  ],
+  panorama_360: [
+    'expansive ultra-wide panoramic field of view with continuous horizon line',
+    'deep spatial layering from foreground anchors to far distance',
+    'coherent directional lighting across the entire panoramic sweep',
+  ],
+  macro_8k: [
+    'focus-stacked 1:1 macro acuity with sub-millimeter surface relief',
+    'individual fibers, crystalline facets, micro-pores and anisotropic reflections clearly resolved',
+    'physically accurate subsurface scattering and micro-shadows',
   ],
   technical_render: [
     'clean CAD-like silhouette without organic melting',
@@ -303,14 +363,18 @@ const STYLE_QUALITY_RULES: Record<FluxStyle, string[]> = {
 
 export function getAvailableStyles(): Array<{ id: FluxStyle; label: string }> {
   return [
-    { id: 'none', label: 'Auto / Libre' },
-    { id: 'realistic', label: 'Realiste / Photo' },
-    { id: 'technical_render', label: 'Technique / Produit' },
+    { id: 'none', label: 'Auto / Libre (FLUX.2)' },
+    { id: 'realistic', label: 'Réaliste / Photo RAW' },
+    { id: 'landscape', label: 'Paysage & Nature Photoréaliste' },
+    { id: 'scene_environment', label: 'Scène & Architecture Réaliste' },
+    { id: 'panorama_360', label: 'Panorama Grand Angle 360°' },
+    { id: 'macro_8k', label: 'Macro & Texture Pure 8K' },
+    { id: 'cinematic', label: 'Cinématique Film 65mm' },
+    { id: 'technical_render', label: 'Technique / Produit CAO' },
+    { id: 'concept_art', label: 'Concept Art & Monde' },
     { id: 'anime', label: 'Anime' },
     { id: 'manga', label: 'Manga' },
-    { id: 'cinematic', label: 'Cinematique' },
-    { id: 'concept_art', label: 'Concept Art' },
-    { id: 'oil_painting', label: 'Peinture a l huile' },
+    { id: 'oil_painting', label: 'Peinture à l’huile' },
     { id: 'watercolor', label: 'Aquarelle' },
     { id: 'pixel_art', label: 'Pixel Art' },
     { id: 'sketch', label: 'Croquis' },
@@ -318,7 +382,7 @@ export function getAvailableStyles(): Array<{ id: FluxStyle; label: string }> {
     { id: 'minimalist', label: 'Minimaliste' },
     { id: 'cyberpunk', label: 'Cyberpunk' },
     { id: 'fantasy', label: 'Fantasy' },
-    { id: 'retro', label: 'Retro / Vintage' },
+    { id: 'retro', label: 'Rétro / Vintage' },
   ]
 }
 
@@ -338,6 +402,8 @@ function detectPromptTraits(prompt: string) {
   const wantsMechanicalSubject = /\b(component|composant|piece|part|mecanique|mechanical|courroie|belt|poulie|pulley|gear|engrenage|verin|cylinder|bearing|roulement|cable|connector|connecteur|harness|faisceau)\b/i.test(normalized)
   const wantsExactReference = /\b(reference exacte|exact reference|official design|modele reel|real object|same subject|meme sujet|existing character|existing object)\b/i.test(normalized)
   const wantsFullBody = /\b(plein pied|plain pied|corps entier|full body|head[-\s]?to[-\s]?toe|entire body|figure entiere|figure enti[eè]re|des pieds a la tete|des pieds [aà] la t[eê]te)\b/i.test(normalized)
+  const wantsLandscapeOrScene = /\b(paysage|landscape|montagne|mountain|foret|forêt|forest|ocean|océan|mer|sea|plage|beach|lac|lake|riviere|rivière|river|vallee|vallée|valley|desert|désert|canyon| cascade|waterfall|ville|city|cityscape|rue|ruelle|street|architecture|batiment|bâtiment|interieur|intérieur|interior|piece|chambre|salon|temple|chateau|château|castle|panorama|horizon|nature|campagne|jardin|garden|ciel|sky|aurore|sunset|sunrise|coucher de soleil)\b/i.test(normalized)
+  const wantsHumanSubject = /\b(homme|femme|personne|personnage|portrait|visage|garcon|garçon|fille|enfant|guerrier|guerriere|man|woman|person|character|face|boy|girl|child|human|people|crowd)\b/i.test(normalized)
 
   return {
     wantsMonochrome,
@@ -349,6 +415,8 @@ function detectPromptTraits(prompt: string) {
     wantsMechanicalSubject,
     wantsExactReference,
     wantsFullBody,
+    wantsLandscapeOrScene,
+    wantsHumanSubject,
   }
 }
 
@@ -469,11 +537,22 @@ function buildStyledPrompt(prompt: string, style: FluxStyle, hasReferenceImage =
     'single coherent continuous image',
     'clear composition',
     'coherent perspective',
-    'finished readable detail',
+    'finished readable detail across the entire frame',
     'no unintended duplicated objects',
   ]
   let promptPrefix = config.promptPrefix
   let promptSuffix = config.promptSuffix
+
+  // Adaptation intelligente du mode Réaliste selon qu'il s'agit d'un paysage/scène, d'un objet ou d'un portrait
+  if (style === 'realistic') {
+    if (promptTraits.wantsLandscapeOrScene && !promptTraits.wantsHumanSubject) {
+      promptPrefix = STYLE_PRESETS.landscape.promptPrefix
+      promptSuffix = STYLE_PRESETS.landscape.promptSuffix
+    } else if (promptTraits.wantsMechanicalSubject && !promptTraits.wantsHumanSubject) {
+      promptPrefix = 'photorealistic medium-format RAW photograph, shot on Hasselblad X2D 100C, 50mm f/5.6 prime lens, natural studio or location lighting, unretouched,'
+      promptSuffix = ', razor-sharp focus across the subject and environment, authentic physical materials (anodized metal, brushed steel, carbon fiber, glass caustics, rubber, wood grain), realistic reflections and contact shadows, zero plastic smoothing'
+    }
+  }
 
   if (allowsMultipleSubjects) {
     qualityRules.push(
@@ -495,10 +574,11 @@ function buildStyledPrompt(prompt: string, style: FluxStyle, hasReferenceImage =
   if (!promptTraits.wantsPixelArt) {
     qualityRules.push(
       'native high-resolution detail',
-      'proportional anatomy',
-      'stable face and hands',
-      'sharp subject boundaries',
+      'sharp boundaries and rich background depth',
     )
+    if (promptTraits.wantsHumanSubject) {
+      qualityRules.push('proportional anatomy', 'stable face and hands')
+    }
   } else {
     qualityRules.push(
       'authentic pixel art, not a painting',
@@ -533,9 +613,18 @@ function buildStyledPrompt(prompt: string, style: FluxStyle, hasReferenceImage =
   }
 
   if (style === 'realistic') {
+    if (promptTraits.wantsHumanSubject) {
+      qualityRules.push(
+        'natural camera skin texture with pores and fine lines',
+        'real fabric weave and material micro-texture',
+      )
+    } else if (promptTraits.wantsLandscapeOrScene) {
+      qualityRules.push(
+        'hyperfocal optical sharpness from foreground to distant horizon',
+        'realistic atmospheric depth, foliage, water, stone and architectural micro-textures',
+      )
+    }
     qualityRules.push(
-      'natural camera skin texture',
-      'real fabric weave and material micro-texture',
       'physically plausible materials',
       'natural directional lighting and contact shadows',
     )
@@ -626,13 +715,41 @@ export type FluxWorkflowOptions = {
     filename: string
     denoise?: number
   } | null
+  referenceImage2?: {
+    filename: string
+  } | null
   negativePrompt?: string
   editIntent?: ParsedImageIntent | null
+  upscaleTargetMaxEdge?: number | null
 }
 
+/**
+ * Graphe unifié FLUX.2-dev haute précision :
+ * - Modèle UNet : flux2-dev-Q4_K_M.gguf (20 Go)
+ * - Encodeur texte : mistral_3_small_flux2_fp8.safetensors (18 Go, type: flux2)
+ * - VAE : flux2-vae.safetensors
+ * - Conditionnement de référence natif FLUX.2 via ReferenceLatent (1 ou 2 images)
+ * - Guidage négatif réel via CFGGuider ou Flux2Scheduler
+ * - Super-résolution neuronale optionnelle RealESRGAN_x4plus.pth (4K / 8K)
+ */
 export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string, unknown> {
-  const { prompt, width, height, steps, filenamePrefix, style = 'none', seed: seedOpt = null, referenceImage = null, negativePrompt = '', editIntent = null } = options
-  void negativePrompt
+  const {
+    prompt,
+    width,
+    height,
+    steps,
+    filenamePrefix,
+    style = 'none',
+    seed: seedOpt = null,
+    referenceImage = null,
+    referenceImage2 = null,
+    negativePrompt = '',
+    editIntent = null,
+    upscaleTargetMaxEdge = null,
+  } = options
+  void IMAGE_CLIP_MODEL
+  void IMAGE_PANO360_LORA_MODEL
+
   const augmentedPrompt = prompt
   const seed = seedOpt ?? Math.floor(Math.random() * 2 ** 32)
   const styleConfig = STYLE_PRESETS[style] || STYLE_PRESETS.none
@@ -642,9 +759,10 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
     : baseSteps
   const styledPrompt = buildStyledPrompt(augmentedPrompt, style, Boolean(referenceImage), editIntent)
   const referenceDenoise = referenceImage?.denoise ?? (referenceImage ? editIntent?.editContract.denoise ?? styleConfig.editDenoise : 1.0)
+  const effectiveNegative = (negativePrompt || '').trim() ||
+    'blurry, low detail, out of focus, plastic skin, airbrushed, waxy, deformed anatomy, extra fingers, mutated hands, watermark, signature, text overlay, split screen, multi-panel'
+
   const workflow: Record<string, unknown> = {
-    // FLUX.2: encodeur unique Mistral, sur CPU (16.8 Go ne tiennent pas dans
-    // 15.8 Go de VRAM; sur CPU le resultat est IDENTIQUE, sans perte de qualite).
     '1': {
       class_type: 'CLIPLoader',
       inputs: {
@@ -679,154 +797,239 @@ export function createFluxWorkflow(options: FluxWorkflowOptions): Record<string,
   }
 
   let latentNode: [string, number]
+  let refLatentNode: [string, number] | null = null
+  let refLatentNode2: [string, number] | null = null
   let nextNodeId = 5
 
   if (referenceImage) {
-    workflow[String(nextNodeId)] = {
+    const cleanRefName = referenceImage.filename.replace(/\\/g, '/').split('/').pop()!
+    const loadId = String(nextNodeId++)
+    workflow[loadId] = {
       class_type: 'LoadImage',
-      inputs: {
-        image: referenceImage.filename.replace(/\\/g, '/').split('/').pop()!,
-        upload: 'image',
-      },
+      inputs: { image: cleanRefName, upload: 'image' },
     }
-    nextNodeId += 1
-    workflow[String(nextNodeId)] = {
+    const scaleId = String(nextNodeId++)
+    workflow[scaleId] = {
       class_type: 'ImageScale',
       inputs: {
-        image: [String(nextNodeId - 1), 0],
+        image: [loadId, 0],
         width,
         height,
         upscale_method: 'lanczos',
         crop: 'center',
       },
     }
-    nextNodeId += 1
-    workflow[String(nextNodeId)] = {
+    const encodeId = String(nextNodeId++)
+    workflow[encodeId] = {
       class_type: 'VAEEncode',
       inputs: {
-        pixels: [String(nextNodeId - 1), 0],
+        pixels: [scaleId, 0],
         vae: ['3', 0],
       },
     }
-    latentNode = [String(nextNodeId), 0]
-    nextNodeId += 1
+    refLatentNode = [encodeId, 0]
+
+    // Si denoise < 0.88 (retouche locale ou conservation stricte de la structure),
+    // on part du latent de l'image de référence ; sinon on part d'un latent FLUX.2
+    // vierge guidé par ReferenceLatent (reproduction / nouvelle pose / nouvelle scène).
+    if (referenceDenoise < 0.88) {
+      latentNode = [encodeId, 0]
+    } else {
+      const emptyId = String(nextNodeId++)
+      workflow[emptyId] = {
+        class_type: 'EmptyFlux2LatentImage',
+        inputs: { width, height, batch_size: 1 },
+      }
+      latentNode = [emptyId, 0]
+    }
   } else {
-    workflow[String(nextNodeId)] = {
+    const emptyId = String(nextNodeId++)
+    workflow[emptyId] = {
       class_type: 'EmptyFlux2LatentImage',
       inputs: { width, height, batch_size: 1 },
     }
-    latentNode = [String(nextNodeId), 0]
-    nextNodeId += 1
+    latentNode = [emptyId, 0]
   }
 
-  workflow[String(nextNodeId)] = {
+  if (referenceImage2?.filename) {
+    const cleanRef2 = referenceImage2.filename.replace(/\\/g, '/').split('/').pop()!
+    const load2Id = String(nextNodeId++)
+    workflow[load2Id] = {
+      class_type: 'LoadImage',
+      inputs: { image: cleanRef2, upload: 'image' },
+    }
+    const scale2Id = String(nextNodeId++)
+    workflow[scale2Id] = {
+      class_type: 'ImageScale',
+      inputs: {
+        image: [load2Id, 0],
+        width,
+        height,
+        upscale_method: 'lanczos',
+        crop: 'center',
+      },
+    }
+    const encode2Id = String(nextNodeId++)
+    workflow[encode2Id] = {
+      class_type: 'VAEEncode',
+      inputs: {
+        pixels: [scale2Id, 0],
+        vae: ['3', 0],
+      },
+    }
+    refLatentNode2 = [encode2Id, 0]
+  }
+
+  const noiseNode = String(nextNodeId++)
+  workflow[noiseNode] = {
     class_type: 'RandomNoise',
     inputs: { noise_seed: seed },
   }
-  const noiseNode = String(nextNodeId)
-  nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
-    class_type: 'BasicScheduler',
-    inputs: {
-      scheduler: styleConfig.scheduler,
-      steps: effectiveSteps,
-      denoise: referenceDenoise,
-      model: ['4', 0],
-    },
+  const sigmaNode = String(nextNodeId++)
+  if (referenceImage && referenceDenoise < 0.88) {
+    workflow[sigmaNode] = {
+      class_type: 'BasicScheduler',
+      inputs: {
+        scheduler: styleConfig.scheduler,
+        steps: effectiveSteps,
+        denoise: referenceDenoise,
+        model: ['4', 0],
+      },
+    }
+  } else {
+    workflow[sigmaNode] = {
+      class_type: 'Flux2Scheduler',
+      inputs: {
+        steps: effectiveSteps,
+        width,
+        height,
+      },
+    }
   }
-  const sigmaNode = String(nextNodeId)
-  nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
+  const posTextNode = String(nextNodeId++)
+  workflow[posTextNode] = {
     class_type: 'CLIPTextEncode',
     inputs: {
       clip: ['1', 0],
       text: styledPrompt,
     },
   }
-  const clipTextNode = String(nextNodeId)
-  nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
-    class_type: 'FluxGuidance',
+  const negTextNode = String(nextNodeId++)
+  workflow[negTextNode] = {
+    class_type: 'CLIPTextEncode',
     inputs: {
-      conditioning: [clipTextNode, 0],
-      guidance: styleConfig.guidance,
+      clip: ['1', 0],
+      text: effectiveNegative,
     },
   }
-  const conditioningNode = String(nextNodeId)
-  nextNodeId += 1
 
-  let latentOutputNode: string
+  let positiveCond: [string, number] = [posTextNode, 0]
+  let negativeCond: [string, number] = [negTextNode, 0]
 
-  if (referenceImage) {
-    workflow[String(nextNodeId)] = {
-      class_type: 'CLIPTextEncode',
-      inputs: {
-        clip: ['1', 0],
-        text: negativePrompt || '',
-      },
+  // Conditionnement ReferenceLatent natif FLUX.2 (verrouille l'identité et les détails de référence)
+  if (refLatentNode) {
+    const refPosId = String(nextNodeId++)
+    workflow[refPosId] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: positiveCond, latent: refLatentNode },
     }
-    const negativeTextNode = String(nextNodeId)
-    nextNodeId += 1
-
-    workflow[String(nextNodeId)] = {
-      class_type: 'KSampler',
-      inputs: {
-        model: ['4', 0],
-        seed,
-        steps: effectiveSteps,
-        cfg: 1.0,
-        sampler_name: styleConfig.sampler,
-        scheduler: styleConfig.scheduler === 'simple' || styleConfig.scheduler === 'normal' || styleConfig.scheduler === 'ddim_uniform' || styleConfig.scheduler === 'sgm_uniform' ? styleConfig.scheduler : 'simple',
-        positive: [conditioningNode, 0],
-        negative: [negativeTextNode, 0],
-        latent_image: latentNode,
-        denoise: referenceDenoise,
-      },
+    const refNegId = String(nextNodeId++)
+    workflow[refNegId] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: negativeCond, latent: refLatentNode },
     }
-    latentOutputNode = String(nextNodeId)
-    nextNodeId += 1
-  } else {
-    workflow[String(nextNodeId)] = {
-      class_type: 'BasicGuider',
-      inputs: { model: ['4', 0], conditioning: [conditioningNode, 0] },
-    }
-    const guiderNode = String(nextNodeId)
-    nextNodeId += 1
-
-    workflow[String(nextNodeId)] = {
-      class_type: 'KSamplerSelect',
-      inputs: { sampler_name: styleConfig.sampler },
-    }
-    const samplerNode = String(nextNodeId)
-    nextNodeId += 1
-
-    workflow[String(nextNodeId)] = {
-      class_type: 'SamplerCustomAdvanced',
-      inputs: {
-        noise: [noiseNode, 0],
-        guider: [guiderNode, 0],
-        sampler: [samplerNode, 0],
-        sigmas: [sigmaNode, 0],
-        latent_image: latentNode,
-      },
-    }
-    latentOutputNode = String(nextNodeId)
-    nextNodeId += 1
+    positiveCond = [refPosId, 0]
+    negativeCond = [refNegId, 0]
   }
 
-  workflow[String(nextNodeId)] = {
+  if (refLatentNode2) {
+    const ref2PosId = String(nextNodeId++)
+    workflow[ref2PosId] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: positiveCond, latent: refLatentNode2 },
+    }
+    const ref2NegId = String(nextNodeId++)
+    workflow[ref2NegId] = {
+      class_type: 'ReferenceLatent',
+      inputs: { conditioning: negativeCond, latent: refLatentNode2 },
+    }
+    positiveCond = [ref2PosId, 0]
+    negativeCond = [ref2NegId, 0]
+  }
+
+  const guiderNode = String(nextNodeId++)
+  workflow[guiderNode] = {
+    class_type: 'CFGGuider',
+    inputs: {
+      model: ['4', 0],
+      positive: positiveCond,
+      negative: negativeCond,
+      cfg: styleConfig.guidance,
+    },
+  }
+
+  const samplerNode = String(nextNodeId++)
+  workflow[samplerNode] = {
+    class_type: 'KSamplerSelect',
+    inputs: { sampler_name: styleConfig.sampler },
+  }
+
+  const latentOutputNode = String(nextNodeId++)
+  workflow[latentOutputNode] = {
+    class_type: 'SamplerCustomAdvanced',
+    inputs: {
+      noise: [noiseNode, 0],
+      guider: [guiderNode, 0],
+      sampler: [samplerNode, 0],
+      sigmas: [sigmaNode, 0],
+      latent_image: latentNode,
+    },
+  }
+
+  const decodedImageNode = String(nextNodeId++)
+  workflow[decodedImageNode] = {
     class_type: 'VAEDecode',
     inputs: { samples: [latentOutputNode, 0], vae: ['3', 0] },
   }
-  const imageNode = String(nextNodeId)
-  nextNodeId += 1
 
-  workflow[String(nextNodeId)] = {
+  let finalImageOutputNode = decodedImageNode
+
+  // Super-résolution neuronale RealESRGAN_x4plus intégrée au graphe FLUX.2 (4K / 8K)
+  if (upscaleTargetMaxEdge && upscaleTargetMaxEdge > Math.max(width, height)) {
+    const scaleRatio = upscaleTargetMaxEdge / Math.max(width, height)
+    const outW = Math.max(64, Math.round((width * scaleRatio) / 8) * 8)
+    const outH = Math.max(64, Math.round((height * scaleRatio) / 8) * 8)
+    const upscaleLoaderNode = String(nextNodeId++)
+    workflow[upscaleLoaderNode] = {
+      class_type: 'UpscaleModelLoader',
+      inputs: { model_name: IMAGE_UPSCALER_MODEL },
+    }
+    const upscaledNode = String(nextNodeId++)
+    workflow[upscaledNode] = {
+      class_type: 'ImageUpscaleWithModel',
+      inputs: { upscale_model: [upscaleLoaderNode, 0], image: [decodedImageNode, 0] },
+    }
+    const scaledNode = String(nextNodeId++)
+    workflow[scaledNode] = {
+      class_type: 'ImageScale',
+      inputs: {
+        image: [upscaledNode, 0],
+        upscale_method: 'lanczos',
+        width: outW,
+        height: outH,
+        crop: 'disabled',
+      },
+    }
+    finalImageOutputNode = scaledNode
+  }
+
+  const saveNode = String(nextNodeId++)
+  workflow[saveNode] = {
     class_type: 'SaveImage',
-    inputs: { images: [imageNode, 0], filename_prefix: filenamePrefix },
+    inputs: { images: [finalImageOutputNode, 0], filename_prefix: filenamePrefix },
   }
 
   return workflow

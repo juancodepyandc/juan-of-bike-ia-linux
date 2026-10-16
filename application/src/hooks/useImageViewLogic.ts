@@ -19,7 +19,13 @@ import {
 } from '../services/selfInformedReference.ts'
 import { findMultipleReferenceVisuals, type ReferenceSearchProfile } from '../services/referenceVisualResearch.ts'
 import { analyzeImage } from '../services/visionService.ts'
-import { VISION_LIVE_MODEL } from '../config/models.ts'
+import {
+  IMAGE_MODEL_PACK_LABEL,
+  IMAGE_PRIMARY_ENGINE,
+  IMAGE_UNET_MODEL,
+  VISION_HIGH_QUALITY_MODEL,
+  VISION_LIVE_MODEL,
+} from '../config/models.ts'
 import {
   comfyuiGetHistory,
   comfyuiGetImage,
@@ -79,9 +85,14 @@ export const PORTRAITS: Record<Character, string> = {
 }
 
 export const DIMENSIONS = {
-  square: { w: 1024, h: 1024, label: '1:1' },
-  portrait: { w: 832, h: 1216, label: '2:3' },
-  landscape: { w: 1216, h: 832, label: '3:2' },
+  square: { w: 1024, h: 1024, upscaleMaxEdge: null as number | null, label: '1:1 (1024)' },
+  portrait: { w: 832, h: 1216, upscaleMaxEdge: null as number | null, label: '2:3 Portrait' },
+  landscape: { w: 1216, h: 832, upscaleMaxEdge: null as number | null, label: '3:2 Paysage' },
+  cinema: { w: 1344, h: 768, upscaleMaxEdge: null as number | null, label: '16:9 Cinéma' },
+  panorama: { w: 1536, h: 640, upscaleMaxEdge: null as number | null, label: '21:9 Panorama' },
+  uhd_4k: { w: 1024, h: 1024, upscaleMaxEdge: 4096 as number | null, label: '4K Ultra-HD' },
+  master_8k: { w: 1024, h: 1024, upscaleMaxEdge: 8192 as number | null, label: '8K Master' },
+  landscape_8k: { w: 1216, h: 832, upscaleMaxEdge: 8192 as number | null, label: '8K Paysage' },
 } as const
 export type DimensionId = keyof typeof DIMENSIONS
 
@@ -443,10 +454,10 @@ export function useImageViewLogic() {
     })
   }, [])
 
-  // v83 : moteur d'edition reel. FLUX.1 Kontext dev (instruction editing,
-  // preserve identite/composition) si le UNET kontext est installe, sinon
-  // fallback img2img latent — approximatif et annonce comme tel dans l'UI.
-  const [editEngine, setEditEngine] = useState<'kontext' | 'img2img'>('img2img')
+  // Moteur d'édition et de référence : FLUX.2-dev intègre nativement ReferenceLatent
+  // + CFGGuider (fidélité identité/composition sans perte). Si un UNET Kontext dédié
+  // est en plus présent, il est également détecté.
+  const [editEngine, setEditEngine] = useState<'kontext' | 'img2img'>('kontext')
   const kontextRef = useRef<{ checked: boolean; model: string | null }>({ checked: false, model: null })
   const lastEngineRef = useRef<'dev' | 'kontext' | null>(null)
   const detectKontextModel = useCallback(async (): Promise<string | null> => {
@@ -458,11 +469,9 @@ export function useImageViewLogic() {
       const names = info?.UNETLoader?.input?.required?.unet_name?.[0]
       const model = resolveKontextModel(Array.isArray(names) ? names : [])
       kontextRef.current = { checked: true, model }
-      setEditEngine(model ? 'kontext' : 'img2img')
+      setEditEngine('kontext')
       return model
     } catch {
-      // ComfyUI pas encore joignable — on ne cache pas l'echec, on retentera
-      // au moment de la generation (apres ensureComfyUIRunning).
       return null
     }
   }, [])
@@ -569,16 +578,17 @@ export function useImageViewLogic() {
 
     const jobId = `image_${Date.now().toString(36)}`
     activeJobIdRef.current = jobId
+    const activeFlux2ModelLabel = `${IMAGE_PRIMARY_ENGINE} (${IMAGE_UNET_MODEL})`
     useAppStore.getState().addGenerationJob({
       id: jobId,
       module: 'image',
-      title: `Rendu Image FLUX (${styleForRun === 'none' ? 'auto' : styleForRun}) — « ${text.slice(0, 80)} »`,
+      title: `Rendu Image FLUX.2-dev (${styleForRun === 'none' ? 'auto' : styleForRun}) — « ${text.slice(0, 80)} »`,
       status: 'running',
       phase: 'prepare',
       progress: 5,
-      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation de la mission…',
+      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation FLUX.2-dev…',
       services: ['comfyui'],
-      model: mainModel || 'FLUX.1',
+      model: activeFlux2ModelLabel,
       createdAt: Date.now(),
       startedAt: Date.now(),
       finishedAt: null,
@@ -588,9 +598,9 @@ export function useImageViewLogic() {
     useAppStore.getState().setRuntimeTask({
       active: true,
       module: 'image',
-      title: `Image FLUX · « ${text.slice(0, 72)} »`,
+      title: `Image FLUX.2-dev · « ${text.slice(0, 72)} »`,
       phase: 'prepare',
-      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation de la mission…',
+      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation FLUX.2-dev…',
       progress: 5,
       startedAt: Date.now(),
       finishedAt: null,
@@ -604,8 +614,8 @@ export function useImageViewLogic() {
       {
         request_id: jobId,
         module: 'image',
-        title: `Image · ${text.slice(0, 110)}`,
-        model: mainModel || 'FLUX.1',
+        title: `Image FLUX.2 · ${text.slice(0, 110)}`,
+        model: IMAGE_MODEL_PACK_LABEL,
       },
       (waitMsg) => {
         if (!ac.signal.aborted) {
@@ -623,7 +633,7 @@ export function useImageViewLogic() {
       // Ne jamais bloquer le rendu local si l'API /api/projects est indisponible
     })
 
-    reportImageStep(1, 8, 'Analyse du prompt & vérification de ComfyUI…', 'Étape 1/5 démarrée : vérification du serveur ComfyUI')
+    reportImageStep(1, 8, 'Analyse du prompt & vérification de ComfyUI (FLUX.2-dev)…', 'Étape 1/5 démarrée : vérification du serveur ComfyUI FLUX.2-dev')
 
     try {
       const up = await ensureComfyUIRunning()
@@ -650,12 +660,12 @@ export function useImageViewLogic() {
 
       // Si une image de référence est présente (reproduction "fais-moi ce personnage"
       // ou modification/changement de style), on extrait ses caractéristiques visuelles
-      // réelles via Vision avant d'enrichir le prompt pour ne rien halluciner.
+      // réelles via Qwen3-VL 30B avant d'enrichir le prompt pour ne rien halluciner.
       let referenceVisionSummary = ''
       const refUrlForVision = refPreview || (current && (intent.isEditIntent || intent.editMode === 'replicate') ? current.url : null)
       if (refUrlForVision && !ac.signal.aborted) {
         try {
-          reportImageStep(1, 12, 'Analyse visuelle du personnage / sujet de référence…', 'Inspection Vision de l’image de référence pour fidélité maximale')
+          reportImageStep(1, 12, 'Analyse visuelle haute précision (Qwen3-VL 30B) du sujet de référence…', 'Inspection Qwen3-VL 30B de l’image de référence pour fidélité maximale')
           const refResp = await fetch(refUrlForVision, { signal: ac.signal })
           if (refResp.ok) {
             const refBlob = await refResp.blob()
@@ -665,7 +675,7 @@ export function useImageViewLogic() {
                 task: 'describe_reference',
                 userPrompt: `Exact visual appearance, character traits, outfit, colors, pose, and composition for: ${text}`,
                 language: 'fr',
-                preferQuality: false,
+                preferQuality: true,
                 signal: ac.signal,
               },
             )
@@ -681,7 +691,7 @@ export function useImageViewLogic() {
       reportImageStep(
         1,
         16,
-        'Développement IA du prompt (sujet, décor cohérent & lumière)…',
+        'Développement IA du prompt (Qwen3.8-27B · sujet, décor cohérent & lumière)…',
         'Enrichissement intelligent de la demande humaine (aucun fond laissé vide)',
       )
       const humanExpansion = await expandHumanImagePromptWithAI(cleanedText, {
@@ -722,7 +732,7 @@ export function useImageViewLogic() {
 
       if (!groundedReference && current && (intent.isEditIntent || refFilename2)) {
         try {
-          reportImageStep(2, 23, 'Préparation de l’image actuelle comme référence…', 'Étape 2/5 : chargement de l’image courante comme référence')
+          reportImageStep(2, 23, 'Préparation de l’image actuelle comme référence FLUX.2…', 'Étape 2/5 : chargement de l’image courante dans ReferenceLatent FLUX.2')
           const response = await fetch(current.url, { signal: ac.signal })
           if (response.ok) {
             const blob = await response.blob()
@@ -734,12 +744,9 @@ export function useImageViewLogic() {
         }
       }
 
-      // iter32 (quête 10/10): l'auto-référence web n'est déclenchée que pour
-      // un sujet SPÉCIFIQUE nommé (targetToResearch — personnage/objet à
-      // rendre fidèlement) ou un mode replicate explicite.
       if (!groundedReference && (intent.editMode === 'replicate' || (targetToResearch !== null && !intent.isEditIntent))) {
         try {
-          reportImageStep(2, 26, 'Recherche de référence visuelle vérifiée…', 'Étape 2/5 : recherche de référence visuelle pour le sujet nommé')
+          reportImageStep(2, 26, 'Recherche de référence visuelle vérifiée (Qwen3-VL 30B)…', 'Étape 2/5 : recherche de référence visuelle pour le sujet nommé')
           let foundBlob: Blob | null = null
           try {
             const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
@@ -754,7 +761,7 @@ export function useImageViewLogic() {
             const { findBestReferenceVisual } = await import('../services/referenceVisualResearch')
             const selection = await findBestReferenceVisual({
               prompt: cleanedText,
-              model: VISION_LIVE_MODEL,
+              model: VISION_HIGH_QUALITY_MODEL,
               queries: [cleanedText],
             })
             if (selection?.blob) foundBlob = selection.blob
@@ -771,13 +778,6 @@ export function useImageViewLogic() {
       const parsedSeed = seed.trim() ? Number(seed.trim()) : null
       const baseSeed = (parsedSeed !== null && !Number.isNaN(parsedSeed)) ? parsedSeed : null
 
-      // v88 : AUTO-INFORMATION. Pour un sujet SPÉCIFIQUE (personnage/objet nommé à
-      // ajouter, ou environnement/lieu nommé pour une scène), Aurora s'informe au
-      // lieu d'inventer : elle recherche une VRAIE référence (image vérifiée
-      // "bon sujet" par le modèle vision + description vision précise). L'image
-      // trouvée d'un sujet à AJOUTER devient la 2e référence Kontext (injection
-      // stitch) → fidélité réelle, fini le "Jax lapin violet générique". Tout
-      // ceci AVANT le swap mémoire FLUX (comme la traduction).
       let entityClause = ''
       let autoSecondReference: string | null = null
       if (targetToResearch) {
@@ -788,7 +788,7 @@ export function useImageViewLogic() {
               fetchReferenceImages: async (queries, profile) => {
                 const selections = await findMultipleReferenceVisuals({
                   prompt: profile.subjectLabel,
-                  model: VISION_LIVE_MODEL,
+                  model: VISION_HIGH_QUALITY_MODEL,
                   queries,
                   profile: profile as unknown as ReferenceSearchProfile,
                   maxResults: 3,
@@ -809,7 +809,7 @@ export function useImageViewLogic() {
               fetchReferenceImage: async (queries, profile) => {
                 const selection = (await findMultipleReferenceVisuals({
                   prompt: profile.subjectLabel,
-                  model: VISION_LIVE_MODEL,
+                  model: VISION_HIGH_QUALITY_MODEL,
                   queries,
                   profile: profile as unknown as ReferenceSearchProfile,
                   maxResults: 1,
@@ -827,7 +827,7 @@ export function useImageViewLogic() {
                 if (!ref.blob) return ''
                 const res = await analyzeImage(
                   { kind: 'blob', data: ref.blob },
-                  { task: 'describe_reference', userPrompt: `the exact visual appearance of ${t.searchLabel || t.subject}`, language: 'fr', preferQuality: false, signal },
+                  { task: 'describe_reference', userPrompt: `the exact visual appearance of ${t.searchLabel || t.subject}`, language: 'fr', preferQuality: true, signal },
                 )
                 return res?.description ?? ''
               },
@@ -837,10 +837,6 @@ export function useImageViewLogic() {
               onProgress: setProgress,
             })
             if (resolved.appearanceDescription) entityClause = buildAppearanceClause(target, resolved.appearanceDescription)
-            // NB: pas d'AUTO-stitch de l'image trouvée — un sujet isolé sur fond
-            // neutre fait "collapser" Kontext (il recrache la référence au lieu
-            // d'éditer la base). La description consensus précise suffit en
-            // mono-image et PRÉSERVE la scène. Le stitch reste pour le 2e slot manuel.
             void autoSecondReference
             if (resolved.advisory) setNotice(resolved.advisory)
           } catch {
@@ -849,31 +845,18 @@ export function useImageViewLogic() {
         }
       }
 
-      // v87 : injection multi-image — référence MANUELLE (2e slot) OU image
-      // AUTO-RECHERCHÉE du sujet à ajouter. Déclenche le stitch même sans verbe
-      // d'ajout explicite. Requiert une base + le moteur Kontext.
       const effectiveSecondReference = refFilename2 || autoSecondReference
       const injection = Boolean(effectiveSecondReference && groundedReference)
       const wantsKontextEdit = intent.isEditIntent || injection
 
-      // v83 : edition reelle. Si l'intention est un edit (ou une injection) ET
-      // qu'une reference existe ET que le UNET Kontext est installe → workflow
-      // Kontext (instruction editing, denoise 1.0 via ReferenceLatent). Sinon
-      // fallback img2img legacy avec son contrat de denoise.
       const kontextModel = (groundedReference && wantsKontextEdit)
         ? await detectKontextModel()
         : null
       const useKontext = Boolean(kontextModel && groundedReference && wantsKontextEdit)
 
-      // v83 : swap dev ↔ kontext = 2 UNET de 11-16 GB. Sans /free, ComfyUI
-      // garde l'ancien en cache RAM pendant le chargement du nouveau.
-      // v83+ : FLUX.1 Kontext n'obeit bien qu'en ANGLAIS. On traduit l'instruction
-      // d'edition FR->EN AVANT le swap memoire (donc avant que Kontext occupe la
-      // VRAM) — lexique deterministe pour les cas courants, LLM seulement si du
-      // francais subsiste. Sans ca, "ajoute un noeud papillon" etait ignore.
       let kontextEnglishCore: string | undefined
       if (useKontext) {
-        reportImageStep(2, 29, 'Traduction de la demande d’édition (moteur Kontext)…', 'Étape 2/5 : traduction de l’instruction pour FLUX.1 Kontext')
+        reportImageStep(2, 29, 'Traduction de la demande d’édition (moteur Kontext)…', 'Étape 2/5 : traduction de l’instruction pour Kontext')
         try {
           kontextEnglishCore = await translateEditInstructionToEnglish(text, {
             generate: (m, p) => ollamaGenerate(m, p, { signal: ac.signal }),
@@ -925,8 +908,8 @@ export function useImageViewLogic() {
       }
 
       const engine: 'dev' | 'kontext' = useKontext ? 'kontext' : 'dev'
-      reportImageStep(2, 34, 'Libération mémoire GPU avant diffusion FLUX…', 'Étape 2/5 terminée : bascule VRAM vers ComfyUI FLUX')
-      await freeGpuBeforeFlux(Array.from(new Set([mainModel].filter(Boolean))))
+      reportImageStep(2, 34, 'Libération mémoire GPU avant diffusion FLUX.2-dev…', 'Étape 2/5 terminée : bascule VRAM vers ComfyUI FLUX.2-dev')
+      await freeGpuBeforeFlux(Array.from(new Set([mainModel, VISION_HIGH_QUALITY_MODEL, VISION_LIVE_MODEL].filter(Boolean))))
       lastEngineRef.current = engine
 
       try {
@@ -942,13 +925,17 @@ export function useImageViewLogic() {
         const runSeed = baseSeed !== null
           ? (baseSeed + k * 10007) % 1_000_000_000_000_000
           : Math.floor(Math.random() * 900_000_000_000_000) + 100_000_000_000_000 + k * 10007
+        const dim = DIMENSIONS[dimensions] || DIMENSIONS.square
+        const autoUpscaleTarget = dim.upscaleMaxEdge
+          ?? ((effectiveStyle === 'macro_8k' || /\b(8k|16k|ultra[\s-]?hd|masterpiece\s+8k)\b/i.test(text)) ? 4096 : null)
         reportImageStep(
           3,
           36,
-          batch > 1 ? `Construction du workflow FLUX (${k + 1}/${batch})…` : 'Construction du workflow FLUX (28 pas)…',
-          `Étape 3/5 : lancement du graphe FLUX (seed ${runSeed})`,
+          batch > 1
+            ? `Construction du workflow FLUX.2-dev (${k + 1}/${batch})…`
+            : `Construction du workflow FLUX.2-dev (${autoUpscaleTarget ? `diffusion + RealESRGAN ${autoUpscaleTarget}px` : '34 pas + Mistral-3 Small'})…`,
+          `Étape 3/5 : lancement du graphe FLUX.2-dev (seed ${runSeed})`,
         )
-        const dim = DIMENSIONS[dimensions]
         let blob: Blob | null = null
         let comfyFilename: string | undefined
         if (useKontext && groundedReference && kontextModel && stagedReplacementPlan) {
@@ -1044,11 +1031,13 @@ export function useImageViewLogic() {
               style: effectiveStyle,
               width: dim.w,
               height: dim.h,
-              steps: 28,
+              steps: 34,
               filenamePrefix: `aurora_image_${Date.now()}_${k}`,
               referenceImage: groundedReference,
+              referenceImage2: effectiveSecondReference ? { filename: effectiveSecondReference } : null,
               seed: runSeed,
               editIntent: intent,
+              upscaleTargetMaxEdge: autoUpscaleTarget,
             })
 
         reportImageStep(
@@ -1056,7 +1045,7 @@ export function useImageViewLogic() {
           useKontext ? 82 : 38,
           useKontext
             ? (batch > 1 ? `Édition Kontext ${k + 1}/${batch} — envoi à ComfyUI…` : 'Édition Kontext (modification réelle sans hallucination)…')
-            : (batch > 1 ? `Diffusion FLUX ${k + 1}/${batch} — envoi à ComfyUI…` : 'Diffusion FLUX — envoi du workflow 28 pas à ComfyUI…'),
+            : (batch > 1 ? `Diffusion FLUX.2-dev ${k + 1}/${batch} — envoi à ComfyUI…` : 'Diffusion FLUX.2-dev — envoi du workflow à ComfyUI…'),
         )
         const queueResponse = await comfyuiQueuePrompt(workflow)
         const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
@@ -1074,16 +1063,16 @@ export function useImageViewLogic() {
         reportImageStep(
           useKontext ? 4 : 3,
           useKontext ? 85 : 42,
-          batch > 1 ? `Diffusion FLUX (${k + 1}/${batch}) — calcul des 28 pas…` : 'Diffusion FLUX en cours (28 pas neuronaux)…',
-          `Exécution ComfyUI #${promptId.slice(0, 8)} en cours`,
+          batch > 1 ? `Diffusion FLUX.2-dev (${k + 1}/${batch}) — calcul en cours…` : 'Diffusion FLUX.2-dev en cours (Mistral-3 Small + VAE FLUX.2)…',
+          `Exécution ComfyUI FLUX.2-dev #${promptId.slice(0, 8)} en cours`,
         )
         const filenames = await waitForComfyOutput(promptId, ac.signal)
 
         reportImageStep(
           5,
           93,
-          batch > 1 ? `Décodage VAE & récupération de l'image ${k + 1}/${batch}…` : 'Décodage VAE & contrôle qualité anti-écran-noir…',
-          'Étape 5/5 : récupération du PNG et vérification d’intégrité',
+          batch > 1 ? `Décodage VAE FLUX.2 & récupération de l'image ${k + 1}/${batch}…` : 'Décodage VAE FLUX.2 & contrôle qualité anti-écran-noir…',
+          'Étape 5/5 : récupération du PNG haute fidélité et vérification d’intégrité',
         )
         const first = filenames[0]
         blob = await comfyuiGetImage(first.filename, first.subfolder)

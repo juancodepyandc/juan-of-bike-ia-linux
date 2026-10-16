@@ -746,6 +746,12 @@ export function buildContextualSceneCompletion(
   if (referenceVisionSummary && referenceVisionSummary.trim().length > 12) {
     return `faithful continuity with the reference visual (${referenceVisionSummary.trim()}), cohesive surrounding environment with rich depth, natural lighting falloff, and zero empty or neglected background areas`
   }
+  if (/\b(paysage|landscape|montagne|mountain|alpes|fjord|falaise|cliff|ocean|mer|sea|plage|beach|foret|forest|jungle|canyon|vallee|valley|lac|lake|cascade|waterfall|volcan|glacier|desert|savane)\b/.test(norm)) {
+    return 'expansive medium-format photorealistic vista with crisp foreground geological and botanical micro-textures, layered midground relief, authentic atmospheric Rayleigh scattering, volumetric sunlight, and razor-sharp horizon definition'
+  }
+  if (/\b(scene|architecture|ville|city|village|ruelle|street|chateau|castle|temple|cathedrale|palais|interieur|interior|salon|atelier|bibliotheque|museum|musee)\b/.test(norm)) {
+    return 'rectilinear architectural composition with true-to-life PBR materials (weathered stone, natural wood grain, brushed metal, realistic glass reflections), physically accurate global illumination, and rich foreground-to-background spatial depth'
+  }
   if (/\b(samourai|katana|ninja|ronin|japon|edo|kyoto|shinobi|kimono)\b/.test(norm)) {
     return 'set within a richly detailed feudal Japanese environment with atmospheric mist, textured timber and stone architecture, depth-layered foliage, and directional cinematic light'
   }
@@ -825,8 +831,8 @@ export async function expandHumanImagePromptWithAI(
       let modeDirective = ''
       if (effectiveMode === 'replicate') {
         modeDirective =
-          `MODE REPRODUCTION FIDÈLE : L'humain demande de reproduire le sujet/personnage de référence ("${trimmed}"). ` +
-          `Décris avec précision tous les traits distinctifs du sujet observé dans l'analyse de référence (morphologie, visage, coiffure, tenue, couleurs, accessoires, posture) ET construis un environnement cohérent et travaillé autour de lui pour que l'image entière soit magnifique, sans fond vide ni éléments hors-sujet.`
+          `MODE REPRODUCTION FIDÈLE : L'humain demande de reproduire le sujet/personnage/scène de référence ("${trimmed}"). ` +
+          `Décris avec précision tous les traits distinctifs observés dans l'analyse de référence (morphologie, visage, coiffure, tenue, architecture, couleurs, accessoires, posture) ET construis un environnement cohérent et travaillé autour pour que l'image entière soit magnifique, sans fond vide ni éléments hors-sujet.`
       } else if (effectiveMode === 'style_transfer' || effectiveMode === 'edit') {
         modeDirective =
           `MODE MODIFICATION / CHANGEMENT DE STYLE SANS HALLUCINATION : L'humain veut modifier ou changer le style ("${trimmed}") tout en gardant exactement le sujet et la composition de base. ` +
@@ -834,19 +840,20 @@ export async function expandHumanImagePromptWithAI(
       } else {
         modeDirective =
           `MODE CRÉATION DÉVELOPPÉE PAR L'IA : L'humain a formulé une demande naturelle ("${trimmed}"). ` +
-          `S'il a donné des détails précis, conserve-les à 100 %. Là où la demande est courte ou implicite, développe-la comme un directeur artistique d'élite : précise l'attitude et les textures du sujet principal, construis un VRAI décor complet et cohérent (premier plan, second plan, arrière-plan riche — ne laisse JAMAIS un fond vide, flou générique ou moche), et définis une lumière directionnelle naturelle adaptée au style (${styleLabel}).`
+          `S'il a donné des détails précis, conserve-les à 100 %. Là où la demande est courte ou implicite, développe-la comme un directeur artistique d'élite : que ce soit un paysage réaliste, une scène architecturale, un objet ou un personnage, précise les matériaux physiques, construis un VRAI décor complet et cohérent du premier plan jusqu'à l'horizon (ne laisse JAMAIS un fond vide, flou générique ou moche), et définis une optique et une lumière directionnelle naturelle adaptées au style (${styleLabel}).`
       }
 
       const llmPrompt = [
-        'Tu es le Directeur Artistique Principal d\'AuroraIA pour le moteur FLUX.1.',
+        'Tu es le Directeur Artistique Principal d\'AuroraIA pour le moteur maître FLUX.2-dev (couplé à l\'encodeur Mistral-3 Small FP8 et RealESRGAN 8K).',
         modeDirective,
         refBlock,
         convBlock,
         'RÈGLES ABSOLUES :',
-        '1. Ne mets AUCUNE liste de mots-clés robotiques ("8k, masterpiece, best quality, trending..."). Rédige une description visuelle fluide, concrète et naturelle en anglais (3 à 5 phrases denses) directement exploitable par FLUX.1.',
+        '1. Ne mets AUCUNE liste de mots-clés robotiques ("8k, masterpiece, best quality, trending..."). Rédige une description visuelle fluide, concrète et naturelle en anglais (3 à 6 phrases denses) directement exploitable par l\'encodeur Mistral-3 de FLUX.2-dev.',
         '2. Respecte 100 % de l\'intention humaine sans jamais halluciner de nouveaux sujets hors-propos.',
-        '3. Assure-toi que l\'arrière-plan et l\'environnement autour du sujet sont pleinement décrits, cohérents et esthétiques (jamais de vide ni de décor négligé).',
-        '4. Réponds UNIQUEMENT avec le prompt visuel final, sans guillemets, sans préambule et sans explication.',
+        '3. Adapte l\'optique au sujet : pour un paysage ou une scène, utilise une optique grand-angle ou moyen-format hyperfocale nette du premier plan à l\'infini ; pour un portrait, une optique dédiée avec micro-texture cutanée naturelle.',
+        '4. Assure-toi que l\'arrière-plan et l\'environnement sont pleinement décrits, cohérents et esthétiques (jamais de vide ni de décor négligé).',
+        '5. Réponds UNIQUEMENT avec le prompt visuel final, sans guillemets, sans préambule et sans explication.',
         `DEMANDE DE L'UTILISATEUR : ${trimmed}`,
       ].filter(Boolean).join('\n')
 

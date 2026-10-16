@@ -11,7 +11,7 @@
 
 import { runWorkspaceCommand, getWorkspacePath, ollamaGenerate } from '../../hooks/useTauri.ts'
 import { runEphemeralToolSandbox, type EphemeralToolResponse } from '../ephemeralToolRunner.ts'
-import { resolveConfiguredModel, AUXILIARY_ANALYSIS_MODEL } from '../../config/models.ts'
+import { selectCyberModel } from '../../config/models.ts'
 import { useAppStore } from '../../stores/appStore.ts'
 
 export interface LearnedToolEntry {
@@ -148,8 +148,8 @@ export async function executeAutonomousToolWithSelfHealing(options: {
   const timeoutSeconds = options.timeoutPerAttemptSeconds || 90
   const history: ToolExecutionAttempt[] = []
 
-  const { mainModel } = useAppStore.getState()
-  const model = options.modelOverride || resolveConfiguredModel(mainModel, AUXILIARY_ANALYSIS_MODEL)
+  const { mainModel, installedModels } = useAppStore.getState()
+  const model = options.modelOverride || selectCyberModel(installedModels, mainModel)
 
   let currentPackages = options.suggestedPackages || []
   let currentScript = options.initialScript || ''
@@ -275,8 +275,8 @@ export async function generateSecurityAssessmentReport(options: {
   auditLogs: string
   modelOverride?: string
 }): Promise<SecurityAssessmentReport> {
-  const { mainModel } = useAppStore.getState()
-  const model = options.modelOverride || resolveConfiguredModel(mainModel, AUXILIARY_ANALYSIS_MODEL)
+  const { mainModel, installedModels } = useAppStore.getState()
+  const model = options.modelOverride || selectCyberModel(installedModels, mainModel)
 
   const prompt = `Tu es l'évaluateur de sécurité d'Aurora IA.
 Analyse les résultats d'audit suivants pour la cible "${options.target}" et produis une évaluation structurée au format JSON strict.

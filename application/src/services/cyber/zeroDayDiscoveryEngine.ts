@@ -10,7 +10,7 @@
  */
 
 import { ollamaGenerate } from '../../hooks/useTauri.ts'
-import { resolveConfiguredModel, AUXILIARY_ANALYSIS_MODEL } from '../../config/models.ts'
+import { selectCyberModel } from '../../config/models.ts'
 import { useAppStore } from '../../stores/appStore.ts'
 
 export type InvariantType =
@@ -52,8 +52,8 @@ export async function discoverNovelVulnerabilities(options: {
   architectureOrCode: string
   modelOverride?: string
 }): Promise<ZeroDayDiscoveryReport> {
-  const { mainModel } = useAppStore.getState()
-  const model = options.modelOverride || resolveConfiguredModel(mainModel, AUXILIARY_ANALYSIS_MODEL)
+  const { mainModel, installedModels } = useAppStore.getState()
+  const model = options.modelOverride || selectCyberModel(installedModels, mainModel)
 
   const prompt = `Tu es l'analyste principal en recherche de vulnérabilités inédites (0-Day Research) d'Aurora IA.
 Objectif : Examiner la cible suivante selon les premiers principes de sécurité et identifier les failles 0-day potentielles.

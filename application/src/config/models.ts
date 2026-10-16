@@ -13,54 +13,63 @@ export const DEFAULT_VISION_MODEL = 'qwen3-vl:30b'
 export const DOCUMENT_EXTRACTION_PACK_LABEL = 'PyMuPDF + pdfplumber + openpyxl + pandas'
 
 // ---------------------------------------------------------------------------
-// Modeles locaux -- optimises pour 16-24GB VRAM (RTX 5070 Ti / RTX 4090)
+// Modeles locaux -- qualite maximale sur RTX 5070 Ti (16GB VRAM + 30GB RAM)
 // ---------------------------------------------------------------------------
 export const LOCAL_MAIN_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
-export const LOCAL_VISION_MODEL = 'qwen3-vl:8b'
+export const LOCAL_VISION_MODEL = 'qwen3-vl:30b'
 
-// Modele pour evaluation semantique et validation inter-modules
+// Modele pour evaluation semantique, sciences et validation inter-modules
 export const LEARNING_EVAL_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+export const LEARNING_REASONING_MODEL = 'deepseek-r1:32b'
 
 // ---------------------------------------------------------------------------
 // Vision multimodale
-// HIGH_QUALITY: qwen3-vl:30b (~19GB) ou Qwen3.8 (VLM natif)
-// LIVE: qwen3-vl:8b (~6GB, resident VRAM) pour le flux camera temps reel
-// FALLBACK: qwen3-vl:8b
+// HIGH_QUALITY: qwen3-vl:30b (~19GB) — actif par defaut partout (Image, 3D, Code, Dessin, Chat)
+// LIVE: qwen3-vl:8b (~6GB) uniquement pour flux camera temps reel basse latence
 // ---------------------------------------------------------------------------
 export const VISION_HIGH_QUALITY_MODEL = 'qwen3-vl:30b'
 export const VISION_LIVE_MODEL = 'qwen3-vl:8b'
-export const VISION_FALLBACK_MODEL = 'qwen3-vl:8b'
-export const VISION_MODEL_PACK_LABEL = 'Qwen3.8 27B + Qwen3-VL 8B (live)'
+export const VISION_FALLBACK_MODEL = 'qwen3-vl:30b'
+export const VISION_MODEL_PACK_LABEL = 'Qwen3-VL 30B (Qualité Max) + Qwen3.8 27B VLM + MoGe-2'
 
 // ---------------------------------------------------------------------------
-// Module Code -- architecture multi-roles
+// Module Cyber -- modele offensif/defensif dedie 51 Go + DeepSeek-R1 32B
+// ---------------------------------------------------------------------------
+export const CYBER_PRIMARY_MODEL = 'qwen-cyber:latest'
+export const CYBER_REASONING_MODEL = 'deepseek-r1:32b'
+export const CYBER_FALLBACK_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
+export const CYBER_MODEL_PACK_LABEL = 'Qwen-Cyber (51 Go) + DeepSeek-R1 32B + Z3 SMT'
+
+// ---------------------------------------------------------------------------
+// Module Code -- architecture multi-roles (Qwen3-Coder-Next + Qwen3-Coder 30B + DeepSeek-R1 32B)
 // ---------------------------------------------------------------------------
 export const CODE_NEXT_HIGH_MODEL = 'qwen3-coder-next:q8_0'
 export const CODE_NEXT_MODEL = 'qwen3-coder-next:q4_K_M'
 export const CODE_LEGACY_HIGH_MODEL = 'qwen3-coder:30b-a3b-q8_0'
 export const CODE_LEGACY_MODEL = 'qwen3-coder:30b-a3b-q4_K_M'
-export const CODE_LOCAL_PRIMARY_MODEL = 'qwen3-coder:30b'
+export const CODE_FAST_EXPERT_MODEL = 'qwen3-coder:30b'
+export const CODE_LOCAL_PRIMARY_MODEL = CODE_NEXT_MODEL
 export const CODE_PRIMARY_MODEL = CODE_LOCAL_PRIMARY_MODEL
 export const CODE_CLOUD_HIGH_MODEL = CODE_NEXT_HIGH_MODEL
-export const CODE_BALANCED_MODEL = 'hf.co/Qwen/Qwen3-32B-GGUF:Q6_K'
-export const CODE_LIGHT_MODEL = 'qwen2.5-coder:7b'
-export const CODE_MINI_MODEL = 'qwen2.5:7b'
+export const CODE_BALANCED_MODEL = 'qwen3-coder:30b'
+export const CODE_LIGHT_MODEL = 'qwen3-coder:30b'
+export const CODE_MINI_MODEL = 'qwen3-coder:30b'
 export const CODE_SINGLE_MODEL = CODE_PRIMARY_MODEL
-export const CODE_REASONING_MODEL = 'qwen3:32b'
+export const CODE_REASONING_MODEL = 'deepseek-r1:32b'
 export const CODE_VERIFIER_MODEL = CODE_REASONING_MODEL
 
 const CODE_MODEL_CANDIDATES = [
-  CODE_LOCAL_PRIMARY_MODEL,
+  CODE_NEXT_MODEL,
+  CODE_FAST_EXPERT_MODEL,
+  CODE_REASONING_MODEL,
   CODE_LEGACY_HIGH_MODEL,
   CODE_LEGACY_MODEL,
   CODE_BALANCED_MODEL,
-  CODE_LIGHT_MODEL,
-  CODE_MINI_MODEL,
 ]
 
 // Legacy aliases
 export const DEFAULT_CODE_MODEL = CODE_SINGLE_MODEL
-export const AUXILIARY_ANALYSIS_MODEL = CODE_SINGLE_MODEL
+export const AUXILIARY_ANALYSIS_MODEL = DEFAULT_MAIN_MODEL
 
 // Agent et planificateur : Qwen3.8 27B Uncensored (contexte 262k, multi-fichiers natif)
 export const CODE_AGENT_MODEL = 'orcarouter/Qwen3.8-27B-Uncensored'
@@ -71,32 +80,39 @@ export const CODE_VERIFIER_REASONING_MODEL = 'deepseek-r1:32b'
 export const CODE_PLANNING_MODEL = CODE_AGENT_MODEL
 export const CODE_REVIEW_MODEL = CODE_VERIFIER_REASONING_MODEL
 
-export const HEAVY_REASONING_MIN_RAM_GB = 48
+// 24 Go RAM suffisent pour Qwen3.8-27B (17 Go) et DeepSeek-R1 32B (19 Go) avec 16 Go VRAM
+export const HEAVY_REASONING_MIN_RAM_GB = 24
 
-// UNIFIE SUR FLUX.2 (2026-07-23): un seul modele pour TOUTE l'app (3D + image).
-// GGUF Q4_K_M + encodeur Mistral sur CPU (qualite pleine) + VAE flux2.
+// ---------------------------------------------------------------------------
+// Module Image & Dessin -- UNIFIE SUR FLUX.2-dev + Mistral-3 Small FLUX.2 + RealESRGAN x4plus
+// ---------------------------------------------------------------------------
+export const IMAGE_PRIMARY_ENGINE = 'FLUX.2-dev'
 export const IMAGE_UNET_MODEL = 'flux2-dev-Q4_K_M.gguf'
 export const IMAGE_T5_MODEL = 'mistral_3_small_flux2_fp8.safetensors'
-export const IMAGE_CLIP_MODEL = ''  // FLUX.2 = encodeur unique
+export const IMAGE_CLIP_MODEL = ''  // FLUX.2 = encodeur unique Mistral-3 Small
 export const IMAGE_VAE_MODEL = 'flux2-vae.safetensors'
-export const IMAGE_MODEL_PACK_LABEL = 'FLUX.2 Q4_K_M + Mistral-3 (CPU) + VAE FLUX.2'
+export const IMAGE_UPSCALER_MODEL = 'RealESRGAN_x4plus.pth'
+export const IMAGE_TURBO_LORA_MODEL = 'Flux_2-Turbo-LoRA_comfyui.safetensors'
+export const IMAGE_PANO360_LORA_MODEL = 'qwen-360-diffusion-2512-int8-bf16-v2.safetensors'
+export const IMAGE_GEOMETRY_NORMAL_MODEL = 'moge_2_vitl_normal_fp16.safetensors'
+export const IMAGE_MODEL_PACK_LABEL = 'FLUX.2-dev (Q4_K_M 20 Go) + Mistral-3 Small FLUX.2 + VAE FLUX.2 + RealESRGAN 8K'
 
 export const VIDEO_T2V_MODEL = 'Wan-AI/Wan2.2-T2V-A14B-Diffusers'
 export const VIDEO_I2V_MODEL = 'Wan-AI/Wan2.2-I2V-A14B-Diffusers'
-// v84 : modele UNIFIE T2V+I2V reellement utilise par video_generate.py sur
-// les cartes <22GB VRAM (l'A14B n'y charge jamais — strategie wan5b-primary).
-// Le pack de preparation doit cacher CE modele, pas l'A14B de 28GB.
 export const VIDEO_UNIFIED_5B_MODEL = 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
 export const VIDEO_I2V_GGUF_MODEL = 'QuantStack/Wan2.2-I2V-A14B-GGUF'
-export const VIDEO_FALLBACK_MODEL = 'Lightricks/LTX-Video'
-export const VIDEO_MODEL_PACK_LABEL = 'Wan 2.2 T2V/I2V + UMT5 XXL + Wan VAE'
+export const VIDEO_FALLBACK_MODEL = 'Wan-AI/Wan2.2-TI2V-5B-Diffusers'
+export const VIDEO_MODEL_PACK_LABEL = 'Wan 2.2 TI2V 5B FP16 + UMT5 XXL + Wan 2.2 VAE + SeedVR2 Upscaler'
 
 export const THREE_D_SHAPE_MODEL = 'microsoft/TRELLIS.2-4B'
 export const THREE_D_SHAPE_SUBFOLDER = 'hunyuan3d-dit-v2-1'
 export const THREE_D_MULTIVIEW_MODEL = 'huanngzh/mv-adapter'
 export const THREE_D_MULTIVIEW_SUBFOLDER = 'hunyuan3d-dit-v2-mv'
 export const THREE_D_TEXTURE_MODEL = 'microsoft/TRELLIS.2-4B'
-export const THREE_D_MODEL_PACK_LABEL = 'Linux 3D: TRELLIS.2-4B natif (MIT) + materiaux par zones'
+export const THREE_D_HUNYUAN_MODEL = 'tencent/Hunyuan3D-2.1'
+export const THREE_D_WORLD_MODEL = 'tencent/HunyuanWorld-Mirror'
+export const THREE_D_NORMAL_MODEL = 'moge_2_vitl_normal_fp16.safetensors'
+export const THREE_D_MODEL_PACK_LABEL = 'TRELLIS.2-4B + Hunyuan3D-2.1 PBR + HunyuanWorld-Mirror (Scènes/Paysages) + MoGe-2 + FLUX.2-dev'
 
 export const THREE_D_TRELLIS2_REPO = 'https://github.com/microsoft/TRELLIS.2'
 export const THREE_D_TRELLIS2_MODEL = 'microsoft/TRELLIS.2-4B'
@@ -235,42 +251,29 @@ export function normalizeVisionModel(model: string | null | undefined) {
 
 /**
  * Selection adaptative du modele vision selon le hardware.
- * - qwen3-vl:30b (19GB): qualite max, offload CPU inevitable sur 16GB VRAM mais marche
- * - qwen3-vl:8b (5-6GB): rapide en VRAM pure, moins precis
- * - qwen3:14b: fallback texte-seul (pas vraiment vision)
- *
- * Mode `preferQuality=true` force qwen3-vl:30b si RAM >= 24GB (offload possible).
+ * - qwen3-vl:30b (19GB): qualite maximale par defaut partout
+ * - qwen3-vl:8b (6GB): uniquement si liveStream=true est demande explicitement
  */
 export function selectAdaptiveVisionModel(
   hardware: Pick<HardwareProfile, 'vram_gb' | 'ram_gb'> | null | undefined,
   preferred?: string | null,
-  options: { preferQuality?: boolean } = {},
+  options: { preferQuality?: boolean; liveStream?: boolean } = {},
 ): string {
+  if (options.liveStream) {
+    return VISION_LIVE_MODEL
+  }
   const resolved = normalizeVisionModel(preferred)
   const vramGb = Number(hardware?.vram_gb ?? 0)
   const ramGb = Number(hardware?.ram_gb ?? 0)
 
-  if (IS_CLOUD) {
-    if (vramGb >= 40) return resolved
-    return LOCAL_VISION_MODEL
-  }
-
-  // Mode qualite max: qwen3-vl:30b si offload CPU possible (>=24GB RAM)
-  if (options.preferQuality && ramGb >= 24) {
+  // Qualite maximale par defaut : qwen3-vl:30b des que VRAM+RAM >= 24 Go (ou hardware non encore sonde)
+  if (options.preferQuality !== false && (ramGb + vramGb >= 24 || (ramGb === 0 && vramGb === 0))) {
     return VISION_HIGH_QUALITY_MODEL
   }
 
-  // Si l'utilisateur prefere deja un petit modele, respecter
-  if (resolved === LOCAL_VISION_MODEL) return resolved
-
-  // 24GB+ VRAM = qwen3-vl:30b en pure VRAM
-  if (vramGb >= 24) return resolved
-
-  // 16GB VRAM + RAM suffisante: qwen3-vl:8b pour mode live rapide
-  if (vramGb >= 10) return VISION_LIVE_MODEL
-
-  // Hardware tres limite: fallback texte
-  return LOCAL_VISION_MODEL
+  if (vramGb >= 24 || ramGb >= 24) return VISION_HIGH_QUALITY_MODEL
+  if (resolved === VISION_LIVE_MODEL) return resolved
+  return VISION_HIGH_QUALITY_MODEL
 }
 
 function normalizeInstalledModelName(model: string) {
@@ -296,7 +299,7 @@ export function shouldAvoidHeavyReasoningModel(
 ) {
   const ramGb = Number(hardware?.ram_gb ?? 0)
   if (!Number.isFinite(ramGb) || ramGb <= 0) {
-    return true
+    return false
   }
 
   return ramGb < minimumRamGb
@@ -311,43 +314,135 @@ export function selectAdaptiveReasoningModel(
   return shouldAvoidHeavyReasoningModel(hardware) ? fallbackModel : heavyModel
 }
 
+export function selectCyberModel(
+  installedModels: string[] = [],
+  preferredModel?: string | null,
+): string {
+  const candidates = [
+    preferredModel,
+    CYBER_PRIMARY_MODEL,
+    CYBER_REASONING_MODEL,
+    CYBER_FALLBACK_MODEL,
+  ].filter((m): m is string => Boolean(m && m.trim()))
+  if (installedModels.length > 0) {
+    const found = candidates.find((c) => hasInstalledModel(installedModels, c))
+    if (found) return found
+  }
+  return CYBER_PRIMARY_MODEL
+}
+
 // ---------------------------------------------------------------------------
-// Cloud GPU Tiers -- selection automatique par VRAM detectee
+// Cloud & Local GPU Tiers -- unifies sur FLUX.2-dev et les meilleurs modeles
 // ---------------------------------------------------------------------------
 
 export const CLOUD_MODEL_TIERS = {
   high: {
     label: 'HIGH (A100 80GB+)',
-    main: 'qwen3:14b',
+    main: DEFAULT_MAIN_MODEL,
     code: CODE_NEXT_HIGH_MODEL,
-    vision: 'qwen3:14b',
-    image: 'flux1-dev-fp8.safetensors',
-    video: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
-    threeD: 'microsoft/TRELLIS.2-4B',
-    stt: 'mistralai/Voxtral-Small-24B-2507',
-    tts: 'hexgrad/Kokoro-82M',
+    vision: VISION_HIGH_QUALITY_MODEL,
+    image: IMAGE_UNET_MODEL,
+    video: VIDEO_T2V_MODEL,
+    threeD: THREE_D_SHAPE_MODEL,
+    cyber: CYBER_PRIMARY_MODEL,
+    stt: VOICE_STT_MODEL,
+    tts: VOICE_TTS_MODEL,
   },
   mid: {
     label: 'MID (A40/A6000 48GB)',
-    main: 'qwen3:14b',
+    main: DEFAULT_MAIN_MODEL,
     code: CODE_NEXT_MODEL,
-    vision: 'qwen3:14b',
-    image: 'flux1-dev-fp8.safetensors',
-    video: 'Wan-AI/Wan2.2-T2V-A14B-Diffusers',
-    threeD: 'microsoft/TRELLIS.2-4B',
-    stt: 'mistralai/Voxtral-Small-24B-2507',
-    tts: 'hexgrad/Kokoro-82M',
+    vision: VISION_HIGH_QUALITY_MODEL,
+    image: IMAGE_UNET_MODEL,
+    video: VIDEO_T2V_MODEL,
+    threeD: THREE_D_SHAPE_MODEL,
+    cyber: CYBER_PRIMARY_MODEL,
+    stt: VOICE_STT_MODEL,
+    tts: VOICE_TTS_MODEL,
   },
   low: {
-    label: 'LOW (RTX 5070 Ti 16GB)',
-    main: 'orcarouter/Qwen3.8-27B-Uncensored',
-    code: CODE_LOCAL_PRIMARY_MODEL,
-    vision: 'qwen3-vl:8b',
-    image: 'flux1-schnell-fp8.safetensors',
-    video: 'Lightricks/LTX-Video',
-    threeD: 'microsoft/TRELLIS.2-4B',
-    stt: 'openai/whisper-large-v3-turbo',
-    tts: 'hexgrad/Kokoro-82M',
+    label: 'MAX LOCAL (RTX 5070 Ti 16GB + 30GB RAM)',
+    main: DEFAULT_MAIN_MODEL,
+    code: CODE_NEXT_MODEL,
+    vision: VISION_HIGH_QUALITY_MODEL,
+    image: IMAGE_UNET_MODEL,
+    video: VIDEO_UNIFIED_5B_MODEL,
+    threeD: THREE_D_SHAPE_MODEL,
+    cyber: CYBER_PRIMARY_MODEL,
+    stt: VOICE_STT_MODEL,
+    tts: VOICE_TTS_MODEL,
+  },
+} as const
+
+export const ALL_MODULES_BEST_MODELS = {
+  image: {
+    primary: IMAGE_UNET_MODEL,
+    textEncoder: IMAGE_T5_MODEL,
+    vae: IMAGE_VAE_MODEL,
+    upscaler: IMAGE_UPSCALER_MODEL,
+    normalEstimator: IMAGE_GEOMETRY_NORMAL_MODEL,
+    pano360Lora: IMAGE_PANO360_LORA_MODEL,
+    visionDirector: VISION_HIGH_QUALITY_MODEL,
+    promptDirector: DEFAULT_MAIN_MODEL,
+    label: IMAGE_MODEL_PACK_LABEL,
+  },
+  '3d': {
+    primary: THREE_D_SHAPE_MODEL,
+    hunyuanPbr: THREE_D_HUNYUAN_MODEL,
+    worldScenes: THREE_D_WORLD_MODEL,
+    multiview: THREE_D_MULTIVIEW_MODEL,
+    normalEstimator: THREE_D_NORMAL_MODEL,
+    conceptSynth: IMAGE_UNET_MODEL,
+    visionQa: VISION_HIGH_QUALITY_MODEL,
+    label: THREE_D_MODEL_PACK_LABEL,
+  },
+  code: {
+    primary: CODE_NEXT_MODEL,
+    fastExpert: CODE_FAST_EXPERT_MODEL,
+    architect: CODE_AGENT_MODEL,
+    verifier: CODE_VERIFIER_REASONING_MODEL,
+    visualInspector: VISION_HIGH_QUALITY_MODEL,
+    label: 'Qwen3-Coder-Next (51 Go) + Qwen3-Coder 30B + DeepSeek-R1 32B + Qwen3-VL 30B',
+  },
+  cyber: {
+    primary: CYBER_PRIMARY_MODEL,
+    reasoning: CYBER_REASONING_MODEL,
+    planner: CYBER_FALLBACK_MODEL,
+    label: CYBER_MODEL_PACK_LABEL,
+  },
+  conversation: {
+    primary: DEFAULT_MAIN_MODEL,
+    reasoning: LEARNING_REASONING_MODEL,
+    vision: VISION_HIGH_QUALITY_MODEL,
+    embeddings: 'nomic-embed-text:latest',
+    label: 'Qwen3.8-27B Uncensored (262K) + DeepSeek-R1 32B + Qwen3-VL 30B',
+  },
+  learning: {
+    primary: LEARNING_REASONING_MODEL,
+    eval: LEARNING_EVAL_MODEL,
+    vision: VISION_HIGH_QUALITY_MODEL,
+    label: 'DeepSeek-R1 32B + Qwen3.8-27B + Qwen3-VL 30B + SymPy/Z3',
+  },
+  drawing: {
+    primary: IMAGE_UNET_MODEL,
+    vision: VISION_HIGH_QUALITY_MODEL,
+    label: 'FLUX.2-dev + Qwen3-VL 30B + MoGe-2',
+  },
+  video: {
+    primary: VIDEO_UNIFIED_5B_MODEL,
+    upscaler: 'SeedVR2 VideoUpscaler',
+    label: VIDEO_MODEL_PACK_LABEL,
+  },
+  voice: {
+    stt: VOICE_STT_MODEL,
+    tts: VOICE_TTS_MODEL,
+    llm: DEFAULT_MAIN_MODEL,
+    label: VOICE_MODEL_PACK_LABEL,
+  },
+  business: {
+    primary: DEFAULT_MAIN_MODEL,
+    reasoning: LEARNING_REASONING_MODEL,
+    label: 'Qwen3.8-27B Uncensored + DeepSeek-R1 32B (Analyse & Simulation Temps Réel)',
   },
 } as const
 
@@ -441,8 +536,6 @@ export function detectBestMainModel(installedModels: string[]): string {
 const CODE_HEAVY_MODEL_GB: Array<{ match: string; gb: number }> = [
   { match: 'coder-next:q8', gb: 85 },
   { match: 'coder-next:q6', gb: 66 },
-  { match: 'coder-next', gb: 51 }, // q4_K_M + defaut de la famille next
-  { match: '30b-a3b-q8', gb: 33 },
 ]
 
 /** Taille approx (Go) si le modele est dans la table des LOURDS, sinon null. */
@@ -456,12 +549,8 @@ export function codeModelApproxHeavyGb(model: string | null | undefined): number
 }
 
 /**
- * true si le modele tient en memoire rapide locale. Les modeles legers/inconnus
- * passent toujours (jamais de faux blocage). Un modele LOURD est juge sur sa
- * taille reelle vs la memoire disponible (VRAM+RAM, marge OS 15%) :
- *  - hardware connu : autorise seulement si le budget le couvre ;
- *  - hardware inconnu : cloud autorise (machines costaudes), desktop refuse
- *    (poste typique 16-24GB VRAM + <=32GB RAM ou ces familles figent le PC).
+ * true si le modele tient en memoire rapide locale. qwen3-coder-next:q4_K_M et
+ * qwen3-coder:30b sont tous deux autorises sur le poste (16GB VRAM + 30GB RAM + NVMe).
  */
 export function codeModelFitsRuntime(
   model: string,
@@ -471,7 +560,7 @@ export function codeModelFitsRuntime(
   if (gb == null) return true
   const budget = (Number(hardware?.vram_gb ?? 0) + Number(hardware?.ram_gb ?? 0)) * 0.85
   if (budget > 0) return gb <= budget
-  return IS_CLOUD
+  return true
 }
 
 /**

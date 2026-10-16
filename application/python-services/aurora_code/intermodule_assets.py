@@ -119,10 +119,10 @@ def optimize_image(data: bytes, root: pathlib.Path, out_dir: pathlib.Path, name:
 
 
 def build_flux_workflow(prompt: str, seed: int, width: int = 1280, height: int = 768) -> dict[str, Any]:
-    """Workflow FLUX.2 valide par l'installation ComfyUI Aurora."""
+    """Workflow FLUX.2-dev (flux2-dev-Q4_K_M.gguf + Mistral-3 Small FP8) valide par l'installation ComfyUI Aurora."""
     return {
-        "11": {"class_type": "CLIPLoader", "inputs": {"clip_name": "mistral_3_small_flux2_fp8.safetensors", "type": "flux2"}},
-        "12": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux2_dev_fp8mixed.safetensors", "weight_dtype": "default"}},
+        "11": {"class_type": "CLIPLoader", "inputs": {"clip_name": "mistral_3_small_flux2_fp8.safetensors", "type": "flux2", "device": "cpu"}},
+        "12": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": "flux2-dev-Q4_K_M.gguf"}},
         "10": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["11", 0], "text": prompt}},
         "33": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["11", 0],

@@ -233,7 +233,7 @@ def generate_image_comfy(prompt: str, output_path: str, research_brief: str = ""
         },
         "11": {
             "class_type": "CLIPLoader",
-            "inputs": {"clip_name": "mistral_3_small_flux2_fp8.safetensors", "type": "flux2"}
+            "inputs": {"clip_name": "mistral_3_small_flux2_fp8.safetensors", "type": "flux2", "device": "cpu"}
         },
         "12": {
             "class_type": "CLIPTextEncode",
@@ -272,8 +272,8 @@ def generate_image_comfy(prompt: str, output_path: str, research_brief: str = ""
             }
         },
         "14": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": "flux2_dev_fp8mixed.safetensors", "weight_dtype": "default"}
+            "class_type": "UnetLoaderGGUF",
+            "inputs": {"unet_name": "flux2-dev-Q4_K_M.gguf"}
         }
     }
 

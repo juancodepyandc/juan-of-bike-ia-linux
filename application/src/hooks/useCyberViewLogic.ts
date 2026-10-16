@@ -20,6 +20,7 @@ import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
 import { ollamaChat, ollamaChatStream } from './useTauri.ts'
 import { getBuiltinFallbackLab } from '../services/cyber/builtinLabs.ts'
 import { useAppStore } from '../stores/appStore.ts'
+import { selectCyberModel } from '../config/models.ts'
 import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
 import { computeStreak } from '../utils/streak.ts'
 import type { GradeResult } from '../services/labAssistant.ts'
@@ -231,7 +232,12 @@ export function useCyberViewLogic() {
     return () => window.clearInterval(t)
   }, [])
 
-  const mainModel = useAppStore((s) => s.mainModel)
+  const configuredMainModel = useAppStore((s) => s.mainModel)
+  const installedModels = useAppStore((s) => s.installedModels)
+  const mainModel = useMemo(
+    () => selectCyberModel(installedModels, configuredMainModel),
+    [installedModels, configuredMainModel],
+  )
   // v82cr : persist + restore Cyber session (parity Academy v82cq).
   // Restaure activeId + stage + stance + xp + customBrief au reload.
   // Pas le lab (ré-forgeable), ni les logs (session-scope), ni les

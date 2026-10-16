@@ -9,7 +9,7 @@
  */
 
 import { ollamaGenerate } from '../../hooks/useTauri.ts'
-import { resolveConfiguredModel, AUXILIARY_ANALYSIS_MODEL } from '../../config/models.ts'
+import { selectCyberModel, CYBER_REASONING_MODEL } from '../../config/models.ts'
 import { useAppStore } from '../../stores/appStore.ts'
 
 export type CyberAgentRole = 'RECON_SPECIALIST' | 'AUDIT_ANALYST' | 'DEFENSE_ENGINEER' | 'QUALITY_VALIDATOR'
@@ -45,13 +45,13 @@ export interface WarRoomMissionState {
 
 async function safeCyberGenerate(model: string, prompt: string): Promise<string> {
   try {
-    const resp = await ollamaGenerate(model, prompt, { num_ctx: 2048 })
+    const resp = await ollamaGenerate(model, prompt, { num_ctx: 4096 })
     return (resp?.response || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
   } catch (err) {
     const errStr = String(err)
     if (errStr.includes('out of memory') || errStr.includes('CUDA')) {
       try {
-        const fallbackResp = await ollamaGenerate('qwen3-vl:8b', prompt, { num_ctx: 2048 })
+        const fallbackResp = await ollamaGenerate(CYBER_REASONING_MODEL, prompt, { num_ctx: 4096 })
         return (fallbackResp?.response || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
       } catch {
         return ''
@@ -70,8 +70,8 @@ export async function executeMultiAgentWarRoomMission(options: {
   contextLogs?: string
   modelOverride?: string
 }): Promise<WarRoomMissionState> {
-  const { mainModel } = useAppStore.getState()
-  const model = options.modelOverride || resolveConfiguredModel(mainModel, AUXILIARY_ANALYSIS_MODEL)
+  const { mainModel, installedModels } = useAppStore.getState()
+  const model = options.modelOverride || selectCyberModel(installedModels, mainModel)
   const transcript: CyberAgentMessage[] = []
 
   const squadPrompt = `Tu orchestres l'escouade Cyber Aurora composée de 4 spécialistes en concertation :
