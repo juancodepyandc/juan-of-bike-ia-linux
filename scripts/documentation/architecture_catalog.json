@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2211,
- "source_lines": 741322,
+ "source_lines": 742348,
  "static_route_declarations": 654,
  "by_repository": {
   "AuroraIA": 2048,
@@ -1169,8 +1169,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_viewer.html",
-   "sha256": "1d08ecce8e37d8ab57c8df89bfc099c9f95b28522f9c010cf24e7c59818a5878",
-   "lines": 158
+   "sha256": "54cdbeeac5759bd797c8ac015264d9c7c82b26793c294265dd04c0fd79d7bb1e",
+   "lines": 266
   },
   {
    "repo": "AuroraIA",
@@ -10526,8 +10526,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraV1AppShell.tsx",
-   "sha256": "e1cea0256d846be34c684a9b20f063c7f813f61d1964dcbfbd652c141732a652",
-   "lines": 381
+   "sha256": "2c4b8f4c386565d57113cf3d904fce6c308909331f19cef6d69c9c3b45bc2c4f",
+   "lines": 382
   },
   {
    "repo": "AuroraIA",
@@ -10544,8 +10544,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraV4AppShell.tsx",
-   "sha256": "262c8e6f48d0987e00293f7a86aa7e68ca5be42616f5c3a7b7448030b6e11f98",
-   "lines": 368
+   "sha256": "331fdc2d66d78a04eeebb937aaae91473dda638f50bf2814f773a7e10bc5d802",
+   "lines": 396
   },
   {
    "repo": "AuroraIA",
@@ -10670,8 +10670,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/EngineeringDesignPanel.tsx",
-   "sha256": "cfd49b8b60eccf53bf2f8d217c10c91e02c5523a8b58bf897fb923e9bb89d074",
-   "lines": 1221
+   "sha256": "8d6968dcb6389538ce2dc80f530844f443440ad3685b64043a41dc93c7a3a120",
+   "lines": 1276
   },
   {
    "repo": "AuroraIA",
@@ -10892,8 +10892,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/SpatialCanvas.tsx",
-   "sha256": "3f203623839f4daf94e7f16042b17bcaea2e2773bb12e83bb923bd2047fd37e7",
-   "lines": 951
+   "sha256": "76add68eb64f4195d082614b47e5d870abc1272c0591995d8ab5ee200559c324",
+   "lines": 953
   },
   {
    "repo": "AuroraIA",
@@ -10994,20 +10994,20 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/fxBus.ts",
-   "sha256": "8f4aeb41af01962083c68226eed53246ad45c93efebe9ad27f4e334298d485e1",
+   "sha256": "967500aa7fb22e0832e7650e6c2365579b373b0e44c6dccf0f7f0a18c908217e",
    "lines": 120
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/mascots.tsx",
-   "sha256": "fdd5b81a4c6c8fc75eee8437f9d13132abb5130bbc9c02740b09ec430284ccdc",
-   "lines": 422
+   "sha256": "80c639163e326f2017e5e13a97c1abf91d70e0beb46a61fb8b8d38130c255ec4",
+   "lines": 439
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/scenes.ts",
-   "sha256": "d67f825e543fef64bed6d818f448e4dcb688a6cf2c53205ed922693f28ee90a5",
-   "lines": 1256
+   "sha256": "9f23ba7b2afbb077474858e1baac04441466dc40e67ae48ba9936133633de721",
+   "lines": 1257
   },
   {
    "repo": "AuroraIA",
@@ -11048,8 +11048,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/studio/SidebarPersona.tsx",
-   "sha256": "cf1eae6f41e3e4f8a8a65644dcb10171e772fc70abfd24f2b608da512adc3d99",
-   "lines": 42
+   "sha256": "9a0b1685bce0afde2169cd1827adb9fb71fd76661c250b311a2b36f920422b08",
+   "lines": 43
   },
   {
    "repo": "AuroraIA",
@@ -11258,8 +11258,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/auroraAgents.ts",
-   "sha256": "cccd6cbd87a28de243087cee7f1b9e590679caa92ae6ad63a42834526420b7cd",
-   "lines": 497
+   "sha256": "bc27d5583b05c82c163bf221a25f13037e561cc26b4a3a0df2f0642c69c5c532",
+   "lines": 503
   },
   {
    "repo": "AuroraIA",
@@ -14408,7 +14408,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraV13DView.tsx",
-   "sha256": "e5663da5e76549a968503c8be2e509f3ff7af6871da9cff2e41471f5cbd1adcd",
+   "sha256": "1ae65b86fd1756e75c078c8bda1ce24442a222b93cd58e98dcf08c4f3d5215b5",
    "lines": 647
   },
   {
@@ -14636,8 +14636,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "a6d7dd356249f45acd3e176f0a9e997ba1b39b7d87a2646cd4f0c3922787beae",
-   "lines": 6088
+   "sha256": "9db72934e36eec5bd072b642c77ddd72df7424942455e978a038b7162624c6d1",
+   "lines": 6895
   },
   {
    "repo": "AuroraIA",

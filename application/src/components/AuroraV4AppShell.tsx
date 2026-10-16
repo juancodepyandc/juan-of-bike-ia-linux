@@ -31,18 +31,18 @@ const ICONS: Record<string, string> = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
 }
 
-const DOCK: { id: ShellModuleId; fx: FxModule; label: string }[] = [
-  { id: 'conversation', fx: 'conversation', label: 'Conversation' },
-  { id: 'image', fx: 'image', label: 'Image' },
-  { id: 'code', fx: 'code', label: 'Code' },
-  { id: 'video', fx: 'video', label: 'Vidéo' },
-  { id: 'drawing', fx: 'drawing', label: 'Dessin' },
-  { id: '3d', fx: '3d', label: '3D' },
-  { id: 'learning', fx: 'learning', label: 'Académie' },
-  { id: 'cyber', fx: 'cyber', label: 'Cyber' },
-  { id: 'business', fx: 'learning', label: 'Business' },
-  { id: 'voice', fx: 'voice', label: 'Voix' },
-  { id: 'cowork', fx: 'cowork', label: 'Cowork' },
+const DOCK: { id: ShellModuleId; fx: FxModule; label: string; shortLabel: string; badge?: string }[] = [
+  { id: 'conversation', fx: 'conversation', label: 'Conversation', shortLabel: 'Chat' },
+  { id: 'image', fx: 'image', label: 'Image', shortLabel: 'Image' },
+  { id: 'code', fx: 'code', label: 'Code', shortLabel: 'Code' },
+  { id: 'video', fx: 'video', label: 'Vidéo', shortLabel: 'Vidéo' },
+  { id: 'drawing', fx: 'drawing', label: 'Dessin', shortLabel: 'Dessin' },
+  { id: '3d', fx: '3d', label: 'Studio 3D & CAO', shortLabel: '3D' },
+  { id: 'learning', fx: 'learning', label: 'Académie', shortLabel: 'Acad.' },
+  { id: 'cyber', fx: 'cyber', label: 'Cybersécurité', shortLabel: 'Cyber' },
+  { id: 'business', fx: 'business', label: 'Business Intelligence', shortLabel: 'Business', badge: 'LAB' },
+  { id: 'voice', fx: 'voice', label: 'Voix', shortLabel: 'Voix' },
+  { id: 'cowork', fx: 'cowork', label: 'Cowork', shortLabel: 'Cowork' },
 ]
 
 function AuroraBackdrop() {
@@ -117,49 +117,77 @@ function AuroraBackdrop() {
   return <canvas ref={ref} style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }} aria-hidden="true" />
 }
 
-function DockOrb({ entry, active, onClick }: { entry: { id: ShellModuleId; fx: FxModule; label: string }; active: boolean; onClick: () => void }) {
+function DockOrb({ entry, active, onClick }: { entry: { id: ShellModuleId; fx: FxModule; label: string; shortLabel: string; badge?: string }; active: boolean; onClick: () => void }) {
   const [hover, setHover] = useState(false)
+  const [tipY, setTipY] = useState<number>(120)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
   const accent = FX_AGENTS[entry.fx].accent
+  const iconSvg = ICONS[entry.id] ?? ICONS[entry.fx]
   return (
     <button
+      ref={btnRef}
       type="button"
       aria-label={entry.label}
+      aria-current={active ? 'page' : undefined}
       onClick={onClick}
-      onMouseEnter={() => setHover(true)}
+      onMouseEnter={() => {
+        if (btnRef.current) {
+          const r = btnRef.current.getBoundingClientRect()
+          setTipY(r.top + r.height / 2)
+        }
+        setHover(true)
+      }}
       onMouseLeave={() => setHover(false)}
       style={{
-        width: 44, height: 44, borderRadius: 14, position: 'relative', cursor: 'pointer', flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        border: `1px solid ${active || hover ? accent : 'rgba(255,255,255,.07)'}`,
-        background: active ? 'rgba(255,255,255,.05)' : 'rgba(255,255,255,.03)',
-        boxShadow: active ? `0 0 16px ${accent}55` : hover ? `0 0 20px ${accent}44` : 'none',
-        transform: hover ? 'scale(1.12)' : 'scale(1)',
-        transition: 'all .3s cubic-bezier(.22,1,.36,1)',
+        width: 66, minHeight: 50, padding: '5px 4px 4px', borderRadius: 14, position: 'relative', cursor: 'pointer', flexShrink: 0,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3,
+        border: `1px solid ${active || hover ? accent : 'rgba(255,255,255,.08)'}`,
+        background: active ? `linear-gradient(180deg, ${accent}22, rgba(255,255,255,.05))` : hover ? 'rgba(255,255,255,.06)' : 'rgba(255,255,255,.025)',
+        boxShadow: active ? `0 0 18px ${accent}55` : hover ? `0 0 16px ${accent}38` : 'none',
+        transform: hover ? 'translateY(-1px) scale(1.04)' : 'scale(1)',
+        transition: 'all .22s cubic-bezier(.22,1,.36,1)',
       }}
     >
       {active && (
-        <span style={{ position: 'absolute', left: -13, width: 3.5, height: 20, borderRadius: 3, background: accent, boxShadow: `0 0 10px ${accent}` }} />
+        <span style={{ position: 'absolute', left: -6, top: '50%', transform: 'translateY(-50%)', width: 3.5, height: 24, borderRadius: 3, background: accent, boxShadow: `0 0 10px ${accent}` }} />
+      )}
+      {entry.badge && (
+        <span style={{
+          position: 'absolute', top: -4, right: -4, fontSize: 7.5, fontWeight: 800,
+          padding: '1px 4px', borderRadius: 99, background: accent, color: '#05070D',
+          letterSpacing: '0.04em', boxShadow: `0 2px 8px ${accent}88`,
+        }}>
+          {entry.badge}
+        </span>
       )}
       <svg
         viewBox="0 0 24 24"
-        width={20}
-        height={20}
-        style={{ stroke: active || hover ? accent: '#8B93A7', fill: 'none', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round', transition: 'stroke .3s', filter: active ? `drop-shadow(0 0 6px ${accent}88)` : 'none' }}
-        dangerouslySetInnerHTML={{ __html: ICONS[entry.fx] }}
+        width={19}
+        height={19}
+        style={{ stroke: active || hover ? accent : '#9AA4BA', fill: 'none', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round', transition: 'stroke .22s', filter: active ? `drop-shadow(0 0 6px ${accent}88)` : 'none' }}
+        dangerouslySetInnerHTML={{ __html: iconSvg }}
       />
+      <span style={{
+        fontSize: 9.5, fontWeight: active ? 700 : 600,
+        color: active || hover ? '#F3F6FC' : '#9AA4BA',
+        lineHeight: 1.05, letterSpacing: '-0.01em', maxWidth: 60,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {entry.shortLabel}
+      </span>
       {hover && (
         <span style={{
-          position: 'absolute', left: 58, top: '50%', transform: 'translateY(-50%)',
-          display: 'flex', alignItems: 'center', gap: 9, whiteSpace: 'nowrap',
-          padding: '7px 12px 7px 8px', borderRadius: 11, background: 'rgba(8,12,24,.97)',
-          border: `1px solid ${accent}`, zIndex: 60, boxShadow: '0 10px 30px rgba(0,0,0,.55)',
+          position: 'fixed', left: 84, top: tipY, transform: 'translateY(-50%)',
+          display: 'flex', alignItems: 'center', gap: 10, whiteSpace: 'nowrap',
+          padding: '8px 13px 8px 9px', borderRadius: 12, background: 'rgba(8,12,24,.98)',
+          border: `1px solid ${accent}`, zIndex: 120, boxShadow: '0 12px 32px rgba(0,0,0,.65)',
           pointerEvents: 'none',
         }}>
-          <AuroraMascot module={entry.fx} size={30} />
+          <AuroraMascot module={entry.fx} size={32} />
           <span style={{ textAlign: 'left' }}>
-            <span style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#E6EAF5' }}>{entry.label}</span>
-            <span style={{ display: 'block', fontSize: 9.5, fontFamily: "'Cascadia Code',Consolas,monospace", color: accent }}>
-              agent {FX_AGENTS[entry.fx].name}
+            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, color: '#E6EAF5' }}>{entry.label}</span>
+            <span style={{ display: 'block', fontSize: 10, fontFamily: "'Cascadia Code',Consolas,monospace", color: accent }}>
+              agent {FX_AGENTS[entry.fx].name} · {FX_AGENTS[entry.fx].hello}
             </span>
           </span>
         </span>
@@ -282,9 +310,9 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
       </header>
 
       <nav className="aurora-v4-dock" aria-label="Modules Aurora" style={{
-        position: 'fixed', left: 0, top: 52, bottom: 0, width: 68, zIndex: 35,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '14px 0',
-        background: 'rgba(5,7,13,.55)', backdropFilter: 'blur(20px)',
+        position: 'fixed', left: 0, top: 52, bottom: 0, width: 78, zIndex: 35,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 5, padding: '10px 0',
+        background: 'rgba(5,7,13,.65)', backdropFilter: 'blur(20px)',
         borderRight: '1px solid rgba(255,255,255,.09)',
         overflowY: 'auto',
       }}>
@@ -314,14 +342,14 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
       </nav>
 
       <nav className="aurora-v4-mobile-nav" aria-label="Navigation mobile">
-        {(['conversation', 'image', '3d'] as const).map((id) => {
+        {(['conversation', '3d', 'business'] as const).map((id) => {
           const entry = DOCK.find((item) => item.id === id)!
           return <button key={id} type="button" aria-current={activeModule === id ? 'page' : undefined} onClick={() => activate(id)}>
-            <svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS[entry.fx] }} />
-            <span>{id === 'conversation' ? 'Chat' : entry.label}</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS[entry.id] ?? ICONS[entry.fx] }} />
+            <span>{entry.shortLabel}</span>
           </button>
         })}
-        <button type="button" aria-label="Tous les modules" aria-expanded={modulesOpen} aria-controls="aurora-mobile-modules" aria-haspopup="dialog" aria-current={!['conversation','image','3d'].includes(activeModule) ? 'page' : undefined} onClick={() => setModulesOpen(true)}>
+        <button type="button" aria-label="Tous les modules" aria-expanded={modulesOpen} aria-controls="aurora-mobile-modules" aria-haspopup="dialog" aria-current={!['conversation','3d','business'].includes(activeModule) ? 'page' : undefined} onClick={() => setModulesOpen(true)}>
           <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>
           <span>Modules</span>
         </button>
@@ -330,7 +358,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
         <div className="aurora-v4-sheet-head"><div><h2 id="aurora-modules-title">Votre espace Aurora</h2><p>Choisissez ce que vous voulez faire.</p></div><button type="button" aria-label="Fermer les modules" onClick={() => setModulesOpen(false)}>✕</button></div>
         <div className="aurora-v4-module-grid">
           {DOCK.map((entry) => <button key={entry.id} type="button" aria-current={entry.id === activeModule ? 'page' : undefined} onClick={() => activate(entry.id)}>
-            <svg aria-hidden="true" viewBox="0 0 24 24" style={{ color: FX_AGENTS[entry.fx].accent }} dangerouslySetInnerHTML={{ __html: ICONS[entry.fx] }} /><span>{entry.label}</span>
+            <svg aria-hidden="true" viewBox="0 0 24 24" style={{ color: FX_AGENTS[entry.fx].accent }} dangerouslySetInnerHTML={{ __html: ICONS[entry.id] ?? ICONS[entry.fx] }} /><span>{entry.label}</span>
           </button>)}
           <button type="button" onClick={() => { setModulesOpen(false); window.dispatchEvent(new CustomEvent('aurora:open-settings')) }}><svg aria-hidden="true" viewBox="0 0 24 24" dangerouslySetInnerHTML={{ __html: ICONS.settings }}/><span>Paramètres</span></button>
         </div>
@@ -338,7 +366,7 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
       </dialog>
 
       <main className="aurora-v4-main" style={{
-        position: 'fixed', top: 52, left: 68, right: 0, bottom: 0, zIndex: 10,
+        position: 'fixed', top: 52, left: 78, right: 0, bottom: 0, zIndex: 10,
         overflow: 'auto',
       }}>
         {children}

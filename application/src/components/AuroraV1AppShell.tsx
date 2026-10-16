@@ -287,19 +287,20 @@ function Sidebar({ activeModule, onActivateModule }: {
       flexShrink: 0,
     }}>
       <Eyebrow style={{ padding: '0 12px 8px' }}>Modules</Eyebrow>
-      {SIDE_MODULES.map((entry) => (
-        <SideItem
-          key={entry.id}
-          entry={entry}
-          active={entry.id === activeModule}
-          onClick={() => onActivateModule(entry.id)}
-        />
-      ))}
-      <div className="aurora-v1-sidebar-spacer" style={{ flex: 1 }} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 2 }}>
+        {SIDE_MODULES.map((entry) => (
+          <SideItem
+            key={entry.id}
+            entry={entry}
+            active={entry.id === activeModule}
+            onClick={() => onActivateModule(entry.id)}
+          />
+        ))}
+      </div>
       {/* v82s-studio iter13 : l'agent du module actif, vivant (respiration,
           clignement). Décoratif — ouvrir le panneau d'agents via ⌘, ou TopBar. */}
-      <Suspense fallback={<div style={{ height: 210 }} />}>
-        <div className="aurora-v1-sidebar-persona">
+      <Suspense fallback={<div style={{ height: 180 }} />}>
+        <div className="aurora-v1-sidebar-persona" style={{ flexShrink: 0 }}>
           <SidebarPersona moduleId={activeModule} />
         </div>
       </Suspense>

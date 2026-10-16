@@ -206,6 +206,9 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
   const [deviceConnected, setDeviceConnected] = useState(true)
   const [showEmbeddedViewer, setShowEmbeddedViewer] = useState(true)
   const [viewerExploded, setViewerExploded] = useState(false)
+  const [viewerOpacity, setViewerOpacity] = useState<number>(1)
+  const [viewerXray, setViewerXray] = useState<boolean>(false)
+  const [viewerAnimating, setViewerAnimating] = useState<boolean>(false)
   const [activeStepIndex, setActiveStepIndex] = useState<number>(-1)
   const [inspectedPartId, setInspectedPartId] = useState<string>('')
   const [clockNow, setClockNow] = useState<number>(() => Date.now())
@@ -519,6 +522,20 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     setActiveStepIndex(stepIndex)
     setShowEmbeddedViewer(true)
     setTimeout(() => postToViewer({ type: 'aurora-assembly-step', step_index: stepIndex }), 60)
+  }
+
+  function handleUpdateOpacity(nextOpacity: number, nextXray: boolean) {
+    setViewerOpacity(nextOpacity)
+    setViewerXray(nextXray)
+    setShowEmbeddedViewer(true)
+    postToViewer({ type: 'aurora-assembly-opacity', opacity: nextOpacity, xray: nextXray })
+  }
+
+  function handleToggleAnimate() {
+    const next = !viewerAnimating
+    setViewerAnimating(next)
+    setShowEmbeddedViewer(true)
+    postToViewer({ type: 'aurora-assembly-animate', playing: next })
   }
 
   function appendQuickSpec(spec: { goalSnippet?: string; constraintSnippet: string }) {
@@ -1187,6 +1204,42 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
                     </button>
                     <button
                       type="button"
+                      aria-pressed={viewerAnimating}
+                      onClick={handleToggleAnimate}
+                      className={`min-h-10 rounded-lg border px-3 text-xs ${
+                        viewerAnimating
+                          ? 'border-emerald-400/60 bg-emerald-500/20 font-semibold text-emerald-200'
+                          : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'
+                      }`}
+                    >
+                      {viewerAnimating ? '⏸ Pause cinématique' : '▶ Animer le mécanisme'}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={viewerXray}
+                      onClick={() => handleUpdateOpacity(viewerOpacity, !viewerXray)}
+                      className={`min-h-10 rounded-lg border px-3 text-xs ${
+                        viewerXray
+                          ? 'border-cyan-400/60 bg-cyan-500/20 font-semibold text-cyan-200'
+                          : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'
+                      }`}
+                    >
+                      🔬 Rayons-X {viewerXray ? 'ON' : 'OFF'}
+                    </button>
+                    <label className="flex min-h-10 items-center gap-2 rounded-lg border border-aurora-border/60 bg-aurora-surface-2 px-3 text-xs text-aurora-text-muted">
+                      <span>Opacité {Math.round((viewerXray ? Math.min(viewerOpacity, 0.35) : viewerOpacity) * 100)}%</span>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1"
+                        step="0.05"
+                        value={viewerOpacity}
+                        onChange={(e) => handleUpdateOpacity(Number(e.target.value), viewerXray)}
+                        className="w-24 accent-cyan-400"
+                      />
+                    </label>
+                    <button
+                      type="button"
                       onClick={() => handleSelectStep(-1)}
                       className="min-h-10 rounded-lg border border-aurora-border px-3 text-xs text-aurora-text-muted hover:text-aurora-text"
                     >
@@ -1198,6 +1251,8 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
                     ref={viewerIframeRef}
                     onLoad={() => {
                       postToViewer({ type: 'aurora-assembly-view', exploded: viewerExploded })
+                      postToViewer({ type: 'aurora-assembly-opacity', opacity: viewerOpacity, xray: viewerXray })
+                      postToViewer({ type: 'aurora-assembly-animate', playing: viewerAnimating })
                       if (inspectedPartId) postToViewer({ type: 'aurora-assembly-inspect', part_id: inspectedPartId })
                       if (activeStepIndex >= 0) postToViewer({ type: 'aurora-assembly-step', step_index: activeStepIndex })
                     }}

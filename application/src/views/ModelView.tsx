@@ -9,7 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
-import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, Color, Group, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector3 } from 'three'
+import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, Color, DoubleSide, FrontSide, Group, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector3 } from 'three'
 import type { Texture } from 'three'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
 import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay.tsx'
@@ -1003,6 +1003,20 @@ function inspectionColorForPart(name: string, index: number): Color {
   return new Color(hex)
 }
 
+export type KinematicLawKind = 'auto' | 'revolute' | 'pendulum' | 'piston' | 'hinge' | 'biomechanical'
+
+export type KinematicTelemetry = {
+  active: boolean
+  source: 'glb_keyframes' | 'live_kinematics' | 'idle'
+  law: string
+  equation: string
+  angularVelocityRpm: number
+  linearVelocityMmPerSec: number
+  amplitudeDegOrMm: number
+  periodSec: number
+  activePartsCount: number
+}
+
 // v82nu iter3: info-panel payload emitted by the 3D click raycaster.
 // Aggregated for "Select All" mode by summing across all meshes in the model.
 export type PartInfo = {
@@ -1015,6 +1029,13 @@ export type PartInfo = {
   emissiveIntensity: number | null
   metalness: number | null
   roughness: number | null
+  opacity: number
+  transmission: number
+  ior: number
+  fresnelReflectancePct: number
+  effectiveTransmissionPct: number
+  wallThicknessMm: number | null         // Raycast-measured local thickness at hit point (mm)
+  harmonicThicknessMm: number            // Bounding-box harmonic thickness (mm)
   vertexCount: number
   triangleCount: number
   dimensionsMeters: [number, number, number]
@@ -1029,7 +1050,58 @@ function _hexFromColor(c: Color | null | undefined): string | null {
   return '#' + c.getHexString()
 }
 
-function _extractPartInfo(mesh: Mesh, model: Object3D): PartInfo {
+function _computeOpticalMetrics(
+  opacity: number,
+  transmission: number,
+  ior: number,
+  thicknessMm: number,
+): { fresnelReflectancePct: number; effectiveTransmissionPct: number } {
+  const n = Math.max(1.0, Number.isFinite(ior) ? ior : 1.49)
+  const r0 = Math.pow((n - 1) / (n + 1), 2)
+  const fresnelReflectancePct = Number((r0 * 100).toFixed(2))
+  // Beer-Lambert + double-interface Fresnel transmission (air -> medium -> air)
+  const alphaThrough = Math.max(0, Math.min(1, 1 - opacity + transmission * opacity))
+  const attenuation = Math.exp(-Math.max(0, thicknessMm) * 0.008 * (1 - alphaThrough))
+  const effectiveTransmissionPct = Number((Math.pow(1 - r0, 2) * alphaThrough * attenuation * 100).toFixed(1))
+  return { fresnelReflectancePct, effectiveTransmissionPct }
+}
+
+function _measureLocalWallThicknessMm(
+  mesh: Mesh,
+  hitPointWorld?: Vector3 | null,
+  hitNormalWorld?: Vector3 | null,
+): number | null {
+  if (!hitPointWorld || !hitNormalWorld) return null
+  const inDir = hitNormalWorld.clone().normalize().negate()
+  if (inDir.lengthSq() < 0.5) return null
+  const origin = hitPointWorld.clone().addScaledVector(inDir, 0.0006)
+  const raycaster = new Raycaster(origin, inDir, 0.0001, 50)
+  const rawMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+  const savedSides = rawMats.map((m) => (m as MeshStandardMaterial | undefined)?.side)
+  try {
+    rawMats.forEach((m) => {
+      if (m) (m as MeshStandardMaterial).side = DoubleSide
+    })
+    const hits = raycaster.intersectObject(mesh, false)
+    if (hits.length > 0 && hits[0].distance > 0.0001) {
+      return Number((hits[0].distance * 1000).toFixed(2))
+    }
+  } catch {
+    // Fallback to null if raycast fails on non-indexed geometry
+  } finally {
+    rawMats.forEach((m, i) => {
+      if (m && savedSides[i] !== undefined) (m as MeshStandardMaterial).side = savedSides[i]!
+    })
+  }
+  return null
+}
+
+function _extractPartInfo(
+  mesh: Mesh,
+  model: Object3D,
+  hitPointWorld?: Vector3 | null,
+  hitNormalWorld?: Vector3 | null,
+): PartInfo {
   const matRaw = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
   const mat = matRaw as MeshStandardMaterial | MeshPhysicalMaterial | undefined
   const geom = mesh.geometry
@@ -1040,6 +1112,25 @@ function _extractPartInfo(mesh: Mesh, model: Object3D): PartInfo {
   const box = new Box3().setFromObject(mesh)
   const size = new Vector3(); box.getSize(size)
   const center = new Vector3(); box.getCenter(center)
+
+  const dimsMm = [size.x * 1000, size.y * 1000, size.z * 1000].filter((d) => d > 0.001)
+  const harmonicThicknessMm = dimsMm.length > 0
+    ? Number((dimsMm.length / dimsMm.reduce((acc, d) => acc + 1 / d, 0)).toFixed(2))
+    : 0
+  const wallThicknessMm = _measureLocalWallThicknessMm(mesh, hitPointWorld, hitNormalWorld)
+  const opacity = typeof mat?.opacity === 'number' ? Number(mat.opacity.toFixed(3)) : 1
+  const transmission = typeof (mat as MeshPhysicalMaterial)?.transmission === 'number'
+    ? Number((mat as MeshPhysicalMaterial).transmission.toFixed(3))
+    : 0
+  const ior = typeof (mat as MeshPhysicalMaterial)?.ior === 'number'
+    ? Number((mat as MeshPhysicalMaterial).ior.toFixed(3))
+    : 1.49
+  const { fresnelReflectancePct, effectiveTransmissionPct } = _computeOpticalMetrics(
+    opacity,
+    transmission,
+    ior,
+    wallThicknessMm ?? harmonicThicknessMm,
+  )
 
   // bones / skinning
   const skinned = mesh as SkinnedMesh
@@ -1064,6 +1155,13 @@ function _extractPartInfo(mesh: Mesh, model: Object3D): PartInfo {
     emissiveIntensity: typeof mat?.emissiveIntensity === 'number' ? mat.emissiveIntensity : null,
     metalness: typeof mat?.metalness === 'number' ? mat.metalness : null,
     roughness: typeof mat?.roughness === 'number' ? mat.roughness : null,
+    opacity,
+    transmission,
+    ior,
+    fresnelReflectancePct,
+    effectiveTransmissionPct,
+    wallThicknessMm,
+    harmonicThicknessMm,
     vertexCount,
     triangleCount: triangleCount > 0 ? triangleCount : Math.floor(indexCount / 3),
     dimensionsMeters: [size.x, size.y, size.z],
@@ -1080,6 +1178,10 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
   let bonesAttached = 0
   let hasSkinning = false
   let hasMorphTargets = false
+  let opacitySum = 0
+  let transmissionSum = 0
+  let iorSum = 0
+  let matCount = 0
   const sampledMaterials: string[] = []
 
   model.traverse((obj) => {
@@ -1092,7 +1194,13 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
       triangleCount += tri
       if ((mesh as { isSkinnedMesh?: boolean }).isSkinnedMesh) hasSkinning = true
       if (geom?.morphAttributes && Object.keys(geom.morphAttributes).length > 0) hasMorphTargets = true
-      const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as MeshPhysicalMaterial | undefined
+      if (mat) {
+        opacitySum += typeof mat.opacity === 'number' ? mat.opacity : 1
+        transmissionSum += typeof mat.transmission === 'number' ? mat.transmission : 0
+        iorSum += typeof mat.ior === 'number' ? mat.ior : 1.49
+        matCount += 1
+      }
       const mname = (mat as { name?: string })?.name
       if (mname && !sampledMaterials.includes(mname)) sampledMaterials.push(mname)
     }
@@ -1102,6 +1210,19 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
   const box = new Box3().setFromObject(model)
   const size = new Vector3(); box.getSize(size)
   const center = new Vector3(); box.getCenter(center)
+  const dimsMm = [size.x * 1000, size.y * 1000, size.z * 1000].filter((d) => d > 0.001)
+  const harmonicThicknessMm = dimsMm.length > 0
+    ? Number((dimsMm.length / dimsMm.reduce((acc, d) => acc + 1 / d, 0)).toFixed(2))
+    : 0
+  const avgOpacity = matCount > 0 ? Number((opacitySum / matCount).toFixed(3)) : 1
+  const avgTransmission = matCount > 0 ? Number((transmissionSum / matCount).toFixed(3)) : 0
+  const avgIor = matCount > 0 ? Number((iorSum / matCount).toFixed(3)) : 1.49
+  const { fresnelReflectancePct, effectiveTransmissionPct } = _computeOpticalMetrics(
+    avgOpacity,
+    avgTransmission,
+    avgIor,
+    harmonicThicknessMm,
+  )
 
   return {
     name: 'all',
@@ -1115,6 +1236,13 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
     emissiveIntensity: null,
     metalness: null,
     roughness: null,
+    opacity: avgOpacity,
+    transmission: avgTransmission,
+    ior: avgIor,
+    fresnelReflectancePct,
+    effectiveTransmissionPct,
+    wallThicknessMm: null,
+    harmonicThicknessMm,
     vertexCount,
     triangleCount,
     dimensionsMeters: [size.x, size.y, size.z],
@@ -1122,6 +1250,150 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
     hasMorphTargets,
     hasSkinning,
     bonesAttached,
+  }
+}
+
+/**
+ * _computeRealtimeMeshMetrology — computes exact geometric & topological
+ * metrics directly from the loaded Three.js Object3D so we NEVER rely on
+ * missing/fake reports and ALWAYS detect degenerate triangles, flat planes,
+ * zero volume, or open/non-manifold edges.
+ */
+function _computeRealtimeMeshMetrology(root: Object3D) {
+  let vertexCount = 0
+  let faceCount = 0
+  let degenerateFaceCount = 0
+  let surfaceArea = 0
+  let signedVolume = 0
+  let meshNodeCount = 0
+  const directedEdges = new Map<string, number>()
+
+  const vA = new Vector3()
+  const vB = new Vector3()
+  const vC = new Vector3()
+  const cb = new Vector3()
+  const ab = new Vector3()
+
+  root.updateMatrixWorld(true)
+  root.traverse((obj) => {
+    const mesh = obj as Mesh
+    if (!mesh.isMesh || !mesh.geometry) return
+    meshNodeCount += 1
+    const pos = mesh.geometry.attributes?.position
+    if (!pos || pos.count < 3) return
+    vertexCount += pos.count
+    const idx = mesh.geometry.index
+    const triCount = idx ? Math.floor(idx.count / 3) : Math.floor(pos.count / 3)
+    faceCount += triCount
+    const trackTopology = faceCount <= 120_000
+    const qKey = (v: Vector3) => `${Math.round(v.x * 1e5)},${Math.round(v.y * 1e5)},${Math.round(v.z * 1e5)}`
+
+    for (let t = 0; t < triCount; t += 1) {
+      const i0 = idx ? idx.getX(t * 3) : t * 3
+      const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1
+      const i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2
+      vA.fromBufferAttribute(pos, i0).applyMatrix4(mesh.matrixWorld)
+      vB.fromBufferAttribute(pos, i1).applyMatrix4(mesh.matrixWorld)
+      vC.fromBufferAttribute(pos, i2).applyMatrix4(mesh.matrixWorld)
+
+      cb.subVectors(vC, vB)
+      ab.subVectors(vA, vB)
+      cb.cross(ab)
+      const area = 0.5 * cb.length()
+      if (!Number.isFinite(area) || area < 1e-10) {
+        degenerateFaceCount += 1
+      } else {
+        surfaceArea += area
+      }
+      // Signed tetrahedron volume (vA · (vB × vC)) / 6
+      ab.copy(vB).cross(vC)
+      const tet = vA.dot(ab) / 6.0
+      if (Number.isFinite(tet)) signedVolume += tet
+
+      if (trackTopology) {
+        const k0 = qKey(vA)
+        const k1 = qKey(vB)
+        const k2 = qKey(vC)
+        for (const [u, v] of [[k0, k1], [k1, k2], [k2, k0]] as const) {
+          if (u === v) continue
+          const ek = `${u}->${v}`
+          directedEdges.set(ek, (directedEdges.get(ek) || 0) + 1)
+        }
+      }
+    }
+  })
+
+  let openOrNonManifoldEdges = 0
+  if (directedEdges.size > 0) {
+    for (const [ek, count] of directedEdges.entries()) {
+      const [u, v] = ek.split('->')
+      const revCount = directedEdges.get(`${v}->${u}`) || 0
+      if (count !== 1 || revCount !== 1) openOrNonManifoldEdges += 1
+    }
+  }
+
+  const box = new Box3().setFromObject(root)
+  const size = new Vector3()
+  if (!box.isEmpty()) box.getSize(size)
+  const extents: [number, number, number] = [
+    Number(size.x.toFixed(4)),
+    Number(size.y.toFixed(4)),
+    Number(size.z.toFixed(4)),
+  ]
+  const sortedDims = [...extents].sort((a, b) => a - b)
+  const maxDim = Math.max(sortedDims[2], 1e-6)
+  const minDim = Math.max(sortedDims[0], 0)
+  const flatnessRatio = Number((minDim / maxDim).toFixed(4))
+  const aspectRatio = minDim > 1e-6 ? Number((maxDim / minDim).toFixed(3)) : 999
+  const volume = Number(Math.abs(signedVolume).toFixed(6))
+  const isWatertight = directedEdges.size > 0 ? openOrNonManifoldEdges === 0 && volume > 1e-7 : volume > 1e-6
+
+  const issues: string[] = []
+  const warnings: string[] = []
+  if (vertexCount === 0 || faceCount < 4) {
+    issues.push(`Maillage vide ou insuffisant (${vertexCount} sommets, ${faceCount} faces)`)
+  }
+  if (flatnessRatio < 0.03) {
+    issues.push(`Géométrie quasi-plane détectée (ratio d'épaisseur ${flatnessRatio} < 0.03 — artefact carte 2D)`)
+  } else if (flatnessRatio < 0.08) {
+    warnings.push(`Profil très fin (ratio plat ${flatnessRatio})`)
+  }
+  if (volume <= 1e-8) {
+    issues.push(`Volume géométrique nul (${volume} m³)`)
+  }
+  if (degenerateFaceCount > Math.max(25, faceCount * 0.15)) {
+    issues.push(`Trop de triangles dégénérés (${degenerateFaceCount} / ${faceCount})`)
+  } else if (degenerateFaceCount > 0) {
+    warnings.push(`${degenerateFaceCount} triangle(s) dégénéré(s) d'aire quasi-nulle`)
+  }
+  if (!isWatertight && directedEdges.size > 0) {
+    warnings.push(`Maillage non étanche (${openOrNonManifoldEdges} demi-arêtes ouvertes ou non-manifold)`)
+  }
+
+  const qualityOk = issues.length === 0 && vertexCount >= 4 && faceCount >= 4
+  const grade = !qualityOk
+    ? (vertexCount === 0 || flatnessRatio < 0.03 ? 'F' : 'D')
+    : isWatertight && warnings.length === 0
+      ? 'A'
+      : warnings.length <= 1
+        ? 'B'
+        : 'C'
+
+  return {
+    grade,
+    qualityOk,
+    issues,
+    warnings,
+    vertexCount,
+    faceCount,
+    extents,
+    flatnessRatio,
+    aspectRatio,
+    disconnectedBodies: meshNodeCount,
+    degenerateFaceCount,
+    isWatertight,
+    surfaceArea: Number(surfaceArea.toFixed(4)),
+    volume,
   }
 }
 
@@ -1577,6 +1849,14 @@ function InteractiveModel({
   pbrProfile = null,
   onDurationChange,
   onTimeChange,
+  meshOpacity = 1,
+  opticalIor = 1.49,
+  xrayMode = false,
+  transparencyScope = 'all',
+  selectedPartName = null,
+  motionEnabled = false,
+  kinematicLaw = 'auto',
+  onKinematicTelemetry,
 }: {
   url: string
   localMeshPath?: string | null
@@ -1595,6 +1875,14 @@ function InteractiveModel({
   pbrProfile?: PbrProfile | null
   onDurationChange?: (duration: number) => void
   onTimeChange?: (time: number) => void
+  meshOpacity?: number
+  opticalIor?: number
+  xrayMode?: boolean
+  transparencyScope?: 'all' | 'selected'
+  selectedPartName?: string | null
+  motionEnabled?: boolean
+  kinematicLaw?: KinematicLawKind
+  onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
 }) {
   const groupRef = useRef<Group>(null)
   const [model, setModel] = useState<Object3D | null>(null)
@@ -1602,6 +1890,10 @@ function InteractiveModel({
   const mixerRef = useRef<AnimationMixer | null>(null)
   const highlightedRef = useRef<Mesh | null>(null)
   const actionsRef = useRef<ReturnType<AnimationMixer['clipAction']>[]>([])
+  const initialTransformsRef = useRef<Map<Object3D, { pos: Vector3; rot: [number, number, number]; scale: Vector3 }>>(new Map())
+  const kinematicVirtualTimeRef = useRef<number>(0)
+  const lastTelemetryEmitRef = useRef<number>(0)
+  const wasLiveKinematicActiveRef = useRef<boolean>(false)
   // iter6.A: OLED flipbook atlas bindings detected from material.userData.gltfExtras.
   // Populated on model load, animated by useFrame at draw-time.
   const oledBindingsRef = useRef<OledBinding[]>([])
@@ -1751,6 +2043,68 @@ function InteractiveModel({
     })
   }, [model, wireframe, pbrProfile, materialMode])
 
+  // Real measured optical transparency + IOR + X-Ray depth-peeling pass
+  useEffect(() => {
+    if (!model) return
+    const clampedOpacity = Math.max(0.05, Math.min(1, meshOpacity))
+    const clampedIor = Math.max(1.0, Math.min(2.6, opticalIor))
+    const wantsTransparency = clampedOpacity < 0.995 || xrayMode
+    model.traverse((child) => {
+      const mesh = child as Mesh
+      if (!mesh.isMesh || !mesh.material) return
+      const partName = mesh.name || mesh.parent?.name || 'unnamed_part'
+      const inScope =
+        transparencyScope === 'all' ||
+        !selectedPartName ||
+        selectedPartName === 'all' ||
+        partName === selectedPartName
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      const updatedMats = mats.map((rawMat) => {
+        if (!rawMat) return rawMat
+        let mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial
+        if (inScope && wantsTransparency && !('transmission' in mat)) {
+          const upgraded = new MeshPhysicalMaterial({
+            ...materialChannels(mat, Boolean(mesh.geometry?.getAttribute('color'))),
+            color: mat.color ? mat.color.clone() : new Color('#cbd5e1'),
+            map: mat.map ?? null,
+            normalMap: mat.normalMap ?? null,
+            metalness: mat.metalness ?? 0.08,
+            roughness: Math.min(mat.roughness ?? 0.35, 0.42),
+            envMapIntensity: mat.envMapIntensity ?? 1.35,
+            wireframe: mat.wireframe ?? wireframe,
+          })
+          mat = upgraded
+        }
+        if (inScope && wantsTransparency) {
+          const effOpacity = xrayMode ? Math.min(clampedOpacity, 0.35) : clampedOpacity
+          mat.transparent = true
+          mat.opacity = effOpacity
+          mat.depthWrite = !xrayMode && effOpacity >= 0.94
+          mat.side = DoubleSide
+          if ('transmission' in mat) {
+            const phys = mat as MeshPhysicalMaterial
+            phys.ior = clampedIor
+            phys.transmission = xrayMode ? 0.52 : Math.max(0, Number(((1 - effOpacity) * 0.78).toFixed(3)))
+            phys.roughness = Math.min(phys.roughness ?? 0.35, xrayMode ? 0.22 : 0.38)
+          }
+        } else {
+          mat.transparent = false
+          mat.opacity = 1
+          mat.depthWrite = true
+          mat.side = FrontSide
+          if ('transmission' in mat) {
+            const phys = mat as MeshPhysicalMaterial
+            phys.transmission = pbrProfile?.transmission ?? 0
+            phys.ior = pbrProfile?.ior ?? clampedIor
+          }
+        }
+        mat.needsUpdate = true
+        return mat
+      })
+      mesh.material = updatedMats.length === 1 ? updatedMats[0] : updatedMats
+    })
+  }, [model, meshOpacity, opticalIor, xrayMode, transparencyScope, selectedPartName, wireframe, pbrProfile])
+
   useEffect(() => {
     let cancelled = false
     let loadedObject: Object3D | null = null
@@ -1772,6 +2126,16 @@ function InteractiveModel({
         const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[] }) => {
           if (cancelled) return
           loadedObject = loadedModel.scene
+          const initMap = new Map<Object3D, { pos: Vector3; rot: [number, number, number]; scale: Vector3 }>()
+          loadedModel.scene.traverse((obj) => {
+            initMap.set(obj, {
+              pos: obj.position.clone(),
+              rot: [obj.rotation.x, obj.rotation.y, obj.rotation.z],
+              scale: obj.scale.clone(),
+            })
+          })
+          initialTransformsRef.current = initMap
+          kinematicVirtualTimeRef.current = 0
           oledBindingsRef.current = _collectOledBindings(loadedModel.scene)
           oledVirtualTimeRef.current = 0
           ledBindingsRef.current = _collectLedBindings(loadedModel.scene)
@@ -1791,6 +2155,7 @@ function InteractiveModel({
           setModel(null)
           setClips([])
           onAnimationsLoaded?.([])
+          initialTransformsRef.current.clear()
           oledBindingsRef.current = []
           ledBindingsRef.current = []
           beltBindingsRef.current = []
@@ -1839,10 +2204,17 @@ function InteractiveModel({
       const { OBJLoader } = await import('three/examples/jsm/loaders/OBJLoader.js')
       new OBJLoader().load(url, (loadedModel) => {
         if (cancelled) return
+        const initMap = new Map<Object3D, { pos: Vector3; rot: [number, number, number]; scale: Vector3 }>()
         loadedModel.traverse((child) => {
+          initMap.set(child, {
+            pos: child.position.clone(),
+            rot: [child.rotation.x, child.rotation.y, child.rotation.z],
+            scale: child.scale.clone(),
+          })
           const meshChild = child as Mesh
           if (meshChild.isMesh) meshChild.material = new MeshStandardMaterial({ color: COLORS[0], roughness: 0.58, metalness: 0.12 })
         })
+        initialTransformsRef.current = initMap
         loadedObject = loadedModel
         setModel(loadedModel)
         onModelLoaded?.(loadedModel)
@@ -1854,6 +2226,7 @@ function InteractiveModel({
       cancelled = true
       mixerRef.current?.stopAllAction()
       mixerRef.current = null
+      initialTransformsRef.current.clear()
       oledBindingsRef.current = []
       oledVirtualTimeRef.current = 0
       ledBindingsRef.current = []
@@ -1907,7 +2280,204 @@ function InteractiveModel({
       mixerRef.current.update(delta)
       onTimeChange?.(actionsRef.current[0]?.time ?? 0)
     }
-    if (autoRotate && groupRef.current) groupRef.current.rotation.y += delta * 0.2
+    if (autoRotate && groupRef.current && !(motionEnabled && playAnimations)) {
+      groupRef.current.rotation.y += delta * 0.2
+    }
+
+    // Real-Time Physical & Kinematic Motion Engine when motionEnabled or clips are active
+    if (model) {
+      const hasBakedClips = clips.length > 0
+      const shouldRunLiveKinematics = !hasBakedClips && motionEnabled && playAnimations
+      if (hasBakedClips && playAnimations) {
+        if (state.clock.elapsedTime - lastTelemetryEmitRef.current > 0.15) {
+          lastTelemetryEmitRef.current = state.clock.elapsedTime
+          let movingNodes = 0
+          let maxLinearDispM = 0
+          let maxAngularDispRad = 0
+          model.traverse((obj) => {
+            const init = initialTransformsRef.current.get(obj)
+            if (!init) return
+            const dPos = obj.position.distanceTo(init.pos)
+            const dRot = Math.hypot(obj.rotation.x - init.rot[0], obj.rotation.y - init.rot[1], obj.rotation.z - init.rot[2])
+            if (dPos > 1e-4 || dRot > 1e-4) {
+              movingNodes += 1
+              if (dPos > maxLinearDispM) maxLinearDispM = dPos
+              if (dRot > maxAngularDispRad) maxAngularDispRad = dRot
+            }
+          })
+          const activeDur = Math.max(0.1, clips[0]?.duration || 1)
+          const approxRpm = Number(((maxAngularDispRad * 60) / (2 * Math.PI * activeDur) * animationSpeed).toFixed(1))
+          const approxMmPerSec = Number(((maxLinearDispM * 1000) / activeDur * animationSpeed).toFixed(1))
+          onKinematicTelemetry?.({
+            active: true,
+            law: kinematicLaw,
+            source: 'glb_keyframes',
+            angularVelocityRpm: approxRpm,
+            linearVelocityMmPerSec: approxMmPerSec,
+            amplitudeDegOrMm: Number((maxAngularDispRad > 0.01 ? (maxAngularDispRad * 180) / Math.PI : maxLinearDispM * 1000).toFixed(1)),
+            periodSec: Number((activeDur / Math.max(0.1, animationSpeed)).toFixed(2)),
+            activePartsCount: Math.max(1, movingNodes),
+            equation: `Keyframes GLB (${clips.length} clip${clips.length > 1 ? 's' : ''}) · Δθ=${((maxAngularDispRad * 180) / Math.PI).toFixed(1)}° · Δx=${(maxLinearDispM * 1000).toFixed(1)}mm`,
+          })
+        }
+      } else if (shouldRunLiveKinematics) {
+        wasLiveKinematicActiveRef.current = true
+        kinematicVirtualTimeRef.current += delta * (animationSpeed ?? 1)
+        const t = manualTime ?? kinematicVirtualTimeRef.current
+        const meshes: Mesh[] = []
+        model.traverse((child) => {
+          if ((child as Mesh).isMesh) meshes.push(child as Mesh)
+        })
+        const bbox = new Box3().setFromObject(model)
+        const size = bbox.getSize(new Vector3())
+        const heightM = Math.max(0.12, size.y)
+        const targetMeshes =
+          transparencyScope === 'selected' && selectedPartName && selectedPartName !== 'all'
+            ? meshes.filter((m) => (m.name || m.parent?.name || 'unnamed_part') === selectedPartName)
+            : meshes
+        const activeList = targetMeshes.length > 0 ? targetMeshes : meshes
+
+        // Infer physical law when 'auto'
+        let resolvedLaw: Exclude<KinematicLawKind, 'auto'> = 'revolute'
+        if (kinematicLaw !== 'auto') {
+          resolvedLaw = kinematicLaw
+        } else {
+          const joinedNames = activeList.map((m) => `${m.name} ${m.parent?.name || ''}`.toLowerCase()).join(' ')
+          if (/pendul|chain|swing|balanc|lustre|corde/.test(joinedNames)) resolvedLaw = 'pendulum'
+          else if (/piston|slider|verin|rail|tiroir|linear|soupape/.test(joinedNames)) resolvedLaw = 'piston'
+          else if (/door|lid|hinge|porte|capot|bras|jaw|pince|clamp/.test(joinedNames)) resolvedLaw = 'hinge'
+          else if (/body|head|leg|arm|torso|char|creature|organ|heart/.test(joinedNames)) resolvedLaw = 'biomechanical'
+          else resolvedLaw = 'revolute'
+        }
+
+        let rpm = 0
+        let mmPerSec = 0
+        let amp = 0
+        let period = 0
+        let equation = ''
+
+        if (resolvedLaw === 'revolute') {
+          rpm = Number((24 * animationSpeed).toFixed(1))
+          const omega = (2 * Math.PI * 24) / 60 // rad/s at 1x
+          period = Number((60 / Math.max(0.1, rpm)).toFixed(2))
+          const radiusMm = Math.max(10, Math.max(size.x, size.z) * 500)
+          mmPerSec = Number((omega * animationSpeed * radiusMm).toFixed(1))
+          amp = 360
+          equation = `θ(t) = ω·t, ω = ${(omega * animationSpeed).toFixed(2)} rad/s (${rpm} RPM)`
+          activeList.forEach((m, idx) => {
+            const init = initialTransformsRef.current.get(m)
+            if (!init) return
+            const dir = activeList.length > 1 && idx % 2 === 1 ? -1 : 1
+            m.rotation.set(init.rot[0], init.rot[1] + dir * omega * t, init.rot[2])
+          })
+        } else if (resolvedLaw === 'pendulum') {
+          const g = 9.80665
+          const L = Math.max(0.15, heightM)
+          const omega0 = Math.sqrt(g / L)
+          const thetaMax = 0.42 // 24.1 deg
+          const theta = thetaMax * Math.sin(omega0 * t)
+          const thetaDot = thetaMax * omega0 * Math.cos(omega0 * t) * animationSpeed
+          period = Number(((2 * Math.PI) / (omega0 * Math.max(0.1, animationSpeed))).toFixed(2))
+          rpm = Number(((Math.abs(thetaDot) * 60) / (2 * Math.PI)).toFixed(1))
+          mmPerSec = Number((Math.abs(thetaDot) * L * 1000).toFixed(1))
+          amp = Number(((thetaMax * 180) / Math.PI).toFixed(1))
+          equation = `T = 2π√(L/g) = ${((2 * Math.PI) / omega0).toFixed(2)}s (L=${L.toFixed(2)}m, g=9.81m/s²)`
+          if (activeList.length <= 1 && groupRef.current) {
+            groupRef.current.rotation.z = theta
+          } else {
+            activeList.forEach((m, idx) => {
+              const init = initialTransformsRef.current.get(m)
+              if (!init) return
+              const phase = idx * 0.28
+              m.rotation.set(init.rot[0], init.rot[1], init.rot[2] + thetaMax * Math.sin(omega0 * t - phase))
+            })
+          }
+        } else if (resolvedLaw === 'piston') {
+          const strokeM = Math.max(0.02, heightM * 0.16)
+          const R = strokeM * 0.5
+          const rodRatio = 0.25 // R / L_rod
+          const freqHz = 0.85
+          const omega = 2 * Math.PI * freqHz
+          const disp = R * (Math.sin(omega * t) + (rodRatio * 0.5) * Math.sin(2 * omega * t))
+          const velMPerSec = R * omega * (Math.cos(omega * t) + rodRatio * Math.cos(2 * omega * t)) * animationSpeed
+          rpm = Number((freqHz * 60 * animationSpeed).toFixed(1))
+          mmPerSec = Number((Math.abs(velMPerSec) * 1000).toFixed(1))
+          amp = Number((strokeM * 1000).toFixed(1))
+          period = Number((1 / Math.max(0.05, freqHz * animationSpeed)).toFixed(2))
+          equation = `s(t) = R(sin ωt + λ/2 sin 2ωt), course = ${amp} mm`
+          activeList.forEach((m, idx) => {
+            const init = initialTransformsRef.current.get(m)
+            if (!init) return
+            const phase = idx % 2 === 0 ? 0 : Math.PI
+            const d = R * Math.sin(omega * t + phase)
+            m.position.set(init.pos.x, init.pos.y + d, init.pos.z)
+          })
+        } else if (resolvedLaw === 'hinge') {
+          const freqHz = 0.55
+          const omega = 2 * Math.PI * freqHz
+          const thetaMax = 0.61 // ~35 deg
+          const theta = thetaMax * Math.sin(omega * t)
+          const thetaDot = thetaMax * omega * Math.cos(omega * t) * animationSpeed
+          rpm = Number(((Math.abs(thetaDot) * 60) / (2 * Math.PI)).toFixed(1))
+          mmPerSec = Number((Math.abs(thetaDot) * Math.max(0.08, size.x * 0.5) * 1000).toFixed(1))
+          amp = Number(((thetaMax * 180) / Math.PI).toFixed(1))
+          period = Number((1 / Math.max(0.05, freqHz * animationSpeed)).toFixed(2))
+          equation = `θ(t) = ±${amp}°·sin(2π·${(freqHz * animationSpeed).toFixed(2)}Hz·t)`
+          activeList.forEach((m, idx) => {
+            const init = initialTransformsRef.current.get(m)
+            if (!init) return
+            const sign = idx % 2 === 0 ? 1 : -1
+            m.rotation.set(init.rot[0] + sign * theta, init.rot[1], init.rot[2])
+          })
+        } else {
+          // biomechanical: breathing + subtle postural sway
+          const freqHz = 0.35 // 21 breaths/min at 1x
+          const omega = 2 * Math.PI * freqHz
+          const breath = Math.sin(omega * t)
+          const sway = 0.06 * Math.sin(omega * 0.5 * t)
+          rpm = Number((freqHz * 60 * animationSpeed).toFixed(1))
+          mmPerSec = Number((Math.abs( Math.cos(omega * t) * omega * animationSpeed * heightM * 0.035) * 1000).toFixed(1))
+          amp = Number((heightM * 35).toFixed(1))
+          period = Number((1 / Math.max(0.05, freqHz * animationSpeed)).toFixed(2))
+          equation = `Respiration + posture: ΔV = ±3.5% · f = ${(freqHz * animationSpeed).toFixed(2)} Hz`
+          activeList.forEach((m, idx) => {
+            const init = initialTransformsRef.current.get(m)
+            if (!init) return
+            const s = 1 + 0.028 * breath
+            m.scale.set(init.scale.x * s, init.scale.y * (1 + 0.018 * breath), init.scale.z * s)
+            m.rotation.set(init.rot[0] + sway * 0.35, init.rot[1] + sway * (idx % 2 === 0 ? 1 : -1), init.rot[2])
+          })
+        }
+
+        if (state.clock.elapsedTime - lastTelemetryEmitRef.current > 0.12) {
+          lastTelemetryEmitRef.current = state.clock.elapsedTime
+          onKinematicTelemetry?.({
+            active: true,
+            law: resolvedLaw,
+            source: 'live_kinematics',
+            angularVelocityRpm: rpm,
+            linearVelocityMmPerSec: mmPerSec,
+            amplitudeDegOrMm: amp,
+            periodSec: period,
+            activePartsCount: activeList.length,
+            equation,
+          })
+        }
+      } else if (wasLiveKinematicActiveRef.current) {
+        wasLiveKinematicActiveRef.current = false
+        // Restore exact initial transforms when live motion is turned off
+        initialTransformsRef.current.forEach((init, obj) => {
+          obj.position.copy(init.pos)
+          obj.rotation.set(init.rot[0], init.rot[1], init.rot[2])
+          obj.scale.copy(init.scale)
+        })
+        if (groupRef.current) {
+          groupRef.current.rotation.z = 0
+        }
+        onKinematicTelemetry?.(null)
+      }
+    }
+
     // iter6.A: animate OLED flipbook atlases by stepping UV offset.
     // iter7.C: pause/resume smoothness — instead of using clock.elapsedTime
     // directly (which keeps advancing during the pause and snaps the frame
@@ -2027,7 +2597,10 @@ function InteractiveModel({
       const partName = hitMesh.name || hitMesh.parent?.name || 'unnamed_part'
       onPartSelect?.(partName)
       if (onPartInfo && model) {
-        onPartInfo(_extractPartInfo(hitMesh, model))
+        const worldNormal = event.face
+          ? event.face.normal.clone().transformDirection(hitMesh.matrixWorld).normalize()
+          : null
+        onPartInfo(_extractPartInfo(hitMesh, model, event.point ?? null, worldNormal))
       }
     }
   }, [onPartSelect, onPartInfo, model])
@@ -2369,6 +2942,14 @@ function Scene3D({
   onTimeChange,
   onCanvasReady,
   pbrProfile = null,
+  meshOpacity = 1,
+  opticalIor = 1.49,
+  xrayMode = false,
+  transparencyScope = 'all',
+  selectedPartName = null,
+  motionEnabled = false,
+  kinematicLaw = 'auto',
+  onKinematicTelemetry,
 }: {
   modelUrl: string
   localMeshPath?: string | null
@@ -2394,6 +2975,14 @@ function Scene3D({
   onTimeChange?: (time: number) => void
   onCanvasReady?: (canvas: HTMLCanvasElement) => void
   pbrProfile?: PbrProfile | null
+  meshOpacity?: number
+  opticalIor?: number
+  xrayMode?: boolean
+  transparencyScope?: 'all' | 'selected'
+  selectedPartName?: string | null
+  motionEnabled?: boolean
+  kinematicLaw?: KinematicLawKind
+  onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
 }) {
   const [modelLoaded, setModelLoaded] = useState(false)
   const [internalRoot, setInternalRoot] = useState<Object3D | null>(null)
@@ -2453,6 +3042,14 @@ function Scene3D({
           pbrProfile={pbrProfile}
           onDurationChange={onDurationChange}
           onTimeChange={onTimeChange}
+          meshOpacity={meshOpacity}
+          opticalIor={opticalIor}
+          xrayMode={xrayMode}
+          transparencyScope={transparencyScope}
+          selectedPartName={selectedPartName}
+          motionEnabled={motionEnabled}
+          kinematicLaw={kinematicLaw}
+          onKinematicTelemetry={onKinematicTelemetry}
         />
       </Suspense>
       <CameraController viewer={viewer} modelLoaded={modelLoaded} />
@@ -2548,12 +3145,26 @@ export default function ModelView() {
   const [customMotionStatus, setCustomMotionStatus] = useState<'idle' | 'classifying' | 'baking' | 'done' | 'error'>('idle')
   const [customMotionResult, setCustomMotionResult] = useState<{ category: string; rationale: string; rebake?: boolean } | null>(null)
   const [playAnimations, setPlayAnimations] = useState(true)
-  // Bouton MOUVEMENT : ON = on bake une vraie animation (le classifieur choisit laquelle),
-  // OFF = mesh statique (la pose de génération, ex. "Caine en train de tomber" reste figée).
-  // Lu via un ref dans generate() (useCallback) pour éviter une closure obsolète.
+  // Bouton MOUVEMENT : ON = on bake une vraie animation (le classifieur choisit laquelle)
+  // ET active le moteur cinematique temps-reel sur le modele charge si aucun clip n'est embarque.
+  // OFF = mesh statique (la pose de génération reste figée).
   const [motionEnabled, setMotionEnabled] = useState(false)
   const motionEnabledRef = useRef(false)
-  const toggleMotion = useCallback(() => setMotionEnabled((v) => { motionEnabledRef.current = !v; return !v }), [])
+  const toggleMotion = useCallback(() => {
+    setMotionEnabled((v) => {
+      const next = !v
+      motionEnabledRef.current = next
+      if (next) setPlayAnimations(true)
+      return next
+    })
+  }, [])
+  // Measured Optical Transparency & Real-Time Kinematics state
+  const [meshOpacity, setMeshOpacity] = useState<number>(1)
+  const [opticalIor, setOpticalIor] = useState<number>(1.49)
+  const [xrayMode, setXrayMode] = useState<boolean>(false)
+  const [transparencyScope, setTransparencyScope] = useState<'all' | 'selected'>('all')
+  const [kinematicLaw, setKinematicLaw] = useState<KinematicLawKind>('auto')
+  const [kinematicTelemetry, setKinematicTelemetry] = useState<KinematicTelemetry | null>(null)
   const [animationSpeed, setAnimationSpeed] = useState(1)
   const [animationClips, setAnimationClips] = useState<AnimationClip[]>([])
   const [activeClipIndex, setActiveClipIndex] = useState(-1)
@@ -2571,8 +3182,7 @@ export default function ModelView() {
   const [hdriPreset, setHdriPreset] = useState<'studio' | 'outdoor' | 'indoor' | null>('studio')
   const [meshFaceCount, setMeshFaceCount] = useState(0)
   // stocke le rapport qualite mesh du dernier result TRELLIS.2/DreamGaussian
-  // pour exposer un bouton 'Inspecter mesh' qui affiche tout (grade, watertight,
-  // disconnected bodies, flatness, etc.) sans devoir relancer une generation.
+  // ou de la metrologie geometrique temps-reel sur le GLB charge.
   type MeshQualityReport = {
     grade?: string
     qualityOk?: boolean
@@ -2597,22 +3207,14 @@ export default function ModelView() {
   const modelRootRef = useRef<Object3D | null>(null)
   const handleAnimationsLoaded = useCallback((clips: AnimationClip[]) => {
     setAnimationClips(clips)
-    setPlayAnimations(clips.length > 0)
+    setPlayAnimations(clips.length > 0 || motionEnabledRef.current)
     setAnimationSpeed(1)
-    // Auto-play the first clip by default when a single one is available
-    // (typical Rigify/Mixamo export). Only fall back to "all clips" when the
-    // GLB ships multiple distinct animations the user might want to mix.
     setActiveClipIndex(clips.length === 1 ? 0 : -1)
     setScrubTime(null)
     setCurrentTime(0)
   }, [])
   const handleModelLoaded = useCallback((model: Object3D) => {
     modelRootRef.current = model
-    // Count bones + faces across the whole model so the UI can advertise
-    // "rigged with N bones" / "M faces" and trigger smart defaults:
-    //   - bones >0    → auto-toggle the SkeletonHelper overlay so the user
-    //                   sees the rig immediately on load (no hunting for it)
-    //   - faces > 200k → surface a "mesh lourd, sauvetage suggere" hint
     let bones = 0
     let faces = 0
     model.traverse((child) => {
@@ -2629,11 +3231,18 @@ export default function ModelView() {
     })
     setBoneCount(bones)
     setMeshFaceCount(Math.round(faces))
-    // Smart default: open the bones overlay automatically on rigged meshes so
-    // the user immediately sees the auto-rig result. If the user manually
-    // toggled it off before a new model loads, we respect that intent —
-    // reset to false on every load and re-enable only when bones are present.
     setShowBones(bones > 0)
+    // Compute real-time mathematical mesh metrology (surface area, signed volume,
+    // half-edge watertightness, flatness, degenerate triangles) so "Inspecter"
+    // and QA validation always reflect true geometry, never a fake placeholder.
+    const realtimeMetrology = _computeRealtimeMeshMetrology(model)
+    setMeshQualityReport((prev) => ({
+      ...realtimeMetrology,
+      ...(prev && prev.faceCount === realtimeMetrology.faceCount ? prev : {}),
+      surfaceArea: prev?.surfaceArea && prev.surfaceArea > 0 ? prev.surfaceArea : realtimeMetrology.surfaceArea,
+      volume: prev?.volume && prev.volume > 0 ? prev.volume : realtimeMetrology.volume,
+    }))
+    setSelectedPartInfo(_aggregatePartInfo(model))
   }, [])
 
   // Mobile reload rescue: if we come back to a fresh mount after a tab kill
@@ -5270,9 +5879,23 @@ export default function ModelView() {
           const referencePassSummary = directMultiView
             ? `Reference multivue directe: ${multiviewSummary}.`
             : `Reference ${referenceWorkflow.style} ${referenceWorkflow.width}x${referenceWorkflow.height}.`
-          const baseFidelityScore = activePipeline === 'procedural' ? 98 : activePipeline === 'photogrammetry' ? 97 : result.fallback_used ? 84 : (result.multiview_used || directMultiView) ? 96 : referenceWorkflow.style === 'technical_render' ? 92 : 90
-          // Adjust fidelity score based on mesh verification
-          const fidelityScore = meshFidelityResult ? Math.round((baseFidelityScore + meshFidelityResult.score) / 2) : baseFidelityScore
+          const gradeToMeasuredScore: Record<string, number> = { A: 88, B: 78, C: 64, D: 46, F: 25 }
+          const geometryMeasuredScore = gradeToMeasuredScore[result.mesh_geometry_grade ?? ''] ?? (result.mesh_quality_ok === false ? 42 : 70)
+          const rawFidelityScore = meshFidelityResult ? meshFidelityResult.score : geometryMeasuredScore
+          const hasHardQualityFailure = Boolean(finalAcceptanceRejectedReason) || result.mesh_quality_ok === false
+          const fidelityScore = hasHardQualityFailure ? Math.min(rawFidelityScore, 58) : rawFidelityScore
+          if (hasHardQualityFailure && meshFidelityResult) {
+            const rejectionReasons = [
+              ...(finalAcceptanceRejectedReason ? [`Gate finale rejetee: ${finalAcceptanceRejectedReason}`] : []),
+              ...(result.mesh_quality_issues || []),
+            ]
+            setMeshFidelity({
+              ...meshFidelityResult,
+              score: fidelityScore,
+              passed: false,
+              artifacts: [...new Set([...meshFidelityResult.artifacts, ...rejectionReasons])],
+            })
+          }
           setProgress(`${pipelineLabel}: mesh ${shapeLabel} ${textureState} genere${fallbackState}. ${validationSummary} ${riggingSummary} ${meshFidelitySummary}`.trim())
           setPhase('Finalisation — validation et chargement du modèle 3D...', 98)
           const syntheticViewsSummary = resolvedViewPlan.assignments.filter((a) => a.sourceKind === 'synthetic' && a.resolvedBlob).length
@@ -5605,6 +6228,14 @@ export default function ModelView() {
                     onTimeChange={handleTimeChange}
                     onCanvasReady={handleCanvasReady}
                     pbrProfile={viewerPbrProfile}
+                    meshOpacity={meshOpacity}
+                    opticalIor={opticalIor}
+                    xrayMode={xrayMode}
+                    transparencyScope={transparencyScope}
+                    selectedPartName={selectedPart}
+                    motionEnabled={motionEnabled}
+                    kinematicLaw={kinematicLaw}
+                    onKinematicTelemetry={setKinematicTelemetry}
                   />
                   <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1">
                     {(['face', 'side', 'top', 'iso'] as const).map((view) => (
@@ -5645,6 +6276,28 @@ export default function ModelView() {
                       title="Basculer filaire / plein"
                     >
                       Filaire {wireframe ? 'ON' : 'OFF'}
+                    </button>
+                    <button
+                      onClick={() => setXrayMode((v) => !v)}
+                      className={`pointer-events-auto rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${
+                        xrayMode || meshOpacity < 0.99
+                          ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
+                          : 'border-aurora-border/60 bg-aurora-surface/80 text-aurora-text-dim hover:text-aurora-text'
+                      }`}
+                      title="Inspection interne Rayons-X / Transparence optique mesurée (DoubleSide + depth-peeling)"
+                    >
+                      🔬 Rayons-X {xrayMode ? 'ON' : `${Math.round(meshOpacity * 100)}%`}
+                    </button>
+                    <button
+                      onClick={toggleMotion}
+                      className={`pointer-events-auto rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${
+                        motionEnabled
+                          ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-200'
+                          : 'border-aurora-border/60 bg-aurora-surface/80 text-aurora-text-dim hover:text-aurora-text'
+                      }`}
+                      title="Activer / couper le mouvement cinématique réel sur le modèle 3D"
+                    >
+                      🎬 Mouvement {motionEnabled ? 'ON' : 'OFF'}
                     </button>
                     <button
                       onClick={() => {
@@ -5778,14 +6431,22 @@ export default function ModelView() {
                     </div>
                   )}
                   {modelUrl && (boneCount > 0 || meshFaceCount > 0) && (
-                    <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col items-start gap-1 rounded-lg border border-aurora-border/50 bg-aurora-surface/85 px-2.5 py-1.5 backdrop-blur">
-                      <span className="text-[9px] uppercase tracking-[0.18em] text-aurora-text-dim">Stats mesh</span>
+                    <div className="pointer-events-none absolute left-3 top-12 z-10 flex flex-col items-start gap-1 rounded-lg border border-aurora-border/50 bg-aurora-surface/85 px-2.5 py-1.5 backdrop-blur">
+                      <span className="text-[9px] uppercase tracking-[0.18em] text-aurora-text-dim">Métrologie mesh</span>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-aurora-text">
                         {meshFaceCount > 0 && (
                           <span title="Faces (triangles) totales du mesh">
                             <span className="text-aurora-text-dim">faces</span>{' '}
                             <span className={meshFaceCount > 200_000 ? 'text-amber-300 font-semibold' : ''}>
                               {meshFaceCount >= 1000 ? `${Math.round(meshFaceCount / 1000)}k` : meshFaceCount}
+                            </span>
+                          </span>
+                        )}
+                        {meshQualityReport?.grade && (
+                          <span title="Grade géométrique mesuré">
+                            <span className="text-aurora-text-dim">grade</span>{' '}
+                            <span className={meshQualityReport.grade === 'A' || meshQualityReport.grade === 'B' ? 'text-emerald-300 font-semibold' : 'text-amber-300 font-semibold'}>
+                              {meshQualityReport.grade}
                             </span>
                           </span>
                         )}
@@ -5805,6 +6466,13 @@ export default function ModelView() {
                           <span title="Duree totale du clip actif">
                             <span className="text-aurora-text-dim">dur.</span>{' '}
                             <span className="font-mono">{animationDuration.toFixed(1)}s</span>
+                          </span>
+                        )}
+                        {(xrayMode || meshOpacity < 0.99) && (
+                          <span title="Transmission optique effective (Beer-Lambert + Fresnel)">
+                            <span className="text-cyan-300 font-mono">
+                              T={_computeOpticalMetrics(xrayMode ? Math.min(meshOpacity, 0.35) : meshOpacity, xrayMode ? 0.52 : (1 - meshOpacity) * 0.78, opticalIor, selectedPartInfo?.wallThicknessMm ?? selectedPartInfo?.harmonicThicknessMm ?? 2.5).effectiveTransmissionPct}%
+                            </span>
                           </span>
                         )}
                       </div>
@@ -5896,6 +6564,186 @@ export default function ModelView() {
             </div>
             <div className="space-y-4">
               <EngineeringExportPanel modelUrl={modelUrl} onAssemblyRequested={() => setWorkspace('assembly')} />
+              {/* Measured Optical Transparency & Wall Thickness Panel */}
+              {modelUrl && (() => {
+                const effOpacity = xrayMode ? Math.min(meshOpacity, 0.35) : meshOpacity
+                const effTrans = xrayMode ? 0.52 : Math.max(0, (1 - effOpacity) * 0.78)
+                const refThicknessMm = selectedPartInfo?.wallThicknessMm ?? selectedPartInfo?.harmonicThicknessMm ?? 2.5
+                const optical = _computeOpticalMetrics(effOpacity, effTrans, opticalIor, refThicknessMm)
+                return (
+                  <div className="rounded-[1.4rem] border border-cyan-500/30 bg-cyan-500/5 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] uppercase tracking-[0.22em] text-cyan-300">Optique & Transparence Mesurée</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setXrayMode(false)
+                          setMeshOpacity(1)
+                          setOpticalIor(1.49)
+                        }}
+                        className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-400/20"
+                      >
+                        Opaque 100%
+                      </button>
+                    </div>
+                    <div className="mt-3 space-y-2.5 text-[11px]">
+                      <div>
+                        <div className="flex justify-between text-aurora-text-dim">
+                          <span>Opacité surfacique (α)</span>
+                          <span className="font-mono text-aurora-text">{Math.round(effOpacity * 100)}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.05"
+                          max="1"
+                          step="0.01"
+                          value={meshOpacity}
+                          onChange={(e) => setMeshOpacity(Number(e.target.value))}
+                          className="mt-1 w-full accent-cyan-400"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-aurora-text-dim mb-1">Indice de réfraction (IOR n)</label>
+                        <select
+                          value={opticalIor}
+                          onChange={(e) => setOpticalIor(Number(e.target.value))}
+                          className="w-full rounded-xl border border-aurora-border/50 bg-aurora-surface-2 px-2.5 py-1.5 text-[11px] text-aurora-text outline-none"
+                        >
+                          <option value={1.0}>Air / Vide (n = 1.00)</option>
+                          <option value={1.333}>Eau pure 20°C (n = 1.333)</option>
+                          <option value={1.46}>Silice fondue / Quartz (n = 1.46)</option>
+                          <option value={1.49}>PMMA / Acrylique (n = 1.49)</option>
+                          <option value={1.52}>Verre Crown optique (n = 1.52)</option>
+                          <option value={1.585}>Polycarbonate (n = 1.585)</option>
+                          <option value={1.77}>Saphir synthétique (n = 1.77)</option>
+                          <option value={2.417}>Diamant (n = 2.417)</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setXrayMode((v) => !v)}
+                          className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            xrayMode
+                              ? 'border-cyan-400/60 bg-cyan-500/25 text-cyan-100'
+                              : 'border-aurora-border/40 bg-aurora-surface-2/70 text-aurora-text-dim hover:text-aurora-text'
+                          }`}
+                        >
+                          🔬 Rayons-X {xrayMode ? 'ON' : 'OFF'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTransparencyScope((s) => (s === 'all' ? 'selected' : 'all'))}
+                          className="rounded-xl border border-aurora-border/40 bg-aurora-surface-2/70 px-2.5 py-1.5 text-[11px] text-aurora-text-dim hover:text-aurora-text"
+                          title="Appliquer la transparence à tout le modèle ou uniquement au composant cliqué"
+                        >
+                          {transparencyScope === 'all' ? 'Cible: Tout' : 'Cible: Sélection'}
+                        </button>
+                      </div>
+                      <div className="mt-2 rounded-xl border border-cyan-500/20 bg-black/25 p-2.5 space-y-1 font-mono text-[10px]">
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Réflectance Fresnel R₀</span><span className="text-cyan-200">{optical.fresnelReflectancePct.toFixed(2)} %</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Transmission Beer-Lambert T_eff</span><span className="text-emerald-300">{optical.effectiveTransmissionPct.toFixed(1)} %</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Épaisseur paroi (Raycast)</span><span className="text-aurora-text">{selectedPartInfo?.wallThicknessMm != null ? `${selectedPartInfo.wallThicknessMm.toFixed(2)} mm` : 'Clic face 3D'}</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Épaisseur harmonique BBox</span><span className="text-aurora-text">{selectedPartInfo?.harmonicThicknessMm != null ? `${selectedPartInfo.harmonicThicknessMm.toFixed(2)} mm` : '—'}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+              {/* Live Real-Time Kinematics & Baked Animation Panel */}
+              {modelUrl && (
+                <div className="rounded-[1.4rem] border border-emerald-500/30 bg-emerald-500/5 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-emerald-300">Cinématique & Mouvement Réel</p>
+                    <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-mono text-emerald-200">
+                      {animationClips.length > 0 ? `${animationClips.length} clip(s) GLB` : motionEnabled ? 'Loi physique live' : 'Statique'}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2.5 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!motionEnabled && animationClips.length === 0) {
+                            toggleMotion()
+                          } else {
+                            setPlayAnimations((v) => !v)
+                          }
+                        }}
+                        className={`flex-1 rounded-xl px-3 py-2 text-[11px] font-medium transition-colors ${
+                          playAnimations && (motionEnabled || animationClips.length > 0)
+                            ? 'bg-emerald-500/25 border border-emerald-400/60 text-emerald-100'
+                            : 'border border-aurora-border bg-aurora-surface-2 text-aurora-text'
+                        }`}
+                      >
+                        {playAnimations && (motionEnabled || animationClips.length > 0) ? '⏸ Pause mouvement' : '▶ Activer mouvement réel'}
+                      </button>
+                      {animationClips.length === 0 && (
+                        <button
+                          type="button"
+                          onClick={toggleMotion}
+                          className={`rounded-xl border px-2.5 py-2 text-[11px] font-medium transition-colors ${
+                            motionEnabled
+                              ? 'border-red-400/40 bg-red-500/15 text-red-200'
+                              : 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
+                          }`}
+                          title="Activer ou réinitialiser la pose statique"
+                        >
+                          {motionEnabled ? '⏹ Stop' : '🎬 ON'}
+                        </button>
+                      )}
+                    </div>
+                    {animationClips.length === 0 && (
+                      <div>
+                        <label className="block text-aurora-text-dim mb-1">Loi cinématique appliquée</label>
+                        <select
+                          value={kinematicLaw}
+                          onChange={(e) => {
+                            setKinematicLaw(e.target.value as KinematicLawKind)
+                            if (!motionEnabled) toggleMotion()
+                          }}
+                          className="w-full rounded-xl border border-aurora-border/50 bg-aurora-surface-2 px-2.5 py-1.5 text-[11px] text-aurora-text outline-none"
+                        >
+                          <option value="auto">Auto (inférence géométrique)</option>
+                          <option value="revolute">Rotation continue (Revolute ω·t)</option>
+                          <option value="pendulum">Pendule gravitaire T = 2π√(L/g)</option>
+                          <option value="piston">Piston bielle-manivelle s(t)</option>
+                          <option value="hinge">Articulation charnière ±35°</option>
+                          <option value="biomechanical">Biomécanique (respiration & posture)</option>
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex justify-between text-aurora-text-dim">
+                        <span>Vitesse d&apos;exécution</span>
+                        <span className="font-mono text-aurora-text">×{animationSpeed.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="3"
+                        step="0.05"
+                        value={animationSpeed}
+                        onChange={(event) => setAnimationSpeed(Number(event.target.value))}
+                        className="mt-1 w-full accent-emerald-400"
+                      />
+                    </div>
+                    {kinematicTelemetry ? (
+                      <div className="rounded-xl border border-emerald-500/25 bg-black/25 p-2.5 space-y-1 font-mono text-[10px]">
+                        <div className="text-emerald-300 truncate" title={kinematicTelemetry.equation}>{kinematicTelemetry.equation}</div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Vitesse angulaire</span><span className="text-aurora-text">{kinematicTelemetry.angularVelocityRpm} RPM</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Vitesse linéaire</span><span className="text-aurora-text">{kinematicTelemetry.linearVelocityMmPerSec} mm/s</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Période / Cycle</span><span className="text-aurora-text">{kinematicTelemetry.periodSec} s</span></div>
+                        <div className="flex justify-between"><span className="text-aurora-text-dim">Sous-ensembles actifs</span><span className="text-emerald-200">{kinematicTelemetry.activePartsCount}</span></div>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] leading-relaxed text-aurora-text-muted">
+                        Clique sur « ▶ Activer mouvement réel » ou « 🎬 Mouvement ON » pour exécuter la loi physique mesurée en temps réel.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Actions / Mouvement</p>
                 <p className="mt-2 text-sm text-aurora-text">{uiIntent ? 'Les boutons affinent la prochaine generation et verrouillent la vue quand la lecture du mouvement doit rester claire.' : 'Ecris un prompt pour faire apparaitre des presets de pose ou d etude mecanique adaptes.'}</p>
@@ -5948,21 +6796,33 @@ export default function ModelView() {
                       <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Vertex</span><span className="text-aurora-text">{selectedPartInfo.vertexCount.toLocaleString('fr-FR')}</span></div>
                       <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Triangles</span><span className="text-aurora-text">{selectedPartInfo.triangleCount.toLocaleString('fr-FR')}</span></div>
                       <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Dimensions</span><span className="text-aurora-text">{selectedPartInfo.dimensionsMeters.map((v) => v.toFixed(2)).join(' × ')} m</span></div>
+                      {selectedPartInfo.wallThicknessMm != null && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Épaisseur locale (Rayon)</span><span className="text-cyan-300 font-mono">{selectedPartInfo.wallThicknessMm.toFixed(2)} mm</span></div>
+                      )}
+                      {selectedPartInfo.harmonicThicknessMm != null && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Épaisseur harmonique</span><span className="text-aurora-text font-mono">{selectedPartInfo.harmonicThicknessMm.toFixed(2)} mm</span></div>
+                      )}
+                      {meshQualityReport?.surfaceArea != null && meshQualityReport.surfaceArea > 0 && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Aire maillage</span><span className="text-aurora-text font-mono">{meshQualityReport.surfaceArea.toFixed(4)} m²</span></div>
+                      )}
+                      {meshQualityReport?.volume != null && meshQualityReport.volume > 0 && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Volume signé</span><span className="text-aurora-text font-mono">{meshQualityReport.volume.toFixed(5)} m³</span></div>
+                      )}
                       {selectedPartInfo.bonesAttached > 0 && (
                         <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Os</span><span className="text-aurora-text">{selectedPartInfo.bonesAttached}</span></div>
                       )}
                       {selectedPartInfo.hasSkinning && <p className="mt-2 text-[10px] text-aurora-accent-light">Skinning detecte (mesh anime par armature)</p>}
-                      {selectedPartInfo.hasMorphTargets && <p className="text-[10px] text-aurora-accent-light">Morph targets disponibles</p>}
+                      {selectedPartInfo.hasMorphTargets && <p className="mt-2 text-[10px] text-aurora-accent-light">Morph targets disponibles</p>}
                     </div>
                   ) : (
-                    <p className="mt-3 text-[11px] leading-relaxed text-aurora-text-muted">Clique sur une face du modele pour afficher ses infos techniques (materiau, polycount, dimensions, animation), ou utilise « Tout selectionner » pour l aggregat.</p>
+                    <p className="mt-3 text-[11px] leading-relaxed text-aurora-text-muted">Clique sur une face du modele pour afficher ses infos techniques (materiau, polycount, dimensions, epaisseur raycast), ou utilise « Tout selectionner » pour l aggregat.</p>
                   )}
                 </div>
               )}
               {/* v82nu iter3 — Custom motion zone (LLM-driven) */}
               {modelUrl && (
                 <div className="rounded-[1.4rem] border border-aurora-border/35 bg-aurora-surface/70 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Mouvement custom</p>
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Mouvement custom (Bake Blender)</p>
                   <p className="mt-2 text-xs leading-relaxed text-aurora-text-muted">Decris en texte libre comment animer le modele. L IA classifie en led_emission / fan_pwm / oled_screen / creature_organic / mechanical_simple / rigid_static, puis re-bake si un mesh est charge.</p>
                   <textarea
                     value={customMotionText}
@@ -5993,62 +6853,9 @@ export default function ModelView() {
                   )}
                 </div>
               )}
-              {animationClips.length > 0 && (
-                <div className="rounded-[1.4rem] border border-aurora-accent/30 bg-aurora-accent/5 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-accent">Animations mecaniques</p>
-                    <span className="text-[10px] text-aurora-text-dim">{animationClips.length} clip{animationClips.length > 1 ? 's' : ''}</span>
-                  </div>
-                  <ul className="mt-2 space-y-1">
-                    {animationClips.slice(0, 4).map((clip, index) => (
-                      <li key={`${clip.name}-${index}`} className="flex items-center justify-between text-[11px]">
-                        <span className="truncate text-aurora-text">{clip.name || `Animation ${index + 1}`}</span>
-                        <span className="text-aurora-text-dim">{clip.duration.toFixed(1)}s</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="mt-3 flex items-center gap-2">
-                    <button
-                      onClick={() => setPlayAnimations((value) => !value)}
-                      className={`flex-1 rounded-xl px-3 py-2 text-[11px] font-medium transition-colors ${
-                        playAnimations ? 'gradient-accent text-white' : 'border border-aurora-border bg-aurora-surface-2 text-aurora-text'
-                      }`}
-                    >
-                      {playAnimations ? '⏸ Pause' : '▶ Lecture'}
-                    </button>
-                    <button
-                      onClick={() => setAnimationSpeed((value) => (value >= 2 ? 0.25 : value >= 1 ? 2 : value >= 0.5 ? 1 : 0.5))}
-                      className="rounded-xl border border-aurora-border bg-aurora-surface-2 px-3 py-2 text-[11px] font-medium text-aurora-text-dim hover:text-aurora-text transition-colors"
-                      title="Changer la vitesse"
-                    >
-                      ×{animationSpeed.toFixed(animationSpeed < 1 ? 2 : 1)}
-                    </button>
-                  </div>
-                  <div className="mt-3">
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="3"
-                      step="0.1"
-                      value={animationSpeed}
-                      onChange={(event) => setAnimationSpeed(Number(event.target.value))}
-                      className="w-full accent-aurora-accent"
-                    />
-                    <div className="flex justify-between text-[9px] text-aurora-text-dim">
-                      <span>0.1×</span>
-                      <span>1×</span>
-                      <span>3×</span>
-                    </div>
-                  </div>
-                  <p className="mt-3 text-[10px] leading-relaxed text-aurora-text-muted">
-                    Les animations procedurales (courroie, engrenages, verin, charniere...) sont jouees automatiquement.
-                    Mets en pause pour inspecter une position precise.
-                  </p>
-                </div>
-              )}
-              {meshFidelity && <div className={`rounded-[1.4rem] border px-4 py-3 ${meshFidelity.passed ? 'border-aurora-accent/20 bg-aurora-accent/8' : 'border-aurora-red/20 bg-aurora-red/8'}`}>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Fidelite mesh</p>
-                <p className={`mt-2 text-sm font-medium ${meshFidelity.passed ? 'text-aurora-accent-light' : meshFidelity.score >= 75 ? 'text-yellow-400' : 'text-aurora-red'}`}>{meshFidelity.score}/100 — {meshFidelity.passed ? 'QA PASS (95%+)' : meshFidelity.score >= 75 ? 'Acceptable mais perfectible' : 'Ameliorations necessaires'}</p>
+              {meshFidelity && <div className={`rounded-[1.4rem] border px-4 py-3 ${meshFidelity.passed && meshQualityReport?.qualityOk !== false ? 'border-aurora-accent/20 bg-aurora-accent/8' : 'border-aurora-red/20 bg-aurora-red/8'}`}>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Fidelite & Validation Geometrique</p>
+                <p className={`mt-2 text-sm font-medium ${meshFidelity.passed && meshQualityReport?.qualityOk !== false ? 'text-aurora-accent-light' : meshFidelity.score >= 75 ? 'text-yellow-400' : 'text-aurora-red'}`}>{meshFidelity.score}/100 — {meshFidelity.passed && meshQualityReport?.qualityOk !== false ? 'QA PASS (Vérifié)' : meshFidelity.score >= 75 ? 'Acceptable mais perfectible' : 'Validation rejetée — corrections requises'}</p>
                 {meshFidelity.failureCategory && meshFidelity.failureCategory !== 'none' && <p className="mt-1 text-xs text-aurora-red/70">Categorie: {meshFidelity.failureCategory.replace(/_/g, ' ')}</p>}
                 {meshFidelity.notes && <p className="mt-1 text-xs leading-relaxed text-aurora-text-muted">{meshFidelity.notes}</p>}
                 {meshFidelity.missingDetails.length > 0 && <div className="mt-2"><p className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Details manquants</p>{meshFidelity.missingDetails.slice(0, 5).map((d, i) => <p key={i} className="mt-1 text-xs text-aurora-text-muted">· {d}</p>)}</div>}

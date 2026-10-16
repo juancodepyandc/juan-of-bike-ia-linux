@@ -1253,4 +1253,5 @@ export const FX_SCENES: Record<FxModule, FxScene> = {
   cyber,
   voice,
   cowork,
+  business: cowork,
 }

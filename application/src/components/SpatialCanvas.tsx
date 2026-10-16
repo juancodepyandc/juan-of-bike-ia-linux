@@ -105,6 +105,7 @@ const COMPANION_LINES: Record<Character, Partial<Record<ModuleId, string>>> = {
     '3d':         "Un mesh brûlant sort du four !",
     cyber:        "Chiffrement ? J'brûle les pare-feux moi.",
     learning:     "Quiz time ! Donne-moi tout ton XP.",
+    business:     "Capital protégé et profit brûlant avec nos 10 agents !",
   },
   lucy: {
     conversation: "Ouvre-toi, Porte de l'Informatique !",
@@ -115,6 +116,7 @@ const COMPANION_LINES: Record<Character, Partial<Record<ModuleId, string>>> = {
     '3d':         "On sculpte dans la lumière stellaire.",
     cyber:        "Taurus protège nos clés, ne crains rien.",
     learning:     "Nouvelle leçon, nouvelle constellation.",
+    business:     "Sovereign veille sur notre trésorerie stellaire.",
   },
 }
 
@@ -729,7 +731,7 @@ export function SpatialCanvas({
         setSlashPos({ x: window.innerWidth / 2 - 160, y: window.innerHeight / 2 - 180 })
         setSlashOpen(true)
       }
-      if ((e.metaKey || e.ctrlKey) && /^[1-8]$/.test(e.key)) {
+      if ((e.metaKey || e.ctrlKey) && /^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1
         const target = MODULES[idx]
         if (target) { e.preventDefault(); openModule(target.id) }

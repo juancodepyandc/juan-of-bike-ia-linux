@@ -10,10 +10,11 @@ export const FX_AGENTS: Record<FxModule, { name: string; accent: string; hello: 
   video:        { name: 'Klap',   accent: '#F59E0B', hello: 'Silence… on tourne.' },
   drawing:      { name: 'Sumi',   accent: '#A3E635', hello: 'Ton geste devient une œuvre.' },
   '3d':         { name: 'Poly',   accent: '#60A5FA', hello: 'Je sculpte vertex par vertex.' },
-  learning:     { name: 'Sage',   accent: '#10B981', hello: 'Prêt à engranger de l\'XP ?' },
-  cyber:        { name: 'Senti',  accent: '#F43F5E', hello: 'Périmètre sous contrôle.' },
-  voice:        { name: 'Echo',   accent: '#2DD4BF', hello: 'Je t\'écoute déjà.' },
-  cowork:       { name: 'Navi',   accent: '#6366F1', hello: 'Je navigue, tu supervises.' },
+  learning:     { name: 'Sage',      accent: '#10B981', hello: 'Prêt à engranger de l\'XP ?' },
+  cyber:        { name: 'Senti',     accent: '#F43F5E', hello: 'Périmètre sous contrôle.' },
+  business:     { name: 'Sovereign', accent: '#F59E0B', hello: 'Capital protégé, alpha en vue.' },
+  voice:        { name: 'Echo',      accent: '#2DD4BF', hello: 'Je t\'écoute déjà.' },
+  cowork:       { name: 'Navi',      accent: '#6366F1', hello: 'Je navigue, tu supervises.' },
 }
 
 type MascotProps = {
@@ -114,6 +115,13 @@ const CHARS: Record<FxModule, CharacterCfg> = {
     hairBack: 'M28 43 C26 26 36 13 50 12 C64 13 74 26 72 43 C73 49 72 53 70 56 L66 45 L61 55 L55 44 L50 55 L45 44 L39 55 L34 45 L30 56 C28 53 27 49 28 43 Z',
     hairFront: 'M31 36 C31 22 40 15 50 15 C60 15 69 22 69 36 C64 28 60 33 55 26 C50 32 45 27 41 32 C37 28 33 31 31 36 Z',
     hairHighlight: 'M40 18 C45 15 52 15 56 17 C51 17 44 18 42 22 Z',
+  },
+  business: {
+    skin: '#F5D6BA', hairBase: '#1F2937', hairShade: '#111827', hairLight: '#F59E0B',
+    outfit: '#064E3B', outfitLight: '#047857', eyeColor: '#10B981', lashes: false,
+    hairBack: 'M28 43 C26 25 36 13 50 12 C64 13 74 25 72 43 L68 52 L64 44 L58 53 L50 44 L42 53 L36 44 L32 52 Z',
+    hairFront: 'M31 36 C32 22 40 15 50 15 C60 15 68 22 69 36 C64 28 59 32 54 25 C49 31 44 26 40 31 C36 27 33 30 31 36 Z',
+    hairHighlight: 'M40 18 C46 15 54 15 58 17 C52 17 45 18 42 22 Z',
   },
 }
 
@@ -329,6 +337,15 @@ export default function AuroraMascot({ module, size = 46, state = 'idle', classN
           <circle cx="68" cy="45.5" r="8.6" fill="none" stroke="#C9A76B" strokeWidth="1.8" />
           <path d="M74.5 51.5 L80 58" stroke="#C9A76B" strokeWidth="2.2" strokeLinecap="round" />
           <path d="M50 66 L47 74 L50 72 L53 74 Z" fill={shade(a, 1.2)} />
+        </g>
+      )
+      break
+    case 'business':
+      accessory = (
+        <g>
+          <path d="M47 72 L50 85 L53 72 L50 69 Z" fill="#F59E0B" />
+          <polyline points="16,62 22,56 26,59 32,50" fill="none" stroke="#10B981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="32" cy="50" r="2" fill="#F59E0B" />
         </g>
       )
       break

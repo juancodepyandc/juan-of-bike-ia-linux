@@ -13,6 +13,7 @@ const MODULE_PERSONA: Record<string, string> = {
   image: 'mira', drawing: 'mira',
   video: 'tess', '3d': 'tess',
   code: 'lou', learning: 'sam', cyber: 'yann',
+  business: 'sam',
 }
 
 export default function SidebarPersona({ moduleId }: { moduleId: string }) {

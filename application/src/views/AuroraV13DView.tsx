@@ -69,8 +69,8 @@ function NodeDot({ active, color }: { active: boolean; color: string }) {
 }
 
 const PIPELINE: Array<[string, 'done' | 'running' | 'queued']> = [
-  ['intent', 'done'], ['traits', 'done'], ['portrait', 'done'],
-  ['variations', 'done'], ['segmentation', 'running'], ['rig', 'queued'],
+  ['intent', 'queued'], ['traits', 'queued'], ['portrait', 'queued'],
+  ['variations', 'queued'], ['segmentation', 'queued'], ['rig', 'queued'],
   ['assemblage', 'queued'], ['publish', 'queued'],
 ]
 
@@ -271,8 +271,8 @@ export default function AuroraV13DView() {
           fontFamily: 'var(--font-mono, monospace)', fontSize: 11, color: 'var(--fg-dim, #aaa)',
           display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4,
         }}>
-          <span>12 482 verts · 8 196 tris · 24mb</span>
-          <DensityGauge current={8196} target={140000} category="object" />
+          <span>0 verts · 0 tris · aucun maillage chargé</span>
+          <DensityGauge current={0} target={140000} category={model.intent?.subjectKind || 'en attente'} />
         </div>
 
         {/* Enter button overlay */}

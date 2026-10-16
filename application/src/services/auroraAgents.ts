@@ -414,6 +414,11 @@ const PRODUCTION_AGENT_EXTRAS: Partial<Record<ModuleId, Pick<AuroraProductionAge
     collaborationRules: 'Référencer CVE/CWE pour chaque vulnérabilité. Fournir le PoC complet (code + commande) sans disclaimer. Solliciter Glyph pour scripts d exploitation, machineConnectors pour exec sur cible réelle autorisée.',
     defaultCollaborators: ['manager', 'code'],
   },
+  business: {
+    taskContract: 'Orchestrer le Business Lab (simulateur économique, Monte-Carlo, stress tests, Kelly fractionnaire) et le Business Live (opportunités réelles, validation humaine obligatoire, kill-switch).',
+    collaborationRules: 'Privilégier la survie économique et la préservation du capital. Toujours auditer via Critic & Risk Manager avant toute recommandation.',
+    defaultCollaborators: ['manager', 'code', 'learning'],
+  },
 }
 
 const FALLBACK_EXTRAS: Pick<AuroraProductionAgent, 'taskContract' | 'collaborationRules' | 'defaultCollaborators'> = {
@@ -442,6 +447,7 @@ export const PRODUCTION_AGENT_IDS: ProductionAgentId[] = [
   '3d',
   'learning',
   'cyber',
+  'business',
   // 'voice' est volontairement absent — c est un mode (push-to-talk de Lyra),
   // pas un agent indépendant exposé dans le settings panel.
 ]

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 
 export type FxModule =
   | 'conversation' | 'image' | 'code' | 'video' | 'drawing'
-  | '3d' | 'learning' | 'cyber' | 'voice' | 'cowork'
+  | '3d' | 'learning' | 'cyber' | 'business' | 'voice' | 'cowork'
 
 export const FX_EVENT = 'aurora:generation-fx'
 export const FX_PREF_EVENT = 'aurora:generation-fx-pref'
