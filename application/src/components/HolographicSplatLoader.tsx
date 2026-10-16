@@ -1,740 +1,693 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Activity,
+  Box,
+  CheckCircle2,
+  Clock,
+  Cpu,
+  Layers,
+  Minimize2,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  Wrench,
+} from 'lucide-react';
 import {
   computeLiveMissionTiming,
   computeSubAgentsForProgress,
+  formatDurationShort,
   generateHolographicSplats,
+  LiveEngineeringTelemetryInput,
   readPersistedThreeDMission,
-  subscribeThreeDMission,
-  synthesizeThreeDMasterPrompt,
-  type PersistedThreeDMissionState,
-} from '../services/threeDSubAgentsOrchestrator.ts'
+} from '../services/threeDSubAgentsOrchestrator';
 
 export interface HolographicSplatLoaderProps {
-  prompt: string
-  active: boolean
-  mode?: 'mesh_3d' | 'engineering_cad'
-  phaseLabel?: string
-  phasePercent?: number
-  startedAtMs?: number
-  serverElapsedSeconds?: number | null
-  serverRemainingSeconds?: number | null
-  stlCount?: number
-  verifiedCriteriaCount?: number
-  totalCriteriaCount?: number
-  referenceImageUrl?: string | null
-  compact?: boolean
-  onApplyMasterPrompt?: (formattedPrompt: string, inferredConstraints: string) => void
-  onStop?: () => void
+  active?: boolean;
+  prompt: string;
+  progressPercent?: number;
+  phasePercent?: number;
+  phaseDetail?: string;
+  phaseLabel?: string;
+  startedAtMs?: number;
+  serverElapsedSeconds?: number | null;
+  serverRemainingSeconds?: number | null;
+  stlCount?: number;
+  verifiedCriteriaCount?: number;
+  totalCriteriaCount?: number;
+  referenceImageUrl?: string | null;
+  mode?: 'visual_3d' | 'engineering_cad' | 'mesh_3d';
+  compact?: boolean;
+  liveTelemetry?: LiveEngineeringTelemetryInput;
+  onMinimize?: () => void;
+  onStop?: () => void;
 }
 
-type HoloDisplayMode = 'splats' | 'kinematics' | 'laser_cad'
-
-export default function HolographicSplatLoader({
+export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
   prompt,
-  active,
-  mode = 'mesh_3d',
-  phaseLabel = '',
+  progressPercent,
   phasePercent = 0,
+  phaseDetail = '',
+  phaseLabel = '',
   startedAtMs,
   serverElapsedSeconds = null,
   serverRemainingSeconds = null,
-  stlCount = 0,
-  verifiedCriteriaCount = 0,
-  totalCriteriaCount = 0,
-  referenceImageUrl = null,
+  stlCount,
+  verifiedCriteriaCount,
+  totalCriteriaCount,
+  mode = 'visual_3d',
   compact = false,
-  onApplyMasterPrompt,
-  onStop,
-}: HolographicSplatLoaderProps) {
-  const [persistedMission, setPersistedMission] = useState<PersistedThreeDMissionState | null>(() =>
-    readPersistedThreeDMission(),
-  )
-  const [nowMs, setNowMs] = useState(() => Date.now())
-  const [holoMode, setHoloMode] = useState<HoloDisplayMode>('splats')
-  const [showMasterPrompt, setShowMasterPrompt] = useState(false)
-  const [copiedMaster, setCopiedMaster] = useState(false)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const dragRef = useRef<{ dragging: boolean; lastX: number; lastY: number; rotY: number; rotX: number }>({
-    dragging: false,
-    lastX: 0,
-    lastY: 0,
-    rotY: 0.45,
-    rotX: 0.18,
-  })
+  liveTelemetry,
+  onMinimize,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  const [viewMode, setViewMode] = useState<'splats' | 'kinematics' | 'blueprint'>('splats');
+  const [selectedAgentIdx, setSelectedAgentIdx] = useState<number | null>(null);
+  const [cameraYaw, setCameraYaw] = useState<number>(0.45);
+  const [cameraPitch, setCameraPitch] = useState<number>(0.22);
+  const isDraggingRef = useRef(false);
+  const lastMouseRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  const persisted = useMemo(() => readPersistedThreeDMission(), [nowTick]);
+  const effectivePrompt = (prompt || persisted?.rawPrompt || 'Projet 3D & Assemblage').trim();
+  const effectiveStartedAt = startedAtMs || persisted?.startedAtMs || Date.now();
+  const resolvedInputPct = progressPercent ?? phasePercent ?? 0;
+  const rawPct = resolvedInputPct > 0 ? resolvedInputPct : persisted?.progressPercent || 6;
+  const resolvedPhaseText = phaseDetail || phaseLabel || persisted?.phaseDetail || '';
+  const mergedTelemetry = useMemo<LiveEngineeringTelemetryInput | undefined>(
+    () =>
+      liveTelemetry || {
+        stlCount: stlCount ?? persisted?.stlCount,
+        verifiedCount: verifiedCriteriaCount ?? persisted?.verifiedCriteriaCount,
+        criteriaCount: totalCriteriaCount ?? persisted?.totalCriteriaCount,
+      },
+    [liveTelemetry, stlCount, verifiedCriteriaCount, totalCriteriaCount, persisted],
+  );
+
+  // Horloge locale 1s infigeable
   useEffect(() => {
-    return subscribeThreeDMission((state) => {
-      setPersistedMission(state)
-    })
-  }, [])
+    const id = window.setInterval(() => {
+      setNowTick(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
-  // Horloge murale infigeable (1 tick / seconde basé sur Date.now())
-  useEffect(() => {
-    if (!active && !persistedMission?.active) return
-    setNowMs(Date.now())
-    const timer = window.setInterval(() => {
-      setNowMs(Date.now())
-    }, 1000)
-    const onVis = () => {
-      if (!document.hidden) setNowMs(Date.now())
-    }
-    document.addEventListener('visibilitychange', onVis)
-    window.addEventListener('focus', onVis)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('focus', onVis)
-    }
-  }, [active, persistedMission?.active])
-
-  const effectivePrompt = (prompt || persistedMission?.rawPrompt || 'Système 3D articulé').trim()
-  const blueprint = useMemo(
-    () => synthesizeThreeDMasterPrompt(effectivePrompt),
-    [effectivePrompt],
-  )
-
-  const effectivePct = useMemo(() => {
-    const raw = typeof phasePercent === 'number' && phasePercent > 0 ? phasePercent : persistedMission?.phasePercent || 8
-    return Math.max(4, Math.min(99, Math.round(raw)))
-  }, [phasePercent, persistedMission?.phasePercent])
-
-  const effectivePhaseLabel =
-    phaseLabel.trim() ||
-    persistedMission?.phaseLabel ||
-    'Orchestration des sous-agents 3D & construction volumétrique en cours…'
-
-  const effectiveStlCount = stlCount || persistedMission?.stlCount || 0
-  const effectiveVerified = verifiedCriteriaCount || persistedMission?.verifiedCriteriaCount || 0
-  const effectiveTotalCriteria = totalCriteriaCount || persistedMission?.totalCriteriaCount || 0
+  const timing = useMemo(
+    () =>
+      computeLiveMissionTiming(
+        effectiveStartedAt,
+        rawPct,
+        mode === 'engineering_cad' ? 210 : 165,
+        serverElapsedSeconds,
+        serverRemainingSeconds,
+      ),
+    [effectiveStartedAt, rawPct, mode, serverElapsedSeconds, serverRemainingSeconds, nowTick],
+  );
 
   const subAgents = useMemo(
     () =>
-      computeSubAgentsForProgress(blueprint, effectivePct, effectivePhaseLabel, {
-        stlCount: effectiveStlCount,
-        verifiedCriteriaCount: effectiveVerified,
-        totalCriteriaCount: effectiveTotalCriteria,
-      }),
-    [blueprint, effectivePct, effectivePhaseLabel, effectiveStlCount, effectiveVerified, effectiveTotalCriteria],
-  )
+      computeSubAgentsForProgress(
+        effectivePrompt,
+        timing.effectivePercent,
+        resolvedPhaseText,
+        mode,
+        mergedTelemetry,
+      ),
+    [effectivePrompt, timing.effectivePercent, resolvedPhaseText, mode, mergedTelemetry],
+  );
 
-  const activeAgent = useMemo(
-    () => subAgents.find((a) => a.status === 'working') || subAgents[subAgents.length - 1],
-    [subAgents],
-  )
+  const activeAgentIndex = useMemo(() => {
+    const idx = subAgents.findIndex((a) => a.status === 'running');
+    if (idx >= 0) return idx;
+    const doneCount = subAgents.filter((a) => a.status === 'done').length;
+    return Math.min(subAgents.length - 1, Math.max(0, doneCount - 1));
+  }, [subAgents]);
 
-  const timing = useMemo(() => {
-    const syntheticMission: PersistedThreeDMissionState = persistedMission ?? {
-      missionKey: 'live',
-      rawPrompt: effectivePrompt,
-      mode,
-      active: true,
-      startedAtMs: startedAtMs || Date.now(),
-      lastHeartbeatMs: Date.now(),
-      phaseLabel: effectivePhaseLabel,
-      phasePercent: effectivePct,
-      estimatedTotalSeconds: mode === 'engineering_cad' ? 240 : 360,
-      stlCount: effectiveStlCount,
-      verifiedCriteriaCount: effectiveVerified,
-      totalCriteriaCount: effectiveTotalCriteria,
-      masterBlueprint: blueprint,
-      subAgents,
-    }
-    return computeLiveMissionTiming(
-      syntheticMission,
-      nowMs,
-      serverElapsedSeconds,
-      serverRemainingSeconds,
-    )
-  }, [
-    persistedMission,
-    effectivePrompt,
-    mode,
-    startedAtMs,
-    effectivePhaseLabel,
-    effectivePct,
-    effectiveStlCount,
-    effectiveVerified,
-    effectiveTotalCriteria,
-    blueprint,
-    subAgents,
-    nowMs,
-    serverElapsedSeconds,
-    serverRemainingSeconds,
-  ])
+  const displayedAgent = subAgents[selectedAgentIdx ?? activeAgentIndex] || subAgents[0];
+
+  const livePartsSignature = useMemo(() => {
+    const pts = liveTelemetry?.parts || [];
+    return pts.map((p) => `${p.id}:${p.dimensions_mm?.join('x') || ''}:${p.sample_points_mm?.length || 0}`).join('|');
+  }, [liveTelemetry?.parts]);
 
   const splats = useMemo(
-    () => generateHolographicSplats(blueprint.archetype, compact ? 1100 : 1750),
-    [blueprint.archetype, compact],
-  )
+    () =>
+      generateHolographicSplats(
+        effectivePrompt,
+        compact ? 850 : 1500,
+        liveTelemetry?.parts,
+        liveTelemetry?.joints,
+        liveTelemetry?.usableBedMm || [220, 220, 250],
+      ),
+    [effectivePrompt, compact, livePartsSignature, liveTelemetry?.joints?.length],
+  );
 
-  // Rendu 60 FPS du champ 3D de Gaussian Splats Holographiques
+  const hasRealStlGeometry = Boolean(liveTelemetry?.parts && liveTelemetry.parts.length > 0);
+
+  // Boucle de rendu 60 FPS du nuage de Splats Gaussiens 3D & Squelette Cinématique
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-    let disposed = false
-    let rafId = 0
-    const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    let width = 0
-    let height = 0
+    let rafId = 0;
+    let startTime = performance.now();
 
-    const resize = () => {
-      width = canvas.clientWidth || 640
-      height = canvas.clientHeight || 380
-      canvas.width = Math.max(1, Math.floor(width * dpr))
-      canvas.height = Math.max(1, Math.floor(height * dpr))
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    }
-    resize()
-    const ro = new ResizeObserver(resize)
-    ro.observe(canvas)
+    const render = (now: number) => {
+      const dt = (now - startTime) * 0.001;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.max(240, Math.floor(rect.width));
+      const height = Math.max(180, Math.floor(rect.height));
 
-    const renderFrame = (timeMs: number) => {
-      if (disposed) return
-      const t = timeMs * 0.001
-      const prog = Math.max(0.08, Math.min(1, effectivePct / 100))
-
-      if (!dragRef.current.dragging) {
-        dragRef.current.rotY += 0.0065
+      if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
       }
-      const rotY = dragRef.current.rotY
-      const rotX = dragRef.current.rotX
 
-      ctx.clearRect(0, 0, width, height)
+      ctx.save();
+      ctx.scale(dpr, dpr);
 
-      // Fond holographique profond
+      // Fond studio CAO profond
       const bgGrad = ctx.createRadialGradient(
         width * 0.5,
-        height * 0.52,
+        height * 0.48,
         10,
         width * 0.5,
-        height * 0.52,
-        Math.max(width, height) * 0.65,
-      )
-      bgGrad.addColorStop(0, 'rgba(14, 30, 56, 0.92)')
-      bgGrad.addColorStop(0.55, 'rgba(7, 13, 25, 0.96)')
-      bgGrad.addColorStop(1, 'rgba(4, 7, 15, 0.99)')
-      ctx.fillStyle = bgGrad
-      ctx.fillRect(0, 0, width, height)
+        height * 0.5,
+        Math.max(width, height) * 0.72,
+      );
+      bgGrad.addColorStop(0, '#0f172a');
+      bgGrad.addColorStop(0.55, '#070b14');
+      bgGrad.addColorStop(1, '#030509');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, width, height);
 
-      // Grille de référence CAO en perspective au sol
-      const cx = width * 0.5
-      const cy = height * 0.54
-      const scale = Math.min(width, height) * 0.44
+      const cx = width * 0.5;
+      const cy = height * 0.52;
+      const scale = Math.min(width, height) * 0.44;
 
-      ctx.save()
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)'
-      ctx.lineWidth = 1
-      for (let g = -4; g <= 4; g++) {
-        const gx = g * 0.22
-        ctx.beginPath()
-        ctx.moveTo(cx + gx * scale * 0.9, cy + 0.72 * scale)
-        ctx.lineTo(cx + gx * scale * 1.45, cy + 0.95 * scale)
-        ctx.stroke()
+      const autoYaw = isDraggingRef.current ? cameraYaw : cameraYaw + dt * 0.35;
+      const cosY = Math.cos(autoYaw);
+      const sinY = Math.sin(autoYaw);
+      const cosP = Math.cos(cameraPitch);
+      const sinP = Math.sin(cameraPitch);
+
+      const project = (x: number, y: number, z: number) => {
+        const x1 = x * cosY - z * sinY;
+        const z1 = x * sinY + z * cosY;
+        const y2 = y * cosP - z1 * sinP;
+        const z2 = y * sinP + z1 * cosP;
+        const fov = 2.6 / Math.max(0.8, 2.6 + z2);
+        return {
+          sx: cx + x1 * scale * fov,
+          sy: cy + y2 * scale * fov,
+          depth: z2,
+          fov,
+        };
+      };
+
+      // Plateau millimétré CAO 3D
+      ctx.lineWidth = 1;
+      const gridY = 0.68;
+      for (let g = -6; g <= 6; g++) {
+        const t = g * 0.16;
+        const p1 = project(t, gridY, -0.96);
+        const p2 = project(t, gridY, 0.96);
+        ctx.strokeStyle = g === 0 ? 'rgba(56, 189, 248, 0.32)' : 'rgba(56, 189, 248, 0.09)';
+        ctx.beginPath();
+        ctx.moveTo(p1.sx, p1.sy);
+        ctx.lineTo(p2.sx, p2.sy);
+        ctx.stroke();
+
+        const q1 = project(-0.96, gridY, t);
+        const q2 = project(0.96, gridY, t);
+        ctx.beginPath();
+        ctx.moveTo(q1.sx, q1.sy);
+        ctx.lineTo(q2.sx, q2.sy);
+        ctx.stroke();
       }
-      // Anneau radar de base
-      ctx.beginPath()
-      ctx.ellipse(cx, cy + 0.76 * scale, scale * 0.78, scale * 0.18, 0, 0, Math.PI * 2)
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)'
-      ctx.stroke()
-      ctx.restore()
 
-      // Plan laser de balayage vertical
-      const scanY = Math.sin(t * 1.35) * 0.85
-      const cosY = Math.cos(rotY)
-      const sinY = Math.sin(rotY)
-      const cosX = Math.cos(rotX)
-      const sinX = Math.sin(rotX)
+      // Plan de balayage laser de solidification lié à la progression réelle
+      const scanNorm = (timing.effectivePercent % 100) / 100;
+      const scanWave = Math.sin(dt * 1.9) * 0.52;
+      const solidifyThresholdY = 0.72 - scanNorm * 1.44;
 
-      // Projection et tri en profondeur des Gaussian Splats
-      const projected: Array<{
-        sx: number
-        sy: number
-        sz: number
-        r: number
-        color: string
-        alpha: number
-        isJoint?: boolean
-      }> = []
+      // 1. Projection & tri en profondeur des Splats Gaussiens 3D
+      const projectedSplats: Array<{
+        sx: number;
+        sy: number;
+        depth: number;
+        fov: number;
+        rx: number;
+        ry: number;
+        color: [number, number, number];
+        alpha: number;
+        isJointNode?: boolean;
+        partLabel?: string;
+        solidified: boolean;
+      }> = [];
 
-      const jointScreenNodes: Array<{ sx: number; sy: number; fingerIdx?: number; phalangeIdx?: number }> = []
+      const jointNodes: Array<{
+        sx: number;
+        sy: number;
+        depth: number;
+        group: number;
+        label?: string;
+        color: [number, number, number];
+      }> = [];
 
       for (let i = 0; i < splats.length; i++) {
-        const sp = splats[i]
-        let px = sp.x
-        let py = sp.y
-        let pz = sp.z
+        const sp = splats[i];
+        // Légère respiration d'assemblage éclaté -> assemblé au fur et à mesure que la progression tend vers 100 %
+        const assemblyConvergence = Math.max(0, 1 - timing.effectivePercent / 100) * 0.12;
+        const pulse = 1 + Math.sin(dt * 1.8 + sp.group * 1.1) * assemblyConvergence;
 
-        // Animation cinématique temps réel des doigts si main robotisée
-        if (blueprint.archetype === 'robotic_hand' && sp.fingerIdx !== undefined && sp.phalangeIdx !== undefined) {
-          const flexWave =
-            0.28 *
-            (0.5 + 0.5 * Math.sin(t * 2.1 - sp.fingerIdx * 0.45 - sp.phalangeIdx * 0.35)) *
-            (holoMode === 'kinematics' ? 1.35 : 0.85)
-          const curlZ = flexWave * (sp.phalangeIdx + 1) * 0.12
-          const curlY = -Math.abs(flexWave) * (sp.phalangeIdx + 1) * 0.055
-          pz += curlZ
-          py += curlY
+        const px = sp.x * pulse;
+        const py = sp.y * pulse;
+        const pz = sp.z * pulse;
+
+        const proj = project(px, py, pz);
+        const distToScan = Math.abs(py - scanWave);
+        const scanBoost = distToScan < 0.09 ? (1 - distToScan / 0.09) * 0.5 : 0;
+        const solidified = py >= solidifyThresholdY;
+
+        if (sp.isJointNode) {
+          jointNodes.push({
+            sx: proj.sx,
+            sy: proj.sy,
+            depth: proj.depth,
+            group: sp.group,
+            label: sp.partLabel,
+            color: sp.color,
+          });
         }
 
-        // Dispersion quantique initiale qui converge au fil de la progression `prog`
-        const isSolid = prog >= sp.solidifyThreshold
-        const scatter = isSolid ? 0.0 : (sp.solidifyThreshold - prog) * 0.38
-        if (scatter > 0) {
-          const orbitAngle = t * 1.6 + i * 0.13
-          px += Math.cos(orbitAngle) * scatter
-          pz += Math.sin(orbitAngle) * scatter
-          py += Math.sin(t * 2.0 + i) * scatter * 0.4
-        }
-
-        // Rotation 3D Y puis X
-        const rx = px * cosY - pz * sinY
-        const rz1 = px * sinY + pz * cosY
-        const ry = py * cosX - rz1 * sinX
-        const rz = py * sinX + rz1 * cosX
-
-        const fov = 2.6
-        const depth = fov / (fov + rz + 1.25)
-        const sx = cx + rx * scale * depth
-        const sy = cy - ry * scale * depth
-
-        const distToScan = Math.abs(py - scanY)
-        const scanBoost = distToScan < 0.09 ? (1 - distToScan / 0.09) * 0.55 : 0
-
-        let alpha = isSolid ? 0.78 : 0.26
-        if (holoMode === 'kinematics' && !sp.isJoint) {
-          alpha *= 0.38
-        }
-        alpha = Math.min(1, alpha + scanBoost)
-
-        const r = sp.radius * depth * (sp.isJoint && holoMode === 'kinematics' ? 1.55 : 1.0)
-        projected.push({
-          sx,
-          sy,
-          sz: rz,
-          r,
-          color: distToScan < 0.045 && holoMode === 'laser_cad' ? '#ffffff' : sp.color,
-          alpha,
-          isJoint: sp.isJoint,
-        })
-
-        if (sp.isJoint && i % 7 === 0) {
-          jointScreenNodes.push({
-            sx,
-            sy,
-            fingerIdx: sp.fingerIdx,
-            phalangeIdx: sp.phalangeIdx,
-          })
-        }
+        projectedSplats.push({
+          sx: proj.sx,
+          sy: proj.sy,
+          depth: proj.depth,
+          fov: proj.fov,
+          rx: sp.rx * scale * proj.fov * (solidified ? 1.1 : 0.88),
+          ry: sp.ry * scale * proj.fov * (solidified ? 1.1 : 0.88),
+          color: sp.color,
+          alpha: Math.min(1, sp.alpha * (solidified ? 0.92 : 0.42) + scanBoost),
+          isJointNode: sp.isJointNode,
+          partLabel: sp.partLabel,
+          solidified,
+        });
       }
 
-      projected.sort((a, b) => b.sz - a.sz)
+      projectedSplats.sort((a, b) => b.depth - a.depth);
 
-      // Lignes cinématiques / vecteurs d'articulation
-      if (holoMode === 'kinematics' || holoMode === 'laser_cad') {
-        ctx.save()
-        ctx.strokeStyle =
-          holoMode === 'kinematics' ? 'rgba(245, 158, 11, 0.38)' : 'rgba(52, 211, 153, 0.25)'
-        ctx.lineWidth = 1.1
-        for (let j = 1; j < jointScreenNodes.length; j++) {
-          const prev = jointScreenNodes[j - 1]
-          const curr = jointScreenNodes[j]
-          if (prev.fingerIdx === curr.fingerIdx) {
-            ctx.beginPath()
-            ctx.moveTo(prev.sx, prev.sy)
-            ctx.lineTo(curr.sx, curr.sy)
-            ctx.stroke()
+      // 2. Rendu des Splats Gaussiens anisotropes
+      if (viewMode === 'splats' || viewMode === 'kinematics') {
+        for (let i = 0; i < projectedSplats.length; i++) {
+          const p = projectedSplats[i];
+          if (viewMode === 'kinematics' && !p.isJointNode && i % 3 !== 0) continue;
+
+          const [r, g, b] = p.color;
+          const radius = Math.max(1.5, Math.max(p.rx, p.ry));
+
+          if (p.isJointNode) {
+            ctx.fillStyle = `rgba(255, 255, 255, 0.95)`;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, Math.max(3.5, radius * 0.55), 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.9)`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.sx, p.sy, Math.max(7, radius * 1.15), 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.fillStyle = p.solidified
+              ? `rgba(${r}, ${g}, ${b}, ${p.alpha.toFixed(3)})`
+              : `rgba(${Math.min(255, r + 35)}, ${Math.min(255, g + 45)}, 255, ${(p.alpha * 0.58).toFixed(3)})`;
+            ctx.beginPath();
+            ctx.ellipse(
+              p.sx,
+              p.sy,
+              Math.max(1.3, p.rx),
+              Math.max(1.0, p.ry),
+              (i % 7) * 0.45,
+              0,
+              Math.PI * 2,
+            );
+            ctx.fill();
           }
         }
-        ctx.restore()
       }
 
-      // Dessin des Gaussian Splats (noyau + halo anisotrope)
-      for (let i = 0; i < projected.length; i++) {
-        const pt = projected[i]
-        ctx.globalAlpha = pt.alpha
-        ctx.fillStyle = pt.color
-        ctx.beginPath()
-        ctx.ellipse(
-          pt.sx,
-          pt.sy,
-          pt.r * 1.35,
-          pt.r * 0.88,
-          (i % 5) * 0.3,
-          0,
-          Math.PI * 2,
-        )
-        ctx.fill()
-
-        if (pt.isJoint || pt.alpha > 0.85) {
-          ctx.globalAlpha = pt.alpha * 0.28
-          ctx.beginPath()
-          ctx.arc(pt.sx, pt.sy, pt.r * 2.4, 0, Math.PI * 2)
-          ctx.fill()
+      // 3. Mode Blueprint / Squelette : Liaisons inter-pièces et étiquettes dimensionnelles réelles
+      if (viewMode === 'kinematics' || viewMode === 'blueprint') {
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < jointNodes.length; i++) {
+          const a = jointNodes[i];
+          for (let j = i + 1; j < jointNodes.length; j++) {
+            const b = jointNodes[j];
+            const dist = Math.hypot(a.sx - b.sx, a.sy - b.sy);
+            if (dist < scale * 0.85) {
+              ctx.strokeStyle =
+                viewMode === 'blueprint' ? 'rgba(52, 211, 153, 0.48)' : 'rgba(56, 189, 248, 0.42)';
+              ctx.beginPath();
+              ctx.moveTo(a.sx, a.sy);
+              ctx.lineTo(b.sx, b.sy);
+              ctx.stroke();
+            }
+          }
         }
+
+        // Étiquettes des vraies pièces / articulations
+        ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+        jointNodes.slice(0, 8).forEach((node) => {
+          if (!node.label) return;
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+          const w = ctx.measureText(node.label).width + 10;
+          ctx.fillRect(node.sx + 8, node.sy - 10, w, 16);
+          ctx.strokeStyle = `rgba(${node.color[0]}, ${node.color[1]}, ${node.color[2]}, 0.65)`;
+          ctx.strokeRect(node.sx + 8, node.sy - 10, w, 16);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(node.label, node.sx + 13, node.sy + 1);
+        });
       }
-      ctx.globalAlpha = 1
 
-      // Faisceau laser horizontal de reconstruction
-      const laserScreenY = cy - scanY * scale * 0.72
-      const laserGrad = ctx.createLinearGradient(cx - scale * 0.9, laserScreenY, cx + scale * 0.9, laserScreenY)
-      laserGrad.addColorStop(0, 'rgba(56, 189, 248, 0)')
-      laserGrad.addColorStop(0.2, 'rgba(56, 189, 248, 0.45)')
-      laserGrad.addColorStop(0.5, 'rgba(52, 211, 153, 0.9)')
-      laserGrad.addColorStop(0.8, 'rgba(56, 189, 248, 0.45)')
-      laserGrad.addColorStop(1, 'rgba(56, 189, 248, 0)')
-      ctx.fillStyle = laserGrad
-      ctx.fillRect(cx - scale * 0.9, laserScreenY - 1.2, scale * 1.8, 2.4)
+      // 4. Anneau laser de scan CAO
+      const scanP1 = project(-0.68, scanWave, -0.68);
+      const scanP2 = project(0.68, scanWave, -0.68);
+      const scanP3 = project(0.68, scanWave, 0.68);
+      const scanP4 = project(-0.68, scanWave, 0.68);
 
-      // Annotations HUD d'ingénierie dans les coins du canvas
-      ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
-      ctx.fillStyle = 'rgba(125, 211, 252, 0.85)'
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(scanP1.sx, scanP1.sy);
+      ctx.lineTo(scanP2.sx, scanP2.sy);
+      ctx.lineTo(scanP3.sx, scanP3.sy);
+      ctx.lineTo(scanP4.sx, scanP4.sy);
+      ctx.closePath();
+      ctx.stroke();
+
+      // 5. HUD télémétrique sur le canvas
+      ctx.font = '600 10px ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.88)';
       ctx.fillText(
-        `ARCHÉTYPE: ${blueprint.archetype.toUpperCase()} · ${blueprint.degreesOfFreedom} DDL`,
+        hasRealStlGeometry
+          ? `GÉOMÉTRIE STL EN DIRECT : ${liveTelemetry?.parts?.length || 0} PIÈCE(S) · ${splats.length} SPLATS`
+          : `SYNTHÈSE VOLUMÉTRIQUE : ${splats.length} SPLATS 3D`,
         14,
         22,
-      )
-      ctx.fillStyle = 'rgba(167, 139, 250, 0.85)'
+      );
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.92)';
       ctx.fillText(
-        `ENVELOPPE: ${blueprint.dimensionalEnvelopeMm.join(' × ')} mm · SPLATS: ${splats.length}`,
+        `AGENT ACTIF [${activeAgentIndex + 1}/5] : ${displayedAgent.code} · SOLIDIFICATION ${timing.effectivePercent}%`,
         14,
-        38,
-      )
-      ctx.fillStyle = 'rgba(52, 211, 153, 0.9)'
-      ctx.fillText(
-        `SOLIDIFICATION: ${effectivePct}% · ${activeAgent?.codeName || 'AGENT ACTIF'}`,
-        14,
-        height - 14,
-      )
+        36,
+      );
 
-      rafId = window.requestAnimationFrame(renderFrame)
-    }
+      ctx.restore();
+      rafId = window.requestAnimationFrame(render);
+    };
 
-    rafId = window.requestAnimationFrame(renderFrame)
-    return () => {
-      disposed = true
-      window.cancelAnimationFrame(rafId)
-      ro.disconnect()
-    }
-  }, [splats, blueprint, effectivePct, holoMode, activeAgent])
+    rafId = window.requestAnimationFrame(render);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [splats, viewMode, timing.effectivePercent, activeAgentIndex, displayedAgent.code, cameraYaw, cameraPitch, hasRealStlGeometry, liveTelemetry?.parts?.length]);
 
-  const handleCopyMasterPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(blueprint.formattedMasterPrompt)
-      setCopiedMaster(true)
-      window.setTimeout(() => setCopiedMaster(false), 2200)
-    } catch {
-      /* ignore clipboard restrictions */
-    }
-  }
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    isDraggingRef.current = true;
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return;
+    const dx = e.clientX - lastMouseRef.current.x;
+    const dy = e.clientY - lastMouseRef.current.y;
+    lastMouseRef.current = { x: e.clientX, y: e.clientY };
+    setCameraYaw((prev) => prev + dx * 0.008);
+    setCameraPitch((prev) => Math.max(-0.85, Math.min(0.85, prev + dy * 0.008)));
+  };
+
+  const handlePointerUp = () => {
+    isDraggingRef.current = false;
+  };
 
   return (
-    <section
-      aria-label="Prévisualisation Holographique Gaussian Splats et Escouade de Sous-Agents 3D"
-      className="relative overflow-hidden rounded-[1.6rem] border border-cyan-400/30 bg-[#050b14] text-slate-100 shadow-2xl"
-    >
-      {/* Barre supérieure : Statut Live + Timer Infigeable + ETA + Contrôles */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-500/20 bg-slate-900/80 px-4 py-3 backdrop-blur-md">
-        <div className="flex items-center gap-2.5">
-          <span className="relative flex h-3 w-3">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-400" />
-          </span>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300">
-                Projet en route · Calcul actif sur le PC
+    <div className="w-full rounded-2xl border border-cyan-500/25 bg-[#070b14]/95 text-slate-100 shadow-[0_20px_70px_rgba(0,0,0,0.75)] overflow-hidden backdrop-blur-xl">
+      {/* Barre supérieure : Statut live, Chronomètre infigeable, ETA restant et contrôles */}
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-white/10 bg-gradient-to-r from-cyan-500/10 via-indigo-500/10 to-emerald-500/10">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/15 border border-cyan-400/35">
+            <Sparkles className="w-4 h-4 text-cyan-300 animate-spin" style={{ animationDuration: '5s' }} />
+            <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                {mode === 'engineering_cad'
+                  ? 'Orchestration CAO & Assemblage Multi-Agents'
+                  : 'Reconstruction Holographique 3D Multi-Agents'}
               </span>
-              <span className="rounded-full border border-cyan-400/35 bg-cyan-500/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-cyan-200">
-                Étape {activeAgent.index} / {subAgents.length}
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-400/30">
+                Étape {activeAgentIndex + 1} / {subAgents.length}
               </span>
+              {hasRealStlGeometry && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/20 text-cyan-200 border border-cyan-400/40">
+                  {liveTelemetry?.parts?.length} STL mesuré(s) en direct
+                </span>
+              )}
             </div>
-            <p className="mt-0.5 text-xs text-slate-300 line-clamp-1" title={effectivePhaseLabel}>
-              {effectivePhaseLabel}
+            <p className="text-xs text-slate-300 truncate max-w-xl" title={effectivePrompt}>
+              {phaseDetail || displayedAgent.currentAction}
             </p>
           </div>
         </div>
 
-        {/* Compteurs temps réel : Écoulé, Restant (ETA), Pourcentage */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="rounded-xl border border-slate-700/80 bg-slate-950/90 px-3 py-1.5 text-right">
-            <span className="block text-[9px] uppercase tracking-wider text-slate-400">Temps écoulé</span>
-            <span className="font-mono text-sm font-bold text-cyan-300" data-testid="holo-elapsed-timer">
-              {timing.formattedElapsed}
+        {/* Chronomètre temps réel (jamais figé) + Temps restant estimé + % */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-xs">
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-slate-400">Écoulé :</span>
+            <span className="font-mono font-bold text-white tabular-nums">
+              {formatDurationShort(timing.elapsedSeconds)}
             </span>
           </div>
-          <div className="rounded-xl border border-slate-700/80 bg-slate-950/90 px-3 py-1.5 text-right">
-            <span className="block text-[9px] uppercase tracking-wider text-slate-400">Temps restant estimé</span>
-            <span className="font-mono text-sm font-bold text-amber-300" data-testid="holo-eta-timer">
-              {timing.formattedRemaining}
+
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-cyan-500/25 text-xs">
+            <Activity className="w-3.5 h-3.5 text-amber-300" />
+            <span className="text-slate-400">Restant estimé :</span>
+            <span className="font-mono font-bold text-amber-200 tabular-nums">
+              ~{formatDurationShort(timing.remainingSeconds)}
             </span>
           </div>
-          <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-right">
-            <span className="block text-[9px] uppercase tracking-wider text-cyan-200">Avancement</span>
-            <span className="font-mono text-sm font-extrabold text-white" data-testid="holo-progress-pct">
-              {effectivePct}%
-            </span>
+
+          <div className="px-3 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 font-mono text-xs font-bold text-cyan-200 tabular-nums">
+            {timing.effectivePercent}%
           </div>
-          {onStop && (
+
+          {onMinimize && (
             <button
               type="button"
-              onClick={onStop}
-              className="rounded-xl border border-red-500/45 bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-500/25"
+              onClick={onMinimize}
+              title="Réduire en mini-pilule (continue en arrière-plan)"
+              className="p-1.5 rounded-lg bg-white/5 hover:bg-white/15 border border-white/10 text-slate-300 hover:text-white transition"
             >
-              ■ Arrêter
+              <Minimize2 className="w-4 h-4" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Barre de progression globale continue */}
-      <div className="h-1.5 w-full bg-slate-900">
+      {/* Barre de progression continue globale */}
+      <div className="h-1.5 w-full bg-slate-900 overflow-hidden">
         <div
-          className="h-full bg-gradient-to-r from-cyan-400 via-indigo-400 to-emerald-400 transition-all duration-300"
-          style={{ width: `${effectivePct}%` }}
+          className="h-full bg-gradient-to-r from-cyan-400 via-indigo-400 to-emerald-400 transition-all duration-500"
+          style={{ width: `${timing.effectivePercent}%` }}
         />
       </div>
 
-      {/* Grille centrale : Canvas Gaussian Splats 3D + Escouade de 5 Sous-Agents */}
-      <div className={`grid gap-4 p-4 ${compact ? 'lg:grid-cols-1' : 'xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]'}`}>
-        {/* Colonne Gauche : Viewport Holographique Gaussian Splats */}
-        <div className="flex flex-col justify-between rounded-2xl border border-cyan-500/25 bg-[#040811] overflow-hidden">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 px-3.5 py-2.5">
-            <div>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-300">
-                Prévisualisation Holographique · Gaussian Splats 3D
-              </span>
-              <h4 className="text-sm font-semibold text-white">{blueprint.subjectTitle}</h4>
-            </div>
-            <div className="flex flex-wrap gap-1" role="group" aria-label="Mode de prévisualisation holographique">
-              {(
-                [
-                  ['splats', 'Nuage Splats 3D'],
-                  ['kinematics', 'Squelette & DDL'],
-                  ['laser_cad', 'Scan CAO & Cotes'],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setHoloMode(id)}
-                  className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium transition ${
-                    holoMode === id
-                      ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200'
-                      : 'border-slate-700/70 bg-slate-900/60 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Zone Canvas Interactive (rotation 3D à la souris / au doigt sur tunnel mobile) */}
-          <div className={`relative w-full ${compact ? 'h-[250px]' : 'h-[340px] sm:h-[390px]'} select-none`}>
+      {/* Corps principal : Viewport Holographique Gaussian Splatting + Tableau des 5 Sous-Agents */}
+      <div className={`grid gap-4 p-4 ${compact ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-12'}`}>
+        {/* Colonne Gauche : Viewport 3D Gaussian Splatting interactif */}
+        <div className={`${compact ? '' : 'lg:col-span-7'} flex flex-col gap-2.5`}>
+          <div className="relative rounded-xl overflow-hidden border border-cyan-500/25 bg-[#050811] select-none">
             <canvas
               ref={canvasRef}
-              onPointerDown={(e) => {
-                dragRef.current.dragging = true
-                dragRef.current.lastX = e.clientX
-                dragRef.current.lastY = e.clientY
-              }}
-              onPointerMove={(e) => {
-                if (!dragRef.current.dragging) return
-                const dx = e.clientX - dragRef.current.lastX
-                const dy = e.clientY - dragRef.current.lastY
-                dragRef.current.lastX = e.clientX
-                dragRef.current.lastY = e.clientY
-                dragRef.current.rotY += dx * 0.008
-                dragRef.current.rotX = Math.max(-0.85, Math.min(0.85, dragRef.current.rotX + dy * 0.006))
-              }}
-              onPointerUp={() => {
-                dragRef.current.dragging = false
-              }}
-              onPointerLeave={() => {
-                dragRef.current.dragging = false
-              }}
-              className="h-full w-full cursor-grab active:cursor-grabbing"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+              className={`w-full ${compact ? 'h-56' : 'h-80'} cursor-grab active:cursor-grabbing block`}
             />
 
-            {/* Vignette image de référence si déjà générée */}
-            {referenceImageUrl && (
-              <div className="pointer-events-none absolute right-3 top-3 w-24 overflow-hidden rounded-xl border border-cyan-400/40 bg-slate-950/85 p-1 shadow-lg">
-                <img
-                  src={referenceImageUrl}
-                  alt="Référence validée"
-                  className="h-20 w-full rounded-lg object-contain"
-                />
-                <span className="mt-0.5 block text-center font-mono text-[9px] text-cyan-200">
-                  Réf. active
-                </span>
+            {/* Sélecteur de mode d'inspection holographique */}
+            <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
+              <div className="flex items-center gap-1 rounded-lg bg-slate-950/85 border border-white/15 p-1 backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('splats')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                    viewMode === 'splats'
+                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Nuage Splats 3D
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('kinematics')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                    viewMode === 'kinematics'
+                      ? 'bg-indigo-500/25 text-indigo-200 border border-indigo-400/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Liaisons & Pièces
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('blueprint')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                    viewMode === 'blueprint'
+                      ? 'bg-emerald-500/25 text-emerald-200 border border-emerald-400/40'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Cotes & Repères
+                </button>
               </div>
-            )}
 
-            <div className="pointer-events-none absolute bottom-2.5 right-3 rounded-lg border border-slate-700/70 bg-slate-950/80 px-2.5 py-1 text-[10px] text-slate-300">
-              Glisser pour tourner l’hologramme 3D · Reprise auto si vous quittez la page
+              <button
+                type="button"
+                onClick={() => {
+                  setCameraYaw(0.45);
+                  setCameraPitch(0.22);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-950/85 border border-white/15 text-[11px] text-slate-300 hover:text-white"
+              >
+                <RotateCcw className="w-3 h-3" /> Recadrer 3D
+              </button>
             </div>
           </div>
 
-          {/* Bandeau métriques d'ingénierie sous le canvas */}
-          <div className="grid grid-cols-2 gap-2 border-t border-slate-800/80 bg-slate-950/70 px-3.5 py-2.5 text-[11px] sm:grid-cols-4">
-            <div>
-              <span className="text-slate-400">Chaîne cinématique :</span>
-              <p className="font-semibold text-cyan-200 truncate" title={blueprint.kinematicChainSummary}>
-                {blueprint.degreesOfFreedom} DDL (degrés de liberté)
-              </p>
-            </div>
-            <div>
-              <span className="text-slate-400">Enveloppe cible :</span>
-              <p className="font-mono font-semibold text-slate-200">
-                {blueprint.dimensionalEnvelopeMm.join(' × ')} mm
-              </p>
-            </div>
-            <div>
-              <span className="text-slate-400">Solides générés :</span>
-              <p className="font-mono font-semibold text-emerald-300">
-                {effectiveStlCount > 0 ? `${effectiveStlCount} STL/GLB sur disque` : 'Synthèse volumétrique…'}
-              </p>
-            </div>
-            <div>
-              <span className="text-slate-400">Continuité session :</span>
-              <p className="font-semibold text-amber-300">
-                Persistant (Tunnel / Mobile / PC)
-              </p>
+          {/* Bandeau d'assurance de persistance : quitter et reprendre */}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] text-emerald-200">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>
+                <strong>Continuité active :</strong> tu peux changer d’onglet ou quitter cette page ; la génération se
+                poursuit sur le serveur et reprendra automatiquement ici ou affichera le modèle final dès ton retour.
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Colonne Droite : Division du travail en 5 Sous-Agents Indépendants */}
-        <div className="flex flex-col justify-between space-y-3">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/65 p-3.5">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-300">
-                  Intelligence Collective · Division par Tâche
-                </span>
-                <h4 className="text-sm font-semibold text-white">
-                  Escouade de 5 Sous-Agents 3D & Ingénierie
-                </h4>
-              </div>
-              <span className="rounded-full border border-emerald-400/35 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
-                {subAgents.filter((a) => a.status === 'done').length} / {subAgents.length} terminés
+        {/* Colonne Droite : Division du travail des 5 Sous-Agents Spécialisés */}
+        <div className={`${compact ? '' : 'lg:col-span-5'} flex flex-col justify-between gap-3`}>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-cyan-400" />
+                Division en 5 Sous-Agents Spécialisés
+              </span>
+              <span className="text-[11px] text-slate-400">
+                {subAgents.filter((a) => a.status === 'done').length}/{subAgents.length} terminés
               </span>
             </div>
 
             <div className="space-y-2">
-              {subAgents.map((agent) => {
-                const isWorking = agent.status === 'working'
-                const isDone = agent.status === 'done'
+              {subAgents.map((agent, idx) => {
+                const isSelected = (selectedAgentIdx ?? activeAgentIndex) === idx;
                 return (
-                  <div
+                  <button
                     key={agent.id}
-                    className={`rounded-xl border p-2.5 transition-all ${
-                      isWorking
-                        ? 'border-cyan-400/60 bg-cyan-500/10 shadow-md'
-                        : isDone
-                          ? 'border-emerald-500/35 bg-emerald-500/5'
-                          : 'border-slate-800 bg-slate-950/50 opacity-75'
-                    }`}
+                    type="button"
+                    onClick={() => setSelectedAgentIdx(idx)}
+                    className={`w-full text-left p-2.5 rounded-xl border transition ${
+                      agent.status === 'running'
+                        ? 'bg-cyan-500/12 border-cyan-400/45 shadow-[0_0_20px_rgba(56,189,248,0.12)]'
+                        : agent.status === 'done'
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : 'bg-slate-900/60 border-white/10 opacity-75 hover:opacity-100'
+                    } ${isSelected ? 'ring-1 ring-white/30' : ''}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <span
-                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-slate-950"
-                          style={{ backgroundColor: isDone ? '#34d399' : isWorking ? agent.accentColor : '#475569' }}
-                        >
-                          {isDone ? '✓' : agent.index}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold text-white truncate">{agent.role}</p>
-                          <p className="font-mono text-[10px] text-slate-400 truncate">{agent.codeName}</p>
-                        </div>
+                          className="h-2.5 w-2.5 rounded-full shrink-0"
+                          style={{
+                            backgroundColor:
+                              agent.status === 'done'
+                                ? '#34d399'
+                                : agent.status === 'running'
+                                ? agent.color
+                                : '#64748b',
+                          }}
+                        />
+                        <span className="font-mono text-[11px] font-bold text-white truncate">{agent.code}</span>
                       </div>
-                      <span
-                        className={`shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] font-bold ${
-                          isDone
-                            ? 'bg-emerald-500/20 text-emerald-300'
-                            : isWorking
-                              ? 'bg-cyan-500/25 text-cyan-200'
-                              : 'bg-slate-800 text-slate-400'
-                        }`}
-                      >
-                        {isDone ? '100% · OK' : isWorking ? `${agent.progressPct}% · ACTIF` : 'EN FILE'}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] font-mono text-slate-300 tabular-nums">
+                          {agent.progressPercent}%
+                        </span>
+                        {agent.status === 'done' ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : agent.status === 'running' ? (
+                          <Layers className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
+                        ) : (
+                          <Box className="w-3.5 h-3.5 text-slate-500" />
+                        )}
+                      </div>
                     </div>
 
-                    <p className="mt-1.5 text-[11px] leading-snug text-slate-300">{agent.currentTask}</p>
+                    <div className="mt-1 text-[11px] font-medium text-slate-200">{agent.role}</div>
+                    <div className="mt-0.5 text-[11px] text-slate-400 line-clamp-1">{agent.currentAction}</div>
 
-                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                    {/* Barre de progression propre au sous-agent */}
+                    <div className="mt-2 h-1 w-full rounded-full bg-slate-950 overflow-hidden">
                       <div
-                        className="h-full transition-all duration-300"
+                        className="h-full transition-all duration-500"
                         style={{
-                          width: `${agent.progressPct}%`,
-                          backgroundColor: isDone ? '#34d399' : agent.accentColor,
+                          width: `${agent.progressPercent}%`,
+                          backgroundColor: agent.status === 'done' ? '#34d399' : agent.color,
                         }}
                       />
                     </div>
-                  </div>
-                )
+                  </button>
+                );
               })}
             </div>
           </div>
 
-          {/* Carte du Prompt Maître Auto-Organisé */}
-          <div className="rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-indigo-300">
-                  Prompt Maître Auto-Structuré
-                </span>
-                <p className="text-xs text-slate-300">
-                  Contraintes mécatroniques, jeux et topologie déduits automatiquement même sans contrainte fournie.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setShowMasterPrompt((v) => !v)}
-                  className="rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-2.5 py-1 text-xs font-medium text-indigo-200 hover:bg-indigo-500/25"
-                >
-                  {showMasterPrompt ? 'Masquer le Prompt Maître' : 'Voir le Prompt Maître'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleCopyMasterPrompt()}
-                  className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-medium text-slate-200 hover:border-cyan-400/50"
-                >
-                  {copiedMaster ? '✓ Copié !' : 'Copier'}
-                </button>
-                {onApplyMasterPrompt && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onApplyMasterPrompt(
-                        blueprint.formattedMasterPrompt,
-                        blueprint.inferredConstraints.map((c) => `• ${c}`).join('\n'),
-                      )
-                    }
-                    className="rounded-lg bg-cyan-500 px-2.5 py-1 text-xs font-semibold text-slate-950 hover:bg-cyan-400"
-                  >
-                    Injecter dans le projet
-                  </button>
-                )}
-              </div>
+          {/* Détail temps réel du sous-agent inspecté */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-white/10 space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="font-mono font-bold text-cyan-300 flex items-center gap-1.5">
+                <Wrench className="w-3.5 h-3.5" />
+                {displayedAgent.code}
+              </span>
+              <span className="text-slate-400">{displayedAgent.name}</span>
             </div>
-
-            {showMasterPrompt && (
-              <pre className="mt-2.5 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/90 p-3 font-mono text-[11px] leading-relaxed text-slate-200">
-                {blueprint.formattedMasterPrompt}
-              </pre>
-            )}
+            <p className="text-[11px] text-slate-300 leading-relaxed">{displayedAgent.specialty}</p>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {displayedAgent.liveMetrics.map((c, i) => (
+                <span
+                  key={i}
+                  className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[10px] text-slate-300"
+                >
+                  {c}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </div>
-    </section>
-  )
-}
+    </div>
+  );
+};
 
-export { HolographicSplatLoader }
+export default HolographicSplatLoader;

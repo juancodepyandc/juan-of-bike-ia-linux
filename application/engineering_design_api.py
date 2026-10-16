@@ -35,6 +35,44 @@ Vérifie les octets de l'archive et les critères avant de conclure ; indique le
 '''
 
 
+from functools import lru_cache
+
+
+@lru_cache(maxsize=256)
+def _stl_live_snapshot(path_str: str, size: int, mtime_ns: int):
+    try:
+        import numpy as np
+        import trimesh
+        mesh = trimesh.load_mesh(path_str)
+        if not hasattr(mesh, 'vertices') or len(mesh.vertices) == 0:
+            return None
+        verts = np.asarray(mesh.vertices, dtype=float)
+        if not np.isfinite(verts).all():
+            return None
+        step = max(1, len(verts) // 84)
+        sampled = [[round(float(v[0]), 2), round(float(v[1]), 2), round(float(v[2]), 2)] for v in verts[::step][:84]]
+        ext = [round(float(x), 2) for x in mesh.extents.tolist()]
+        b0 = [round(float(x), 2) for x in mesh.bounds[0].tolist()]
+        b1 = [round(float(x), 2) for x in mesh.bounds[1].tolist()]
+        cent = [round((b0[i] + b1[i]) * 0.5, 2) for i in range(3)]
+        is_vol = bool(mesh.is_volume)
+        vol = round(float(mesh.volume), 2) if is_vol else None
+        area = round(float(mesh.area), 2)
+        mass = round(vol * 1.24 * 1e-3, 2) if vol and vol > 0 else None
+        return {
+            'dimensions_mm': ext,
+            'bounds_mm': [b0, b1],
+            'centroid_mm': cent,
+            'volume_mm3': vol,
+            'surface_area_mm2': area,
+            'estimated_mass_g': mass,
+            'watertight': is_vol,
+            'sample_points_mm': sampled,
+        }
+    except Exception:
+        return None
+
+
 def publish(event,payload):
     try:
         with socket.create_connection(('127.0.0.1',3002),timeout=2) as conn:
@@ -125,6 +163,7 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                 recent_actions.append({'index': seq, 'seq': seq, 'kind': 'done', 'type': kind, 'label': label, 'detail': detail, 'summary': f"{label} — {detail}".strip(' —'), 'ts': ts})
 
         workspace_files = []
+        stl_files_found = []
         stl_count = 0
         has_design_py = False
         has_tests_py = False
@@ -142,6 +181,8 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                     ext = p.suffix.lower()
                     if ext == '.stl':
                         stl_count += 1
+                        if len(stl_files_found) < 16:
+                            stl_files_found.append((rel, p))
                     if rel == 'design.py':
                         has_design_py = True
                     elif rel == 'tests.py':
@@ -185,17 +226,34 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                     continue
                 dims = pt.get('dimensions_mm')
                 mfg = str(pt.get('manufacturing') or pt.get('source') or 'print')
+                rel_file = str(pt.get('file') or '')
+                snap = None
+                if rel_file and folder.is_dir():
+                    try:
+                        cand_stl = (folder / rel_file).resolve()
+                        if cand_stl.is_relative_to(folder.resolve()) and cand_stl.is_file():
+                            st_info = cand_stl.stat()
+                            snap = _stl_live_snapshot(str(cand_stl), st_info.st_size, st_info.st_mtime_ns)
+                    except Exception:
+                        snap = None
+                bounds_val = pt.get('assembled_bounds_mm') or (snap.get('bounds_mm') if snap else None)
+                centroid_val = pt.get('center_of_mass_mm') or (snap.get('centroid_mm') if snap else None)
                 parts_preview.append({
                     'id': str(pt.get('id') or pt.get('design_id') or ''),
                     'name': str(pt.get('name') or pt.get('id') or ''),
-                    'file': str(pt.get('file') or ''),
+                    'file': rel_file,
                     'source': mfg,
                     'manufacturing': mfg,
-                    'dimensions_mm': [round(float(x), 2) for x in dims[:3]] if isinstance(dims, list) and len(dims) == 3 and all(isinstance(x, (int, float)) for x in dims) else None,
-                    'volume_mm3': round(float(pt['volume_mm3']), 2) if isinstance(pt.get('volume_mm3'), (int, float)) else None,
-                    'watertight': pt.get('watertight') if isinstance(pt.get('watertight'), bool) else None,
+                    'dimensions_mm': [round(float(x), 2) for x in dims[:3]] if isinstance(dims, list) and len(dims) == 3 and all(isinstance(x, (int, float)) for x in dims) else (snap.get('dimensions_mm') if snap else None),
+                    'bounds_mm': bounds_val,
+                    'centroid_mm': centroid_val,
+                    'volume_mm3': round(float(pt['volume_mm3']), 2) if isinstance(pt.get('volume_mm3'), (int, float)) else (snap.get('volume_mm3') if snap else None),
+                    'surface_area_mm2': round(float(pt['surface_area_mm2']), 2) if isinstance(pt.get('surface_area_mm2'), (int, float)) else (snap.get('surface_area_mm2') if snap else None),
+                    'estimated_mass_g': round(float(pt['estimated_mass_g']), 2) if isinstance(pt.get('estimated_mass_g'), (int, float)) else (snap.get('estimated_mass_g') if snap else None),
+                    'watertight': pt.get('watertight') if isinstance(pt.get('watertight'), bool) else (snap.get('watertight') if snap else None),
                     'filament': str(pt['filament']) if pt.get('filament') else None,
                     'color_rgba': pt.get('color_rgba') if isinstance(pt.get('color_rgba'), list) else None,
+                    'sample_points_mm': snap.get('sample_points_mm') if snap else None,
                 })
             joints_preview = []
             dof_sum = 0
@@ -206,11 +264,15 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                 jdof = int(j['dof']) if isinstance(j.get('dof'), int) else (0 if jtype == 'fixed' else 1)
                 dof_sum += jdof
                 lims = j.get('limits') if 'limits' in j else j.get('limits_deg')
+                orig = j.get('origin_mm')
+                axis = j.get('axis')
                 joints_preview.append({
                     'id': str(j.get('id') or ''),
                     'type': jtype,
                     'parent': str(j.get('parent') or ''),
                     'child': str(j.get('child') or ''),
+                    'origin_mm': [round(float(x), 2) for x in orig[:3]] if isinstance(orig, list) and len(orig) == 3 and all(isinstance(x, (int, float)) for x in orig) else None,
+                    'axis': [round(float(x), 3) for x in axis[:3]] if isinstance(axis, list) and len(axis) == 3 and all(isinstance(x, (int, float)) for x in axis) else None,
                     'limits': [float(lims[0]), float(lims[1])] if isinstance(lims, (list, tuple)) and len(lims) == 2 and all(isinstance(x, (int, float)) for x in lims) else None,
                 })
             bom_preview = [
@@ -255,8 +317,65 @@ def register_design_routes(bp,workspace,*,local,extension,model_default,store=No
                 'assumptions': [str(a)[:240] for a in (active_doc.get('assumptions') or [])[:12] if isinstance(a, str)],
                 'blockers': [str(b)[:240] for b in (active_doc.get('blockers') or [])[:12] if isinstance(b, str)],
                 'measured_checks': active_doc.get('measured_checks') if isinstance(active_doc.get('measured_checks'), dict) else None,
+                'assembly_precision': active_doc.get('assembly_precision') if isinstance(active_doc.get('assembly_precision'), dict) else None,
                 'simulations': {},
             }
+        elif stl_files_found:
+            # Prévisualisation temps réel directe depuis les fichiers .stl pendant que design.py s'exécute
+            live_parts = []
+            for idx_stl, (rel_stl, p_stl) in enumerate(stl_files_found[:16]):
+                if rel_stl.startswith('plate-') or rel_stl.startswith('printable/'):
+                    continue
+                try:
+                    st_info = p_stl.stat()
+                    snap = _stl_live_snapshot(str(p_stl), st_info.st_size, st_info.st_mtime_ns)
+                except Exception:
+                    snap = None
+                if snap:
+                    live_parts.append({
+                        'id': p_stl.stem,
+                        'name': p_stl.stem.replace('_', ' '),
+                        'file': rel_stl,
+                        'source': 'print',
+                        'manufacturing': 'print',
+                        'dimensions_mm': snap['dimensions_mm'],
+                        'bounds_mm': snap['bounds_mm'],
+                        'centroid_mm': snap['centroid_mm'],
+                        'volume_mm3': snap['volume_mm3'],
+                        'surface_area_mm2': snap['surface_area_mm2'],
+                        'estimated_mass_g': snap['estimated_mass_g'],
+                        'watertight': snap['watertight'],
+                        'filament': None,
+                        'color_rgba': None,
+                        'sample_points_mm': snap['sample_points_mm'],
+                    })
+            if live_parts:
+                draft_summary = {
+                    'title': rec.get('objective', '')[:80],
+                    'feasibility': 'in_progress',
+                    'units': 'mm',
+                    'part_count': len(live_parts),
+                    'printable_count': len(live_parts),
+                    'printed_part_count': len(live_parts),
+                    'purchased_count': 0,
+                    'purchased_part_count': 0,
+                    'bom_count': 0,
+                    'joint_count': 0,
+                    'dof': 0,
+                    'dof_total': 0,
+                    'assembly_step_count': 0,
+                    'plate_count': 0,
+                    'parts': live_parts,
+                    'parts_preview': live_parts,
+                    'joints': [],
+                    'bom': [],
+                    'assembly_steps': [],
+                    'assumptions': [],
+                    'blockers': [],
+                    'measured_checks': None,
+                    'assembly_precision': None,
+                    'simulations': {},
+                }
 
         status = item['status']
         if complete and status == 'completed':

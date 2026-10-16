@@ -132,9 +132,14 @@ def solve_closures(parts,joints,values,constraints):
 
 
 
+@lru_cache(maxsize=512)
+def _cached_mesh(path, size, modified):
+    return trimesh.load_mesh(path)
+
+
 @lru_cache(maxsize=1024)
 def _bounds(path, size, modified):
-    bounds=trimesh.load_mesh(path).bounds.copy()
+    bounds=_cached_mesh(path, size, modified).bounds.copy()
     digest=hashlib.sha256()
     with open(path,'rb') as stream:
         for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
@@ -146,7 +151,7 @@ def simulate(report,root,values=None,*,cursor=0,batch_size=None):
     parts=report['parts'];joints=report.get('mechanism_joints',[]);transforms,resolved,closure=solve_closures(parts,joints,values,report.get('closure_constraints',[]));root=Path(root).resolve()
     batch_size=batch_size or int(os.environ.get('AURORA_SIMULATION_PAIR_BATCH','128'))
     if type(cursor)!=int or cursor<0 or type(batch_size)!=int or not 1<=batch_size<=1024:raise ValueError('Invalid collision batch.')
-    paths={};bounds={};versions=[]
+    paths={};stats={};bounds={};versions=[]
     for p in parts:
         path=(root/p['file']).resolve()
         if not path.is_relative_to(root):raise ValueError('Part path outside project.')
@@ -154,7 +159,7 @@ def simulate(report,root,values=None,*,cursor=0,batch_size=None):
         versions.append([p['id'],digest]);low,high=box
         corners=np.array([[x,y,z] for x in [low[0],high[0]] for y in [low[1],high[1]] for z in [low[2],high[2]]])
         world=trimesh.transformations.transform_points(corners,transforms[p['id']])
-        bounds[p['id']]=np.array([world.min(axis=0),world.max(axis=0)]);paths[p['id']]=path
+        bounds[p['id']]=np.array([world.min(axis=0),world.max(axis=0)]);paths[p['id']]=path;stats[p['id']]=(str(path),stat.st_size,stat.st_mtime_ns)
     candidates=[];keys=list(paths)
     for i,a in enumerate(keys):
         for b in keys[i+1:]:
@@ -164,7 +169,7 @@ def simulate(report,root,values=None,*,cursor=0,batch_size=None):
     collisions=[];uncertain=[]
     for a,b in candidates[cursor:cursor+batch_size]:
         try:
-            ma=trimesh.load_mesh(paths[a]);mb=trimesh.load_mesh(paths[b])
+            ma=_cached_mesh(*stats[a]).copy();mb=_cached_mesh(*stats[b]).copy()
             ma.apply_transform(transforms[a]);mb.apply_transform(transforms[b])
             overlap=trimesh.boolean.intersection([ma,mb],engine='manifold');volume=float(overlap.volume)
             if not math.isfinite(volume):raise ValueError('Nonfinite intersection')

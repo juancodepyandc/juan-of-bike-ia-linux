@@ -57,7 +57,14 @@ def build_project(spec, root='.', *, require_sources=False):
         printable_dir=root/('printable' if manufacturing=='print' else 'components');printable_dir.mkdir(exist_ok=True)
         print_path=printable_dir/(node+'.stl');printable.export(print_path)
         print_transform=transform @ trimesh.transformations.translation_matrix(mesh.bounds[0])
-        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':float(mesh.volume),'watertight':True,'manufacturing':manufacturing,'geometry_basis':part.get('geometry_basis','generated_printable'),'source_reference':part.get('source_reference'),'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist(),'source_origin_mm':mesh.bounds[0].tolist()})
+        mat_hint=(str(part.get('filament') or '')+' '+str(part.get('name') or '')).lower()
+        if manufacturing=='purchased':
+            density=7.85 if any(k in mat_hint for k in ('vis','m2','m3','m4','m5','acier','steel','inox','roulement','bearing','axe')) else (4.2 if any(k in mat_hint for k in ('moteur','motor','servo','cuivre','laiton')) else 2.7)
+        else:
+            density=1.27 if 'petg' in mat_hint else (1.04 if 'abs' in mat_hint else (1.21 if 'tpu' in mat_hint else (1.14 if ('nylon' in mat_hint or 'pa12' in mat_hint) else (1.30 if ('carbone' in mat_hint or 'cf' in mat_hint) else 1.24))))
+        vol_mm3=float(mesh.volume);area_mm2=float(mesh.area);mass_g=max(0.01,round(vol_mm3*density*1e-3,3))
+        com_world=placed.center_mass.tolist() if np.isfinite(placed.center_mass).all() else placed.bounds.mean(axis=0).tolist()
+        measured.append({'id':node,'design_id':part['id'],'name':str(part.get('name',part['id'])),'file':print_path.relative_to(root).as_posix(),'dimensions_mm':mesh.extents.tolist(),'volume_mm3':vol_mm3,'surface_area_mm2':round(area_mm2,2),'estimated_mass_g':mass_g,'density_g_cm3':density,'center_of_mass_mm':[round(float(x),3) for x in com_world],'assembled_bounds_mm':[[round(float(x),3) for x in placed.bounds[0].tolist()],[round(float(x),3) for x in placed.bounds[1].tolist()]],'face_count':int(len(mesh.faces)),'vertex_count':int(len(mesh.vertices)),'euler_number':int(mesh.euler_number),'watertight':True,'manufacturing':manufacturing,'geometry_basis':part.get('geometry_basis','generated_printable'),'source_reference':part.get('source_reference'),'color_rgba':color,'explosion_translation_mm':displacement.tolist(),'explosion_vector_3d_mm':displacement.tolist(),'assembly_matrix_mm':print_transform.tolist(),'source_origin_mm':mesh.bounds[0].tolist()})
         source_files.extend([path,print_path])
     checked_bom=[]
     for item in bom:
@@ -90,6 +97,56 @@ def build_project(spec, root='.', *, require_sources=False):
     _,resolved_home,report['closure_at_home']=solve_closures(measured,report['mechanism_joints'],{},report['closure_constraints'])
     if any(abs(resolved_home.get(j['id'],j['home'])-j['home'])>1e-4 for j in coordinates(report['mechanism_joints'])):raise ValueError('The declared rest assembly requires different passive positions. Revise the actual rest matrices and joint frames using the calculated closure, then rerun; packaging cannot silently replace the declared assembly.')
     if not report['closure_at_home']['converged']:raise ValueError('The declared mechanism does not close at home; inspect residual and revise its geometry or constraints.')
+    # Métrologie globale d'assemblage, équilibre statique et vecteurs d'éclatement 3D radiaux/cinématiques
+    if measured:
+        total_mass=sum(p['estimated_mass_g'] for p in measured)
+        total_vol=sum(p['volume_mm3'] for p in measured)
+        total_area=sum(p['surface_area_mm2'] for p in measured)
+        global_com=np.sum([np.asarray(p['center_of_mass_mm'],dtype=float)*p['estimated_mass_g'] for p in measured],axis=0)/max(1e-6,total_mass)
+        all_low=np.min([p['assembled_bounds_mm'][0] for p in measured],axis=0)
+        all_high=np.max([p['assembled_bounds_mm'][1] for p in measured],axis=0)
+        overall_span=all_high-all_low
+        explode_mag=max(18.0,float(np.linalg.norm(overall_span))*0.36)
+        joint_by_child={j['child']:j for j in report['mechanism_joints']}
+        for idx_p,p in enumerate(measured):
+            p_com=np.asarray(p['center_of_mass_mm'],dtype=float)
+            radial=p_com-global_com
+            r_norm=float(np.linalg.norm(radial))
+            radial_dir=radial/r_norm if r_norm>1e-3 else np.array([math.cos(idx_p*1.2),math.sin(idx_p*1.2),0.25*(idx_p%3-1)],dtype=float)
+            j_info=joint_by_child.get(p['id'])
+            if j_info:
+                j_axis=np.asarray(j_info.get('axis') or (j_info.get('coordinates',[{}])[0].get('axis') if j_info.get('coordinates') else [0,0,1]),dtype=float)
+                ja_norm=float(np.linalg.norm(j_axis))
+                if ja_norm>1e-6:
+                    j_dir=j_axis/ja_norm
+                    if float(np.dot(j_dir,radial_dir))<0:j_dir=-j_dir
+                    radial_dir=0.65*radial_dir+0.35*j_dir
+            dir_norm=float(np.linalg.norm(radial_dir))
+            unit_dir=radial_dir/max(1e-6,dir_norm)
+            dist_factor=0.35+0.65*min(1.5,r_norm/max(10.0,float(np.max(overall_span))*0.45)) if len(measured)>1 else 0.0
+            vec3d=(unit_dir*explode_mag*dist_factor).tolist()
+            p['explosion_vector_3d_mm']=[round(float(x),2) for x in vec3d]
+        z_min=float(all_low[2])
+        base_parts=[p for p in measured if p['assembled_bounds_mm'][0][2]<=z_min+max(2.5,float(overall_span[2])*0.08)]
+        fp_low=np.min([p['assembled_bounds_mm'][0][:2] for p in base_parts],axis=0) if base_parts else all_low[:2]
+        fp_high=np.max([p['assembled_bounds_mm'][1][:2] for p in base_parts],axis=0) if base_parts else all_high[:2]
+        margins_xy=[float(global_com[0]-fp_low[0]),float(fp_high[0]-global_com[0]),float(global_com[1]-fp_low[1]),float(fp_high[1]-global_com[1])]
+        min_stability_margin=round(min(margins_xy),2)
+        stable_at_rest=bool(min_stability_margin>=0.0)
+        interface_clearances=[]
+        for i_a,pa in enumerate(measured):
+            ba0,ba1=np.asarray(pa['assembled_bounds_mm'][0]),np.asarray(pa['assembled_bounds_mm'][1])
+            for pb in measured[i_a+1:]:
+                bb0,bb1=np.asarray(pb['assembled_bounds_mm'][0]),np.asarray(pb['assembled_bounds_mm'][1])
+                sep=np.maximum(0.0,np.maximum(ba0-bb1,bb0-ba1))
+                aabb_dist=float(np.linalg.norm(sep))
+                if aabb_dist<=25.0 and len(interface_clearances)<32:
+                    overlap_xyz=np.minimum(ba1,bb1)-np.maximum(ba0,bb0)
+                    min_gap=round(float(-np.min(overlap_xyz)) if np.all(overlap_xyz>0) else round(aabb_dist,3),3)
+                    interface_clearances.append({'parts':[pa['id'],pb['id']],'names':[pa['name'],pb['name']],'aabb_clearance_mm':min_gap})
+        report['assembly_precision']={'total_volume_mm3':round(total_vol,2),'total_surface_area_mm2':round(total_area,2),'total_estimated_mass_g':round(total_mass,2),'center_of_mass_mm':[round(float(x),2) for x in global_com.tolist()],'overall_bounds_mm':[[round(float(x),2) for x in all_low.tolist()],[round(float(x),2) for x in all_high.tolist()]],'overall_dimensions_mm':[round(float(x),2) for x in overall_span.tolist()],'support_footprint_xy_mm':[[round(float(x),2) for x in fp_low.tolist()],[round(float(x),2) for x in fp_high.tolist()]],'stable_at_rest':stable_at_rest,'stability_margin_mm':min_stability_margin,'total_dof':sum(j.get('dof',0) for j in report['mechanism_joints']),'interface_clearances':interface_clearances}
+    else:
+        report['assembly_precision']=None
     report['fastening_assessment']=[]
     if spec.get('fastening_candidates'):
         from application.engineering_connections import rank_fastening_locations
@@ -110,10 +167,13 @@ def build_project(spec, root='.', *, require_sources=False):
     else:report['print_plates']=[]
     lines=[f'# {title}',objective,'','## État','Résoudre les blocages avant fabrication.' if blockers else 'Prototype géométriquement vérifié. Validation mécanique, électrique et essai physique nécessaires.','','## Contraintes et hypothèses']
     lines += ['- '+str(v) for v in [*report['constraints'],*assumptions]]
+    if report.get('assembly_precision'):
+        ap=report['assembly_precision']
+        lines += ['','## Métrologie et précision d’assemblage',f"- Dimensions hors-tout assemblées : {' × '.join(f'{v:.2f}' for v in ap['overall_dimensions_mm'])} mm",f"- Masse totale estimée : {ap['total_estimated_mass_g']:.2f} g (volume total {ap['total_volume_mm3']:.2f} mm³ · surface {ap['total_surface_area_mm2']:.2f} mm²)",f"- Centre de gravité global (XYZ) : {' / '.join(f'{v:.2f}' for v in ap['center_of_mass_mm'])} mm",f"- Équilibre statique au repos : {'Stable (marge ' + str(ap['stability_margin_mm']) + ' mm)' if ap['stable_at_rest'] else 'Porte-à-faux détecté (marge ' + str(ap['stability_margin_mm']) + ' mm — prévoir socle ou lestage)'}"]
     lines += ['','## Architecture et composants','| Élément | Quantité | Spécification / dimensions | Pièces concernées |','|---|---:|---|---|']
     def cell(value):return str(value).replace('|','\\|').replace('\n',' ')
     lines += [f"| {cell(i['name'])} | {i['quantity']} | {cell(i['specification'])} | {cell(', '.join(i.get('part_ids',[])))} |" for i in checked_bom]
-    lines += ['','## Pièces imprimables']+[f"- {p['name']} ({p['design_id']}) : {' × '.join(f'{v:.2f}' for v in p['dimensions_mm'])} mm ; volume {p['volume_mm3']:.2f} mm³ ; fichier `{p['file']}`." for p in printed]
+    lines += ['','## Pièces imprimables']+[f"- {p['name']} ({p['design_id']}) : {' × '.join(f'{v:.2f}' for v in p['dimensions_mm'])} mm ; volume {p['volume_mm3']:.2f} mm³ ; masse ~{p['estimated_mass_g']:.2f} g ; fichier `{p['file']}`." for p in printed]
     lines += ['','## Composants achetés et enveloppes']+[f"- {p['name']} : géométrie {p['geometry_basis']} (provenance déclarée), référence {p['source_reference']}, fichier `{p['file']}` ; exclu des plaques d’impression." for p in measured if p['manufacturing']=='purchased']
     lines += ['','## Plaques et couleurs']+[f"- {plate['id']} : {plate['filament']['name']} ; {len(plate['parts'])} pièce(s), fichier `{plate['file']}`." for plate in report['print_plates']]
     lines += ['- Les couleurs de repérage de l’assemblage distinguent les pièces ; elles ne prescrivent pas plusieurs filaments. Le plan de filaments ci-dessus décrit les couleurs physiques proposées.','- Plaques regroupées par filament/couleur ; placement conservateur. Trancher et choisir supports, matière et paramètres avant impression.']
@@ -134,7 +194,7 @@ def build_project(spec, root='.', *, require_sources=False):
     (root/'project.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if measured:
         scene.scaled(.001).export(root/'assembled.glb');exploded.scaled(.001).export(root/'exploded.glb')
-        mesh=scene.to_mesh();manifest={'mode':'assembly','title':title,'objective':objective,'piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates'],'bom':checked_bom,'assembly_steps':[{**s,'resolved_part_ids':[id_map.get(r,r) for r in s.get('part_ids',[])]} for s in steps],'assumptions':assumptions,'blockers':blockers}
+        mesh=scene.to_mesh();manifest={'mode':'assembly','title':title,'objective':objective,'piece_count':len(measured),'pin_count':0,'profile':{'name':spec.get('printer_name','Profil du projet'),'bed_mm':bed.tolist()},'dimensions_mm':mesh.extents.tolist(),'parts':measured,'joints':[],'cut_axis':'x','exploded_gap_mm':max(bed)*.18,'view_up_axis':'z','textured_assembly_available':False,'fabrication':{'instructions':'Consulter DOSSIER.md pour le montage, les composants et les limites de validation.'},'protected_zones_mm':[],'print_plates':report['print_plates'],'bom':checked_bom,'assembly_steps':[{**s,'resolved_part_ids':[id_map.get(r,r) for r in s.get('part_ids',[])]} for s in steps],'assumptions':assumptions,'blockers':blockers,'assembly_precision':report['assembly_precision']}
         manifest['mechanism_joints']=report['mechanism_joints']
         manifest['motion_controls']=coordinates(report['mechanism_joints'])
         manifest['closure_constraints']=report['closure_constraints']

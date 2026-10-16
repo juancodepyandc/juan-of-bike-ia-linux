@@ -4,7 +4,6 @@ import { duration } from './ProjectsPanel.tsx'
 import { getBridgeUrl } from '../utils/runtime.ts'
 import { HolographicSplatLoader } from './HolographicSplatLoader.tsx'
 import {
-  synthesizeThreeDMasterPrompt,
   startOrUpdateThreeDMission,
   completeThreeDMission,
 } from '../services/threeDSubAgentsOrchestrator.ts'
@@ -19,16 +18,38 @@ type TelemetryPart = {
   source: string
   dimensions_mm: number[] | null
   volume_mm3: number | null
+  surface_area_mm2?: number | null
+  estimated_mass_g?: number | null
   watertight: boolean | null
   filament: string | null
   color_rgba: number[] | null
+  bounds_mm?: [number[], number[]] | null
+  centroid_mm?: number[] | null
+  sample_points_mm?: number[][]
 }
 type TelemetryJoint = {
   id: string
   type: string
   parent: string
   child: string
+  origin_mm?: number[]
+  axis?: number[]
   limits: [number, number] | null
+}
+type TelemetryAssemblyPrecision = {
+  total_volume_mm3?: number
+  total_surface_area_mm2?: number
+  total_estimated_mass_g?: number
+  center_of_mass_mm?: number[] | null
+  support_footprint_xy_mm?: [number[], number[]] | null
+  stable_at_rest?: boolean | null
+  stability_margin_mm?: number | null
+  interface_clearances?: {
+    pair: [string, string]
+    min_aabb_gap_mm: number
+    axes_gaps_mm?: number[]
+    status: string
+  }[]
 }
 type TelemetryBomItem = { name: string; quantity: number; specification: string }
 type TelemetryDraftSummary = {
@@ -47,6 +68,7 @@ type TelemetryDraftSummary = {
   assumptions: string[]
   blockers: string[]
   simulations: Record<string, unknown>
+  assembly_precision?: TelemetryAssemblyPrecision | null
 }
 type Telemetry = {
   phase: string
@@ -195,6 +217,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
         /* ignore storage restrictions */
       }
       if (['queued', 'planning', 'running'].includes(current.state)) {
+        const draftSummary = current.telemetry?.draft_summary
         startOrUpdateThreeDMission({
           rawPrompt: current.objective || goal || 'Projet CAO multi-pièces',
           phasePercent: current.telemetry?.progress_pct || 8,
@@ -203,6 +226,16 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
           stlCount: current.telemetry?.stl_count ?? 0,
           verifiedCriteriaCount: current.telemetry?.verified_count ?? 0,
           totalCriteriaCount: current.telemetry?.criteria_count ?? 0,
+          liveTelemetry: {
+            stlCount: current.telemetry?.stl_count ?? 0,
+            verifiedCriteriaCount: current.telemetry?.verified_count ?? 0,
+            totalCriteriaCount: current.telemetry?.criteria_count ?? 0,
+            partCount: draftSummary?.part_count ?? draftSummary?.parts?.length ?? 0,
+            jointCount: draftSummary?.joint_count ?? draftSummary?.joints?.length ?? 0,
+            dof: draftSummary?.dof ?? null,
+            parts: draftSummary?.parts,
+            joints: draftSummary?.joints,
+          },
         })
       } else if (['completed', 'failed', 'stopped'].includes(current.state)) {
         completeThreeDMission({
@@ -487,19 +520,6 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
     })
   }
 
-  function applyStructuredMasterPrompt(seedInput?: string) {
-    const structured = synthesizeThreeDMasterPrompt(
-      seedInput || goal.trim() || 'main robotisée anthropomorphe 5 doigts articulés 15 DDL'
-    )
-    setGoal(`${structured.subjectTitle} — ${structured.kinematicChainSummary}`)
-    setConstraints(
-      [
-        `ENVELOPPE & CINÉMATIQUE (${structured.dimensionalEnvelopeMm.join(' × ')} mm · ${structured.degreesOfFreedom} DDL) :`,
-        ...structured.inferredConstraints.map((s) => `• ${s}`),
-      ].join('\n')
-    )
-  }
-
   const status: Record<string, string> = {
     queued: 'Projet dans la file d’attente',
     planning: 'L’IA prépare son plan',
@@ -579,30 +599,9 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
           className={field}
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          placeholder="Ce que le projet doit accomplir, ses dimensions, ses mécanismes (main robotisée, engrenages, charnières, boîtier, support articulé) et son usage…"
+          placeholder="Ce que le projet doit accomplir, ses dimensions, ses mécanismes (charnières, engrenages, boîtier, support articulé) et son usage…"
         />
       </label>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy || unconfirmed}
-          onClick={() => applyStructuredMasterPrompt()}
-          className="rounded-xl border border-aurora-accent/50 bg-aurora-accent/15 px-3 py-1.5 text-xs font-semibold text-aurora-accent hover:bg-aurora-accent/25 disabled:opacity-40"
-          title="Structure automatiquement une demande libre (même sans contrainte) en Prompt Maître d’ingénierie CAO multi-pièces (5 Sous-Agents)"
-        >
-          ⚡ Structurer en Prompt Maître (5 Sous-Agents)
-        </button>
-        <button
-          type="button"
-          disabled={busy || unconfirmed}
-          onClick={() => applyStructuredMasterPrompt('main robotisée anthropomorphe 5 doigts articulés 15 DDL')}
-          className="rounded-xl border border-aurora-border/70 bg-aurora-surface-2 px-3 py-1.5 text-xs text-aurora-text-muted hover:border-aurora-accent hover:text-aurora-text disabled:opacity-40"
-          title="Remplit l’objectif et les contraintes complètes d’une main robotisée 5 doigts (15 DDL) imprimable et assemblable"
-        >
-          🤖 Preset : Main robotisée 15 DDL (CAO + Assemblage)
-        </button>
-      </div>
 
       <details className="mt-3" open={Boolean(constraints.trim())}>
         <summary className="min-h-11 cursor-pointer text-sm font-medium">
@@ -696,19 +695,25 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
           {['queued', 'planning', 'running'].includes(current.state) && (
             <div className="mt-3">
               <HolographicSplatLoader
-                active
                 prompt={current.objective || goal || 'Projet CAO multi-pièces'}
-                phasePercent={telemetry?.progress_pct ?? 10}
-                phaseLabel={telemetry?.phase || status[current.state] || current.state}
+                progressPercent={telemetry?.progress_pct ?? 10}
+                phaseLabel={status[current.state] || current.state}
+                phaseDetail={telemetry?.phase || status[current.state] || current.state}
                 serverElapsedSeconds={liveElapsedSeconds}
                 serverRemainingSeconds={liveRemainingSeconds}
                 stlCount={telemetry?.stl_count ?? 0}
                 verifiedCriteriaCount={telemetry?.verified_count ?? 0}
                 totalCriteriaCount={telemetry?.criteria_count ?? 0}
                 mode="engineering_cad"
-                onApplyMasterPrompt={(formattedPrompt, inferredConstraints) => {
-                  setGoal(formattedPrompt)
-                  setConstraints(inferredConstraints)
+                liveTelemetry={{
+                  stlCount: telemetry?.stl_count ?? 0,
+                  verifiedCriteriaCount: telemetry?.verified_count ?? 0,
+                  totalCriteriaCount: telemetry?.criteria_count ?? 0,
+                  partCount: draft?.part_count ?? draft?.parts?.length ?? 0,
+                  jointCount: draft?.joint_count ?? draft?.joints?.length ?? 0,
+                  dof: draft?.dof ?? null,
+                  parts: draft?.parts,
+                  joints: draft?.joints,
                 }}
               />
             </div>
@@ -818,7 +823,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
 
           {current.error && <p className="mt-2 text-red-400">{current.error}</p>}
 
-          {/* Structured Engineering Inspector: Parts, Joints/DOF, BOM, Assembly Steps */}
+          {/* Structured Engineering Inspector: Parts, Metrology, Joints/DOF, BOM, Assembly Steps */}
           {draft && (
             <div className="mt-3 space-y-3 rounded-xl border border-aurora-border/60 bg-aurora-surface/60 p-3 text-xs">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -838,6 +843,55 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
                 )}
               </div>
 
+              {/* Assembly Precision & Global Metrology */}
+              {draft.assembly_precision && (
+                <div className="grid grid-cols-2 gap-2 rounded-lg border border-aurora-border/50 bg-aurora-surface-2/60 p-2.5 sm:grid-cols-4">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Masse totale estimée</div>
+                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                      {draft.assembly_precision.total_estimated_mass_g != null
+                        ? `${Number(draft.assembly_precision.total_estimated_mass_g).toFixed(1)} g`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Volume / Surface</div>
+                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                      {draft.assembly_precision.total_volume_mm3 != null
+                        ? `${(Number(draft.assembly_precision.total_volume_mm3) / 1000).toFixed(2)} cm³`
+                        : '—'}
+                      {draft.assembly_precision.total_surface_area_mm2 != null
+                        ? ` · ${(Number(draft.assembly_precision.total_surface_area_mm2) / 100).toFixed(1)} cm²`
+                        : ''}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Centre de gravité (XYZ)</div>
+                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                      {Array.isArray(draft.assembly_precision.center_of_mass_mm) && draft.assembly_precision.center_of_mass_mm.length === 3
+                        ? `${draft.assembly_precision.center_of_mass_mm.map((v) => Number(v).toFixed(1)).join(', ')} mm`
+                        : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Équilibre statique</div>
+                    <div className={`mt-0.5 font-mono font-semibold ${
+                      draft.assembly_precision.stable_at_rest === true
+                        ? 'text-emerald-300'
+                        : draft.assembly_precision.stable_at_rest === false
+                          ? 'text-amber-300'
+                          : 'text-aurora-text'
+                    }`}>
+                      {draft.assembly_precision.stable_at_rest === true
+                        ? `Stable (+${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
+                        : draft.assembly_precision.stable_at_rest === false
+                          ? `Bascule (${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
+                          : '—'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Parts table */}
               {draft.parts.length > 0 && (
                 <div className="overflow-x-auto">
@@ -847,7 +901,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
                         <th className="py-1.5 pr-2">Pièce</th>
                         <th className="py-1.5 pr-2">Type / Matière</th>
                         <th className="py-1.5 pr-2">Dimensions (mm)</th>
-                        <th className="py-1.5 pr-2">Volume</th>
+                        <th className="py-1.5 pr-2">Volume / Masse</th>
                         <th className="py-1.5">Inspection</th>
                       </tr>
                     </thead>
@@ -869,6 +923,7 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
                           </td>
                           <td className="py-1.5 pr-2 font-mono text-aurora-text-muted">
                             {part.volume_mm3 ? `${(part.volume_mm3 / 1000).toFixed(2)} cm³` : '—'}
+                            {part.estimated_mass_g != null ? ` (${Number(part.estimated_mass_g).toFixed(1)} g)` : ''}
                             {part.watertight === true ? ' ✓' : part.watertight === false ? ' ⚠' : ''}
                           </td>
                           <td className="py-1.5">

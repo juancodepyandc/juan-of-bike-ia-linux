@@ -190,6 +190,8 @@ def test_design_telemetry_and_assembly_steps_enrichment(tmp_path):
     assert tel['draft_summary']['joint_count']==1
     assert tel['draft_summary']['dof']==1
     assert tel['draft_summary']['bom'][0]['name']=='Vis CHC M3x16'
+    assert tel['draft_summary']['assembly_precision']['total_estimated_mass_g']>0
+    assert all(p.get('sample_points_mm') and len(p['sample_points_mm'])>0 for p in tel['draft_summary']['parts'])
     assert len(tel['sub_agents'])==5
     assert [a['id'] for a in tel['sub_agents']]==['agent-kinematics','agent-cad-geometry','agent-gaussian-splat','agent-materials-pbr','agent-qa-assembly']
     assert all(a['status']=='done' and a['progress_pct']==100 for a in tel['sub_agents'])
@@ -197,4 +199,6 @@ def test_design_telemetry_and_assembly_steps_enrichment(tmp_path):
     assert assembly_manifest['title']=='Bras articulé M3'
     assert len(assembly_manifest['bom'])==1
     assert assembly_manifest['assembly_steps'][1]['resolved_part_ids']==['piece_01','piece_02']
+    assert assembly_manifest['assembly_precision']['total_estimated_mass_g']>0
+    assert all(len(p.get('explosion_vector_3d_mm',[]))==3 for p in assembly_manifest['parts'])
 

@@ -18,7 +18,6 @@ import {
   startOrUpdateThreeDMission,
   completeThreeDMission,
   readPersistedThreeDMission,
-  synthesizeThreeDMasterPrompt,
 } from '../services/threeDSubAgentsOrchestrator.ts'
 import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
 import ContextFilesField from '../components/ContextFilesField.tsx'
@@ -5428,33 +5427,7 @@ export default function ModelView() {
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl gradient-accent text-white"><Sparkles size={18} /></div>
               </div>
             </div>
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ex: main robotisée anthropomorphe 5 doigts articulés, ou pièce mécanique imprimable pour charnière de boîtier 42 mm" rows={6} className="mt-4 w-full resize-none rounded-2xl border border-aurora-border bg-aurora-bg/60 px-3 py-3 text-sm text-aurora-text outline-none transition-colors focus:border-aurora-accent/45" />
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                disabled={isGenerating}
-                onClick={() => {
-                  const structured = synthesizeThreeDMasterPrompt(prompt.trim() || 'main robotisée anthropomorphe 5 doigts articulés')
-                  setPrompt(structured.formattedMasterPrompt)
-                }}
-                className="rounded-xl border border-aurora-accent/45 bg-aurora-accent/15 px-2.5 py-1.5 text-[11px] font-semibold text-aurora-accent-light hover:bg-aurora-accent/25 transition-colors disabled:opacity-40"
-                title="Transforme une demande libre ou sans contrainte en Prompt Maître d'ingénierie 3D structuré pour les 5 sous-agents"
-              >
-                ⚡ Structurer en Prompt Maître (5 Sous-Agents)
-              </button>
-              <button
-                type="button"
-                disabled={isGenerating}
-                onClick={() => {
-                  const structured = synthesizeThreeDMasterPrompt('main robotisée anthropomorphe 5 doigts articulés 15 DDL')
-                  setPrompt(structured.formattedMasterPrompt)
-                }}
-                className="rounded-xl border border-aurora-border/50 bg-aurora-surface/80 px-2.5 py-1.5 text-[11px] text-aurora-text-muted hover:text-aurora-text hover:border-aurora-accent/35 transition-colors disabled:opacity-40"
-                title="Charge le Prompt Maître complet d'une main robotisée 5 doigts (15 DDL) avec prévisualisation Splats Holographiques"
-              >
-                🤖 Preset : Main robotisée 15 DDL
-              </button>
-            </div>
+            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ex: pièce mécanique imprimable, mécanisme articulé, boîtier sur mesure, assemblage multi-pièces…" rows={6} className="mt-4 w-full resize-none rounded-2xl border border-aurora-border bg-aurora-bg/60 px-3 py-3 text-sm text-aurora-text outline-none transition-colors focus:border-aurora-accent/45" />
             <div className="mt-2 flex items-center gap-2">
               <VoicePushToTalk
                 onTranscript={(text) => setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text))}
@@ -5898,8 +5871,8 @@ export default function ModelView() {
                 <div className="h-full space-y-3">
                   <HolographicSplatLoader
                     active={isGenerating}
-                    prompt={prompt.trim() || readPersistedThreeDMission()?.rawPrompt || 'main robotisée anthropomorphe 5 doigts articulés'}
-                    phasePercent={
+                    prompt={prompt.trim() || readPersistedThreeDMission()?.rawPrompt || 'Projet 3D'}
+                    progressPercent={
                       isGenerating
                         ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 4)
                         : prompt.trim()
@@ -5911,12 +5884,11 @@ export default function ModelView() {
                         ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Orchestration 3D par les 5 sous-agents...'
                         : prompt.trim()
                           ? 'Prévisualisation Splats Holographiques 3D & Répartition des 5 Sous-Agents prête'
-                          : 'Aperçu Splats Holographiques 3D — Saisis un projet ou structure un Prompt Maître'
+                          : 'Aperçu Splats Holographiques 3D — Saisissez une demande 3D'
                     }
                     startedAtMs={isGenerating ? readPersistedThreeDMission()?.startedAtMs : undefined}
-                    mode="mesh_3d"
+                    mode="visual_3d"
                     referenceImageUrl={referenceImageUrl}
-                    onApplyMasterPrompt={(formattedPrompt) => setPrompt(formattedPrompt)}
                     onStop={isGenerating ? () => void stopGeneration() : undefined}
                   />
                 </div>

@@ -18,7 +18,12 @@ def test_generic_actual_parts_report_docs_figure_and_normalized_printable_zip(tm
     for part in result['parts']:
         mesh=trimesh.load_mesh(tmp_path/part['file']);assert mesh.is_volume
         assert mesh.bounds[0]==pytest.approx([0,0,0],abs=1e-5)
-    text=(tmp_path/'DOSSIER.md').read_text();assert '1,75 mm' in text and 'Socle' in text
+        assert part['surface_area_mm2']>0 and part['estimated_mass_g']>0
+        assert len(part['center_of_mass_mm'])==3 and len(part['explosion_vector_3d_mm'])==3
+    assert result['assembly_precision']['total_estimated_mass_g']>0
+    assert len(result['assembly_precision']['center_of_mass_mm'])==3
+    assert result['assembly_precision']['interface_clearances']
+    text=(tmp_path/'DOSSIER.md').read_text();assert '1,75 mm' in text and 'Socle' in text and 'Métrologie et précision d’assemblage' in text
     assert result['parts'][0]['color_rgba']!=result['parts'][1]['color_rgba']
     assert result['print_plates'] and len(result['print_plates'][0]['parts'])==2
     assert trimesh.load_mesh(tmp_path/result['print_plates'][0]['file']).is_volume
