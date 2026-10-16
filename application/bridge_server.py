@@ -1449,6 +1449,9 @@ _training_sys.path.insert(0, str(_TrainingPath(__file__).resolve().parent.parent
 from auto_rl.integration import register_routes as _register_training_routes
 _register_training_routes(app, _proxy)
 
+from business_intelligence import register_business_routes as _register_business_routes
+_register_business_routes(app, workspace=WORKSPACE)
+
 
 def sync_tunnel_url_to_gist():
     import subprocess, os

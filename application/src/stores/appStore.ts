@@ -113,6 +113,7 @@ const INITIAL_MODULE_ASSET_PACKS: Record<ModuleId, ModuleAssetPackState> = {
   learning: createInitialModuleAssetPack('learning'),
   voice: createInitialModuleAssetPack('voice'),
   cyber: createInitialModuleAssetPack('cyber'),
+  business: createInitialModuleAssetPack('business'),
 }
 
 interface AppState {

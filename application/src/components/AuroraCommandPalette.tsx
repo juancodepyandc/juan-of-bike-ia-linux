@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { motion } from 'framer-motion'
 import {
-  Box, Code2, GraduationCap, Image as ImageIcon, MessageSquare,
+  Box, Briefcase, Code2, GraduationCap, Image as ImageIcon, MessageSquare,
   Mic, Paintbrush, Search, Shield, Sparkles, Video,
   type LucideIcon,
 } from 'lucide-react'
@@ -85,6 +85,7 @@ const ENTRIES: PaletteEntry[] = [
   { id: '3d',           label: '3D',           kicker: 'Mesh + rig',                 icon: Box,           color: 'oklch(0.74 0.130 60)',  kbd: '⌘6' },
   { id: 'cyber',        label: 'Cyber',        kicker: 'Crypto · réseau · CTF',      icon: Shield,        color: 'oklch(0.70 0.130 130)', kbd: '⌘7' },
   { id: 'learning',     label: 'Academy',      kicker: 'Labs · quiz · parcours',     icon: GraduationCap, color: 'oklch(0.74 0.110 90)',  kbd: '⌘8' },
+  { id: 'business',     label: 'Business',     kicker: 'Business Lab · Live · 10 Agents', icon: Briefcase, color: 'oklch(0.72 0.150 160)', kbd: '⌘9' },
   { id: 'voice',        label: 'Voice',        kicker: 'Studio vocal',               icon: Mic,           color: 'oklch(0.72 0.140 350)', kbd: '⌘V' },
 ]
 

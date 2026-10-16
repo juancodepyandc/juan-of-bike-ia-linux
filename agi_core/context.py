@@ -174,9 +174,10 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
 
 def call_mcp_stdio(server: dict, method: str, params: dict, *,
                    timeout: float = 12.0, cwd: str | None = None) -> tuple[dict | None, str | None]:
-    """Run one JSON-RPC request against an MCP stdio server with a bounded wait."""
-    import select
+    """Run one JSON-RPC request against an MCP stdio server with a bounded wait (cross-platform)."""
+    import queue
     import subprocess
+    import threading
     command = server.get("command", "")
     raw_args = server.get("args", [])
     cmd = [command] + (list(raw_args) if isinstance(raw_args, list) else [])
@@ -194,11 +195,15 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
         reader = proc.stdout
         if reader is None:
             return None, "MCP stdout unavailable"
-        reader_fd = reader.fileno()
         deadline = time.monotonic() + timeout
 
-        def send_rpc(mid: int, rpc_method: str, rpc_params: dict) -> None:
-            payload = json.dumps({"jsonrpc": "2.0", "id": mid, "method": rpc_method, "params": rpc_params}) + "\n"
+        def send_rpc(mid: int | None, rpc_method: str, rpc_params: dict | None = None) -> None:
+            obj: dict = {"jsonrpc": "2.0", "method": rpc_method}
+            if mid is not None:
+                obj["id"] = mid
+            if rpc_params is not None:
+                obj["params"] = rpc_params
+            payload = json.dumps(obj) + "\n"
             if proc.stdin is None or proc.stdin.closed:
                 raise OSError("MCP stdin closed")
             proc.stdin.write(payload.encode("utf-8"))
@@ -209,39 +214,53 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
             "capabilities": {},
             "clientInfo": {"name": "aurora-agi", "version": "1.3.0"},
         })
+        send_rpc(None, "notifications/initialized", {})
         send_rpc(2, method, params)
-        buf = b""
+
+        line_queue: queue.Queue[bytes | None] = queue.Queue()
+
+        def _pump_stdout() -> None:
+            try:
+                for raw_line in iter(reader.readline, b""):
+                    line_queue.put(raw_line)
+            except Exception:
+                pass
+            finally:
+                line_queue.put(None)
+
+        pump = threading.Thread(target=_pump_stdout, daemon=True)
+        pump.start()
+
+        total_bytes = 0
         while True:
-            while b"\n" in buf:
-                line, _, buf = buf.partition(b"\n")
-                try:
-                    msg = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(msg, dict) and msg.get("id") == 2:
-                    if "error" in msg and isinstance(msg["error"], dict):
-                        return None, str(msg["error"].get("message") or msg["error"])
-                    return msg, None
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None, "MCP server timed out (no response)"
-            ready, _, _ = select.select([reader_fd], [], [], min(remaining, 2.0))
-            if not ready:
-                if proc.poll() is not None and not buf:
+            try:
+                raw_line = line_queue.get(timeout=min(remaining, 2.0))
+            except queue.Empty:
+                if proc.poll() is not None and line_queue.empty():
                     return None, "MCP server exited before responding"
                 continue
-            chunk = os.read(reader_fd, 65536)
-            if not chunk:
+            if raw_line is None:
                 return None, "MCP server closed while waiting for response"
-            buf += chunk
-            if len(buf) > 1_000_000:
+            total_bytes += len(raw_line)
+            if total_bytes > 1_000_000:
                 return None, "MCP server response too large"
+            try:
+                msg = json.loads(raw_line.decode("utf-8", errors="replace").strip())
+            except json.JSONDecodeError:
+                continue
+            if isinstance(msg, dict) and msg.get("id") == 2:
+                if "error" in msg and isinstance(msg["error"], dict):
+                    return None, str(msg["error"].get("message") or msg["error"])
+                return msg, None
     except OSError as exc:
         return None, f"MCP request failed: {exc}"
     finally:
         try:
-            if reader is not None and not reader.closed:
-                reader.close()
+            if proc is not None and proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
         except Exception:
             pass
         try:

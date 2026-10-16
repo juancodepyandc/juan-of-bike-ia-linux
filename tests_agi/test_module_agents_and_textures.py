@@ -325,7 +325,65 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertIn("CWE-125", cwes)
         self.assertIn("CWE-362", cwes)
 
+        # 4. 3-Regime Adaptive Epistemic Routing (KNOWN_CANONICAL vs KNOWN_OPTIMIZABLE vs UNKNOWN_EXPLORATORY)
+        from scientific_oracle import (
+            classify_epistemic_regime,
+            evaluate_competing_hypotheses,
+            verify_optimization_pareto,
+        )
+
+        r_known = classify_epistemic_regime("Trier une liste avec un algorithme de tri standard")
+        self.assertEqual(r_known["regime"], "KNOWN_CANONICAL")
+        self.assertFalse(r_known["should_reinvent"])
+
+        r_opt = classify_epistemic_regime(
+            "Optimiser la complexité O(n^2) de cette fonction",
+            code="def dup(items):\n    for i in items:\n        for j in items:\n            pass\n",
+        )
+        self.assertEqual(r_opt["regime"], "KNOWN_OPTIMIZABLE")
+        self.assertFalse(r_opt["should_reinvent"])
+
+        r_unk = classify_epistemic_regime("Auditer une faille 0-day inconnue et tester une conjecture inédite")
+        self.assertEqual(r_unk["regime"], "UNKNOWN_EXPLORATORY")
+        self.assertTrue(r_unk["should_reinvent"])
+
+        # 5. Pareto Optimization Verification (semantic equivalence + loop-depth reduction)
+        base_code = (
+            "def sum_squares(items):\n"
+            "    total = 0\n"
+            "    for x in items:\n"
+            "        for _ in range(1):\n"
+            "            total += x * x\n"
+            "    return total\n"
+        )
+        opt_code = (
+            "def sum_squares(items):\n"
+            "    return sum(x * x for x in items)\n"
+        )
+        pareto = verify_optimization_pareto(base_code, opt_code, entry_function="sum_squares")
+        self.assertTrue(pareto["ok"])
+        self.assertTrue(pareto["semantic_equivalence"])
+        self.assertEqual(pareto["status"], "PROVEN_OPTIMIZED")
+        self.assertTrue(pareto["loop_depth_reduced"])
+
+        # 6. Multi-Hypothesis Exploration & Skill Capitalization
+        exp = evaluate_competing_hypotheses(
+            "Identify closed-form sum of first n odd numbers",
+            [
+                {"id": "H1", "statement": "Sum is n*(n+1)", "conjecture": "n*(n + 1) == n**2", "domain": "pos_int"},
+                {"id": "H2", "statement": "Odd k-th term expansion (2*k - 1) + 1 == 2*k", "conjecture": "(2*k - 1) + 1 == 2*k", "domain": "pos_int"},
+            ],
+            workspace=self.root,
+            capitalize_skill_name="odd-sum-invariant",
+        )
+        self.assertTrue(exp["ok"])
+        self.assertEqual(exp["evaluated_hypotheses"][0]["status"], "FALSIFIED")
+        self.assertEqual(exp["evaluated_hypotheses"][1]["status"], "VERIFIED")
+        self.assertEqual(exp["winning_hypothesis"]["id"], "H2")
+        self.assertTrue((self.root / ".aurora" / "skills" / "odd-sum-invariant" / "SKILL.md").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

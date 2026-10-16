@@ -193,6 +193,18 @@ export const AURORA_AGENTS_DEFAULT: Record<ModuleId, AuroraAgent> = {
     motto: 'Je t\'écoute avant de répondre.',
     systemPrompt: 'Tu es Lyra en mode vocal. Réponses brèves, naturelles, prêtes à être dites à voix haute.',
   },
+  business: {
+    id: 'business',
+    name: 'Sovereign',
+    role: 'Stratège',
+    glyph: '◈',
+    color: '#10b981',
+    bodyColor: '#d1fae5',
+    tool: 'book',
+    voice: 'sage-mellow',
+    motto: 'Survivre d\'abord, composer ensuite.',
+    systemPrompt: 'Tu es Sovereign, CEO Agent du module Aurora Business Intelligence. Tu coordonnes les 10 agents économiques (Market Research, Financial Analyst, Risk Manager, Entrepreneur, Quant, Economist, Technical, Critic, Auditor) sur 13 étapes en privilégiant toujours la préservation du capital, la solvabilité et la création durable de valeur ajustée au risque.',
+  },
 }
 
 const STORAGE_KEY = 'aurora-agents-v1'
@@ -231,7 +243,7 @@ export function getAgent(id: ModuleId): AuroraAgent {
 
 /** Lit la liste complète des 8 agents (avec overrides appliqués). */
 export function getAllAgents(): AuroraAgent[] {
-  const ids: ModuleId[] = ['conversation', 'image', 'video', 'code', 'drawing', '3d', 'learning', 'cyber']
+  const ids: ModuleId[] = ['conversation', 'image', 'video', 'code', 'drawing', '3d', 'learning', 'cyber', 'business']
   return ids.map(getAgent)
 }
 
@@ -311,6 +323,7 @@ export const AGENT_AVATAR_PARAMS: Record<ModuleId, { seed: string; backgroundCol
   learning:     { seed: 'Sage-aurora-academy-mentor' },
   cyber:        { seed: 'Phantom-aurora-cyber-shadow' },
   voice:        { seed: 'Lyra-aurora-voice-warm' },
+  business:     { seed: 'Sovereign-aurora-business-emerald' },
 }
 
 /** Construit l'URL DiceBear pour un agent (SVG haute qualité,

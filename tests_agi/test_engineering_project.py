@@ -23,11 +23,11 @@ def test_generic_actual_parts_report_docs_figure_and_normalized_printable_zip(tm
     assert result['assembly_precision']['total_estimated_mass_g']>0
     assert len(result['assembly_precision']['center_of_mass_mm'])==3
     assert result['assembly_precision']['interface_clearances']
-    text=(tmp_path/'DOSSIER.md').read_text();assert '1,75 mm' in text and 'Socle' in text and 'Métrologie et précision d’assemblage' in text
+    text=(tmp_path/'DOSSIER.md').read_text(encoding='utf-8');assert '1,75 mm' in text and 'Socle' in text and 'Métrologie et précision d’assemblage' in text
     assert result['parts'][0]['color_rgba']!=result['parts'][1]['color_rgba']
     assert result['print_plates'] and len(result['print_plates'][0]['parts'])==2
     assert trimesh.load_mesh(tmp_path/result['print_plates'][0]['file']).is_volume
-    assert '<polygon' in (tmp_path/'representation.svg').read_text()
+    assert '<polygon' in (tmp_path/'representation.svg').read_text(encoding='utf-8')
     with zipfile.ZipFile(tmp_path/'engineering-project.zip') as z:
         assert z.testzip() is None and {'DOSSIER.md','DOSSIER.html','project.json','representation.svg','viewer.html','printable/piece_01.stl'}<=set(z.namelist())
     loaded=trimesh.load_scene(tmp_path/'assembled.glb')

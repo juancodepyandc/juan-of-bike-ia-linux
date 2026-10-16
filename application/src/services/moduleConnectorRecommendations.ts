@@ -27,6 +27,7 @@ export type ModuleId =
   | 'learning'
   | 'voice'
   | 'cyber'
+  | 'business'
 
 export type ConnectorRecommendation = {
   id: ConnectorId
@@ -575,6 +576,33 @@ export const MODULE_CONNECTOR_PLAN: Record<ModuleId, ModuleConnectorPlan> = {
           "Reconnaissance passive d'un domaine (dns, certs, archive.org snapshots) sans toucher a la cible.",
         benefits:
           'Audit passif respectueux de la legalite, parfait pour pentests autorises et bug bounty.',
+      },
+    ],
+  },
+  business: {
+    module: 'business',
+    primary: [
+      {
+        id: 'github',
+        impact: 'high',
+        reason:
+          'Synchronisation des notebooks reproductibles Kaggle/Colab et versionnement des checkpoints de politiques economiques.',
+      },
+      {
+        id: 'huggingface',
+        impact: 'medium',
+        reason:
+          'Publication ou chargement prive de modeles financiers et de datasets historiques multi-regimes.',
+      },
+    ],
+    optional: [],
+    extensionFallback: [
+      {
+        capability: 'market_benchmark_lookup',
+        description:
+          'Collecte horodatee des cotations publiques (BCE Frankfurter, CoinGecko, indices) et benchmarks sectoriels SaaS/B2B.',
+        benefits:
+          'Permet au simulateur Business Lab et au conseil des 10 agents de travailler sur des donnees reelles sans frais API.',
       },
     ],
   },

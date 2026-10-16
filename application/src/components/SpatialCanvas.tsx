@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft,
   Box,
+  Briefcase,
   Code2,
   GraduationCap,
   Image as ImageIcon,
@@ -49,6 +50,7 @@ const MODULES: ModuleMeta[] = [
   { id: '3d',           label: '3D',       kicker: 'Mesh · Rig',             icon: Box,            color: 'var(--color-mod-3d)',      shortcut: '6', rank: 'A', metricLabel: 'meshes',   reward: '+60 XP' },
   { id: 'cyber',        label: 'Cyber',    kicker: 'Crypto · réseau · CTF',  icon: Shield,         color: 'var(--color-mod-video)',   shortcut: '7', rank: 'S', metricLabel: 'défis',    reward: '+90 XP' },
   { id: 'learning',     label: 'Académie', kicker: 'Labs · quiz · parcours', icon: GraduationCap,  color: 'var(--color-mod-learn)',   shortcut: '8', rank: 'S', metricLabel: 'xp total', reward: 'niveau UP' },
+  { id: 'business',     label: 'Business', kicker: 'Lab · Live · 10 Agents', icon: Briefcase,      color: '#10b981',                  shortcut: '9', rank: 'S', metricLabel: 'simulations', reward: '+100 XP' },
 ]
 
 // SFX onomatopoeias per module × character (Natsu fire / Lucy stars)
@@ -62,6 +64,7 @@ const MODULE_SFX: Record<ModuleId, { natsu: [string, string]; lucy: [string, str
   cyber:        { natsu: ['HACK !', 'ZAP'], lucy: ['OPEN !', 'KEY'] },
   learning:     { natsu: ['LEARN !', 'POW'], lucy: ['ÉTOILE', 'SHINE'] },
   voice:        { natsu: ['VOICE !', 'BOOM'], lucy: ['CHANT !', 'BELL'] },
+  business:     { natsu: ['DEAL !', 'GOLD'], lucy: ['PROFIT ★', 'CROWN'] },
 }
 
 // =============================================================================

@@ -65,6 +65,7 @@ async function generateSemanticSlug(prompt: string, module: ModuleId): Promise<s
     learning: 'cours',
     voice: 'voix',
     cyber: 'cyber',
+    business: 'business',
   }
   const hint = moduleHints[module] || module
   try {

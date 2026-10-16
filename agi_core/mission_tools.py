@@ -480,6 +480,15 @@ class MissionTools:
                 status['memory'] = {'total_bytes':memory.total,'available_bytes':memory.available}
             except ImportError:
                 status['memory'] = {'status':'measurement_unavailable'}
+            try:
+                if str(self.services) not in sys.path:
+                    sys.path.insert(0, str(self.services))
+                import scientific_oracle
+                status['epistemic_routing'] = scientific_oracle.classify_epistemic_regime(
+                    a.request_text, workspace=a.workspace
+                )
+            except Exception:
+                pass
             return status
         if name == 'inspect_path':
             return await asyncio.to_thread(self.path_info,a._file_path(args['path']))

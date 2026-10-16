@@ -25,6 +25,7 @@ const ICONS: Record<string, string> = {
   '3d': '<path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 12l9-5M12 12v10M12 12L3 7"/>',
   learning: '<path d="M2 8l10-4 10 4-10 4z"/><path d="M6 10v6c0 1.5 2.7 3 6 3s6-1.5 6-3v-6"/>',
   cyber: '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5z"/><path d="M9 12l2 2 4-4.5"/>',
+  business: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M3 12h18"/>',
   voice: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0"/><path d="M12 18v3"/>',
   cowork: '<path d="M3 4h11v9H3z"/><path d="M17 8h4v12h-11v-3"/><path d="M13 13l3 6 1.4-2.6L20 15z"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>',
@@ -39,6 +40,7 @@ const DOCK: { id: ShellModuleId; fx: FxModule; label: string }[] = [
   { id: '3d', fx: '3d', label: '3D' },
   { id: 'learning', fx: 'learning', label: 'Académie' },
   { id: 'cyber', fx: 'cyber', label: 'Cyber' },
+  { id: 'business', fx: 'learning', label: 'Business' },
   { id: 'voice', fx: 'voice', label: 'Voix' },
   { id: 'cowork', fx: 'cowork', label: 'Cowork' },
 ]

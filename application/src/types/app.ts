@@ -174,6 +174,7 @@ export type ModuleId =
   | 'learning'
   | 'voice'
   | 'cyber'
+  | 'business'
 
 export interface ModuleConfig {
   id: ModuleId

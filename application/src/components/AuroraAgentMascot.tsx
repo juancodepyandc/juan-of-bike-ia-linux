@@ -216,6 +216,7 @@ function SceneBillboard({ agent, elapsed }: { agent: AuroraAgent; elapsed: numbe
     cyber:          'ANALYSE',
     conversation:   'RÉFLEXION',
     voice:          'ÉCOUTE',
+    business:       'STRATÉGIE',
   }
   const label = labels[agent.id]
   return (

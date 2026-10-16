@@ -31,6 +31,7 @@ const MODULE_LABELS: Record<ModuleId, string> = {
   learning: 'Académie',
   voice: 'Voix',
   cyber: 'Cyber',
+  business: 'Business Intelligence',
 }
 
 /**

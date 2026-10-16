@@ -260,4 +260,53 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
         return Response(stream_with_context(generate()),mimetype='text/event-stream',
                         headers={'Cache-Control':'no-cache, no-transform','X-Accel-Buffering':'no'})
 
+    @blueprint.route('/api/cli/epistemic/evaluate',methods=['POST'])
+    @auth
+    def cli_epistemic_evaluate():
+        import sys
+        from pathlib import Path
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data,dict):
+            return jsonify(ok=False,error='JSON object required'),400
+        mode = str(data.get('mode','route') or 'route').strip().lower()
+        services_dir = str(Path(__file__).resolve().parent / 'python-services')
+        if services_dir not in sys.path:
+            sys.path.insert(0,services_dir)
+        try:
+            import scientific_oracle as oracle
+            if mode == 'route':
+                res = oracle.classify_epistemic_regime(
+                    str(data.get('prompt') or data.get('hypothesis') or ''),
+                    code=str(data.get('code') or ''),
+                    workspace=data.get('workspace') or workspace,
+                )
+            elif mode == 'math':
+                res = oracle.verify_mathematical_conjecture(
+                    str(data.get('conjecture') or ''),
+                    domain=str(data.get('domain') or 'int'),
+                    assumptions=data.get('assumptions') if isinstance(data.get('assumptions'),list) else None,
+                )
+            elif mode == 'cyber':
+                res = oracle.analyze_cyber_code_dynamically(str(data.get('code') or ''))
+            elif mode == 'optimize':
+                res = oracle.verify_optimization_pareto(
+                    str(data.get('baseline_code') or ''),
+                    str(data.get('candidate_code') or ''),
+                    entry_function=str(data.get('entry_function') or ''),
+                    test_inputs=data.get('test_inputs') if isinstance(data.get('test_inputs'),list) else None,
+                )
+            elif mode == 'explore':
+                res = oracle.evaluate_competing_hypotheses(
+                    str(data.get('problem') or data.get('hypothesis') or ''),
+                    data.get('hypotheses') if isinstance(data.get('hypotheses'),list) else [],
+                    workspace=data.get('workspace') or workspace,
+                    capitalize_skill_name=str(data.get('capitalize_skill') or ''),
+                )
+            else:
+                return jsonify(ok=False,error=f'Unsupported epistemic mode: {mode}'),400
+            return jsonify(**res)
+        except Exception as exc:
+            return jsonify(ok=False,error=str(exc)),400
+
     return store
+

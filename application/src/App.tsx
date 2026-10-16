@@ -146,6 +146,12 @@ const CyberView = pickView({
   aurora_v3: () => import('./views/AuroraV1CyberView'),
   aurora_v4: () => import('./views/AuroraV4CyberView'),
 })
+const BusinessView = pickView({
+  manga:     () => import('./views/BusinessView'),
+  aurora_v1: () => import('./views/BusinessView'),
+  aurora_v3: () => import('./views/BusinessView'),
+  aurora_v4: () => import('./views/BusinessView'),
+})
 
 const VIEW_MAP = {
   conversation: ConversationView,
@@ -156,6 +162,7 @@ const VIEW_MAP = {
   learning: LearningView,
   voice: VoiceCopilotView,
   cyber: CyberView,
+  business: BusinessView,
 } as const
 
 /**
@@ -729,6 +736,8 @@ export default function App() {
         return { value: '—', caption: 'Voxtral · Kokoro · avatars 3D.' }
       case 'cyber':
         return { value: hist.length || 0, caption: 'Crypto · réseau · forensics · CTF local.', tags: ['AES', 'nmap', 'hash', 'CTF'] }
+      case 'business':
+        return { value: hist.length || 10, caption: 'Business Lab · Live · 10 Agents · Survie Économique.', tags: ['Lab', 'Live', 'Walk-Forward', 'Risk'] }
       default:
         return { value: '—' }
     }
@@ -1077,6 +1086,7 @@ const V3_DOCK_MODULES: ReadonlyArray<{ id: ModuleId; label: string; glyph: strin
   { id: '3d',           label: '3D',       glyph: '◇' },
   { id: 'learning',     label: 'Academy',  glyph: '∎' },
   { id: 'cyber',        label: 'Cyber',    glyph: '※' },
+  { id: 'business',     label: 'Business', glyph: '◈' },
 ]
 function V3FloatingDock({ activeModule, setActiveModule, teamOpen, onToggleTeam }: {
   activeModule: ModuleId

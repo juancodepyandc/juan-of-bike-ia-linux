@@ -53,6 +53,7 @@ const SIDE_MODULES: SideEntry[] = [
   { id: '3d',           label: '3D',           glyph: '◇', tint: 'var(--aura-3d, oklch(0.74 0.130 60))',       kbd: '⌘6' },
   { id: 'voice',        label: 'Voice',        glyph: '◌', tint: 'var(--aura-voice, oklch(0.72 0.140 350))',   kbd: '⌘V' },
   { id: 'cyber',        label: 'Cyber',        glyph: '※', tint: 'var(--aura-cyber, oklch(0.70 0.130 130))',   kbd: '⌘7' },
+  { id: 'business',     label: 'Business',     glyph: '◈', tint: 'var(--aura-business, oklch(0.72 0.150 160))', kbd: '⌘9' },
 ]
 
 function Eyebrow({ children, style }: { children: ReactNode; style?: React.CSSProperties }) {

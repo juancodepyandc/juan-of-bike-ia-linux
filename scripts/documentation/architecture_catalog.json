@@ -15,20 +15,20 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2205,
- "source_lines": 734883,
- "static_route_declarations": 644,
+ "source_files": 2211,
+ "source_lines": 741322,
+ "static_route_declarations": 654,
  "by_repository": {
-  "AuroraIA": 2043,
-  "aurora-remote-cli": 158,
+  "AuroraIA": 2048,
+  "aurora-remote-cli": 159,
   "aurora-live": 4
  },
  "files": [
   {
    "repo": "AuroraIA",
    "path": ".github/workflows/mission-contracts.yml",
-   "sha256": "56759c8f14dc04bf7e06c127c5bd24b5882032226a1045ce571e87c171b5dbd2",
-   "lines": 49
+   "sha256": "3c0049343259472a8a088b1ec2b2c3a405e737d21ba48b3fc5329e27206359fa",
+   "lines": 52
   },
   {
    "repo": "AuroraIA",
@@ -109,8 +109,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/context.py",
-   "sha256": "44a4c3aef7c19ebe291d62510ba785725586fc4a08ae8c4fadd53f5ea22431b1",
-   "lines": 535,
+   "sha256": "ee0af840e974616d23d84e749395ee7030b92231546ee0541b938d832a65ff68",
+   "lines": 554,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -157,7 +157,7 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/mission_agent.py",
-   "sha256": "c1eddcf4b2b7e38ccd36e9f5517d236ca154a3aaaac8c9bf2106dfcc4f3401dc",
+   "sha256": "8af970a824178cf30d4f8fc93959497e20294686f92edb54ca81b4c2235ce93d",
    "lines": 1904,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -181,8 +181,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/mission_routing.py",
-   "sha256": "0849706e20993df751ddf5e66ebb8b1389838c122b2e0fd8f40e098cc1260ddb",
-   "lines": 18,
+   "sha256": "21ecebed53abb5dc998e0667431f5380640c968dcc4dc9bb1f6e948580fc5f6b",
+   "lines": 21,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -205,8 +205,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/mission_tools.py",
-   "sha256": "7ff52598d5aa976cebc2f21ad6e31906628a41402ab0fa20fccc511680de44cb",
-   "lines": 741,
+   "sha256": "5be0ea6982d784a1de91d519a7ca93d49d0bb587c80a9ef4b0f0dfe3cba43f57",
+   "lines": 750,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -271,8 +271,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/agent_registry.py",
-   "sha256": "f15254db5c178726e56de62cc161092e1afaf82e0676a9633014ff0c4729e2d1",
-   "lines": 355,
+   "sha256": "20631ffec0f83d5490a73147c6b1d7a0dff057b1c880f5001cf38702a0f40484",
+   "lines": 489,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -343,8 +343,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/bridge_server.py",
-   "sha256": "f998f0375b57a5accbae342b30e83d501ae8453dab15db1c573878a77af8586d",
-   "lines": 1657,
+   "sha256": "c1a5b6690187cdfb6d223ea12499f7940b9f4957e06eb171e54d4a2d12295f34",
+   "lines": 1660,
    "http_routes": [
     {
      "path": "/api/code/install-model",
@@ -475,6 +475,89 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/business_intelligence.py",
+   "sha256": "93dccce9daf1e4ed27bf3bc0d3d00aba2cac079b17d7577f5498f6b24d7c5017",
+   "lines": 2712,
+   "http_routes": [
+    {
+     "path": "/api/business/overview",
+     "methods": [
+      "GET"
+     ],
+     "handler": "business_overview",
+     "line": 2595
+    },
+    {
+     "path": "/api/business/market/quotes",
+     "methods": [
+      "GET"
+     ],
+     "handler": "business_market_quotes",
+     "line": 2614
+    },
+    {
+     "path": "/api/business/lab/portfolio",
+     "methods": [
+      "GET",
+      "POST"
+     ],
+     "handler": "business_lab_portfolio",
+     "line": 2619
+    },
+    {
+     "path": "/api/business/lab/simulate",
+     "methods": [
+      "POST"
+     ],
+     "handler": "business_lab_simulate",
+     "line": 2629
+    },
+    {
+     "path": "/api/business/lab/train",
+     "methods": [
+      "POST"
+     ],
+     "handler": "business_lab_train",
+     "line": 2648
+    },
+    {
+     "path": "/api/business/council/deliberate",
+     "methods": [
+      "POST"
+     ],
+     "handler": "business_council_deliberate",
+     "line": 2664
+    },
+    {
+     "path": "/api/business/live/viability",
+     "methods": [
+      "POST"
+     ],
+     "handler": "business_live_viability",
+     "line": 2685
+    },
+    {
+     "path": "/api/business/live/governance",
+     "methods": [
+      "GET",
+      "POST"
+     ],
+     "handler": "business_live_governance",
+     "line": 2697
+    },
+    {
+     "path": "/api/business/compute/quotas",
+     "methods": [
+      "GET"
+     ],
+     "handler": "business_compute_quotas",
+     "line": 2709
+    }
+   ],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/cli_artifacts.py",
    "sha256": "59bc290207038653bfe0ddf77abfdf00aaf388069b291bd6e5024e16ca900540",
    "lines": 81,
@@ -484,7 +567,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/cli_inputs.py",
-   "sha256": "d11b34878459d72e3fb6c9a34f1a8b840483f985a8aa026df1994208f3947a29",
+   "sha256": "8a013b55a59617a0ca380b4c14325cfeaa0cc34d1b107ef5170a5d26f50576e2",
    "lines": 107,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -1214,8 +1297,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/mission_api.py",
-   "sha256": "15cfd2ea2bc2b13bc05ee070632242136cad26b6c576e98e92109a3830b76d83",
-   "lines": 263,
+   "sha256": "c6be75ca1664f13cde01f8b280cc873fb677eac9cbee23c51dd035eb4c0a337b",
+   "lines": 312,
    "http_routes": [
     {
      "path": "/api/cli/inputs",
@@ -1288,6 +1371,14 @@
      ],
      "handler": "cli_mission_stream",
      "line": 227
+    },
+    {
+     "path": "/api/cli/epistemic/evaluate",
+     "methods": [
+      "POST"
+     ],
+     "handler": "cli_epistemic_evaluate",
+     "line": 265
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -2821,6 +2912,14 @@
    "path": "application/python-services/build_unified_arms_and_hands.py",
    "sha256": "a80d1e50f6665c1379ce75de5280430e81fbc98e5d0c2c685faf8959fb60e704",
    "lines": 214,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/python-services/business_engine.py",
+   "sha256": "42d78e8a9eda528f50f9ca04a20b2740e6b62e3770105ec556d446a1e09d1486",
+   "lines": 83,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7127,8 +7226,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/scientific_oracle.py",
-   "sha256": "1cd11386287971c7ba18ffeac50faa259f0030e2915be0a021d8b3189c993abb",
-   "lines": 555,
+   "sha256": "a9b06375b603d84cf04a4634a2031f84630df598f09c6410755f2f42eb1679e9",
+   "lines": 1153,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -10331,8 +10430,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/App.tsx",
-   "sha256": "11da9888fe71c25dc594980322a208d7c41ea0488c9a9e95abfad780dca00903",
-   "lines": 1380
+   "sha256": "59f4579cd3bace6f8f51e09afb055a60f52deff3199718a80f5b9f122fda7ac8",
+   "lines": 1390
   },
   {
    "repo": "AuroraIA",
@@ -10385,8 +10484,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraAgentMascot.tsx",
-   "sha256": "7d19e7cf468ef2324fd2ad0eac9ae485247c061c56f48c868a02e1a4bdd76b23",
-   "lines": 356
+   "sha256": "19314cf2b65a2c4f767d6fad74de73d7487458ebb18fb626b924684221307bad",
+   "lines": 357
   },
   {
    "repo": "AuroraIA",
@@ -10415,8 +10514,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraCommandPalette.tsx",
-   "sha256": "dfe6813b05840d3775cf0d9974fa344061315a4824e7336cb412f6e4eb2b8fcf",
-   "lines": 358
+   "sha256": "bb209cb009bcb2cf68b5c1c6b1e378c7dd1efcdec69032552485c3437fdaf997",
+   "lines": 359
   },
   {
    "repo": "AuroraIA",
@@ -10427,8 +10526,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraV1AppShell.tsx",
-   "sha256": "fd83a8e89e998e0db59e6021e5d1463f0c34ee444f2a093603a2ffce809cfccc",
-   "lines": 380
+   "sha256": "e1cea0256d846be34c684a9b20f063c7f813f61d1964dcbfbd652c141732a652",
+   "lines": 381
   },
   {
    "repo": "AuroraIA",
@@ -10445,8 +10544,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/AuroraV4AppShell.tsx",
-   "sha256": "4cde5556b6584c63c04a6bcc97544830fabaf7a41b848b31ddfd4eaccd0d60e8",
-   "lines": 366
+   "sha256": "262c8e6f48d0987e00293f7a86aa7e68ca5be42616f5c3a7b7448030b6e11f98",
+   "lines": 368
   },
   {
    "repo": "AuroraIA",
@@ -10793,8 +10892,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/SpatialCanvas.tsx",
-   "sha256": "d3d99eba90fd4a0ee690ec8214ef2d5eab71fe132f4a1f00d439e49337295a24",
-   "lines": 948
+   "sha256": "3f203623839f4daf94e7f16042b17bcaea2e2773bb12e83bb923bd2047fd37e7",
+   "lines": 951
   },
   {
    "repo": "AuroraIA",
@@ -11159,8 +11258,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/auroraAgents.ts",
-   "sha256": "4436224fc27967214eadb7935a11422cdc34eb54dc57fa7f8c287c3397dfb7aa",
-   "lines": 484
+   "sha256": "cccd6cbd87a28de243087cee7f1b9e590679caa92ae6ad63a42834526420b7cd",
+   "lines": 497
   },
   {
    "repo": "AuroraIA",
@@ -13325,8 +13424,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/moduleConnectorRecommendations.ts",
-   "sha256": "e4ba5cc04d7d2e9072f4e8972f957801e376665d3ede538d0981d5c9df89da43",
-   "lines": 625
+   "sha256": "723d1ced19bfee74906c1514f4769b5e05fe456fa7d467845d4daa845cfe4413",
+   "lines": 653
   },
   {
    "repo": "AuroraIA",
@@ -13427,8 +13526,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/saveSystem.ts",
-   "sha256": "6a804a435ba2d036c88ab321fe0b0ae08efd0de0731b5ad00a2afc4bb2e00164",
-   "lines": 345
+   "sha256": "08fe8df81207c45775f624b9952ef94ecbe22557e9f311159be11424c93d3dc5",
+   "lines": 346
   },
   {
    "repo": "AuroraIA",
@@ -13709,8 +13808,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/stores/appStore.ts",
-   "sha256": "c6c90d56d682f8abbb0c4f8d15cd2b59380e84cc4be3a2f27e693b1bc9d2bcc5",
-   "lines": 605
+   "sha256": "d692fbee2abb3f03e5e2bc2e83bac048400b9f58a7a511d080280ebe52177382",
+   "lines": 606
   },
   {
    "repo": "AuroraIA",
@@ -13925,14 +14024,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/types/app.ts",
-   "sha256": "2b0d442f61be6b72c1a781d5610b5db70e7859f2f9328ed26188fd95b112d8fc",
-   "lines": 404
+   "sha256": "05404516d2317c406bca001771dca9477f26620523f651a59d37a5396e85bdc6",
+   "lines": 405
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/utils/announceText.ts",
-   "sha256": "397f3b06e523f978e3317904c4ac3bb6fa177de4d4868cb3e5fbc8789096981a",
-   "lines": 133
+   "sha256": "6e106c417afcb2ba3f0cd372910ef970b96250b013fc296b23e8b6a0c6464774",
+   "lines": 139
   },
   {
    "repo": "AuroraIA",
@@ -14285,8 +14384,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/utils/voiceCommands.ts",
-   "sha256": "7443bcbf8b451ac1220fc96810baa503aa24775451d93c4b6d7839f2e45c0028",
-   "lines": 76
+   "sha256": "79b8f1c4f496b9c5a724cce8dc85f7b052a62fe3108799eabbb44a7494e4ca0b",
+   "lines": 77
   },
   {
    "repo": "AuroraIA",
@@ -14455,6 +14554,12 @@
    "path": "application/src/views/AuroraV4ImageView.tsx",
    "sha256": "ba1030095122d6bb836285c83285c6481852e80730d7613ceeb30205c98dacf7",
    "lines": 1135
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/src/views/BusinessView.tsx",
+   "sha256": "3f0fb640dd847c6559092305d986b0aa5ff0b70a7146cc93454d7c60db42d1af",
+   "lines": 1439
   },
   {
    "repo": "AuroraIA",
@@ -18159,6 +18264,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "notebooks/kernel-metadata.json",
+   "sha256": "26da22091a78c4d30dab5536c5f43bcdf05ba4819b43defdb3baef5b70a06c9b",
+   "lines": 15
+  },
+  {
+   "repo": "AuroraIA",
    "path": "package.json",
    "sha256": "7ed7e6b0ba9eff8ce814e0f097228821e92a1567af8018df20b2483e3acc1662",
    "lines": 12
@@ -19022,6 +19133,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_business_intelligence.py",
+   "sha256": "a3b0439187a77cbf8a6b6844788e207062e565e63f58623c81faed2ed218f923",
+   "lines": 292,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_cli_doctor_resources.py",
    "sha256": "543d8460cda89f4612e5f48d66c0492aeb2d786a2f846462b9fef126878e20c8",
    "lines": 160,
@@ -19145,7 +19264,7 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_engineering_design_api.py",
-   "sha256": "4dfb2119a0809000f9af7d51a705d3666d3c920b792f487af1a573492a03dd78",
+   "sha256": "c1aa23c67658a927bfd4e6ba927f001833b3442e4a3de695d8ecebf59dc01089",
    "lines": 204,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -19177,7 +19296,7 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_engineering_project.py",
-   "sha256": "9588ba660d3c105e92359cc42b44b25b6513c80ef6732f49c7631a40d23d6bed",
+   "sha256": "31a0290e3e5dcbd98831dfddaaee6630c93e387132e30f3534be9ea59a8dc798",
    "lines": 104,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -19345,8 +19464,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_module_agents_and_textures.py",
-   "sha256": "3c04d37d1af4a0835b9e5706ec746a32001aa114fe0767cd7f693bbeffdde95a",
-   "lines": 331,
+   "sha256": "5df37ed42fde8a83969c29390fc6272516904450f7f11a2cd30e3ad2622d8810",
+   "lines": 389,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -19667,8 +19786,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/bridge.py",
-   "sha256": "28b4d516562a01c1ff3dcda889dbdd9f119dd43937f60bd78b7505f57c98e3fb",
-   "lines": 519,
+   "sha256": "bb55ab48f0ddc251b4d4a4e47b884a6436b4b355ddc31e557f25986dbebd8248",
+   "lines": 571,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20090,6 +20209,14 @@
   },
   {
    "repo": "aurora-remote-cli",
+   "path": "aurora_cli/epistemic.py",
+   "sha256": "ce0bb273f395a16c97a2ff43cc38f155fb3a5120ae99d44c0bb9ad44a5603641",
+   "lines": 614,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "aurora-remote-cli",
    "path": "aurora_cli/evolution.py",
    "sha256": "9769275def78c637fd02045686e77dc70348a83fda33dad0b100ea57d8f1c74d",
    "lines": 591,
@@ -20123,8 +20250,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/local_mission.py",
-   "sha256": "75ff8063be5e8ebe2f9df224166c58ddba6e660a00faed6809071d42c52e3b49",
-   "lines": 898,
+   "sha256": "756b51a9e547630ebccbf2d79c3c417440f960523b6bd3e38544601e847efcbe",
+   "lines": 1069,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20399,8 +20526,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "pyproject.toml",
-   "sha256": "e49e7c5a232832e8758020b448fa3eced8fbb62ff8116f453fedd68897f3b20d",
-   "lines": 60
+   "sha256": "4029da36752caa2b08b15ce4a2c32a3e18c9b7a35bacdaaebf1be2ae25481eb4",
+   "lines": 61
   },
   {
    "repo": "aurora-remote-cli",
@@ -20581,8 +20708,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "tests/test_local_mission.py",
-   "sha256": "1d667ac296d8a0129c0a80034c23092ddd4aa9cd6d3d92c275cb2c517b008a89",
-   "lines": 348,
+   "sha256": "f5508d3fad10395cf700b4ccee09c1b84d1a8a5599bda594fa47a5a671abedec",
+   "lines": 463,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

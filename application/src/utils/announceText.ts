@@ -19,6 +19,7 @@ const MODULE_LABEL_FR: Record<ModuleId, string> = {
   learning: 'ta leçon',
   voice: 'la voix',
   cyber: 'le challenge cyber',
+  business: 'la simulation économique',
 }
 
 /** Pool de phrases 'completed' par module — persona-flavored, anti-répétition. */
@@ -60,6 +61,10 @@ const COMPLETED_POOL_FR: Record<ModuleId, string[]> = {
     'Analyse cyber terminée.',
     'Challenge prêt — bonne chasse.',
   ],
+  business: [
+    'Le conseil Business a terminé sa délibération.',
+    'Simulation économique et contrôle des risques prêts.',
+  ],
 }
 
 /** Pool 'failed' (plus court — pas de personality push sur les erreurs). */
@@ -73,6 +78,7 @@ const FAILED_POOL_FR: Record<ModuleId, string[]> = {
   learning: ['La leçon n\'a pas pu être générée.', 'Sage a buté sur ce sujet.'],
   voice: ['Le moteur vocal a échoué.'],
   cyber: ['L\'analyse cyber a échoué.', 'Phantom signale une erreur.'],
+  business: ['La simulation Business a rencontré une erreur.'],
 }
 
 export interface AnnouncePayloadInput {

@@ -285,6 +285,137 @@ AGENTS = {
             "d'authentification et de synchronisation entre AuroraIA et aurora-remote-cli."
         ),
     },
+    "business-ceo": {
+        "description": "CEO Agent : arbitre entre les options stratégiques, fixe les priorités et protège la survie économique.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["set_plan", "inspect_tool", "run_tool", "search_web", "fetch_url", "create_agent", "spawn_agent", "create_skill", "verify"],
+        "verification_focus": "Préservation du capital, solvabilité long terme, arbitrage multi-horizons en 13 étapes et respect du droit de veto Risk Manager.",
+        "role": (
+            "CEO Agent d'Aurora Business Intelligence : coordonne le conseil des 10 agents économiques, "
+            "compare la création d'entreprise (SaaS, B2B, e-commerce), l'investissement multi-actifs et "
+            "l'inactivité stratégique via business_engine.py, et privilégie toujours la survie et la création de valeur durable."
+        ),
+    },
+    "business-market-research": {
+        "description": "Market Research Agent : étudie la demande, les tendances, les prix, le CAC et la concurrence.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["search_web", "fetch_url", "inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Données de marché sourcées et horodatées, élasticité-prix, saturation concurrentielle et CAC réaliste.",
+        "role": (
+            "Spécialiste études de marché et intelligence concurrentielle : identifie les besoins mal couverts, "
+            "évalue la taille du marché adressable et vérifie la demande réelle avant tout engagement."
+        ),
+    },
+    "business-financial-analyst": {
+        "description": "Financial Analyst Agent : calcule les coûts, marges, trésorerie, BFR (DSO), seuil de rentabilité et valorisation.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["inspect_tool", "run_tool", "read_file", "verify"],
+        "verification_focus": "Exactitude comptable et financière (LTV/CAC, payback, DSO, impôts, inflation, VAN/TRI) sans frais omis.",
+        "role": (
+            "Analyste financier et contrôleur de gestion : modélise les charges fixes et variables, "
+            "les délais de paiement clients (DSO), la fiscalité et les flux de trésorerie nets réels."
+        ),
+    },
+    "business-risk-manager": {
+        "description": "Risk Manager Agent : évalue les pertes potentielles, la liquidité, la ruine et dispose d'un droit de veto absolu.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "SAFE",
+        "preferred_tools": ["inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Probabilité de ruine <= 2%, réserve liquide >= 25%, zéro effet de levier autonome, détection anti-Martingale et droit de veto.",
+        "role": (
+            "Directeur indépendant des risques économiques : applique des règles déterministes strictes "
+            "pour bloquer toute stratégie menaçant la solvabilité, le surendettement ou l'escalade d'exposition après perte."
+        ),
+    },
+    "business-entrepreneur": {
+        "description": "Entrepreneur Agent : conçoit des entreprises virtuelles ou réelles (SaaS, B2B, e-commerce), offres et modèles économiques.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["inspect_tool", "run_tool", "search_web", "create_skill", "verify"],
+        "verification_focus": "Proposition de valeur concrète, MVP frugal, économie unitaire positive et rétention client.",
+        "role": (
+            "Architecte d'entreprises et de produits : conçoit des modèles économiques viables "
+            "(services numériques, SaaS B2B, commerce spécialisé) adaptés au capital disponible."
+        ),
+    },
+    "business-quant": {
+        "description": "Quantitative Agent : développe et teste les modèles statistiques, walk-forward backtests, Monte-Carlo et allocations.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["inspect_tool", "run_tool", "run_command", "create_skill", "verify"],
+        "verification_focus": "Séparation chronologique Train/Val/Test sans fuite de données, intervalles de confiance 95% et absence de surapprentissage.",
+        "role": (
+            "Chercheur quantitatif et ML : exécute les validations walk-forward, les simulations Monte-Carlo "
+            "à queues épaisses, l'optimisation bayésienne et l'orchestration d'entraînement Kaggle/Colab."
+        ),
+    },
+    "business-economist": {
+        "description": "Economist Agent : analyse l'inflation, les taux d'intérêt, la fiscalité, les cycles et les chocs macroéconomiques.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "SAFE",
+        "preferred_tools": ["search_web", "fetch_url", "inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Distinction rendement nominal vs réel après inflation, impact des taux directeurs et résilience aux récessions.",
+        "role": (
+            "Économiste macro et sectoriel : intègre l'inflation, la politique monétaire (BCE/Fed), "
+            "les cycles sectoriels et les chocs d'offre/demande dans chaque simulation."
+        ),
+    },
+    "business-technical": {
+        "description": "Technical Agent : évalue la faisabilité technique, les coûts cloud/IA et l'automatisation des produits numériques.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["search_code", "read_file", "inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Faisabilité d'implémentation, maîtrise des coûts d'infrastructure cloud/GPU et sobriété opérationnelle.",
+        "role": (
+            "Directeur technique (CTO) Business : évalue les coûts de construction, d'hébergement "
+            "et d'automatisation des produits et services envisagés."
+        ),
+    },
+    "business-critic": {
+        "description": "Critic Agent : cherche systématiquement les failles, biais de survie, coûts cachés et erreurs de raisonnement.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "SAFE",
+        "preferred_tools": ["inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Identification explicite des biais cognitifs, hypothèses fragiles, retards d'encaissement et scénarios d'échec.",
+        "role": (
+            "Contradicteur systématique (Red-Team économique) : attaque chaque plan d'affaires ou backtest "
+            "pour débusquer l'excès d'optimisme, le biais de survie et les risques cachés."
+        ),
+    },
+    "business-auditor": {
+        "description": "Auditor Agent : vérifie la provenance des données, la calibration des modèles et l'intégrité du journal d'audit.",
+        "domain": "business",
+        "module": "business",
+        "can_create_subagents": True,
+        "permissions": "SAFE",
+        "preferred_tools": ["inspect_tool", "run_tool", "verify"],
+        "verification_focus": "Séparation stricte données temps réel / différées / historiques / synthétiques, porte de promotion des modèles et chaîne SHA-256.",
+        "role": (
+            "Auditeur épistémique et conformité : vérifie les licences de données, bloque toute présentation "
+            "d'une simulation comme gain réel et contrôle la promotion ou le rollback des modèles entraînés."
+        ),
+    },
 }
 
 MODULE_PRIMARY_AGENTS = {
@@ -310,6 +441,9 @@ MODULE_PRIMARY_AGENTS = {
     "mcp": "mcp-lead",
     "skills": "skills-lead",
     "cli-tunnel": "cli-tunnel-lead",
+    "business": "business-ceo",
+    "finance": "business-ceo",
+    "economy": "business-ceo",
 }
 
 
