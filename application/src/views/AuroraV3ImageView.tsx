@@ -229,6 +229,7 @@ export default function AuroraV3ImageView() {
           <PinBtn onClick={() => I.setInpaintOpen(true)} title="Retouche LaMa">✎ RETOUCHE</PinBtn>
           <PinBtn onClick={() => void I.upscaleCurrent(2)} disabled={I.upscaling}>↗ 2×</PinBtn>
           <PinBtn onClick={() => void I.upscaleCurrent(4)} disabled={I.upscaling}>↗ 4×</PinBtn>
+          <PinBtn onClick={() => void I.upscaleCurrent(8)} disabled={I.upscaling} title="Super-Résolution 8K (8192px)">✨ 8K</PinBtn>
         </div>
       )}
 

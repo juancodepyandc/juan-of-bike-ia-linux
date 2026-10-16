@@ -886,6 +886,33 @@ const taskContext = await prepareTaskIntelligence({
     }
   }, [])
 
+  const [upscalingScale, setUpscalingScale] = useState<number | null>(null)
+
+  const handleUpscaleSelected = useCallback(async (scale: 2 | 4 | 8) => {
+    if (!selectedImage || upscalingScale !== null) return
+    setUpscalingScale(scale)
+    setProgress(scale === 8 ? 'Super-Résolution 8K UHD (8192×8192 px) en cours…' : `Super-Résolution ${scale}× en cours…`)
+    try {
+      const mod = await import('../utils/upscaleImage')
+      const { url, method, width: outW, height: outH } = await mod.upscaleAuto(selectedImage.url, scale)
+      const label = scale === 8 ? '8K' : `x${scale}`
+      const upscaled: GeneratedImage = {
+        ...selectedImage,
+        id: `${selectedImage.id}-${label}-${Date.now()}`,
+        url,
+        prompt: `${selectedImage.prompt} [${label} ${outW}×${outH}px · ${method}]`,
+        timestamp: Date.now(),
+      }
+      setImages((prev) => [upscaled, ...prev])
+      setSelectedImage(upscaled)
+      setProgress(`Super-Résolution ${label} terminée : ${outW}×${outH} px (${method})`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUpscalingScale(null)
+    }
+  }, [selectedImage, upscalingScale])
+
   const handleRegenerateSelected = useCallback(() => {
     if (!selectedImage) return
     setPrompt(selectedImage.prompt)
@@ -1393,6 +1420,22 @@ const taskContext = await prepareTaskIntelligence({
                     title="Voir en plein ecran"
                   >
                     ⤢ Plein
+                  </button>
+                  <button
+                    onClick={() => void handleUpscaleSelected(4)}
+                    disabled={upscalingScale !== null}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-aurora-border/40 bg-aurora-surface-2 px-3 py-2 text-xs text-aurora-text hover:border-aurora-accent/35 disabled:opacity-50 transition-colors"
+                    title="Super-Résolution 4K (4096px)"
+                  >
+                    {upscalingScale === 4 ? '4K…' : '4× (4K)'}
+                  </button>
+                  <button
+                    onClick={() => void handleUpscaleSelected(8)}
+                    disabled={upscalingScale !== null}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-3 py-2 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/25 disabled:opacity-50 transition-colors"
+                    title="Super-Résolution 8K UHD (8192×8192 px — RealESRGAN + Lanczos)"
+                  >
+                    {upscalingScale === 8 ? '8K en cours…' : '✨ 8K (8192px)'}
                   </button>
                   <button
                     onClick={handleRegenerateSelected}

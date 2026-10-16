@@ -128,13 +128,50 @@ def compute_normal_map(gray_arr: np.ndarray) -> Image.Image:
          (pad[0:h, 0:w] + 2 * pad[0:h, 1:w+1] + pad[0:h, 2:w+2])
     dx = dx / 8.0
     dy = dy / 8.0
-    dz = np.ones_like(dx) * 32.0
+    dz = np.ones_like(dx) * 28.0
     norm = np.sqrt(dx**2 + dy**2 + dz**2)
     nx = (dx / norm * 0.5 + 0.5) * 255.0
     ny = (-dy / norm * 0.5 + 0.5) * 255.0
     nz = (dz / norm * 0.5 + 0.5) * 255.0
     rgb = np.stack([nx, ny, nz], axis=2).astype(np.uint8)
     return Image.fromarray(rgb)
+
+
+def compute_roughness_map(gray_arr: np.ndarray) -> Image.Image:
+    """Calcule une carte de rugosité PBR haute précision à partir des micro-variations locales."""
+    h, w = gray_arr.shape
+    pad = np.pad(gray_arr, 1, mode="edge")
+    local_mean = (
+        pad[0:h, 0:w] + pad[0:h, 1:w+1] + pad[0:h, 2:w+2] +
+        pad[1:h+1, 0:w] + pad[1:h+1, 1:w+1] + pad[1:h+1, 2:w+2] +
+        pad[2:h+2, 0:w] + pad[2:h+2, 1:w+1] + pad[2:h+2, 2:w+2]
+    ) / 9.0
+    micro_dev = np.abs(gray_arr - local_mean)
+    inv_luma = 255.0 - gray_arr
+    rough = np.clip(inv_luma * 0.65 + micro_dev * 2.2, 12.0, 245.0).astype(np.uint8)
+    return Image.fromarray(rough, mode="L")
+
+
+def upscale_image_to_target(im: Image.Image, target_max_edge: int) -> Image.Image:
+    """Super-résolution progressive Lanczos + UnsharpMask micro-contraste jusqu'à 8K (8192 px)."""
+    w, h = im.size
+    max_edge = max(w, h)
+    if target_max_edge <= max_edge:
+        return im
+    cur = im.convert("RGB")
+    cur_w, cur_h = w, h
+    while max(cur_w, cur_h) * 2 <= target_max_edge:
+        cur_w *= 2
+        cur_h *= 2
+        cur = cur.resize((cur_w, cur_h), Image.Resampling.LANCZOS)
+        cur = cur.filter(ImageFilter.UnsharpMask(radius=1.2, percent=125, threshold=2))
+    if max(cur_w, cur_h) < target_max_edge:
+        scale = target_max_edge / float(max(cur_w, cur_h))
+        final_w = max(64, int(round((cur_w * scale) / 8.0) * 8))
+        final_h = max(64, int(round((cur_h * scale) / 8.0) * 8))
+        cur = cur.resize((final_w, final_h), Image.Resampling.LANCZOS)
+        cur = cur.filter(ImageFilter.UnsharpMask(radius=1.1, percent=115, threshold=2))
+    return cur
 
 # --- COMFYUI FLUX WORKFLOW BUILDER ---
 
@@ -146,10 +183,11 @@ def build_comfy_flux_workflow(
     steps: int,
     guidance: float,
     seed: int,
-    prefix: str
+    prefix: str,
+    target_max_edge: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Use the same distilled FLUX sampling path as the image workspace."""
-    workflow = {
+    """Use the same distilled FLUX sampling path as the image workspace, with optional RealESRGAN + Lanczos 8K stage."""
+    workflow: Dict[str, Any] = {
         "11": {
             "class_type": "CLIPLoader",
             "inputs": {
@@ -247,6 +285,30 @@ def build_comfy_flux_workflow(
             }
         }
     }
+    esrgan_weight = REPO_ROOT / "modele" / "comfyui" / "models" / "upscale_models" / "RealESRGAN_x4plus.pth"
+    if target_max_edge and target_max_edge > max(width, height) and esrgan_weight.exists():
+        scale_ratio = target_max_edge / float(max(width, height))
+        out_w = max(64, int(round((width * scale_ratio) / 8.0) * 8))
+        out_h = max(64, int(round((height * scale_ratio) / 8.0) * 8))
+        workflow["50"] = {
+            "class_type": "UpscaleModelLoader",
+            "inputs": {"model_name": "RealESRGAN_x4plus.pth"},
+        }
+        workflow["51"] = {
+            "class_type": "ImageUpscaleWithModel",
+            "inputs": {"upscale_model": ["50", 0], "image": ["8", 0]},
+        }
+        workflow["52"] = {
+            "class_type": "ImageScale",
+            "inputs": {
+                "image": ["51", 0],
+                "upscale_method": "lanczos",
+                "width": out_w,
+                "height": out_h,
+                "crop": "disabled",
+            },
+        }
+        workflow["9"]["inputs"]["images"] = ["52", 0]
     sys.path.insert(0, str(REPO_ROOT))
     from auto_rl.image_runtime import apply_validated_workflow
     return apply_validated_workflow(workflow)
@@ -318,17 +380,36 @@ def wait_for_comfy_image(prompt_id: str, timeout_s: int = 1800) -> bytes:
 
 # --- MAIN GENERATION PIPELINE ---
 
+def _resolve_target_max_edge(raw_prompt: str, resolution: str = "auto") -> Optional[int]:
+    res = (resolution or "auto").strip().lower()
+    if res in ("8k", "8192"):
+        return 8192
+    if res in ("4k", "4096"):
+        return 4096
+    if res in ("2k", "2048"):
+        return 2048
+    if res in ("1k", "1024"):
+        return None
+    if re.search(r"\b(8k|8192\s*px|8192x8192|ultra\s*hd\s*8k)\b", raw_prompt or "", re.IGNORECASE):
+        return 8192
+    if re.search(r"\b(4k|4096\s*px|4096x4096)\b", raw_prompt or "", re.IGNORECASE):
+        return 4096
+    return None
+
+
 def generate_image_manifest(
     raw_prompt: str,
     output_dir: Optional[Path] = None,
     seed: Optional[int] = None,
     force_category: Optional[str] = None,
-    use_comfy: bool = True
+    use_comfy: bool = True,
+    resolution: str = "auto",
 ) -> Dict[str, Any]:
     start_time = time.time()
     
     spec = direct_prompt(raw_prompt, force_category=force_category)
     spec["steps"] = 28
+    target_max_edge = _resolve_target_max_edge(raw_prompt, resolution)
         
     category = spec["category"]
     main_cat = resolve_main_folder(category, raw_prompt)
@@ -362,14 +443,15 @@ def generate_image_manifest(
                         steps=spec["steps"],
                         guidance=spec["guidance"],
                         seed=run_seed,
-                        prefix=f"aurora_{slug[:18]}"
+                        prefix=f"aurora_{slug[:18]}",
+                        target_max_edge=target_max_edge,
                     )
                     p_id = submit_comfy_prompt(wf)
                     if p_id:
-                        print(f"[ComfyUI] Job {p_id} queued on CUDA ({w}x{h}, {spec['steps']} steps)...")
+                        print(f"[ComfyUI] Job {p_id} queued on CUDA ({w}x{h} -> target {target_max_edge or max(w, h)}px, {spec['steps']} steps)...")
                         img_data = wait_for_comfy_image(p_id)
                         if img_data:
-                            engine_name = "flux2_dev_comfyui_cuda"
+                            engine_name = "flux2_dev_realesrgan_8k_cuda" if target_max_edge == 8192 else "flux2_dev_comfyui_cuda"
         except Exception as exc:
             raise RuntimeError(f"ComfyUI generation failed: {exc}") from exc
         if not img_data:
@@ -394,6 +476,10 @@ def generate_image_manifest(
         else:
             arr[:, :] = [28, 26, 32]
         img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
+
+    if target_max_edge and max(img.size) < target_max_edge:
+        img = upscale_image_to_target(img, target_max_edge)
+    w, h = img.size
         
     subject_dir.mkdir(parents=True, exist_ok=True)
     img.save(master_png)
@@ -434,11 +520,13 @@ def generate_image_manifest(
             derived_files.append(f"icon_{sz}x{sz}.png")
             
     if "texture" in category:
-        tile_2x2 = Image.new("RGB", (w * 2, h * 2))
-        tile_2x2.paste(img, (0, 0))
-        tile_2x2.paste(img, (w, 0))
-        tile_2x2.paste(img, (0, h))
-        tile_2x2.paste(img, (w, h))
+        tile_base = img if max(w, h) <= 2048 else img.resize((2048, 2048), Image.Resampling.LANCZOS)
+        tw, th = tile_base.size
+        tile_2x2 = Image.new("RGB", (tw * 2, th * 2))
+        tile_2x2.paste(tile_base, (0, 0))
+        tile_2x2.paste(tile_base, (tw, 0))
+        tile_2x2.paste(tile_base, (0, th))
+        tile_2x2.paste(tile_base, (tw, th))
         tile_path = subject_dir / "seamless_2x2_tiling.png"
         tile_2x2.save(tile_path)
         derived_files.append("seamless_2x2_tiling.png")
@@ -448,6 +536,11 @@ def generate_image_manifest(
         normal_path = subject_dir / "normal_map_simulated.png"
         normal_im.save(normal_path)
         derived_files.append("normal_map_simulated.png")
+
+        rough_im = compute_roughness_map(gray)
+        rough_path = subject_dir / "roughness_map_pbr.png"
+        rough_im.save(rough_path)
+        derived_files.append("roughness_map_pbr.png")
         
         height_im = img.convert("L")
         height_path = subject_dir / "height_map.png"
@@ -494,7 +587,8 @@ def generate_image_manifest(
         "dimensions": {
             "width": w,
             "height": h,
-            "aspect_ratio": spec["aspect_ratio"]
+            "aspect_ratio": spec["aspect_ratio"],
+            "target_resolution_tier": "8K" if max(w, h) >= 8192 else ("4K" if max(w, h) >= 4096 else "native")
         },
         "generation_params": {
             "steps": spec["steps"],
@@ -582,6 +676,7 @@ if __name__ == "__main__":
     parser.add_argument("--category", type=str, default=None, help="Force category")
     parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--output-dir", type=Path, default=None, help="Destination for this image package")
+    parser.add_argument("--resolution", type=str, default="auto", choices=["auto", "1k", "2k", "4k", "8k"], help="Target output resolution tier (up to 8K 8192x8192)")
     parser.add_argument("--no-comfy", action="store_true", help="Disable ComfyUI live queue")
     args = parser.parse_args()
     
@@ -590,6 +685,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         force_category=args.category,
         seed=args.seed,
-        use_comfy=not args.no_comfy
+        use_comfy=not args.no_comfy,
+        resolution=args.resolution,
     )
     print(json.dumps(manifest, indent=2, ensure_ascii=False))

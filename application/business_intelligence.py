@@ -627,79 +627,161 @@ _MARKET_CACHE_LOCK = threading.Lock()
 _MARKET_CACHE: dict[str, Any] = {"timestamp": 0.0, "quotes": {}, "origin": "HISTORICAL_VERIFIED"}
 
 
-def fetch_market_quotes(*, allow_network: bool = True, cache_ttl_sec: int = 90) -> dict[str, Any]:
-    """Fetches real-world market quotes from public APIs (ECB Frankfurter, CoinGecko, Yahoo)
+def fetch_market_quotes(*, allow_network: bool = True, cache_ttl_sec: int = 20, force_refresh: bool = False) -> dict[str, Any]:
+    """Fetches real-world market quotes in real time from public APIs (ECB Frankfurter,
+    Binance Public Spot API, CoinGecko, Yahoo Finance v8 Chart API) concurrently
     and merges with verified reference benchmarks. Every quote carries an explicit
     `data_origin`, `timestamp_utc`, `provider`, and `is_simulated_execution: True`.
     """
+    import concurrent.futures
+
     now = time.time()
     with _MARKET_CACHE_LOCK:
-        if _MARKET_CACHE["quotes"] and (now - _MARKET_CACHE["timestamp"] < cache_ttl_sec):
+        if not force_refresh and _MARKET_CACHE["quotes"] and (now - _MARKET_CACHE["timestamp"] < cache_ttl_sec):
+            live_cnt = sum(1 for q in _MARKET_CACHE["quotes"].values() if q.get("data_origin") in ("REALTIME_PUBLIC_FEED", "DELAYED_QUOTE"))
             return {
                 "ok": True,
                 "cached": True,
+                "live_feeds_connected": live_cnt,
                 "timestamp_utc": datetime.datetime.fromtimestamp(_MARKET_CACHE["timestamp"], tz=datetime.timezone.utc).isoformat(),
                 "quotes": _MARKET_CACHE["quotes"],
                 "macro": MACRO_BENCHMARKS,
                 "providers": DATA_PROVIDERS_REGISTRY,
-                "execution_notice": "SIMULATION / PAPER ONLY — Aucune transaction réelle n'est exécutée.",
+                "execution_notice": "SIMULATION EN DIRECT (PAPER) — Prix du marché réel en direct, capital 100% fictif.",
             }
 
     quotes: dict[str, dict[str, Any]] = {}
     iso_now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    with _MARKET_CACHE_LOCK:
+        prev_cached_quotes = dict(_MARKET_CACHE.get("quotes") or {})
+
     for key, item in DEFAULT_MARKET_INSTRUMENTS.items():
+        prev_q = prev_cached_quotes.get(key)
         quotes[key] = {
             **item,
             "id": key,
-            "data_origin": "HISTORICAL_VERIFIED",
-            "data_origin_label": DATA_ORIGINS["HISTORICAL_VERIFIED"],
-            "provider": "eurostat_insee_macro",
+            "price": float(prev_q["price"]) if prev_q and "price" in prev_q else float(item["price"]),
+            "change_24h_pct": float(prev_q["change_24h_pct"]) if prev_q and "change_24h_pct" in prev_q else float(item["change_24h_pct"]),
+            "data_origin": prev_q.get("data_origin", "HISTORICAL_VERIFIED") if prev_q else "HISTORICAL_VERIFIED",
+            "data_origin_label": prev_q.get("data_origin_label", DATA_ORIGINS["HISTORICAL_VERIFIED"]) if prev_q else DATA_ORIGINS["HISTORICAL_VERIFIED"],
+            "provider": prev_q.get("provider", "eurostat_insee_macro") if prev_q else "eurostat_insee_macro",
             "timestamp_utc": iso_now,
             "is_simulated_execution": True,
         }
 
     live_hits = 0
     if allow_network and os.environ.get("AURORA_BUSINESS_OFFLINE", "0") != "1":
-        # 1. ECB Frankfurter FX feed (Open Data, zero API key needed)
-        try:
+        ua_headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AuroraIA-BusinessLab/2.5"}
+
+        def _fetch_ecb_fx() -> tuple[str, dict[str, Any]] | None:
             req = urllib.request.Request(
                 "https://api.frankfurter.app/latest?from=EUR&to=USD,GBP,CHF,JPY",
-                headers={"User-Agent": "AuroraIA-BusinessLab/2.0 (Research Simulation)"},
+                headers=ua_headers,
             )
-            with urllib.request.urlopen(req, timeout=2.5) as resp:
+            with urllib.request.urlopen(req, timeout=2.2) as resp:
                 fx_data = json.loads(resp.read().decode("utf-8"))
                 rates = fx_data.get("rates") or {}
                 if "USD" in rates:
                     usd_rate = float(rates["USD"])
-                    prev_price = quotes["EUR_USD_FX"]["price"]
-                    quotes["EUR_USD_FX"]["price"] = round(usd_rate, 4)
-                    quotes["EUR_USD_FX"]["change_24h_pct"] = round(((usd_rate - prev_price) / prev_price) * 100.0, 2)
-                    quotes["EUR_USD_FX"]["data_origin"] = "REALTIME_PUBLIC_FEED"
-                    quotes["EUR_USD_FX"]["data_origin_label"] = DATA_ORIGINS["REALTIME_PUBLIC_FEED"]
-                    quotes["EUR_USD_FX"]["provider"] = "frankfurter_ecb"
-                    quotes["EUR_USD_FX"]["timestamp_utc"] = iso_now
-                    live_hits += 1
-        except Exception:
-            pass
+                    prev_price = float(DEFAULT_MARKET_INSTRUMENTS["EUR_USD_FX"]["price"])
+                    return ("EUR_USD_FX", {
+                        "price": round(usd_rate, 4),
+                        "change_24h_pct": round(((usd_rate - prev_price) / max(0.01, prev_price)) * 100.0, 2),
+                        "data_origin": "REALTIME_PUBLIC_FEED",
+                        "data_origin_label": DATA_ORIGINS["REALTIME_PUBLIC_FEED"],
+                        "provider": "frankfurter_ecb",
+                        "timestamp_utc": iso_now,
+                    })
+            return None
 
-        # 2. CoinGecko Public BTC/EUR price (Open public endpoint)
-        try:
+        def _fetch_crypto_live() -> tuple[str, dict[str, Any]] | None:
+            # Primary: Binance Public Spot 24hr Ticker (high-frequency real-time orderbook)
+            try:
+                req = urllib.request.Request(
+                    "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCEUR",
+                    headers=ua_headers,
+                )
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    b_data = json.loads(resp.read().decode("utf-8"))
+                    if "lastPrice" in b_data:
+                        return ("BTC_EUR", {
+                            "price": round(float(b_data["lastPrice"]), 2),
+                            "change_24h_pct": round(float(b_data.get("priceChangePercent") or 0.0), 2),
+                            "data_origin": "REALTIME_PUBLIC_FEED",
+                            "data_origin_label": DATA_ORIGINS["REALTIME_PUBLIC_FEED"],
+                            "provider": "binance_public_spot",
+                            "timestamp_utc": iso_now,
+                        })
+            except Exception:
+                pass
+            # Fallback: CoinGecko Public Price
             req = urllib.request.Request(
                 "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=eur&include_24hr_change=true",
-                headers={"User-Agent": "AuroraIA-BusinessLab/2.0 (Research Simulation)"},
+                headers=ua_headers,
             )
-            with urllib.request.urlopen(req, timeout=2.5) as resp:
+            with urllib.request.urlopen(req, timeout=2.2) as resp:
                 cg_data = json.loads(resp.read().decode("utf-8"))
                 btc = cg_data.get("bitcoin") or {}
                 if "eur" in btc:
-                    quotes["BTC_EUR"]["price"] = round(float(btc["eur"]), 2)
-                    if "eur_24h_change" in btc and btc["eur_24h_change"] is not None:
-                        quotes["BTC_EUR"]["change_24h_pct"] = round(float(btc["eur_24h_change"]), 2)
-                    quotes["BTC_EUR"]["data_origin"] = "REALTIME_PUBLIC_FEED"
-                    quotes["BTC_EUR"]["data_origin_label"] = DATA_ORIGINS["REALTIME_PUBLIC_FEED"]
-                    quotes["BTC_EUR"]["provider"] = "coingecko_public"
-                    quotes["BTC_EUR"]["timestamp_utc"] = iso_now
-                    live_hits += 1
+                    return ("BTC_EUR", {
+                        "price": round(float(btc["eur"]), 2),
+                        "change_24h_pct": round(float(btc.get("eur_24h_change") or 0.0), 2),
+                        "data_origin": "REALTIME_PUBLIC_FEED",
+                        "data_origin_label": DATA_ORIGINS["REALTIME_PUBLIC_FEED"],
+                        "provider": "coingecko_public",
+                        "timestamp_utc": iso_now,
+                    })
+            return None
+
+        def _fetch_yahoo_symbol(inst_key: str, yahoo_sym: str) -> tuple[str, dict[str, Any]] | None:
+            encoded = urllib.parse.quote(yahoo_sym)
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{encoded}?interval=1d&range=5d"
+            req = urllib.request.Request(url, headers=ua_headers)
+            with urllib.request.urlopen(req, timeout=2.2) as resp:
+                y_data = json.loads(resp.read().decode("utf-8"))
+                result_list = (y_data.get("chart") or {}).get("result") or []
+                if not result_list:
+                    return None
+                meta = result_list[0].get("meta") or {}
+                reg_price = meta.get("regularMarketPrice")
+                prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or reg_price
+                if reg_price is not None and float(reg_price) > 0:
+                    px = float(reg_price)
+                    pc = float(prev_close) if prev_close else px
+                    chg = ((px - pc) / max(0.01, pc)) * 100.0
+                    return (inst_key, {
+                        "price": round(px, 2),
+                        "change_24h_pct": round(chg, 2),
+                        "data_origin": "REALTIME_PUBLIC_FEED",
+                        "data_origin_label": DATA_ORIGINS["REALTIME_PUBLIC_FEED"],
+                        "provider": "yahoo_chart_public",
+                        "timestamp_utc": iso_now,
+                    })
+            return None
+
+        tasks = [
+            _fetch_ecb_fx,
+            _fetch_crypto_live,
+            lambda: _fetch_yahoo_symbol("MSCI_WORLD_ETF", "CW8.PA"),
+            lambda: _fetch_yahoo_symbol("SP500_INDEX", "^GSPC"),
+            lambda: _fetch_yahoo_symbol("CAC40_INDEX", "^FCHI"),
+            lambda: _fetch_yahoo_symbol("GOLD_TROY_OZ", "GC=F"),
+        ]
+        try:
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+            futures = [ex.submit(fn) for fn in tasks]
+            done, _ = concurrent.futures.wait(futures, timeout=2.6)
+            for fut in done:
+                try:
+                    res = fut.result()
+                    if res:
+                        k, patch = res
+                        if k in quotes:
+                            quotes[k].update(patch)
+                            live_hits += 1
+                except Exception:
+                    pass
+            ex.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
 
@@ -716,7 +798,7 @@ def fetch_market_quotes(*, allow_network: bool = True, cache_ttl_sec: int = 90) 
         "quotes": quotes,
         "macro": MACRO_BENCHMARKS,
         "providers": DATA_PROVIDERS_REGISTRY,
-        "execution_notice": "SIMULATION / PAPER ONLY — Aucune transaction réelle n'est exécutée.",
+        "execution_notice": "SIMULATION EN DIRECT (PAPER) — Prix du marché réel en direct, capital 100% fictif.",
     }
 
 
@@ -2102,6 +2184,321 @@ class EconomicMemoryStore:
         )
         return self.get_paper_portfolio("default_lab")
 
+    def live_tick_paper_portfolio(self, portfolio_id: str = "default_lab") -> dict[str, Any]:
+        """Advances the virtual Paper Lab portfolio and its virtual digital businesses in real time ("en direct")
+        against current live market prices and real-time operational cashflows (zero real money spent).
+        """
+        quotes_bundle = fetch_market_quotes(allow_network=True, cache_ttl_sec=10)
+        quotes = quotes_bundle["quotes"]
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        tick_events: list[dict[str, Any]] = []
+
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM paper_portfolios WHERE portfolio_id = ?", (portfolio_id,)
+            ).fetchone()
+            if not row:
+                row = conn.execute("SELECT * FROM paper_portfolios LIMIT 1").fetchone()
+            positions: list[dict[str, Any]] = json.loads(row["positions_json"])
+            ventures: list[dict[str, Any]] = json.loads(row["ventures_json"])
+            cash_eur = float(row["cash_eur"])
+            initial_cap = float(row["initial_capital_eur"])
+
+            # 1. Real-time ECB deposit yield accrued on liquid safety reserve
+            daily_yield_rate = (MACRO_BENCHMARKS["ecb_deposit_facility_rate"] / 365.0)
+            reserve_interest = round(max(0.0, cash_eur) * daily_yield_rate, 2)
+            if reserve_interest >= 0.01:
+                cash_eur += reserve_interest
+                tick_events.append({
+                    "type": "RESERVE_YIELD",
+                    "label": f"Intérêts temps réel sur réserve de sécurité (+{reserve_interest:,.2f} €)",
+                    "delta_eur": reserve_interest,
+                })
+
+            # 2. Real-time operations of active virtual digital enterprises (SaaS, E-Commerce, Service B2B)
+            for v in ventures:
+                if v.get("status") != "SIMULATED_OPERATING":
+                    continue
+                mrr = float(v.get("current_mrr_eur", 0.0))
+                burn = float(v.get("monthly_burn_eur", 0.0))
+                alloc = float(v.get("allocated_capital_eur", 1000.0))
+                arch_id = str(v.get("archetype") or "saas_b2b_micro")
+                arch = STRATEGY_ARCHETYPES.get(arch_id) or STRATEGY_ARCHETYPES["saas_b2b_micro"]
+
+                # Real-time operational step (~1 day of live activity per tick)
+                arpu = float(arch.get("base_arpu_monthly_eur") or 79.0)
+                cac = float(arch.get("base_cac_eur") or 180.0)
+                churn = float(arch.get("base_monthly_churn") or 0.035)
+                daily_rev = mrr / 30.0
+                daily_cost = burn / 30.0
+                # Organic + paid client acquisition pulse
+                growth_pulse = max(0.0, (alloc * 0.0025) / max(25.0, cac)) * arpu
+                churn_drag = mrr * (churn / 30.0)
+                new_mrr = max(20.0, mrr + growth_pulse - churn_drag)
+                net_step_cash = round((daily_rev - daily_cost) * 0.75, 2)  # after 25% corporate tax provision
+                v["current_mrr_eur"] = round(new_mrr, 2)
+                v["active_clients_est"] = max(1, int(round(new_mrr / max(15.0, arpu))))
+                v["last_live_tick_utc"] = now_iso
+                cash_eur = max(0.0, cash_eur + net_step_cash)
+                tick_events.append({
+                    "type": "VENTURE_LIVE_CASHFLOW",
+                    "label": f"{v.get('name', 'Entreprise Virtuelle')} : encaissement net direct {'+' if net_step_cash >= 0 else ''}{net_step_cash:,.2f} € (MRR {new_mrr:,.0f} €/mois)",
+                    "delta_eur": net_step_cash,
+                })
+
+            conn.execute(
+                """
+                UPDATE paper_portfolios
+                SET cash_eur = ?, positions_json = ?, ventures_json = ?, updated_at = ?
+                WHERE portfolio_id = ?
+                """,
+                (round(cash_eur, 2), json.dumps(positions), json.dumps(ventures), now_iso, row["portfolio_id"]),
+            )
+
+        updated_portfolio = self.get_paper_portfolio(portfolio_id)
+        updated_portfolio["live_tick_events"] = tick_events
+        updated_portfolio["market_timestamp_utc"] = quotes_bundle["timestamp_utc"]
+        updated_portfolio["live_feeds_connected"] = quotes_bundle.get("live_feeds_connected", 0)
+        return {
+            "ok": True,
+            "portfolio": updated_portfolio,
+            "market": quotes_bundle,
+            "tick_events": tick_events,
+            "initial_capital_eur": initial_cap,
+        }
+
+    def execute_paper_action(self, payload: dict[str, Any], portfolio_id: str = "default_lab") -> dict[str, Any]:
+        """Executes an instant real-time virtual action in the Paper Lab:
+          - `buy_asset`: buy a real-time market instrument (`instrument_id`, `amount_eur`)
+          - `sell_asset`: sell a position (`instrument_id`, `fraction` 0..1)
+          - `launch_venture`: create a virtual business (`archetype_id`, `amount_eur`, `custom_name`)
+          - `close_venture`: liquidate a virtual business back to cash (`venture_id`)
+          - `auto_pilot`: let the 10-agent Council + Risk Manager optimize the live portfolio right now
+        Enforces the Independent Risk Manager's 25% minimum cash reserve rule!
+        """
+        action_type = str(payload.get("action") or "auto_pilot").strip().lower()
+        quotes_bundle = fetch_market_quotes(allow_network=True, cache_ttl_sec=15)
+        quotes = quotes_bundle["quotes"]
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        action_summary = ""
+        risk_warning: str | None = None
+
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM paper_portfolios WHERE portfolio_id = ?", (portfolio_id,)
+            ).fetchone()
+            if not row:
+                row = conn.execute("SELECT * FROM paper_portfolios LIMIT 1").fetchone()
+            positions: list[dict[str, Any]] = json.loads(row["positions_json"])
+            ventures: list[dict[str, Any]] = json.loads(row["ventures_json"])
+            cash_eur = float(row["cash_eur"])
+            initial_cap = float(row["initial_capital_eur"])
+
+            # Minimum safety cash floor (25% of initial capital)
+            safety_floor_eur = initial_cap * 0.25
+            max_spendable_eur = max(0.0, cash_eur - safety_floor_eur)
+
+            if action_type == "buy_asset":
+                inst_id = str(payload.get("instrument_id") or "MSCI_WORLD_ETF")
+                req_amount = max(10.0, float(payload.get("amount_eur") or (initial_cap * 0.15)))
+                if req_amount > max_spendable_eur:
+                    if max_spendable_eur < 5.0:
+                        risk_warning = (
+                            f"VETO RISK MANAGER : Réserve de sécurité minimale ({safety_floor_eur:,.0f} € = 25%) atteinte. "
+                            "Vendez un actif ou augmentez le capital virtuel avant d'investir davantage."
+                        )
+                        req_amount = 0.0
+                    else:
+                        risk_warning = (
+                            f"Protection Risk Manager : montant ajusté de {req_amount:,.0f} € à {max_spendable_eur:,.0f} € "
+                            f"pour préserver votre matelas de sécurité intouchable de {safety_floor_eur:,.0f} € (25%)."
+                        )
+                        req_amount = max_spendable_eur
+
+                if req_amount > 0:
+                    q = quotes.get(inst_id) or DEFAULT_MARKET_INSTRUMENTS["MSCI_WORLD_ETF"]
+                    live_px = float(q["price"])
+                    if q.get("currency") == "USD":
+                        fx = float(quotes.get("EUR_USD_FX", {}).get("price") or 1.0865)
+                        live_px = live_px / max(0.5, fx)
+                    fee_eur = round(req_amount * 0.001, 2)  # 0.10% realistic commission + spread
+                    net_invest = max(0.0, req_amount - fee_eur)
+                    added_units = net_invest / max(0.0001, live_px)
+                    existing = next((p for p in positions if p.get("instrument_id") == inst_id), None)
+                    if existing:
+                        old_u = float(existing.get("units", 0.0))
+                        old_px = float(existing.get("entry_price_eur", live_px))
+                        new_u = old_u + added_units
+                        existing["entry_price_eur"] = round(((old_u * old_px) + net_invest) / max(0.0001, new_u), 2)
+                        existing["units"] = round(new_u, 6)
+                    else:
+                        positions.append({
+                            "instrument_id": inst_id,
+                            "units": round(added_units, 6),
+                            "entry_price_eur": round(live_px, 2),
+                        })
+                    cash_eur = round(cash_eur - req_amount, 2)
+                    action_summary = (
+                        f"Achat en direct (fictif) de {req_amount:,.2f} € sur {q.get('name', inst_id)} "
+                        f"au cours réel de {live_px:,.2f} € (frais réels déduits : {fee_eur:,.2f} €)."
+                    )
+
+            elif action_type == "sell_asset":
+                inst_id = str(payload.get("instrument_id") or "")
+                fraction = max(0.1, min(1.0, float(payload.get("fraction") or 1.0)))
+                target_pos = next((p for p in positions if p.get("instrument_id") == inst_id), None)
+                if not target_pos and positions:
+                    target_pos = positions[0]
+                    inst_id = str(target_pos.get("instrument_id"))
+                if target_pos:
+                    q = quotes.get(inst_id) or DEFAULT_MARKET_INSTRUMENTS["MSCI_WORLD_ETF"]
+                    live_px = float(q["price"])
+                    if q.get("currency") == "USD":
+                        fx = float(quotes.get("EUR_USD_FX", {}).get("price") or 1.0865)
+                        live_px = live_px / max(0.5, fx)
+                    units_sold = float(target_pos.get("units", 0.0)) * fraction
+                    gross_eur = units_sold * live_px
+                    fee_eur = round(gross_eur * 0.001, 2)
+                    net_proceeds = max(0.0, gross_eur - fee_eur)
+                    remaining = float(target_pos.get("units", 0.0)) - units_sold
+                    if remaining <= 1e-5 or fraction >= 0.99:
+                        positions = [p for p in positions if p.get("instrument_id") != inst_id]
+                    else:
+                        target_pos["units"] = round(remaining, 6)
+                    cash_eur = round(cash_eur + net_proceeds, 2)
+                    action_summary = (
+                        f"Vente en direct (fictif) sur {q.get('name', inst_id)} : +{net_proceeds:,.2f} € "
+                        f"remis dans la trésorerie disponible (cours réel {live_px:,.2f} €)."
+                    )
+                else:
+                    action_summary = "Aucune position financière ouverte à vendre."
+
+            elif action_type == "launch_venture":
+                arch_id = str(payload.get("archetype_id") or "saas_b2b_micro")
+                arch = STRATEGY_ARCHETYPES.get(arch_id) or STRATEGY_ARCHETYPES["saas_b2b_micro"]
+                req_amount = max(50.0, float(payload.get("amount_eur") or (initial_cap * 0.25)))
+                if req_amount > max_spendable_eur:
+                    if max_spendable_eur < 25.0:
+                        risk_warning = (
+                            f"VETO RISK MANAGER : Impossible de lancer cette activité sans entamer votre réserve "
+                            f"de sécurité de {safety_floor_eur:,.0f} € (25%). Libérez d'abord du cash."
+                        )
+                        req_amount = 0.0
+                    else:
+                        risk_warning = (
+                            f"Protection Risk Manager : budget de lancement ajusté à {max_spendable_eur:,.0f} € "
+                            f"pour conserver {safety_floor_eur:,.0f} € en sécurité absolue."
+                        )
+                        req_amount = max_spendable_eur
+
+                if req_amount > 0:
+                    custom_name = str(payload.get("custom_name") or f"Activité En Direct — {arch['name']}").strip()
+                    new_v = {
+                        "venture_id": f"v_{uuid.uuid4().hex[:6]}",
+                        "name": custom_name,
+                        "archetype": arch_id,
+                        "allocated_capital_eur": round(req_amount, 2),
+                        "current_mrr_eur": round(req_amount * 0.13, 2),
+                        "monthly_burn_eur": round(req_amount * 0.055, 2),
+                        "status": "SIMULATED_OPERATING",
+                        "created_at": now_iso,
+                    }
+                    ventures.append(new_v)
+                    cash_eur = round(cash_eur - req_amount, 2)
+                    action_summary = (
+                        f"Nouvelle activité virtuelle lancée en direct : « {custom_name} » avec {req_amount:,.2f} € "
+                        f"(revenus récurrents initiaux estimés : {new_v['current_mrr_eur']:,.0f} €/mois)."
+                    )
+
+            elif action_type == "close_venture":
+                vid = str(payload.get("venture_id") or "")
+                target_v = next((v for v in ventures if v.get("venture_id") == vid), None)
+                if not target_v and ventures:
+                    target_v = ventures[0]
+                    vid = str(target_v.get("venture_id"))
+                if target_v:
+                    alloc = float(target_v.get("allocated_capital_eur", 0.0))
+                    mrr = float(target_v.get("current_mrr_eur", 0.0))
+                    burn = float(target_v.get("monthly_burn_eur", 0.0))
+                    # Recover 92% of book valuation (8% liquidation friction)
+                    book_val = max(0.0, alloc + (mrr - burn) * 12.0) * 0.92
+                    ventures = [v for v in ventures if v.get("venture_id") != vid]
+                    cash_eur = round(cash_eur + book_val, 2)
+                    action_summary = (
+                        f"Cession / clôture en direct de « {target_v.get('name')} » : +{book_val:,.2f} € "
+                        "récupérés en trésorerie liquide."
+                    )
+                else:
+                    action_summary = "Aucune entreprise virtuelle active à clôturer."
+
+            else:
+                # auto_pilot: Council optimizes allocation between ETF/Bonds and B2B Digital Venture while keeping >=30% cash
+                target_reserve = max(safety_floor_eur, initial_cap * 0.32)
+                excess_cash = max(0.0, cash_eur - target_reserve)
+                if excess_cash >= 25.0:
+                    etf_spend = round(excess_cash * 0.50, 2)
+                    ven_spend = round(excess_cash * 0.50, 2)
+                    cw8_px = float(quotes["MSCI_WORLD_ETF"]["price"])
+                    existing = next((p for p in positions if p.get("instrument_id") == "MSCI_WORLD_ETF"), None)
+                    if existing:
+                        existing["units"] = round(float(existing["units"]) + (etf_spend / cw8_px), 6)
+                    else:
+                        positions.append({
+                            "instrument_id": "MSCI_WORLD_ETF",
+                            "units": round(etf_spend / cw8_px, 6),
+                            "entry_price_eur": cw8_px,
+                        })
+                    if ventures:
+                        ventures[0]["allocated_capital_eur"] = round(float(ventures[0]["allocated_capital_eur"]) + ven_spend, 2)
+                        ventures[0]["current_mrr_eur"] = round(float(ventures[0]["current_mrr_eur"]) + ven_spend * 0.14, 2)
+                    else:
+                        ventures.append({
+                            "venture_id": f"v_{uuid.uuid4().hex[:6]}",
+                            "name": "Activité Numérique B2B Automatisée (Pilotage IA)",
+                            "archetype": "b2b_ai_service_agency",
+                            "allocated_capital_eur": ven_spend,
+                            "current_mrr_eur": round(ven_spend * 0.14, 2),
+                            "monthly_burn_eur": round(ven_spend * 0.05, 2),
+                            "status": "SIMULATED_OPERATING",
+                        })
+                    cash_eur = round(cash_eur - (etf_spend + ven_spend), 2)
+                    action_summary = (
+                        f"Pilotage automatique exécuté en direct : {etf_spend:,.0f} € déployés sur ETF Monde (cours réel {cw8_px:,.2f} €) "
+                        f"et {ven_spend:,.0f} € injectés dans l'activité numérique B2B. Réserve protégée : {cash_eur:,.2f} €."
+                    )
+                else:
+                    action_summary = (
+                        f"Pilotage automatique : l'allocation actuelle est déjà optimale avec {cash_eur:,.2f} € "
+                        "en réserve de sécurité. Exécution d'un cycle de revenus en direct."
+                    )
+
+            conn.execute(
+                """
+                UPDATE paper_portfolios
+                SET cash_eur = ?, positions_json = ?, ventures_json = ?, updated_at = ?
+                WHERE portfolio_id = ?
+                """,
+                (round(cash_eur, 2), json.dumps(positions), json.dumps(ventures), now_iso, row["portfolio_id"]),
+            )
+
+        if action_summary:
+            self.append_audit(
+                category="LIVE_PAPER_ACTION",
+                actor="business_copilot_live",
+                summary=action_summary,
+                payload={"action": action_type, "risk_warning": risk_warning},
+            )
+
+        portfolio_now = self.get_paper_portfolio(portfolio_id)
+        return {
+            "ok": True,
+            "action": action_type,
+            "action_summary": action_summary,
+            "risk_warning": risk_warning,
+            "portfolio": portfolio_now,
+            "market": quotes_bundle,
+        }
+
     def record_simulation(self, sim_report: dict[str, Any]) -> str:
         sim_id = f"sim_{uuid.uuid4().hex[:12]}"
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -2569,6 +2966,288 @@ def run_advanced_policy_training(
 
 
 # ============================================================================
+# 8.5 CONVERSATIONAL BUSINESS COPILOT (LIVE REAL-TIME + BEGINNER/EXPERT ADAPTIVE)
+# ============================================================================
+
+def run_business_conversational_copilot(
+    *,
+    store: EconomicMemoryStore,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Conversational Business Intelligence Copilot.
+    Understands natural-language requests in French, executes live virtual actions
+    in real time on the Paper Lab portfolio when requested, runs multi-agent council
+    evaluations, and adapts its language strictly between Beginner Mode (zero fiscal/quant
+    jargon) and Expert Mode.
+    """
+    import re
+
+    user_msg = str(payload.get("message") or "").strip()
+    pedagogical_mode = bool(payload.get("pedagogical_mode", True))
+    auto_execute = bool(payload.get("auto_execute", True))
+    history = payload.get("history") or []
+
+    quotes_bundle = fetch_market_quotes(allow_network=True, cache_ttl_sec=15)
+    quotes = quotes_bundle["quotes"]
+    portfolio = store.get_paper_portfolio("default_lab")
+
+    executed_actions: list[str] = []
+    deliberation_snapshot: dict[str, Any] | None = None
+    lower_msg = user_msg.lower()
+
+    # 1. Detect natural-language capital reset or strategy change
+    # e.g. "J'ai 5000 €", "mets 1000 euros", "commence avec 50 000 €"
+    cap_match = re.search(
+        r"(?:avec|mets|mettre|capital(?:\s+de)?|confie|j'ai|budget(?:\s+de)?|initialise(?:\s+à)?)\s*(\d[\d\s.,]*)\s*(?:€|eur|euros|k€|k\b)",
+        lower_msg,
+    )
+    if cap_match and auto_execute:
+        raw_num = cap_match.group(1).replace(" ", "").replace("\u00a0", "").replace(",", ".")
+        try:
+            parsed_cap = float(raw_num)
+            if "k" in lower_msg[cap_match.start():cap_match.end() + 3] and parsed_cap < 10_000:
+                parsed_cap *= 1_000.0
+            if 10.0 <= parsed_cap <= 100_000_000.0:
+                chosen_strat = portfolio["strategy_id"]
+                if "saas" in lower_msg or "logiciel" in lower_msg:
+                    chosen_strat = "saas_b2b_micro"
+                elif "service" in lower_msg or "agence" in lower_msg or "conseil" in lower_msg:
+                    chosen_strat = "b2b_ai_service_agency"
+                elif "commerce" in lower_msg or "boutique" in lower_msg:
+                    chosen_strat = "ecommerce_specialized_brand"
+                elif "bourse" in lower_msg or "etf" in lower_msg or "financier" in lower_msg:
+                    chosen_strat = "prudent_financial_portfolio"
+                elif "sécurité" in lower_msg or "prudent" in lower_msg or "rien faire" in lower_msg:
+                    chosen_strat = "strategic_cash_preservation"
+                else:
+                    chosen_strat = "hybrid_venture_and_etf"
+                portfolio = store.reset_or_configure_paper_portfolio(
+                    initial_capital_eur=parsed_cap,
+                    strategy_id=chosen_strat,
+                )
+                executed_actions.append(
+                    f"Capital fictif réglé en direct à {parsed_cap:,.0f} € (dont {portfolio['liquid_cash_eur']:,.0f} € mis de côté en réserve de sécurité)."
+                )
+        except Exception:
+            pass
+
+    # 2. Detect live asset buy / venture launch / live tick requests in natural language
+    if auto_execute:
+        amount_match = re.search(r"(\d[\d\s]*)\s*(?:€|eur|euros)", lower_msg)
+        explicit_amount = None
+        if amount_match:
+            try:
+                explicit_amount = float(amount_match.group(1).replace(" ", ""))
+            except Exception:
+                explicit_amount = None
+
+        if any(w in lower_msg for w in ["achète", "achete", "acheter", "investis", "investir", "place", "placer"]):
+            inst_target = None
+            if any(w in lower_msg for w in ["bitcoin", "btc", "crypto"]):
+                inst_target = "BTC_EUR"
+            elif any(w in lower_msg for w in ["or", "gold", "métal"]):
+                inst_target = "GOLD_COMMODITY"
+            elif any(w in lower_msg for w in ["obligation", "souverain", "taux", "sécurisé"]):
+                inst_target = "EU_SOVEREIGN_BOND_ETF"
+            elif any(w in lower_msg for w in ["cac", "france", "cac40"]):
+                inst_target = "CAC40_INDEX"
+            elif any(w in lower_msg for w in ["s&p", "sp500", "usa", "américain"]):
+                inst_target = "SP500_INDEX"
+            elif any(w in lower_msg for w in ["etf", "monde", "msci", "action", "bourse"]):
+                inst_target = "MSCI_WORLD_ETF"
+
+            if inst_target:
+                act_res = store.execute_paper_action({
+                    "action": "buy_asset",
+                    "instrument_id": inst_target,
+                    "amount_eur": explicit_amount or (portfolio["initial_capital_eur"] * 0.15),
+                })
+                portfolio = act_res["portfolio"]
+                if act_res.get("action_summary"):
+                    executed_actions.append(act_res["action_summary"])
+                if act_res.get("risk_warning"):
+                    executed_actions.append(act_res["risk_warning"])
+
+        if any(w in lower_msg for w in ["lance", "lancer", "crée", "creer", "créer", "ouvrir", "démarre"]) and any(
+            w in lower_msg for w in ["entreprise", "business", "saas", "agence", "service", "boutique", "e-commerce", "ecommerce", "activité", "projet"]
+        ):
+            arch_target = "saas_b2b_micro"
+            if any(w in lower_msg for w in ["agence", "service", "conseil", "b2b"]):
+                arch_target = "b2b_ai_service_agency"
+            elif any(w in lower_msg for w in ["boutique", "e-commerce", "ecommerce", "produit"]):
+                arch_target = "ecommerce_specialized_brand"
+            act_res = store.execute_paper_action({
+                "action": "launch_venture",
+                "archetype_id": arch_target,
+                "amount_eur": explicit_amount or (portfolio["initial_capital_eur"] * 0.25),
+            })
+            portfolio = act_res["portfolio"]
+            if act_res.get("action_summary"):
+                executed_actions.append(act_res["action_summary"])
+            if act_res.get("risk_warning"):
+                executed_actions.append(act_res["risk_warning"])
+
+        if any(w in lower_msg for w in ["pilotage auto", "optimise", "gère tout", "fais fructifier", "en direct"]):
+            tick_res = store.live_tick_paper_portfolio("default_lab")
+            portfolio = tick_res["portfolio"]
+            for ev in tick_res.get("tick_events", []):
+                executed_actions.append(ev["label"])
+
+    # Run a fast deliberation snapshot for grounded metrics
+    deliberation_snapshot = run_13_step_council_deliberation(
+        capital_eur=portfolio["initial_capital_eur"],
+        horizon_months=24,
+        tax_rate=0.25,
+    )
+    winner = deliberation_snapshot["selected_strategy"]
+    mc = winner["monte_carlo"]
+    verdict = winner["risk_manager_verdict"]
+
+    # Format live prices summary
+    cw8 = quotes["MSCI_WORLD_ETF"]
+    btc = quotes["BTC_EUR"]
+    gold = quotes["GOLD_COMMODITY"]
+    fx = quotes["EUR_USD_FX"]
+    cac = quotes["CAC40_INDEX"]
+
+    # Try local Ollama LLM for natural conversational response, with instant deterministic fallback
+    llm_reply: str | None = None
+    if os.environ.get("AURORA_BUSINESS_OFFLINE", "0") != "1":
+        try:
+            mode_instruction = (
+                "MODE DÉBUTANT ACTIF : Tu t'adresses à un utilisateur qui veut des explications simples, concrètes et honnêtes en français courant. "
+                "INTERDICTION ABSOLUE d'utiliser du jargon technique ou fiscal complexe (ne dis jamais DSO, Sortino, Walk-Forward OOS, IC 95%, BFR, CAC/LTV abstrait, fiscalité paramétrable). "
+                "Parle toujours en Euros nets dans la poche (une fois toutes les charges et impôts automatiquement déduits en coulisses), explique clairement combien d'argent est gardé en sécurité intouchable, combien travaille en direct, et pourquoi."
+                if pedagogical_mode
+                else "MODE EXPERT ACTIF : Tu peux détailler l'allocation quantitative, les ratios de risque (Sortino, Drawdown P90, probabilité de ruine), les Unit Economics (LTV/CAC, DSO) et la gouvernance du Risk Manager."
+            )
+            sys_prompt = (
+                "Tu es le Copilote Conversationnel d'Aurora Business Intelligence (Conseil des 10 Agents + Risk Manager indépendant).\n"
+                f"{mode_instruction}\n"
+                "Règles fondamentales :\n"
+                "1. Tout fonctionne EN DIRECT sur les vrais prix actuels du marché (ETF Monde CW8, CAC 40, S&P 500, Or, Bitcoin, taux BCE), mais avec de l'argent 100% fictif dans le Lab (0 € réel risqué).\n"
+                "2. La survie et la protection du capital passent avant tout : au moins 25% à 30% du capital reste toujours en réserve de sécurité liquide.\n"
+                "3. Ne promets jamais de gains garantis ; indique toujours le pire scénario temporaire possible.\n"
+                f"État actuel en direct du portefeuille virtuel :\n"
+                f"- Capital de départ : {portfolio['initial_capital_eur']:,.2f} €\n"
+                f"- Valeur totale actuelle en direct : {portfolio['total_mark_to_market_equity_eur']:,.2f} € ({portfolio['total_return_pct']:+.2f}%)\n"
+                f"- Argent gardé en sécurité (Cash disponible) : {portfolio['liquid_cash_eur']:,.2f} € ({portfolio['cash_reserve_ratio']*100:.0f}%)\n"
+                f"- Valeur des placements marché en direct : {portfolio['market_positions_value_eur']:,.2f} €\n"
+                f"- Valeur des activités/entreprises virtuelles en direct : {portfolio['virtual_ventures_value_eur']:,.2f} €\n"
+                f"- Cours réels en direct : ETF Monde CW8={cw8['price']} €, CAC40={cac['price']} pts, Or={gold['price']} $, BTC={btc['price']} €, EUR/USD={fx['price']}\n"
+                f"- Meilleure stratégie recommandée par le Conseil : {winner['strategy_name']} (capital net estimé à 24 mois : {mc['median_final_real_equity_eur']:,.0f} € net).\n"
+                + (f"- Actions exécutées à l'instant en direct : {' ; '.join(executed_actions)}\n" if executed_actions else "")
+            )
+            messages_payload = [{"role": "system", "content": sys_prompt}]
+            for h in history[-4:]:
+                if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("content"):
+                    messages_payload.append({"role": h["role"], "content": str(h["content"])[:600]})
+            messages_payload.append({"role": "user", "content": user_msg or "Que me conseilles-tu de faire en direct avec mon capital ?"})
+
+            ollama_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
+            model_name = os.environ.get("AURORA_MAIN_MODEL", "qwen2.5:7b")
+            req_body = json.dumps({
+                "model": model_name,
+                "messages": messages_payload,
+                "stream": False,
+                "options": {"temperature": 0.35, "num_predict": 380},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                f"{ollama_url}/api/chat",
+                data=req_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=4.5) as resp:
+                odata = json.loads(resp.read().decode("utf-8"))
+                candidate = ((odata.get("message") or {}).get("content") or "").strip()
+                # Strip any <think>...</think> blocks
+                candidate = re.sub(r"<think>[\s\S]*?</think>", "", candidate).strip()
+                if len(candidate) > 40:
+                    llm_reply = candidate
+        except Exception:
+            llm_reply = None
+
+    if not llm_reply:
+        # High-precision deterministic conversational response (Beginner vs Expert)
+        cap_now = portfolio["initial_capital_eur"]
+        eq_now = portfolio["total_mark_to_market_equity_eur"]
+        cash_now = portfolio["liquid_cash_eur"]
+        net_est = mc["median_final_real_equity_eur"]
+        net_gain = net_est - cap_now
+        worst_dip_eur = round(cap_now * (mc["p90_max_drawdown_pct"] / 100.0), 0)
+
+        if pedagogical_mode:
+            parts = []
+            if executed_actions:
+                parts.append("✅ **C'est fait en direct !** " + " ".join(executed_actions))
+            parts.append(
+                f"Voici le point **en direct** sur votre argent virtuel (**{eq_now:,.2f} €** au total aujourd'hui) :\n\n"
+                f"1. 🛡️ **Votre matelas de sécurité intouchable ({cash_now:,.0f} €)** : "
+                f"Aurora garde **{portfolio['cash_reserve_ratio']*100:.0f}%** de votre argent de côté en permanence. "
+                "Même s'il y a un imprévu ou une baisse des marchés, vous ne pouvez pas faire faillite.\n"
+                f"2. 🚀 **Ce qui travaille pour vous en direct ({eq_now - cash_now:,.0f} €)** : "
+                f"Le reste est réparti entre une activité numérique à faibles charges et des placements mondiaux suivis au prix réel du jour "
+                f"(ETF Monde à **{cw8['price']:,.2f} €**, Or à **{gold['price']:,.0f} $**, Bitcoin à **{btc['price']:,.0f} €**).\n"
+                f"3. 💡 **Ce que vous pouvez espérer net dans votre poche** : "
+                f"Sur 2 ans, une fois toutes les dépenses et taxes automatiquement déduites en coulisses, votre capital est estimé autour de **{net_est:,.0f} €** "
+                f"(soit **{'+' if net_gain >= 0 else ''}{net_gain:,.0f} € net**), avec une baisse temporaire maximale limitée à environ **-{worst_dip_eur:,.0f} €** en cas de crise."
+            )
+            parts.append(
+                "\nDites-moi simplement en français ce que vous voulez tester (par exemple : *« Mets 5 000 € de capital »*, "
+                "*« Lance un petit service en ligne »* ou *« Achète 300 € d'ETF Monde en direct »*) et je l'exécute devant vous !"
+            )
+            llm_reply = "\n\n".join(parts)
+        else:
+            parts = []
+            if executed_actions:
+                parts.append("⚡ **Exécution Temps Réel (Paper Lab) :** " + " | ".join(executed_actions))
+            parts.append(
+                f"### Synthèse Exécutive En Direct — Capital {cap_now:,.2f} € (Mark-to-Market : {eq_now:,.2f} €)\n"
+                f"- **Stratégie optimale retenue par le Conseil** : **{winner['strategy_name']}** (Grade de survie **{winner['reward_evaluation']['survival_grade']}**, Score **{winner['effective_council_score']}**).\n"
+                f"- **Réserve liquide & Solvabilité** : **{cash_now:,.2f} €** ({portfolio['cash_reserve_ratio']*100:.1f}% du portefeuille, au-dessus du plancher strict de 25% imposé par le Risk Manager).\n"
+                f"- **Cotation Temps Réel connectée ({quotes_bundle.get('live_feeds_connected', 0)} flux live)** : CW8 ETF={cw8['price']} € ({cw8['change_24h_pct']:+.2f}%) · CAC 40={cac['price']} pts · Or={gold['price']} $ · BTC={btc['price']} € · EUR/USD={fx['price']}.\n"
+                f"- **Espérance nette réelle (après inflation & fiscalité)** : Médiane **{net_est:,.2f} €** (CAGR réel **{mc['median_real_cagr_pct']:+.2f}%/an**, Sortino **{mc['median_sortino_ratio']:.2f}**, Drawdown P90 **-{mc['p90_max_drawdown_pct']:.2f}%**, Probabilité de ruine **{mc['ruin_probability_pct']:.2f}%**)."
+            )
+            llm_reply = "\n\n".join(parts)
+
+    suggested_prompts = (
+        [
+            "J'ai 1 000 € fictifs, quelle est la façon la plus sûre de les faire grandir en direct ?",
+            "Lance une activité numérique B2B en direct avec 2 500 €",
+            "Achète 500 € d'ETF Monde au prix réel d'aujourd'hui",
+            "Que se passe-t-il sur mon argent s'il y a une crise économique ?",
+        ]
+        if pedagogical_mode
+        else [
+            "Exécute le pilotage automatique en direct sur mon portefeuille",
+            "Compare la création d'un SaaS B2B face à un portefeuille ETF + Obligations avec 10 000 €",
+            "Achète 1 500 € sur MSCI_WORLD_ETF au cours temps réel",
+            "Analyse le risque de ruine et les seuils Kill-Switch de ma stratégie",
+        ]
+    )
+
+    return {
+        "ok": True,
+        "reply": llm_reply,
+        "pedagogical_mode": pedagogical_mode,
+        "executed_actions": executed_actions,
+        "portfolio": portfolio,
+        "market": quotes_bundle,
+        "recommended_strategy": {
+            "strategy_id": winner["strategy_id"],
+            "strategy_name": winner["strategy_name"],
+            "survival_grade": winner["reward_evaluation"]["survival_grade"],
+            "net_expected_equity_eur": mc["median_final_real_equity_eur"],
+            "cash_reserve_eur": verdict["cash_reserve_eur"],
+            "ruin_probability_pct": mc["ruin_probability_pct"],
+        },
+        "suggested_prompts": suggested_prompts,
+        "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
+
+# ============================================================================
 # 9. FLASK BLUEPRINT & HTTP API ROUTES (/api/business/*)
 # ============================================================================
 
@@ -2613,7 +3292,8 @@ def register_business_routes(app_or_bp: Any, *, workspace: str | Path) -> Econom
     @app_or_bp.route("/api/business/market/quotes", methods=["GET"])
     def business_market_quotes():
         offline = request.args.get("offline", "0") == "1"
-        return jsonify(fetch_market_quotes(allow_network=not offline))
+        force = request.args.get("force", "0") == "1"
+        return jsonify(fetch_market_quotes(allow_network=not offline, force_refresh=force))
 
     @app_or_bp.route("/api/business/lab/portfolio", methods=["GET", "POST"])
     def business_lab_portfolio():
@@ -2624,6 +3304,20 @@ def register_business_routes(app_or_bp: Any, *, workspace: str | Path) -> Econom
         strat = str(body.get("strategy_id") or "hybrid_venture_and_etf")
         updated = store.reset_or_configure_paper_portfolio(initial_capital_eur=cap, strategy_id=strat)
         return jsonify({"ok": True, "portfolio": updated})
+
+    @app_or_bp.route("/api/business/lab/live-tick", methods=["POST"])
+    def business_lab_live_tick():
+        return jsonify(store.live_tick_paper_portfolio("default_lab"))
+
+    @app_or_bp.route("/api/business/lab/action", methods=["POST"])
+    def business_lab_action():
+        body = request.get_json(silent=True) or {}
+        return jsonify(store.execute_paper_action(body, "default_lab"))
+
+    @app_or_bp.route("/api/business/chat", methods=["POST"])
+    def business_conversational_chat():
+        body = request.get_json(silent=True) or {}
+        return jsonify(run_business_conversational_copilot(store=store, payload=body))
 
     @app_or_bp.route("/api/business/lab/simulate", methods=["POST"])
     def business_lab_simulate():

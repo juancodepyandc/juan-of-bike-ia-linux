@@ -346,8 +346,12 @@ export default function AuroraV1ImageView() {
                         {I.upscaling ? <Loader2 size={12} /> : <Maximize size={12} />} 2×
                       </Btn>
                       <Btn size="sm" disabled={I.upscaling}
-                        onClick={() => void I.upscaleCurrent(4)} title="Upscale 4×">
+                        onClick={() => void I.upscaleCurrent(4)} title="Upscale 4× (4K)">
                         4×
+                      </Btn>
+                      <Btn size="sm" disabled={I.upscaling}
+                        onClick={() => void I.upscaleCurrent(8)} title="Super-Résolution 8K UHD (8192px)">
+                        ✨ 8K
                       </Btn>
                     </div>
                   )}

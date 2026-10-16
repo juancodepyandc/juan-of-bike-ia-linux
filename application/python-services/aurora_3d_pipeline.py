@@ -5408,10 +5408,8 @@ def run_pipeline(prompt: str, run_id: str, *,
                 and str(final_mesh_path) != str(mesh_path)):
             import bake_normal_map as _bake  # noqa: WPS433
             _normal_png = str(output_dir / f"{run_id}_normal.png")
-            # Normal map haute-res: 8192 en mode precision max (AURORA_TRELLIS2_MANAGED), sinon
-            # 4096. Recupere le detail de surface fin du mesh dense sur le mesh allege du viewer.
-            _nres = int(os.environ.get("AURORA_NORMAL_RES",
-                        "8192" if os.environ.get("AURORA_TRELLIS2_MANAGED") == "1" else "4096"))
+            # Normal map 8K (8192x8192) par defaut pour capturer le micro-relief haute frequence
+            _nres = int(os.environ.get("AURORA_NORMAL_RES", "8192"))
             _dense_src = str(raw_dense_path) if ("raw_dense_path" in dir() and Path(str(raw_dense_path)).is_file()) else str(mesh_path)
             _bake_res = _bake.bake_normal(_dense_src, str(final_mesh_path), _normal_png, res=_nres)
             audit.append({"stage": "bake_normal", **_bake_res})

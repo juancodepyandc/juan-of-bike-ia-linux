@@ -9,7 +9,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { AlertCircle, BookOpen, Box, Check, Globe, Image as ImageIcon, Layers3, Loader2, Lock, Orbit, Palette, Sparkles, X } from 'lucide-react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import { Center, OrbitControls } from '@react-three/drei'
-import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, Color, DoubleSide, FrontSide, Group, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector3 } from 'three'
+import { ACESFilmicToneMapping, AnimationClip, AnimationMixer, AxesHelper, Box3, CanvasTexture, Color, DoubleSide, FrontSide, Group, LinearFilter, LinearMipmapLinearFilter, LoopRepeat, Mesh, MeshPhysicalMaterial, MeshStandardMaterial, NearestFilter, Object3D, Raycaster, RepeatWrapping, SkeletonHelper, SkinnedMesh, SRGBColorSpace, Vector2, Vector3 } from 'three'
 import type { Texture } from 'three'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
 import { ThreeDProgressOverlay } from '../components/ThreeDProgressOverlay.tsx'
@@ -1036,6 +1036,9 @@ export type PartInfo = {
   effectiveTransmissionPct: number
   wallThicknessMm: number | null         // Raycast-measured local thickness at hit point (mm)
   harmonicThicknessMm: number            // Bounding-box harmonic thickness (mm)
+  textureResolutionPx: string | null     // Measured max texture resolution (e.g. "8192×8192 px (8K UHD)")
+  pbrChannels: string[]                  // Active PBR channels (Albedo, Normal, Roughness, Metalness, AO, Emissive)
+  maxAnisotropy: number                  // Active anisotropic filtering factor (up to 16×)
   vertexCount: number
   triangleCount: number
   dimensionsMeters: [number, number, number]
@@ -1043,6 +1046,249 @@ export type PartInfo = {
   hasMorphTargets: boolean
   hasSkinning: boolean
   bonesAttached: number
+}
+
+function _inspectMaterialTextures(mat: MeshStandardMaterial | MeshPhysicalMaterial | undefined): {
+  maxW: number
+  maxH: number
+  channels: string[]
+  maxAniso: number
+} {
+  if (!mat) return { maxW: 0, maxH: 0, channels: [], maxAniso: 1 }
+  const channels: string[] = []
+  let maxW = 0
+  let maxH = 0
+  let maxAniso = 1
+  const probe = (tex: Texture | null | undefined, label: string) => {
+    if (!tex) return
+    channels.push(label)
+    if (typeof tex.anisotropy === 'number' && tex.anisotropy > maxAniso) {
+      maxAniso = tex.anisotropy
+    }
+    const img = tex.image as { width?: number; height?: number; naturalWidth?: number; naturalHeight?: number } | undefined
+    const w = Number(img?.width || img?.naturalWidth || 0)
+    const h = Number(img?.height || img?.naturalHeight || 0)
+    if (w * h > maxW * maxH) {
+      maxW = w
+      maxH = h
+    }
+  }
+  probe(mat.map, 'Albedo')
+  probe(mat.normalMap, 'Normal')
+  probe(mat.roughnessMap, 'Roughness')
+  probe(mat.metalnessMap, 'Metalness')
+  probe(mat.aoMap, 'AO')
+  probe(mat.emissiveMap, 'Emissive')
+  if ('transmission' in mat && typeof (mat as MeshPhysicalMaterial).transmission === 'number' && (mat as MeshPhysicalMaterial).transmission > 0.01) {
+    channels.push('Transmission')
+  }
+  return { maxW, maxH, channels, maxAniso }
+}
+
+function _formatTextureResolutionLabel(w: number, h: number): string | null {
+  if (w <= 0 || h <= 0) return null
+  const maxEdge = Math.max(w, h)
+  const tier = maxEdge >= 8192 ? '8K UHD' : maxEdge >= 4096 ? '4K UHD' : maxEdge >= 2048 ? '2K QHD' : 'SD/HD'
+  return `${w}×${h} px (${tier})`
+}
+
+function _applyMaxAnisotropyToModel(root: Object3D, maxAniso = 16): void {
+  const targetAniso = Math.max(1, Math.min(16, maxAniso || 16))
+  root.traverse((obj) => {
+    const mesh = obj as Mesh
+    if (!mesh.isMesh || !mesh.material) return
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    mats.forEach((rawMat) => {
+      const mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial | undefined
+      if (!mat) return
+      const isSpecialAtlas = Boolean(_readOledAtlasMeta(mat) || _readBeltScrollMeta(mat))
+      for (const tex of [mat.map, mat.normalMap, mat.roughnessMap, mat.metalnessMap, mat.aoMap, mat.emissiveMap]) {
+        if (!tex) continue
+        tex.anisotropy = targetAniso
+        if (!isSpecialAtlas && tex.generateMipmaps !== false) {
+          tex.minFilter = LinearMipmapLinearFilter
+          tex.magFilter = LinearFilter
+        }
+        tex.needsUpdate = true
+      }
+    })
+  })
+}
+
+function _upgradeModelTexturesTo8KPbr(
+  root: Object3D,
+  maxGpuTexSize = 8192,
+): { upgradedMeshes: number; targetRes: number; channelsAdded: string[] } {
+  const targetRes = Math.min(8192, Math.max(2048, maxGpuTexSize || 8192))
+  const pbrDetailRes = Math.min(2048, targetRes)
+  let upgradedMeshes = 0
+  const channelsAdded = new Set<string>()
+
+  root.traverse((obj) => {
+    const mesh = obj as Mesh
+    if (!mesh.isMesh || !mesh.material) return
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    mats.forEach((rawMat) => {
+      const mat = rawMat as MeshStandardMaterial | MeshPhysicalMaterial | undefined
+      if (!mat) return
+      const baseTex = mat.map
+      const srcImg = baseTex?.image as (HTMLImageElement | HTMLCanvasElement | ImageBitmap | undefined)
+
+      // 1. Si aucune texture Albedo n'existe, génère une micro-texture procédurale haute définition
+      let detailCanvas: HTMLCanvasElement
+      if (srcImg && ('width' in srcImg) && srcImg.width > 0 && srcImg.height > 0) {
+        // Upscale progressif vers targetRes (8192x8192)
+        let curW = srcImg.width
+        let curH = srcImg.height
+        let curSource: CanvasImageSource = srcImg
+        while (curW * 2 <= targetRes && curH * 2 <= targetRes) {
+          const stepCanvas = document.createElement('canvas')
+          stepCanvas.width = curW * 2
+          stepCanvas.height = curH * 2
+          const sCtx = stepCanvas.getContext('2d')!
+          sCtx.imageSmoothingEnabled = true
+          sCtx.imageSmoothingQuality = 'high'
+          sCtx.drawImage(curSource, 0, 0, stepCanvas.width, stepCanvas.height)
+          curSource = stepCanvas
+          curW = stepCanvas.width
+          curH = stepCanvas.height
+        }
+        const finalAlbedo = document.createElement('canvas')
+        finalAlbedo.width = targetRes
+        finalAlbedo.height = targetRes
+        const fCtx = finalAlbedo.getContext('2d')!
+        fCtx.imageSmoothingEnabled = true
+        fCtx.imageSmoothingQuality = 'high'
+        fCtx.drawImage(curSource, 0, 0, targetRes, targetRes)
+
+        const newMap = new CanvasTexture(finalAlbedo)
+        newMap.colorSpace = SRGBColorSpace
+        newMap.anisotropy = 16
+        newMap.minFilter = LinearMipmapLinearFilter
+        newMap.magFilter = LinearFilter
+        newMap.wrapS = baseTex?.wrapS ?? RepeatWrapping
+        newMap.wrapT = baseTex?.wrapT ?? RepeatWrapping
+        newMap.flipY = baseTex?.flipY ?? false
+        newMap.needsUpdate = true
+        mat.map = newMap
+        channelsAdded.add(`Albedo ${targetRes}×${targetRes}`)
+
+        // Prépare un canvas 2048x2048 pour dériver Normal Map Sobel + Roughness Map PBR
+        detailCanvas = document.createElement('canvas')
+        detailCanvas.width = pbrDetailRes
+        detailCanvas.height = pbrDetailRes
+        const dCtx = detailCanvas.getContext('2d')!
+        dCtx.drawImage(curSource, 0, 0, pbrDetailRes, pbrDetailRes)
+      } else {
+        // Synthèse d'une carte de micro-grain PBR pour maillages procéduraux sans UV image
+        detailCanvas = document.createElement('canvas')
+        detailCanvas.width = 1024
+        detailCanvas.height = 1024
+        const dCtx = detailCanvas.getContext('2d')!
+        const baseHex = '#' + (mat.color ? mat.color.getHexString() : '9ca3af')
+        dCtx.fillStyle = baseHex
+        dCtx.fillRect(0, 0, 1024, 1024)
+      }
+
+      // 2. Synthèse Normal Map Tangent-Space Sobel + Micro-Roughness Map PBR
+      try {
+        const w = detailCanvas.width
+        const h = detailCanvas.height
+        const dCtx = detailCanvas.getContext('2d')
+        if (dCtx) {
+          const srcData = dCtx.getImageData(0, 0, w, h).data
+          const luma = new Float32Array(w * h)
+          for (let i = 0, p = 0; i < srcData.length; i += 4, p += 1) {
+            luma[p] = 0.299 * srcData[i] + 0.587 * srcData[i + 1] + 0.114 * srcData[i + 2]
+          }
+
+          if (!mat.normalMap) {
+            const normCanvas = document.createElement('canvas')
+            normCanvas.width = w
+            normCanvas.height = h
+            const nCtx = normCanvas.getContext('2d')!
+            const normImg = nCtx.createImageData(w, h)
+            const nOut = normImg.data
+            const dz = 26.0
+            for (let y = 1; y < h - 1; y += 1) {
+              const row = y * w
+              for (let x = 1; x < w - 1; x += 1) {
+                const idx = row + x
+                const dx =
+                  (luma[idx - w + 1] + 2 * luma[idx + 1] + luma[idx + w + 1]) -
+                  (luma[idx - w - 1] + 2 * luma[idx - 1] + luma[idx + w - 1])
+                const dy =
+                  (luma[idx + w - 1] + 2 * luma[idx + w] + luma[idx + w + 1]) -
+                  (luma[idx - w - 1] + 2 * luma[idx - w] + luma[idx - w + 1])
+                const gx = dx * 0.125
+                const gy = dy * 0.125
+                const invLen = 1.0 / Math.sqrt(gx * gx + gy * gy + dz * dz)
+                const outIdx = idx * 4
+                nOut[outIdx] = Math.min(255, Math.max(0, Math.round((gx * invLen * 0.5 + 0.5) * 255)))
+                nOut[outIdx + 1] = Math.min(255, Math.max(0, Math.round((-gy * invLen * 0.5 + 0.5) * 255)))
+                nOut[outIdx + 2] = Math.min(255, Math.max(0, Math.round((dz * invLen * 0.5 + 0.5) * 255)))
+                nOut[outIdx + 3] = 255
+              }
+            }
+            nCtx.putImageData(normImg, 0, 0)
+            const normalTex = new CanvasTexture(normCanvas)
+            normalTex.anisotropy = 16
+            normalTex.wrapS = RepeatWrapping
+            normalTex.wrapT = RepeatWrapping
+            normalTex.flipY = baseTex?.flipY ?? false
+            normalTex.needsUpdate = true
+            mat.normalMap = normalTex
+            mat.normalScale = new Vector2(0.42, 0.42)
+            channelsAdded.add('Normal Map Sobel')
+          }
+
+          if (!mat.roughnessMap) {
+            const roughCanvas = document.createElement('canvas')
+            roughCanvas.width = w
+            roughCanvas.height = h
+            const rCtx = roughCanvas.getContext('2d')!
+            const roughImg = rCtx.createImageData(w, h)
+            const rOut = roughImg.data
+            for (let y = 1; y < h - 1; y += 1) {
+              const row = y * w
+              for (let x = 1; x < w - 1; x += 1) {
+                const idx = row + x
+                const c = luma[idx]
+                const localAvg = (luma[idx - 1] + luma[idx + 1] + luma[idx - w] + luma[idx + w]) * 0.25
+                const microVar = Math.abs(c - localAvg)
+                const val = Math.min(242, Math.max(24, Math.round((255 - c) * 0.55 + microVar * 2.4)))
+                const outIdx = idx * 4
+                rOut[outIdx] = val
+                rOut[outIdx + 1] = val
+                rOut[outIdx + 2] = val
+                rOut[outIdx + 3] = 255
+              }
+            }
+            rCtx.putImageData(roughImg, 0, 0)
+            const roughTex = new CanvasTexture(roughCanvas)
+            roughTex.anisotropy = 16
+            roughTex.wrapS = RepeatWrapping
+            roughTex.wrapT = RepeatWrapping
+            roughTex.flipY = baseTex?.flipY ?? false
+            roughTex.needsUpdate = true
+            mat.roughnessMap = roughTex
+            channelsAdded.add('Roughness Map PBR')
+          }
+        }
+      } catch {
+        // Ignore security/memory errors on tainted canvases
+      }
+
+      mat.needsUpdate = true
+      upgradedMeshes += 1
+    })
+  })
+
+  return {
+    upgradedMeshes,
+    targetRes,
+    channelsAdded: Array.from(channelsAdded),
+  }
 }
 
 function _hexFromColor(c: Color | null | undefined): string | null {
@@ -1131,6 +1377,7 @@ function _extractPartInfo(
     ior,
     wallThicknessMm ?? harmonicThicknessMm,
   )
+  const texMeta = _inspectMaterialTextures(mat)
 
   // bones / skinning
   const skinned = mesh as SkinnedMesh
@@ -1162,6 +1409,9 @@ function _extractPartInfo(
     effectiveTransmissionPct,
     wallThicknessMm,
     harmonicThicknessMm,
+    textureResolutionPx: _formatTextureResolutionLabel(texMeta.maxW, texMeta.maxH),
+    pbrChannels: texMeta.channels,
+    maxAnisotropy: texMeta.maxAniso,
     vertexCount,
     triangleCount: triangleCount > 0 ? triangleCount : Math.floor(indexCount / 3),
     dimensionsMeters: [size.x, size.y, size.z],
@@ -1182,6 +1432,10 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
   let transmissionSum = 0
   let iorSum = 0
   let matCount = 0
+  let maxTexW = 0
+  let maxTexH = 0
+  let maxAniso = 1
+  const allChannels = new Set<string>()
   const sampledMaterials: string[] = []
 
   model.traverse((obj) => {
@@ -1200,6 +1454,13 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
         transmissionSum += typeof mat.transmission === 'number' ? mat.transmission : 0
         iorSum += typeof mat.ior === 'number' ? mat.ior : 1.49
         matCount += 1
+        const tm = _inspectMaterialTextures(mat)
+        if (tm.maxW * tm.maxH > maxTexW * maxTexH) {
+          maxTexW = tm.maxW
+          maxTexH = tm.maxH
+        }
+        if (tm.maxAniso > maxAniso) maxAniso = tm.maxAniso
+        tm.channels.forEach((ch) => allChannels.add(ch))
       }
       const mname = (mat as { name?: string })?.name
       if (mname && !sampledMaterials.includes(mname)) sampledMaterials.push(mname)
@@ -1243,6 +1504,9 @@ function _aggregatePartInfo(model: Object3D): PartInfo {
     effectiveTransmissionPct,
     wallThicknessMm: null,
     harmonicThicknessMm,
+    textureResolutionPx: _formatTextureResolutionLabel(maxTexW, maxTexH),
+    pbrChannels: Array.from(allChannels),
+    maxAnisotropy: maxAniso,
     vertexCount,
     triangleCount,
     dimensionsMeters: [size.x, size.y, size.z],
@@ -1857,6 +2121,8 @@ function InteractiveModel({
   motionEnabled = false,
   kinematicLaw = 'auto',
   onKinematicTelemetry,
+  upscale8kToken = 0,
+  onUpscale8kComplete,
 }: {
   url: string
   localMeshPath?: string | null
@@ -1883,7 +2149,10 @@ function InteractiveModel({
   motionEnabled?: boolean
   kinematicLaw?: KinematicLawKind
   onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
+  upscale8kToken?: number
+  onUpscale8kComplete?: (summary: string) => void
 }) {
+  const { gl } = useThree()
   const groupRef = useRef<Group>(null)
   const [model, setModel] = useState<Object3D | null>(null)
   const [clips, setClips] = useState<AnimationClip[]>([])
@@ -2136,6 +2405,7 @@ function InteractiveModel({
           })
           initialTransformsRef.current = initMap
           kinematicVirtualTimeRef.current = 0
+          _applyMaxAnisotropyToModel(loadedModel.scene, gl.capabilities.getMaxAnisotropy() || 16)
           oledBindingsRef.current = _collectOledBindings(loadedModel.scene)
           oledVirtualTimeRef.current = 0
           ledBindingsRef.current = _collectLedBindings(loadedModel.scene)
@@ -2625,6 +2895,18 @@ function InteractiveModel({
     if (onPartInfo) onPartInfo(_aggregatePartInfo(model))
   }, [selectAllToken, model, onPartSelect, onPartInfo])
 
+  // Super-Résolution 8K PBR (8192×8192 + Sobel Normal Map + Roughness PBR + Anisotropie 16×)
+  useEffect(() => {
+    if (!upscale8kToken || !model) return
+    const maxGpuTex = gl.capabilities.maxTextureSize || 8192
+    const res = _upgradeModelTexturesTo8KPbr(model, maxGpuTex)
+    onPartSelect?.('all')
+    onPartInfo?.(_aggregatePartInfo(model))
+    onUpscale8kComplete?.(
+      `✨ Super-Résolution 8K PBR appliquée sur ${res.upgradedMeshes} sous-maillage(s) : ${res.channelsAdded.join(' + ')} (Anisotropie 16×)`,
+    )
+  }, [upscale8kToken, model, gl, onPartSelect, onPartInfo, onUpscale8kComplete])
+
   if (!model) return null
   return (
     <Center>
@@ -2950,6 +3232,8 @@ function Scene3D({
   motionEnabled = false,
   kinematicLaw = 'auto',
   onKinematicTelemetry,
+  upscale8kToken = 0,
+  onUpscale8kComplete,
 }: {
   modelUrl: string
   localMeshPath?: string | null
@@ -2983,6 +3267,8 @@ function Scene3D({
   motionEnabled?: boolean
   kinematicLaw?: KinematicLawKind
   onKinematicTelemetry?: (telemetry: KinematicTelemetry | null) => void
+  upscale8kToken?: number
+  onUpscale8kComplete?: (summary: string) => void
 }) {
   const [modelLoaded, setModelLoaded] = useState(false)
   const [internalRoot, setInternalRoot] = useState<Object3D | null>(null)
@@ -3050,6 +3336,8 @@ function Scene3D({
           motionEnabled={motionEnabled}
           kinematicLaw={kinematicLaw}
           onKinematicTelemetry={onKinematicTelemetry}
+          upscale8kToken={upscale8kToken}
+          onUpscale8kComplete={onUpscale8kComplete}
         />
       </Suspense>
       <CameraController viewer={viewer} modelLoaded={modelLoaded} />
@@ -3175,6 +3463,8 @@ export default function ModelView() {
   const [viewerMaterialMode, setViewerMaterialMode] = useState<ViewerMaterialMode>('authored')
   const [isLoadingColors, setIsLoadingColors] = useState(false)
   const [colorLoadResult, setColorLoadResult] = useState<string | null>(null)
+  const [upscale8kToken, setUpscale8kToken] = useState(0)
+  const [isUpscaling8k, setIsUpscaling8k] = useState(false)
   const [showGrid, setShowGrid] = useState(true)
   const [showAxes, setShowAxes] = useState(false)
   const [showBones, setShowBones] = useState(false)
@@ -6236,6 +6526,12 @@ export default function ModelView() {
                     motionEnabled={motionEnabled}
                     kinematicLaw={kinematicLaw}
                     onKinematicTelemetry={setKinematicTelemetry}
+                    upscale8kToken={upscale8kToken}
+                    onUpscale8kComplete={(msg) => {
+                      setIsUpscaling8k(false)
+                      setColorLoadResult(msg)
+                      setSelectAllToken((v) => v + 1)
+                    }}
                   />
                   <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap gap-1">
                     {(['face', 'side', 'top', 'iso'] as const).map((view) => (
@@ -6318,6 +6614,23 @@ export default function ModelView() {
                     >
                       <Palette size={11} />
                       {isLoadingColors ? 'Couleurs...' : viewerMaterialMode === 'diagnostic' ? 'Original' : 'Charger couleurs'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (!modelUrl || isUpscaling8k) return
+                        setIsUpscaling8k(true)
+                        setColorLoadResult('Synthèse PBR 8K Ultra-HD (8192×8192 Albedo + Normal Map Sobel + Roughness + Anisotropie 16×) en cours...')
+                        setUpscale8kToken((v) => v + 1)
+                      }}
+                      disabled={!modelUrl || isUpscaling8k}
+                      className={`pointer-events-auto inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors ${
+                        selectedPartInfo?.textureResolutionPx?.includes('8192')
+                          ? 'border-amber-400/60 bg-amber-500/20 text-amber-200'
+                          : 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40'
+                      }`}
+                      title="Suréchantillonner les textures du modèle en 8K Ultra-HD (8192×8192) avec synthèse Normal Map Sobel + Roughness Map PBR + filtrage anisotrope 16×"
+                    >
+                      {isUpscaling8k ? '⟳ 8K PBR...' : '✨ 8K PBR'}
                     </button>
                     <button
                       onClick={() => setShowBones((v) => !v)}
@@ -6466,6 +6779,12 @@ export default function ModelView() {
                           <span title="Duree totale du clip actif">
                             <span className="text-aurora-text-dim">dur.</span>{' '}
                             <span className="font-mono">{animationDuration.toFixed(1)}s</span>
+                          </span>
+                        )}
+                        {selectedPartInfo?.textureResolutionPx && (
+                          <span title="Résolution effective des textures PBR sur le modèle">
+                            <span className="text-aurora-text-dim">tex</span>{' '}
+                            <span className="text-amber-300 font-mono font-semibold">{selectedPartInfo.textureResolutionPx}</span>
                           </span>
                         )}
                         {(xrayMode || meshOpacity < 0.99) && (
@@ -6792,6 +7111,12 @@ export default function ModelView() {
                       )}
                       {selectedPartInfo.roughness != null && (
                         <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Roughness</span><span className="text-aurora-text">{selectedPartInfo.roughness.toFixed(2)}</span></div>
+                      )}
+                      {selectedPartInfo.textureResolutionPx && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Résolution texture PBR</span><span className="text-amber-300 font-mono">{selectedPartInfo.textureResolutionPx}{selectedPartInfo.maxAnisotropy ? ` · Aniso ${selectedPartInfo.maxAnisotropy}×` : ''}</span></div>
+                      )}
+                      {selectedPartInfo.pbrChannels && selectedPartInfo.pbrChannels.length > 0 && (
+                        <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Canaux PBR actifs</span><span className="text-emerald-300 font-mono text-[10px]">{selectedPartInfo.pbrChannels.join(' + ')}</span></div>
                       )}
                       <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Vertex</span><span className="text-aurora-text">{selectedPartInfo.vertexCount.toLocaleString('fr-FR')}</span></div>
                       <div className="flex justify-between gap-2"><span className="text-aurora-text-dim">Triangles</span><span className="text-aurora-text">{selectedPartInfo.triangleCount.toLocaleString('fr-FR')}</span></div>

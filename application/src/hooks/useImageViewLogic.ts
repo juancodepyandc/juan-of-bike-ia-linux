@@ -345,26 +345,30 @@ export function useImageViewLogic() {
 
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [upscaling, setUpscaling] = useState(false)
-  const upscaleCurrent = async (scale: 2 | 4) => {
+  const upscaleCurrent = async (scale: 2 | 4 | 8) => {
     if (!current || upscaling) return
     setUpscaling(true)
+    setNotice(scale === 8 ? 'Super-Résolution 8K UHD (8192px) en cours…' : `Super-Résolution ${scale}× en cours…`)
     try {
       const mod = await import('../utils/upscaleImage')
-      const { url, method } = await mod.upscaleAuto(current.url, scale)
+      const { url, method, width, height } = await mod.upscaleAuto(current.url, scale)
+      const label = scale === 8 ? '8K' : `x${scale}`
       try {
         const blob = await fetch(url).then((r) => r.blob())
-        const newId = `${current.id}-x${scale}-${method}`
+        const newId = `${current.id}-${label}-${method}`
         const savedUrl = await saveBlob(newId, blob, 'image')
         const card: GeneratedCard = { ...current, id: newId, url: savedUrl }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
       } catch {
-        const card: GeneratedCard = { ...current, id: `${current.id}-x${scale}-${method}`, url }
+        const card: GeneratedCard = { ...current, id: `${current.id}-${label}-${method}`, url }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
       }
+      setNotice(`Super-Résolution ${label} terminée : ${width}×${height} px (${method})`)
     } catch (err) {
       console.warn('[upscale]', err)
+      setError(err instanceof Error ? err.message : String(err))
     } finally { setUpscaling(false) }
   }
 

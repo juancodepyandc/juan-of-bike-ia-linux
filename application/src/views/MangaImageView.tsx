@@ -217,21 +217,22 @@ export default function MangaImageView() {
   }, [])
   const [inpaintOpen, setInpaintOpen] = useState(false)
   const [upscaling, setUpscaling] = useState(false)
-  const upscaleCurrent = async (scale: 2 | 4) => {
+  const upscaleCurrent = async (scale: 2 | 4 | 8) => {
     if (!current || upscaling) return
     setUpscaling(true)
     try {
       const mod = await import('../utils/upscaleImage')
       const { url, method } = await mod.upscaleAuto(current.url, scale)
+      const label = scale === 8 ? '8K' : `x${scale}`
       try {
         const blob = await fetch(url).then((r) => r.blob())
-        const newId = `${current.id}-x${scale}-${method}`
+        const newId = `${current.id}-${label}-${method}`
         const savedUrl = await saveBlob(newId, blob, 'image')
         const card: GeneratedCard = { ...current, id: newId, url: savedUrl }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
       } catch {
-        const card: GeneratedCard = { ...current, id: `${current.id}-x${scale}-${method}`, url }
+        const card: GeneratedCard = { ...current, id: `${current.id}-${label}-${method}`, url }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
       }
@@ -496,8 +497,14 @@ export default function MangaImageView() {
           )}
           {current && !generating && (
             <button type="button" className="mi-upscale is-four" disabled={upscaling}
-              onClick={() => void upscaleCurrent(4)} title="Upscale 4x">
+              onClick={() => void upscaleCurrent(4)} title="Upscale 4x (4K)">
               {upscaling ? '…' : '4×'}
+            </button>
+          )}
+          {current && !generating && (
+            <button type="button" className="mi-upscale is-eight" disabled={upscaling}
+              onClick={() => void upscaleCurrent(8)} title="Super-Résolution 8K UHD (8192px)">
+              {upscaling ? '…' : '✨ 8K'}
             </button>
           )}
           {current && !generating && (

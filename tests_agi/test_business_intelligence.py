@@ -288,5 +288,60 @@ def test_persistent_memory_model_promotion_rollback_and_Flask_routes(tmp_path: P
         t_data = r_train.get_json()
         assert t_data["ok"] is True
         assert Path(t_data["checkpoint_path"]).is_file()
+
+        # 5. Verify live real-time paper portfolio tick (/api/business/lab/live-tick)
+        r_tick = client.post("/api/business/lab/live-tick", json={"days_elapsed": 1.0})
+        assert r_tick.status_code == 200
+        tick_data = r_tick.get_json()
+        assert tick_data["ok"] is True
+        assert tick_data["portfolio"]["real_money_at_risk_eur"] == 0.0
+        assert "tick_events" in tick_data
+        assert len(tick_data["tick_events"]) >= 1
+
+        # 6. Verify live paper actions (/api/business/lab/action) and Risk Manager reserve protection
+        r_act = client.post(
+            "/api/business/lab/action",
+            json={"action": "buy_asset", "instrument_id": "MSCI_WORLD_ETF", "amount_eur": 500},
+        )
+        assert r_act.status_code == 200
+        act_data = r_act.get_json()
+        assert act_data["ok"] is True
+        assert act_data["portfolio"]["real_money_at_risk_eur"] == 0.0
+        assert "action_summary" in act_data
+
+        # 7. Verify Conversational Business Copilot (/api/business/chat) in Beginner Mode (zero technical jargon)
+        r_chat_beg = client.post(
+            "/api/business/chat",
+            json={
+                "message": "J'ai 5 000 €, que me conseilles-tu de faire en direct aujourd'hui ?",
+                "pedagogical_mode": True,
+                "capital_eur": 5000,
+            },
+        )
+        assert r_chat_beg.status_code == 200
+        chat_beg = r_chat_beg.get_json()
+        assert chat_beg["ok"] is True
+        assert chat_beg["pedagogical_mode"] is True
+        reply_beg = chat_beg["reply"]
+        # Beginner mode must never leak quant/tax jargon
+        for forbidden_jargon in ("Sortino", "IC 95%", "Drawdown P90", "Walk-Forward", "DSO", "BFR"):
+            assert forbidden_jargon not in reply_beg
+        assert len(chat_beg["suggested_prompts"]) >= 3
+
+        # 8. Verify Conversational Business Copilot in Expert Mode
+        r_chat_exp = client.post(
+            "/api/business/chat",
+            json={
+                "message": "Analyse quant complète avec Sortino et Walk-Forward sur 10 000 €",
+                "pedagogical_mode": False,
+                "capital_eur": 10000,
+            },
+        )
+        assert r_chat_exp.status_code == 200
+        chat_exp = r_chat_exp.get_json()
+        assert chat_exp["ok"] is True
+        assert chat_exp["pedagogical_mode"] is False
+        assert "Sortino" in chat_exp["reply"]
     finally:
         os.environ.pop("AURORA_BUSINESS_OFFLINE", None)
+
