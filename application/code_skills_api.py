@@ -778,6 +778,16 @@ def inspect_code_agents_and_toolchains(workspace: str | pathlib.Path = ".") -> d
         "make_cmake": (shutil.which("make") or shutil.which("cmake")) is not None,
     }
 
+    gpu_info: dict[str, Any] = {"available": False}
+    try:
+        from application.comfy_runtime import gpu_status
+        gpu_info = gpu_status()
+    except Exception:
+        pass
+
+    kaggle_sync_dir = pathlib.Path(__file__).resolve().parents[1] / "kaggle_sync"
+    kaggle_ready = bool(shutil.which("kaggle") is not None or kaggle_sync_dir.is_dir())
+
     return {
         "ok": True,
         "skillsCount": len(skills),
@@ -788,6 +798,8 @@ def inspect_code_agents_and_toolchains(workspace: str | pathlib.Path = ".") -> d
         "codePipelineRoles": code_pipeline_roles,
         "codeSubAgentRoles": code_pipeline_roles,
         "toolchains": toolchains,
+        "gpuStatus": gpu_info,
+        "kaggleReady": kaggle_ready,
     }
 
 

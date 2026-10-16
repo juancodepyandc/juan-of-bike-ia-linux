@@ -59,7 +59,7 @@ def _manifold64(mesh):
 
 
 def insertion_directions(mesh, limit=12):
-    """Axes plus dominant surface normals, ranked deterministically by real area."""
+    """Axes plus dominant surface normals and principal diagonals, ranked deterministically."""
     directions=[np.eye(3)[i]*sign for i in range(3) for sign in [1,-1]]
     # Cap candidate research; more directions or curved paths need a planner.
     indices=np.argsort(-mesh.area_faces,kind='stable')[:256]
@@ -71,7 +71,18 @@ def insertion_directions(mesh, limit=12):
         for value in [candidate,-candidate]:
             if not any(np.dot(value,existing)>1-1e-5 for existing in directions):directions.append(value.copy())
             if len(directions)>=limit:return directions
-    return directions
+    diagonals=[
+        [1.,1.,0.],[-1.,-1.,0.],[1.,-1.,0.],[-1.,1.,0.],
+        [0.,1.,1.],[0.,-1.,-1.],[1.,0.,1.],[-1.,0.,-1.],
+        [1.,1.,1.],[-1.,-1.,-1.],
+    ]
+    for raw_diag in diagonals:
+        if len(directions)>=limit:break
+        vec=np.asarray(raw_diag,dtype=float)
+        vec=vec/float(np.linalg.norm(vec))
+        if not any(np.dot(vec,existing)>1-1e-5 for existing in directions):
+            directions.append(vec)
+    return directions[:limit]
 
 
 def verify_translation(report, root, part_id, translation_mm=None, *, direction_index=0, cursor=0, batch_size=32):
@@ -146,3 +157,21 @@ def evaluate_insertion(report, root, part_id, translation_mm=None, *, direction_
                   status='blocked' if blocked else 'inconclusive' if uncertain else 'clear',
                   continuous_collision_validated=not blocked and not uncertain)
     return result
+
+
+def find_clear_insertion(report, root, part_id):
+    """Evaluate all candidate extraction directions and select the shortest verified clear path."""
+    first=evaluate_insertion(report,root,part_id,direction_index=0)
+    candidates=[first]
+    for idx in range(1,first['direction_count']):
+        candidates.append(evaluate_insertion(report,root,part_id,direction_index=idx))
+    clear=[c for c in candidates if c['status']=='clear']
+    selected=min(clear,key=lambda c:float(np.linalg.norm(c['translation_mm']))) if clear else min(candidates,key=lambda c:(len(c['blocked_by']),len(c['uncertain_pairs']),float(np.linalg.norm(c['translation_mm']))))
+    return {
+        'part_id':part_id,
+        'clear_count':len(clear),
+        'direction_count':len(candidates),
+        'selected':selected,
+        'candidates':candidates,
+    }
+

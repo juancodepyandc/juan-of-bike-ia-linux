@@ -34,7 +34,8 @@ const report=await response.json();if(report.mode!=='assembly')throw Error('Doss
 if(report.textured_assembly_available===false){const option=$('appearance').querySelector('option[value="textured"]');option.disabled=true;option.textContent='Textures non fournies';}
 const titlePrefix=report.title?report.title+'\n':'';
 const ap=report.assembly_precision;
-const precisionLine=ap?`\nMasse ~${ap.total_estimated_mass_g.toFixed(1)} g · CdG (${ap.center_of_mass_mm.map(v=>v.toFixed(1)).join(', ')}) mm · ${ap.stable_at_rest?'Équilibre stable':'Porte-à-faux'}`:'';
+const interStatus=ap?(ap.collision_free_at_rest===false?` · Interférence 3D (${Number(ap.rest_interference_volume_mm3||0).toFixed(2)} mm³)`:' · 0 collision 3D'):'';
+const precisionLine=ap?`\nMasse ~${ap.total_estimated_mass_g.toFixed(1)} g · CdG (${ap.center_of_mass_mm.map(v=>v.toFixed(1)).join(', ')}) mm · ${ap.stable_at_rest?'Équilibre stable':'Porte-à-faux'}${interStatus}`:'';
 $('summary').textContent=`${titlePrefix}${report.piece_count} pièces · ${report.pin_count} pions · ${report.profile.name}\n${report.dimensions_mm.map(v=>v.toFixed(2)).join(' × ')} mm${precisionLine}`;
 $('fabrication').textContent=report.fabrication?.instructions||'Couleurs : repères de pièces, pas des filaments.';
 const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.localClippingEnabled=true;renderer.setPixelRatio(Math.min(devicePixelRatio,mobile.matches?1.5:2));renderer.setClearColor(0x131b29);renderer.toneMapping=THREE.ACESFilmicToneMapping;stage.appendChild(renderer.domElement);

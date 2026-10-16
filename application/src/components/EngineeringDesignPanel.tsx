@@ -44,11 +44,23 @@ type TelemetryAssemblyPrecision = {
   support_footprint_xy_mm?: [number[], number[]] | null
   stable_at_rest?: boolean | null
   stability_margin_mm?: number | null
+  collision_free_at_rest?: boolean | null
+  rest_interference_volume_mm3?: number | null
+  rest_interferences?: {
+    parts: [string, string]
+    names?: [string, string]
+    interference_volume_mm3: number
+    repair_translation_mm?: number[]
+  }[]
   interface_clearances?: {
-    pair: [string, string]
-    min_aabb_gap_mm: number
+    pair?: [string, string]
+    parts?: [string, string]
+    min_aabb_gap_mm?: number
+    aabb_clearance_mm?: number
+    interference_volume_mm3?: number
+    repair_translation_mm?: number[]
     axes_gaps_mm?: number[]
-    status: string
+    status?: string
   }[]
 }
 type TelemetryBomItem = { name: string; quantity: number; specification: string }
@@ -845,50 +857,77 @@ export default function EngineeringDesignPanel({ profile, objectiveHint = '' }: 
 
               {/* Assembly Precision & Global Metrology */}
               {draft.assembly_precision && (
-                <div className="grid grid-cols-2 gap-2 rounded-lg border border-aurora-border/50 bg-aurora-surface-2/60 p-2.5 sm:grid-cols-4">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Masse totale estimée</div>
-                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
-                      {draft.assembly_precision.total_estimated_mass_g != null
-                        ? `${Number(draft.assembly_precision.total_estimated_mass_g).toFixed(1)} g`
-                        : '—'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Volume / Surface</div>
-                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
-                      {draft.assembly_precision.total_volume_mm3 != null
-                        ? `${(Number(draft.assembly_precision.total_volume_mm3) / 1000).toFixed(2)} cm³`
-                        : '—'}
-                      {draft.assembly_precision.total_surface_area_mm2 != null
-                        ? ` · ${(Number(draft.assembly_precision.total_surface_area_mm2) / 100).toFixed(1)} cm²`
-                        : ''}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Centre de gravité (XYZ)</div>
-                    <div className="mt-0.5 font-mono font-semibold text-aurora-text">
-                      {Array.isArray(draft.assembly_precision.center_of_mass_mm) && draft.assembly_precision.center_of_mass_mm.length === 3
-                        ? `${draft.assembly_precision.center_of_mass_mm.map((v) => Number(v).toFixed(1)).join(', ')} mm`
-                        : '—'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Équilibre statique</div>
-                    <div className={`mt-0.5 font-mono font-semibold ${
-                      draft.assembly_precision.stable_at_rest === true
-                        ? 'text-emerald-300'
-                        : draft.assembly_precision.stable_at_rest === false
-                          ? 'text-amber-300'
-                          : 'text-aurora-text'
-                    }`}>
-                      {draft.assembly_precision.stable_at_rest === true
-                        ? `Stable (+${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
-                        : draft.assembly_precision.stable_at_rest === false
-                          ? `Bascule (${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
+                <div className="space-y-2 rounded-lg border border-aurora-border/50 bg-aurora-surface-2/60 p-2.5">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Masse totale estimée</div>
+                      <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                        {draft.assembly_precision.total_estimated_mass_g != null
+                          ? `${Number(draft.assembly_precision.total_estimated_mass_g).toFixed(1)} g`
                           : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Volume / Surface</div>
+                      <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                        {draft.assembly_precision.total_volume_mm3 != null
+                          ? `${(Number(draft.assembly_precision.total_volume_mm3) / 1000).toFixed(2)} cm³`
+                          : '—'}
+                        {draft.assembly_precision.total_surface_area_mm2 != null
+                          ? ` · ${(Number(draft.assembly_precision.total_surface_area_mm2) / 100).toFixed(1)} cm²`
+                          : ''}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Centre de gravité (XYZ)</div>
+                      <div className="mt-0.5 font-mono font-semibold text-aurora-text">
+                        {Array.isArray(draft.assembly_precision.center_of_mass_mm) && draft.assembly_precision.center_of_mass_mm.length === 3
+                          ? `${draft.assembly_precision.center_of_mass_mm.map((v) => Number(v).toFixed(1)).join(', ')} mm`
+                          : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Équilibre statique</div>
+                      <div className={`mt-0.5 font-mono font-semibold ${
+                        draft.assembly_precision.stable_at_rest === true
+                          ? 'text-emerald-300'
+                          : draft.assembly_precision.stable_at_rest === false
+                            ? 'text-amber-300'
+                            : 'text-aurora-text'
+                      }`}>
+                        {draft.assembly_precision.stable_at_rest === true
+                          ? `Stable (+${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
+                          : draft.assembly_precision.stable_at_rest === false
+                            ? `Bascule (${Number(draft.assembly_precision.stability_margin_mm ?? 0).toFixed(1)} mm)`
+                            : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-aurora-text-dim">Interférence 3D repos</div>
+                      <div className={`mt-0.5 font-mono font-semibold ${
+                        draft.assembly_precision.collision_free_at_rest !== false
+                          ? 'text-emerald-300'
+                          : 'text-amber-300'
+                      }`}>
+                        {draft.assembly_precision.collision_free_at_rest !== false
+                          ? '0.00 mm³ (Sain)'
+                          : `${Number(draft.assembly_precision.rest_interference_volume_mm3 ?? 0).toFixed(2)} mm³`}
+                      </div>
                     </div>
                   </div>
+                  {Array.isArray(draft.assembly_precision.rest_interferences) && draft.assembly_precision.rest_interferences.length > 0 && (
+                    <div className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+                      <strong>Collisions volumiques au repos :</strong>{' '}
+                      {draft.assembly_precision.rest_interferences.map((it, idx) => (
+                        <span key={idx} className="mr-3 font-mono">
+                          {it.parts.join(' ↔ ')} ({Number(it.interference_volume_mm3).toFixed(2)} mm³
+                          {Array.isArray(it.repair_translation_mm)
+                            ? ` · vecteur correction [${it.repair_translation_mm.map((v) => Number(v).toFixed(2)).join(', ')}] mm`
+                            : ''})
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 

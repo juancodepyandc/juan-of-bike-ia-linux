@@ -83,3 +83,22 @@ def test_purchased_component_envelope_is_not_printed_or_forced_into_bed(tmp_path
     assert len(report['filament_plan'])==1
     assert all(p['id']!='piece_02' for plate in report['print_plates'] for p in plate['parts'])
     assert 'exclu des plaques' in (tmp_path/'DOSSIER.md').read_text(encoding='utf-8')
+
+
+def test_rest_pose_boolean_interference_and_assert_assembly_quality(tmp_path):
+    from application.engineering_project import assert_assembly_quality
+    files(tmp_path)
+    clean_report=build_project(spec(),tmp_path)
+    cert=assert_assembly_quality(clean_report,tmp_path)
+    assert cert['ok'] and cert['collision_free_at_rest'] and cert['rest_interference_volume_mm3']==0.0
+    overlapping=spec()
+    overlapping['parts'][1]['assembly_matrix_mm']=[[1,0,0,5],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+    bad_report=build_project(overlapping,tmp_path)
+    ap=bad_report['assembly_precision']
+    assert ap['collision_free_at_rest'] is False
+    assert ap['rest_interference_volume_mm3']>1.0
+    assert len(ap['rest_interferences'])==1
+    assert len(ap['rest_interferences'][0]['repair_translation_mm'])==3
+    with pytest.raises(ValueError,match='Interférence volumique 3D'):
+        assert_assembly_quality(bad_report,tmp_path)
+

@@ -102,3 +102,17 @@ def test_large_world_coordinates_do_not_erase_a_thin_collision(tmp_path):
     assert distant['blocked_by'][0]['swept_envelope_intersection_mm3']==pytest.approx(local['blocked_by'][0]['swept_envelope_intersection_mm3'],abs=1e-8)
     assert distant['verification_precision']=='float64'
     assert distant['verification_origin_mm']==[400_000_000]*3
+
+
+def test_find_clear_insertion_explores_diagonal_candidates(tmp_path):
+    from application.engineering_insertion import find_clear_insertion
+    # Block +X and -X, leave other directions clear
+    report=assembly(tmp_path,[('moving',trimesh.creation.box([1,1,1]),[0,0,0]),
+                              ('wall_pos_x',trimesh.creation.box([.1,4,4]),[3,0,0]),
+                              ('wall_neg_x',trimesh.creation.box([.1,4,4]),[-3,0,0])])
+    summary=find_clear_insertion(report,tmp_path,'moving')
+    assert summary['direction_count']==12
+    assert summary['clear_count']>=4
+    assert summary['selected']['status']=='clear'
+    assert summary['selected']['continuous_collision_validated'] is True
+

@@ -620,14 +620,27 @@ def inspect_mesh(raw_bytes: bytes, suffix: str, raw_config: dict) -> dict:
     except Exception:
         parts_split = 1
 
+    is_vol = bool(mesh.is_volume)
+    vol_mm3 = round(float(mesh.volume), 2) if is_vol else None
+    area_mm2 = round(float(mesh.area), 2)
+    est_mass_g = round(vol_mm3 * 1.24 * 1e-3, 2) if vol_mm3 is not None and vol_mm3 > 0 else None
+    char_thickness_mm = round(2.0 * float(mesh.volume) / max(float(mesh.area), 1e-6), 3) if is_vol and float(mesh.volume) > 0 else None
+    com_raw = mesh.center_mass if is_vol and np.isfinite(mesh.center_mass).all() else mesh.bounds.mean(axis=0)
+    com_mm = [round(float(x), 2) for x in com_raw.tolist()]
+
     return {
         'ok': True,
         'raw_extents': raw_extents,
         'dimensions_mm': dims,
         'scale_factor': round(scale, 6),
         'watertight': bool(mesh.is_watertight),
-        'is_volume': bool(mesh.is_volume),
-        'volume_mm3': round(float(mesh.volume), 2) if mesh.is_volume else None,
+        'is_volume': is_vol,
+        'volume_mm3': vol_mm3,
+        'surface_area_mm2': area_mm2,
+        'estimated_mass_g': est_mass_g,
+        'characteristic_thickness_mm': char_thickness_mm,
+        'center_of_mass_mm': com_mm,
+        'euler_number': int(mesh.euler_number),
         'face_count': int(len(mesh.faces)),
         'vertex_count': int(len(mesh.vertices)),
         'connected_components': int(parts_split),
@@ -646,7 +659,7 @@ def inspect_mesh(raw_bytes: bytes, suffix: str, raw_config: dict) -> dict:
         'min_end_slab_mm': min_end_slab_mm,
         'max_no_cut_size_mm': max_no_cut_size_mm,
         'max_single_axis_size_mm': max_single_axis_size_mm,
-        'ready_for_assembly': len(blockers) == 0 and bool(mesh.is_volume),
+        'ready_for_assembly': len(blockers) == 0 and is_vol,
         'blockers': blockers,
         'warnings': warnings,
     }

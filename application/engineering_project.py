@@ -29,7 +29,7 @@ def build_project(spec, root='.', *, require_sources=False):
     if bed.shape!=(3,) or not np.isfinite(bed).all() or np.any(bed<10): raise ValueError('Finite build volume required.')
     margin=float(spec.get('margin_mm',5));usable=bed-2*margin
     if not math.isfinite(margin) or margin<0 or np.any(usable<=0): raise ValueError('Invalid build margin.')
-    scene=trimesh.Scene();exploded=trimesh.Scene();measured=[];ids=set();source_files=[];cursor=None
+    scene=trimesh.Scene();exploded=trimesh.Scene();measured=[];placed_meshes=[];ids=set();source_files=[];cursor=None
     for index,part in enumerate(parts):
         if not isinstance(part,dict) or not isinstance(part.get('id'),str) or part['id'] in ids: raise ValueError('Unique part IDs required.')
         ids.add(part['id']);path=(root/str(part.get('file',''))).resolve()
@@ -46,7 +46,7 @@ def build_project(spec, root='.', *, require_sources=False):
         color=part.get('color_rgba',palette[index%len(palette)])
         if isinstance(color,list) and len(color)==4 and all(type(c) in {int,float} and math.isfinite(c) and 0<=c<=1 for c in color):color=[round(c*255) for c in color]
         if not isinstance(color,list) or len(color)!=4 or any(type(c)!=int or not 0<=c<=255 for c in color): raise ValueError('RGBA bytes or normalized RGBA values required.')
-        mesh.visual.face_colors=color;placed=mesh.copy();placed.apply_transform(transform)
+        mesh.visual.face_colors=color;placed=mesh.copy();placed.apply_transform(transform);placed_meshes.append(placed)
         node=f'piece_{index+1:02}';scene.add_geometry(placed,node_name=node,geom_name=node)
         gap=max(10.,max(bed)*.08)
         offset=0. if cursor is None else max(gap*index,cursor-placed.bounds[0,0])
@@ -134,17 +134,44 @@ def build_project(spec, root='.', *, require_sources=False):
         min_stability_margin=round(min(margins_xy),2)
         stable_at_rest=bool(min_stability_margin>=0.0)
         interface_clearances=[]
+        rest_interferences=[]
+        total_interference_vol=0.0
         for i_a,pa in enumerate(measured):
             ba0,ba1=np.asarray(pa['assembled_bounds_mm'][0]),np.asarray(pa['assembled_bounds_mm'][1])
-            for pb in measured[i_a+1:]:
+            for off_b,pb in enumerate(measured[i_a+1:],start=1):
+                i_b=i_a+off_b
                 bb0,bb1=np.asarray(pb['assembled_bounds_mm'][0]),np.asarray(pb['assembled_bounds_mm'][1])
                 sep=np.maximum(0.0,np.maximum(ba0-bb1,bb0-ba1))
                 aabb_dist=float(np.linalg.norm(sep))
+                overlap_xyz=np.minimum(ba1,bb1)-np.maximum(ba0,bb0)
+                inter_vol=0.0
+                repair_vec=None
+                if np.all(overlap_xyz>0):
+                    try:
+                        import manifold3d as _m3d
+                        ma=_m3d.Manifold(_m3d.Mesh64(vert_properties=np.ascontiguousarray(placed_meshes[i_a].vertices,dtype=np.float64),tri_verts=np.ascontiguousarray(placed_meshes[i_a].faces,dtype=np.uint64)))
+                        mb=_m3d.Manifold(_m3d.Mesh64(vert_properties=np.ascontiguousarray(placed_meshes[i_b].vertices,dtype=np.float64),tri_verts=np.ascontiguousarray(placed_meshes[i_b].faces,dtype=np.uint64)))
+                        inter=ma^mb
+                        if inter.status()==_m3d.Error.NoError:
+                            inter_vol=round(max(0.0,float(inter.volume())),4)
+                    except Exception:
+                        inter_vol=0.0
+                    if inter_vol>1e-4:
+                        total_interference_vol+=inter_vol
+                        axis_min=int(np.argmin(overlap_xyz))
+                        ca=np.asarray(pa['center_of_mass_mm'],dtype=float)
+                        cb=np.asarray(pb['center_of_mass_mm'],dtype=float)
+                        sign=1.0 if cb[axis_min]>=ca[axis_min] else -1.0
+                        rv=[0.0,0.0,0.0]
+                        rv[axis_min]=round(float(sign*(overlap_xyz[axis_min]+0.2)),3)
+                        repair_vec=rv
+                        rest_interferences.append({'parts':[pa['id'],pb['id']],'design_ids':[pa['design_id'],pb['design_id']],'names':[pa['name'],pb['name']],'interference_volume_mm3':inter_vol,'repair_translation_mm':repair_vec})
                 if aabb_dist<=25.0 and len(interface_clearances)<32:
-                    overlap_xyz=np.minimum(ba1,bb1)-np.maximum(ba0,bb0)
                     min_gap=round(float(-np.min(overlap_xyz)) if np.all(overlap_xyz>0) else round(aabb_dist,3),3)
-                    interface_clearances.append({'parts':[pa['id'],pb['id']],'names':[pa['name'],pb['name']],'aabb_clearance_mm':min_gap})
-        report['assembly_precision']={'total_volume_mm3':round(total_vol,2),'total_surface_area_mm2':round(total_area,2),'total_estimated_mass_g':round(total_mass,2),'center_of_mass_mm':[round(float(x),2) for x in global_com.tolist()],'overall_bounds_mm':[[round(float(x),2) for x in all_low.tolist()],[round(float(x),2) for x in all_high.tolist()]],'overall_dimensions_mm':[round(float(x),2) for x in overall_span.tolist()],'support_footprint_xy_mm':[[round(float(x),2) for x in fp_low.tolist()],[round(float(x),2) for x in fp_high.tolist()]],'stable_at_rest':stable_at_rest,'stability_margin_mm':min_stability_margin,'total_dof':sum(j.get('dof',0) for j in report['mechanism_joints']),'interface_clearances':interface_clearances}
+                    entry={'parts':[pa['id'],pb['id']],'names':[pa['name'],pb['name']],'aabb_clearance_mm':min_gap,'interference_volume_mm3':inter_vol}
+                    if repair_vec is not None:entry['repair_translation_mm']=repair_vec
+                    interface_clearances.append(entry)
+        report['assembly_precision']={'total_volume_mm3':round(total_vol,2),'total_surface_area_mm2':round(total_area,2),'total_estimated_mass_g':round(total_mass,2),'center_of_mass_mm':[round(float(x),2) for x in global_com.tolist()],'overall_bounds_mm':[[round(float(x),2) for x in all_low.tolist()],[round(float(x),2) for x in all_high.tolist()]],'overall_dimensions_mm':[round(float(x),2) for x in overall_span.tolist()],'support_footprint_xy_mm':[[round(float(x),2) for x in fp_low.tolist()],[round(float(x),2) for x in fp_high.tolist()]],'stable_at_rest':stable_at_rest,'stability_margin_mm':min_stability_margin,'total_dof':sum(j.get('dof',0) for j in report['mechanism_joints']),'collision_free_at_rest':bool(total_interference_vol<=0.05),'rest_interference_volume_mm3':round(total_interference_vol,4),'rest_interferences':rest_interferences,'interface_clearances':interface_clearances}
     else:
         report['assembly_precision']=None
     report['fastening_assessment']=[]
@@ -169,7 +196,8 @@ def build_project(spec, root='.', *, require_sources=False):
     lines += ['- '+str(v) for v in [*report['constraints'],*assumptions]]
     if report.get('assembly_precision'):
         ap=report['assembly_precision']
-        lines += ['','## Métrologie et précision d’assemblage',f"- Dimensions hors-tout assemblées : {' × '.join(f'{v:.2f}' for v in ap['overall_dimensions_mm'])} mm",f"- Masse totale estimée : {ap['total_estimated_mass_g']:.2f} g (volume total {ap['total_volume_mm3']:.2f} mm³ · surface {ap['total_surface_area_mm2']:.2f} mm²)",f"- Centre de gravité global (XYZ) : {' / '.join(f'{v:.2f}' for v in ap['center_of_mass_mm'])} mm",f"- Équilibre statique au repos : {'Stable (marge ' + str(ap['stability_margin_mm']) + ' mm)' if ap['stable_at_rest'] else 'Porte-à-faux détecté (marge ' + str(ap['stability_margin_mm']) + ' mm — prévoir socle ou lestage)'}"]
+        inter_txt='Aucune collision (0.00 mm³)' if ap.get('collision_free_at_rest',True) else f"Interférence détectée ({ap.get('rest_interference_volume_mm3',0):.3f} mm³ sur {len(ap.get('rest_interferences',[]))} paire(s))"
+        lines += ['','## Métrologie et précision d’assemblage',f"- Dimensions hors-tout assemblées : {' × '.join(f'{v:.2f}' for v in ap['overall_dimensions_mm'])} mm",f"- Masse totale estimée : {ap['total_estimated_mass_g']:.2f} g (volume total {ap['total_volume_mm3']:.2f} mm³ · surface {ap['total_surface_area_mm2']:.2f} mm²)",f"- Centre de gravité global (XYZ) : {' / '.join(f'{v:.2f}' for v in ap['center_of_mass_mm'])} mm",f"- Équilibre statique au repos : {'Stable (marge ' + str(ap['stability_margin_mm']) + ' mm)' if ap['stable_at_rest'] else 'Porte-à-faux détecté (marge ' + str(ap['stability_margin_mm']) + ' mm — prévoir socle ou lestage)'}",f"- Contrôle d’interférence volumique 3D au repos : {inter_txt}"]
     lines += ['','## Architecture et composants','| Élément | Quantité | Spécification / dimensions | Pièces concernées |','|---|---:|---|---|']
     def cell(value):return str(value).replace('|','\\|').replace('\n',' ')
     lines += [f"| {cell(i['name'])} | {i['quantity']} | {cell(i['specification'])} | {cell(', '.join(i.get('part_ids',[])))} |" for i in checked_bom]
@@ -257,3 +285,42 @@ def write_assembly_dossier(report,scene,root):
     (root/'DOSSIER.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
     svg=projection_svg(scene);(root/'representation.svg').write_text(svg,encoding='utf-8')
     (root/'DOSSIER.html').write_text('<!doctype html><html lang="fr"><meta charset="utf-8"><title>Dossier de montage</title><style>body{font:14px system-ui;max-width:960px;margin:30px auto;padding:16px}pre{white-space:pre-wrap;overflow-wrap:anywhere}svg{width:100%;height:auto}@page{size:A4;margin:16mm}</style>'+svg+'<pre>'+html.escape('\n'.join(lines))+'</pre><button onclick="print()">Enregistrer en PDF / imprimer</button></html>',encoding='utf-8')
+
+
+def assert_assembly_quality(report, root='.', *, max_interference_mm3: float = 0.05, require_static_stability: bool = False):
+    """Verify exact 3D boolean rest-pose non-penetration, mechanism closure and static stability."""
+    root = Path(root).resolve()
+    if isinstance(report, (str, Path)):
+        p = (root / report).resolve()
+        if not p.is_relative_to(root) or not p.is_file():
+            raise ValueError('Project report file must exist inside the project root.')
+        report = json.loads(p.read_text(encoding='utf-8'))
+    if not isinstance(report, dict) or report.get('units') != 'mm':
+        raise ValueError('Valid engineering project report in mm required.')
+    ap = report.get('assembly_precision') or {}
+    interferences = ap.get('rest_interferences') or []
+    violating = [item for item in interferences if float(item.get('interference_volume_mm3', 0.0)) > max_interference_mm3]
+    if violating:
+        details = '; '.join(
+            f"{item['parts'][0]}↔{item['parts'][1]} ({item['names'][0]} / {item['names'][1]}): "
+            f"{item['interference_volume_mm3']:.4f} mm³ (vecteur de correction suggéré sur {item['parts'][1]}: {item.get('repair_translation_mm')})"
+            for item in violating
+        )
+        raise ValueError(f'Interférence volumique 3D au repos supérieure au seuil ({max_interference_mm3} mm³) : {details}')
+    if require_static_stability and not ap.get('stable_at_rest', True):
+        raise ValueError(
+            f"Porte-à-faux statique détecté au repos : centre de gravité {ap.get('center_of_mass_mm')} mm "
+            f"hors du polygone de sustentation {ap.get('support_footprint_xy_mm')} (marge {ap.get('stability_margin_mm')} mm)."
+        )
+    closure = report.get('closure_at_home') or {}
+    if closure and not closure.get('converged', True):
+        raise ValueError(f"Boucle cinématique non convergée au repos : résidu {closure.get('residual')}.")
+    return {
+        'ok': True,
+        'collision_free_at_rest': len(violating) == 0,
+        'rest_interference_volume_mm3': float(ap.get('rest_interference_volume_mm3', 0.0)),
+        'stable_at_rest': bool(ap.get('stable_at_rest', True)),
+        'stability_margin_mm': float(ap.get('stability_margin_mm', 0.0)),
+        'closures_converged': bool(closure.get('converged', True)),
+    }
+

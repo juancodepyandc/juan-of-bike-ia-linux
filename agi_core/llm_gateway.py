@@ -40,7 +40,7 @@ class LLMGateway:
 
     def timeout(self):
         return aiohttp.ClientTimeout(total=None, sock_connect=10,
-                                    sock_read=positive_env('AURORA_MODEL_READ_TIMEOUT', 300))
+                                    sock_read=positive_env('AURORA_MODEL_READ_TIMEOUT', 900))
 
     async def get_available_models(self) -> list[str]:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
