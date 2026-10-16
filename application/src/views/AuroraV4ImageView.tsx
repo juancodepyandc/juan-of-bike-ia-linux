@@ -423,9 +423,16 @@ export default function AuroraV4ImageView() {
                 width: 7, height: 7, borderRadius: 999, background: ACCENT,
                 boxShadow: `0 0 10px ${ACCENT}`, animation: 'av4ImgPulse 1.2s ease-in-out infinite',
               }} />
-              rendu
+              {I.currentStep > 0 ? `étape ${I.currentStep}/5 · ${I.progressPct}%` : 'rendu'}
             </span>
           )}
+          <GhostBtn
+            onClick={I.resetWorkspaceClean}
+            title="Arrêter toute génération bloquée, vider la file ComfyUI, nettoyer les références et repartir sur une création vierge dans le dossier unifié output/image/creations/"
+            style={{ padding: '5px 11px', fontSize: 11, color: '#FDE68A', borderColor: 'rgba(251,191,36,.35)' }}
+          >
+            <Icon name="redo" size={11} /> Reprendre à neuf
+          </GhostBtn>
         </div>
       </div>
 
@@ -434,16 +441,21 @@ export default function AuroraV4ImageView() {
       {I.resumeBanner && (
         <div style={{
           ...glass, position: 'relative', borderColor: 'rgba(251,191,36,.35)', padding: '12px 16px', marginBottom: 14,
-          display: 'flex', alignItems: 'center', gap: 10, animation: 'av4ImgRise .4s cubic-bezier(.22,1,.36,1) both',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', animation: 'av4ImgRise .4s cubic-bezier(.22,1,.36,1) both',
         }}>
-          <span style={{ width: 8, height: 8, borderRadius: 999, background: '#FBBF24', boxShadow: '0 0 12px #FBBF24', animation: 'av4ImgPulse 1.4s ease-in-out infinite', flexShrink: 0 }} />
-          <div style={{ fontSize: 12, lineHeight: 1.5 }}>
-            <span style={{ fontWeight: 700, color: '#FDE68A' }}>Reprise d'un rendu en cours.</span>{' '}
-            <span style={{ color: '#8B93A7' }}>
-              Le PC termine une image démarrée il y a {I.resumeBanner.minutes} min
-              {I.resumeBanner.text ? ` (« ${I.resumeBanner.text.slice(0, 70)}${I.resumeBanner.text.length > 70 ? '…' : ''} »)` : ''}.
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: '#FBBF24', boxShadow: '0 0 12px #FBBF24', animation: 'av4ImgPulse 1.4s ease-in-out infinite', flexShrink: 0 }} />
+            <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+              <span style={{ fontWeight: 700, color: '#FDE68A' }}>Reprise d'un rendu en cours.</span>{' '}
+              <span style={{ color: '#8B93A7' }}>
+                Le PC termine une image démarrée il y a {I.resumeBanner.minutes} min
+                {I.resumeBanner.text ? ` (« ${I.resumeBanner.text.slice(0, 70)}${I.resumeBanner.text.length > 70 ? '…' : ''} »)` : ''}.
+              </span>
+            </div>
           </div>
+          <GhostBtn onClick={I.resetWorkspaceClean} title="Stopper cette reprise et repartir à neuf" style={{ padding: '5px 11px', fontSize: 11, color: '#FCA5A5', borderColor: 'rgba(248,113,113,.45)' }}>
+            <Icon name="stop" size={11} /> Arrêter & reprendre à neuf
+          </GhostBtn>
         </div>
       )}
 
@@ -796,15 +808,26 @@ export default function AuroraV4ImageView() {
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {I.generating ? (
-              <button type="button" className="av4img-primary" onClick={I.onStop}
-                style={{
-                  width: '100%', padding: '11px 18px', borderRadius: 12, border: '1px solid rgba(248,113,113,.5)',
-                  background: 'rgba(248,113,113,.14)', color: '#FCA5A5', fontWeight: 750, fontSize: 13,
-                  cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  transition: 'all .25s', fontFamily: 'inherit',
-                }}>
-                <Icon name="stop" /> Arrêter le rendu
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="av4img-primary" onClick={I.onStop}
+                  style={{
+                    flex: 1, padding: '11px 14px', borderRadius: 12, border: '1px solid rgba(248,113,113,.5)',
+                    background: 'rgba(248,113,113,.18)', color: '#FCA5A5', fontWeight: 750, fontSize: 13,
+                    cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    transition: 'all .25s', fontFamily: 'inherit',
+                  }}>
+                  <Icon name="stop" /> Arrêter immédiatement
+                </button>
+                <button type="button" className="av4img-ghost" onClick={I.resetWorkspaceClean}
+                  title="Arrêter et repartir sur une création vierge"
+                  style={{
+                    padding: '11px 12px', borderRadius: 12, border: '1px solid rgba(251,191,36,.45)',
+                    background: 'rgba(251,191,36,.12)', color: '#FDE68A', fontWeight: 700, fontSize: 12,
+                    cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'inherit',
+                  }}>
+                  <Icon name="redo" size={12} /> À neuf
+                </button>
+              </div>
             ) : (
               <button type="button" className="av4img-primary" onClick={() => void I.queuePrompt()}
                 disabled={!I.prompt.trim()}
@@ -835,18 +858,74 @@ export default function AuroraV4ImageView() {
               tags={['image', I.style]}
               disabled={I.generating}
             />
-            {I.progress && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                <span style={{
-                  width: 7, height: 7, borderRadius: 999, background: ACCENT, flexShrink: 0,
-                  boxShadow: `0 0 10px ${ACCENT}`,
-                  animation: I.generating ? 'av4ImgPulse 1.2s ease-in-out infinite' : 'none',
-                }} />
-                <span style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 11, color: '#8B93A7' }}>
-                  {I.progress}
-                </span>
+            {(I.generating || I.progress) && (
+              <div style={{
+                marginTop: 4, padding: '10px 12px', borderRadius: 12,
+                border: `1px solid ${I.generating ? `${ACCENT}55` : 'rgba(255,255,255,.09)'}`,
+                background: 'rgba(8,12,24,.65)', display: 'flex', flexDirection: 'column', gap: 7,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <span style={{
+                      width: 7, height: 7, borderRadius: 999, background: ACCENT, flexShrink: 0,
+                      boxShadow: `0 0 10px ${ACCENT}`,
+                      animation: I.generating ? 'av4ImgPulse 1.2s ease-in-out infinite' : 'none',
+                    }} />
+                    <span style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 11, color: '#E6EAF5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {I.progress || 'Préparation…'}
+                    </span>
+                  </div>
+                  {I.generating && I.progressPct > 0 && (
+                    <span style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 11, fontWeight: 700, color: ACCENT }}>
+                      {I.progressPct}%
+                    </span>
+                  )}
+                </div>
+                {I.generating && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 4 }}>
+                    {[
+                      { step: 1, label: '1. IA Prompt' },
+                      { step: 2, label: '2. Référence' },
+                      { step: 3, label: '3. Diffusion' },
+                      { step: 4, label: '4. Kontext' },
+                      { step: 5, label: '5. Livraison' },
+                    ].map((s) => {
+                      const activeStep = I.currentStep || 1
+                      const done = s.step < activeStep
+                      const curr = s.step === activeStep
+                      return (
+                        <div key={s.step} style={{
+                          padding: '3px 4px', borderRadius: 6, textAlign: 'center',
+                          fontSize: 9, fontFamily: "'Cascadia Code',Consolas,monospace",
+                          background: curr ? `${ACCENT}26` : done ? 'rgba(74,222,128,.14)' : 'rgba(255,255,255,.03)',
+                          border: `1px solid ${curr ? ACCENT : done ? 'rgba(74,222,128,.4)' : 'rgba(255,255,255,.07)'}`,
+                          color: curr ? '#fff' : done ? '#4ADE80' : '#6B7280',
+                          fontWeight: curr ? 700 : 500,
+                        }}>
+                          {done ? `✓ ${s.label.slice(3)}` : s.label}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
+            {I.lastExpandedNote && (
+              <div style={{
+                padding: '6px 10px', borderRadius: 10, fontSize: 10.5,
+                background: 'rgba(52,211,153,.08)', border: '1px solid rgba(52,211,153,.28)', color: '#6EE7B7',
+                fontFamily: "'Cascadia Code',Consolas,monospace",
+              }}>
+                ✦ {I.lastExpandedNote}
+              </div>
+            )}
+            <div style={{
+              padding: '6px 10px', borderRadius: 10, fontSize: 10,
+              background: 'rgba(255,255,255,.025)', border: '1px solid rgba(255,255,255,.08)', color: '#8B93A7',
+              fontFamily: "'Cascadia Code',Consolas,monospace",
+            }}>
+              📁 Dossier unifié : <strong style={{ color: '#E6EAF5' }}>{I.lastSavedPath || 'output/image/creations/'}</strong>
+            </div>
           </div>
         </div>
 

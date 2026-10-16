@@ -16,8 +16,8 @@
   }
  },
  "source_files": 2211,
- "source_lines": 744887,
- "static_route_declarations": 657,
+ "source_lines": 746080,
+ "static_route_declarations": 658,
  "by_repository": {
   "AuroraIA": 2048,
   "aurora-remote-cli": 159,
@@ -1489,8 +1489,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/projects_api.py",
-   "sha256": "00872f3cc9a59afa44e9865554a49a7e81ac356a6d0881c71d770b0caef4ce0d",
-   "lines": 175,
+   "sha256": "5ad9c01452daaab789a921d36da906b8f10d1f1d56722e177643bd6b8d1f4264",
+   "lines": 251,
    "http_routes": [
     {
      "path": "/api/projects/reconcile",
@@ -1571,6 +1571,14 @@
      ],
      "handler": "cancel_queued",
      "line": 172
+    },
+    {
+     "path": "/api/image/persist",
+     "methods": [
+      "POST"
+     ],
+     "handler": "persist_image",
+     "line": 183
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -3590,8 +3598,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/image_module_engine.py",
-   "sha256": "170c177afd3b0fc50d13086317704875f8a3aa9ce8b036ea71b82cff57704a3a",
-   "lines": 691,
+   "sha256": "d88111e578496d294b1039bc6039b9ffdc5dfd4d6dc83589746438744b8f3599",
+   "lines": 702,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -10838,8 +10846,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/ProjectsPanel.tsx",
-   "sha256": "35ad138bb4072a90746b334052474db575444ad6e5eeac4e64d1b1d3772dfd9e",
-   "lines": 26
+   "sha256": "ca8fedddb4b1b31d1445106c187e0ff4b1d79d4c6ae1a09a3d61ef8a453c6e84",
+   "lines": 112
   },
   {
    "repo": "AuroraIA",
@@ -11006,14 +11014,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/GenerationFxHost.tsx",
-   "sha256": "74dd533d51665ea073cd66adfd567245e4c122f3d0cc644512d14ddd328fa93c",
-   "lines": 946
+   "sha256": "616f1dfd3140e379bb444ed4618fa979c257540872588446567e9253864aa368",
+   "lines": 1017
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/comfyProgress.ts",
-   "sha256": "042c54f858b33acb69e7ba0f4f4676c5cffb9dc5d9ca2f3e8fb2b69dbac49a21",
-   "lines": 32
+   "sha256": "f216677cdebba2703f7d68014abdcd486ded54dab3ee7ab9861fafd10c3001af",
+   "lines": 49
   },
   {
    "repo": "AuroraIA",
@@ -11192,8 +11200,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/hooks/useImageViewLogic.ts",
-   "sha256": "7554c37b8dbd3553f22456a7de5f66b3423717f647ff7389059b90b9727f6ab8",
-   "lines": 1084
+   "sha256": "0286cba1f4ba73683d2e7b9d267448b88eb896ebbe7dd0fdb97dd8ade0ee37d9",
+   "lines": 1399
   },
   {
    "repo": "AuroraIA",
@@ -11552,8 +11560,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeDesignPolishGate.ts",
-   "sha256": "a4947e0ececceb18d67373f6aa760e66d25b8e005ce58db4c41522d488120902",
-   "lines": 107
+   "sha256": "04ebf3a7519aade7e4d47e2fc3ba451fc7c6a127663fadde0e690b9dc0991c78",
+   "lines": 112
   },
   {
    "repo": "AuroraIA",
@@ -11630,8 +11638,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeExecutorQualityContract.ts",
-   "sha256": "cfc7247a722340c644765f481d21b2d66032c8aab9f9f1274d8e370486f924dc",
-   "lines": 262
+   "sha256": "8b9ba30943ab4d40893ebccd6c2d41d7b4b7e3fb9c440ffce131cea3203ca598",
+   "lines": 293
   },
   {
    "repo": "AuroraIA",
@@ -13286,8 +13294,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/imagePromptBuilder.ts",
-   "sha256": "1c9eb0ff16ec47ac765e1f3aefe05b1c373872e5b28afee652ddc6328f42a554",
-   "lines": 708
+   "sha256": "e09c39a1366ab519ca1714f3cd4ce93d2b792fe993ae1c10e93d7cec0467b46d",
+   "lines": 891
   },
   {
    "repo": "AuroraIA",
@@ -14402,8 +14410,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/utils/upscaleImage.ts",
-   "sha256": "a650e8d8c0e41cd5223c66db7dccb9cd1e66ba11edc45516a1031481f2cf712a",
-   "lines": 237
+   "sha256": "6253c6f40952dffad4fc806a12ba8d0bbc35ff32eb97e954a3ff44cf68d09f7e",
+   "lines": 303
   },
   {
    "repo": "AuroraIA",
@@ -14480,8 +14488,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraV1ImageView.tsx",
-   "sha256": "151ae2c6713c1a57312e8e17c25a3eacc77746240a40152f613f44f71eec2b15",
-   "lines": 945
+   "sha256": "11fa06265ff6483d4af65a1f6cd716a7e4dbda042a8ba9941336c58e6c8b86a1",
+   "lines": 949
   },
   {
    "repo": "AuroraIA",
@@ -14534,8 +14542,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraV3ImageView.tsx",
-   "sha256": "a295630d283600c196a1fa1b499f657e8d43b2f6c8b29522dc22f850b2095024",
-   "lines": 545
+   "sha256": "6355f8a35f41c080d8b0d2ef0175888a37dd8615aefbe9aeca92714db2f07fc5",
+   "lines": 546
   },
   {
    "repo": "AuroraIA",
@@ -14576,8 +14584,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraV4ImageView.tsx",
-   "sha256": "4beb1da8a22743c975e70ca3ab1b44cbda1dbc06461737e35a3ad97d42d53128",
-   "lines": 1138
+   "sha256": "d23dcb7727a21fd13d3aec45e22aff854cb09ab3488b40a994bc4578a0853288",
+   "lines": 1220
   },
   {
    "repo": "AuroraIA",
@@ -14618,8 +14626,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ImageView.tsx",
-   "sha256": "a5da0841e739e2e9c065ddbf676fd29115bc9a0071843f1b8d36c2548a9a65ce",
-   "lines": 1782
+   "sha256": "f2c231c5cd452a0d4338c23ae7873588fbc64eee519651e3f4961470218ff64e",
+   "lines": 1796
   },
   {
    "repo": "AuroraIA",
@@ -14654,14 +14662,14 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/MangaImageView.tsx",
-   "sha256": "44a0089b1718e753a09e96689427707bf6c998cdc3faf2d65ccde4f84f29e325",
-   "lines": 829
+   "sha256": "847334e1083cd65b72c8ab9ece1ed9448be9306bcf13576a6f6b8ba90f25a490",
+   "lines": 835
   },
   {
    "repo": "AuroraIA",
    "path": "application/src/views/ModelView.tsx",
-   "sha256": "8851ffa5fd7ec475850413ec6828782965ba4d3d30018de1b2638b90cf69e2a2",
-   "lines": 7220
+   "sha256": "d92388cc40c0d3145280b932eec761acbf10cc7fa6e19ad08d8f87b224a23bf5",
+   "lines": 7445
   },
   {
    "repo": "AuroraIA",

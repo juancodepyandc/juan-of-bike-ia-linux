@@ -54,6 +54,13 @@ const MODULE_PHASE_RANGES: Partial<Record<FxModule, [number, number][]>> = {
     [0.85, 0.95], // 4: Animation
     [0.95, 1.00], // 5: Finalisation
   ],
+  image: [
+    [0.00, 0.20], // 0: Analyse du prompt & développement IA
+    [0.20, 0.35], // 1: Référence visuelle & préparation
+    [0.35, 0.80], // 2: Diffusion FLUX (pas 1..28)
+    [0.80, 0.92], // 3: Édition Kontext / raffinement
+    [0.92, 1.00], // 4: Finalisation & sauvegarde
+  ],
 }
 
 function phaseIndexFor(module: FxModule, entry: FxEntry, now: number): { idx: number; simProg: number } {
@@ -63,18 +70,22 @@ function phaseIndexFor(module: FxModule, entry: FxEntry, now: number): { idx: nu
 
   if (entry.phase) {
     const needle = entry.phase.toLowerCase()
+    const stepMatch = needle.match(/[eé]tape\s*([1-9])\s*\/\s*([1-9])/)
     const direct = phases.findIndex((p) => needle.includes(p.toLowerCase()) || p.toLowerCase().includes(needle))
-    if (direct >= 0) {
+    if (stepMatch) {
+      idx = Math.max(0, Math.min(phases.length - 1, Number(stepMatch[1]) - 1))
+    } else if (typeof entry.progress === 'number' && ranges) {
+      const p = Math.max(0, Math.min(0.999, entry.progress))
+      const matchedIdx = ranges.findIndex(([start, end]) => p >= start && p < end)
+      if (matchedIdx >= 0) idx = matchedIdx
+      else if (direct >= 0) idx = direct
+    } else if (direct >= 0) {
       idx = direct
     } else if (module === 'code' && CODE_PHASE_INDEX[needle] !== undefined) {
       idx = CODE_PHASE_INDEX[needle]
-    } else if (typeof entry.progress === 'number' && ranges) {
-      const p = Math.max(0, Math.min(1, entry.progress))
-      const matchedIdx = ranges.findIndex(([start, end]) => p >= start && p < end)
-      if (matchedIdx >= 0) idx = matchedIdx
     }
   } else if (typeof entry.progress === 'number' && ranges) {
-    const p = Math.max(0, Math.min(1, entry.progress))
+    const p = Math.max(0, Math.min(0.999, entry.progress))
     const matchedIdx = ranges.findIndex(([start, end]) => p >= start && p < end)
     if (matchedIdx >= 0) idx = matchedIdx
   } else {
@@ -349,7 +360,7 @@ function CenterStage({ entry, accent }: { entry: FxEntry; accent: string }) {
   )
 }
 
-function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: FxEntry; onMinimize?: () => void }) {
+function FullOverlay({ module, entry, onMinimize, onStopOverlay }: { module: FxModule; entry: FxEntry; onMinimize?: () => void; onStopOverlay?: () => void }) {
   const scene = FX_SCENES[module]
   const agent = FX_AGENTS[module]
   const [, force] = useState(0)
@@ -363,6 +374,8 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
   const sayIdx = Math.min(scene.says.length - 1, Math.floor(simProg * scene.says.length))
   const persisted3d = module === '3d' ? readPersistedThreeDMission() : null
   const liveTiming = module === '3d' ? computeLiveMissionTiming(persisted3d, now) : null
+  const elapsedSec = Math.max(0, Math.floor((now - entry.startedAt) / 1000))
+  const formattedElapsedGeneric = elapsedSec < 60 ? `${elapsedSec}s` : `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`
   return (
     <div
       style={{
@@ -399,7 +412,10 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
         )}
         <button
           type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('aurora-fx-stop', { detail: { module } }))
+            onStopOverlay?.()
+          }}
           style={{
             minHeight: 44, cursor: 'pointer',
             padding: '7px 14px', borderRadius: 999,
@@ -408,7 +424,7 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
             fontFamily: "'Inter','Segoe UI',system-ui,sans-serif",
           }}
         >
-          ■ Arreter la generation
+          ■ Arrêter la génération
         </button>
       </div>
       <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('aurora:projects'))}
@@ -490,10 +506,35 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
           <span style={{ fontSize: 10, letterSpacing: '.32em', color: '#8B93A7' }}>
             {module.toUpperCase()} · {agent.name.toUpperCase()} TRAVAILLE
-            {liveTiming ? ` · ÉCOULÉ ${liveTiming.formattedElapsed} · RESTANT ${liveTiming.formattedRemaining}` : ''}
+            {liveTiming ? ` · ÉCOULÉ ${liveTiming.formattedElapsed} · RESTANT ${liveTiming.formattedRemaining}` : ` · ÉCOULÉ ${formattedElapsedGeneric} · ÉTAPE ${idx + 1}/${scene.phases.length}`}
           </span>
           <span style={{ fontSize: 22, fontWeight: 700, color: agent.accent, textShadow: `0 0 18px ${agent.accent}88` }}>
             {`${Math.max(5, Math.floor(simProg * 100))}%`}
+          </span>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+          padding: '8px 12px', marginBottom: 10, borderRadius: 10,
+          background: 'rgba(8, 12, 24, 0.82)', border: `1px solid ${agent.accent}55`,
+          boxShadow: `0 0 18px ${agent.accent}22`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <span style={{
+              padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+              background: `${agent.accent}28`, color: '#fff', border: `1px solid ${agent.accent}88`,
+              whiteSpace: 'nowrap',
+            }}>
+              ÉTAPE {idx + 1}/{scene.phases.length}
+            </span>
+            <span style={{
+              fontSize: 12, fontWeight: 600, color: '#EEF2FF',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {entry.phase || scene.phases[idx]}
+            </span>
+          </div>
+          <span style={{ fontSize: 10, color: '#9AA5BC', whiteSpace: 'nowrap' }}>
+            {scene.phases[idx]}
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${scene.phases.length}, minmax(0, 1fr))`, gap: 6, marginBottom: 10 }}>
@@ -529,7 +570,7 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
                     color: isDone ? '#4ADE80' : isCurrent ? '#fff' : '#6B7280',
                     whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                   }}>
-                    {isDone ? '✓ ' : ''}{p}
+                    {isDone ? '✓ ' : `${i + 1}. `}{p}
                   </span>
                   <span style={{ fontSize: 9, color: isDone ? '#4ADE80' : isCurrent ? agent.accent : '#4B5563', fontWeight: 600 }}>
                     {isDone ? '100%' : isCurrent ? `${phaseFill}%` : '0%'}
@@ -547,15 +588,28 @@ function FullOverlay({ module, entry, onMinimize }: { module: FxModule; entry: F
             )
           })}
         </div>
-        {module === '3d' && Boolean(entry.logLines?.length) && (
-          <div role="log" aria-label="Actions réelles de la génération 3D" style={{ fontSize: 12, lineHeight: 1.5, marginTop: 10, overflowWrap: 'anywhere' }}>
-            <strong>Actions en cours / derniers événements</strong>
-            {entry.logLines!.slice(-3).map((line, index) => <div key={index}>{line.slice(0, 600)}</div>)}
-          </div>
-        )}
-        {entry.phase && (
-          <div style={{ fontSize: 11, color: '#B7C0D4', marginBottom: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            <span style={{ color: agent.accent }}>›</span> {entry.phase}
+        {Boolean(entry.logLines?.length) && (
+          <div
+            role="log"
+            aria-label={`Actions réelles de la génération ${module}`}
+            style={{
+              fontSize: 11, lineHeight: 1.5, marginTop: 6, marginBottom: 8,
+              padding: '7px 11px', borderRadius: 9,
+              background: 'rgba(4, 7, 15, 0.76)', border: '1px solid rgba(255,255,255,.08)',
+              overflowWrap: 'anywhere', color: '#B7C0D4',
+            }}
+          >
+            <div style={{ fontSize: 9.5, letterSpacing: '.16em', color: '#8B93A7', marginBottom: 3, textTransform: 'uppercase' }}>
+              Journal des étapes exécutées ({entry.logLines!.length})
+            </div>
+            {entry.logLines!.slice(-4).map((line, index, arr) => (
+              <div key={index} style={{ color: index === arr.length - 1 ? '#EEF2FF' : '#8B93A7' }}>
+                <span style={{ color: index === arr.length - 1 ? agent.accent : '#4ADE80' }}>
+                  {index === arr.length - 1 ? '▸ ' : '✓ '}
+                </span>
+                {line.slice(0, 600)}
+              </div>
+            ))}
           </div>
         )}
         <div style={{ height: 4, borderRadius: 4, background: 'rgba(255,255,255,.08)', overflow: 'hidden' }}>
@@ -864,13 +918,22 @@ export default function GenerationFxHost() {
   const comfyActive = Boolean(entries.image && !entries.image.reveal) || Boolean(entries.drawing && !entries.drawing.reveal)
   useEffect(() => {
     if (!comfyActive) return
-    const stop = watchComfyProgress((frac, label) => {
+    const stop = watchComfyProgress((frac, label, logLine) => {
       setEntries((prev) => {
         const next = { ...prev }
         let touched = false
         for (const m of ['image', 'drawing'] as FxModule[]) {
           if (next[m] && !next[m]!.reveal) {
-            next[m] = { ...next[m]!, progress: frac, phase: label ?? next[m]!.phase }
+            const cur = next[m]!
+            const nextLogs = logLine
+              ? [...(cur.logLines ?? []), logLine].slice(-300)
+              : cur.logLines
+            next[m] = {
+              ...cur,
+              progress: frac,
+              phase: label ?? cur.phase,
+              logLines: nextLogs,
+            }
             touched = true
           }
         }
@@ -924,6 +987,14 @@ export default function GenerationFxHost() {
           onMinimize={() =>
             setMinimizedModules((prev) => ({ ...prev, [fxForCurrent[0]]: true }))
           }
+          onStopOverlay={() => {
+            const mod = fxForCurrent[0]
+            setEntries((prev) => {
+              const next = { ...prev }
+              delete next[mod]
+              return next
+            })
+          }}
         />
       )}
       {others.length > 0 && (

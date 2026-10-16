@@ -706,3 +706,186 @@ function dedupe(values: string[]): string[] {
   }
   return out
 }
+
+export type HumanPromptIntentMode = 'create' | 'replicate' | 'edit' | 'style_transfer'
+
+export type ExpandHumanPromptOptions = {
+  mode: HumanPromptIntentMode
+  requestedStyle?: string
+  hasReference?: boolean
+  referenceVisionSummary?: string
+  conversationContext?: string
+  generateText?: (systemAndUserPrompt: string) => Promise<string>
+}
+
+export type ExpandedHumanPromptResult = {
+  expandedPrompt: string
+  intentMode: HumanPromptIntentMode
+  wasExpandedByAI: boolean
+  sceneCompletionNote: string
+}
+
+/**
+ * Infers a rich, coherent environment and lighting completion when the user prompt
+ * is brief or does not specify a background, ensuring the rest of the frame is never
+ * left empty, bland, or ugly.
+ */
+export function buildContextualSceneCompletion(
+  rawPrompt: string,
+  style?: string,
+  referenceVisionSummary?: string,
+): string {
+  const norm = stripAccents(rawPrompt).toLowerCase()
+  if (/\b(fond transparent|transparent background|fond blanc|white background|packshot|isole|isolated)\b/.test(norm)) {
+    return 'clean studio staging with subtle grounded contact shadows and crisp subject separation'
+  }
+  const hasExplicitBackground = ENVIRONMENT_CUE_RE.test(norm) || /\b(dans|sur|devant|arriere[- ]plan|background|decor|interieur|exterieur|room|atelier|studio|garden|jardin|ciel|sky|nuit|night)\b/.test(norm)
+  if (hasExplicitBackground && rawPrompt.trim().split(/\s+/).length >= 18) {
+    return 'coherent full-frame environmental depth from foreground to horizon, natural material continuity, balanced atmospheric lighting across the entire scene'
+  }
+  if (referenceVisionSummary && referenceVisionSummary.trim().length > 12) {
+    return `faithful continuity with the reference visual (${referenceVisionSummary.trim()}), cohesive surrounding environment with rich depth, natural lighting falloff, and zero empty or neglected background areas`
+  }
+  if (/\b(samourai|katana|ninja|ronin|japon|edo|kyoto|shinobi|kimono)\b/.test(norm)) {
+    return 'set within a richly detailed feudal Japanese environment with atmospheric mist, textured timber and stone architecture, depth-layered foliage, and directional cinematic light'
+  }
+  if (/\b(velo|bike|cycliste|gravel|vtt|moto|voiture|car|vehicule|auto|bolide)\b/.test(norm)) {
+    return 'framed in a coherent scenic environment with textured road surface, realistic ground reflections, atmospheric depth in the background landscape, and physically motivated key and rim lighting'
+  }
+  if (/\b(personnage|character|portrait|homme|femme|garcon|fille|hero|guerrier|mage|chevalier)\b/.test(norm)) {
+    return 'placed in a fully realized, atmospheric setting that complements the character identity, with layered foreground-to-background depth, expressive directional lighting, and rich environmental textures so the background feels alive and intentional'
+  }
+  if (style && /anime|manga/i.test(style)) {
+    return 'complete illustrated background environment with architectural or natural depth layers, expressive atmospheric lighting, and cohesive color harmony across the entire frame'
+  }
+  return 'complete, richly composed surrounding environment with coherent foreground, midground, and background depth, natural directional lighting, and authentic surface textures across the entire frame'
+}
+
+/**
+ * Développe dynamiquement une demande humaine en cahier des charges visuel complet :
+ * - Si l'humain donne déjà énormément de détails : conserve 100 % des détails fournis et complète uniquement la cohérence de scène.
+ * - Si c'est une reproduction ("fais-moi ce personnage", image de référence) : s'appuie sur la description visuelle réelle de la référence sans inventer de mots-clés hors-sujet.
+ * - Si c'est une modification ou un changement de style : verrouille le sujet et la scène de base, et applique strictement le changement demandé sans halluciner.
+ * - Si c'est une nouvelle création courte/vague : développe intelligemment le sujet, la mise en scène, la lumière et surtout un vrai décor complet cohérent pour ne jamais laisser le fond vide ou moche.
+ */
+export async function expandHumanImagePromptWithAI(
+  rawPrompt: string,
+  options: ExpandHumanPromptOptions,
+): Promise<ExpandedHumanPromptResult> {
+  const trimmed = rawPrompt.trim()
+  const words = trimmed.split(/\s+/).filter(Boolean)
+  const wordCount = words.length
+  const norm = stripAccents(trimmed).toLowerCase()
+
+  const looksLikeReplicateRequest =
+    options.mode === 'replicate' ||
+    (Boolean(options.hasReference) &&
+      /\b(fais[- ]?moi ce|fait[- ]?moi ce|reproduis|reproduire|meme personnage|ce personnage|comme ca|comme sur l[' ]image|identique|refais)\b/.test(norm))
+
+  const looksLikeStyleSwitch =
+    options.mode === 'style_transfer' ||
+    (Boolean(options.hasReference) &&
+      /\b(en style|style |version |en anime|en manga|en photo|en peinture|en pixel|en 3d|en dessin|en comics|en aquarelle|transforme en|passe en)\b/.test(norm))
+
+  const effectiveMode: HumanPromptIntentMode = looksLikeReplicateRequest
+    ? 'replicate'
+    : looksLikeStyleSwitch
+      ? 'style_transfer'
+      : options.mode
+
+  const fallbackCompletion = buildContextualSceneCompletion(
+    trimmed,
+    options.requestedStyle,
+    options.referenceVisionSummary,
+  )
+
+  // Si l'utilisateur a déjà écrit un prompt très détaillé (>= 42 mots), on respecte
+  // intégralement chaque détail sans le réécrire, en ajoutant seulement la garantie de décor complet.
+  if (wordCount >= 42 && effectiveMode === 'create') {
+    return {
+      expandedPrompt: `${trimmed}. Full-frame coherence: ${fallbackCompletion}.`,
+      intentMode: effectiveMode,
+      wasExpandedByAI: false,
+      sceneCompletionNote: 'Prompt détaillé conservé à 100 % avec garantie de scène complète.',
+    }
+  }
+
+  if (options.generateText) {
+    try {
+      const styleLabel = options.requestedStyle && options.requestedStyle !== 'none'
+        ? options.requestedStyle
+        : 'fidèle à la demande (photoréaliste ou direction artistique implicite)'
+      const refBlock = options.referenceVisionSummary
+        ? `\nANALYSE VISUELLE DE L'IMAGE DE RÉFÉRENCE :\n${options.referenceVisionSummary.trim()}\n`
+        : ''
+      const convBlock = options.conversationContext
+        ? `\nCONTEXTE RÉCENT DE LA SESSION :\n${options.conversationContext.trim()}\n`
+        : ''
+
+      let modeDirective = ''
+      if (effectiveMode === 'replicate') {
+        modeDirective =
+          `MODE REPRODUCTION FIDÈLE : L'humain demande de reproduire le sujet/personnage de référence ("${trimmed}"). ` +
+          `Décris avec précision tous les traits distinctifs du sujet observé dans l'analyse de référence (morphologie, visage, coiffure, tenue, couleurs, accessoires, posture) ET construis un environnement cohérent et travaillé autour de lui pour que l'image entière soit magnifique, sans fond vide ni éléments hors-sujet.`
+      } else if (effectiveMode === 'style_transfer' || effectiveMode === 'edit') {
+        modeDirective =
+          `MODE MODIFICATION / CHANGEMENT DE STYLE SANS HALLUCINATION : L'humain veut modifier ou changer le style ("${trimmed}") tout en gardant exactement le sujet et la composition de base. ` +
+          `Verrouille l'identité du sujet, sa pose et les éléments clés de la scène, et traduis uniquement le changement ou le style demandé (${styleLabel}) sur l'ensemble de l'image, sans inventer d'objets parasites.`
+      } else {
+        modeDirective =
+          `MODE CRÉATION DÉVELOPPÉE PAR L'IA : L'humain a formulé une demande naturelle ("${trimmed}"). ` +
+          `S'il a donné des détails précis, conserve-les à 100 %. Là où la demande est courte ou implicite, développe-la comme un directeur artistique d'élite : précise l'attitude et les textures du sujet principal, construis un VRAI décor complet et cohérent (premier plan, second plan, arrière-plan riche — ne laisse JAMAIS un fond vide, flou générique ou moche), et définis une lumière directionnelle naturelle adaptée au style (${styleLabel}).`
+      }
+
+      const llmPrompt = [
+        'Tu es le Directeur Artistique Principal d\'AuroraIA pour le moteur FLUX.1.',
+        modeDirective,
+        refBlock,
+        convBlock,
+        'RÈGLES ABSOLUES :',
+        '1. Ne mets AUCUNE liste de mots-clés robotiques ("8k, masterpiece, best quality, trending..."). Rédige une description visuelle fluide, concrète et naturelle en anglais (3 à 5 phrases denses) directement exploitable par FLUX.1.',
+        '2. Respecte 100 % de l\'intention humaine sans jamais halluciner de nouveaux sujets hors-propos.',
+        '3. Assure-toi que l\'arrière-plan et l\'environnement autour du sujet sont pleinement décrits, cohérents et esthétiques (jamais de vide ni de décor négligé).',
+        '4. Réponds UNIQUEMENT avec le prompt visuel final, sans guillemets, sans préambule et sans explication.',
+        `DEMANDE DE L'UTILISATEUR : ${trimmed}`,
+      ].filter(Boolean).join('\n')
+
+      const rawResponse = await Promise.race([
+        options.generateText(llmPrompt),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 9500)),
+      ])
+
+      const cleaned = (rawResponse || '')
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/^["'«“]+|["'»”]+$/g, '')
+        .replace(/^(?:prompt|visual prompt|description)\s*:\s*/i, '')
+        .trim()
+
+      if (cleaned.length >= 28) {
+        return {
+          expandedPrompt: `${trimmed}\n\nAI Scene Direction: ${cleaned}`,
+          intentMode: effectiveMode,
+          wasExpandedByAI: true,
+          sceneCompletionNote:
+            effectiveMode === 'replicate'
+              ? 'Reproduction fidèle enrichie par analyse du sujet et décor cohérent'
+              : effectiveMode === 'style_transfer'
+                ? 'Style adapté avec préservation stricte du sujet sans hallucination'
+                : effectiveMode === 'edit'
+                  ? 'Modification ciblée avec verrouillage de la scène'
+                  : 'Demande développée par l\'IA (sujet, décor complet et lumière)',
+        }
+      }
+    } catch {
+      // Fallback déterministe immédiat si Ollama est occupé ou lent
+    }
+  }
+
+  return {
+    expandedPrompt: `${trimmed}. ${fallbackCompletion}.`,
+    intentMode: effectiveMode,
+    wasExpandedByAI: false,
+    sceneCompletionNote: 'Scène et arrière-plan complétés automatiquement en cohérence avec la demande',
+  }
+}
+

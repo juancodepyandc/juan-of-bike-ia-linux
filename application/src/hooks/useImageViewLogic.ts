@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { emitGenerationFx, useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
 import { waitForComfyImages, type ComfyImageOutput } from '../services/comfyJobMonitor.ts'
 import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
 import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser.ts'
@@ -38,7 +38,7 @@ import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
 import { saveBlob, loadBlobUrl, pruneOldBlobs } from '../utils/blobStore.ts'
 import { RANDOM_IMAGE_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
 import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
-import { buildPromptContractBlock, parseBrief } from '../services/imagePromptBuilder.ts'
+import { buildPromptContractBlock, expandHumanImagePromptWithAI, parseBrief } from '../services/imagePromptBuilder.ts'
 import {
   buildImageAutocorrectionContract,
   buildImageConversationContext,
@@ -51,6 +51,8 @@ import {
 } from '../services/imageGenerationSafety.ts'
 import type { ConversationSession } from '../stores/moduleHistoryStore.ts'
 import { getBridgeUrl, isCloudRuntime, isTauriRuntime } from '../utils/runtime.ts'
+import { acquireProject } from '../utils/projectAdmission.ts'
+
 
 export type GeneratedCard = {
   id: string
@@ -396,12 +398,50 @@ export function useImageViewLogic() {
 
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState<string>('')
-  useGenerationFxEmitter('image', generating, progress || undefined)
+  const [progressPct, setProgressPct] = useState<number>(0)
+  const [currentStep, setCurrentStep] = useState<number>(0)
+  const [lastSavedPath, setLastSavedPath] = useState<string | null>(null)
+  const [lastExpandedNote, setLastExpandedNote] = useState<string | null>(null)
+  useGenerationFxEmitter('image', generating, progress || undefined, progressPct > 0 ? progressPct / 100 : undefined)
   useGenerationFxResult('image', generating, current?.url)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const generationLockRef = useRef(false)
+  const activeLockTokenRef = useRef<string | null>(null)
+  const activeJobIdRef = useRef<string | null>(null)
+  const activeProjectFinishRef = useRef<((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null>(null)
+
+  const reportImageStep = useCallback((step: 1 | 2 | 3 | 4 | 5, pct: number, label: string, logLine?: string) => {
+    const clampedPct = Math.max(2, Math.min(100, Math.round(pct)))
+    const stepPrefix = /^Étape\s+\d\/5/i.test(label) ? label : `Étape ${step}/5 · ${label}`
+    setCurrentStep(step)
+    setProgressPct(clampedPct)
+    setProgress(stepPrefix)
+    emitGenerationFx('image', {
+      active: true,
+      phase: stepPrefix,
+      progress: clampedPct / 100,
+      logLine: logLine ?? stepPrefix,
+    })
+    const jobId = activeJobIdRef.current
+    const mappedPhase = step <= 2 ? 'prepare' : step <= 4 ? 'generate' : 'cleanup'
+    if (jobId) {
+      useAppStore.getState().setGenerationJob(jobId, {
+        status: 'running',
+        phase: mappedPhase,
+        progress: clampedPct,
+        detail: stepPrefix,
+      })
+    }
+    useAppStore.getState().setRuntimeTask({
+      active: true,
+      module: 'image',
+      phase: mappedPhase,
+      detail: stepPrefix,
+      progress: clampedPct,
+    })
+  }, [])
 
   // v83 : moteur d'edition reel. FLUX.1 Kontext dev (instruction editing,
   // preserve identite/composition) si le UNET kontext est installe, sinon
@@ -513,18 +553,77 @@ export function useImageViewLogic() {
     if (!text || generationLockRef.current) return
     const lockToken = claimImageGenerationLock(text)
     if (!lockToken) {
-      setNotice('Un rendu image est deja en cours dans Aurora. Attends la fin ou utilise STOP avant de relancer, sinon FLUX peut saturer la memoire.')
+      setNotice('Un rendu image est déjà en cours dans Aurora. Utilise le bouton « Arrêter » ou « Reprendre à neuf » pour repartir proprement.')
       return
     }
+    activeLockTokenRef.current = lockToken
     const lockHeartbeat = setInterval(() => renewImageGenerationLock(lockToken), 60_000)
     generationLockRef.current = true
     setError(null)
     setNotice(null)
+    setLastSavedPath(null)
     setGenerating(true)
-    setProgress('Vérification de ComfyUI…')
     abortRef.current = new AbortController()
     const ac = abortRef.current
     let finalProgressAfterCleanup = ''
+
+    const jobId = `image_${Date.now().toString(36)}`
+    activeJobIdRef.current = jobId
+    useAppStore.getState().addGenerationJob({
+      id: jobId,
+      module: 'image',
+      title: `Rendu Image FLUX (${styleForRun === 'none' ? 'auto' : styleForRun}) — « ${text.slice(0, 80)} »`,
+      status: 'running',
+      phase: 'prepare',
+      progress: 5,
+      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation de la mission…',
+      services: ['comfyui'],
+      model: mainModel || 'FLUX.1',
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+      history: [],
+    })
+    useAppStore.getState().setRuntimeTask({
+      active: true,
+      module: 'image',
+      title: `Image FLUX · « ${text.slice(0, 72)} »`,
+      phase: 'prepare',
+      detail: 'Étape 1/5 · Vérification de ComfyUI & préparation de la mission…',
+      progress: 5,
+      startedAt: Date.now(),
+      finishedAt: null,
+      services: ['comfyui'],
+      error: null,
+    })
+
+    // Enregistrement de la mission dans la file d'attente PC (non-bloquant si hors-ligne)
+    activeProjectFinishRef.current = null
+    void acquireProject(
+      {
+        request_id: jobId,
+        module: 'image',
+        title: `Image · ${text.slice(0, 110)}`,
+        model: mainModel || 'FLUX.1',
+      },
+      (waitMsg) => {
+        if (!ac.signal.aborted) {
+          reportImageStep(1, 6, waitMsg, waitMsg)
+        }
+      },
+      ac.signal,
+    ).then((finishFn) => {
+      if (ac.signal.aborted) {
+        void finishFn('stopped').catch(() => {})
+      } else {
+        activeProjectFinishRef.current = finishFn
+      }
+    }).catch(() => {
+      // Ne jamais bloquer le rendu local si l'API /api/projects est indisponible
+    })
+
+    reportImageStep(1, 8, 'Analyse du prompt & vérification de ComfyUI…', 'Étape 1/5 démarrée : vérification du serveur ComfyUI')
 
     try {
       const up = await ensureComfyUIRunning()
@@ -548,15 +647,66 @@ export function useImageViewLogic() {
         hasReference: hasReferenceCandidate,
         conversationContext,
       })
+
+      // Si une image de référence est présente (reproduction "fais-moi ce personnage"
+      // ou modification/changement de style), on extrait ses caractéristiques visuelles
+      // réelles via Vision avant d'enrichir le prompt pour ne rien halluciner.
+      let referenceVisionSummary = ''
+      const refUrlForVision = refPreview || (current && (intent.isEditIntent || intent.editMode === 'replicate') ? current.url : null)
+      if (refUrlForVision && !ac.signal.aborted) {
+        try {
+          reportImageStep(1, 12, 'Analyse visuelle du personnage / sujet de référence…', 'Inspection Vision de l’image de référence pour fidélité maximale')
+          const refResp = await fetch(refUrlForVision, { signal: ac.signal })
+          if (refResp.ok) {
+            const refBlob = await refResp.blob()
+            const visionRes = await analyzeImage(
+              { kind: 'blob', data: refBlob },
+              {
+                task: 'describe_reference',
+                userPrompt: `Exact visual appearance, character traits, outfit, colors, pose, and composition for: ${text}`,
+                language: 'fr',
+                preferQuality: false,
+                signal: ac.signal,
+              },
+            )
+            if (visionRes?.description) {
+              referenceVisionSummary = visionRes.description
+            }
+          }
+        } catch {
+          // Best-effort vision analysis
+        }
+      }
+
+      reportImageStep(
+        1,
+        16,
+        'Développement IA du prompt (sujet, décor cohérent & lumière)…',
+        'Enrichissement intelligent de la demande humaine (aucun fond laissé vide)',
+      )
+      const humanExpansion = await expandHumanImagePromptWithAI(cleanedText, {
+        mode: intent.editMode === 'replicate'
+          ? 'replicate'
+          : intent.isEditIntent
+            ? (styleForRun !== 'none' ? 'style_transfer' : 'edit')
+            : 'create',
+        requestedStyle: effectiveStyle,
+        hasReference: hasReferenceCandidate,
+        referenceVisionSummary,
+        conversationContext,
+        generateText: mainModel ? (p) => ollamaGenerate(mainModel, p, { signal: ac.signal }) : undefined,
+      })
+      setLastExpandedNote(humanExpansion.sceneCompletionNote)
+
       const promptContract = buildPromptContractBlock(parseBrief(text))
       const workflowPrompt = [
-        cleanedText,
+        humanExpansion.expandedPrompt,
         promptContract,
         sessionContract,
       ].filter(Boolean).join('\n\n')
 
       if (styleResolution.overrideReason) {
-        setProgress(styleResolution.overrideReason)
+        reportImageStep(1, 19, styleResolution.overrideReason, styleResolution.overrideReason)
       }
 
       const mergedNegative = buildNegativePrompt(negPrompt, intent.removals)
@@ -572,7 +722,7 @@ export function useImageViewLogic() {
 
       if (!groundedReference && current && (intent.isEditIntent || refFilename2)) {
         try {
-          setProgress('Preparation de l image actuelle comme reference...')
+          reportImageStep(2, 23, 'Préparation de l’image actuelle comme référence…', 'Étape 2/5 : chargement de l’image courante comme référence')
           const response = await fetch(current.url, { signal: ac.signal })
           if (response.ok) {
             const blob = await response.blob()
@@ -586,13 +736,10 @@ export function useImageViewLogic() {
 
       // iter32 (quête 10/10): l'auto-référence web n'est déclenchée que pour
       // un sujet SPÉCIFIQUE nommé (targetToResearch — personnage/objet à
-      // rendre fidèlement) ou un mode replicate explicite. Une simple création
-      // (« un vélo en acier ») sans sujet nommé reste du text-to-image PUR —
-      // avant, on fabriquait systématiquement une référence web (img2img
-      // denoise 0.40) → l'utilisateur voyait « ça attend une image d'entrée ».
+      // rendre fidèlement) ou un mode replicate explicite.
       if (!groundedReference && (intent.editMode === 'replicate' || (targetToResearch !== null && !intent.isEditIntent))) {
         try {
-          setProgress('Recherche de reference visuelle...')
+          reportImageStep(2, 26, 'Recherche de référence visuelle vérifiée…', 'Étape 2/5 : recherche de référence visuelle pour le sujet nommé')
           let foundBlob: Blob | null = null
           try {
             const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
@@ -726,7 +873,7 @@ export function useImageViewLogic() {
       // francais subsiste. Sans ca, "ajoute un noeud papillon" etait ignore.
       let kontextEnglishCore: string | undefined
       if (useKontext) {
-        setProgress('Traduction de la demande (anglais Kontext)…')
+        reportImageStep(2, 29, 'Traduction de la demande d’édition (moteur Kontext)…', 'Étape 2/5 : traduction de l’instruction pour FLUX.1 Kontext')
         try {
           kontextEnglishCore = await translateEditInstructionToEnglish(text, {
             generate: (m, p) => ollamaGenerate(m, p, { signal: ac.signal }),
@@ -740,7 +887,7 @@ export function useImageViewLogic() {
 
       let stagedReplacementPlan: ReturnType<typeof buildStagedKontextEditPlan> | null = null
       if (useKontext && groundedReference && shouldUseStagedKontextEditPlan(intent, { rawPrompt: text, injection })) {
-        setProgress('Planification multi-etage: suppression, reconstruction, placement...')
+        reportImageStep(2, 31, 'Planification multi-étage : suppression, reconstruction, placement…', 'Étape 2/5 : planification multi-étage Kontext')
         let removeEnglishCore: string | undefined
         let addEnglishCore: string | undefined
         try {
@@ -778,7 +925,7 @@ export function useImageViewLogic() {
       }
 
       const engine: 'dev' | 'kontext' = useKontext ? 'kontext' : 'dev'
-      setProgress('Libération mémoire GPU avant rendu…')
+      reportImageStep(2, 34, 'Libération mémoire GPU avant diffusion FLUX…', 'Étape 2/5 terminée : bascule VRAM vers ComfyUI FLUX')
       await freeGpuBeforeFlux(Array.from(new Set([mainModel].filter(Boolean))))
       lastEngineRef.current = engine
 
@@ -795,7 +942,12 @@ export function useImageViewLogic() {
         const runSeed = baseSeed !== null
           ? (baseSeed + k * 10007) % 1_000_000_000_000_000
           : Math.floor(Math.random() * 900_000_000_000_000) + 100_000_000_000_000 + k * 10007
-        setProgress(batch > 1 ? `Construction ${k + 1}/${batch}…` : 'Construction du workflow FLUX…')
+        reportImageStep(
+          3,
+          36,
+          batch > 1 ? `Construction du workflow FLUX (${k + 1}/${batch})…` : 'Construction du workflow FLUX (28 pas)…',
+          `Étape 3/5 : lancement du graphe FLUX (seed ${runSeed})`,
+        )
         const dim = DIMENSIONS[dimensions]
         let blob: Blob | null = null
         let comfyFilename: string | undefined
@@ -803,7 +955,12 @@ export function useImageViewLogic() {
           let activeReferenceFilename = groundedReference.filename
           for (let stageIndex = 0; stageIndex < stagedReplacementPlan.stages.length; stageIndex += 1) {
             const stage = stagedReplacementPlan.stages[stageIndex]
-            setProgress(batch > 1 ? `${stage.progressLabel} (${k + 1}/${batch})` : stage.progressLabel)
+            reportImageStep(
+              4,
+              81 + stageIndex * 4,
+              batch > 1 ? `${stage.progressLabel} (${k + 1}/${batch})` : stage.progressLabel,
+              `Étape 4/5 : ${stage.label}`,
+            )
             const stageWorkflow = createFluxKontextWorkflow({
               instruction: stage.instruction,
               referenceFilename: activeReferenceFilename,
@@ -833,7 +990,11 @@ export function useImageViewLogic() {
             } catch {
             }
 
-            setProgress(batch > 1 ? `${stage.label} ${k + 1}/${batch} - rendu...` : `${stage.label} - rendu...`)
+            reportImageStep(
+              4,
+              83 + stageIndex * 4,
+              batch > 1 ? `${stage.label} ${k + 1}/${batch} — diffusion en cours…` : `${stage.label} — diffusion en cours…`,
+            )
             const filenames = await waitForComfyOutput(promptId, ac.signal)
             const first = filenames[0]
             const stageBlob = await comfyuiGetImage(first.filename, first.subfolder)
@@ -890,10 +1051,12 @@ export function useImageViewLogic() {
               editIntent: intent,
             })
 
-        setProgress(
+        reportImageStep(
+          useKontext ? 4 : 3,
+          useKontext ? 82 : 38,
           useKontext
-            ? (batch > 1 ? `Édition Kontext ${k + 1}/${batch}…` : 'Édition Kontext (modification réelle)…')
-            : (batch > 1 ? `Envoi ${k + 1}/${batch}…` : 'Envoi à ComfyUI…'),
+            ? (batch > 1 ? `Édition Kontext ${k + 1}/${batch} — envoi à ComfyUI…` : 'Édition Kontext (modification réelle sans hallucination)…')
+            : (batch > 1 ? `Diffusion FLUX ${k + 1}/${batch} — envoi à ComfyUI…` : 'Diffusion FLUX — envoi du workflow 28 pas à ComfyUI…'),
         )
         const queueResponse = await comfyuiQueuePrompt(workflow)
         const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
@@ -908,10 +1071,20 @@ export function useImageViewLogic() {
         } catch {
         }
 
-        setProgress(batch > 1 ? `Rendu ${k + 1}/${batch}…` : 'Rendu en cours…')
+        reportImageStep(
+          useKontext ? 4 : 3,
+          useKontext ? 85 : 42,
+          batch > 1 ? `Diffusion FLUX (${k + 1}/${batch}) — calcul des 28 pas…` : 'Diffusion FLUX en cours (28 pas neuronaux)…',
+          `Exécution ComfyUI #${promptId.slice(0, 8)} en cours`,
+        )
         const filenames = await waitForComfyOutput(promptId, ac.signal)
 
-        setProgress(batch > 1 ? `Image ${k + 1}/${batch}…` : 'Récupération de l\'image…')
+        reportImageStep(
+          5,
+          93,
+          batch > 1 ? `Décodage VAE & récupération de l'image ${k + 1}/${batch}…` : 'Décodage VAE & contrôle qualité anti-écran-noir…',
+          'Étape 5/5 : récupération du PNG et vérification d’intégrité',
+        )
         const first = filenames[0]
         blob = await comfyuiGetImage(first.filename, first.subfolder)
         comfyFilename = first.filename
@@ -922,7 +1095,7 @@ export function useImageViewLogic() {
         // downsample grille entiere + palette indexee + upscale nearest.
         if (effectiveStyle === 'pixel_art') {
           try {
-            setProgress('Verrouillage pixel art (grille + palette)…')
+            reportImageStep(5, 95, 'Verrouillage pixel art (grille + palette)…', 'Post-traitement grille pixel-art authentique')
             const mod = await import('../utils/pixelArtEnforcer')
             blob = await mod.enforcePixelArtBlob(blob, mod.parsePixelArtOptions(text))
           } catch {
@@ -967,65 +1140,199 @@ export function useImageViewLogic() {
         } catch {
         }
 
-        // Persistance disque organisée : output/image/<context>/<session>/.
-        // Contexte dérivé de l'environnement (tauri=natif -> ui, tunnel -> tunnel,
-        // navigateur local -> ui) pour ne JAMAIS mélanger les créations CLI avec
-        // les créations UI. Best-effort : une coupure bridge ne bloque pas la
-        // livraison (la carte reste dans IndexedDB local).
+        // Persistance disque unifiée : output/image/creations/ (fini la dispersion
+        // confuse entre assets, decor, perso, edits, etc.) + sous-dossier de session.
         try {
           if (typeof window !== 'undefined' && comfyFilename) {
             const persistContext = (!isTauriRuntime() && isCloudRuntime()) ? 'tunnel' : 'ui'
             const bridge = getBridgeUrl()
-            await fetch(`${bridge}/api/image/persist`, {
+            reportImageStep(5, 98, 'Sauvegarde dans le dossier unifié output/image/creations/…')
+            const persistResp = await fetch(`${bridge}/api/image/persist`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 filename: comfyFilename,
+                context: persistContext,
                 sessionId: activeSessionAtStart?.id || 'general',
                 mode: intent.isEditIntent ? intent.editMode : 'creation',
                 prompt: text,
                 timestamp: Date.now(),
               }),
             })
+            if (persistResp.ok) {
+              const persistData = await persistResp.json().catch(() => null)
+              if (persistData?.saved_rel) {
+                setLastSavedPath(persistData.saved_rel as string)
+              }
+            }
           }
         } catch {
         }
       }
 
-      setProgress('Prêt')
-      finalProgressAfterCleanup = 'Pret'
+      setProgress('Étape 5/5 · Terminé')
+      setProgressPct(100)
+      finalProgressAfterCleanup = 'Prêt'
       const activeSession = useModuleHistoryStore.getState().getActiveSession('image')
       setHistory(pushHistory('image', text, { style: effectiveStyle, sessionId: activeSession.id, requestedStyle: styleForRun }))
       if (batch === 1) setPrompt('')
+      if (activeJobIdRef.current) {
+        useAppStore.getState().setGenerationJob(activeJobIdRef.current, {
+          status: 'done',
+          phase: 'done',
+          progress: 100,
+          finishedAt: Date.now(),
+          detail: 'Étape 5/5 · Image générée et sauvegardée dans output/image/creations/',
+        })
+      }
+      useAppStore.getState().setRuntimeTask({
+        active: false,
+        module: 'image',
+        phase: 'done',
+        detail: 'Image générée avec succès.',
+        progress: 100,
+        finishedAt: Date.now(),
+      })
+      const finishOk = activeProjectFinishRef.current as ((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null
+      if (finishOk) {
+        void finishOk('completed').catch(() => {})
+        activeProjectFinishRef.current = null
+      }
     } catch (err) {
-      if ((err as Error)?.name === 'AbortError') {
-        setProgress('Annulé')
-        finalProgressAfterCleanup = 'Annule'
+      if ((err as Error)?.name === 'AbortError' || ac.signal.aborted) {
+        setProgress('Arrêté')
+        setProgressPct(0)
+        finalProgressAfterCleanup = 'Arrêté'
+        if (activeJobIdRef.current) {
+          useAppStore.getState().setGenerationJob(activeJobIdRef.current, {
+            status: 'cancelled',
+            phase: 'done',
+            progress: 100,
+            finishedAt: Date.now(),
+            detail: 'Génération arrêtée par l’utilisateur.',
+          })
+        }
+        useAppStore.getState().resetRuntimeTask()
+        const finishStopped = activeProjectFinishRef.current as ((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null
+        if (finishStopped) {
+          void finishStopped('stopped').catch(() => {})
+          activeProjectFinishRef.current = null
+        }
       } else {
         const msg = err instanceof Error ? err.message : String(err)
         setError(msg)
         setProgress('')
+        setProgressPct(0)
+        if (activeJobIdRef.current) {
+          useAppStore.getState().setGenerationJob(activeJobIdRef.current, {
+            status: 'error',
+            phase: 'error',
+            progress: 100,
+            finishedAt: Date.now(),
+            error: msg,
+            detail: msg,
+          })
+        }
+        useAppStore.getState().setRuntimeTask({
+          active: false,
+          module: 'image',
+          phase: 'error',
+          detail: msg,
+          error: msg,
+          finishedAt: Date.now(),
+        })
+        const finishFailed = activeProjectFinishRef.current as ((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null
+        if (finishFailed) {
+          void finishFailed('failed').catch(() => {})
+          activeProjectFinishRef.current = null
+        }
       }
     } finally {
-      try {
-        setProgress('Nettoyage memoire GPU...')
-        await freeGpuBeforeFlux(Array.from(new Set([mainModel].filter(Boolean))))
-      } catch {
-      }
-      setProgress(finalProgressAfterCleanup)
+      // Libérer immédiatement le verrou et l'état UI AVANT le nettoyage mémoire GPU
+      // pour que le bouton Arrêter / Reprendre à neuf soit instantané et ne bloque jamais.
       clearInterval(lockHeartbeat)
       releaseImageGenerationLock(lockToken)
+      activeLockTokenRef.current = null
       generationLockRef.current = false
       abortRef.current = null
       setGenerating(false)
+      setCurrentStep(0)
+      setProgress(finalProgressAfterCleanup)
+      void freeGpuBeforeFlux(Array.from(new Set([mainModel].filter(Boolean)))).catch(() => {})
     }
-  }, [prompt, style, pushMessage, negPrompt, refFilename, refFilename2, refDenoise, seed, batch, dimensions, current, detectKontextModel, mainModel])
+  }, [prompt, style, pushMessage, negPrompt, refFilename, refFilename2, refPreview, refDenoise, seed, batch, dimensions, current, detectKontextModel, mainModel, reportImageStep])
 
-  const onStop = () => {
+  const onStop = useCallback(() => {
     abortRef.current?.abort()
-    setProgress('Annulation demandee a ComfyUI...')
+    abortRef.current = null
+    try { localStorage.removeItem('aurora.pendingComfyPrompt.v1') } catch {}
+    setResumeBanner(null)
+    if (activeLockTokenRef.current) {
+      releaseImageGenerationLock(activeLockTokenRef.current)
+      activeLockTokenRef.current = null
+    } else {
+      try { localStorage.removeItem('aurora.image.lock.v1') } catch {}
+    }
+    generationLockRef.current = false
+    setGenerating(false)
+    setCurrentStep(0)
+    setProgressPct(0)
+    setProgress('Arrêté — prêt à relancer')
+    emitGenerationFx('image', { active: false })
+    if (activeJobIdRef.current) {
+      useAppStore.getState().setGenerationJob(activeJobIdRef.current, {
+        status: 'cancelled',
+        phase: 'done',
+        progress: 100,
+        finishedAt: Date.now(),
+        detail: 'Génération arrêtée immédiatement par l’utilisateur.',
+      })
+    }
+    useAppStore.getState().resetRuntimeTask()
+    const finishStopNow = activeProjectFinishRef.current as ((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null
+    if (finishStopNow) {
+      void finishStopNow('stopped').catch(() => {})
+      activeProjectFinishRef.current = null
+    }
     void comfyuiInterrupt()
-  }
+  }, [])
+
+  // Écoute le bouton "■ Arrêter la génération" de l'animation plein écran (GenerationFxHost)
+  // ainsi que le bouton d'arrêt depuis "Projets et file d'attente" (ProjectsPanel).
+  useEffect(() => {
+    const onFxStop = (ev: Event) => {
+      const mod = (ev as CustomEvent<{ module?: string }>)?.detail?.module
+      if (!mod || mod === 'image') {
+        onStop()
+      }
+    }
+    window.addEventListener('aurora-fx-stop', onFxStop)
+    return () => window.removeEventListener('aurora-fx-stop', onFxStop)
+  }, [onStop])
+
+  // "Reprendre à neuf" : arrête tout calcul en cours, purge la file ComfyUI,
+  // nettoie les références/erreurs et ouvre une session vierge propre.
+  const resetWorkspaceClean = useCallback(() => {
+    onStop()
+    if (refPreview) URL.revokeObjectURL(refPreview)
+    if (refPreview2) URL.revokeObjectURL(refPreview2)
+    setRefPreview(null)
+    setRefFilename(null)
+    setRefPreview2(null)
+    setRefFilename2(null)
+    setError(null)
+    setProgress('')
+    setProgressPct(0)
+    setCurrentStep(0)
+    setLastExpandedNote(null)
+    const newSessionId = useModuleHistoryStore.getState().createSession('image')
+    const newSession = useModuleHistoryStore.getState().sessions.find((s) => s.id === newSessionId)
+    if (newSession) {
+      setImages([])
+      setCurrent(null)
+    }
+    setNotice('Atelier remis à neuf : génération précédente interrompue, références nettoyées et dossier unifié (output/image/creations/) prêt.')
+  }, [onStop, refPreview, refPreview2])
 
   const downloadCurrent = useCallback(async () => {
     if (!current) return
@@ -1070,8 +1377,9 @@ export function useImageViewLogic() {
     refPreview2, refFilename2, refUploading2,
     onUploadSource, clearSource, uploadSourceFile,
     images, current, setCurrent,
-    generating, progress, error, notice, setNotice,
-    queuePrompt, onStop,
+    generating, progress, progressPct, currentStep, lastSavedPath, lastExpandedNote,
+    error, notice, setNotice,
+    queuePrompt, onStop, resetWorkspaceClean,
     randomImagePreset,
     downloadCurrent,
     inpaintOpen, setInpaintOpen, applyInpaint,
@@ -1088,3 +1396,4 @@ export function useImageViewLogic() {
     onImageSessionChange,
   }
 }
+
