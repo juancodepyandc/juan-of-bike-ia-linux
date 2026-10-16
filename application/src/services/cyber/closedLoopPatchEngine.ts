@@ -210,18 +210,20 @@ Consignes strictes :
 
   logs.push("Patch de sécurité généré. Exécution des tests de conformité dans le bac à sable...")
 
-  // Vérification de compilation dans le bac éphémère si du code Python est fourni
-  let buildOk = true
+  // Vérification de compilation, d'élimination du motif vulnérable et de la suite de tests dans le bac éphémère
+  let buildOk = patchedCode.trim().length > 0 && patchedCode.trim() !== options.vulnerableCode.trim()
+  let vulnEliminated = buildOk
   if (options.language === 'python') {
-    const testRunnerScript = `
-${patchedCode}
+    const customTests = options.testSuiteCode ? `\n# Suite de tests fournie\n${options.testSuiteCode}\n` : ''
+    const testRunnerScript = [
+      'import ast, sys',
+      `patched_src = ${JSON.stringify(patchedCode)}`,
+      'ast.parse(patched_src)',
+      patchedCode,
+      customTests,
+      'print("__REMEDIATION_BUILD_OK__")',
+    ].join('\n')
 
-# Auto-test de non régression
-try:
-    print("__REMEDIATION_BUILD_OK__")
-except Exception as e:
-    print(f"__REMEDIATION_ERROR__: {e}")
-`
     const testExec = await runEphemeralToolSandbox({
       name: `closed_loop_test_${Date.now()}`,
       scriptCode: testRunnerScript,
@@ -229,26 +231,33 @@ except Exception as e:
     })
 
     buildOk = testExec.ok && testExec.stdout.includes('__REMEDIATION_BUILD_OK__')
-    logs.push(`Vérification bac à sable : ${buildOk ? 'COMPILATION ET EXÉCUTION RÉUSSIES' : 'ERREUR DÉTECTÉE'}`)
+    const stillHasDangerousSink = /shell\s*=\s*True|\beval\s*\(|\bpickle\.loads\s*\(/i.test(patchedCode)
+    vulnEliminated = buildOk && !stillHasDangerousSink && patchedCode.trim() !== options.vulnerableCode.trim()
+    logs.push(`Vérification bac à sable : ${buildOk ? 'COMPILATION ET TESTS RÉUSSIS' : 'ERREUR DÉTECTÉE'}`)
+    logs.push(`Audit d'élimination de la primitive vulnérable : ${vulnEliminated ? 'VALIDÉ' : 'INCOMPLET'}`)
+  } else {
+    const stillHasUnsafeCOrJs = /\bstrcpy\s*\(|\bsprintf\s*\(|\beval\s*\(/i.test(patchedCode)
+    vulnEliminated = buildOk && !stillHasUnsafeCOrJs
   }
 
+  const isCompleteSuccess = buildOk && vulnEliminated
   const certId = `CERT-AUTO-${Date.now()}`
   return {
-    ok: buildOk,
-    vulnerabilityResolved: true,
+    ok: isCompleteSuccess,
+    vulnerabilityResolved: vulnEliminated,
     nominalFunctionPreserved: buildOk,
     buildSuccess: buildOk,
     originalSnippet: options.vulnerableCode,
     patchedSnippet: patchedCode,
-    diffSummary: `Application du correctif de sécurité pour ${options.cwe}.`,
+    diffSummary: `Application et vérification du correctif de sécurité pour ${options.cwe}.`,
     executionLogs: logs,
     remediationCertificate: {
       certificateId: certId,
       timestamp: Date.now(),
       cwe: options.cwe,
       severity: 'HIGH',
-      status: buildOk ? 'VERIFIED_SECURE' : 'PARTIAL_FIX',
-      attestationHash: computeSimpleHash(`${certId}:${buildOk}:${Date.now()}`),
+      status: isCompleteSuccess ? 'VERIFIED_SECURE' : (buildOk ? 'PARTIAL_FIX' : 'REGRESSION_DETECTED'),
+      attestationHash: computeSimpleHash(`${certId}:${isCompleteSuccess}:${Date.now()}`),
     },
   }
 }

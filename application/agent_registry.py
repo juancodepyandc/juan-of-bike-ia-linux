@@ -13,12 +13,13 @@ AGENTS = {
         "module": "orchestration",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["set_plan", "revise_plan", "create_agent", "spawn_agent", "verify", "inspect_runtime"],
-        "verification_focus": "Couverture complète des critères du plan et preuves d'exécution des sous-tâches.",
+        "preferred_tools": ["set_plan", "revise_plan", "search_web", "fetch_url", "create_agent", "spawn_agent", "create_skill", "verify", "inspect_runtime"],
+        "verification_focus": "Couverture complète des critères du plan, hypothèses réfutables testées par l'expérience, et capitalisation des nouvelles méthodes en skills.",
         "role": (
-            "Architecte et coordinateur principal : décompose l'objectif en étapes vérifiables, "
-            "sélectionne ou crée les agents spécialisés adaptés par module et contrôle que chaque critère "
-            "dispose d'une preuve mesurée avant conclusion."
+            "Architecte et coordinateur scientifique principal : décompose l'objectif en étapes vérifiables, "
+            "formule des hypothèses réfutables face à l'inconnu, sélectionne ou crée les agents spécialisés adaptés "
+            "par module, contrôle que chaque critère dispose d'une preuve mesurée sans hallucination, et capitalise "
+            "les méthodes inédites validées via create_skill."
         ),
     },
     "conversation-lead": {
@@ -27,11 +28,11 @@ AGENTS = {
         "module": "chat",
         "can_create_subagents": True,
         "permissions": "SAFE",
-        "preferred_tools": ["read_file", "search_code", "list_files", "verify"],
-        "verification_focus": "Exactitude factuelle par rapport aux fichiers et sources réellement observés.",
+        "preferred_tools": ["read_file", "search_code", "list_files", "search_web", "fetch_url", "verify"],
+        "verification_focus": "Exactitude factuelle par rapport aux fichiers et sources réellement observés, zéro affirmation non sourcée.",
         "role": (
-            "Responsable d'analyse et de synthèse : clarifie les exigences, inspecte les fichiers "
-            "sans les modifier et produit des réponses fidèles aux observations."
+            "Responsable d'analyse épistémique et de synthèse : clarifie les exigences, inspecte les fichiers "
+            "et sources sans les modifier, distingue faits mesurés et hypothèses, et produit des réponses fidèles aux observations."
         ),
     },
     "chat-lead": {
@@ -40,11 +41,11 @@ AGENTS = {
         "module": "chat",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["read_file", "search_code", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Exactitude des réponses, continuité du contexte et preuves de délégation.",
+        "preferred_tools": ["read_file", "search_code", "search_web", "fetch_url", "create_agent", "spawn_agent", "create_skill", "verify"],
+        "verification_focus": "Exactitude des réponses, continuité du contexte, vérification des sources et preuves de délégation.",
         "role": (
-            "Agent principal du module Chat : analyse les requêtes complexes, crée au besoin ses propres "
-            "sous-agents spécialisés et vérifie chaque fait avant livraison."
+            "Agent principal du module Chat : analyse les requêtes complexes, recherche les faits inconnus, "
+            "crée au besoin ses propres sous-agents spécialisés et vérifie chaque fait avant livraison."
         ),
     },
     "code-lead": {
@@ -53,12 +54,12 @@ AGENTS = {
         "module": "code",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["search_code", "read_file", "write_file", "run_command", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Tests automatisés passants, intégrité syntaxique et vérification des sorties.",
+        "preferred_tools": ["search_code", "read_file", "write_file", "run_command", "inspect_tool", "run_tool", "create_agent", "spawn_agent", "create_skill", "verify"],
+        "verification_focus": "Tests automatisés passants, vérification formelle/AST (SymPy/Z3 via scientific_oracle.py), intégrité syntaxique et zéro régression.",
         "role": (
-            "Ingénieur logiciel principal : localise les définitions et usages avec search_code, "
-            "lit les fichiers avant modification, écrit du code propre, crée au besoin des sous-agents "
-            "de test ou d'audit et exécute des tests réels pour prouver chaque correction."
+            "Ingénieur logiciel et algorithmique principal : localise les définitions avec search_code, "
+            "formule et teste des hypothèses discriminantes en cas d'erreur inédite, utilise scientific_oracle.py "
+            "(SymPy/Z3) pour prouver les invariants mathématiques ou algorithmiques, et capitalise les patterns résolus en skills."
         ),
     },
     "image-lead": {
@@ -67,8 +68,8 @@ AGENTS = {
         "module": "image",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["generate_image", "inspect_path", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Présence, intégrité SHA-256 et conformité du fichier image généré dans le dossier de livraison.",
+        "preferred_tools": ["generate_image", "inspect_path", "create_agent", "spawn_agent", "create_skill", "verify"],
+        "verification_focus": "Présence, intégrité SHA-256 et conformité sémantique du fichier image généré dans le dossier de livraison.",
         "role": (
             "Spécialiste génération d'images : compose des prompts fidèles au sujet demandé sans "
             "ajouter de décor non sollicité, crée des sous-agents de contrôle visuel si nécessaire et vérifie l'artefact produit."
@@ -80,11 +81,11 @@ AGENTS = {
         "module": "3d",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["generate_3d", "inspect_tool", "run_tool", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Maillage GLB/STL valide, textures PBR appliquées, respect strict du sujet sans éléments inventés, géométrie vérifiée.",
+        "preferred_tools": ["generate_3d", "inspect_tool", "run_tool", "create_agent", "spawn_agent", "create_skill", "verify"],
+        "verification_focus": "Maillage GLB/STL manifold fermé, zéro collision booléenne au repos (Manifold 3D), textures PBR appliquées et respect strict du sujet.",
         "role": (
-            "Ingénieur 3D principal : pilote la génération, le texturage PBR et l'analyse géométrique 3D "
-            "en préservant strictement le sujet demandé et en déléguant aux sous-agents 3D (texture, viewer, motion, rescue)."
+            "Ingénieur 3D et CAO principal : pilote la génération, le texturage PBR, l'assemblage cinématique et "
+            "l'analyse géométrique exacte (Manifold 3D, non-interférence booléenne, trajectoires d'insertion) sans gabarit figé."
         ),
     },
     "3d-pipeline-router": {
@@ -159,7 +160,7 @@ AGENTS = {
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
         "preferred_tools": ["list_tools", "inspect_tool", "run_tool", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Présence et taille non nulle des fichiers audio ou transcriptions générés.",
+        "verification_focus": "Présence, intégrité spectrale/durée et taille non nulle des fichiers audio ou transcriptions générés.",
         "role": (
             "Ingénieur audio et voix : inspecte les outils de transcription et de synthèse vocale, "
             "crée au besoin ses sous-agents audio et vérifie les fichiers produits."
@@ -179,29 +180,31 @@ AGENTS = {
         ),
     },
     "learning-lead": {
-        "description": "Adapte l'explication, documente l'architecture et vérifie la compréhension.",
+        "description": "Adapte l'explication, résout et vérifie formellement les problèmes mathématiques et académiques.",
         "domain": "learning",
         "module": "learning",
         "can_create_subagents": True,
-        "permissions": "SAFE",
-        "preferred_tools": ["read_file", "search_code", "list_files", "verify"],
-        "verification_focus": "Clarté pédagogique et exactitude des exemples par rapport au code réel.",
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["read_file", "search_code", "list_files", "inspect_tool", "run_tool", "run_command", "search_web", "fetch_url", "create_skill", "verify"],
+        "verification_focus": "Preuve symbolique et formelle (SymPy / Z3 via scientific_oracle.py), recherche de contre-exemples et clarté pédagogique sans hallucination.",
         "role": (
-            "Responsable documentation et pédagogie : inspecte le code source réel pour produire "
-            "des explications et guides techniques vérifiables."
+            "Responsable recherche académique, mathématique et pédagogie : utilise scientific_oracle.py "
+            "(SymPy + solveur SMT Z3) pour prouver les théorèmes ou chercher des contre-exemples, "
+            "distingue rigoureusement les résultats démontrés des conjectures ouvertes, et produit des démonstrations vérifiables."
         ),
     },
     "cyber-lead": {
-        "description": "Analyse défensive, audit de surface et vérifications de sécurité.",
+        "description": "Analyse défensive, découverte dynamique de 0-days par invariants et preuves formelles SMT.",
         "domain": "security",
         "module": "cyber",
         "can_create_subagents": True,
-        "permissions": "STANDARD",
-        "preferred_tools": ["search_code", "read_file", "inspect_path", "run_command", "verify"],
-        "verification_focus": "Absence de traversée de chemin, confinement workspace, validation des entrées et secrets.",
+        "permissions": "AUTONOMOUS",
+        "preferred_tools": ["search_code", "read_file", "inspect_path", "inspect_tool", "run_tool", "run_command", "search_web", "fetch_url", "create_skill", "verify"],
+        "verification_focus": "Preuve SMT d'atteignabilité (Z3 BitVec/Int via scientific_oracle.py), PoC reproductible, élimination vérifiée de la primitive vulnérable et zéro régression.",
         "role": (
-            "Ingénieur sécurité défensive : audite le code et les configurations pour détecter "
-            "les failles d'injection, fuites de secrets ou contournements de permissions."
+            "Ingénieur sécurité et recherche 0-day par premiers principes : extrait l'AST et les invariants "
+            "(mémoire, concurrence TOCTOU, séparation code/données, entropie), résout les contraintes de chemin "
+            "avec Z3 (scientific_oracle.py --mode cyber), valide les correctifs en boucle fermée et capitalise les signatures en skills."
         ),
     },
     "bridge-doctor": {
@@ -223,8 +226,8 @@ AGENTS = {
         "module": "cowork",
         "can_create_subagents": True,
         "permissions": "AUTONOMOUS",
-        "preferred_tools": ["list_mcp_tools", "call_mcp_tool", "list_skills", "create_agent", "spawn_agent", "verify"],
-        "verification_focus": "Exécution bornée des outils MCP et vérification des résultats retournés.",
+        "preferred_tools": ["list_mcp_tools", "call_mcp_tool", "list_skills", "create_skill", "create_agent", "spawn_agent", "verify"],
+        "verification_focus": "Exécution bornée des outils MCP, observation réelle du DOM/état et vérification des résultats retournés.",
         "role": (
             "Spécialiste intégration MCP et automatisation : découvre les outils MCP et skills "
             "du projet, crée des sous-agents d'automatisation et exécute les appels externes autorisés avec preuves."

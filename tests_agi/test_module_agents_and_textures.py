@@ -288,6 +288,44 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.state["status"], "completed")
         self.assertEqual(agent.state["verified"], [criterion])
 
+    def test_scientific_oracle_math_and_cyber_formal_verification(self):
+        services_dir = ROOT / "application" / "python-services"
+        if str(services_dir) not in sys.path:
+            sys.path.insert(0, str(services_dir))
+        from scientific_oracle import (
+            analyze_cyber_code_dynamically,
+            verify_mathematical_conjecture,
+        )
+
+        # 1. Exact algebraic & Z3 SMT theorem proving
+        valid = verify_mathematical_conjecture("(a + b)**2 == a**2 + 2*a*b + b**2", domain="int")
+        self.assertEqual(valid["status"], "PROVEN_VALID")
+        self.assertTrue(valid["algebraic_identity"])
+
+        # 2. Falsification of a false conjecture with concrete Z3 counterexample
+        false_conj = verify_mathematical_conjecture("n**2 > 2*n", domain="pos_int")
+        self.assertEqual(false_conj["status"], "FALSIFIED")
+        self.assertIsNotNone(false_conj["counterexample"])
+        n_val = int(false_conj["counterexample"]["n"])
+        self.assertFalse(n_val**2 > 2 * n_val)
+
+        # 3. Dynamic 0-day AST + Z3 BitVec32 & TOCTOU analysis
+        vuln_code = (
+            "async def process_packet(pkt_id, offset, length, data):\n"
+            "    if offset + length <= 1024:\n"
+            "        await record_audit(pkt_id)\n"
+            "        return data[offset]\n"
+        )
+        cyber = analyze_cyber_code_dynamically(vuln_code, language="python")
+        self.assertEqual(cyber["analyzed_function"], "process_packet")
+        self.assertEqual(cyber["formal_verification_status"], "PROVEN_VULNERABLE")
+        self.assertGreaterEqual(cyber["findings_count"], 3)
+        cwes = " ".join(f["cwe"] for f in cyber["findings"])
+        self.assertIn("CWE-190", cwes)
+        self.assertIn("CWE-125", cwes)
+        self.assertIn("CWE-362", cwes)
+
 
 if __name__ == "__main__":
     unittest.main()
+

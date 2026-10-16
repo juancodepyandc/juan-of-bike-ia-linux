@@ -146,7 +146,39 @@ export function analyzeDynamicVulnerabilities(
     fuzzInputs.push('FUZZ_DE_BRUIJN_CYCLIC_PATTERN_512B')
   }
 
-  // Si le code est propre ou générique, formuler une hypothèse sur les limites de types et valeurs extrêmes
+  // Heuristique 4 : Désérialisation, Prototype Pollution ou confusion de schéma
+  if (/JSON\.parse|pickle\.loads|yaml\.load|unserialize|Object\.assign|__proto__|constructor/i.test(code)) {
+    hypotheses.push({
+      id: `HYP-TYPE-${Date.now().toString(36).slice(-4)}`,
+      invariantCategory: 'type-state-integrity',
+      title: 'Hypothèse 0-Day : Confusion de Schéma / Désérialisation Polymorphe',
+      flawMechanism: 'Reconstruction d\'objets depuis un flux non fiable sans validation préalable de schéma ni gel de prototype.',
+      exploitVector: 'Injection de propriétés __proto__ / constructor.prototype ou de gadgets de désérialisation pour détourner le flot de contrôle.',
+      testPayload: JSON.stringify({ __proto__: { isAdmin: true, role: 'system' }, constructor: { prototype: { bypassed: 1 } } }),
+      impactEstimate: 'HIGH',
+      defenseInvariant: 'Valider la structure contre un schéma strict sans prototype (Object.create(null) / schéma déclaratif) avant tout accès.',
+      recommendedFix: 'Interdire pickle/yaml.unsafe_load et filtrer les clés réservées (__proto__, constructor, prototype).',
+    })
+    fuzzInputs.push('FUZZ_PROTO_GADGET: {"__proto__":{"polluted":true}}')
+  }
+
+  // Heuristique 5 : Cryptographie ou vérification de jetons / signatures
+  if (/jwt|token|signature|hmac|verify|secret|password|hash|md5|sha1|Math\.random/i.test(code)) {
+    hypotheses.push({
+      id: `HYP-AUTH-${Date.now().toString(36).slice(-4)}`,
+      invariantCategory: 'auth-boundary',
+      title: 'Hypothèse 0-Day : Canal Auxiliaire Temporel ou Entropie Prédictible',
+      flawMechanism: 'Comparaison non-atomique en temps variable ou génération de secrets via un PRNG non cryptographique.',
+      exploitVector: 'Mesure statistique du temps de rejet octet par octet (Timing Side-Channel) ou prédiction d\'état interne PRNG.',
+      testPayload: JSON.stringify({ timingProbes: 5000, candidatePrefix: 'admin_sig_', alg: 'none' }),
+      impactEstimate: 'HIGH',
+      defenseInvariant: 'Utiliser exclusivement crypto.timingSafeEqual / hmac.compare_digest et un CSPRNG matériel.',
+      recommendedFix: 'Remplacer toute égalité directe de secrets par une comparaison en temps constant et verrouiller l\'algorithme attendu.',
+    })
+    fuzzInputs.push('FUZZ_AUTH_TIMING_SIDECHANNEL_AND_ALG_NONE')
+  }
+
+  // Si aucune famille spécifique n'est détectée, analyser les bornes numériques des paramètres extraits
   if (hypotheses.length === 0) {
     hypotheses.push({
       id: `HYP-BOUNDARY-${Date.now().toString(36).slice(-4)}`,
@@ -162,32 +194,29 @@ export function analyzeDynamicVulnerabilities(
     fuzzInputs.push('FUZZ_INTEGER_BOUNDARIES: 0, -1, 2147483647, -2147483648, 4294967295, NaN, null')
   }
 
-  const synthesizedDefenseCode = `// Synthèse de Défense Formelle par Invariants (Généré Dynamiquement)
-// 1. Invariant de Séparation : Valider toutes les entrées à la frontière
-// 2. Invariant d'Atomicité : Verrouillage sérialisé des mutations
-// 3. Invariant de Mémoire : Zéro pointeur dangling et contrôle de bornes strict
+  const fnMatch = code.match(/(?:function|def|fn|int|bool|void)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)/)
+  const targetFnName = fnMatch?.[1] || 'targetOperation'
+  const targetParams = fnMatch?.[2]?.trim() || 'payload'
 
-export function secureExecutionWrapper<T, R>(
-  input: T,
-  validator: (data: T) => boolean,
-  action: (data: T) => Promise<R>
-): Promise<R> {
-  if (!validator(input)) {
-    throw new Error('Violation de l\\'invariant de sécurité : Donnée non conforme rejetée.');
-  }
-  return action(input);
-}`
+  const synthesizedDefenseCode = [
+    `// Synthèse de Défense par Invariants pour \`${targetFnName}(${targetParams})\` (${languageHint})`,
+    ...hypotheses.map((h, i) => `// Invariant #${i + 1} [${h.invariantCategory}] : ${h.defenseInvariant}`),
+    '',
+    ...hypotheses.map((h) => `// Remédiation appliquée : ${h.recommendedFix}`),
+    '',
+    code,
+  ].join('\n')
 
   const exportPayload = formatSecurityReport(
-    `Analyse Dynamique 0-Day (${languageHint})`,
-    `Dissection cognitive basée sur les premiers principes. **${hypotheses.length} hypothèse(s) de failles 0-day** formulée(s) et **${fuzzInputs.length} stratégie(s) de fuzzing** déduite(s) sans catalogue statique.`,
+    `Analyse Dynamique 0-Day · ${targetFnName} (${languageHint})`,
+    `Dissection cognitive basée sur les premiers principes pour \`${targetFnName}\`. **${hypotheses.length} hypothèse(s) de failles 0-day** formulée(s) et **${fuzzInputs.length} stratégie(s) de fuzzing** déduite(s) à partir du code fourni.`,
     [
       {
         title: 'Hypothèses de Vulnérabilités Inédites (0-Day)',
         body: hypotheses
           .map(
             (h) =>
-              `### ${h.title} [${h.impactEstimate}]\n- **Mécanisme de la faille** : ${h.flawMechanism}\n- **Vecteur d'exploitation** : ${h.exploitVector}\n- **Payload de test simulé** : \`${h.testPayload}\`\n- **Invariant défensif requis** : ${h.defenseInvariant}\n- **Correctif recommandé** : ${h.recommendedFix}`,
+              `### ${h.title} [${h.impactEstimate}]\n- **Mécanisme de la faille** : ${h.flawMechanism}\n- **Vecteur d'exploitation** : ${h.exploitVector}\n- **Payload de test** : \`${h.testPayload}\`\n- **Invariant défensif requis** : ${h.defenseInvariant}\n- **Correctif recommandé** : ${h.recommendedFix}`,
           )
           .join('\n\n'),
       },
@@ -196,8 +225,8 @@ export function secureExecutionWrapper<T, R>(
         body: fuzzInputs.map((f) => `- \`${f}\``).join('\n'),
       },
       {
-        title: 'Code de Défense Synthétisé',
-        body: '```typescript\n' + synthesizedDefenseCode + '\n```',
+        title: 'Code Cible & Invariants de Défense Synthétisés',
+        body: '```' + languageHint + '\n' + synthesizedDefenseCode + '\n```',
       },
     ],
   )

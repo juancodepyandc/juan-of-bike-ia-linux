@@ -18,25 +18,38 @@ import {
 } from 'lucide-react'
 import {
   runSymbolicExecution,
+  runSymbolicExecutionWithZ3,
   type SymbolicExecutionReport,
   type SymbolicPath,
 } from '../../services/cyber/symbolicExecutionEngine.ts'
 import { triggerBrowserDownload } from '../../services/cyber/cyberOutputManager.ts'
 
+const INITIAL_SYMBOLIC_CODE = `bool process_payload(const uint8_t *buffer, size_t capacity, uint32_t offset, uint32_t size) {
+    if (!buffer) return false;
+    if (offset + size <= capacity) {
+        uint8_t header = buffer[offset];
+        return header != 0;
+    }
+    return false;
+}`
+
 export default function SymbolicExecutionLab() {
   const [functionName, setFunctionName] = useState('process_payload')
+  const [sourceCode, setSourceCode] = useState(INITIAL_SYMBOLIC_CODE)
   const [isRunning, setIsRunning] = useState(false)
   const [report, setReport] = useState<SymbolicExecutionReport | null>(() =>
-    runSymbolicExecution('', 'process_payload'),
+    runSymbolicExecution(INITIAL_SYMBOLIC_CODE, 'process_payload'),
   )
   const [copied, setCopied] = useState(false)
 
-  const handleRun = () => {
+  const handleRun = async () => {
     setIsRunning(true)
-    setTimeout(() => {
-      setReport(runSymbolicExecution('', functionName))
+    try {
+      const nextReport = await runSymbolicExecutionWithZ3(sourceCode, functionName)
+      setReport(nextReport)
+    } finally {
       setIsRunning(false)
-    }, 400)
+    }
   }
 
   const handleDownload = () => {
@@ -85,24 +98,33 @@ export default function SymbolicExecutionLab() {
         )}
       </div>
 
-      {/* Control bar */}
-      <div className="rounded-xl border border-white/10 bg-black/40 p-3.5 flex items-center gap-3">
-        <span className="text-[12px] font-mono text-white/70 font-bold uppercase">Fonction Cible :</span>
-        <input
-          type="text"
-          value={functionName}
-          onChange={(e) => setFunctionName(e.target.value)}
-          className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-1.5 text-[12px] font-mono text-white outline-none"
+      {/* Control bar & Source Code Editor */}
+      <div className="rounded-xl border border-white/10 bg-black/40 p-3.5 space-y-3">
+        <div className="flex items-center gap-3">
+          <span className="text-[12px] font-mono text-white/70 font-bold uppercase">Fonction Cible :</span>
+          <input
+            type="text"
+            value={functionName}
+            onChange={(e) => setFunctionName(e.target.value)}
+            className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-1.5 text-[12px] font-mono text-white outline-none"
+          />
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={isRunning}
+            className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-[12px] flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+            Résoudre Contraintes SMT (Z3)
+          </button>
+        </div>
+        <textarea
+          rows={6}
+          value={sourceCode}
+          onChange={(e) => setSourceCode(e.target.value)}
+          placeholder="Collez le code source C, Python, Rust ou TypeScript à analyser symboliquement..."
+          className="w-full rounded-lg bg-black/70 border border-white/10 p-2.5 text-[11.5px] font-mono text-white/90 leading-relaxed outline-none resize-vertical focus:border-amber-500"
         />
-        <button
-          type="button"
-          onClick={handleRun}
-          disabled={isRunning}
-          className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-[12px] flex items-center gap-1.5 transition-colors cursor-pointer"
-        >
-          {isRunning ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-          Résoudre Contraintes SMT
-        </button>
       </div>
 
       {report && (
