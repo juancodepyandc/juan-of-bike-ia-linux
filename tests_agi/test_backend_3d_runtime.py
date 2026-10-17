@@ -26,6 +26,10 @@ def load_module(name, path):
 
 # CORS middleware is outside these local Flask/runtime contracts and is not
 # installed in the CLI test environment. No bridge startup code is executed.
+APP_DIR = ROOT / "application"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
 with patch.dict(sys.modules, {'flask_cors':SimpleNamespace(CORS=lambda app, **kwargs:None)}):
     BRIDGE = load_module('_test_3d_bridge', ROOT/'application/bridge_server.py')
 with patch.dict(sys.modules, {'bridge_server': BRIDGE}), patch.dict(os.environ, {'AURORA_VITE_SUPERVISOR': '0'}):
