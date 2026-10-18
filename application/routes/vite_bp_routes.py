@@ -1908,6 +1908,37 @@ def agents_loops_state():
     return jsonify({"ok": True, "state": evo.load_state()})
 
 
+@vite_bp.route("/api/agents/loops/watchdog", methods=["POST"])
+def agents_loops_watchdog():
+    """Autonomous Goal Watchdog Loop: evaluates mission trajectory for semantic drift, tool oscillation, and missing prompt anchors."""
+    from agi_core.agi_loops import AutonomousGoalWatchdogLoop
+    data = request.get_json(silent=True) or {}
+    req_text = str(data.get("request") or data.get("prompt") or "")
+    steps = data.get("executed_steps") if isinstance(data.get("executed_steps"), list) else []
+    output = str(data.get("current_output") or "")
+    wd = AutonomousGoalWatchdogLoop()
+    return jsonify(wd.evaluate_trajectory(req_text, executed_steps=steps, current_output=output))
+
+
+@vite_bp.route("/api/agents/loops/counterfactual", methods=["POST"])
+def agents_loops_counterfactual():
+    """Multi-Hypothesis Counterfactual Loop: evaluates 3 Bayesian hypotheses (Canonical, Cross-Verified, Red-Team Resilient)."""
+    from agi_core.agi_loops import CognitiveExecutiveLoop
+    data = request.get_json(silent=True) or {}
+    req_text = str(data.get("request") or data.get("prompt") or "")
+    mod = str(data.get("module") or "").strip() or None
+    if not req_text:
+        return jsonify({"ok": False, "error": "missing request parameter"}), 400
+    loop = CognitiveExecutiveLoop()
+    plan = loop.build_autonomous_loop_plan(req_text, active_module=mod)
+    return jsonify({
+        "ok": True,
+        "counterfactual_evaluation": plan["counterfactual_evaluation"],
+        "handoff_contracts": plan["handoff_contracts"],
+        "epistemic_regime": plan["epistemic_regime"],
+    })
+
+
 @vite_bp.route("/api/agents/sync-disk", methods=["POST"])
 def agents_sync_disk():
     """Materialize all 111 agents into both Workspace (.agents/agents/{name}/agent.md)

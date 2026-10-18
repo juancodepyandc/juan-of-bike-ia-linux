@@ -16,8 +16,8 @@
   }
  },
  "source_files": 2215,
- "source_lines": 752814,
- "static_route_declarations": 671,
+ "source_lines": 753327,
+ "static_route_declarations": 673,
  "by_repository": {
   "AuroraIA": 2052,
   "aurora-remote-cli": 159,
@@ -101,8 +101,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/agi_loops.py",
-   "sha256": "9eb6946476889cddb44b52a799f5148ac3af153c8731b7d0ea6a29f6d3cf3eb3",
-   "lines": 547,
+   "sha256": "ede3b13c2bfa8364413f399d9534f11ebd8a73eaa219c73ce2af8a5ce177fa6f",
+   "lines": 802,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -9425,8 +9425,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/vite_bp_routes.py",
-   "sha256": "592e1a3b3e713d3c42c956568fc93719fc08775fbafcf917bc640a8df3de4ef4",
-   "lines": 3211,
+   "sha256": "578ba8992ef38ab4c7d9da1e8c0d4fb79c4bd066592aa1254099484325956251",
+   "lines": 3242,
    "http_routes": [
     {
      "path": "/api/admin/status",
@@ -9674,12 +9674,28 @@
      "line": 1892
     },
     {
+     "path": "/api/agents/loops/watchdog",
+     "methods": [
+      "POST"
+     ],
+     "handler": "agents_loops_watchdog",
+     "line": 1912
+    },
+    {
+     "path": "/api/agents/loops/counterfactual",
+     "methods": [
+      "POST"
+     ],
+     "handler": "agents_loops_counterfactual",
+     "line": 1924
+    },
+    {
      "path": "/api/agents/sync-disk",
      "methods": [
       "POST"
      ],
      "handler": "agents_sync_disk",
-     "line": 1912
+     "line": 1943
     },
     {
      "path": "/api/agents/<name>",
@@ -9687,7 +9703,7 @@
       "GET"
      ],
      "handler": "agents_get",
-     "line": 1921
+     "line": 1952
     },
     {
      "path": "/api/3d/auto-rescue",
@@ -9695,7 +9711,7 @@
       "POST"
      ],
      "handler": "three_d_auto_rescue",
-     "line": 1958
+     "line": 1989
     },
     {
      "path": "/api/3d/bake-colors",
@@ -9703,7 +9719,7 @@
       "POST"
      ],
      "handler": "three_d_bake_colors",
-     "line": 2029
+     "line": 2060
     },
     {
      "path": "/api/3d/color-diagnostic",
@@ -9711,7 +9727,7 @@
       "POST"
      ],
      "handler": "three_d_color_diagnostic",
-     "line": 2095
+     "line": 2126
     },
     {
      "path": "/api/3d/auto-validate",
@@ -9719,7 +9735,7 @@
       "POST"
      ],
      "handler": "three_d_auto_validate",
-     "line": 2155
+     "line": 2186
     },
     {
      "path": "/api/3d/mesh-score",
@@ -9727,7 +9743,7 @@
       "POST"
      ],
      "handler": "three_d_mesh_score",
-     "line": 2214
+     "line": 2245
     },
     {
      "path": "/api/agents/watchdog",
@@ -9735,7 +9751,7 @@
       "GET"
      ],
      "handler": "agents_watchdog",
-     "line": 2264
+     "line": 2295
     },
     {
      "path": "/api/agents/health",
@@ -9743,7 +9759,7 @@
       "GET"
      ],
      "handler": "agents_health",
-     "line": 2315
+     "line": 2346
     },
     {
      "path": "/api/agents/dispatches",
@@ -9751,7 +9767,7 @@
       "GET"
      ],
      "handler": "agents_dispatches",
-     "line": 2349
+     "line": 2380
     },
     {
      "path": "/api/agents/coverage",
@@ -9759,7 +9775,7 @@
       "GET"
      ],
      "handler": "agents_coverage",
-     "line": 2394
+     "line": 2425
     },
     {
      "path": "/api/agents/metrics",
@@ -9767,7 +9783,7 @@
       "GET"
      ],
      "handler": "agents_metrics",
-     "line": 2422
+     "line": 2453
     },
     {
      "path": "/api/3d/motion-intent",
@@ -9775,7 +9791,7 @@
       "POST"
      ],
      "handler": "three_d_motion_intent",
-     "line": 2451
+     "line": 2482
     },
     {
      "path": "/api/3d/custom-motion",
@@ -9783,7 +9799,7 @@
       "POST"
      ],
      "handler": "three_d_custom_motion",
-     "line": 2511
+     "line": 2542
     },
     {
      "path": "/api/3d/auto-motion-bake",
@@ -9791,7 +9807,7 @@
       "POST"
      ],
      "handler": "three_d_auto_motion_bake",
-     "line": 2596
+     "line": 2627
     },
     {
      "path": "/api/admin/git-pull",
@@ -9800,7 +9816,7 @@
       "GET"
      ],
      "handler": "admin_git_pull",
-     "line": 2756
+     "line": 2787
     },
     {
      "path": "/api/admin/restart-vite",
@@ -9809,7 +9825,7 @@
       "GET"
      ],
      "handler": "admin_restart_vite",
-     "line": 2894
+     "line": 2925
     },
     {
      "path": "/",
@@ -9823,7 +9839,7 @@
       "OPTIONS"
      ],
      "handler": "vite_root",
-     "line": 3086
+     "line": 3117
     },
     {
      "path": "/<path:path>",
@@ -9837,7 +9853,7 @@
       "OPTIONS"
      ],
      "handler": "vite_catchall",
-     "line": 3202
+     "line": 3233
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10962,8 +10978,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/ReinforcedModelBar.tsx",
-   "sha256": "f4da2f5fe1227c6604e837ea82a32bd5e4fae8fb4872382408b53dea7fe2ba52",
-   "lines": 582
+   "sha256": "4bed49c95979b1f7dcba0d774a1df1357d8bf256319acd539ce9c8a4409ca9da",
+   "lines": 792
   },
   {
    "repo": "AuroraIA",
@@ -19634,8 +19650,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_module_agents_and_textures.py",
-   "sha256": "af1e113254b09d73e0f160e9d15d32b5c8b42adbc3cce88bbe789f4a45c211b6",
-   "lines": 541,
+   "sha256": "663b8a8761f3f40b1d1443db8d9981ecb72f1904d3608cb7b48180330e51a5ee",
+   "lines": 558,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

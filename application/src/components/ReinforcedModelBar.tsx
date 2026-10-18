@@ -69,6 +69,38 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
   const [inspectModule, setInspectModule] = useState<string>(backendMod)
   const [switching, setSwitching] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
+  const [brainModalOpen, setBrainModalOpen] = useState(false)
+  const [brainQuery, setBrainQuery] = useState('')
+  const [brainPlan, setBrainPlan] = useState<Record<string, unknown> | null>(null)
+  const [ghStatus, setGhStatus] = useState<Record<string, unknown> | null>(null)
+  const [brainLoading, setBrainLoading] = useState(false)
+
+  const runBrainSimulation = useCallback(
+    async (promptToTest: string) => {
+      setBrainLoading(true)
+      try {
+        const [planRes, ghRes] = await Promise.all([
+          fetch(`${getBridgeUrl()}/api/agents/loops/plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: promptToTest, module: backendMod }),
+          }),
+          fetch(`${getBridgeUrl()}/api/agents/loops/github-status`),
+        ])
+        if (planRes.ok) {
+          setBrainPlan((await planRes.json()) as Record<string, unknown>)
+        }
+        if (ghRes.ok) {
+          setGhStatus((await ghRes.json()) as Record<string, unknown>)
+        }
+      } catch {
+        // Ignore transient network errors
+      } finally {
+        setBrainLoading(false)
+      }
+    },
+    [backendMod],
+  )
 
   useEffect(() => {
     setInspectModule(backendMod)
@@ -251,6 +283,27 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
           }}
         >
           📊 Gains .md
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setBrainModalOpen(true)
+            void runBrainSimulation(brainQuery || `Optimiser le module ${backendMod} avec précision industrielle`)
+          }}
+          title="Ouvrir le Centre Cerveau AGI : 111 Agents (Workspace & Global) + 8 Boucles Opérationnelles Autonomes"
+          style={{
+            padding: '4px 8px',
+            borderRadius: 8,
+            border: '1px solid rgba(34, 211, 238, 0.45)',
+            background: 'rgba(6, 182, 212, 0.16)',
+            color: '#A5F3FC',
+            fontSize: 10.5,
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          🧠 AGI · 8 Boucles
         </button>
 
         {training?.active && (
@@ -573,6 +626,163 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {brainModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Centre Cerveau AGI, 111 Agents & 8 Boucles Opérationnelles"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setBrainModalOpen(false)
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 210,
+            background: 'rgba(3, 6, 15, 0.85)',
+            backdropFilter: 'blur(12px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(1080px, 96vw)',
+              maxHeight: '88vh',
+              background: 'linear-gradient(160deg, #091224 0%, #050914 100%)',
+              border: '1px solid rgba(34, 211, 238, 0.45)',
+              borderRadius: 20,
+              boxShadow: '0 28px 90px rgba(0, 0, 0, 0.8)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              color: '#E6EAF5',
+            }}
+          >
+            <div
+              style={{
+                padding: '16px 22px',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: '#A5F3FC' }}>
+                  🧠 Cerveau AGI (`aurora-orchestrator`) · 20 Maîtres · 90 Appliquants · 8 Boucles Fermées
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#94A3B8' }}>
+                  Workspace : <code>/home/juan/AuroraIA/.agents/agents/&#123;agent_name&#125;/agent.md</code> · Global :{' '}
+                  <code>/home/juan/.gemini/config/agents/&#123;agent_name&#125;/agent.md</code>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBrainModalOpen(false)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 10,
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  color: '#CBD5E1',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Fermer ✕
+              </button>
+            </div>
+
+            <div style={{ padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <input
+                  type="text"
+                  value={brainQuery}
+                  onChange={(e) => setBrainQuery(e.target.value)}
+                  placeholder="Tester une requête complexe dans le Cerveau AGI (routage Maître -> Appliquant + DAG + Pare-Feu)…"
+                  style={{
+                    flex: 1,
+                    padding: '10px 14px',
+                    borderRadius: 10,
+                    border: '1px solid rgba(34, 211, 238, 0.35)',
+                    background: 'rgba(15, 23, 42, 0.85)',
+                    color: '#F8FAFC',
+                    fontSize: 13,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => void runBrainSimulation(brainQuery || `Optimiser le module ${backendMod}`)}
+                  disabled={brainLoading}
+                  style={{
+                    padding: '10px 16px',
+                    borderRadius: 10,
+                    border: '1px solid rgba(34, 211, 238, 0.6)',
+                    background: 'rgba(6, 182, 212, 0.25)',
+                    color: '#ECFEFF',
+                    fontWeight: 700,
+                    fontSize: 12.5,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {brainLoading ? 'Calcul AGI…' : 'Simuler Boucle AGI'}
+                </button>
+              </div>
+
+              {ghStatus && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: 12,
+                    background: 'rgba(16, 185, 129, 0.12)',
+                    border: '1px solid rgba(52, 211, 153, 0.35)',
+                    fontSize: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <span>
+                    🔄 <strong>Boucle 4 — Gardien GitHub CI :</strong> Workflows passés :{' '}
+                    <code>{String(ghStatus.passed_count ?? 0)}</code> · En cours :{' '}
+                    <code>{String(ghStatus.in_progress_count ?? 0)}</code> · Échecs :{' '}
+                    <code>{String(ghStatus.failed_count ?? 0)}</code>
+                  </span>
+                  <span style={{ color: '#6EE7B7', fontWeight: 700 }}>
+                    {ghStatus.should_continue_improving
+                      ? '⚡ Boucle d’amélioration active'
+                      : '✅ 100 % des contrats GitHub validés'}
+                  </span>
+                </div>
+              )}
+
+              {brainPlan && (
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: 16,
+                    borderRadius: 14,
+                    background: 'rgba(6, 10, 22, 0.94)',
+                    border: '1px solid rgba(34, 211, 238, 0.2)',
+                    color: '#E2E8F0',
+                    fontFamily: "'Cascadia Code', Consolas, monospace",
+                    fontSize: 11.5,
+                    lineHeight: 1.55,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {JSON.stringify(brainPlan, null, 2)}
+                </pre>
+              )}
             </div>
           </div>
         </div>

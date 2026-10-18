@@ -172,7 +172,11 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(plan["loop_phases"]), LOOP_PHASES)
         self.assertEqual(len(plan["phases_trace"]), 7)
         self.assertGreaterEqual(len(plan["dag_nodes"]), 2)
+        self.assertEqual(len(plan["operational_loops"]), 8)
         self.assertTrue(all(plan["operational_loops"].values()))
+        self.assertIn("counterfactual_evaluation", plan)
+        self.assertEqual(len(plan["counterfactual_evaluation"]["hypotheses"]), 3)
+        self.assertGreaterEqual(len(plan["handoff_contracts"]), 1)
 
         # Firewall must block never_touch breaches and TODO placeholders
         fw = ScopeFirewallEnforcementLoop(loop.router)
@@ -203,6 +207,19 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diag["signature_id"], "python_module_not_found")
         self.assertEqual(diag["extracted_symbol"], "business_intelligence")
         self.assertTrue(diag["assigned_applicator"])
+
+        # Goal Watchdog loop must detect tool oscillation and semantic drift
+        wd_res = loop.watchdog.evaluate_trajectory(
+            "Génère un assemblage CAO STEP paramétrique avec visserie ISO",
+            executed_steps=[
+                {"tool": "read_file", "target": "foo.py"},
+                {"tool": "read_file", "target": "foo.py"},
+                {"tool": "read_file", "target": "foo.py"},
+            ],
+            current_output="unrelated text",
+        )
+        self.assertTrue(wd_res["oscillation_detected"])
+        self.assertTrue(wd_res["needs_course_correction"])
 
         # Episodic skill evolution loop records and persists telemetry
         with tempfile.TemporaryDirectory() as tmp_dir:

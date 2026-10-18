@@ -416,8 +416,234 @@ class ContinuousGitHubVerificationLoop:
         }
 
 
+class MultiHypothesisCounterfactualLoop:
+    """Boucle 6 — Raisonnement Contre-Factuel & Tree-of-Thoughts Bayésien.
+    Évalue 3 hypothèses concurrentes avant action (Directe, Double-Vérifiée, Red-Team Résiliente)
+    et sélectionne la trajectoire maximisant l'utilité espérée.
+    """
+
+    def __init__(self, router: AGIBrainRouter | None = None, memory: EpisodicSkillEvolutionLoop | None = None):
+        self.router = router or AGIBrainRouter()
+        self.memory = memory or EpisodicSkillEvolutionLoop()
+
+    def evaluate_hypotheses(
+        self,
+        request_text: str,
+        applicators: list[dict[str, Any]],
+        complexity: str = "single_feature_surgical",
+    ) -> dict[str, Any]:
+        state = self.memory.load_state()
+        stats = state.get("applicator_stats", {})
+
+        primary_app = applicators[0]["applicator_agent"] if applicators else "conversation-intent-router"
+        primary_stat = stats.get(primary_app, {})
+        runs = max(1, int(primary_stat.get("runs", 0)))
+        verified = int(primary_stat.get("verified", 0))
+        empirical_prior = round(min(0.99, max(0.78, (verified + 3) / (runs + 3))), 3)
+
+        is_complex = complexity in {"multi_module", "multi_feature"} or len(request_text) > 120
+        hypotheses = [
+            {
+                "id": "hypothesis_alpha_canonical",
+                "title": "Exécution Chirurgicale Directe (Chemin Canonique)",
+                "strategy": f"Délégation directe à `{primary_app}` sur son périmètre `files_owned` avec vérification unitaire.",
+                "prior_probability": empirical_prior,
+                "quality_gain": 0.86,
+                "risk_penalty": 0.14 if is_complex else 0.04,
+                "expected_utility": round(empirical_prior * 0.86 - (0.14 if is_complex else 0.04), 3),
+            },
+            {
+                "id": "hypothesis_beta_cross_verified",
+                "title": "Pipeline Multi-Appliquants à Double Porte de Preuve",
+                "strategy": (
+                    f"Chaînage coordonné {', '.join(a['applicator_agent'] for a in applicators)} "
+                    "avec contrôle formel SymPy/Z3 ou test d'intégration croisé avant clôture."
+                ),
+                "prior_probability": round(min(0.99, empirical_prior + 0.05), 3),
+                "quality_gain": 0.96,
+                "risk_penalty": 0.05,
+                "expected_utility": round(min(0.99, empirical_prior + 0.05) * 0.96 - 0.05, 3),
+            },
+            {
+                "id": "hypothesis_gamma_counterfactual_redteam",
+                "title": "Trajectoire Contre-Factuelle Red-Team & Anti-Régression",
+                "strategy": (
+                    "Pré-simulation des cas limites (VRAM 16 Go, chemins multi-OS Linux/macOS/Windows, "
+                    "absence de dépendances externes, contrat HTTP atomique) + boucle Self-Healing active."
+                ),
+                "prior_probability": round(min(0.995, empirical_prior + 0.08), 3),
+                "quality_gain": 0.99 if is_complex else 0.92,
+                "risk_penalty": 0.02,
+                "expected_utility": round(
+                    min(0.995, empirical_prior + 0.08) * (0.99 if is_complex else 0.92) - 0.02, 3
+                ),
+            },
+        ]
+        hypotheses.sort(key=lambda h: -h["expected_utility"])
+        selected = hypotheses[0]
+        return {
+            "ok": True,
+            "selected_hypothesis": selected["id"],
+            "selected_title": selected["title"],
+            "selected_expected_utility": selected["expected_utility"],
+            "empirical_prior": empirical_prior,
+            "hypotheses": hypotheses,
+        }
+
+
+class CrossModuleSynergyOrchestratorLoop:
+    """Boucle 7 — Synergie Inter-Modules & Contrats de Passage de Relais Typés (`HandoffContract`).
+    Garantit que lorsque plusieurs modules ou appliquants coopèrent, la sortie vérifiée du nœud N
+    alimente proprement l'entrée du nœud N+1 sans perte de contexte ni mélange de fichiers.
+    """
+
+    MODULE_ARTIFACT_SCHEMAS: dict[str, dict[str, str]] = {
+        "drawing": {
+            "output": "aurora.artifact.sketch_turnaround.v1 (PNG + strokes JSON)",
+            "invariant": "Traits nets et proportions validées par Qwen3-VL",
+        },
+        "image": {
+            "output": "aurora.artifact.image_master_package.v1 (PNG 4K/8K/16K + PBR maps + metadata.json)",
+            "invariant": "Zéro artefact de compression, dossier creations/ ou modifications/ respecté",
+        },
+        "3d": {
+            "output": "aurora.artifact.mesh_cad_bundle.v1 (GLB/STL watertight + textures PBR + BOM)",
+            "invariant": "Maillage manifold/watertight vérifié et centré à l'origine",
+        },
+        "video": {
+            "output": "aurora.artifact.video_sequence.v1 (MP4 H.264 + piste audio synchronisée)",
+            "invariant": "Cohérence temporelle inter-trames et durée conforme",
+        },
+        "voice": {
+            "output": "aurora.artifact.voice_visemes.v1 (WAV 24kHz + visèmes temporels A-X)",
+            "invariant": "Prosodie naturelle sans coupure",
+        },
+        "code": {
+            "output": "aurora.artifact.verified_codebase.v1 (Arborescence complète + tests unitaires 0 erreur)",
+            "invariant": "Compilation/exécution code retour 0 et zéro TODO/placeholder",
+        },
+        "cyber": {
+            "output": "aurora.artifact.security_proof.v1 (Rapport CVE/CWE + preuve Z3 UNSAT sur patch)",
+            "invariant": "Vulnérabilité éliminée sans régression fonctionnelle",
+        },
+        "business": {
+            "output": "aurora.artifact.executive_memo.v1 (VAN/TRI/DSO + Net en poche + Veto Risque)",
+            "invariant": "Probabilité de ruine <= 2 % et réserve >= 25 %",
+        },
+        "learning": {
+            "output": "aurora.artifact.formal_curriculum.v1 (Cours structuré + Preuve SymPy/Z3 + Quiz)",
+            "invariant": "Exactitude mathématique et pédagogique vérifiée",
+        },
+        "training": {
+            "output": "aurora.artifact.reinforced_adapter.v1 (modele/renforce/<module>/ + GAINS.md)",
+            "invariant": "Modèle de base intact et gain mesuré sur holdout > 0",
+        },
+    }
+
+    def build_handoff_contracts(self, applicators: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        contracts: list[dict[str, Any]] = []
+        for i in range(len(applicators) - 1):
+            src = applicators[i]
+            dst = applicators[i + 1]
+            src_mod = str(src.get("module") or "conversation")
+            dst_mod = str(dst.get("module") or "conversation")
+            src_schema = self.MODULE_ARTIFACT_SCHEMAS.get(src_mod, {
+                "output": f"aurora.artifact.{src_mod}.v1",
+                "invariant": src.get("verification_gate") or "Sortie vérifiée",
+            })
+            dst_schema = self.MODULE_ARTIFACT_SCHEMAS.get(dst_mod, {
+                "output": f"aurora.artifact.{dst_mod}.v1",
+                "invariant": dst.get("verification_gate") or "Entrée validée",
+            })
+            contracts.append({
+                "handoff_index": i + 1,
+                "from_master": src["master_agent"],
+                "from_applicator": src["applicator_agent"],
+                "from_module": src_mod,
+                "to_master": dst["master_agent"],
+                "to_applicator": dst["applicator_agent"],
+                "to_module": dst_mod,
+                "artifact_contract": src_schema["output"],
+                "required_invariant_before_handoff": src_schema["invariant"],
+                "target_output_contract": dst_schema["output"],
+            })
+        return contracts
+
+
+class AutonomousGoalWatchdogLoop:
+    """Boucle 8 — Gouverneur d'Objectif Anti-Stagnation & Anti-Divagation Temps Réel.
+    Surveille la trajectoire d'une mission pour détecter immédiatement :
+      - l'oscillation d'outils (appels identiques répétés sans progrès),
+      - la dérive sémantique hors de la demande utilisateur,
+      - les contraintes explicites non encore satisfaites.
+    """
+
+    STOPWORDS: frozenset[str] = frozenset({
+        "dans", "avec", "pour", "sans", "plus", "tout", "tous", "toute", "toutes",
+        "cette", "comme", "mais", "donc", "alors", "bien", "faire", "fait", "être",
+        "avoir", "vrai", "vraiment", "aussi", "meme", "même", "tres", "très",
+    })
+
+    def evaluate_trajectory(
+        self,
+        request_text: str,
+        *,
+        executed_steps: list[dict[str, Any]] | None = None,
+        current_output: str = "",
+    ) -> dict[str, Any]:
+        req_tokens = [
+            t for t in re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{4,}", (request_text or "").lower())
+            if t not in self.STOPWORDS
+        ]
+        unique_anchors = list(dict.fromkeys(req_tokens))[:15]
+
+        steps = executed_steps or []
+        recent_signatures = [
+            f"{s.get('tool', '')}:{s.get('target', '')}" for s in steps[-4:] if isinstance(s, dict)
+        ]
+        oscillation_detected = (
+            len(recent_signatures) >= 3 and len(set(recent_signatures[-3:])) == 1 and bool(recent_signatures[-1].strip(":"))
+        )
+
+        combined_work = f"{current_output} " + " ".join(json.dumps(s, ensure_ascii=False) for s in steps)
+        combined_lower = combined_work.lower()
+
+        if unique_anchors and combined_lower.strip():
+            covered = [a for a in unique_anchors if a in combined_lower]
+            missing = [a for a in unique_anchors if a not in combined_lower]
+            alignment_score = round(len(covered) / len(unique_anchors), 3)
+        else:
+            covered = unique_anchors
+            missing = []
+            alignment_score = 1.0
+
+        drift_score = round(1.0 - alignment_score, 3)
+        needs_course_correction = oscillation_detected or (bool(combined_lower.strip()) and drift_score > 0.65)
+
+        directive = (
+            "Trajectoire nominale : verrouillage d'intention maintenu et progression vérifiée."
+            if not needs_course_correction
+            else (
+                "ALERTE WATCHDOG AGI : Recentrage immédiat requis. "
+                + ("Oscillation d'outil détectée (changer d'approche). " if oscillation_detected else "")
+                + (f"Ancres du prompt à couvrir : {', '.join(missing[:6])}." if missing else "")
+            )
+        )
+
+        return {
+            "ok": True,
+            "alignment_score": alignment_score,
+            "drift_score": drift_score,
+            "oscillation_detected": oscillation_detected,
+            "covered_anchors": covered[:10],
+            "missing_anchors": missing[:10],
+            "needs_course_correction": needs_course_correction,
+            "course_correction_directive": directive,
+        }
+
+
 class CognitiveExecutiveLoop:
-    """Boucle Maîtresse en 7 Phases du Cerveau AGI d'AuroraIA.
+    """Boucle Maîtresse en 7 Phases du Cerveau AGI d'AuroraIA (coordonnant les 8 Boucles Opérationnelles).
     Orchestre de bout en bout :
       1. PERCEIVE_INTENT
       2. DECOMPOSE_DAG
@@ -435,6 +661,9 @@ class CognitiveExecutiveLoop:
         self.healer = SelfHealingDiagnosticLoop(self.router)
         self.memory = EpisodicSkillEvolutionLoop(self.workspace)
         self.github_guardian = ContinuousGitHubVerificationLoop(self.workspace)
+        self.counterfactual = MultiHypothesisCounterfactualLoop(self.router, self.memory)
+        self.synergy = CrossModuleSynergyOrchestratorLoop()
+        self.watchdog = AutonomousGoalWatchdogLoop()
 
     def build_autonomous_loop_plan(
         self,
@@ -444,7 +673,9 @@ class CognitiveExecutiveLoop:
         target_paths: list[str] | None = None,
         max_applicators: int = 5,
     ) -> dict[str, Any]:
-        """Génère le plan complet d'exécution en boucle fermée (DAG multi-agents + Pare-Feu + Auto-Réparation)."""
+        """Génère le plan complet d'exécution en boucle fermée (DAG multi-agents + Pare-Feu +
+        Tree-of-Thoughts Bayésien + Synergie Inter-Modules + Watchdog + Auto-Réparation).
+        """
         base_plan = self.router.plan_execution(
             request_text,
             active_module=active_module,
@@ -460,6 +691,19 @@ class CognitiveExecutiveLoop:
             epistemic_regime = "KNOWN_OPTIMIZABLE"
         else:
             epistemic_regime = "KNOWN_CANONICAL"
+
+        # Évaluation contre-factuelle bayésienne (Boucle 6)
+        hypothesis_eval = self.counterfactual.evaluate_hypotheses(
+            request_text,
+            applicators,
+            complexity=base_plan.get("complexity", "single_feature_surgical"),
+        )
+
+        # Contrats de synergie inter-modules / inter-appliquants (Boucle 7)
+        handoff_contracts = self.synergy.build_handoff_contracts(applicators)
+
+        # Pré-évaluation Watchdog des ancres obligatoires (Boucle 8)
+        watchdog_baseline = self.watchdog.evaluate_trajectory(request_text)
 
         # Construire le DAG ordonné avec dépendances et vérifications par nœud
         dag_nodes: list[dict[str, Any]] = []
@@ -492,13 +736,18 @@ class CognitiveExecutiveLoop:
                 "status": "ready",
                 "detail": (
                     f"Intention verrouillée ({base_plan['complexity']}) — "
-                    f"Régime épistémique : {epistemic_regime}."
+                    f"Régime : {epistemic_regime} — "
+                    f"Stratégie retenue : {hypothesis_eval['selected_title']} "
+                    f"(U={hypothesis_eval['selected_expected_utility']})."
                 ),
             },
             {
                 "phase": "DECOMPOSE_DAG",
                 "status": "ready",
-                "detail": f"Graphe DAG construit avec {len(dag_nodes)} nœud(s) atomique(s) sans recouvrement.",
+                "detail": (
+                    f"Graphe DAG construit avec {len(dag_nodes)} nœud(s) atomique(s) "
+                    f"et {len(handoff_contracts)} contrat(s) de relais typé(s)."
+                ),
             },
             {
                 "phase": "ROUTE_APPLICATORS",
@@ -516,7 +765,7 @@ class CognitiveExecutiveLoop:
             {
                 "phase": "VERIFY_CRITIQUE",
                 "status": "pending_verification",
-                "detail": "Validation déterministe (tests, AST, invariants, zéro TODO/placeholder).",
+                "detail": "Validation déterministe (tests, AST, invariants, zéro TODO/placeholder, Watchdog anti-dérive).",
             },
             {
                 "phase": "SELF_HEAL_REFLECT",
@@ -526,7 +775,7 @@ class CognitiveExecutiveLoop:
             {
                 "phase": "CONSOLIDATE_EVOLVE",
                 "status": "armed",
-                "detail": "Consolidation épisodique dans `.aurora/agi_brain_state.json` et contrôle continu CI.",
+                "detail": "Consolidation épisodique dans `.aurora/agi_brain_state.json` et contrôle continu GitHub CI.",
             },
         ]
 
@@ -537,11 +786,17 @@ class CognitiveExecutiveLoop:
             "loop_phases": list(LOOP_PHASES),
             "phases_trace": phases_trace,
             "dag_nodes": dag_nodes,
+            "counterfactual_evaluation": hypothesis_eval,
+            "handoff_contracts": handoff_contracts,
+            "watchdog_anchors": watchdog_baseline["covered_anchors"],
             "operational_loops": {
                 "cognitive_executive_loop": True,
                 "scope_firewall_loop": True,
                 "self_healing_diagnostic_loop": True,
                 "continuous_github_verification_loop": True,
                 "episodic_skill_evolution_loop": True,
+                "multi_hypothesis_counterfactual_loop": True,
+                "cross_module_synergy_orchestrator_loop": True,
+                "autonomous_goal_watchdog_loop": True,
             },
         }
