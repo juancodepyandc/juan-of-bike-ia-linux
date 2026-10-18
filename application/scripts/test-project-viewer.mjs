@@ -3,6 +3,8 @@ import {spawn} from 'node:child_process'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {chromium,devices} from 'playwright'
+import {execSync} from 'node:child_process'
+execSync('python3 -m pip install trimesh Flask werkzeug', {stdio: 'inherit'})
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..')
 const server=spawn(process.env.PYTHON||(process.platform==='win32'?'python':'python3'),[path.join(root,'tests_agi/project_viewer_fixture.py')],{cwd:root,env:{...process.env,PYTHONPATH:[root,process.env.PYTHONPATH].filter(Boolean).join(path.delimiter)}})
 let fixtureErrors=''
