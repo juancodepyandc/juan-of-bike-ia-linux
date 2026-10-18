@@ -195,6 +195,7 @@ export function buildExpertEngineeringContractBlock(intent: CodeIntent): string 
 
   const lines = [
     '## CONTRAT INGENIEUR EXPERT',
+    '- REFLEXION OBLIGATOIRE: Tu DOIS TOUJOURS raisonner et analyser etape par etape dans un bloc `<think>...</think>` avant de produire le code final.',
     '- Livre une implementation complete et coherente avec le niveau de la demande. Une UI jolie sans logique reliee est un echec.',
     '- Ne reduis pas le scope en MVP si la demande parle de projet complet, complexe, multipage, simulateur, OS, tunnel, UI, CLI ou rendu premium.',
     '- Chaque fonctionnalite visible doit avoir une implementation mesurable: etat, donnees, validation, erreurs, feedback utilisateur et persistance quand pertinent.',

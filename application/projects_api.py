@@ -180,6 +180,18 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
             return jsonify(ok=True,status='stopped')
         return jsonify(ok=False,error='Le projet a déjà démarré. Utilisez son module pour contrôler son arrêt.'),409
 
+    @bp.route('/api/projects/<mid>',methods=['DELETE'])
+    def delete_project(mid):
+        if not allowed():return jsonify(ok=False,error='forbidden_public'),403
+        item=store.get(mid)
+        if not item:return jsonify(ok=False,error='Projet introuvable.'),404
+        if item['status'] not in {'completed','failed','stopped','blocked','interrupted'}:
+            return jsonify(ok=False,error='Impossible de supprimer un projet en cours.'),409
+        with store.connect(write=True) as db:
+            db.execute("DELETE FROM events WHERE mission=?",(mid,))
+            db.execute("DELETE FROM missions WHERE id=?",(mid,))
+        return jsonify(ok=True)
+
     @bp.route('/api/image/persist',methods=['POST'])
     def persist_image():
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403

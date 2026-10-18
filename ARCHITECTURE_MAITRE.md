@@ -864,6 +864,18 @@ Pour éliminer toute perte de repère et tout archétype codé en dur lors de la
   - **3D & Mondes :** `microsoft/TRELLIS.2-4B` + `tencent/Hunyuan3D-2.1` + `tencent/HunyuanWorld-Mirror` + `moge_2_vitl_normal_fp16.safetensors` + `FLUX.2-dev`.
   - **Académie, Sciences, Conversation, Business & Cowork :** `deepseek-r1:32b` (seuil RAM abaissé à 24 Go pour ne jamais brider la machine 30 Go RAM) + `orcarouter/Qwen3.8-27B-Uncensored:latest` (262K contexte) + `qwen3-vl:30b` + `nomic-embed-text:latest`.
 
+### 6.2.9 Consolidation de toutes les branches sur `main`, Ingénieur 3D Autonome et refonte UI Aurora OS Studio Pro (19 octobre 2026)
+
+- **Consolidation intégrale et nettoyage des branches/worktrees :** toutes les fonctionnalités utiles présentes sur les branches locales et distantes (`agents/debug-3d-multiview-monoview-issues`, `ameliorations/3d-fidelite-animation-2026-09-07`, `origin/jules-*`, `origin/feature/enforce-think-blocks-*`, `origin/bolt/memoize-react-markdown-*`) ont été intégrées sur `main` :
+  - `application/src/services/threeDAutonomousEngineer.ts` (Ingénieur 3D & CAO autonome bilingue FR/EN : arbitrage Monoview vs Multiview, tolérances géométriques/topologiques Manifold64, résolution PBR 8K/16K et plan de repli OOM) relié à `threeDIntent.ts` et `threeDViewPlanner.ts`.
+  - `application/src/utils/modulePreload.ts` (préchargement paresseux au survol du dock à 90 ms).
+  - `DELETE /api/projects/<mid>` dans `application/projects_api.py` (en préservant le contrat atomique `409` sur `/cancel`) et action `🗑 Supprimer` dans `ProjectsPanel.tsx`.
+  - Alias `run_mcp_tool` dans `agi_core/mission_tools.py`, raisonnement structuré `<think>...</think>` obligatoire dans `codeSystemPromptContracts.ts` / `codeSystemPrompts.ts`, et mémoïsation `ReactMarkdown` dans `CoworkOverlay.tsx`.
+  - Suppression des 5 worktrees obsolètes, fermeture des PR dupliquées et suppression des 19 branches locales/distantes obsolètes pour ne conserver que `main`.
+- **Refonte UI `Aurora OS Studio Pro` et Cockpit d’Ingénierie (`AuroraV4AppShell.tsx`, `ModuleEngineeringInspector.tsx`, `ProjectsPanel.tsx`, `StudioHero.tsx`) :**
+  - Ajout de `ModuleEngineeringInspector.tsx` dans la barre supérieure V4 (`Ingénierie & Précision · N agents`), exposant pour le module actif la télémétrie matérielle (GPU/VRAM/RAM, Ollama `:11434`, ComfyUI `:8188`), la pile technologique, la chaîne d’exécution déterministe, les portes de précision, le simulateur interactif d’Ingénieur 3D & CAO autonome et les sous-agents appliquants chirurgicaux avec leur périmètre exclusif.
+  - Refonte Studio Pro de `AuroraV4AppShell.tsx` (barre supérieure 54 px avec fil d’Ariane Agent Maître, dock gauche à préchargement au survol, et respect strict du contrat mobile `application/scripts/mobile-navigation.mjs` sur Pixel 7, iPhone 13, iPad Mini et Desktop Chrome), de `ProjectsPanel.tsx` (filtres segmentés, barres de progression, badges d’état et suppression) et de `StudioHero.tsx` (HUD d’ingénierie de précision conservant les sélecteurs `.manga-hero*` et `.manga-diag*`).
+
 ### 6.3 Builds
 
 `application/package.json` définit `typecheck`, `check`, `build`, conformance, Vite et Tauri. `npm run check` enchaîne les types TypeScript et le build Vite. `npm run build` seul ne les remplace pas. `vite.config.ts` définit proxies, chunks et métadonnées de build.

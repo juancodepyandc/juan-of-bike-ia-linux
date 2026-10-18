@@ -562,9 +562,12 @@ class MissionTools:
             from agi_core.context import probe_mcp_tools
             probe = bool(args.get('probe', False)) and a.permissions != 'SAFE'
             return await asyncio.to_thread(probe_mcp_tools, a.workspace, args.get('server', ''), probe=probe)
-        if name == 'call_mcp_tool':
+        if name in {'call_mcp_tool', 'run_mcp_tool'}:
             from agi_core.context import invoke_mcp_tool
-            return await asyncio.to_thread(invoke_mcp_tool, a.workspace, args['server'], args['tool'], args.get('arguments', {}))
+            srv = args.get('server') or args.get('server_name', '')
+            tl = args.get('tool') or args.get('tool_name', '')
+            tl_args = args.get('arguments') if 'arguments' in args else args.get('args', {})
+            return await asyncio.to_thread(invoke_mcp_tool, a.workspace, srv, tl, tl_args)
         if name == 'fetch_url':
             return await self.fetch(args.get('url', ''))
         if name == 'search_web':

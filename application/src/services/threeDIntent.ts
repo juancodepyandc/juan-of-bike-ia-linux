@@ -10,6 +10,7 @@ import {
   type KinematicSystemClass,
   type MotionDescriptor as KinematicMotionDescriptor,
 } from './kinematicsLibrary.ts'
+import { engineerDecision, type ThreeDEngineerDecision } from './threeDAutonomousEngineer.ts'
 
 export type ThreeDPipeline =
   | 'ai_generation'       // TRELLIS.2 / DreamGaussian — creative or reference-based
@@ -113,6 +114,7 @@ export type ThreeDIntent = {
   researchQueries: string[]
   motionPresets: ThreeDMotionPreset[]
   summary: string
+  engineerDecision?: ThreeDEngineerDecision
 }
 
 export type ThreeDMotionPreset = {
@@ -2230,6 +2232,32 @@ export async function analyzeThreeDIntent({
         resolvedMotionReadiness,
       ),
       summary: parsed.summary?.trim() || `${resolvedPurpose} / ${resolvedSubjectKind} / ${resolvedSystemClass} / ${resolvedRepresentationGoal} / ${parsed.referenceFraming || fallback.referenceFraming} / ${resolvedMotionReadiness} / pipeline:${resolvedPipelineRouting.pipeline}`,
+      engineerDecision: engineerDecision(prompt, {
+        purpose: resolvedPurpose,
+        subjectKind: resolvedSubjectKind,
+        systemClass: resolvedSystemClass,
+        representationGoal: resolvedRepresentationGoal,
+        referenceFraming: parsed.referenceFraming || fallback.referenceFraming,
+        motionReadiness: resolvedMotionReadiness,
+        pipelineRouting: resolvedPipelineRouting,
+        requiresDimensionalPrecision: parsed.requiresDimensionalPrecision ?? fallback.requiresDimensionalPrecision,
+        wantsNeutralPose: parsed.wantsNeutralPose ?? fallback.wantsNeutralPose,
+        wantsSymmetry: parsed.wantsSymmetry ?? fallback.wantsSymmetry,
+        needsResearch: parsed.needsResearch ?? fallback.needsResearch,
+        needsClarification: parsed.needsClarification ?? fallback.needsClarification,
+        clarificationQuestion: null,
+        clarificationCategory: null,
+        clarificationOptions: [],
+        referencePromptAdditions: [],
+        meshConstraints: [],
+        motionGuidance: [],
+        motionRisks: [],
+        movingPartsFocus: [],
+        anchoredPartsFocus: [],
+        researchQueries: [],
+        motionPresets: [],
+        summary: '',
+      } as ThreeDIntent, files),
     } satisfies ThreeDIntent
   } catch (err) {
     clearTimeout(timeoutId)

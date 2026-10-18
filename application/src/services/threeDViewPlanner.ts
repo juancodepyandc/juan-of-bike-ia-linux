@@ -619,6 +619,21 @@ function buildFallbackViewStrategy(
   enrichedDescription = '',
   overlay?: ThreeDViewOverlay,
 ): ViewStrategy {
+  if (intent.engineerDecision && intent.engineerDecision.strategy.monoview === true) {
+    return {
+      needsMultiview: false,
+      requiredViews: ['front'],
+      optionalViews: [],
+      reuseMap: {},
+      verificationChecks: buildFallbackVerificationChecks(prompt, intent),
+      lightingRequirements: buildFallbackLightingRequirements(prompt, intent, referenceSupport),
+      viewRequirements: {
+        front: ['main silhouette readable', 'primary subject identity preserved'],
+      },
+      viewGenerationDirectives: buildViewGenerationDirectives(prompt, intent, referenceSupport, enrichedDescription, overlay),
+    }
+  }
+
   const exactLike = referenceSupport.referenceMode !== 'freeform' || intent.needsResearch
   const structuredSubject = intent.systemClass !== 'generic' || intent.subjectKind === 'electrical_system' || intent.subjectKind === 'mechanical_part'
   const isCharacter = intent.subjectKind === 'character' || intent.subjectKind === 'creature' || intent.purpose === 'character'
