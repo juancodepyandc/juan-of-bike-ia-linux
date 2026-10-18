@@ -922,7 +922,10 @@ export default function AuroraV4ImageView() {
               background: 'rgba(255,255,255,.025)', border: '1px solid rgba(255,255,255,.08)', color: '#8B93A7',
               fontFamily: "'Cascadia Code',Consolas,monospace",
             }}>
-              📁 Dossier unifié : <strong style={{ color: '#E6EAF5' }}>{I.lastSavedPath || 'output/image/creations/'}</strong>
+              📁 Dossiers : <strong style={{ color: '#6EE7B7' }}>output/image/creations/</strong> &amp; <strong style={{ color: '#FDE68A' }}>output/image/modifications/</strong>
+              {I.lastSavedPath && (
+                <div style={{ marginTop: 3, color: '#E6EAF5' }}>↳ Dernier fichier : <strong>{I.lastSavedPath}</strong></div>
+              )}
             </div>
           </div>
         </div>

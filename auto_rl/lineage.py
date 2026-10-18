@@ -60,11 +60,20 @@ def choices(module,state=STATE):
 
 def choose(module, selection='best', state=STATE):
     if module not in LABELS:raise ValueError('Module inconnu')
+    if not selection:
+        selection='best'
     if selection=='base':return None
     if selection in {'best','validated'}:
         from .runtime import validated_record
         record=validated_record(module,state)
-        if record:return {**record,'selection_reason':'champion_validated'}
+        if record:
+            if 'config' not in record and record.get('run_id'):
+                try:
+                    record={**candidate_record(module,record['run_id'],state),**record}
+                except (OSError,ValueError,RuntimeError,KeyError,TypeError):
+                    pass
+            if 'config' in record:
+                return {**record,'selection_reason':'champion_validated'}
         if selection=='validated':raise ValueError('Aucun champion validé disponible')
     if selection in {'best','best_candidate'}:
         pool=[r for r in choices(module,state) if r['validation_contract']]
@@ -82,17 +91,22 @@ def choose(module, selection='best', state=STATE):
         return {**record,'selection_reason':'best_comparable_validation','experimental':True}
     from .runtime import validated_record
     current=validated_record(module,state)
-    if current and current['run_id']==selection:return {**current,'selection_reason':'pinned_validated','experimental':False}
+    if current and current['run_id']==selection:
+        if 'config' not in current:
+            current={**candidate_record(module,selection,state),**current}
+        return {**current,'selection_reason':'pinned_validated','experimental':False}
     return {**candidate_record(module,selection,state),'selection_reason':'explicit_candidate','experimental':True}
 
 
 def prepare(c, run, manifest):
     """Pin parent identity at cycle start and retain every earlier weight file."""
     if 'training_start' not in c:return None
-    parent=choose(c['module'],c['training_start'],Path(c['state_dir']))
+    sel=c.get('training_start') or 'best'
+    c['training_start']=sel
+    parent=choose(c['module'],sel,Path(c['state_dir']))
     record={'schema':1,'original_model':c['models'][c['module']],
             'original_fingerprint':digest(manifest),'parent_run_id':None,
-            'parent_sha256':None,'selection':c['training_start'],'experimental':False}
+            'parent_sha256':None,'selection':sel,'experimental':False}
     if parent:
         previous=parent['config']
         if parent['base_fingerprint']!=digest(manifest):raise ValueError('La base du parent est incompatible')

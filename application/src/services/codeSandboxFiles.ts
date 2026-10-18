@@ -1,4 +1,3 @@
-import { fsMkdir, fsWriteText } from '../hooks/useTauri.ts'
 import type { CodeFile } from './codeSandboxTypes.ts'
 
 // ---------------------------------------------------------------------------
@@ -349,6 +348,7 @@ export function sanitizeRelativePath(filePath: string) {
 // ---------------------------------------------------------------------------
 
 export async function writeSandboxFiles(rootPath: string, files: CodeFile[]) {
+  const { fsMkdir, fsWriteText } = await import('../hooks/useTauri.ts')
   await fsMkdir(rootPath)
 
   // Collect all unique directories to create

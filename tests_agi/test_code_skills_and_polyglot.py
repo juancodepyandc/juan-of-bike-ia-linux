@@ -191,12 +191,13 @@ console.log(JSON.stringify({
 }));
 """
     proc = subprocess.run(
-        ["node", "--experimental-strip-types", "-e", script],
+        ["node", "--experimental-strip-types", "--input-type=module", "-e", script],
         cwd=str(repo_root),
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
+    assert proc.returncode == 0, f"Node exited with {proc.returncode}:\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
     payload = json.loads(proc.stdout.strip().splitlines()[-1])
     assert payload["asmProjectType"] == "system_asm"
     assert "assembly" in payload["asmLanguages"]

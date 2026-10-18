@@ -467,15 +467,750 @@ export function getAllProductionAgents(): AuroraProductionAgent[] {
   return PRODUCTION_AGENT_IDS.map(getProductionAgent)
 }
 
+// ---------------------------------------------------------------------------
+// Hiérarchie Agent Maître → Sous-Agents Fonctionnels par Module
+// Chaque sous-agent possède un périmètre strictement disjoint (feature,
+// filesOwned, routesOwned, neverTouch) afin qu'aucun agent ne se mélange.
+// ---------------------------------------------------------------------------
+
+export type AuroraFeatureSubAgent = {
+  id: string
+  masterId: string
+  module: ModuleId | 'simulator' | 'cowork' | 'training' | 'missions' | 'bridge' | 'cli-tunnel' | 'memory' | 'mcp' | 'skills'
+  feature: string
+  role: string
+  filesOwned: string[]
+  routesOwned: string[]
+  neverTouch: string[]
+}
+
+export const MODULE_MASTER_IDS: Record<ModuleId, string> = {
+  conversation: 'conversation-lead',
+  image: 'image-lead',
+  video: 'video-lead',
+  code: 'code-lead',
+  drawing: 'drawing-lead',
+  '3d': '3d-lead',
+  learning: 'learning-lead',
+  cyber: 'cyber-lead',
+  voice: 'voice-lead',
+  business: 'business-ceo',
+}
+
+export const MODULE_FEATURE_SUBAGENTS: Record<ModuleId, AuroraFeatureSubAgent[]> = {
+  conversation: [
+    {
+      id: 'conversation-intent-router',
+      masterId: 'conversation-lead',
+      module: 'conversation',
+      feature: 'intent_routing',
+      role: 'Détection d’intention et routage inter-modules sans faux positifs',
+      filesOwned: ['application/src/components/ChatModule.tsx'],
+      routesOwned: ['/api/chat/intent'],
+      neverTouch: ['application/src/services/chatPipeline.ts', 'application/routes/vite_bp_routes.py'],
+    },
+    {
+      id: 'conversation-pipeline-tuner',
+      masterId: 'conversation-lead',
+      module: 'conversation',
+      feature: 'sse_streaming_fallback',
+      role: 'Pipeline SSE, nettoyage <think>, sélection du modèle chat et fallback local',
+      filesOwned: ['application/src/services/chatPipeline.ts', 'application/src/services/llm.ts'],
+      routesOwned: ['/api/chat', '/api/llm/generate'],
+      neverTouch: ['application/src/components/CodeModule.tsx'],
+    },
+    {
+      id: 'conversation-web-factchecker',
+      masterId: 'conversation-lead',
+      module: 'conversation',
+      feature: 'web_rag_verification',
+      role: 'Recherche web temps réel, extraction d’URL et anti-hallucination factuelle',
+      filesOwned: ['application/routes/vite_bp_routes.py#web_search'],
+      routesOwned: ['/api/web/search', '/api/web/fetch'],
+      neverTouch: ['application/src/services/memoryService.ts'],
+    },
+    {
+      id: 'conversation-memory-keeper',
+      masterId: 'conversation-lead',
+      module: 'conversation',
+      feature: 'session_persistence',
+      role: 'Persistance des fils de discussion, reprise multi-surface et profil',
+      filesOwned: ['application/src/services/memoryService.ts'],
+      routesOwned: ['/api/memory/store', '/api/memory/search', '/api/conversations'],
+      neverTouch: ['application/src/services/chatPipeline.ts'],
+    },
+    {
+      id: 'conversation-vision-multimodal',
+      masterId: 'conversation-lead',
+      module: 'conversation',
+      feature: 'multimodal_attachments',
+      role: 'Analyse d’images/PDF joints dans le chat via Qwen-VL / OCR',
+      filesOwned: ['application/routes/vite_bp_routes.py#vision_analyze'],
+      routesOwned: ['/api/vision/analyze', '/api/ocr'],
+      neverTouch: ['application/comfy_bridge.py'],
+    },
+  ],
+  code: [
+    {
+      id: 'code-architecture-planner',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'architecture_planning',
+      role: 'Étape 1 Architecte : planification multi-fichiers et contrats de types',
+      filesOwned: ['application/src/components/CodeModule.tsx#architect'],
+      routesOwned: ['/api/code/plan'],
+      neverTouch: ['application/src/services/fidelityScorer.ts'],
+    },
+    {
+      id: 'code-design-architect',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'motion_ui_design_aaa',
+      role: 'Directeur Design UI/UX AAA, Motion Design 60fps, Shaders WebGL & Anti-Slop',
+      filesOwned: ['application/src/components/CodeModule.tsx#design_prompt'],
+      routesOwned: [],
+      neverTouch: ['application/routes/vite_bp_routes.py'],
+    },
+    {
+      id: 'code-backend-performance',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'backend_perf_security',
+      role: 'Architecture Backend Haute Performance, SQL/Index, Concurrence & Sécurité OWASP',
+      filesOwned: ['application/src/components/CodeModule.tsx#backend_prompt'],
+      routesOwned: ['/api/code/lint'],
+      neverTouch: ['application/src/services/fidelityScorer.ts'],
+    },
+    {
+      id: 'code-fidelity-auditor',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'ast_fidelity_audit',
+      role: 'Étape 3 Auditeur : scoring de fidélité 0-100, détection TODO/stubs et boucle d’auto-correction',
+      filesOwned: ['application/src/services/fidelityScorer.ts', 'application/src/services/brandRegistry.ts'],
+      routesOwned: ['/api/code/audit'],
+      neverTouch: ['application/src/components/ChatModule.tsx'],
+    },
+    {
+      id: 'code-sandbox-runner',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'live_preview_sandbox',
+      role: 'Compilation Babel/TSX live, iframe preview isolée et capture d’erreurs runtime',
+      filesOwned: ['application/src/components/CodeModule.tsx#preview'],
+      routesOwned: ['/api/code/execute', '/api/sandbox/run'],
+      neverTouch: ['application/src/services/fidelityScorer.ts'],
+    },
+    {
+      id: 'code-delivery-packager',
+      masterId: 'code-lead',
+      module: 'code',
+      feature: 'workspace_export',
+      role: 'Écriture disque atomique, export ZIP et persistance dans workspace_projects/',
+      filesOwned: ['application/routes/vite_bp_routes.py#workspace_projects'],
+      routesOwned: ['/api/projects/save', '/api/projects/export'],
+      neverTouch: ['application/src/services/chatPipeline.ts'],
+    },
+  ],
+  image: [
+    {
+      id: 'image-prompt-director',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'adaptive_prompt_expansion',
+      role: 'Expansion adaptative (fidélité sujet vs enrichissement créatif) sans mots-clés figés',
+      filesOwned: ['application/src/components/ImageModule.tsx#expandPrompt'],
+      routesOwned: ['/api/image/expand-prompt'],
+      neverTouch: ['application/comfy_bridge.py'],
+    },
+    {
+      id: 'image-flux-stylist',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'flux2_txt2img_img2img',
+      role: 'Exécution des workflows FLUX.2-dev / FLUX.1-dev (txt2img, img2img, inpainting)',
+      filesOwned: ['application/comfy_bridge.py', 'application/src/services/imageWorkflows.ts'],
+      routesOwned: ['/api/image/generate', '/api/comfy/prompt'],
+      neverTouch: ['application/src/components/ThreeDModule.tsx'],
+    },
+    {
+      id: 'image-reference-researcher',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'ground_truth_reference',
+      role: 'Recherche de vérité terrain (Wikimedia/marques/personnages) et garde-fou anti-hallucination',
+      filesOwned: ['application/src/services/imageReferenceService.ts'],
+      routesOwned: ['/api/image/reference-lookup'],
+      neverTouch: ['application/comfy_bridge.py'],
+    },
+    {
+      id: 'image-upscale-16k-pbr',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'upscale_16k_32bit_pbr',
+      role: 'Super-résolution tuilée 8K/16K, export EXR/PNG 16-bit/32-bit et extraction de maps PBR',
+      filesOwned: ['application/routes/vite_bp_routes.py#image_upscale_16k'],
+      routesOwned: ['/api/image/upscale-16k', '/api/image/extract-pbr'],
+      neverTouch: ['application/src/components/ChatModule.tsx'],
+    },
+    {
+      id: 'image-job-cancellation',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'job_stop_and_step_telemetry',
+      role: 'Interruption immédiate (Stop) AbortController + /interrupt ComfyUI et télémétrie d’étape',
+      filesOwned: ['application/src/components/ImageModule.tsx#handleStopGeneration'],
+      routesOwned: ['/api/image/cancel', '/api/comfy/interrupt', '/api/image/progress'],
+      neverTouch: ['application/src/services/auroraMissionStore.ts'],
+    },
+    {
+      id: 'image-output-organizer',
+      masterId: 'image-lead',
+      module: 'image',
+      feature: 'creations_modifications_storage',
+      role: 'Rangement strict dans creations/ vs modifications/ et galerie d’historique',
+      filesOwned: ['application/routes/vite_bp_routes.py#image_output_storage'],
+      routesOwned: ['/api/image/gallery', '/api/image/organize'],
+      neverTouch: ['application/comfy_bridge.py'],
+    },
+  ],
+  drawing: [
+    {
+      id: 'drawing-canvas-stroke',
+      masterId: 'drawing-lead',
+      module: 'drawing',
+      feature: 'canvas_brush_layers',
+      role: 'Moteur de pinceaux, pression stylet, lissage Bézier, calques et undo/redo',
+      filesOwned: ['application/src/components/DrawingModule.tsx#canvas'],
+      routesOwned: [],
+      neverTouch: ['application/comfy_bridge.py'],
+    },
+    {
+      id: 'drawing-sketch-interpreter',
+      masterId: 'drawing-lead',
+      module: 'drawing',
+      feature: 'sketch_gesture_analysis',
+      role: 'Analyse du trait (axe d’énergie, rythme, espace négatif) sans surcharge',
+      filesOwned: ['application/src/components/DrawingModule.tsx#interpret'],
+      routesOwned: ['/api/drawing/analyze'],
+      neverTouch: ['application/src/components/ImageModule.tsx'],
+    },
+    {
+      id: 'drawing-controlnet-renderer',
+      masterId: 'drawing-lead',
+      module: 'drawing',
+      feature: 'scribble_canny_img2img',
+      role: 'Transformation sketch-to-render via ControlNet Scribble / Canny / Lineart',
+      filesOwned: ['application/routes/vite_bp_routes.py#drawing_render'],
+      routesOwned: ['/api/drawing/render', '/api/drawing/controlnet'],
+      neverTouch: ['application/src/components/ThreeDModule.tsx'],
+    },
+    {
+      id: 'drawing-character-forge',
+      masterId: 'drawing-lead',
+      module: 'drawing',
+      feature: 'character_sheet_turnaround',
+      role: 'Génération de Character Sheets cohérentes (face, profil, dos, expressions)',
+      filesOwned: ['application/src/components/CharacterForgeModule.tsx'],
+      routesOwned: ['/api/character/forge', '/api/character/turnaround'],
+      neverTouch: ['application/src/components/DrawingModule.tsx#canvas'],
+    },
+  ],
+  '3d': [
+    {
+      id: '3d-pipeline-router',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'mode_classification_routing',
+      role: 'Classification automatique Neural Mesh vs CAD B-Rep vs Assemblage vs Scène',
+      filesOwned: ['application/pipeline_3d.py'],
+      routesOwned: ['/api/3d/classify', '/api/3d/generate'],
+      neverTouch: ['application/src/components/ThreeDModule.tsx#viewer'],
+    },
+    {
+      id: '3d-neural-generator',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'hunyuan3d_trellis_inference',
+      role: 'Inférence Hunyuan3D-2.1 / Trellis et chargement dynamique des adaptateurs LoRA renforcés',
+      filesOwned: ['application/hunyuan3d_server.py', 'application/routes/vite_bp_routes.py#3d_generate'],
+      routesOwned: ['/api/3d/hunyuan', '/api/3d/reinforced-generate'],
+      neverTouch: ['application/cad_engine.py'],
+    },
+    {
+      id: '3d-mesh-postprocessor',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'topology_manifold_repair',
+      role: 'Post-processing géométrique, réparation watertight/manifold, normales et décimation LOD',
+      filesOwned: ['application/postprocess_3d.py'],
+      routesOwned: ['/api/3d/postprocess', '/api/3d/repair'],
+      neverTouch: ['application/bake_colors_onto_glb.py'],
+    },
+    {
+      id: '3d-texture-lead',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'pbr_uv_material_baking',
+      role: 'Dépliage UV xatlas, baking multi-vues, matériaux PBR (albedo, normal, roughness, metallic)',
+      filesOwned: ['application/bake_colors_onto_glb.py', 'application/postprocess_3d_pbr.py', 'scripts/3d/auto_pbr_from_text.py'],
+      routesOwned: ['/api/3d/bake-colors', '/api/3d/pbr'],
+      neverTouch: ['application/rig_glb.py'],
+    },
+    {
+      id: '3d-quality-rescuer',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'validation_5axes_autorescue',
+      role: 'Validation 5 axes VLM (render_glb_4views + validate_3d_output) et boucle auto-rescue',
+      filesOwned: ['application/validate_3d_output.py', 'application/render_glb_4views.py', 'application/reshape_glb_proportions.py'],
+      routesOwned: ['/api/3d/validate', '/api/3d/auto-rescue', '/api/3d/reshape'],
+      neverTouch: ['application/hunyuan3d_server.py'],
+    },
+    {
+      id: '3d-motion-rigger',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'skeleton_rigging_skinning',
+      role: 'Auto-rigging squelettique, skinning LBS et clips d’animation procéduraux',
+      filesOwned: ['application/rig_glb.py', 'scripts/3d/motion_3d_semantic.py'],
+      routesOwned: ['/api/3d/rig', '/api/3d/animate'],
+      neverTouch: ['application/cad_engine.py'],
+    },
+    {
+      id: '3d-cad-engineering',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'parametric_brep_step_stl',
+      role: 'CAO paramétrique B-Rep exacte (CadQuery/Build123d/OpenSCAD), tolérances ISO et export STEP/STL',
+      filesOwned: ['application/cad_engine.py'],
+      routesOwned: ['/api/3d/cad', '/api/3d/export-step'],
+      neverTouch: ['application/hunyuan3d_server.py'],
+    },
+    {
+      id: '3d-assembly-kinematics',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'multi_part_exploded_view',
+      role: 'Assemblage multi-pièces, graphe de liaisons cinématiques, détection d’interférences BVH et vue éclatée',
+      filesOwned: ['application/scene_3d.py'],
+      routesOwned: ['/api/3d/assembly', '/api/3d/exploded-view'],
+      neverTouch: ['application/bake_colors_onto_glb.py'],
+    },
+    {
+      id: '3d-splat-telemetry',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'gaussian_splatting_telemetry',
+      role: 'Rendu 3D Gaussian Splatting (.splat/.ply) et télémétrie matérielle 3D temps réel',
+      filesOwned: ['application/src/components/SplatViewer.tsx', 'application/src/components/Telemetry3DPanel.tsx'],
+      routesOwned: ['/api/3d/splat', '/api/3d/telemetry'],
+      neverTouch: ['application/postprocess_3d.py'],
+    },
+    {
+      id: '3d-viewer-lead',
+      masterId: '3d-lead',
+      module: '3d',
+      feature: 'webgl_threejs_viewer',
+      role: 'Viewer Three.js / React Three Fiber, gizmos, coupe, wireframe et décodage Draco/Meshopt',
+      filesOwned: ['application/src/components/ThreeDModule.tsx#viewer', 'application/src/components/AssetGeneratorModule.tsx'],
+      routesOwned: ['/api/3d/models', '/api/3d/serve'],
+      neverTouch: ['application/hunyuan3d_server.py'],
+    },
+  ],
+  video: [
+    {
+      id: 'video-storyboard-director',
+      masterId: 'video-lead',
+      module: 'video',
+      feature: 'multi_shot_storyboard',
+      role: 'Découpage en plans numérotés, cadrage, mouvements de caméra et raccords',
+      filesOwned: ['application/src/components/VideoModule.tsx#storyboard'],
+      routesOwned: ['/api/video/storyboard'],
+      neverTouch: ['application/routes/vite_bp_routes.py#musetalk'],
+    },
+    {
+      id: 'video-motion-director',
+      masterId: 'video-lead',
+      module: 'video',
+      feature: 'ltx_wan_video_diffusion',
+      role: 'Inférence LTX-Video 2B / Wan2.1 14B, cohérence temporelle et assemblage FFmpeg',
+      filesOwned: ['application/routes/vite_bp_routes.py#video_generate'],
+      routesOwned: ['/api/video/generate', '/api/video/status'],
+      neverTouch: ['application/src/components/ThreeDModule.tsx'],
+    },
+    {
+      id: 'video-hymotion-kinematics',
+      masterId: 'video-lead',
+      module: 'video',
+      feature: 'hymotion_3d_trajectory',
+      role: 'Synthèse de mouvements humains HY-Motion-1.0 et guidage de trajectoires caméra',
+      filesOwned: ['application/routes/vite_bp_routes.py#hymotion'],
+      routesOwned: ['/api/video/hymotion'],
+      neverTouch: ['application/src/components/ImageModule.tsx'],
+    },
+    {
+      id: 'video-talking-head',
+      masterId: 'video-lead',
+      module: 'video',
+      feature: 'portrait_video_animation',
+      role: 'Animation de portraits parlants synchronisés (MuseTalk / LivePortrait)',
+      filesOwned: ['application/routes/vite_bp_routes.py#musetalk'],
+      routesOwned: ['/api/video/talking-head'],
+      neverTouch: ['application/src/components/VideoModule.tsx#storyboard'],
+    },
+  ],
+  voice: [
+    {
+      id: 'voice-stt-transcriber',
+      masterId: 'voice-lead',
+      module: 'voice',
+      feature: 'whisper_asr_vad',
+      role: 'Transcription speech-to-text Faster-Whisper / Canary, VAD et diarisation',
+      filesOwned: ['application/routes/vite_bp_routes.py#voice_stt'],
+      routesOwned: ['/api/voice/transcribe', '/api/stt'],
+      neverTouch: ['application/routes/vite_bp_routes.py#voice_tts'],
+    },
+    {
+      id: 'voice-tts-stt-tuner',
+      masterId: 'voice-lead',
+      module: 'voice',
+      feature: 'kokoro_f5_tts_synthesis',
+      role: 'Synthèse vocale Kokoro-82M / F5-TTS / Piper, prosodie et clonage vocal',
+      filesOwned: ['application/routes/vite_bp_routes.py#voice_tts', 'application/src/services/voiceService.ts'],
+      routesOwned: ['/api/voice/synthesize', '/api/tts'],
+      neverTouch: ['application/routes/vite_bp_routes.py#voice_stt'],
+    },
+    {
+      id: 'voice-lipsync',
+      masterId: 'voice-lead',
+      module: 'voice',
+      feature: 'viseme_avatar_sync',
+      role: 'Extraction d’enveloppe/visèmes temps réel et synchronisation labiale de l’avatar',
+      filesOwned: ['application/src/components/VoiceModule.tsx#lipsync'],
+      routesOwned: ['/api/voice/visemes'],
+      neverTouch: ['application/routes/vite_bp_routes.py#voice_stt'],
+    },
+    {
+      id: 'voice-live-duplex',
+      masterId: 'voice-lead',
+      module: 'voice',
+      feature: 'full_duplex_barge_in',
+      role: 'Conversation vocale mains-libres en continu, détection d’interruption (barge-in)',
+      filesOwned: ['application/src/components/VoiceModule.tsx#duplex'],
+      routesOwned: ['/api/voice/session'],
+      neverTouch: ['application/src/components/ChatModule.tsx'],
+    },
+  ],
+  learning: [
+    {
+      id: 'learning-formal-oracle',
+      masterId: 'learning-lead',
+      module: 'learning',
+      feature: 'sympy_z3_lean4_verification',
+      role: 'Vérification formelle des preuves et calculs via SymPy, Z3 et Lean 4',
+      filesOwned: ['application/routes/vite_bp_routes.py#learning_oracle'],
+      routesOwned: ['/api/learning/verify-proof', '/api/learning/solve'],
+      neverTouch: ['application/src/components/AcademyModule.tsx#quiz'],
+    },
+    {
+      id: 'learning-bac-curator',
+      masterId: 'learning-lead',
+      module: 'learning',
+      feature: 'curriculum_courses_lessons',
+      role: 'Structuration des cours, fiches de révision, théorèmes et annales',
+      filesOwned: ['application/src/components/AcademyModule.tsx#curriculum', 'application/src/components/LearningModule.tsx'],
+      routesOwned: ['/api/learning/courses', '/api/learning/lesson'],
+      neverTouch: ['application/routes/vite_bp_routes.py#learning_oracle'],
+    },
+    {
+      id: 'learning-quiz-verifier',
+      masterId: 'learning-lead',
+      module: 'learning',
+      feature: 'interactive_exercises_grading',
+      role: 'Génération de quiz/exercices gradués, indices progressifs et correction pas-à-pas',
+      filesOwned: ['application/src/components/AcademyModule.tsx#quiz'],
+      routesOwned: ['/api/learning/quiz', '/api/learning/grade'],
+      neverTouch: ['application/src/components/SimulatorModule.tsx'],
+    },
+    {
+      id: 'learning-lab-integrator',
+      masterId: 'learning-lead',
+      module: 'learning',
+      feature: 'theory_to_simulator_bridge',
+      role: 'Passerelle directe entre une formule théorique et une scène du Simulateur Scientifique',
+      filesOwned: ['application/src/components/AcademyModule.tsx#lab_bridge'],
+      routesOwned: ['/api/learning/launch-simulation'],
+      neverTouch: ['application/src/components/AcademyModule.tsx#quiz'],
+    },
+  ],
+  cyber: [
+    {
+      id: 'cyber-symbolic-zeroday',
+      masterId: 'cyber-lead',
+      module: 'cyber',
+      feature: 'ast_taint_symbolic_audit',
+      role: 'Analyse statique AST, taint tracking, exécution symbolique Z3 et détection CWE/CVE',
+      filesOwned: ['application/src/components/CyberModule.tsx#audit'],
+      routesOwned: ['/api/cyber/audit', '/api/cyber/symbolic'],
+      neverTouch: ['application/src/components/CyberModule.tsx#network'],
+    },
+    {
+      id: 'cyber-closedloop-patcher',
+      masterId: 'cyber-lead',
+      module: 'cyber',
+      feature: 'auto_remediation_diff_verify',
+      role: 'Génération de correctifs de sécurité (diffs minimaux) et re-vérification fermée',
+      filesOwned: ['application/src/components/CyberModule.tsx#patcher'],
+      routesOwned: ['/api/cyber/patch', '/api/cyber/verify-fix'],
+      neverTouch: ['application/src/components/CyberModule.tsx#lab'],
+    },
+    {
+      id: 'cyber-lab-builder',
+      masterId: 'cyber-lead',
+      module: 'cyber',
+      feature: 'sandboxed_ctf_scenarios',
+      role: 'Environnements d’entraînement CTF isolés et challenges d’audit de code',
+      filesOwned: ['application/src/components/CyberModule.tsx#lab'],
+      routesOwned: ['/api/cyber/lab'],
+      neverTouch: ['application/routes/vite_bp_routes.py#system'],
+    },
+    {
+      id: 'cyber-pyops-keeper',
+      masterId: 'cyber-lead',
+      module: 'cyber',
+      feature: 'deps_sbom_secrets_scanner',
+      role: 'Scan de dépendances (pip/npm/cargo), SBOM et détection de secrets exposés',
+      filesOwned: ['application/routes/vite_bp_routes.py#cyber_sbom'],
+      routesOwned: ['/api/cyber/sbom', '/api/cyber/secrets-scan'],
+      neverTouch: ['application/src/components/CyberModule.tsx#audit'],
+    },
+    {
+      id: 'cyber-network-recon',
+      masterId: 'cyber-lead',
+      module: 'cyber',
+      feature: 'local_surface_headers_tls',
+      role: 'Inspection des ports locaux autorisés, en-têtes HTTP/CSP/CORS et configuration TLS',
+      filesOwned: ['application/src/components/CyberModule.tsx#network'],
+      routesOwned: ['/api/cyber/recon', '/api/cyber/headers'],
+      neverTouch: ['application/src/components/CyberModule.tsx#patcher'],
+    },
+  ],
+  business: [
+    {
+      id: 'business-market-research',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'tam_sam_som_competition',
+      role: 'Analyse TAM/SAM/SOM, élasticité-prix, concurrence et signaux de demande',
+      filesOwned: ['application/business_intelligence.py#market_research'],
+      routesOwned: ['/api/business/market-research'],
+      neverTouch: ['application/business_intelligence.py#risk_manager'],
+    },
+    {
+      id: 'business-financial-analyst',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'unit_economics_cashflow_dso',
+      role: 'Modélisation P&L, cash-flow, BFR (DSO/DPO), LTV/CAC, point mort et VAN/TRI',
+      filesOwned: ['application/business_intelligence.py#financial_analyst'],
+      routesOwned: ['/api/business/financials'],
+      neverTouch: ['application/business_intelligence.py#quant'],
+    },
+    {
+      id: 'business-risk-manager',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'ruin_probability_kelly_veto',
+      role: 'Probabilité de ruine, drawdown max, Kelly fractionnaire (0.25x) et droit de veto',
+      filesOwned: ['application/business_intelligence.py#risk_manager'],
+      routesOwned: ['/api/business/risk-check'],
+      neverTouch: ['application/business_intelligence.py#entrepreneur'],
+    },
+    {
+      id: 'business-entrepreneur',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'venture_gtm_design',
+      role: 'Conception d’offres SaaS/B2B/E-commerce, MVP, pricing et stratégie Go-To-Market',
+      filesOwned: ['application/business_intelligence.py#entrepreneur'],
+      routesOwned: ['/api/business/venture'],
+      neverTouch: ['application/business_intelligence.py#risk_manager'],
+    },
+    {
+      id: 'business-quant',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'montecarlo_walkforward_sim',
+      role: 'Simulations Monte-Carlo (10 000 trajectoires), backtesting Walk-Forward et stress-tests',
+      filesOwned: ['application/business_intelligence.py#quant'],
+      routesOwned: ['/api/business/simulate', '/api/business/montecarlo'],
+      neverTouch: ['application/business_intelligence.py#financial_analyst'],
+    },
+    {
+      id: 'business-economist',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'macro_inflation_rates_tax',
+      role: 'Cycles macroéconomiques, taux directeurs, inflation, change et fiscalité',
+      filesOwned: ['application/business_intelligence.py#economist'],
+      routesOwned: ['/api/business/macro'],
+      neverTouch: ['application/business_intelligence.py#technical'],
+    },
+    {
+      id: 'business-technical',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'infra_cloud_ai_costs',
+      role: 'Faisabilité technique, chiffrage précis des coûts cloud/GPU/API et scalabilité',
+      filesOwned: ['application/business_intelligence.py#technical'],
+      routesOwned: ['/api/business/tech-costs'],
+      neverTouch: ['application/business_intelligence.py#economist'],
+    },
+    {
+      id: 'business-critic',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'redteam_premortem_bias',
+      role: 'Red-Team économique, pré-mortem, détection du biais de survie et des coûts cachés',
+      filesOwned: ['application/business_intelligence.py#critic'],
+      routesOwned: ['/api/business/critique'],
+      neverTouch: ['application/business_intelligence.py#entrepreneur'],
+    },
+    {
+      id: 'business-auditor',
+      masterId: 'business-ceo',
+      module: 'business',
+      feature: 'provenance_killswitch_gate',
+      role: 'Traçabilité des sources, calibration des prédictions, kill-switch et validation humaine Live',
+      filesOwned: ['application/business_intelligence.py#auditor'],
+      routesOwned: ['/api/business/audit', '/api/business/kill-switch'],
+      neverTouch: ['application/business_intelligence.py#market_research'],
+    },
+  ],
+}
+
+/** Chemins canoniques des définitions `agent.md` (Workspace & Global). */
+export function getWorkspaceAgentMdPath(agentName: string): string {
+  return `/home/juan/AuroraIA/.agents/agents/${agentName}/agent.md`
+}
+
+export function getGlobalAgentMdPath(agentName: string): string {
+  return `/home/juan/.gemini/config/agents/${agentName}/agent.md`
+}
+
+/** Retourne tous les sous-agents fonctionnels rattachés au module donné. */
+export function getModuleFeatureSubAgents(id: ModuleId): AuroraFeatureSubAgent[] {
+  return MODULE_FEATURE_SUBAGENTS[id] || []
+}
+
+/** Résout le sous-agent fonctionnel unique responsable d'une fonctionnalité ou d'un fichier dans un module. */
+export function resolveFeatureSubAgent(id: ModuleId, targetFeatureOrPath: string): AuroraFeatureSubAgent | undefined {
+  const list = getModuleFeatureSubAgents(id)
+  const needle = targetFeatureOrPath.trim().toLowerCase()
+  return list.find(
+    (sub) =>
+      sub.id.toLowerCase() === needle ||
+      sub.feature.toLowerCase() === needle ||
+      sub.filesOwned.some((f) => f.toLowerCase().includes(needle)) ||
+      sub.routesOwned.some((r) => r.toLowerCase().includes(needle))
+  )
+}
+
+export const AURORA_AGI_LOOP_PHASES = [
+  'PERCEIVE_INTENT',
+  'DECOMPOSE_DAG',
+  'ROUTE_APPLICATORS',
+  'APPLY_SURGICAL',
+  'VERIFY_CRITIQUE',
+  'SELF_HEAL_REFLECT',
+  'CONSOLIDATE_EVOLVE',
+] as const
+
+export type AuroraAgiLoopPhase = (typeof AURORA_AGI_LOOP_PHASES)[number]
+
+/**
+ * Cerveau AGI côté client : identifie l'Agent Maître et le(s) Sous-Agent(s) Appliquant(s)
+ * les plus pertinents pour une requête donnée sans mélange de fonctionnalités, et génère
+ * la trace des 7 phases de la boucle cognitive & exécutive fermée.
+ */
+export function planWithAgiBrainLocal(
+  requestText: string,
+  activeModule: ModuleId = 'conversation'
+): {
+  brainOrchestrator: string
+  masterAgent: string
+  selectedApplicators: AuroraFeatureSubAgent[]
+  loopPhases: readonly AuroraAgiLoopPhase[]
+} {
+  const subs = getModuleFeatureSubAgents(activeModule)
+  const q = (requestText || '').toLowerCase()
+  const scored = subs
+    .map((sub) => {
+      let score = 0
+      const tokens = `${sub.id} ${sub.feature.replace(/_/g, ' ')} ${sub.role}`.toLowerCase().split(/\W+/)
+      for (const tok of tokens) {
+        if (tok.length >= 4 && q.includes(tok)) score += 10
+      }
+      for (const f of sub.filesOwned) {
+        if (q.includes(f.toLowerCase())) score += 35
+      }
+      for (const r of sub.routesOwned) {
+        if (q.includes(r.toLowerCase())) score += 35
+      }
+      return { sub, score }
+    })
+    .sort((a, b) => b.score - a.score)
+
+  const matched = scored.filter((item) => item.score > 0).map((item) => item.sub)
+  return {
+    brainOrchestrator: 'aurora-orchestrator',
+    masterAgent: MODULE_MASTER_IDS[activeModule],
+    selectedApplicators: matched.length > 0 ? matched.slice(0, 3) : subs.slice(0, 1),
+    loopPhases: AURORA_AGI_LOOP_PHASES,
+  }
+}
+
 /**
  * Construit la section "agent persona" à injecter dans un system prompt
  * de pipeline (Architecte / Codeur / Auditeur etc.). Sert à propager le
- * nom + ton + contrat de tâche personnalisés par l utilisateur.
+ * nom + ton + contrat de tâche personnalisés par l utilisateur, ainsi que
+ * l'architecture Cerveau AGI → Agent Maître → Sous-Agents Appliquants exclusifs
+ * et les 7 phases de la boucle cognitive & auto-réparatrice.
  */
-export function buildAgentPromptSection(id: ProductionAgentId): string {
+export function buildAgentPromptSection(id: ProductionAgentId, requestText?: string): string {
   const agent = getProductionAgent(id)
+  const subAgents = id !== 'manager' ? getModuleFeatureSubAgents(id as ModuleId) : []
+  const masterId = id !== 'manager' ? MODULE_MASTER_IDS[id as ModuleId] : 'aurora-orchestrator'
+  const activePlan =
+    id !== 'manager' && requestText ? planWithAgiBrainLocal(requestText, id as ModuleId) : null
+
+  const subLines =
+    subAgents.length > 0
+      ? [
+          '',
+          `### ARCHITECTURE CERVEAU AGI → MAÎTRE (${masterId}) → APPLIQUANTS SPÉCIALISÉS`,
+          `- Définition Maître Workspace : \`${getWorkspaceAgentMdPath(masterId)}\``,
+          `- Définition Maître Global : \`${getGlobalAgentMdPath(masterId)}\``,
+          ...subAgents.map(
+            (s) =>
+              `- **${s.id}** [fonctionnalité: \`${s.feature}\`] : ${s.role} | Périmètre exclusif: \`${s.filesOwned.join(', ') || s.routesOwned.join(', ')}\` | Pare-feu INTERDIT: \`${s.neverTouch.join(', ')}\``
+          ),
+          ...(activePlan && activePlan.selectedApplicators.length > 0
+            ? [
+                '',
+                `### APPLIQUANT(S) ACTIVÉ(S) POUR CETTE REQUÊTE : ${activePlan.selectedApplicators.map((a) => a.id).join(', ')}`,
+              ]
+            : []),
+          '',
+          `### BOUCLE OPÉRATIONNELLE AGI EN 7 PHASES (${AURORA_AGI_LOOP_PHASES.join(' → ')})`,
+          '1. PERCEIVE_INTENT & DECOMPOSE_DAG : verrouille l intention exacte et découpe en sous-objectifs atomiques sans divagation.',
+          '2. ROUTE_APPLICATORS & APPLY_SURGICAL : chaque sous-agent appliquant traite EXCLUSIVEMENT sa fonctionnalité sans jamais empiéter sur le périmètre (`neverTouch`) d un autre sous-agent.',
+          '3. VERIFY_CRITIQUE, SELF_HEAL_REFLECT & CONSOLIDATE_EVOLVE : vérifie chaque invariant (zéro TODO/placeholder), corrige en boucle fermée toute anomalie et consolide le livrable final.',
+        ]
+      : []
   return [
-    `## AGENT: ${agent.name.toUpperCase()} — ${agent.role}`,
+    `## AGENT MAÎTRE: ${agent.name.toUpperCase()} (${masterId}) — ${agent.role}`,
     agent.systemPrompt,
     '',
     '### CONTRAT DE TACHE',
@@ -483,21 +1218,26 @@ export function buildAgentPromptSection(id: ProductionAgentId): string {
     '',
     '### REGLES DE COLLABORATION',
     agent.collaborationRules,
+    ...subLines,
   ].join('\n')
 }
 
 /**
  * Construit le bloc "équipe Aurora" injecté dans le coworkPlanner pour que
- * le LLM connaisse les agents disponibles autour de lui (handoff, mention).
+ * le LLM connaisse les agents maîtres et leurs sous-agents disponibles autour de lui.
  */
 export function buildCoworkTeamPromptSection(activeModule?: ModuleId | null): string {
-  const lines: string[] = ['## EQUIPE AURORA — AGENTS DISPONIBLES']
+  const lines: string[] = ['## EQUIPE AURORA — CERVEAU AGI, AGENTS MAÎTRES & APPLIQUANTS FONCTIONNELS']
   for (const id of PRODUCTION_AGENT_IDS) {
     const agent = getProductionAgent(id)
     const tag = activeModule && id === activeModule ? ' [actif]' : ''
-    lines.push(`- ${agent.name} (${id})${tag} — ${agent.role}. ${agent.taskContract}`)
+    const subs = id !== 'manager' ? getModuleFeatureSubAgents(id as ModuleId) : []
+    const subSummary = subs.length > 0 ? ` | Appliquants (${subs.length}): ${subs.map((s) => s.id).join(', ')}` : ''
+    lines.push(`- ${agent.name} (${id})${tag} — ${agent.role}. ${agent.taskContract}${subSummary}`)
   }
   lines.push('')
-  lines.push('Mentionne un agent par son id (ex. @image) pour suggérer un handoff.')
+  lines.push('Mentionne un agent maître par son id (ex. @image) ou un sous-agent appliquant précis pour déléguer sans mélange.')
   return lines.join('\n')
 }
+
+

@@ -94,7 +94,7 @@ def apply(c):
         c.update(train_tasks=12,rollouts_per_task=3,minimum_preference_pairs=8,
                  auto_refill=True,sft_weight=.05,
                  local_step_timeout_seconds=2400,
-                 local_preparation_seconds=max(3600, 60*75))
+                 local_preparation_seconds=max(3600, 60*180))
     else:
         c.update(train_tasks=12,local_epochs=1,directions=2)
     if c['module']=='audio':c['quality_metrics']={'wer':'lower','clipping_fraction':'lower'}

@@ -118,7 +118,22 @@ def discover_mcp(workspace: str) -> list[dict]:
     return found
 
 
-def discover_official_agents() -> list[dict]:
+def discover_official_agents(workspace: str | None = None) -> list[dict]:
+    state = _read_json(data_dir() / "cli_agent_state.json")
+    disabled = state.get("disabled", [])
+    if not isinstance(disabled, list):
+        disabled = []
+    disabled_set = set(disabled)
+    try:
+        from agi_core.agi_brain import get_unified_agent_catalog
+        catalog = get_unified_agent_catalog(workspace)
+        return [
+            {**info, "enabled": name not in disabled_set, "protected": True}
+            for name, info in sorted(catalog.items())
+            if name not in disabled_set
+        ]
+    except Exception:
+        pass
     try:
         from application.agent_registry import list_agents
     except ImportError:
@@ -126,10 +141,6 @@ def discover_official_agents() -> list[dict]:
             from agent_registry import list_agents
         except ImportError:
             return []
-    state = _read_json(data_dir() / "cli_agent_state.json")
-    disabled = state.get("disabled", [])
-    if not isinstance(disabled, list):
-        disabled = []
     return [a for a in list_agents(disabled=disabled) if a.get("enabled", True)]
 
 
@@ -147,14 +158,19 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
                     "role": a.get("role", "")[:8000],
                     "domain": str(a.get("domain", ""))[:200],
                     "module": str(a.get("module") or a.get("domain") or "")[:200],
+                    "role_type": str(a.get("role_type", "subagent")),
+                    "feature": str(a.get("feature", name))[:200],
                     "parent_agent": str(a.get("parent_agent", ""))[:80],
+                    "files_owned": list(a.get("files_owned") or []),
+                    "routes_owned": list(a.get("routes_owned") or []),
+                    "never_touch": list(a.get("never_touch") or []),
                     "can_create_subagents": bool(a.get("can_create_subagents", True)),
                     "permissions": a.get("permissions", "STANDARD"),
                     "preferred_tools": [t for t in raw_tools if isinstance(t, str)] if isinstance(raw_tools, list) else [],
                     "verification_focus": str(a.get("verification_focus", ""))[:2000],
                     "origin": "saved",
                 }
-    for official in discover_official_agents():
+    for official in discover_official_agents(workspace):
         if official.get("name") == name:
             return {
                 "name": official["name"],
@@ -162,14 +178,24 @@ def resolve_agent(name: str, workspace: str | None = None) -> dict | None:
                 "description": official.get("description", ""),
                 "domain": official.get("domain", ""),
                 "module": official.get("module") or official.get("domain") or "",
+                "role_type": official.get("role_type", "subagent"),
+                "feature": official.get("feature", official["name"]),
                 "parent_agent": official.get("parent_agent", ""),
+                "files_owned": list(official.get("files_owned") or []),
+                "routes_owned": list(official.get("routes_owned") or []),
+                "never_touch": list(official.get("never_touch") or []),
+                "subagents": list(official.get("subagents") or []),
                 "can_create_subagents": bool(official.get("can_create_subagents", True)),
                 "permissions": official.get("permissions", "STANDARD"),
                 "preferred_tools": official.get("preferred_tools", []),
                 "verification_focus": official.get("verification_focus", ""),
+                "agent_md_path": official.get("agent_md_path", ""),
+                "workspace_agent_md": official.get("workspace_agent_md", ""),
+                "global_agent_md": official.get("global_agent_md", ""),
                 "origin": "official",
             }
     return None
+
 
 
 def call_mcp_stdio(server: dict, method: str, params: dict, *,

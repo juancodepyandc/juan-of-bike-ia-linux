@@ -168,4 +168,9 @@ def promote(state, module, run_id, candidate, report, expected_champion):
                   "score": report["gate"]["candidate_mean"], "promoted_at": time.time(),
                   "previous": current, "base_fingerprint": report["base_fingerprint"]}
         atomic_json(path, record)
+    try:
+        from .reinforced_registry import sync_all_reinforced_models
+        sync_all_reinforced_models(state)
+    except Exception:
+        pass
     return record

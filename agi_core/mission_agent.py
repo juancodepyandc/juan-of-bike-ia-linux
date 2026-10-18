@@ -554,10 +554,17 @@ class AutonomousMissionAgent:
         child_module = str(definition.get('module') or definition.get('domain') or self.module or '')
         child_can_subagent = bool(definition.get('can_create_subagents', True)) and (self.depth + 1) < 2
         module_note = f"Module scope: {child_module}\n" if child_module else ""
+        feature_note = f"Exclusive feature: {definition['feature']}\n" if definition.get('feature') else ""
+        files_note = (f"Exclusive files_owned: {', '.join(definition['files_owned'])}\n"
+                      if definition.get('files_owned') else '')
+        routes_note = (f"Exclusive routes_owned: {', '.join(definition['routes_owned'])}\n"
+                       if definition.get('routes_owned') else '')
+        never_note = (f"NEVER TOUCH firewall (strictly forbidden): {', '.join(definition['never_touch'])}\n"
+                      if definition.get('never_touch') else '')
         child = AutonomousMissionAgent(self.mission_id, task, self.workspace, self.model, narrowed,
                                        policy=self.policy, depth=self.depth+1, context_tokens=self.context_tokens,
                                        agent_name=agent_name, module=child_module, can_create_subagents=child_can_subagent,
-                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\n{module_note}Reusable role, subordinate to this task: {definition['role']}\n{focus}{preferred}"
+                                       additional_context=f"Delegated task only. Do not repeat the parent's other steps or recreate existing roles/skills.\n{module_note}{feature_note}{files_note}{routes_note}{never_note}Reusable role, subordinate to this task: {definition['role']}\n{focus}{preferred}"
                                            'The parent will check these outputs after your task; define your own criteria only for this delegated task. These output bindings have no parent criterion labels: '+json.dumps(self._worker_acceptance_bindings(acceptance_checks),ensure_ascii=False))
         child._emit = self._worker_emitter(task)
         child._lease_guard = self._assert_owned

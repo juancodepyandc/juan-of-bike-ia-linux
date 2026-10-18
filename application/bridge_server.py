@@ -1445,7 +1445,12 @@ def aurora_api_doc():
 # Audited local adapters use the same bridge as the UI and tunnel.
 import sys as _training_sys
 from pathlib import Path as _TrainingPath
-_training_sys.path.insert(0, str(_TrainingPath(__file__).resolve().parent.parent))
+_app_dir_path = str(_TrainingPath(__file__).resolve().parent)
+_root_dir_path = str(_TrainingPath(__file__).resolve().parent.parent)
+if _app_dir_path not in _training_sys.path:
+    _training_sys.path.insert(0, _app_dir_path)
+if _root_dir_path not in _training_sys.path:
+    _training_sys.path.insert(0, _root_dir_path)
 from auto_rl.integration import register_routes as _register_training_routes
 _register_training_routes(app, _proxy)
 

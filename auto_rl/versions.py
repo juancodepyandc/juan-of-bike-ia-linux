@@ -5,23 +5,45 @@ from .config import STATE, LABELS, defaults
 from .storage import read_json, atomic_json, exclusive_lock
 
 
+MODULE_ALIASES = {'academy': 'learning', 'voice': 'audio'}
+EXTRA_UI_MODULES = {'business', 'drawing'}
+
+
+def _canon_mod(module):
+    if not isinstance(module, str):
+        return module
+    return MODULE_ALIASES.get(module, module)
+
+
 def preference(module, state=STATE):
-    if module not in LABELS: raise ValueError('Module inconnu')
+    module = _canon_mod(module)
+    if module not in LABELS and module not in EXTRA_UI_MODULES:
+        raise ValueError('Module inconnu')
     value = read_json(Path(state)/'inference_preferences.json', {}).get(module, 'base')
     return value if value in {'base', 'validated'} else 'base'
 
 
-def select(module, version, state=STATE):
-    if not isinstance(module,str) or not isinstance(version,str) or module not in LABELS or version not in {'base', 'validated'}:
+selected_version = preference
+
+
+
+def select(module, version, state=STATE, allow_pending=False):
+    module = _canon_mod(module)
+    if version == 'renforce':
+        version = 'validated'
+    if (not isinstance(module,str) or not isinstance(version,str)
+            or (module not in LABELS and module not in EXTRA_UI_MODULES)
+            or version not in {'base', 'validated'}):
         raise ValueError('Choisir la base officielle ou la dernière version validée')
-    if version == 'validated':
+    if version == 'validated' and not allow_pending:
         from .runtime import validated_record
-        if not validated_record(module, state): raise ValueError('Aucune version validée disponible pour ce module')
+        if module not in LABELS or not validated_record(module, state):
+            raise ValueError('Aucune version validée disponible pour ce module')
     with exclusive_lock(Path(state)/'inference_preferences.lock'):
         values = read_json(Path(state)/'inference_preferences.json', {})
         values[module] = version
         atomic_json(Path(state)/'inference_preferences.json', values)
-    return {'module': module, 'version': version, 'applies': 'next_generation'}
+    return {'module': module, 'version': version, 'variant': 'renforce' if version == 'validated' else 'base', 'applies': 'next_generation'}
 
 
 def summary(run):

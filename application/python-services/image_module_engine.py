@@ -67,6 +67,14 @@ def resolve_main_folder(category: str, raw_text: str = "") -> str:
         return "decor"
     return "perso" if "photo" in c else "decor"
 
+
+def resolve_output_bucket(category: str, raw_text: str = "") -> str:
+    c = category.lower()
+    t = strip_accents(raw_text.lower())
+    if any(k in c or k in t for k in ("edit", "retouche", "inpaint", "modif", "upscale", "transfert")):
+        return "modifications"
+    return "creations"
+
 def unload_ollama_memory() -> None:
     """Evicts any resident Ollama models from RAM/VRAM before loading FLUX."""
     base = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
@@ -424,9 +432,10 @@ def generate_image_manifest(
         
     category = spec["category"]
     main_cat = resolve_main_folder(category, raw_prompt)
+    output_bucket = resolve_output_bucket(category, raw_prompt)
     slug = slugify(raw_prompt)
     
-    subject_dir = (output_dir or (BASE_OUTPUT_DIR / main_cat / slug))
+    subject_dir = (output_dir or (BASE_OUTPUT_DIR / output_bucket / slug))
     
     ts = int(time.time())
     run_seed = seed if seed is not None else (ts % 1000000000)

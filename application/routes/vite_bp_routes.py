@@ -1749,39 +1749,209 @@ def _parse_agent_frontmatter(text: str) -> dict[str, str]:
 @vite_bp.route("/api/agents/list", methods=["GET"])
 def agents_list():
     """Expose the Aurora multi-agent registry to UI / extension / external
-    clients. Returns the lead/sub-agent hierarchy from state.json plus a
-    name→description map from the .md files. Read-only.
+    clients. Returns the lead/sub-agent hierarchy plus a name→description map
+    and strict file/route ownership boundaries. Read-only.
     """
-    from agent_registry import AGENTS
+    from agent_registry import AGENTS, get_master_agents, get_module_hierarchy
     descriptions = {name: details["description"] for name, details in AGENTS.items()}
-    state: dict = {}
+    hierarchy = get_module_hierarchy()
+    leads_map = {}
+    for mod, info in hierarchy.get("modules", {}).items():
+        master_info = info.get("master") or {}
+        master_name = master_info.get("name") or mod
+        leads_map[master_name] = {
+            "module": mod,
+            "role": master_info.get("role", ""),
+            "description": master_info.get("description", ""),
+            "files_owned": master_info.get("files_owned", []),
+            "routes_owned": master_info.get("routes_owned", []),
+            "never_touch": master_info.get("never_touch", []),
+            "subagents": [
+                {
+                    "name": sub["name"],
+                    "feature": sub.get("feature", ""),
+                    "role": sub.get("role", ""),
+                    "description": sub.get("description", ""),
+                    "files_owned": sub.get("files_owned", []),
+                    "routes_owned": sub.get("routes_owned", []),
+                    "never_touch": sub.get("never_touch", []),
+                }
+                for sub in info.get("feature_subagents", [])
+            ],
+        }
+    from pathlib import Path as _Path
+    ws_agents_dir = str(_Path(__file__).resolve().parents[2] / ".agents" / "agents")
+    gl_agents_dir = str(_Path.home() / ".gemini" / "config" / "agents")
     return jsonify({
         "ok": True,
-        "schema_version": state.get("schema_version", "aurora.tracker.v1"),
-        "leads": state.get("leads") or {},
-        "crosscut": state.get("crosscut") or [],
+        "schema_version": hierarchy.get("schema_version", "aurora.hierarchy.v2"),
+        "orchestrator": hierarchy.get("orchestrator"),
+        "leads": leads_map,
+        "master_count": len(get_master_agents()),
+        "crosscut": ["aurora-orchestrator", "bridge-doctor", "missions-lead", "training-lead"],
         "descriptions": descriptions,
         "agent_count": len(descriptions),
+        "workspace_agents_dir": ws_agents_dir,
+        "global_agents_dir": gl_agents_dir,
     })
+
+
+@vite_bp.route("/api/agents/hierarchy", methods=["GET"])
+def agents_hierarchy():
+    """Return the complete or module-filtered Master -> Feature Sub-Agents hierarchy."""
+    from agent_registry import get_module_hierarchy
+    module = (request.args.get("module") or "").strip() or None
+    return jsonify({"ok": True, **get_module_hierarchy(module)})
+
+
+@vite_bp.route("/api/agents/resolve", methods=["GET", "POST"])
+def agents_resolve():
+    """Resolve which single Feature Sub-Agent and Module Master exclusively own a file, route, or feature."""
+    from agent_registry import resolve_agent_for_target
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        target = (data.get("target") or "").strip()
+    else:
+        target = (request.args.get("target") or "").strip()
+    if not target:
+        return jsonify({"ok": False, "error": "missing target parameter"}), 400
+    res = resolve_agent_for_target(target)
+    if not res:
+        return jsonify({"ok": False, "error": f"no agent matched target: {target}"}), 404
+    return jsonify({"ok": True, **res})
+
+
+@vite_bp.route("/api/agents/brain-plan", methods=["GET", "POST"])
+def agents_brain_plan():
+    """Cognitive AGI Brain Router: decomposes any request into Module Master(s) + Feature Applicator(s)
+    with strict scope firewalls (files_owned, routes_owned, never_touch), 7-phase operational loop,
+    and verification gates.
+    """
+    from agi_core.agi_loops import CognitiveExecutiveLoop
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        query = (data.get("request") or data.get("prompt") or data.get("query") or "").strip()
+        active_module = (data.get("module") or "").strip() or None
+        target_paths = data.get("target_paths") if isinstance(data.get("target_paths"), list) else None
+    else:
+        query = (request.args.get("request") or request.args.get("q") or "").strip()
+        active_module = (request.args.get("module") or "").strip() or None
+        target_paths = None
+    if not query:
+        return jsonify({"ok": False, "error": "missing request parameter"}), 400
+    loop = CognitiveExecutiveLoop()
+    plan = loop.build_autonomous_loop_plan(query, active_module=active_module, target_paths=target_paths)
+    plan["prompt_injection"] = loop.router.format_prompt_injection(query, active_module=active_module)
+    return jsonify(plan)
+
+
+@vite_bp.route("/api/agents/loops/plan", methods=["GET", "POST"])
+def agents_loops_plan():
+    """7-Phase Closed-Loop AGI Executive Planner (PERCEIVE -> DECOMPOSE_DAG -> ROUTE -> APPLY -> VERIFY -> SELF_HEAL -> CONSOLIDATE)."""
+    return agents_brain_plan()
+
+
+@vite_bp.route("/api/agents/loops/diagnose", methods=["POST"])
+def agents_loops_diagnose():
+    """Self-Healing Diagnostic Loop: analyzes runtime errors/tracebacks and assigns the exact Applicator + remediation directive."""
+    from agi_core.agi_loops import SelfHealingDiagnosticLoop
+    data = request.get_json(silent=True) or {}
+    error_text = (data.get("error") or data.get("traceback") or "").strip()
+    failing_file = (data.get("file") or "").strip() or None
+    attempt = int(data.get("attempt") or 1)
+    if not error_text:
+        return jsonify({"ok": False, "error": "missing error parameter"}), 400
+    healer = SelfHealingDiagnosticLoop()
+    return jsonify(healer.diagnose_and_plan_repair(error_text, failing_file=failing_file, attempt=attempt))
+
+
+@vite_bp.route("/api/agents/loops/firewall-check", methods=["POST"])
+def agents_loops_firewall_check():
+    """Scope Firewall Enforcement Loop: verifies an Applicator does not breach `never_touch` or inject TODO/placeholders."""
+    from agi_core.agi_loops import ScopeFirewallEnforcementLoop
+    data = request.get_json(silent=True) or {}
+    applicator = (data.get("applicator") or data.get("agent") or "").strip()
+    if not applicator:
+        return jsonify({"ok": False, "error": "missing applicator parameter"}), 400
+    target_files = data.get("target_files") if isinstance(data.get("target_files"), list) else []
+    target_routes = data.get("target_routes") if isinstance(data.get("target_routes"), list) else []
+    proposed_content = data.get("proposed_content") if isinstance(data.get("proposed_content"), str) else None
+    fw = ScopeFirewallEnforcementLoop()
+    return jsonify(fw.validate_action(applicator, target_files=target_files, target_routes=target_routes, proposed_content=proposed_content))
+
+
+@vite_bp.route("/api/agents/loops/github-status", methods=["GET"])
+def agents_loops_github_status():
+    """Continuous GitHub Verification Loop: checks live GitHub Actions workflow runs and reports whether improvement loop must continue."""
+    from agi_core.agi_loops import ContinuousGitHubVerificationLoop
+    guardian = ContinuousGitHubVerificationLoop()
+    return jsonify(guardian.inspect_github_runs())
+
+
+@vite_bp.route("/api/agents/loops/state", methods=["GET", "POST"])
+def agents_loops_state():
+    """Episodic Skill Evolution Loop: reads or records autonomous cycle telemetry in `.aurora/agi_brain_state.json`."""
+    from agi_core.agi_loops import EpisodicSkillEvolutionLoop
+    evo = EpisodicSkillEvolutionLoop()
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        state = evo.record_cycle(
+            request=str(data.get("request") or "cycle"),
+            complexity=str(data.get("complexity") or "single_feature_surgical"),
+            masters=list(data.get("masters") or []),
+            applicators=list(data.get("applicators") or []),
+            verified=bool(data.get("verified", True)),
+            self_healed=bool(data.get("self_healed", False)),
+            notes=str(data.get("notes") or ""),
+        )
+        return jsonify({"ok": True, "state": state})
+    return jsonify({"ok": True, "state": evo.load_state()})
+
+
+@vite_bp.route("/api/agents/sync-disk", methods=["POST"])
+def agents_sync_disk():
+    """Materialize all 111 agents into both Workspace (.agents/agents/{name}/agent.md)
+    and Global (~/.gemini/config/agents/{name}/agent.md).
+    """
+    from agent_registry import materialize_agent_md_files
+    return jsonify(materialize_agent_md_files())
 
 
 @vite_bp.route("/api/agents/<name>", methods=["GET"])
 def agents_get(name: str):
-    """Return a single agent's frontmatter + body. 404 if not in the registry."""
+    """Return a single agent's metadata, ownership boundaries, sub-agents, and agent.md body."""
     if not name or not all(c.isalnum() or c in "-_" for c in name):
         return jsonify({"ok": False, "error": "invalid agent name"}), 400
-    from agent_registry import get_agent
+    from agent_registry import get_agent, render_agent_markdown
+    from pathlib import Path as _Path
     agent = get_agent(name)
     if agent is None:
         return jsonify({"ok": False, "error": "agent not found"}), 404
+    ws_md = _Path(__file__).resolve().parents[2] / ".agents" / "agents" / name / "agent.md"
+    gl_md = _Path.home() / ".gemini" / "config" / "agents" / name / "agent.md"
+    body = ws_md.read_text(encoding="utf-8") if ws_md.is_file() else render_agent_markdown(name, agent)
     return jsonify({
         "ok": True,
         "name": name,
+        "module": agent.get("module", ""),
+        "role_type": agent.get("role_type", "subagent"),
+        "parent_master": agent.get("parent_agent") or agent.get("parent_master"),
+        "feature": agent.get("feature", ""),
+        "role": agent.get("role", ""),
         "description": agent["description"],
+        "files_owned": agent.get("files_owned", []),
+        "routes_owned": agent.get("routes_owned", []),
+        "never_touch": agent.get("never_touch", []),
+        "subagents": agent.get("subagents", []),
+        "can_create_subagents": agent.get("can_create_subagents", False),
+        "workspace_agent_md": str(ws_md),
+        "global_agent_md": str(gl_md),
         "model": "auto",
         "color": "",
-        "body": "",
+        "body": body,
     })
+
+
 
 
 @vite_bp.route("/api/3d/auto-rescue", methods=["POST"])

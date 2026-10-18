@@ -76,21 +76,89 @@ VISUAL_STYLES=[
  ('comic','inked comic-book illustration rendered as a solid 3D object, bold contour lines and controlled halftone accents')]
 
 
+def load_trellis_500k_curriculum(limit=48, seed=42):
+    """Charge des sujets structurels haute esthétique depuis `modele/renforce/3d/datasets/TRELLIS-500K/` (504 006 objets)."""
+    import csv
+    import json
+    import random
+    from pathlib import Path
+    from .config import ROOT
+
+    pack_dir = ROOT / "modele" / "renforce" / "3d" / "datasets" / "TRELLIS-500K"
+    if not pack_dir.is_dir():
+        return []
+    audit_forbidden = {"bicycle", "bike", "scorpion", "cathedral", "sailing ship", "ship", "owl", "rocking chair", "chair", "helmet", "camera"}
+    candidates = []
+    for csv_name, fam_tag in [
+        ("Toys4k.csv", "trellis500k_toys4k"),
+        ("ABO.csv", "trellis500k_abo"),
+        ("3D-FUTURE.csv", "trellis500k_future"),
+        ("HSSD.csv", "trellis500k_hssd"),
+    ]:
+        csv_path = pack_dir / csv_name
+        if not csv_path.is_file():
+            continue
+        try:
+            with csv_path.open("r", encoding="utf-8", errors="ignore") as f:
+                reader = csv.DictReader(f)
+                for idx, row in enumerate(reader):
+                    if idx > 1500:
+                        break
+                    try:
+                        score = float(row.get("aesthetic_score") or 0.0)
+                    except ValueError:
+                        continue
+                    if score < 6.0:
+                        continue
+                    raw_caps = row.get("captions") or "[]"
+                    try:
+                        caps = json.loads(raw_caps)
+                    except Exception:
+                        continue
+                    if not caps or not isinstance(caps, list):
+                        continue
+                    cap = str(caps[0]).strip()
+                    if len(cap) < 60 or len(cap) > 280:
+                        continue
+                    lower = cap.lower()
+                    if any(word in lower for word in audit_forbidden):
+                        continue
+                    candidates.append((fam_tag, cap, score))
+        except OSError:
+            continue
+    candidates.sort(key=lambda x: (-x[2], x[1]))
+    rng = random.Random(seed)
+    top_pool = candidates[: max(limit * 4, 120)]
+    rng.shuffle(top_pool)
+    return [(fam, cap) for fam, cap, _ in top_pool[:limit]]
+
+
 def visual_briefs(c):
     rows=[]
     detail=['Neutral studio lighting; preserve all thin parts and occluded connections.',
             'Three-quarter view; emphasize fine surface relief, cavities and distinct materials.',
             'Side view; preserve exact counts, contact points and physically continuous structure.']
-    for split,n,pool in [('train',c['train_tasks'],MEDIA_TRAIN),('audit',c['eval_tasks'],MEDIA_AUDIT)]:
+    train_pool = list(MEDIA_TRAIN)
+    if c.get('use_trellis_500k_pack') or int(c.get('train_tasks', 12)) > len(MEDIA_TRAIN):
+        extra_500k = load_trellis_500k_curriculum(limit=max(24, int(c.get('train_tasks', 12))), seed=int(c.get('seed', 42)))
+        if extra_500k:
+            if c.get('use_trellis_500k_pack'):
+                # Mix core verified briefs with TRELLIS-500K high-aesthetic briefs
+                train_pool = train_pool[:8] + extra_500k
+            else:
+                train_pool = train_pool + extra_500k
+    for split,n,pool in [('train',c['train_tasks'],train_pool),('audit',c['eval_tasks'],MEDIA_AUDIT)]:
         for i in range(n):
             family,prompt=pool[i%len(pool)]
             style,style_prompt=VISUAL_STYLES[i%len(VISUAL_STYLES)]
+            origin = 'trellis_500k_pack' if str(family).startswith('trellis500k_') else 'reviewed_complex_brief'
             rows.append({'id':f'{split}_{family}_{i:03d}','split':split,'family':family,
                          'style':style,'audit_group':f'{family}:{style}',
                          'prompt':prompt+' Style target: '+style_prompt+'. '+detail[(i//len(pool))%3],
                          'difficulty':['structural','fine_detail','occlusion'][(i//len(pool))%3],
-                         'suite_version':c.get('curriculum_version','radical-v3'),'origin':'reviewed_complex_brief'})
+                         'suite_version':c.get('curriculum_version','radical-v3'),'origin':origin})
     return rows
+
 
 
 def prepare_visual(c,root,check,progress=None):

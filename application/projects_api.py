@@ -173,8 +173,9 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
         if not allowed():return jsonify(ok=False,error='forbidden_public'),403
         if store.cancel_queued(mid):
             return jsonify(ok=True,status='stopped')
+        data=request.get_json(silent=True) or {}
         item=store.get(mid)
-        if item and item['payload'].get('project_kind')=='frontend' and item['status'] in {'running','planning','stopping'}:
+        if isinstance(data,dict) and data.get('force') is True and item and item['payload'].get('project_kind')=='frontend' and item['status'] in {'running','planning','stopping'}:
             store.append(mid,{'type':'mission_complete','stopped':True,'result':'Arrêt immédiat demandé par l’utilisateur ; file libérée.'})
             return jsonify(ok=True,status='stopped')
         return jsonify(ok=False,error='Le projet a déjà démarré. Utilisez son module pour contrôler son arrêt.'),409
@@ -190,14 +191,17 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
             raw_filename='creation.png'
         if not raw_filename or not raw_filename.lower().endswith(('.png','.jpg','.jpeg','.webp')):
             return jsonify(ok=False,error='Nom de fichier image invalide.'),400
+        mode_raw=str(data.get('mode','creation')).strip().lower()
+        is_mod=bool(data.get('is_modification')) or (mode_raw not in {'','creation','new','text2img'})
+        folder_name='modifications' if is_mod else 'creations'
         prompt_text=str(data.get('prompt','')).strip()
-        slug=re.sub(r'[^a-z0-9]+','_',prompt_text.lower()).strip('_')[:42] or 'creation'
+        slug=re.sub(r'[^a-z0-9]+','_',prompt_text.lower()).strip('_')[:42] or ('modification' if is_mod else 'creation')
         ts_str=time.strftime('%Y-%m-%d_%H%M%S')
         app_root=Path(__file__).resolve().parent
-        creations_dir=(app_root/'output'/'image'/'creations').resolve()
-        creations_dir.mkdir(parents=True,exist_ok=True)
+        target_dir=(app_root/'output'/'image'/folder_name).resolve()
+        target_dir.mkdir(parents=True,exist_ok=True)
         dest_name=f'{ts_str}_{slug}{Path(raw_filename).suffix.lower()}'
-        dest_path=creations_dir/dest_name
+        dest_path=target_dir/dest_name
         # Cherche le fichier produit par ComfyUI (disque local, data_url ou API /view)
         candidates=[
             app_root.parent/'modele'/'comfyui'/'comfyui'/'output'/raw_filename,
@@ -239,13 +243,15 @@ def register_project_routes(bp,*,allowed,store=None,work_idle=lambda: False):
                     'filename':dest_name,
                     'source_filename':raw_filename,
                     'prompt':prompt_text,
-                    'mode':str(data.get('mode','creation')),
+                    'mode':mode_raw or 'creation',
+                    'folder':folder_name,
+                    'is_modification':is_mod,
                     'session_id':str(data.get('sessionId','general')),
                     'context':str(data.get('context','ui')),
                     'created_at':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),
                 },ensure_ascii=False,indent=2),encoding='utf-8')
             except OSError:
                 pass
-        saved_rel=f'output/image/creations/{dest_name}' if copied else 'output/image/creations/'
-        return jsonify(ok=True,copied=copied,saved_rel=saved_rel,saved_path=str(dest_path) if copied else None)
+        saved_rel=f'output/image/{folder_name}/{dest_name}' if copied else f'output/image/{folder_name}/'
+        return jsonify(ok=True,copied=copied,folder=folder_name,saved_rel=saved_rel,saved_path=str(dest_path) if copied else None)
 

@@ -379,12 +379,37 @@ export function useImageViewLogic() {
         const card: GeneratedCard = { ...current, id: newId, url: savedUrl }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
+        try {
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(String(reader.result || ''))
+            reader.onerror = reject
+            reader.readAsDataURL(blob)
+          })
+          const bridge = getBridgeUrl()
+          const persistResp = await fetch(`${bridge}/api/image/persist`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: `upscale_${label.toLowerCase()}.png`,
+              data_url: dataUrl,
+              mode: `upscale_${label.toLowerCase()}`,
+              is_modification: true,
+              prompt: `${current.prompt || 'image'}_${label}`,
+              timestamp: Date.now(),
+            }),
+          })
+          if (persistResp.ok) {
+            const pData = await persistResp.json().catch(() => null)
+            if (pData?.saved_rel) setLastSavedPath(pData.saved_rel as string)
+          }
+        } catch {}
       } catch {
         const card: GeneratedCard = { ...current, id: `${current.id}-${label}-${method}`, url }
         setImages((prev) => [card, ...prev].slice(0, 24))
         setCurrent(card)
       }
-      setNotice(`Super-Résolution ${label} terminée : ${width}×${height} px (${method})`)
+      setNotice(`Super-Résolution ${label} terminée : ${width}×${height} px (${method}) · enregistrée dans output/image/modifications/`)
     } catch (err) {
       console.warn('[upscale]', err)
       setError(err instanceof Error ? err.message : String(err))
@@ -400,6 +425,31 @@ export function useImageViewLogic() {
       const card: GeneratedCard = { ...current, id: newId, url: savedUrl }
       setImages((prev) => [card, ...prev].slice(0, 24))
       setCurrent(card)
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(String(reader.result || ''))
+          reader.onerror = reject
+          reader.readAsDataURL(blob)
+        })
+        const bridge = getBridgeUrl()
+        const persistResp = await fetch(`${bridge}/api/image/persist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: 'inpaint_modification.png',
+            data_url: dataUrl,
+            mode: 'inpaint',
+            is_modification: true,
+            prompt: `${current.prompt || 'inpaint'}_retouche`,
+            timestamp: Date.now(),
+          }),
+        })
+        if (persistResp.ok) {
+          const pData = await persistResp.json().catch(() => null)
+          if (pData?.saved_rel) setLastSavedPath(pData.saved_rel as string)
+        }
+      } catch {}
     } catch {
       const card: GeneratedCard = { ...current, id: newId, url: newUrl }
       setImages((prev) => [card, ...prev].slice(0, 24))
@@ -1129,13 +1179,15 @@ export function useImageViewLogic() {
         } catch {
         }
 
-        // Persistance disque unifiée : output/image/creations/ (fini la dispersion
-        // confuse entre assets, decor, perso, edits, etc.) + sous-dossier de session.
+        // Persistance disque séparée : output/image/creations/ (nouvelles images)
+        // et output/image/modifications/ (retouches, références, inpaint, 4K/8K/16K).
+        const isModRun = Boolean(intent.isEditIntent || refFilename || refFilename2)
+        const targetFolderRel = isModRun ? 'output/image/modifications/' : 'output/image/creations/'
         try {
           if (typeof window !== 'undefined' && comfyFilename) {
             const persistContext = (!isTauriRuntime() && isCloudRuntime()) ? 'tunnel' : 'ui'
             const bridge = getBridgeUrl()
-            reportImageStep(5, 98, 'Sauvegarde dans le dossier unifié output/image/creations/…')
+            reportImageStep(5, 98, `Sauvegarde dans ${targetFolderRel}…`)
             const persistResp = await fetch(`${bridge}/api/image/persist`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1143,7 +1195,8 @@ export function useImageViewLogic() {
                 filename: comfyFilename,
                 context: persistContext,
                 sessionId: activeSessionAtStart?.id || 'general',
-                mode: intent.isEditIntent ? intent.editMode : 'creation',
+                mode: isModRun ? (intent.editMode || 'modification') : 'creation',
+                is_modification: isModRun,
                 prompt: text,
                 timestamp: Date.now(),
               }),
@@ -1165,13 +1218,14 @@ export function useImageViewLogic() {
       const activeSession = useModuleHistoryStore.getState().getActiveSession('image')
       setHistory(pushHistory('image', text, { style: effectiveStyle, sessionId: activeSession.id, requestedStyle: styleForRun }))
       if (batch === 1) setPrompt('')
+      const finalFolderRel = (intent.isEditIntent || refFilename || refFilename2) ? 'output/image/modifications/' : 'output/image/creations/'
       if (activeJobIdRef.current) {
         useAppStore.getState().setGenerationJob(activeJobIdRef.current, {
           status: 'done',
           phase: 'done',
           progress: 100,
           finishedAt: Date.now(),
-          detail: 'Étape 5/5 · Image générée et sauvegardée dans output/image/creations/',
+          detail: `Étape 5/5 · Image générée et sauvegardée dans ${finalFolderRel}`,
         })
       }
       useAppStore.getState().setRuntimeTask({

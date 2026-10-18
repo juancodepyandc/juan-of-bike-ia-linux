@@ -179,7 +179,7 @@ def start(data, state=STATE):
 
 
 def request(action, data=None, state=STATE):
-    if action not in {'stop', 'switch'}:
+    if action not in {'stop', 'stop_after_cycle', 'switch'}:
         raise ValueError('Commande inconnue')
     spec = options(data) if action == 'switch' else {}
     state = Path(state)
@@ -205,6 +205,7 @@ def cycle_config(spec, number, state=STATE):
                 c[key] = value
     for key in ('resume_run', 'resume_audit', 'initial_adapter', 'prepared_tasks'):
         c.pop(key, None)
+    _bornes = {k: c[k] for k in ('max_hours', 'train_tasks', 'fallback_on_quota') if k in c}
     c.update(module=spec['module'], state_dir=str(state), stage='full',
              mode='auto', cycles=1, fallback_on_quota=False, kaggle_max_session=False,
              training_budget_seconds=spec['training_minutes']*60,
@@ -227,7 +228,6 @@ def cycle_config(spec, number, state=STATE):
     # autoritaire: on mémorise ses bornes et on les réapplique après `apply`,
     # sinon `max_hours: 5` et `train_tasks: 3` du fichier 3d n'ont jamais eu
     # aucun effet. Le budget par défaut reste 24 h si le profil ne dit rien.
-    _bornes = {k: c[k] for k in ('max_hours', 'train_tasks') if k in c}
     if spec.get('strategy','radical-v3') in {'radical-v2','radical-v3'}:
         from .strategy import apply
         apply(c)
@@ -268,7 +268,7 @@ def apply_boundary(state, record):
         command = pending(state, record)
         if command:
             record['consumed_command'] = command['command_id']
-            if command['action'] == 'stop':
+            if command['action'] in {'stop', 'stop_after_cycle'}:
                 record.update(phase='stopped', finished_at=time.time())
             else:
                 record.update(options({k: command[k] for k in ('module', 'mode', 'training_minutes','training_start','strategy') if k in command}))
@@ -341,7 +341,7 @@ def worker(session_id, state=STATE):
                         current = read_json(state/'status.json', {})
                         own = current.get('pid') == child.pid
                         command = pending(state, record)
-                        if command and own and current.get('run_id'):
+                        if command and command.get('action') != 'stop_after_cycle' and own and current.get('run_id'):
                             # The supervisor owns the control file, but the
                             # cycle subprocess owns the actual work.  Pass a
                             # durable boundary signal in every phase.  A
@@ -362,7 +362,7 @@ def worker(session_id, state=STATE):
                                 child.send_signal(signal.SIGINT);interruption_at=time.time()
                             elif time.time()-interruption_at>15:
                                 child.kill()
-                        save(phase='stop_requested' if command.get('action')=='stop' else 'switch_requested' if command else 'running',
+                        save(phase='stop_requested' if command.get('action') in {'stop', 'stop_after_cycle'} else 'switch_requested' if command else 'running',
                              current_run_id=current.get('run_id') if own else None)
                         time.sleep(2)
                 current = read_json(state/'status.json', {})
@@ -424,7 +424,7 @@ def worker(session_id, state=STATE):
 
 def main():
     parser = argparse.ArgumentParser(description='Contrôler les cycles Aurora, arrêt après sauvegarde et audit')
-    parser.add_argument('command', choices=['start', 'stop', 'switch', 'status', 'worker'])
+    parser.add_argument('command', choices=['start', 'stop', 'stop_after_cycle', 'switch', 'status', 'worker'])
     parser.add_argument('--module', choices=LABELS, default='3d')
     parser.add_argument('--continuous', action='store_true')
     parser.add_argument('--minutes', type=int, default=30)
@@ -435,7 +435,7 @@ def main():
     if a.command == 'worker': return worker(a.session, Path(a.state))
     data = {'module': a.module, 'mode': 'continuous' if a.continuous else 'once', 'training_minutes': a.minutes,
             'training_start':a.training_start,'strategy':a.strategy}
-    result = start(data) if a.command=='start' else request(a.command, data) if a.command in {'stop','switch'} else snapshot()
+    result = start(data) if a.command=='start' else request(a.command, data) if a.command in {'stop','stop_after_cycle','switch'} else snapshot()
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

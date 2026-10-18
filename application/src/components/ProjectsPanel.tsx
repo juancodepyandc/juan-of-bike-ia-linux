@@ -99,7 +99,7 @@ export default function ProjectsPanel(){
    return
   }
   try{
-   const r=await bridgeFetch(getBridgeUrl()+'/api/projects/'+project.id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+   const r=await bridgeFetch(getBridgeUrl()+'/api/projects/'+project.id+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(project.status==='queued'?{}:{force:true})});
    const d=await r.json();
    if(!r.ok&&r.status!==409)throw Error(d.error);
    setProjects(p=>p.map(x=>x.id===project.id?{...x,status:'stopped'}:x))

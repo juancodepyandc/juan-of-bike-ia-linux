@@ -81,6 +81,7 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
     adapter.capture_reference()
     if reference_file.is_file():adapter.load(root/'initial.safetensors')
     reference_cache={}
+    tensor_cache={}
     response_lengths={}
     if not records:
         raise ValueError("Aucune préférence mesurée : entraînement interdit")
@@ -126,11 +127,18 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
             rejected = code_logp(record, "rejected")
             preference_logit = c["dpo_beta"] * ((chosen-ref_chosen) - (rejected-ref_rejected))
             anchor = ((chosen-ref_chosen) / 512).square()
+            margin_weight = 1.0
         else:
-            data = load_file(str(root / record["tensors"]))
+            tensor_name = record["tensors"]
+            if tensor_name not in tensor_cache:
+                tensor_cache[tensor_name] = load_file(str(root / tensor_name))
+            data = tensor_cache[tensor_name]
             chosen_z, rejected_z = data["chosen"].cuda(), data["rejected"].cuda()
             cond = data["cond"].cuda()
-            t = torch.rand((1,), device="cuda").clamp(0.05, 0.95)
+            # Stratified timestep in [0.10, 0.90] covering both fine geometry
+            # (thin walls, spokes, cables) and global 360° back-view structure.
+            u = torch.rand((1,), device="cuda")
+            t = (0.10 + 0.80 * u).clamp(0.05, 0.95)
             noise = torch.randn_like(chosen_z)
             sigma = 1e-5
             def sample(z):
@@ -150,7 +158,29 @@ def train_preferences(c, records, input_root, output, epochs, seconds, callback,
             current_r = model(rejected_x, t*1000, cond)
             c_loss = F.mse_loss(current_c.float(), chosen_target)
             r_loss = F.mse_loss(current_r.float(), rejected_target)
-            preference_logit = c["dpo_beta"] * ((ref_c_loss-c_loss) - (ref_r_loss-r_loss))
+            # 3D Spatial Velocity Continuity Regularization: penalize finite-difference
+            # discontinuities across adjacent 3D voxels (D, H, W) on the chosen trajectory
+            # to suppress self-intersections, non-manifold edges, and detached islands.
+            if current_c.ndim == 5 and current_c.shape[-1] > 1:
+                err_c = current_c.float() - chosen_target.float()
+                ref_err_c = ref_c.float() - chosen_target.float()
+                grad_c = (
+                    (err_c[:, :, 1:, :, :] - err_c[:, :, :-1, :, :]).square().mean()
+                    + (err_c[:, :, :, 1:, :] - err_c[:, :, :, :-1, :]).square().mean()
+                    + (err_c[:, :, :, :, 1:] - err_c[:, :, :, :, :-1]).square().mean()
+                ) / 3.0
+                grad_ref_c = (
+                    (ref_err_c[:, :, 1:, :, :] - ref_err_c[:, :, :-1, :, :]).square().mean()
+                    + (ref_err_c[:, :, :, 1:, :] - ref_err_c[:, :, :, :-1, :]).square().mean()
+                    + (ref_err_c[:, :, :, :, 1:] - ref_err_c[:, :, :, :, :-1]).square().mean()
+                ) / 3.0
+                w_sp = float(c.get("spatial_continuity_weight", 0.08))
+                c_loss = c_loss + w_sp * grad_c
+                ref_c_loss = ref_c_loss + w_sp * grad_ref_c
+            score_gap = max(0.0, float(record.get("chosen_score", 0.0)) - float(record.get("rejected_score", 0.0)))
+            strict_bonus = 1.12 if (record.get("selection") or {}).get("strict") else 1.0
+            margin_weight = min(1.5, max(0.9, (1.0 + 2.5 * score_gap) * strict_bonus))
+            preference_logit = c["dpo_beta"] * margin_weight * ((ref_c_loss-c_loss) - (ref_r_loss-r_loss))
             anchor = F.mse_loss(current_c.float(), ref_c.float()) + F.mse_loss(current_r.float(), ref_r.float())
         supervised=(-chosen/max(1,response_lengths[(record['task_id'],'chosen')]) if c['module'] in TEXT_MODULES else c_loss)
         return F.softplus(-preference_logit) + c["anchor_penalty"] * anchor + c.get('sft_weight',0)*supervised

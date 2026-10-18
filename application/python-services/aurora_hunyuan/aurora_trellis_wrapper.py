@@ -121,23 +121,45 @@ def import_error() -> str | None:
 _PIPE_CACHE = None
 
 
+def _sync_trellis_adapter(pipe) -> None:
+    try:
+        from pathlib import Path as _Path
+        import sys as _sys
+        root_str = str(_Path(__file__).resolve().parents[3])
+        if root_str not in _sys.path:
+            _sys.path.insert(0, root_str)
+        from auto_rl.runtime import attach_validated
+        from auto_rl.versions import preference
+        flow_model = pipe.models["sparse_structure_flow_model"]
+        existing = getattr(flow_model, "_aurora_validated_adapter", None)
+        pref = preference("3d")
+        if pref == "base":
+            if existing is not None:
+                existing.enabled = False
+                log.info("[trellis2] Modele de Base (Intouchable) actif — adaptateur renforce desactive")
+        else:
+            if existing is not None:
+                existing.enabled = True
+                log.info("[trellis2] Modele Renforce (+Gains) actif : %s", getattr(flow_model, "_aurora_validated_name", "v1"))
+            else:
+                _trained = attach_validated(flow_model, "3d", MODEL_ID)
+                if _trained:
+                    log.info("[trellis2] Modele Renforce (+Gains) charge : %s", _trained["name"])
+    except Exception as _exc:
+        log.warning("[trellis2] sync adapter warning: %s", _exc)
+
+
 def _load_pipe():
     global _PIPE_CACHE
     if _PIPE_CACHE is not None:
+        _sync_trellis_adapter(_PIPE_CACHE)
         return _PIPE_CACHE
     from trellis2.pipelines import Trellis2ImageTo3DPipeline
     log.info("[trellis2] loading Trellis2ImageTo3DPipeline from %s", MODEL_ID)
     pipe = Trellis2ImageTo3DPipeline.from_pretrained(MODEL_ID)
     pipe.low_vram = True
     pipe.to(torch.device("cuda"))
-    # Apply only an audited adapter for this exact TRELLIS base.
-    from pathlib import Path as _Path
-    import sys as _sys
-    _sys.path.insert(0, str(_Path(__file__).resolve().parents[3]))
-    from auto_rl.runtime import attach_validated
-    _trained = attach_validated(pipe.models["sparse_structure_flow_model"], "3d", MODEL_ID)
-    if _trained:
-        log.info("[trellis2] audited adapter %s", _trained["name"])
+    _sync_trellis_adapter(pipe)
 
     # Etape A (gratuit) : liberer les latents (shape_slat/tex_slat) AVANT fill_holes/CuMesh
     # (le pic OOM du 1536) -> rend ~1-3 Go juste avant l'extraction. Sur des monkeypatch de

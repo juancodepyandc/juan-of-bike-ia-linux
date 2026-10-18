@@ -5,6 +5,7 @@ import type { ModuleId } from '../types/app.ts'
 import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
 import HelpFab from './HelpFab.tsx'
 import ProjectsPanel from './ProjectsPanel.tsx'
+import ReinforcedModelBar from './ReinforcedModelBar.tsx'
 import { openPersistentWorkspace } from '../utils/persistentWorkspace.ts'
 import { getBridgeUrl, isCloudRuntime } from '../utils/runtime.ts'
 
@@ -242,7 +243,8 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           .aurora-v4-search { flex: 0 0 44px !important; min-width: 44px; height: 44px; padding: 0 !important; justify-content: center; margin-left: auto; color: #c4cce0 !important; }
           .aurora-v4-search .search-label, .aurora-v4-search kbd, .aurora-v4-model, .aurora-v4-local, .aurora-v4-mascot { display: none !important; }
           .aurora-v4-header-actions { gap: 4px !important; margin-left: 0 !important; }
-          .aurora-v4-header-actions button { width: 44px; height: 44px; align-items: center; justify-content: center; }
+          .aurora-v4-header-actions > button { width: 44px; height: 44px; align-items: center; justify-content: center; }
+          .aurora-v4-reinforced-bar { display: none !important; }
           .aurora-v4-dock { display: none !important; }
           .aurora-v4-mobile-nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; padding: 8px max(12px,env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); background: #080c17f5; backdrop-filter: blur(20px); border-top: 1px solid #ffffff15; }
           .aurora-v4-mobile-nav button { min-width: 0; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border: 1px solid transparent; border-radius: 16px; color: #9da8c1; background: transparent; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -283,7 +285,8 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
           <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><span className="search-label">Rechercher ou commander…</span>
           <kbd style={{ marginLeft: 'auto', fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10, border: '1px solid rgba(255,255,255,.14)', borderRadius: 5, padding: '1px 6px', color: '#8B93A7' }}>Ctrl K</kbd>
         </button>
-        <div className="aurora-v4-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16, fontSize: 11.5, color: '#8B93A7' }}>
+        <div className="aurora-v4-header-actions" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12, fontSize: 11.5, color: '#8B93A7' }}>
+          <ReinforcedModelBar activeModule={activeModule} />
           <span className="aurora-v4-model" style={{ fontFamily: "'Cascadia Code',Consolas,monospace", fontSize: 10.5, color: '#8B5CF6' }}>{mainModel || 'modèle local'}</span>
           <span className="aurora-v4-local" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <b style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', boxShadow: '0 0 8px #4ADE80' }} />

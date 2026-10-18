@@ -26,8 +26,11 @@ from agi_core.runtime_policy import RuntimePolicy
 from application.agent_registry import (
     AGENTS,
     MODULE_PRIMARY_AGENTS,
+    get_master_agents,
     get_module_agent,
+    get_module_hierarchy,
     list_module_agents,
+    resolve_agent_for_target,
 )
 
 
@@ -43,9 +46,11 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
     def test_every_module_has_dedicated_agent_with_subagent_capability(self):
         expected_modules = {
             "orchestration",
+            "conversation",
             "chat",
             "code",
             "image",
+            "drawing",
             "3d",
             "3d-texture",
             "3d-viewer",
@@ -53,7 +58,11 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
             "voice",
             "video",
             "learning",
+            "simulator",
             "cyber",
+            "business",
+            "training",
+            "missions",
             "bridge",
             "cowork",
             "memory",
@@ -68,6 +77,149 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(agent.get("can_create_subagents"), f"{mod} lead must support sub-agents")
                 mod_list = list_module_agents(mod)
                 self.assertTrue(len(mod_list) >= 1)
+
+    def test_master_and_feature_subagents_disjoint_hierarchy(self):
+        masters = get_master_agents()
+        self.assertGreaterEqual(len(masters), 19)
+        hierarchy = get_module_hierarchy()
+        self.assertEqual(hierarchy["schema_version"], "aurora.hierarchy.v2")
+        self.assertGreaterEqual(hierarchy["total_agents"], 95)
+
+        for mod_name, mod_data in hierarchy["modules"].items():
+            with self.subTest(module=mod_name):
+                master = mod_data["master"]
+                self.assertIsNotNone(master, f"Module {mod_name} must have a Master Agent")
+                subs = mod_data["feature_subagents"]
+                self.assertGreaterEqual(len(subs), 2, f"Module {mod_name} must have dedicated Feature Sub-Agents")
+                seen_features = set()
+                for sub in subs:
+                    self.assertEqual(sub["role_type"], "subagent")
+                    self.assertTrue(sub.get("parent_agent") or sub.get("parent_master"))
+                    feature = sub.get("feature", "")
+                    self.assertTrue(feature, f"Sub-agent {sub['name']} must declare an exclusive feature")
+                    self.assertNotIn(feature, seen_features, f"Duplicate feature {feature} in module {mod_name}")
+                    seen_features.add(feature)
+                    self.assertTrue(
+                        sub.get("files_owned") or sub.get("routes_owned"),
+                        f"Sub-agent {sub['name']} must declare files_owned or routes_owned",
+                    )
+                    self.assertTrue(
+                        sub.get("never_touch"),
+                        f"Sub-agent {sub['name']} must declare never_touch boundaries",
+                    )
+
+        # Verify deterministic resolution for specific files/routes/features
+        r_3d_cad = resolve_agent_for_target("3d-cad-engineering")
+        self.assertEqual(r_3d_cad["selected_agent"]["name"], "3d-cad-engineering")
+        self.assertEqual(r_3d_cad["master_agent"]["name"], "3d-lead")
+
+        r_img_stop = resolve_agent_for_target("image-job-cancellation")
+        self.assertEqual(r_img_stop["selected_agent"]["name"], "image-job-cancellation")
+        self.assertEqual(r_img_stop["master_agent"]["name"], "image-lead")
+
+        r_code_design = resolve_agent_for_target("code-design-architect")
+        self.assertEqual(r_code_design["selected_agent"]["name"], "code-design-architect")
+        self.assertEqual(r_code_design["master_agent"]["name"], "code-lead")
+
+    def test_workspace_and_global_agent_md_and_agi_brain_router(self):
+        from agi_core.agi_brain import AGIBrainRouter, discover_markdown_agents
+        from application.agent_registry import materialize_agent_md_files
+
+        sync_res = materialize_agent_md_files(
+            workspace_dir=str(self.root / "ws"),
+            global_dir=str(self.root / "gl"),
+        )
+        self.assertTrue(sync_res["ok"])
+        self.assertEqual(sync_res["total_agents"], len(AGENTS))
+
+        ws_dir = Path(sync_res["workspace_agents_dir"])
+        gl_dir = Path(sync_res["global_agents_dir"])
+        for agent_name in ("aurora-orchestrator", "3d-lead", "3d-cad-engineering", "image-lead", "image-job-cancellation", "code-lead", "code-design-architect"):
+            self.assertTrue((ws_dir / agent_name / "agent.md").is_file(), f"Missing Workspace agent.md for {agent_name}")
+            self.assertTrue((gl_dir / agent_name / "agent.md").is_file(), f"Missing Global agent.md for {agent_name}")
+
+        discovered = discover_markdown_agents(self.root / "ws")
+        self.assertGreaterEqual(len(discovered), len(AGENTS))
+
+        router = AGIBrainRouter(ROOT)
+        plan_cad = router.plan_execution("Génère une pièce mécanique CAO B-Rep paramétrique STEP et STL avec assemblage sans collision BVH", active_module="3d")
+        self.assertTrue(plan_cad["ok"])
+        self.assertIn("3d-lead", plan_cad["masters_involved"])
+        applicator_names = [a["applicator_agent"] for a in plan_cad["applicators"]]
+        self.assertTrue(
+            "3d-cad-engineering" in applicator_names or "3d-assembly-kinematics" in applicator_names,
+            f"Expected 3D CAD or Assembly applicator in {applicator_names}",
+        )
+        self.assertTrue(plan_cad["anti_drift_contract"]["zero_mixing"])
+
+    def test_autonomous_agi_operational_loops_firewall_and_self_healing(self):
+        import tempfile
+        from agi_core.agi_loops import (
+            LOOP_PHASES,
+            CognitiveExecutiveLoop,
+            EpisodicSkillEvolutionLoop,
+            ScopeFirewallEnforcementLoop,
+            SelfHealingDiagnosticLoop,
+        )
+
+        loop = CognitiveExecutiveLoop(ROOT)
+        plan = loop.build_autonomous_loop_plan(
+            "Conçois un assemblage CAO STEP et génère les textures PBR 8K et vérifie le score financier business",
+            active_module="3d",
+        )
+        self.assertTrue(plan["ok"])
+        self.assertEqual(plan["schema_version"], "aurora.agi_loops.v2")
+        self.assertEqual(tuple(plan["loop_phases"]), LOOP_PHASES)
+        self.assertEqual(len(plan["phases_trace"]), 7)
+        self.assertGreaterEqual(len(plan["dag_nodes"]), 2)
+        self.assertTrue(all(plan["operational_loops"].values()))
+
+        # Firewall must block never_touch breaches and TODO placeholders
+        fw = ScopeFirewallEnforcementLoop(loop.router)
+        ok_check = fw.validate_action(
+            "3d-cad-engineering",
+            target_files=["application/engineering_design_api.py"],
+            proposed_content="def build_solid():\n    return True\n",
+        )
+        self.assertTrue(ok_check["ok"])
+
+        breach_check = fw.validate_action(
+            "3d-cad-engineering",
+            target_files=["application/python-services/aurora_hunyuan/hunyuan3d_run.py"],
+            proposed_content="def stub():\n    # TODO: implement later\n    raise NotImplementedError\n",
+        )
+        self.assertFalse(breach_check["ok"])
+        violation_types = {v["type"] for v in breach_check["violations"]}
+        self.assertIn("never_touch_breach", violation_types)
+        self.assertIn("anti_placeholder_breach", violation_types)
+
+        # Self-healing diagnostic loop must classify errors and assign the right applicator
+        healer = SelfHealingDiagnosticLoop(loop.router)
+        diag = healer.diagnose_and_plan_repair(
+            "ModuleNotFoundError: No module named 'business_intelligence' in application/bridge_server.py",
+            failing_file="application/bridge_server.py",
+        )
+        self.assertTrue(diag["ok"])
+        self.assertEqual(diag["signature_id"], "python_module_not_found")
+        self.assertEqual(diag["extracted_symbol"], "business_intelligence")
+        self.assertTrue(diag["assigned_applicator"])
+
+        # Episodic skill evolution loop records and persists telemetry
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            evo = EpisodicSkillEvolutionLoop(tmp_dir)
+            state = evo.record_cycle(
+                request="Test cycle AGI",
+                complexity="multi_module",
+                masters=["3d-lead", "business-ceo"],
+                applicators=["3d-cad-engineering", "business-financial-analyst"],
+                verified=True,
+                self_healed=True,
+                notes="Auto-healed and verified",
+            )
+            self.assertEqual(state["total_cycles"], 1)
+            self.assertEqual(state["successful_cycles"], 1)
+            self.assertEqual(state["self_healed_cycles"], 1)
+            self.assertEqual(state["applicator_stats"]["3d-cad-engineering"]["verified"], 1)
 
     def test_each_module_can_create_and_list_its_own_subagents(self):
         for mod in ("code", "3d", "3d-texture", "3d-viewer", "voice", "mcp"):

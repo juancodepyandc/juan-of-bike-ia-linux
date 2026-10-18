@@ -423,20 +423,62 @@ def execute_preference_cycle(c, cycle_number=1):
             if is_champion and not has_champion_weights:
                 rows[branch] = rows["base"]
                 continue
+            branch_adapter_sha = None
             if branch == "base":
                 backend.adapter.enabled = False
             else:
                 backend.adapter.enabled = True
                 if is_champion:
-                    backend.adapter.load(registry["adapter"] if registry else c["initial_adapter"])
+                    champ_path = registry["adapter"] if registry else c["initial_adapter"]
+                    backend.adapter.load(champ_path)
+                    branch_adapter_sha = file_hash(champ_path)
                 elif branch=='parent':
                     backend.adapter.load(c['initial_adapter'])
+                    branch_adapter_sha = file_hash(c['initial_adapter'])
                 else:
                     backend.adapter.load(candidate)
+                    branch_adapter_sha = file_hash(candidate)
             for task in audit_tasks:
                 for seed in c["eval_seeds"]:
                     status.update("local_audit", f"Comparaison RTX · {branch} · {task['id']} · graine {seed}", progress_percent=85)
-                    cached = resume / "audit" / branch / f"{task['id']}_graine_{seed}.evaluation.json" if c.get("resume_audit") else None
+                    eval_name = f"{task['id']}_graine_{seed}.evaluation.json"
+                    cached = resume / "audit" / branch / eval_name if c.get("resume_audit") else None
+                    if (not cached or not cached.is_file()) and branch in {"base", "champion", "parent"} and c.get("reuse_verified_audit_cache", True):
+                        runs_root = state / "runs"
+                        if runs_root.is_dir():
+                            for prior_run in sorted(runs_root.glob(f"{c['module']}-*"), reverse=True):
+                                if prior_run == run:
+                                    continue
+                                if branch == "base":
+                                    cand_eval = prior_run / "audit" / "base" / eval_name
+                                    if cand_eval.is_file():
+                                        r_try = read_json(cand_eval, {})
+                                        art_p = Path(r_try.get("artifact", ""))
+                                        if (r_try.get("prompt") == task["prompt"]
+                                                and r_try.get("generation_digest") == generation_id
+                                                and art_p.is_file()
+                                                and r_try.get("sha256") == file_hash(art_p)):
+                                            cached = cand_eval
+                                            break
+                                elif branch_adapter_sha:
+                                    prior_lin = read_json(prior_run / "lineage.json", {})
+                                    prior_rep = read_json(prior_run / "report.json", {})
+                                    sub_branch = None
+                                    if prior_lin.get("parent_sha256") == branch_adapter_sha:
+                                        sub_branch = "parent"
+                                    elif prior_rep.get("candidate_sha256") == branch_adapter_sha:
+                                        sub_branch = "candidate"
+                                    if sub_branch:
+                                        cand_eval = prior_run / "audit" / sub_branch / eval_name
+                                        if cand_eval.is_file():
+                                            r_try = read_json(cand_eval, {})
+                                            art_p = Path(r_try.get("artifact", ""))
+                                            if (r_try.get("prompt") == task["prompt"]
+                                                    and r_try.get("generation_digest") == generation_id
+                                                    and art_p.is_file()
+                                                    and r_try.get("sha256") == file_hash(art_p)):
+                                                cached = cand_eval
+                                                break
                     if cached and cached.is_file():
                         row = read_json(cached)
                         if (row["prompt"] != task["prompt"] or row["generation_digest"] != generation_id
@@ -472,6 +514,11 @@ def execute_preference_cycle(c, cycle_number=1):
         atomic_json(run / "report.json", report)
         page = write_html(run, report)
         folder = publish_shortcuts(c["module"], run)
+        try:
+            from .reinforced_registry import sync_all_reinforced_models
+            sync_all_reinforced_models(state)
+        except Exception:
+            pass
         report_digest = digest(report)
         status.update("awaiting_validation", "Comparaison prête : rendus et scores disponibles.", progress_percent=100,
             report=page, results_folder=folder, report_digest=report_digest, waiting_validation=True,
@@ -500,6 +547,11 @@ def execute_preference_cycle(c, cycle_number=1):
             if c["module"] == "3d":
                 from .photo_queue import mark_validated
                 mark_validated(c, tasks, report, run)
+            try:
+                from .reinforced_registry import sync_all_reinforced_models
+                sync_all_reinforced_models(state)
+            except Exception:
+                pass
             status.update("accepted", f"{record['name']} validé. Le prochain cycle repart de ces poids.", waiting_validation=False)
         else:
             status.update("rejected", "Candidat conservé pour comparaison ; champion inchangé.", waiting_validation=False)

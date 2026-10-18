@@ -9,6 +9,25 @@ from .storage import read_json, file_hash, assert_unchanged, digest
 def validated_record(module, state=STATE):
     state=Path(state).resolve()
     record=read_json(state/'registry'/(module+'.json'))
+    if not record and state == Path(STATE).resolve():
+        from .reinforced_registry import RENFORCE_ROOT
+        renf = read_json(RENFORCE_ROOT / module / 'manifest.json')
+        if renf and renf.get('status') == 'reinforced_available' and renf.get('adapter'):
+            adapter = Path(renf['adapter']).resolve()
+            if adapter.is_file() and file_hash(adapter) == renf.get('sha256'):
+                run = (state / 'runs' / str(renf.get('run_id', ''))).resolve()
+                if (run / 'base_manifest.json').is_file():
+                    assert_unchanged(read_json(run / 'base_manifest.json'))
+                cfg = renf.get('config') or read_json(run / 'config.json') or {}
+                model_id = cfg.get('models', {}).get(module) or renf.get('base_model', '').split(' ')[0]
+                return {
+                    **renf,
+                    'adapter': str(adapter),
+                    'score': float(renf.get('score_renforce_100', 0.0)) / 100.0,
+                    'module': module,
+                    'config': cfg,
+                    'model_id': model_id,
+                }
     if not record:
         return None
     run=(state/'runs'/record['run_id']).resolve()

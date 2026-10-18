@@ -168,14 +168,9 @@ export function buildIntentFilename(
   const ts = (isObj ? (source as UniversalDownloadItem).timestamp : null) || Date.now()
   const filename = `${modeSlug}_${promptSlug}_${ts}.${ext}`
 
-  const isTunnel = typeof window !== 'undefined' && (
-    window.location.hostname.includes('trycloudflare.com') ||
-    window.location.hostname.includes('ngrok') ||
-    window.location.hostname.includes('loca.lt')
-  )
-  const context = options.context || (isTunnel ? 'tunnel' : 'ui')
-  const sessionFolder = (options.sessionId || (isObj ? ((source as any).sessionId) : null) || new Date(ts).toISOString().slice(0, 10)).replace(/[^a-z0-9_.-]+/gi, '_')
-  const relativeDir = `output/image/${context}/${sessionFolder}`
+  const isModification = modeSlug !== 'creation' && modeSlug !== 'new' && modeSlug !== 'text2img'
+  const folderName = isModification ? 'modifications' : 'creations'
+  const relativeDir = `output/image/${folderName}`
   const fullPath = `${relativeDir}/${filename}`
 
   return { filename, relativeDir, fullPath }

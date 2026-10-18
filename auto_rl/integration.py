@@ -23,10 +23,9 @@ def register_routes(app, proxy):
         origin=request.headers.get('Origin')
         if not origin:return True
         parsed=urlsplit(origin)
-        # The local Aurora UI proxies /api through Vite with changeOrigin.
-        # Trust its known origins, never a client-supplied forwarded-host header.
-        allowed={request.host,'127.0.0.1:1420','localhost:1420','127.0.0.1:3001','localhost:3001'}
-        return parsed.scheme in {'http','https'} and parsed.netloc in allowed
+        # The local Aurora UI proxies /api through Vite with changeOrigin or calls from Tauri webview.
+        allowed={request.host,'127.0.0.1:1420','localhost:1420','127.0.0.1:3001','localhost:3001','localhost','tauri.localhost'}
+        return parsed.scheme in {'http','https','tauri'} and parsed.netloc in allowed
 
     def authorized():
         return same_origin() and secrets.compare_digest(request.headers.get('X-Aurora-Control',''),token)
@@ -63,7 +62,7 @@ def register_routes(app, proxy):
     @app.post('/api/training/control/<action>')
     def training_control(action):
         if not authorized():return jsonify({'error':'Actualiser cette page avant de commander l’entraînement'}),403
-        if action not in {'start','stop','switch'}:return jsonify({'error':'Commande inconnue'}),404
+        if action not in {'start','stop','stop_after_cycle','switch'}:return jsonify({'error':'Commande inconnue'}),404
         if control is None:
             return jsonify({'supported': False, 'error': 'Le contrôleur d’entraînement local nécessite Linux.'}), 503
         data=request.get_json(silent=True)
@@ -242,6 +241,76 @@ def register_routes(app, proxy):
     @app.get('/api/training/models')
     def training_models():return jsonify({'models':catalog(include_base=True)})
 
+    @app.get('/api/models/reinforced-status')
+    def models_reinforced_status():
+        from .reinforced_registry import get_reinforced_overview
+        overview = get_reinforced_overview(STATE)
+        cycle = read_json(STATE/'status.json', {})
+        controller = control.snapshot(STATE) if control is not None else {}
+        is_active = bool(
+            control is not None
+            and (
+                controller.get('active')
+                or (
+                    control.alive(cycle)
+                    and cycle.get('phase') not in {'accepted', 'rejected', 'error', 'cancelled', 'remote_complete'}
+                )
+            )
+        )
+        overview['training'] = {
+            'active': is_active,
+            'module': controller.get('module') or cycle.get('module'),
+            'mode': controller.get('mode') or cycle.get('mode'),
+            'phase': cycle.get('phase') or controller.get('phase'),
+            'status': cycle.get('status') or controller.get('status'),
+            'run_id': cycle.get('run_id') or controller.get('run_id'),
+            'cycle_index': controller.get('cycle_index', 1),
+            'updated_at': cycle.get('updated_at') or controller.get('updated_at'),
+        }
+        response = jsonify(overview)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    @app.post('/api/models/reinforced-select')
+    def models_reinforced_select():
+        if not same_origin():
+            return jsonify({'error': 'Origine refusée'}), 403
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'Sélection JSON requise'}), 400
+        module = data.get('module')
+        variant = data.get('variant') or data.get('version') or 'base'
+        try:
+            result = versions.select(module, variant, STATE, allow_pending=True)
+            from .reinforced_registry import get_reinforced_overview
+            overview = get_reinforced_overview(STATE)
+            return jsonify({**result, 'module_info': overview['modules'].get(result['module'])})
+        except (ValueError, RuntimeError, OSError) as exc:
+            return jsonify({'error': str(exc)}), 409
+
+    @app.post('/api/models/training-stop')
+    def models_training_stop():
+        if not same_origin():
+            return jsonify({'error': 'Origine refusée'}), 403
+        if control is None:
+            return jsonify({'supported': False, 'error': 'Contrôleur Linux requis'}), 503
+        try:
+            return jsonify(control.request('stop', {}, STATE)), 202
+        except (ValueError, RuntimeError, OSError) as exc:
+            return jsonify({'error': str(exc)}), 409
+
+    @app.post('/api/models/training-start')
+    def models_training_start():
+        if not same_origin():
+            return jsonify({'error': 'Origine refusée'}), 403
+        if control is None:
+            return jsonify({'supported': False, 'error': 'Contrôleur Linux requis'}), 503
+        data = request.get_json(silent=True) or {}
+        try:
+            return jsonify(control.start(data, STATE)), 202
+        except (ValueError, RuntimeError, OSError) as exc:
+            return jsonify({'error': str(exc)}), 409
+
     @app.post('/api/training/image-workflow')
     def image_workflow():
         from .image_runtime import apply_validated_workflow
@@ -258,3 +327,4 @@ def register_routes(app, proxy):
         if path not in {'api/tags','api/show','api/chat','api/generate','health'}:
             return jsonify({'error':'Route de modèle inconnue'}),404
         return proxy('http://127.0.0.1:11435/'+path)
+
