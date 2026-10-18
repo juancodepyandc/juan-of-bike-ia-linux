@@ -171,6 +171,7 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
     """Run one JSON-RPC request against an MCP stdio server with a bounded wait."""
     import select
     import subprocess
+    import sys
     command = server.get("command", "")
     raw_args = server.get("args", [])
     cmd = [command] + (list(raw_args) if isinstance(raw_args, list) else [])
@@ -219,12 +220,31 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None, "MCP server timed out (no response)"
-            ready, _, _ = select.select([reader_fd], [], [], min(remaining, 2.0))
-            if not ready:
-                if proc.poll() is not None and not buf:
-                    return None, "MCP server exited before responding"
-                continue
-            chunk = os.read(reader_fd, 65536)
+            if sys.platform == "win32":
+                import msvcrt
+                import time as _time
+                # Use a non-blocking peek loop on Windows
+                handle = msvcrt.get_osfhandle(reader_fd)
+                from ctypes import windll, byref, c_ulong, POINTER, c_void_p
+                avail = c_ulong()
+                while remaining > 0:
+                    res = windll.kernel32.PeekNamedPipe(c_void_p(handle), None, 0, None, byref(avail), None)
+                    if res and avail.value > 0:
+                        break
+                    if proc.poll() is not None and not buf:
+                        return None, "MCP server exited before responding"
+                    _time.sleep(0.05)
+                    remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    return None, "MCP server timed out (no response)"
+                chunk = os.read(reader_fd, min(avail.value, 65536))
+            else:
+                ready, _, _ = select.select([reader_fd], [], [], min(remaining, 2.0))
+                if not ready:
+                    if proc.poll() is not None and not buf:
+                        return None, "MCP server exited before responding"
+                    continue
+                chunk = os.read(reader_fd, 65536)
             if not chunk:
                 return None, "MCP server closed while waiting for response"
             buf += chunk
@@ -233,9 +253,15 @@ def call_mcp_stdio(server: dict, method: str, params: dict, *,
     except OSError as exc:
         return None, f"MCP request failed: {exc}"
     finally:
+        import sys
         try:
             if reader is not None and not reader.closed:
                 reader.close()
+        except Exception:
+            pass
+        try:
+            if proc is not None and proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
         except Exception:
             pass
         try:
