@@ -22,7 +22,7 @@
 // block ; the user stays in control).
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -1106,18 +1106,7 @@ function Bubble({ turn, onNotion }: { turn: ChatTurn; onNotion: (n: string) => v
           ) : isUser ? (
             <span style={{ whiteSpace: 'pre-wrap' }}>{turn.content}</span>
           ) : (
-            <div className="cowork-md" onClick={(e) => {
-              const a = (e.target as HTMLElement).closest('a')
-              if (a && a.getAttribute('href')?.startsWith('cowork://')) {
-                e.preventDefault()
-                const n = decodeURIComponent(a.getAttribute('href')!.replace('cowork://explain/', ''))
-                onNotion(n)
-              }
-            }}>
-              <ReactMarkdown remarkPlugins={remarkPlugins}>
-                {turn.content.replace(/\[\[([^[\]\n]{2,80})\]\]/g, (_m, l: string) => `[${l.trim()}](cowork://explain/${encodeURIComponent(l.trim())})`)}
-              </ReactMarkdown>
-            </div>
+            <MemoizedMarkdown content={turn.content} onNotion={onNotion} />
           )}
         </div>
         {!isUser && turn.artifacts && turn.artifacts.length > 0 && (
@@ -1700,3 +1689,30 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+
+
+
+
+
+// ⚡ Bolt: Memoize components object to prevent ReactMarkdown from re-rendering
+// We extract it out so that ReactMarkdown doesn't re-parse the tree unless content changes
+const MemoizedMarkdown = memo(({ content, onNotion }: { content: string, onNotion: (n: string) => void }) => {
+  const replacedContent = useMemo(() => {
+    return content.replace(/\[\[([^[\]\n]{2,80})\]\]/g, (_m, l: string) => `[${l.trim()}](cowork://explain/${encodeURIComponent(l.trim())})`)
+  }, [content])
+
+  return (
+    <div className="cowork-md" onClick={(e) => {
+      const a = (e.target as HTMLElement).closest('a')
+      if (a && a.getAttribute('href')?.startsWith('cowork://')) {
+        e.preventDefault()
+        const n = decodeURIComponent(a.getAttribute('href')!.replace('cowork://explain/', ''))
+        onNotion(n)
+      }
+    }}>
+      <ReactMarkdown remarkPlugins={remarkPlugins}>
+        {replacedContent}
+      </ReactMarkdown>
+    </div>
+  )
+})
