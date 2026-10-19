@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2218,
- "source_lines": 756212,
+ "source_lines": 757102,
  "static_route_declarations": 674,
  "by_repository": {
   "AuroraIA": 2055,
@@ -93,8 +93,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/agi_brain.py",
-   "sha256": "087eae618431ff7dca383e0254093a5e2fc742b848f9e1dddaeb7df456da80dc",
-   "lines": 615,
+   "sha256": "da1d52a7c91ab8609a1b0e2711b66991c1a4f47bd9ebefd44868e04a0d88f2ba",
+   "lines": 710,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -19942,8 +19942,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/__init__.py",
-   "sha256": "d0e2e9cac532dd092ab94aaba37f6b07094eaf113b8dde12dda51f493ab6e66c",
-   "lines": 2,
+   "sha256": "4c23fa4d4d3b573c98bf173fa38d47f85ce6c57b66c9f38222fa31c5b169acb5",
+   "lines": 5,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20078,8 +20078,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/core/audio.py",
-   "sha256": "4f6f300ec8af1ba21030cec3eeb69fda58bb2c37b5f7399d243fdcc2e766570d",
-   "lines": 48,
+   "sha256": "89543d7f9cf29ee77e54d67f10893941d7ea37401099db91055a152e461ba337",
+   "lines": 50,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20094,8 +20094,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/core/bootstrap.py",
-   "sha256": "d7cf99df3fca68dd0c826ae816dddbec0d15527bf6d5b626fac7cd5b9af5aa7d",
-   "lines": 237,
+   "sha256": "0a0881cba134427b801bd4ea38d9f5cd0e4d12a15378f8cd2c52cc3f9af0e312",
+   "lines": 247,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20422,8 +20422,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/epistemic.py",
-   "sha256": "ce0bb273f395a16c97a2ff43cc38f155fb3a5120ae99d44c0bb9ad44a5603641",
-   "lines": 614,
+   "sha256": "5e4860ae7b280f6adc622459b0d70b1bc59cc20a4e30632c6dccc1b7ad551708",
+   "lines": 674,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20446,24 +20446,24 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/install.py",
-   "sha256": "f9b17fe9561881f1af4cf26930addfb81e926db727b1f4641f10464eba97fb95",
-   "lines": 379,
+   "sha256": "4f2575bff6006fa903c18ccd144d4a290ef4433c7f1ce382f44e0e405fb82934",
+   "lines": 442,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/interactive.py",
-   "sha256": "3d463bb65ea80180ca4af06829914ea918c9bea35ed92e92ced90820167cfff2",
-   "lines": 518,
+   "sha256": "a91616b5c8bbbc01dbfca65a7009c0d84f645184acf29fd1efbb3257e1a1303d",
+   "lines": 572,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/local_mission.py",
-   "sha256": "756b51a9e547630ebccbf2d79c3c417440f960523b6bd3e38544601e847efcbe",
-   "lines": 1069,
+   "sha256": "eba11c7935fdefc506e1aaea4750ccfa3f9f12e44e964b7653732063848b60b7",
+   "lines": 1172,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20542,8 +20542,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/mission_domain.py",
-   "sha256": "e8ec7bbb891e0b671d9f98a790c59d9473d367aab30f8539599b517ece806ab9",
-   "lines": 7,
+   "sha256": "c91fbd5af571b290c704fa1fcbb3706d345f8940e2f901d70342c7992a4c3c35",
+   "lines": 13,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20588,8 +20588,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/policies/install.toml",
-   "sha256": "c2654cbf2c84171941ab69341be2133ab6a5bec9f6e037d50aea3dbd5b27b210",
-   "lines": 7
+   "sha256": "23812da2d545ff2873f39c3c528fcf25c1307a9631a87364136ee0d1456c69cc",
+   "lines": 9
   },
   {
    "repo": "aurora-remote-cli",
@@ -20660,8 +20660,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/themes/base.py",
-   "sha256": "f897f2f48429f90e2eca531ae7af50683b00e9fe7fd75f0f26f6edff70b08fbf",
-   "lines": 267,
+   "sha256": "9e50109ac0c7e26cf00627369b18e12cedbe9c5781da2b9d1b84c34a0bd2eff4",
+   "lines": 283,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20708,8 +20708,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "aurora_cli/ui.py",
-   "sha256": "4a53ee1d5c43a7a8007fa323c921c57788d2f866b0a82d105aeb563a130e18f3",
-   "lines": 987,
+   "sha256": "f7a390bed6aa0fdf483fedf7192aaa578a15fa4c19491e18af1da7239e4ed7c9",
+   "lines": 1381,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20732,14 +20732,14 @@
   {
    "repo": "aurora-remote-cli",
    "path": "install.sh",
-   "sha256": "c860c914c39febbc2d9200587632354f261d5be260f8e235d28c8dc13a4b4ed6",
-   "lines": 15
+   "sha256": "957963775bdd4ef8d6074631751ddcdce0cf27aa9e773db20dfa3b145bda5b75",
+   "lines": 64
   },
   {
    "repo": "aurora-remote-cli",
    "path": "pyproject.toml",
-   "sha256": "4029da36752caa2b08b15ce4a2c32a3e18c9b7a35bacdaaebf1be2ae25481eb4",
-   "lines": 61
+   "sha256": "a24362e58fc9f64f62168aeccdaedf02d32b5e6708c221e02d1ad5b7ae2cfbea",
+   "lines": 62
   },
   {
    "repo": "aurora-remote-cli",
@@ -21176,8 +21176,8 @@
   {
    "repo": "aurora-remote-cli",
    "path": "tests/test_ui.py",
-   "sha256": "fda679c9f460294bd1f8fc7af6643c97ab6d25a636a46303ead3824b0f5b385a",
-   "lines": 363,
+   "sha256": "955eddf7fa2ddda81e01703b380838067392a58063185f56afcb4c71ed9da673",
+   "lines": 395,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
