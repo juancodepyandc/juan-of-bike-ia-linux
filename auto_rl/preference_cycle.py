@@ -265,9 +265,10 @@ def execute_preference_cycle(c, cycle_number=1):
                     # modules conservent le classement scalaire historique.
                     dominance_info = None
                     beaten = None
-                    if c["module"] == "3d":
-                        from .dominance import TRACKED_3D, select as dominance_select
-                        chosen, beaten, dominance_info = dominance_select(samples, TRACKED_3D)
+                    from .dominance import TRACKED_3D, TRACKED_BY_MODULE, select as dominance_select
+                    tracked_spec = TRACKED_BY_MODULE.get(c["module"], TRACKED_3D if c["module"] == "3d" else None)
+                    if tracked_spec:
+                        chosen, beaten, dominance_info = dominance_select(samples, tracked_spec)
                         if chosen is None:
                             status.flush(preference_skipped=dominance_info.get("raison"))
                             continue

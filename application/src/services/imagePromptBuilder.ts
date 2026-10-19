@@ -1,3 +1,5 @@
+import { analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
+
 export type ImageBrief = {
   subject: string
   context?: string
@@ -631,7 +633,18 @@ export function parseBrief(raw: string): ImageBrief {
   const countHints = extractCountHints(trimmed)
   const layoutHints = extractLayoutHints(trimmed)
   const backgroundHints = extractBackgroundHints(trimmed)
-  const style = STYLE_PATTERNS.find((p) => p.pattern.test(normalised))?.style
+  const ontology = analyzePromptOntologySync(trimmed, { targetModule: 'image' })
+  let style = STYLE_PATTERNS.find((p) => p.pattern.test(normalised))?.style
+  if (!style) {
+    if (ontology.effectiveRenderMode === 'native_anime_stylized') {
+      style = 'anime-clean'
+    } else if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
+      style = 'photorealistic'
+    }
+  } else if (style === 'anime-clean' && ontology.explicitRealTexturesOverride) {
+    // Explicit override: anime character with real human skin/fabric textures
+    style = 'photorealistic'
+  }
   const lighting = LIGHTING_PATTERNS.find((p) => p.pattern.test(normalised))?.lighting
   const composition = COMPOSITION_PATTERNS.find((p) => p.pattern.test(normalised))?.composition
   const mood = MOOD_PATTERNS.find((p) => p.pattern.test(normalised))?.mood
@@ -645,13 +658,16 @@ export function parseBrief(raw: string): ImageBrief {
   else if (/\b(21:9|ultra.?wide|cinemascope)\b/i.test(normalised)) aspectRatio = '21:9'
 
   return {
-    subject,
+    subject: translateFrenchSubjectToEnglish(subject) || subject,
     style,
     lighting,
     composition,
     mood,
     paletteHints: palette.length > 0 ? dedupe(palette.map((c) => c.startsWith('#') ? c : `#${c}`)) : undefined,
-    negativeHints: negativeHints.length > 0 ? negativeHints : undefined,
+    negativeHints:
+      negativeHints.length > 0 || ontology.negativeDirectivesEn.length > 0
+        ? dedupe([...negativeHints, ...ontology.negativeDirectivesEn])
+        : undefined,
     exactText: exactText.length > 0 ? exactText : undefined,
     countHints: countHints.length > 0 ? countHints : undefined,
     layoutHints: layoutHints.length > 0 ? layoutHints : undefined,
@@ -769,10 +785,8 @@ export function buildContextualSceneCompletion(
 
 /**
  * Développe dynamiquement une demande humaine en cahier des charges visuel complet :
- * - Si l'humain donne déjà énormément de détails : conserve 100 % des détails fournis et complète uniquement la cohérence de scène.
- * - Si c'est une reproduction ("fais-moi ce personnage", image de référence) : s'appuie sur la description visuelle réelle de la référence sans inventer de mots-clés hors-sujet.
- * - Si c'est une modification ou un changement de style : verrouille le sujet et la scène de base, et applique strictement le changement demandé sans halluciner.
- * - Si c'est une nouvelle création courte/vague : développe intelligemment le sujet, la mise en scène, la lumière et surtout un vrai décor complet cohérent pour ne jamais laisser le fond vide ou moche.
+ * - Détecte l'ontologie native du sujet (Personnage Animé Natif vs Override explicite de textures de personne réelle vs Réel Photoréaliste vs Modification conservatrice).
+ * - Traduit et développe intégralement le prompt en anglais riche et naturel pour FLUX.2-dev (Mistral-3 Small FP8).
  */
 export async function expandHumanImagePromptWithAI(
   rawPrompt: string,
@@ -793,68 +807,89 @@ export async function expandHumanImagePromptWithAI(
     (Boolean(options.hasReference) &&
       /\b(en style|style |version |en anime|en manga|en photo|en peinture|en pixel|en 3d|en dessin|en comics|en aquarelle|transforme en|passe en)\b/.test(norm))
 
+  const ontology = analyzePromptOntologySync(trimmed, {
+    targetModule: 'image',
+    modeHint:
+      options.mode === 'edit' || looksLikeStyleSwitch
+        ? 'modification'
+        : looksLikeReplicateRequest
+          ? 'reproduction'
+          : undefined,
+    requestedStyle: options.requestedStyle,
+    hasReference: options.hasReference,
+    conversationContext: options.conversationContext,
+  })
+
   const effectiveMode: HumanPromptIntentMode = looksLikeReplicateRequest
     ? 'replicate'
     : looksLikeStyleSwitch
       ? 'style_transfer'
-      : options.mode
+      : ontology.operationMode === 'modification'
+        ? 'edit'
+        : options.mode
 
   const fallbackCompletion = buildContextualSceneCompletion(
     trimmed,
-    options.requestedStyle,
+    ontology.effectiveRenderMode === 'native_anime_stylized' ? 'anime-clean' : options.requestedStyle,
     options.referenceVisionSummary,
   )
 
-  // Si l'utilisateur a déjà écrit un prompt très détaillé (>= 42 mots), on respecte
-  // intégralement chaque détail sans le réécrire, en ajoutant seulement la garantie de décor complet.
+  // Si l'utilisateur a déjà écrit un prompt très détaillé (>= 42 mots), on le traduit en anglais
+  // tout en conservant 100 % des détails et son ontologie native.
   if (wordCount >= 42 && effectiveMode === 'create') {
     return {
-      expandedPrompt: `${trimmed}. Full-frame coherence: ${fallbackCompletion}.`,
+      expandedPrompt: `${ontology.englishSubject}. ${ontology.styleDirectiveEn} Full-frame coherence: ${fallbackCompletion}.`,
       intentMode: effectiveMode,
       wasExpandedByAI: false,
-      sceneCompletionNote: 'Prompt détaillé conservé à 100 % avec garantie de scène complète.',
+      sceneCompletionNote: `Prompt détaillé conservé à 100 % en anglais (${ontology.explanationFr})`,
     }
   }
 
   if (options.generateText) {
     try {
-      const styleLabel = options.requestedStyle && options.requestedStyle !== 'none'
-        ? options.requestedStyle
-        : 'fidèle à la demande (photoréaliste ou direction artistique implicite)'
+      const styleLabel =
+        ontology.effectiveRenderMode === 'native_anime_stylized'
+          ? 'NATIVE ANIME / MANGA STYLIZED (cel-shaded anime aesthetics, anime proportions, ZERO realistic skin pores)'
+          : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+            ? 'HYBRID ANIME + REAL HUMAN SKIN TEXTURES (preserve iconic anime silhouette/hair/costume, apply realistic human skin pores and physical fabrics)'
+            : options.requestedStyle && options.requestedStyle !== 'none'
+              ? options.requestedStyle
+              : 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic skin/surface micro-texture)'
       const refBlock = options.referenceVisionSummary
-        ? `\nANALYSE VISUELLE DE L'IMAGE DE RÉFÉRENCE :\n${options.referenceVisionSummary.trim()}\n`
+        ? `\nREFERENCE IMAGE VISUAL ANALYSIS:\n${options.referenceVisionSummary.trim()}\n`
         : ''
       const convBlock = options.conversationContext
-        ? `\nCONTEXTE RÉCENT DE LA SESSION :\n${options.conversationContext.trim()}\n`
+        ? `\nRECENT SESSION CONTEXT:\n${options.conversationContext.trim()}\n`
         : ''
 
       let modeDirective = ''
       if (effectiveMode === 'replicate') {
         modeDirective =
-          `MODE REPRODUCTION FIDÈLE : L'humain demande de reproduire le sujet/personnage/scène de référence ("${trimmed}"). ` +
-          `Décris avec précision tous les traits distinctifs observés dans l'analyse de référence (morphologie, visage, coiffure, tenue, architecture, couleurs, accessoires, posture) ET construis un environnement cohérent et travaillé autour pour que l'image entière soit magnifique, sans fond vide ni éléments hors-sujet.`
+          `FAITHFUL REPRODUCTION MODE: The user wants to reproduce the reference subject/character/scene ("${trimmed}" -> "${ontology.englishSubject}"). ` +
+          `Describe all distinctive features observed in the reference analysis and build a coherent, rich surrounding environment.`
       } else if (effectiveMode === 'style_transfer' || effectiveMode === 'edit') {
         modeDirective =
-          `MODE MODIFICATION / CHANGEMENT DE STYLE SANS HALLUCINATION : L'humain veut modifier ou changer le style ("${trimmed}") tout en gardant exactement le sujet et la composition de base. ` +
-          `Verrouille l'identité du sujet, sa pose et les éléments clés de la scène, et traduis uniquement le changement ou le style demandé (${styleLabel}) sur l'ensemble de l'image, sans inventer d'objets parasites.`
+          `CONSERVATIVE MODIFICATION MODE (ZERO HALLUCINATION): The user wants to modify or adapt ("${trimmed}" -> "${ontology.modificationDeltaEn || ontology.englishSubject}") while strictly locking the existing subject identity, pose, and unmentioned scene elements. ` +
+          `Apply ONLY the requested change in ${styleLabel} without inventing unrelated objects.`
       } else {
         modeDirective =
-          `MODE CRÉATION DÉVELOPPÉE PAR L'IA : L'humain a formulé une demande naturelle ("${trimmed}"). ` +
-          `S'il a donné des détails précis, conserve-les à 100 %. Là où la demande est courte ou implicite, développe-la comme un directeur artistique d'élite : que ce soit un paysage réaliste, une scène architecturale, un objet ou un personnage, précise les matériaux physiques, construis un VRAI décor complet et cohérent du premier plan jusqu'à l'horizon (ne laisse JAMAIS un fond vide, flou générique ou moche), et définis une optique et une lumière directionnelle naturelle adaptées au style (${styleLabel}).`
+          `COGNITIVE CREATION MODE: The user requested ("${trimmed}" -> "${ontology.englishSubject}"). ` +
+          `ONTOLOGY DIRECTIVE: ${ontology.styleDirectiveEn} ` +
+          `Expand this short human request into a rich, fluent English visual brief (3 to 5 dense sentences): specify lighting, composition, and a COMPLETE, coherent foreground-to-background environment.`
       }
 
       const llmPrompt = [
-        'Tu es le Directeur Artistique Principal d\'AuroraIA pour le moteur maître FLUX.2-dev (couplé à l\'encodeur Mistral-3 Small FP8 et RealESRGAN 8K).',
+        'You are the Principal Art Director of AuroraIA for the FLUX.2-dev master engine (Mistral-3 Small FP8 encoder).',
         modeDirective,
         refBlock,
         convBlock,
-        'RÈGLES ABSOLUES :',
-        '1. Ne mets AUCUNE liste de mots-clés robotiques ("8k, masterpiece, best quality, trending..."). Rédige une description visuelle fluide, concrète et naturelle en anglais (3 à 6 phrases denses) directement exploitable par l\'encodeur Mistral-3 de FLUX.2-dev.',
-        '2. Respecte 100 % de l\'intention humaine sans jamais halluciner de nouveaux sujets hors-propos.',
-        '3. Adapte l\'optique au sujet : pour un paysage ou une scène, utilise une optique grand-angle ou moyen-format hyperfocale nette du premier plan à l\'infini ; pour un portrait, une optique dédiée avec micro-texture cutanée naturelle.',
-        '4. Assure-toi que l\'arrière-plan et l\'environnement sont pleinement décrits, cohérents et esthétiques (jamais de vide ni de décor négligé).',
-        '5. Réponds UNIQUEMENT avec le prompt visuel final, sans guillemets, sans préambule et sans explication.',
-        `DEMANDE DE L'UTILISATEUR : ${trimmed}`,
+        'ABSOLUTE RULES:',
+        '1. Write ONLY in fluent, natural English (3 to 5 dense descriptive sentences). Never output French words or robotic tag spam ("8k, masterpiece, trending...").',
+        '2. Strictly obey the ONTOLOGY DIRECTIVE: if the subject is an anime character without an explicit real-human-texture override, keep it 100% authentic anime/manga (no photorealistic skin pores). Only apply real human skin textures to an anime character if hybrid_anime_with_real_textures is active.',
+        '3. Ensure the background and surrounding environment are fully realized and coherent with the subject.',
+        '4. Reply ONLY with the final English visual prompt, without quotes or preamble.',
+        `USER REQUEST (FR/EN): ${trimmed}`,
+        `TRANSLATED CORE & CANONICAL LORE (EN): ${ontology.englishSubject}`,
       ].filter(Boolean).join('\n')
 
       const rawResponse = await Promise.race([
@@ -870,17 +905,10 @@ export async function expandHumanImagePromptWithAI(
 
       if (cleaned.length >= 28) {
         return {
-          expandedPrompt: `${trimmed}\n\nAI Scene Direction: ${cleaned}`,
+          expandedPrompt: `${cleaned} ${ontology.styleDirectiveEn}`.trim(),
           intentMode: effectiveMode,
           wasExpandedByAI: true,
-          sceneCompletionNote:
-            effectiveMode === 'replicate'
-              ? 'Reproduction fidèle enrichie par analyse du sujet et décor cohérent'
-              : effectiveMode === 'style_transfer'
-                ? 'Style adapté avec préservation stricte du sujet sans hallucination'
-                : effectiveMode === 'edit'
-                  ? 'Modification ciblée avec verrouillage de la scène'
-                  : 'Demande développée par l\'IA (sujet, décor complet et lumière)',
+          sceneCompletionNote: ontology.explanationFr,
         }
       }
     } catch {
@@ -889,10 +917,11 @@ export async function expandHumanImagePromptWithAI(
   }
 
   return {
-    expandedPrompt: `${trimmed}. ${fallbackCompletion}.`,
+    expandedPrompt: `${ontology.englishExpandedPrompt} ${fallbackCompletion}.`.replace(/\s+/g, ' ').trim(),
     intentMode: effectiveMode,
-    wasExpandedByAI: false,
-    sceneCompletionNote: 'Scène et arrière-plan complétés automatiquement en cohérence avec la demande',
+    wasExpandedByAI: true,
+    sceneCompletionNote: ontology.explanationFr,
   }
 }
+
 

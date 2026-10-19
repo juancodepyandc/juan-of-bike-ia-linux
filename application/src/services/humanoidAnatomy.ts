@@ -17,6 +17,8 @@
  * Pure: no Tauri / React deps so node --test can exercise it directly.
  */
 
+import { analyzePromptOntologySync } from './cognitivePromptDirector.ts'
+
 export type HumanoidAnatomyIntent = {
   purpose:
     | 'visual_preview'
@@ -63,28 +65,39 @@ export function buildHumanoidAnatomyBlock(
   )
   if (!isHumanoid) return ''
 
-  const realisticRequested = /\b(realiste|realistic|adult|adulte|photorealist)\b/i.test(prompt)
-  const stylizedRequested = /\b(chibi|cartoon|anime|stylis[eé])\b/i.test(prompt)
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  const realisticRequested =
+    ontology.effectiveRenderMode === 'native_photorealistic'
+    || ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+    || /\b(realiste|realistic|adult|adulte|photorealist)\b/i.test(prompt)
+  const stylizedRequested =
+    ontology.effectiveRenderMode === 'native_anime_stylized'
+    || ontology.effectiveRenderMode === 'hybrid_real_to_stylized'
+    || /\b(chibi|cartoon|anime|anim[eé]|manga|stylis[eé])\b/i.test(prompt)
 
   const baseLines: string[] = [
     'HUMANOID ANATOMY DIRECTIVES (Meshy-grade requirement):',
     '- Full-body framing: subject occupies the WHOLE vertical extent of the image, head at top, feet at bottom, NO head close-up, NO waist crop',
     '- Vertical silhouette aspect ratio at least 3:1 (height:width) — the subject is taller than wide',
-    '- Head occupies approximately 12% of the total vertical extent for realistic adult (1:7 head:body), 18% for young adult, 25% for child',
+    '- Head occupies approximately 12% of the total vertical extent for realistic adult (1:7 head:body), 16% for authentic anime hero, 25% for child/chibi',
     '- Hips and feet zone WIDER than the head zone (no inverted proportions, no head wider than shoulders unless explicit helmet/coiffure was requested)',
     '- Limbs separated and clearly visible: arms not glued to torso, legs distinct, fingers on each hand',
     '- Bilateral symmetry: left and right halves match (left arm = right arm length, left ear = right ear, left eye = right eye)',
     '- Stable centered standing pose by default (T-pose or A-pose) unless an explicit action verb appears in the user prompt',
   ]
 
-  if (realisticRequested && !stylizedRequested) {
+  if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
+    baseLines.push(
+      '- HYBRID ANIME + REAL PERSON TEXTURES MODE: preserve the iconic anime character silhouette, sculpted hairstyle geometry, and canonical costume proportions, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves',
+    )
+  } else if (ontology.effectiveRenderMode === 'native_anime_stylized' || stylizedRequested) {
+    baseLines.push(
+      '- NATIVE ANIME / STYLIZED MODE: authentic anime/manga character proportions, expressive anime facial geometry, sculpted anime hair locks, smooth cel-shaded/stylized anime skin (DO NOT force realistic human skin pores unless explicitly requested), while respecting bilateral symmetry, clear limb separation, and full-body framing',
+    )
+  } else if (realisticRequested) {
     baseLines.push(
       '- Realistic adult mode: 1:7 head:body ratio, photorealistic skin texture, sharp clothing edges, individual hair strands not blobby masses, defined facial features (eye shape, nose bridge, jawline)',
       '- NO chibi proportions, NO oversized head, NO marshmallow body — push toward real adult anatomy',
-    )
-  } else if (stylizedRequested) {
-    baseLines.push(
-      '- Stylised mode acknowledged: chibi/anime allowed but still respect bilateral symmetry, clear limb separation, full-body framing',
     )
   } else {
     baseLines.push(

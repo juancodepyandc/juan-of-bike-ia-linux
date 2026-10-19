@@ -6,6 +6,12 @@
  * in favor of cohesive photographic, artistic, and game-development prose.
  */
 
+import {
+  analyzePromptOntologySync,
+  translateFrenchSubjectToEnglish,
+  type CognitivePromptDecision,
+} from './cognitivePromptDirector.ts'
+
 export type ImageIntentCategory =
   | 'photo_realistic'
   | 'game_asset_pixel_art'
@@ -40,6 +46,7 @@ export type HumanPromptResult = {
   }
   suggestedDirectory: string
   qualityChecklist: string[]
+  ontologyDecision?: CognitivePromptDecision
 }
 
 const CATEGORY_RESOLUTIONS: Record<string, { width: number; height: number; ar: HumanPromptResult['aspectRatio'] }> = {
@@ -53,10 +60,13 @@ const CATEGORY_RESOLUTIONS: Record<string, { width: number; height: number; ar: 
 }
 
 /**
- * Detect the exact intent category from natural language user input.
+ * Detect the exact intent category from natural language user input,
+ * respecting the intrinsic ontology of anime/stylized characters vs real subjects
+ * and explicit real-skin texture overrides.
  */
 export function detectIntentCategory(rawText: string): ImageIntentCategory {
   const text = rawText.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const ontology = analyzePromptOntologySync(rawText, { targetModule: 'image' })
 
   // 1. Game Assets
   if (/\b(pixel art|pixelart|pixel-art|sprite|spritesheet|tileset|8.?bit|16.?bit|aseprite|rpg maker|gameboy|snes|nes)\b/.test(text)) {
@@ -71,22 +81,30 @@ export function detectIntentCategory(rawText: string): ImageIntentCategory {
   if (/\b(seamless|tileable|motif repetable|sol carrelage|pbr texture|albedo map|texture de sol|texture de mur)\b/.test(text)) {
     return 'game_asset_texture'
   }
-  if (/\b(texture)\b/.test(text) && !/\b(texture de peau|skin texture|texture du visage|texture des cheveux)\b/.test(text) && /\b(sol|mur|pave|pierre|bois|metal|pbr|seamless|tile)\b/.test(text)) {
+  if (/\b(texture)\b/.test(text) && !/\b(texture[s]? de (?:peau|personne)|skin texture|texture du visage|texture des cheveux|textures? reelles?)\b/.test(text) && /\b(sol|mur|pave|pierre|bois|metal|pbr|seamless|tile)\b/.test(text)) {
     return 'game_asset_texture'
   }
   if (/\b(asset 3d|game prop|low poly prop|game asset|asset jeu|modele pour jeu)\b/.test(text)) {
     return 'game_asset_3d_prop'
   }
 
-  // 2. Stylized & Animation
+  // 2. Explicit real-human skin texture override on an anime/stylized character -> photo_realistic hybrid
+  if (ontology.explicitRealTexturesOverride) {
+    return 'photo_realistic'
+  }
+
+  // 3. Stylized & Animation (including intrinsic anime/manga characters like Goku, Natsu, Luffy, etc.)
   if (/\b(pixar|disney|animation 3d|dreamworks|personnage 3d stylise|caricature 3d)\b/.test(text)) {
     return 'stylized_pixar_3d'
   }
-  if (/\b(anime|ghibli|shinkai|makoto|cel.?shad|cleankey|japonais animation|dessin anime)\b/.test(text)) {
+  if (/\b(manga|noir et blanc|encre|screentone|trame|planche manga)\b/.test(text) && /\b(noir et blanc|encre|screentone|trame|planche)\b/.test(text)) {
+    return 'stylized_manga_ink'
+  }
+  if (ontology.effectiveRenderMode === 'native_anime_stylized' || ontology.effectiveRenderMode === 'hybrid_real_to_stylized') {
     return 'stylized_anime_ghibli'
   }
-  if (/\b(manga|noir et blanc|encre|screentone|trame|planche manga|shonen|seinen)\b/.test(text)) {
-    return 'stylized_manga_ink'
+  if (/\b(anime|ghibli|shinkai|makoto|cel.?shad|cleankey|japonais animation|dessin anime|manga|shonen|seinen)\b/.test(text)) {
+    return 'stylized_anime_ghibli'
   }
   if (/\b(cyberpunk|neon noir|futuriste neon|blade runner|synthwave)\b/.test(text)) {
     return 'stylized_cyberpunk'
@@ -101,56 +119,82 @@ export function detectIntentCategory(rawText: string): ImageIntentCategory {
     return 'concept_art_production'
   }
 
-  // 3. Photo-Realistic
-  if (/\b(photo|photographie|photorealiste|realiste|portrait|85mm|canon|nikon|sony|raw photo|documentaire|street photography|argentique)\b/.test(text)) {
-    return 'photo_realistic'
-  }
-
+  // 4. Photo-Realistic
   return 'photo_realistic'
 }
 
 /**
- * Human-like Art Director prompt synthesis.
+ * Human-like Art Director prompt synthesis with full FR->EN translation and ontological fidelity.
  */
 export function directHumanPrompt(rawInput: string): HumanPromptResult {
   const category = detectIntentCategory(rawInput)
   const cleanInput = rawInput.trim().replace(/^[\s,;.-]+|[\s,;.-]+$/g, '')
+  const ontology = analyzePromptOntologySync(cleanInput, { targetModule: 'image' })
+  const englishSubject = translateFrenchSubjectToEnglish(cleanInput)
 
+  let res: HumanPromptResult
   switch (category) {
     case 'photo_realistic':
-      return buildPhotorealisticPrompt(cleanInput)
+      res = buildPhotorealisticPrompt(englishSubject, cleanInput, ontology)
+      break
     case 'game_asset_pixel_art':
-      return buildPixelArtPrompt(cleanInput)
+      res = buildPixelArtPrompt(englishSubject)
+      break
     case 'game_asset_isometric':
-      return buildIsometricAssetPrompt(cleanInput)
+      res = buildIsometricAssetPrompt(englishSubject)
+      break
     case 'game_asset_icon_ui':
-      return buildGameIconPrompt(cleanInput)
+      res = buildGameIconPrompt(englishSubject)
+      break
     case 'game_asset_texture':
-      return buildTileableTexturePrompt(cleanInput)
+      res = buildTileableTexturePrompt(englishSubject)
+      break
     case 'game_asset_3d_prop':
-      return buildGamePropPrompt(cleanInput)
+      res = buildGamePropPrompt(englishSubject)
+      break
     case 'stylized_pixar_3d':
-      return buildPixar3DPrompt(cleanInput)
+      res = buildPixar3DPrompt(englishSubject)
+      break
     case 'stylized_anime_ghibli':
-      return buildAnimeGhibliPrompt(cleanInput)
+      res = buildAnimeGhibliPrompt(englishSubject)
+      break
     case 'stylized_manga_ink':
-      return buildMangaInkPrompt(cleanInput)
+      res = buildMangaInkPrompt(englishSubject)
+      break
     case 'stylized_cyberpunk':
-      return buildCyberpunkPrompt(cleanInput)
+      res = buildCyberpunkPrompt(englishSubject)
+      break
     case 'stylized_oil_painting':
-      return buildOilPaintingPrompt(cleanInput)
+      res = buildOilPaintingPrompt(englishSubject)
+      break
     case 'stylized_watercolor':
-      return buildWatercolorPrompt(cleanInput)
+      res = buildWatercolorPrompt(englishSubject)
+      break
     case 'concept_art_production':
-      return buildConceptArtPrompt(cleanInput)
+      res = buildConceptArtPrompt(englishSubject)
+      break
     default:
-      return buildPhotorealisticPrompt(cleanInput)
+      res = buildPhotorealisticPrompt(englishSubject, cleanInput, ontology)
+      break
   }
+
+  if (ontology.operationMode === 'modification') {
+    res = {
+      ...res,
+      humanPrompt: ontology.englishExpandedPrompt,
+      negativePrompt: ontology.negativePrompt,
+    }
+  }
+  return { ...res, ontologyDecision: ontology }
 }
 
-function buildPhotorealisticPrompt(subject: string): HumanPromptResult {
-  const isPortrait = /\b(portrait|visage|femme|homme|personne|regard|fille|garcon|ingenieure?|artisan|docteur|modele|chef)\b/i.test(subject)
-  const isLandscape = /\b(paysage|montagne|foret|mer|plage|ciel|horizon|ville|rue)\b/i.test(subject)
+function buildPhotorealisticPrompt(
+  subject: string,
+  rawSubject: string = subject,
+  ontology?: CognitivePromptDecision,
+): HumanPromptResult {
+  const isPortrait = /\b(portrait|visage|femme|homme|personne|regard|fille|garcon|ingenieure?|artisan|docteur|modele|chef|man|woman|boy|girl|person|character|mage|warrior|knight)\b/i.test(rawSubject)
+  const isLandscape = /\b(paysage|montagne|foret|mer|plage|ciel|horizon|ville|rue|landscape|mountain|forest|ocean|beach)\b/i.test(rawSubject)
 
   const res = isPortrait
     ? CATEGORY_RESOLUTIONS.portrait
@@ -158,15 +202,21 @@ function buildPhotorealisticPrompt(subject: string): HumanPromptResult {
     ? CATEGORY_RESOLUTIONS.landscape
     : CATEGORY_RESOLUTIONS.square
 
-  const prompt = isPortrait
-    ? `An authentic editorial documentary portrait of ${subject}. Natural daylight illumination with soft directional shadows that accentuate real skin texture, fine pores, subtle natural imperfections, and expressive eyes with clear corneal reflections. Captured on an 85mm prime lens at f/2.0 with a gentle shallow depth of field, delicate optical bokeh in the background, and true-to-life color fidelity. No artificial airbrushing, no plastic skin smoothing, genuine human presence.`
-    : `A genuine documentary-grade photograph capturing ${subject}. Natural atmospheric lighting with believable specular highlights, authentic surface textures, and physical contact shadows. Shot with professional 35mm optical glass, capturing realistic depth, tactile material micro-textures, and organic tonal gradients without oversaturation or synthetic HDR effects.`
+  const prompt =
+    ontology?.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+      ? ontology.englishExpandedPrompt
+      : isPortrait
+        ? `An authentic editorial documentary portrait of ${subject}. Natural daylight illumination with soft directional shadows that accentuate real skin texture, fine pores, subtle natural imperfections, and expressive eyes with clear corneal reflections. Captured on an 85mm prime lens at f/2.0 with a gentle shallow depth of field, delicate optical bokeh in the background, and true-to-life color fidelity. No artificial airbrushing, no plastic skin smoothing, genuine human presence.`
+        : `A genuine documentary-grade photograph capturing ${subject}. Natural atmospheric lighting with believable specular highlights, authentic surface textures, and physical contact shadows. Shot with professional 35mm optical glass, capturing realistic depth, tactile material micro-textures, and organic tonal gradients without oversaturation or synthetic HDR effects.`
 
   return {
     category: 'photo_realistic',
-    title: `Photographie Réaliste - ${subject.slice(0, 32)}`,
+    title: `Photographie Réaliste - ${rawSubject.slice(0, 32)}`,
     humanPrompt: prompt,
-    negativePrompt: 'plastic skin, airbrushed, cartoon, 3d render, CGI, doll face, fake smooth texture, oversaturated, unnatural glow, extra limbs, deformed anatomy, blurry, low resolution, watermark, signature',
+    negativePrompt:
+      ontology?.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+        ? ontology.negativePrompt
+        : 'plastic skin, airbrushed, cartoon, 3d render, CGI, doll face, fake smooth texture, oversaturated, unnatural glow, extra limbs, deformed anatomy, blurry, low resolution, watermark, signature',
     aspectRatio: res.ar,
     width: res.width,
     height: res.height,

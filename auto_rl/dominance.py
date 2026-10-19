@@ -32,6 +32,57 @@ TRACKED_3D: dict[str, int] = {
     "self_intersections": -1,
 }
 
+TRACKED_BY_MODULE: dict[str, dict[str, int]] = {
+    "3d": TRACKED_3D,
+    "image": {
+        "clip_cosine": +1,
+        "laion_aesthetic_0_10": +1,
+        "contrast": +1,
+        "edge_energy": +1,
+        "extreme_pixels": -1,
+    },
+    "video": {
+        "clip_mean": +1,
+        "motion_compensated_error": -1,
+        "luminance_change": -1,
+        "flow_pixels_per_frame": +1,
+        "contrast": +1,
+    },
+    "animation": {
+        "action_proxy": +1,
+        "bone_length_cv": -1,
+        "jerk_m_s3": -1,
+        "foot_slide_m_s": -1,
+        "ground_penetration_m": -1,
+    },
+    "audio": {
+        "wer": -1,
+        "clipping_fraction": -1,
+        "snr_proxy_db": +1,
+    },
+    "code": {
+        "passed": +1,
+        "exit_code": -1,
+        "attempts": -1,
+    },
+    "cyber": {
+        "passed": +1,
+        "exit_code": -1,
+        "attempts": -1,
+    },
+    "cowork": {
+        "passed": +1,
+        "exit_code": -1,
+        "attempts": -1,
+    },
+    "conversation": {
+        "passed": +1,
+    },
+    "learning": {
+        "passed": +1,
+    },
+}
+
 
 def _value(metrics: dict, key: str):
     v = metrics.get(key)

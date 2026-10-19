@@ -508,9 +508,16 @@ def sync_all_reinforced_models(state: Path = STATE) -> dict[str, Any]:
         modules_summary[mod] = {**meta, **record, "gains_md": f"modele/renforce/{mod}/GAINS.md"}
 
     _write_master_gains_md(RENFORCE_ROOT / "GAINS_MODELES_RENFORCES.md", modules_summary, trellis_pack)
+    before_after_summary: dict[str, Any] = {}
+    try:
+        from .before_after_report import generate_before_after_visual_and_report
+        before_after_summary = generate_before_after_visual_and_report(state)
+    except Exception:
+        pass
     return {
         "renforce_root": str(RENFORCE_ROOT),
         "master_markdown": str(RENFORCE_ROOT / "GAINS_MODELES_RENFORCES.md"),
+        "before_after_report": before_after_summary,
         "trellis_500k_pack": trellis_pack,
         "modules": modules_summary,
     }

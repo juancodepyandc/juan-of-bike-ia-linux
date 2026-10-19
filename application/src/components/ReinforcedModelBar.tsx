@@ -38,6 +38,10 @@ export interface TrainingLiveState {
   run_id?: string | null
   cycle_index?: number
   updated_at?: number
+  stop_after_cycle?: boolean
+  progress_percent?: number
+  local_generations_done?: number
+  local_generations_planned?: number
 }
 
 interface ReinforcedOverviewResponse {
@@ -216,13 +220,13 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
     }
   }
 
-  const stopTraining = async () => {
+  const stopTraining = async (action: 'stop_after_cycle' | 'stop' = 'stop_after_cycle') => {
     setStopping(true)
     try {
       await fetch(`${getBridgeUrl()}/api/models/training-stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ action }),
       })
       await fetchOverview()
     } finally {
@@ -334,7 +338,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
             setInspectModule(backendMod)
             setModalOpen(true)
           }}
-          title="Ouvrir le registre des gains (GAINS.md) et comparer les modèles par module"
+          title="Ouvrir le comparatif Avant / Après (GAINS.md) et vérifier les modèles par module"
           style={{
             padding: '4px 8px',
             borderRadius: 8,
@@ -347,7 +351,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
             whiteSpace: 'nowrap',
           }}
         >
-          📊 Gains
+          📊 Avant/Après
         </button>
 
         <button
@@ -387,9 +391,9 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
               gap: 6,
               padding: '3px 8px',
               borderRadius: 8,
-              background: 'rgba(245, 158, 11, 0.16)',
-              border: '1px solid rgba(251, 191, 36, 0.5)',
-              color: '#FDE68A',
+              background: training.stop_after_cycle ? 'rgba(14, 165, 233, 0.18)' : 'rgba(245, 158, 11, 0.16)',
+              border: training.stop_after_cycle ? '1px solid rgba(56, 189, 248, 0.55)' : '1px solid rgba(251, 191, 36, 0.5)',
+              color: training.stop_after_cycle ? '#BAE6FD' : '#FDE68A',
               fontSize: 10.5,
               fontWeight: 600,
             }}
@@ -400,30 +404,33 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                 width: 7,
                 height: 7,
                 borderRadius: '50%',
-                background: '#FBBF24',
-                boxShadow: '0 0 8px #FBBF24',
+                background: training.stop_after_cycle ? '#38BDF8' : '#FBBF24',
+                boxShadow: training.stop_after_cycle ? '0 0 8px #38BDF8' : '0 0 8px #FBBF24',
               }}
             />
             <span>
               {String(training.module || '3d').toUpperCase()}
               {training.cycle_index ? ` #${training.cycle_index}` : ''}
+              {typeof training.progress_percent === 'number' ? ` (${training.progress_percent}%)` : ''}
             </span>
             <button
               type="button"
-              onClick={() => void stopTraining()}
-              disabled={stopping}
+              onClick={() => void stopTraining('stop_after_cycle')}
+              disabled={stopping || Boolean(training.stop_after_cycle)}
+              title="Arrêter proprement à la fin du cycle en cours (audit complet + promotion si gain Pareto)"
               style={{
                 padding: '2px 7px',
                 borderRadius: 6,
-                border: '1px solid rgba(248, 113, 113, 0.7)',
-                background: 'rgba(239, 68, 68, 0.28)',
-                color: '#FECACA',
-                fontSize: 10,
+                border: '1px solid rgba(56, 189, 248, 0.65)',
+                background: training.stop_after_cycle ? 'rgba(14, 165, 233, 0.35)' : 'rgba(14, 165, 233, 0.2)',
+                color: '#E0F2FE',
+                fontSize: 9.8,
                 fontWeight: 700,
-                cursor: 'pointer',
+                cursor: training.stop_after_cycle ? 'default' : 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
-              {stopping ? 'Arrêt…' : '■'}
+              {training.stop_after_cycle ? '⏳ Fin de cycle activée' : stopping ? '…' : '⏹ Fin de cycle'}
             </button>
           </div>
         )}

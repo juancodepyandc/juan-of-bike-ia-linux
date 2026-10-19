@@ -265,6 +265,10 @@ def register_routes(app, proxy):
             'status': cycle.get('status') or controller.get('status'),
             'run_id': cycle.get('run_id') or controller.get('run_id'),
             'cycle_index': controller.get('cycle_index', 1),
+            'stop_after_cycle': bool(controller.get('stop_after_cycle') or (STATE / 'stop_after_cycle.txt').exists()),
+            'progress_percent': cycle.get('progress_percent', 0),
+            'local_generations_done': cycle.get('local_generations_done', 0),
+            'local_generations_planned': cycle.get('local_generations_planned', 0),
             'updated_at': cycle.get('updated_at') or controller.get('updated_at'),
         }
         response = jsonify(overview)
@@ -294,8 +298,10 @@ def register_routes(app, proxy):
             return jsonify({'error': 'Origine refusée'}), 403
         if control is None:
             return jsonify({'supported': False, 'error': 'Contrôleur Linux requis'}), 503
+        data = request.get_json(silent=True) or {}
+        stop_mode = 'stop_after_cycle' if data.get('after_cycle') or data.get('action') == 'stop_after_cycle' else 'stop'
         try:
-            return jsonify(control.request('stop', {}, STATE)), 202
+            return jsonify(control.request(stop_mode, data, STATE)), 202
         except (ValueError, RuntimeError, OSError) as exc:
             return jsonify({'error': str(exc)}), 409
 
@@ -310,6 +316,37 @@ def register_routes(app, proxy):
             return jsonify(control.start(data, STATE)), 202
         except (ValueError, RuntimeError, OSError) as exc:
             return jsonify({'error': str(exc)}), 409
+
+    @app.route('/api/agi/prompt-director', methods=['GET', 'POST'])
+    def agi_prompt_director():
+        from agi_core.prompt_intelligence import analyze_and_direct_prompt
+        if request.method == 'GET':
+            raw_prompt = request.args.get('prompt', '')
+            target_module = request.args.get('module', 'image')
+            mode_hint = request.args.get('mode')
+            requested_style = request.args.get('style')
+            has_reference = request.args.get('has_reference', '').lower() in {'1', 'true', 'yes'}
+            conversation_context = request.args.get('context', '')
+            use_llm = request.args.get('use_llm', '').lower() in {'1', 'true', 'yes'}
+        else:
+            data = request.get_json(silent=True) or {}
+            raw_prompt = data.get('prompt', '')
+            target_module = data.get('module', 'image')
+            mode_hint = data.get('mode')
+            requested_style = data.get('style')
+            has_reference = bool(data.get('has_reference', False))
+            conversation_context = data.get('context', '')
+            use_llm = bool(data.get('use_llm', False))
+        result = analyze_and_direct_prompt(
+            raw_prompt=raw_prompt,
+            target_module=target_module,
+            mode_hint=mode_hint,
+            requested_style=requested_style,
+            has_reference=has_reference,
+            conversation_context=conversation_context,
+            use_llm=use_llm,
+        )
+        return jsonify(result)
 
     @app.post('/api/training/image-workflow')
     def image_workflow():

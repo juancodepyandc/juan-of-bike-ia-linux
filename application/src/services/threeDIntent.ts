@@ -11,6 +11,7 @@ import {
   type MotionDescriptor as KinematicMotionDescriptor,
 } from './kinematicsLibrary.ts'
 import { engineerDecision, type ThreeDEngineerDecision } from './threeDAutonomousEngineer.ts'
+import { analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
 
 export type ThreeDPipeline =
   | 'ai_generation'       // TRELLIS.2 / DreamGaussian — creative or reference-based
@@ -154,11 +155,19 @@ function hasNegatedStylizedSignal(prompt: string) {
 }
 
 function hasPositiveStylizedSignal(prompt: string) {
-  return /\b(anime|manga|stylise|stylis[eé]|cartoon|lowpoly|low poly|voxel|chibi)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  if (ontology.effectiveRenderMode === 'native_anime_stylized' || ontology.effectiveRenderMode === 'hybrid_real_to_stylized') {
+    return true
+  }
+  return /\b(anime|anim[eé]|manga|stylise|stylis[eé]|cartoon|lowpoly|low poly|voxel|chibi)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
 }
 
 function hasPositiveAnimeSignal(prompt: string) {
-  return /\b(anime|manga|shonen|fairy\s*tail|one\s*piece|naruto|dragon\s*ball|bleach|jujutsu|demon\s*slayer|kimetsu)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  if (ontology.nativeOntology === 'anime_stylized' && !hasNegatedStylizedSignal(prompt)) {
+    return true
+  }
+  return /\b(anime|anim[eé]|manga|shonen|fairy\s*tail|one\s*piece|naruto|dragon\s*ball|bleach|jujutsu|demon\s*slayer|kimetsu)\b/i.test(prompt) && !hasNegatedStylizedSignal(prompt)
 }
 
 function hasFlossSignal(prompt: string) {
@@ -170,6 +179,10 @@ function hasDanceOrGestureSignal(prompt: string) {
 }
 
 function hasKnownCharacterSignal(prompt: string) {
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+  if (ontology.canonicalSubjectName) {
+    return true
+  }
   const normalized = prompt.toLowerCase()
   const fictionContext = (/\b(comic|comics|bd|serie|series|film|movie|game|jeu|franchise|marvel|dc|pokemon|zelda|final\s*fantasy)\b/i.test(normalized) || hasPositiveAnimeSignal(prompt))
   const properName = /\b[A-Z][a-zA-Z'_-]{2,}\s+[A-Z][a-zA-Z'_-]{2,}\b/.test(prompt)
@@ -197,6 +210,7 @@ function requiresHumanFidelityPrompt(prompt: string, purpose: ThreeDPurpose, sub
 }
 
 function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPurpose, subjectKind: ThreeDSubjectKind) {
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
   if (purpose !== 'character' && subjectKind !== 'character' && subjectKind !== 'creature' && !hasKnownCharacterSignal(prompt)) {
     return []
   }
@@ -207,6 +221,9 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
     'preserve hair shape, colors and identity from the reference, except every explicit user change; remove excluded clothing or accessories even if present in the reference or canonical design',
     'use distinct material/color zones for the requested surfaces only; do not invent clothing or accessories to create material zones',
   ]
+  if (ontology.canonicalSubjectName) {
+    additions.push(`Visual description: ${ontology.englishSubject}`)
+  }
   if (requiresHumanFidelityPrompt(prompt, purpose, subjectKind)) {
     additions.push(
       'human fidelity is mandatory: reject mannequin, toy, chibi, marshmallow, blob or generic avatar substitutions',
@@ -226,12 +243,23 @@ function buildCharacterIdentityPromptAdditions(prompt: string, purpose: ThreeDPu
   if (/\b(femme|feminin|féminin|female|woman|girl|fille|she\b|her\b)\b/i.test(normalized)) {
     additions.push('explicit female/feminine identity requested: preserve that identity without masculinizing the design')
   }
-  if (hasKnownCharacterSignal(prompt)) {
-    if (hasPositiveAnimeSignal(prompt)) {
-      additions.push('known anime/manga character: preserve anime identity cues, official costume colors, hairstyle silhouette and gender; reject generic lookalikes')
-    } else {
-      additions.push('named real/public person: preserve realistic adult proportions, face/costume cues and non-cartoon material treatment; reject generic avatar substitutions')
-    }
+  if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
+    additions.push(
+      'HYBRID ANIME + REAL PERSON TEXTURES OVERRIDE: preserve the exact iconic anime character silhouette, hairstyle locks, and canonical costume colors, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves',
+    )
+  } else if (ontology.effectiveRenderMode === 'native_anime_stylized' || hasPositiveAnimeSignal(prompt)) {
+    additions.push(
+      'NATIVE ANIME / MANGA CHARACTER MODE: render directly in authentic anime/cel-shaded 3D style with anime facial proportions, sculpted anime hair locks, official costume colors, and smooth anime skin (DO NOT force realistic human skin pores unless explicitly requested); reject generic lookalikes',
+    )
+  } else if (hasKnownCharacterSignal(prompt)) {
+    additions.push(
+      'named real/public person: preserve realistic adult proportions, face/costume cues and non-cartoon photorealistic material treatment; reject generic avatar substitutions',
+    )
+  }
+  if (ontology.operationMode === 'modification') {
+    additions.push(
+      `MODIFICATION LOCK: preserve 100% of the existing 3D model ontology, style, pose, and unmentioned attributes; apply ONLY the requested modification delta (${ontology.modificationDeltaEn || ontology.englishSubject})`,
+    )
   }
   return additions
 }
@@ -370,7 +398,8 @@ function detectMotionReadiness(
     return 'articulated'
   }
   if (purpose === 'character' || subjectKind === 'character' || subjectKind === 'creature') {
-    return asksAnimation || motionVerb === 'walking' ? 'rig_candidate' : 'poseable'
+    const explicitlyStaticStatue = /\b(statue\s+fig[eé]e|buste\s+statique|non[-\s]?rigg[eé]|sans\s+rig|static\s+statue|unrigged)\b/i.test(normalized)
+    return explicitlyStaticStatue && !asksAnimation && !motionVerb ? 'poseable' : 'rig_candidate'
   }
   if (purpose === 'body_part' || subjectKind === 'body_part') {
     return asksAnimation ? 'poseable' : 'static_only'
@@ -1962,9 +1991,17 @@ export async function buildFluxVisualDescription({
 
   const systemHint = systemClassHints[intent.systemClass] || ''
   const kindHint = subjectKindHints[intent.subjectKind] || ''
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
+
+  const ontologyCharacterRule =
+    ontology.effectiveRenderMode === 'native_anime_stylized'
+      ? '- ONTOLOGY MODE (NATIVE ANIME / MANGA 3D): The subject is intrinsically an anime/manga/stylized character without a real-skin override. Render directly in authentic anime/cel-shaded 3D aesthetics: anime facial proportions, sculpted anime hair locks, official vivid costume colors, and smooth stylized anime skin (DO NOT force realistic human skin pores).'
+      : ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures'
+        ? '- ONTOLOGY MODE (HYBRID ANIME + REAL HUMAN TEXTURES OVERRIDE): The user explicitly requested real human textures on an anime character. Preserve 100% of the iconic anime silhouette, hairstyle locks, and canonical costume, while applying photorealistic human skin pores, subsurface scattering, and real physical fabric weaves.'
+        : '- ONTOLOGY MODE (NATIVE PHOTOREALISTIC 3D): Characters and objects MUST look PHOTOREALISTIC with sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry, and realistic skin pores.'
 
   const fluxPromptRequest = `/no_think
-You are a FLUX diffusion model prompt engineer. Your job is to convert a user's 3D modeling request into a precise, FLUX-optimized visual description.
+You are a FLUX diffusion model prompt engineer. Your job is to convert a user's 3D modeling request into a precise, FLUX-optimized visual description in fluent English.
 
 CRITICAL RULES:
 - Output ONLY the visual description, nothing else, no explanations, no markdown
@@ -1981,17 +2018,18 @@ CRITICAL RULES:
 - Use solid black studio background only when no background is specified; keep clean edge separation.
 - CRITICAL FOR 3D RECONSTRUCTION: the image MUST show DEPTH and VOLUME — show the object at a slight angle so 3 faces are visible (front + one side + top or bottom)
 - Depth cues are a reconstruction preference, not permission to override the requested camera view or body pose.
-- The object MUST look like a real physical 3D product photograph, not a flat icon or diagram
+- The object MUST look like a real physical 3D render with clear volumetric form, not a flat icon or diagram
 - Ensure strong lighting contrast to reveal surface depth, edges, bevels, recesses, and protruding features
 - Do NOT use primitive block-in shapes, cubes, spheres, cylinders or toy placeholders unless the user explicitly asked for a primitive. The reference must contain the real silhouette and real part structure of the requested subject.
-- Texture is part of fidelity: show material grain, fabric weave, brushed metal, glass transparency, skin pores, rubber, wood grain, emission or paint finish when relevant. Avoid flat single-color surfaces and avoid a 2D image pasted onto a simple block.
-- For characters: describe only the requested outfit and accessories; excluded clothing must remain absent even when it belongs to a known character design. Describe PRECISE hairstyle shape, explicitly requested costume geometry, EXACT body proportions (slim/muscular/etc), face features (eye shape, nose, jawline), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. Characters MUST look PHOTOREALISTIC unless anime is explicitly requested — sharp edges on clothing folds, visible fabric texture, realistic hair strands NOT blobby masses, correct finger separation, clear facial geometry. NEVER produce a blobby/cartoony/marshmallow character.
+- Texture is part of fidelity: show material grain, fabric weave, brushed metal, glass transparency, rubber, wood grain, emission or paint finish when relevant. Avoid flat single-color surfaces and avoid a 2D image pasted onto a simple block.
+- For characters: describe only the requested outfit and accessories; excluded clothing must remain absent even when it belongs to a known character design. Describe PRECISE hairstyle shape, explicitly requested costume geometry, EXACT body proportions (slim/muscular/etc), face features (eye shape, nose, jawline), accessories. Preserve the requested/official gender and body type; NEVER gender-swap a named character. Face, hair and costume details must be sharp, not blurry, blobby or single-color. NEVER produce a blobby/marshmallow character.
+${ontologyCharacterRule}
+- ${ontology.styleDirectiveEn}
 - For products: describe exact shape, connector types, materials, size proportions, surface finish, ALL fine details (USB ports, buttons, screws, ventilation holes, fan grilles, mesh patterns)
 - For PC cases: MUST include tempered glass panel, mesh front pattern, USB/audio ports on top I/O panel, PCIe slots at rear, PSU shroud, rubber feet, power button, fan positions, cable routing holes
 - For mechanical parts: describe geometry, moving vs fixed parts, materials, surface qualities
 - For motion/pose requests: describe EXACTLY which body parts are mobilized and HOW — if "running" then one leg forward bent at knee, other leg back pushing off, arms in opposite swing, torso leaning forward. If "punching" then one fist extended, shoulder rotated, hips turned. Show ANATOMICALLY CORRECT joint articulation.
 - COLOR & PBR (Meshy-grade output): use VIVID SATURATED PBR-ready base colors with strong albedo contrast — clean vibrant materials, deep blacks, bright highlights, NO washed-out greys, NO muddy mids. The downstream texture-paint pass needs maximum color information to bake rich PBR maps. Mention specific material qualities (matte plastic, polished metal, brushed aluminum, glossy paint, soft fabric) so the texture pipeline produces correct metalness/roughness. For mechanical parts: clean primary colors on housings, contrasting accent colors on moving parts so motion is readable. For real-world objects in motion: describe the moving subassemblies with distinctive colors that contrast with the static frame.
-- CRITICAL: Generate a PHOTOREALISTIC product photograph style by default. Only use cartoon/stylized if the user EXPLICITLY requests anime, cartoon, or stylized. When the user says "realistic" or provides a real photo reference, the output MUST look like a real photograph, not AI-generated or illustrated.
 ${motionPreset ? `- The subject MUST be in this exact pose/state: ${motionPreset.promptDirective}` : ''}
 
 Subject type: ${kindHint}
@@ -2005,6 +2043,7 @@ ${buildKinematicsBlockForIntent(intent, prompt)}
 ${buildCompoundSceneContract(prompt, motionPreset?.promptDirective ?? '', { isolated: intent.subjectKind === 'character' || intent.subjectKind === 'creature' })}
 
 User request: ${prompt}
+Translated English & Canonical Core: ${ontology.englishSubject}
 
 FLUX visual description:`
 
@@ -2045,15 +2084,16 @@ FLUX visual description:`
 
 /**
  * Manual FLUX prompt construction when the LLM fails.
- * Uses product knowledge, intent, and structural terms to build a
- * comma-separated visual description directly.
+ * Uses product knowledge, intent, cognitive ontology, and structural terms to build a
+ * comma-separated English visual description directly.
  */
-function buildManualFluxDescription(
+export function buildManualFluxDescription(
   prompt: string,
   intent: ThreeDIntent,
   motionPreset?: ThreeDMotionPreset | null,
 ): string {
   const parts: string[] = []
+  const ontology = analyzePromptOntologySync(prompt, { targetModule: '3d' })
 
   // Extract visual description from product knowledge
   const visualLines = intent.referencePromptAdditions
@@ -2063,8 +2103,37 @@ function buildManualFluxDescription(
   if (visualLines.length > 0) {
     parts.push(...visualLines)
   } else {
-    // Use the raw prompt as the core description
-    parts.push(prompt.split('\n')[0].trim())
+    // Use the English translated & canonical core instead of raw French
+    parts.push(ontology.englishSubject || translateFrenchSubjectToEnglish(prompt.split('\n')[0].trim()))
+  }
+
+  // Add ontological render mode directives
+  if (ontology.effectiveRenderMode === 'native_anime_stylized') {
+    parts.push(
+      'authentic anime 3D character style',
+      'clean cel-shaded anime proportions',
+      'sculpted anime hair locks',
+      'smooth stylized anime skin without realistic skin pores',
+      'vivid official anime costume colors',
+    )
+  } else if (ontology.effectiveRenderMode === 'hybrid_anime_with_real_textures') {
+    parts.push(
+      'iconic anime character silhouette and canonical costume preserved',
+      'photorealistic human skin pores and subsurface scattering override',
+      'realistic physical fabric weave and material micro-detail',
+    )
+  } else if (intent.subjectKind === 'character' || intent.subjectKind === 'creature') {
+    parts.push(
+      'photorealistic physical character',
+      'realistic human skin pores and fabric weave',
+      'accurate adult 1:7 proportions',
+    )
+  }
+
+  if (ontology.operationMode === 'modification') {
+    parts.push(
+      `conservative modification lock preserving base 3D model identity and applying only: ${ontology.modificationDeltaEn || ontology.englishSubject}`,
+    )
   }
 
   // Add intent-derived terms
@@ -2087,10 +2156,10 @@ function buildManualFluxDescription(
   parts.push(
     'solid black studio background',
     'single isolated subject centered in frame',
-    'three-quarter angle product photograph showing front side and top visible with depth',
+    'three-quarter angle studio render showing front side and top visible with depth',
     'strong directional studio lighting revealing edges bevels recesses and surface details',
     'clean edge separation',
-    'high detail realistic proportions',
+    'high detail coherent proportions',
   )
 
   // Anti-confusion terms
