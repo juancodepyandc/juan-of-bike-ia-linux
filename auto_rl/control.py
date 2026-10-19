@@ -405,6 +405,9 @@ def worker(session_id, state=STATE):
                 cached=state/'control_curricula'/(c['control_curriculum_key']+'.json')
                 if curriculum.is_file() and not cached.exists():
                     atomic_json(cached,read_json(curriculum))
+                with contextlib.suppress(Exception):
+                    from .reinforced_registry import sync_all_reinforced_models
+                    sync_all_reinforced_models(state)
                 save(phase='running', child_pid=None)
         finally:
             guard.__exit__(None, None, None)

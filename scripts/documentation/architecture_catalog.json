@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2218,
- "source_lines": 757102,
+ "source_lines": 757228,
  "static_route_declarations": 674,
  "by_repository": {
   "AuroraIA": 2055,
@@ -17840,8 +17840,8 @@
   {
    "repo": "AuroraIA",
    "path": "auto_rl/control.py",
-   "sha256": "cd562d10b601172a69653b6d114a395918d2b0d67828acb4bbf30f9f5437dd3d",
-   "lines": 443,
+   "sha256": "d86263f934847abefaec5f4e2cdd1ca6699993f593f635f1edefb53729ba5640",
+   "lines": 446,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -18214,8 +18214,8 @@
   {
    "repo": "AuroraIA",
    "path": "auto_rl/reinforced_registry.py",
-   "sha256": "44d0c0838e3e778572bbf619aa378604927fd7ed0b46e5481dd657498d602b5a",
-   "lines": 657,
+   "sha256": "c043c1db7e464d3e2aef4edf231a369797ad01c61683a1caa3b87ad05b44a1f1",
+   "lines": 780,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
