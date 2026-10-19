@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2218,
- "source_lines": 755836,
+ "source_lines": 756212,
  "static_route_declarations": 674,
  "by_repository": {
   "AuroraIA": 2055,
@@ -93,16 +93,16 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/agi_brain.py",
-   "sha256": "d7c2ee6b434128a86b213430baeafb4130bd3c69731e367d65ebc4cbbbaa44ae",
-   "lines": 503,
+   "sha256": "087eae618431ff7dca383e0254093a5e2fc742b848f9e1dddaeb7df456da80dc",
+   "lines": 615,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
   {
    "repo": "AuroraIA",
    "path": "agi_core/agi_loops.py",
-   "sha256": "ede3b13c2bfa8364413f399d9534f11ebd8a73eaa219c73ce2af8a5ce177fa6f",
-   "lines": 802,
+   "sha256": "82266c5acf111c90434bf698246f68c82390a0cfe1107c45f9e3488b1d133d24",
+   "lines": 807,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -9433,8 +9433,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/vite_bp_routes.py",
-   "sha256": "578ba8992ef38ab4c7d9da1e8c0d4fb79c4bd066592aa1254099484325956251",
-   "lines": 3242,
+   "sha256": "d8f9c365bad9e7ee892651afa30426b1e5bb5d4eaa57fce3bf5625a5e6fac2fc",
+   "lines": 3248,
    "http_routes": [
     {
      "path": "/api/admin/status",
@@ -9646,7 +9646,7 @@
       "POST"
      ],
      "handler": "agents_loops_plan",
-     "line": 1849
+     "line": 1855
     },
     {
      "path": "/api/agents/loops/diagnose",
@@ -9654,7 +9654,7 @@
       "POST"
      ],
      "handler": "agents_loops_diagnose",
-     "line": 1855
+     "line": 1861
     },
     {
      "path": "/api/agents/loops/firewall-check",
@@ -9662,7 +9662,7 @@
       "POST"
      ],
      "handler": "agents_loops_firewall_check",
-     "line": 1869
+     "line": 1875
     },
     {
      "path": "/api/agents/loops/github-status",
@@ -9670,7 +9670,7 @@
       "GET"
      ],
      "handler": "agents_loops_github_status",
-     "line": 1884
+     "line": 1890
     },
     {
      "path": "/api/agents/loops/state",
@@ -9679,7 +9679,7 @@
       "POST"
      ],
      "handler": "agents_loops_state",
-     "line": 1892
+     "line": 1898
     },
     {
      "path": "/api/agents/loops/watchdog",
@@ -9687,7 +9687,7 @@
       "POST"
      ],
      "handler": "agents_loops_watchdog",
-     "line": 1912
+     "line": 1918
     },
     {
      "path": "/api/agents/loops/counterfactual",
@@ -9695,7 +9695,7 @@
       "POST"
      ],
      "handler": "agents_loops_counterfactual",
-     "line": 1924
+     "line": 1930
     },
     {
      "path": "/api/agents/sync-disk",
@@ -9703,7 +9703,7 @@
       "POST"
      ],
      "handler": "agents_sync_disk",
-     "line": 1943
+     "line": 1949
     },
     {
      "path": "/api/agents/<name>",
@@ -9711,7 +9711,7 @@
       "GET"
      ],
      "handler": "agents_get",
-     "line": 1952
+     "line": 1958
     },
     {
      "path": "/api/3d/auto-rescue",
@@ -9719,7 +9719,7 @@
       "POST"
      ],
      "handler": "three_d_auto_rescue",
-     "line": 1989
+     "line": 1995
     },
     {
      "path": "/api/3d/bake-colors",
@@ -9727,7 +9727,7 @@
       "POST"
      ],
      "handler": "three_d_bake_colors",
-     "line": 2060
+     "line": 2066
     },
     {
      "path": "/api/3d/color-diagnostic",
@@ -9735,7 +9735,7 @@
       "POST"
      ],
      "handler": "three_d_color_diagnostic",
-     "line": 2126
+     "line": 2132
     },
     {
      "path": "/api/3d/auto-validate",
@@ -9743,7 +9743,7 @@
       "POST"
      ],
      "handler": "three_d_auto_validate",
-     "line": 2186
+     "line": 2192
     },
     {
      "path": "/api/3d/mesh-score",
@@ -9751,7 +9751,7 @@
       "POST"
      ],
      "handler": "three_d_mesh_score",
-     "line": 2245
+     "line": 2251
     },
     {
      "path": "/api/agents/watchdog",
@@ -9759,7 +9759,7 @@
       "GET"
      ],
      "handler": "agents_watchdog",
-     "line": 2295
+     "line": 2301
     },
     {
      "path": "/api/agents/health",
@@ -9767,7 +9767,7 @@
       "GET"
      ],
      "handler": "agents_health",
-     "line": 2346
+     "line": 2352
     },
     {
      "path": "/api/agents/dispatches",
@@ -9775,7 +9775,7 @@
       "GET"
      ],
      "handler": "agents_dispatches",
-     "line": 2380
+     "line": 2386
     },
     {
      "path": "/api/agents/coverage",
@@ -9783,7 +9783,7 @@
       "GET"
      ],
      "handler": "agents_coverage",
-     "line": 2425
+     "line": 2431
     },
     {
      "path": "/api/agents/metrics",
@@ -9791,7 +9791,7 @@
       "GET"
      ],
      "handler": "agents_metrics",
-     "line": 2453
+     "line": 2459
     },
     {
      "path": "/api/3d/motion-intent",
@@ -9799,7 +9799,7 @@
       "POST"
      ],
      "handler": "three_d_motion_intent",
-     "line": 2482
+     "line": 2488
     },
     {
      "path": "/api/3d/custom-motion",
@@ -9807,7 +9807,7 @@
       "POST"
      ],
      "handler": "three_d_custom_motion",
-     "line": 2542
+     "line": 2548
     },
     {
      "path": "/api/3d/auto-motion-bake",
@@ -9815,7 +9815,7 @@
       "POST"
      ],
      "handler": "three_d_auto_motion_bake",
-     "line": 2627
+     "line": 2633
     },
     {
      "path": "/api/admin/git-pull",
@@ -9824,7 +9824,7 @@
       "GET"
      ],
      "handler": "admin_git_pull",
-     "line": 2787
+     "line": 2793
     },
     {
      "path": "/api/admin/restart-vite",
@@ -9833,7 +9833,7 @@
       "GET"
      ],
      "handler": "admin_restart_vite",
-     "line": 2925
+     "line": 2931
     },
     {
      "path": "/",
@@ -9847,7 +9847,7 @@
       "OPTIONS"
      ],
      "handler": "vite_root",
-     "line": 3117
+     "line": 3123
     },
     {
      "path": "/<path:path>",
@@ -9861,7 +9861,7 @@
       "OPTIONS"
      ],
      "handler": "vite_catchall",
-     "line": 3233
+     "line": 3239
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10554,8 +10554,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src-tauri/src/lib.rs",
-   "sha256": "3523d191d322efc3f4aa6db28fe917368f76342692a085a9a68b8639bba68792",
-   "lines": 170
+   "sha256": "60b653b5665921a9af87103bb1aa72bd7d87edfc9c878eb4f6b90451a42fccc2",
+   "lines": 177
   },
   {
    "repo": "AuroraIA",
@@ -10572,8 +10572,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src-tauri/tauri.conf.json",
-   "sha256": "e3a921dbe6a56da0e5044e2f2ccfce25b7bc6caf3744d44129e297939546ad17",
-   "lines": 96
+   "sha256": "a62399efe768911491f675fc3c081f546a5a57e924eb832825bb169b950b35d1",
+   "lines": 97
   },
   {
    "repo": "AuroraIA",
@@ -10992,8 +10992,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/ReinforcedModelBar.tsx",
-   "sha256": "4bed49c95979b1f7dcba0d774a1df1357d8bf256319acd539ce9c8a4409ca9da",
-   "lines": 792
+   "sha256": "2ff5fd87439cd8f1ad7135ae806851510317c6c0e939690cf1f31555709295fb",
+   "lines": 1037
   },
   {
    "repo": "AuroraIA",

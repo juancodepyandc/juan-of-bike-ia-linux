@@ -1824,8 +1824,7 @@ def agents_resolve():
 @vite_bp.route("/api/agents/brain-plan", methods=["GET", "POST"])
 def agents_brain_plan():
     """Cognitive AGI Brain Router: decomposes any request into Module Master(s) + Feature Applicator(s)
-    with strict scope firewalls (files_owned, routes_owned, never_touch), 7-phase operational loop,
-    and verification gates.
+    with deep cognitive intent understanding, 7-phase operational loop, and verification gates.
     """
     from agi_core.agi_loops import CognitiveExecutiveLoop
     if request.method == "POST":
@@ -1833,14 +1832,21 @@ def agents_brain_plan():
         query = (data.get("request") or data.get("prompt") or data.get("query") or "").strip()
         active_module = (data.get("module") or "").strip() or None
         target_paths = data.get("target_paths") if isinstance(data.get("target_paths"), list) else None
+        use_llm = bool(data.get("use_llm", True))
     else:
         query = (request.args.get("request") or request.args.get("q") or "").strip()
         active_module = (request.args.get("module") or "").strip() or None
         target_paths = None
+        use_llm = request.args.get("use_llm", "1") not in {"0", "false"}
     if not query:
         return jsonify({"ok": False, "error": "missing request parameter"}), 400
     loop = CognitiveExecutiveLoop()
-    plan = loop.build_autonomous_loop_plan(query, active_module=active_module, target_paths=target_paths)
+    plan = loop.build_autonomous_loop_plan(
+        query,
+        active_module=active_module,
+        target_paths=target_paths,
+        use_llm=use_llm,
+    )
     plan["prompt_injection"] = loop.router.format_prompt_injection(query, active_module=active_module)
     return jsonify(plan)
 

@@ -116,6 +116,12 @@ async fn search_duckduckgo(query: String) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("GTK_THEME").is_none() {
+            std::env::set_var("GTK_THEME", "Yaru:dark");
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::RuntimeManagerState::default())
@@ -163,6 +169,7 @@ pub fn run() {
         .setup(|app| {
             let window = app.get_webview_window("main").unwrap();
             let _ = window.set_title("juan of bike IA");
+            let _ = window.set_theme(Some(tauri::Theme::Dark));
             Ok(())
         })
         .run(tauri::generate_context!())

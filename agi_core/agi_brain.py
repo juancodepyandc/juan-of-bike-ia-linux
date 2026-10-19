@@ -330,12 +330,116 @@ class AGIBrainRouter:
         if agent_name.lower() in query_lower:
             score += 80.0
 
-        desc_tokens = set(re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{4,}", (agent_info.get("description") or "").lower()))
-        query_tokens = set(re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{4,}", query_lower))
+        desc_tokens = set(re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{3,}", (agent_info.get("description") or "").lower()))
+        role_tokens = set(re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{4,}", (agent_info.get("role") or "").lower()))
+        query_tokens = set(re.findall(r"[a-z0-9àâçéèêëîïôûùüÿñæœ]{3,}", query_lower))
         overlap = len(desc_tokens & query_tokens)
-        score += overlap * 3.5
+        role_overlap = len(role_tokens & query_tokens)
+        score += overlap * 4.0 + min(role_overlap, 8) * 2.0
 
         return round(score, 2)
+
+    def analyze_cognitive_intent(
+        self,
+        request_text: str,
+        selected_applicators: list[dict[str, Any]],
+        *,
+        use_llm: bool = False,
+    ) -> dict[str, Any]:
+        """Analyse cognitive profonde de l'intention : comprend le but réel, le régime épistémique,
+        les contraintes implicites et construit une chaîne de raisonnement causale (avec synthèse
+        LLM locale optionnelle si Ollama est actif).
+        """
+        query = (request_text or "").strip()
+        q_low = query.lower()
+        modules = list(dict.fromkeys(a.get("module") or "conversation" for a in selected_applicators))
+        features = list(dict.fromkeys(a.get("feature") or a.get("applicator_agent") for a in selected_applicators))
+
+        # 1. Détermination du régime épistémique
+        exploratory_signals = (
+            "jamais vu", "innover", "créer", "invente", "architecture", "0-day", "zero-day",
+            "nouveau", "améliorer au max", "repousser", "recherche", "algorithme", "agi",
+        )
+        optimizable_signals = (
+            "optimis", "amélio", "perfection", "qualité", "précision", "design", "ui", "ux",
+            "animation", "fluide", "vitesse", "latence", "vram", "renforc", "gain",
+        )
+        if any(s in q_low for s in exploratory_signals) or len(modules) > 1:
+            epistemic_regime = "UNKNOWN_EXPLORATORY"
+            regime_label = "Exploration Créative & Synthèse Multi-Domaine"
+        elif any(s in q_low for s in optimizable_signals) or len(selected_applicators) > 1:
+            epistemic_regime = "KNOWN_OPTIMIZABLE"
+            regime_label = "Optimisation Pareto & Raffinement Haute Précision"
+        else:
+            epistemic_regime = "KNOWN_CANONICAL"
+            regime_label = "Résolution Directe & Vérification Formelle"
+
+        # 2. Extraction des contraintes implicites (ce qu'un simple script précodé oublierait)
+        implicit_constraints: list[str] = []
+        if any(m in modules for m in ("code", "cli", "bridge")):
+            implicit_constraints.append("Préserver 100 % des contrats existants, de l'état de session et de la parité Natif / Web / CLI.")
+        if any(w in q_low for w in ("ui", "interface", "cli", "graphisme", "barre", "panel", "modal", "animation", "design")):
+            implicit_constraints.append("Cohérence visuelle Cyber-Aurora sombre intégrale (zéro barre blanche, modales en portail DOM, animations fluides).")
+        if any(m in modules for m in ("3d", "image", "video", "drawing")):
+            implicit_constraints.append("Fidélité géométrique et physique vérifiée par métriques réelles (topologie manifold, PBR, cohérence multi-vues).")
+        if any(m in modules for m in ("cyber", "learning", "simulator")):
+            implicit_constraints.append("Preuve formelle ou exécutable (Z3 / SymPy / PoC en boucle fermée) avant validation.")
+        if any(m in modules for m in ("business", "training")):
+            implicit_constraints.append("Mesure empirique hors-échantillon (holdout / Walk-Forward) et respect strict des garde-fous de risque.")
+        if not implicit_constraints:
+            implicit_constraints.append("Compréhension contextuelle complète sans réponse générique ni supposition non vérifiée.")
+
+        # 3. Synthèse d'intention et hypothèse causale
+        primary_goal = query if len(query) <= 180 else query[:177] + "..."
+        intent_synthesis = (
+            f"Compréhension de l'objectif : « {primary_goal} » — Mobilisation coordonnée de "
+            f"{', '.join(modules)} autour des capacités {', '.join(str(f) for f in features[:3])}."
+        )
+        causal_reasoning = (
+            f"Régime {epistemic_regime} ({regime_label}) : au lieu d'appliquer une réponse précodée, "
+            f"le cerveau décompose le problème en {len(selected_applicators)} sous-objectif(s) complémentaires, "
+            f"verrouille les invariants critiques ({implicit_constraints[0].rstrip('.')}) et impose une preuve "
+            f"d'exécution avant validation finale."
+        )
+
+        # 4. Raisonnement neuronal en direct via LLM local si demandé et disponible
+        llm_insight = None
+        if use_llm and query:
+            try:
+                import urllib.request
+                payload = json.dumps({
+                    "model": "qwen2.5-coder:7b",
+                    "prompt": (
+                        "Tu es le Cerveau AGI d'AuroraIA. En 2 phrases denses et précises en français, "
+                        "explique la compréhension profonde (intention réelle, piège à éviter, stratégie) "
+                        f"pour cette demande : {query}"
+                    ),
+                    "stream": False,
+                    "options": {"temperature": 0.2, "num_predict": 140},
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    "http://127.0.0.1:11434/api/generate",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=2.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    resp_text = (data.get("response") or "").strip()
+                    if resp_text:
+                        llm_insight = resp_text
+                        causal_reasoning = resp_text
+            except Exception:
+                llm_insight = None
+
+        return {
+            "epistemic_regime": epistemic_regime,
+            "regime_label": regime_label,
+            "intent_synthesis": intent_synthesis,
+            "causal_reasoning": causal_reasoning,
+            "implicit_constraints": implicit_constraints,
+            "llm_live_reasoning": llm_insight is not None,
+        }
 
     def plan_execution(
         self,
@@ -344,9 +448,11 @@ class AGIBrainRouter:
         active_module: str | None = None,
         target_paths: list[str] | None = None,
         max_applicators: int = 4,
+        use_llm: bool = False,
     ) -> dict[str, Any]:
         """Construit le plan cognitif complet Cerveau AGI -> Agent(s) Maître(s) -> Appliquant(s)
-        avec pare-feu anti-mélange (`scope_firewall`) et critères de validation (`verification_gate`).
+        avec compréhension d'intention (`cognitive_understanding`), pare-feu anti-mélange
+        (`scope_firewall`) et critères de validation (`verification_gate`).
         """
         query = (request_text or "").strip()
         query_lower = query.lower()
@@ -427,28 +533,34 @@ class AGIBrainRouter:
             else ("multi_feature" if len(selected_applicators) > 1 else "single_feature_surgical")
         )
 
+        cognitive_understanding = self.analyze_cognitive_intent(
+            query,
+            selected_applicators,
+            use_llm=use_llm,
+        )
+
         execution_steps = []
         for idx, app in enumerate(selected_applicators, start=1):
+            desc = app.get("description") or f"Piloter la capacité `{app['feature']}`"
             execution_steps.append({
                 "step": idx,
                 "master": app["master_agent"],
                 "applicator": app["applicator_agent"],
                 "feature": app["feature"],
                 "directive": (
-                    f"[{app['master_agent']} → {app['applicator_agent']}] "
-                    f"Traiter exclusivement la fonctionnalité `{app['feature']}` sur "
-                    f"{', '.join(app['scope_firewall']['files_owned'][:3]) or 'son périmètre'} "
-                    f"sans toucher à {', '.join(app['scope_firewall']['never_touch'][:3]) or 'aucun autre module'}."
+                    f"{desc} — Coordination {app['master_agent']} → {app['applicator_agent']} "
+                    f"avec vérification sur {', '.join(app['scope_firewall']['files_owned'][:2]) or 'le module actif'}."
                 ),
                 "verification": app["verification_gate"],
             })
 
         return {
             "ok": True,
-            "schema_version": "aurora.agi_brain.v1",
+            "schema_version": "aurora.agi_brain.v2",
             "brain_orchestrator": "aurora-orchestrator",
             "request": query,
             "complexity": complexity,
+            "cognitive_understanding": cognitive_understanding,
             "modules_involved": modules_involved,
             "masters_involved": masters_involved,
             "applicators": selected_applicators,

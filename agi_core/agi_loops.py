@@ -672,21 +672,26 @@ class CognitiveExecutiveLoop:
         active_module: str | None = None,
         target_paths: list[str] | None = None,
         max_applicators: int = 5,
+        use_llm: bool = False,
     ) -> dict[str, Any]:
-        """Génère le plan complet d'exécution en boucle fermée (DAG multi-agents + Pare-Feu +
-        Tree-of-Thoughts Bayésien + Synergie Inter-Modules + Watchdog + Auto-Réparation).
+        """Génère le plan complet d'exécution en boucle fermée (Compréhension Cognitive + DAG multi-agents +
+        Pare-Feu + Tree-of-Thoughts Bayésien + Synergie Inter-Modules + Watchdog + Auto-Réparation).
         """
         base_plan = self.router.plan_execution(
             request_text,
             active_module=active_module,
             target_paths=target_paths,
             max_applicators=max_applicators,
+            use_llm=use_llm,
         )
         applicators = base_plan.get("applicators", [])
+        cog = base_plan.get("cognitive_understanding") or {}
 
         # Déterminer le régime épistémique
         if len(base_plan.get("modules_involved", [])) > 1:
             epistemic_regime = "MULTI_MODULE_SYNTHESIS"
+        elif cog.get("epistemic_regime"):
+            epistemic_regime = str(cog["epistemic_regime"])
         elif len(applicators) > 1:
             epistemic_regime = "KNOWN_OPTIMIZABLE"
         else:
