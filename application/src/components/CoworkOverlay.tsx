@@ -16,7 +16,7 @@
 // can approve / skip / abort destructive steps mid-run.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, memo } from 'react'
 import type { ModuleId } from '../types/app.ts'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -3229,10 +3229,10 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
           ) : turn.pending && !turn.content ? (
             <CoworkLiveActivity events={turn.technical ?? []} />
           ) : turn.content ? (
-            <ReactMarkdown
-              remarkPlugins={remarkPlugins}
-              components={markdownComponents}
-            >{visibleMarkdown}</ReactMarkdown>
+            <MemoizedMarkdown
+              visibleMarkdown={visibleMarkdown}
+              markdownComponents={markdownComponents}
+            />
           ) : (
             <span className="text-white/40 italic">(reponse vide)</span>
           )}
@@ -4443,3 +4443,16 @@ async function transcribeAudio(blob: Blob): Promise<string> {
     return ''
   }
 }
+
+// ⚡ Bolt: Memoize components object to prevent ReactMarkdown from re-rendering
+// We extract it out so that ReactMarkdown doesn't re-parse the tree unless content changes
+const MemoizedMarkdown = memo(({ visibleMarkdown, markdownComponents }: { visibleMarkdown: string, markdownComponents: any }) => {
+  return (
+    <ReactMarkdown
+      remarkPlugins={remarkPlugins}
+      components={markdownComponents}
+    >
+      {visibleMarkdown}
+    </ReactMarkdown>
+  )
+})
