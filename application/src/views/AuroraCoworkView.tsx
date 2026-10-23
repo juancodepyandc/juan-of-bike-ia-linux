@@ -22,7 +22,7 @@
 // block ; the user stays in control).
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -585,6 +585,15 @@ export default function AuroraCoworkView({ open: openProp, onClose }: { open?: b
     }
   }, [prompt, running, attachedTextFiles, runtime, launchModule, voiceMode, messages, projectThread, setAbortController])
 
+  const submitRef = useRef(submit)
+  useEffect(() => {
+    submitRef.current = submit
+  }, [submit])
+
+  const handleNotion = useCallback((n: string) => {
+    submitRef.current(`Explique-moi la notion "${n}" dans le contexte de cette conversation.`)
+  }, [])
+
   const onAttach = (files: FileList | null) => {
     if (!files) return
     for (const file of Array.from(files).slice(0, 3)) {
@@ -726,7 +735,7 @@ export default function AuroraCoworkView({ open: openProp, onClose }: { open?: b
           {messages.length === 0 && <EmptyState onPick={(p) => submit(p)} />}
           <div style={{ maxWidth: CONTENT_MAX, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
             {messages.map((m) => (
-              <Bubble key={m.id} turn={m} onNotion={(n) => submit(`Explique-moi la notion "${n}" dans le contexte de cette conversation.`)} />
+              <Bubble key={m.id} turn={m} onNotion={handleNotion} />
             ))}
             {running && (
               <LiveActivity events={events} show={showActivity} onToggle={() => setShowActivity((s) => !s)} />
@@ -1089,7 +1098,7 @@ function Capability({ icon, label, desc, on }: { icon: ReactNode; label: string;
   )
 }
 
-function Bubble({ turn, onNotion }: { turn: ChatTurn; onNotion: (n: string) => void }) {
+const Bubble = memo(function Bubble({ turn, onNotion }: { turn: ChatTurn; onNotion: (n: string) => void }) {
   const isUser = turn.role === 'user'
   return (
     <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
@@ -1126,7 +1135,7 @@ function Bubble({ turn, onNotion }: { turn: ChatTurn; onNotion: (n: string) => v
       </div>
     </div>
   )
-}
+})
 
 function ProjectMemoryBand({ thread }: { thread: CoworkProjectThread }) {
   const artifacts = thread.artifacts.filter((artifact) => artifact.status === 'ready')
