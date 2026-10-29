@@ -16,7 +16,7 @@
 // can approve / skip / abort destructive steps mid-run.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModuleId } from '../types/app.ts'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -2320,6 +2320,30 @@ function ConversationThread({
 }) {
   const QUICK_PROMPTS = getQuickPrompts(module)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // Latest-ref pattern for callbacks to prevent unnecessary re-renders of ChatBubble
+  const onRegenerateRef = useRef(onRegenerate)
+  const onQuickPromptRef = useRef(onQuickPrompt)
+  const onEditUserTurnRef = useRef(onEditUserTurn)
+
+  useEffect(() => {
+    onRegenerateRef.current = onRegenerate
+    onQuickPromptRef.current = onQuickPrompt
+    onEditUserTurnRef.current = onEditUserTurn
+  }, [onRegenerate, onQuickPrompt, onEditUserTurn])
+
+  const handleRegenerate = useCallback((prompt: string) => {
+    onRegenerateRef.current(prompt)
+  }, [])
+
+  const handleQuickPrompt = useCallback((prompt: string) => {
+    onQuickPromptRef.current(prompt)
+  }, [])
+
+  const handleEditUserTurn = useCallback((id: string) => {
+    onEditUserTurnRef.current(id)
+  }, [])
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -2371,15 +2395,23 @@ function ConversationThread({
         {messages.map((m, i) => {
           // For Aurora bubbles, find the immediately preceding user prompt
           // so the "Refaire" button can re-submit the same query.
-          const prevUser = m.role === 'aurora'
-            ? [...messages.slice(0, i)].reverse().find((t) => t.role === 'user')?.content
-            : undefined
+          // O(n) optimization to prevent repeated slicing/reversing in the map loop.
+          let prevUser: string | undefined = undefined;
+          if (m.role === 'aurora') {
+            for (let j = i - 1; j >= 0; j--) {
+              if (messages[j].role === 'user') {
+                prevUser = messages[j].content;
+                break;
+              }
+            }
+          }
           return <ChatBubble
             key={m.id}
             turn={m}
-            onRegenerate={prevUser ? () => onRegenerate(prevUser) : undefined}
-            onQuickPrompt={onQuickPrompt}
-            onEdit={m.role === 'user' ? () => onEditUserTurn(m.id) : undefined}
+            prevUserPrompt={prevUser}
+            onRegenerate={handleRegenerate}
+            onQuickPrompt={handleQuickPrompt}
+            onEdit={handleEditUserTurn}
           />
         })}
         {running && messages[messages.length - 1]?.pending && (
@@ -3124,10 +3156,11 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
+const ChatBubble = memo(function ChatBubble({ turn, prevUserPrompt, onRegenerate, onEdit, onQuickPrompt }: {
   turn: ChatTurn
-  onRegenerate?: () => void
-  onEdit?: () => void
+  prevUserPrompt?: string
+  onRegenerate?: (prompt: string) => void
+  onEdit?: (id: string) => void
   onQuickPrompt?: (prompt: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -3255,9 +3288,9 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
               <Copy size={10} />
               {copied ? 'Copie !' : 'Copier'}
             </button>
-            {onRegenerate && (
+            {onRegenerate && prevUserPrompt && (
               <button
-                onClick={onRegenerate}
+                onClick={() => onRegenerate(prevUserPrompt)}
                 className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-white/55 border border-white/8 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
                 title="Refaire avec la meme question"
               >
@@ -3282,7 +3315,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
               {copied ? 'Copie !' : 'Copier'}
             </button>
             <button
-              onClick={onEdit}
+              onClick={() => onEdit?.(turn.id)}
               className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-white/55 border border-white/8 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
               title="Modifier cette question (la paire suivante sera supprimee)"
             >
@@ -3315,7 +3348,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       </div>
     </div>
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 // Console drawer (chat mode side panel) — same content as EventsLog but
