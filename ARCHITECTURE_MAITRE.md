@@ -78,6 +78,14 @@ Le CLI local était sur `master`, 15 commits derrière `origin/main`. Sa branche
 
 Les contrôles exécutés comprennent les tests CLI et serveur avec modèles substitués, les types TypeScript, le build web et la conformance comportementale existante. Ils ne prouvent ni une génération réelle, ni le trajet public SSE, ni la compatibilité sur un Windows/macOS réel, ni une AGI. Les relevés JSON et journaux détaillés restent privés dans `~/maintenance-pc-2026-10-04`. L'index et les empreintes de septembre restent historiques ; `--check-code` signale les écarts encore à revoir, sans les approuver automatiquement.
 
+### Correction de contexte du 31 octobre 2026
+
+Observation en lecture seule : plusieurs missions CLI acceptées échouaient ensuite dans Ollama `/api/chat`. Son journal indique 14 233 tokens pour une fenêtre réelle de 4 096 ; le transport masquait le corps du HTTP 400. Le gateway reconnaît désormais ce diagnostic borné et n'expose que ses comptes numériques, jamais le corps brut ou une URL potentiellement sensible. Les autres refus gardent leur statut HTTP.
+
+Avant toute sortie du modèle, la boucle peut réessayer une seule fois avec les budgets recalculés depuis ces mesures (marge de 15 % pour le gabarit et réserve de réponse). Le protocole compact découvre compétences et rôles à la demande au lieu de réinjecter leur catalogue complet. Objectif immuable, critères, permissions et barrières contre la répétition d'actions restent conservés. Une augmentation de contexte éventuelle reste soumise à la limite automatique et à la réserve mémoire existantes ; aucun agrandissement global de configuration. Une réponse partielle ou un second refus ne déclenche pas de nouvelle tentative.
+
+Preuves : tests HTTP locaux sans inférence, conservation des missions et reprise. Ils ne prouvent pas la qualité d'une génération 3D ou la disponibilité de tous les moteurs. La copie en production contient des modifications locales non publiées ; aucun écrasement ni redémarrage de ce service n'a été effectué pour cette correction.
+
 ### 1.5 Missions vérifiables et interface terminal JOBIA 1.3.0
 
 Le moteur des missions conserve l'objectif original séparément du contexte de dialogue, de la mémoire et des conseils. Une boucle unique remplace l'Oracle et le Gardien exécutés systématiquement avant chaque tâche. Elle établit un plan pour les actions, découvre les scripts disponibles, expérimente, conserve les observations et vérifie les critères avant de terminer. Une revue avec un contexte LLM séparé recherche les écarts ; c'est un jugement du modèle, pas une preuve empirique ni une note de qualité.
