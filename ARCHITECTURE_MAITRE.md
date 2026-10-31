@@ -84,6 +84,8 @@ Observation en lecture seule : plusieurs missions CLI acceptées échouaient ens
 
 Avant toute sortie du modèle, la boucle peut réessayer une seule fois avec les budgets recalculés depuis ces mesures (marge de 15 % pour le gabarit et réserve de réponse). Le protocole compact découvre compétences et rôles à la demande au lieu de réinjecter leur catalogue complet. Objectif immuable, critères, permissions et barrières contre la répétition d'actions restent conservés. Une augmentation de contexte éventuelle reste soumise à la limite automatique et à la réserve mémoire existantes ; aucun agrandissement global de configuration. Une réponse partielle ou un second refus ne déclenche pas de nouvelle tentative.
 
+Les événements token de la boucle d’action portent le champ additif `channel: tool_call` : ce JSON de commande ne constitue pas une réponse conversationnelle. Les clients peuvent conserver le flux dans leur journal de diagnostic et afficher la phase puis le résultat vérifié dans la conversation. Les anciens événements sans channel restent compatibles.
+
 Preuves : tests HTTP locaux sans inférence, conservation des missions et reprise. Ils ne prouvent pas la qualité d'une génération 3D ou la disponibilité de tous les moteurs. La copie en production contient des modifications locales non publiées ; aucun écrasement ni redémarrage de ce service n'a été effectué pour cette correction.
 
 ### 1.5 Missions vérifiables et interface terminal JOBIA 1.3.0

@@ -1698,7 +1698,7 @@ class AutonomousMissionAgent:
                     else:
                         async for chunk in self._chat_chunks(await self._execution_messages()):
                             reply += chunk
-                            await self._emit('token',{'content':chunk,'worker':worker})
+                            await self._emit('token',{'content':chunk,'worker':worker,'channel':'tool_call'})
                     self.state['messages'].append({'role':'assistant','content':reply})
                     call = _parse_tool_call(reply)
                     if not call:
