@@ -86,7 +86,7 @@ Avant toute sortie du modèle, la boucle peut réessayer une seule fois avec les
 
 Les événements token de la boucle d’action portent le champ additif `channel: tool_call` : ce JSON de commande ne constitue pas une réponse conversationnelle. Les clients peuvent conserver le flux dans leur journal de diagnostic et afficher la phase puis le résultat vérifié dans la conversation. Les anciens événements sans channel restent compatibles.
 
-Preuves : tests HTTP locaux sans inférence, conservation des missions et reprise. Ils ne prouvent pas la qualité d'une génération 3D ou la disponibilité de tous les moteurs. La copie en production contient des modifications locales non publiées ; aucun écrasement ni redémarrage de ce service n'a été effectué pour cette correction.
+Preuves : neuf jobs GitHub réussis avant fusion de la PR #16 en 58e4b07 ; le job Windows 3.10 compte 603 tests réussis, 15 ignorés et 241 sous-tests. Les tests HTTP n'effectuent aucune inférence et ne prouvent pas la qualité d'une génération 3D ou la disponibilité de tous les moteurs. Activation ensuite limitée à llm_gateway.py et mission_agent.py sur le PC, avec empreintes préalables, sauvegarde de leurs brouillons et adaptation conservant les autres fonctions. Les 26 tests de transport passent contre ces fichiers appliqués. Après vérification de l'absence de demande en file et de bail actif, le superviseur existant a redémarré le seul démon AGI ; son bus IPC et le bridge sont sains, aucun modèle n'a été chargé. La copie PC conserve d'autres modifications non publiées et n'est pas identique au main GitHub.
 
 ### 1.5 Missions vérifiables et interface terminal JOBIA 1.3.0
 
