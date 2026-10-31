@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 
 import aiohttp
@@ -19,6 +20,38 @@ class ModelReadTimeout(asyncio.TimeoutError):
 
 class ModelIncompleteAnswer(RuntimeError):
     """No usable model answer; retrying an unchanged budget is not a repair."""
+
+
+class ModelContextOverflow(RuntimeError):
+    """Runner rejected input before generation; counts are safe to persist."""
+    def __init__(self, request_tokens, context_tokens):
+        self.request_tokens, self.context_tokens = request_tokens, context_tokens
+        super().__init__(f'Ollama: requete de {request_tokens} tokens pour une fenetre de '
+                         f'{context_tokens} tokens. Contexte insuffisant; objectif et travaux conserves.')
+
+
+async def _check_chat_response(response):
+    if response.status < 400:
+        return
+    # Error bodies can contain prompts, URLs or credentials. Read a bounded
+    # diagnostic, expose only recognized numeric context measurements.
+    raw = bytearray()
+    async for chunk in response.content.iter_chunked(1024):
+        raw.extend(chunk)
+        if len(raw) > 8192:
+            break
+    try:
+        detail = json.loads(raw[:8192]).get('error','')
+    except (ValueError, AttributeError):
+        detail = ''
+    if response.status == 400 and isinstance(detail,str):
+        match = re.search(r'request \((\d{1,9}) tokens\) exceeds the available context size \((\d{1,9}) tokens\)',detail)
+        if match:
+            needed, window = map(int,match.groups())
+            if needed > window > 0:
+                raise ModelContextOverflow(needed,window)
+    raise RuntimeError(f'Ollama: requete refusee (HTTP {response.status}). '
+                       'Consulter le journal serveur pour le diagnostic; aucune action rejouee.')
 
 
 def _model_timeout(exc, model, timeout, received_chars):
@@ -96,7 +129,7 @@ class LLMGateway:
         thinking_chars, done_reason = 0, None
         try:
             async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
-                response.raise_for_status()
+                await _check_chat_response(response)
                 async for line in response.content:
                     if not line.strip():
                         continue

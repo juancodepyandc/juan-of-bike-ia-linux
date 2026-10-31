@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import aiohttp
 from agi_core.bus import global_bus
-from agi_core.llm_gateway import LLMGateway, ModelIncompleteAnswer
+from agi_core.llm_gateway import LLMGateway, ModelIncompleteAnswer, ModelContextOverflow
 from agi_core.mission_tools import MissionTools, digest_file
 from agi_core.mission_protocol import CHECK_FIELDS, PURE_CHECKS, tool_response_schema, validate_args, validate_checks
 from agi_core.runtime_policy import RuntimePolicy
@@ -182,13 +182,39 @@ class AutonomousMissionAgent:
             # Propose a conclusion for the existing audit/review pipeline. This
             # is not approval, and does not execute an unsolicited extra action.
             allowed = ['finish']
-        async for chunk in self.gateway.chat_chunks(messages, self.model, session=self._session, on_metrics=metrics,
-                                                    thinking=False if completion else None,
-                                                    response_format=tool_response_schema(missing or self.state['criteria'],allowed,
-                                                        required_tool_names=self._explicit_tool_names(),allow_delegation_checks=not self.depth,
-                                                        available_script_names=self.state.get('available_script_names'),
-                                                        generation_prompt=self.request_text if allowed==['generate_3d'] else None)):
-            yield chunk
+        response_format = tool_response_schema(missing or self.state['criteria'],allowed,
+            required_tool_names=self._explicit_tool_names(),allow_delegation_checks=not self.depth,
+            available_script_names=self.state.get('available_script_names'),
+            generation_prompt=self.request_text if allowed==['generate_3d'] else None)
+        emitted = False
+        for attempt in range(2):
+            try:
+                async for chunk in self.gateway.chat_chunks(messages,self.model,session=self._session,on_metrics=metrics,
+                        thinking=False if completion else None,response_format=response_format):
+                    emitted = True
+                    yield chunk
+                return
+            except ModelContextOverflow as exc:
+                if attempt or emitted:
+                    raise  # Never retry a partial answer or loop on a rejected repair.
+                # The initial request has no successful usage metrics. Learn from
+                # the runner's explicit rejection, including template overhead.
+                ratio = sum(len(m['content']) for m in messages)/exc.request_tokens * .85
+                if ratio <= 0:
+                    raise
+                self.state.update(context_model=self.model,context_window=exc.context_tokens,
+                    context_chars_per_token=min(self.state.get('context_chars_per_token',ratio),ratio),
+                    max_reply_tokens=max(self.state.get('max_reply_tokens',0),min(2048,max(256,exc.context_tokens//8))))
+                self.state.pop('context_request_pending',None)
+                self._context_window_checked = False
+                # Existing compaction preserves the immutable request, criteria,
+                # resource references and interruption fences. Its resource cap
+                # also bounds a context increase if the compact protocol cannot fit.
+                messages = await self._execution_messages()
+                await self._emit('context_recovery',{'request_tokens':exc.request_tokens,
+                    'context_tokens':exc.context_tokens,'retry':1,'protocol_variant':self.state.get('protocol_variant'),
+                    'message':'Contexte compacte; nouvelle tentative sans rejouer les outils.'})
+                await self._save()
 
     def _available_tools(self):
         """Constrain decoding to the same prerequisites as the executor."""
@@ -1042,7 +1068,6 @@ class AutonomousMissionAgent:
         executor. Do not truncate the user objective, obligations or fences.
         """
         from agi_core.mission_protocol import ARG_SCHEMAS
-        context = _cli_load_context_for_workspace(self.workspace)
         allowed = []
         for name in ARG_SCHEMAS:
             try:
@@ -1081,7 +1106,7 @@ class AutonomousMissionAgent:
             f'Workspace: {self.workspace}. Host: {sys.platform}. Python: {PYTHON_BIN}. Permissions: {self.permissions}. '
             f'Delivery: .transfer_to_client/{self.mission_id}/ (downloaded and hash-checked by the client). '
             f'Tools: {", ".join(allowed)}. Inspect tool definitions when needed. '
-            f'Project skills: {context["skills_context"]}. Reusable roles: {json.dumps(context["saved_agents"],ensure_ascii=False)}. '
+            'Discover skill and saved-role definitions only when relevant using list_skills and inspect_runtime; read their source before reuse. '
             f'Advisory context: {self.additional_context}')
 
     async def _deliver(self):
@@ -1673,7 +1698,7 @@ class AutonomousMissionAgent:
                     else:
                         async for chunk in self._chat_chunks(await self._execution_messages()):
                             reply += chunk
-                            await self._emit('token',{'content':chunk,'worker':worker})
+                            await self._emit('token',{'content':chunk,'worker':worker,'channel':'tool_call'})
                     self.state['messages'].append({'role':'assistant','content':reply})
                     call = _parse_tool_call(reply)
                     if not call:

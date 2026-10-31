@@ -7,16 +7,23 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
 import aiohttp
-from agi_core.llm_gateway import LLMGateway, ModelReadTimeout
+from agi_core.llm_gateway import LLMGateway, ModelReadTimeout, ModelContextOverflow
 from agi_core.mission_agent import AutonomousMissionAgent
 
 
 class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        context = patch('agi_core.mission_agent._cli_load_context_for_workspace',return_value={
+            'skills_context':'Fixture catalog ' * 1000,'saved_agents':[]})
+        context.start()
+        self.addCleanup(context.stop)
         self.received,self.lines = [],[]
+        self.http_errors = []
         self.delay_before_headers, self.delay_after_lines = 0, 0
         async def chat(request):
             self.received.append(await request.json())
+            if self.http_errors:
+                return web.json_response({"error":self.http_errors.pop(0)},status=400)
             await asyncio.sleep(self.delay_before_headers)
             response = web.StreamResponse(headers={'Content-Type':'application/x-ndjson'})
             await response.prepare(request)
@@ -272,3 +279,79 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError,'Model unavailable'):
             async for _ in self.gateway.chat_chunks([{'role':'user','content':'Test'}],'fixture:local'):
                 pass
+
+
+    async def test_context_rejection_preserves_only_measured_counts(self):
+        self.http_errors = ['request (14233 tokens) exceeds the available context size (4096 tokens), try increasing it']
+        with self.assertRaisesRegex(RuntimeError, '14233.*4096') as failure:
+            _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local')]
+        self.assertEqual(failure.exception.request_tokens,14233)
+        self.assertEqual(failure.exception.context_tokens,4096)
+        self.assertNotIn('http://',str(failure.exception))
+
+    async def test_unknown_bad_request_does_not_leak_body_or_endpoint(self):
+        self.http_errors = ['untrusted error with secret=fixture-private-value']
+        with self.assertRaisesRegex(RuntimeError, 'Ollama.*HTTP 400') as failure:
+            _ = [c async for c in self.gateway.chat_chunks([], 'fixture:local')]
+        self.assertNotIn('fixture-private-value',str(failure.exception))
+        self.assertNotIn('http://',str(failure.exception))
+        self.assertEqual(len(self.received),1)
+
+    async def test_context_rejection_compacts_once_without_replaying_tools(self):
+        self.http_errors = ['request (14233 tokens) exceeds the available context size (4096 tokens), try increasing it']
+        self.lines = [{'message':{'content':'{"tool":"inspect_runtime","args":{}}'}},{'done':True}]
+        with tempfile.TemporaryDirectory() as workspace:
+            agent = AutonomousMissionAgent('overflow','Preserve the exact original objective',workspace,'fixture:local')
+            agent.gateway = self.gateway
+            agent.state['messages'] = [{'role':'system','content':agent._system_prompt()},{'role':'user','content':agent.request_text}]
+            original = agent._messages()
+            with patch.object(agent,'_emit',AsyncMock()) as emit:
+                reply = ''.join([c async for c in agent._chat_chunks(original)])
+            self.assertEqual(json.loads(reply)['tool'],'inspect_runtime')
+            self.assertEqual(len(self.received),2)
+            repaired = self.received[1]['messages']
+            self.assertIn(agent.request_text,[m['content'] for m in repaired])
+            self.assertLess(sum(len(m['content']) for m in repaired),sum(len(m['content']) for m in original))
+            self.assertEqual(self.received[0]['format'],self.received[1]['format'])
+            self.assertEqual(agent.state['action_count'],0)
+            self.assertTrue(any(c.args[0]=='context_recovery' for c in emit.call_args_list))
+
+    async def test_context_retry_is_bounded_even_if_runner_rejects_again(self):
+        self.http_errors = ['request (14233 tokens) exceeds the available context size (4096 tokens)']*3
+        with tempfile.TemporaryDirectory() as workspace:
+            agent = AutonomousMissionAgent('overflow','Keep the goal',workspace,'fixture:local')
+            agent.gateway = self.gateway
+            agent.state['messages'] = [{'role':'system','content':agent._system_prompt()},{'role':'user','content':agent.request_text}]
+            with self.assertRaisesRegex(RuntimeError,'14233.*4096'):
+                _ = [c async for c in agent._chat_chunks(agent._messages())]
+        self.assertEqual(len(self.received),2)
+
+
+    async def test_partial_answer_is_never_retried_as_context_repair(self):
+        async def partial(*args,**kwargs):
+            yield 'partial answer'
+            raise ModelContextOverflow(14233,4096)
+        with tempfile.TemporaryDirectory() as workspace:
+            agent = AutonomousMissionAgent('partial','Keep the goal',workspace,'fixture:local')
+            with patch.object(agent.gateway,'chat_chunks',partial), patch.object(agent,'_execution_messages',AsyncMock()) as repair:
+                observed=[]
+                with self.assertRaises(ModelContextOverflow):
+                    async for chunk in agent._chat_chunks([{'role':'user','content':agent.request_text}]):
+                        observed.append(chunk)
+                self.assertEqual(observed,['partial answer'])
+                repair.assert_not_awaited()
+
+    async def test_immutable_goal_too_large_stops_before_retry_and_keeps_all_text(self):
+        self.http_errors = ['request (14233 tokens) exceeds the available context size (4096 tokens)']
+        with tempfile.TemporaryDirectory() as workspace:
+            goal = 'Exact required detail ' * 1000
+            agent = AutonomousMissionAgent('large',goal,workspace,'fixture:local')
+            agent.gateway = self.gateway
+            agent.state['messages']=[{'role':'system','content':agent._system_prompt()},{'role':'user','content':goal}]
+            from dataclasses import replace
+            agent.policy=replace(agent.policy,auto_context_max_tokens=4096)
+            with self.assertRaisesRegex(RuntimeError,'immutable goal'):
+                _=[c async for c in agent._chat_chunks(agent._messages())]
+            self.assertEqual(agent.state['goal'],goal)
+            self.assertEqual(agent.state['messages'][1]['content'],goal)
+            self.assertEqual(len(self.received),1)
