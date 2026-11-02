@@ -3191,6 +3191,11 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
     [turn.content, displayedLength],
   )
 
+  const onQuickPromptRef = useRef(onQuickPrompt)
+  useEffect(() => {
+    onQuickPromptRef.current = onQuickPrompt
+  }, [onQuickPrompt])
+
   const markdownComponents = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
       const isInline = !className
@@ -3205,7 +3210,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
           <button
             type="button"
             className="inline-flex items-center rounded-full border border-violet-400/25 bg-violet-500/10 px-2 py-0.5 text-[12px] font-medium text-violet-200 hover:bg-violet-500/20 hover:text-violet-100"
-            onClick={() => onQuickPrompt?.(buildExplainNotionPrompt(notion))}
+            onClick={() => onQuickPromptRef.current?.(buildExplainNotionPrompt(notion))}
             title={`Expliquer: ${notion}`}
           >
             {children}
@@ -3214,7 +3219,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       }
       return <a target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline" href={href} {...props}>{children}</a>
     },
-  }), [onQuickPrompt])
+  }), [])
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
