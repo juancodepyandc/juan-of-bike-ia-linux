@@ -1,3 +1,7 @@
 ## 2026-10-12 - Prevent isolated generation split in 3D pipeline
 **Learning:** The pipeline defaults to orchestrating scenes, parsing the prompt into multiple objects when possible. A user explicitly requesting a single base block without an assembly context had their subject split into disconnected meshes because the 3D intent mapper wasn't appending the proper flag to the pipeline configuration.
 **Action:** When a user expresses intent for `referenceFraming === 'isolated_subject'` and `subjectKind !== 'assembly'`, we must proactively inject `--no-scene` into `auroraArgs` passed to `python-services/aurora_3d_pipeline.py`.
+
+## 2026-11-06 - Prevent ReactMarkdown full unmount during typewriter effect
+**Learning:** Using an inline callback (`onQuickPrompt`) in the parent component that is passed down and added to the dependency array of `ReactMarkdown`'s `components` object causes the entire markdown tree to unmount and remount on every keystroke/tick of the typewriter reveal effect. This is because React-Markdown treats a new `components` object reference as a reason to remount all custom nodes.
+**Action:** Always extract the `components` map out of render cycles or, if it needs dynamic state/callbacks, use the `useRef` (latest-ref) pattern for those callbacks and keep the `useMemo` dependency array empty to guarantee strict referential equality of the `components` object across renders.

@@ -16,7 +16,7 @@
 // can approve / skip / abort destructive steps mid-run.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModuleId } from '../types/app.ts'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -3124,7 +3124,7 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
+const ChatBubble = memo(function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
   turn: ChatTurn
   onRegenerate?: () => void
   onEdit?: () => void
@@ -3186,6 +3186,9 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       setTimeout(() => setCopied(false), 1400)
     } catch { /* clipboard unavailable */ }
   }
+  const onQuickPromptRef = useRef(onQuickPrompt)
+  useEffect(() => { onQuickPromptRef.current = onQuickPrompt }, [onQuickPrompt])
+
   const visibleMarkdown = useMemo(
     () => renderInteractiveMarkdown(turn.content.slice(0, displayedLength)),
     [turn.content, displayedLength],
@@ -3205,7 +3208,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
           <button
             type="button"
             className="inline-flex items-center rounded-full border border-violet-400/25 bg-violet-500/10 px-2 py-0.5 text-[12px] font-medium text-violet-200 hover:bg-violet-500/20 hover:text-violet-100"
-            onClick={() => onQuickPrompt?.(buildExplainNotionPrompt(notion))}
+            onClick={() => onQuickPromptRef.current?.(buildExplainNotionPrompt(notion))}
             title={`Expliquer: ${notion}`}
           >
             {children}
@@ -3214,7 +3217,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       }
       return <a target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline" href={href} {...props}>{children}</a>
     },
-  }), [onQuickPrompt])
+  }), [])
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
@@ -3315,7 +3318,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       </div>
     </div>
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 // Console drawer (chat mode side panel) — same content as EventsLog but
