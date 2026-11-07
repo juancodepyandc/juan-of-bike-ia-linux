@@ -557,6 +557,10 @@ Validation avant publication : **1 450 tests CLI réussis, 18 ignorés, 5 sous-t
 
 Le déploiement et les essais réels via le CLI doivent être consignés avec leurs empreintes et leurs limites. Le push autorisé ne doit pas écraser l’index ni les modifications locales préexistantes du checkout principal. Les versions publiées sont préparées dans un worktree isolé basé sur le dernier distant ; l’activation du PC conserve les modèles, bases et configurations privées existantes.
 
+Activation observée le 7 novembre : code serveur `a173c5c` et CLI `abd89a8` poussés sur `main`, documentation CLI `c22e612`. La roue 1.5.4 installée démarre depuis AuroraIA, hors du checkout CLI. L’ancienne connexion pointait vers un tunnel expiré et sa clé était refusée ; un nouvel appairage via les API locales prévues à cet effet connecte le PC maître à `http://127.0.0.1:3001`, sans afficher le jeton. Les commandes réelles explorent les outils, les trois ressources et le prompt du hub ; l’état observé signale zéro worker cloud connecté. Le daemon a été relancé par son superviseur et le bridge par son rechargement natif après contrôle des files vides et des baux expirés. Les modifications locales et l’index préexistant sont conservés ; ce checkout comporte donc un overlay qui n’est pas identique à `main`.
+
+Le démarrage du bridge n’amorce plus par défaut de gros modèle ni de synchronisation de tunnel vers Gist. Ces comportements restent disponibles par `AURORA_BRIDGE_BACKGROUND_PRELOAD=1` et `AURORA_BRIDGE_SYNC_TUNNEL=1`. La latence du premier appel peut augmenter en échange d’une absence de chargement ou publication sans demande. Le contrôle TypeScript du parcours navigateur passe. Dans Colab, le navigateur connecté affiche désormais un refus d’accès : son compte ne possède pas le notebook privé ; aucun runtime ni GPU Colab n’est observé.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 

@@ -1476,7 +1476,7 @@ def sync_tunnel_url_to_gist():
 
 
 if __name__ == "__main__":
-    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "1").strip().lower() not in {"0", "false", "no"}:
+    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "0").strip().lower() not in {"0", "false", "no"}:
         sync_tunnel_url_to_gist()
     print("=" * 60)
     print("  BRIDGE AURORA — Port 3001")
@@ -1508,7 +1508,7 @@ if __name__ == "__main__":
     print("  SELF-WATCH       = ON  (auto re-exec sur changement de bridge_server.py)")
     # v82ld — fire-and-forget warmup of qwen3:14b so the first extract-structured
     # request doesn t pay the ~11s cold-load. Daemon thread, never blocks boot.
-    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}:
+    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "0").strip().lower() not in {"0", "false", "no"}:
         _start_ollama_warmup_once("qwen3:14b")
         print("  WARMUP           = qwen3:14b (background, non-blocking)")
         # Best-effort conditional pull; disabled together with the warmup.
