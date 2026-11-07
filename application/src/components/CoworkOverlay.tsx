@@ -16,7 +16,7 @@
 // can approve / skip / abort destructive steps mid-run.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ModuleId } from '../types/app.ts'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -2377,9 +2377,10 @@ function ConversationThread({
           return <ChatBubble
             key={m.id}
             turn={m}
-            onRegenerate={prevUser ? () => onRegenerate(prevUser) : undefined}
+            prevUserPrompt={prevUser}
+            onRegenerate={onRegenerate}
             onQuickPrompt={onQuickPrompt}
-            onEdit={m.role === 'user' ? () => onEditUserTurn(m.id) : undefined}
+            onEdit={m.role === 'user' ? onEditUserTurn : undefined}
           />
         })}
         {running && messages[messages.length - 1]?.pending && (
@@ -3124,10 +3125,11 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
+const ChatBubble = memo(function ChatBubble({ turn, prevUserPrompt, onRegenerate, onEdit, onQuickPrompt }: {
   turn: ChatTurn
-  onRegenerate?: () => void
-  onEdit?: () => void
+  prevUserPrompt?: string
+  onRegenerate?: (prompt: string) => void
+  onEdit?: (turnId: string) => void
   onQuickPrompt?: (prompt: string) => void
 }) {
   const [expanded, setExpanded] = useState(false)
@@ -3186,11 +3188,17 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       setTimeout(() => setCopied(false), 1400)
     } catch { /* clipboard unavailable */ }
   }
+  const onQuickPromptRef = useRef(onQuickPrompt)
+  useEffect(() => {
+    onQuickPromptRef.current = onQuickPrompt
+  }, [onQuickPrompt])
+
   const visibleMarkdown = useMemo(
     () => renderInteractiveMarkdown(turn.content.slice(0, displayedLength)),
     [turn.content, displayedLength],
   )
 
+  // ⚡ Bolt: Memoize components object to prevent ReactMarkdown from re-rendering
   const markdownComponents = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
       const isInline = !className
@@ -3205,7 +3213,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
           <button
             type="button"
             className="inline-flex items-center rounded-full border border-violet-400/25 bg-violet-500/10 px-2 py-0.5 text-[12px] font-medium text-violet-200 hover:bg-violet-500/20 hover:text-violet-100"
-            onClick={() => onQuickPrompt?.(buildExplainNotionPrompt(notion))}
+            onClick={() => onQuickPromptRef.current?.(buildExplainNotionPrompt(notion))}
             title={`Expliquer: ${notion}`}
           >
             {children}
@@ -3214,7 +3222,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       }
       return <a target="_blank" rel="noopener noreferrer" className="text-violet-300 hover:underline" href={href} {...props}>{children}</a>
     },
-  }), [onQuickPrompt])
+  }), [])
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} group`}>
@@ -3255,9 +3263,9 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
               <Copy size={10} />
               {copied ? 'Copie !' : 'Copier'}
             </button>
-            {onRegenerate && (
+            {onRegenerate && prevUserPrompt && (
               <button
-                onClick={onRegenerate}
+                onClick={() => onRegenerate(prevUserPrompt)}
                 className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-white/55 border border-white/8 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
                 title="Refaire avec la meme question"
               >
@@ -3282,7 +3290,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
               {copied ? 'Copie !' : 'Copier'}
             </button>
             <button
-              onClick={onEdit}
+              onClick={() => onEdit?.(turn.id)}
               className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] text-white/55 border border-white/8 hover:bg-white/[0.08] hover:text-white/80 transition-colors"
               title="Modifier cette question (la paire suivante sera supprimee)"
             >
@@ -3315,7 +3323,7 @@ function ChatBubble({ turn, onRegenerate, onEdit, onQuickPrompt }: {
       </div>
     </div>
   )
-}
+})
 
 // ---------------------------------------------------------------------------
 // Console drawer (chat mode side panel) — same content as EventsLog but
