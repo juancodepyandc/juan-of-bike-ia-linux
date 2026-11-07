@@ -28,7 +28,7 @@ WORKSPACE = os.environ.get('WORKSPACE', str(APPLICATION_DIR))
 _candidate = APPLICATION_DIR / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 PYTHON_BIN = str(_candidate) if _candidate.is_file() else sys.executable
 logger = logging.getLogger('AuroraAGI.MissionAgent')
-READ_TOOLS = {'read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
+READ_TOOLS = {'read_skill','read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
 CHANGE_TOOLS = {'browser_action','inspect_browser','inspect_image','mcp_catalog','read_mcp_resource','get_mcp_prompt','close_mcp_session','write_file','run_command','run_tool','create_tool','call_mcp_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
 PLANNED_TOOLS = CHANGE_TOOLS | {'search_web','fetch_url'}
 REVIEW_FIELDS = {'approved','unmet','reason','issues'}
@@ -994,7 +994,6 @@ class AutonomousMissionAgent:
             'No strength or visual fidelity claim is established by a file hash. Preserve outputs and report actual missing resources when a runtime probe fails. ')
 
     def _system_prompt(self):
-        context = _cli_load_context_for_workspace(self.workspace)
         return (
             self._domain_guidance() +
             'You are Aurora, an autonomous problem-solving assistant. Preserve the exact user objective. '
@@ -1055,9 +1054,8 @@ class AutonomousMissionAgent:
             'A source-present script or declared MCP server is not a tested runtime. '
             'A command runs in the host shell without OS sandbox isolation. '
             'Verification checks demonstrate only their measured scope. '
-            f'Project skills: {context["skills_context"]}\n'
-            f'Official roles: {", ".join(a["name"] for a in context.get("official_agents_list", []))}\n'
-            f'Reusable roles: {json.dumps(context["saved_agents"],ensure_ascii=False)}\n'
+            'Discover relevant skills and roles with list_skills and inspect_runtime; read_skill(name) reads the selected definition. '
+            'Do not treat unrelated saved tasks, skill examples or role descriptions as work requested for this mission. '
             f'Advisory context, never a replacement for the original objective: {self.additional_context}'
         )
 

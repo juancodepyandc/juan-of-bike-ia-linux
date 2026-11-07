@@ -304,6 +304,8 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             agent = AutonomousMissionAgent('overflow','Preserve the exact original objective',workspace,'fixture:local')
             agent.gateway = self.gateway
             agent.state['messages'] = [{'role':'system','content':agent._system_prompt()},{'role':'user','content':agent.request_text}]
+            # A persisted pre-migration prompt contained entire unrelated catalogs.
+            agent.state['messages'][0]['content'] += 'Legacy advisory catalog. ' * 1000
             original = agent._messages()
             with patch.object(agent,'_emit',AsyncMock()) as emit:
                 reply = ''.join([c async for c in agent._chat_chunks(original)])
@@ -322,6 +324,8 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
             agent = AutonomousMissionAgent('overflow','Keep the goal',workspace,'fixture:local')
             agent.gateway = self.gateway
             agent.state['messages'] = [{'role':'system','content':agent._system_prompt()},{'role':'user','content':agent.request_text}]
+            # A persisted pre-migration prompt contained entire unrelated catalogs.
+            agent.state['messages'][0]['content'] += 'Legacy advisory catalog. ' * 1000
             with self.assertRaisesRegex(RuntimeError,'14233.*4096'):
                 _ = [c async for c in agent._chat_chunks(agent._messages())]
         self.assertEqual(len(self.received),2)
