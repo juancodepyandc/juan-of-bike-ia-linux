@@ -29,7 +29,7 @@ _candidate = APPLICATION_DIR / '.venv' / ('Scripts/python.exe' if os.name == 'nt
 PYTHON_BIN = str(_candidate) if _candidate.is_file() else sys.executable
 logger = logging.getLogger('AuroraAGI.MissionAgent')
 READ_TOOLS = {'read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
-CHANGE_TOOLS = {'write_file','run_command','run_tool','create_tool','call_mcp_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
+CHANGE_TOOLS = {'browser_action','inspect_browser','inspect_image','mcp_catalog','read_mcp_resource','get_mcp_prompt','close_mcp_session','write_file','run_command','run_tool','create_tool','call_mcp_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
 PLANNED_TOOLS = CHANGE_TOOLS | {'search_web','fetch_url'}
 REVIEW_FIELDS = {'approved','unmet','reason','issues'}
 class ContextCapacityError(RuntimeError):
@@ -1027,7 +1027,7 @@ class AutonomousMissionAgent:
             'required_tools lists only tools explicitly named and requested in the original user request; use [] when none are named. Never require every available tool. Other implementation choices remain optional. Completion requires successful execution of declared requested tools. '
             'inspect_csv(path,integer_columns:[str] optional,delimiter optional) measures actual CSV data rows and exact integer sums. DictReader already consumes the header. '
             'run_command(argv:[str] OR command:str); list_tools(query); inspect_tool(name); run_tool(name,argv:[str]); '
-            'create_tool(name,code); list_mcp_tools(server optional,probe optional); call_mcp_tool(server,tool,arguments optional); generate_image(prompt,folder,regenerate optional); revise_plan(steps,reason,evidence_ids); search_web(query); fetch_url(url); '
+            'browser_action(action,session_id,observation_id,ref); inspect_browser(session_id,question,model optional); inspect_image(path,question,model optional); mcp_catalog(server,kind,cursor optional); read_mcp_resource(server,uri); get_mcp_prompt(server,name,arguments optional); close_mcp_session(server); create_tool(name,code); list_mcp_tools(server optional,probe optional); call_mcp_tool(server,tool,arguments optional); generate_image(prompt,folder,regenerate optional); revise_plan(steps,reason,evidence_ids); search_web(query); fetch_url(url); '
             'spawn_agent(task OR tasks:[str],checks:[check],agent optional); create_agent(name,role); create_skill(name,description,instructions); list_skills(); '
             'verify(checks:[{kind:"file",path,min_bytes,sha256 optional,criterion optional} OR '
             '{kind:"text",path,equals OR contains,criterion optional} OR {kind:"json",path,equals optional,exact_keys:[str] optional,types:{field:type} optional,expressions:[str] optional,criterion optional} OR '
