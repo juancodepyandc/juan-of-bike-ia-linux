@@ -6,6 +6,7 @@ import io
 import json
 import threading
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 from agi_core.llm_gateway import LLMGateway
@@ -28,7 +29,8 @@ class VisionServer(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.requests.append((self.path, payload))
         if self.path == "/api/show":
-            self.send_json({"capabilities": ["completion"] + (["vision"] if "visual" in payload["model"] else [])})
+            self.send_json(getattr(self.server, 'metadata', {}).get(payload['model'],
+                {"capabilities": ["completion"] + (["vision"] if "visual" in payload["model"] else [])}))
         elif self.path == "/api/chat":
             image = payload["messages"][1]["images"][0]
             self.server.observed_image = base64.b64decode(image)
@@ -71,6 +73,21 @@ class VisionObservationContracts(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError):
                 await inspect_image_bytes(self.raw, "Describe content", model=model, gateway=self.gateway)
         self.assertFalse(any(path == "/api/chat" for path, _ in VisionServer.requests))
+
+    async def test_auto_prefers_a_measured_nonthinking_peer_but_honors_explicit_choice(self):
+        base = {'capabilities':['vision','thinking'],
+                'details':{'family':'observed-family','quantization_level':'observed-quant'},
+                'model_info':{'general.parameter_count':20}}
+        peer = {**base, 'capabilities':['vision'], 'model_info':{'general.parameter_count':19}}
+        self.server.metadata = {'visual':base, 'large-visual':peer}
+        with patch('agi_core.vision_observer.available_model_bytes',return_value=3):
+            selected = await inspect_image_bytes(self.raw,'Observe content',gateway=self.gateway)
+            self.assertEqual(selected['model'],'large-visual')
+            explicit = await inspect_image_bytes(self.raw,'Observe content',model='visual',gateway=self.gateway)
+            self.assertEqual(explicit['model'],'visual')
+        with patch('agi_core.vision_observer.available_model_bytes',return_value=2):
+            selected = await inspect_image_bytes(self.raw,'Observe content',gateway=self.gateway)
+            self.assertEqual(selected['model'],'visual')
 
     async def test_invalid_image_or_question_cannot_submit_inference(self):
         with self.assertRaises(ValueError):

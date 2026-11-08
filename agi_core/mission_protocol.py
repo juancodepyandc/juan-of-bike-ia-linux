@@ -3,13 +3,14 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from agi_core.json_predicates import parse_json_expression
+from agi_core.json_evidence import BINDING_SCHEMA
 
 
 TEXT = {'type':'string'}
 STRINGS = {'type':'array','items':TEXT}
 NONEMPTY_STRINGS = {**STRINGS,'minItems':1}
 INTEGER = {'type':'integer'}
-PURE_CHECKS = {'file','text','json','csv_json','agent','skill','delegation'}
+PURE_CHECKS = {'file','text','json','json_evidence','csv_json','agent','skill','delegation'}
 
 
 def object_args(properties, required=()):
@@ -17,6 +18,9 @@ def object_args(properties, required=()):
 
 
 CHECK_SCHEMA = {'anyOf':[
+    object_args({'kind':{'const':'json_evidence'},'path':TEXT,'criterion':TEXT,
+                 'bindings':{'type':'array','minItems':1,'maxItems':64,'items':BINDING_SCHEMA}},
+                ('kind','path','bindings')),
     object_args({'kind':{'const':'file'},'path':TEXT,'min_bytes':INTEGER,'sha256':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'text'},'path':TEXT,'equals':TEXT,'contains':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'json'},'path':TEXT,'equals':{'description':'Expected complete JSON value; object key sets and values must match exactly.'},
@@ -302,12 +306,15 @@ def validate_checks(checks, criteria=()):
             field = schema['properties'][key]
             if 'type' in field and type(value) is not kinds[field['type']]:
                 raise ValueError(f'Acceptance check {key} must be {field["type"]}')
-            if field.get('type')=='array' and (len(value)<field.get('minItems',0) or not all(isinstance(v,str) for v in value)):
+            if field.get('type')=='array' and key!='bindings' and (len(value)<field.get('minItems',0) or not all(isinstance(v,str) for v in value)):
                 raise ValueError(f'Acceptance check {key} must contain strings')
             if isinstance(value,dict) and 'additionalProperties' in field:
                 item = field['additionalProperties']
                 if any(not isinstance(v,str) or ('enum' in item and v not in item['enum']) for v in value.values()):
                     raise ValueError(f'Acceptance check {key} has invalid field values')
+        if check['kind']=='json_evidence':
+            from agi_core.json_evidence import validate_bindings
+            validate_bindings(check['bindings'])
         if check['kind']=='csv_json':
             if not check['row_field'] or check['row_field'] in check['sum_fields'] or any(not k or not v for k,v in check['sum_fields'].items()):
                 raise ValueError('CSV JSON row/sum field mappings must be nonempty and distinct')

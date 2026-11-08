@@ -73,6 +73,14 @@ def image_metadata(raw, *, max_bytes=25 * 1024 * 1024, max_pixels=70_000_000):
     return {"sha256": hashlib.sha256(raw).hexdigest(), "width": width, "height": height, "bytes": len(raw)}
 
 
+def available_model_bytes():
+    try:
+        import psutil
+        return psutil.virtual_memory().available
+    except (ImportError, OSError):
+        return None
+
+
 async def _select_model(gateway, session, requested):
     async with session.get(gateway.ollama_url + "/api/tags") as response:
         response.raise_for_status()
@@ -86,6 +94,7 @@ async def _select_model(gateway, session, requested):
     else:
         # Read capabilities in size order; no model-family keywords or fixed model names.
         models.sort(key=lambda m: m.get("size") if type(m.get("size")) is int else math.inf)
+    candidates = []
     for model in models[:100]:
         if model.get("remote_host") or model.get("remote_model"):
             continue
@@ -93,7 +102,29 @@ async def _select_model(gateway, session, requested):
             response.raise_for_status()
             details = await response.json()
         if "vision" in details.get("capabilities", []):
-            return model["name"], "explicit" if requested else "smallest_installed_vision_model"
+            if requested:
+                return model['name'], 'explicit'
+            candidates.append((model, details))
+    if candidates:
+        smallest, baseline = candidates[0]
+        if 'thinking' in baseline.get('capabilities', []):
+            budget = available_model_bytes()
+            family = baseline.get('details', {}).get('family')
+            quant = baseline.get('details', {}).get('quantization_level')
+            parameters = baseline.get('model_info', {}).get('general.parameter_count')
+            for model, details in candidates:
+                count = details.get('model_info', {}).get('general.parameter_count')
+                size = model.get('size')
+                if (family and quant and type(parameters) is int and type(count) is int
+                        and 0 < count <= parameters
+                        and details.get('details', {}).get('family') == family
+                        and details.get('details', {}).get('quantization_level') == quant
+                        and 'thinking' not in details.get('capabilities', [])
+                        and type(size) is int and budget is not None and 0 < size <= budget):
+                    # A measured peer avoids hidden deliberation for observation.
+                    # This is a model preference, not a runtime memory reservation.
+                    return model['name'], 'nonthinking_vision_peer_within_available_ram'
+        return smallest['name'], 'smallest_installed_vision_model'
     raise ValueError("No installed local model advertises vision capability")
 
 

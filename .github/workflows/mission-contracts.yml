@@ -34,7 +34,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.10', '3.13']
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -54,5 +54,5 @@ jobs:
           node-version: '24'
       - run: python -m pip install -e "aurora-remote-cli[test]" aiohttp flask requests manifold3d pillow playwright
       - run: python -m playwright install --with-deps chromium
-      - run: python -m pytest tests_agi tests_auto_rl -q
+      - run: python -m pytest tests_agi tests_auto_rl -q --durations=20 -o faulthandler_timeout=120
         working-directory: AuroraIA

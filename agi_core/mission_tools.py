@@ -684,6 +684,14 @@ class MissionTools:
                         digest = await asyncio.to_thread(digest_file, path)
                         item.update(bytes=path.stat().st_size, observed_sha256=digest)
                         item['passed'] = item['bytes'] >= minimum and (not check.get('sha256') or check['sha256']==digest)
+                    elif kind == 'json_evidence':
+                        from agi_core.json_evidence import compare_evidence
+                        path = a._file_path(check['path'])
+                        raw = await asyncio.to_thread(read_verification_bytes,path,a.policy.output_chars*4)
+                        actual = strict_json(raw.decode('utf-8'))
+                        receipts = {entry['id']:entry for entry in a.state.get('evidence',[])}
+                        result = compare_evidence(actual,check['bindings'],receipts)
+                        item.update(result,observed_sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
                     elif kind in {'text','json'}:
                         path = a._file_path(check.get('path',''))
                         raw = await asyncio.to_thread(read_verification_bytes,path,a.policy.output_chars*4)
