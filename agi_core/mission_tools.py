@@ -480,6 +480,13 @@ class MissionTools:
         return result
 
     async def execute(self, name, args):
+        if name == 'inspect_evidence':
+            self.agent._require_tool(name)
+            from agi_core.json_evidence import inspect_receipt
+            receipts = {entry['id']:entry for entry in self.agent.state.get('evidence',[])}
+            return inspect_receipt(receipts,args.get('evidence_id',''),args.get('pointer',''),
+                                   tool=args.get('tool'),offset=args.get('offset',0),limit=args.get('limit',16),
+                                   max_chars=self.agent.policy.output_chars//2)
         if name == 'read_skill':
             self.agent._require_tool(name)
             from agi_core.context import discover_skills

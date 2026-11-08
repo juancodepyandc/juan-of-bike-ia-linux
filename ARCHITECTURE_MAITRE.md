@@ -597,6 +597,25 @@ Le schéma partagé utilise donc une union explicite : racine vide constante, ou
 
 Parcours : missions daemon natives/CLI distant et vérificateur CLI autonome 1.5.7. Aucun changement de poids, de défaut global de modèle ni entraînement. Le schéma et les instructions ajoutent quelques caractères ; aucun gain général de latence ou de qualité n’est mesuré. Validation : **39 tests JSON/contexte/transport réussis en 1,746 s**, puis **1 452 tests CLI, 18 ignorés et 5 sous-tests en 20,85 s**. Le critère de réussite reste une mission réelle livrant ses observations correctement liées, avec les actions demandées effectivement exécutées ; le préfixe syntaxique ne suffit pas.
 
+### 1.32 Inspection des reçus et contexte réel de reprise — 8 novembre 2026
+
+**Problème observé.** La reprise du diagnostic `mis_d5f7e51f8d534cbd` avec `qwen3-coder:30b` charge réellement le modèle avec contexte 16 384 : Ollama rapporte environ 20,45 Go au total, dont 13,33 Go en VRAM, et la RAM disponible observée reste à 22,43 Gio. Elle échoue pourtant après 66 étapes. L’audit du checkpoint ne trouve aucun contrôle `json_evidence` réussi ; douze vérifications réussies portent sur d’autres contrôles, notamment la structure. Les six critères déclarés vérifiés ne prouvent donc pas les liaisons exigées. La mission reste échouée, ses fichiers ne sont pas réparés manuellement et aucun gain de qualité général n’est attribué à ce changement de modèle.
+
+**Contrat implémenté, CLI 1.6.0.** `inspect_evidence` liste les reçus retenus de la mission, avec filtre de nom d’outil et pagination, ou lit un `evidence_id` exact et un pointeur optionnel. Il renvoie les champs et leurs vrais pointeurs depuis le reçu complet ; un texte JSON n’est indexé qu’après décodage strict, avec les paramètres `decode_json` et `value_pointer` appropriés. La lecture ne relance aucun outil, est permise en SAFE et refuse un identifiant absent de cette mission. Les appels d’inspection sont exclus de leur propre index, ce qui évite que la pagination s’allonge à chaque lecture. Les parcours natif/daemon, CLI distant et CLI autonome partagent la même logique ; les interfaces React qui ne passent pas par cette boucle gardent leurs propres contrats.
+
+La route authentifiée `GET /api/cli/mission/<id>/evidence` utilise le checkpoint sauvegardé et le même lecteur. L’utilisateur peut l’appeler depuis le PC ou le client distant :
+
+```bash
+jobia missions evidence ID --tool browser_action
+jobia missions evidence ID --evidence-id RECU --pointer /result
+```
+
+Les valeurs sont historiques, avec des limites et marques de troncature explicites. Les réponses sont plafonnées à 16 384 caractères, l’index à 64 entrées par page, et l’exploration d’un reçu à 256 nœuds et 64 champs ; le daemon consacre au plus la moitié de son budget de sortie à cette inspection. Cela ajoute une lecture et une petite indexation, sans nouvelle inférence ni calcul moteur. Les liaisons doivent toujours viser le reçu d’origine : le résultat de l’inspecteur lui-même est refusé comme source de `json_evidence`. Ces chemins n’attestent ni fraîcheur, ni vérité externe, ni couverture totale d’une demande.
+
+**Reprise affichée.** Le terminal affichait ses défauts AUTONOMOUS et `/tmp` lors d’une reprise, alors que le journal conservait STANDARD et le workspace Aurora d’origine. Le statut HTTP rapporte désormais permissions et session retenues ; le CLI lit ces métadonnées et affiche la demande originale et le véritable dossier serveur. Si un ancien serveur ne les rapporte pas, l’affichage les indique comme non rapportées. Le dossier client de réception reste celui effectivement utilisé, distinct du workspace serveur. Aucune élévation de permissions ni nouvelle soumission n’est faite par cette lecture.
+
+**Preuves avant activation.** 102 tests natifs JSON/contexte/transport/API et missions durables passent en 55,818 s ; 1 461 tests CLI, 18 ignorés et 5 sous-tests passent en 22,55 s. Ils couvrent notamment un vrai reçu stdio retrouvé après reprise SAFE sans aucun lancement de processus, une pagination stable, les tailles bornées, le rejet d’un reçu étranger et l’authentification HTTP. La [CI de `0ac2b1d`](https://github.com/juancodepyandc/juan-of-bike-ia-linux/actions/runs/42433513807) réussit sur les six configurations Linux/Windows/macOS et Python 3.10/3.13 ; elle précède cet ajout d’inspection. Son essai autonome et sa CI doivent être vérifiés séparément. L’activation précédente a installé réellement le CLI 1.5.7, avec huit commandes MCP réussies et empreintes identiques au comparateur natif ; l’index local préexistant du PC maître est conservé.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
@@ -8200,6 +8219,8 @@ Preuves JSON (1.5.5) : les missions locales disposent de `verify_json_evidence`.
 La version 1.5.6 précise les erreurs de pointeurs JSON : `/field` et `/items/0`, depuis le reçu complet ; la notation pointée ou à crochets est refusée. Un champ absent indique les clés disponibles, sans afficher leurs valeurs.
 
 La version 1.5.7 demande aussi au décodage structuré une racine vide ou un préfixe `/`, avec une forme de schéma testée sur le moteur local. Le vérificateur contrôle encore la syntaxe complète et le contenu des reçus : un préfixe correct ne prouve pas que le chemin ou la donnée sont justes.
+
+Preuves consultables (1.6.0) : `jobia missions evidence ID --tool browser_action` liste les reçus conservés ; `--evidence-id RECU --pointer /result` lit un reçu et ses vrais chemins JSON. Filtre, `--offset` et `--limit` permettent de parcourir le journal sans relancer les outils. Les missions disposent aussi de `inspect_evidence`, y compris en SAFE. Ces données sont historiques et bornées ; leurs troncatures sont explicites. Les vérifications doivent citer le reçu d’origine. Lors d’une reprise, le terminal affiche désormais le contexte retenu par le serveur, ou son absence de métadonnées, au lieu de présenter les défauts du client comme appliqués.
 ``````````
 <!-- /AURORA_EXPORT -->
 

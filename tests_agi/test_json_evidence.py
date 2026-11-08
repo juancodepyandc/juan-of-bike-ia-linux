@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from agi_core.json_evidence import compare_evidence, pointer
+from agi_core.json_evidence import compare_evidence, pointer, inspect_receipt
 from agi_core.mission_protocol import validate_checks, PURE_CHECKS, tool_response_schema
 from agi_core.mission_tools import MissionTools
 
@@ -35,6 +35,7 @@ class EvidenceBindings(unittest.TestCase):
         binding = [{'path': '', 'evidence_id': 'source', 'source_pointer': '/result'}]
         for receipts in ({}, {'source': {'ok': False, 'result': 'x'}},
                          {'source': {'ok': True, 'tool': 'write_file', 'result': 'x'}},
+                         {'source': {'ok': True, 'tool': 'inspect_evidence', 'result': 'x'}},
                          {'source': {'ok': True, 'tool': 'verify', 'result': 'x'}}):
             with self.subTest(receipts=receipts), self.assertRaises(ValueError):
                 compare_evidence('x', binding, receipts)
@@ -89,6 +90,18 @@ class EvidenceBindings(unittest.TestCase):
 
 
 class NativeEvidenceVerification(unittest.IsolatedAsyncioTestCase):
+    async def test_inspector_reads_only_the_current_mission_without_execution(self):
+        required = []
+        agent = SimpleNamespace(state={'evidence':[
+            {'id':'receipt','tool':'browser_action','ok':True,'result':{'title':'Observed'}}]},
+            policy=SimpleNamespace(output_chars=4000), _require_tool=required.append)
+        observed = await MissionTools(agent,'.','python').execute('inspect_evidence',{'evidence_id':'receipt'})
+        self.assertEqual(required,['inspect_evidence'])
+        self.assertEqual(observed['value']['result']['title'],'Observed')
+        self.assertTrue(any(f['source_pointer']=='/result/title' for f in observed['fields']))
+        with self.assertRaises(ValueError):
+            await MissionTools(agent,'.','python').execute('inspect_evidence',{'evidence_id':'another-mission'})
+
     async def test_native_verifier_reads_actual_saved_bytes_and_keeps_provenance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -119,3 +132,44 @@ class NativeEvidenceVerification(unittest.IsolatedAsyncioTestCase):
                          [{'path':'','evidence_id':'receipt','source_pointer':'','decode_json':1}]):
             with self.subTest(bindings=bindings), self.assertRaises(ValueError):
                 validate_checks([{'kind':'json_evidence','path':'output.json','bindings':bindings}])
+
+
+class ReceiptInspection(unittest.TestCase):
+    def test_index_filters_and_paginates_without_including_its_own_reads(self):
+        receipts = {str(i):{'id':str(i),'tool':'browser_action','ok':True} for i in range(3)}
+        first = inspect_receipt(receipts,tool='browser_action',limit=2)
+        self.assertEqual([r['id'] for r in first['receipts']],['0','1'])
+        self.assertEqual(first['next_offset'],2)
+        receipts['inspection']={'id':'inspection','tool':'inspect_evidence','ok':True}
+        second = inspect_receipt(receipts,offset=first['next_offset'],limit=2)
+        self.assertEqual([r['id'] for r in second['receipts']],['2'])
+        self.assertIsNone(second['next_offset'])
+        for args in ({'offset':-1},{'limit':True},{'limit':65},{'pointer_path':'/result'}):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                inspect_receipt(receipts,**args)
+
+    def test_paths_from_nested_json_text_can_be_used_directly_for_verification(self):
+        receipts = {'source':{'id':'source','tool':'read_mcp_resource','ok':True,
+                    'result':{'contents':[{'text':json.dumps({'a/b':{'~count':0}})}]}}}
+        observed = inspect_receipt(receipts,'source')
+        field = next(f for f in observed['fields'] if f.get('value_pointer')=='/a~1b/~0count')
+        binding = {k:field[k] for k in ('source_pointer','decode_json','value_pointer')}
+        checked = compare_evidence({'count':0},[{'path':'/count','evidence_id':'source',**binding}],receipts)
+        self.assertTrue(checked['passed'])
+
+    def test_inspection_is_bounded_and_does_not_mutate_the_original_receipt(self):
+        receipt = {'id':'source','tool':'browser_action','ok':True,
+                   'result':{'text':'x'*100000,'elements':[{'name':'n'}]*10000}}
+        observed = inspect_receipt({'source':receipt},'source',max_chars=2048)
+        self.assertLessEqual(len(json.dumps(observed,ensure_ascii=False)),2048)
+        self.assertTrue(observed['truncated'])
+        self.assertEqual(len(receipt['result']['text']),100000)
+        small = inspect_receipt({'source':receipt},'source','/result/elements/0')
+        small['value']['name']='changed'
+        self.assertEqual(receipt['result']['elements'][0]['name'],'n')
+
+    def test_failed_receipts_are_visible_but_never_marked_successful(self):
+        observed = inspect_receipt({'source':{'tool':'browser_action','ok':False,'result':{'error':'closed'}}},'source')
+        self.assertFalse(observed['source_ok'])
+        with self.assertRaises(ValueError):
+            inspect_receipt({},'missing')

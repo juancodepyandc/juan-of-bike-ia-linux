@@ -28,7 +28,7 @@ WORKSPACE = os.environ.get('WORKSPACE', str(APPLICATION_DIR))
 _candidate = APPLICATION_DIR / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 PYTHON_BIN = str(_candidate) if _candidate.is_file() else sys.executable
 logger = logging.getLogger('AuroraAGI.MissionAgent')
-READ_TOOLS = {'read_skill','read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
+READ_TOOLS = {'inspect_evidence','read_skill','read_file','search_code','inspect_csv','inspect_path','list_files','list_skills','list_tools','inspect_tool','list_mcp_tools','inspect_runtime','set_plan','revise_plan','verify','finish'}
 CHANGE_TOOLS = {'browser_action','inspect_browser','inspect_image','mcp_catalog','read_mcp_resource','get_mcp_prompt','close_mcp_session','write_file','run_command','run_tool','create_tool','call_mcp_tool','create_skill','create_agent','generate_image','generate_3d','spawn_agent'}
 PLANNED_TOOLS = CHANGE_TOOLS | {'search_web','fetch_url'}
 REVIEW_FIELDS = {'approved','unmet','reason','issues'}
@@ -1058,6 +1058,7 @@ class AutonomousMissionAgent:
             'Ground JSON fields reporting external observations with json_evidence checks: path is the saved file, '
             'bindings contain saved-field path, actual evidence_id and source_pointer in the whole receipt; use equals or text_in. '
             'Pointers use RFC 6901: /field, /items/0, /result/field; never field.name or items[0]. Follow the actual receipt nesting. '
+            'inspect_evidence(tool optional,offset/limit optional) lists retained receipt IDs; inspect_evidence(evidence_id,pointer optional) retrieves values and exact binding pointers. Inspect the original external observation, not your own output or an assertion. '
             'Decode JSON text explicitly with decode_json and value_pointer. Missing observations require real tool execution, not guessed constants. '
             'Do not treat unrelated saved tasks, skill examples or role descriptions as work requested for this mission. '
             f'Advisory context, never a replacement for the original objective: {self.additional_context}'
@@ -1096,7 +1097,8 @@ class AutonomousMissionAgent:
             'For JSON fields claimed from external observations, use verify kind=json_evidence with path and bindings '
             '(path is a JSON pointer in the saved file; evidence_id is an actual successful receipt; source_pointer starts at the complete receipt). '
             'Compare equals or text_in. Explicit decode_json and value_pointer handle JSON text returned by a source. Never invent a receipt or observed value. '
-            'Pointers use slash syntax /field or /items/0; source_pointer starts with /result and follows actual receipt nesting, not dot or bracket syntax. '
+            'Pointers use slash syntax /field or /items/0. source_pointer starts at the whole receipt: /result/... for returned observations, /tool for the executed tool name. Follow actual nesting, never dot or bracket syntax. '
+            'inspect_evidence(tool optional) finds retained IDs; inspect_evidence(evidence_id,pointer optional) retrieves original values and exact binding pointers instead of guessing. '
             'JSON exact_keys requires the complete set of ALL object keys; extra or missing fields fail even when expressions pass. For expression-only checks omit exact_keys unless the complete output format must also be checked. '
             'Use types for field types and equals for a complete JSON value; a text contains check is sensitive to whitespace. '
             'Use csv_json to compare saved aggregates to actual CSV rows/sums. JSON expressions use data and numeric arithmetic/comparisons, no calls/attributes. '
@@ -1368,6 +1370,7 @@ class AutonomousMissionAgent:
             'not constants copied from the candidate output. Bind path to the saved-field JSON pointer, evidence_id to the supplied actual receipt, '
             'source_pointer to the whole receipt field, and relation to equals or text_in. For JSON text use decode_json=true and value_pointer. '
             'Use slash pointers such as /field, /items/0 and /result/field; follow actual nesting, never dot or bracket syntax. '
+            'Inspect original observation receipts with inspect_evidence to recover their exact field paths, not guessed IDs, output files or prior assertions. '
             'A missing observation is a gap requiring the relevant tool execution, never permission to invent expected observations. '
             'Honor conditional alternatives, preserve protected inputs, and inspect/assert without repairing or changing deliverables. '
             'Conditional obligations are implications: test the condition from the inputs and require only its applicable consequent. Never assert mutually exclusive output branches together. '
