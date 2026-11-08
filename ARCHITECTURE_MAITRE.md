@@ -589,6 +589,14 @@ Le notebook Colab reste inaccessible dans le navigateur connecté à un compte d
 
 L’essai réel suivant, `mis_d5f7e51f8d534cbd`, utilise le CLI installé 1.5.5 et un contexte explicite de 16 384 tokens. Il ouvre, observe puis ferme réellement son navigateur et remplace les limites non mesurées par « inconnue ». Il échoue néanmoins après 17 étapes : les liaisons de vérification utilisent une notation pointée ou à crochets au lieu des pointeurs RFC 6901. Le titre et le nombre de workers ne suffisent pas à valider ce livrable ; un libellé concaténé et la lecture de ressource échouée restent à contrôler. Le retour d’erreur et le schéma précisent désormais `/field` et `/items/0`, le préfixe du reçu complet et les clés réellement disponibles au niveau manquant, sans exposer leurs valeurs. La validation reste stricte, sans conversion implicite de syntaxe ni réparation des sorties. Ce correctif passe douze tests JSON/contexte et toute la suite CLI (**1 452 réussites, 18 ignorés, 5 sous-tests**, 22,19 s), version 1.5.6 ; il ne transforme pas l’essai échoué en réussite. Huit commandes réelles du CLI 1.5.5 installé passent séparément : version, liste, catalogue, prompts, lecture, sélection d’un prompt, appel de calcul et fermeture MCP.
 
+### 1.31 Préfixes des pointeurs dans le décodage structuré — 8 novembre 2026
+
+Le modèle 8B conserve des chemins erronés malgré le diagnostic explicite de la section 1.30 ; la reprise reste sans critère validé. Un test réel séparé montre aussi que des motifs réguliers avec groupe optionnel ou alternative vide peuvent laisser sortir du texte libre sur ce moteur Ollama 0.31.1. Retirer `think=false` ne résout pas ce cas. Les contrôles de format simple et d’objet contraint réussissent, ce qui distingue ce défaut du refus général de tout schéma. La documentation de [llama.cpp](https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md#json-schemas--gbnf) précise que seul un sous-ensemble de JSON Schema est converti ; cela ne prouve pas à lui seul la cause interne de notre observation.
+
+Le schéma partagé utilise donc une union explicite : racine vide constante, ou chaîne avec le motif simple `^/.*$`. La validation d’exécution conserve ses contrôles RFC 6901 et sa borne de 4 096 caractères ; la grammaire de génération impose seulement le préfixe. Les instructions complètes, compactes et de revue expliquent les chemins `/field`, `/items/0` et le reçu complet. Sur un vrai appel local avec consigne de syntaxe contradictoire, la branche native imbriquée produit un JSON clos avec les préfixes contraints en 3,13 s. Ses chemins restent sémantiquement incorrects : **ce test prouve une contrainte de format pour ce cas, pas une observation valide ni une mission réussie**. Le contrôle des reçus reste nécessaire et rejette ces chemins.
+
+Parcours : missions daemon natives/CLI distant et vérificateur CLI autonome 1.5.7. Aucun changement de poids, de défaut global de modèle ni entraînement. Le schéma et les instructions ajoutent quelques caractères ; aucun gain général de latence ou de qualité n’est mesuré. Validation : **39 tests JSON/contexte/transport réussis en 1,746 s**, puis **1 452 tests CLI, 18 ignorés et 5 sous-tests en 20,85 s**. Le critère de réussite reste une mission réelle livrant ses observations correctement liées, avec les actions demandées effectivement exécutées ; le préfixe syntaxique ne suffit pas.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
@@ -8190,6 +8198,8 @@ MCP (1.5.4) : `jobia mcp catalog SERVEUR --kind tools`, `resources SERVEUR`, `pr
 Preuves JSON (1.5.5) : les missions locales disposent de `verify_json_evidence`. Des pointeurs relient les champs du fichier sauvegardé aux reçus réussis de la même mission, avec égalité typée ou inclusion textuelle et décodage JSON explicite. Une contre-vérification échouée retire le crédit du critère. Ce contrôle couvre seulement les liaisons fournies : il ne garantit ni la vérité externe, ni la fraîcheur, ni la couverture entière de la demande. Les missions distantes utilisent `verify(kind="json_evidence")` du serveur compatible.
 
 La version 1.5.6 précise les erreurs de pointeurs JSON : `/field` et `/items/0`, depuis le reçu complet ; la notation pointée ou à crochets est refusée. Un champ absent indique les clés disponibles, sans afficher leurs valeurs.
+
+La version 1.5.7 demande aussi au décodage structuré une racine vide ou un préfixe `/`, avec une forme de schéma testée sur le moteur local. Le vérificateur contrôle encore la syntaxe complète et le contenu des reçus : un préfixe correct ne prouve pas que le chemin ou la donnée sont justes.
 ``````````
 <!-- /AURORA_EXPORT -->
 

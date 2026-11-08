@@ -1,12 +1,13 @@
 import json
 import hashlib
+import re
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
 
 from agi_core.json_evidence import compare_evidence, pointer
-from agi_core.mission_protocol import validate_checks, PURE_CHECKS
+from agi_core.mission_protocol import validate_checks, PURE_CHECKS, tool_response_schema
 from agi_core.mission_tools import MissionTools
 
 
@@ -49,6 +50,7 @@ class EvidenceBindings(unittest.TestCase):
 
     def test_pointer_escaping_and_bounds_do_not_execute_expressions(self):
         self.assertEqual(pointer({'a/b': {'~': [5]}}, '/a~1b/~0/0'), 5)
+        self.assertEqual(pointer({'line\nkey': 5}, '/line\nkey'), 5)
         for path in ('/missing', '/a~2', '/00', '/-1', '__import__("os")'):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 pointer([0], path)
@@ -61,6 +63,20 @@ class EvidenceBindings(unittest.TestCase):
             pointer({'result':{'private_value':'never expose this value'}}, '/title')
         self.assertIn('result', str(caught.exception))
         self.assertNotIn('never expose this value', str(caught.exception))
+
+    def test_constrained_model_schema_rejects_observed_dot_and_bracket_syntax(self):
+        schema = tool_response_schema(allowed=['verify'], criteria=['Observed'])
+        checks = schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+        evidence = next(c for c in checks if c['properties']['kind']['const']=='json_evidence')
+        properties = evidence['properties']['bindings']['items']['properties']
+        for field in ('path', 'source_pointer', 'value_pointer'):
+            alternatives = properties[field]['anyOf']
+            self.assertEqual(alternatives[0], {'const': ''})
+            pattern = alternatives[1]['pattern']
+            for invalid in ('title', 'elements[0].name', 'structuredContent.count'):
+                self.assertIsNone(re.fullmatch(pattern, invalid))
+            for valid in ('/title', '/items/0', '/result/result/count', '/a~1b/~0'):
+                self.assertIsNotNone(re.fullmatch(pattern, valid))
 
     def test_empty_or_duplicate_bindings_and_unmatched_text_are_rejected(self):
         binding = {'path': '', 'evidence_id': 'observed-page', 'source_pointer': '/result/text', 'relation': 'text_in'}
