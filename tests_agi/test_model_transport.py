@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from aiohttp import web
 import aiohttp
-from agi_core.llm_gateway import LLMGateway, ModelReadTimeout, ModelContextOverflow
+from agi_core.llm_gateway import LLMGateway, ModelReadTimeout, ModelContextOverflow, ModelIncompleteAnswer
 from agi_core.mission_agent import AutonomousMissionAgent
 
 
@@ -60,6 +60,37 @@ class ModelTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('think',self.received[0])
         self.assertEqual(metrics[0]['tokens_per_second'],20)
         self.assertEqual(metrics[0]['prompt_eval_count'],23)
+
+    async def test_structured_response_rejects_trailing_value_before_waiting_for_eos(self):
+        self.lines=[{'message':{'content':'{"tool":"finish"}'}},
+                    {'message':{'content':' \n {"tool":"another"}'}}]
+        self.delay_after_lines=.8
+        with patch.object(self.gateway,'timeout',return_value=aiohttp.ClientTimeout(total=None,sock_read=.3)):
+            with self.assertRaisesRegex(ModelIncompleteAnswer,'trailing data'):
+                _=[c async for c in self.gateway.chat_chunks([],'fixture:local',response_format={'type':'object'})]
+
+    async def test_structured_boundary_handles_escaped_strings_arrays_and_fragmented_json(self):
+        values=[{'text':'Braces } { and a quote " and slash \\','items':[{'value':1},[2,3]]},
+                [{'text':'] [ escaped " and \\'},True,None]]
+        for expected in values:
+            with self.subTest(root=type(expected).__name__):
+                raw=json.dumps(expected)
+                self.lines=[{'message':{'content':char}} for char in ' \n'+raw+'\n '] + [{'done':True}]
+                schema={'type':'object' if isinstance(expected,dict) else 'array'}
+                answer=''.join([c async for c in self.gateway.chat_chunks([],'fixture:local',response_format=schema)])
+                self.assertEqual(json.loads(answer),expected)
+
+    async def test_structured_truncated_container_is_not_a_complete_answer(self):
+        self.lines=[{'message':{'content':'{"items":[1,2'}},{'done':True,'done_reason':'length'}]
+        with self.assertRaisesRegex(ModelIncompleteAnswer,'incomplete JSON container'):
+            _=[c async for c in self.gateway.chat_chunks([],'fixture:local',response_format={'type':'object'})]
+
+    async def test_unformatted_text_and_formatted_scalars_keep_their_existing_contract(self):
+        for response_format,answer in ((None,'{} then {}'),({'type':'string'},'"scalar text"')):
+            with self.subTest(response_format=response_format):
+                self.lines=[{'message':{'content':answer}},{'done':True}]
+                actual=''.join([c async for c in self.gateway.chat_chunks([],'fixture:local',response_format=response_format)])
+                self.assertEqual(actual,answer)
 
     async def test_model_timeout_before_first_block_names_server_and_model(self):
         self.delay_before_headers = .8
