@@ -53,6 +53,15 @@ class EvidenceBindings(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 pointer([0], path)
 
+    def test_pointer_feedback_explains_syntax_and_actual_nesting_without_values(self):
+        with self.assertRaisesRegex(ValueError, 'Binding path:.*RFC 6901'):
+            compare_evidence({}, [{'path':'items[0]', 'evidence_id':'observed-page',
+                                   'source_pointer':'/result/title'}], self.receipts)
+        with self.assertRaises(ValueError) as caught:
+            pointer({'result':{'private_value':'never expose this value'}}, '/title')
+        self.assertIn('result', str(caught.exception))
+        self.assertNotIn('never expose this value', str(caught.exception))
+
     def test_empty_or_duplicate_bindings_and_unmatched_text_are_rejected(self):
         binding = {'path': '', 'evidence_id': 'observed-page', 'source_pointer': '/result/text', 'relation': 'text_in'}
         for bindings in ([], [binding, binding]):

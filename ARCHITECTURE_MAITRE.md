@@ -587,6 +587,8 @@ Ce contrat prouve la correspondance des champs explicitement liés avec leurs re
 
 Le notebook Colab reste inaccessible dans le navigateur connecté à un compte différent du propriétaire. L’autorisation de changer de compte est en attente ; aucune cellule ni GPU Colab n’est observé. Le run Kaggle de la section 1.27 reste limité au paquet initial approuvé, pas aux sources postérieures. Le catalogue d’empreintes historique signale encore des écarts ; les sections MCP et mission ont été révisées, sans déclarer l’ensemble du dépôt réaudité.
 
+L’essai réel suivant, `mis_d5f7e51f8d534cbd`, utilise le CLI installé 1.5.5 et un contexte explicite de 16 384 tokens. Il ouvre, observe puis ferme réellement son navigateur et remplace les limites non mesurées par « inconnue ». Il échoue néanmoins après 17 étapes : les liaisons de vérification utilisent une notation pointée ou à crochets au lieu des pointeurs RFC 6901. Le titre et le nombre de workers ne suffisent pas à valider ce livrable ; un libellé concaténé et la lecture de ressource échouée restent à contrôler. Le retour d’erreur et le schéma précisent désormais `/field` et `/items/0`, le préfixe du reçu complet et les clés réellement disponibles au niveau manquant, sans exposer leurs valeurs. La validation reste stricte, sans conversion implicite de syntaxe ni réparation des sorties. Ce correctif passe douze tests JSON/contexte et toute la suite CLI (**1 452 réussites, 18 ignorés, 5 sous-tests**, 22,19 s), version 1.5.6 ; il ne transforme pas l’essai échoué en réussite. Huit commandes réelles du CLI 1.5.5 installé passent séparément : version, liste, catalogue, prompts, lecture, sélection d’un prompt, appel de calcul et fermeture MCP.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
@@ -8186,6 +8188,8 @@ Ce README est un export de compatibilité du maître.
 MCP (1.5.4) : `jobia mcp catalog SERVEUR --kind tools`, `resources SERVEUR`, `prompts SERVEUR`, `read SERVEUR URI`, `prompt SERVEUR NOM --json-args '{"argument":"texte"}'` et `close SERVEUR`. `jobia mcp call SERVEUR OUTIL --json-args '{}' --timeout 120` affiche la réponse réelle. Une configuration `persistent: true` conserve l’état du processus serveur entre les appels ; fermer explicitement après avoir inspecté une action de résultat inconnu. Les missions locales disposent des mêmes catalogues et ne rejouent pas automatiquement un appel dont la réponse a été perdue. Ces commandes exigent un bridge connecté et des permissions d’exécution.
 
 Preuves JSON (1.5.5) : les missions locales disposent de `verify_json_evidence`. Des pointeurs relient les champs du fichier sauvegardé aux reçus réussis de la même mission, avec égalité typée ou inclusion textuelle et décodage JSON explicite. Une contre-vérification échouée retire le crédit du critère. Ce contrôle couvre seulement les liaisons fournies : il ne garantit ni la vérité externe, ni la fraîcheur, ni la couverture entière de la demande. Les missions distantes utilisent `verify(kind="json_evidence")` du serveur compatible.
+
+La version 1.5.6 précise les erreurs de pointeurs JSON : `/field` et `/items/0`, depuis le reçu complet ; la notation pointée ou à crochets est refusée. Un champ absent indique les clés disponibles, sans afficher leurs valeurs.
 ``````````
 <!-- /AURORA_EXPORT -->
 
