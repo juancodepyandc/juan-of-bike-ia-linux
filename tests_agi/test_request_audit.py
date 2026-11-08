@@ -101,6 +101,28 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         self.assertIn('/labels',text['properties']['path']['enum'])
         self.assertEqual(text['properties']['relation'],{'const':'text_in'})
 
+    async def test_failed_bindings_remain_actionable_when_the_full_receipt_is_compacted(self):
+        target=self.root/'result.json'
+        target.write_text(json.dumps({'title':'Observed title','label':'Incorrect label'}))
+        self.agent.state.update(criteria=['Observed fields'],evidence=[
+            {'id':'source','tool':'browser_action','ok':True,
+             'result':{'title':'Observed title','label':'Actual label'}}])
+        result=await self.agent.tools.execute('verify',{'checks':[
+            {'kind':'json_evidence','path':str(target),'criterion':'Observed fields','bindings':[
+                {'path':'/title','evidence_id':'source','source_pointer':'/result/title'},
+                {'path':'/label','evidence_id':'source','source_pointer':'/result/label'}]}]})
+        self.assertFalse(result['passed'])
+        self.agent._record_verification(result,1)
+        detail=json.loads(self.agent.state['verification_failures'][0]['detail'])
+        failed=detail['failed_bindings']
+        self.assertEqual(len(failed),1)
+        self.assertEqual(failed[0]['path'],'/label')
+        self.assertEqual(failed[0]['source_pointer'],'/result/label')
+        self.assertEqual(failed[0]['evidence_id'],'source')
+        self.assertNotIn('Incorrect label',json.dumps(detail))
+        self.assertNotIn('Actual label',json.dumps(detail))
+        self.assertNotIn('Observed fields',self.agent.state['verified'])
+
     def initial(self,data,check):
         return [self.plan,call('read_file',path='input.csv'),call('write_file',path='summary.json',content=json.dumps(data)),
                 call('verify',checks=[check]),call('finish',message='Premature proposal')]

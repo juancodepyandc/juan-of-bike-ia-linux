@@ -1648,9 +1648,15 @@ class AutonomousMissionAgent:
             if check['passed']:
                 continue
             key_result = check.get('exact_keys_result') or check.get('keys_result') or {}
-            detail = key_result.get('reason') or check.get('error') or json.dumps({
+            measured = {
                 k:check[k] for k in ('types','expression_results','exit_code','output','observed') if k in check
-            },ensure_ascii=False)
+            }
+            if check['kind']=='json_evidence':
+                failed = [{k:binding[k] for k in ('path','evidence_id','source_pointer','relation','decode_json','value_pointer')
+                           if k in binding} for binding in check.get('bindings',[]) if binding.get('passed') is False]
+                if failed:
+                    measured.update(failed_bindings=failed[:4],failed_bindings_omitted=max(0,len(failed)-4))
+            detail = key_result.get('reason') or check.get('error') or json.dumps(measured,ensure_ascii=False)
             failures.append({'kind':check['kind'],'criterion':check.get('criterion'),
                              'path':check.get('path'),'detail':self._excerpt(detail,700)})
         # Keep current failures visible independently of a verbose action log.
