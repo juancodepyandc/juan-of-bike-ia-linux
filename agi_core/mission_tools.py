@@ -697,7 +697,9 @@ class MissionTools:
                         raw = await asyncio.to_thread(read_verification_bytes,path,a.policy.output_chars*4)
                         actual = strict_json(raw.decode('utf-8'))
                         receipts = {entry['id']:entry for entry in a.state.get('evidence',[])}
-                        result = compare_evidence(actual,check['bindings'],receipts)
+                        if any(len(expression)>a.policy.output_chars for expression in check.get('expressions',[])):
+                            raise ValueError('JSON expression exceeds the output bound; use a command check')
+                        result = compare_evidence(actual,check['bindings'],receipts,check.get('expressions',()))
                         item.update(result,observed_sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
                     elif kind in {'text','json'}:
                         path = a._file_path(check.get('path',''))

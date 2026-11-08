@@ -6,7 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 
-from agi_core.json_evidence import compare_evidence, pointer, inspect_receipt
+from agi_core.json_evidence import compare_evidence, pointer, inspect_receipt, observed_binding_schema, BINDING_SCHEMA, json_pointer_paths, operation_bindings
 from agi_core.mission_protocol import validate_checks, PURE_CHECKS, tool_response_schema
 from agi_core.mission_tools import MissionTools
 
@@ -30,6 +30,14 @@ class EvidenceBindings(unittest.TestCase):
         for key, forged in [('title', 'Invented page'), ('labels', ['Invented label']), ('workers', False)]:
             with self.subTest(key=key):
                 self.assertFalse(compare_evidence({**actual, key: forged}, bindings, self.receipts)['passed'])
+
+    def test_grounding_one_item_does_not_satisfy_a_requested_collection_size(self):
+        bindings=[{'path':'/labels/0','evidence_id':'observed-page','source_pointer':'/result/title'}]
+        actual={'labels':['Actual page']}
+        measured=compare_evidence(actual,bindings,self.receipts,['len(data["labels"]) == 2'])
+        self.assertFalse(measured['passed'])
+        self.assertTrue(measured['bindings'][0]['passed'])
+        self.assertFalse(measured['expression_results'][0]['passed'])
 
     def test_missing_failed_or_assertion_receipts_cannot_ground_a_claim(self):
         binding = [{'path': '', 'evidence_id': 'source', 'source_pointer': '/result'}]
@@ -135,6 +143,43 @@ class NativeEvidenceVerification(unittest.IsolatedAsyncioTestCase):
 
 
 class ReceiptInspection(unittest.TestCase):
+    def test_operation_hints_match_actual_calls_and_never_unused_catalog_entries(self):
+        receipts = [{'id':'catalog','tool':'list_mcp_tools','ok':True,'result':{'tools':[{'name':'declared_only'}]}},
+                    {'id':'browser','tool':'browser_action','ok':True,'result':{}},
+                    {'id':'mcp','tool':'call_mcp_tool','ok':True,'result':{'tool':'actual_mcp','result':{'isError':False}}},
+                    {'id':'failed','tool':'call_mcp_tool','ok':True,'result':{'tool':'failed_mcp','result':{'isError':True}}}]
+        actual = {'used':['browser_action','actual_mcp','declared_only','failed_mcp']}
+        hints = operation_bindings(actual,receipts,json_pointer_paths(actual)['paths'])
+        self.assertEqual([b['path'] for b in hints['bindings']],['/used/0','/used/1'])
+        self.assertEqual(hints['bindings'][0]['source_pointer'],'/tool')
+        self.assertEqual(hints['bindings'][1]['source_pointer'],'/result/tool')
+        self.assertTrue(compare_evidence(actual,hints['bindings'],{r['id']:r for r in receipts})['passed'])
+
+    def test_structural_paths_preserve_empty_and_escaped_keys_without_candidate_values(self):
+        data = {'':{'a/b':[{'~':'candidate-value'}]}}
+        info = json_pointer_paths(data)
+        self.assertFalse(info['truncated'])
+        self.assertIn('//a~1b/0/~0',info['paths'])
+        self.assertNotIn('candidate-value',json.dumps(info))
+        self.assertTrue(json_pointer_paths({'x':list(range(10000))},max_nodes=8)['truncated'])
+        self.assertTrue(json_pointer_paths({'long-key'*20:0},max_chars=20)['truncated'])
+    def test_model_binding_ids_are_actual_successful_sources_without_mutating_schema(self):
+        receipts = [{'id':'seen','tool':'browser_action','ok':True},
+                    {'id':'failed','tool':'browser_action','ok':False},
+                    {'id':'asserted','tool':'verify','ok':True},
+                    {'id':'inspected','tool':'inspect_evidence','ok':True}]
+        binding = observed_binding_schema(receipts)
+        self.assertEqual(binding['properties']['evidence_id']['enum'],['seen'])
+        self.assertNotIn('enum',BINDING_SCHEMA['properties']['evidence_id'])
+        response = tool_response_schema(allowed=['verify','inspect_evidence'],evidence=receipts)
+        verify = next(b for b in response['oneOf'] if b['properties']['tool']['const']=='verify')
+        checks = verify['properties']['args']['properties']['checks']['items']['anyOf']
+        check = next(c for c in checks if c['properties']['kind']['const']=='json_evidence')
+        self.assertEqual(check['properties']['bindings']['items']['properties']['evidence_id']['enum'],['seen'])
+        inspect = next(b for b in response['oneOf'] if b['properties']['tool']['const']=='inspect_evidence')
+        self.assertEqual(set(inspect['properties']['args']['properties']['evidence_id']['enum']),
+                         {'','seen','failed','asserted','inspected'})
+
     def test_index_filters_and_paginates_without_including_its_own_reads(self):
         receipts = {str(i):{'id':str(i),'tool':'browser_action','ok':True} for i in range(3)}
         first = inspect_receipt(receipts,tool='browser_action',limit=2)

@@ -71,6 +71,8 @@ class JSONPredicates(unittest.IsolatedAsyncioTestCase):
             'False and open("marker","w")','[x for x in data]',
             '(lambda: True)()','data["x"] ** 999999999','"x" * 999999999',
             '(data := True)','True | False','data["x"] << 1000000000']
+        expressions += ['len(data, 0) == 0','len(value=data) == 0','len.__call__(data) == 0',
+                        'data["len"]() == 0','False and len(open("marker","w")) == 0','len == data']
         for expression in expressions:
             with self.subTest(expression=expression):
                 result = await self.check({'x':1},[expression])
@@ -79,6 +81,12 @@ class JSONPredicates(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue('error' in record or any('error' in e for e in record.get('expression_results',[])))
         self.assertEqual(marker.read_text(),'preserve')
         self.assertFalse(self.agent.state['process_observations'])
+
+    async def test_len_measures_saved_collection_sizes_without_executing_functions(self):
+        expressions=['len(data["items"]) == 2','len(data["text"]) == 2','len(data) == 2']
+        self.assertTrue((await self.check({'items':['a','b'],'text':'猫犬'},expressions))['passed'])
+        self.assertFalse((await self.check({'items':['a'],'text':'猫犬'},expressions))['passed'])
+        self.assertFalse((await self.check({'items':2,'text':'猫犬'},expressions))['passed'])
 
     async def test_missing_fields_bad_syntax_truthiness_and_nonfinite_numbers_fail(self):
         expressions = ['data["missing"] == 1','data["n"]','data["x"] + 1 > 0',

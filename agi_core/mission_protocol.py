@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from agi_core.json_predicates import parse_json_expression
-from agi_core.json_evidence import BINDING_SCHEMA
+from agi_core.json_evidence import BINDING_SCHEMA, observed_binding_schema
 
 
 TEXT = {'type':'string'}
@@ -19,7 +19,8 @@ def object_args(properties, required=()):
 
 CHECK_SCHEMA = {'anyOf':[
     object_args({'kind':{'const':'json_evidence'},'path':TEXT,'criterion':TEXT,
-                 'bindings':{'type':'array','minItems':1,'maxItems':64,'items':BINDING_SCHEMA}},
+                 'bindings':{'type':'array','minItems':1,'maxItems':64,'items':BINDING_SCHEMA},
+                 'expressions':{**NONEMPTY_STRINGS,'maxItems':64,'description':'Optional saved-value predicates; len(data["array"]) checks required quantities. Each claimed item still needs appropriate grounding.'}},
                 ('kind','path','bindings')),
     object_args({'kind':{'const':'file'},'path':TEXT,'min_bytes':INTEGER,'sha256':TEXT,'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'text'},'path':TEXT,'equals':TEXT,'contains':TEXT,'criterion':TEXT},('kind','path')),
@@ -27,7 +28,7 @@ CHECK_SCHEMA = {'anyOf':[
                  'keys':{**STRINGS,'description':'The exact complete object key set; extra or missing keys fail. For expression-only checks omit keys unless the complete output format must also be checked. Structural proof only; does not prove calculations or constraints.'},
                  'exact_keys':{**STRINGS,'description':'The complete set of ALL keys in the object. Extra or missing fields FAIL. Omit this for checking some field types or value relations; use types or expressions instead.'},
                  'types':{'type':'object','additionalProperties':{'type':'string','enum':['integer','number','string','boolean','object','array','null']},'description':'Field types only; not proof of calculations or value relations.'},
-                 'expressions':{**NONEMPTY_STRINGS,'description':'Boolean predicates evaluated on the actual saved JSON named data. Supports field/array subscripts, numeric arithmetic, comparisons and boolean logic. No calls or attributes. For expression-only checks omit keys unless the complete output format must also be checked; supplied keys is always exact. Use actual request parameters for relations; use command assertions for complex or optimality proofs.'},
+                 'expressions':{**NONEMPTY_STRINGS,'description':'Boolean predicates on saved JSON named data: subscripts, numeric arithmetic, comparisons, booleans and only the len(array/object/string) intrinsic. No other calls or attributes. Omit keys unless checking the complete format. Use actual request parameters; use command assertions for complex or optimality proofs.'},
                  'criterion':TEXT},('kind','path')),
     object_args({'kind':{'const':'command'},'argv':NONEMPTY_STRINGS,'contains':TEXT,'expected_exit_code':INTEGER,'criterion':TEXT},('kind','argv')),
     object_args({'kind':{'const':'source'},'evidence_ids':NONEMPTY_STRINGS,'criterion':TEXT},('kind','evidence_ids')),
@@ -138,11 +139,31 @@ TOOL_DESCRIPTIONS['get_mcp_prompt'] = 'Retrieve an explicitly user-selected prom
 TOOL_DESCRIPTIONS['call_mcp_tool'] = 'Execute a tool on a configured MCP server over bounded JSON-RPC stdio and observe its returned result.'
 
 
-def audit_response_schema(criteria, allowed, inventory, *, max_chars, allow_delegation_checks=True):
+def audit_response_schema(criteria, allowed, inventory, *, max_chars, allow_delegation_checks=True, evidence=None):
     """Bind flat integer CSV aggregate output names to observed schemas."""
-    schema = tool_response_schema(criteria,allowed,allow_delegation_checks=allow_delegation_checks)
+    schema = tool_response_schema(criteria,allowed,allow_delegation_checks=allow_delegation_checks,evidence=evidence)
     schema['oneOf'] = [b for b in schema['oneOf'] if b['properties']['tool']['const']=='verify']
     checks = schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+    json_files = [info for info in inventory if str(info.get('path','')).lower().endswith('.json')]
+    indexed = [info['json_pointers'] for info in json_files if 'json_pointers' in info]
+    if indexed and len(indexed)==len(json_files) and all(not item['truncated'] for item in indexed):
+        paths = sorted({path for item in indexed for path in item['paths']})
+        if paths and len(json.dumps(paths,ensure_ascii=False))<=max_chars//4:
+            branch = next(b for b in checks if b['properties']['kind']['const']=='json_evidence')
+            binding = branch['properties']['bindings']['items']
+            binding['properties']['path'] = {'type':'string','enum':paths}
+            if all('text_paths' in item for item in indexed):
+                text_paths = sorted({path for item in indexed for path in item['text_paths']})
+                exact = deepcopy(binding)
+                exact['properties']['relation'] = {'const':'equals'}
+                variants = [exact]
+                if text_paths:
+                    text = deepcopy(binding)
+                    text['properties']['path'] = {'type':'string','enum':text_paths}
+                    text['properties']['relation'] = {'const':'text_in'}
+                    text['required'].append('relation')
+                    variants.append(text)
+                branch['properties']['bindings']['items'] = {'oneOf':variants}
     csv_branch = next(b for b in checks if b['properties']['kind']['const']=='csv_json')
     variants = []
     for info in inventory:
@@ -205,11 +226,14 @@ def normalize_audit_checks(checks, criteria):
     return result
 
 
-def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True, available_script_names=None, generation_prompt=None):
+def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None, allow_delegation_checks=True, available_script_names=None, generation_prompt=None, evidence=None):
     selected = list(ARG_SCHEMAS) if allowed is None else [name for name in ARG_SCHEMAS if name in allowed]
     alternatives = []
     for name in selected:
         args = deepcopy(ARG_SCHEMAS[name])
+        if name=='inspect_evidence' and evidence:
+            ids = sorted({r['id'] for r in evidence if isinstance(r,dict) and isinstance(r.get('id'),str) and 0<len(r['id'])<=256})
+            args['properties']['evidence_id'] = {'type':'string','enum':['',*ids]}
         if name=='generate_3d' and generation_prompt is not None:args['properties']['prompt']={'const':generation_prompt}
         if name in {'inspect_tool','run_tool'} and available_script_names is not None:
             scripts = sorted(set(available_script_names))
@@ -230,6 +254,8 @@ def tool_response_schema(criteria=(), allowed=None, *, required_tool_names=None,
             concrete = []
             for branch in checks:
                 kind = branch['properties']['kind']['const']
+                if kind=='json_evidence' and evidence is not None:
+                    branch['properties']['bindings']['items'] = observed_binding_schema(evidence)
                 if kind == 'json':
                     # Keep legacy keys in stored/external checks, but expose a
                     # less ambiguous name to new model proposals.
@@ -310,7 +336,7 @@ def validate_checks(checks, criteria=()):
             field = schema['properties'][key]
             if 'type' in field and type(value) is not kinds[field['type']]:
                 raise ValueError(f'Acceptance check {key} must be {field["type"]}')
-            if field.get('type')=='array' and key!='bindings' and (len(value)<field.get('minItems',0) or not all(isinstance(v,str) for v in value)):
+            if field.get('type')=='array' and key!='bindings' and (len(value)<field.get('minItems',0) or len(value)>field.get('maxItems',len(value)) or not all(isinstance(v,str) for v in value)):
                 raise ValueError(f'Acceptance check {key} must contain strings')
             if isinstance(value,dict) and 'additionalProperties' in field:
                 item = field['additionalProperties']
@@ -328,7 +354,7 @@ def validate_checks(checks, criteria=()):
             raise ValueError('Text verification requires equals or contains')
         if check['kind']=='json' and not {'equals','keys','exact_keys','types','expressions'}&check.keys():
             raise ValueError('JSON verification requires equals, exact_keys, types or expressions')
-        if check['kind']=='json' and 'expressions' in check:
+        if check['kind'] in {'json','json_evidence'} and 'expressions' in check:
             for expression in check['expressions']:
                 parse_json_expression(expression)
         if check['kind']=='file' and check.get('min_bytes',1)<0:

@@ -185,7 +185,8 @@ class AutonomousMissionAgent:
         response_format = tool_response_schema(missing or self.state['criteria'],allowed,
             required_tool_names=self._explicit_tool_names(),allow_delegation_checks=not self.depth,
             available_script_names=self.state.get('available_script_names'),
-            generation_prompt=self.request_text if allowed==['generate_3d'] else None)
+            generation_prompt=self.request_text if allowed==['generate_3d'] else None,
+            evidence=self.state.get('evidence',[]))
         emitted = False
         for attempt in range(2):
             try:
@@ -1045,7 +1046,7 @@ class AutonomousMissionAgent:
             'After set_plan, every check must name one exact criterion from the current plan. Cover unverified criteria instead of repeating already verified checks. When all are verified, propose finish for review. Test expected exceptions with an explicit expected_exit_code and output check. '
             'After a rejected completion review, address its actual gaps and verify every planned criterion again in one batch before proposing completion. '
             'Use text/json checks to measure saved content and exact field names; JSON types: integer, number, string, boolean, object, array, null. '
-            'JSON expressions evaluate boolean relations on saved data (data["field"]), using numeric +,-,*,/,//,% and comparisons/and/or/not; no calls or attributes. They prove only the supplied predicates; optimality needs an independent calculation/test. Compare JSON structurally, not with whitespace-sensitive text substrings. '
+            'JSON expressions evaluate saved-data relations using numeric +,-,*,/,//,%, comparisons/and/or/not and only the len(array/object/string) intrinsic; no other calls or attributes. They prove only the supplied predicates; optimality needs an independent calculation/test. Compare JSON structurally, not with whitespace-sensitive text substrings. '
             'Command checks may mutate outputs and invalidate prior proofs. Group all command-dependent acceptance criteria into the same verify batch, then finish after that batch passes. '
             'JSON exact_keys requires the complete set of ALL object keys: extra or missing fields fail even when expressions pass. For expression-only checks omit exact_keys unless the complete output format must also be checked. For a subset field type check, use types without exact_keys. Legacy keys remains accepted from saved checks with the same exact-set semantics. '
             'JSON equals compares the whole value, including all object keys; use the exact output filename and fields required by the original request. '
@@ -1060,6 +1061,7 @@ class AutonomousMissionAgent:
             'Pointers use RFC 6901: /field, /items/0, /result/field; never field.name or items[0]. Follow the actual receipt nesting. '
             'inspect_evidence(tool optional,offset/limit optional) lists retained receipt IDs; inspect_evidence(evidence_id,pointer optional) retrieves values and exact binding pointers. Inspect the original external observation, not your own output or an assertion. '
             'Decode JSON text explicitly with decode_json and value_pointer. Missing observations require real tool execution, not guessed constants. '
+            'equals compares complete typed values, including numbers. text_in requires saved nonempty string(s) contained in a source string; never use it for numbers, booleans or objects. '
             'Do not treat unrelated saved tasks, skill examples or role descriptions as work requested for this mission. '
             f'Advisory context, never a replacement for the original objective: {self.additional_context}'
         )
@@ -1097,11 +1099,12 @@ class AutonomousMissionAgent:
             'For JSON fields claimed from external observations, use verify kind=json_evidence with path and bindings '
             '(path is a JSON pointer in the saved file; evidence_id is an actual successful receipt; source_pointer starts at the complete receipt). '
             'Compare equals or text_in. Explicit decode_json and value_pointer handle JSON text returned by a source. Never invent a receipt or observed value. '
+            'equals compares complete typed values. text_in only matches saved nonempty string(s) within observed text; numbers, booleans and objects require equals. '
             'Pointers use slash syntax /field or /items/0. source_pointer starts at the whole receipt: /result/... for returned observations, /tool for the executed tool name. Follow actual nesting, never dot or bracket syntax. '
             'inspect_evidence(tool optional) finds retained IDs; inspect_evidence(evidence_id,pointer optional) retrieves original values and exact binding pointers instead of guessing. '
             'JSON exact_keys requires the complete set of ALL object keys; extra or missing fields fail even when expressions pass. For expression-only checks omit exact_keys unless the complete output format must also be checked. '
             'Use types for field types and equals for a complete JSON value; a text contains check is sensitive to whitespace. '
-            'Use csv_json to compare saved aggregates to actual CSV rows/sums. JSON expressions use data and numeric arithmetic/comparisons, no calls/attributes. '
+            'Use csv_json to compare saved aggregates to actual CSV rows/sums. JSON expressions support arithmetic/comparisons and only len(array/object/string), no other calls or attributes. '
             'Write multiline Python to a .py file with real newlines, then run it. Use observed expected_sha256 only; omit it for new files. '
             'Existing roles/skills should be inspected/verified instead of recreated. Each delegation needs concrete parent acceptance checks. '
             'Pass the requested saved role as spawn_agent.agent. Verify kind=delegation with its exact agent name to prove completed execution; kind=agent proves only a definition. '
@@ -1284,7 +1287,8 @@ class AutonomousMissionAgent:
                 prompt = instructions+feedback
                 value = bounded_recovery_payload(self,observations,stalled_actions,prompt)
                 schema = recovery_response_schema(self.state['criteria'],allowed,
-                    [e['id'] for e in value['observations']],self._explicit_tool_names(),allow_delegation_checks=not self.depth,request_excerpt=self.request_text[:1200])
+                    [e['id'] for e in value['observations']],self._explicit_tool_names(),allow_delegation_checks=not self.depth,request_excerpt=self.request_text[:1200],
+                    evidence=value['observations'])
                 reply = await self.gateway.generate(prompt,json.dumps(value,ensure_ascii=False),self.model,
                                                     response_format=schema)
                 proposal = validate_recovery(reply,self.request_text,value['observations'],allowed,
@@ -1344,6 +1348,38 @@ class AutonomousMissionAgent:
         result = await self.tools.execute('verify',{'checks':audit['checks']})
         return result['passed'] and self._verification_fingerprint(result)==audit['fingerprints']
 
+    def _audit_observations(self):
+        """Add non-file observations without priming from candidate file values.
+
+        File schemas remain in observed_files; their checks execute on actual
+        files. Do not smuggle task-authored output values into this context.
+        """
+        from agi_core.json_evidence import NON_OBSERVATION_TOOLS, inspect_receipt
+        candidates = []
+        for receipt in self.state['evidence']:
+            result = receipt.get('result')
+            if not receipt.get('ok') or not isinstance(result,dict):
+                continue
+            if receipt['tool'] in NON_OBSERVATION_TOOLS | {'read_file','edit_file','create_tool','create_skill','create_agent','spawn_agent'}:
+                continue
+            candidates.append(receipt)
+        budget = max(512,min(self.policy.output_chars,self._context_chars()//3))
+        result, used, omitted = [], 0, 0
+        for receipt in reversed(candidates):
+            remaining = budget-used
+            if remaining<512:
+                omitted += 1
+                continue
+            try:
+                view = inspect_receipt({receipt['id']:receipt},receipt['id'],
+                    max_chars=min(remaining,self.policy.output_chars//2))
+            except (ValueError,TypeError,RecursionError):
+                omitted += 1
+                continue
+            used += len(json.dumps(view,ensure_ascii=False))
+            result.append(view)
+        return result, omitted
+
     async def _propose_completion_audit(self):
         """Separate model context proposes actual tests, not an approval verdict."""
         from agi_core.mission_protocol import ARG_SCHEMAS, audit_response_schema
@@ -1366,11 +1402,17 @@ class AutonomousMissionAgent:
             'For numerical/optimization requests derive assertions and an independent calculation from input parameters; test saved results, constraints and optimality. '
             'JSON keys/types, file presence and printing expectations only prove structure/presence, not numerical or functional correctness. '
             'Use literal equals only for content explicitly required by the user, not a result copied from the task agent. '
-            'For externally observed facts saved in JSON require json_evidence bindings to actual successful tool receipts, '
-            'not constants copied from the candidate output. Bind path to the saved-field JSON pointer, evidence_id to the supplied actual receipt, '
+            'For externally observed facts saved in JSON require json_evidence bindings to actual successful tool receipts, not constants copied from the candidate output. '
+            'For requested collection quantities, combine grounding with expressions such as len(data["items"]) == the requested count. Ground every claimed item; a count alone proves neither contents nor distinctness. '
+            'Check quantities and obligations in the original request even when a plan criterion omits them. '
+            'When the request permits explicit unknown values for absent telemetry, check that representation with a JSON predicate; never bind it to an unrelated observation. '
+            'Bind path to the saved-field JSON pointer, evidence_id to the supplied actual receipt, '
             'source_pointer to the whole receipt field, and relation to equals or text_in. For JSON text use decode_json=true and value_pointer. '
+            'equals compares complete typed values. text_in requires saved nonempty string(s) within an observed source string; never choose text_in for numbers, booleans or objects. '
             'Use slash pointers such as /field, /items/0 and /result/field; follow actual nesting, never dot or bracket syntax. '
-            'Inspect original observation receipts with inspect_evidence to recover their exact field paths, not guessed IDs, output files or prior assertions. '
+            'Original receipt views are supplied in observations with actual evidence_id and field pointers. Use these exact references; no inspection tools are available in this checker context. '
+            'operation_bindings are exact references for saved identifiers matching actual tool invocations; use them for claims of usage, never as a goal verdict. Catalogue entries prove declarations, not execution, and output array positions need not match catalog order. '
+            'Omitted/truncated fields are unknown, never permission to invent IDs, paths or expected values. '
             'A missing observation is a gap requiring the relevant tool execution, never permission to invent expected observations. '
             'Honor conditional alternatives, preserve protected inputs, and inspect/assert without repairing or changing deliverables. '
             'Conditional obligations are implications: test the condition from the inputs and require only its applicable consequent. Never assert mutually exclusive output branches together. '
@@ -1387,6 +1429,7 @@ class AutonomousMissionAgent:
                              'Do not require proof of its own completed delegation before it can return; the parent checks that afterward. Delegation checks are unavailable here.')
         inventory = self._audit_inventory()
         from agi_core.mission_tools import strict_json
+        from agi_core.json_evidence import json_pointer_paths, operation_bindings
         def json_type(value):
             if value is None:
                 return 'null'
@@ -1399,6 +1442,9 @@ class AutonomousMissionAgent:
                     if not observed['truncated']:
                         data = strict_json(observed['content'])
                         info['json_type'] = json_type(data)
+                        info['json_pointers'] = json_pointer_paths(data,max_chars=self.policy.output_chars//4)
+                        info['operation_bindings'] = operation_bindings(data,self.state['evidence'],info['json_pointers']['paths'],
+                                                                        max_chars=self.policy.output_chars//4)
                         if isinstance(data,dict):
                             info['json_fields'] = {key:json_type(value) for key,value in data.items()}
                     else:
@@ -1411,7 +1457,20 @@ class AutonomousMissionAgent:
                 await self._emit('request_audit_file_schema',info)
             except (OSError,ValueError,PermissionError) as exc:
                 info['schema_status'] = str(exc)
+        observations, observations_omitted = self._audit_observations()
+        previous = []
+        audit_number = self.state.get('request_audit',{}).get('number')
+        for receipt in reversed(self.state['evidence']):
+            if receipt.get('action_number')==audit_number and receipt['tool']=='verify':
+                previous = [{'kind':c.get('kind'),'criterion':c.get('criterion'),
+                             'error':str(c.get('error') or 'Previous independently executed check failed')[:256]}
+                            for c in receipt.get('result',{}).get('checks',[]) if not c.get('passed')]
+                break
         value = {'original_request':self.request_text,'runtime':self._runtime_paths(),'criteria':self.state['criteria'],
+                 'observations':observations,'observations_omitted':observations_omitted,
+                 'previous_audit_failures':previous,
+                 'previous_failure_scope':'Historical checker diagnostics; may be superseded by repairs, never a current verdict or candidate data',
+                 'previous_failures_omitted':0,
                  'required_tools':self.state.get('required_tools',[]),'executed_tools':self.state.get('executed_tools',[]),
                  'interrupted_processes':self.state.get('interrupted_processes',[]),
                  'resources':[{'name':r.get('name'),'kind':r.get('kind'),'path':r.get('path')}
@@ -1422,16 +1481,26 @@ class AutonomousMissionAgent:
                  'observed_files':inventory,'files_omitted':0}
         encode = lambda:json.dumps(value,ensure_ascii=False)
         capacity = self._context_chars()-len(instructions)
+        while len(encode())>capacity and value['previous_audit_failures']:
+            value['previous_audit_failures'].pop(0)
+            value['previous_failures_omitted'] += 1
         while len(encode())>capacity and value['observed_files']:
             value['observed_files'].pop(0)
             value['files_omitted'] += 1
         while len(encode())>capacity and value['delegations']:
             value['delegations'].pop(0)
             value['delegations_omitted'] += 1
+        while len(encode())>capacity and value['observations']:
+            value['observations'].pop()
+            value['observations_omitted'] += 1
         if len(encode())>capacity:
             raise ValueError('Request audit context cannot retain the original goal, criteria and interruption fences')
+        visible_ids = {o['evidence_id'] for o in value['observations']}
+        visible_ids.update(b['evidence_id'] for info in value['observed_files']
+                           for b in info.get('operation_bindings',{}).get('bindings',[]))
         schema = audit_response_schema(self.state['criteria'],allowed,value['observed_files'],max_chars=self.policy.context_chars,
-                                       allow_delegation_checks=not self.depth)
+                                       allow_delegation_checks=not self.depth,
+                                       evidence=[e for e in self.state['evidence'] if e['id'] in visible_ids])
         await self._emit('request_audit_start',{'scope':'Separate context proposes checks; same fallible model, no verdict or effects yet'})
         started = time.monotonic()
         reply = await self.gateway.generate(instructions,encode(),self.model,response_format=schema)
