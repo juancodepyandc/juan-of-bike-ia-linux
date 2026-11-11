@@ -1,6 +1,7 @@
 """Install a verified reinforced model in Ollama on the PC, then make it the default.
 
     python -m auto_rl.professor.install status
+    python -m auto_rl.professor.install deliver  --owner COMPTE --student qwen2.5:7b --activate   # fetch, install, examine, activate
     python -m auto_rl.professor.install install  --delivery DIR      # side by side, then examined through Ollama
     python -m auto_rl.professor.install activate --tag qwen2.5:7b    # the application's tag now serves the reinforced weights
     python -m auto_rl.professor.install rollback --tag qwen2.5:7b
@@ -102,9 +103,18 @@ def modelfile(base_tag, files):
 def deployment_exam(base_tag, candidate_tag, folder, *, modules, per_skill, cycle, url, context):
     """Gate 3: the paired exam, answered by Ollama exactly as the application is served."""
     library = Library()
-    items, notes = build_exam("gate", per_skill, modules=modules, cycle=cycle, library=library)
-    # Generated programs are never executed on a workstation: those items are left to the cloud examiner.
-    items = [item for item in items if item["grader"]["type"] != "python_tests"]
+
+    def draw(count):
+        drawn, drawn_notes = build_exam("gate", count, modules=modules, cycle=cycle, library=library)
+        # Generated programs are never executed on a workstation: those items are left to the cloud examiner.
+        return [item for item in drawn if item["grader"]["type"] != "python_tests"], drawn_notes
+    items, notes = draw(per_skill)
+    families = len({item["skill"] for item in items})
+    if families and len(items) < 260:
+        # Without the `datasets` package only generated skills are available: draw more of them
+        # rather than run an exam too small to decide anything.
+        items, notes = draw(-(-260 // families))
+    notes["skills_examined"] = sorted({item["skill"] for item in items})
     folder = Path(folder)
     for name, tag in (("base", base_tag), ("candidate", candidate_tag)):
         evaluate(OllamaStudent(tag, url=url, context=context), items, folder / name, batch_size=1, label=f"ollama_{name}")
@@ -182,13 +192,32 @@ def rollback(tag, *, url="http://127.0.0.1:11434"):
     return {"tag": tag, "restored_from": backup}
 
 
+def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, context=8192, activate_after=False):
+    """Fetch the examiner's verified output from Kaggle, install it, and optionally activate it.
+
+    One command for the PC: every gate still applies, and activation happens only
+    if the model wins the paired exam again as served by Ollama.
+    """
+    from . import kaggle_runner
+    slug = kaggle_runner.kernel_name("verify", student)[0]
+    folder = STATE / "deliveries" / slug
+    kaggle_runner.fetch(f"{owner}/{slug}", folder)
+    record = install(folder, url=url, per_skill=per_skill, context=context)
+    if activate_after and (record.get("deployment") or {}).get("verdict") == "promote":
+        record = activate(record["base_tag"], url=url)
+    return record
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("status", "check", "install", "activate", "rollback"))
+    parser.add_argument("command", choices=("status", "check", "install", "deliver", "activate", "rollback"))
     parser.add_argument("--delivery", type=Path)
+    parser.add_argument("--owner", help="Kaggle account that ran the examiner (deliver)")
+    parser.add_argument("--student", help="Ollama tag of the examined model (deliver)")
+    parser.add_argument("--activate", action="store_true", help="deliver: activate when the deployment exam is won")
     parser.add_argument("--tag")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
-    parser.add_argument("--exam-per-skill", type=int, default=40)
+    parser.add_argument("--exam-per-skill", type=int, default=60)
     parser.add_argument("--context", type=int, default=8192)
     args = parser.parse_args(argv)
     if args.command == "status":
@@ -198,6 +227,11 @@ def main(argv=None):
         result = {"student": checked["student"]["tag"], "files": sorted(checked["files"]), "problems": checked["problems"]}
     elif args.command == "install":
         result = install(args.delivery, url=args.ollama_url, per_skill=args.exam_per_skill, context=args.context)
+    elif args.command == "deliver":
+        if not args.owner or not args.student:
+            parser.error("deliver requires --owner and --student")
+        result = deliver(args.owner, args.student, url=args.ollama_url, per_skill=args.exam_per_skill, context=args.context,
+                         activate_after=args.activate)
     elif args.command == "activate":
         result = activate(args.tag, url=args.ollama_url)
     else:

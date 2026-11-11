@@ -211,6 +211,7 @@ class OllamaStudent:
 
     def __init__(self, tag, *, url="http://127.0.0.1:11434", context=8192, timeout=600, thinking=False):
         self.tag, self.url, self.context, self.timeout, self.thinking = tag, url.rstrip("/"), context, timeout, thinking
+        self.think_parameter = True      # dropped once if this model or server refuses the parameter
 
     def _post(self, path, payload):
         request = urllib.request.Request(self.url + path, data=json.dumps(payload).encode(),
@@ -231,15 +232,26 @@ class OllamaStudent:
 
     def generate(self, conversations, max_new_tokens, batch_size=1):
         outputs = []
+        import urllib.error
         for messages in conversations:
-            payload = {"model": self.tag, "messages": messages, "stream": False, "think": self.thinking,
+            payload = {"model": self.tag, "messages": messages, "stream": False,
                        "options": {"temperature": 0, "seed": 0, "num_predict": max_new_tokens, "num_ctx": self.context}}
-            for attempt in range(3):
+            for attempt in range(4):
+                if self.think_parameter:
+                    payload["think"] = self.thinking
+                else:
+                    payload.pop("think", None)
                 try:
                     answer = self._post("/api/chat", payload)
                     break
+                except urllib.error.HTTPError as exc:
+                    detail = exc.read().decode("utf-8", "replace")[:300]
+                    if exc.code == 400 and "think" in detail.lower() and self.think_parameter:
+                        self.think_parameter = False       # a model without a reasoning mode: ask again without it
+                        continue
+                    raise RuntimeError(f"Ollama a refusé la requête ({exc.code}) : {detail}") from None
                 except OSError:
-                    if attempt == 2:
+                    if attempt >= 2:
                         raise
                     time.sleep(2 + 3 * attempt)
             if answer.get("done_reason") == "length" and not answer.get("message", {}).get("content"):

@@ -175,5 +175,63 @@ class Installation(unittest.TestCase):
                     item.stop()
 
 
+class OllamaBackend(unittest.TestCase):
+    """Real HTTP exchanges with a stand-in server speaking the Ollama chat API."""
+
+    def serve(self, handler):
+        import http.server
+        import threading
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *arguments):
+                pass
+
+            def do_GET(self):
+                self._send(200, {"models": [{"name": "demo:1", "digest": "abc"}]})
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                status, payload = handler(body)
+                self._send(status, payload)
+
+            def _send(self, status, payload):
+                raw = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        return f"http://127.0.0.1:{server.server_address[1]}"
+
+    def test_requests_are_deterministic_and_a_missing_reasoning_mode_is_handled(self):
+        from auto_rl.professor.inference import OllamaStudent
+        seen = []
+
+        def handler(body):
+            seen.append(body)
+            if "think" in body:
+                return 400, {"error": "\"demo:1\" does not support thinking"}
+            return 200, {"message": {"content": "B"}, "done_reason": "stop"}
+        student = OllamaStudent("demo:1", url=self.serve(handler), context=4096)
+        answers = student.generate([[{"role": "user", "content": "q1"}], [{"role": "user", "content": "q2"}]], 8)
+        self.assertEqual(answers, ["B", "B"])
+        self.assertEqual(len(seen), 3)                      # one refusal, then two plain requests
+        self.assertEqual(seen[-1]["options"], {"temperature": 0, "seed": 0, "num_predict": 8, "num_ctx": 4096})
+        self.assertIs(seen[-1]["stream"], False)
+        self.assertEqual(student.describe()["digest"], "abc")
+
+    def test_a_spent_budget_without_answer_is_an_empty_answer_and_errors_are_not_scores(self):
+        from auto_rl.professor.inference import OllamaStudent
+        url = self.serve(lambda body: (200, {"message": {"content": ""}, "done_reason": "length"}))
+        self.assertEqual(OllamaStudent("demo:1", url=url).generate([[{"role": "user", "content": "q"}]], 4), [""])
+        broken = self.serve(lambda body: (500, {"error": "model failed to load"}))
+        with self.assertRaises(RuntimeError):
+            OllamaStudent("demo:1", url=broken).generate([[{"role": "user", "content": "q"}]], 4)
+
+
 if __name__ == "__main__":
     unittest.main()
