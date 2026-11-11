@@ -396,22 +396,25 @@ def grade_evidence(output, grader):
     if not isinstance(value, dict) or value.get("tool") != "verify" or not isinstance(value.get("args"), dict):
         return _result(False, "not_a_verify_action")
     checks = value["args"].get("checks")
-    if not isinstance(checks, list) or len(checks) != 1 or not isinstance(checks[0], dict):
-        return _result(False, "expected_one_check")
-    check = checks[0]
+    if not isinstance(checks, list) or not checks or not all(isinstance(check, dict) for check in checks):
+        return _result(False, "no_check")
+    # The mission executor accepts several checks on the same file as well as one check
+    # holding every binding: both are graded alike, each check through the production comparator.
     from agi_core.json_evidence import compare_evidence
     from agi_core.mission_protocol import validate_checks
+    bound, expressions = [], []
     try:
         validate_checks(checks)
-        if check["kind"] != "json_evidence" or check["path"] != grader["path"]:
-            return _result(False, "wrong_check_or_path")
-        report = compare_evidence(grader["saved"], check["bindings"], grader["receipts"],
-                                  check.get("expressions", ()))
+        for check in checks:
+            if check["kind"] != "json_evidence" or check["path"] != grader["path"]:
+                return _result(False, "wrong_check_or_path")
+            report = compare_evidence(grader["saved"], check["bindings"], grader["receipts"], check.get("expressions", ()))
+            if not report["passed"]:
+                return _result(False, "binding_or_expression_failed")
+            bound += [binding["path"] for binding in report["bindings"]]
+            expressions += list(check.get("expressions", ()))
     except (ValueError, KeyError, TypeError) as exc:
         return _result(False, "contract_rejected:" + str(exc)[:80])
-    if not report["passed"]:
-        return _result(False, "binding_or_expression_failed")
-    bound = [binding["path"] for binding in report["bindings"]]
     # Binding a whole array or object by equality also grounds its leaves.
     missing = sorted(path for path in grader["required_paths"]
                      if not any(path == b or path.startswith(b + "/") or b == "" for b in bound))
@@ -422,7 +425,7 @@ def grade_evidence(output, grader):
     from agi_core.json_predicates import evaluate_json_expression
     for counterexample in grader.get("quantity_counterexamples", ()):
         rejected = False
-        for expression in check.get("expressions", ()):
+        for expression in expressions:
             try:
                 rejected = rejected or evaluate_json_expression(expression, counterexample) is False
             except ValueError:

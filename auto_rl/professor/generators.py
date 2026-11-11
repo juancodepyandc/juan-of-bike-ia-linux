@@ -203,8 +203,9 @@ def _verify_contract():
     from agi_core.mission_protocol import CHECK_SCHEMA, TOOL_DESCRIPTIONS
     check = next(branch for branch in CHECK_SCHEMA["anyOf"] if branch["properties"]["kind"].get("const") == "json_evidence")
     envelope = {"tool": "verify", "args": {"checks": ["<json_evidence check>"]}}
-    return (f"- verify: {TOOL_DESCRIPTIONS['verify']}\n  action: {_json(envelope)}\n"
-            f"  json_evidence check: {_json({k: v for k, v in check.items() if k in ('properties', 'required')})}")
+    # "root object" on purpose: a first wording, "action: {...}", led a real model to answer {"action": {...}}.
+    return (f"- verify: {TOOL_DESCRIPTIONS['verify']}\n  root JSON object of the answer (keys `tool` and `args` only): {_json(envelope)}\n"
+            f"  schema of one json_evidence check: {_json({k: v for k, v in check.items() if k in ('properties', 'required')})}")
 
 
 _EVIDENCE_PROMPTS = {
