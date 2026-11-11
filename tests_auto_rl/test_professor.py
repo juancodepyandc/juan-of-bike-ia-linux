@@ -1,0 +1,266 @@
+"""Contracts of the professor loop that need no model, GPU or network."""
+import json
+import os
+import unittest
+from unittest.mock import patch
+
+from auto_rl.professor import generators, generators_domain  # noqa: F401
+from auto_rl.professor.compare import GATE, compare, mcnemar_exact, wilson
+from auto_rl.professor.graders import grade, parse_numbers, parse_single_json
+from auto_rl.professor.records import bucket, exam_role, question_hash
+from auto_rl.professor.suites import MODULES, build_exam, build_pool, skills, stratified
+from auto_rl.professor.weakness import build_curriculum, profile, skill_weights
+
+
+def item(kind, **grader):
+    return {"grader": {"type": kind, **grader}}
+
+
+class Graders(unittest.TestCase):
+    def test_multiple_choice_needs_one_unambiguous_letter(self):
+        mcq = item("mcq", answer="B", options=4)
+        for answer in ("B", "b", "(B)", "B.", "B) Paris", "**B**", "La bonne réponse est B.", "Answer: B", "B\n\nParce que..."):
+            self.assertTrue(grade(mcq, answer)["correct"], answer)
+        for answer in ("", "A", "A or B", "The answer is A, not B... answer: A", "Paris", "A B C D", "Réponse : A ou réponse : B",
+                       "Be careful", "<think>B"):
+            self.assertFalse(grade(mcq, answer)["correct"], answer)
+        self.assertTrue(grade(item("mcq", answer="K", options=12), "(K)")["correct"])
+
+    def test_reasoning_block_is_not_the_answer(self):
+        mcq = item("mcq", answer="C", options=4)
+        self.assertTrue(grade(mcq, "<think>maybe A</think>C")["correct"])
+        self.assertFalse(grade(mcq, "<think>the answer is C")["correct"])
+
+    def test_numbers_french_and_english_notation(self):
+        self.assertEqual(parse_numbers("1 234,56"), [1234.56])
+        self.assertEqual(parse_numbers("1,234.56"), [1234.56])
+        self.assertEqual(sorted(parse_numbers("1,234")), [1.234, 1234.0])
+        self.assertEqual(parse_numbers("3/4"), [0.75])
+        numeric = item("numeric", answer="1234.56", abs_tol=0.006)
+        self.assertTrue(grade(numeric, "Calcul...\nRéponse finale : 1 234,56 €")["correct"])
+        self.assertTrue(grade(numeric, "Final answer: 1,234.56")["correct"])
+        self.assertFalse(grade(numeric, "Réponse finale : 1234.60")["correct"])
+        self.assertFalse(grade(numeric, "Je ne sais pas.")["correct"])
+        # The marked final answer wins over later numbers in the text.
+        self.assertFalse(grade(numeric, "Réponse finale : 12 (et non 1234.56)")["correct"])
+        self.assertTrue(grade(item("numeric", answer="0.153", rel_tol=0.01, percent_ok=True), "Final answer: 15.3%")["correct"])
+
+    def test_json_must_be_a_single_document(self):
+        self.assertEqual(parse_single_json('```json\n{"a": 1}\n```'), {"a": 1})
+        for bad in ('{"a": 1}{"a": 2}', '{"a": 1} done', '{"a": 1, "a": 2}', "NaN", ""):
+            with self.assertRaises(ValueError):
+                parse_single_json(bad)
+        check = item("json", accept=[{"n": 1, "tags": ["x", "y"]}], unordered=["/tags"])
+        self.assertTrue(grade(check, '{"tags": ["y", "x"], "n": 1.0}')["correct"])
+        self.assertFalse(grade(check, '{"tags": ["y"], "n": 1}')["correct"])
+        self.assertFalse(grade(check, '{"tags": ["x", "y"], "n": true}')["correct"])
+
+    def test_label_text_and_translation(self):
+        cwe = item("label", answer="CWE-79", pattern=r"CWE-\d+")
+        self.assertTrue(grade(cwe, "cwe-79 (XSS)")["correct"])
+        self.assertFalse(grade(cwe, "CWE-79 ou CWE-89")["correct"])
+        self.assertFalse(grade(cwe, "CWE-798")["correct"])
+        sentiment = item("label", answer="Neutral", labels=["Negative", "Neutral", "Positive"])
+        self.assertTrue(grade(sentiment, "Neutral.")["correct"])
+        self.assertFalse(grade(sentiment, "Neutral or Positive")["correct"])
+        text = item("text", answers=["par un mauvais état de santé", "mauvais état de santé"], f1_threshold=0.7)
+        self.assertTrue(grade(text, "Mauvais état de santé.")["correct"])
+        self.assertFalse(grade(text, "Il était riche.")["correct"])
+        translation = item("chrf", references=["The cat sleeps on the blue sofa."], threshold=0.55)
+        self.assertTrue(grade(translation, "The cat sleeps on the blue sofa")["correct"])
+        self.assertFalse(grade(translation, "A dog runs in the garden.")["correct"])
+        self.assertFalse(grade(translation, "The cat sleeps on the blue sofa. " * 8)["correct"])
+
+    def test_sql_is_judged_by_its_result_not_its_text(self):
+        context = "CREATE TABLE t (id INT, v INT); INSERT INTO t VALUES (1, 10), (2, 20), (3, 30);"
+        sql = item("sql", context=context, rows=[[60]])
+        self.assertTrue(grade(sql, "```sql\nSELECT SUM(v) FROM t;\n```")["correct"])
+        self.assertTrue(grade(sql, "select 10 + 20 + 30")["correct"])
+        self.assertFalse(grade(sql, "SELECT SUM(id) FROM t")["correct"])
+        self.assertFalse(grade(sql, "SELECT nothing FROM nowhere")["correct"])
+        self.assertFalse(grade(sql, "PRAGMA table_info(t)")["correct"])
+
+    def test_generated_code_never_runs_without_explicit_permission(self):
+        tests = item("python_tests", tests="assert add(1, 2) == 3", entry_point="add")
+        with patch.dict(os.environ, {"AURORA_PROFESSOR_ALLOW_CODE_EXECUTION": ""}):
+            with self.assertRaises(RuntimeError):
+                grade(tests, "```python\ndef add(a, b):\n    return a + b\n```")
+
+    @unittest.skipIf(os.name == "nt", "POSIX resource limits")
+    def test_code_is_judged_by_running_its_tests(self):
+        tests = item("python_tests", tests="assert add(1, 2) == 3\nassert add(-1, 1) == 0", entry_point="add")
+        with patch.dict(os.environ, {"AURORA_PROFESSOR_ALLOW_CODE_EXECUTION": "1"}):
+            self.assertTrue(grade(tests, "Voici :\n```python\ndef add(a, b):\n    return a + b\n```")["correct"])
+            self.assertFalse(grade(tests, "```python\ndef add(a, b):\n    return a - b\n```")["correct"])
+            self.assertFalse(grade(tests, "```python\ndef add(a, b):\n    while True: pass\n```" if False else "```python\nraise SystemExit(3)\n```")["correct"])
+
+    def test_unknown_grader_is_an_error_not_a_score(self):
+        with self.assertRaises(ValueError):
+            grade(item("vibes"), "great")
+
+
+class Generators(unittest.TestCase):
+    def test_every_reference_passes_and_exam_never_repeats_training(self):
+        train, exam = set(), set()
+        for name, spec in generators.FAMILIES.items():
+            for subskill in spec["subskills"]:
+                for role in ("train", "diagnostic", "gate:0", "gate:1"):
+                    for index in range(6):
+                        built = generators.generate(name, role, index, subskill)
+                        self.assertTrue(grade(built, built["target"])["correct"], built["id"])
+                        (train if role == "train" else exam).add(built["question_hash"])
+        self.assertFalse(train & exam)
+
+    def test_generation_is_deterministic(self):
+        first = generators.generate("mission.evidence", "gate:2", 5, "quantity")
+        second = generators.generate("mission.evidence", "gate:2", 5, "quantity")
+        self.assertEqual(json.dumps(first, sort_keys=True), json.dumps(second, sort_keys=True))
+        self.assertNotEqual(first["messages"], generators.generate("mission.evidence", "gate:3", 5, "quantity")["messages"])
+
+    def test_evidence_oracle_is_the_production_comparator(self):
+        built = generators.generate("mission.evidence", "gate:0", 3, "quantity")
+        good = json.loads(built["target"])
+        check = good["args"]["checks"][0]
+
+        def answer(**changes):
+            return json.dumps({"tool": "verify", "args": {"checks": [{**check, **changes}]}})
+        self.assertTrue(grade(built, answer())["correct"])
+        self.assertFalse(grade(built, answer(expressions=["1 == 1"]))["correct"])                       # tautology
+        self.assertFalse(grade(built, answer(bindings=check["bindings"][:-1]))["correct"])              # unbound field
+        dotted = [{**check["bindings"][0], "source_pointer": "result.url"}] + check["bindings"][1:]
+        self.assertFalse(grade(built, answer(bindings=dotted))["correct"])                              # not RFC 6901
+        written = next(r for r in built["grader"]["receipts"].values() if r["tool"] == "write_file")
+        copied = [{"path": "/title", "evidence_id": written["id"], "source_pointer": "/result/content/title"}] + check["bindings"]
+        self.assertFalse(grade(built, answer(bindings=copied))["correct"])                              # own output is no evidence
+        failed = next(r for r in built["grader"]["receipts"].values() if r["ok"] is False)
+        refused = [{"path": "/title", "evidence_id": failed["id"], "source_pointer": "/result/title"}] + check["bindings"]
+        self.assertFalse(grade(built, answer(bindings=refused))["correct"])                             # failed receipt
+        self.assertFalse(grade(built, built["target"] + built["target"])["correct"])                    # two JSON documents
+
+    def test_pointer_and_action_use_real_contracts(self):
+        pointer = generators.generate("mission.pointer", "train", 5, "escape")
+        self.assertIn("~", pointer["target"])
+        self.assertFalse(grade(pointer, pointer["target"].replace("~1", "/").replace("~0", "~"))["correct"])
+        self.assertFalse(grade(pointer, "result.headers")["correct"])
+        action = generators.generate("mission.action", "gate:0", 2, "browser_click")
+        expected = json.loads(action["target"])
+        self.assertTrue(grade(action, action["target"])["correct"])
+        self.assertFalse(grade(action, json.dumps({**expected, "args": {**expected["args"], "invented": 1}}))["correct"])
+        self.assertFalse(grade(action, json.dumps({"tool": "click", "args": expected["args"]}))["correct"])
+
+
+class Statistics(unittest.TestCase):
+    def rows(self, flags, skill="s", module="m"):
+        return [{"id": f"{skill}:{i}", "module": module, "skill": skill, "subskill": "a", "status": "graded",
+                 "correct": bool(flag), "output": "x"} for i, flag in enumerate(flags)]
+
+    def test_exact_mcnemar_and_wilson(self):
+        self.assertEqual(mcnemar_exact(0, 0), 1.0)
+        self.assertAlmostEqual(mcnemar_exact(1, 9), 2 * (1 + 10) / 2 ** 10)
+        low, high = wilson(50, 100)
+        self.assertTrue(0.40 < low < 0.5 < high < 0.60)
+        self.assertEqual(wilson(0, 0), (0.0, 1.0))
+
+    def test_clear_gain_is_promoted_and_noise_is_not(self):
+        base = self.rows([0] * 150 + [1] * 150, "a") + self.rows([0] * 150 + [1] * 150, "b")
+        better = self.rows([1] * 120 + [0] * 30 + [1] * 150, "a") + self.rows([1] * 110 + [0] * 40 + [1] * 150, "b")
+        self.assertEqual(compare(base, better)["verdict"], "promote")
+        same = compare(base, base)
+        self.assertEqual(same["verdict"], "inconclusive")
+        self.assertEqual(same["overall"]["macro_gain"], 0.0)
+        noisy = self.rows([0] * 148 + [1] * 152, "a") + self.rows([0] * 151 + [1] * 149, "b")
+        self.assertNotEqual(compare(base, noisy)["verdict"], "promote")
+
+    def test_a_gain_cannot_hide_a_broken_skill(self):
+        base = self.rows([0] * 150 + [1] * 150, "a") + self.rows([1] * 300, "b")
+        traded = self.rows([1] * 300, "a") + self.rows([0] * 60 + [1] * 240, "b")
+        result = compare(base, traded)
+        self.assertEqual(result["verdict"], "reject")
+        self.assertEqual(result["regressions"], ["b"])
+
+    def test_small_or_mismatched_exams_cannot_promote(self):
+        base, better = self.rows([0] * 40), self.rows([1] * 40)
+        self.assertEqual(compare(base, better)["verdict"], "inconclusive")
+        with self.assertRaises(ValueError):
+            compare(base, better[:-1])
+        self.assertGreaterEqual(GATE["min_items"], 200)
+
+    def test_more_empty_answers_is_a_rejection(self):
+        base = self.rows([0] * 150 + [1] * 150)
+        candidate = self.rows([1] * 300)
+        for row in candidate[:20]:
+            row["output"] = ""
+        self.assertEqual(compare(base, candidate)["verdict"], "reject")
+
+
+class Curriculum(unittest.TestCase):
+    def test_exam_partition_is_stable_and_disjoint(self):
+        self.assertEqual(bucket("x", "salt"), bucket("x", "salt"))
+        roles = [exam_role(f"hf:demo:{i}") for i in range(2000)]
+        self.assertTrue(0.25 < roles.count("diagnostic") / 2000 < 0.35)
+        self.assertEqual(question_hash("  Où est le VÉLO ? "), question_hash("ou est le velo"))
+
+    def test_gate_cycles_draw_disjoint_items(self):
+        items = [{"id": f"i{n}", "subskill": f"s{n % 4}"} for n in range(400)]
+        first, reused_first = stratified(items, 40, "seed", 0)
+        second, reused_second = stratified(items, 40, "seed", 1)
+        self.assertFalse({i["id"] for i in first} & {i["id"] for i in second})
+        self.assertFalse(reused_first or reused_second)
+        _, exhausted = stratified(items[:40], 40, "seed", 3)
+        self.assertTrue(exhausted)
+
+    def test_generator_exams_and_pools_never_overlap(self):
+        modules = ["missions", "engineering", "media"]
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            diagnostic, _ = build_exam("diagnostic", 8, modules=modules)
+            gate, _ = build_exam("gate", 8, modules=modules, cycle=1)
+            pool, _ = build_pool(24, modules=modules)
+        exam_hashes = {i["question_hash"] for i in diagnostic + gate}
+        self.assertFalse(exam_hashes & {i["question_hash"] for group in pool.values() for i in group})
+        self.assertFalse({i["id"] for i in diagnostic} & {i["id"] for i in gate})
+        self.assertTrue(all("target" not in i for i in diagnostic + gate))
+        self.assertEqual(set(skills(modules)) & set(pool), set(pool))
+
+    def test_blocklist_removes_leaking_training_items(self):
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            pool, _ = build_pool(12, modules=["engineering"])
+            leaked = pool["engineering.calc"][0]["question_hash"][:20]
+            filtered, notes = build_pool(12, modules=["engineering"], blocklist=[leaked])
+        self.assertNotIn(leaked, {i["question_hash"][:20] for i in filtered["engineering.calc"]})
+        self.assertEqual(notes["removed_by_blocklist"], 1)
+
+    def test_budget_follows_measured_weakness_with_a_floor(self):
+        summary = {"skills": {"weak": {"module": "m", "items": 100, "correct": 10, "accuracy": 0.1, "ci95": [0.05, 0.18]},
+                              "strong": {"module": "m", "items": 100, "correct": 95, "accuracy": 0.95, "ci95": [0.89, 0.98]}},
+                   "subskills": {"weak / a": {"items": 50, "correct": 1, "accuracy": 0.02}, "weak / b": {"items": 50, "correct": 9, "accuracy": 0.18}}}
+        catalogue = {"weak": {"generator": True, "train_sources": []}, "strong": {"generator": False, "train_sources": ["x"]}}
+        weak_points = profile(summary, catalogue)
+        self.assertEqual(weak_points[0]["skill"], "weak")
+        self.assertEqual(weak_points[0]["subskills"][0]["subskill"], "a")
+        weights = skill_weights(weak_points, ["weak", "strong", "unexamined"])
+        self.assertAlmostEqual(sum(weights.values()), 1.0)
+        self.assertGreater(weights["weak"], 5 * weights["strong"])
+        self.assertGreater(weights["strong"], 0)
+        self.assertGreater(weights["unexamined"], 0)
+
+    def test_known_failures_are_taught_first(self):
+        pool = {"weak": [{"id": f"w{n}", "module": "m", "skill": "weak"} for n in range(50)],
+                "replay": [{"id": f"r{n}", "module": "m", "skill": "replay"} for n in range(50)]}
+        mined = {"w3": False, "w7": False, "w9": True}
+        chosen, plan = build_curriculum(pool, {"weak": 1.0}, 20, mined=mined, replay_skills=("replay",))
+        ids = {i["id"] for i in chosen}
+        self.assertTrue({"w3", "w7"} <= ids)
+        self.assertNotIn("w9", ids)
+        self.assertEqual(plan["skills"]["weak"]["known_failures_included"], 2)
+        self.assertTrue(plan["skills"]["replay"]["replay"])
+        self.assertEqual(len(chosen), plan["total"])
+
+    def test_modules_cover_the_application_families(self):
+        self.assertEqual(set(MODULES), {"missions", "code", "conversation", "academy", "cyber", "business", "cowork", "media", "engineering"})
+        catalogue = skills()
+        for module in MODULES:
+            self.assertTrue(any(entry["module"] == module for entry in catalogue.values()), module)
+
+
+if __name__ == "__main__":
+    unittest.main()

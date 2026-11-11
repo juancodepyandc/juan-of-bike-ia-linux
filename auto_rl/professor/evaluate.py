@@ -1,0 +1,104 @@
+"""Examine a student on a fixed item set and write graded, resumable results.
+
+One line per item goes to ``results.jsonl`` as soon as it is graded, so a cloud
+session that is cut short can resume without re-running or re-grading anything.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import time
+from collections import defaultdict
+from pathlib import Path
+
+from .compare import wilson
+from .graders import grade
+from .records import atomic_json, suite_digest
+
+
+def _read(path):
+    rows = []
+    if Path(path).is_file():
+        with Path(path).open(encoding="utf-8") as stream:
+            for line in stream:
+                if line.strip():
+                    rows.append(json.loads(line))
+    return rows
+
+
+def read_results(folder):
+    return _read(Path(folder) / "results.jsonl")
+
+
+def summarize(rows):
+    """Accuracy with Wilson intervals per module, skill and sub-skill (graded rows only)."""
+    graded = [row for row in rows if row.get("status", "graded") == "graded"]
+    levels = {"modules": defaultdict(list), "skills": defaultdict(list), "subskills": defaultdict(list)}
+    for row in graded:
+        levels["modules"][row["module"]].append(row)
+        levels["skills"][row["skill"]].append(row)
+        levels["subskills"][f"{row['skill']} / {row.get('subskill')}"].append(row)
+
+    def table(group):
+        n, correct = len(group), sum(bool(r["correct"]) for r in group)
+        low, high = wilson(correct, n)
+        return {"items": n, "correct": correct, "accuracy": correct / n if n else None, "ci95": [low, high],
+                "mean_score": sum(r.get("score", 0.0) for r in group) / n if n else None,
+                "module": group[0]["module"] if group else None}
+    summary = {name: {key: table(group) for key, group in sorted(groups.items())} for name, groups in levels.items()}
+    macro = [entry["accuracy"] for entry in summary["skills"].values() if entry["items"]]
+    summary["overall"] = {**table(graded), "macro_accuracy": sum(macro) / len(macro) if macro else None,
+                          "skipped": len(rows) - len(graded),
+                          "empty_answers": sum(not str(r.get("output") or "").strip() for r in graded)}
+    return summary
+
+
+def evaluate(student, items, folder, *, batch_size=8, label="exam", progress=None, budget_seconds=None):
+    """Grade ``items`` with ``student``; returns the summary and writes a receipt."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    results_path = folder / "results.jsonl"
+    done = {row["id"] for row in _read(results_path)}
+    pending = [item for item in items if item["id"] not in done]
+    started = time.monotonic()
+    # Similar answer budgets share a batch so a long task does not slow short ones.
+    groups = defaultdict(list)
+    for item in pending:
+        groups[int(item.get("max_new_tokens", 96))].append(item)
+    complete = True
+    with results_path.open("a", encoding="utf-8") as stream:
+        for tokens in sorted(groups):
+            group = groups[tokens]
+            for start in range(0, len(group), batch_size * 4):
+                if budget_seconds is not None and time.monotonic() - started > budget_seconds:
+                    complete = False
+                    break
+                chunk = group[start:start + batch_size * 4]
+                outputs = student.generate([item["messages"] for item in chunk], tokens, batch_size=batch_size)
+                for item, output in zip(chunk, outputs):
+                    row = {"id": item["id"], "module": item["module"], "skill": item["skill"],
+                           "subskill": item.get("subskill"), "source": item.get("source")}
+                    if output is None:
+                        row.update(status="skipped_prompt_too_long", correct=False, score=0.0, output=None)
+                    else:
+                        result = grade(item, output)
+                        row.update(status="graded", correct=result["correct"], score=result["score"],
+                                   reason=result["reason"], output=output[:4000])
+                    stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+                stream.flush()
+                if progress:
+                    progress({"label": label, "graded": len(_read(results_path)), "total": len(items),
+                              "elapsed_seconds": round(time.monotonic() - started, 1)})
+            if not complete:
+                break
+    rows = _read(results_path)
+    wanted = {item["id"] for item in items}
+    rows = [row for row in rows if row["id"] in wanted]
+    summary = summarize(rows)
+    receipt = {"kind": "aurora_professor_exam", "label": label, "complete": complete and len(rows) == len(items),
+               "items": len(items), "graded_rows": len(rows), "suite_sha256": suite_digest(items),
+               "results_sha256": hashlib.sha256(results_path.read_bytes()).hexdigest(),
+               "student": student.describe(), "decoding": {"do_sample": False, "batch_size": batch_size},
+               "elapsed_seconds": round(time.monotonic() - started, 1), "summary": summary}
+    atomic_json(folder / "exam_receipt.json", receipt)
+    return receipt
