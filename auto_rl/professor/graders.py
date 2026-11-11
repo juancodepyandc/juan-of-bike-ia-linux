@@ -253,8 +253,16 @@ def parse_single_json(output):
     return json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
 
 
-def json_equal(left, right, *, unordered=frozenset(), path=""):
-    """Typed deep equality; ints and floats compare by value, booleans never as numbers."""
+def _fold(text):
+    text = unicodedata.normalize("NFD", unicodedata.normalize("NFKC", text).casefold())
+    return re.sub(r"[^0-9a-z]+", " ", "".join(c for c in text if unicodedata.category(c) != "Mn")).strip()
+
+
+def json_equal(left, right, *, unordered=frozenset(), path="", fold=False):
+    """Typed deep equality; ints and floats compare by value, booleans never as numbers.
+
+    ``fold`` compares strings without case, accents or punctuation (labels), never numbers or types.
+    """
     if isinstance(left, bool) or isinstance(right, bool):
         return type(left) is bool and type(right) is bool and left == right
     if isinstance(left, (int, float)) and isinstance(right, (int, float)):
@@ -263,7 +271,7 @@ def json_equal(left, right, *, unordered=frozenset(), path=""):
         return False
     if isinstance(left, dict):
         return left.keys() == right.keys() and all(
-            json_equal(v, right[k], unordered=unordered, path=f"{path}/{k}") for k, v in left.items())
+            json_equal(v, right[k], unordered=unordered, path=f"{path}/{k}", fold=fold) for k, v in left.items())
     if isinstance(left, list):
         if len(left) != len(right):
             return False
@@ -271,14 +279,14 @@ def json_equal(left, right, *, unordered=frozenset(), path=""):
             remaining = list(right)
             for value in left:
                 match = next((i for i, other in enumerate(remaining)
-                              if json_equal(value, other, unordered=unordered, path=path + "/*")), None)
+                              if json_equal(value, other, unordered=unordered, path=path + "/*", fold=fold)), None)
                 if match is None:
                     return False
                 remaining.pop(match)
             return True
-        return all(json_equal(a, b, unordered=unordered, path=f"{path}/{i}") for i, (a, b) in enumerate(zip(left, right)))
+        return all(json_equal(a, b, unordered=unordered, path=f"{path}/{i}", fold=fold) for i, (a, b) in enumerate(zip(left, right)))
     if isinstance(left, str):
-        return left.strip() == right.strip()
+        return _fold(left) == _fold(right) if fold else left.strip() == right.strip()
     return left == right
 
 
@@ -289,7 +297,7 @@ def grade_json(output, grader):
         return _result(False, f"invalid_json:{type(exc).__name__}")
     unordered = frozenset(grader.get("unordered", ()))
     for expected in grader["accept"]:
-        if json_equal(value, expected, unordered=unordered):
+        if json_equal(value, expected, unordered=unordered, fold=grader.get("fold", False)):
             return _result(True, "json_equal")
     return _result(False, "json_differs")
 
@@ -352,11 +360,18 @@ def grade_mission_action(output, grader):
 def grade_pointer(output, grader):
     """An RFC 6901 pointer is right when it resolves to the requested value."""
     from agi_core.json_evidence import equal, pointer
-    text = strip_reasoning(output).strip().strip("`").strip()
+    text = strip_reasoning(output).strip()
+    # The skill is locating the field: a pointer wrapped in a code fence, quotes or
+    # {"pointer": ...} is read as the pointer. Two different pointers are no answer.
+    fenced = re.findall(r"```[A-Za-z0-9_-]*[ \t]*\n?(.*?)```", text, flags=re.S)
+    if fenced:
+        text = fenced[-1].strip()
     try:
         candidate = parse_single_json(text)
     except (ValueError, RecursionError):
-        candidate = text
+        lines = [line.strip().strip("`\"'") for line in text.splitlines() if line.strip()]
+        rooted = sorted({line for line in lines if line.startswith("/")})
+        candidate = rooted[0] if len(rooted) == 1 else (lines[0] if len(lines) == 1 else None)
     if isinstance(candidate, dict) and set(candidate) == {"pointer"}:
         candidate = candidate["pointer"]
     if not isinstance(candidate, str) or "\n" in candidate:

@@ -194,11 +194,24 @@ def _pointer(rng, role, subskill):
 
 # --- mission.evidence ------------------------------------------------------
 
+def _verify_contract():
+    """Contract of a ``json_evidence`` check, taken from the production schema.
+
+    A mission always sees its tool contracts; an exercise that hid them would
+    measure guessing of field names, not the ability to bind fields to receipts.
+    """
+    from agi_core.mission_protocol import CHECK_SCHEMA, TOOL_DESCRIPTIONS
+    check = next(branch for branch in CHECK_SCHEMA["anyOf"] if branch["properties"]["kind"].get("const") == "json_evidence")
+    envelope = {"tool": "verify", "args": {"checks": ["<json_evidence check>"]}}
+    return (f"- verify: {TOOL_DESCRIPTIONS['verify']}\n  action: {_json(envelope)}\n"
+            f"  json_evidence check: {_json({k: v for k, v in check.items() if k in ('properties', 'required')})}")
+
+
 _EVIDENCE_PROMPTS = {
-    "train": ["Fichier sauvegardé `{path}` :\n{saved}\n\nReçus conservés par la mission :\n{receipts}\n\n{quantity}Produis l'unique action JSON `verify` avec un contrôle `json_evidence` sur `{path}` : chaque champ du fichier doit être lié par `path`, `evidence_id` et `source_pointer` (pointeurs RFC 6901 depuis la racine du reçu complet) à un reçu d'observation réussi. Réponds uniquement par l'objet JSON {{\"tool\":\"verify\",\"args\":{{...}}}}.",
-              "Saved file `{path}`:\n{saved}\n\nReceipts retained by this mission:\n{receipts}\n\n{quantity}Output the single JSON action `verify` holding one `json_evidence` check on `{path}`. Bind every field of the file with `path`, `evidence_id` and `source_pointer` (RFC 6901 pointers from the complete receipt root) to a successful observation receipt. Answer with the JSON object only."],
-    "exam": ["La mission a écrit `{path}` avec ce contenu :\n{saved}\n\nElle dispose de ces reçus :\n{receipts}\n\n{quantity}Rédige l'action de vérification (outil `verify`, un seul contrôle de type `json_evidence` visant `{path}`) qui rattache tous les champs du fichier aux observations réelles. Utilise des pointeurs RFC 6901 complets. Sortie : un seul objet JSON, rien d'autre.",
-             "The mission saved `{path}`:\n{saved}\n\nAvailable receipts:\n{receipts}\n\n{quantity}Write the verification action (tool `verify`, exactly one `json_evidence` check for `{path}`) grounding all fields of the file in actual observations, using full RFC 6901 pointers. Output one JSON object and nothing else."],
+    "train": ["Contrat de l'outil :\n{contract}\n\nFichier sauvegardé `{path}` :\n{saved}\n\nReçus conservés par la mission :\n{receipts}\n\n{quantity}Produis l'unique action JSON `verify` avec un contrôle `json_evidence` sur `{path}` : chaque champ du fichier doit être lié par `path`, `evidence_id` et `source_pointer` (pointeurs RFC 6901 depuis la racine du reçu complet) à un reçu d'observation réussi. Réponds uniquement par l'objet JSON {{\"tool\":\"verify\",\"args\":{{...}}}}.",
+              "Tool contract:\n{contract}\n\nSaved file `{path}`:\n{saved}\n\nReceipts retained by this mission:\n{receipts}\n\n{quantity}Output the single JSON action `verify` holding one `json_evidence` check on `{path}`. Bind every field of the file with `path`, `evidence_id` and `source_pointer` (RFC 6901 pointers from the complete receipt root) to a successful observation receipt. Answer with the JSON object only."],
+    "exam": ["Tu pilotes une mission. Contrat de l'outil de vérification :\n{contract}\n\nLa mission a écrit `{path}` avec ce contenu :\n{saved}\n\nElle dispose de ces reçus :\n{receipts}\n\n{quantity}Rédige l'action de vérification (outil `verify`, un seul contrôle de type `json_evidence` visant `{path}`) qui rattache tous les champs du fichier aux observations réelles. Utilise des pointeurs RFC 6901 complets. Sortie : un seul objet JSON, rien d'autre.",
+             "You are running a mission. Contract of the verification tool:\n{contract}\n\nThe mission saved `{path}`:\n{saved}\n\nAvailable receipts:\n{receipts}\n\n{quantity}Write the verification action (tool `verify`, exactly one `json_evidence` check for `{path}`) grounding all fields of the file in actual observations, using full RFC 6901 pointers. Output one JSON object and nothing else."],
 }
 _QUANTITY = {"fr": "Le critère exige exactement {n} libellés : ajoute une expression qui contrôle cette quantité sur le fichier sauvegardé.\n\n",
              "en": "The criterion demands exactly {n} labels: add an expression that checks this quantity on the saved file.\n\n"}
@@ -238,7 +251,7 @@ def _evidence(rng, role, subskill):
               "required_paths": [p for p, _ in _leaves(saved)]}
     check = {"kind": "json_evidence", "path": path, "bindings": bindings}
     prompt = _pick(rng, role, _EVIDENCE_PROMPTS["train"], _EVIDENCE_PROMPTS["exam"])
-    lang = "en" if prompt.startswith(("Saved file", "The mission")) else "fr"
+    lang = "en" if prompt.startswith(("Tool contract", "You are running")) else "fr"
     quantity = ""
     if subskill == "quantity":
         count = len(saved["visible_labels"])
@@ -248,8 +261,9 @@ def _evidence(rng, role, subskill):
         quantity = _QUANTITY[lang].format(n=count)
     target = {"tool": "verify", "args": {"checks": [check]}}
     return {"messages": [{"role": "user", "content": prompt.format(path=path, saved=_pretty(saved), quantity=quantity,
+                                                                 contract=_verify_contract(),
                                                                  receipts="\n".join(_json(r) for r in receipts))}],
-            "target": _json(target), "grader": grader, "lang": lang, "max_new_tokens": 560}
+            "target": _json(target), "grader": grader, "lang": lang, "max_new_tokens": 640}
 
 
 # --- mission.action --------------------------------------------------------

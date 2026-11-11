@@ -199,7 +199,8 @@ def build(diagnosis=None):
     colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", TRAINER_PARAMETERS, "parameters"),
                    cell("code", TRAINER_DIAGNOSIS.replace("__DIAGNOSIS__", embedded), "diagnosis"),
                    cell("code", TRAINER_ADMISSION, "admission"),
-                   cell("code", kaggle_runner.script(base="/content", inputs="/content/aurora_inputs", hf_home="/content/hf_cache"), "professor-run"),
+                   cell("code", kaggle_runner.script(base="/content", inputs="/content/aurora_inputs", hf_home="/content/hf_cache",
+                                                sources="/content/aurora_sources"), "professor-run"),
                    cell("code", TRAINER_EXPORT, "export")]
     (out / "Aurora_Professeur_Entraineur_Colab.ipynb").write_text(
         json.dumps(notebook(colab_cells), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

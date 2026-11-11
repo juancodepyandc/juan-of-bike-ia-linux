@@ -17,6 +17,7 @@ import base64
 import hashlib
 import inspect
 import json
+import re
 import time
 from pathlib import Path
 
@@ -28,6 +29,16 @@ BUNDLE_MODULES = ["auto_rl.professor.run", "auto_rl.professor.train", "auto_rl.s
 KERNELS = {"diagnose": ("aurora-professeur-examinateur", "Aurora Professeur Examinateur"),
            "verify": ("aurora-professeur-examinateur", "Aurora Professeur Examinateur"),
            "train": ("aurora-professeur-entraineur", "Aurora Professeur Entraineur")}
+
+
+def kernel_name(role, student):
+    """``(slug, title)`` of one student's kernel: each student has its own examiner and trainer,
+    so two students can be examined or trained at the same time without sharing a machine."""
+    slug, title = KERNELS[role]
+    words = [re.sub(r"[^a-z0-9]", "", part) for part in re.split(r"[:/\s]+", student.lower())]
+    words = [word for word in words if word]
+    return slug + "-" + "-".join(words), title + " " + " ".join(word.capitalize() for word in words)
+
 #: Minimum library versions; a newer preinstalled version is kept as is.
 REQUIREMENTS = {"transformers": "4.57.0", "peft": "0.13.0", "bitsandbytes": "0.43.0", "accelerate": "0.34.0", "datasets": "3.0.0"}
 
@@ -44,7 +55,8 @@ SOURCES = base64.b64decode({blob!r})
 BASE = Path({base!r})
 WORK = BASE / "aurora_professor"
 WORK.mkdir(parents=True, exist_ok=True)
-REPO = extract_bundle(SOURCES, BASE / "aurora_sources" / SOURCE_SHA256[:16], SOURCE_SHA256)
+# Sources live outside the output folder: only evidence is published as kernel output.
+REPO = extract_bundle(SOURCES, Path({sources!r}) / SOURCE_SHA256[:16], SOURCE_SHA256)
 print("AURORA_BOOT " + json.dumps({{"sources": SOURCE_SHA256, "role": OPTIONS["role"]}}), flush=True)
 
 
@@ -76,6 +88,8 @@ argv = [sys.executable, "-m", "auto_rl.professor.run", OPTIONS["role"], "--stude
         "--budget-minutes", str(OPTIONS["budget_minutes"])]
 if OPTIONS.get("modules"):
     argv += ["--modules", OPTIONS["modules"]]
+if OPTIONS.get("skills"):
+    argv += ["--skills", OPTIONS["skills"]]
 for key, value in (OPTIONS.get("overrides") or {{}}).items():
     argv += ["--" + key.replace("_", "-"), str(value)]
 inputs = Path({inputs!r})
@@ -101,11 +115,16 @@ if OPTIONS["role"] == "verify":
 started = time.time()
 # Lines are relayed one by one so a notebook cell shows progress, not only a script log.
 process = subprocess.Popen(argv, env=env, cwd=str(REPO), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+beat = time.time()
 with (WORK / "run.log").open("a", encoding="utf-8") as log:
     for line in process.stdout:
         log.write(line)
+        log.flush()
         if line.startswith("AURORA_") or "Error" in line or "Traceback" in line or line.startswith("  File "):
             print(line, end="", flush=True)
+        elif time.time() - beat > 120:           # a quiet phase (downloads, model load) stays observable
+            beat = time.time()
+            print("AURORA_HEARTBEAT " + json.dumps({{"elapsed_seconds": round(beat - started), "last": line.strip()[-160:]}}), flush=True)
 code = process.wait()
 if code:
     print("".join((WORK / "run.log").read_text(encoding="utf-8", errors="replace").splitlines(True)[-60:]), flush=True)
@@ -133,7 +152,8 @@ def bundle():
     return blob, hashlib.sha256(blob).hexdigest(), manifest
 
 
-def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_home="/tmp/aurora_hf"):
+def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_home="/tmp/aurora_hf",
+           sources="/tmp/aurora_sources"):
     """Self-contained runner for one role; the same text runs in a Kaggle kernel or a notebook cell.
 
     Without ``options`` the runner reads a ``AURORA_OPTIONS`` dict defined by an
@@ -143,23 +163,23 @@ def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_h
     chosen = "dict(AURORA_OPTIONS)" if options is None else "json.loads(%r)" % json.dumps(options, ensure_ascii=False)
     return _BOOTSTRAP.format(extract=inspect.getsource(extract_bundle), options=chosen,
                              digest=digest, blob=base64.b64encode(blob).decode(), base=base, inputs=inputs,
-                             hf_home=hf_home, requirements=REQUIREMENTS)
+                             hf_home=hf_home, sources=sources, requirements=REQUIREMENTS)
 
 
 def write_kernel(folder, owner, role, *, student, profile="standard", modules=None, cycle=0, budget_minutes=240,
-                 overrides=None, gpu=True, dataset_sources=()):
+                 overrides=None, gpu=True, dataset_sources=(), skills=None):
     """Create the kernel folder (script + metadata). Nothing is uploaded by this function."""
-    slug, title = KERNELS[role]
+    slug, title = kernel_name(role, student)
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
-    options = {"role": role, "student": student, "profile": profile, "modules": modules, "cycle": cycle,
+    options = {"role": role, "student": student, "profile": profile, "modules": modules, "skills": skills, "cycle": cycle,
                "budget_minutes": budget_minutes, "overrides": overrides or {}}
     (folder / "kernel.py").write_text(script(options), encoding="utf-8")
     sources = []
     if role == "train":
-        sources = [f"{owner}/{KERNELS['diagnose'][0]}"]
+        sources = [f"{owner}/{kernel_name('diagnose', student)[0]}"]
     elif role == "verify" and not dataset_sources:
-        sources = [f"{owner}/{KERNELS['train'][0]}"]
+        sources = [f"{owner}/{kernel_name('train', student)[0]}"]
     metadata = {"id": f"{owner}/{slug}", "title": title, "code_file": "kernel.py", "language": "python",
                 "kernel_type": "script", "is_private": True, "enable_gpu": bool(gpu), "enable_internet": True,
                 "machine_shape": "NvidiaTeslaT4" if gpu else "", "dataset_sources": list(dataset_sources),
@@ -188,6 +208,29 @@ def launch(folder, *, timeout_seconds):
 def state(reference):
     answer = _api().kernels_status(reference)
     return {"status": str(answer.status).split(".")[-1].lower(), "failure": answer.failure_message}
+
+
+def logs(reference, *, markers=("AURORA_", "Error", "Traceback"), tail=40, window_seconds=25):
+    """Last marked lines of a kernel log (status lines and failures), newest last.
+
+    A running session only exposes a live stream, so it is read for a bounded
+    window in a helper thread; a finished session returns its stored log.
+    """
+    import threading
+    api, collected = _api(), []
+
+    def read():
+        try:
+            for event in api.kernels_logs_stream(reference):
+                collected.append(str(event.get("data", "")))
+        except Exception as exc:                 # a quiet or closed stream is not a kernel failure
+            collected.append(f"(log stream ended: {type(exc).__name__})")
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(window_seconds)
+    text = "\n".join(collected) or (api.kernels_logs(reference) or "")
+    lines = [part.strip()[:400] for part in text.splitlines() if any(marker in part for marker in markers)]
+    return lines[-tail:]
 
 
 def quota():
@@ -260,12 +303,13 @@ def fetch(reference, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "quota"))
+    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "logs", "quota"))
     parser.add_argument("--owner")
     parser.add_argument("--role", choices=sorted(KERNELS))
     parser.add_argument("--student", default="qwen2.5:7b")
     parser.add_argument("--profile", default="standard")
     parser.add_argument("--modules")
+    parser.add_argument("--skills")
     parser.add_argument("--cycle", type=int, default=0)
     parser.add_argument("--budget-minutes", type=float, default=240)
     parser.add_argument("--folder", type=Path)
@@ -279,19 +323,22 @@ def main(argv=None):
         return 0
     if not args.owner or not args.role:
         parser.error("--owner and --role are required")
-    reference = f"{args.owner}/{KERNELS[args.role][0]}"
-    folder = args.folder or ROOT / "Outputs" / "auto_rl" / "professor" / "kernels" / args.role
+    slug = kernel_name(args.role, args.student)[0]
+    reference = f"{args.owner}/{slug}"
+    folder = args.folder or ROOT / "Outputs" / "auto_rl" / "professor" / "kernels" / slug / args.role
     if args.command in ("build", "launch"):
         overrides = dict(pair.split("=", 1) for pair in args.override)
         metadata = write_kernel(folder, args.owner, args.role, student=args.student, profile=args.profile, modules=args.modules,
                                 cycle=args.cycle, budget_minutes=args.budget_minutes, overrides=overrides, gpu=not args.cpu,
-                                dataset_sources=args.dataset_source)
+                                dataset_sources=args.dataset_source, skills=args.skills)
         result = {"folder": str(folder), "kernel": metadata["id"], "gpu": metadata["enable_gpu"]}
         if args.command == "launch":
             result.update(launch(folder, timeout_seconds=args.budget_minutes * 60 + 1500))
         print(json.dumps(result))
     elif args.command == "status":
         print(json.dumps(state(reference)))
+    elif args.command == "logs":
+        print("\n".join(logs(reference)))
     elif args.command == "wait":
         print(json.dumps(wait(reference)))
     else:

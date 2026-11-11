@@ -53,8 +53,10 @@ def status(payload):
 def settings(args):
     config = {**PROFILES[args.profile], "profile": args.profile, "student": resolve(args.student),
               "modules": sorted(set(args.modules.split(","))) if args.modules else sorted(MODULES),
+              "skills": sorted(set(args.skills.split(","))) if args.skills else None,
               "cycle": args.cycle, "budget_seconds": args.budget_minutes * 60 if args.budget_minutes else None,
-              "four_bit": args.four_bit, "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1"}
+              "four_bit": args.four_bit, "export": args.export,
+              "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1"}
     for name in ("diagnostic_per_skill", "gate_per_skill", "curriculum", "epochs", "learning_rate", "rank", "max_tokens"):
         value = getattr(args, name, None)
         if value is not None:
@@ -74,7 +76,8 @@ def open_student(config, adapter=None):
 
 
 def _exam(config, role, library):
-    items, notes = build_exam(role, config[f"{role}_per_skill"], modules=config["modules"], cycle=config["cycle"], library=library)
+    items, notes = build_exam(role, config[f"{role}_per_skill"], modules=config["modules"], cycle=config["cycle"],
+                              library=library, only=config["skills"])
     if not config["allow_execution"]:
         skipped = sorted({item["skill"] for item in items if item["grader"]["type"] in EXECUTING})
         items = [item for item in items if item["grader"]["type"] not in EXECUTING]
@@ -84,6 +87,7 @@ def _exam(config, role, library):
 
 def _context(config):
     return {"schema": SCHEMA, "student": config["student"], "profile": config["profile"], "modules": config["modules"],
+            "skills": config["skills"],
             "cycle": config["cycle"], "hardware": hardware(), "versions": library_versions(),
             "python": platform.python_version(), "host": platform.node(), "created_at": time.time()}
 
@@ -97,11 +101,11 @@ def diagnose(config, work, student=None, library=None):
     status({"phase": "diagnose", "items": len(items)})
     receipt = evaluate(student, items, work / "diagnosis", batch_size=config["eval_batch"], label="diagnostic",
                        progress=status, budget_seconds=config["budget_seconds"])
-    catalogue = skills(config["modules"])
+    catalogue = skills(config["modules"], config["skills"])
     report = {**_context(config), "kind": "aurora_professor_diagnosis", "complete": receipt["complete"],
               "summary": receipt["summary"], "weak_points": profile(receipt["summary"], catalogue),
               "exam": {"suite_sha256": receipt["suite_sha256"], "results_sha256": receipt["results_sha256"], "notes": notes},
-              "blocklist": exam_blocklist(modules=config["modules"], library=library)}
+              "blocklist": exam_blocklist(modules=config["modules"], library=library, only=config["skills"])}
     atomic_json(work / "diagnosis.json", report)
     return report
 
@@ -116,7 +120,7 @@ def train_role(config, work, diagnosis, student=None, library=None):
         raise ValueError("This diagnosis describes another student")
     weak = diagnosis["weak_points"]
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
-                                  library=library, subskill_weights=subskill_weights(weak))
+                                  library=library, subskill_weights=subskill_weights(weak), only=config["skills"])
     # Probe the base model on training items it can be graded on: what it fails goes first.
     probes = []
     for name, items in pool.items():
@@ -180,6 +184,20 @@ def verify(config, work, adapter, student=None, library=None, base_done=False):
                # A rehearsal student is not called by any module: its verdict can never authorise an installation.
                "promotable": result["verdict"] == "promote" and complete and bool(config["student"]["production"])}
     atomic_json(work / f"verdict_{config['cycle']}.json", verdict)
+    wanted = config.get("export", "promote")
+    if wanted == "always" or (wanted == "promote" and verdict["promotable"]):
+        # Files Ollama can load. A failed conversion is recorded in the receipt and never changes the verdict.
+        from .export import export
+        status({"phase": "export"})
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot = snapshot_download(config["student"]["hf"], revision=config["student"].get("revision"),
+                                         allow_patterns=["*.json"], token=os.environ.get("HF_TOKEN") or None)
+            receipt = export(config["student"], adapter, work / "export", base_snapshot=snapshot)
+            status({"phase": "export", "files": sorted(receipt["files"]), "errors": receipt["errors"]})
+        except Exception as exc:
+            atomic_json(work / "export" / "export_receipt.json", {"kind": "aurora_professor_export", "files": {},
+                                                                 "errors": {"export": f"{type(exc).__name__}: {str(exc)[:600]}"}})
     return verdict
 
 
@@ -206,12 +224,15 @@ def main(argv=None):
     parser.add_argument("--student", default="qwen3:0.6b", help="Ollama tag or Hugging Face id listed in students.py")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="standard")
     parser.add_argument("--modules", help="Comma-separated subset of: " + ", ".join(sorted(MODULES)))
+    parser.add_argument("--skills", help="Comma-separated skill names for a targeted cycle (default: every skill of the modules)")
     parser.add_argument("--work", type=Path)
     parser.add_argument("--cycle", type=int, default=0, help="Selects a fresh, disjoint gate exam")
     parser.add_argument("--diagnosis", type=Path)
     parser.add_argument("--adapter", type=Path)
     parser.add_argument("--budget-minutes", type=float)
     parser.add_argument("--four-bit", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--export", choices=("promote", "always", "never"), default="promote",
+                        help="Convert the adapter to GGUF after verification (default: only when promotable)")
     for name, kind in (("diagnostic_per_skill", int), ("gate_per_skill", int), ("curriculum", int), ("epochs", float),
                        ("learning_rate", float), ("rank", int), ("max_tokens", int)):
         parser.add_argument("--" + name.replace("_", "-"), type=kind)

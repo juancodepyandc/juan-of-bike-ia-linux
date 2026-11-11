@@ -147,6 +147,8 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
     initial_dev = _dev_loss(model, dev_groups, pad_id, torch, device, autocast)
     history = [{"step": 0, "dev_loss": initial_dev, "elapsed_seconds": round(time.monotonic() - started, 1)}]
     step, micro, running, stale, stopped = 0, 0, None, 0, "completed"
+    seen_batches = skipped_batches = 0
+    out_of_memory = getattr(torch.cuda, "OutOfMemoryError", RuntimeError) if cuda else ()
     model.train()
     optimizer.zero_grad(set_to_none=True)
     epoch = 0
@@ -154,14 +156,27 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
         log.write(json.dumps(history[0]) + "\n")
         while step < planned and stopped == "completed":
             for group in batches(fit, settings["batch_size"], settings["seed"] + epoch):
-                ids, mask, labels = collate(group, pad_id, torch, device)
-                with autocast():
-                    loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
-                if not torch.isfinite(loss):
-                    stopped = "non_finite_loss"
-                    break
-                scaled = loss / settings["accumulate"]
-                (scaler.scale(scaled) if fp16 else scaled).backward()
+                seen_batches += 1
+                try:
+                    ids, mask, labels = collate(group, pad_id, torch, device)
+                    with autocast():
+                        loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
+                    if not torch.isfinite(loss):
+                        stopped = "non_finite_loss"
+                        break
+                    scaled = loss / settings["accumulate"]
+                    (scaler.scale(scaled) if fp16 else scaled).backward()
+                except out_of_memory:
+                    # One over-long batch must not lose the run: drop its partial gradients and go on.
+                    # Too many of them means the settings do not fit this GPU, which is an error.
+                    optimizer.zero_grad(set_to_none=True)
+                    torch.cuda.empty_cache()
+                    micro -= micro % settings["accumulate"]
+                    skipped_batches += 1
+                    if skipped_batches > 10 and skipped_batches > 0.2 * seen_batches:
+                        stopped = "out_of_memory"
+                        break
+                    continue
                 value = loss.detach().item()
                 running = value if running is None else 0.95 * running + 0.05 * value
                 micro += 1
@@ -220,6 +235,7 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
                "total_parameters": total_parameters, "examples": {"fit": len(fit), "dev": len(dev), "dropped_too_long": dropped},
                "examples_per_skill": _count(fit), "data_sha256": _data_digest(items),
                "steps": step, "planned_steps": planned, "stopped": stopped, "selected_step": best["step"],
+               "batches": {"seen": seen_batches, "skipped_out_of_memory": skipped_batches},
                "initial_dev_loss": initial_dev, "selected_dev_loss": best["loss"], "history": history,
                "elapsed_seconds": round(time.monotonic() - started, 1), "adapter_files": adapter_files,
                "note": "A lower development loss is not evidence of better answers; only the paired exam decides."}

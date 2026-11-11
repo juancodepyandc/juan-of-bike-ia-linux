@@ -79,7 +79,10 @@ class TransformersStudent:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         kwargs = {"revision": revision, "token": token, "low_cpu_mem_usage": True}
         if cuda:
-            self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+            # ``is_bf16_supported`` is also true where bf16 is only emulated (T4, compute capability 7.5),
+            # which was measured at ~0.6 s per decoding step. Use bf16 only where it is native.
+            native = min(torch.cuda.get_device_capability(i)[0] for i in range(torch.cuda.device_count())) >= 8
+            self.dtype = torch.bfloat16 if native else torch.float16
             kwargs["device_map"] = "auto"
             if self.four_bit:
                 from transformers import BitsAndBytesConfig
@@ -166,6 +169,39 @@ class TransformersStudent:
         return {"backend": self.backend, "model": self.model_id, "revision": self.revision, "four_bit": self.four_bit,
                 "dtype": str(self.dtype).replace("torch.", ""), "adapter": self.adapter, "thinking": self.thinking,
                 "max_prompt_tokens": self.max_prompt_tokens}
+
+
+class LlamaCppStudent:
+    """A quantised GGUF, optionally with a GGUF LoRA adapter: the engine Ollama embeds.
+
+    Prompts are rendered by the caller (same chat template as the Transformers
+    student), so both backends answer exactly the same text.
+    """
+
+    backend = "llama_cpp"
+
+    def __init__(self, gguf, *, render, adapter=None, context=4096, threads=None, max_prompt_tokens=3072):
+        from llama_cpp import Llama
+        self.gguf, self.adapter, self.render, self.max_prompt_tokens = str(gguf), adapter and str(adapter), render, max_prompt_tokens
+        self.llama = Llama(model_path=self.gguf, lora_path=self.adapter, n_ctx=context, n_threads=threads, seed=0, verbose=False)
+
+    def generate(self, conversations, max_new_tokens, batch_size=1):
+        outputs = []
+        for messages in conversations:
+            tokens = self.llama.tokenize(self.render(messages).encode("utf-8"), add_bos=False, special=True)
+            if len(tokens) > self.max_prompt_tokens or len(tokens) + max_new_tokens > self.llama.n_ctx():
+                outputs.append(None)
+                continue
+            self.llama.reset()
+            answer = self.llama.create_completion(prompt=tokens, max_tokens=max_new_tokens, temperature=0.0)
+            outputs.append(answer["choices"][0]["text"])
+        return outputs
+
+    def describe(self):
+        from .records import file_hash
+        return {"backend": self.backend, "gguf": self.gguf, "gguf_sha256": file_hash(self.gguf),
+                "adapter": self.adapter, "adapter_sha256": file_hash(self.adapter) if self.adapter else None,
+                "context": self.llama.n_ctx()}
 
 
 class OllamaStudent:

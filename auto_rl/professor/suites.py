@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from . import generators, generators_domain  # noqa: F401  (registers the families)
+from .pins import DATASETS
 from .records import rank, validate_item
 from .sources import SOURCES, load_source
 
@@ -32,8 +33,12 @@ MODULES = {
 }
 
 
-def skills(modules=None):
-    """Catalogue ``skill -> {module, train_sources, exam_sources, generator}``."""
+def skills(modules=None, only=None):
+    """Catalogue ``skill -> {module, train_sources, exam_sources, generator}``.
+
+    ``only`` restricts the catalogue to named skills (a targeted cycle); replay
+    skills without an exam stay available to the curriculum when their module is selected.
+    """
     catalogue = defaultdict(lambda: {"module": None, "train_sources": [], "exam_sources": [], "generator": False})
     for name, spec in SOURCES.items():
         entry = catalogue[spec["skill"]]
@@ -48,6 +53,12 @@ def skills(modules=None):
     # MetaMathQA feeds two skills; its hard half has no source of its own name.
     catalogue["academy.math_hard"]["train_sources"].append("metamath")
     chosen = {skill: entry for skill, entry in catalogue.items() if not modules or entry["module"] in modules}
+    if only:
+        unknown = set(only) - set(catalogue)
+        if unknown:
+            raise ValueError(f"Unknown skills: {sorted(unknown)}")
+        chosen = {skill: entry for skill, entry in chosen.items()
+                  if skill in only or not (entry["generator"] or entry["exam_sources"])}
     return dict(sorted(chosen.items()))
 
 
@@ -84,7 +95,8 @@ class Library:
     """Lazy cache of loaded sources so one process downloads each dataset once."""
 
     def __init__(self, revisions=None, row_limit=None):
-        self.revisions, self.row_limit, self._cache = revisions or {}, row_limit, {}
+        # Verified, pinned dataset revisions by default: both machines read identical data.
+        self.revisions, self.row_limit, self._cache = DATASETS if revisions is None else revisions, row_limit, {}
         self.errors = {}
 
     def load(self, name):
@@ -117,12 +129,12 @@ def _generated(skill, role, count):
     return sorted(built, key=lambda item: rank(item["id"], role))[:count] if count < len(built) else built
 
 
-def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="aurora-exam"):
+def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="aurora-exam", only=None):
     """Exam items of one role. Returns ``(items, notes)``; ``notes`` reports reuse and gaps."""
     if role not in ("diagnostic", "gate"):
         raise ValueError("An exam role is diagnostic or gate")
     library = library or Library()
-    catalogue = skills(modules)
+    catalogue = skills(modules, only)
     items, notes = [], {"reused": [], "empty": [], "skills": {}}
     for skill, entry in catalogue.items():
         chosen = []
@@ -145,10 +157,10 @@ def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="au
     return items, notes
 
 
-def exam_blocklist(*, modules=None, library=None):
+def exam_blocklist(*, modules=None, library=None, only=None):
     """Short hashes of every question of the exam families (both roles), for the trainer."""
     library = library or Library()
-    catalogue = skills(modules)
+    catalogue = skills(modules, only)
     hashes = set()
     for skill, entry in catalogue.items():
         for item in library.exam_family(skill, catalogue):
@@ -156,14 +168,14 @@ def exam_blocklist(*, modules=None, library=None):
     return sorted(hashes)
 
 
-def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aurora-pool", subskill_weights=None):
+def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aurora-pool", subskill_weights=None, only=None):
     """Training pool per skill, after removing every blocklisted question.
 
     ``subskill_weights`` (skill -> {subskill: weight}) shifts the generator
     budget toward the sub-skills the diagnosis found weak.
     """
     library = library or Library()
-    catalogue = skills(modules)
+    catalogue = skills(modules, only)
     blocked = set(blocklist)
     pool, removed = {}, 0
     for skill, entry in catalogue.items():

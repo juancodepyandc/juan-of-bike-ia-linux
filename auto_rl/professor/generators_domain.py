@@ -21,7 +21,7 @@ def _num(value, digits=2):
     return text
 
 
-def _numeric(question, steps, value, digits=2, abs_tol=None, lang="fr", tokens=360):
+def _numeric(question, steps, value, digits=2, abs_tol=None, lang="fr", tokens=768):
     target = "\n".join(steps + [_FINAL[lang].format(value=_num(value, digits))])
     return {"messages": [{"role": "user", "content": question}], "target": target, "lang": lang,
             "grader": {"type": "numeric", "answer": _num(value, digits), "rel_tol": 1e-6,
@@ -101,7 +101,7 @@ def _fin_math(rng, role, subskill):
         value = sum(terms) - invest
         return _numeric(_ask(rng, role, f"{firm.capitalize()} investit {invest} € aujourd'hui et attend des flux nets de {', '.join(str(f) + ' €' for f in flows)} à la fin de chacune des {len(flows)} années suivantes. Avec un taux d'actualisation de {rate} %, quelle est la valeur actuelle nette ?", "euros"),
                         [f"Flux actualisé année {t + 1} = {flow} / {1 + rate / 100:.2f}^{t + 1} = {_num(term)}" for t, (flow, term) in enumerate(zip(flows, terms))]
-                        + [f"Somme des flux actualisés = {_num(sum(terms))}", f"VAN = {_num(sum(terms))} − {invest} = {_num(value)}"], value, abs_tol=0.02, tokens=460)
+                        + [f"Somme des flux actualisés = {_num(sum(terms))}", f"VAN = {_num(sum(terms))} − {invest} = {_num(value)}"], value, abs_tol=0.02, tokens=900)
     if subskill == "seuil_rentabilite":
         fixed, price = rng.randrange(2000, 90000, 500), round(rng.uniform(8, 400), 2)
         variable = round(price * rng.uniform(0.25, 0.8), 2)
@@ -125,7 +125,7 @@ def _fin_math(rng, role, subskill):
         if worst == 0:
             steps.append("La valeur ne redescend jamais sous un sommet précédent : aucune baisse.")
         return _numeric(_ask(rng, role, f"Un portefeuille de {firm} vaut successivement, en euros : {', '.join(map(str, values))}. Quel est le drawdown maximal (plus forte baisse depuis un sommet précédent) ?", "pourcentage"),
-                        steps + [f"Drawdown maximal = {_num(worst)} %"], worst, tokens=460)
+                        steps + [f"Drawdown maximal = {_num(worst)} %"], worst, tokens=900)
     if subskill == "mensualite":
         capital, annual, months = rng.randrange(3000, 250000, 1000), rng.choice([1.2, 2.4, 3, 3.6, 4.8, 6]), rng.choice([12, 24, 36, 60, 120, 180, 240])
         t = annual / 100 / 12
@@ -266,6 +266,10 @@ _COLORS = {"train": [("rouge", "rouge", "rouges", "rouges", "red"), ("bleu", "bl
            "exam": [("blanc", "blanche", "blancs", "blanches", "white"), ("gris", "grise", "gris", "grises", "grey"),
                     ("violet", "violette", "violets", "violettes", "purple"), ("rose", "rose", "roses", "roses", "pink"),
                     ("brun", "brune", "bruns", "brunes", "brown")]}
+#: English words accepted for one French noun or colour: a faithful translation may choose any of them.
+_SYNONYMS = {"sofa": ("sofa", "couch"), "car": ("car", "automobile"), "ball": ("ball", "balloon"), "house": ("house", "home"),
+             "bicycle": ("bicycle", "bike"), "cup": ("cup", "mug"), "boat": ("boat", "ship"), "lamp": ("lamp", "light")}
+_COLOR_SYNONYMS = {"grey": ("grey", "gray"), "purple": ("purple", "violet"), "brown": ("brown", "tan")}
 _NUMBERS = ["un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix"]
 _NUMBERS_EN = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
 _RELATIONS = [("sur", "on"), ("sous", "under"), ("à gauche de", "left of"), ("à droite de", "right of"),
@@ -274,7 +278,8 @@ _STYLES = {"train": [("aquarelle", "watercolor"), ("photo réaliste", "realistic
            "exam": [("peinture à l'huile", "oil painting"), ("animation japonaise", "anime"), ("pâte à modeler", "claymation")]}
 _SPEC_SCHEMA = ("Clés attendues : `objects` (liste d'objets {\"name\": nom au singulier, \"count\": entier, \"color\": couleur au masculin singulier ou null}), "
                 "`relations` (liste de {\"subject\": nom, \"relation\": une valeur parmi " + _json([r for r, _ in _RELATIONS]) + ", \"object\": nom}), "
-                "`exclusions` (liste des noms au singulier explicitement interdits) et `style` (style demandé ou null).")
+                "`exclusions` (liste des noms au singulier explicitement interdits) et `style` (style demandé ou null). "
+                "N'indique que les relations spatiales écrites dans la demande : « et » ou « avec » ne créent aucune relation.")
 _SPEC_PROMPTS = {
     "train": ["Demande de création visuelle : « {request} »\n\nExtrais sa spécification sous la forme d'un unique objet JSON. " + _SPEC_SCHEMA + " Réponds uniquement par le JSON.",
               "Analyse cette demande d'image : « {request} »\n\nRetourne un seul objet JSON décrivant ce qu'il faut dessiner. " + _SPEC_SCHEMA + " Aucun texte hors du JSON."],
@@ -329,8 +334,8 @@ def _prompt_spec(rng, role, subskill):
     request = f"{opener} {request}."
     spec = {"objects": objects, "relations": relations, "exclusions": exclusions, "style": style}
     return {"messages": [{"role": "user", "content": rng.choice(_SPEC_PROMPTS[side]).replace("{request}", request)}],
-            "target": _json(spec), "max_new_tokens": 360,
-            "grader": {"type": "json", "accept": [spec], "unordered": ["/objects", "/relations", "/exclusions"]}}
+            "target": _json(spec), "max_new_tokens": 512,
+            "grader": {"type": "json", "accept": [spec], "unordered": ["/objects", "/relations", "/exclusions"], "fold": True}}
 
 
 _TRANSLATE_PROMPTS = {
@@ -357,11 +362,15 @@ def _prompt_translate(rng, role, subskill):
     target = f"{render(english[0])} {relation[1]} {render(english[1])}" if subskill == "relations" else f"{render(english[0])} and {render(english[1])}"
     required = []
     for entry in english:
-        required.append([entry["noun"][1 if entry["count"] > 1 else 0]])
-        if entry["count"] > 1:
+        plural = entry["count"] > 1
+        required.append([form for word in _SYNONYMS.get(entry["noun"][0], (entry["noun"][0],))
+                         for form in ((word + "s", word + "es") if plural and word != entry["noun"][0] else (word,))]
+                        if not plural else
+                        [entry["noun"][1]] + [word + "s" for word in _SYNONYMS.get(entry["noun"][0], ()) if word != entry["noun"][0]])
+        if plural:
             required.append([_NUMBERS_EN[entry["count"] - 1], str(entry["count"])])
         if entry["color"]:
-            required.append([entry["color"]] + (["gray"] if entry["color"] == "grey" else []) + (["violet"] if entry["color"] == "purple" else []))
+            required.append(list(_COLOR_SYNONYMS.get(entry["color"], (entry["color"],))))
     forbidden = []
     if subskill == "relations":
         synonyms = {"on": ["on", "on top of", "atop"], "under": ["under", "beneath", "below", "underneath"],
@@ -432,7 +441,7 @@ def _extract(rng, role, subskill):
     record = {"client": client, "reference": reference, "date_emission": "%04d-%02d-%02d" % issued,
               "date_echeance": "%04d-%02d-%02d" % due, "montant_ht": ht, "montant_ttc": ttc}
     return {"messages": [{"role": "user", "content": rng.choice(_EXTRACT_PROMPTS[side]).format(doc=doc)}],
-            "target": _json(record), "grader": {"type": "json", "accept": [record]}, "max_new_tokens": 220}
+            "target": _json(record), "grader": {"type": "json", "accept": [record]}, "max_new_tokens": 320}
 
 
 # --- code.trace ------------------------------------------------------------
@@ -481,12 +490,17 @@ _TRACE_PROMPTS = {
 
 @family("code.trace", "code", ("loops", "strings", "collections", "recursion", "comprehension"))
 def _trace(rng, role, subskill):
-    code = _trace_program(rng, role, subskill)
-    output = _run_trusted(code)
+    for _ in range(50):
+        code = _trace_program(rng, role, subskill)
+        output = _run_trusted(code)
+        if all(line.strip() for line in output.strip("\n").split("\n")) and output.strip():
+            break
+    else:
+        raise RuntimeError("Could not build a tracing exercise with a non-empty output")
     prompt = rng.choice(_TRACE_PROMPTS["exam" if _exam(role) else "train"])
     return {"messages": [{"role": "user", "content": prompt.format(code=code)}], "target": output.strip("\n"),
             "lang": "en" if prompt.startswith(("What", "The following")) else "fr",
-            "grader": {"type": "python_output", "stdout": output}, "max_new_tokens": 96}
+            "grader": {"type": "python_output", "stdout": output}, "max_new_tokens": 128}
 
 
 # --- conversation.format_fr ------------------------------------------------
@@ -559,4 +573,4 @@ def _format(rng, role, subskill):
         rules = [{"kind": "uppercase"}, {"kind": "lines", "count": count}]
         text = f"tout le texte en MAJUSCULES ; exactement {count} ligne{'s' if count > 1 else ''} non vide{'s' if count > 1 else ''}."
     return {"messages": [{"role": "user", "content": rng.choice(_FORMAT_PROMPTS[side]).format(topic=topic, rules=text)}],
-            "target": target, "grader": {"type": "constraints", "rules": rules}, "max_new_tokens": 220}
+            "target": target, "grader": {"type": "constraints", "rules": rules}, "max_new_tokens": 320}

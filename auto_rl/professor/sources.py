@@ -281,7 +281,7 @@ def _gsm8k(row, key, role):
         return None
     template = _rng(key).choice(_MATH[(_side(role), "en")])
     item = _plain(_user(template.format(q=row["question"].strip())), f"{solution}\nFinal answer: {final}",
-                  {"type": "numeric", "answer": final, "rel_tol": 1e-6, "abs_tol": 1e-6}, 420, row["question"])
+                  {"type": "numeric", "answer": final, "rel_tol": 1e-6, "abs_tol": 1e-6}, 640, row["question"])
     item["subskill"] = "gsm8k"
     return item
 
@@ -317,7 +317,7 @@ def _math_hard(row, key, role):
         return None
     template = _rng(key).choice(_LATEX[(_side(role), "en")])
     item = _plain(_user(template.format(q=row["problem"].strip())), row["solution"].strip(),
-                  {"type": "latex", "answer": answer}, 640, row["problem"])
+                  {"type": "latex", "answer": answer}, 900, row["problem"])
     item["subskill"] = f"{row['type']} · {row['level']}"
     return item
 
@@ -521,7 +521,7 @@ def _finqa(row, key, role):
     evidence = "\n".join(row.get("gold_evidence") or [])
     value = number.group(1).replace(",", "")
     item = _plain(_user(ask), (evidence + "\n" if evidence else "") + f"Final answer: {value}{number.group(2)}",
-                  {"type": "numeric", "answer": value, "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": True}, 320, question + " " + row["id"])
+                  {"type": "numeric", "answer": value, "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": True}, 640, question + " " + row["id"])
     item["subskill"] = "percent" if number.group(2) else "amount"
     return item
 
@@ -544,7 +544,7 @@ def _convfinqa(row, key, role):
         return None
     ask = f"{text}\n\nAnswer the last question. Show the computation briefly and finish with a line \"Final answer: <number>\"."
     item = _plain(_user(ask), f"Final answer: {value}", {"type": "numeric", "answer": repr(value), "rel_tol": 0.01,
-                                                         "abs_tol": 0.005, "percent_ok": True}, 320, text[-600:])
+                                                         "abs_tol": 0.005, "percent_ok": True}, 640, text[-600:])
     item["subskill"] = "turns_" + str(min(4, text.count("?")))
     return item
 
