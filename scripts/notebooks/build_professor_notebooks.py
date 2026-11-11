@@ -189,14 +189,17 @@ else:
 '''
 
 
-def build(diagnosis=None):
-    out = ROOT / "notebooks"
+def build(diagnosis=None, output=None, cycle=0):
+    """Write both notebooks. ``output`` (default ``notebooks/``) lets a run-specific copy with an
+    embedded diagnosis live outside the repository; ``cycle`` presets the trainer's cycle number."""
+    out = Path(output) if output else ROOT / "notebooks"
+    out.mkdir(parents=True, exist_ok=True)
     kaggle_cells = [cell("markdown", EXAMINER_INTRO), cell("code", EXAMINER_PARAMETERS, "parameters"),
                     cell("code", kaggle_runner.script(), "professor-run"), cell("code", EXAMINER_RESULT, "result")]
     (out / "Aurora_Professeur_Examinateur_Kaggle.ipynb").write_text(
         json.dumps(notebook(kaggle_cells), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     embedded = repr(base64.b64encode(Path(diagnosis).read_bytes()).decode()) if diagnosis else "None"
-    colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", TRAINER_PARAMETERS, "parameters"),
+    colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", TRAINER_PARAMETERS.replace("CYCLE = 0", f"CYCLE = {int(cycle)}"), "parameters"),
                    cell("code", TRAINER_DIAGNOSIS.replace("__DIAGNOSIS__", embedded), "diagnosis"),
                    cell("code", TRAINER_ADMISSION, "admission"),
                    cell("code", kaggle_runner.script(base="/content", inputs="/content/aurora_inputs", hf_home="/content/hf_cache",
@@ -210,4 +213,7 @@ def build(diagnosis=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--diagnosis", type=Path, help="diagnosis.json to embed in the Colab trainer notebook")
-    print(json.dumps(build(parser.parse_args().diagnosis)))
+    parser.add_argument("--output", type=Path, help="folder for the notebooks (default: notebooks/ of the repository)")
+    parser.add_argument("--cycle", type=int, default=0, help="cycle number preset in the Colab trainer notebook")
+    arguments = parser.parse_args()
+    print(json.dumps(build(arguments.diagnosis, arguments.output, arguments.cycle)))
