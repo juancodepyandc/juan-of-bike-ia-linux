@@ -93,7 +93,7 @@ Ce qu'elle reçoit : `diagnosis.json` (scores agrégés par compétence et empre
 
 Déroulement : *Exécution → Tout exécuter*. Choisir un runtime **GPU**. La cellule de contrôle refuse de démarrer si la mémoire mesurée ne suffit pas pour l'élève diagnostiqué : aucun GPU ni capacité n'est supposé.
 
-Secrets Colab facultatifs (icône clé) : `HF_TOKEN` pour un modèle à accès restreint ; `KAGGLE_USERNAME` et `KAGGLE_KEY` pour déposer l'adaptateur dans un jeu de données privé et lancer l'examen automatiquement. Sans eux, l'adaptateur est enregistré dans Google Drive (`Aurora_Professeur/`).
+Secrets Colab facultatifs (icône clé) : `HF_TOKEN` pour un modèle à accès restreint ; `KAGGLE_API_TOKEN` (jeton récent `KGAT_…`) ou bien `KAGGLE_USERNAME` et `KAGGLE_KEY` (kaggle.json) pour déposer l'adaptateur dans un jeu de données privé et lancer l'examen Kaggle automatiquement. Sans eux, l'adaptateur est seulement enregistré dans Google Drive (`Aurora_Professeur/`) et l'examen reste à lancer.
 
 Élèves connus :
 {CATALOGUE}
@@ -130,7 +130,7 @@ for row in diagnosis["weak_points"][:12]:
     print(f"  {row['accuracy']:.3f}  n={row['items']:4d}  {row['skill']}")
 try:
     from google.colab import userdata
-    for name in ("HF_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
+    for name in ("HF_TOKEN", "KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
         try:
             os.environ[name] = userdata.get(name)
         except Exception:
@@ -164,11 +164,11 @@ print("Pas effectués :", receipt["steps"], "| arrêt :", receipt["stopped"], "|
 print("Une loss plus basse ne prouve pas de meilleures réponses : seul l'examen apparié de Kaggle décide.")
 archive = shutil.make_archive(f"/content/aurora_adaptateur_cycle{CYCLE}", "zip", root_dir=work, base_dir="training")
 shutil.copy2(work / "curriculum.json", "/content/curriculum.json")
-if os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"):
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "kaggle"], check=True)
+if os.environ.get("KAGGLE_API_TOKEN") or (os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY")):
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "kaggle", "six"], check=True)
     sys.path.insert(0, str(REPO))
     from auto_rl.professor import kaggle_runner
-    owner = os.environ["KAGGLE_USERNAME"]
+    owner = kaggle_runner.whoami()
     dataset = kaggle_runner.publish_adapter(owner, work / "training", note=f"cycle {CYCLE} {STUDENT}")
     print("Adaptateur déposé dans le jeu de données privé", dataset)
     folder = Path("/content/aurora_examinateur")

@@ -168,11 +168,14 @@ def exam_blocklist(*, modules=None, library=None, only=None):
     return sorted(hashes)
 
 
-def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aurora-pool", subskill_weights=None, only=None):
+def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aurora-pool", subskill_weights=None, only=None,
+               sizes=None):
     """Training pool per skill, after removing every blocklisted question.
 
     ``subskill_weights`` (skill -> {subskill: weight}) shifts the generator
-    budget toward the sub-skills the diagnosis found weak.
+    budget toward the sub-skills the diagnosis found weak. ``sizes`` (skill ->
+    count) enlarges the pool of a skill whose curriculum share exceeds
+    ``per_skill``, so the weakest skills are not capped by the default pool.
     """
     library = library or Library()
     catalogue = skills(modules, only)
@@ -180,16 +183,17 @@ def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aur
     pool, removed = {}, 0
     for skill, entry in catalogue.items():
         items = []
+        wanted = max(per_skill, (sizes or {}).get(skill, 0))
         if entry["generator"]:
             family = generators.FAMILIES[skill]
             weights = (subskill_weights or {}).get(skill) or {}
             total = sum(weights.get(s, 1.0) for s in family["subskills"])
             for subskill in family["subskills"]:
-                share = max(4, round(per_skill * weights.get(subskill, 1.0) / total))
+                share = max(4, round(wanted * weights.get(subskill, 1.0) / total))
                 items += [generators.generate(skill, "train", index, subskill) for index in range(share)]
         elif entry["train_sources"]:
             family = library.train_family(skill, catalogue)
-            items, _ = stratified(family, per_skill, seed)
+            items, _ = stratified(family, wanted, seed)
         kept = [item for item in items if item["question_hash"][:20] not in blocked]
         removed += len(items) - len(kept)
         if kept:

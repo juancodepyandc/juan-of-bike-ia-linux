@@ -66,6 +66,26 @@ def lora_targets(model, attention_only):
     return found or "all-linear"
 
 
+def answer_loss(model, ids, mask, labels, torch):
+    """Mean cross-entropy over answer tokens, without building logits for the prompt.
+
+    The usual forward pass materialises ``batch x length x vocabulary`` logits
+    (several gigabytes for a long prompt and a 150k vocabulary) although only
+    the answer positions carry loss. Here the output head runs on those
+    positions only; the value is the same as the library's own loss.
+    """
+    language_model = getattr(getattr(model, "base_model", None), "model", model)      # PeftModel -> causal LM
+    inner = getattr(language_model, getattr(language_model, "base_model_prefix", ""), None)
+    head = language_model.get_output_embeddings() if hasattr(language_model, "get_output_embeddings") else None
+    if inner is None or head is None or inner is language_model:
+        return model(input_ids=ids, attention_mask=mask, labels=labels).loss
+    hidden = inner(input_ids=ids, attention_mask=mask).last_hidden_state
+    targets = labels[:, 1:]
+    keep = (targets != -100).to(hidden.device)
+    logits = head(hidden[:, :-1][keep])
+    return torch.nn.functional.cross_entropy(logits.float(), targets.to(hidden.device)[keep].to(logits.device))
+
+
 def _dev_loss(model, groups, pad_id, torch, device, autocast):
     total, count = 0.0, 0
     model.eval()
@@ -73,8 +93,8 @@ def _dev_loss(model, groups, pad_id, torch, device, autocast):
         for group in groups:
             ids, mask, labels = collate(group, pad_id, torch, device)
             with autocast():
-                loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
-            tokens = int((labels != -100).sum())
+                loss = answer_loss(model, ids, mask, labels, torch)
+            tokens = int((labels[:, 1:] != -100).sum())
             total += loss.item() * tokens
             count += tokens
     model.train()
@@ -101,6 +121,8 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
 
     model = student.model
     cuda = torch.cuda.is_available()
+    if cuda:
+        torch.cuda.empty_cache()                         # memory left by earlier exams of the same process
     if student.four_bit:
         from peft import prepare_model_for_kbit_training
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -160,7 +182,7 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
                 try:
                     ids, mask, labels = collate(group, pad_id, torch, device)
                     with autocast():
-                        loss = model(input_ids=ids, attention_mask=mask, labels=labels).loss
+                        loss = answer_loss(model, ids, mask, labels, torch)
                     if not torch.isfinite(loss):
                         stopped = "non_finite_loss"
                         break
@@ -223,8 +245,12 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
         best = {"loss": None, "step": step}
     # Continue with the SELECTED checkpoint, not the last one: reload it into the student.
     base = model.unload()
-    if hasattr(base, "gradient_checkpointing_disable"):
-        base.gradient_checkpointing_disable()
+    for restore in ("gradient_checkpointing_disable", "disable_input_require_grads"):
+        if hasattr(base, restore):                       # leave the base model as an examiner would load it
+            try:
+                getattr(base, restore)()
+            except Exception:
+                pass
     base.config.use_cache = True
     student.model = base
     student.model.eval()

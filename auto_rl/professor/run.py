@@ -30,7 +30,7 @@ from .weakness import build_curriculum, profile, skill_weights, subskill_weights
 PROFILES = {
     # Rehearsal on a CPU or a small GPU: proves the mechanics, too small to certify a module.
     "smoke": {"diagnostic_per_skill": 12, "gate_per_skill": 16, "pool_per_skill": 60, "curriculum": 320,
-              "mine_per_skill": 8, "max_tokens": 1024, "max_prompt_tokens": 1400, "batch_size": 4, "accumulate": 2,
+              "mine_per_skill": 8, "max_tokens": 640, "max_prompt_tokens": 1400, "batch_size": 2, "accumulate": 4,
               "epochs": 2.0, "eval_batch": 8, "eval_every": 10, "row_limit": 1500, "min_items": 60},
     "standard": {"diagnostic_per_skill": 60, "gate_per_skill": 100, "pool_per_skill": 1200, "curriculum": 6000,
                  "mine_per_skill": 40, "max_tokens": 1536, "max_prompt_tokens": 3072, "batch_size": 4, "accumulate": 4,
@@ -57,7 +57,8 @@ def settings(args):
               "cycle": args.cycle, "budget_seconds": args.budget_minutes * 60 if args.budget_minutes else None,
               "four_bit": args.four_bit, "export": args.export,
               "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1"}
-    for name in ("diagnostic_per_skill", "gate_per_skill", "curriculum", "epochs", "learning_rate", "rank", "max_tokens"):
+    for name in ("diagnostic_per_skill", "gate_per_skill", "curriculum", "epochs", "learning_rate", "rank", "max_tokens",
+                 "batch_size", "accumulate", "mine_per_skill", "pool_per_skill"):
         value = getattr(args, name, None)
         if value is not None:
             config[name] = value
@@ -119,8 +120,13 @@ def train_role(config, work, diagnosis, student=None, library=None):
     if diagnosis["student"]["hf"] != config["student"]["hf"]:
         raise ValueError("This diagnosis describes another student")
     weak = diagnosis["weak_points"]
+    # Size each pool for its expected share of the curriculum, so a very weak skill is not capped by the default pool.
+    catalogue = skills(config["modules"], config["skills"])
+    trainable = [name for name, entry in catalogue.items() if (entry["generator"] or entry["train_sources"]) and name not in REPLAY]
+    expected = skill_weights(weak, trainable)
+    sizes = {name: int(1.2 * config["curriculum"] * share) + 8 for name, share in expected.items()}
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
-                                  library=library, subskill_weights=subskill_weights(weak), only=config["skills"])
+                                  library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes)
     # Probe the base model on training items it can be graded on: what it fails goes first.
     probes = []
     for name, items in pool.items():
@@ -234,7 +240,8 @@ def main(argv=None):
     parser.add_argument("--export", choices=("promote", "always", "never"), default="promote",
                         help="Convert the adapter to GGUF after verification (default: only when promotable)")
     for name, kind in (("diagnostic_per_skill", int), ("gate_per_skill", int), ("curriculum", int), ("epochs", float),
-                       ("learning_rate", float), ("rank", int), ("max_tokens", int)):
+                       ("learning_rate", float), ("rank", int), ("max_tokens", int), ("batch_size", int), ("accumulate", int),
+                       ("mine_per_skill", int), ("pool_per_skill", int)):
         parser.add_argument("--" + name.replace("_", "-"), type=kind)
     args = parser.parse_args(argv)
     if args.role == "probe":

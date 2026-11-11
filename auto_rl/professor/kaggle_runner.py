@@ -197,6 +197,14 @@ def _api():
     return api
 
 
+def whoami():
+    """Kaggle account of the configured credential (the owner of the private kernels)."""
+    name = _api().config_values.get("username")
+    if not name:
+        raise RuntimeError("The Kaggle credential does not identify an account")
+    return name
+
+
 def launch(folder, *, timeout_seconds):
     """Upload and start the kernel. This spends Kaggle GPU quota: call it deliberately."""
     answer = _api().kernels_push(str(folder), timeout=str(int(timeout_seconds)))
