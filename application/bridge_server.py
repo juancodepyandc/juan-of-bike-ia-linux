@@ -1453,6 +1453,12 @@ if _root_dir_path not in _training_sys.path:
     _training_sys.path.insert(0, _root_dir_path)
 from auto_rl.integration import register_routes as _register_training_routes
 _register_training_routes(app, _proxy)
+try:
+    # Professor autopilot (verified weekly training on Kaggle): every route, reading included, needs this device.
+    from auto_rl.professor.bridge_routes import register_routes as _register_professor_routes
+    _register_professor_routes(app, allowed=lambda: _request_is_local_loopback() or _admin_ok() or _ext_auth()[0])
+except Exception as _professor_error:
+    print(f'Registration failed for the professor autopilot routes: {_professor_error}')
 
 from business_intelligence import register_business_routes as _register_business_routes
 _register_business_routes(app, workspace=WORKSPACE)

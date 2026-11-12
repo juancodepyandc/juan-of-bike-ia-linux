@@ -26,6 +26,7 @@ import { useModuleStreak } from '../hooks/useModuleStreak.ts'
 import { useCyberLeaderboardStore } from '../stores/cyberLeaderboardStore.ts'
 import { useAcademyLeaderboardStore } from '../stores/academyLeaderboardStore.ts'
 import { computeStreak } from '../utils/streak.ts'
+import ProfessorAutopilotPanel from './ProfessorAutopilotPanel.tsx'
 
 const SHORTCUTS = [
   { combo: 'Ctrl / ⌘ + K', action: 'Recherche globale' },
@@ -289,6 +290,7 @@ export default function SettingsPanel() {
         <div className="sp-body">
           {expanded === 'models' && (
             <>
+              <ProfessorAutopilotPanel />
               <div className="sp-sec">
                 <label className="sp-label">Modèle principal</label>
                 <select aria-label="Modèle principal" className="sp-select" value={mainModelAutomatic ? '__auto__' : mainModel} onChange={(e) => e.target.value === '__auto__' ? setMainModelAutomatic() : setMainModel(e.target.value)}>
