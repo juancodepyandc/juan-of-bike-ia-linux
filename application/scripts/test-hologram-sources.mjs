@@ -296,3 +296,15 @@ test('a round object keeps the depth of its real profile (identical to the front
   assert.ok(object.depth > 1.5 * relief.depth, `drum ${object.depth} vs relief ${relief.depth}`)
   assert.equal(buildSilhouetteCloud(front, { side, maxPoints: 6000, subjectKind: 'character' }).method, 'relief')
 })
+
+test('a dark character on the black backdrop the 3D interface forces for characters stays separated', () => {
+  const black = () => [4, 4, 6]
+  const subject = (x, y) => {
+    if (inEllipse(84, 22, 15, 13)(x, y) && y < 26) return [15, 14, 12]
+    if (inEllipse(84, 30, 12, 14)(x, y)) return [200, 160, 140]
+    if (box(62, 44, 106, 104)(x, y) || box(48, 46, 60, 100)(x, y) || box(108, 46, 120, 100)(x, y)) return [20, 20, 24]
+    if (box(66, 104, 80, 158)(x, y) || box(88, 104, 102, 158)(x, y)) return [30, 30, 36]
+    return null
+  }
+  expectIoU(aaScene(168, 168, subject, { bg: black }), 0.9, 'hair 15 and armour 20 on black 4')
+})
