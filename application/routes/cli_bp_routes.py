@@ -735,110 +735,17 @@ def cli_dynamic_agent_save(agent_id):
 # --- MCP Servers ---
 
 def _cli_discover_mcp(workspace_path):
-    """Discover MCP server configs from .aurora/mcp_config.json and .mcp.json files."""
-    servers = []
-    search_paths = [
-        os.path.join(workspace_path, ".aurora", "mcp_config.json"),
-        os.path.join(workspace_path, ".mcp.json"),
-        os.path.join(os.path.dirname(workspace_path), ".aurora", "mcp_config.json"),
-        os.path.join(os.path.dirname(workspace_path), ".mcp.json"),
-    ]
-    seen = set()
-    for p in search_paths:
-        if not os.path.isfile(p):
-            continue
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for name, cfg in data.get("mcpServers", {}).items():
-                if name in seen or not isinstance(cfg, dict):
-                    continue
-                seen.add(name)
-                declared_tools = cfg.get("tools", [])
-                servers.append({
-                    "name": name, "command": cfg.get("command", ""),
-                    "args": cfg.get("args", []), "env": cfg.get("env", {}),
-                    "source": p, "tools": declared_tools if isinstance(declared_tools, list) else [],
-                })
-        except Exception:
-            continue
-    return servers
+    """Use the same discovery, disabled flag and session policy as mission workers."""
+    from agi_core.context import discover_mcp
+    return discover_mcp(workspace_path)
 
 
 _CLI_MCP_SPAWN_TIMEOUT = 12.0  # seconds for init + one JSON-RPC round-trip
 
 def _cli_mcp_rpc(server, method, params, timeout=_CLI_MCP_SPAWN_TIMEOUT, cwd=None):
-    """Run one JSON-RPC request against an MCP stdio server with a bounded wait.
-
-    Never leaves a spawned process alive on failure and never blocks a Flask
-    thread indefinitely. Returns (result_or_None, error_or_None)."""
-    cmd = [server["command"]] + list(server.get("args", []))
-    if not cmd or not cmd[0]:
-        return None, "MCP server command is empty"
-    env = {**os.environ, **server.get("env", {})}
-    proc = None
-    reader = None
-    try:
-        import errno as _errno
-        import select as _select
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, env=env, cwd=cwd or os.getcwd())
-        reader = proc.stdout
-        reader_fd = reader.fileno()
-        deadline = time.monotonic() + timeout
-
-        def request(mid, method, params):
-            payload = json.dumps({"jsonrpc": "2.0", "id": mid, "method": method,
-                                  "params": params}) + "\n"
-            if proc.stdin is None or proc.stdin.closed:
-                raise OSError("MCP stdin closed")
-            proc.stdin.write(payload.encode())
-            proc.stdin.flush()
-
-        request(1, "initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
-                                  "clientInfo": {"name": "aurora-cli", "version": _CLI_VERSION}})
-        request(2, method, params)
-        buf = b""
-        while True:
-            while b"\n" in buf:
-                line, _, buf = buf.partition(b"\n")
-                try:
-                    msg = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(msg, dict) and msg.get("id") == 2:
-                    return msg, None
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None, "MCP server timed out (no response)"
-            ready, _, _ = _select.select([reader_fd], [], [], min(remaining, 5.0))
-            if not ready:
-                continue
-            chunk = os.read(reader_fd, 65536)
-            if not chunk:
-                return None, "MCP server closed while waiting for response"
-            buf += chunk
-            if len(buf) > 1_000_000:
-                return None, "MCP server response too large"
-    except OSError as e:
-        return None, f"MCP request failed: {e}"
-    finally:
-        try:
-            if reader is not None and not reader.closed:
-                reader.close()
-        except Exception:
-            pass
-        try:
-            if proc is not None:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=2.0)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.wait(timeout=2.0)
-        except Exception:
-            pass
+    """Shared bounded transport; persistent servers keep state across HTTP calls."""
+    from agi_core.context import call_mcp_stdio
+    return call_mcp_stdio(server, method, params, timeout=timeout, cwd=cwd)
 
 
 @cli_bp.route("/api/cli/mcp/list", methods=["GET"])
@@ -846,36 +753,29 @@ def _cli_mcp_rpc(server, method, params, timeout=_CLI_MCP_SPAWN_TIMEOUT, cwd=Non
 def cli_mcp_list():
     workspace = request.args.get("workspace", WORKSPACE)
     servers = _cli_discover_mcp(workspace)
-    return jsonify({"ok": True, "servers": servers, "total": len(servers)})
+    public = [{k: v for k, v in server.items() if k not in {"args", "env"}} for server in servers]
+    for item, server in zip(public, servers):
+        item["argument_count"] = len(server.get("args", []))
+        item["environment_keys"] = sorted(server.get("env", {}))
+    return jsonify({"ok": True, "servers": public, "total": len(public)})
 
 
 @cli_bp.route("/api/cli/mcp/tools", methods=["GET"])
 @_cli_auth_required
 def cli_mcp_tools():
-    """List tools from all MCP servers (spawns each, sends tools/list)."""
+    """Discover all bounded pages, without executing MCP processes for SAFE keys."""
+    from agi_core.context import probe_mcp_tools
     workspace = request.args.get("workspace") or WORKSPACE
-    servers = _cli_discover_mcp(workspace)
-    all_tools = []
-    errors = []
-    for srv in servers:
-        resp, err = _cli_mcp_rpc(srv, "tools/list", {}, cwd=workspace)
-        if err:
-            errors.append({"server": srv["name"], "error": err})
-            continue
-        try:
-            for t in resp.get("result", {}).get("tools", []):
-                all_tools.append({"server": srv["name"], "name": t.get("name", ""),
-                                  "description": t.get("description", ""),
-                                  "schema": t.get("inputSchema", {})})
-        except AttributeError:
-            pass
-    return jsonify({"ok": True, "tools": all_tools, "total": len(all_tools), "errors": errors})
+    execute_probe = g.cli_key_rec.get("permissions") != "SAFE"
+    return jsonify({"ok": True, **probe_mcp_tools(workspace, probe=execute_probe)})
 
 
 @cli_bp.route("/api/cli/mcp/call", methods=["POST"])
 @_cli_auth_required
 def cli_mcp_call():
     """Call an MCP tool by server name + tool name."""
+    if g.cli_key_rec.get("permissions") == "SAFE":
+        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"ok": False, "error": "JSON object required"}), 400
@@ -889,13 +789,17 @@ def cli_mcp_call():
     srv = next((s for s in servers if s["name"] == server_name), None)
     if not srv:
         return jsonify({"ok": False, "error": f"MCP server '{server_name}' not found"}), 404
+    timeout = data.get("timeout_seconds", _CLI_MCP_SPAWN_TIMEOUT)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 180:
+        return jsonify(ok=False, error="MCP timeout must be between 1 and 180 seconds"), 400
     resp, err = _cli_mcp_rpc(srv, "tools/call", {"name": tool_name, "arguments": arguments},
-                             cwd=workspace)
+                             cwd=workspace, timeout=timeout)
     if err:
         return jsonify({"ok": False, "error": err}), 504
     if resp is None:
         return jsonify({"ok": False, "error": "empty MCP response"}), 502
-    return jsonify({"ok": True, "result": resp.get("result", {})})
+    result = resp.get("result", {})
+    return jsonify({"ok": not bool(result.get("isError")), "result": result})
 
 
 # --- Skills ---
@@ -1238,3 +1142,43 @@ _MISSION_STORE = register_mission_routes(
     cli_bp,_cli_auth_required,workspace=WORKSPACE,model_default=_ext_default_model,
     publish=_cli_publish_ipc,history_loader=_mission_history,on_accepted=_mission_accepted,
     on_completed=_mission_completed)
+
+
+def _cli_mcp_read_operation(operation, data):
+    if g.cli_key_rec.get("permissions") == "SAFE":
+        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
+    from agi_core.context import list_mcp_catalog, read_mcp_resource, get_mcp_prompt, close_mcp_session
+    workspace, server = data.get("workspace") or WORKSPACE, data.get("server", "")
+    try:
+        if operation == "catalog":
+            result = list_mcp_catalog(workspace, server, data.get("kind", "tools"), data.get("cursor"))
+        elif operation == "resource":
+            result = read_mcp_resource(workspace, server, data.get("uri"))
+        elif operation == "prompt":
+            result = get_mcp_prompt(workspace, server, data.get("name"), data.get("arguments"))
+        else:
+            result = close_mcp_session(workspace, server)
+        return jsonify(ok=True, result=result)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except TimeoutError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except RuntimeError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@cli_bp.route("/api/cli/mcp/catalog", methods=["GET"])
+@_cli_auth_required
+def cli_mcp_catalog():
+    return _cli_mcp_read_operation("catalog", request.args)
+
+
+@cli_bp.route("/api/cli/mcp/resource", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/prompt", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/close", methods=["POST"])
+@_cli_auth_required
+def cli_mcp_context_operation():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="JSON object required"), 400
+    return _cli_mcp_read_operation(request.path.rsplit("/", 1)[-1], data)

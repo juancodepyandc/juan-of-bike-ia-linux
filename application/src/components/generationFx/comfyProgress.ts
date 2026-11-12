@@ -1,4 +1,19 @@
-type ProgressCb = (frac: number, label?: string, logLine?: string) => void
+/**
+ * Progression réelle de ComfyUI (WebSocket). Chaque message `progress` est un
+ * pas de diffusion effectivement calculé : c'est une mesure fine, utilisée pour
+ * la vitesse et le temps restant de l'étape « Diffusion ».
+ */
+export type ComfyMeasure = {
+  /** pas de diffusion atteint et total (mesure fine) */
+  step?: number
+  max?: number
+  /** fraction de l'étape de diffusion (step / max) */
+  phaseFraction?: number
+  /** un nœud a fini de s'exécuter (jalon, pas une fraction) */
+  executedNode?: string
+}
+
+type ProgressCb = (frac: number, label?: string, logLine?: string, measure?: ComfyMeasure) => void
 
 export function watchComfyProgress(onProgress: ProgressCb): () => void {
   if (typeof window === 'undefined' || typeof WebSocket === 'undefined') return () => {}
@@ -33,9 +48,15 @@ export function watchComfyProgress(onProgress: ProgressCb): () => void {
             overallFrac,
             label,
             shouldLog ? `Diffusion neuronale FLUX : pas ${step}/${max} (${stepPct}%)` : undefined,
+            { step, max, phaseFraction: rawRatio },
           )
         } else if (msg.type === 'executed' && msg.data?.node) {
-          onProgress(0.92, 'Étape 5/5 · Finalisation — Décodage VAE & vérification qualité', 'Décodage VAE haute fidélité terminé')
+          onProgress(
+            0.92,
+            'Étape 5/5 · Finalisation — Décodage VAE & vérification qualité',
+            'Décodage VAE haute fidélité terminé',
+            { executedNode: String(msg.data.node) },
+          )
         }
       } catch { /* frame non-JSON (binaire preview) */ }
     }
@@ -46,4 +67,3 @@ export function watchComfyProgress(onProgress: ProgressCb): () => void {
     try { ws?.close() } catch { /* ignore */ }
   }
 }
-

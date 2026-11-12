@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 
 import aiohttp
@@ -19,6 +20,85 @@ class ModelReadTimeout(asyncio.TimeoutError):
 
 class ModelIncompleteAnswer(RuntimeError):
     """No usable model answer; retrying an unchanged budget is not a repair."""
+
+
+class _JSONContainerBoundary:
+    """Detect an unusable container stream early; not a schema validator.
+
+    A second value cannot repair a completed action. Track quotes and escapes
+    across chunks without retaining or reparsing the generated document.
+    Scalar roots keep their existing downstream validation contract.
+    """
+    def __init__(self):
+        self.stack = []
+        self.started = self.ended = self.quoted = self.escaped = self.disabled = False
+
+    def feed(self, content):
+        for char in content:
+            if self.disabled:
+                return
+            if self.ended:
+                if char not in ' \t\r\n':
+                    raise ModelIncompleteAnswer('Structured response contains trailing data after one JSON container; no action accepted. Existing outputs are preserved.')
+            elif not self.started:
+                if char in ' \t\r\n':
+                    continue
+                if char not in '{[':
+                    self.disabled = True
+                    return
+                self.started = True
+                self.stack.append('}' if char=='{' else ']')
+            elif self.quoted:
+                if self.escaped:
+                    self.escaped = False
+                elif char=='\\':
+                    self.escaped = True
+                elif char=='"':
+                    self.quoted = False
+            elif char=='"':
+                self.quoted = True
+            elif char in '{[':
+                self.stack.append('}' if char=='{' else ']')
+            elif char in '}]':
+                if char!=self.stack.pop():
+                    raise ModelIncompleteAnswer('Structured response has mismatched JSON container delimiters; no action accepted. Existing outputs are preserved.')
+                self.ended = not self.stack
+
+    def finish(self):
+        if self.started and not self.ended:
+            raise ModelIncompleteAnswer('Structured response ended with an incomplete JSON container; no action accepted. Existing outputs are preserved.')
+
+
+class ModelContextOverflow(RuntimeError):
+    """Runner rejected input before generation; counts are safe to persist."""
+    def __init__(self, request_tokens, context_tokens):
+        self.request_tokens, self.context_tokens = request_tokens, context_tokens
+        super().__init__(f'Ollama: requete de {request_tokens} tokens pour une fenetre de '
+                         f'{context_tokens} tokens. Contexte insuffisant; objectif et travaux conserves.')
+
+
+async def _check_chat_response(response):
+    if response.status < 400:
+        return
+    # Error bodies can contain prompts, URLs or credentials. Read a bounded
+    # diagnostic, expose only recognized numeric context measurements.
+    raw = bytearray()
+    async for chunk in response.content.iter_chunked(1024):
+        raw.extend(chunk)
+        if len(raw) > 8192:
+            break
+    try:
+        detail = json.loads(raw[:8192]).get('error','')
+    except (ValueError, AttributeError):
+        detail = ''
+    if response.status == 400 and isinstance(detail,str):
+        match = re.search(r'request \((\d{1,9}) tokens\) exceeds the available context size \((\d{1,9}) tokens\)',detail)
+        if match:
+            needed, window = map(int,match.groups())
+            if needed > window > 0:
+                raise ModelContextOverflow(needed,window)
+    raise RuntimeError(f'Ollama: requete refusee (HTTP {response.status}). '
+                       'Consulter le journal serveur pour le diagnostic; aucune action rejouee.')
 
 
 def _model_timeout(exc, model, timeout, received_chars):
@@ -94,9 +174,10 @@ class LLMGateway:
         complete, received, pending = False, False, ''
         received_chars = 0
         thinking_chars, done_reason = 0, None
+        boundary = _JSONContainerBoundary() if response_format is not None else None
         try:
             async with session.post(f'{self.ollama_url}/api/chat', json=payload) as response:
-                response.raise_for_status()
+                await _check_chat_response(response)
                 async for line in response.content:
                     if not line.strip():
                         continue
@@ -122,6 +203,8 @@ class LLMGateway:
                     content = data.get('message', {}).get('content', '')
                     received = received or bool(content.strip())
                     received_chars += len(content)
+                    if boundary is not None:
+                        boundary.feed(content)
                     pending += content
                     # Coalesce small fragments before durable logging and terminal redraws.
                     if pending and (len(pending) >= 128 or time.monotonic()-last_flush >= .05):
@@ -131,6 +214,8 @@ class LLMGateway:
             raise _model_timeout(exc, selected, session.timeout, received_chars) from exc
         if pending:
             yield pending
+        if boundary is not None:
+            boundary.finish()
         if not complete or not received:
             raise ModelIncompleteAnswer('Model stream ended without a complete answer'
                                +f' (done_reason={done_reason!r}, thinking_chars={thinking_chars}, answer_chars={received_chars}). '

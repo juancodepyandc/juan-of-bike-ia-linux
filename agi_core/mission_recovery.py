@@ -9,7 +9,7 @@ RECOVERY_FIELDS = {'request_quote', 'evidence_ids', 'hypothesis',
                    'expected_observation', 'next_action'}
 
 
-def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *, allow_delegation_checks=True, request_excerpt=None):
+def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *, allow_delegation_checks=True, request_excerpt=None, evidence=None):
     quote={'type':'string'}
     if request_excerpt:quote['enum']=[request_excerpt]
     return {'type': 'object', 'properties': {
@@ -20,7 +20,7 @@ def recovery_response_schema(criteria, allowed, evidence_ids, explicit_tools, *,
         'expected_observation': {'type': 'string'},
         'next_action': tool_response_schema(criteria, allowed,
                                             required_tool_names=explicit_tools,
-                                            allow_delegation_checks=allow_delegation_checks)},
+                                            allow_delegation_checks=allow_delegation_checks,evidence=evidence)},
         'required': sorted(RECOVERY_FIELDS), 'additionalProperties': False}
 
 

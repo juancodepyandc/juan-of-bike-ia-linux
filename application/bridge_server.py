@@ -1476,7 +1476,7 @@ def sync_tunnel_url_to_gist():
 
 
 if __name__ == "__main__":
-    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "1").strip().lower() not in {"0", "false", "no"}:
+    if os.environ.get("AURORA_BRIDGE_SYNC_TUNNEL", "0").strip().lower() not in {"0", "false", "no"}:
         sync_tunnel_url_to_gist()
     print("=" * 60)
     print("  BRIDGE AURORA — Port 3001")
@@ -1495,6 +1495,20 @@ if __name__ == "__main__":
     print(f"  WORKSPACE       = {WORKSPACE}", flush=True)
     print(f"  ComfyUI cherche = {_expected}", flush=True)
     print(f"  COMFYUI_PATH    = {COMFYUI_PATH or 'NON DETECTE'}", flush=True)
+    # Blender : une seule localisation (AURORA_BLENDER, embarque, PATH, installations,
+    # bureau ~/Bureau ou ~/Desktop) exportee dans AURORA_BLENDER pour tous les scripts lances.
+    try:
+        import sys as _sys
+        _services = os.path.join(WORKSPACE, "python-services")
+        if _services not in _sys.path:
+            _sys.path.insert(0, _services)
+        from blender_locator import ensure_env as _ensure_blender, locate as _locate_blender
+        # origine lue AVANT l'export : sinon elle vaudrait toujours « AURORA_BLENDER »
+        _bl_path, _bl_origin = _locate_blender()
+        _ensure_blender()
+        print(f"  BLENDER         = {_bl_path or 'NON DETECTE'} ({_bl_origin})", flush=True)
+    except Exception as _bl_exc:  # noqa: BLE001
+        print(f"  BLENDER         = recherche indisponible ({_bl_exc!r})", flush=True)
     # Dev auto-reload: set AURORA_BRIDGE_DEV=1 to get Flask to reload this file
     # when it changes. Off by default so the production start.bat isn't noisy.
     dev_reload = os.environ.get("AURORA_BRIDGE_DEV", "").strip() in ("1", "true", "yes")
@@ -1508,7 +1522,7 @@ if __name__ == "__main__":
     print("  SELF-WATCH       = ON  (auto re-exec sur changement de bridge_server.py)")
     # v82ld — fire-and-forget warmup of qwen3:14b so the first extract-structured
     # request doesn t pay the ~11s cold-load. Daemon thread, never blocks boot.
-    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "1").strip().lower() not in {"0", "false", "no"}:
+    if os.environ.get("AURORA_BRIDGE_BACKGROUND_PRELOAD", "0").strip().lower() not in {"0", "false", "no"}:
         _start_ollama_warmup_once("qwen3:14b")
         print("  WARMUP           = qwen3:14b (background, non-blocking)")
         # Best-effort conditional pull; disabled together with the warmup.

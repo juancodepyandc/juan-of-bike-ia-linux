@@ -20,6 +20,13 @@ _ESRGAN_CKPT = _HERE / "_hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth"
 
 
 def _find_blender():
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     for c in (os.environ.get("AURORA_BLENDER"), os.environ.get("BLENDER_BIN"),
               os.path.expanduser("~/.local/bin/blender"), shutil.which("blender")):
         if c and os.path.isfile(c):

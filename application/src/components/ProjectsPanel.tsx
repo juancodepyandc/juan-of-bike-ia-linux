@@ -3,6 +3,9 @@ import { createPortal } from 'react-dom'
 import { getBridgeUrl } from '../utils/runtime.ts'
 import { bridgeFetch, readBridgeKey } from '../utils/bridgeAuth.ts'
 import { useAppStore } from '../stores/appStore.ts'
+import type { AdmissionScheduling, GenerationJobState } from '../types/app.ts'
+import { comparableRuns, estimateRemaining } from '../services/generationTiming.ts'
+import { FX_AGENTS } from './generationFx/mascots.tsx'
 
 type Schedule = {
   queue_position: number
@@ -54,16 +57,30 @@ const labels: Record<string, string> = {
   cancelled: 'Arrêté par l’utilisateur',
 }
 
-const MODULE_ACCENTS: Record<string, string> = {
-  conversation: '#8B5CF6',
-  image: '#F472B6',
-  code: '#22D3EE',
-  video: '#F59E0B',
-  drawing: '#A3E635',
-  '3d': '#60A5FA',
-  learning: '#10B981',
-  cyber: '#F43F5E',
-  business: '#38BDF8',
+// une seule source de couleur par module : celle du personnage du module
+const MODULE_ACCENTS: Record<string, string> = Object.fromEntries(
+  Object.entries(FX_AGENTS).map(([id, agent]) => [id, agent.accent]),
+)
+
+/**
+ * Estimation d'un job frontend : la file du PC (médiane de runs comparables)
+ * si elle a répondu, sinon l'historique local mesuré ; jamais une durée fixe.
+ */
+function measuredSchedule(job: Pick<GenerationJobState, 'module' | 'model' | 'status' | 'startedAt' | 'createdAt' | 'finishedAt'> & { scheduling?: AdmissionScheduling | null }, now: number): Schedule {
+  if (job.scheduling) return { ...job.scheduling }
+  const queued = job.status === 'queued'
+  const { runs, basis } = comparableRuns(job.module, job.model)
+  const est = estimateRemaining({ now, runStartedAt: queued ? null : job.startedAt ?? job.createdAt, runs, historyBasis: basis, done: job.status === 'done' })
+  const elapsed = Math.max(0, Math.floor(((job.finishedAt ?? now) - (job.startedAt ?? now)) / 1000))
+  return {
+    queue_position: queued ? 1 : 0,
+    ahead_count: 0,
+    elapsed_seconds: elapsed,
+    estimated_duration_seconds: est.expectedTotalMs != null ? Math.round(est.expectedTotalMs / 1000) : null,
+    remaining_seconds: est.remainingMs != null && est.state !== 'queued' ? Math.round(est.remainingMs / 1000) : null,
+    wait_seconds: null,
+    estimate_sample_count: est.sampleCount,
+  }
 }
 
 function statusTone(status: string): { bg: string; border: string; text: string; dot: string } {
@@ -233,23 +250,14 @@ export default function ProjectsPanel() {
                   ? 'failed'
                   : job.status,
           steps: job.progress > 0 ? Math.max(1, Math.ceil(job.progress / 20)) : 1,
-          verified_count: job.status === 'done' ? 5 : Math.floor((job.progress || 0) / 20),
-          criteria_count: 5,
+          // aucun critère n'est vérifié par ce suivi frontend : rien n'est inventé
+          verified_count: 0,
+          criteria_count: 0,
           result: job.error || job.detail,
           liveDetail: job.detail,
           liveProgress: job.progress,
           isFrontendLive: true,
-          scheduling: {
-            queue_position: 1,
-            ahead_count: 0,
-            elapsed_seconds: elapsedSec,
-            estimated_duration_seconds: 45,
-            remaining_seconds: isJobActive
-              ? Math.max(4, Math.round(45 * (1 - Math.min(0.95, (job.progress || 10) / 100))))
-              : 0,
-            wait_seconds: 0,
-            estimate_sample_count: 1,
-          },
+          scheduling: { ...measuredSchedule(job, now), elapsed_seconds: elapsedSec },
         })
       }
     }
@@ -265,19 +273,14 @@ export default function ProjectsPanel() {
           title: runtimeTask.title || `Mission ${runtimeTask.module.toUpperCase()} en cours`,
           status: 'running',
           steps: Math.max(1, runtimeTask.history?.length || 1),
-          verified_count: Math.min(5, Math.floor((runtimeTask.progress || 10) / 20)),
-          criteria_count: 5,
+          verified_count: 0,
+          criteria_count: 0,
           liveDetail: runtimeTask.detail,
           liveProgress: runtimeTask.progress,
           isFrontendLive: true,
           scheduling: {
-            queue_position: 1,
-            ahead_count: 0,
+            ...measuredSchedule({ module: runtimeTask.module, model: null, status: 'running', startedAt: runtimeTask.startedAt, createdAt: runtimeTask.startedAt ?? now, finishedAt: null }, now),
             elapsed_seconds: elapsedSec,
-            estimated_duration_seconds: 45,
-            remaining_seconds: Math.max(5, 45 - elapsedSec),
-            wait_seconds: 0,
-            estimate_sample_count: 1,
           },
         })
       }

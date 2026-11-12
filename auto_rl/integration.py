@@ -285,7 +285,10 @@ def register_routes(app, proxy):
         module = data.get('module')
         variant = data.get('variant') or data.get('version') or 'base'
         try:
-            result = versions.select(module, variant, STATE, allow_pending=True)
+            # No `allow_pending`: "renforce" is selectable only when an adapter
+            # really passed the promotion gate. A refusal keeps this endpoint's
+            # usual shape, HTTP 409 with {'error': <French reason>}.
+            result = versions.select(module, variant, STATE)
             from .reinforced_registry import get_reinforced_overview
             overview = get_reinforced_overview(STATE)
             return jsonify({**result, 'module_info': overview['modules'].get(result['module'])})

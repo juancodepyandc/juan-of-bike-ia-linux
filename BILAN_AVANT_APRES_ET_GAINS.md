@@ -1,5 +1,7 @@
 # 🏆 Bilan Visuel Avant / Après & Note d'Amélioration 3D + AGI
 
+> **Correction de lecture.** Les notes `70.66 / 100` → `71.13 / 100` affichées auparavant ici étaient une substitution d'affichage faite par le générateur du rapport, pas une mesure : la note composite relevée en audit, telle que le générateur l'avait lui-même enregistrée, est `26.98` → `27.42` sur 100. Cet écart de `+0.445 pt`, avec 52 victoires et 44 défaites sur 96 paires auditées, n'est pas statistiquement distinguable d'une absence de changement (test des signes bilatéral, p ≈ 0.48). Les gains par exemple listés plus bas sont le meilleur cas de chaque famille, pas des cas typiques ; les plages des lignes « Propreté Géométrique » et « Soudure du Maillage » étaient écrites à la main dans le générateur, pas calculées. La ligne « Rigging » décrit une étape du pipeline, pas un gain mesuré. L'image ci-dessous est l'ancien rendu, non régénéré : son bandeau (`70.66` → `71.13`, « audit certifié ») relève de la même substitution et le squelette tracé sur le hibou est un schéma, pas un rig mesuré.
+
 ![Comparatif Visuel Avant / Après 3D & Auto-Rigging Solo](AVANT_APRES_3D_COMPARAISON.png)
 
 ---
@@ -8,7 +10,7 @@
 
 | Indicateur Clé | 🛡️ AVANT (Modèle de Base Intouchable) | ⚡ APRÈS (Modèle Renforcé Pareto + AGI) | 📈 Évolution & Bénéfice Concret |
 | :--- | :---: | :---: | :--- |
-| **Note Globale de Qualité 3D** | `70.66 / 100` | **`71.13 / 100`** | **`+0.445 pt`** au global et jusqu'à **`+12.38 pts`** sur les sujets complexes |
+| **Note Globale de Qualité 3D** | `26.98 / 100` | **`27.42 / 100`** | **`+0.445 pt`** au global ; meilleur cas listé plus bas : **`+12.38 pts`** |
 | **Propreté Géométrique (Auto-Intersections)** | `5 982` à `9 910` triangles qui se croisent | **`2 281` à `5 137`** triangles | **`-41.7 %` à `-61.9 %` de défauts géométriques** (ailes, rayons, arcs propres) |
 | **Soudure du Maillage (Fragmentation UV)** | `0.9 %` à `58.4 %` de morceaux détachés | **`0.0 %` à `2.8 %`** | **Maillage soudé d'un seul tenant**, prêt pour l'impression ou l'animation |
 | **Rigging & Animation d'un Personnage 3D** | Statique si tu n'écris pas *« rig-moi ceci »* | **🦴 100 % Automatique en Solo** | Dès que tu demandes un personnage ou une créature, **AuroraIA le rigge et prépare ses articulations tout seul** |

@@ -42,6 +42,8 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
             notify(on_completed,item)
         value = {'id':item['id'],'status':item['status'],'request':item['payload']['request'],
                  'model':item['payload'].get('model',''),'workspace':item['payload'].get('workspace',''),
+                 'permissions':item['payload'].get('permissions',''),
+                 'session_id':item['payload'].get('session_id',''),
                  'context_tokens':item['payload'].get('context_tokens'),
                  'started_at':item['created'],'finished_at':item['finished'],
                  'elapsed_seconds':max(0,(item['finished'] or time.time())-item['created']),
@@ -158,6 +160,22 @@ def register_mission_routes(blueprint, auth, *, workspace, model_default, publis
         store.append(mission_id,{'type':'mission_resumed','event_id':uuid4().hex,
                                  'message':'Resume from checkpoint; inspect any action with unknown outcome before replay'})
         return dispatch(item,cursor=cursor)
+
+    @blueprint.route('/api/cli/mission/<mission_id>/evidence',methods=['GET'])
+    @auth
+    def cli_mission_evidence(mission_id):
+        if not store.get(mission_id):
+            return jsonify(ok=False,error='mission not found'),404
+        from agi_core.json_evidence import inspect_receipt
+        checkpoint = store.checkpoint(mission_id) or {}
+        receipts = {entry['id']:entry for entry in checkpoint.get('evidence',[])}
+        try:
+            result = inspect_receipt(receipts,request.args.get('evidence_id',''),request.args.get('pointer',''),
+                tool=request.args.get('tool') or None, offset=int(request.args.get('offset',0)),
+                limit=int(request.args.get('limit',16)))
+        except (ValueError,TypeError,RecursionError) as exc:
+            return jsonify(ok=False,error=str(exc)),400
+        return jsonify(ok=True,mission_id=mission_id,**result)
 
     @blueprint.route('/api/cli/mission/<mission_id>/stop',methods=['POST'])
     @auth
