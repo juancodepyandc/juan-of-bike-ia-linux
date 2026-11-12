@@ -33,6 +33,7 @@ import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
 import { fsReadText, ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
+import { threeDPhaseForStage } from '../components/generationFx/fxPhases.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
 import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
@@ -3823,6 +3824,7 @@ export default function ModelView() {
             emitGenerationFx('3d', {
               active: true,
               phase: detail,
+              phaseIndex: threeDPhaseForStage(stage) ?? undefined,
               progress: phaseProgress / 100,
             })
           })
@@ -5065,7 +5067,7 @@ export default function ModelView() {
               url: toAssetUrl(a.path),
               role: a.view === 'front' ? 'face' : a.view === 'right' ? 'droite' : a.view === 'left' ? 'gauche' : 'dos',
             }))
-            emitGenerationFx('3d', { active: true, phase: 'Référence photo — multi-vues prêtes', refs: allRefs })
+            emitGenerationFx('3d', { active: true, phase: 'Référence photo — multi-vues prêtes', refs: allRefs, subjectKind: intent.subjectKind })
             referenceSeedForWorkflow = true
             referenceVerificationSummary = `Reference multivue directe retenue: ${materializedViewPlan.summary}.`
           } else {
@@ -5103,7 +5105,7 @@ export default function ModelView() {
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
               setProgress('Reference 3D fiable retenue, preparation de la reconstruction...')
               setPhase('Référence photo — référence visuelle retenue...', 35)
-              emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
             } else try {
               setProgress(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...')
               setPhase(referenceSeed ? 'Référence photo — raffinement de la vue...' : 'Référence photo — génération de la vue...', 25)
@@ -5222,7 +5224,7 @@ export default function ModelView() {
               await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await imageBlob.arrayBuffer())))
               lastReferenceImagePathRef.current = referenceImagePath
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
-              emitGenerationFx('3d', { active: true, phase: 'Référence photo — vue front prête', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — vue front prête', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
             } catch (refErr) {
               // ECHEC NON FATAL. Un 400 ComfyUI ici (mauvais graphe, modele
               // absent, service down) ne doit PAS tuer la generation.
@@ -5355,6 +5357,14 @@ export default function ModelView() {
             // v77zag: keep a local snapshot for the live overlay so the user
             // sees the percent / detail / heartbeat regardless of runtime.
             setPhaseSnapshot({ label: detail, percent: phaseProgress })
+            // L'étape réelle du pipeline (et non le pourcentage 82–95 %) pilote
+            // l'écran de génération et l'hologramme (la ligne elle-même est
+            // journalisée par ThreeDProgressOverlay).
+            const fxPhase = threeDPhaseForStage(stage)
+            if (stage === 'perfection' && /REFUS/i.test(detail)) {
+              // refus du contrôle final suivi d'une purge et d'une régénération : l'écran revient à la sculpture
+              emitGenerationFx('3d', { active: true, phaseIndex: 2, phaseReset: true, logLine: detail })
+            } else if (fxPhase != null) emitGenerationFx('3d', { active: true, phaseIndex: fxPhase })
           })
 
           let result: ModelGenerationResult | null = null
@@ -5374,6 +5384,10 @@ export default function ModelView() {
             if (proceduralResult.ok && proceduralResult.outputPath) {
               const proceduralTextured = ['humanoid_performer', 'strimer_plus_v2_cable', 'led_strip_system', 'pulley_belt_system', 'motherboard_layout'].includes(intent.pipelineRouting.proceduralTemplate || '')
               result = { ok: true, path: proceduralResult.outputPath, format: proceduralResult.format as 'glb' | 'obj' || 'glb', shape_model: `Blender Procedural (${intent.pipelineRouting.proceduralTemplate})`, shape_runtime: 'blender_headless', shape_strategy: intent.pipelineRouting.proceduralTemplate, textured: proceduralTextured, fallback_used: false, pipeline: 'procedural', animationFrames: proceduralResult.animationFrames }
+              // le GLB réel sorti de Blender se matérialise tout de suite dans l'hologramme
+              if ((proceduralResult.format || 'glb') === 'glb') {
+                emitGenerationFx('3d', { active: true, meshUrl: toAssetUrl(proceduralResult.outputPath), meshInfo: `modèle Blender procédural (${intent.pipelineRouting.proceduralTemplate})`, logLine: 'modèle Blender exporté — matérialisation dans l’hologramme' })
+              }
             } else {
               // Fallback to AI generation
               setProgress('Procedural echoue, fallback vers generation IA...')
@@ -5391,6 +5405,9 @@ export default function ModelView() {
               const photoResult = parseLastJsonLine(photoOutput)
               if (photoResult?.ok && photoResult.path) {
                 result = { ...photoResult, pipeline: 'photogrammetry' } as ModelGenerationResult
+                if (/\.glb$/i.test(String(photoResult.path))) {
+                  emitGenerationFx('3d', { active: true, meshUrl: toAssetUrl(String(photoResult.path)), meshInfo: `photogrammétrie (${imageFiles.length} photos réelles)`, logLine: 'maillage photogrammétrique reconstruit — matérialisation dans l’hologramme' })
+                }
               } else {
                 setProgress('Photogrammetrie echouee, fallback vers generation IA...')
                 setPhase('Sculpture 3D — fallback vers génération IA...', 45)
@@ -5460,7 +5477,7 @@ export default function ModelView() {
                 auroraArgs.push('--synthetic-reference')
               }
               if (referenceImagePath) {
-                emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+                emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
               }
               const refRoles: [string, string][] = [
                 [`${genDir}/${runId}_reference.png`, 'face'],
@@ -5485,6 +5502,7 @@ export default function ModelView() {
                     emitGenerationFx('3d', {
                       active: true,
                       refs: refs.length ? refs : undefined,
+                      subjectKind: intent.subjectKind,
                       meshUrl: (meshExists || meshEmitted) ? toAssetUrl(meshPath) : undefined,
                       meshInfo: meshEmitted ? 'géométrie native posée — texture & matériaux en cours' : undefined,
                     })
@@ -6368,6 +6386,9 @@ export default function ModelView() {
           const finalAssetUrl = toAssetUrl(activeMeshPath)
           setModelUrl(finalAssetUrl)
           completeThreeDMission({ meshUrl: finalAssetUrl })
+          // Le maillage final se verrouille dans l'hologramme (≈ 2,6 s) au moment
+          // réel de la livraison, puis l'écran laisse place au viewer.
+          emitGenerationFx('3d', { active: false, resultUrl: finalAssetUrl, resultKind: 'mesh', outcome: 'success' })
           setViewerWebUrl(null)
           setWorkspace('model')
           // v71: persist le rapport qualite mesh pour le bouton 'Inspecter mesh'.
@@ -7086,17 +7107,13 @@ export default function ModelView() {
                     prompt={prompt.trim() || readPersistedThreeDMission()?.rawPrompt || 'Projet 3D'}
                     progressPercent={
                       isGenerating
-                        ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 4)
-                        : prompt.trim()
-                          ? 38
-                          : 22
+                        ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 0)
+                        : 0
                     }
                     phaseLabel={
                       isGenerating
-                        ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Orchestration 3D par les 5 sous-agents...'
-                        : prompt.trim()
-                          ? 'Prévisualisation Splats Holographiques 3D & Répartition des 5 Sous-Agents prête'
-                          : 'Aperçu Splats Holographiques 3D — Saisissez une demande 3D'
+                        ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Génération 3D en cours…'
+                        : 'En attente d’une demande 3D — aucune génération en cours'
                     }
                     startedAtMs={isGenerating ? readPersistedThreeDMission()?.startedAtMs : undefined}
                     mode="visual_3d"

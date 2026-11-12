@@ -38,7 +38,8 @@ def select(module, version, state=STATE, allow_pending=False):
     if version == 'validated' and not allow_pending:
         from .runtime import validated_record
         if module not in LABELS or not validated_record(module, state):
-            raise ValueError('Aucune version validée disponible pour ce module')
+            raise ValueError('Aucune version validée disponible pour ce module : aucun adaptateur '
+                             'n’a franchi la porte de promotion. Le modèle de base reste utilisé.')
     with exclusive_lock(Path(state)/'inference_preferences.lock'):
         values = read_json(Path(state)/'inference_preferences.json', {})
         values[module] = version

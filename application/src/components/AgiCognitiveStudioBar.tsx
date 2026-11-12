@@ -4,6 +4,19 @@ import type { ModuleId } from '../types/app.ts'
 import { getBridgeUrl } from '../utils/runtime.ts'
 import type { ReinforcedModuleInfo, TrainingLiveState } from './ReinforcedModelBar.tsx'
 
+// A value the audit did not measure is shown as such, never replaced by a plausible-looking number.
+function formatScore(value: number | null | undefined, digits = 2): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : 'non mesuré'
+}
+
+function formatGain(value: number | null | undefined, digits: number): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(digits)}` : 'non mesuré'
+}
+
+function formatCount(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '—'
+}
+
 interface Props {
   activeModule: ModuleId
   activeAccent: string
@@ -335,12 +348,12 @@ export default function AgiCognitiveStudioBar({
                 color: '#D1FAE5',
                 fontFamily: "'Cascadia Code',Consolas,monospace",
               }}
-              title="Comparatif vérifié : Modèle de Base Intouchable vs Modèle Renforcé Pareto"
+              title="Écart mesuré en audit entre le modèle de base et le candidat ; un candidat non promu n'est pas servi"
             >
-              <span>🛡️ Base {(displayThreeD.score_base_100 ?? 70.66).toFixed(2)}</span>
+              <span>🛡️ Base {formatScore(displayThreeD.score_base_100)}</span>
               <span style={{ color: '#34D399' }}>→</span>
               <span style={{ fontWeight: 800, color: '#6EE7B7' }}>
-                ⚡ Renforcé {(displayThreeD.score_renforce_100 ?? 71.13).toFixed(2)} (+{(displayThreeD.gain_points_100 ?? 0.47).toFixed(2)})
+                ⚡ Renforcé {formatScore(displayThreeD.score_renforce_100)} ({formatGain(displayThreeD.gain_points_100, 2)})
               </span>
             </div>
           )}
@@ -659,24 +672,24 @@ export default function AgiCognitiveStudioBar({
                 <div style={{ padding: '6px 8px', borderRadius: 8, background: 'rgba(14, 165, 233, 0.12)', border: '1px solid rgba(56, 189, 248, 0.3)' }}>
                   <div style={{ fontSize: 9.5, color: '#94A3B8' }}>MODÈLE DE BASE (SHA-256)</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: '#E0F2FE', marginTop: 2 }}>
-                    {(displayThreeD?.score_base_100 ?? 70.66).toFixed(2)} / 100
+                    {formatScore(displayThreeD?.score_base_100)} / 100
                   </div>
                 </div>
                 <div style={{ padding: '6px 8px', borderRadius: 8, background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(52, 211, 153, 0.4)' }}>
                   <div style={{ fontSize: 9.5, color: '#A7F3D0' }}>MODÈLE RENFORCÉ (CHAMPION)</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: '#6EE7B7', marginTop: 2 }}>
-                    {(displayThreeD?.score_renforce_100 ?? 71.13).toFixed(2)} / 100
+                    {formatScore(displayThreeD?.score_renforce_100)} / 100
                   </div>
                 </div>
                 <div style={{ padding: '6px 8px', borderRadius: 8, background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(167, 139, 250, 0.35)' }}>
-                  <div style={{ fontSize: 9.5, color: '#DDD6FE' }}>GAIN VÉRIFIÉ (MULTI-GRAINES)</div>
+                  <div style={{ fontSize: 9.5, color: '#DDD6FE' }}>ÉCART D'AUDIT (MULTI-GRAINES)</div>
                   <div style={{ fontSize: 13, fontWeight: 800, color: '#C4B5FD', marginTop: 2 }}>
-                    +{(displayThreeD?.gain_points_100 ?? 0.47).toFixed(3)} pts ({displayThreeD?.wins ?? 18}W/{displayThreeD?.losses ?? 0}L)
+                    {formatGain(displayThreeD?.gain_points_100, 3)} pts ({formatCount(displayThreeD?.wins)}W/{formatCount(displayThreeD?.losses)}L)
                   </div>
                 </div>
               </div>
               <div style={{ fontSize: 10.2, color: '#94A3B8', lineHeight: 1.35 }}>
-                Garantie stricte : le modèle de base est figé et immuable. Un candidat entraîné sur Kaggle 2×T4 n’est promu dans <code>modele/renforce/</code> que s’il bat le champion actuel sans dégrader aucune sous-métrique (Pareto + Wilcoxon).
+                Le modèle de base est figé. Un candidat n’est servi que s’il franchit la porte d’audit (gain moyen, intervalle bootstrap apparié, aucune régression) ; sinon le modèle de base reste utilisé et l’écart ci-dessus n’est qu’une mesure.
               </div>
             </div>
           </div>

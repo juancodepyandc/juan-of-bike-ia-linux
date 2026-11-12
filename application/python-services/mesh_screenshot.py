@@ -28,6 +28,13 @@ from typing import Any
 
 
 def _find_blender_executable() -> str | None:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     env_path = os.environ.get("BLENDER_BIN") or os.environ.get("BLENDER_EXE")
     if env_path and os.path.isfile(env_path):
         return env_path

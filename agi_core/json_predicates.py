@@ -9,7 +9,7 @@ def parse_json_expression(expression):
     allowed = (ast.Expression,ast.Constant,ast.Name,ast.Load,ast.Subscript,ast.List,
                ast.BinOp,ast.UnaryOp,ast.BoolOp,ast.Compare,ast.USub,ast.UAdd,ast.Not,
                ast.And,ast.Or,ast.Eq,ast.NotEq,ast.Add,ast.Sub,ast.Mult,ast.Div,
-               ast.FloorDiv,ast.Mod,ast.Lt,ast.LtE,ast.Gt,ast.GtE)
+               ast.FloorDiv,ast.Mod,ast.Lt,ast.LtE,ast.Gt,ast.GtE,ast.Call)
     if not isinstance(expression,str) or not expression.strip():
         raise ValueError('A JSON expression must be nonempty text')
     try:
@@ -19,9 +19,16 @@ def parse_json_expression(expression):
     nodes = list(ast.walk(tree))
     if len(nodes)>512:
         raise ValueError('JSON expression exceeds the syntax bound; use a command check')
+    intrinsic_names = set()
     for node in nodes:
-        if not isinstance(node,allowed) or isinstance(node,ast.Name) and node.id!='data':
-            raise ValueError('JSON expressions allow only data subscripts, literals, numeric arithmetic, comparisons and booleans; no calls or attributes')
+        if isinstance(node,ast.Call):
+            if (not isinstance(node.func,ast.Name) or node.func.id!='len'
+                    or len(node.args)!=1 or node.keywords):
+                raise ValueError('Only the len(JSON array/object/string) intrinsic is supported')
+            intrinsic_names.add(node.func)
+    for node in nodes:
+        if not isinstance(node,allowed) or isinstance(node,ast.Name) and node.id!='data' and node not in intrinsic_names:
+            raise ValueError('JSON expressions allow data subscripts, literals, numeric arithmetic, comparisons, booleans and the len intrinsic; no other calls or attributes')
         if isinstance(node,ast.Constant) and (type(node.value) not in (int,float,str,bool,type(None))
                 or type(node.value) is float and not math.isfinite(node.value)):
             raise ValueError('Only finite JSON scalar literals are supported')
@@ -60,6 +67,11 @@ def evaluate_json_expression(expression, data):
                 raise ValueError('Only JSON scalar literals are supported')
             return number(node.value) if type(node.value) in (int,float) else node.value
         if isinstance(node,ast.List): return [visit(v) for v in node.elts]
+        if isinstance(node,ast.Call):
+            value = visit(node.args[0])
+            if type(value) not in (list,dict,str):
+                raise ValueError('len requires a JSON array, object or string')
+            return len(value)
         if isinstance(node,ast.Subscript):
             container,key = visit(node.value),visit(node.slice)
             if type(container) is dict and type(key) is str or type(container) is list and type(key) is int:

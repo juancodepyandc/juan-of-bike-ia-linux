@@ -120,6 +120,17 @@ function parseJsonFromOutput(output: string): Record<string, unknown> | null {
 }
 
 /**
+ * Les modèles du pont Blender impriment leur fichier sous `path` (la plupart),
+ * `outputPath` ou `output_path` selon le script : sans cette normalisation, un
+ * modèle procédural réussi était lu comme sans fichier et l'application repartait
+ * sur la génération IA.
+ */
+export function normalizeBlenderResult(result: Record<string, unknown>): BlenderScriptResult {
+  const outputPath = [result.outputPath, result.path, result.output_path].find((v) => typeof v === 'string' && v.length > 0) as string | undefined
+  return { ...(result as unknown as BlenderScriptResult), outputPath }
+}
+
+/**
  * Run a Blender Python script via the headless CLI bridge.
  */
 export async function runBlenderScript(
@@ -135,7 +146,7 @@ export async function runBlenderScript(
     ])
     const result = parseJsonFromOutput(output)
     if (result?.ok) {
-      return result as unknown as BlenderScriptResult
+      return normalizeBlenderResult(result)
     }
     return { ok: false, error: result?.error as string || 'Blender script failed without details.' }
   } catch (err) {
@@ -170,7 +181,7 @@ export async function runProceduralModeling(params: ProceduralParams): Promise<B
     const output = await runPythonScript(`${workspacePath}/python-services/blender_bridge.py`, args)
     const result = parseJsonFromOutput(output)
     if (result?.ok) {
-      return result as unknown as BlenderScriptResult
+      return normalizeBlenderResult(result)
     }
     return { ok: false, error: result?.error as string || 'Procedural modeling failed.' }
   } catch (err) {
@@ -198,7 +209,7 @@ export async function runAutoRig(params: RiggingParams): Promise<BlenderScriptRe
     ])
     const result = parseJsonFromOutput(output)
     if (result?.ok) {
-      return result as unknown as BlenderScriptResult
+      return normalizeBlenderResult(result)
     }
     return { ok: false, error: result?.error as string || 'Auto-rig failed.' }
   } catch (err) {
@@ -223,7 +234,7 @@ export async function runMeshValidation(params: MeshCleanupParams): Promise<Blen
     ])
     const result = parseJsonFromOutput(output)
     if (result?.ok) {
-      return result as unknown as BlenderScriptResult
+      return normalizeBlenderResult(result)
     }
     return { ok: false, error: result?.error as string || 'Mesh validation failed.' }
   } catch (err) {
@@ -248,7 +259,7 @@ export async function runMeshCleanup(params: MeshCleanupParams): Promise<Blender
     ])
     const result = parseJsonFromOutput(output)
     if (result?.ok) {
-      return result as unknown as BlenderScriptResult
+      return normalizeBlenderResult(result)
     }
     return { ok: false, error: result?.error as string || 'Mesh cleanup failed.' }
   } catch (err) {

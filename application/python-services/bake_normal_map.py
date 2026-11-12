@@ -36,6 +36,13 @@ _REPO_ROOT = _HERE.parents[1]  # .../AuroraIA-v2
 
 # locate the portable Blender we shipped under application/_blender/
 def _find_blender() -> str | None:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     for sub in (_REPO_ROOT / "application" / "_blender").glob("blender-*-windows-x64"):
         exe = sub / "blender.exe"
         if exe.is_file():

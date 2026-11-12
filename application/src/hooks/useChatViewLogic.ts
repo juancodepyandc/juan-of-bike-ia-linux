@@ -21,6 +21,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
+import { CHAT_STAGE_INDEX } from '../components/generationFx/fxPhases.ts'
 import { useChatStore } from '../stores/chatStore.ts'
 import { useAppStore } from '../stores/appStore.ts'
 import { runConversationTurn } from '../services/conversationOrchestrator.ts'
@@ -98,14 +99,19 @@ export function useChatViewLogic() {
   }, [])
 
   const {
-    messages, isStreaming, streamContent,
+    messages, isStreaming, streamContent, runState,
     addMessage, setStreaming, setStreamContent, appendStreamContent,
     startRun, setRunStage, setRunAnalysis, setRunVerification, upsertRunSource, setRunQueries,
     finishRun, failRun, clearMessages, popLastAssistantTurn,
     updateMessage, removeMessage, togglePinned,
   } = useChatStore()
   const mainModel = useAppStore((s) => s.mainModel)
-  useGenerationFxEmitter('conversation', isStreaming)
+  // Étapes réelles du run (analyse, plan, brouillon, vérification…) ; dès que
+  // le texte arrive, l'écran se réduit pour laisser lire la réponse en direct.
+  useGenerationFxEmitter('conversation', isStreaming, runState.label || undefined, undefined, {
+    phaseIndex: CHAT_STAGE_INDEX[runState.stage],
+    revealContent: isStreaming && streamContent.length > 0,
+  })
 
   const [draft, setDraft] = useState('')
   // Recherche web : 'auto' (heuristique), 'on' (globe allume, on cherche

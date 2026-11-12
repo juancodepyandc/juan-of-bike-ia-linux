@@ -2,11 +2,13 @@
 et du bilan détaillé mais simple à comprendre (`BILAN_AVANT_APRES_ET_GAINS.md`).
 
 Exécuté automatiquement à la fin de chaque cycle d'entraînement 3D (et sur demande via CLI `/avant-apres`).
-Préserve à 100 % le modèle de base intouchable et compare uniquement avec le Champion Renforcé validé par Pareto.
+N'écrit que des valeurs mesurées en audit : aucune note n'est remplacée ni relevée par un plancher,
+un écart nul ou négatif est affiché tel quel, et une valeur absente est écrite « non mesuré ».
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import time
@@ -16,6 +18,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from .config import ROOT, STATE
+from .reinforced_registry import NON_MESURE, PROMOTED_STATUS, honest_status, sign_test_sentence
 from .storage import read_json
 
 
@@ -45,8 +48,53 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageF
     return ImageFont.load_default()
 
 
+def _fit_font(draw: ImageDraw.ImageDraw, text: str, max_width: int, size: int, bold: bool = False):
+    """Largest font up to `size` that keeps `text` inside `max_width` (measured sentences are longer)."""
+    font = _load_font(size, bold)
+    while size > 9 and draw.textlength(text, font=font) > max_width:
+        size -= 1
+        font = _load_font(size, bold)
+    return font
+
+
+def _measured(value: Any) -> float | None:
+    """A finite measured number, or None. A missing value is never replaced by a literal."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _txt(value: float | None, spec: str = ".2f", unit: str = "") -> str:
+    return NON_MESURE if value is None else f"{value:{spec}}{unit}"
+
+
+def _count_txt(value: int | None) -> str:
+    return NON_MESURE if value is None else f"{value:,}".replace(",", " ")
+
+
+def _range_txt(values: list[Any], render) -> str:
+    """`min à max` over the measured values of the loaded pairs, or « non mesuré »."""
+    known = [v for v in values if v is not None]
+    if not known:
+        return NON_MESURE
+    low, high = min(known), max(known)
+    return render(low) if low == high else f"{render(low)} à {render(high)}"
+
+
+def _si_change_pct(pair: dict[str, Any]) -> float | None:
+    """Relative change of self-intersections for one pair; undefined without a positive baseline."""
+    base, cand = pair["base_si"], pair["cand_si"]
+    if base is None or cand is None or base <= 0:
+        return None
+    return (cand - base) / base * 100.0
+
+
 def _find_best_audit_pairs(state: Path) -> list[dict[str, Any]]:
-    """Trouve les meilleures paires auditées AVANT (Base Intouchable) vs APRÈS (Candidat Renforcé) avec rendus 4 vues."""
+    """Trouve, pour chaque famille, la paire auditée AVANT (base) vs APRÈS (candidat) au meilleur écart.
+
+    Ce sont des meilleurs cas, pas des cas typiques : chaque paire porte `family_pairs_examined`,
+    le nombre de paires comparables examinées pour sa famille, tous cycles confondus.
+    """
     runs_dir = state / "runs"
     candidate_runs = []
     if runs_dir.is_dir():
@@ -54,7 +102,16 @@ def _find_best_audit_pairs(state: Path) -> list[dict[str, Any]]:
             if d.is_dir() and d.name.startswith("3d-") and (d / "AVANT_BASE").is_dir() and (d / "APRES_CANDIDAT").is_dir():
                 candidate_runs.append(d)
 
+    def metric(metrics: dict[str, Any], key: str, scale: float = 1.0) -> float | None:
+        value = _measured(metrics.get(key))
+        return None if value is None else value * scale
+
+    def count(metrics: dict[str, Any], key: str) -> int | None:
+        value = _measured(metrics.get(key))
+        return None if value is None else int(value)
+
     best_by_family: dict[str, dict[str, Any]] = {}
+    examined: dict[str, int] = {}
     for run_dir in candidate_runs:
         base_dir = run_dir / "AVANT_BASE"
         cand_dir = run_dir / "APRES_CANDIDAT"
@@ -72,8 +129,14 @@ def _find_best_audit_pairs(state: Path) -> list[dict[str, Any]]:
             c_views = [p for p in c_metrics.get("views", []) if os.path.isfile(p)]
             if len(b_views) < 2 or len(c_views) < 2:
                 continue
-            gain_pts = (float(c_judge.get("score", 0.0)) - float(b_judge.get("score", 0.0))) * 100.0
+            b_score = _measured(b_judge.get("score"))
+            c_score = _measured(c_judge.get("score"))
+            if b_score is None or c_score is None:
+                # Without a judged score on both sides there is no measured difference to show.
+                continue
+            gain_pts = (c_score - b_score) * 100.0
             family = str(b_data.get("family") or eval_file.stem.split("_")[1])
+            examined[family] = examined.get(family, 0) + 1
             item = {
                 "run_id": run_dir.name,
                 "eval_name": eval_file.stem.replace(".evaluation", ""),
@@ -81,21 +144,23 @@ def _find_best_audit_pairs(state: Path) -> list[dict[str, Any]]:
                 "prompt": str(b_data.get("prompt", "")),
                 "style": str(b_data.get("style", "")),
                 "gain_pts": gain_pts,
-                "base_score_100": float(b_judge.get("score", 0.0)) * 100.0,
-                "cand_score_100": float(c_judge.get("score", 0.0)) * 100.0,
-                "base_si": int(b_metrics.get("self_intersections", 0)),
-                "cand_si": int(c_metrics.get("self_intersections", 0)),
-                "base_frag": float(b_metrics.get("fragment_area_fraction", 0.0)) * 100.0,
-                "cand_frag": float(c_metrics.get("fragment_area_fraction", 0.0)) * 100.0,
-                "base_clip": float(b_metrics.get("clip_mean", 0.0)) * 100.0,
-                "cand_clip": float(c_metrics.get("clip_mean", 0.0)) * 100.0,
-                "base_worst": float(b_metrics.get("clip_worst_view", 0.0)) * 100.0,
-                "cand_worst": float(c_metrics.get("clip_worst_view", 0.0)) * 100.0,
+                "base_score_100": b_score * 100.0,
+                "cand_score_100": c_score * 100.0,
+                "base_si": count(b_metrics, "self_intersections"),
+                "cand_si": count(c_metrics, "self_intersections"),
+                "base_frag": metric(b_metrics, "fragment_area_fraction", 100.0),
+                "cand_frag": metric(c_metrics, "fragment_area_fraction", 100.0),
+                "base_clip": metric(b_metrics, "clip_mean", 100.0),
+                "cand_clip": metric(c_metrics, "clip_mean", 100.0),
+                "base_worst": metric(b_metrics, "clip_worst_view", 100.0),
+                "cand_worst": metric(c_metrics, "clip_worst_view", 100.0),
                 "base_views": b_views,
                 "cand_views": c_views,
             }
             if family not in best_by_family or item["gain_pts"] > best_by_family[family]["gain_pts"]:
                 best_by_family[family] = item
+    for family, item in best_by_family.items():
+        item["family_pairs_examined"] = examined[family]
 
     preferred_order = ["owl", "bicycle", "cathedral", "helmet", "camera"]
     ordered: list[dict[str, Any]] = []
@@ -108,40 +173,8 @@ def _find_best_audit_pairs(state: Path) -> list[dict[str, Any]]:
     return ordered[:3]
 
 
-def _draw_rig_skeleton_overlay(canvas: Image.Image, x0: int, y0: int, w: int, h: int) -> None:
-    """Trace l'aperçu du squelette d'Auto-Rigging & Cinématique Inverse (UniRig DQS + IK) sur la vue personnage/créature."""
-    draw = ImageDraw.Draw(canvas)
-    cx = x0 + w // 2
-    cy = y0 + h // 2
-    joints = {
-        "head": (cx, cy - int(h * 0.26)),
-        "neck": (cx, cy - int(h * 0.14)),
-        "pelvis": (cx, cy + int(h * 0.16)),
-        "wing_l1": (cx - int(w * 0.16), cy - int(h * 0.10)),
-        "wing_l2": (cx - int(w * 0.34), cy - int(h * 0.18)),
-        "wing_r1": (cx + int(w * 0.16), cy - int(h * 0.10)),
-        "wing_r2": (cx + int(w * 0.34), cy - int(h * 0.18)),
-        "talon_l": (cx - int(w * 0.10), cy + int(h * 0.34)),
-        "talon_r": (cx + int(w * 0.10), cy + int(h * 0.34)),
-    }
-    bones = [
-        ("head", "neck"),
-        ("neck", "pelvis"),
-        ("neck", "wing_l1"),
-        ("wing_l1", "wing_l2"),
-        ("neck", "wing_r1"),
-        ("wing_r1", "wing_r2"),
-        ("pelvis", "talon_l"),
-        ("pelvis", "talon_r"),
-    ]
-    for a, b in bones:
-        draw.line([joints[a], joints[b]], fill=(0, 245, 212), width=3)
-    for name, (jx, jy) in joints.items():
-        r = 5 if "2" in name or "talon" in name else 4
-        draw.ellipse((jx - r, jy - r, jx + r, jy + r), fill=(16, 185, 129), outline=(255, 255, 255), width=2)
-
-
-def _compose_two_views(views: list[str], target_w: int, target_h: int, draw_rig: bool = False) -> Image.Image:
+def _compose_two_views(views: list[str], target_w: int, target_h: int) -> Image.Image:
+    """Two untouched audit renders side by side. Nothing is drawn over them: no rig is measured here."""
     panel = Image.new("RGB", (target_w, target_h), (14, 19, 30))
     half_w = (target_w - 12) // 2
     selected = [views[0], views[min(2, len(views) - 1)]]
@@ -154,84 +187,99 @@ def _compose_two_views(views: list[str], target_w: int, target_h: int, draw_rig:
             px = idx * (half_w + 12) + (half_w - img.width) // 2
             py = 24 + (target_h - 28 - img.height) // 2
             panel.paste(img, (px, py))
-            if draw_rig and idx == 0:
-                _draw_rig_skeleton_overlay(panel, px, py, img.width, img.height)
         except Exception:
             pass
         draw = ImageDraw.Draw(panel)
         lx = idx * (half_w + 12) + 8
         draw.text((lx, 4), labels[idx], fill=(148, 163, 184), font=font_small)
-    if draw_rig:
-        draw = ImageDraw.Draw(panel)
-        badge_text = "[SQUELETTE UNIRIG DQS + IK] AUTO-RIGGING & ANIMATION SOLO ACTIFS (Sans demander 'rig-moi ceci')"
-        draw.rounded_rectangle((8, target_h - 30, target_w - 8, target_h - 6), radius=6, fill=(6, 78, 59), outline=(16, 185, 129), width=1)
-        draw.text((16, target_h - 25), badge_text, fill=(167, 243, 208), font=_load_font(12, bold=True))
     return panel
+
+
+def _statut(manifest_3d: dict[str, Any], promoted: bool) -> str:
+    """What the manifest allows us to say about the candidate; "non promu" unless proven otherwise."""
+    if promoted:
+        return "candidat promu (registre officiel)"
+    return "candidat non promu" if manifest_3d.get("run_id") else "aucun candidat mesuré"
+
+
+def _audit_sentence(score_base: float | None, score_renforce: float | None, gain: float | None,
+                    manifest_3d: dict[str, Any]) -> str:
+    """French sentence stating the audited composite, its paired outcome and the sign test."""
+    if score_base is None or score_renforce is None:
+        return f"Note composite d'audit : {NON_MESURE} (aucun score dans le manifeste)."
+    sentence = (f"Note composite mesurée en audit : {score_base:.2f} → {score_renforce:.2f} sur 100 "
+                f"(écart moyen {_txt(gain, '+.3f', ' pt')})")
+    wins, losses, samples = manifest_3d.get("wins"), manifest_3d.get("losses"), manifest_3d.get("samples_audited")
+    if all(isinstance(v, int) and not isinstance(v, bool) for v in (wins, losses, samples)):
+        sentence += f" ; {wins} victoires / {losses} défaites sur {samples} paires auditées"
+        sign_test = sign_test_sentence(wins, losses)
+        if sign_test:
+            sentence += f" ; {sign_test}"
+    return sentence + "."
 
 
 def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, Any]:
     """Génère la photo comparative `AVANT_APRES_3D_COMPARAISON.png` et le rapport `BILAN_AVANT_APRES_ET_GAINS.md`."""
     state = Path(state).resolve()
-    manifest_3d = read_json(ROOT / "modele" / "renforce" / "3d" / "manifest.json", {})
+    manifest_3d = read_json(ROOT / "modele" / "renforce" / "3d" / "manifest.json", {}) or {}
     status_data = read_json(state / "status.json", {})
 
-    raw_base = float(manifest_3d.get("score_base_100") or 26.979)
-    raw_renforce = float(manifest_3d.get("score_renforce_100") or 27.424)
-    gain_global = float(manifest_3d.get("gain_points_100") or (raw_renforce - raw_base))
-    # Note normalisée sur 100 (référentiel d'audit multi-axes AuroraIA : 70.66 -> 71.13)
-    score_base = 70.663 if raw_base < 50.0 else raw_base
-    score_renforce = score_base + max(gain_global, 0.470) if raw_base < 50.0 else raw_renforce
-    gain_display = score_renforce - score_base
+    # Exactly what the audit measured: no substitution, no floor, no fallback literal.
+    score_base = _measured(manifest_3d.get("score_base_100"))
+    score_renforce = _measured(manifest_3d.get("score_renforce_100"))
+    gain_global = _measured(manifest_3d.get("gain_points_100"))
+    if gain_global is None and score_base is not None and score_renforce is not None:
+        gain_global = score_renforce - score_base
+    # "Promu" only when the official registry still lists this very run; default "non promu".
+    promoted = honest_status(manifest_3d, state, "3d") == PROMOTED_STATUS
+    statut = _statut(manifest_3d, promoted)
 
     pairs = _find_best_audit_pairs(state)
+    si_changes = [pct for pct in (_si_change_pct(p) for p in pairs) if pct is not None]
 
     width, height = 1680, 1260
     img = Image.new("RGB", (width, height), (9, 13, 22))
     draw = ImageDraw.Draw(img)
 
-    font_title = _load_font(22, bold=True)
-    font_sub = _load_font(14, bold=False)
     font_h2 = _load_font(18, bold=True)
     font_metric = _load_font(14, bold=True)
     font_body = _load_font(13, bold=False)
 
     # En-tête supérieur
+    box_x = width - 600
+    header_room = box_x - 44 - 20
     draw.rounded_rectangle((24, 20, width - 24, 142), radius=14, fill=(15, 23, 42), outline=(56, 189, 248), width=2)
-    draw.text(
-        (44, 34),
-        "AURORA IA — COMPARATIF VISUEL AVANT / APRÈS (3D & AUTO-RIGGING SOLO)",
-        fill=(248, 250, 252),
-        font=font_title,
-    )
-    draw.text(
-        (44, 68),
-        "Modèle de Base 100 % Intouchable (SHA-256)  vs  Modèle Renforcé Pareto (Kaggle 2x T4 + Audit RTX 5070 Ti)",
-        fill=(148, 163, 184),
-        font=font_sub,
-    )
-    draw.text(
-        (44, 98),
-        "Intelligence Active : Traduction FR->EN · Ontologie Animé vs Réel · Rigging & Animation Solo Automatique",
-        fill=(56, 189, 248),
-        font=font_metric,
-    )
+    header_title = "AURORA IA — COMPARATIF VISUEL AVANT / APRÈS 3D (MESURES D'AUDIT)"
+    draw.text((44, 34), header_title, fill=(248, 250, 252), font=_fit_font(draw, header_title, header_room, 22, bold=True))
+    if manifest_3d.get("run_id"):
+        header_sub = f"Modèle de base (poids d'origine)  vs  candidat entraîné {manifest_3d['run_id']} — {statut}"
+    else:
+        header_sub = "Modèle de base (poids d'origine) — aucun candidat mesuré dans le manifeste"
+    draw.text((44, 68), header_sub, fill=(148, 163, 184), font=_fit_font(draw, header_sub, header_room, 14))
+    header_note = "Chaque cas affiché est le meilleur écart de sa famille, tous cycles confondus : il ne représente pas le gain moyen."
+    draw.text((44, 98), header_note, fill=(56, 189, 248), font=_fit_font(draw, header_note, header_room, 14, bold=True))
 
-    # Encadré Note d'Amélioration en haut à droite
-    box_x = width - 555
+    # Encadré de la note composite mesurée, en haut à droite
+    box_room = (width - 38) - (box_x + 18) - 14
     draw.rounded_rectangle((box_x, 30, width - 38, 132), radius=12, fill=(6, 78, 59), outline=(16, 185, 129), width=2)
-    draw.text((box_x + 18, 40), "NOTE GLOBALE D'AMÉLIORATION 3D (AUDIT CERTIFIÉ)", fill=(167, 243, 208), font=_load_font(13, bold=True))
-    draw.text(
-        (box_x + 18, 64),
-        f"AVANT : {score_base:.2f}/100  ->  APRÈS : {score_renforce:.2f}/100",
-        fill=(255, 255, 255),
-        font=_load_font(19, bold=True),
-    )
-    draw.text(
-        (box_x + 18, 98),
-        f"GAIN MOYEN : +{gain_display:.2f} pt  |  Pics : +12.38 pts et -61.9% d'auto-intersections",
-        fill=(110, 231, 183),
-        font=_load_font(12, bold=True),
-    )
+    box_title = f"NOTE COMPOSITE 3D — MESURE D'AUDIT · {statut.upper()}"
+    draw.text((box_x + 18, 40), box_title, fill=(167, 243, 208), font=_fit_font(draw, box_title, box_room, 13, bold=True))
+    if score_base is None or score_renforce is None:
+        box_scores = f"AVANT : {NON_MESURE}  ->  APRÈS : {NON_MESURE}"
+    else:
+        box_scores = f"AVANT : {score_base:.2f}/100  ->  APRÈS : {score_renforce:.2f}/100"
+    draw.text((box_x + 18, 60), box_scores, fill=(255, 255, 255), font=_fit_font(draw, box_scores, box_room, 19, bold=True))
+    box_gain = f"ÉCART MOYEN : {_txt(gain_global, '+.3f', ' pt')}"
+    wins, losses, samples = manifest_3d.get("wins"), manifest_3d.get("losses"), manifest_3d.get("samples_audited")
+    if gain_global is not None and all(isinstance(v, int) and not isinstance(v, bool) for v in (wins, losses, samples)):
+        box_gain += f"  ·  {wins} V / {losses} D sur {samples} paires"
+    draw.text((box_x + 18, 90), box_gain, fill=(110, 231, 183), font=_fit_font(draw, box_gain, box_room, 12, bold=True))
+    if pairs:
+        # Peaks come from the pairs loaded above and are named for what they are: best cases.
+        box_peak = f"Meilleurs cas affichés : note {max(p['gain_pts'] for p in pairs):+.2f} pts"
+        if si_changes:
+            box_peak += f"  ·  auto-intersections {min(si_changes):+.1f} %"
+        draw.text((box_x + 18, 109), box_peak, fill=(110, 231, 183), font=_fit_font(draw, box_peak, box_room, 12, bold=True))
 
     # En-têtes de colonnes AVANT / APRÈS
     col_w = (width - 72) // 2
@@ -241,7 +289,7 @@ def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, An
     draw.rounded_rectangle((left_x, 156, left_x + col_w, 202), radius=10, fill=(45, 20, 28), outline=(244, 63, 94), width=2)
     draw.text(
         (left_x + 20, 168),
-        "[AVANT] MODÈLE DE BASE INTOUCHABLE (TRELLIS.2-4B Brut)",
+        "[AVANT] MODÈLE DE BASE (poids d'origine)",
         fill=(254, 205, 211),
         font=font_h2,
     )
@@ -249,41 +297,47 @@ def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, An
     draw.rounded_rectangle((right_x, 156, right_x + col_w, 202), radius=10, fill=(12, 52, 44), outline=(16, 185, 129), width=2)
     draw.text(
         (right_x + 20, 168),
-        "[APRÈS] MODÈLE RENFORCÉ PARETO + AUTO-RIGGING SOLO",
+        f"[APRÈS] {statut.upper()}",
         fill=(167, 243, 208),
         font=font_h2,
     )
 
-    family_titles = {
-        "owl": "Cas #1 · Créature & Animation Solo (Hibou ailes déployées)",
-        "bicycle": "Cas #2 · Précision Mécanique & Rayons Fins (Vélo Cargo 360°)",
-        "cathedral": "Cas #3 · Architecture Complexe & Arcs (Cathédrale Gothique)",
-        "helmet": "Cas #3 · Armure & Visière Articulée (Casque Ornementé)",
-        "camera": "Cas #3 · Optique Concentrique & Soufflet (Caméra Vintage)",
+    family_labels = {
+        "owl": "Créature (hibou ailes déployées)",
+        "bicycle": "Mécanique fine (vélo cargo)",
+        "cathedral": "Architecture (cathédrale gothique)",
+        "helmet": "Armure (casque ornementé)",
+        "camera": "Optique (caméra vintage)",
     }
 
     row_y = 216
     row_h = 285
+    if not pairs:
+        draw.text(
+            (left_x + 16, row_y + 12),
+            f"Aucune paire d'audit avec rendus disponible : cas {NON_MESURE}s.",
+            fill=(226, 232, 240),
+            font=font_metric,
+        )
     for idx, pair in enumerate(pairs):
         fam = pair["family"]
-        title = family_titles.get(fam, f"Cas #{idx + 1} · Famille {fam.capitalize()}")
-        si_diff_pct = ((pair["cand_si"] - pair["base_si"]) / max(1, pair["base_si"])) * 100.0
-        is_creature = fam == "owl"
+        title = f"Cas #{idx + 1} · {family_labels.get(fam, f'Famille {fam.capitalize()}')}"
+        si_pct = _si_change_pct(pair)
 
         # Carte AVANT
         draw.rounded_rectangle((left_x, row_y, left_x + col_w, row_y + row_h), radius=12, fill=(17, 24, 39), outline=(71, 85, 105), width=1)
         draw.text((left_x + 16, row_y + 10), title, fill=(226, 232, 240), font=font_metric)
-        panel_before = _compose_two_views(pair["base_views"], col_w - 32, row_h - 86, draw_rig=False)
+        panel_before = _compose_two_views(pair["base_views"], col_w - 32, row_h - 86)
         img.paste(panel_before, (left_x + 16, row_y + 36))
         draw.text(
             (left_x + 16, row_y + row_h - 42),
-            f"Auto-intersections BVH : {pair['base_si']:,}   |   Fragmentation UV : {pair['base_frag']:.1f}%   |   CLIP 4-vues : {pair['base_clip']:.1f}",
+            f"Auto-intersections BVH : {_count_txt(pair['base_si'])}   |   Fragmentation UV : {_txt(pair['base_frag'], '.1f', ' %')}   |   CLIP 4-vues : {_txt(pair['base_clip'], '.1f')}",
             fill=(252, 165, 165),
             font=font_body,
         )
         draw.text(
             (left_x + 16, row_y + row_h - 22),
-            "Comportement : Maillage brut non soudé, statique si l'humain n'écrit pas 'rig-moi ceci'",
+            "Rendu du modèle de base pour ce sujet et cette graine",
             fill=(148, 163, 184),
             font=_load_font(12, bold=False),
         )
@@ -292,44 +346,51 @@ def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, An
         draw.rounded_rectangle((right_x, row_y, right_x + col_w, row_y + row_h), radius=12, fill=(15, 29, 34), outline=(16, 185, 129), width=2)
         draw.text(
             (right_x + 16, row_y + 10),
-            f"{title}  [GAIN : +{pair['gain_pts']:.2f} pts]",
+            f"{title}  [ÉCART : {pair['gain_pts']:+.2f} pts]",
             fill=(110, 231, 183),
             font=font_metric,
         )
-        panel_after = _compose_two_views(pair["cand_views"], col_w - 32, row_h - 86, draw_rig=is_creature)
+        panel_after = _compose_two_views(pair["cand_views"], col_w - 32, row_h - 86)
         img.paste(panel_after, (right_x + 16, row_y + 36))
+        after_metrics = (
+            f"Auto-intersections BVH : {_count_txt(pair['cand_si'])} ({_txt(si_pct, '+.1f', ' %')})   |   "
+            f"Fragmentation UV : {_txt(pair['cand_frag'], '.1f', ' %')}   |   CLIP 4-vues : {_txt(pair['cand_clip'], '.1f')}"
+        )
         draw.text(
             (right_x + 16, row_y + row_h - 42),
-            f"Auto-intersections BVH : {pair['cand_si']:,} ({si_diff_pct:+.1f}%)   |   Fragmentation UV : {pair['cand_frag']:.1f}%   |   CLIP 4-vues : {pair['cand_clip']:.1f}",
+            after_metrics,
             fill=(110, 231, 183),
-            font=font_metric,
+            font=_fit_font(draw, after_metrics, col_w - 32, 14, bold=True),
         )
         after_sub = (
-            "Comportement : Squelette UniRig DQS + IK injecté solo d'office + Topologie soudée sans coutures"
-            if is_creature
-            else "Comportement : Rayons/arcs continus (-48% d'auto-intersections), face arrière 360° nette et soudée"
+            f"Meilleur écart parmi {pair['family_pairs_examined']} paire(s) examinée(s) pour cette famille "
+            f"(cycle {pair['run_id']}) — cas non représentatif"
         )
-        draw.text((right_x + 16, row_y + row_h - 22), after_sub, fill=(203, 213, 225), font=_load_font(12, bold=False))
+        draw.text((right_x + 16, row_y + row_h - 22), after_sub, fill=(203, 213, 225),
+                  font=_fit_font(draw, after_sub, col_w - 32, 12))
 
         row_y += row_h + 14
 
-    # Bandeau récapitulatif inférieur (Explication Simple des 5 Piliers d'Amélioration)
+    # Bandeau récapitulatif inférieur : ce qui est mesuré, et ce qui ne l'est pas
     footer_y = 1112
     draw.rounded_rectangle((24, footer_y, width - 24, height - 20), radius=12, fill=(15, 23, 42), outline=(99, 102, 241), width=2)
     draw.text(
         (44, footer_y + 12),
-        "RÉSUMÉ SIMPLE DES 5 PROGRÈS MAJEURS DU SYSTÈME AGI & 3D :",
+        "CE QUE CE COMPARATIF MESURE, ET CE QU'IL NE MESURE PAS :",
         fill=(199, 210, 254),
         font=font_metric,
     )
     pillars = [
-        "1. Propreté Géométrique (-61.9% à -78 auto-intersections BVH) : Les ailes, rayons de vélo et détails fins ne se traversent plus.",
-        "2. Rigging & Animation Solo Automatique : Tout personnage ou créature 3D est automatiquement préparé pour le mouvement sans demander 'rig-moi ceci'.",
-        "3. Intelligence Ontologique (Animé vs Réel & FR->EN) : Goku/Naruto restent 100% animés sauf demande explicite de peau réelle ; traduction anglaise auto.",
-        "4. Modèle de Base 100% Intouchable + Garde Pareto : Seul le modèle renforcé qui bat le modèle de base sur toutes les vues 360° est promu.",
+        # Plain ASCII arrow: the fallback bitmap font cannot draw "→".
+        "1. " + _audit_sentence(score_base, score_renforce, gain_global, manifest_3d).replace("→", "->"),
+        "2. Les cas affichés sont le meilleur écart de chaque famille d'objets : ils ne sont pas représentatifs du gain moyen.",
+        f"3. Rigging et animation : {NON_MESURE}s. Aucun squelette n'est évalué par cet audit ni dessiné sur ces rendus.",
+        f"4. Statut : {statut}. "
+        + ("L'adaptateur est inscrit au registre officiel après la porte de promotion." if promoted
+           else "Le modèle de base reste servi tant qu'aucun adaptateur n'a franchi la porte de promotion."),
     ]
     for i, line in enumerate(pillars):
-        draw.text((44, footer_y + 38 + i * 21), line, fill=(226, 232, 240), font=_load_font(13, bold=False))
+        draw.text((44, footer_y + 38 + i * 21), line, fill=(226, 232, 240), font=_fit_font(draw, line, width - 88, 13))
 
     # Sauvegarde aux emplacements clés
     out_paths = [
@@ -348,7 +409,8 @@ def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, An
             shutil.copy2(out_paths[0], p)
 
     # Génération du rapport Markdown simple et détaillé
-    md_content = _build_markdown_report(score_base, score_renforce, gain_global, pairs, status_data, manifest_3d)
+    md_content = _build_markdown_report(score_base, score_renforce, gain_global, pairs, status_data, manifest_3d,
+                                        promoted=promoted)
     md_paths = [
         ROOT / "BILAN_AVANT_APRES_ET_GAINS.md",
         ROOT / "modele" / "renforce" / "3d" / "BILAN_AVANT_APRES_ET_GAINS.md",
@@ -365,66 +427,106 @@ def generate_before_after_visual_and_report(state: Path = STATE) -> dict[str, An
         "desktop_image_path": str(BUREAU_STUDIO_DIR / "AVANT_APRES_3D_COMPARAISON.png"),
         "markdown_path": str(md_paths[0]),
         "desktop_markdown_path": str(BUREAU_STUDIO_DIR / "BILAN_AVANT_APRES_ET_GAINS.md"),
-        "score_base_100": round(score_base, 3),
-        "score_renforce_100": round(score_renforce, 3),
-        "gain_points_100": round(gain_global, 3),
+        # None means "not measured"; these keys never carry a substituted figure.
+        "score_base_100": None if score_base is None else round(score_base, 3),
+        "score_renforce_100": None if score_renforce is None else round(score_renforce, 3),
+        "gain_points_100": None if gain_global is None else round(gain_global, 3),
+        "promoted": promoted,
         "cases_count": len(pairs),
     }
 
 
 def _build_markdown_report(
-    score_base: float,
-    score_renforce: float,
-    gain_global: float,
+    score_base: float | None,
+    score_renforce: float | None,
+    gain_global: float | None,
     pairs: list[dict[str, Any]],
     status_data: dict[str, Any],
     manifest_3d: dict[str, Any],
+    promoted: bool = False,
 ) -> str:
     run_id = status_data.get("run_id") or manifest_3d.get("run_id") or "3d-active"
     phase = status_data.get("phase") or "idle"
     epoch = status_data.get("epoch")
     val_loss = status_data.get("validation_loss")
+    statut = _statut(manifest_3d, promoted)
+
+    note = [_audit_sentence(score_base, score_renforce, gain_global, manifest_3d)]
+    note.append(f"Statut : **{statut}**" + ("." if promoted else " ; le modèle de base reste servi."))
+    if pairs:
+        note.append("Les exemples détaillés plus bas sont le meilleur cas de chaque famille, pas des cas typiques.")
+    note.append("Les lignes « Rigging » et « Compréhension » décrivent des étapes du pipeline, pas des gains mesurés.")
+
+    if score_base is None or score_renforce is None:
+        composite_row = (f"| **Note Globale de Qualité 3D** | `{NON_MESURE}` | **`{NON_MESURE}`** | "
+                         f"**{NON_MESURE}** : aucun score d'audit dans le manifeste |")
+    else:
+        best_case = f" ; meilleur cas affiché : **`{max(p['gain_pts'] for p in pairs):+.2f} pts`**" if pairs else ""
+        composite_row = (f"| **Note Globale de Qualité 3D** | `{score_base:.2f} / 100` | **`{score_renforce:.2f} / 100`** | "
+                         f"**`{_txt(gain_global, '+.3f', ' pt')}`** en moyenne{best_case} |")
+    # Ranges are computed from the pairs loaded for this report, never written by hand.
+    if pairs:
+        si_changes = [change for change in (_si_change_pct(p) for p in pairs) if change is not None]
+        scope = f"sur les {len(pairs)} cas affichés (le meilleur de chaque famille, non représentatif de la moyenne)"
+        pct = lambda value: f"`{value:+.1f} %`"
+        frag = lambda value: f"`{value:.1f} %`"
+        count = lambda value: f"`{_count_txt(value)}`"
+        si_row = (f"| **Propreté Géométrique (Auto-Intersections)** | {_range_txt([p['base_si'] for p in pairs], count)} | "
+                  f"**{_range_txt([p['cand_si'] for p in pairs], count)}** | {_range_txt(si_changes, pct)} {scope} |")
+        frag_row = (f"| **Soudure du Maillage (Fragmentation UV)** | {_range_txt([p['base_frag'] for p in pairs], frag)} | "
+                    f"**{_range_txt([p['cand_frag'] for p in pairs], frag)}** | Valeurs relevées {scope} |")
+    else:
+        si_row = (f"| **Propreté Géométrique (Auto-Intersections)** | {NON_MESURE} | {NON_MESURE} | "
+                  f"{NON_MESURE} : aucune paire d'audit chargée |")
+        frag_row = (f"| **Soudure du Maillage (Fragmentation UV)** | {NON_MESURE} | {NON_MESURE} | "
+                    f"{NON_MESURE} : aucune paire d'audit chargée |")
 
     lines = [
         "# 🏆 Bilan Visuel Avant / Après & Note d'Amélioration 3D + AGI",
         "",
-        "![Comparatif Visuel Avant / Après 3D & Auto-Rigging Solo](AVANT_APRES_3D_COMPARAISON.png)",
+        "> **Lecture de ce bilan.** " + " ".join(note),
+        "",
+        "![Comparatif Visuel Avant / Après 3D (mesures d'audit)](AVANT_APRES_3D_COMPARAISON.png)",
         "",
         "---",
         "",
         "## 1. Résumé Ultra-Simple à Comprendre (En 30 Secondes)",
         "",
-        "| Indicateur Clé | 🛡️ AVANT (Modèle de Base Intouchable) | ⚡ APRÈS (Modèle Renforcé Pareto + AGI) | 📈 Évolution & Bénéfice Concret |",
+        f"| Indicateur Clé | 🛡️ AVANT (Modèle de Base Intouchable) | ⚡ APRÈS ({statut}) | 📈 Écart mesuré |",
         "| :--- | :---: | :---: | :--- |",
-        f"| **Note Globale de Qualité 3D** | `{score_base:.2f} / 100` | **`{score_renforce:.2f} / 100`** | **`+{gain_global:.3f} pt`** au global et jusqu'à **`+12.38 pts`** sur les sujets complexes |",
-        "| **Propreté Géométrique (Auto-Intersections)** | `5 982` à `9 910` triangles qui se croisent | **`2 281` à `5 137`** triangles | **`-41.7 %` à `-61.9 %` de défauts géométriques** (ailes, rayons, arcs propres) |",
-        "| **Soudure du Maillage (Fragmentation UV)** | `0.9 %` à `58.4 %` de morceaux détachés | **`0.0 %` à `2.8 %`** | **Maillage soudé d'un seul tenant**, prêt pour l'impression ou l'animation |",
-        "| **Rigging & Animation d'un Personnage 3D** | Statique si tu n'écris pas *« rig-moi ceci »* | **🦴 100 % Automatique en Solo** | Dès que tu demandes un personnage ou une créature, **AuroraIA le rigge et prépare ses articulations tout seul** |",
-        "| **Compréhension Animé vs Réel & Anglais** | Littérale (pouvait mélanger les styles) | **🧠 Directeur Cognitif d'Ontologie** | *Goku / Naruto* reste **100 % animé** sauf si tu demandes des textures de peau réelle ; traduction **FR $\\rightarrow$ EN** automatique |",
-        "| **Sécurité du Modèle de Base** | Intact | **100 % Intouchable (Vérifié SHA-256)** | Le modèle renforcé est stocké à part dans `modele/renforce/3d/` et n'est activé que s'il est **strictement meilleur** |",
+        composite_row,
+        si_row,
+        frag_row,
+        f"| **Rigging & Animation d'un Personnage 3D** | {NON_MESURE} | {NON_MESURE} | Étape du pipeline (préparation automatique du rig d'un personnage ou d'une créature), **pas un gain mesuré** : aucune évaluation de rigging n'est faite par cet audit |",
+        f"| **Compréhension Animé vs Réel & Anglais** | {NON_MESURE} | {NON_MESURE} | Fonction du pipeline (ontologie de style, traduction **FR $\\rightarrow$ EN**), **non mesurée** par cet audit |",
+        "| **Sécurité du Modèle de Base** | Poids d'origine | Inchangés par conception | L'entraînement n'écrit que des adaptateurs, stockés à part dans `modele/renforce/3d/` et servis seulement s'ils ont **franchi la porte de promotion** (registre officiel) ; ce rapport ne revérifie pas l'empreinte de la base |",
         "",
         "---",
         "",
-        "## 2. Explication Détaillée des Gains sur 3 Exemples Concrets (Vérifiés sur 4 Vues 360°)",
+        f"## 2. Détail des Écarts sur {len(pairs)} Exemple(s) — le Meilleur Cas de Chaque Famille, pas un Cas Typique",
         "",
     ]
+    if not pairs:
+        lines.extend([f"Aucune paire d'audit avec rendus disponible : exemples {NON_MESURE}s.", ""])
 
     for idx, pair in enumerate(pairs, start=1):
-        si_pct = ((pair["cand_si"] - pair["base_si"]) / max(1, pair["base_si"])) * 100.0
         lines.extend([
             f"### Exemple #{idx} : `{pair['eval_name']}` — *{pair['prompt']}*",
+            f"- **Provenance** : cycle `{pair['run_id']}` ; meilleur écart parmi {pair['family_pairs_examined']} paire(s) examinée(s) pour la famille `{pair['family']}`",
             f"- **Note Avant (Base Intouchable)** : `{pair['base_score_100']:.2f} / 100`",
-            f"- **Note Après (Modèle Renforcé)** : **`{pair['cand_score_100']:.2f} / 100`** (**`+{pair['gain_pts']:.2f} points`**)",
-            f"- **Triangles qui s'entrechoquent (Auto-intersections BVH)** : réduit de `{pair['base_si']:,}` à **`{pair['cand_si']:,}`** (**`{si_pct:+.1f} %`**)",
-            f"- **Morceaux flottants / Fragmentation UV** : réduit de `{pair['base_frag']:.2f} %` à **`{pair['cand_frag']:.2f} %`**",
-            f"- **Fidélité Visuelle 360° (CLIP 4 vues)** : passe de `{pair['base_clip']:.2f}` à **`{pair['cand_clip']:.2f}`** (pire vue 360° : `{pair['base_worst']:.2f}` $\\rightarrow$ **`{pair['cand_worst']:.2f}`**)",
+            f"- **Note Après (candidat)** : **`{pair['cand_score_100']:.2f} / 100`** (**`{pair['gain_pts']:+.2f} points`**)",
+            f"- **Triangles qui s'entrechoquent (Auto-intersections BVH)** : passe de `{_count_txt(pair['base_si'])}` à **`{_count_txt(pair['cand_si'])}`** (**`{_txt(_si_change_pct(pair), '+.1f', ' %')}`**)",
+            f"- **Morceaux flottants / Fragmentation UV** : passe de `{_txt(pair['base_frag'], '.2f', ' %')}` à **`{_txt(pair['cand_frag'], '.2f', ' %')}`**",
+            f"- **Fidélité Visuelle 360° (CLIP 4 vues)** : passe de `{_txt(pair['base_clip'])}` à **`{_txt(pair['cand_clip'])}`** (pire vue 360° : `{_txt(pair['base_worst'])}` $\\rightarrow$ **`{_txt(pair['cand_worst'])}`**)",
             "",
         ])
 
     lines.extend([
         "---",
         "",
-        "## 3. Pourquoi AuroraIA est Maintenant Beaucoup Plus Intelligent (Zéro Précodage Rigide)",
+        "## 3. Fonctions du Pipeline Décrites (Non Mesurées dans cet Audit)",
+        "",
+        "*Cette section décrit ce que le pipeline est conçu pour faire. Aucune de ces fonctions n'a été évaluée par l'audit ci-dessus.*",
         "",
         "1. **Rigging & Animation Solo Automatique (`threeDIntent.ts` + `prompt_intelligence.py`)** :",
         "   - Tu n'as **plus jamais besoin d'écrire** *« rig-moi ceci »* ou *« ajoute un squelette »*.",

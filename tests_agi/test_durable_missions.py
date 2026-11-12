@@ -177,6 +177,21 @@ class DurableStoreTests(unittest.TestCase):
         self.assertEqual(self.store.list(),[])
         self.assertEqual(self.dispatched,[])
 
+    def test_resume_status_reports_retained_execution_context_not_client_defaults(self):
+        client = self.app().test_client()
+        headers = {'Authorization':'Bearer test-key'}
+        payload = {**self.payload, 'permissions':'STANDARD', 'session_id':'retained-session'}
+        mid = client.post('/api/cli/mission/start',headers=headers,json=payload).get_json()['mission_id']
+        self.store.append(mid,{'type':'error','message':'fixture interruption'})
+        reply = client.post(f'/api/cli/mission/{mid}/resume',headers=headers,
+                            json={'model':'replacement:local','permissions':'FULL','workspace':'wrong'})
+        self.assertEqual(reply.status_code,200)
+        status = client.get(f'/api/cli/mission/{mid}/status',headers=headers).get_json()
+        self.assertEqual(status['permissions'],'STANDARD')
+        self.assertEqual(status['workspace'],payload['workspace'])
+        self.assertEqual(status['session_id'],'retained-session')
+        self.assertEqual(status['model'],'replacement:local')
+
     def test_http_sse_survives_bridge_recreation_and_validates_cursor(self):
         client = self.app().test_client()
         headers = {'Authorization':'Bearer test-key'}
@@ -190,6 +205,26 @@ class DurableStoreTests(unittest.TestCase):
         self.assertNotIn('id: 1\n',text)
         self.assertIn('mission_complete',text)
         self.assertEqual(client.get(f'/api/cli/mission/{mid}/stream',headers={**headers,'Last-Event-ID':'99'}).status_code,409)
+
+    def test_receipt_api_requires_auth_and_cannot_read_another_mission_receipt(self):
+        client = self.app().test_client()
+        first,_ = self.store.create(self.payload)
+        other,_ = self.store.create(self.payload)
+        receipt = {'id':'actual','tool':'browser_action','ok':True,'result':{'title':'Observed'}}
+        self.assertTrue(self.store.save_checkpoint(first['id'],{'evidence':[receipt]}))
+        self.assertTrue(self.store.save_checkpoint(other['id'],{'evidence':[{**receipt,'id':'foreign'}]}))
+        url = f"/api/cli/mission/{first['id']}/evidence"
+        headers = {'Authorization':'Bearer test-key'}
+        self.assertEqual(client.get(url).status_code,401)
+        listed = client.get(url,headers=headers,query_string={'tool':'browser_action'}).get_json()
+        self.assertEqual([r['id'] for r in listed['receipts']],['actual'])
+        inspected = client.get(url,headers=headers,query_string={'evidence_id':'actual','pointer':'/result/title'}).get_json()
+        self.assertEqual(inspected['value'],'Observed')
+        self.assertEqual(inspected['fields'][0]['source_pointer'],'/result/title')
+        for query in ({'evidence_id':'foreign'},{'offset':-1},{'limit':65},{'pointer':'/result'}):
+            with self.subTest(query=query):
+                self.assertEqual(client.get(url,headers=headers,query_string=query).status_code,400)
+        self.assertEqual(self.dispatched,[])
 
     def test_json_polling_replays_after_reconstruction_and_preserves_batches(self):
         client = self.app().test_client()

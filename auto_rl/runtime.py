@@ -1,18 +1,38 @@
 """Load only audited adapters for their exact pretrained base model."""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 from .config import STATE, TEXT_MODULES
 from .storage import read_json, file_hash, assert_unchanged, digest
+
+# Explicit opt-in for local experiments only. Without an official registry entry
+# (`<state>/registry/<module>.json`, written by `storage.promote` once the
+# promotion gate has passed), an adapter described only by
+# `modele/renforce/<module>/manifest.json` has NOT been through the gate and is
+# not served: callers get None and keep the base model. Setting
+# AURORA_ALLOW_UNGATED_REINFORCED=1 in the environment of the process that
+# loads the model restores the previous behaviour, which attaches such a
+# hash-matching adapter although the promotion gate never admitted it. The
+# returned record then carries `ungated: True`. The variable is read on every
+# call. `/api/models/reinforced-status` keeps describing that adapter as not
+# promoted and only reports the opt-in itself (`ungated_opt_in`).
+UNGATED_OPT_IN_ENV = 'AURORA_ALLOW_UNGATED_REINFORCED'
+
+
+def ungated_reinforced_allowed():
+    return os.environ.get(UNGATED_OPT_IN_ENV, '').strip() == '1'
 
 
 def validated_record(module, state=STATE):
     state=Path(state).resolve()
     record=read_json(state/'registry'/(module+'.json'))
-    if not record and state == Path(STATE).resolve():
+    if not record and state == Path(STATE).resolve() and ungated_reinforced_allowed():
         from .reinforced_registry import RENFORCE_ROOT
         renf = read_json(RENFORCE_ROOT / module / 'manifest.json')
-        if renf and renf.get('status') == 'reinforced_available' and renf.get('adapter'):
+        # Both spellings are unpromoted here: older manifests called such a
+        # candidate `reinforced_available`, current ones `candidate_not_promoted`.
+        if renf and renf.get('status') in {'reinforced_available', 'candidate_not_promoted'} and renf.get('adapter'):
             adapter = Path(renf['adapter']).resolve()
             if adapter.is_file() and file_hash(adapter) == renf.get('sha256'):
                 run = (state / 'runs' / str(renf.get('run_id', ''))).resolve()
@@ -27,6 +47,7 @@ def validated_record(module, state=STATE):
                     'module': module,
                     'config': cfg,
                     'model_id': model_id,
+                    'ungated': True,
                 }
     if not record:
         return None

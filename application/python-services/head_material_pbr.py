@@ -29,6 +29,13 @@ _HERE = Path(__file__).resolve().parent
 
 
 def _find_blender() -> str:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     for c in (os.environ.get("AURORA_BLENDER"), os.environ.get("BLENDER_BIN"),
               "/home/juan/.local/bin/blender", "/usr/bin/blender", shutil.which("blender")):
         if c and os.path.isfile(str(c)):

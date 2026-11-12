@@ -27,6 +27,13 @@ def emit(stage: str, detail: str):
 
 def find_blender() -> str | None:
     """Find Blender executable on the system."""
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     local_blender_root = Path(__file__).resolve().parents[1] / "_blender"
     local_blenders = sorted(
         local_blender_root.glob("blender-*-windows-x64/blender.exe"),
