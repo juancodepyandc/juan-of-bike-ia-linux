@@ -5381,6 +5381,10 @@ export default function ModelView() {
             if (proceduralResult.ok && proceduralResult.outputPath) {
               const proceduralTextured = ['humanoid_performer', 'strimer_plus_v2_cable', 'led_strip_system', 'pulley_belt_system', 'motherboard_layout'].includes(intent.pipelineRouting.proceduralTemplate || '')
               result = { ok: true, path: proceduralResult.outputPath, format: proceduralResult.format as 'glb' | 'obj' || 'glb', shape_model: `Blender Procedural (${intent.pipelineRouting.proceduralTemplate})`, shape_runtime: 'blender_headless', shape_strategy: intent.pipelineRouting.proceduralTemplate, textured: proceduralTextured, fallback_used: false, pipeline: 'procedural', animationFrames: proceduralResult.animationFrames }
+              // le GLB réel sorti de Blender se matérialise tout de suite dans l'hologramme
+              if ((proceduralResult.format || 'glb') === 'glb') {
+                emitGenerationFx('3d', { active: true, phaseIndex: 3, meshUrl: toAssetUrl(proceduralResult.outputPath), meshInfo: `modèle Blender procédural (${intent.pipelineRouting.proceduralTemplate})`, logLine: 'modèle Blender exporté — matérialisation dans l’hologramme' })
+              }
             } else {
               // Fallback to AI generation
               setProgress('Procedural echoue, fallback vers generation IA...')
@@ -5398,6 +5402,9 @@ export default function ModelView() {
               const photoResult = parseLastJsonLine(photoOutput)
               if (photoResult?.ok && photoResult.path) {
                 result = { ...photoResult, pipeline: 'photogrammetry' } as ModelGenerationResult
+                if (/\.glb$/i.test(String(photoResult.path))) {
+                  emitGenerationFx('3d', { active: true, phaseIndex: 3, meshUrl: toAssetUrl(String(photoResult.path)), meshInfo: `photogrammétrie (${imageFiles.length} photos réelles)`, logLine: 'maillage photogrammétrique reconstruit — matérialisation dans l’hologramme' })
+                }
               } else {
                 setProgress('Photogrammetrie echouee, fallback vers generation IA...')
                 setPhase('Sculpture 3D — fallback vers génération IA...', 45)

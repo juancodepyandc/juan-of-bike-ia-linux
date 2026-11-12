@@ -48,6 +48,24 @@ test('pipeline stage names map to the 3D screen phases', () => {
   assert.equal(threeDPhaseForStage('memoire'), null, 'service lines do not move the phase')
 })
 
+test('every stage name actually printed by the 3D pipelines and the Blender bridge is mapped', async () => {
+  const fs = await import('node:fs')
+  const dir = new URL('../python-services/', import.meta.url)
+  const files = ['aurora_3d_pipeline.py', 'blender_bridge.py', 'scene_process.py', 'neural_process.py', 'texture_fidelity.py', 'rig_skin_binding.py', 'semantic_animation.py']
+  const service = new Set(['memoire', 'vram', 'error', 'confirm_req'])
+  const unmapped = new Set()
+  for (const f of files) {
+    let text = ''
+    try { text = fs.readFileSync(new URL(f, dir), 'utf8') } catch { continue }
+    for (const m of text.matchAll(/PROGRESS:([a-z_]+):/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
+    for (const m of text.matchAll(/emit\(\s*["']([a-z_]+)["']/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
+  }
+  assert.deepEqual([...unmapped], [], `stages that would not move the screen: ${[...unmapped].join(', ')}`)
+  assert.equal(threeDPhaseForStage('matieres'), 3)
+  assert.equal(threeDPhaseForStage('procedural'), 2)
+  assert.equal(threeDPhaseForStage('livraison'), 5)
+})
+
 test('character state follows the real loading state', () => {
   assert.equal(mascotStateFor({ stage: 'queued', phaseIdx: 0 }), 'waiting')
   assert.equal(mascotStateFor({ stage: 'preparing', phaseIdx: 0 }), 'thinking')

@@ -93,10 +93,13 @@ export function threeDPhaseForStage(stage: string): number | null {
   const s = (stage || '').toLowerCase()
   if (!s) return null
   if (['reference', 'confirm_req', 'ref', 'web', 'source'].includes(s)) return 1
-  if (['install', 'device', 'bg', 'asset_scan', 'asset_download', 'shape_fallback', 'shape_load', 'shape_run', 'gaussian', 'procedural', 'sfm', 'photogrammetry', 'mesh_extract', 'shape', 'trellis', 'hunyuan'].includes(s)) return 2
-  if (['texture_load', 'texture_run', 'texture_retry', 'texture_warn', 'paint', 'bake', 'texture', 'color'].includes(s)) return 3
+  // sculpture : moteurs neuronaux, scène multi-entités, Blender procédural, photogrammétrie, géométrie
+  if (['install', 'device', 'bg', 'asset_scan', 'asset_download', 'shape_fallback', 'shape_load', 'shape_run', 'gaussian', 'procedural', 'sfm', 'photogrammetry', 'mesh_extract', 'shape', 'trellis', 'hunyuan', 'engine', 'scene', 'geometrie', 'blender'].includes(s)) return 2
+  // matières : peinture, cuisson, zones de matière, fidélité de texture
+  if (['texture_load', 'texture_run', 'texture_retry', 'texture_warn', 'paint', 'bake', 'texture', 'color', 'matieres', 'fidelity', 'texture_fidelity'].includes(s)) return 3
   if (['animation', 'rig', 'motion'].includes(s)) return 4
-  if (['export', 'export_fallback', 'validate', 'final', 'done'].includes(s)) return 5
+  // finalisation : contrôles qualité, nettoyage, export et rangement de la livraison
+  if (['export', 'export_fallback', 'validate', 'final', 'done', 'cleanup', 'qualite', 'perfection', 'finalisation', 'livraison'].includes(s)) return 5
   return null
 }
 

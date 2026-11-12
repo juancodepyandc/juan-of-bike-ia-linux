@@ -637,7 +637,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
           background: 'rgba(8, 12, 24, 0.86)', border: `1px solid ${agent.accent}55`, boxShadow: `0 0 18px ${agent.accent}22`,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 260px' }}>
-            <span style={{
+            <span data-testid="fx-phase" style={{
               padding: '3px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
               background: `${agent.accent}28`, color: '#fff', border: `1px solid ${agent.accent}88`, whiteSpace: 'nowrap',
             }}>
@@ -648,11 +648,11 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
             </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 0 }}>
-            <span style={{ fontSize: 12, color: '#FDE68A', fontWeight: 700, whiteSpace: 'nowrap' }}>
+            <span data-testid="fx-eta" style={{ fontSize: 12, color: '#FDE68A', fontWeight: 700, whiteSpace: 'nowrap' }}>
               {done ? '✓ terminé' : `${elapsedLabel} · ${timing.headline}`}
             </span>
             {!done && (
-              <span style={{ fontSize: 9.5, color: '#8B93A7', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: narrow ? 280 : 520 }}>
+              <span data-testid="fx-eta-basis" style={{ fontSize: 9.5, color: '#8B93A7', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: narrow ? 280 : 520 }}>
                 {timing.interval ? `intervalle ${timing.interval} · ` : ''}{timing.est.basis}{timing.accuracy ? ` · ${timing.accuracy}` : ''}
               </span>
             )}

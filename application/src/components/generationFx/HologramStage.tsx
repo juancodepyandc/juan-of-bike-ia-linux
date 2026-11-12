@@ -555,13 +555,20 @@ class HoloEngine {
     if (!cloud || token !== this.refsToken) return
     this.setSubjectCloud(cloud.positions, cloud.colors, cloud.kinds, 'refs')
     const views = [f, s, b].filter(Boolean).length
+    // une vue reçue mais sans sujet séparable (gros plan, motif, fond chargé) est écartée, et on le dit
+    const dropped = [side && !s ? 'profil' : null, back && !b ? 'dos' : null].filter(Boolean)
+    const droppedNote = dropped.length ? ` — vue ${dropped.join(' et ')} écartée : sujet non séparable du fond` : ''
     this.status(
       cloud.method,
       cloud.count,
       views,
-      cloud.method === 'hull'
-        ? `Reconstruit depuis ${views} vue(s) réelle(s) : silhouette de face, épaisseur du profil`
-        : `Relief reconstruit depuis la silhouette de la vue de face${views > 1 ? ' (dos pour la face arrière)' : ''}`,
+      (cloud.method === 'hull'
+        ? cloud.profileAmbiguous
+          ? `Reconstruit depuis ${views} vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur`
+          : `Reconstruit depuis ${views} vue(s) réelle(s) : silhouette de face, épaisseur du profil`
+        : cloud.sideRejected
+          ? 'Relief reconstruit depuis la vue de face — vue « profil » écartée : même silhouette que la face'
+          : `Relief reconstruit depuis la silhouette de la vue de face${b ? ' (dos pour la face arrière)' : ''}`) + droppedNote,
     )
   }
 

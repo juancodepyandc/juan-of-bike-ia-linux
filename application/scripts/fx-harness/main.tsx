@@ -329,7 +329,8 @@ async function fidelity() {
   const relief = evaluate('face seule (relief)', buildSilhouetteCloud(front, { maxPoints: 32000 }))
   const hull = evaluate('face + profil + dos (enveloppe)', buildSilhouetteCloud(front, { side, back, maxPoints: 32000 }))
   const modelDepth = (() => { let a = Infinity, b = -Infinity; for (const p of truth) { a = Math.min(a, p[2]); b = Math.max(b, p[2]) } return Math.round((b - a) * 1000) / 1000 })()
-  const result = { model: url, triangles: Math.round(totalTris), truthSamples: truth.length, modelDepth, unit: '% de la hauteur du modèle', relief, hull }
+  const { silhouetteSimilarity } = await import('../../src/components/generationFx/hologramSources.ts')
+  const result = { model: url, triangles: Math.round(totalTris), truthSamples: truth.length, modelDepth, unit: '% de la hauteur du modèle', relief, hull, sideVsFront: silhouetteSimilarity(front.mask, side.mask) }
   ;(window as unknown as { __fidelity: unknown; __views: unknown }).__fidelity = result
   ;(window as unknown as { __views: unknown }).__views = Object.fromEntries(Object.entries(shots).map(([k, v]) => [k, v.png]))
   renderer.dispose()
@@ -369,6 +370,126 @@ function RealData() {
   return <GenerationFxHost />
 }
 
+// ── Mode « live » : l'écran est piloté par de vraies générations
+// (scripts/real-gen/run-live.mjs relaie les événements du générateur). ──────
+async function imageFromUrl(url: string, maxDim = 168) {
+  const blob = await (await fetch(url)).blob()
+  const bmp = await createImageBitmap(blob)
+  const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height))
+  const w = Math.max(8, Math.round(bmp.width * scale))
+  const h = Math.max(8, Math.round(bmp.height * scale))
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const ctx = c.getContext('2d', { willReadFrequently: true })!
+  ctx.drawImage(bmp, 0, 0, w, h)
+  const id = ctx.getImageData(0, 0, w, h)
+  return { width: w, height: h, data: id.data }
+}
+
+/** Accord de l'hologramme avec les vues réellement générées (IoU face et profil). */
+async function holoCheck(frontUrl: string, sideUrl: string, backUrl?: string) {
+  const { buildSilhouetteCloud, foregroundMask, maskBounds, silhouetteSimilarity } = await import('../../src/components/generationFx/hologramSources.ts')
+  const load = async (u: string) => {
+    const img = await imageFromUrl(u)
+    const m = foregroundMask(img)
+    return m ? { img, mask: m.mask } : null
+  }
+  const front = await load(frontUrl)
+  const side = await load(sideUrl)
+  const back = backUrl ? await load(backUrl) : null
+  if (!front) return { error: 'vue de face sans sujet séparable' }
+  const fb = maskBounds(front.mask)!
+  const Hf = fb.y1 - fb.y0 + 1
+  const Wf = fb.x1 - fb.x0 + 1
+  const s = 2 / Math.max(Hf, Wf)
+  const cx = (fb.x0 + fb.x1) / 2
+  const raster = (W: number, H: number, pts: [number, number][]) => {
+    const raw = new Uint8Array(W * H)
+    for (const [u, v] of pts) {
+      const uu = Math.floor(u), vv = Math.floor(v)
+      if (uu >= 0 && vv >= 0 && uu < W && vv < H) raw[vv * W + uu] = 1
+    }
+    const morph = (src: Uint8Array, dilate: boolean) => {
+      const out = new Uint8Array(W * H)
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        let v = dilate ? 0 : 1
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx, yy = y + dy
+          const inside = xx >= 0 && yy >= 0 && xx < W && yy < H ? src[yy * W + xx] : 0
+          if (dilate && inside) v = 1
+          if (!dilate && !inside) v = 0
+        }
+        out[y * W + x] = v
+      }
+      return out
+    }
+    return morph(morph(raw, true), false)
+  }
+  const iouOf = (grid: Uint8Array, mask: Uint8Array) => {
+    let inter = 0, uni = 0
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] && mask[i]) inter++
+      if (grid[i] || mask[i]) uni++
+    }
+    return Math.round((inter / Math.max(1, uni)) * 1000) / 1000
+  }
+  const evaluate = (cloud: NonNullable<ReturnType<typeof buildSilhouetteCloud>>) => {
+    const frontPts: [number, number][] = []
+    const sidePts: [number, number][] = []
+    const sideA: [number, number][] = []
+    const sb = side ? maskBounds(side.mask) : null
+    const Hs = sb ? sb.y1 - sb.y0 + 1 : 1
+    const sideWorldPerPx = (Hf * s) / Hs
+    const sideCenter = sb ? (sb.x0 + sb.x1) / 2 : 0
+    for (let i = 0; i < cloud.count; i++) {
+      if (cloud.kinds[i] === 1) continue
+      const x = cloud.positions[i * 3], y = cloud.positions[i * 3 + 1], z = cloud.positions[i * 3 + 2]
+      const fy = fb.y1 - (y + 1) / s
+      frontPts.push([x / s + cx, fy])
+      if (sb) {
+        const t = Hf > 1 ? (fy - fb.y0) / (Hf - 1) : 0
+        const sv = sb.y0 + t * (Hs - 1)
+        sidePts.push([sideCenter + z / sideWorldPerPx, sv])
+        sideA.push([sideCenter - z / sideWorldPerPx, sv])
+      }
+    }
+    const iouFront = iouOf(raster(front.mask.width, front.mask.height, frontPts), front.mask.data)
+    const iouSide = side
+      ? Math.max(
+        iouOf(raster(side.mask.width, side.mask.height, sidePts), side.mask.data),
+        iouOf(raster(side.mask.width, side.mask.height, sideA), side.mask.data),
+      )
+      : null
+    return { method: cloud.method, points: cloud.count, iouFront, iouSide, profileSign: cloud.profileSign ?? null, profileAmbiguous: cloud.profileAmbiguous ?? false, depth: Math.round(cloud.depth * 1000) / 1000 }
+  }
+  const relief = buildSilhouetteCloud(front, { maxPoints: 32000 })
+  const hull = side ? buildSilhouetteCloud(front, { side, back, maxPoints: 32000 }) : null
+  return {
+    relief: relief ? evaluate(relief) : null,
+    hull: hull ? evaluate(hull) : null,
+    sideSeparable: Boolean(side),
+    backSeparable: Boolean(back),
+    sideVsFront: side ? silhouetteSimilarity(front.mask, side.mask) : null,
+  }
+}
+
+function Live() {
+  useEffect(() => {
+    useAppStore.getState().setActiveModule('3d' as never)
+    const w = window as unknown as Record<string, unknown>
+    w.__fx = (patch: Parameters<typeof emitGenerationFx>[1]) => emitGenerationFx('3d', patch)
+    w.__accuracy = async () => (await import('../../src/services/generationTiming.ts')).etaAccuracy('3d')
+    w.__holoCheck = holoCheck
+    w.__liveReady = true
+  }, [])
+  return <GenerationFxHost />
+}
+
 createRoot(document.getElementById('root')!).render(
-  mode === 'gallery' ? <Gallery /> : mode === 'fidelity' ? <Fidelity /> : mode === 'real-ref' || mode === 'real-mesh' ? <RealData /> : <Scenario />,
+  mode === 'gallery' ? <Gallery />
+    : mode === 'fidelity' ? <Fidelity />
+      : mode === 'real-ref' || mode === 'real-mesh' ? <RealData />
+        : mode === 'live' ? <Live />
+          : <Scenario />,
 )
