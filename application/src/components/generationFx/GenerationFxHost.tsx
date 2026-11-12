@@ -498,7 +498,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
   const timing = computeTiming(module, session, job, now, done)
   const mState = mascotStateFor({ ask: Boolean(entry.ask), reveal: done, stage, phaseIdx: idx, phaseName })
   const says = STATE_SAYS[mState]
-    ?? (stage === 'preparing' ? 'Je prépare les modèles et services…' : scene.says[Math.min(scene.says.length - 1, Math.floor(((idx + 0.5) / scene.phases.length) * scene.says.length))])
+    ?? (stage === 'preparing' ? 'Je prépare les modèles et services…' : scene.says[idx] ?? scene.says[scene.says.length - 1])
   const read = frameReader(session, entry, stage)
   const pctLabel = done
     ? '100 %'

@@ -128,8 +128,11 @@ async function evaluateHolograms(list) {
   let holoNote = null
   for (const r of shots) {
     await fx({ active: true, phaseIndex: 2, phase: `Sculpture 3D — hologramme reconstruit depuis les vues générées (${r.id})`, refs: r.refs.map(({ url, role }) => ({ url, role })) })
-    await page.waitForTimeout(4500)
-    const note = await page.locator('text=/Reconstruit depuis|Relief reconstruit/').first().textContent().catch(() => null)
+    // capture déterministe : attendre la note de reconstruction (ou de refus), puis la fin de la convergence du nuage
+    const noteLocator = page.locator('text=/Reconstruit depuis|Relief reconstruit|sujet non séparable/').first()
+    await noteLocator.waitFor({ timeout: 20000 }).catch(() => {})
+    await page.waitForTimeout(3500)
+    const note = await noteLocator.textContent().catch(() => null)
     const entry = holo.find((h) => h.id === r.id)
     if (entry) entry.screenNote = note
     holoNote = note

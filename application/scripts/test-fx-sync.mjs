@@ -88,3 +88,14 @@ test('animation follows measurement first, then the real phase, and never announ
   const noInfo = animationProgress({ measured: null, phaseIdx: 0, phaseCount: 5, phaseAgeMs: 9e9, elapsedMs: 9e9, phaseReported: false })
   assert.ok(noInfo <= 0.6)
 })
+
+test('each character line describes the real current step and never announces the end early', async () => {
+  const { FX_SCENES } = await import('../src/components/generationFx/scenes.ts')
+  for (const [module, scene] of Object.entries(FX_SCENES)) {
+    assert.equal(scene.says.length, scene.phases.length, `${module}: one line per step`)
+    for (const line of scene.says) assert.doesNotMatch(line, /\bprêt\b|protégé|terminé|fini\b/i, `${module}: « ${line} » claims a result before it exists`)
+  }
+  const atlas = FX_SCENES['3d']
+  assert.match(atlas.says[atlas.phases.indexOf('Référence photo')], /référence/i)
+  assert.match(atlas.says[atlas.phases.indexOf('Sculpture 3D')], /sculpte/i)
+})

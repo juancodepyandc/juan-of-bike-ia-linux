@@ -23,6 +23,7 @@ export type SceneDraw = (ctx: CanvasRenderingContext2D, W: number, H: number, no
 
 export type FxScene = {
   phases: string[]
+  /** une réplique par étape (même ordre que `phases`), jamais d’annonce de fin avant la fin réelle */
   says: string[]
   create: () => SceneDraw
 }
@@ -45,7 +46,7 @@ function rgba(hex: string, a: number): string {
 
 const conversation: FxScene = {
   phases: ['Analyse', 'Plan', 'Brouillon', 'Vérification', 'Raffinage', 'Livraison'],
-  says: ['Je décortique ta question…', 'Je structure ma pensée…', 'J\'écris, je relis…', 'Je peaufine chaque mot…'],
+  says: ['Je décortique ta question…', 'Je structure ma réponse…', 'J’écris un premier jet…', 'Je vérifie chaque affirmation…', 'Je peaufine chaque mot…', 'Je te livre la réponse…'],
   create: () => {
     type Node = { x: number; y: number; vx: number; vy: number; r: number; ph: number; far: boolean; thr: number }
     const WORDS = ['analyse', 'contexte', 'nuance', 'structure', 'preuve', 'clarté', 'synthèse', 'logique', 'intention', 'style']
@@ -170,7 +171,7 @@ const conversation: FxScene = {
 
 const image: FxScene = {
   phases: ['Analyse du prompt', 'Référence visuelle', 'Diffusion FLUX', 'Édition Kontext', 'Finalisation'],
-  says: ['Je capture la lumière…', 'Chaque pixel compte…', 'Les couleurs cristallisent…', 'Dernier coup de prisme…'],
+  says: ['Je lis ta demande mot à mot…', 'Je cherche la bonne référence…', 'FLUX diffuse la lumière, pas à pas…', 'Je retouche avec Kontext…', 'Dernier coup de prisme…'],
   create: () => {
     const SP = ['#F43F5E', '#F59E0B', '#FDE047', '#A3E635', '#22D3EE', '#8B5CF6', '#F472B6']
     const G = 12
@@ -324,7 +325,7 @@ const image: FxScene = {
 
 const code: FxScene = {
   phases: ['Intention', 'Architecture', 'Recherche', 'Génération', 'Sandbox', 'Correction', 'Livraison'],
-  says: ['J\'analyse ton besoin…', 'Je pose les fondations…', 'J\'écris chaque fichier…', 'Je compile, je corrige…', 'C\'est du solide.'],
+  says: ['J’analyse ton besoin…', 'Je pose l’architecture…', 'Je vérifie la documentation…', 'J’écris chaque fichier…', 'Je lance le code en sandbox…', 'Je corrige ce qui casse…', 'Je prépare la livraison…'],
   create: () => {
     const GL = '{}[]()<>=>;:+*/&|!?#$%λΔΦ01'.split('')
     type Col = { x: number; y: number; s: number; seed: number }
@@ -456,7 +457,7 @@ const code: FxScene = {
 
 const video: FxScene = {
   phases: ['Scénario', 'Keyframes FLUX', 'Segments I2V', 'Lipsync', 'Assemblage', 'Encodage'],
-  says: ['Silence plateau…', 'Action !', 'Je cale chaque lèvre…', 'Le montage prend forme…'],
+  says: ['J’écris le scénario…', 'Je fixe les images clés…', 'J’anime chaque segment…', 'Je cale chaque lèvre…', 'Le montage prend forme…', 'J’encode la vidéo finale…'],
   create: () => {
     const motes: { u: number; v: number; s: number; ph: number }[] = []
     for (let i = 0; i < 110; i++) motes.push({ u: Math.random(), v: Math.random(), s: 0.3 + Math.random() * 0.9, ph: Math.random() * 6.28 })
@@ -565,7 +566,7 @@ const video: FxScene = {
 
 const drawing: FxScene = {
   phases: ['Analyse du croquis', 'Vision', 'Composition', 'Rendu FLUX', 'Révélation'],
-  says: ['Je lis ton geste…', 'L\'encre prend vie…', 'Dernier coup de pinceau…'],
+  says: ['Je lis ton geste…', 'Je comprends ce que tu dessines…', 'Je compose la scène…', 'L’encre prend vie…', 'Dernier coup de pinceau…'],
   create: () => {
     type Stroke = { pts: [number, number][]; w: number; c?: string }
     let strokes: Stroke[] = []
@@ -697,7 +698,7 @@ function buildIco() {
 
 const threeD: FxScene = {
   phases: ['Analyse', 'Référence photo', 'Sculpture 3D', 'Matériaux & zones', 'Animation', 'Finalisation'],
-  says: ['Je choisis la meilleure photo…', 'Je sculpte en géométrie native…', 'Je pose les matières par zones…', 'Modèle prêt.'],
+  says: ['J’analyse la forme demandée…', 'Je prépare les vues de référence…', 'Je sculpte la géométrie…', 'Je pose les matières par zones…', 'Je donne vie au mouvement…', 'Je vérifie et j’exporte le modèle…'],
   create: () => {
     const GEO = buildIco()
     let lastVerts = 0
@@ -800,7 +801,7 @@ const threeD: FxScene = {
 
 const learning: FxScene = {
   phases: ['Synthèse', 'Fiches', 'Cartes', 'Exercices', 'Examen'],
-  says: ['Je lis tout le chapitre…', 'Je distille l\'essentiel…', 'Tes fiches se remplissent…', '+XP en approche.'],
+  says: ['Je lis tout le chapitre…', 'Je rédige tes fiches…', 'Je prépare tes cartes…', 'Je calibre tes exercices…', 'Je compose ton examen…'],
   create: () => {
     const SY = ['∑', 'π', '√', '∆', '∫', 'θ', '∞', 'ƒ', '≈', 'α', 'β', 'λ']
     const orb: { sym: string; a: number; rx: number; ry: number; s: number; size: number; ph: number }[] = []
@@ -928,7 +929,7 @@ const learning: FxScene = {
 
 const cyber: FxScene = {
   phases: ['Forge du lab', 'Déploiement', 'Scan', 'Analyse', 'Validation'],
-  says: ['Périmètre sécurisé…', 'Je scanne chaque port…', 'Défi calibré pour toi.'],
+  says: ['Je forge le labo isolé…', 'Je déploie les services du labo…', 'Je scanne chaque port…', 'J’analyse les failles…', 'Je vérifie que le défi est jouable…'],
   create: () => {
     const HX = '0123456789ABCDEF'
     const row = () => Array.from({ length: 5 }, () => HX[Math.floor(Math.random() * 16)] + HX[Math.floor(Math.random() * 16)]).join(' ')
@@ -1026,7 +1027,7 @@ const cyber: FxScene = {
 
 const voice: FxScene = {
   phases: ['Écoute', 'Transcription', 'Réflexion', 'Synthèse vocale', 'Lipsync'],
-  says: ['Je t\'écoute…', 'Chaque mot compte…', 'Ma voix se forme…'],
+  says: ['Je t’écoute…', 'Je transcris chaque mot…', 'Je prépare ma réponse…', 'Ma voix se forme…', 'Je cale les lèvres sur la voix…'],
   create: () => {
     const BARS = 110
     const hist: number[] = []
@@ -1114,7 +1115,7 @@ const voice: FxScene = {
 
 const cowork: FxScene = {
   phases: ['Plan', 'Navigation', 'Extraction', 'Synthèse', 'Audit'],
-  says: ['Je repère les bonnes pages…', 'J\'extrais l\'essentiel…', 'Ta synthèse arrive…'],
+  says: ['Je planifie la recherche…', 'Je parcours les bonnes pages…', 'J’extrais l’essentiel…', 'Ta synthèse arrive…', 'Je vérifie les sources…'],
   create: () => {
     type Win = { x: number; y: number; w: number; h: number; tag: string; hue: string }
     let wins: Win[] = []
@@ -1263,7 +1264,7 @@ const cowork: FxScene = {
 
 const business: FxScene = {
   phases: ['Collecte marché', 'Modélisation', 'Simulation Monte-Carlo', 'Conseil des risques', 'Recommandation'],
-  says: ['Je lis le marché…', 'Je modélise les flux…', 'Mille futurs simulés…', 'Le conseil délibère…', 'Capital protégé.'],
+  says: ['Je lis le marché…', 'Je modélise les flux…', 'Mille futurs simulés…', 'Le conseil des risques délibère…', 'Je formule la recommandation…'],
   create: () => {
     let seed = 0x9e3779b9
     const rnd = () => {
