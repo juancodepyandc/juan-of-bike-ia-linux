@@ -22,6 +22,31 @@ from .records import atomic_json, file_hash
 DEFAULT_QUANTIZATION = "Q4_K_M"
 
 
+def fetch_source_package(folder, release=None, *, name="llama-cpp-python", timeout=600):
+    """Download the source archive of a PyPI release and check it against the index's own SHA-256.
+
+    ``pip download --no-binary`` was used first: it prepares the package's build environment, and on
+    the Kaggle examiner of 2026-11-12 that step ran for more than fifteen minutes for scripts that
+    only need to be unpacked. The archive is now read straight from the package index.
+    """
+    import hashlib
+    import json
+    import urllib.request
+    index = f"https://pypi.org/pypi/{name}/{release}/json" if release else f"https://pypi.org/pypi/{name}/json"
+    with urllib.request.urlopen(index, timeout=60) as answer:
+        entry = next(item for item in json.load(answer)["urls"] if item["packagetype"] == "sdist")
+    target, partial, digest = Path(folder) / entry["filename"], Path(folder) / (entry["filename"] + ".part"), hashlib.sha256()
+    with urllib.request.urlopen(entry["url"], timeout=timeout) as answer, partial.open("wb") as stream:
+        for block in iter(lambda: answer.read(1 << 20), b""):
+            digest.update(block)
+            stream.write(block)
+    if digest.hexdigest() != entry["digests"]["sha256"]:
+        partial.unlink()
+        raise RuntimeError(f"{entry['filename']} does not match the SHA-256 published by the package index")
+    partial.replace(target)
+    return target
+
+
 def llama_tools(folder):
     """Locate (or fetch from PyPI) the llama.cpp conversion scripts matching the installed engine.
 
@@ -39,9 +64,7 @@ def llama_tools(folder):
                 wanted = "llama-cpp-python==" + version("llama-cpp-python")
             except PackageNotFoundError:         # converting an adapter needs the scripts only, not the compiled engine
                 wanted = "llama-cpp-python"
-            subprocess.run([sys.executable, "-m", "pip", "download", "--quiet", "--no-deps", "--no-binary", ":all:",
-                            "--dest", str(folder), wanted], check=True, timeout=1800)
-            archive = next(folder.glob("llama_cpp_python-*.tar.gz"))
+            archive = fetch_source_package(folder, wanted.partition("==")[2] or None)
         with tarfile.open(archive) as bundle:
             # The converters import their sibling ``conversion`` package and ``gguf-py``; nothing else is unpacked.
             members = [m for m in bundle.getmembers()

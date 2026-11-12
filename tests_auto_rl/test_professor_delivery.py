@@ -127,6 +127,17 @@ class Launcher(unittest.TestCase):
                                                    continue_adapter=True, dataset_sources=["owner/aurora-professeur-adaptateurs-qwen25-7b"])
             self.assertEqual(continued["kernel_sources"], [])      # one source of truth for the starting adapter
             self.assertIs(json.loads((Path(folder) / "k" / "launch.json").read_text())["options"]["continue"], True)
+            # A later cycle that trains a new adapter from the base carries the base diagnosis itself.
+            (Path(folder) / "base_diagnosis.json").write_text('{"kind": "aurora_professor_diagnosis", "n": 1}')
+            fresh = kaggle_runner.write_kernel(Path(folder) / "n", "owner", "train", student="qwen2.5:7b", cycle=1,
+                                               diagnosis=Path(folder) / "base_diagnosis.json")
+            self.assertEqual((fresh["kernel_sources"], fresh["dataset_sources"]), ([], []))
+            self.assertNotIn("diagnosis_b64", json.loads((Path(folder) / "n" / "launch.json").read_text())["options"])
+            text = (Path(folder) / "n" / "kernel.py").read_text()
+            options = json.loads(eval(text[text.index("OPTIONS = json.loads(") + len("OPTIONS = json.loads("):text.index(")\nSOURCE_SHA256")]))
+            argv = self.run_bootstrap(Path(folder) / "nb", options, [])
+            self.assertEqual(json.loads(Path(argv[argv.index("--diagnosis") + 1]).read_text())["n"], 1)
+            self.assertNotIn("--init-adapter", argv)
             # Each cycle has its own pair of kernels, so an earlier verdict and its files stay downloadable.
             first = kaggle_runner.write_kernel(Path(folder) / "v0", "owner", "verify", student="qwen2.5:7b")
             later_train = kaggle_runner.write_kernel(Path(folder) / "t1", "owner", "train", student="qwen2.5:7b", cycle=1, continue_adapter=True)

@@ -103,11 +103,20 @@ inputs = Path({inputs!r})
 adapters = sorted(inputs.rglob("adapter_config.json")) if inputs.is_dir() else []
 candidates = [path for path in adapters if path.parent.name != "init_adapter"]
 earlier = [path for path in adapters if path.parent.name == "init_adapter"]
+embedded = OPTIONS.pop("diagnosis_b64", None)       # a diagnosis carried by the launcher (retraining from the base)
 if OPTIONS["role"] == "train":
-    wanted = "diagnosis_next_*.json" if OPTIONS.get("continue") else "diagnosis.json"
-    found = sorted(inputs.rglob(wanted)) if inputs.is_dir() else []
-    if len(found) != 1:
-        raise SystemExit("Expected exactly one %s from the examiner, found %d" % (wanted, len(found)))
+    if embedded:
+        raw = base64.b64decode(embedded)
+        OPTIONS["diagnosis_sha256"] = hashlib.sha256(raw).hexdigest()
+        carried = Path({hf_home!r}).parent / "aurora_launcher_inputs" / "diagnosis.json"
+        carried.parent.mkdir(parents=True, exist_ok=True)
+        carried.write_bytes(raw)
+        found = [carried]
+    else:
+        wanted = "diagnosis_next_*.json" if OPTIONS.get("continue") else "diagnosis.json"
+        found = sorted(inputs.rglob(wanted)) if inputs.is_dir() else []
+        if len(found) != 1:
+            raise SystemExit("Expected exactly one %s from the examiner, found %d" % (wanted, len(found)))
     argv += ["--diagnosis", str(found[0])]
     if OPTIONS.get("continue"):
         if len(candidates) != 1:
@@ -193,11 +202,13 @@ def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_h
 
 
 def write_kernel(folder, owner, role, *, student, profile="standard", modules=None, cycle=0, budget_minutes=240,
-                 overrides=None, gpu=True, dataset_sources=(), skills=None, continue_adapter=False):
+                 overrides=None, gpu=True, dataset_sources=(), skills=None, continue_adapter=False, diagnosis=None):
     """Create the kernel folder (script + metadata). Nothing is uploaded by this function.
 
     ``continue_adapter`` (trainer only) continues the adapter of the previous cycle with the examiner's
     ``diagnosis_next_N.json``; both are read from the examiner's last output, or from ``dataset_sources``.
+    ``diagnosis`` (trainer only) embeds a diagnosis file in the kernel: a later cycle that trains a NEW
+    adapter from the base model needs the base diagnosis, which the examiner's last output no longer holds.
     """
     slug, title = kernel_name(role, student, cycle)
     folder = Path(folder)
@@ -208,9 +219,16 @@ def write_kernel(folder, owner, role, *, student, profile="standard", modules=No
         if not cycle:
             raise ValueError("A first cycle has no adapter to continue")
         options["continue"] = True
+    if role == "train" and diagnosis:
+        if continue_adapter:
+            raise ValueError("A continued cycle reads the examiner's diagnosis of the candidate, not an embedded one")
+        options["diagnosis_b64"] = base64.b64encode(Path(diagnosis).read_bytes()).decode()
     (folder / "kernel.py").write_text(script(options), encoding="utf-8")
+    options = {key: value for key, value in options.items() if key != "diagnosis_b64"}      # launch.json stays small
     sources = []
-    if role == "train" and not dataset_sources:
+    if role == "train" and diagnosis:
+        sources = []
+    elif role == "train" and not dataset_sources:
         # A continued cycle reads the previous examiner (its verdict's diagnosis and the adapter it examined).
         sources = [f"{owner}/{kernel_name('diagnose', student, cycle - 1 if continue_adapter else cycle)[0]}"]
     elif role == "verify" and not dataset_sources:
@@ -373,6 +391,7 @@ def main(argv=None):
     parser.add_argument("--override", action="append", default=[], help="name=value passed to the role, e.g. curriculum=4000")
     parser.add_argument("--continue-adapter", action="store_true",
                         help="train: continue the previous cycle's adapter with the examiner's diagnosis_next file")
+    parser.add_argument("--diagnosis", type=Path, help="train: embed this diagnosis (a new adapter from the base at a later cycle)")
     parser.add_argument("--training", type=Path, help="publish: folder holding adapter/ (a fetched training folder)")
     parser.add_argument("--extra", action="append", default=[], type=Path, help="publish: extra file, e.g. diagnosis_next_0.json")
     args = parser.parse_args(argv)
@@ -395,7 +414,7 @@ def main(argv=None):
         metadata = write_kernel(folder, args.owner, args.role, student=args.student, profile=args.profile, modules=args.modules,
                                 cycle=args.cycle, budget_minutes=args.budget_minutes, overrides=overrides, gpu=not args.cpu,
                                 dataset_sources=args.dataset_source, skills=args.skills,
-                                continue_adapter=args.continue_adapter)
+                                continue_adapter=args.continue_adapter, diagnosis=args.diagnosis)
         result = {"folder": str(folder), "kernel": metadata["id"], "gpu": metadata["enable_gpu"]}
         if args.command == "launch":
             result.update(launch(folder, timeout_seconds=args.budget_minutes * 60 + 1500))

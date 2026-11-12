@@ -37,19 +37,24 @@ from .weakness import build_curriculum, profile, skill_weights, subskill_weights
 PROFILES = {
     # Rehearsal on a CPU or a small GPU: proves the mechanics, too small to certify a module.
     "smoke": {"diagnostic_per_skill": 12, "gate_per_skill": 16, "pool_per_skill": 60, "curriculum": 320,
-              "mine_per_skill": 8, "max_tokens": 640, "max_prompt_tokens": 1400, "batch_size": 2, "accumulate": 4,
+              "mine_per_skill": 8, "self_worked_per_skill": 8, "max_tokens": 640, "max_prompt_tokens": 1400, "batch_size": 2, "accumulate": 4,
               "epochs": 2.0, "eval_batch": 8, "eval_every": 10, "row_limit": 1500, "min_items": 60},
     "standard": {"diagnostic_per_skill": 60, "gate_per_skill": 100, "pool_per_skill": 1200, "curriculum": 6000,
-                 "mine_per_skill": 40, "max_tokens": 1536, "max_prompt_tokens": 3072, "batch_size": 4, "accumulate": 4,
+                 "mine_per_skill": 40, "self_worked_per_skill": 250, "max_tokens": 1536, "max_prompt_tokens": 3072, "batch_size": 4, "accumulate": 4,
                  "epochs": 2.0, "eval_batch": 8, "eval_every": 50, "row_limit": None, "min_items": 200},
     "full": {"diagnostic_per_skill": 150, "gate_per_skill": 250, "pool_per_skill": 4000, "curriculum": 20000,
-             "mine_per_skill": 80, "max_tokens": 2048, "max_prompt_tokens": 4096, "batch_size": 4, "accumulate": 4,
+             "mine_per_skill": 80, "self_worked_per_skill": 500, "max_tokens": 2048, "max_prompt_tokens": 4096, "batch_size": 4, "accumulate": 4,
              "epochs": 2.0, "eval_batch": 8, "eval_every": 100, "row_limit": None, "min_items": 400},
 }
 #: Free-form skills kept in every curriculum so drills do not erode fluent answers.
 REPLAY = ("conversation.instruct_fr", "business.advice", "cyber.defense", "code.polyglot")
 #: Graders that execute generated programs; excluded unless explicitly allowed.
 EXECUTING = ("python_tests",)
+#: Skills whose reference targets give a result without the work that leads to it (source sentences then a
+#: number, or a formula then a number). Trained on such targets on 2026-11-12, a 7B student stopped computing
+#: step by step: -14 and -15 points on report questions, no gain on financial arithmetic, verdict "reject".
+#: For these skills the only training targets are the student's OWN worked answers that the grader verified.
+SELF_WORKED = ("business.finqa", "business.fin_math", "engineering.calc")
 
 
 def status(payload):
@@ -65,7 +70,7 @@ def settings(args):
               "four_bit": args.four_bit, "export": args.export,
               "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1"}
     for name in ("diagnostic_per_skill", "gate_per_skill", "curriculum", "epochs", "learning_rate", "rank", "max_tokens",
-                 "batch_size", "accumulate", "mine_per_skill", "pool_per_skill"):
+                 "batch_size", "accumulate", "mine_per_skill", "pool_per_skill", "self_worked_per_skill"):
         value = getattr(args, name, None)
         if value is not None:
             config[name] = value
@@ -137,6 +142,27 @@ def adapter_hash(adapter):
     return file_hash(weights) if weights else None
 
 
+def keep_verified_answers(pool, worked, rows):
+    """Replace the pool of each self-worked skill by the student's own answers that the grader verified.
+
+    ``worked`` maps a skill to the training items the student was asked; ``rows`` are the graded
+    results. An item is kept only with the student's full answer as its target; a skill without any
+    verified answer leaves the pool, because a target without its work is worse than no example.
+    """
+    notes = {}
+    for name, group in worked.items():
+        answers = {row["id"]: row["output"].strip() for row in rows
+                   if row["skill"] == name and row.get("status", "graded") == "graded" and row["correct"] and (row["output"] or "").strip()}
+        graded = {row["id"] for row in rows if row["skill"] == name}
+        verified = [{**item, "target": answers[item["id"]]} for item in group if item["id"] in answers]
+        notes[name] = {"asked": len(group), "answered": sum(item["id"] in graded for item in group), "verified": len(verified)}
+        if verified:
+            pool[name] = verified
+        else:
+            del pool[name]
+    return notes
+
+
 def train_role(config, work, diagnosis, student=None, library=None, init_adapter=None):
     """Trainer: build a curriculum aimed at the measured weak points and fit an adapter.
 
@@ -165,28 +191,35 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
                                   cycle=config["cycle"])
     # Probe the model as it is now on training items it can be graded on: what it fails goes first.
-    probes = mining_probes(pool, config["mine_per_skill"], config["allow_execution"])
-    mined = {}
-    if probes:
+    probes = mining_probes({name: items for name, items in pool.items() if name not in SELF_WORKED},
+                           config["mine_per_skill"], config["allow_execution"])
+    # Self-worked skills: many more questions are asked, and only the answers the grader verifies become targets.
+    worked = {name: mining_probes({name: pool[name]}, config["self_worked_per_skill"], config["allow_execution"])
+              for name in pool if name in SELF_WORKED}
+    asked = probes + [item for group in worked.values() for item in group]
+    mined, rows = {}, []
+    if asked:
         if init_adapter:
             student.attach(init_adapter)
-        status({"phase": "mine", "items": len(probes)})
-        evaluate(student, probes, work / "mine", batch_size=config["eval_batch"], label="mine", progress=status,
-                 budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.15)
-        mined = {row["id"]: bool(row["correct"]) for row in read_results(work / "mine") if row["status"] == "graded"}
+        status({"phase": "mine", "items": len(asked)})
+        evaluate(student, asked, work / "mine", batch_size=config["eval_batch"], label="mine", progress=status,
+                 budget_seconds=config["budget_seconds"] and config["budget_seconds"] * (0.3 if worked else 0.15))
+        rows = [row for row in read_results(work / "mine") if row["status"] == "graded"]
+        mined = {row["id"]: bool(row["correct"]) for row in rows}
         student.detach()
+    self_worked = keep_verified_answers(pool, worked, rows)
     weights = skill_weights(weak, [name for name in pool if name not in REPLAY])
     chosen, plan = build_curriculum(pool, weights, config["curriculum"], mined=mined, replay_skills=REPLAY)
     atomic_json(work / "curriculum.json", {"kind": "aurora_professor_curriculum", "plan": plan, "weights": weights,
                                            "pool": pool_notes, "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
                                            "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
-                                           "cycle": config["cycle"], "continued_from": given})
+                                           "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked})
     status({"phase": "train", "examples": len(chosen)})
     knobs = {k: config[k] for k in ("max_tokens", "batch_size", "accumulate", "epochs", "eval_every", "learning_rate", "rank") if k in config}
     if config["student"].get("attention_only"):
         knobs["attention_only"] = True
     receipt = train(student, chosen, work / "training", config=knobs, progress=status, init_adapter=init_adapter,
-                    budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.6)
+                    budget_seconds=config["budget_seconds"] and config["budget_seconds"] * (0.55 if worked else 0.6))
     if init_adapter:
         # The examiner compares the new adapter with the one it continues, on the same unseen items.
         kept = work / "training" / "init_adapter"
@@ -344,7 +377,7 @@ def main(argv=None):
                         help="Convert the adapter to GGUF after verification (default: only when promotable)")
     for name, kind in (("diagnostic_per_skill", int), ("gate_per_skill", int), ("curriculum", int), ("epochs", float),
                        ("learning_rate", float), ("rank", int), ("max_tokens", int), ("batch_size", int), ("accumulate", int),
-                       ("mine_per_skill", int), ("pool_per_skill", int)):
+                       ("mine_per_skill", int), ("pool_per_skill", int), ("self_worked_per_skill", int)):
         parser.add_argument("--" + name.replace("_", "-"), type=kind)
     args = parser.parse_args(argv)
     if args.role == "probe":

@@ -314,6 +314,26 @@ class Curriculum(unittest.TestCase):
         with self.assertRaises(ValueError):       # an adapter the diagnosis does not describe
             train_role(config, "unused", {**following, "basis": None}, student=object(), library=object(), init_adapter="absent")
 
+    def test_numeric_skills_train_only_on_the_students_own_verified_work(self):
+        from auto_rl.professor.run import SELF_WORKED, keep_verified_answers
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            pool, _ = build_pool(40, modules=["business", "media"])
+        self.assertIn("business.fin_math", SELF_WORKED)
+        asked = pool["business.fin_math"][:6]
+        own = "Étape 1 : 100 × 0,2 = 20\nÉtape 2 : 100 + 20 = 120\nRéponse finale : 120.00"
+        rows = [{"id": asked[0]["id"], "skill": "business.fin_math", "status": "graded", "correct": True, "output": own + "\n"},
+                {"id": asked[1]["id"], "skill": "business.fin_math", "status": "graded", "correct": False, "output": "Réponse finale : 3"},
+                {"id": asked[2]["id"], "skill": "business.fin_math", "status": "graded", "correct": True, "output": "  "},
+                {"id": asked[3]["id"], "skill": "business.fin_math", "status": "skipped_prompt_too_long", "correct": False, "output": None}]
+        untouched = list(pool["media.prompt_spec"])
+        notes = keep_verified_answers(pool, {"business.fin_math": asked}, rows)
+        self.assertEqual(notes, {"business.fin_math": {"asked": 6, "answered": 4, "verified": 1}})
+        self.assertEqual([(i["id"], i["target"]) for i in pool["business.fin_math"]], [(asked[0]["id"], own)])   # the student's work, not the reference
+        self.assertEqual(pool["media.prompt_spec"], untouched)
+        notes = keep_verified_answers(pool, {"business.fin_math": asked}, rows[1:])       # nothing verified: no example at all
+        self.assertNotIn("business.fin_math", pool)
+        self.assertEqual(notes["business.fin_math"]["verified"], 0)
+
     def test_modules_cover_the_application_families(self):
         self.assertEqual(set(MODULES), {"missions", "code", "conversation", "academy", "cyber", "business", "cowork", "media", "engineering"})
         catalogue = skills()
