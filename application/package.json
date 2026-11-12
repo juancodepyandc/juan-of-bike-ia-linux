@@ -25,6 +25,8 @@
     "tauri:info": "tauri info",
     "tauri": "tauri",
     "test:mobile": "node scripts/mobile-navigation.mjs",
+    "test:fx": "node --test scripts/test-generation-timing.mjs scripts/test-hologram-sources.mjs scripts/test-fx-sync.mjs",
+    "test:fx:visual": "node scripts/test-fx-visual.mjs",
     "workspace:serve": "node scripts/persistent-workspace.mjs",
     "test:workspace": "node scripts/test-persistent-workspace.mjs"
   },

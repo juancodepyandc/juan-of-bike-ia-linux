@@ -141,7 +141,7 @@ export function useManagedRuntime() {
       history: [],
     })
 
-    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>{setGenerationJob(jobId,{detail});onWaiting?.(detail)},signal);
+    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>{setGenerationJob(jobId,{detail});onWaiting?.(detail)},signal,scheduling=>setGenerationJob(jobId,{scheduling}));
     void admission.catch(()=>{})
     const runQueuedJob = async () => {
       const release=await admission;

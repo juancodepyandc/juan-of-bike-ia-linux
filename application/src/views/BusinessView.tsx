@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
 import {
   Activity,
   AlertTriangle,
@@ -513,6 +514,13 @@ export default function BusinessView() {
 
   const [loading, setLoading] = useState<boolean>(false)
   const [trainingLoading, setTrainingLoading] = useState<boolean>(false)
+  // Écran de génération : seulement pour les calculs demandés par l'utilisateur
+  // (le chargement automatique à l'ouverture du module reste discret).
+  const initialRunDoneRef = useRef(false)
+  const [fxUserRun, setFxUserRun] = useState(false)
+  const [fxPhase, setFxPhase] = useState<number | undefined>(undefined)
+  const [fxOutcome, setFxOutcome] = useState<'success' | 'error' | undefined>(undefined)
+  useGenerationFxEmitter('business', trainingLoading || (loading && fxUserRun), undefined, undefined, { phaseIndex: fxPhase, outcome: fxOutcome })
   const [liveStreaming, setLiveStreaming] = useState<boolean>(true)
   const [liveTickLoading, setLiveTickLoading] = useState<boolean>(false)
   const [lastLiveSyncTime, setLastLiveSyncTime] = useState<string>(() => new Date().toLocaleTimeString('fr-FR'))
@@ -579,6 +587,10 @@ export default function BusinessView() {
   const runCouncilAndSimulation = useCallback(
     async (cap: number, stratId: string, horizon: number, tax: number) => {
       setLoading(true)
+      if (initialRunDoneRef.current) setFxUserRun(true)
+      setFxOutcome(undefined)
+      setFxPhase(2)
+      let ok = false
       try {
         const effectiveTax = pedagogicalMode ? 0.25 : tax
         const [simData, delibData] = await Promise.all([
@@ -605,6 +617,7 @@ export default function BusinessView() {
           }),
         ])
         if (simData?.ok && simData.simulation) {
+          ok = true
           setSimulation(simData.simulation)
         } else {
           setSimulation(buildInstantSimulation(cap, horizon))
@@ -612,9 +625,13 @@ export default function BusinessView() {
         if (delibData?.ok) {
           setDeliberation(delibData)
         }
+        setFxPhase(4)
         await loadOverview()
       } finally {
+        setFxOutcome(ok ? 'success' : 'error')
         setLoading(false)
+        setFxUserRun(false)
+        initialRunDoneRef.current = true
       }
     },
     [loadOverview, pedagogicalMode, section],
@@ -768,7 +785,10 @@ export default function BusinessView() {
   }
 
   const handleTrainPolicy = async () => {
+    setFxOutcome(undefined)
+    setFxPhase(2)
     setTrainingLoading(true)
+    let ok = false
     try {
       const data = await businessApiFetch('/api/business/lab/train', {
         method: 'POST',
@@ -781,10 +801,13 @@ export default function BusinessView() {
         }),
       })
       if (data?.ok) {
+        ok = true
         setTrainingReport(data)
+        setFxPhase(4)
         await loadOverview()
       }
     } finally {
+      setFxOutcome(ok ? 'success' : 'error')
       setTrainingLoading(false)
     }
   }

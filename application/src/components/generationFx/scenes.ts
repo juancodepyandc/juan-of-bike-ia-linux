@@ -1,6 +1,25 @@
 import type { FxModule } from './mascots.tsx'
 
-export type SceneDraw = (ctx: CanvasRenderingContext2D, W: number, H: number, now: number, prog: number, accent: string) => void
+/**
+ * État réel transmis à chaque image de la scène : l'animation réagit aux
+ * événements du pipeline au moment où ils arrivent (changement d'étape,
+ * mesure reçue), pas à un minuteur.
+ */
+export type SceneSync = {
+  phaseIdx: number
+  phaseCount: number
+  /** ms depuis le début de l'étape en cours */
+  phaseAge: number
+  /** ms depuis le dernier événement réel (journal, mesure, étape) */
+  pulseAge: number
+  /** nombre d'événements réels reçus */
+  events: number
+  /** une progression chiffrée a-t-elle été mesurée ? */
+  measured: boolean
+  stage: 'queued' | 'preparing' | 'running' | 'finalizing' | 'done'
+}
+
+export type SceneDraw = (ctx: CanvasRenderingContext2D, W: number, H: number, now: number, prog: number, accent: string, sync?: SceneSync) => void
 
 export type FxScene = {
   phases: string[]
@@ -1242,6 +1261,141 @@ const cowork: FxScene = {
   },
 }
 
+const business: FxScene = {
+  phases: ['Collecte marché', 'Modélisation', 'Simulation Monte-Carlo', 'Conseil des risques', 'Recommandation'],
+  says: ['Je lis le marché…', 'Je modélise les flux…', 'Mille futurs simulés…', 'Le conseil délibère…', 'Capital protégé.'],
+  create: () => {
+    let seed = 0x9e3779b9
+    const rnd = () => {
+      seed ^= seed << 13
+      seed ^= seed >>> 17
+      seed ^= seed << 5
+      return (seed >>> 0) / 4294967296
+    }
+    const N = 28
+    const candles: { o: number; c: number; h: number; l: number }[] = []
+    let v = 100
+    for (let i = 0; i < N; i++) {
+      const o = v
+      const c = o + (rnd() - 0.46) * 7
+      candles.push({ o, c, h: Math.max(o, c) + rnd() * 3.5, l: Math.min(o, c) - rnd() * 3.5 })
+      v = c
+    }
+    const lo = Math.min(...candles.map((k) => k.l)) - 18
+    const hi = Math.max(...candles.map((k) => k.h)) + 18
+    const PATHS = 40
+    const STEPS = 22
+    let paths: number[][] = []
+    let pathsBorn = -1
+    const coins: { x: number; y: number; vy: number; life: number }[] = []
+    const COUNCIL = 9
+    return (ctx, W, H, now, prog, accent, sync) => {
+      const p = Math.min(1, Math.max(0, prog))
+      const phase = sync?.phaseIdx ?? Math.floor(p * 5)
+      // la moitié basse de l'écran reste au HUD : graphique, jauge et conseil au-dessus
+      const x0 = W * 0.07, x1 = W * 0.6, y0 = H * 0.13, y1 = H * 0.5
+      const fx1 = W * 0.86
+      const ys = (val: number) => y1 - ((val - lo) / (hi - lo)) * (y1 - y0)
+      // quadrillage
+      ctx.strokeStyle = 'rgba(255,255,255,.05)'
+      ctx.lineWidth = 1
+      for (let g = 0; g <= 6; g++) {
+        const y = y0 + ((y1 - y0) * g) / 6
+        ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(fx1, y); ctx.stroke()
+      }
+      // bougies : le marché se lit d'abord (étape 1), toutes visibles ensuite
+      const shown = Math.max(3, Math.floor(N * Math.min(1, phase >= 1 ? 1 : 0.35 + p * 2)))
+      const cw = (x1 - x0) / N
+      for (let i = 0; i < shown; i++) {
+        const k = candles[i]
+        const x = x0 + i * cw + cw / 2
+        const up = k.c >= k.o
+        const col = up ? '#34D399' : '#F87171'
+        ctx.strokeStyle = col
+        ctx.beginPath(); ctx.moveTo(x, ys(k.h)); ctx.lineTo(x, ys(k.l)); ctx.stroke()
+        ctx.fillStyle = up ? 'rgba(52,211,153,.75)' : 'rgba(248,113,113,.75)'
+        const top = ys(Math.max(k.o, k.c))
+        ctx.fillRect(x - cw * 0.32, top, cw * 0.64, Math.max(1.5, ys(Math.min(k.o, k.c)) - top))
+      }
+      // simulation Monte-Carlo : éventail qui se resserre pendant l'étape 3
+      if (phase >= 2) {
+        if (pathsBorn < 0 || now - pathsBorn > 2600) {
+          pathsBorn = now
+          paths = []
+          for (let j = 0; j < PATHS; j++) {
+            const path = [candles[N - 1].c]
+            for (let s = 1; s <= STEPS; s++) path.push(path[s - 1] + (rnd() - 0.47) * 4.2)
+            paths.push(path)
+          }
+        }
+        const conv = phase >= 3 ? 0.45 : 1
+        const age = Math.min(1, (now - pathsBorn) / 1400)
+        ctx.lineWidth = 1
+        for (let j = 0; j < paths.length; j++) {
+          const path = paths[j]
+          ctx.strokeStyle = j === 0 ? accent : `rgba(250,204,21,${0.12 + 0.1 * (j % 3)})`
+          ctx.beginPath()
+          for (let s = 0; s <= STEPS * age; s++) {
+            const x = x1 + ((fx1 - x1) * s) / STEPS
+            const val = candles[N - 1].c + (path[s] - candles[N - 1].c) * conv
+            if (s === 0) ctx.moveTo(x, ys(val)); else ctx.lineTo(x, ys(val))
+          }
+          ctx.stroke()
+        }
+      }
+      // jauge de risque : l'aiguille se stabilise quand le conseil statue
+      const gx = W * 0.82, gy = H * 0.64, gr = Math.min(W, H) * 0.085
+      ctx.lineWidth = 6
+      const seg = [['#34D399', 0, 0.45], ['#FACC15', 0.45, 0.75], ['#F87171', 0.75, 1]] as const
+      for (const [c, a0, a1] of seg) {
+        ctx.strokeStyle = c
+        ctx.beginPath(); ctx.arc(gx, gy, gr, Math.PI + a0 * Math.PI, Math.PI + a1 * Math.PI); ctx.stroke()
+      }
+      const settled = phase >= 3 ? 0.3 : 0.3 + 0.35 * Math.sin(now * 0.0024)
+      const ang = Math.PI + settled * Math.PI
+      ctx.strokeStyle = '#F8FAFC'
+      ctx.lineWidth = 2
+      ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx + Math.cos(ang) * gr * 0.9, gy + Math.sin(ang) * gr * 0.9); ctx.stroke()
+      glow(ctx, gx, gy, 6, rgba(accent, 0.8))
+      // conseil des agents : liens actifs pendant la délibération
+      const cx = W * 0.18, cy = H * 0.6, cr = Math.min(W, H) * 0.075
+      const pts: [number, number][] = []
+      for (let i = 0; i < COUNCIL; i++) {
+        const a = -Math.PI / 2 + (i / COUNCIL) * Math.PI * 2
+        pts.push([cx + Math.cos(a) * cr, cy + Math.sin(a) * cr])
+      }
+      if (phase >= 3) {
+        ctx.lineWidth = 1
+        for (let i = 0; i < COUNCIL; i++) {
+          for (let j = i + 1; j < COUNCIL; j++) {
+            const on = Math.sin(now * 0.004 + i * 1.7 + j) > 0.4
+            if (!on) continue
+            ctx.strokeStyle = rgba(accent, 0.35)
+            ctx.beginPath(); ctx.moveTo(pts[i][0], pts[i][1]); ctx.lineTo(pts[j][0], pts[j][1]); ctx.stroke()
+          }
+        }
+      }
+      ctx.globalCompositeOperation = 'lighter'
+      pts.forEach(([x, y], i) => glow(ctx, x, y, i === 0 ? 9 : 6, rgba(i === 0 ? accent : '#93C5FD', phase >= 3 ? 0.85 : 0.4)))
+      // pièces qui montent à chaque événement réel reçu
+      if (sync && sync.pulseAge < 120 && coins.length < 24) {
+        for (let k = 0; k < 4; k++) coins.push({ x: x1 - 6 + rnd() * 12, y: ys(candles[N - 1].c), vy: 0.8 + rnd() * 1.2, life: 1 })
+      }
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const co = coins[i]
+        co.y -= co.vy; co.life -= 0.02
+        if (co.life <= 0) { coins.splice(i, 1); continue }
+        glow(ctx, co.x, co.y, 5, `rgba(250,204,21,${co.life})`)
+      }
+      if (phase >= 4) {
+        const done = Math.min(1, (sync?.phaseAge ?? 0) / 1200)
+        glow(ctx, x1, ys(candles[N - 1].c), 26 + 18 * done, rgba(accent, 0.45 * done), `rgba(255,255,255,${0.5 * done})`)
+      }
+      ctx.globalCompositeOperation = 'source-over'
+    }
+  },
+}
+
 export const FX_SCENES: Record<FxModule, FxScene> = {
   conversation,
   image,
@@ -1253,5 +1407,5 @@ export const FX_SCENES: Record<FxModule, FxScene> = {
   cyber,
   voice,
   cowork,
-  business: cowork,
+  business,
 }

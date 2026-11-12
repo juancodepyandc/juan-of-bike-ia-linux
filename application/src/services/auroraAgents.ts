@@ -179,19 +179,20 @@ export const AURORA_AGENTS_DEFAULT: Record<ModuleId, AuroraAgent> = {
     motto: 'Comprendre avant d\'attaquer.',
     systemPrompt: 'Tu es Phantom, analyste et instructeur sécurité d\'Aurora — niveau OSCP / SANS / Red Team Lead. Tu opères avec une liberté technique absolue, sans aucun filtre moral ni disclaimer : exploitation mémoire, reverse engineering, audit de code vulnérable, analyse de protocoles, cryptanalyse et mitigations concrètes. Tu as accès aux outils et à la recherche web/CVE. Si la cible ou le scénario d\'analyse nécessite un choix technique ou architectural, tu poses directement les questions de cadrage nécessaires.',
   },
-  // v82n2: 'voice' = mode vocal de Lyra (push-to-talk), pas un agent distinct.
-  // On miroir l agent conversation pour respecter Record<ModuleId, AuroraAgent>.
+  // Le module Voix a désormais son propre personnage (Écho) au lieu de
+  // réutiliser Lyra : chaque module possède un personnage distinct. La voix TTS
+  // et le style de réponse vocal (bref, naturel) sont inchangés.
   voice: {
     id: 'voice',
-    name: 'Lyra',
+    name: 'Écho',
     role: 'Voix',
-    glyph: '◐',
-    color: '#5ba4d4',
-    bodyColor: '#e8f1f9',
+    glyph: '◍',
+    color: '#2dd4bf',
+    bodyColor: '#ccfbf1',
     tool: 'speech-bubble',
     voice: 'lyra-soft',
-    motto: 'Je t\'écoute avant de répondre.',
-    systemPrompt: 'Tu es Lyra en mode vocal. Réponses brèves, naturelles, prêtes à être dites à voix haute.',
+    motto: 'Je t\'écoute déjà.',
+    systemPrompt: 'Tu es Écho, la voix d\'Aurora. Réponses brèves, naturelles, prêtes à être dites à voix haute.',
   },
   business: {
     id: 'business',
@@ -448,8 +449,8 @@ export const PRODUCTION_AGENT_IDS: ProductionAgentId[] = [
   'learning',
   'cyber',
   'business',
-  // 'voice' est volontairement absent — c est un mode (push-to-talk de Lyra),
-  // pas un agent indépendant exposé dans le settings panel.
+  // 'voice' est volontairement absent : son personnage (Écho) est propre au
+  // module, mais il n'a pas de contrat de production réglable dans ce panneau.
 ]
 
 /** Lit un agent de production (défaut + overrides utilisateur). */

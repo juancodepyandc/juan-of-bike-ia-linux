@@ -33,6 +33,7 @@ import { buildThreeDModuleAssets } from '../config/moduleAssetPacks.ts'
 import { AUXILIARY_ANALYSIS_MODEL, THREE_D_MODEL_PACK_LABEL } from '../config/models.ts'
 import { fsReadText, ollamaGenerate, clearResumableJob, comfyuiCancelPrompt, comfyuiGetHistory, comfyuiGetImage, comfyuiQueuePrompt, freeGpuBeforeFlux, fsExists, fsMkdir, fsReadBinary, fsWriteBinary, getWorkspacePath, onPythonProgress, peekResumableJob, runPythonScript as runPythonScriptBase, toAssetUrl } from '../hooks/useTauri.ts'
 import { emitGenerationFx, fxAsk } from '../components/generationFx/fxBus.ts'
+import { threeDPhaseForStage } from '../components/generationFx/fxPhases.ts'
 import { StudioDiagnosticsPanel, StudioHero } from '../components/StudioHero.tsx'
 import { useManagedRuntime } from '../hooks/useManagedRuntime.ts'
 import { useModuleAssetPack } from '../hooks/useModuleAssetPack.ts'
@@ -3823,6 +3824,7 @@ export default function ModelView() {
             emitGenerationFx('3d', {
               active: true,
               phase: detail,
+              phaseIndex: threeDPhaseForStage(stage) ?? undefined,
               progress: phaseProgress / 100,
             })
           })
@@ -5355,6 +5357,11 @@ export default function ModelView() {
             // v77zag: keep a local snapshot for the live overlay so the user
             // sees the percent / detail / heartbeat regardless of runtime.
             setPhaseSnapshot({ label: detail, percent: phaseProgress })
+            // L'étape réelle du pipeline (et non le pourcentage 82–95 %) pilote
+            // l'écran de génération et l'hologramme (la ligne elle-même est
+            // journalisée par ThreeDProgressOverlay).
+            const fxPhase = threeDPhaseForStage(stage)
+            if (fxPhase != null) emitGenerationFx('3d', { active: true, phaseIndex: fxPhase })
           })
 
           let result: ModelGenerationResult | null = null
@@ -6368,6 +6375,9 @@ export default function ModelView() {
           const finalAssetUrl = toAssetUrl(activeMeshPath)
           setModelUrl(finalAssetUrl)
           completeThreeDMission({ meshUrl: finalAssetUrl })
+          // Le maillage final se verrouille dans l'hologramme (≈ 2,6 s) au moment
+          // réel de la livraison, puis l'écran laisse place au viewer.
+          emitGenerationFx('3d', { active: false, resultUrl: finalAssetUrl, resultKind: 'mesh', outcome: 'success' })
           setViewerWebUrl(null)
           setWorkspace('model')
           // v71: persist le rapport qualite mesh pour le bouton 'Inspecter mesh'.
@@ -7086,17 +7096,13 @@ export default function ModelView() {
                     prompt={prompt.trim() || readPersistedThreeDMission()?.rawPrompt || 'Projet 3D'}
                     progressPercent={
                       isGenerating
-                        ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 4)
-                        : prompt.trim()
-                          ? 38
-                          : 22
+                        ? Math.max(phaseSnapshot.percent, readPersistedThreeDMission()?.phasePercent ?? 0)
+                        : 0
                     }
                     phaseLabel={
                       isGenerating
-                        ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Orchestration 3D par les 5 sous-agents...'
-                        : prompt.trim()
-                          ? 'Prévisualisation Splats Holographiques 3D & Répartition des 5 Sous-Agents prête'
-                          : 'Aperçu Splats Holographiques 3D — Saisissez une demande 3D'
+                        ? phaseSnapshot.label || progress || readPersistedThreeDMission()?.phaseLabel || 'Génération 3D en cours…'
+                        : 'En attente d’une demande 3D — aucune génération en cours'
                     }
                     startedAtMs={isGenerating ? readPersistedThreeDMission()?.startedAtMs : undefined}
                     mode="visual_3d"
