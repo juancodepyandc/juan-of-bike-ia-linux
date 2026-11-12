@@ -234,8 +234,10 @@ class OllamaStudent:
 
     def digest(self):
         """Content digest of the served weights, so a verdict names what was really examined."""
+        def full(name):
+            return name if ":" in str(name).rsplit("/", 1)[-1] else f"{name}:latest"
         for model in self._get("/api/tags").get("models", []):
-            if model.get("name") == self.tag or model.get("model") == self.tag:
+            if full(model.get("name", "")) == full(self.tag) or full(model.get("model", "")) == full(self.tag):
                 return model.get("digest")
         return None
 

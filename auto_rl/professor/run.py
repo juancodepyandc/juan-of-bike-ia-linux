@@ -277,6 +277,8 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     knobs = {k: config[k] for k in ("max_tokens", "batch_size", "accumulate", "epochs", "eval_every", "learning_rate", "rank") if k in config}
     if config["student"].get("attention_only"):
         knobs["attention_only"] = True
+    if not init_adapter and (work / "training" / "init_adapter").exists():
+        shutil.rmtree(work / "training" / "init_adapter")  # a fresh cycle continues nothing: no leftover may pose as "previous"
     if init_adapter:
         # The examiner compares the new adapter with the one it continues, on the same unseen items. The copy is made
         # BEFORE training: training writes work/training/adapter, which may be the very folder being continued.
@@ -401,9 +403,13 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
     """
     work = Path(work)
     library = library or Library(row_limit=config["row_limit"])
+    previous = None if base_done else previous
+    continued = ((read_json(Path(adapter).parent / "train_receipt.json", {}) or {}).get("continued_from") or {}).get("adapter_sha256")
+    if previous and adapter_hash(previous) != continued:
+        raise ValueError("The previous adapter given is not the one this candidate continues (train receipt): "
+                         f"{adapter_hash(previous)} != {continued}")
     items, notes = _exam(config, "gate", library)
     gate = work / f"gate_{config['cycle']}"
-    previous = None if base_done else previous
     share = config["budget_seconds"] and config["budget_seconds"] * 0.9 / (3 if previous else 2)
     if not base_done:
         student = student or open_student(config)

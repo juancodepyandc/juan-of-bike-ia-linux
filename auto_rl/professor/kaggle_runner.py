@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from ..source_bundle import build_bundle, extract_bundle
-from .records import atomic_json, file_hash
+from .records import atomic_json, file_hash, read_json
 
 ROOT = Path(__file__).resolve().parents[2]
 # The launcher travels too: the Colab trainer imports it from the extracted sources to publish its adapter
@@ -126,6 +126,12 @@ if OPTIONS["role"] == "train":
 if OPTIONS["role"] == "verify":
     if len(candidates) != 1:
         raise SystemExit("Expected exactly one adapter from the trainer, found %d" % len(candidates))
+    expected = OPTIONS.get("expected_adapter_sha256")
+    if expected:
+        weights = sorted(candidates[0].parent.glob("adapter_model.*"))
+        found_sha = hashlib.sha256(weights[0].read_bytes()).hexdigest() if weights else None
+        if found_sha != expected:
+            raise SystemExit("The adapter found is not the one this examiner was launched for: %s, expected %s" % (found_sha, expected))
     adapter = WORK / "training" / "adapter"
     if adapter.exists():
         shutil.rmtree(adapter)
@@ -203,7 +209,8 @@ def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_h
 
 
 def write_kernel(folder, owner, role, *, student, profile="standard", modules=None, cycle=0, budget_minutes=240,
-                 overrides=None, gpu=True, dataset_sources=(), skills=None, continue_adapter=False, diagnosis=None):
+                 overrides=None, gpu=True, dataset_sources=(), skills=None, continue_adapter=False, diagnosis=None,
+                 expected_adapter_sha256=None):
     """Create the kernel folder (script + metadata). Nothing is uploaded by this function.
 
     ``continue_adapter`` (trainer only) continues the adapter of the previous cycle with the examiner's
@@ -220,6 +227,8 @@ def write_kernel(folder, owner, role, *, student, profile="standard", modules=No
         if not cycle:
             raise ValueError("A first cycle has no adapter to continue")
         options["continue"] = True
+    if role == "verify" and expected_adapter_sha256:
+        options["expected_adapter_sha256"] = expected_adapter_sha256    # the examiner refuses to examine any other adapter
     if role == "train" and diagnosis:
         if continue_adapter:
             raise ValueError("A continued cycle reads the examiner's diagnosis of the candidate, not an embedded one")
@@ -304,6 +313,32 @@ def quota():
             "used_seconds": gpu.time_used.total_seconds()}
 
 
+def _publish(api, staging, reference, note, *, ready_timeout=900):
+    """Create or version a private dataset and confirm Kaggle accepted it.
+
+    The client returns an error status instead of raising when a version is refused, and creating a dataset
+    that already exists fails the same way: either way the previous version stayed in place silently.
+    """
+    try:
+        api.dataset_status(reference)
+        exists = True
+    except Exception as exc:                              # only "not found" means the dataset must be created
+        if getattr(getattr(exc, "response", None), "status_code", None) != 404 and "404" not in str(exc):
+            raise
+        exists = False
+    answer = (api.dataset_create_version(str(staging), version_notes=note, quiet=True) if exists
+              else api.dataset_create_new(str(staging), public=False, quiet=True))
+    error = getattr(answer, "error", None) or (getattr(answer, "status", None) == "error" and "status error")
+    if error:
+        raise RuntimeError(f"Kaggle refused the dataset {reference}: {error}")
+    deadline = time.monotonic() + ready_timeout
+    while "ready" not in str(api.dataset_status(reference)).lower():
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"The dataset {reference} is still not ready")
+        time.sleep(10)
+    return reference
+
+
 def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateurs", note="adapter", student=None, extra=()):
     """Upload a trained adapter as a PRIVATE Kaggle dataset a kernel can mount (Colab path, continued cycles).
 
@@ -327,22 +362,21 @@ def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateu
         for added in ("train_receipt.json",):
             if (training_folder / added).is_file():
                 (staging / added).write_bytes((training_folder / added).read_bytes())
-        for path in sorted((training_folder / "init_adapter").glob("adapter_*")):
-            if path.is_file() and path.suffix in {".json", ".safetensors"}:      # the adapter this one continues
-                (staging / ("init_" + path.name)).write_bytes(path.read_bytes())
+        receipt = read_json(training_folder / "train_receipt.json", {}) if (training_folder / "train_receipt.json").is_file() else {}
+        continued = (receipt.get("continued_from") or {}).get("adapter_sha256")
+        before = next((p for p in sorted((training_folder / "init_adapter").glob("adapter_model.*")) if p.is_file()), None)
+        if continued and before is not None and file_hash(before) == continued:
+            # Shipped only when it is the adapter this one really continues (a reused runtime may hold an older one).
+            for path in sorted((training_folder / "init_adapter").glob("adapter_*")):
+                if path.is_file() and path.suffix in {".json", ".safetensors"}:
+                    (staging / ("init_" + path.name)).write_bytes(path.read_bytes())
         for added in extra:
             (staging / Path(added).name).write_bytes(Path(added).read_bytes())
         if "adapter_config.json" not in names:
             raise ValueError("No adapter to publish in " + str(training_folder))
         atomic_json(staging / "dataset-metadata.json", {"title": title, "id": f"{owner}/{slug}",
                                                         "licenses": [{"name": "other"}]})
-        api = _api()
-        try:
-            api.dataset_status(f"{owner}/{slug}")
-            api.dataset_create_version(str(staging), version_notes=note, quiet=True)
-        except Exception:
-            api.dataset_create_new(str(staging), public=False, quiet=True)
-    return f"{owner}/{slug}"
+        return _publish(_api(), staging, f"{owner}/{slug}", note)
 
 
 def publish_delivery(owner, folder, *, student, cycle=0):
@@ -364,13 +398,7 @@ def publish_delivery(owner, folder, *, student, cycle=0):
         if not any(name.startswith("verdict_") for name in names) or "adapter.gguf" not in names:
             raise ValueError("A delivery holds a verdict and the converted adapter; found " + ", ".join(names))
         atomic_json(staging / "dataset-metadata.json", {"title": title, "id": f"{owner}/{slug}", "licenses": [{"name": "other"}]})
-        api = _api()
-        try:
-            api.dataset_status(f"{owner}/{slug}")
-            api.dataset_create_version(str(staging), version_notes=f"cycle {cycle} {student}", quiet=True)
-        except Exception:
-            api.dataset_create_new(str(staging), public=False, quiet=True)
-    return f"{owner}/{slug}"
+        return _publish(_api(), staging, f"{owner}/{slug}", f"cycle {cycle} {student}")
 
 
 def fetch_dataset(reference, output):

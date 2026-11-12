@@ -5,6 +5,7 @@ tests prove the decision logic, not that a real kernel ran or a real model was
 installed. Real runs are recorded as dated observations in the master document.
 """
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,61 @@ from auto_rl.professor import install, kaggle_runner
 from auto_rl.professor.records import atomic_json, file_hash
 
 
+class NotFound(Exception):
+    """What the Kaggle client raises for a dataset that does not exist."""
+    response = type("Response", (), {"status_code": 404})()
+
+
+class Accepted:
+    error, status = None, "ok"
+
+
 class Launcher(unittest.TestCase):
+    def test_a_refused_dataset_version_is_an_error_not_a_publication(self):
+        class Api:
+            def dataset_status(self, reference):
+                return "ready"
+
+            def dataset_create_version(self, folder, version_notes, quiet):
+                return type("Refused", (), {"error": "Invalid file", "status": "error"})()
+
+            def dataset_create_new(self, *arguments, **options):
+                raise AssertionError("an existing dataset is versioned, never created again")
+        with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
+            adapter = Path(folder) / "training" / "adapter"
+            adapter.mkdir(parents=True)
+            (adapter / "adapter_config.json").write_text("{}")
+            (adapter / "adapter_model.safetensors").write_bytes(b"w")
+            with self.assertRaisesRegex(RuntimeError, "refused"):
+                kaggle_runner.publish_adapter("owner", Path(folder) / "training", student="qwen2.5:7b")
+
+    def test_a_leftover_starting_adapter_is_not_shipped_as_the_previous_one(self):
+        shipped = []
+
+        class Api:
+            created = False
+
+            def dataset_status(self, reference):
+                if not self.created:
+                    raise NotFound("404")
+                return "ready"
+
+            def dataset_create_new(self, folder, public, quiet):
+                self.created = True
+                shipped.append(sorted(p.name for p in Path(folder).iterdir()))
+                return Accepted()
+        with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
+            training = Path(folder) / "training"
+            (training / "adapter").mkdir(parents=True)
+            (training / "adapter" / "adapter_config.json").write_text("{}")
+            (training / "adapter" / "adapter_model.safetensors").write_bytes(b"new")
+            (training / "init_adapter").mkdir()
+            (training / "init_adapter" / "adapter_model.safetensors").write_bytes(b"from an earlier run")
+            atomic_json(training / "train_receipt.json", {"continued_from": None})
+            kaggle_runner.publish_adapter("owner", training, student="qwen2.5:7b")
+        self.assertNotIn("init_adapter_model.safetensors", shipped[0])
+
+
     def test_script_is_self_contained_and_holds_no_credential(self):
         options = {"role": "diagnose", "student": "qwen2.5:7b", "profile": "standard", "modules": "business",
                    "cycle": 0, "budget_minutes": 30, "overrides": {}}
@@ -153,11 +208,18 @@ class Launcher(unittest.TestCase):
         seen = []
 
         class Api:
+            def __init__(self):
+                self.created = set()
+
             def dataset_status(self, reference):
-                raise RuntimeError("absent")
+                if reference not in self.created:
+                    raise NotFound("404 Client Error: Not Found")
+                return "ready"
 
             def dataset_create_new(self, folder, public, quiet):
+                self.created.add(json.loads((Path(folder) / "dataset-metadata.json").read_text())["id"])
                 seen.append((json.loads((Path(folder) / "dataset-metadata.json").read_text()), public, sorted(p.name for p in Path(folder).iterdir())))
+                return Accepted()
         with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
             for name in ("verdict_0.json", "adapter_config.json", "export_receipt.json"):
                 (Path(folder) / name).write_text("{}")
@@ -204,12 +266,19 @@ class Launcher(unittest.TestCase):
         seen = []
 
         class Api:
+            def __init__(self):
+                self.created = set()
+
             def dataset_status(self, reference):
-                raise RuntimeError("absent")
+                if reference not in self.created:
+                    raise NotFound("404 Client Error: Not Found")
+                return "ready"
 
             def dataset_create_new(self, folder, public, quiet):
+                self.created.add(json.loads((Path(folder) / "dataset-metadata.json").read_text())["id"])
                 seen.append((json.loads((Path(folder) / "dataset-metadata.json").read_text())["id"], public,
                              sorted(p.name for p in Path(folder).iterdir())))
+                return Accepted()
         with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
             adapter = Path(folder) / "training" / "adapter"
             adapter.mkdir(parents=True)
@@ -220,6 +289,8 @@ class Launcher(unittest.TestCase):
             before.mkdir()
             (before / "adapter_config.json").write_text("{}")
             (before / "adapter_model.safetensors").write_bytes(b"v")
+            atomic_json(Path(folder) / "training" / "train_receipt.json",          # the adapter this one really continues
+                        {"continued_from": {"adapter_sha256": file_hash(before / "adapter_model.safetensors")}})
             first = kaggle_runner.publish_adapter("owner", Path(folder) / "training", student="qwen2.5:7b",
                                                   extra=[Path(folder) / "diagnosis_next_0.json"])
             second = kaggle_runner.publish_adapter("owner", Path(folder) / "training", student="qwen2.5-coder:7b")
@@ -372,7 +443,9 @@ class Installation(unittest.TestCase):
                 tags[arguments[2]] = tags[arguments[1]]
             return ""
         exam = {"verdict": deployment_verdict, "reasons": ["simulated"], "regressions": [],
-                "overall": {"macro_gain": 0.1, "macro_gain_ci": [0.02, 0.2], "items": 240}}
+                "overall": {"macro_gain": 0.1, "macro_gain_ci": [0.02, 0.2], "items": 240},
+                "exam": {"notes": {"skills_examined": ["business.fin_math"], "skills_missing": [], "left_to_cloud": [],
+                                   "source_errors": {}}}}
         return tags, calls, [patch.object(install, "ollama", side_effect=command),
                              patch.object(install, "installed_tags", side_effect=lambda url: dict(tags)),
                              patch.object(install, "deployment_exam", return_value=exam),
@@ -392,7 +465,7 @@ class Installation(unittest.TestCase):
                 self.assertTrue(active["active"])
                 self.assertEqual(tags["qwen2.5:7b"], "candidate-digest")             # the application's tag is reinforced
                 self.assertEqual(tags["qwen2.5:7b-aurora-base"], "base-digest")      # original weights preserved
-                self.assertEqual(active["rollback"], "ollama cp qwen2.5:7b-aurora-base qwen2.5:7b")
+                self.assertEqual(active["rollback"], "python -m auto_rl.professor.install rollback --tag qwen2.5:7b")
                 install.activate("qwen2.5:7b")                                       # activating twice keeps the backup intact
                 self.assertEqual(tags["qwen2.5:7b-aurora-base"], "base-digest")
                 install.rollback("qwen2.5:7b")
@@ -433,6 +506,101 @@ class Installation(unittest.TestCase):
             finally:
                 for item in patches:
                     item.stop()
+
+
+class ReviewedInstallation(Installation):
+    """Second review of 2026-11-12: the installer's state, its exam as served and its paths."""
+
+    def test_an_active_candidate_stays_recorded_and_the_backup_is_checked(self):
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second, tempfile.TemporaryDirectory() as state:
+            tags, calls, patches = self.simulated(state, "promote")
+            for item in patches:
+                item.start()
+            try:
+                install.install(self.delivery(first))
+                install.activate("qwen2.5:7b")
+                later = self.delivery(second)
+                path = later / "aurora_professor" / "verdict_0.json"
+                atomic_json(later / "aurora_professor" / "verdict_1.json", {**json.loads(path.read_text()), "cycle": 1})
+                path.unlink()
+                with patch.object(install, "deployment_exam", return_value={"verdict": "reject", "reasons": ["simulated"], "regressions": [],
+                                                                                "overall": {"macro_gain": -0.1, "macro_gain_ci": [-0.2, -0.02], "items": 240},
+                                                                                "exam": {"notes": {"skills_examined": [], "skills_missing": [],
+                                                                                                   "left_to_cloud": [], "source_errors": {}}}}):
+                    install.install(later)
+                status = install._state()["qwen2.5:7b"]
+                self.assertEqual(status["active"], "qwen2.5:7b-aurora-renforce-c0")    # still what the tag serves
+                self.assertEqual(sorted(status["candidates"]), ["qwen2.5:7b-aurora-renforce-c0", "qwen2.5:7b-aurora-renforce-c1"])
+                tags["qwen2.5:7b-aurora-base"] = "someone-replaced-the-backup"
+                with self.assertRaises(ValueError):
+                    install.rollback("qwen2.5:7b")
+                self.assertEqual(tags["qwen2.5:7b"], "candidate-digest")
+            finally:
+                for item in patches:
+                    item.stop()
+
+    def test_a_stale_backup_is_replaced_by_the_current_original(self):
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as state:
+            tags, calls, patches = self.simulated(state, "promote")
+            for item in patches:
+                item.start()
+            try:
+                install.install(self.delivery(folder))
+                install.activate("qwen2.5:7b")
+                install.rollback("qwen2.5:7b")
+                tags["qwen2.5:7b"] = "updated-upstream"                             # `ollama pull` after the rollback
+                install.install(self.delivery(folder + "/again"))
+                self.assertEqual(install._state()["qwen2.5:7b"]["candidates"]["qwen2.5:7b-aurora-renforce-c0"]["built_from"], "qwen2.5:7b")
+                install.activate("qwen2.5:7b")
+                self.assertEqual(tags["qwen2.5:7b-aurora-base"], "updated-upstream")  # the backup is the current original
+            finally:
+                for item in patches:
+                    item.stop()
+
+    def test_the_exam_as_served_is_incomplete_when_a_cloud_skill_is_missing(self):
+        class Student:
+            def __init__(self, tag, **_):
+                self.tag = tag
+
+            def describe(self):
+                return {"backend": "fake", "tag": self.tag}
+
+            def generate(self, conversations, tokens, batch_size=1):
+                return ["{}"] * len(conversations)
+        with tempfile.TemporaryDirectory() as folder, patch.object(install, "OllamaStudent", Student), \
+                patch("auto_rl.professor.suites.Library.load", return_value=([], [])), \
+                patch.object(install, "compare", return_value={"verdict": "promote", "reasons": ["simulated"], "regressions": [],
+                                                                 "overall": {"macro_gain": 0.1, "macro_gain_ci": [0.05, 0.2], "items": 300}}):
+            result = install.deployment_exam("qwen2.5:7b", "qwen2.5:7b-aurora-renforce-c1", folder, modules=["business", "media"],
+                                             per_skill=60, cycle=1001, url="http://x", context=4096,
+                                             expected_skills=["business.finqa", "media.prompt_spec"])
+        self.assertEqual(result["verdict"], "inconclusive")                         # finqa needs `datasets`: nothing activates
+        self.assertIn("business.finqa", result["exam"]["notes"]["skills_missing"])
+
+    def test_untagged_names_and_relative_deliveries(self):
+        self.assertEqual(install.full_tag("orcarouter/Qwen3.8-27B-Uncensored"), "orcarouter/Qwen3.8-27B-Uncensored:latest")
+        self.assertEqual(install.full_tag("qwen2.5:7b"), "qwen2.5:7b")
+        with tempfile.TemporaryDirectory() as folder:
+            self.delivery(Path(folder) / "relative")
+            previous = os.getcwd()
+            os.chdir(folder)
+            try:
+                checked = install.check_delivery("relative")
+            finally:
+                os.chdir(previous)
+        self.assertTrue(checked["files"]["adapter.gguf"].is_absolute())
+
+    def test_each_download_gets_a_fresh_folder(self):
+        seen = []
+        with tempfile.TemporaryDirectory() as state, patch.object(install, "STATE", Path(state)), \
+                patch.object(kaggle_runner, "fetch", lambda reference, output: (Path(output) / "leftover").mkdir(parents=True) or seen.append(output)), \
+                patch.object(kaggle_runner, "fetch_dataset", lambda reference, output: seen.append(output)), \
+                patch.object(install, "install", lambda folder, **_: {"base_tag": "qwen2.5:7b", "candidate_tag": "c", "deployment": None}):
+            install.deliver("owner", "qwen2.5:7b", cycle=1)
+            install.deliver("owner", "qwen2.5:7b", cycle=1)
+            install.deliver(None, "qwen2.5:7b", cycle=1, dataset="owner/aurora-professeur-livraison-qwen25-7b-c1")
+        self.assertEqual(seen[0], seen[1])
+        self.assertNotEqual(seen[0], seen[2])                                       # kernel output and dataset never mix
 
 
 class OllamaBackend(unittest.TestCase):

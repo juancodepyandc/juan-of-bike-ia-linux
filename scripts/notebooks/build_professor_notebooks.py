@@ -211,8 +211,11 @@ if os.environ.get("KAGGLE_API_TOKEN") or (os.environ.get("KAGGLE_USERNAME") and 
     dataset = kaggle_runner.publish_adapter(owner, work / "training", student=STUDENT, note=f"cycle {CYCLE} {STUDENT}")
     print("Adaptateur déposé dans le jeu de données privé", dataset)
     folder = Path("/content/aurora_examinateur")
+    import hashlib
+    trained = hashlib.sha256(next((work / "training" / "adapter").glob("adapter_model.*")).read_bytes()).hexdigest()
     kaggle_runner.write_kernel(folder, owner, "verify", student=STUDENT, profile=PROFILE, modules=AURORA_OPTIONS["modules"],
-                               cycle=CYCLE, budget_minutes=300, dataset_sources=[dataset])       # jusqu'à trois modèles examinés
+                               cycle=CYCLE, budget_minutes=300, dataset_sources=[dataset],        # jusqu'à trois modèles examinés
+                               expected_adapter_sha256=trained)                                   # l'examinateur refuse tout autre adaptateur
     print("Examen lancé :", kaggle_runner.launch(folder, timeout_seconds=300 * 60 + 1500))
 else:
     try:

@@ -34,7 +34,7 @@ from .inference import OllamaStudent
 from .records import atomic_json, file_hash, read_json
 from .run import installable_problems
 from .students import resolve
-from .suites import Library, build_exam
+from .suites import GATE_SLOT, Library, build_exam
 
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "Outputs" / "auto_rl" / "professor"
@@ -52,14 +52,37 @@ def ollama(*arguments, timeout=3600):
     return done.stdout
 
 
+def full_tag(name):
+    """Ollama lists an untagged model as NAME:latest; every comparison uses that form."""
+    return name if ":" in name.rsplit("/", 1)[-1] else name + ":latest"
+
+
 def installed_tags(url):
     with urllib.request.urlopen(url.rstrip("/") + "/api/tags", timeout=30) as response:
-        return {model["name"]: model.get("digest") for model in json.load(response).get("models", [])}
+        return {full_tag(model["name"]): model.get("digest") for model in json.load(response).get("models", [])}
+
+
+def _state():
+    """installed.json: per application tag, every installed candidate and which one (if any) is active.
+
+    The first version kept one record per tag and lost the active candidate when another was installed.
+    """
+    state = read_json(STATE / "installed.json", {})
+    for tag, entry in list(state.items()):
+        if "candidate_tag" in entry:                     # first format: one record per tag
+            state[tag] = {"candidates": {entry["candidate_tag"]: entry},
+                          "active": entry["candidate_tag"] if entry.get("active") else None,
+                          "backup_digest": None, "active_digest": None}
+    return state
+
+
+def _save(state):
+    atomic_json(STATE / "installed.json", state)
 
 
 def check_delivery(delivery):
     """Gate 1 and 2: a promotable verdict whose adapter hash matches the delivered file."""
-    delivery = Path(delivery)
+    delivery = Path(delivery).resolve()                 # the Modelfile is written elsewhere: its paths must be absolute
     verdicts = sorted(delivery.rglob("verdict_*.json"))
     if len(verdicts) != 1:
         raise ValueError(f"Un seul verdict est attendu dans la livraison, {len(verdicts)} trouvés")
@@ -101,25 +124,33 @@ def modelfile(base_tag, files):
     return f"FROM {merged}\n" + "\n".join(inherited) + "\n", "merged"
 
 
-def deployment_exam(base_tag, candidate_tag, folder, *, modules, per_skill, cycle, url, context):
+def deployment_exam(base_tag, candidate_tag, folder, *, modules, per_skill, cycle, url, context, expected_skills=None):
     """Gate 3: the paired exam, answered by Ollama exactly as the application is served."""
     library = Library()
 
     def draw(count):
-        drawn, drawn_notes = build_exam("gate", count, modules=modules, cycle=cycle, library=library)
+        drawn, drawn_notes = build_exam("gate", min(count, GATE_SLOT), modules=modules, cycle=cycle, library=library)
         # Generated programs are never executed on a workstation: those items are left to the cloud examiner.
+        drawn_notes["left_to_cloud"] = sorted({i["skill"] for i in drawn if i["grader"]["type"] == "python_tests"}
+                                              - {i["skill"] for i in drawn if i["grader"]["type"] != "python_tests"})
         return [item for item in drawn if item["grader"]["type"] != "python_tests"], drawn_notes
     items, notes = draw(per_skill)
     families = len({item["skill"] for item in items})
     if families and len(items) < 260:
-        # Without the `datasets` package only generated skills are available: draw more of them
-        # rather than run an exam too small to decide anything.
-        items, notes = draw(-(-260 // families))
+        items, notes = draw(-(-260 // families))         # enough items to decide, within one gate slot per skill
     notes["skills_examined"] = sorted({item["skill"] for item in items})
+    # The same exam as in the cloud, as served: a skill that is missing here (a public source that could not be
+    # loaded, the `datasets` package absent) makes this exam incomplete, and an incomplete exam activates nothing.
+    notes["skills_missing"] = sorted(set(expected_skills or ()) - set(notes["skills_examined"]) - set(notes["left_to_cloud"]))
     folder = Path(folder)
     for name, tag in (("base", base_tag), ("candidate", candidate_tag)):
         evaluate(OllamaStudent(tag, url=url, context=context), items, folder / name, batch_size=1, label=f"ollama_{name}")
     result = compare(read_results(folder / "base"), read_results(folder / "candidate"))
+    missing = notes["skills_missing"] or sorted(notes["source_errors"])
+    if missing and result["verdict"] == "promote":
+        result["verdict"] = "inconclusive"
+        result["reasons"].insert(0, "the exam as served lacks part of the cloud exam: " + ", ".join(missing)
+                                 + " (install the `datasets` package and check the network, then install again)")
     result["exam"] = {"items": len(items), "notes": notes, "served_by": "ollama", "base_tag": base_tag, "candidate_tag": candidate_tag}
     atomic_json(folder / "deployment_verdict.json", result)
     return result
@@ -140,7 +171,7 @@ def convert_locally(delivery):
     if checked["problems"] != [NO_GGUF]:
         return checked
     adapter = next(path.parent for path in sorted(delivery.rglob("adapter_model.safetensors")) if path.parent.name != "init_adapter")
-    receipt = export(checked["student"], adapter, adapter.parent.parent / "export_local")
+    receipt = export(checked["student"], adapter, delivery / "export_local")
     checked = check_delivery(delivery)
     if receipt["errors"]:
         checked["problems"].append("conversion locale impossible : " + " ; ".join(f"{k} — {v[:200]}" for k, v in receipt["errors"].items()))
@@ -152,66 +183,93 @@ def install(delivery, *, url="http://127.0.0.1:11434", per_skill=40, context=819
     if checked["problems"]:
         raise ValueError("Livraison refusée : " + " ; ".join(checked["problems"]))
     verdict, student = checked["verdict"], checked["student"]
-    base_tag = student["tag"]
+    base_tag = full_tag(student["tag"])
     tags = installed_tags(url)
+    state = _state()
+    entry = state.setdefault(base_tag, {"candidates": {}, "active": None, "backup_digest": None, "active_digest": None})
     backup = base_tag + BACKUP_SUFFIX
-    source = backup if backup in tags else base_tag          # after an activation the pristine base is the backup
+    # While a candidate is active the original weights are the backup; otherwise the tag itself is the original
+    # (it may have been updated since an earlier rollback, which makes an old backup stale).
+    source = backup if entry["active"] else base_tag
     if source not in tags:
-        raise RuntimeError(f"Le modèle de base {base_tag} n'est pas installé dans Ollama")
+        raise RuntimeError(f"Le modèle de base {source} n'est pas installé dans Ollama")
+    if entry["active"] and entry.get("backup_digest") and tags[backup] != entry["backup_digest"]:
+        raise RuntimeError(f"La sauvegarde {backup} a changé depuis l'activation : vérifier avant toute installation")
     candidate = f"{base_tag}-aurora-renforce-c{verdict['cycle']}"
     text, kind = modelfile(source, checked["files"])
     with tempfile.TemporaryDirectory(prefix="aurora_modelfile_") as temporary:
         path = Path(temporary) / "Modelfile"
         path.write_text(text, encoding="utf-8")
         ollama("create", candidate, "-f", str(path))
-    record = {"base_tag": base_tag, "candidate_tag": candidate, "kind": kind, "installed_at": time.time(),
-              "verdict_sha256": checked["verdict_sha256"], "adapter_sha256": verdict["adapter_sha256"],
+    record = {"base_tag": base_tag, "candidate_tag": candidate, "kind": kind, "installed_at": time.time(), "built_from": source,
+              "built_from_digest": tags[source], "verdict_sha256": checked["verdict_sha256"], "adapter_sha256": verdict["adapter_sha256"],
               "cloud_gain": verdict["overall"]["macro_gain"], "cloud_gain_ci": verdict["overall"]["macro_gain_ci"],
-              "candidate_digest": installed_tags(url).get(candidate), "active": False, "deployment": None}
+              "candidate_digest": installed_tags(url).get(candidate), "deployment": None}
     if exam:
         result = deployment_exam(source, candidate, STATE / "deployment" / candidate.replace("/", "_").replace(":", "_"),
                                  modules=verdict["modules"], per_skill=per_skill, cycle=verdict["cycle"] + 1000,
-                                 url=url, context=context)
+                                 url=url, context=context, expected_skills=sorted(verdict.get("skills") or {}))
+        notes = result["exam"]["notes"]
         record["deployment"] = {"verdict": result["verdict"], "reasons": result["reasons"],
                                 "macro_gain": result["overall"]["macro_gain"], "macro_gain_ci": result["overall"]["macro_gain_ci"],
-                                "items": result["overall"]["items"], "regressions": result["regressions"]}
-    state = read_json(STATE / "installed.json", {})
-    state[base_tag] = record
-    atomic_json(STATE / "installed.json", state)
-    return record
+                                "items": result["overall"]["items"], "regressions": result["regressions"],
+                                "skills_examined": notes["skills_examined"], "skills_missing": notes["skills_missing"],
+                                "left_to_cloud": notes["left_to_cloud"], "source_errors": notes["source_errors"]}
+    entry["candidates"][candidate] = record              # the active candidate, if another one, stays recorded
+    _save(state)
+    return {**record, "active": entry["active"]}
 
 
-def activate(tag, *, url="http://127.0.0.1:11434"):
+def activate(tag, *, url="http://127.0.0.1:11434", candidate=None):
     """Point the application's tag at the reinforced weights, keeping the original under a backup tag."""
-    state = read_json(STATE / "installed.json", {})
-    record = state.get(tag)
-    if not record:
+    tag = full_tag(tag)
+    state = _state()
+    entry = state.get(tag)
+    if not entry or not entry["candidates"]:
         raise ValueError(f"Aucun modèle renforcé installé pour {tag}")
+    name = candidate or max(entry["candidates"], key=lambda key: entry["candidates"][key]["installed_at"])
+    record = entry["candidates"].get(name)
+    if not record:
+        raise ValueError(f"Aucun candidat {name} installé pour {tag}")
     deployment = record.get("deployment") or {}
     if deployment.get("verdict") != "promote":
         raise ValueError("Activation refusée : le modèle n'a pas regagné l'examen apparié tel que servi par Ollama "
                          f"(verdict : {deployment.get('verdict', 'examen non exécuté')})")
     tags = installed_tags(url)
-    if tags.get(record["candidate_tag"]) != record["candidate_digest"]:
+    if not record.get("candidate_digest") or tags.get(name) != record["candidate_digest"]:
         raise ValueError("Le modèle installé a changé depuis son examen : relancer l'installation")
     backup = tag + BACKUP_SUFFIX
-    if backup not in tags:
-        ollama("cp", tag, backup)                        # the original weights stay available under this name
-    ollama("cp", record["candidate_tag"], tag)
-    record.update(active=True, activated_at=time.time(), backup_tag=backup, rollback=f"ollama cp {backup} {tag}")
-    atomic_json(STATE / "installed.json", state)
-    return record
+    if entry["active"]:
+        # The tag serves an earlier candidate: the backup must still hold the original weights.
+        if tags.get(tag) != entry.get("active_digest") or (entry.get("backup_digest") and tags.get(backup) != entry["backup_digest"]):
+            raise ValueError(f"{tag} ou sa sauvegarde {backup} a changé depuis la dernière activation : vérifier avant d'activer")
+    else:
+        # The tag serves the original: keep exactly it as the backup (a backup left by an earlier rollback may be stale).
+        if tags.get(tag) != record.get("built_from_digest"):
+            raise ValueError(f"{tag} a changé depuis l'installation du candidat : relancer l'installation")
+        ollama("cp", tag, backup)
+        entry["backup_digest"] = installed_tags(url).get(backup)
+    ollama("cp", name, tag)
+    entry.update(active=name, active_digest=installed_tags(url).get(tag), activated_at=time.time(),
+                 rollback=f"python -m auto_rl.professor.install rollback --tag {tag}")
+    _save(state)
+    return {**record, "active": name, "backup_tag": backup, "rollback": entry["rollback"]}
 
 
 def rollback(tag, *, url="http://127.0.0.1:11434"):
-    state = read_json(STATE / "installed.json", {})
+    tag = full_tag(tag)
+    state = _state()
+    entry = state.get(tag) or {}
     backup = tag + BACKUP_SUFFIX
-    if backup not in installed_tags(url):
+    tags = installed_tags(url)
+    if backup not in tags:
         raise ValueError(f"Aucune sauvegarde {backup} : le modèle d'origine n'a pas été remplacé par cet outil")
+    if entry.get("backup_digest") and tags[backup] != entry["backup_digest"]:
+        raise ValueError(f"La sauvegarde {backup} n'est plus celle créée à l'activation : restauration refusée")
     ollama("cp", backup, tag)
-    if tag in state:
-        state[tag].update(active=False, rolled_back_at=time.time())
-        atomic_json(STATE / "installed.json", state)
+    if entry:
+        entry.update(active=None, active_digest=None, rolled_back_at=time.time())
+        _save(state)
     return {"tag": tag, "restored_from": backup}
 
 
@@ -224,16 +282,20 @@ def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, conte
     which cycle's examiner to fetch (each cycle keeps its own output); ``dataset``
     reads a published delivery (private dataset) instead of the examiner's output.
     """
+    import shutil
     from . import kaggle_runner
     slug = kaggle_runner.kernel_name("verify", student, cycle)[0]
-    folder = STATE / "deliveries" / slug
+    # One fresh folder per source: leftovers of an earlier download would add a second verdict or receipt.
+    folder = STATE / "deliveries" / slug / (("dataset-" + dataset.replace("/", "-")) if dataset else "kernel")
+    if folder.exists():
+        shutil.rmtree(folder)
     if dataset:
         kaggle_runner.fetch_dataset(dataset, folder)
     else:
         kaggle_runner.fetch(f"{owner}/{slug}", folder)
     record = install(folder, url=url, per_skill=per_skill, context=context)
     if activate_after and (record.get("deployment") or {}).get("verdict") == "promote":
-        record = activate(record["base_tag"], url=url)
+        record = activate(record["base_tag"], url=url, candidate=record["candidate_tag"])
     return record
 
 
@@ -252,7 +314,7 @@ def main(argv=None):
     parser.add_argument("--context", type=int, default=8192)
     args = parser.parse_args(argv)
     if args.command == "status":
-        result = read_json(STATE / "installed.json", {})
+        result = _state()
     elif args.command == "check":
         checked = check_delivery(args.delivery)
         result = {"student": checked["student"]["tag"], "files": sorted(checked["files"]), "problems": checked["problems"]}
