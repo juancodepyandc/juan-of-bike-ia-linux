@@ -68,6 +68,9 @@ class FakeKaggle:
     def trained_modules(self, reference, folder):
         return self.kernels[reference].get("trained_modules", [])
 
+    def curriculum(self, reference, folder):
+        return self.kernels.get(reference, {}).get("curriculum")
+
     def verdict(self, reference, folder):
         return self.kernels.get(reference, {}).get("verdict")
 

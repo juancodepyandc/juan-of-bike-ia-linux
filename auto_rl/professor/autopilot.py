@@ -171,18 +171,20 @@ class Kaggle:
         found = sorted(folder.rglob("verdict_*.json"))
         return json.loads(found[-1].read_text(encoding="utf-8")) if found else None
 
-    def trained_modules(self, reference, folder):
-        """Modules a finished trainer really trained, from its curriculum (the exam must cover them too)."""
-        from .suites import skills as catalogue
+    def curriculum(self, reference, folder):
+        """Only the curriculum of a trainer output: what it really trained, skill by skill."""
         folder = Path(folder)
         if folder.exists():
             shutil.rmtree(folder)
         folder.mkdir(parents=True)
         self.runner._api().kernels_output(reference, path=str(folder), file_pattern=r".*curriculum\.json", force=True, quiet=True)
         found = sorted(folder.rglob("curriculum.json"))
-        if not found:
-            return []
-        planned = (json.loads(found[-1].read_text(encoding="utf-8")).get("plan") or {}).get("skills") or {}
+        return json.loads(found[-1].read_text(encoding="utf-8")) if found else None
+
+    def trained_modules(self, reference, folder):
+        """Modules a finished trainer really trained, from its curriculum (the exam must cover them too)."""
+        from .suites import skills as catalogue
+        planned = ((self.curriculum(reference, folder) or {}).get("plan") or {}).get("skills") or {}
         known = catalogue()
         return sorted({known[name]["module"] for name in planned if name in known})
 
@@ -238,13 +240,16 @@ def served(student):
     return list(resolve(student).get("modules") or [])
 
 
-def plan(student, diagnosis=None):
-    """Modules and skills of a cycle: the served modules, plus those the previous cycle trained."""
+def plan(student, diagnosis=None, exclude=()):
+    """Modules and skills of a cycle: the served modules, plus those the previous cycle trained.
+
+    ``exclude`` are skills the analysis of the last two exams found stuck (trained, below 85 %, not moving).
+    """
     from .suites import skills as catalogue
     policy = POLICY.get(student, {})
     modules = sorted(set(served(student)) | set((diagnosis or {}).get("trained_modules") or []))
     known = catalogue(modules)
-    wanted = [name for name in policy.get("skills", ()) if name in known]
+    wanted = [name for name in policy.get("skills", ()) if name in known and name not in set(exclude)]
     return {"modules": modules, "skills": wanted or None, "overrides": dict(policy.get("overrides", {})),
             "gate_per_skill": policy.get("gate_per_skill", 120)}
 
@@ -357,7 +362,10 @@ def start_cycle(state, student, entry, kaggle, now):
         return stall(state, student, entry, f"la sortie de l'examinateur du cycle {best} n'a pas d'adaptateur à prolonger")
     if not diagnosis_path.is_file():
         rebuild_diagnosis(source, best, diagnosis_path)
-    options = plan(student, json.loads(diagnosis_path.read_text(encoding="utf-8")))
+    excluded = (entry.get("advice") or {}).get("exclude") or []
+    options = plan(student, json.loads(diagnosis_path.read_text(encoding="utf-8")), exclude=excluded)
+    if excluded:
+        note(state, student, f"cycle {cycle} : retirés de l'entraînement car bloqués deux cycles de suite : {', '.join(excluded)}")
     dataset = kaggle.publish(owner, training, student, [diagnosis_path], f"cycle {cycle} {student}")
     reference = kaggle.launch(_folder(student, cycle, "train_kernel"), owner, "train", student, modules=",".join(options["modules"]),
                               skills=",".join(options["skills"]) if options["skills"] else None, cycle=cycle,
@@ -413,6 +421,7 @@ def conclude(state, student, entry, kaggle):
                              "macro_gain": overall.get("macro_gain"), "macro_gain_ci": overall.get("macro_gain_ci"),
                              "versus_previous": ((verdict or {}).get("versus_previous") or {}).get("verdict")})
     entry.update(phase="ready", kernel=None, next_cycle=cycle + 1)
+    understand(state, student, entry, kaggle, folder, cycle)
     if problems:
         entry["rejected_in_a_row"] += 1
         note(state, student, f"cycle {cycle} : non installable, le modèle en place reste ({'; '.join(problems)[:300]})")
@@ -424,6 +433,29 @@ def conclude(state, student, entry, kaggle):
     note(state, student, f"cycle {cycle} : verdict installable (gain macro {overall.get('macro_gain', 0) * 100:+.1f} points) ; "
                          "le prochain cycle le prolongera")
     return "concluded"
+
+
+def understand(state, student, entry, kaggle, folder, cycle):
+    """Analyse the finished exam beyond its verdict and keep the advice for the next cycle (skills only).
+
+    A failed analysis (a source that does not load on the PC, for example) is reported and never blocks the loop.
+    """
+    from . import analysis
+    try:
+        curriculum = kaggle.curriculum(kaggle.reference(state["owner"], "train", student, cycle), _folder(student, cycle, "curriculum"))
+        report = analysis.analyse(folder, curriculum=curriculum)
+    except Exception as exc:
+        note(state, student, f"cycle {cycle} : analyse des résultats impossible ({type(exc).__name__}: {str(exc)[:200]})")
+        return None
+    atomic_json(_folder(student, cycle, "analysis.json"), report)
+    compact = {"cycle": cycle, "side_effects": report["side_effects"],
+               "skills": {name: {key: value for key, value in skill.items() if key in ("base", "previous", "candidate", "flags", "trained_examples")}
+                          for name, skill in report["skills"].items()}}
+    entry["analyses"] = (entry.get("analyses") or [])[-3:] + [compact]
+    entry["advice"] = analysis.recommend(entry["analyses"])
+    for line in analysis.summary_lines(report, entry["advice"])[:12]:
+        note(state, student, f"cycle {cycle} : {line}")
+    return report
 
 
 def follow(state, student, entry, kaggle, now):
@@ -595,7 +627,7 @@ def status():
     """What the interface shows: the runner, the quota, one line per student and the last events."""
     state = load()
     alive = runner_alive(state)
-    keys = ("phase", "cycle", "best_cycle", "installed_cycle", "kernel", "until", "why", "deliveries", "rejected_in_a_row")
+    keys = ("phase", "cycle", "best_cycle", "installed_cycle", "kernel", "until", "why", "deliveries", "rejected_in_a_row", "advice")
     return {"enabled": bool(state.get("enabled")), "running": alive,
             "busy": (state.get("runner") or {}).get("busy") if alive else None,
             "activate": state.get("activate", True), "owner": state.get("owner"), "quota": state.get("quota"),
