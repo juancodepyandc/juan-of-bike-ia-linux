@@ -25,8 +25,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-const remarkPlugins = [remarkGfm]
+import { NOTION_ATTRIBUTE, coworkMarkdownOptions, linkifyNotions } from '../utils/coworkNotionLinks.ts'
 import {
   Activity,
   Boxes,
@@ -1116,16 +1115,16 @@ const Bubble = memo(function Bubble({ turn, onNotion }: { turn: ChatTurn; onNoti
             <span style={{ whiteSpace: 'pre-wrap' }}>{turn.content}</span>
           ) : (
             <div className="cowork-md" onClick={(e) => {
-              const a = (e.target as HTMLElement).closest('a')
-              if (a && a.getAttribute('href')?.startsWith('cowork://')) {
-                e.preventDefault()
-                const n = decodeURIComponent(a.getAttribute('href')!.replace('cowork://explain/', ''))
-                onNotion(n)
-              }
+              // Notions render as buttons carrying their decoded label (utils/coworkNotionLinks.ts):
+              // no href to navigate, whatever the input path; Enter and Space also land here.
+              const notion = e.target instanceof Element
+                ? e.target.closest(`[${NOTION_ATTRIBUTE}]`)?.getAttribute(NOTION_ATTRIBUTE)
+                : null
+              if (!notion) return
+              e.preventDefault()
+              onNotion(notion)
             }}>
-              <ReactMarkdown remarkPlugins={remarkPlugins}>
-                {turn.content.replace(/\[\[([^[\]\n]{2,80})\]\]/g, (_m, l: string) => `[${l.trim()}](cowork://explain/${encodeURIComponent(l.trim())})`)}
-              </ReactMarkdown>
+              <ReactMarkdown {...coworkMarkdownOptions}>{linkifyNotions(turn.content)}</ReactMarkdown>
             </div>
           )}
         </div>

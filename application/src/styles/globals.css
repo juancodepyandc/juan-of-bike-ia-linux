@@ -2046,6 +2046,28 @@ kbd {
   background: rgba(255,255,255,0.04);
   font-weight: 600;
 }
+/* Notion [[…]] : bouton « Expliquer » dans le texte, jamais un lien navigable
+   (utils/coworkNotionLinks.ts). min-* annule la cible tactile de 40 px posée
+   sur les boutons en (pointer: coarse), qui écarterait les lignes du texte. */
+.cowork-md .cowork-notion {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: #c4b5fd;
+  text-align: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(196, 181, 253, 0.7);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.cowork-md .cowork-notion:hover {
+  color: #ede9fe;
+  text-decoration-style: solid;
+}
 
 /* ===== Settings drawer (Ctrl+,) — skin-agnostic fallback =====
    v82lk2 : la stylefeuille .sp-* vit dans manga-theme.css mais celui-ci
