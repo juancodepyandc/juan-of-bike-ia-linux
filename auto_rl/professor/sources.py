@@ -346,13 +346,22 @@ def _humaneval(row, key, role):
     return item
 
 
+def mbpp_task(task_id):
+    """Identity of an MBPP problem shared by MBPP and MBPP+, used as the question to hash.
+
+    MBPP+ (EvalPlus) reuses MBPP problems and rewords many of them: 108 of its 378 exam tasks are in the
+    MBPP train split, and hashing the wording removed only 42 of them from training (measured 2026-11-12).
+    """
+    return "mbpp-task:" + str(int(str(task_id).rsplit("/", 1)[-1]))
+
+
 @source("mbpp_plus", dataset="evalplus/mbppplus", split="test", role="exam", skill="code.python", module="code", license="apache-2.0")
 def _mbpp_plus(row, key, role):
     example = row["test_list"][0] if row["test_list"] else ""
     ask = f"{row['prompt'].strip()}\nYour code must satisfy this assertion:\n{example}\n\n{_CODE_ASK['exam']}"
     item = _plain(_user(ask), f"```python\n{row['code'].strip()}\n```",
                   {"type": "python_tests", "tests": "\n".join(row.get("test_imports") or []) + "\n" + row["test"], "timeout": 40},
-                  512, row["prompt"])
+                  512, mbpp_task(row["task_id"]))
     item["subskill"] = "mbpp"
     return item
 
@@ -361,7 +370,11 @@ def _mbpp_plus(row, key, role):
 def _mbpp(row, key, role):
     example = row["test_list"][0] if row["test_list"] else ""
     ask = f"{row['text'].strip()}\nYour code must satisfy this assertion:\n{example}\n\n{_CODE_ASK['train']}"
-    item = _plain(_user(ask), f"```python\n{row['code'].strip()}\n```", None, 0, row["text"])
+    # The tests travel with the item so the student's own solutions can be verified (self-worked training, mining).
+    tests = "\n".join(row["test_list"]) + ("\n" + "\n".join(row["challenge_test_list"]) if row.get("challenge_test_list") else "")
+    item = _plain(_user(ask), f"```python\n{row['code'].strip()}\n```",
+                  {"type": "python_tests", "setup": row.get("test_setup_code") or "", "tests": tests, "timeout": 40},
+                  512, mbpp_task(row["task_id"]))
     item["subskill"] = "mbpp"
     return item
 

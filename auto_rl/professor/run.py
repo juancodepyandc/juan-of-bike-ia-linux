@@ -203,11 +203,20 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     trainable = [name for name, entry in catalogue.items() if (entry["generator"] or entry["train_sources"]) and name not in REPLAY]
     expected = skill_weights(weak, trainable)
     sizes = {name: int(1.2 * config["curriculum"] * share) + 8 for name, share in expected.items()}
-    pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
+    # The examiner's blocklist, plus the exam families this trainer can rebuild itself from the same pinned public
+    # sources: an examiner and a trainer of different code versions must not let an exam question through.
+    blocklist = set(diagnosis["blocklist"]) | set(exam_blocklist(modules=config["modules"], library=library))
+    pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=blocklist,
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
                                   cycle=config["cycle"])
     for name in set(REPLAY) - set(replay):              # free-form skills left out of this cycle by an explicit choice
         pool.pop(name, None)
+    for name in self_worked_skills:
+        if name in pool and not any(item.get("grader") and (config["allow_execution"] or item["grader"]["type"] not in EXECUTING)
+                                    for item in pool[name]):
+            # Seen on 2026-11-12: MBPP training items carried no tests, so code.python silently left the curriculum.
+            raise ValueError(f"{name} is trained on verified answers only, but none of its training items can be graded here"
+                             + ("" if config["allow_execution"] else " (its grader runs code: set AURORA_PROFESSOR_ALLOW_CODE_EXECUTION=1)"))
     # Probe the model as it is now on training items it can be graded on: what it fails goes first.
     probes = mining_probes({name: items for name, items in pool.items() if name not in self_worked_skills},
                            config["mine_per_skill"], config["allow_execution"])
@@ -229,7 +238,9 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     weights = skill_weights(weak, [name for name in pool if name not in REPLAY])
     chosen, plan = build_curriculum(pool, weights, config["curriculum"], mined=mined, replay_skills=replay)
     atomic_json(work / "curriculum.json", {"kind": "aurora_professor_curriculum", "plan": plan, "weights": weights,
-                                           "pool": pool_notes, "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
+                                           "pool": {**pool_notes, "blocklist": {"from_examiner": len(set(diagnosis["blocklist"])),
+                                                                               "total": len(blocklist)}},
+                                           "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
                                            "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
                                            "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked,
                                            "choices": {"replay": list(replay), "self_worked": list(self_worked_skills),

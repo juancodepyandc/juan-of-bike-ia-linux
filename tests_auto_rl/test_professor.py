@@ -373,6 +373,7 @@ class Curriculum(unittest.TestCase):
             config = {**base, **choice}
             with tempfile.TemporaryDirectory() as work, \
                     patch.object(run_module.Library, "train_family", lambda self, skill, catalogue: free_form(skill)), \
+                    patch.object(run_module.Library, "exam_family", lambda self, skill, catalogue: []), \
                     patch.object(train_module, "train", fake_train):
                 run_module.train_role(config, work, diagnosis, student=Student(), library=run_module.Library())
                 plan = json.loads((Path(work) / "curriculum.json").read_text())
@@ -382,10 +383,34 @@ class Curriculum(unittest.TestCase):
             self.assertEqual(plan["self_worked"]["business.fin_math"]["verified"], 0)
             self.assertNotIn("business.fin_math", plan["plan"]["skills"])       # no verified work: no example at all
             self.assertTrue(all(item["skill"] in expected_replay | {"conversation.format_fr"} for item in captured[-1]))
+        # A self-worked skill whose training items cannot be graded is a configuration error, not a silent omission.
+        with tempfile.TemporaryDirectory() as work, \
+                patch.object(run_module.Library, "train_family", lambda self, skill, catalogue: free_form(skill)), \
+                patch.object(run_module.Library, "exam_family", lambda self, skill, catalogue: []), \
+                patch.object(train_module, "train", fake_train), self.assertRaises(ValueError):
+            run_module.train_role({**base, "skills": ["business.finqa"], "self_worked": ("business.finqa",)}, work, diagnosis,
+                                  student=Student(), library=run_module.Library())
         with self.assertRaises(SystemExit):
             run_module._names("conversation.unknown", run_module.REPLAY, "--replay")
         self.assertEqual(run_module._names("", run_module.REPLAY, "--replay"), ())
         self.assertEqual(run_module._names("code.sql, code.python", run_module.SELF_WORKED, "--self-worked"), ("code.python", "code.sql"))
+
+    def test_mbpp_problems_are_blocked_by_task_identity_and_carry_their_tests(self):
+        """MBPP+ rewords MBPP problems: 66 of the 108 shared tasks escaped a blocklist keyed on wording (2026-11-12)."""
+        from auto_rl.professor import sources
+        from auto_rl.professor.records import question_hash
+        train_row = {"task_id": 603, "text": "Write a function to get a lucid number smaller than or equal to n.",
+                     "code": "def get_ludic(n):\n    return [1, 2, 3][:n]", "test_list": ["assert get_ludic(2) == [1, 2]"],
+                     "test_setup_code": "", "challenge_test_list": []}
+        exam_row = {"task_id": "Mbpp/603", "prompt": "Write a function to get all lucid numbers smaller than or equal to a given integer.",
+                    "code": "def get_ludic(n):\n    return []", "test_list": ["assert get_ludic(2) == [1, 2]"], "test_imports": [],
+                    "test": "assert get_ludic(2) == [1, 2]"}
+        train_item, exam_item = sources._mbpp(train_row, "mbpp_train:0", "train"), sources._mbpp_plus(exam_row, "mbpp_plus:0", "exam")
+        self.assertEqual(question_hash(train_item["question"]), question_hash(exam_item["question"]))
+        self.assertEqual(train_item["grader"]["type"], "python_tests")
+        with patch.dict(os.environ, {"AURORA_PROFESSOR_ALLOW_CODE_EXECUTION": "1"}):
+            self.assertTrue(grade(train_item, train_item["target"])["correct"])          # the reference passes its own tests
+            self.assertFalse(grade(train_item, "```python\ndef get_ludic(n):\n    return []\n```")["correct"])
 
     def test_diagnoses_of_separate_modules_merge_without_hiding_their_origin(self):
         from auto_rl.professor.run import merge_diagnoses
