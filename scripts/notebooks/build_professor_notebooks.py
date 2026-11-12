@@ -168,11 +168,15 @@ query = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.free,memory.total
 gpus = [line.split(", ") for line in query.stdout.strip().splitlines()] if query.returncode == 0 else []
 free = [float(g[1]) / 1024 for g in gpus]
 print("GPU mesurés :", [(g[0], f"{float(g[1]) / 1024:.1f} Gio libres / {float(g[2]) / 1024:.1f}") for g in gpus] or "aucun")
-need = diagnosis["student"]["four_bit_gb"] + 5.0
+entry = diagnosis["student"]
+# Les modèles à experts groupés ne se quantifient pas en 4 bits avec la bibliothèque actuelle : il faut leur taille en 16 bits.
+weights = entry["full_gb"] if entry.get("expert_tensors") else entry["four_bit_gb"]
+need = weights + 5.0
 usable = sum(max(0.0, f - 1.5) for f in free)
-if usable < need and diagnosis["student"]["params_b"] > 2.0:
-    raise SystemExit(f"Mémoire GPU insuffisante pour {STUDENT} : {usable:.1f} Gio utilisables, {need:.1f} nécessaires en 4 bits. "
-                     "Choisir un runtime plus grand, ou demander à l'examinateur un diagnostic pour un élève plus petit.")
+if usable < need and entry["params_b"] > 2.0:
+    raise SystemExit(f"Mémoire GPU insuffisante pour {STUDENT} : {usable:.1f} Gio utilisables, {need:.1f} nécessaires "
+                     + ("(modèle à experts, non quantifiable en 4 bits). " if entry.get("expert_tensors") else "en 4 bits. ")
+                     + "Choisir un runtime plus grand, ou demander à l'examinateur un diagnostic pour un élève plus petit.")
 print("Admission acceptée pour", STUDENT)
 '''
 

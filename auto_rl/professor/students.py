@@ -7,6 +7,12 @@ promoted to the Ollama tag of the SAME entry and to no other model.
 
 ``four_bit_gb`` is an estimate used only to refuse an obviously impossible run;
 admission still relies on memory measured on the machine.
+
+``expert_tensors`` marks the mixture-of-experts models whose expert weights are
+grouped tensors in current Transformers (not linear layers): bitsandbytes leaves
+them at 16 bits, so the model needs ``full_gb`` of GPU memory instead of
+``four_bit_gb``. Observed on 2026-11-12: ``qwen3-coder:30b`` was refused on two
+T4s ("modules are dispatched on the CPU") after its 61 GB download.
 """
 from __future__ import annotations
 
@@ -24,7 +30,8 @@ STUDENTS = {
     },
     "qwen3-coder:30b": {
         "hf": "Qwen/Qwen3-Coder-30B-A3B-Instruct", "revision": "b2cff646eb4bb1d68355c01b18ae02e7cf42d120",
-        "params_b": 30.53, "four_bit_gb": 19.0, "modules": ["code", "missions", "cowork"], "attention_only": True,
+        "params_b": 30.53, "four_bit_gb": 19.0, "expert_tensors": True, "full_gb": 61.0,
+        "modules": ["code", "missions", "cowork"], "attention_only": True,
         "called_by": ["application/src/config/models.ts:50-56 (Code local)", "application/bridge_server.py:811 (missions CLI)"],
     },
     "qwen3-coder-next:q4_K_M": {
@@ -45,7 +52,8 @@ STUDENTS = {
     },
     "qwen3-vl:30b": {
         "hf": "Qwen/Qwen3-VL-30B-A3B-Instruct", "revision": "9c4b90e1e4ba969fd3b5378b57d966d725f1b86c",
-        "params_b": 31.07, "four_bit_gb": 20.0, "vision": True, "attention_only": True, "modules": ["media"],
+        "params_b": 31.07, "four_bit_gb": 20.0, "expert_tensors": True, "full_gb": 62.0, "vision": True, "attention_only": True,
+        "modules": ["media"],
         "called_by": ["application/src/config/models.ts:12,30 (vision par défaut)"],
     },
     "deepseek-r1:32b": {
@@ -74,13 +82,18 @@ def resolve(name):
     raise KeyError(f"Unknown student {name!r}; known: {sorted(STUDENTS) + sorted(REHEARSAL)}")
 
 
+def memory_needed(entry, *, training):
+    """GiB of GPU memory a run needs: the 4-bit size, or the 16-bit size where 4 bits cannot be applied."""
+    weights = entry["full_gb"] if entry.get("expert_tensors") else entry["four_bit_gb"]
+    return weights + (5.0 if training else 2.0)
+
+
 def fits(entry, gpus, *, training):
     """Coarse feasibility from measured free VRAM (GiB per device); the run still measures for real."""
     if not gpus:
         return entry["params_b"] <= 2.0            # CPU rehearsal only
-    headroom = 5.0 if training else 2.0
     usable = sum(max(0.0, free - 1.5) for free in gpus)
-    return usable >= entry["four_bit_gb"] + headroom
+    return usable >= memory_needed(entry, training=training)
 
 
 def choose(module, gpus, *, training=True):

@@ -334,6 +334,15 @@ class Curriculum(unittest.TestCase):
         self.assertNotIn("business.fin_math", pool)
         self.assertEqual(notes["business.fin_math"]["verified"], 0)
 
+    def test_a_model_that_cannot_be_quantised_is_not_admitted_on_small_gpus(self):
+        from auto_rl.professor.students import choose, fits, resolve
+        coder, small = resolve("qwen3-coder:30b"), resolve("qwen2.5-coder:7b")
+        self.assertTrue(coder["expert_tensors"])
+        self.assertFalse(fits(coder, [14.7, 14.7], training=False))        # two T4s: refused, as observed on Kaggle
+        self.assertTrue(fits(coder, [79.0], training=True))
+        self.assertTrue(fits(small, [14.7], training=True))
+        self.assertEqual(choose("missions", [14.7, 14.7])["tag"], "qwen2.5-coder:7b")
+
     def test_modules_cover_the_application_families(self):
         self.assertEqual(set(MODULES), {"missions", "code", "conversation", "academy", "cyber", "business", "cowork", "media", "engineering"})
         catalogue = skills()
