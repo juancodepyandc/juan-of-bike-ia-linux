@@ -32,6 +32,7 @@ from .compare import compare
 from .evaluate import evaluate, read_results
 from .inference import OllamaStudent
 from .records import atomic_json, file_hash, read_json
+from .run import installable_problems
 from .students import resolve
 from .suites import Library, build_exam
 
@@ -64,19 +65,15 @@ def check_delivery(delivery):
         raise ValueError(f"Un seul verdict est attendu dans la livraison, {len(verdicts)} trouvés")
     verdict = json.loads(verdicts[0].read_text(encoding="utf-8"))
     student = resolve(verdict["student"]["tag"])
-    problems = []
-    if verdict.get("kind") != "aurora_professor_verdict" or verdict.get("verdict") != "promote":
-        problems.append(f"verdict « {verdict.get('verdict')} » : seul « promote » autorise une installation")
-    if not verdict.get("promotable") or not verdict.get("exam_complete"):
-        problems.append("verdict non installable (examen incomplet ou élève de répétition)")
-    if not student["production"]:
-        problems.append("cet élève n'est appelé par aucun module de l'application")
+    # The examiner's own rule, applied again here: the file may come from an older examiner or be edited.
+    problems = [] if verdict.get("kind") == "aurora_professor_verdict" else ["ce fichier n'est pas un verdict de l'examinateur"]
+    problems += installable_problems(verdict)
+    if not verdict.get("promotable"):
+        problems.append("l'examinateur n'a pas déclaré ce verdict installable")
     # ``init_adapter`` is the adapter a continued cycle started from: it travels for the comparison, never for delivery.
     adapters = [path for path in sorted(delivery.rglob("adapter_model.safetensors")) if path.parent.name != "init_adapter"]
     if len(adapters) != 1 or file_hash(adapters[0]) != verdict.get("adapter_sha256"):
         problems.append("l'adaptateur livré ne correspond pas à celui que l'examinateur a évalué")
-    if (verdict.get("versus_previous") or {}).get("verdict") == "reject":
-        problems.append("ce candidat est moins bon que l'adaptateur qu'il prolonge : livrer le cycle précédent")
     # A delivery may hold a failed export beside a later successful one: the receipt that lists files is the one to check.
     receipts = [(path, json.loads(path.read_text(encoding="utf-8"))) for path in sorted(delivery.rglob("export_receipt.json"))]
     export, receipt = next(((path, found) for path, found in receipts if found.get("files")), receipts[0] if receipts else (None, {"files": {}}))

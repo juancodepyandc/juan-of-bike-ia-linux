@@ -28,7 +28,7 @@ from pathlib import Path
 
 from . import SCHEMA
 from .records import atomic_json, digest, file_hash, read_json
-from .compare import compare
+from .compare import GATE, compare
 from .evaluate import evaluate, read_results
 from .inference import hardware, library_versions
 from .students import resolve
@@ -130,7 +130,8 @@ def diagnose(config, work, student=None, library=None):
     receipt = evaluate(student, items, work / "diagnosis", batch_size=config["eval_batch"], label="diagnostic",
                        progress=status, budget_seconds=config["budget_seconds"])
     catalogue = skills(config["modules"], config["skills"])
-    report = {**_context(config), "kind": "aurora_professor_diagnosis", "complete": receipt["complete"] and not notes["source_errors"],
+    report = {**_context(config), "kind": "aurora_professor_diagnosis",
+              "complete": receipt["complete"] and not notes["source_errors"] and not notes.get("skipped_no_execution"),
               "summary": receipt["summary"], "weak_points": profile(receipt["summary"], catalogue),
               "exam": {"suite_sha256": receipt["suite_sha256"], "results_sha256": receipt["results_sha256"], "notes": notes},
               "blocklist": exam_blocklist(modules=config["modules"], library=library, only=config["skills"])}
@@ -331,6 +332,44 @@ def merge_diagnoses(primary, extra):
                              "measured_on": (extra.get("basis") or {"model": "base"}), "exam": extra["exam"]}]}
 
 
+def installable_problems(verdict, config=None):
+    """Why a verdict cannot authorise an installation (empty when it can). The installer applies the same rule.
+
+    A continued candidate must also have sat the same items as the adapter it continues, all of them, without
+    being worse or regressing on any skill: a cut or missing comparison is not a comparison.
+    """
+    problems = []
+    if verdict.get("verdict") != "promote":
+        problems.append(f"verdict « {verdict.get('verdict')} » : seul « promote » autorise une installation")
+    if not verdict.get("exam_complete"):
+        problems.append("examen incomplet")
+    production = (config or {}).get("student", {}).get("production") if config else None
+    if production is None:
+        from .students import resolve
+        try:
+            production = resolve(verdict["student"]["tag"])["production"]
+        except KeyError:
+            production = False
+    if not production:
+        problems.append("cet élève n'est appelé par aucun module de l'application")
+    if (verdict.get("gate") or {}).get("min_items", 0) < GATE["min_items"]:
+        problems.append(f"examen de répétition : moins de {GATE['min_items']} items exigés")
+    continued = ((verdict.get("training") or {}).get("continued_from") or {}).get("adapter_sha256")
+    versus = verdict.get("versus_previous")
+    if continued:
+        if not versus:
+            problems.append("l'adaptateur que ce candidat prolonge n'a pas passé le même examen")
+        else:
+            if not versus.get("complete"):
+                problems.append("la comparaison avec l'adaptateur précédent est incomplète")
+            if versus.get("adapter_sha256") != continued:
+                problems.append("l'adaptateur comparé n'est pas celui que ce candidat prolonge")
+            if versus.get("verdict") == "reject" or versus.get("regressions"):
+                problems.append("ce candidat est moins bon que l'adaptateur qu'il prolonge, ou régresse sur une compétence : "
+                                "livrer le cycle précédent")
+    return problems
+
+
 def verify(config, work, adapter, student=None, library=None, base_done=False, previous=None):
     """Examiner: paired exam of base and candidate on this cycle's unseen gate.
 
@@ -364,13 +403,16 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
     wanted = {item["id"] for item in items}
     finished = {r["id"] for r in base_rows} == {r["id"] for r in candidate_rows} == wanted
     # A source that failed to load changes the gate's composition and the positions of later slices.
-    complete = finished and not notes["source_errors"]
+    # A skill left out because generated code may not run here is not examined at all: the exam is not complete.
+    skipped = notes.get("skipped_no_execution") or []
+    complete = finished and not notes["source_errors"] and not skipped
     result = compare([r for r in base_rows if r["id"] in common], [r for r in candidate_rows if r["id"] in common],
                      gate={"min_items": config["min_items"]})
     if not complete and result["verdict"] == "promote":
         result["verdict"] = "inconclusive"
         result["reasons"].insert(0, "the gate exam was not finished for both models" if not finished else
-                                 "exam sources failed to load: " + ", ".join(sorted(notes["source_errors"])))
+                                 "exam sources failed to load: " + ", ".join(sorted(notes["source_errors"])) if notes["source_errors"] else
+                                 "skills not examined without code execution: " + ", ".join(skipped))
     versus = None
     if previous:
         previous_rows = read_results(gate / "previous")
@@ -392,8 +434,9 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
                "training": {k: training.get(k) for k in ("steps", "stopped", "selected_step", "initial_dev_loss",
                                                          "selected_dev_loss", "examples", "data_sha256", "trainable_parameters",
                                                          "continued_from")},
-               # A rehearsal student is not called by any module: its verdict can never authorise an installation.
-               "promotable": result["verdict"] == "promote" and complete and bool(config["student"]["production"])}
+               "promotable": False}
+    verdict["not_installable"] = installable_problems(verdict, config)
+    verdict["promotable"] = not verdict["not_installable"]
     atomic_json(work / f"verdict_{config['cycle']}.json", verdict)
     # Where the candidate is still weak: the starting point of the next cycle, as aggregate scores only.
     atomic_json(work / f"diagnosis_next_{config['cycle']}.json",

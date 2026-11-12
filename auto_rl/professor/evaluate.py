@@ -17,22 +17,38 @@ from .graders import grade
 from .records import atomic_json, digest, file_hash, read_json, suite_digest
 
 
+#: Production validators the graders call: their content is part of what a grade means.
+_VALIDATORS = ("agi_core/mission_protocol.py", "agi_core/json_evidence.py", "agi_core/json_predicates.py")
+
+
 def run_identity(student, items):
-    """What a results file answers for: the model as described (adapter weights included), the exam, the graders.
+    """What a results file answers for: the model as described (adapter weights included), the exam with each
+    item's answer budget, the graders and the production validators they call.
 
     Resuming is only safe under the same identity: rows written by another adapter in the same folder were
     reused and certified as the new one's answers (review, 2026-11-12).
     """
-    return {"student": student.describe(), "suite_sha256": suite_digest(items), "graders_sha256": file_hash(graders.__file__)}
+    root = Path(graders.__file__).resolve().parents[2]
+    exam = digest(sorted(([item["id"], item.get("max_new_tokens"), item["messages"], item["grader"]] for item in items),
+                         key=lambda entry: entry[0]))
+    return {"student": student.describe(), "suite_sha256": suite_digest(items), "exam_sha256": exam,
+            "graders_sha256": file_hash(graders.__file__),
+            "validators_sha256": {name: file_hash(root / name) for name in _VALIDATORS if (root / name).is_file()}}
 
 
 def _read(path):
+    """Rows of a results file. A last line cut by a killed process is dropped (and regenerated on resume);
+    a damaged line anywhere else is an error."""
     rows = []
     if Path(path).is_file():
-        with Path(path).open(encoding="utf-8") as stream:
-            for line in stream:
-                if line.strip():
-                    rows.append(json.loads(line))
+        lines = [line for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
+        for number, line in enumerate(lines):
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                if number == len(lines) - 1:
+                    break
+                raise
     return rows
 
 
@@ -102,7 +118,7 @@ def evaluate(student, items, folder, *, batch_size=8, label="exam", progress=Non
                         row.update(status="graded", correct=result["correct"], score=result["score"],
                                    reason=result["reason"], output=output[:4000])
                     stream.write(json.dumps(row, ensure_ascii=False) + "\n")
-                stream.flush()
+                    stream.flush()                    # one complete line at a time
                 if progress:
                     progress({"label": label, "graded": len(_read(results_path)), "total": len(items),
                               "elapsed_seconds": round(time.monotonic() - started, 1)})

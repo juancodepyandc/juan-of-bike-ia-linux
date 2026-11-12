@@ -54,8 +54,12 @@ def verdict_lines(verdict):
     low, high = overall["macro_gain_ci"]
     label = {"promote": "PROMU", "reject": "REJETÉ", "inconclusive": "NON CONCLUANT"}[verdict["verdict"]]
     lines = [f"Verdict du cycle {verdict['cycle']} pour {verdict['student']['tag']} : {label}"
-             + ("" if verdict["verdict"] != "promote" else (" — installable" if verdict["promotable"] else " — non installable (élève de répétition ou examen incomplet)")),
+             + ("" if verdict["verdict"] != "promote" else (" — installable" if verdict["promotable"] else " — NON installable")),
              *[f"  motif : {reason}" for reason in verdict["reasons"]],
+             *[f"  non installable : {problem}" for problem in (verdict.get("not_installable") or [])
+               if verdict["verdict"] == "promote"],
+             *([f"  compétences non examinées faute d'exécution de code : {', '.join(skipped)}"]
+               if (skipped := ((verdict.get("exam") or {}).get("notes") or {}).get("skipped_no_execution")) else []),
              f"Examen apparié : {overall['items']} items notés pour les deux modèles ({'complet' if verdict['exam_complete'] else 'INCOMPLET'})",
              *_reuse_lines(verdict),
              f"Précision macro : {_percent(overall['macro_base']).strip()} → {_percent(overall['macro_candidate']).strip()} "
@@ -81,8 +85,9 @@ def verdict_lines(verdict):
     training = verdict.get("training") or {}
     if training.get("steps") is not None:
         origin = " (suite d'un adaptateur existant)" if training.get("continued_from") else ""
+        loss = lambda value: "n/a" if value is None else f"{value:.4f}"
         lines += ["", f"Entraînement{origin} : {training['steps']} pas, arrêt « {training['stopped']} », perte de développement "
-                      f"{training['initial_dev_loss']:.4f} → {training['selected_dev_loss']:.4f} "
+                      f"{loss(training.get('initial_dev_loss'))} → {loss(training.get('selected_dev_loss'))} "
                       "(une perte plus basse n'est pas une preuve de meilleures réponses)."]
     return lines
 

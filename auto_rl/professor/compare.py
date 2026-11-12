@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import random
 from collections import defaultdict
+from fractions import Fraction
 
 #: Promotion rule, fixed before any result is seen.
 GATE = {
@@ -116,19 +117,26 @@ def compare(base_rows, candidate_rows, *, gate=None, seed=20261111):
     empty_base = sum(p["base_empty"] for p in pairs) / len(pairs) if pairs else 0.0
     empty_candidate = sum(p["candidate_empty"] for p in pairs) / len(pairs) if pairs else 0.0
     gain = macro_candidate - macro_base
+    # The thresholds are decided in exact arithmetic: a gain of exactly 1/50 computed as 0.0199999 was
+    # "inconclusive", and an empty-rate rise of exactly 1/50 computed as 0.0200000001 was a rejection.
+    groups = [group for group in by_skill.values() if group]
+    exact_gain = (sum(Fraction(sum(p["candidate"] for p in g) - sum(p["base"] for p in g), len(g)) for g in groups) / len(groups)
+                  if groups else Fraction(0))
+    exact_empty_rise = (Fraction(sum(p["candidate_empty"] for p in pairs) - sum(p["base_empty"] for p in pairs), len(pairs))
+                        if pairs else Fraction(0))
     if len(pairs) < gate["min_items"]:
         verdict = "inconclusive"
         reasons.append(f"only {len(pairs)} graded items; {gate['min_items']} are required")
     elif regressions:
         verdict = "reject"
         reasons.append("regression on: " + ", ".join(regressions))
-    elif empty_candidate - empty_base > gate["max_empty_rate_increase"]:
+    elif exact_empty_rise > Fraction(str(gate["max_empty_rate_increase"])):
         verdict = "reject"
         reasons.append(f"empty answers rose from {empty_base:.3f} to {empty_candidate:.3f}")
     elif high < 0:
         verdict = "reject"
         reasons.append("the candidate is significantly worse overall")
-    elif gain >= gate["min_gain"] and low > 0:
+    elif exact_gain >= Fraction(str(gate["min_gain"])) and low > 0:
         verdict = "promote"
         reasons.append(f"macro gain {gain:+.4f}, {int(gate['confidence'] * 100)}% interval [{low:+.4f}, {high:+.4f}] excludes zero, no skill regressed")
     else:

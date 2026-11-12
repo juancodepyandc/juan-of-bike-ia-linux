@@ -649,3 +649,134 @@ class ReviewedGraders(unittest.TestCase):
             self.assertEqual(len(list(Path(folder).glob("results.stale-*.jsonl"))), 1)
             again = evaluate(Student("B", "2"), items, folder)             # same identity: resumed, nothing regenerated
             self.assertEqual(again["graded_rows"], 5)
+
+
+class ReviewedVerdicts(unittest.TestCase):
+    """Second review of 2026-11-12: verdict statistics and installability."""
+
+    def rows(self, marks, skill="s", prefix="i"):
+        return [{"id": f"{prefix}{n}", "module": "m", "skill": skill, "subskill": "x", "status": "graded",
+                 "correct": bool(m), "output": "x"} for n, m in enumerate(marks)]
+
+    def test_thresholds_are_decided_exactly(self):
+        # A gain of exactly 1/50 whose floating-point difference falls just below 0.02.
+        n = 500
+        k = next(k for k in range(n - 10) if (k + 10) / n - k / n < 0.02)
+        base, candidate = self.rows([1] * k + [0] * (n - k)), self.rows([1] * (k + 10) + [0] * (n - k - 10))
+        result = compare(base, candidate, gate={"min_items": 10})
+        self.assertLess(result["overall"]["macro_gain"], 0.02)                      # the float, as computed
+        self.assertGreater(result["overall"]["macro_gain_ci"][0], 0)
+        self.assertEqual(result["verdict"], "promote")                              # the exact gain meets the rule
+        # An empty-answer rise of exactly 0.02 (30 -> 32 of 100) is allowed; only a rise above it rejects.
+        base = [dict(r, output="" if i < 30 else "x", correct=i >= 30) for i, r in enumerate(self.rows([1] * 100))]
+        candidate = [dict(r, output="" if i < 32 else "x", correct=i >= 32) for i, r in enumerate(self.rows([1] * 100))]
+        self.assertNotEqual(compare(base, candidate, gate={"min_items": 10})["verdict"], "reject")
+        candidate = [dict(r, output="" if i < 33 else "x", correct=i >= 33) for i, r in enumerate(self.rows([1] * 100))]
+        self.assertEqual(compare(base, candidate, gate={"min_items": 10})["verdict"], "reject")
+
+    def verify_run(self, folder, *, previous_marks=None, continued=True, cut_previous=False, execution=True, profile="standard"):
+        from auto_rl.professor import run as run_module
+        from auto_rl.professor.students import resolve
+        config = {**run_module.PROFILES[profile], "profile": profile, "student": resolve("qwen2.5-coder:7b"), "modules": ["missions"],
+                  "skills": None, "cycle": 1, "budget_seconds": None, "allow_execution": execution, "export": "never",
+                  "gate_per_skill": 60, "four_bit": None}
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            items, _ = run_module._exam(config, "gate", run_module.Library())
+        def target(item_id):                         # gen:<family>:<role, may hold ":">:<subskill>:<index>
+            parts = item_id.split(":")
+            return generators.generate(parts[1], ":".join(parts[2:-2]), int(parts[-1]), parts[-2])["target"]
+        targets = {item["messages"][-1]["content"]: target(item["id"]) for item in items}
+        adapters = {}
+        for name in ("candidate", "previous"):
+            path = Path(folder) / name
+            path.mkdir()
+            (path / "adapter_model.safetensors").write_bytes(name.encode())
+            adapters[name] = path
+        atomic = __import__("auto_rl.professor.records", fromlist=["atomic_json"]).atomic_json
+        atomic(adapters["candidate"].parent / "train_receipt.json",
+               {"steps": 1, "continued_from": {"adapter_sha256": __import__("hashlib").sha256(b"previous").hexdigest()} if continued else None})
+
+        class Student:
+            adapter = None
+
+            def attach(self, adapter):
+                self.adapter = Path(adapter).name
+
+            def detach(self):
+                self.adapter = None
+
+            def describe(self):
+                return {"backend": "fake", "adapter": self.adapter}
+
+            def generate(self, conversations, tokens, batch_size=1):
+                answers = []
+                for messages in conversations:
+                    prompt = messages[-1]["content"]
+                    right = self.adapter == "candidate" or (self.adapter == "previous" and previous_marks and hash(prompt) % 3 == 0)
+                    answers.append(targets[prompt] if right else "{}")
+                return answers
+        student = Student()
+        original = run_module.evaluate
+
+        def evaluate(student_, items_, folder_, **options):
+            if cut_previous and Path(folder_).name == "previous":
+                items_ = items_[:len(items_) // 3]
+            return original(student_, items_, folder_, **{k: v for k, v in options.items() if k != "budget_seconds"})
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])), patch.object(run_module, "evaluate", evaluate):
+            return run_module.verify(config, Path(folder) / "work", adapters["candidate"], student=student, library=run_module.Library(),
+                                     previous=adapters["previous"] if previous_marks else None)
+
+    def test_a_continued_candidate_needs_a_complete_comparison_with_the_adapter_it_continues(self):
+        import tempfile
+        from auto_rl.professor import install
+        with tempfile.TemporaryDirectory() as folder:
+            complete = self.verify_run(folder, previous_marks=True)
+        self.assertEqual(complete["verdict"], "promote")
+        self.assertTrue(complete["promotable"], complete["not_installable"])
+        self.assertTrue(complete["versus_previous"]["complete"])
+        with tempfile.TemporaryDirectory() as folder:
+            missing = self.verify_run(folder, previous_marks=None)
+        self.assertFalse(missing["promotable"])
+        self.assertTrue(any("même examen" in p for p in missing["not_installable"]))
+        with tempfile.TemporaryDirectory() as folder:
+            cut = self.verify_run(folder, previous_marks=True, cut_previous=True)
+        self.assertFalse(cut["promotable"])
+        self.assertTrue(any("incomplète" in p for p in cut["not_installable"]))
+        self.assertTrue(any("incomplète" in p for p in install.installable_problems(cut)))
+        with tempfile.TemporaryDirectory() as folder:
+            fresh = self.verify_run(folder, previous_marks=None, continued=False)
+        self.assertTrue(fresh["promotable"], fresh["not_installable"])
+
+    def test_a_rehearsal_sized_exam_never_authorises_an_installation(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            small = self.verify_run(folder, previous_marks=None, continued=False, profile="smoke")
+        self.assertFalse(small["promotable"])
+        self.assertTrue(any("répétition" in p for p in small["not_installable"]))
+
+    def test_the_report_prints_a_missing_loss_and_the_reasons(self):
+        from auto_rl.professor.report import verdict_lines
+        verdict = {"cycle": 1, "student": {"tag": "qwen2.5:7b"}, "verdict": "promote", "promotable": False,
+                   "not_installable": ["examen incomplet"], "reasons": ["r"], "exam_complete": False,
+                   "exam": {"notes": {"skipped_no_execution": ["code.python"]}},
+                   "overall": {"items": 3, "macro_base": 0.1, "macro_candidate": 0.2, "macro_gain": 0.1, "macro_gain_ci": [0.0, 0.2],
+                               "fixed": 1, "broken": 0, "mcnemar_p": 1.0},
+                   "skills": {}, "regressions": [], "training": {"steps": 3, "stopped": "out_of_memory",
+                                                                  "initial_dev_loss": 1.0, "selected_dev_loss": None}}
+        text = "\n".join(verdict_lines(verdict))
+        self.assertIn("n/a", text)
+        self.assertIn("non installable : examen incomplet", text)
+        self.assertIn("code.python", text)
+
+    def test_results_survive_a_cut_last_line_and_identity_covers_the_answer_budget(self):
+        import tempfile
+        from auto_rl.professor.evaluate import read_results, run_identity
+
+        class Student:
+            def describe(self):
+                return {"backend": "fake"}
+        item_ = {"id": "q", "messages": [{"role": "user", "content": "?"}], "grader": {"type": "numeric", "answer": "1"}, "max_new_tokens": 8}
+        self.assertNotEqual(run_identity(Student(), [item_]), run_identity(Student(), [{**item_, "max_new_tokens": 9}]))
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / "results.jsonl").write_text('{"id": "a", "status": "graded"}\n{"id": "b", "stat')
+            self.assertEqual([r["id"] for r in read_results(folder)], ["a"])

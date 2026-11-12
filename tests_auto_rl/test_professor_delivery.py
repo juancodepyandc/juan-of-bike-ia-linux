@@ -279,7 +279,7 @@ class Installation(unittest.TestCase):
             "adapter.gguf": {"sha256": file_hash(export / "adapter.gguf"), "bytes": 12}}})
         atomic_json(folder / "aurora_professor" / "verdict_0.json", {
             "kind": "aurora_professor_verdict", "verdict": verdict, "promotable": promotable, "exam_complete": True,
-            "student": {"tag": student}, "adapter_sha256": sha, "cycle": 0, "modules": ["business"],
+            "student": {"tag": student}, "adapter_sha256": sha, "cycle": 0, "modules": ["business"], "gate": {"min_items": 200},
             "overall": {"macro_gain": 0.11, "macro_gain_ci": [0.05, 0.17]}})
         if tamper == "adapter":
             (adapter / "adapter_model.safetensors").write_bytes(b"another adapter")
@@ -296,10 +296,17 @@ class Installation(unittest.TestCase):
             self.assertEqual(install.check_delivery(delivery)["problems"], [])       # the starting adapter is not the delivery
             path = delivery / "aurora_professor" / "verdict_0.json"
             verdict = json.loads(path.read_text())
-            atomic_json(path, {**verdict, "versus_previous": {"verdict": "inconclusive"}})
+            continued = {**verdict, "training": {"continued_from": {"adapter_sha256": file_hash(before / "adapter_model.safetensors")}}}
+            versus = {"verdict": "inconclusive", "complete": True, "adapter_sha256": file_hash(before / "adapter_model.safetensors"),
+                      "regressions": []}
+            atomic_json(path, {**continued, "versus_previous": versus})
             self.assertEqual(install.check_delivery(delivery)["problems"], [])
-            atomic_json(path, {**verdict, "versus_previous": {"verdict": "reject"}})
+            atomic_json(path, {**continued, "versus_previous": {**versus, "verdict": "reject"}})
             self.assertTrue(any("cycle précédent" in problem for problem in install.check_delivery(delivery)["problems"]))
+            atomic_json(path, {**continued, "versus_previous": {**versus, "complete": False}})       # a cut comparison
+            self.assertTrue(any("incomplète" in problem for problem in install.check_delivery(delivery)["problems"]))
+            atomic_json(path, continued)                                                            # no comparison at all
+            self.assertTrue(any("même examen" in problem for problem in install.check_delivery(delivery)["problems"]))
 
     def test_a_delivery_without_gguf_is_converted_here_or_refused_with_the_reason(self):
         """The first promoted adapter came back without GGUF: the examiner's export had timed out (2026-11-12)."""

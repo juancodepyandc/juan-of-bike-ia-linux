@@ -80,6 +80,8 @@ if AURORA_OPTIONS["role"] == "diagnose":
 else:
     verdict = json.loads((work / f"verdict_{AURORA_OPTIONS['cycle']}.json").read_text())
     print("VERDICT :", verdict["verdict"], "| installable :", verdict["promotable"])
+    for problem in verdict.get("not_installable") or []:
+        print(" - non installable :", problem)
     for reason in verdict["reasons"]:
         print(" -", reason)
     for skill, table in verdict["skills"].items():
@@ -195,8 +197,9 @@ TRAINER_EXPORT = '''import json, os, shutil, sys
 from pathlib import Path
 work = Path("/content/aurora_professor")
 receipt = json.loads((work / "training" / "train_receipt.json").read_text())
+loss = lambda value: "n/a" if value is None else round(value, 4)
 print("Pas effectués :", receipt["steps"], "| arrêt :", receipt["stopped"], "| loss de développement :",
-      round(receipt["initial_dev_loss"], 4), "→", round(receipt["selected_dev_loss"], 4))
+      loss(receipt.get("initial_dev_loss")), "→", loss(receipt.get("selected_dev_loss")))
 print("Une loss plus basse ne prouve pas de meilleures réponses : seul l'examen apparié de Kaggle décide.")
 archive = shutil.make_archive(f"/content/aurora_adaptateur_cycle{CYCLE}", "zip", root_dir=work, base_dir="training")
 shutil.copy2(work / "curriculum.json", "/content/curriculum.json")
