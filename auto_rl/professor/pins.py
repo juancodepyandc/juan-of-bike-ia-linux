@@ -33,6 +33,7 @@ DATASETS = {
     "jpacifico/French-Alpaca-dataset-Instruct-110K": "e153ef14ea6837d3b07a802bc15113a14f8f71eb",  # licence: apache-2.0
     "le-leadboard/bbh-fr": "6c2bb50d64ff5733ad61590c9ca72799ad7a222d",  # licence: apache-2.0
     "manu/fquad2_test": "5384ce827bbc2156d46e6fcba83d75f8e6e1b4a6",  # licence: apache-2.0
+    "AgentPublic/piaf": "bda8c063bc7297180796cd835d1974c0bc71c521",  # licence: mit
     "meta-math/MetaMathQA": "aa4f34d3d2d3231299b5b03d9b3e5a20da45aa18",  # licence: mit
     "openai/MMMLU": "325a01dc3e173cac1578df94120499aaca2e2504",  # licence: mit
     "openai/gsm8k": "740312add88f781978c0658806c59bc2815b9866",  # licence: mit

@@ -645,6 +645,10 @@ def _finance_alpaca(row, key, role):
 
 # --- documents and tools ---------------------------------------------------
 
+# PIAF (Etalab, French Wikipedia, MIT): the training side of the FQuAD exam, same prompt and grader. Measured on
+# 12 November: none of its 3 835 rows shares a context, a question, an article or a long sentence with the exam.
+@source("piaf", dataset="AgentPublic/piaf", config="plain_text", split="train", role="train", skill="cowork.extract_qa_fr",
+        module="cowork", license="mit", lang="fr")
 @source("fquad_test", dataset="manu/fquad2_test", split="test_hasAns", role="exam", skill="cowork.extract_qa_fr", module="cowork", license="apache-2.0", lang="fr")
 @source("fquad_valid", dataset="manu/fquad2_test", split="valid_hasAns", role="exam", skill="cowork.extract_qa_fr", module="cowork", license="apache-2.0", lang="fr")
 def _fquad(row, key, role):
