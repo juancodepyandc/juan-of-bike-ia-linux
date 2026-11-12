@@ -371,10 +371,27 @@ def publish_delivery(owner, folder, *, student, cycle=0):
 
 
 def fetch_dataset(reference, output):
-    """Download a private dataset (a published delivery) into ``output``."""
+    """Download every file of a private dataset (a published delivery, an adapter to continue) into ``output``.
+
+    File by file: on 2026-11-12 the bundled archive of a freshly created dataset answered 404 for
+    minutes while its files were already listed and individually downloadable.
+    """
+    import zipfile
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
-    _api().dataset_download_files(reference, path=str(output), unzip=True, quiet=True)
+    api = _api()
+    names = [entry.name for entry in (getattr(api.dataset_list_files(reference), "files", None) or [])]
+    if not names:
+        raise RuntimeError(f"{reference} lists no file")
+    for name in names:
+        api.dataset_download_file(reference, name, path=str(output), force=True, quiet=True)
+        packed = output / (name + ".zip")
+        if packed.is_file():                       # large files may arrive compressed
+            with zipfile.ZipFile(packed) as archive:
+                archive.extractall(output)
+            packed.unlink()
+        if not (output / name).is_file():
+            raise RuntimeError(f"{name} was not downloaded from {reference}")
     return output
 
 

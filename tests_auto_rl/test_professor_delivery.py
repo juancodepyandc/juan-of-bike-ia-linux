@@ -174,6 +174,32 @@ class Launcher(unittest.TestCase):
         self.assertNotIn("adapter.log", names)
         self.assertIn("adapter.gguf", names)
 
+    def test_a_dataset_is_downloaded_file_by_file(self):
+        """The bundled archive of a new dataset answered 404 while its files were downloadable (2026-11-12)."""
+        import zipfile
+
+        class Entry:
+            def __init__(self, name):
+                self.name = name
+
+        class Api:
+            def dataset_list_files(self, reference):
+                return type("Listing", (), {"files": [Entry("verdict_0.json"), Entry("adapter.gguf")]})()
+
+            def dataset_download_files(self, *arguments, **options):
+                raise AssertionError("the bundled archive must not be used")
+
+            def dataset_download_file(self, reference, name, path, force, quiet):
+                if name == "adapter.gguf":                     # delivered compressed
+                    with zipfile.ZipFile(Path(path) / (name + ".zip"), "w") as archive:
+                        archive.writestr(name, b"gguf")
+                else:
+                    (Path(path) / name).write_text("{}")
+        with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
+            out = kaggle_runner.fetch_dataset("owner/x", Path(folder) / "d")
+            self.assertEqual(sorted(p.name for p in out.iterdir()), ["adapter.gguf", "verdict_0.json"])
+            self.assertEqual((out / "adapter.gguf").read_bytes(), b"gguf")
+
     def test_each_student_publishes_to_its_own_private_dataset(self):
         seen = []
 

@@ -143,7 +143,15 @@ if CONTINUE_FROM:
     api = KaggleApi()
     api.authenticate()
     continued = inputs / "continued"
-    api.dataset_download_files(CONTINUE_FROM, path=str(continued), unzip=True, quiet=True)
+    continued.mkdir(parents=True, exist_ok=True)
+    import zipfile
+    for entry in api.dataset_list_files(CONTINUE_FROM).files:      # fichier par fichier : l'archive groupée peut tarder
+        api.dataset_download_file(CONTINUE_FROM, entry.name, path=str(continued), force=True, quiet=True)
+        packed = continued / (entry.name + ".zip")
+        if packed.is_file():
+            with zipfile.ZipFile(packed) as archive:
+                archive.extractall(continued)
+            packed.unlink()
     found = sorted(continued.glob("diagnosis_next_*.json"))
     if len(found) != 1 or not (continued / "adapter_config.json").is_file():
         raise SystemExit("Le jeu de données ne contient pas un adaptateur et son diagnostic diagnosis_next_N.json")
