@@ -7,6 +7,7 @@ the Colab notebook, so the trainer needs no credential to obtain it.
 """
 import argparse
 import base64
+import gzip
 import json
 from pathlib import Path
 import sys
@@ -109,14 +110,14 @@ OVERRIDES = {}               # par exemple {"curriculum": 8000, "epochs": 2}
 CONTINUE_FROM = None         # jeu de données Kaggle privé "compte/nom" : reprendre l'adaptateur du cycle précédent
 '''
 
-TRAINER_DIAGNOSIS = '''import base64, json, os
+TRAINER_DIAGNOSIS = '''import base64, gzip, json, os
 from pathlib import Path
-DIAGNOSIS_B64 = __DIAGNOSIS__
+DIAGNOSIS_B64 = __DIAGNOSIS__          # diagnostic compressé (gzip) puis encodé en base64
 inputs = Path("/content/aurora_inputs")
 inputs.mkdir(parents=True, exist_ok=True)
 target = inputs / "diagnosis.json"
 if DIAGNOSIS_B64:
-    target.write_bytes(base64.b64decode(DIAGNOSIS_B64))
+    target.write_bytes(gzip.decompress(base64.b64decode(DIAGNOSIS_B64)))
 elif not target.is_file() and not CONTINUE_FROM:
     from google.colab import files
     print("Déposer le fichier diagnosis.json produit par l'examinateur Kaggle.")
@@ -232,7 +233,7 @@ def build(diagnosis=None, output=None, cycle=0, continue_from=None):
                     cell("code", kaggle_runner.script(), "professor-run"), cell("code", EXAMINER_RESULT, "result")]
     (out / "Aurora_Professeur_Examinateur_Kaggle.ipynb").write_text(
         json.dumps(notebook(kaggle_cells), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    embedded = repr(base64.b64encode(Path(diagnosis).read_bytes()).decode()) if diagnosis else "None"
+    embedded = repr(base64.b64encode(gzip.compress(Path(diagnosis).read_bytes(), mtime=0)).decode()) if diagnosis else "None"
     parameters = TRAINER_PARAMETERS.replace("CYCLE = 0", f"CYCLE = {int(cycle)}")
     if continue_from:
         parameters = parameters.replace("CONTINUE_FROM = None", f"CONTINUE_FROM = {str(continue_from)!r}")

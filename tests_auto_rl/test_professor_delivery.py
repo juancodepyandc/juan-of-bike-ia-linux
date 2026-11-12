@@ -132,7 +132,7 @@ class Launcher(unittest.TestCase):
             fresh = kaggle_runner.write_kernel(Path(folder) / "n", "owner", "train", student="qwen2.5:7b", cycle=1,
                                                diagnosis=Path(folder) / "base_diagnosis.json")
             self.assertEqual((fresh["kernel_sources"], fresh["dataset_sources"]), ([], []))
-            self.assertNotIn("diagnosis_b64", json.loads((Path(folder) / "n" / "launch.json").read_text())["options"])
+            self.assertNotIn("diagnosis_gz_b64", json.loads((Path(folder) / "n" / "launch.json").read_text())["options"])
             text = (Path(folder) / "n" / "kernel.py").read_text()
             options = json.loads(eval(text[text.index("OPTIONS = json.loads(") + len("OPTIONS = json.loads("):text.index(")\nSOURCE_SHA256")]))
             argv = self.run_bootstrap(Path(folder) / "nb", options, [])

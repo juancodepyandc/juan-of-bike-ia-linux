@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import gzip
 import hashlib
 import inspect
 import json
@@ -49,7 +50,7 @@ def kernel_name(role, student, cycle=0):
 REQUIREMENTS = {"transformers": "4.57.0", "peft": "0.13.0", "bitsandbytes": "0.43.0", "accelerate": "0.34.0", "datasets": "3.0.0"}
 
 _BOOTSTRAP = '''# Aurora professor - generated, private. Sources are embedded and hash-checked; no credential is stored here.
-import base64, hashlib, io, json, os, re, shutil, stat, subprocess, sys, time, zipfile
+import base64, gzip, hashlib, io, json, os, re, shutil, stat, subprocess, sys, time, zipfile
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path, PurePosixPath
 
@@ -103,10 +104,10 @@ inputs = Path({inputs!r})
 adapters = sorted(inputs.rglob("adapter_config.json")) if inputs.is_dir() else []
 candidates = [path for path in adapters if path.parent.name != "init_adapter"]
 earlier = [path for path in adapters if path.parent.name == "init_adapter"]
-embedded = OPTIONS.pop("diagnosis_b64", None)       # a diagnosis carried by the launcher (retraining from the base)
+embedded = OPTIONS.pop("diagnosis_gz_b64", None)    # a diagnosis carried by the launcher (retraining from the base)
 if OPTIONS["role"] == "train":
     if embedded:
-        raw = base64.b64decode(embedded)
+        raw = gzip.decompress(base64.b64decode(embedded))
         OPTIONS["diagnosis_sha256"] = hashlib.sha256(raw).hexdigest()
         carried = Path({hf_home!r}).parent / "aurora_launcher_inputs" / "diagnosis.json"
         carried.parent.mkdir(parents=True, exist_ok=True)
@@ -222,9 +223,11 @@ def write_kernel(folder, owner, role, *, student, profile="standard", modules=No
     if role == "train" and diagnosis:
         if continue_adapter:
             raise ValueError("A continued cycle reads the examiner's diagnosis of the candidate, not an embedded one")
-        options["diagnosis_b64"] = base64.b64encode(Path(diagnosis).read_bytes()).decode()
+        # Compressed: a diagnosis of many public sources carries tens of thousands of question hashes, and
+        # an uncompressed one made the kernel exceed what Kaggle accepts (1.2 MB refused on 2026-11-12).
+        options["diagnosis_gz_b64"] = base64.b64encode(gzip.compress(Path(diagnosis).read_bytes(), mtime=0)).decode()
     (folder / "kernel.py").write_text(script(options), encoding="utf-8")
-    options = {key: value for key, value in options.items() if key != "diagnosis_b64"}      # launch.json stays small
+    options = {key: value for key, value in options.items() if key != "diagnosis_gz_b64"}   # launch.json stays small
     sources = []
     if role == "train" and diagnosis:
         sources = []
