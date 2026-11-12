@@ -880,3 +880,55 @@ class ReviewedTraining(unittest.TestCase):
             kept = hashlib.sha256((Path(work) / "training" / "init_adapter" / "adapter_model.safetensors").read_bytes()).hexdigest()
         self.assertEqual(seen["continued"], original)
         self.assertEqual(kept, original)                          # the examiner compares with what was really continued
+
+
+class ReviewedFixes(unittest.TestCase):
+    """Third look, at the fixes themselves (2026-11-12)."""
+
+    def test_explicit_percentages_and_small_references(self):
+        ratio = {"type": "numeric", "answer": "-0.42424", "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": False}
+        self.assertTrue(grade({"grader": ratio}, "Final answer: -42.42%")["correct"])
+        self.assertTrue(grade({"grader": {**ratio, "answer": "0.3781"}}, "Final answer: 37.81 %")["correct"])
+        self.assertFalse(grade({"grader": {**ratio, "answer": "0.003"}}, "Final answer: 0%")["correct"])
+        self.assertFalse(grade({"grader": {**ratio, "answer": "0.003"}}, "Final answer: 0")["correct"])
+        self.assertTrue(grade({"grader": {**ratio, "answer": "0"}}, "Final answer: 0.004")["correct"])     # a zero reference keeps it
+        from auto_rl.professor import sources
+        self.assertIsNone(sources._PERCENT_WORDS.search("what is the price of ball corporation in 2010?"))
+        self.assertIsNone(sources._PERCENT_WORDS.search("how many shareholders were there?"))
+        self.assertIsNotNone(sources._PERCENT_WORDS.search("what was the growth rate?"))
+
+    def test_a_single_stated_answer_may_explain_the_other_options(self):
+        mcq = {"type": "mcq", "answer": "C", "options": 4}
+        for text in ("C\n\nExplication : les options A et B ignorent le frottement.",
+                     "La bonne réponse est C ; A, B et D sont des distracteurs.",
+                     "The correct answer is (C), because options A and B ignore friction."):
+            self.assertTrue(grade({"grader": mcq}, text)["correct"], text)
+        self.assertTrue(grade({"grader": {"type": "mcq", "answer": "B", "options": 10}}, "Answer: B, I think.")["correct"])
+        self.assertFalse(grade({"grader": {"type": "mcq", "answer": "A", "options": 4}}, "A, B")["correct"])
+
+    def test_correct_short_french_is_french(self):
+        rule = {"type": "constraints", "rules": [{"kind": "content", "unit": "lines", "min_words": 3}]}
+        for text in ("GARDE-LE SECRET.", "Réduisez vos dépenses non essentielles.", "N'oublie pas l'eau."):
+            self.assertTrue(grade({"grader": rule}, text)["correct"], text)
+        for text in ("X", "BUDGET GESTION", "x x x"):
+            self.assertFalse(grade({"grader": rule}, text)["correct"], text)
+
+    def test_only_exam_sources_count_as_exam_gaps(self):
+        from auto_rl.professor.suites import Library
+
+        def load(self, name):
+            if name == "aya_fr":                                  # a training source
+                self.errors[name] = "simulated"
+            return [], []
+        with patch.object(Library, "load", load):
+            library = Library()
+            library.load("aya_fr")
+            _, notes = build_exam("gate", 10, modules=["conversation"], library=library)
+        self.assertNotIn("aya_fr", notes["source_errors"])
+
+    def test_a_verdict_on_the_gate_that_steered_its_training_is_not_installable(self):
+        from auto_rl.professor.run import installable_problems
+        verdict = {"verdict": "promote", "exam_complete": True, "student": {"tag": "qwen2.5:7b"}, "gate": {"min_items": 200},
+                   "cycle": 1, "training": {"diagnosis_gate": 1}}
+        self.assertTrue(any("orienté" in p for p in installable_problems(verdict)))
+        self.assertEqual(installable_problems({**verdict, "cycle": 2}), [])

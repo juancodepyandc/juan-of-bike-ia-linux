@@ -559,7 +559,9 @@ def _table(table):
     return "\n".join(" | ".join(str(cell) for cell in line) for line in table)
 
 
-_PERCENT_WORDS = re.compile(r"percent|percentage|%|ratio|proportion|portion|share|rate|margin|yield|return", re.I)
+# Whole words only: "corporation" is not "ratio" and "shareholders" is not "share" (review, 2026-11-12). "shares" and
+# "returns" are left out: they name amounts as often as percentages. An answer's own "%" is read by the grader.
+_PERCENT_WORDS = re.compile(r"%|\b(?:percent(?:age)?s?|ratios?|proportions?|portions?|rates?|margins?|yields?)\b", re.I)
 
 
 def _finqa(row, key, role):

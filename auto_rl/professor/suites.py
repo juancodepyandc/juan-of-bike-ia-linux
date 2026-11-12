@@ -220,7 +220,9 @@ def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="au
         for item in chosen:
             exam_item = {k: v for k, v in item.items() if k != "target"}
             items.append(validate_item(exam_item, training=False))
-    notes["source_errors"] = dict(library.errors)
+    # Only the exam sources of this exam: a training source the same library failed to load is not an exam gap.
+    exam_names = {name for entry in catalogue.values() for name in entry["exam_sources"]}
+    notes["source_errors"] = {name: error for name, error in library.errors.items() if name in exam_names}
     return items, notes
 
 

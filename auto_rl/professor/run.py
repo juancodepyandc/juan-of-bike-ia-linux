@@ -203,6 +203,7 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     measured = [str((diagnosis.get("basis") or {}).get("exam", ""))]
     measured += [str((part.get("measured_on") or {}).get("exam", "")) for part in diagnosis.get("merged_from") or []]
     gates = [int(found.group(1)) for found in (re.fullmatch(r"gate:(\d+)", name) for name in measured) if found]
+    diagnosis_gate = max(gates) if gates else None
     if gates and config["cycle"] <= max(gates):
         # Its curriculum was steered by scores on that gate: examining it there again would not be an unseen exam.
         raise ValueError(f"This diagnosis was measured on gate {max(gates)}: the next cycle must use cycle "
@@ -268,7 +269,8 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
                                                                                "total": len(blocklist)}},
                                            "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
                                            "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
-                                           "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked,
+                                           "cycle": config["cycle"], "diagnosis_gate": diagnosis_gate,
+                                           "continued_from": given, "self_worked": self_worked,
                                            "realised": {"total": len(chosen), "replay_share": round(sum(item["skill"] in replay for item in chosen)
                                                                                                  / max(1, len(chosen)), 4)},
                                            "choices": {"replay": list(replay), "self_worked": list(self_worked_skills),
@@ -298,6 +300,11 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
         init_adapter = kept
     receipt = train(student, chosen, work / "training", config=knobs, progress=status, init_adapter=init_adapter,
                     budget_seconds=config["budget_seconds"] and config["budget_seconds"] * (0.55 if worked else 0.6))
+    # The examiner must not sit the gate whose scores steered this training: the receipt carries that gate.
+    receipt = {**receipt, "diagnosis_gate": diagnosis_gate, "cycle": config["cycle"]}
+    if (work / "training" / "train_receipt.json").is_file():
+        atomic_json(work / "training" / "train_receipt.json", {**read_json(work / "training" / "train_receipt.json", {}),
+                                                               "diagnosis_gate": diagnosis_gate, "cycle": config["cycle"]})
     return receipt
 
 
@@ -379,6 +386,9 @@ def installable_problems(verdict, config=None):
         problems.append("cet élève n'est appelé par aucun module de l'application")
     if (verdict.get("gate") or {}).get("min_items", 0) < GATE["min_items"]:
         problems.append(f"examen de répétition : moins de {GATE['min_items']} items exigés")
+    steered = (verdict.get("training") or {}).get("diagnosis_gate")
+    if steered is not None and verdict.get("cycle", -1) <= steered:
+        problems.append(f"examiné sur la tranche {verdict.get('cycle')} alors que l'entraînement a été orienté par la tranche {steered}")
     continued = ((verdict.get("training") or {}).get("continued_from") or {}).get("adapter_sha256")
     versus = verdict.get("versus_previous")
     if continued:
@@ -462,7 +472,7 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
                "versus_previous": versus,
                "training": {k: training.get(k) for k in ("steps", "stopped", "selected_step", "initial_dev_loss",
                                                          "selected_dev_loss", "examples", "data_sha256", "trainable_parameters",
-                                                         "continued_from")},
+                                                         "continued_from", "diagnosis_gate")},
                "promotable": False}
     verdict["not_installable"] = installable_problems(verdict, config)
     verdict["promotable"] = not verdict["not_installable"]

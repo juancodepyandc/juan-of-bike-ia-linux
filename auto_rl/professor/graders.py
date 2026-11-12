@@ -49,15 +49,17 @@ def grade_mcq(output, grader):
     if strict:
         choice = strict.group(1).upper()
         return _result(choice == grader["answer"], "single_letter", choice)
-    if re.search(rf"(?<![A-Za-z])\(?([{valid}])\)?\s*(?:,|/|\bou\b|\bor\b|\bet\b|\band\b)\s*\(?([{valid}])\)?(?![A-Za-z])", text):
-        return _result(False, "several_letters")            # "A, B", "A) ou B)": a hedge, not an answer
-    # Marker words in any case, the letter itself in upper case: "the answer is a guess: B" names B, not "a".
+    # Marker words in any case, the letter itself in upper case: "the answer is a guess: B" names no option.
     marked = re.findall(rf"(?i:r[ée]ponse|answer|option|choix|correcte?)\s*(?i:finale|final|correcte?|is|est|:|=|\s)*\s*:?\s*\(?([{valid}])\)?(?![A-Za-z0-9])",
                         text)
     if marked:
         if len(set(marked)) > 1:
             return _result(False, "conflicting_marked_letters", sorted(set(marked)))
         return _result(marked[0] == grader["answer"], "marked_letter", marked[0])
+    first = next((line for line in text.splitlines() if line.strip()), "")
+    joined = r"\s*(?:,|/|\bou\b|\bor\b|\bet\b|\band\b)\s*"
+    if re.search(rf"(?<![A-Za-z])\(?([{valid}])\)?{joined}\(?([{valid}])\)?(?=\s*(?:[.,;:)!?]|$|\bou\b|\bor\b|\bet\b|\band\b))", first):
+        return _result(False, "several_letters")            # "A, B", "A) ou B)" on the answer line: a hedge, not an answer
     lead = re.match(rf"\(?([{valid}])\)?\s*(?:[.):,]|$|\n|\s+[-\u2013\u2014]\s)", text)
     if lead:
         choice = lead.group(1)
@@ -123,7 +125,9 @@ def numbers_match(candidates, expected, rel_tol, abs_tol, percent_ok=False):
     """
     for value in candidates:
         for target in expected:
-            if math.isclose(value, target, rel_tol=rel_tol, abs_tol=abs_tol):
+            # An absolute tolerance larger than a non-zero reference would accept 0 for it (0.005 for a ratio of 0.003).
+            tolerance = min(abs_tol, abs(target) / 2) if target else abs_tol
+            if math.isclose(value, target, rel_tol=rel_tol, abs_tol=tolerance):
                 return True
             if percent_ok and target and any(math.isclose(value, option, rel_tol=rel_tol, abs_tol=0.0)
                                              for option in (target * 100, target / 100)):
@@ -139,9 +143,19 @@ def grade_numeric(output, grader):
     if not expected:
         raise ValueError(f"Unparseable reference number: {grader['answer']!r}")
     # Tolerances are explicit per item; the default is exact up to floating-point noise.
-    ok = numbers_match(parse_numbers(token), expected, grader.get("rel_tol", 1e-9),
-                       grader.get("abs_tol", 1e-6), grader.get("percent_ok", False))
+    rel_tol, abs_tol = grader.get("rel_tol", 1e-9), grader.get("abs_tol", 1e-6)
+    values = parse_numbers(token)
+    ok = numbers_match(values, expected, rel_tol, abs_tol, grader.get("percent_ok", False))
+    if not ok and _followed_by_percent(output, token):
+        # "-42.42%" states the ratio -0.4242 explicitly, whatever the question's wording (review, 2026-11-12).
+        ok = any(math.isclose(value / 100, target, rel_tol=rel_tol, abs_tol=0.0) for value in values for target in expected)
     return _result(ok, "number_compared", token.strip())
+
+
+def _followed_by_percent(output, token):
+    text = strip_reasoning(output)
+    position = text.rfind(token)
+    return position >= 0 and bool(re.match(r"\s*(?:%|pour\s*cent|percent)", text[position + len(token):], flags=re.I))
 
 
 # --- short text ------------------------------------------------------------
@@ -468,8 +482,16 @@ def _words(text):
 
 
 #: Function words of French: a unit without any of them is not a French sentence.
-_FRENCH = re.compile(r"(?i)(?<![0-9A-Za-zÀ-ÿ])(?:le|la|les|l['’]|un|une|des|du|de|d['’]|et|à|au|aux|en|pour|par|sur|avec|dans|ton|ta|tes|"
-                     r"ce|cet|cette|ces|qui|que|qu['’]|ne|n['’]|pas|plus|chaque|avant|après|sans|sous|entre|si|s['’]|se|tout|toute)(?![0-9A-Za-zÀ-ÿ])")
+_FRENCH = re.compile(r"(?i)(?:(?<![0-9A-Za-zÀ-ÿ])(?:[ldjmnst]|qu)['’](?=[A-Za-zÀ-ÿ])"
+                     r"|(?<![0-9A-Za-zÀ-ÿ])(?:le|la|les|un|une|des|du|de|et|à|au|aux|en|pour|par|sur|avec|dans|ton|ta|tes|"
+                     r"mon|ma|mes|son|sa|ses|vos|votre|nos|notre|leur|leurs|ce|cet|cette|ces|qui|que|ne|pas|plus|chaque|avant|"
+                     r"après|sans|sous|entre|si|se|tout|toute|tous|toutes|est|sont|il|ils|elle|elles|on|vous|nous|je|tu|non|ou|"
+                     r"mais|donc|car|très|bien|comme|dès)(?![0-9A-Za-zÀ-ÿ]))")
+
+
+def _parts(text):
+    """Words of a French unit with hyphenated and elided compounds split: "GARDE-LE SECRET" has three."""
+    return re.findall(r"[0-9A-Za-zÀ-ÖØ-öø-ÿ]+", text)
 
 
 def grade_constraints(output, grader):
@@ -521,7 +543,7 @@ def grade_constraints(output, grader):
                 units = [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", l) for l in text.splitlines() if re.match(r"\s*(?:[-*•]|\d+[.)])\s+\S", l)]
             else:
                 units = [l for l in text.splitlines() if l.strip()][rule.get("skip", 0):]
-            ok = bool(units) and all(len(_words(u)) >= rule.get("min_words", 4) and _FRENCH.search(u) for u in units)
+            ok = bool(units) and all(len(_parts(u)) >= rule.get("min_words", 4) and _FRENCH.search(u) for u in units)
         elif kind == "language_fr":
             ok = len(re.findall(r"\b(?:le|la|les|des|est|et|une|un|dans|pour|que|qui|avec|sur|pas|du)\b", text, flags=re.I)) >= rule.get("minimum", 3)
         else:
