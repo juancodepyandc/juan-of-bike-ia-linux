@@ -231,6 +231,9 @@ export type CloudBuild = {
   height: number
   width: number
   depth: number
+  /** sens du profil retenu (+1 avant à droite de la vue de profil) et marge du vote couleur */
+  profileSign?: 1 | -1
+  profileVote?: number
 }
 
 function mulberry32(seed: number) {
@@ -246,8 +249,16 @@ function mulberry32(seed: number) {
 
 /** Demi-largeur du masque par rangée (pixels) ; 0 si la rangée est vide. */
 export function rowHalfWidths(mask: Mask): Float32Array {
+  return rowExtents(mask).half
+}
+
+/** Étendue horizontale par rangée : demi-largeur et centre (pixels), -1 si vide. */
+export function rowExtents(mask: Mask): { half: Float32Array; center: Float32Array; left: Int32Array; right: Int32Array } {
   const { width: w, height: h, data } = mask
-  const out = new Float32Array(h)
+  const half = new Float32Array(h)
+  const center = new Float32Array(h).fill(-1)
+  const left = new Int32Array(h).fill(-1)
+  const right = new Int32Array(h).fill(-1)
   for (let y = 0; y < h; y++) {
     let a = -1
     let b = -1
@@ -256,9 +267,71 @@ export function rowHalfWidths(mask: Mask): Float32Array {
       if (a < 0) a = x
       b = x
     }
-    out[y] = a < 0 ? 0 : (b - a + 1) / 2
+    if (a < 0) continue
+    half[y] = (b - a + 1) / 2
+    center[y] = (a + b) / 2
+    left[y] = a
+    right[y] = b
   }
-  return out
+  return { half, center, left, right }
+}
+
+function colorDistance(img: RGBAImage, x: number, y: number, rgb: [number, number, number]): number {
+  const k = (y * img.width + x) * 4
+  return Math.hypot(img.data[k] - rgb[0], img.data[k + 1] - rgb[1], img.data[k + 2] - rgb[2])
+}
+
+function meanRowColor(view: ViewInput, y: number): [number, number, number] | null {
+  const { width: w } = view.mask
+  let r = 0, g = 0, b = 0, n = 0
+  for (let x = 0; x < w; x++) {
+    if (!view.mask.data[y * w + x]) continue
+    const k = (y * w + x) * 4
+    r += view.img.data[k]; g += view.img.data[k + 1]; b += view.img.data[k + 2]; n++
+  }
+  return n ? [r / n, g / n, b / n] : null
+}
+
+/**
+ * Sens du profil : +1 si l'avant du sujet est à droite de l'image de profil,
+ * -1 s'il est à gauche. Décidé par les couleurs quand la vue de dos existe
+ * (le bord du profil qui ressemble à la face est l'avant), sinon par la
+ * convention du rôle (vue « droite » : avant à droite ; « gauche » : à gauche).
+ * Retourne aussi la marge du vote (0 = convention seule).
+ */
+export function profileOrientation(
+  front: ViewInput,
+  side: ViewInput,
+  back: ViewInput | null,
+  sideRole: 'droite' | 'gauche' = 'droite',
+): { sign: 1 | -1; margin: number } {
+  const fallback: 1 | -1 = sideRole === 'gauche' ? -1 : 1
+  if (!back) return { sign: fallback, margin: 0 }
+  const fb = maskBounds(front.mask), sb = maskBounds(side.mask), bb = maskBounds(back.mask)
+  if (!fb || !sb || !bb) return { sign: fallback, margin: 0 }
+  const ext = rowExtents(side.mask)
+  let vote = 0
+  let rows = 0
+  const Hs = sb.y1 - sb.y0 + 1
+  for (let ys = sb.y0; ys <= sb.y1; ys += 2) {
+    const a = ext.left[ys], b = ext.right[ys]
+    if (a < 0 || b - a < 6) continue
+    const t = Hs > 1 ? (ys - sb.y0) / (Hs - 1) : 0
+    const fy = Math.round(fb.y0 + t * (fb.y1 - fb.y0))
+    const by = Math.round(bb.y0 + t * (bb.y1 - bb.y0))
+    const fc = meanRowColor(front, fy)
+    const bc = meanRowColor(back, by)
+    if (!fc || !bc) continue
+    const contrast = Math.hypot(fc[0] - bc[0], fc[1] - bc[1], fc[2] - bc[2])
+    if (contrast < 24) continue // la face et le dos se ressemblent sur cette rangée : pas d'indice
+    const inset = Math.max(1, Math.round((b - a) * 0.12))
+    const leftFrontish = colorDistance(side.img, a + inset, ys, bc) - colorDistance(side.img, a + inset, ys, fc)
+    const rightFrontish = colorDistance(side.img, b - inset, ys, bc) - colorDistance(side.img, b - inset, ys, fc)
+    vote += Math.sign(rightFrontish - leftFrontish)
+    rows++
+  }
+  if (rows < 4 || Math.abs(vote) < Math.max(2, rows * 0.15)) return { sign: fallback, margin: rows ? vote / rows : 0 }
+  return { sign: vote > 0 ? 1 : -1, margin: vote / rows }
 }
 
 /**
@@ -267,7 +340,7 @@ export function rowHalfWidths(mask: Mask): Float32Array {
  */
 export function buildSilhouetteCloud(
   front: ViewInput,
-  opts: { side?: ViewInput | null; back?: ViewInput | null; maxPoints?: number; seed?: number } = {},
+  opts: { side?: ViewInput | null; back?: ViewInput | null; sideRole?: 'droite' | 'gauche'; maxPoints?: number; seed?: number } = {},
 ): CloudBuild | null {
   const fb = maskBounds(front.mask)
   if (!fb) return null
@@ -299,31 +372,47 @@ export function buildSilhouetteCloud(
   // épaisseur réelle lue sur la vue de profil, rangée par rangée
   let method: CloudBuild['method'] = 'relief'
   const rowScale = new Float32Array(front.mask.height).fill(0.92)
+  // décalage avant/arrière de chaque rangée lu sur le profil (tête qui avance, cheveux en arrière…)
+  const rowOffset = new Float32Array(front.mask.height)
+  let profileSign: 1 | -1 | undefined
+  let profileVote: number | undefined
   const sb = opts.side ? maskBounds(opts.side.mask) : null
   if (opts.side && sb) {
-    const sideHalf = rowHalfWidths(opts.side.mask)
+    const ext = rowExtents(opts.side.mask)
     const Hs = sb.y1 - sb.y0 + 1
     const sideWorldPerPx = (Hf * s) / Hs
+    const sideCenter = (sb.x0 + sb.x1) / 2
+    const backView = opts.back && maskBounds(opts.back.mask) ? opts.back : null
+    const orient = profileOrientation(front, opts.side, backView, opts.sideRole ?? 'droite')
     const raw = new Float32Array(front.mask.height).fill(Number.NaN)
+    const rawOff = new Float32Array(front.mask.height).fill(Number.NaN)
     let used = 0
     for (let y = fb.y0; y <= fb.y1; y++) {
       const t = Hf > 1 ? (y - fb.y0) / (Hf - 1) : 0
       const ys = Math.round(sb.y0 + t * (Hs - 1))
-      const half = sideHalf[ys] * sideWorldPerPx
+      const half = ext.half[ys] * sideWorldPerPx
       let maxRelief = 0
       for (let x = fb.x0; x <= fb.x1; x++) maxRelief = Math.max(maxRelief, reliefPx[y * w + x] * s)
-      if (half > 0 && maxRelief > 0) { raw[y] = clamp(half / maxRelief, 0.3, 3.5); used++ }
+      if (half > 0 && maxRelief > 0) {
+        raw[y] = clamp(half / maxRelief, 0.3, 3.5)
+        rawOff[y] = orient.sign * (ext.center[ys] - sideCenter) * sideWorldPerPx
+        used++
+      }
     }
     if (used >= Hf * 0.5) {
       method = 'hull'
+      profileSign = orient.sign
+      profileVote = Math.round(orient.margin * 100) / 100
       for (let y = fb.y0; y <= fb.y1; y++) {
         let sum = 0
+        let off = 0
         let cnt = 0
         for (let k = -2; k <= 2; k++) {
           const v = raw[y + k]
-          if (y + k >= fb.y0 && y + k <= fb.y1 && Number.isFinite(v)) { sum += v; cnt++ }
+          if (y + k >= fb.y0 && y + k <= fb.y1 && Number.isFinite(v)) { sum += v; off += rawOff[y + k]; cnt++ }
         }
         rowScale[y] = cnt ? sum / cnt : 0.92
+        rowOffset[y] = cnt ? off / cnt : 0
       }
     }
   }
@@ -331,7 +420,7 @@ export function buildSilhouetteCloud(
   let fgCount = 0
   for (let y = fb.y0; y <= fb.y1; y++) for (let x = fb.x0; x <= fb.x1; x++) fgCount += fm[y * w + x]
   const maxPoints = Math.max(2000, opts.maxPoints ?? 30000)
-  const perPixel = 2.3
+  const perPixel = 3.4 // face + dos + intérieur + parois
   const stride = Math.max(1, Math.ceil(Math.sqrt((fgCount * perPixel) / maxPoints)))
   const rand = mulberry32(opts.seed ?? 1337)
 
@@ -357,10 +446,11 @@ export function buildSilhouetteCloud(
       const wx = (x + jx - cx) * s
       const wy = (fb.y1 - (y + jy)) * s - 1
       const depth = reliefPx[i] * s * rowScale[y]
+      const zc = rowOffset[y]
       maxDepth = Math.max(maxDepth, depth)
       const fc: [number, number, number] = [fd[i * 4] / 255, fd[i * 4 + 1] / 255, fd[i * 4 + 2] / 255]
       const edge = dt[i] < 1.25 ? 2 : 0
-      pos.push(wx, wy, depth); col.push(fc[0], fc[1], fc[2]); kind.push(edge)
+      pos.push(wx, wy, zc + depth); col.push(fc[0], fc[1], fc[2]); kind.push(edge)
       let bc: [number, number, number] = [fc[0] * 0.7, fc[1] * 0.7, fc[2] * 0.7]
       if (back && bbx) {
         const u = Wf > 1 ? (x - fb.x0) / (Wf - 1) : 0
@@ -371,10 +461,31 @@ export function buildSilhouetteCloud(
           bc = colorAt(back.img, bx, by)
         }
       }
-      pos.push(wx, wy, -depth); col.push(bc[0], bc[1], bc[2]); kind.push(edge)
+      pos.push(wx, wy, zc - depth); col.push(bc[0], bc[1], bc[2]); kind.push(edge)
       if (depth > 0.01 && rand() < 0.3) {
         const z = (rand() * 2 - 1) * depth * 0.85
-        pos.push(wx, wy, z); col.push(fc[0] * 0.6, fc[1] * 0.6, fc[2] * 0.6); kind.push(1)
+        pos.push(wx, wy, zc + z); col.push(fc[0] * 0.6, fc[1] * 0.6, fc[2] * 0.6); kind.push(1)
+      }
+      // parois : entre deux échantillons voisins dont la profondeur diffère
+      // fortement (flancs du corps, contour), la surface est complétée pour
+      // que l'hologramme reste plein vu de profil
+      const step = stride * s
+      for (const [nx, ny] of [[x + stride, y], [x, y + stride]] as const) {
+        const inside = nx <= fb.x1 && ny <= fb.y1 && fm[ny * w + nx]
+        const d2 = inside ? reliefPx[ny * w + nx] * s * rowScale[ny] : 0
+        const z2 = inside ? rowOffset[ny] : zc
+        const gap = Math.abs(depth - d2)
+        if (gap <= step * 1.5) continue
+        const k = Math.min(24, Math.floor(gap / step))
+        for (let j = 1; j < k; j++) {
+          const f = j / k
+          const ix = wx + (nx - x) * s * 0.5
+          const iy = wy - (ny - y) * s * 0.5
+          const dd = depth + (d2 - depth) * f
+          const cz = zc + (z2 - zc) * f
+          pos.push(ix, iy, cz + dd); col.push(fc[0], fc[1], fc[2]); kind.push(0)
+          pos.push(ix, iy, cz - dd); col.push(bc[0], bc[1], bc[2]); kind.push(0)
+        }
       }
     }
   }
@@ -389,6 +500,8 @@ export function buildSilhouetteCloud(
     height: Hf * s,
     width: Wf * s,
     depth: maxDepth * 2,
+    profileSign,
+    profileVote,
   }
 }
 

@@ -12,15 +12,21 @@ import type { HologramStatus } from './HologramStage.tsx'
 import {
   EtaCountdown,
   RunTimeline,
+  accuracyLabel,
+  calibrateEstimate,
   comparableRuns,
   estimateRemaining,
+  etaAccuracy,
   etaHeadline,
   etaInterval,
   formatClock,
   formatWait,
   recordCompletedRun,
+  recordEtaOutcome,
   type ComparableRuns,
+  type EtaAccuracy,
   type EtaEstimate,
+  type EtaSnapshot,
   type QueueInfo,
 } from '../../services/generationTiming.ts'
 
@@ -62,7 +68,12 @@ type Session = {
   autoMinimized: boolean
   endedAt: number | null
   success: boolean
+  /** prédictions notées pendant le run, comparées au temps réel à la fin */
+  snapshots: EtaSnapshot[]
+  lastSnapshotAt: number
 }
+
+const SNAPSHOT_EVERY_MS = 10_000
 
 let historyVersion = 0
 const historyCache = new Map<string, { v: number; at: number; value: ComparableRuns }>()
@@ -76,6 +87,14 @@ function historyFor(module: string, model: string | null | undefined): Comparabl
 }
 
 const countdowns = new Map<FxModule, EtaCountdown>()
+const accuracyCache = new Map<string, { v: number; at: number; value: EtaAccuracy | null }>()
+function accuracyFor(module: string): EtaAccuracy | null {
+  const hit = accuracyCache.get(module)
+  if (hit && hit.v === historyVersion && Date.now() - hit.at < 5000) return hit.value
+  const value = etaAccuracy(module)
+  accuracyCache.set(module, { v: historyVersion, at: Date.now(), value })
+  return value
+}
 
 type TimingView = {
   est: EtaEstimate
@@ -83,6 +102,8 @@ type TimingView = {
   interval: string | null
   elapsedMs: number
   queue: QueueInfo | null
+  /** précision mesurée sur les vraies générations précédentes du module */
+  accuracy: string | null
 }
 
 function computeTiming(module: FxModule, s: Session, job: GenerationJobState | null, now: number, done: boolean): TimingView {
@@ -93,7 +114,8 @@ function computeTiming(module: FxModule, s: Session, job: GenerationJobState | n
     : null
   const runStartedAt = queued ? null : job?.startedAt ?? s.tl.startedAt
   const { runs, basis } = historyFor(module, job?.model)
-  const est = estimateRemaining({
+  const acc = accuracyFor(module)
+  const rawEst = estimateRemaining({
     now,
     runStartedAt,
     phaseIdx: s.tl.phaseIdx,
@@ -109,6 +131,16 @@ function computeTiming(module: FxModule, s: Session, job: GenerationJobState | n
     queue,
     done,
   })
+  const est = calibrateEstimate(rawEst, acc)
+  // prédiction notée toutes les 10 s : comparée au temps qui restait vraiment à la fin du run
+  if (
+    !done && runStartedAt != null && est.remainingMs != null &&
+    ['history', 'blended', 'live', 'partial'].includes(est.state) && now - s.lastSnapshotAt >= SNAPSHOT_EVERY_MS
+  ) {
+    s.lastSnapshotAt = now
+    s.snapshots.push({ elapsedMs: now - runStartedAt, remainingMs: est.remainingMs, lowMs: est.lowMs, highMs: est.highMs })
+    if (s.snapshots.length > 60) s.snapshots.splice(0, s.snapshots.length - 60)
+  }
   let cd = countdowns.get(module)
   if (!cd) {
     cd = new EtaCountdown()
@@ -121,6 +153,7 @@ function computeTiming(module: FxModule, s: Session, job: GenerationJobState | n
     interval: etaInterval(est),
     elapsedMs: runStartedAt != null ? Math.max(0, now - runStartedAt) : 0,
     queue,
+    accuracy: accuracyLabel(acc),
   }
 }
 
@@ -620,7 +653,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
             </span>
             {!done && (
               <span style={{ fontSize: 9.5, color: '#8B93A7', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: narrow ? 280 : 520 }}>
-                {timing.interval ? `intervalle ${timing.interval} · ` : ''}{timing.est.basis}
+                {timing.interval ? `intervalle ${timing.interval} · ` : ''}{timing.est.basis}{timing.accuracy ? ` · ${timing.accuracy}` : ''}
               </span>
             )}
           </div>
@@ -983,7 +1016,7 @@ export default function GenerationFxHost() {
     if (patch.active) {
       if (!s || s.endedAt != null) {
         if (s) retire(module)
-        s = { module, tl: new RunTimeline(now, phases.length), explicitPhase: false, revealContent: false, autoMinimized: false, endedAt: null, success: false }
+        s = { module, tl: new RunTimeline(now, phases.length), explicitPhase: false, revealContent: false, autoMinimized: false, endedAt: null, success: false, snapshots: [], lastSnapshotAt: 0 }
         sessions.current.set(module, s)
       }
       if (patch.phase !== undefined || patch.phaseIndex !== undefined || patch.progress !== undefined) {
@@ -1012,7 +1045,9 @@ export default function GenerationFxHost() {
           // un module sans job géré enregistre ici sa durée ; les jobs gérés sont
           // enregistrés à leur fin réelle (avec les étapes observées)
           const managed = jobsRef.current.some((j) => (j.module as string) === module && j.createdAt >= ended.tl.startedAt - 20000)
-          if (!managed && recordCompletedRun(module, null, { id: `fx:${module}:${ended.tl.startedAt}`, totalMs: now - ended.tl.startedAt, phaseMs: ended.tl.phaseDurations(now), at: now })) {
+          const fxId = `fx:${module}:${ended.tl.startedAt}`
+          if (!managed && recordCompletedRun(module, null, { id: fxId, totalMs: now - ended.tl.startedAt, phaseMs: ended.tl.phaseDurations(now), at: now })) {
+            recordEtaOutcome(module, fxId, ended.snapshots, now - ended.tl.startedAt)
             historyVersion++
           }
         }
@@ -1106,7 +1141,11 @@ export default function GenerationFxHost() {
         if (excess > 0) d[0] = Math.max(0, d[0] - excess) // attente en file avant admission
         phaseMs = d
       }
-      if (recordCompletedRun(job.module, job.model, { id: job.id, totalMs: total, phaseMs, at: job.finishedAt })) historyVersion++
+      if (recordCompletedRun(job.module, job.model, { id: job.id, totalMs: total, phaseMs, at: job.finishedAt })) {
+        // écart réel des prédictions affichées pendant ce run (calibration sur vraie génération)
+        if (s) recordEtaOutcome(job.module, job.id, s.snapshots, total)
+        historyVersion++
+      }
     }
   }, [generationJobs])
 
@@ -1172,7 +1211,7 @@ export default function GenerationFxHost() {
     if (live) return live
     const recent = [...recentSessions.current].reverse().find((r) => r.module === m)
     if (recent) return recent
-    const s: Session = { module: m, tl: new RunTimeline(e.startedAt, FX_SCENES[m].phases.length), explicitPhase: false, revealContent: false, autoMinimized: false, endedAt: nowR, success: true }
+    const s: Session = { module: m, tl: new RunTimeline(e.startedAt, FX_SCENES[m].phases.length), explicitPhase: false, revealContent: false, autoMinimized: false, endedAt: nowR, success: true, snapshots: [], lastSnapshotAt: 0 }
     s.tl.notePhase(e.phaseIdx, e.startedAt)
     sessions.current.set(m, s)
     return s

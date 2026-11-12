@@ -98,6 +98,32 @@ try {
     assert.equal(await page.locator('button[title^="Phantom"]').count(), 0)
   })
 
+  // ── Données réelles du dépôt : modèle VRM riggé et référence de personnage ──
+  await scenario('hologram fidelity measured on the real avatar model (aurora-avatar.vrm)', '?mode=fidelity', async (page) => {
+    await page.locator('#fidelity, #fidelity-error').first().waitFor({ timeout: 120000 })
+    const res = await page.evaluate(() => window.__fidelity)
+    assert(res, await page.locator('#fidelity-error').textContent().catch(() => 'no result'))
+    const { hull, relief } = res
+    console.log(`   real model: ${res.triangles} triangles, ${res.truthSamples} surface samples`)
+    for (const r of [relief, hull]) {
+      console.log(`   ${r.label}: Chamfer nuage→modèle p50 ${r.chamferCloudToModel.p50} % / p90 ${r.chamferCloudToModel.p90} %, modèle→nuage p50 ${r.chamferModelToCloud.p50} % / p90 ${r.chamferModelToCloud.p90} %, IoU face ${r.iouFront} (plafond ${r.iouFrontOfTruthSamples}), IoU profil ${r.iouSide} (plafond ${r.iouSideOfTruthSamples})`)
+    }
+    assert.equal(hull.method, 'hull')
+    assert.equal(hull.profileSign, 1, 'profile orientation recovered from colours')
+    assert(hull.chamferCloudToModel.p50 <= 1.2 && hull.chamferCloudToModel.p90 <= 2.5, 'hologram points lie on the real surface')
+    assert(hull.chamferModelToCloud.p90 <= 3, 'the real surface is covered by the hologram')
+    assert(hull.iouFront >= 0.88 && hull.iouSide >= 0.85, 'silhouettes match the real model')
+    assert(hull.iouSide > relief.iouSide, 'the profile view improves the depth')
+  })
+
+  await scenario('a real character reference (natsu.png) becomes a relief hologram', '?mode=real-ref', async (page) => {
+    await page.getByText('Relief reconstruit depuis la silhouette de la vue de face').waitFor({ timeout: 30000 })
+  })
+
+  await scenario('the real rigged model materialises as a hologram', '?mode=real-mesh', async (page) => {
+    await page.getByText(/Maillage réel produit par le pipeline \(36[\s\u202f]470 triangles\)/).waitFor({ timeout: 60000 })
+  })
+
   await scenario('mobile: hologram and HUD fit the screen', '?mode=3d-refs&module=3d', async (page) => {
     await page.getByText(/Reconstruit depuis 3 vue\(s\) réelle\(s\)/).waitFor({ timeout: 20000 })
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)

@@ -545,7 +545,13 @@ class HoloEngine {
       this.status('emitter', 0, 0, 'Vue de référence reçue mais sujet non séparable du fond')
       return
     }
-    const cloud = buildSilhouetteCloud(f, { side: s, back: b, maxPoints: low ? 14000 : 32000, seed: key.length * 7919 })
+    const cloud = buildSilhouetteCloud(f, {
+      side: s,
+      back: b,
+      sideRole: side?.role === 'gauche' ? 'gauche' : 'droite',
+      maxPoints: low ? 14000 : 32000,
+      seed: key.length * 7919,
+    })
     if (!cloud || token !== this.refsToken) return
     this.setSubjectCloud(cloud.positions, cloud.colors, cloud.kinds, 'refs')
     const views = [f, s, b].filter(Boolean).length

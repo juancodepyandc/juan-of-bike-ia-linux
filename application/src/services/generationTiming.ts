@@ -33,7 +33,17 @@ export type TimingRun = {
   at: number
 }
 
-type TimingStore = { v: 1; runs: Record<string, TimingRun[]> }
+/** Erreurs mesurées de l'estimation sur une vraie génération terminée. */
+type CalibrationEntry = {
+  id: string
+  at: number
+  /** erreur relative de chaque prédiction : |prédit - réel| / max(réel, 10 s) */
+  errs: number[]
+  /** [prédictions dont le réel tombait dans l'intervalle, prédictions avec intervalle] */
+  cov: [number, number]
+}
+
+type TimingStore = { v: 1; runs: Record<string, TimingRun[]>; calib?: Record<string, CalibrationEntry[]> }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
 
@@ -632,4 +642,98 @@ export class RunTimeline {
   progressAt(now: number): number {
     return clamp(this.display.valueAt(now), 0, 1)
   }
+}
+
+// ── Calibration sur les vraies générations ─────────────────────────────────
+// Pendant chaque run, l'écran note périodiquement sa prédiction. À la fin
+// réelle (succès), chaque prédiction est comparée au temps qui restait
+// vraiment : l'écart mesuré est conservé par module, affiché, et sert à
+// élargir l'intervalle s'il s'avère trop optimiste. Rien n'est simulé : sans
+// vraie génération terminée, aucune précision n'est annoncée.
+
+export type EtaSnapshot = { elapsedMs: number; remainingMs: number; lowMs: number | null; highMs: number | null }
+
+export type EtaAccuracy = {
+  runs: number
+  predictions: number
+  /** écart relatif médian (0,2 = 20 %) */
+  medianError: number
+  /** part des prédictions dont le réel tombait dans l'intervalle affiché */
+  coverage: number | null
+}
+
+const MAX_CALIB_PER_MODULE = 30
+const MIN_CALIB_RUNS = 3
+
+/** Enregistre l'écart réel des prédictions d'un run terminé avec succès. */
+export function recordEtaOutcome(
+  module: string,
+  runId: string,
+  snapshots: EtaSnapshot[],
+  totalMs: number,
+  storage: StorageLike | null = defaultStorage(),
+): boolean {
+  if (!validDuration(totalMs) || !runId) return false
+  const usable = snapshots.filter((sn) => Number.isFinite(sn.elapsedMs) && Number.isFinite(sn.remainingMs) && totalMs - sn.elapsedMs >= 1500)
+  if (!usable.length) return false
+  const store = readStore(storage)
+  const calib = store.calib ?? {}
+  const list = calib[module] ?? []
+  if (list.some((e) => e.id === runId)) return false
+  const step = Math.max(1, Math.ceil(usable.length / 12))
+  const picked = usable.filter((_, i) => i % step === 0)
+  let covered = 0
+  let withInterval = 0
+  const errs = picked.map((sn) => {
+    const actual = totalMs - sn.elapsedMs
+    if (sn.lowMs != null && sn.highMs != null) {
+      withInterval++
+      if (actual >= sn.lowMs && actual <= sn.highMs) covered++
+    }
+    return Math.round((Math.abs(sn.remainingMs - actual) / Math.max(actual, 10_000)) * 1000) / 1000
+  })
+  list.push({ id: runId, at: Date.now(), errs, cov: [covered, withInterval] })
+  calib[module] = list.slice(-MAX_CALIB_PER_MODULE)
+  store.calib = calib
+  writeStore(storage, store)
+  return true
+}
+
+/** Précision mesurée de l'estimation pour un module (au moins 3 vraies générations). */
+export function etaAccuracy(module: string, storage: StorageLike | null = defaultStorage()): EtaAccuracy | null {
+  const list = (readStore(storage).calib?.[module] ?? []).slice(-20)
+  if (list.length < MIN_CALIB_RUNS) return null
+  const errs = list.flatMap((e) => e.errs).filter((v) => Number.isFinite(v))
+  if (!errs.length) return null
+  const covered = list.reduce((a, e) => a + e.cov[0], 0)
+  const withInterval = list.reduce((a, e) => a + e.cov[1], 0)
+  return {
+    runs: list.length,
+    predictions: errs.length,
+    medianError: quantile(errs.slice().sort((a, b) => a - b), 0.5),
+    coverage: withInterval ? covered / withInterval : null,
+  }
+}
+
+/**
+ * Élargit l'intervalle quand les vraies générations ont montré qu'il était
+ * trop étroit (moins d'une prédiction sur deux dedans, sur au moins 5 runs).
+ */
+export function calibrateEstimate(est: EtaEstimate, acc: EtaAccuracy | null): EtaEstimate {
+  if (!acc || acc.runs < 5 || acc.coverage == null || acc.coverage >= 0.5) return est
+  if (est.remainingMs == null || !['history', 'blended', 'live'].includes(est.state)) return est
+  const e = Math.max(0.05, Math.min(1.5, acc.medianError))
+  const rem = est.remainingMs
+  return {
+    ...est,
+    lowMs: Math.min(est.lowMs ?? rem, Math.max(0, rem * (1 - e))),
+    highMs: Math.max(est.highMs ?? rem, rem * (1 + e)),
+    basis: `${est.basis} · intervalle élargi d’après l’écart mesuré (${Math.round(e * 100)} %)`,
+  }
+}
+
+export function accuracyLabel(acc: EtaAccuracy | null): string | null {
+  if (!acc) return null
+  const cov = acc.coverage != null ? `, ${Math.round(acc.coverage * 100)} % dans l’intervalle` : ''
+  return `précision mesurée sur ${acc.runs} vraies générations : écart médian ${Math.round(acc.medianError * 100)} %${cov}`
 }

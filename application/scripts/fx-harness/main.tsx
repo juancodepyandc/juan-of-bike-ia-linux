@@ -159,4 +159,216 @@ function Scenario() {
   return <GenerationFxHost />
 }
 
-createRoot(document.getElementById('root')!).render(mode === 'gallery' ? <Gallery /> : <Scenario />)
+// ── Fidélité mesurée sur un vrai modèle : vues rendues → reconstruction de
+// production → comparaison à la surface réelle du maillage. ─────────────────
+type Pt = [number, number, number]
+
+function nearestDistances(from: Pt[], to: Pt[], cell = 0.03): number[] {
+  const grid = new Map<string, Pt[]>()
+  const key = (x: number, y: number, z: number) => `${x},${y},${z}`
+  for (const p of to) {
+    const k = key(Math.floor(p[0] / cell), Math.floor(p[1] / cell), Math.floor(p[2] / cell))
+    const list = grid.get(k)
+    if (list) list.push(p)
+    else grid.set(k, [p])
+  }
+  return from.map((p) => {
+    const cx = Math.floor(p[0] / cell), cy = Math.floor(p[1] / cell), cz = Math.floor(p[2] / cell)
+    let best = Infinity
+    for (let r = 1; r <= 12 && best === Infinity; r++) {
+      for (let dx = -r; dx <= r; dx++) for (let dy = -r; dy <= r; dy++) for (let dz = -r; dz <= r; dz++) {
+        const list = grid.get(key(cx + dx, cy + dy, cz + dz))
+        if (!list) continue
+        for (const q of list) {
+          const d = Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+          if (d < best) best = d
+        }
+      }
+    }
+    return best
+  })
+}
+
+const quantile = (values: number[], q: number) => {
+  const s = values.filter(Number.isFinite).sort((a, b) => a - b)
+  return s.length ? s[Math.min(s.length - 1, Math.floor(q * (s.length - 1)))] : NaN
+}
+
+async function fidelity() {
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js')
+  const { MeshSurfaceSampler } = await import('three/examples/jsm/math/MeshSurfaceSampler.js')
+  const { buildSilhouetteCloud, foregroundMask } = await import('../../src/components/generationFx/hologramSources.ts')
+  const url = q.get('model') || '/aurora-avatar.vrm'
+  const gltf = await new GLTFLoader().loadAsync(url)
+  const obj = gltf.scene
+  const box = new THREE.Box3().setFromObject(obj)
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  const s = 2 / size.y
+  obj.scale.setScalar(s)
+  obj.position.set(-center.x * s, -box.min.y * s - 1, -center.z * s)
+  const scene = new THREE.Scene()
+  scene.add(obj)
+  scene.add(new THREE.AmbientLight(0xffffff, 1.4))
+  const key = new THREE.DirectionalLight(0xffffff, 1.2)
+  key.position.set(0, 1, 3)
+  scene.add(key)
+  obj.updateMatrixWorld(true)
+  const PX = 168
+  const half = 1.15
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: false, preserveDrawingBuffer: true })
+  renderer.setPixelRatio(1)
+  renderer.setSize(PX, PX)
+  renderer.setClearColor(0x000000, 0)
+  const cam = new THREE.OrthographicCamera(-half, half, half, -half, 0.01, 20)
+  const views: Record<string, { pos: [number, number, number] }> = {
+    face: { pos: [0, 0, 5] },
+    droite: { pos: [-5, 0, 0] },
+    dos: { pos: [0, 0, -5] },
+  }
+  const shots: Record<string, { img: { width: number; height: number; data: Uint8ClampedArray }; png: string }> = {}
+  const canvas = document.createElement('canvas')
+  canvas.width = PX
+  canvas.height = PX
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
+  for (const [name, v] of Object.entries(views)) {
+    cam.position.set(...v.pos)
+    cam.lookAt(0, 0, 0)
+    renderer.render(scene, cam)
+    ctx.clearRect(0, 0, PX, PX)
+    ctx.drawImage(renderer.domElement, 0, 0)
+    const id = ctx.getImageData(0, 0, PX, PX)
+    shots[name] = { img: { width: PX, height: PX, data: id.data }, png: canvas.toDataURL('image/png') }
+  }
+  const view = (n: string) => {
+    const res = foregroundMask(shots[n].img)
+    if (!res) throw new Error(`no subject in ${n} view`)
+    return { img: shots[n].img, mask: res.mask }
+  }
+  const front = view('face'), side = view('droite'), back = view('dos')
+  // surface réelle (pose de repos), même repère que les rendus
+  const truth: Pt[] = []
+  const tmp = new THREE.Vector3()
+  const meshes: THREE.Mesh[] = []
+  obj.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh) })
+  const totalTris = meshes.reduce((a, m) => a + ((m.geometry.index?.count ?? m.geometry.attributes.position.count) / 3), 0)
+  for (const m of meshes) {
+    const n = Math.max(50, Math.round((24000 * ((m.geometry.index?.count ?? m.geometry.attributes.position.count) / 3)) / totalTris))
+    const sampler = new MeshSurfaceSampler(m).build()
+    for (let i = 0; i < n; i++) {
+      sampler.sample(tmp)
+      tmp.applyMatrix4(m.matrixWorld)
+      truth.push([tmp.x, tmp.y, tmp.z])
+    }
+  }
+  const px = (2 * half) / PX
+  const evaluate = (label: string, cloud: ReturnType<typeof buildSilhouetteCloud>) => {
+    if (!cloud) return { label, error: 'no cloud' }
+    // la reconstruction est centrée sur la boîte du masque de face : même centrage pour la vérité
+    let minX = Infinity, maxX = -Infinity
+    for (const p of truth) { minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]) }
+    const shiftX = (minX + maxX) / 2
+    const surf: Pt[] = []
+    for (let i = 0; i < cloud.count; i++) {
+      if (cloud.kinds[i] === 1) continue
+      surf.push([cloud.positions[i * 3] + shiftX, cloud.positions[i * 3 + 1], cloud.positions[i * 3 + 2]])
+    }
+    const toTruth = nearestDistances(surf, truth)
+    const toCloud = nearestDistances(truth, surf)
+    // silhouettes : projection orthographique du nuage contre les masques rendus
+    const iou = (axis: 'front' | 'side', mask: { width: number; data: Uint8Array }, mirror: boolean, pts: Pt[] = surf) => {
+      const W = mask.width
+      const raw = new Uint8Array(W * W)
+      for (const p of pts) {
+        const h = axis === 'front' ? p[0] : (mirror ? -p[2] : p[2])
+        const u = Math.floor((h + half) / px)
+        const v = Math.floor((half - p[1]) / px)
+        if (u >= 0 && v >= 0 && u < W && v < W) raw[v * W + u] = 1
+      }
+      // fermeture morphologique 3×3 : bouche les trous d'échantillonnage sans épaissir le contour
+      const morph = (src: Uint8Array, dilate: boolean) => {
+        const out = new Uint8Array(W * W)
+        for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+          let v = dilate ? 0 : 1
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy
+            const inside = xx >= 0 && yy >= 0 && xx < W && yy < W ? src[yy * W + xx] : 0
+            if (dilate && inside) v = 1
+            if (!dilate && !inside) v = 0
+          }
+          out[y * W + x] = v
+        }
+        return out
+      }
+      const grid = morph(morph(raw, true), false)
+      let inter = 0, uni = 0
+      for (let i = 0; i < W * W; i++) {
+        const a = grid[i], b = mask.data[i]
+        if (a && b) inter++
+        if (a || b) uni++
+      }
+      return inter / Math.max(1, uni)
+    }
+    const pct = (d: number) => Math.round((d / 2) * 10000) / 100
+    return {
+      label,
+      method: cloud.method,
+      points: cloud.count,
+      chamferCloudToModel: { p50: pct(quantile(toTruth, 0.5)), p90: pct(quantile(toTruth, 0.9)) },
+      chamferModelToCloud: { p50: pct(quantile(toCloud, 0.5)), p90: pct(quantile(toCloud, 0.9)) },
+      iouFront: Math.round(iou('front', front.mask, false) * 1000) / 1000,
+      iouSide: Math.round(Math.max(iou('side', side.mask, false), iou('side', side.mask, true)) * 1000) / 1000,
+      depth: Math.round(cloud.depth * 1000) / 1000,
+      // plafond de la mesure : les vrais points de surface projetés de la même façon
+      iouFrontOfTruthSamples: Math.round(iou('front', front.mask, false, truth) * 1000) / 1000,
+      iouSideOfTruthSamples: Math.round(iou('side', side.mask, false, truth) * 1000) / 1000,
+      profileSign: cloud.profileSign ?? null,
+      profileVote: cloud.profileVote ?? null,
+    }
+  }
+  const relief = evaluate('face seule (relief)', buildSilhouetteCloud(front, { maxPoints: 32000 }))
+  const hull = evaluate('face + profil + dos (enveloppe)', buildSilhouetteCloud(front, { side, back, maxPoints: 32000 }))
+  const modelDepth = (() => { let a = Infinity, b = -Infinity; for (const p of truth) { a = Math.min(a, p[2]); b = Math.max(b, p[2]) } return Math.round((b - a) * 1000) / 1000 })()
+  const result = { model: url, triangles: Math.round(totalTris), truthSamples: truth.length, modelDepth, unit: '% de la hauteur du modèle', relief, hull }
+  ;(window as unknown as { __fidelity: unknown; __views: unknown }).__fidelity = result
+  ;(window as unknown as { __views: unknown }).__views = Object.fromEntries(Object.entries(shots).map(([k, v]) => [k, v.png]))
+  renderer.dispose()
+  return result
+}
+
+function Fidelity() {
+  useEffect(() => {
+    void fidelity().then((r) => {
+      const pre = document.createElement('pre')
+      pre.id = 'fidelity'
+      pre.textContent = JSON.stringify(r, null, 2)
+      document.body.appendChild(pre)
+    }).catch((e) => {
+      const pre = document.createElement('pre')
+      pre.id = 'fidelity-error'
+      pre.textContent = String(e)
+      document.body.appendChild(pre)
+    })
+  }, [])
+  return null
+}
+
+function RealData() {
+  // Vraies données du dépôt : référence de personnage détourée et modèle VRM riggé.
+  useEffect(() => {
+    useAppStore.getState().setActiveModule('3d' as never)
+    emitGenerationFx('3d', { active: true, phase: 'Analyse de la demande 3D…' })
+    window.setTimeout(() => {
+      if (mode === 'real-ref') {
+        emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: q.get('ref') || '/fairy/natsu.png', role: 'face' }], logLine: 'photo validée' })
+      } else {
+        emitGenerationFx('3d', { active: true, phaseIndex: 3, phase: 'Matériaux & zones — textures et matériaux par zones…', meshUrl: q.get('model') || '/aurora-avatar.vrm', meshInfo: 'modèle réel du dépôt' })
+      }
+    }, 300)
+  }, [])
+  return <GenerationFxHost />
+}
+
+createRoot(document.getElementById('root')!).render(
+  mode === 'gallery' ? <Gallery /> : mode === 'fidelity' ? <Fidelity /> : mode === 'real-ref' || mode === 'real-mesh' ? <RealData /> : <Scenario />,
+)

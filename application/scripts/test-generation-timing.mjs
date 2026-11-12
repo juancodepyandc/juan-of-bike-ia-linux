@@ -7,8 +7,12 @@ import {
   MIN_COMPARABLE_RUNS,
   RunTimeline,
   SmoothValue,
+  accuracyLabel,
+  calibrateEstimate,
   comparableRuns,
   estimateRemaining,
+  etaAccuracy,
+  recordEtaOutcome,
   etaHeadline,
   etaInterval,
   formatClock,
@@ -184,4 +188,42 @@ test('readable durations', () => {
   assert.equal(formatWait(3900 * S), '1 h 05')
   assert.equal(formatClock(65 * S), '1 min 05 s')
   assert.deepEqual(summarize([3, 1, 2]), { n: 3, median: 2, q1: 1.5, q3: 2.5, min: 1, max: 3 })
+})
+
+test('accuracy is measured only from real completed runs, then shown and used', () => {
+  const storage = memoryStorage()
+  // a run of 100 s: predictions taken at 10 s and 50 s
+  const snaps = (pred10, pred50, band = 0.1) => [
+    { elapsedMs: 10 * S, remainingMs: pred10 * S, lowMs: pred10 * S * (1 - band), highMs: pred10 * S * (1 + band) },
+    { elapsedMs: 50 * S, remainingMs: pred50 * S, lowMs: pred50 * S * (1 - band), highMs: pred50 * S * (1 + band) },
+  ]
+  assert.equal(etaAccuracy('3d', storage), null, 'no real run yet: no accuracy claimed')
+  assert.equal(recordEtaOutcome('3d', 'run-a', snaps(90, 50), 100 * S, storage), true)
+  assert.equal(recordEtaOutcome('3d', 'run-a', snaps(90, 50), 100 * S, storage), false, 'same run twice')
+  recordEtaOutcome('3d', 'run-b', snaps(60, 30), 100 * S, storage)
+  assert.equal(etaAccuracy('3d', storage), null, 'two runs are not enough')
+  recordEtaOutcome('3d', 'run-c', snaps(120, 70), 100 * S, storage)
+  const acc = etaAccuracy('3d', storage)
+  assert.equal(acc.runs, 3)
+  assert.equal(acc.predictions, 6)
+  // errors: 0, 0, .333, .4, .333, .4 -> median .333
+  assert.ok(Math.abs(acc.medianError - 0.333) < 0.01, `median error ${acc.medianError}`)
+  assert.ok(Math.abs(acc.coverage - 2 / 6) < 1e-9)
+  assert.match(accuracyLabel(acc), /précision mesurée sur 3 vraies générations : écart médian 33 %, 33 % dans l’intervalle/)
+})
+
+test('a too narrow interval is widened by the measured error after 5 real runs', () => {
+  const storage = memoryStorage()
+  for (let i = 0; i < 5; i++) {
+    recordEtaOutcome('image', `r${i}`, [{ elapsedMs: 10 * S, remainingMs: 50 * S, lowMs: 48 * S, highMs: 52 * S }], 100 * S, storage)
+  }
+  const acc = etaAccuracy('image', storage)
+  assert.equal(acc.coverage, 0)
+  const est = { state: 'history', remainingMs: 40 * S, lowMs: 38 * S, highMs: 42 * S, expectedTotalMs: 60 * S, confidence: 0.5, sampleCount: 5, basis: 'médiane' }
+  const widened = calibrateEstimate(est, acc)
+  assert.ok(widened.lowMs < 38 * S && widened.highMs > 42 * S, `${widened.lowMs} – ${widened.highMs}`)
+  assert.match(widened.basis, /intervalle élargi d’après l’écart mesuré \(44 %\)/)
+  assert.equal(calibrateEstimate({ ...est, state: 'estimating', remainingMs: null }, acc).lowMs, 38 * S, 'nothing invented without an estimate')
+  const good = { runs: 6, predictions: 6, medianError: 0.1, coverage: 0.8 }
+  assert.equal(calibrateEstimate(est, good), est, 'a well calibrated interval is kept')
 })
