@@ -260,6 +260,34 @@ def next_diagnosis(verdict, blocklist):
             "blocklist": sorted(blocklist)}
 
 
+def merge_diagnoses(primary, extra):
+    """One diagnosis for a cycle that spans modules examined separately (same student, disjoint skills).
+
+    ``primary`` keeps its identity: if it describes a trained candidate, the result still names that
+    adapter. Scores taken from ``extra`` are listed in ``merged_from`` with what they were measured on,
+    so a curriculum never hides that part of its steering comes from another exam.
+    """
+    if primary["student"]["hf"] != extra["student"]["hf"]:
+        raise ValueError("These diagnoses describe different students")
+    overlap = set(primary["summary"]["skills"]) & set(extra["summary"]["skills"])
+    if overlap:
+        raise ValueError(f"Both diagnoses examine {sorted(overlap)}: nothing to merge for these skills")
+    modules = sorted(set(primary["modules"]) | set(extra["modules"]))
+    summary = {"skills": {**primary["summary"]["skills"], **extra["summary"]["skills"]},
+               "subskills": {**primary["summary"]["subskills"], **extra["summary"]["subskills"]}}
+    tables = summary["skills"].values()
+    items, correct = sum(t["items"] for t in tables), sum(t["correct"] for t in tables)
+    summary["overall"] = {"items": items, "correct": correct, "accuracy": correct / items if items else None,
+                          "macro_accuracy": sum(t["accuracy"] for t in tables) / len(summary["skills"]),
+                          "skipped": primary["summary"]["overall"].get("skipped", 0) + extra["summary"]["overall"].get("skipped", 0)}
+    examined = sorted(summary["skills"])
+    return {**primary, "modules": modules, "skills": examined, "complete": bool(primary["complete"] and extra["complete"]),
+            "summary": summary, "weak_points": profile(summary, skills(modules, examined)),
+            "blocklist": sorted(set(primary["blocklist"]) | set(extra["blocklist"])),
+            "merged_from": [{"modules": extra["modules"], "skills": sorted(extra["summary"]["skills"]),
+                             "measured_on": (extra.get("basis") or {"model": "base"}), "exam": extra["exam"]}]}
+
+
 def verify(config, work, adapter, student=None, library=None, base_done=False, previous=None):
     """Examiner: paired exam of base and candidate on this cycle's unseen gate.
 
@@ -361,7 +389,7 @@ def cycle(config, work):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("role", choices=("probe", "diagnose", "train", "verify", "cycle", "rediagnose"))
+    parser.add_argument("role", choices=("probe", "diagnose", "train", "verify", "cycle", "rediagnose", "merge"))
     parser.add_argument("--student", default="qwen3:0.6b", help="Ollama tag or Hugging Face id listed in students.py")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="standard")
     parser.add_argument("--modules", help="Comma-separated subset of: " + ", ".join(sorted(MODULES)))
@@ -370,6 +398,7 @@ def main(argv=None):
     parser.add_argument("--cycle", type=int, default=0, help="Selects a fresh, disjoint gate exam")
     parser.add_argument("--diagnosis", type=Path)
     parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--extra-diagnosis", type=Path, help="merge: diagnosis of other modules of the same student, added to --diagnosis")
     parser.add_argument("--init-adapter", type=Path, help="train: continue this adapter (needs the examiner's diagnosis_next file)")
     parser.add_argument("--previous-adapter", type=Path, help="verify: the adapter the candidate continues, examined on the same items")
     parser.add_argument("--budget-minutes", type=float)
@@ -388,7 +417,14 @@ def main(argv=None):
         parser.error("--work is required")
     config = settings(args)
     args.work.mkdir(parents=True, exist_ok=True)
-    if args.role == "rediagnose":
+    if args.role == "merge":
+        if not args.diagnosis or not args.extra_diagnosis:
+            parser.error("merge requires --diagnosis and --extra-diagnosis")
+        result = merge_diagnoses(json.loads(args.diagnosis.read_text(encoding="utf-8")),
+                                 json.loads(args.extra_diagnosis.read_text(encoding="utf-8")))
+        atomic_json(args.work / "diagnosis_merged.json", result)
+        summary = {"modules": result["modules"], "weakest": [(w["skill"], round(w["accuracy"], 3)) for w in result["weak_points"][:8]]}
+    elif args.role == "rediagnose":
         # Rebuild the candidate's diagnosis from a verdict already written (no model is loaded).
         verdict = read_json(args.work / f"verdict_{config['cycle']}.json", None)
         if not verdict or verdict.get("kind") != "aurora_professor_verdict":

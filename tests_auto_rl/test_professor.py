@@ -334,6 +334,26 @@ class Curriculum(unittest.TestCase):
         self.assertNotIn("business.fin_math", pool)
         self.assertEqual(notes["business.fin_math"]["verified"], 0)
 
+    def test_diagnoses_of_separate_modules_merge_without_hiding_their_origin(self):
+        from auto_rl.professor.run import merge_diagnoses
+        def diagnosis(module, skill, correct, basis=None):
+            table = {"items": 60, "correct": correct, "accuracy": correct / 60, "ci95": [0.0, 1.0], "module": module}
+            return {"student": {"hf": "Qwen/Qwen2.5-7B-Instruct"}, "modules": [module], "complete": True, "basis": basis,
+                    "summary": {"skills": {skill: table}, "subskills": {f"{skill} / a": table}, "overall": {"skipped": 0}},
+                    "blocklist": [skill[:3]], "exam": {"suite_sha256": skill}}
+        candidate = diagnosis("media", "media.prompt_spec", 48, basis={"model": "candidate", "adapter_sha256": "a" * 64})
+        merged = merge_diagnoses(candidate, diagnosis("conversation", "conversation.format_fr", 29))
+        self.assertEqual(merged["modules"], ["conversation", "media"])
+        self.assertEqual(merged["basis"]["adapter_sha256"], "a" * 64)                       # still the candidate's diagnosis
+        self.assertEqual(merged["weak_points"][0]["skill"], "conversation.format_fr")
+        self.assertEqual(merged["merged_from"][0]["measured_on"], {"model": "base"})        # and it says what came from the base
+        self.assertEqual(merged["blocklist"], ["con", "med"])
+        self.assertEqual(merged["summary"]["overall"]["items"], 120)
+        with self.assertRaises(ValueError):
+            merge_diagnoses(candidate, candidate)
+        with self.assertRaises(ValueError):
+            merge_diagnoses(candidate, {**diagnosis("conversation", "conversation.format_fr", 29), "student": {"hf": "other"}})
+
     def test_a_model_that_cannot_be_quantised_is_not_admitted_on_small_gpus(self):
         from auto_rl.professor.students import choose, fits, resolve
         coder, small = resolve("qwen3-coder:30b"), resolve("qwen2.5-coder:7b")
