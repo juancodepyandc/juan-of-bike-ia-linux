@@ -49,6 +49,13 @@ BLENDER_CANDIDATES = [
 
 
 def _find_blender() -> Optional[str]:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     for cand in BLENDER_CANDIDATES:
         if os.path.isfile(cand):
             return cand

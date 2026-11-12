@@ -6466,6 +6466,11 @@ def render_pretty(result: dict) -> str:
 
 
 def main() -> int:
+    try:  # un seul Blender pour toutes les etapes (bureau compris), exporte aux sous-processus
+        from blender_locator import ensure_env as _ensure_blender
+        _ensure_blender()
+    except Exception:  # noqa: BLE001
+        pass
     parser = argparse.ArgumentParser(description="Aurora 3D end-to-end pipeline")
     parser.add_argument("--prompt")
     parser.add_argument("--run-id", dest="run_id")
