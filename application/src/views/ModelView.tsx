@@ -5361,7 +5361,10 @@ export default function ModelView() {
             // l'écran de génération et l'hologramme (la ligne elle-même est
             // journalisée par ThreeDProgressOverlay).
             const fxPhase = threeDPhaseForStage(stage)
-            if (fxPhase != null) emitGenerationFx('3d', { active: true, phaseIndex: fxPhase })
+            if (stage === 'perfection' && /REFUS/i.test(detail)) {
+              // refus du contrôle final suivi d'une purge et d'une régénération : l'écran revient à la sculpture
+              emitGenerationFx('3d', { active: true, phaseIndex: 2, phaseReset: true, logLine: detail })
+            } else if (fxPhase != null) emitGenerationFx('3d', { active: true, phaseIndex: fxPhase })
           })
 
           let result: ModelGenerationResult | null = null

@@ -7,7 +7,7 @@ import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounte
 import { watchComfyProgress } from './comfyProgress.ts'
 import AuroraMascot, { FX_AGENTS, MASCOT_STATE_LABEL, type MascotState } from './mascots.tsx'
 import { FX_SCENES, type SceneDraw, type SceneSync } from './scenes.ts'
-import { animationProgress, codePhaseIndex, mascotStateFor, resolvePhaseIndex, stageForJob, type FxStage } from './fxPhases.ts'
+import { animationProgress, codePhaseIndex, mascotStateFor, monotonicPhase, resolvePhaseIndex, stageForJob, type FxStage } from './fxPhases.ts'
 import type { HologramStatus } from './HologramStage.tsx'
 import {
   EtaCountdown,
@@ -1022,9 +1022,9 @@ export default function GenerationFxHost() {
         sessions.current.set(module, s)
       }
       if (patch.phase !== undefined || patch.phaseIndex !== undefined || patch.progress !== undefined) {
-        idx = resolvePhaseIndex(module, phases, {
+        idx = monotonicPhase(module, s.tl.phaseIdx, resolvePhaseIndex(module, phases, {
           text: patch.phase, index: patch.phaseIndex, progress: patch.progress, prev: s.tl.phaseIdx, explicit: s.explicitPhase,
-        })
+        }), patch.phaseReset === true)
         if (typeof patch.phaseIndex === 'number') s.explicitPhase = true
       }
       const changed = s.tl.notePhase(idx, now)

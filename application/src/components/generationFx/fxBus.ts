@@ -40,6 +40,8 @@ export type FxPatch = {
   phase?: string
   /** index d'étape réellement atteint (prioritaire sur l'analyse du texte de phase) */
   phaseIndex?: number
+  /** nouvelle tentative explicite : l'étape 3D peut revenir en arrière (sinon elle ne recule pas) */
+  phaseReset?: boolean
   /** progression globale 0..1 fournie par le producteur */
   progress?: number
   /**

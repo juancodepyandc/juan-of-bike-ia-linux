@@ -7,6 +7,7 @@ import {
   animationProgress,
   codePhaseIndex,
   mascotStateFor,
+  monotonicPhase,
   resolvePhaseIndex,
   stageForJob,
   threeDPhaseForStage,
@@ -45,7 +46,8 @@ test('pipeline stage names map to the 3D screen phases', () => {
   assert.equal(threeDPhaseForStage('shape_run'), 2)
   assert.equal(threeDPhaseForStage('texture_run'), 3)
   assert.equal(threeDPhaseForStage('rig'), 4)
-  assert.equal(threeDPhaseForStage('export'), 5)
+  // an engine's export ends sculpture, not the run: ModelView still runs materials and animation
+  assert.equal(threeDPhaseForStage('export'), null)
   assert.equal(threeDPhaseForStage('memoire'), null, 'service lines do not move the phase')
 })
 
@@ -57,6 +59,7 @@ test('every stage name actually printed by the 3D pipelines and the Blender brid
     'aurora_3d_pipeline.py', 'blender_bridge.py', 'scene_process.py', 'neural_process.py', 'texture_fidelity.py', 'rig_skin_binding.py', 'semantic_animation.py',
     'meshroom_run.py', 'mesh_postprocess.py', 'mesh_acceptance_gate.py', 'livraison_organisee.py', 'dreamgaussian_run.py', 'motion_trend_resolver.py',
     'perfection_gate.py', 'auto_rescue_mesh.py', 'scene_orchestrator.py', 'flux_reference_synth.py',
+    'bake_normal_map.py', 'bake_ao_map.py',
   ]
   // service lines and control lines printed at several moments of a run do not move the screen
   const service = new Set(['memoire', 'vram', 'error', 'confirm_req', ...THREE_D_CONTROL_STAGES])
@@ -66,11 +69,12 @@ test('every stage name actually printed by the 3D pipelines and the Blender brid
     try { text = fs.readFileSync(new URL(f, dir), 'utf8') } catch { assert.fail(`producer ${f} is missing: update this list`) }
     for (const m of text.matchAll(/PROGRESS:([a-z_]+):/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
     for (const m of text.matchAll(/emit\(\s*["']([a-z_]+)["']/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
+    for (const m of text.matchAll(/progress_stage\s*=\s*["']([a-z_]+)["']/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
   }
   assert.deepEqual([...unmapped], [], `stages that would not move the screen: ${[...unmapped].join(', ')}`)
   assert.equal(threeDPhaseForStage('matieres'), 3)
   assert.equal(threeDPhaseForStage('procedural'), 2)
-  assert.equal(threeDPhaseForStage('livraison'), 5)
+  assert.equal(threeDPhaseForStage('livraison'), null, 'printed before ModelView runs the animation step')
   // a mid-run quality check or verification render must not jump to Finalisation or back to Sculpture
   for (const s of THREE_D_CONTROL_STAGES) assert.equal(threeDPhaseForStage(s), null, s)
 })
@@ -107,4 +111,11 @@ test('each character line describes the real current step and never announces th
   const atlas = FX_SCENES['3d']
   assert.match(atlas.says[atlas.phases.indexOf('Référence photo')], /référence/i)
   assert.match(atlas.says[atlas.phases.indexOf('Sculpture 3D')], /sculpte/i)
+})
+
+test('the 3D phase never moves back on late follow-up lines, except on an explicit regeneration', () => {
+  assert.equal(monotonicPhase('3d', 3, 2), 3, 'a late "shape" line after the mesh arrived')
+  assert.equal(monotonicPhase('3d', 3, 4), 4)
+  assert.equal(monotonicPhase('3d', 5, 2, true), 2, 'perfection refusal then regeneration')
+  assert.equal(monotonicPhase('conversation', 4, 3), 3, 'a chat refine loop may really go back to verification')
 })

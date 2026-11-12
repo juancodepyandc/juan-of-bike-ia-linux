@@ -87,10 +87,13 @@ export function resolvePhaseIndex(module: FxModule, phases: string[], s: PhaseSi
 
 /** Lignes de contrôle imprimées à plusieurs moments du run (contrôle qualité intermédiaire, rendu de
  * géométrie de vérification, validation et nettoyage du pont Blender, post-traitement du maillage lancé
- * après le pipeline) : journalisées, sans déplacer l'étape. */
+ * après le pipeline) et lignes de fin de sous-étape (export d'un moteur, contrôle « perfection », rangement
+ * de la livraison, suivis de l'animation et de la finalisation de ModelView) : journalisées, sans déplacer
+ * l'étape. La Finalisation vient de l'étape « Finalisation » de ModelView. */
 export const THREE_D_CONTROL_STAGES = [
   'qualite', 'geometrie', 'validate', 'cleanup',
   'post_start', 'post_warn', 'post_done', 'decimate', 'symmetry', 'symmetry_skip', 'volume_restore', 'target_dimension', 'floaters',
+  'export', 'export_fallback', 'perfection', 'livraison', 'finalisation',
 ]
 
 /**
@@ -106,11 +109,20 @@ export function threeDPhaseForStage(stage: string): number | null {
   // sculpture : moteurs neuronaux, scène multi-entités, Blender procédural, photogrammétrie, géométrie
   if (['install', 'device', 'bg', 'asset_scan', 'asset_download', 'shape_fallback', 'shape_load', 'shape_run', 'gaussian', 'procedural', 'sfm', 'photogrammetry', 'mesh_extract', 'shape', 'trellis', 'hunyuan', 'engine', 'scene', 'blender', 'preprocess'].includes(s)) return 2
   // matières : peinture, cuisson, zones de matière, fidélité de texture
-  if (['texture_load', 'texture_run', 'texture_retry', 'texture_warn', 'paint', 'bake', 'texture', 'color', 'matieres', 'fidelity', 'texture_fidelity'].includes(s)) return 3
+  if (['texture_load', 'texture_run', 'texture_retry', 'texture_warn', 'paint', 'bake', 'bake_normal', 'bake_ao', 'texture', 'color', 'matieres', 'fidelity', 'texture_fidelity'].includes(s)) return 3
   if (['animation', 'rig', 'motion'].includes(s)) return 4
-  // finalisation : contrôle final, export et rangement de la livraison
-  if (['export', 'export_fallback', 'final', 'done', 'perfection', 'finalisation', 'livraison'].includes(s)) return 5
+  if (['final', 'done'].includes(s)) return 5
   return null
+}
+
+/**
+ * Étape affichée après une nouvelle indication. La 3D ne recule pas : ses producteurs impriment des
+ * lignes de suivi tardives (confirmation de forme après l'arrivée du maillage…). Seule une remise à
+ * zéro explicite (refus du contrôle « perfection » suivi d'une régénération) la fait revenir en arrière.
+ */
+export function monotonicPhase(module: FxModule, prev: number, next: number, reset = false): number {
+  if (module !== '3d' || reset) return next
+  return Math.max(prev, next)
 }
 
 const CHECK_WORDS = /v[ée]rif|valid|sandbox|correction|contr[ôo]le|audit|examen|finalis|livraison|r[ée]v[ée]lation/i
