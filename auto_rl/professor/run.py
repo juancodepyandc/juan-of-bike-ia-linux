@@ -24,7 +24,7 @@ from .compare import compare
 from .evaluate import evaluate, read_results
 from .inference import hardware, library_versions
 from .students import resolve
-from .suites import Library, MODULES, build_exam, build_pool, exam_blocklist, skills
+from .suites import Library, MODULES, build_exam, build_pool, exam_blocklist, skills, stratified
 from .weakness import build_curriculum, profile, skill_weights, subskill_weights
 
 PROFILES = {
@@ -111,6 +111,19 @@ def diagnose(config, work, student=None, library=None):
     return report
 
 
+def mining_probes(pool, per_skill, allow_execution=False):
+    """Training items the base model is asked before training, spread over the sub-skills of each skill.
+
+    A generated pool is ordered sub-skill by sub-skill: on the first GPU run, probing only its head asked
+    40 questions of one sub-skill per family, so the known failures put first in the curriculum all came from it.
+    """
+    probes = []
+    for items in pool.values():
+        gradable = [item for item in items if item.get("grader") and (allow_execution or item["grader"]["type"] not in EXECUTING)]
+        probes += stratified(gradable, per_skill, "aurora-mine")[0]
+    return probes
+
+
 def train_role(config, work, diagnosis, student=None, library=None):
     """Trainer: build a curriculum aimed at the measured weak points and fit an adapter."""
     from .train import train
@@ -128,10 +141,7 @@ def train_role(config, work, diagnosis, student=None, library=None):
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes)
     # Probe the base model on training items it can be graded on: what it fails goes first.
-    probes = []
-    for name, items in pool.items():
-        gradable = [item for item in items if item.get("grader") and (config["allow_execution"] or item["grader"]["type"] not in EXECUTING)]
-        probes += gradable[:config["mine_per_skill"]]
+    probes = mining_probes(pool, config["mine_per_skill"], config["allow_execution"])
     mined = {}
     if probes:
         status({"phase": "mine", "items": len(probes)})

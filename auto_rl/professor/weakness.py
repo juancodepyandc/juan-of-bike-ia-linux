@@ -69,6 +69,14 @@ def subskill_weights(weak_points, *, focus=FOCUS):
     return result
 
 
+def _composition(items):
+    """How many chosen items each sub-skill received: the curriculum states what it really trains on."""
+    counts = defaultdict(int)
+    for item in items:
+        counts[str(item.get("subskill"))] += 1
+    return dict(sorted(counts.items()))
+
+
 def build_curriculum(pool, weights, total, *, mined=None, replay_skills=(), seed="aurora-curriculum"):
     """Pick ``total`` training items.
 
@@ -93,7 +101,8 @@ def build_curriculum(pool, weights, total, *, mined=None, replay_skills=(), seed
         ordered = sorted(pool[name], key=priority)
         picked = ordered[:quota]
         plan[name] = {"requested": quota, "selected": len(picked), "available": len(ordered),
-                      "known_failures_included": sum(mined.get(i["id"]) is False for i in picked)}
+                      "known_failures_included": sum(mined.get(i["id"]) is False for i in picked),
+                      "subskills": _composition(picked)}
         chosen += picked
     for name in replay:
         quota = replay_budget // len(replay)

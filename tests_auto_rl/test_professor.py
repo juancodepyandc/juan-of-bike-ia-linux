@@ -252,8 +252,20 @@ class Curriculum(unittest.TestCase):
         self.assertTrue({"w3", "w7"} <= ids)
         self.assertNotIn("w9", ids)
         self.assertEqual(plan["skills"]["weak"]["known_failures_included"], 2)
+        self.assertEqual(plan["skills"]["weak"]["subskills"], {"None": plan["skills"]["weak"]["selected"]})
         self.assertTrue(plan["skills"]["replay"]["replay"])
         self.assertEqual(len(chosen), plan["total"])
+
+    def test_mining_probes_cover_every_subskill(self):
+        from auto_rl.professor.run import mining_probes
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            pool, _ = build_pool(120, modules=["missions"])
+        for name, items in pool.items():
+            wanted = {i["subskill"] for i in items if i.get("grader")}
+            probed = {i["subskill"] for i in mining_probes({name: items}, 40)}
+            self.assertEqual(probed, wanted, name)
+            self.assertGreater(len(wanted), 1, name)
+            self.assertLess(len({i["subskill"] for i in items[:40]}), len(wanted), name)   # the head alone misses sub-skills
 
     def test_modules_cover_the_application_families(self):
         self.assertEqual(set(MODULES), {"missions", "code", "conversation", "academy", "cyber", "business", "cowork", "media", "engineering"})
