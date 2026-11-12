@@ -167,8 +167,10 @@ def keep_verified_answers(pool, worked, rows):
     """
     notes = {}
     for name, group in worked.items():
+        # An answer the token budget cut is not a complete worked answer, even when its grade is correct.
         answers = {row["id"]: row["output"].strip() for row in rows
-                   if row["skill"] == name and row.get("status", "graded") == "graded" and row["correct"] and (row["output"] or "").strip()}
+                   if row["skill"] == name and row.get("status", "graded") == "graded" and row["correct"] and not row.get("cut")
+                   and (row["output"] or "").strip()}
         graded = {row["id"] for row in rows if row["skill"] == name}
         verified = [{**item, "target": answers[item["id"]]} for item in group if item["id"] in answers]
         notes[name] = {"asked": len(group), "answered": sum(item["id"] in graded for item in group), "verified": len(verified)}
@@ -194,11 +196,17 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
         raise ValueError("This diagnosis describes another student")
     described = (diagnosis.get("basis") or {}).get("adapter_sha256")
     given = adapter_hash(init_adapter) if init_adapter else None
-    basis_gate = re.fullmatch(r"gate:(\d+)", str((diagnosis.get("basis") or {}).get("exam", "")))
-    if basis_gate and config["cycle"] <= int(basis_gate.group(1)):
+    if not diagnosis.get("complete", True):
+        raise ValueError("This diagnosis is incomplete (unfinished exam, missing source or skills not examined): "
+                         "its weak points would leave out what it did not measure")
+    # Every part of the diagnosis measured on a gate counts, merged parts included.
+    measured = [str((diagnosis.get("basis") or {}).get("exam", ""))]
+    measured += [str((part.get("measured_on") or {}).get("exam", "")) for part in diagnosis.get("merged_from") or []]
+    gates = [int(found.group(1)) for found in (re.fullmatch(r"gate:(\d+)", name) for name in measured) if found]
+    if gates and config["cycle"] <= max(gates):
         # Its curriculum was steered by scores on that gate: examining it there again would not be an unseen exam.
-        raise ValueError(f"This diagnosis was measured on gate {basis_gate.group(1)}: the next cycle must use cycle "
-                         f">= {int(basis_gate.group(1)) + 1}, not {config['cycle']}")
+        raise ValueError(f"This diagnosis was measured on gate {max(gates)}: the next cycle must use cycle "
+                         f">= {max(gates) + 1}, not {config['cycle']}")
     if (init_adapter and not given) or described != given:
         raise ValueError("The diagnosis and the starting adapter do not match: a diagnosis of the base model trains a new "
                          "adapter, and a diagnosis of a trained candidate continues exactly that adapter (--init-adapter)")
@@ -222,6 +230,11 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=blocklist,
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
                                   cycle=config["cycle"])
+    train_sources = {name for skill, entry in catalogue.items() for name in entry["train_sources"]}
+    lost = sorted(train_sources & set(library.errors))
+    if lost:
+        # A training source that failed to load would silently remove its skill from the curriculum.
+        raise ValueError("Training sources could not be loaded: " + "; ".join(f"{name}: {library.errors[name]}" for name in lost))
     for name in set(REPLAY) - set(replay):              # free-form skills left out of this cycle by an explicit choice
         pool.pop(name, None)
     for name in self_worked_skills:
@@ -256,23 +269,33 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
                                            "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
                                            "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
                                            "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked,
+                                           "realised": {"total": len(chosen), "replay_share": round(sum(item["skill"] in replay for item in chosen)
+                                                                                                 / max(1, len(chosen)), 4)},
                                            "choices": {"replay": list(replay), "self_worked": list(self_worked_skills),
                                                        "skills": config["skills"]}})
     status({"phase": "train", "examples": len(chosen)})
     knobs = {k: config[k] for k in ("max_tokens", "batch_size", "accumulate", "epochs", "eval_every", "learning_rate", "rank") if k in config}
     if config["student"].get("attention_only"):
         knobs["attention_only"] = True
-    receipt = train(student, chosen, work / "training", config=knobs, progress=status, init_adapter=init_adapter,
-                    budget_seconds=config["budget_seconds"] and config["budget_seconds"] * (0.55 if worked else 0.6))
     if init_adapter:
-        # The examiner compares the new adapter with the one it continues, on the same unseen items.
+        # The examiner compares the new adapter with the one it continues, on the same unseen items. The copy is made
+        # BEFORE training: training writes work/training/adapter, which may be the very folder being continued.
         kept = work / "training" / "init_adapter"
-        if kept.exists():
-            shutil.rmtree(kept)
-        kept.mkdir(parents=True)
+        staged = work / "training" / ".init_adapter.tmp"
+        if staged.exists():
+            shutil.rmtree(staged)
+        staged.mkdir(parents=True)
         for path in sorted(Path(init_adapter).glob("adapter_*")):      # configuration and weights, nothing else of that folder
             if path.is_file() and path.suffix in {".json", ".safetensors", ".bin"}:
-                shutil.copy2(path, kept / path.name)
+                shutil.copy2(path, staged / path.name)
+        if adapter_hash(staged) != given:
+            raise ValueError("The starting adapter changed while it was being copied")
+        if kept.exists():
+            shutil.rmtree(kept)
+        staged.replace(kept)
+        init_adapter = kept
+    receipt = train(student, chosen, work / "training", config=knobs, progress=status, init_adapter=init_adapter,
+                    budget_seconds=config["budget_seconds"] and config["budget_seconds"] * (0.55 if worked else 0.6))
     return receipt
 
 

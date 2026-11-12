@@ -145,6 +145,10 @@ class TransformersStudent:
         prompts = [self.render(messages) for messages in conversations]
         lengths = [len(ids) for ids in tokenizer(prompts, add_special_tokens=False)["input_ids"]]
         outputs = [None] * len(prompts)
+        self.last_cut = [False] * len(prompts)        # answers that stopped at the token budget, not at end of turn
+        configured = getattr(getattr(self.model, "generation_config", None), "eos_token_id", None)
+        stops = {tokenizer.eos_token_id, tokenizer.pad_token_id} | (set(configured) if isinstance(configured, (list, tuple)) else {configured})
+        stops.discard(None)
         order = sorted((i for i in range(len(prompts)) if lengths[i] <= self.max_prompt_tokens), key=lambda i: lengths[i])
         tokenizer.padding_side = "left"
         position = 0
@@ -166,6 +170,8 @@ class TransformersStudent:
                     size = max(1, size // 2)
             width = batch["input_ids"].shape[1]
             for row, index in enumerate(chunk):
+                tokens = generated[row, width:].tolist()
+                self.last_cut[index] = len(tokens) >= max_new_tokens and not any(t in stops for t in tokens)
                 outputs[index] = tokenizer.decode(generated[row, width:], skip_special_tokens=True)
             position += len(chunk)
         return outputs
@@ -191,15 +197,17 @@ class LlamaCppStudent:
         self.llama = Llama(model_path=self.gguf, lora_path=self.adapter, n_ctx=context, n_threads=threads, seed=0, verbose=False)
 
     def generate(self, conversations, max_new_tokens, batch_size=1):
-        outputs = []
+        outputs, self.last_cut = [], []
         for messages in conversations:
             tokens = self.llama.tokenize(self.render(messages).encode("utf-8"), add_bos=False, special=True)
             if len(tokens) > self.max_prompt_tokens or len(tokens) + max_new_tokens > self.llama.n_ctx():
                 outputs.append(None)
+                self.last_cut.append(False)
                 continue
             self.llama.reset()
             answer = self.llama.create_completion(prompt=tokens, max_tokens=max_new_tokens, temperature=0.0)
             outputs.append(answer["choices"][0]["text"])
+            self.last_cut.append(answer["choices"][0].get("finish_reason") == "length")
         return outputs
 
     def describe(self):
@@ -236,7 +244,7 @@ class OllamaStudent:
             return json.load(response)
 
     def generate(self, conversations, max_new_tokens, batch_size=1):
-        outputs = []
+        outputs, cut = [], []
         import urllib.error
         for messages in conversations:
             payload = {"model": self.tag, "messages": messages, "stream": False,
@@ -263,6 +271,8 @@ class OllamaStudent:
                 outputs.append("")          # the budget was spent without an answer: graded as wrong
             else:
                 outputs.append(answer.get("message", {}).get("content", ""))
+            cut.append(answer.get("done_reason") == "length")
+        self.last_cut = cut
         return outputs
 
     def describe(self):

@@ -104,6 +104,10 @@ def build_curriculum(pool, weights, total, *, mined=None, replay_skills=(), seed
                       "known_failures_included": sum(mined.get(i["id"]) is False for i in picked),
                       "subskills": _composition(picked)}
         chosen += picked
+    # Replay is a share of what is really trained: drill quotas a skill cannot fill (self-worked skills keep only
+    # verified answers) must not leave replay at 20-27 % of the curriculum instead of the declared 15 %.
+    drilled = len(chosen)
+    replay_budget = min(replay_budget, round(drilled * REPLAY_SHARE / (1 - REPLAY_SHARE))) if replay else 0
     for name in replay:
         quota = replay_budget // len(replay)
         picked = sorted(pool[name], key=lambda item: rank(item["id"], seed))[:quota]

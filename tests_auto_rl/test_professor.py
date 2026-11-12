@@ -780,3 +780,103 @@ class ReviewedVerdicts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "results.jsonl").write_text('{"id": "a", "status": "graded"}\n{"id": "b", "stat')
             self.assertEqual([r["id"] for r in read_results(folder)], ["a"])
+
+
+class ReviewedTraining(unittest.TestCase):
+    """Second review of 2026-11-12: what the trainer really trains on."""
+
+    def test_numbers_with_a_leading_point_and_unfinished_final_answers(self):
+        five = {"type": "numeric", "answer": "5"}
+        self.assertFalse(grade({"grader": five}, "Final answer: .5")["correct"])
+        self.assertTrue(grade({"grader": {"type": "numeric", "answer": ".4"}}, "Final answer: .4")["correct"])
+        self.assertTrue(grade({"grader": {"type": "numeric", "answer": "-0.62"}}, "Final answer: -.62")["correct"])
+        cut = {"type": "numeric", "answer": "663750000", "rel_tol": 0.01, "abs_tol": 0.005}
+        self.assertFalse(grade({"grader": cut}, "= $663,750,000\n\nFinal answer: $")["correct"])     # cut before its number
+
+    def test_the_development_split_keeps_equal_prompts_together(self):
+        from auto_rl.professor.train import development_split
+        encoded = [{"id": f"e{n}", "prompt_key": f"p{n % 7}"} for n in range(140)]
+        dev, fit = development_split(encoded, 0.05)
+        self.assertFalse({e["prompt_key"] for e in dev} & {e["prompt_key"] for e in fit})
+        self.assertGreaterEqual(len(dev), 7)
+
+    def test_generated_training_pools_hold_distinct_exercises(self):
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            pool, _ = build_pool(400, modules=["conversation"], only=["conversation.format_fr"])
+        pairs = [(i["question_hash"], i["target"]) for i in pool["conversation.format_fr"]]
+        self.assertEqual(len(pairs), len(set(pairs)))
+
+    def test_replay_stays_at_its_share_of_what_is_trained(self):
+        pool = {"weak": [{"id": f"w{n}", "module": "m", "skill": "weak"} for n in range(100)],
+                "replay": [{"id": f"r{n}", "module": "m", "skill": "replay"} for n in range(1000)]}
+        chosen, plan = build_curriculum(pool, {"weak": 1.0}, 4000, replay_skills=("replay",))
+        share = sum(i["skill"] == "replay" for i in chosen) / len(chosen)
+        self.assertLessEqual(share, 0.16)                       # 100 drill items: replay follows them, not the request
+
+    def test_the_trainer_refuses_what_it_cannot_train_correctly(self):
+        import tempfile
+        from auto_rl.professor import run as run_module
+        from auto_rl.professor.run import keep_verified_answers
+        from auto_rl.professor.students import resolve
+        notes = keep_verified_answers({"s": [{"id": "a"}, {"id": "b"}]}, {"s": [{"id": "a"}, {"id": "b"}]},
+                                      [{"id": "a", "skill": "s", "correct": True, "output": "x", "cut": True},
+                                       {"id": "b", "skill": "s", "correct": True, "output": "y"}])
+        self.assertEqual(notes["s"]["verified"], 1)              # the answer cut by its budget is not a target
+        base = {"student": {"hf": "Qwen/Qwen3-0.6B"}, "weak_points": [], "blocklist": [], "basis": None, "summary": {"skills": {}},
+                "exam": {}, "complete": True}
+        config = {**run_module.PROFILES["smoke"], "profile": "smoke", "student": resolve("qwen3:0.6b"), "modules": ["business"],
+                  "skills": None, "cycle": 1, "budget_seconds": None, "allow_execution": False}
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            run_module.train_role(config, "unused", {**base, "complete": False}, student=object(), library=object())
+        merged = {**base, "merged_from": [{"measured_on": {"model": "candidate", "exam": "gate:1"}}]}
+        with self.assertRaisesRegex(ValueError, "cycle >= 2"):
+            run_module.train_role(config, "unused", merged, student=object(), library=object())
+
+        def load(self, name):
+            if name == "finqa_train":
+                self.errors[name] = "ConnectionError: simulated 429"
+            return [], []
+        with tempfile.TemporaryDirectory() as work, patch.object(run_module.Library, "load", load), \
+                self.assertRaisesRegex(ValueError, "finqa_train"):
+            run_module.train_role(config, work, base, student=object(), library=run_module.Library())
+
+    def test_a_continued_cycle_in_the_same_folder_keeps_the_adapter_it_continues(self):
+        import hashlib
+        import tempfile
+        from auto_rl.professor import run as run_module, train as train_module
+        from auto_rl.professor.students import resolve
+        with tempfile.TemporaryDirectory() as work:
+            adapter = Path(work) / "training" / "adapter"
+            adapter.mkdir(parents=True)
+            (adapter / "adapter_model.safetensors").write_bytes(b"cycle-0 weights")
+            (adapter / "adapter_config.json").write_text("{}")
+            original = hashlib.sha256(b"cycle-0 weights").hexdigest()
+            diagnosis = {"student": {"hf": "Qwen/Qwen3-0.6B"}, "weak_points": [], "blocklist": [], "complete": True,
+                         "basis": {"model": "candidate", "exam": "gate:0", "adapter_sha256": original}, "summary": {"skills": {}}, "exam": {}}
+            config = {**run_module.PROFILES["smoke"], "profile": "smoke", "student": resolve("qwen3:0.6b"), "modules": ["engineering"],
+                      "skills": None, "cycle": 1, "budget_seconds": None, "allow_execution": False, "mine_per_skill": 1,
+                      "self_worked": (), "replay": (), "curriculum": 20}
+            seen = {}
+
+            class Student:
+                def attach(self, path):
+                    seen["mined_with"] = hashlib.sha256((Path(path) / "adapter_model.safetensors").read_bytes()).hexdigest()
+
+                def detach(self):
+                    pass
+
+                def describe(self):
+                    return {"backend": "fake"}
+
+                def generate(self, conversations, tokens, batch_size=1):
+                    return ["0"] * len(conversations)
+
+            def fake_train(student, items, folder, init_adapter=None, **options):
+                seen["continued"] = hashlib.sha256((Path(init_adapter) / "adapter_model.safetensors").read_bytes()).hexdigest()
+                (Path(folder) / "adapter" / "adapter_model.safetensors").write_bytes(b"cycle-1 weights")   # what train() does
+                return {"steps": 1}
+            with patch.object(run_module.Library, "load", lambda self, name: ([], [])), patch.object(train_module, "train", fake_train):
+                run_module.train_role(config, work, diagnosis, student=Student(), library=run_module.Library(), init_adapter=adapter)
+            kept = hashlib.sha256((Path(work) / "training" / "init_adapter" / "adapter_model.safetensors").read_bytes()).hexdigest()
+        self.assertEqual(seen["continued"], original)
+        self.assertEqual(kept, original)                          # the examiner compares with what was really continued

@@ -108,7 +108,8 @@ def evaluate(student, items, folder, *, batch_size=8, label="exam", progress=Non
                     break
                 chunk = group[start:start + batch_size * 4]
                 outputs = student.generate([item["messages"] for item in chunk], tokens, batch_size=batch_size)
-                for item, output in zip(chunk, outputs):
+                cut = list(getattr(student, "last_cut", None) or [False] * len(outputs))
+                for item, output, stopped in zip(chunk, outputs, cut + [False] * (len(outputs) - len(cut))):
                     row = {"id": item["id"], "module": item["module"], "skill": item["skill"],
                            "subskill": item.get("subskill"), "source": item.get("source")}
                     if output is None:
@@ -116,7 +117,7 @@ def evaluate(student, items, folder, *, batch_size=8, label="exam", progress=Non
                     else:
                         result = grade(item, output)
                         row.update(status="graded", correct=result["correct"], score=result["score"],
-                                   reason=result["reason"], output=output[:4000])
+                                   reason=result["reason"], output=output[:4000], cut=bool(stopped) or len(output) > 4000)
                     stream.write(json.dumps(row, ensure_ascii=False) + "\n")
                     stream.flush()                    # one complete line at a time
                 if progress:

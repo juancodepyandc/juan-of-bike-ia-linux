@@ -263,7 +263,18 @@ def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aur
             total = sum(weights.get(s, 1.0) for s in family["subskills"])
             for subskill in family["subskills"]:
                 share = max(4, round(wanted * weights.get(subskill, 1.0) / total))
-                items += [generators.generate(skill, "train", cycle * POOL_STRIDE + index, subskill) for index in range(share)]
+                # Distinct exercises only (prompt and answer): a sub-skill with 24 possible prompts produced 334 items,
+                # many of them exact copies (review, 2026-11-12). The development split groups equal prompts (train.py).
+                seen, lane = set(), []
+                for index in range(share * SEARCH_FACTOR):
+                    item = generators.generate(skill, "train", cycle * POOL_STRIDE + index, subskill)
+                    key = (item["question_hash"], item["target"])
+                    if key not in seen:
+                        seen.add(key)
+                        lane.append(item)
+                        if len(lane) >= share:
+                            break
+                items += lane
         elif entry["train_sources"]:
             family = library.train_family(skill, catalogue)
             items, again = stratified(family, wanted, seed, cycle)

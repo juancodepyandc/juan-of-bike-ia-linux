@@ -19,7 +19,7 @@ import unicodedata
 from collections import Counter
 
 LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-_NUMBER = r"[-+\u2212]?(?:\d[\d\u00a0\u202f ,.'’]*\d|\d)(?:[eE][-+]?\d+)?(?:\s*/\s*\d+)?"
+_NUMBER = r"[-+\u2212]?(?:\d[\d\u00a0\u202f ,.'’]*\d|\d|\.\d+)(?:[eE][-+]?\d+)?(?:\s*/\s*\d+)?"   # ".4" is a number
 
 
 def _result(correct, reason, parsed=None, score=None):
@@ -107,10 +107,10 @@ def extract_final_number(text):
     markers = list(re.finditer(r"####|r[ée]ponse\s+finale\s*:?|final\s+answer\s*:?|the\s+answer\s+is\s*:?|la\s+r[ée]ponse\s+est\s*:?|\\boxed\{",
                                text, flags=re.I))
     if markers:
-        tail = text[markers[-1].end():]
-        found = re.search(_NUMBER, tail)
-        if found:
-            return found.group(0)
+        # A final-answer marker followed by no number is an unfinished answer, not a pointer to an earlier number
+        # (an answer cut by its token budget after "Final answer: $" was graded on the last number of its work).
+        found = re.search(_NUMBER, text[markers[-1].end():])
+        return found.group(0) if found else None
     found = re.findall(_NUMBER, text)
     return found[-1] if found else None
 

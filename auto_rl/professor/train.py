@@ -32,8 +32,20 @@ def encode(student, items, max_tokens):
         if len(prompt) + len(answer) > max_tokens or not answer:
             dropped += 1
             continue
-        encoded.append({"id": item["id"], "skill": item["skill"], "prompt": prompt, "answer": answer})
+        encoded.append({"id": item["id"], "skill": item["skill"], "prompt": prompt, "answer": answer,
+                        "prompt_key": item.get("question_hash") or item["id"]})
     return encoded, dropped
+
+
+def development_split(encoded, share):
+    """Development and fit examples. Equal prompts stay on the same side: a copy of a development prompt in the
+    fit split makes the development loss, which selects the checkpoint, partly a training loss."""
+    ordered = sorted(encoded, key=lambda e: (rank(str(e.get("prompt_key") or e["id"]), "aurora-dev-split"), e["id"]))
+    count = min(max(4, int(len(ordered) * share)), 400, len(ordered))
+    while 0 < count < len(ordered) and ordered[count].get("prompt_key") is not None \
+            and ordered[count].get("prompt_key") == ordered[count - 1].get("prompt_key"):
+        count += 1                                         # the whole group of the last development prompt stays together
+    return ordered[:count], ordered[count:]
 
 
 def batches(encoded, batch_size, seed):
@@ -120,9 +132,7 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
     encoded, dropped = encode(student, items, settings["max_tokens"])
     if len(encoded) < 8:
         raise ValueError(f"Only {len(encoded)} usable training examples ({dropped} exceeded {settings['max_tokens']} tokens)")
-    ordered = sorted(encoded, key=lambda e: rank(e["id"], "aurora-dev-split"))
-    dev_count = min(max(4, int(len(ordered) * settings["dev_share"])), 400)
-    dev, fit = ordered[:dev_count], ordered[dev_count:]
+    dev, fit = development_split(encoded, settings["dev_share"])
 
     model = student.model
     cuda = torch.cuda.is_available()
