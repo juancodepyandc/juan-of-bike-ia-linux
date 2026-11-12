@@ -18,7 +18,8 @@ export interface ReinforcedModuleInfo {
   reinforced_available: boolean
   score_base_100: number | null
   score_renforce_100: number | null
-  gain_points_100: number
+  // null when no audit measured a gain for this module
+  gain_points_100: number | null
   relative_gain_percent?: number
   samples_audited: number
   wins?: number
@@ -121,6 +122,13 @@ const COGNITIVE_LOOP_META: Array<{ id: string; title: string; desc: string; colo
   { id: 'CONSOLIDATE_EVOLVE', title: '7. Mémoire & Apprentissage', desc: 'Consolidation épisodique et enrichissement continu des compétences.', color: '#2DD4BF' },
 ]
 
+// A gain that was not measured is shown as such, never as +0.00; a negative gain keeps its sign.
+function formatGain(value: number | null | undefined, digits: number): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`
+    : 'non mesuré'
+}
+
 export default function ReinforcedModelBar({ activeModule }: { activeModule: string }) {
   const setActiveModule = useAppStore((s) => s.setActiveModule)
   const mainModel = useAppStore((s) => s.mainModel)
@@ -129,6 +137,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
   const [modalOpen, setModalOpen] = useState(false)
   const [inspectModule, setInspectModule] = useState<string>(backendMod)
   const [switching, setSwitching] = useState<string | null>(null)
+  const [selectError, setSelectError] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
   const [brainModalOpen, setBrainModalOpen] = useState(false)
   const [brainQuery, setBrainQuery] = useState('')
@@ -206,6 +215,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
 
   const selectVariant = async (mod: string, variant: 'base' | 'renforce') => {
     setSwitching(`${mod}:${variant}`)
+    setSelectError(null)
     try {
       const res = await fetch(`${getBridgeUrl()}/api/models/reinforced-select`, {
         method: 'POST',
@@ -214,6 +224,10 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
       })
       if (res.ok) {
         await fetchOverview()
+      } else {
+        // The bridge refuses "renforce" (409 + { error }) when no adapter was promoted: say why.
+        const body = (await res.json().catch(() => null)) as { error?: unknown } | null
+        setSelectError(body && typeof body.error === 'string' ? body.error : 'Sélection refusée par le bridge.')
       }
     } finally {
       setSwitching(null)
@@ -235,9 +249,9 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
   }
 
   const modInfo = overview?.modules?.[backendMod]
-  const activeVariant = modInfo?.selected_variant || 'base'
+  // What is really served: anything but a promoted, selected adapter (unknown status included) is the base model.
+  const activeVariant = modInfo?.effective_variant === 'renforce' ? 'renforce' : 'base'
   const hasReinforced = Boolean(modInfo?.reinforced_available)
-  const gainPts = modInfo?.gain_points_100 ?? 0
   const training = overview?.training
 
   const inspectedInfo = overview?.modules?.[inspectModule] || modInfo
@@ -288,8 +302,8 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
           disabled={switching !== null}
           title={
             hasReinforced
-              ? `Modèle Renforcé actif (${gainPts >= 0 ? '+' : ''}${gainPts.toFixed(3)} pts / 100 — ${modInfo?.axes_cibles})`
-              : `Activer la branche Modèle Renforcé pour ${modInfo?.label || backendMod}`
+              ? `Modèle Renforcé promu (écart d'audit : ${formatGain(modInfo?.gain_points_100, 3)} pts / 100 — ${modInfo?.axes_cibles})`
+              : `Aucun adaptateur promu pour ${modInfo?.label || backendMod} : le modèle de base reste servi`
           }
           style={{
             padding: '4px 8px',
@@ -327,10 +341,27 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                 fontWeight: 700,
               }}
             >
-              +{gainPts.toFixed(2)}
+              {formatGain(modInfo?.gain_points_100, 2)}
             </span>
           )}
         </button>
+
+        {selectError && (
+          <span
+            role="alert"
+            title={selectError}
+            style={{
+              maxWidth: 280,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              color: '#FCA5A5',
+              fontSize: 10,
+            }}
+          >
+            ⚠ {selectError}
+          </span>
+        )}
 
         <button
           type="button"
@@ -530,7 +561,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                 >
                   {Object.entries(overview.modules).map(([modKey, info]) => {
                     const selected = inspectModule === modKey
-                    const isRenforce = info.selected_variant === 'renforce'
+                    const isRenforce = info.effective_variant === 'renforce'
                     return (
                       <div
                         key={modKey}
@@ -565,7 +596,7 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                                 fontFamily: "'Cascadia Code',Consolas,monospace",
                               }}
                             >
-                              +{info.gain_points_100.toFixed(3)} pts
+                              {formatGain(info.gain_points_100, 3)} pts
                             </span>
                           ) : (
                             <span style={{ fontSize: 10, color: '#94A3B8' }}>Base intacte</span>
@@ -648,8 +679,8 @@ export default function ReinforcedModelBar({ activeModule }: { activeModule: str
                           </div>
                           <div style={{ fontSize: 13, fontWeight: 700, marginTop: 3 }}>
                             Modèle actif :{' '}
-                            <span style={{ color: inspectedInfo.selected_variant === 'renforce' ? '#34D399' : '#38BDF8' }}>
-                              {inspectedInfo.selected_variant === 'renforce'
+                            <span style={{ color: inspectedInfo.effective_variant === 'renforce' ? '#34D399' : '#38BDF8' }}>
+                              {inspectedInfo.effective_variant === 'renforce'
                                 ? '⚡ Modèle Renforcé (modele/renforce/' + inspectModule + '/)'
                                 : '🛡️ Modèle de Base Intouchable (' + inspectedInfo.base_model + ')'}
                             </span>
