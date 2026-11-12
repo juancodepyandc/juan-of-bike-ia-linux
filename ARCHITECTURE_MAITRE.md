@@ -1265,6 +1265,29 @@ Pour éliminer toute perte de repère et tout archétype codé en dur lors de la
   - Ajout de `ModuleEngineeringInspector.tsx` dans la barre supérieure V4 (`Ingénierie & Précision · N agents`), exposant pour le module actif la télémétrie matérielle (GPU/VRAM/RAM, Ollama `:11434`, ComfyUI `:8188`), la pile technologique, la chaîne d’exécution déterministe, les portes de précision, le simulateur interactif d’Ingénieur 3D & CAO autonome et les sous-agents appliquants chirurgicaux avec leur périmètre exclusif.
   - Refonte Studio Pro de `AuroraV4AppShell.tsx` (barre supérieure 54 px avec fil d’Ariane Agent Maître, dock gauche à préchargement au survol, et respect strict du contrat mobile `application/scripts/mobile-navigation.mjs` sur Pixel 7, iPhone 13, iPad Mini et Desktop Chrome), de `ProjectsPanel.tsx` (filtres segmentés, barres de progression, badges d’état et suppression) et de `StudioHero.tsx` (HUD d’ingénierie de précision conservant les sélecteurs `.manga-hero*` et `.manga-diag*`).
 
+### 6.2.10 Regroupement des branches sur `main` (12 novembre 2026)
+
+Chaque branche a été comparée à `main` par son contenu (diff, `merge-tree`, typecheck), puis chaque recommandation de fusion a été soumise à un relecteur chargé de la réfuter.
+
+- **Fusionnées par PR :**
+  - #21, la boucle professeur (§ 1.36).
+  - #22, l'écran de génération (§ 1.37). Elle apporte aussi les deux correctifs Windows des tests du professeur : le séparateur de chemin dans `test_professor_delivery.py` et `SYSTEMROOT` transmis au processus noté par `graders.run_python`.
+  - #14, le `memo` de `Bubble` dans `AuroraCoworkView.tsx`, la surface Cowork réellement montée. Un `handleNotion` stable, qui lit `submit` par référence, remplace la fonction recréée à chaque rendu. Mesure dans Chromium headless sur 20 tours (application non lancée) : 0 rendu de bulle par frappe au lieu de 20, et le tour en attente reçoit sa réponse finale sans gel. Avec 100 tours, React en production, sur le conteneur : environ 28 ms par frappe en médiane avant, environ 1 ms après.
+- **Fermées sans fusion :**
+  - #15, #17, #19 et #20 ne modifient que `ChatBubble` dans `CoworkOverlay.tsx`, que l'application n'affiche plus. Dans `App.tsx`, `CoworkOverlay` n'est créé que dans la prop `fallback` de `SkinSafeView`, qui l'ignore. Ses autres hôtes (`AppShell.tsx`, `AuroraV1CoworkView.tsx`, `AuroraV3CoworkView.tsx`) ne sont importés nulle part.
+  - #13 et #18 touchent aussi ce fichier, et leur partie `AuroraCoworkView` fait moins bien que #14. #18 appelle `useCallback` après le `return null` du composant et dépend de `submit`, qui change à chaque frappe. Le `memo` de #13 ne saute aucun rendu.
+- **Restes déjà intégrés :** les branches des PR fermées #4, #6 et #9.
+  - Les mémoïsations de #4 et #9 sont dans `main` depuis 7508a58 (§ 6.2.9). La fonction de #9 qui interrogeait le serveur MCP a depuis été remplacée par `agi_core/mcp_transport.py`.
+  - De #6, il manque seulement une clause du prompt de Glyph et des modifications de tests. Ces modifications font échouer les tests de `main` : `AssertionError: 4 != 3` et `cancelPythonJob is not a function`.
+- **Branches restantes :** la session cloud n'a pas le droit de supprimer une branche distante (refus HTTP 403 du proxy). Les branches de ces PR et `claude/charming-mccarthy-f3jyiu` restent donc à supprimer depuis le PC. `claude/lucid-dijkstra-d46v4t` sert encore à la session d'entraînement.
+- **Constats ouverts, non corrigés :**
+  - Les liens « Expliquer » (`[[notion]]` → `cowork://explain/…`) d'`AuroraCoworkView` sont rendus avec `href=""`. En cause, `defaultUrlTransform` de react-markdown 10.1.0, qui n'accepte que http(s), irc(s), mailto et xmpp. Le clic recharge donc la page sans rien envoyer.
+  - Le prompt de l'Architecte exige un bloc `<think>` (`codeSystemPrompts.ts:36`), puis l'interdit (`codeArchitecturePlanInstructions.ts:16`).
+  - `buildExpertEngineeringContractBlock` est importé mais jamais appelé.
+  - Sur 523b88b, `doc_master.py --check-code` trouve 266 sources indexées qui diffèrent de `architecture_catalog.json`. Ce catalogue n'a pas été régénéré depuis 4baddbd, et 57 sources dérivaient déjà sur 645aef8. Les sections concernées sont à relire avant de le régénérer.
+  - Les projections Markdown sont ignorées par Git : dans une copie neuve, lancer `doc_master.py --write` avant le contrôle sans option.
+- **Non mesuré :** l'écran de génération sur de vraies générations FLUX.2. Il faut le GPU du PC, avec ComfyUI et les poids FLUX.2-dev, et lancer `npm run real-gen:live` (§ 1.37).
+
 ### 6.3 Builds
 
 `application/package.json` définit `typecheck`, `check`, `build`, conformance, Vite et Tauri. `npm run check` enchaîne les types TypeScript et le build Vite. `npm run build` seul ne les remplace pas. `vite.config.ts` définit proxies, chunks et métadonnées de build.
