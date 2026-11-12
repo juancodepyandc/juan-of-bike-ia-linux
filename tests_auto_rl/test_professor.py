@@ -674,14 +674,17 @@ class ReviewedVerdicts(unittest.TestCase):
         candidate = [dict(r, output="" if i < 33 else "x", correct=i >= 33) for i, r in enumerate(self.rows([1] * 100))]
         self.assertEqual(compare(base, candidate, gate={"min_items": 10})["verdict"], "reject")
 
-    def verify_run(self, folder, *, previous_marks=None, continued=True, cut_previous=False, execution=True, profile="standard"):
+    def verify_run(self, folder, *, previous_marks=None, continued=True, cut_previous=False, execution=True, profile="standard",
+                   served=("missions",)):
         from auto_rl.professor import run as run_module
         from auto_rl.professor.students import resolve
-        config = {**run_module.PROFILES[profile], "profile": profile, "student": resolve("qwen2.5-coder:7b"), "modules": ["missions"],
+        # The tag's modules are narrowed to generated families, which need no download: the exam covers all of them.
+        student_entry = {**resolve("qwen2.5-coder:7b"), "modules": list(served)}
+        config = {**run_module.PROFILES[profile], "profile": profile, "student": student_entry, "modules": ["missions"],
                   "skills": None, "cycle": 1, "budget_seconds": None, "allow_execution": execution, "export": "never",
                   "gate_per_skill": 60, "four_bit": None}
         with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
-            items, _ = run_module._exam(config, "gate", run_module.Library())
+            items, _ = run_module._exam({**config, "modules": run_module.served_modules(config)}, "gate", run_module.Library())
         def target(item_id):                         # gen:<family>:<role, may hold ":">:<subskill>:<index>
             parts = item_id.split(":")
             return generators.generate(parts[1], ":".join(parts[2:-2]), int(parts[-1]), parts[-2])["target"]
@@ -929,6 +932,168 @@ class ReviewedFixes(unittest.TestCase):
     def test_a_verdict_on_the_gate_that_steered_its_training_is_not_installable(self):
         from auto_rl.professor.run import installable_problems
         verdict = {"verdict": "promote", "exam_complete": True, "student": {"tag": "qwen2.5:7b"}, "gate": {"min_items": 200},
-                   "cycle": 1, "training": {"diagnosis_gate": 1}}
+                   "cycle": 1, "training": {"diagnosis_gate": 1}, "skills": served_skills("qwen2.5:7b")}
         self.assertTrue(any("orienté" in p for p in installable_problems(verdict)))
         self.assertEqual(installable_problems({**verdict, "cycle": 2}), [])
+
+
+def served_skills(tag, leave_out=()):
+    """Per-skill table of a verdict that graded every examinable skill of the modules ``tag`` serves."""
+    from auto_rl.professor.students import resolve
+    from auto_rl.professor.suites import skills
+    modules = resolve(tag).get("modules") or []
+    return {name: {"items": 120} for name, entry in skills(modules).items()
+            if (entry["generator"] or entry["exam_sources"]) and entry["module"] not in leave_out}
+
+
+class ReviewedCoverage(unittest.TestCase):
+    """Activation replaces a tag for every module that calls it: the gate must examine all of them."""
+
+    def test_a_gate_limited_to_the_trained_modules_does_not_authorise_an_installation(self):
+        from auto_rl.professor.run import installable_problems
+        # Cycle 1 of qwen2.5:7b: promoted on Business and media, it lowered French format instructions
+        # (49.0 % -> 40.6 %, p = 0.039), which only the cycle-3 exam, covering Conversation too, measured.
+        verdict = {"verdict": "promote", "exam_complete": True, "student": {"tag": "qwen2.5:7b"}, "gate": {"min_items": 200},
+                   "cycle": 1, "skills": served_skills("qwen2.5:7b", leave_out=("conversation",))}
+        problems = installable_problems(verdict)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("conversation.format_fr", problems[0])
+        self.assertNotIn("business.finqa", problems[0])
+        self.assertEqual(installable_problems({**verdict, "skills": served_skills("qwen2.5:7b")}), [])
+        # A skill left empty by its source counts as not examined, like a missing module.
+        partial = served_skills("qwen2.5-coder:7b")
+        partial.pop("code.sql")
+        coder = {**verdict, "student": {"tag": "qwen2.5-coder:7b"}, "skills": partial}
+        self.assertTrue(any("code.sql" in p for p in installable_problems(coder)))
+
+    def test_the_examiner_extends_its_gate_to_every_module_the_tag_serves(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            verdict = ReviewedVerdicts().verify_run(folder, previous_marks=None, continued=False, served=("media", "missions"))
+        self.assertEqual(sorted(verdict["modules"]), ["media", "missions"])      # per-module results of the gate
+        self.assertEqual(verdict["trained_modules"], ["missions"])
+        self.assertTrue({"media.prompt_spec", "media.prompt_translate", "mission.pointer"} <= set(verdict["skills"]))
+        self.assertTrue(verdict["promotable"], verdict["not_installable"])
+
+    def coverage_case(self):
+        """A production entry narrowed to generated families (nothing to download), trained on missions only."""
+        from auto_rl.professor import run as run_module
+        from auto_rl.professor.students import resolve
+        entry = {**resolve("qwen2.5-coder:7b"), "modules": ["media", "missions"]}
+        config = {**run_module.PROFILES["standard"], "profile": "standard", "student": entry, "modules": ["missions"],
+                  "skills": None, "cycle": 1, "budget_seconds": None, "allow_execution": True, "export": "never",
+                  "gate_per_skill": 60, "diagnostic_per_skill": 10, "four_bit": None}
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            items, _ = run_module._exam(run_module.gate_config(config), "gate", run_module.Library())
+
+        def target(item_id):
+            parts = item_id.split(":")
+            return generators.generate(parts[1], ":".join(parts[2:-2]), int(parts[-1]), parts[-2])["target"]
+        return run_module, config, {item["messages"][-1]["content"]: target(item["id"]) for item in items}
+
+    def test_the_whole_loop_on_one_machine_grades_both_models_on_the_same_extended_gate(self):
+        import contextlib, io, tempfile
+        from auto_rl.professor.records import atomic_json
+        run_module, config, targets = self.coverage_case()
+
+        class Student:
+            trained = False
+
+            def attach(self, adapter):
+                pass
+
+            def detach(self):
+                pass
+
+            def describe(self):
+                return {"backend": "fake", "trained": self.trained}
+
+            def generate(self, conversations, tokens, batch_size=1):
+                return [targets.get(m[-1]["content"], "{}") if self.trained else "{}" for m in conversations]
+        student = Student()
+
+        def fake_train(config_, work, diagnosis, student_, library):
+            adapter = Path(work) / "training" / "adapter"
+            adapter.mkdir(parents=True, exist_ok=True)
+            (adapter / "adapter_model.safetensors").write_bytes(b"trained")
+            atomic_json(adapter.parent / "train_receipt.json", {"steps": 1, "continued_from": None})
+            student_.trained = True
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), \
+                patch("auto_rl.professor.suites.Library.load", return_value=([], [])), \
+                patch.object(run_module, "open_student", lambda config_, adapter=None: student), \
+                patch.object(run_module, "train_role", fake_train):
+            verdict = run_module.cycle(config, folder)
+        self.assertTrue(verdict["exam_complete"], verdict["reasons"])
+        self.assertEqual(verdict["exam"]["graded_both"], verdict["exam"]["items"])
+        self.assertEqual(sorted(verdict["modules"]), ["media", "missions"])
+
+    def test_a_targeted_cycle_still_sits_the_whole_gate_and_the_next_one_trains_the_same_modules(self):
+        import contextlib, io, tempfile
+        from auto_rl.professor.records import atomic_json
+        run_module, config, targets = self.coverage_case()
+        config = {**config, "skills": ["mission.action", "mission.pointer"]}
+
+        class Student:
+            adapter = None
+
+            def attach(self, adapter):
+                self.adapter = Path(adapter).name
+
+            def detach(self):
+                self.adapter = None
+
+            def describe(self):
+                return {"backend": "fake", "adapter": self.adapter}
+
+            def generate(self, conversations, tokens, batch_size=1):
+                return [targets[m[-1]["content"]] if self.adapter == "candidate" else "{}" for m in conversations]
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()), \
+                patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            adapter = Path(folder) / "candidate"
+            adapter.mkdir()
+            (adapter / "adapter_model.safetensors").write_bytes(b"candidate")
+            atomic_json(Path(folder) / "train_receipt.json", {"steps": 1})
+            verdict = run_module.verify(config, Path(folder) / "work", adapter, student=Student(), library=run_module.Library())
+            following = json.loads((Path(folder) / "work" / "diagnosis_next_1.json").read_text())
+        self.assertTrue({"media.prompt_spec", "media.prompt_translate", "mission.evidence", "mission.grounded_report"}
+                        <= set(verdict["skills"]))
+        self.assertTrue(verdict["promotable"], verdict["not_installable"])
+        self.assertEqual(verdict["trained_skills"], ["mission.action", "mission.pointer"])
+        self.assertEqual(following["trained_modules"], ["missions"])
+        self.assertEqual(sorted(following["modules"]), ["media", "missions"])
+
+    def test_merged_diagnoses_train_what_both_parts_trained(self):
+        from auto_rl.professor.run import merge_diagnoses
+
+        def part(skill, module, trained=None):
+            table = {"items": 40, "correct": 20, "accuracy": 0.5, "ci95": [0.35, 0.65], "module": module}
+            found = {"student": {"hf": "x"}, "modules": [module], "complete": True, "blocklist": [], "exam": {},
+                     "summary": {"skills": {skill: table}, "subskills": {}, "overall": {"skipped": 0}}}
+            return {**found, "trained_modules": trained} if trained else found
+        merged = merge_diagnoses(part("media.prompt_spec", "media", trained=["media"]),
+                                 part("conversation.format_fr", "conversation"))
+        self.assertEqual(merged["trained_modules"], ["conversation", "media"])
+
+    def test_a_served_skill_needs_enough_graded_items_and_an_empty_entry_demands_nothing(self):
+        from auto_rl.professor.run import installable_problems, unexamined_served_skills
+        tables = served_skills("qwen2.5:7b")
+        tables["conversation.format_fr"] = {"items": 1}
+        verdict = {"verdict": "promote", "exam_complete": True, "student": {"tag": "qwen2.5:7b"}, "gate": {"min_items": 200},
+                   "cycle": 1, "skills": tables}
+        self.assertTrue(any("conversation.format_fr" in p for p in installable_problems(verdict)))
+        self.assertEqual(unexamined_served_skills(verdict, {"student": {"production": True, "modules": []}}), [])
+
+    def test_the_colab_trainer_trains_the_modules_the_previous_cycle_trained(self):
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "scripts" / "notebooks" / "build_professor_notebooks.py"
+        spec = importlib.util.spec_from_file_location("professor_notebook_builder", path)
+        builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        self.assertIn('diagnosis.get("trained_modules") or diagnosis["modules"]', builder.TRAINER_DIAGNOSIS)
+
+    def test_a_rehearsal_student_keeps_the_modules_it_was_given(self):
+        from auto_rl.professor.run import served_modules
+        from auto_rl.professor.students import resolve
+        self.assertEqual(served_modules({"student": resolve("qwen3:0.6b"), "modules": ["business"]}), ["business"])
+        self.assertEqual(served_modules({"student": resolve("qwen2.5:7b"), "modules": ["business"]}),
+                         ["business", "conversation", "media"])

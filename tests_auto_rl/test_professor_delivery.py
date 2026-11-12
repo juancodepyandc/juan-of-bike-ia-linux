@@ -13,6 +13,15 @@ from unittest.mock import patch
 
 from auto_rl.professor import install, kaggle_runner
 from auto_rl.professor.records import atomic_json, file_hash
+from auto_rl.professor.students import resolve
+from auto_rl.professor.suites import skills
+
+
+def served_skills(tag, leave_out=()):
+    """Per-skill table of a verdict that graded every examinable skill of the modules ``tag`` serves."""
+    modules = resolve(tag).get("modules") or []
+    return {name: {"items": 120} for name, entry in skills(modules).items()
+            if (entry["generator"] or entry["exam_sources"]) and entry["module"] not in leave_out}
 
 
 class NotFound(Exception):
@@ -351,7 +360,7 @@ class Installation(unittest.TestCase):
         atomic_json(folder / "aurora_professor" / "verdict_0.json", {
             "kind": "aurora_professor_verdict", "verdict": verdict, "promotable": promotable, "exam_complete": True,
             "student": {"tag": student}, "adapter_sha256": sha, "cycle": 0, "modules": ["business"], "gate": {"min_items": 200},
-            "overall": {"macro_gain": 0.11, "macro_gain_ci": [0.05, 0.17]}})
+            "skills": served_skills(student), "overall": {"macro_gain": 0.11, "macro_gain_ci": [0.05, 0.17]}})
         if tamper == "adapter":
             (adapter / "adapter_model.safetensors").write_bytes(b"another adapter")
         if tamper == "gguf":
@@ -510,6 +519,17 @@ class Installation(unittest.TestCase):
 
 class ReviewedInstallation(Installation):
     """Second review of 2026-11-12: the installer's state, its exam as served and its paths."""
+
+    def test_a_delivery_whose_exam_left_out_a_module_of_the_tag_is_refused(self):
+        # The PC's registry decides what the tag serves: activation changes every one of those modules.
+        with tempfile.TemporaryDirectory() as folder:
+            delivery = self.delivery(folder)
+            self.assertEqual(install.check_delivery(delivery)["problems"], [])
+            path = delivery / "aurora_professor" / "verdict_0.json"
+            verdict = json.loads(path.read_text())
+            atomic_json(path, {**verdict, "skills": served_skills("qwen2.5:7b", leave_out=("conversation",))})
+            problems = install.check_delivery(delivery)["problems"]
+            self.assertTrue(any("modules servis" in p and "conversation.format_fr" in p for p in problems), problems)
 
     def test_an_active_candidate_stays_recorded_and_the_backup_is_checked(self):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second, tempfile.TemporaryDirectory() as state:

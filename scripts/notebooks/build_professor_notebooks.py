@@ -170,9 +170,10 @@ print("Élève diagnostiqué :", STUDENT, "→", diagnosis["student"]["hf"],
       "| candidat déjà entraîné, reprise de son adaptateur" if CONTINUE_FROM else "| modèle de base")
 for row in diagnosis["weak_points"][:12]:
     print(f"  {row['accuracy']:.3f}  n={row['items']:4d}  {row['skill']}")
+# Un examen de vérification couvre tous les modules du tag : on entraîne ceux que le cycle précédent a entraînés.
 AURORA_OPTIONS = {"role": "train", "student": STUDENT, "profile": PROFILE, "cycle": CYCLE, "continue": bool(CONTINUE_FROM),
-                  "modules": MODULES or ",".join(diagnosis["modules"]), "skills": SKILLS, "budget_minutes": BUDGET_MINUTES,
-                  "overrides": OVERRIDES}
+                  "modules": MODULES or ",".join(diagnosis.get("trained_modules") or diagnosis["modules"]), "skills": SKILLS,
+                  "budget_minutes": BUDGET_MINUTES, "overrides": OVERRIDES}
 '''
 
 TRAINER_ADMISSION = '''import subprocess

@@ -21,12 +21,19 @@ STUDENTS = {
         "hf": "Qwen/Qwen2.5-7B-Instruct", "revision": "a09a35458c702b33eeacc393d103063234e8bc28",
         "params_b": 7.62, "four_bit_gb": 6.0, "modules": ["business", "media", "conversation"],
         "called_by": ["agi_core/prompt_intelligence.py:415 (directeur de prompts image/3D)",
-                      "application/business_intelligence.py:3148 (chat Business, AURORA_MAIN_MODEL)"],
+                      "application/business_intelligence.py:3148 (chat Business, AURORA_MAIN_MODEL)",
+                      # Strict JSON extractions outside the modules above: the gate does not examine them (cowork-like).
+                      "application/routes/web_search_bp_routes.py:456 (profil de marque en JSON strict)",
+                      "application/python-services/aurora_hunyuan/aurora_architect.py:40 (scène 3D en JSON)",
+                      "application/python-services/aurora_hunyuan/aurora_vision_research.py:53 (nom extrait d'une demande)",
+                      "application/routes/voice_bp_routes.py:894 (extraction de page, modèle de repli)"],
     },
     "qwen2.5-coder:7b": {
         "hf": "Qwen/Qwen2.5-Coder-7B-Instruct", "revision": "c03e6d358207e414f1eca0bb1891e29f1db0e242",
         "params_b": 7.62, "four_bit_gb": 6.0, "modules": ["code", "missions"],
-        "called_by": ["agi_core/agi_brain.py:429 (cerveau AGI)"],
+        # application/src/config/models.ts:205 only aliases this tag to qwen3-coder:30b: the interface never calls it.
+        "called_by": ["agi_core/agi_brain.py:429 (cerveau AGI)",
+                      "application/routes/voice_bp_routes.py:894 (extraction de page, modèle de repli)"],
     },
     "qwen3-coder:30b": {
         "hf": "Qwen/Qwen3-Coder-30B-A3B-Instruct", "revision": "b2cff646eb4bb1d68355c01b18ae02e7cf42d120",

@@ -326,7 +326,9 @@ def next_diagnosis(verdict, blocklist):
     summary["overall"] = {**entry(overall, None), "macro_accuracy": overall["macro_candidate"],
                           "skipped": verdict["exam"]["items"] - verdict["exam"]["graded_both"]}
     carried = ("schema", "student", "profile", "modules", "cycle", "hardware", "versions", "python", "host", "created_at")
-    return {**{key: verdict[key] for key in carried}, "skills": examined,
+    # ``modules`` are those the gate examined; the next cycle trains what this one trained unless told otherwise.
+    trained = verdict.get("trained_modules") or sorted(verdict["modules"])
+    return {**{key: verdict[key] for key in carried}, "skills": examined, "trained_modules": sorted(trained),
             "kind": "aurora_professor_diagnosis", "complete": verdict["exam_complete"],
             "basis": {"model": "candidate", "exam": f"gate:{verdict['cycle']}", "adapter_sha256": verdict["adapter_sha256"],
                       "verdict": verdict["verdict"]},
@@ -357,18 +359,70 @@ def merge_diagnoses(primary, extra):
                           "macro_accuracy": sum(t["accuracy"] for t in tables) / len(summary["skills"]),
                           "skipped": primary["summary"]["overall"].get("skipped", 0) + extra["summary"]["overall"].get("skipped", 0)}
     examined = sorted(summary["skills"])
-    return {**primary, "modules": modules, "skills": examined, "complete": bool(primary["complete"] and extra["complete"]),
+    trained = sorted(set(primary.get("trained_modules") or primary["modules"]) | set(extra.get("trained_modules") or extra["modules"]))
+    return {**primary, "modules": modules, "skills": examined, "trained_modules": trained,
+            "complete": bool(primary["complete"] and extra["complete"]),
             "summary": summary, "weak_points": profile(summary, skills(modules, examined)),
             "blocklist": sorted(set(primary["blocklist"]) | set(extra["blocklist"])),
             "merged_from": [{"modules": extra["modules"], "skills": sorted(extra["summary"]["skills"]),
                              "measured_on": (extra.get("basis") or {"model": "base"}), "exam": extra["exam"]}]}
 
 
+def served_modules(config):
+    """Modules a gate must examine: the trained ones plus every module the student's tag serves.
+
+    Activation replaces the tag for all of its modules, not only for the ones that were trained.
+    """
+    student = config["student"]
+    served = (student.get("modules") or []) if student.get("production") else []
+    return sorted(set(config["modules"]) | set(served))
+
+
+def gate_config(config):
+    """Configuration of a gate exam, shared by ``verify`` and ``cycle`` so both models sit the same items.
+
+    For a production student the gate covers every module the tag serves and every skill of them, even
+    after a targeted cycle (``--skills``): the side effects on the skills it did not train are what the
+    gate must see. What was trained is kept apart, so the next cycle trains the same modules.
+    """
+    trained = {"trained_modules": config.get("trained_modules") or config["modules"],
+               "trained_skills": config.get("trained_skills", config.get("skills"))}
+    if not config["student"].get("production"):
+        return {**config, **trained}
+    return {**config, **trained, "modules": served_modules(config), "skills": None}
+
+
+def unexamined_served_skills(verdict, config=None):
+    """Examinable skills of the modules the student's tag serves that this verdict did not grade enough.
+
+    On 12 November, cycle 1 of qwen2.5:7b, examined on Business and media only, had been promoted while it
+    lowered French format instructions from 49.0 % to 40.6 % (McNemar p = 0.039): only the cycle-3 exam,
+    which also covered Conversation, measured it. A skill counts as examined with at least as many graded
+    items as a regression test needs. The examiner reads the tag's modules from its own configuration, the
+    installer from the registry of the PC.
+    """
+    student = (config or {}).get("student")
+    if student is None:
+        from .students import resolve
+        try:
+            student = resolve(verdict["student"]["tag"])
+        except KeyError:
+            return []
+    served = student.get("modules") or []
+    if not served:                                   # skills([]) would be the whole catalogue
+        return []
+    tables = verdict.get("skills") or {}
+    enough = GATE["skill_drop_min_items"]
+    return sorted(name for name, entry in skills(served).items()
+                  if (entry["generator"] or entry["exam_sources"]) and (tables.get(name) or {}).get("items", 0) < enough)
+
+
 def installable_problems(verdict, config=None):
     """Why a verdict cannot authorise an installation (empty when it can). The installer applies the same rule.
 
     A continued candidate must also have sat the same items as the adapter it continues, all of them, without
-    being worse or regressing on any skill: a cut or missing comparison is not a comparison.
+    being worse or regressing on any skill: a cut or missing comparison is not a comparison. The exam must
+    cover every examinable skill of the modules the tag serves, since activation changes all of them.
     """
     problems = []
     if verdict.get("verdict") != "promote":
@@ -386,6 +440,11 @@ def installable_problems(verdict, config=None):
         problems.append("cet élève n'est appelé par aucun module de l'application")
     if (verdict.get("gate") or {}).get("min_items", 0) < GATE["min_items"]:
         problems.append(f"examen de répétition : moins de {GATE['min_items']} items exigés")
+    if production:
+        missing = unexamined_served_skills(verdict, config)
+        if missing:
+            problems.append("l'examen ne couvre pas tous les modules servis par ce tag, que l'activation modifie tous : "
+                            f"compétences non examinées ou sur moins de {GATE['skill_drop_min_items']} items : " + ", ".join(missing))
     steered = (verdict.get("training") or {}).get("diagnosis_gate")
     if steered is not None and verdict.get("cycle", -1) <= steered:
         problems.append(f"examiné sur la tranche {verdict.get('cycle')} alors que l'entraînement a été orienté par la tranche {steered}")
@@ -413,6 +472,12 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
     """
     work = Path(work)
     library = library or Library(row_limit=config["row_limit"])
+    gate_settings = gate_config(config)
+    if (gate_settings["modules"], gate_settings["skills"]) != (config["modules"], config["skills"]):
+        # A gate limited to what was trained cannot see what the adapter does to the rest of the tag.
+        status({"phase": "gate_scope", "trained_modules": gate_settings["trained_modules"],
+                "trained_skills": gate_settings["trained_skills"], "examined_modules": gate_settings["modules"]})
+    config = gate_settings
     previous = None if base_done else previous
     continued = ((read_json(Path(adapter).parent / "train_receipt.json", {}) or {}).get("continued_from") or {}).get("adapter_sha256")
     if previous and adapter_hash(previous) != continued:
@@ -468,6 +533,8 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
                         "candidate_receipt": read_json(gate / "candidate" / "exam_receipt.json", {}).get("results_sha256"),
                         "suite_sha256": read_json(gate / "base" / "exam_receipt.json", {}).get("suite_sha256")},
                "adapter_sha256": adapter_hash(adapter),
+               # ``modules`` and ``skills`` hold the gate's per-module and per-skill tables; what was trained is kept here.
+               "trained_modules": config["trained_modules"], "trained_skills": config["trained_skills"],
                # Present only when the candidate continues an earlier adapter: the same items, previous against candidate.
                "versus_previous": versus,
                "training": {k: training.get(k) for k in ("steps", "stopped", "selected_step", "initial_dev_loss",
@@ -507,7 +574,7 @@ def cycle(config, work):
     if config["budget_seconds"]:
         share["budget_seconds"] = config["budget_seconds"] * 0.2
     diagnosis = diagnose(share, work, student, library)
-    items, _ = _exam(config, "gate", library)
+    items, _ = _exam(gate_config(config), "gate", library)          # the very items ``verify`` grades the candidate on
     status({"phase": "gate_base", "items": len(items)})
     evaluate(student, items, work / f"gate_{config['cycle']}" / "base", batch_size=config["eval_batch"], label="gate_base",
              progress=status, budget_seconds=share["budget_seconds"])
