@@ -166,13 +166,14 @@ class Launcher(unittest.TestCase):
                                        "examiner/aurora_professor/training/adapter/adapter_config.json",
                                        "examiner/aurora_professor/training/init_adapter/adapter_config.json"])
             self.assertTrue(argv[argv.index("--diagnosis") + 1].endswith("diagnosis_next_0.json"))
-            self.assertTrue(argv[argv.index("--init-adapter") + 1].endswith("training/adapter"))
+            # the kernel script runs on Kaggle (Linux); executed here on any OS, compare paths separator-free
+            self.assertTrue(argv[argv.index("--init-adapter") + 1].replace("\\", "/").endswith("training/adapter"))
             # Examiner of cycle 1: the new adapter is the candidate, the one it continues sits the same exam.
             argv = self.run_bootstrap(Path(folder) / "v", {**base, "role": "verify", "cycle": 1},
                                       ["trainer/aurora_professor/training/adapter/adapter_config.json",
                                        "trainer/aurora_professor/training/init_adapter/adapter_config.json"])
-            self.assertTrue(argv[argv.index("--adapter") + 1].endswith("working/aurora_professor/training/adapter"))
-            self.assertTrue(argv[argv.index("--previous-adapter") + 1].endswith("working/aurora_professor/training/init_adapter"))
+            self.assertTrue(argv[argv.index("--adapter") + 1].replace("\\", "/").endswith("working/aurora_professor/training/adapter"))
+            self.assertTrue(argv[argv.index("--previous-adapter") + 1].replace("\\", "/").endswith("working/aurora_professor/training/init_adapter"))
             # Colab path: a flat private dataset carries the continued adapter under an ``init_`` prefix.
             argv = self.run_bootstrap(Path(folder) / "c", {**base, "role": "verify", "cycle": 1},
                                       ["dataset/adapter_config.json", "dataset/adapter_model.safetensors",
