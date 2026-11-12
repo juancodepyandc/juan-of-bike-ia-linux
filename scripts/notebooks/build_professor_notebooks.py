@@ -207,8 +207,8 @@ if os.environ.get("KAGGLE_API_TOKEN") or (os.environ.get("KAGGLE_USERNAME") and 
     print("Adaptateur déposé dans le jeu de données privé", dataset)
     folder = Path("/content/aurora_examinateur")
     kaggle_runner.write_kernel(folder, owner, "verify", student=STUDENT, profile=PROFILE, modules=AURORA_OPTIONS["modules"],
-                               cycle=CYCLE, budget_minutes=240, dataset_sources=[dataset])
-    print("Examen lancé :", kaggle_runner.launch(folder, timeout_seconds=240 * 60 + 1500))
+                               cycle=CYCLE, budget_minutes=300, dataset_sources=[dataset])       # jusqu'à trois modèles examinés
+    print("Examen lancé :", kaggle_runner.launch(folder, timeout_seconds=300 * 60 + 1500))
 else:
     try:
         from google.colab import drive

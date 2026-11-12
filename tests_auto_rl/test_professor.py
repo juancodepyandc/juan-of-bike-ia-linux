@@ -2,6 +2,7 @@
 import json
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from auto_rl.professor import generators, generators_domain  # noqa: F401
@@ -333,6 +334,58 @@ class Curriculum(unittest.TestCase):
         notes = keep_verified_answers(pool, {"business.fin_math": asked}, rows[1:])       # nothing verified: no example at all
         self.assertNotIn("business.fin_math", pool)
         self.assertEqual(notes["business.fin_math"]["verified"], 0)
+
+    def test_the_trainer_follows_explicit_replay_and_self_worked_choices(self):
+        """Replay and self-worked skills are chosen per cycle; what was chosen is written in the curriculum."""
+        import tempfile
+        from auto_rl.professor import run as run_module, train as train_module
+        from auto_rl.professor.students import resolve
+
+        def free_form(skill):
+            return [{"id": f"hf:{skill}:{n}", "module": skill.split(".")[0], "skill": skill, "subskill": "free", "lang": "fr",
+                     "messages": [{"role": "user", "content": f"{skill} consigne {n}"}], "target": "Une réponse rédigée.",
+                     "question_hash": f"{skill}{n}".encode().hex()[:40].ljust(40, "0"), "max_new_tokens": 32} for n in range(30)]
+
+        class Student:
+            def generate(self, conversations, tokens, batch_size=1):
+                return ["Réponse finale : 0"] * len(conversations)       # every numeric answer wrong: nothing verified
+
+            def describe(self):
+                return {"backend": "fake"}
+
+            def attach(self, adapter):
+                raise AssertionError("a first cycle has no adapter to attach")
+
+            def detach(self):
+                pass
+        captured = []
+
+        def fake_train(student, items, folder, **options):
+            captured.append(list(items))
+            return {"steps": 0}
+        diagnosis = {"student": {"hf": "Qwen/Qwen3-0.6B"}, "weak_points": [], "blocklist": [], "basis": None,
+                     "summary": {"skills": {}}, "exam": {}}
+        base = {**run_module.PROFILES["smoke"], "profile": "smoke", "student": resolve("qwen3:0.6b"), "modules": ["business", "conversation"],
+                "skills": ["business.fin_math", "conversation.format_fr"], "cycle": 0, "budget_seconds": None, "allow_execution": False,
+                "curriculum": 60, "self_worked_per_skill": 6, "mine_per_skill": 2}
+        for choice, expected_replay in (({}, {"business.advice", "conversation.instruct_fr"}),
+                                        ({"replay": ("business.advice",)}, {"business.advice"})):
+            config = {**base, **choice}
+            with tempfile.TemporaryDirectory() as work, \
+                    patch.object(run_module.Library, "train_family", lambda self, skill, catalogue: free_form(skill)), \
+                    patch.object(train_module, "train", fake_train):
+                run_module.train_role(config, work, diagnosis, student=Student(), library=run_module.Library())
+                plan = json.loads((Path(work) / "curriculum.json").read_text())
+            replayed = {name for name, entry in plan["plan"]["skills"].items() if entry.get("replay")}
+            self.assertEqual(replayed, expected_replay)
+            self.assertEqual(set(plan["choices"]["replay"]) & {"business.advice", "conversation.instruct_fr"}, expected_replay)
+            self.assertEqual(plan["self_worked"]["business.fin_math"]["verified"], 0)
+            self.assertNotIn("business.fin_math", plan["plan"]["skills"])       # no verified work: no example at all
+            self.assertTrue(all(item["skill"] in expected_replay | {"conversation.format_fr"} for item in captured[-1]))
+        with self.assertRaises(SystemExit):
+            run_module._names("conversation.unknown", run_module.REPLAY, "--replay")
+        self.assertEqual(run_module._names("", run_module.REPLAY, "--replay"), ())
+        self.assertEqual(run_module._names("code.sql, code.python", run_module.SELF_WORKED, "--self-worked"), ("code.python", "code.sql"))
 
     def test_diagnoses_of_separate_modules_merge_without_hiding_their_origin(self):
         from auto_rl.professor.run import merge_diagnoses

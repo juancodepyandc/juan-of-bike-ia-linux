@@ -62,13 +62,27 @@ def status(payload):
     print("AURORA_STATUS " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
+def _names(text, default, option):
+    """A comma-separated list of skills for an explicit trainer choice; ``None`` keeps the default."""
+    if text is None:
+        return tuple(default)
+    names = tuple(sorted({name.strip() for name in text.split(",") if name.strip()}))
+    known = set(REPLAY) if option == "--replay" else set(skills())
+    unknown = set(names) - known
+    if unknown:
+        raise SystemExit(f"{option}: unknown skills {sorted(unknown)}; known: {sorted(known)}")
+    return names
+
+
 def settings(args):
     config = {**PROFILES[args.profile], "profile": args.profile, "student": resolve(args.student),
               "modules": sorted(set(args.modules.split(","))) if args.modules else sorted(MODULES),
               "skills": sorted(set(args.skills.split(","))) if args.skills else None,
               "cycle": args.cycle, "budget_seconds": args.budget_minutes * 60 if args.budget_minutes else None,
               "four_bit": args.four_bit, "export": args.export,
-              "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1"}
+              "allow_execution": os.environ.get("AURORA_PROFESSOR_ALLOW_CODE_EXECUTION") == "1",
+              "replay": _names(args.replay, REPLAY, "--replay"),
+              "self_worked": _names(args.self_worked, SELF_WORKED, "--self-worked")}
     for name in ("diagnostic_per_skill", "gate_per_skill", "curriculum", "epochs", "learning_rate", "rank", "max_tokens",
                  "batch_size", "accumulate", "mine_per_skill", "pool_per_skill", "self_worked_per_skill"):
         value = getattr(args, name, None)
@@ -184,18 +198,22 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     weak = diagnosis["weak_points"]
     # Size each pool for its expected share of the curriculum, so a very weak skill is not capped by the default pool.
     catalogue = skills(config["modules"], config["skills"])
+    replay = tuple(config.get("replay", REPLAY))
+    self_worked_skills = tuple(config.get("self_worked", SELF_WORKED))
     trainable = [name for name, entry in catalogue.items() if (entry["generator"] or entry["train_sources"]) and name not in REPLAY]
     expected = skill_weights(weak, trainable)
     sizes = {name: int(1.2 * config["curriculum"] * share) + 8 for name, share in expected.items()}
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
                                   cycle=config["cycle"])
+    for name in set(REPLAY) - set(replay):              # free-form skills left out of this cycle by an explicit choice
+        pool.pop(name, None)
     # Probe the model as it is now on training items it can be graded on: what it fails goes first.
-    probes = mining_probes({name: items for name, items in pool.items() if name not in SELF_WORKED},
+    probes = mining_probes({name: items for name, items in pool.items() if name not in self_worked_skills},
                            config["mine_per_skill"], config["allow_execution"])
     # Self-worked skills: many more questions are asked, and only the answers the grader verifies become targets.
     worked = {name: mining_probes({name: pool[name]}, config["self_worked_per_skill"], config["allow_execution"])
-              for name in pool if name in SELF_WORKED}
+              for name in pool if name in self_worked_skills}
     asked = probes + [item for group in worked.values() for item in group]
     mined, rows = {}, []
     if asked:
@@ -209,11 +227,13 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
         student.detach()
     self_worked = keep_verified_answers(pool, worked, rows)
     weights = skill_weights(weak, [name for name in pool if name not in REPLAY])
-    chosen, plan = build_curriculum(pool, weights, config["curriculum"], mined=mined, replay_skills=REPLAY)
+    chosen, plan = build_curriculum(pool, weights, config["curriculum"], mined=mined, replay_skills=replay)
     atomic_json(work / "curriculum.json", {"kind": "aurora_professor_curriculum", "plan": plan, "weights": weights,
                                            "pool": pool_notes, "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
                                            "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
-                                           "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked})
+                                           "cycle": config["cycle"], "continued_from": given, "self_worked": self_worked,
+                                           "choices": {"replay": list(replay), "self_worked": list(self_worked_skills),
+                                                       "skills": config["skills"]}})
     status({"phase": "train", "examples": len(chosen)})
     knobs = {k: config[k] for k in ("max_tokens", "batch_size", "accumulate", "epochs", "eval_every", "learning_rate", "rank") if k in config}
     if config["student"].get("attention_only"):
@@ -399,6 +419,10 @@ def main(argv=None):
     parser.add_argument("--diagnosis", type=Path)
     parser.add_argument("--adapter", type=Path)
     parser.add_argument("--extra-diagnosis", type=Path, help="merge: diagnosis of other modules of the same student, added to --diagnosis")
+    parser.add_argument("--replay", help="train: free-form skills kept as replay (comma-separated; empty for none; default: "
+                                         + ",".join(REPLAY) + ")")
+    parser.add_argument("--self-worked", help="train: skills trained only on the student's own verified answers (default: "
+                                              + ",".join(SELF_WORKED) + ")")
     parser.add_argument("--init-adapter", type=Path, help="train: continue this adapter (needs the examiner's diagnosis_next file)")
     parser.add_argument("--previous-adapter", type=Path, help="verify: the adapter the candidate continues, examined on the same items")
     parser.add_argument("--budget-minutes", type=float)
