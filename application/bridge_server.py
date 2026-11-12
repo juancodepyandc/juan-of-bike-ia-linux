@@ -1503,8 +1503,9 @@ if __name__ == "__main__":
         if _services not in _sys.path:
             _sys.path.insert(0, _services)
         from blender_locator import ensure_env as _ensure_blender, locate as _locate_blender
-        _ensure_blender()
+        # origine lue AVANT l'export : sinon elle vaudrait toujours « AURORA_BLENDER »
         _bl_path, _bl_origin = _locate_blender()
+        _ensure_blender()
         print(f"  BLENDER         = {_bl_path or 'NON DETECTE'} ({_bl_origin})", flush=True)
     except Exception as _bl_exc:  # noqa: BLE001
         print(f"  BLENDER         = recherche indisponible ({_bl_exc!r})", flush=True)

@@ -5067,7 +5067,7 @@ export default function ModelView() {
               url: toAssetUrl(a.path),
               role: a.view === 'front' ? 'face' : a.view === 'right' ? 'droite' : a.view === 'left' ? 'gauche' : 'dos',
             }))
-            emitGenerationFx('3d', { active: true, phase: 'Référence photo — multi-vues prêtes', refs: allRefs })
+            emitGenerationFx('3d', { active: true, phase: 'Référence photo — multi-vues prêtes', refs: allRefs, subjectKind: intent.subjectKind })
             referenceSeedForWorkflow = true
             referenceVerificationSummary = `Reference multivue directe retenue: ${materializedViewPlan.summary}.`
           } else {
@@ -5105,7 +5105,7 @@ export default function ModelView() {
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
               setProgress('Reference 3D fiable retenue, preparation de la reconstruction...')
               setPhase('Référence photo — référence visuelle retenue...', 35)
-              emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — référence visuelle retenue', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
             } else try {
               setProgress(referenceSeed ? 'Refinement de la reference 3D...' : 'Generation de la reference image...')
               setPhase(referenceSeed ? 'Référence photo — raffinement de la vue...' : 'Référence photo — génération de la vue...', 25)
@@ -5224,7 +5224,7 @@ export default function ModelView() {
               await fsWriteBinary(referenceImagePath, Array.from(new Uint8Array(await imageBlob.arrayBuffer())))
               lastReferenceImagePathRef.current = referenceImagePath
               setReferenceImageUrl(toAssetUrl(referenceImagePath))
-              emitGenerationFx('3d', { active: true, phase: 'Référence photo — vue front prête', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+              emitGenerationFx('3d', { active: true, phase: 'Référence photo — vue front prête', refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
             } catch (refErr) {
               // ECHEC NON FATAL. Un 400 ComfyUI ici (mauvais graphe, modele
               // absent, service down) ne doit PAS tuer la generation.
@@ -5383,7 +5383,7 @@ export default function ModelView() {
               result = { ok: true, path: proceduralResult.outputPath, format: proceduralResult.format as 'glb' | 'obj' || 'glb', shape_model: `Blender Procedural (${intent.pipelineRouting.proceduralTemplate})`, shape_runtime: 'blender_headless', shape_strategy: intent.pipelineRouting.proceduralTemplate, textured: proceduralTextured, fallback_used: false, pipeline: 'procedural', animationFrames: proceduralResult.animationFrames }
               // le GLB réel sorti de Blender se matérialise tout de suite dans l'hologramme
               if ((proceduralResult.format || 'glb') === 'glb') {
-                emitGenerationFx('3d', { active: true, phaseIndex: 3, meshUrl: toAssetUrl(proceduralResult.outputPath), meshInfo: `modèle Blender procédural (${intent.pipelineRouting.proceduralTemplate})`, logLine: 'modèle Blender exporté — matérialisation dans l’hologramme' })
+                emitGenerationFx('3d', { active: true, meshUrl: toAssetUrl(proceduralResult.outputPath), meshInfo: `modèle Blender procédural (${intent.pipelineRouting.proceduralTemplate})`, logLine: 'modèle Blender exporté — matérialisation dans l’hologramme' })
               }
             } else {
               // Fallback to AI generation
@@ -5403,7 +5403,7 @@ export default function ModelView() {
               if (photoResult?.ok && photoResult.path) {
                 result = { ...photoResult, pipeline: 'photogrammetry' } as ModelGenerationResult
                 if (/\.glb$/i.test(String(photoResult.path))) {
-                  emitGenerationFx('3d', { active: true, phaseIndex: 3, meshUrl: toAssetUrl(String(photoResult.path)), meshInfo: `photogrammétrie (${imageFiles.length} photos réelles)`, logLine: 'maillage photogrammétrique reconstruit — matérialisation dans l’hologramme' })
+                  emitGenerationFx('3d', { active: true, meshUrl: toAssetUrl(String(photoResult.path)), meshInfo: `photogrammétrie (${imageFiles.length} photos réelles)`, logLine: 'maillage photogrammétrique reconstruit — matérialisation dans l’hologramme' })
                 }
               } else {
                 setProgress('Photogrammetrie echouee, fallback vers generation IA...')
@@ -5474,7 +5474,7 @@ export default function ModelView() {
                 auroraArgs.push('--synthetic-reference')
               }
               if (referenceImagePath) {
-                emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }] })
+                emitGenerationFx('3d', { active: true, refs: [{ url: toAssetUrl(referenceImagePath), role: 'face' }], subjectKind: intent.subjectKind })
               }
               const refRoles: [string, string][] = [
                 [`${genDir}/${runId}_reference.png`, 'face'],
@@ -5499,6 +5499,7 @@ export default function ModelView() {
                     emitGenerationFx('3d', {
                       active: true,
                       refs: refs.length ? refs : undefined,
+                      subjectKind: intent.subjectKind,
                       meshUrl: (meshExists || meshEmitted) ? toAssetUrl(meshPath) : undefined,
                       meshInfo: meshEmitted ? 'géométrie native posée — texture & matériaux en cours' : undefined,
                     })

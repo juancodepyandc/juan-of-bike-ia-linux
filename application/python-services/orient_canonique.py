@@ -27,12 +27,27 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 PS = Path(__file__).resolve().parent
 
 
 def _blender() -> str:
     import shutil
-    return shutil.which("blender") or "blender"
+    return _aurora_blender_exe()
 
 
 _BAKE = r"""

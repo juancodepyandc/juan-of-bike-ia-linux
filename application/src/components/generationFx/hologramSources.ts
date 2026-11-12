@@ -128,14 +128,17 @@ const colorDist = (a: ArrayLike<number>, i: number, b: ArrayLike<number>, j: num
   yccDist(a[i] - b[j], a[i + 1] - b[j + 1], a[i + 2] - b[j + 2])
 
 /** Couleur de décor et bande verticale où elle touche le bord (un sol ne monte pas sur le mur). */
-type BackdropCluster = { color: Float32Array; spread: number; seedTol: number; yMin: number; yMax: number }
+type BackdropCluster = { color: Float32Array; spread: number; seedTol: number; gapTol: number; yMin: number; yMax: number }
 
 /**
  * Couleurs du décor lues sur le bord de l'image (jusqu'à 4 : mur, sol, dégradé…).
- * Une couleur n'est retenue comme décor que si elle occupe au moins deux côtés :
- * un sujet coupé par le cadre (pieds, bras) ne touche qu'un côté et reste sujet.
+ * La couleur dominante du bord est le décor. Une autre couleur n'est retenue comme
+ * décor que si elle touche au moins deux côtés, occupe un coin du cadre et reste
+ * absente du cœur de l'image : un sujet coupé par le cadre (bras des deux côtés,
+ * main levée et pieds, véhicule coupé aux deux bouts, buste) a sa couleur au cœur
+ * de l'image ou ne touche aucun coin, et reste donc sujet.
  */
-function backdropClusters(blur: Float32Array, w: number, h: number): { clusters: BackdropCluster[]; noise: number } {
+function backdropClusters(blur: Float32Array, w: number, h: number): { clusters: BackdropCluster[]; noise: number; gradTol: number; grad: Float32Array; borderRange: number } {
   const samples: number[] = []
   const sides: number[] = []
   const add = (x: number, y: number, side: number) => { samples.push((y * w + x) * 3); sides.push(side) }
@@ -164,145 +167,233 @@ function backdropClusters(blur: Float32Array, w: number, h: number): { clusters:
   }
   const sideTotal = [0, 0, 0, 0]
   for (const sd of sides) sideTotal[sd]++
+  // voisinage de chaque coin : 8 % de la longueur des deux côtés qui s'y rejoignent
+  const cornerOf = (k: number): number => {
+    const j = k / 3
+    const x = j % w
+    const y = (j - x) / w
+    const cx = Math.max(2, Math.round(0.08 * w))
+    const cy = Math.max(2, Math.round(0.08 * h))
+    const left = x < cx
+    const right = x >= w - cx
+    const top = y < cy
+    const bottom = y >= h - cy
+    if (top && left) return 0
+    if (top && right) return 1
+    if (bottom && left) return 2
+    if (bottom && right) return 3
+    return -1
+  }
+  const cornerTotal = [0, 0, 0, 0]
+  for (let i = 0; i < S; i++) { const c = cornerOf(samples[i]); if (c >= 0) cornerTotal[c]++ }
   const stats = centers.map((color, c) => {
     const members: number[] = []
     const perSide = [0, 0, 0, 0]
+    const perCorner = [0, 0, 0, 0]
     const ys: number[] = []
     for (let i = 0; i < S; i++) {
       if (assign[i] !== c) continue
       members.push(colorDist(blur, samples[i], color, 0))
       perSide[sides[i]]++
+      const corner = cornerOf(samples[i])
+      if (corner >= 0) perCorner[corner]++
       if (sides[i] >= 2) ys.push(Math.floor(samples[i] / 3 / w))
     }
     members.sort((a, b) => a - b)
     ys.sort((a, b) => a - b)
     const spread = members.length ? members[Math.min(members.length - 1, Math.floor(0.8 * members.length))] : 0
+    const seedTol = clamp(10 + 2 * spread, 14, 48)
     const touches = perSide.map((v, sd) => sideTotal[sd] > 0 && v / sideTotal[sd] >= 0.05)
-    // bande verticale robuste (2e–98e centile des côtés gauche/droit), étendue au cadre si la couleur touche le haut ou le bas
+    const corners = perCorner.filter((v, k) => cornerTotal[k] > 0 && v / cornerTotal[k] >= 0.6).length
+    // présence de la couleur au cœur de l'image (là où se tient le sujet)
+    let core = 0
+    let coreHit = 0
+    for (let y = Math.floor(0.25 * h); y < Math.ceil(0.75 * h); y += 2) {
+      for (let x = Math.floor(0.3 * w); x < Math.ceil(0.7 * w); x += 2) {
+        core++
+        if (colorDist(blur, (y * w + x) * 3, color, 0) < seedTol) coreHit++
+      }
+    }
     const margin = Math.round(0.03 * h)
     const yMin = touches[0] ? 0 : ys.length ? Math.max(0, ys[Math.floor(0.02 * (ys.length - 1))] - margin) : 0
     const yMax = touches[1] ? h - 1 : ys.length ? Math.min(h - 1, ys[Math.ceil(0.98 * (ys.length - 1))] + margin) : h - 1
-    return { color, spread, share: members.length / S, sidesCovered: touches.filter(Boolean).length, yMin, yMax }
+    return { color, spread, seedTol, share: members.length / S, sidesCovered: touches.filter(Boolean).length, corners, corePresence: core ? coreHit / core : 0, yMin, yMax }
   })
   const largest = stats.reduce((a, b) => (b.share > a.share ? b : a))
-  const clusters = stats
-    .filter((st) => st === largest || (st.share >= 0.04 && st.sidesCovered >= 2))
-    .map((st) => ({ color: st.color, spread: st.spread, seedTol: clamp(10 + 2 * st.spread, 14, 48), yMin: st.yMin, yMax: st.yMax }))
+  const keptIdx = stats.map((st, c) => (st === largest || (st.share >= 0.04 && st.sidesCovered >= 2 && st.corners >= 1 && st.corePresence < 0.08) ? c : -1)).filter((c) => c >= 0)
+  const clusters = keptIdx.map((c) => {
+    const st = stats[c]
+    return { color: st.color, spread: st.spread, seedTol: st.seedTol, gapTol: clamp(6 + 1.2 * st.spread, 8, 20), yMin: st.yMin, yMax: st.yMax }
+  })
+  // étendue de luminance du décor sur le bord (10e–90e centile, échantillons du décor seulement) :
+  // un bord uniforme (fond blanc) ne justifie aucune dérive, un dégradé visible au bord en justifie une
+  const keptSet = new Set(keptIdx)
+  const backLum = lum.filter((_, i) => keptSet.has(assign[i])).sort((a, b) => a - b)
+  const borderRange = backLum.length ? backLum[Math.floor(0.9 * (backLum.length - 1))] - backLum[Math.floor(0.1 * (backLum.length - 1))] : 0
   // bruit local du décor : écart entre pixels voisins le long du bord (image floutée)
   const steps: number[] = []
   for (let x = 1; x < w; x++) { steps.push(colorDist(blur, x * 3, blur, (x - 1) * 3)); steps.push(colorDist(blur, ((h - 1) * w + x) * 3, blur, ((h - 1) * w + x - 1) * 3)) }
   for (let y = 1; y < h; y++) { steps.push(colorDist(blur, y * w * 3, blur, (y - 1) * w * 3)); steps.push(colorDist(blur, (y * w + w - 1) * 3, blur, ((y - 1) * w + w - 1) * 3)) }
-  return { clusters, noise: median(steps) }
+  // gradient local (différences centrées) : un contour, même pâle, est une marche ; un dégradé
+  // de décor (projecteur, vignettage) n'en est pas une. Seuil tiré du gradient du bord lui-même.
+  const grad = new Float32Array(w * h)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const j = y * w + x
+      const xl = (y * w + Math.max(0, x - 1)) * 3
+      const xr = (y * w + Math.min(w - 1, x + 1)) * 3
+      const yu = (Math.max(0, y - 1) * w + x) * 3
+      const yd = (Math.min(h - 1, y + 1) * w + x) * 3
+      grad[j] = Math.max(colorDist(blur, xr, blur, xl), colorDist(blur, yd, blur, yu)) / 2
+    }
+  }
+  const borderGrad = samples.map((k) => grad[k / 3]).sort((a, b) => a - b)
+  const p90 = borderGrad.length ? borderGrad[Math.floor(0.9 * (borderGrad.length - 1))] : 0
+  return { clusters, noise: median(steps), gradTol: clamp(1.5 + 2 * p90, 3, 24), grad, borderRange }
 }
 
+/** Pourquoi une vue n'a pas donné de silhouette exploitable. */
+export type MaskRefusal = 'empty' | 'fills-frame'
+
 /**
- * Masque du sujet : canal alpha s'il est utilisé ; sinon le décor est retiré par
- * croissance de région depuis le bord, sur l'image floutée. Chaque pixel de décor
- * transmet à ses voisins une couleur de référence qui suit lentement les dégradés
- * (projecteur, vignettage, mur puis sol) mais s'arrête sur le contour du sujet.
- * Null si l'image ne permet pas d'isoler un sujet (fond absent, sujet qui remplit
- * le cadre, image vide).
+ * Masque du sujet avec la raison d'un refus éventuel. Canal alpha s'il est utilisé
+ * (exact : aucun refus de cadrage, une découpe peut toucher les quatre bords) ; sinon
+ * le décor est retiré par croissance de région depuis le bord, sur l'image floutée.
+ * Chaque pixel de décor transmet à ses voisins une couleur de référence qui suit
+ * lentement les dégradés (projecteur, vignettage, mur puis sol) ; la croissance ne
+ * franchit pas un contour (gradient local au-dessus de celui du bord), même pâle.
+ * Le contour est ensuite affiné sur l'image nette et les interstices étroits du
+ * décor (sous les bras, entre les jambes) sont rendus au fond.
  */
-export function foregroundMask(img: RGBAImage): MaskResult | null {
+export function analyzeForeground(img: RGBAImage): { result: MaskResult | null; refusal: MaskRefusal | null } {
   const { width: w, height: h, data } = img
   const n = w * h
-  if (w < 8 || h < 8 || data.length < n * 4) return null
+  if (w < 8 || h < 8 || data.length < n * 4) return { result: null, refusal: 'empty' }
   const out = new Uint8Array(n)
   let transparent = 0
   for (let i = 0; i < n; i++) if (data[i * 4 + 3] < 250) transparent++
-  let method: MaskResult['method'] = 'background'
   if (transparent > n * 0.02) {
-    method = 'alpha'
     for (let i = 0; i < n; i++) out[i] = data[i * 4 + 3] >= 128 ? 1 : 0
-  } else {
-    const radius = Math.max(1, Math.round(Math.min(w, h) / 256))
-    const blur = blurRGB(data, w, h, radius)
-    const { clusters, noise } = backdropClusters(blur, w, h)
-    const localTol = clamp(7 + 2 * noise, 9, 22)
-    const maxSpread = Math.max(...clusters.map((c) => c.spread))
-    const absTol = clamp(46 + 2 * maxSpread, 60, 120)
-    /** Couleur de décor la plus proche parmi celles dont la bande verticale contient la rangée y. */
-    const nearest = (k: number, y: number) => {
-      let best = Infinity
-      let tol = 0
-      for (const c of clusters) {
-        if (y < c.yMin || y > c.yMax) continue
-        const d = colorDist(blur, k, c.color, 0)
-        if (d < best) { best = d; tol = c.seedTol }
-      }
-      return { d: best, tol }
+    const mask: Mask = { width: w, height: h, data: out }
+    const coverage = cleanMask(mask) / n
+    return coverage < 0.01 ? { result: null, refusal: 'empty' } : { result: { mask, method: 'alpha', coverage }, refusal: null }
+  }
+  const radius = Math.max(1, Math.round(Math.min(w, h) / 256))
+  const blur = blurRGB(data, w, h, radius)
+  const { clusters, noise, gradTol, grad, borderRange } = backdropClusters(blur, w, h)
+  const localTol = clamp(7 + 2 * noise, 9, 22)
+  const maxSpread = Math.max(...clusters.map((c) => c.spread))
+  // dérive permise de la couleur de référence loin des couleurs du décor : 18 sur un bord uniforme
+  // (comme un seuil fixe : un objet pâle ou ombré sur fond blanc reste sujet), davantage quand le bord
+  // montre lui-même un dégradé (projecteur, vignettage, mur puis sol)
+  const driftTol = clamp(18 + maxSpread + 2.5 * borderRange, 18, 120)
+  /** Couleur de décor la plus proche parmi celles dont la bande verticale contient la rangée y. */
+  const nearestOf = (src: ArrayLike<number>, k: number, y: number) => {
+    let best = Infinity
+    let cl: BackdropCluster | null = null
+    for (const c of clusters) {
+      if (y < c.yMin || y > c.yMax) continue
+      const d = colorDist(src, k, c.color, 0)
+      if (d < best) { best = d; cl = c }
     }
-    const background = new Uint8Array(n)
-    const ref = new Float32Array(n * 3)
-    const queue = new Int32Array(n)
-    let head = 0
-    let tail = 0
-    const seed = (j: number) => {
-      if (background[j]) return
-      const nn = nearest(j * 3, Math.floor(j / w))
-      if (nn.d >= nn.tol) return
-      background[j] = 1
-      ref[j * 3] = blur[j * 3]; ref[j * 3 + 1] = blur[j * 3 + 1]; ref[j * 3 + 2] = blur[j * 3 + 2]
-      queue[tail++] = j
-    }
-    for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x) }
-    for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1) }
-    const grow = (i: number, j: number) => {
-      if (background[j]) return
-      if (colorDist(blur, j * 3, ref, i * 3) >= localTol) return
-      if (nearest(j * 3, Math.floor(j / w)).d >= absTol) return
-      background[j] = 1
-      for (let q = 0; q < 3; q++) ref[j * 3 + q] = 0.8 * ref[i * 3 + q] + 0.2 * blur[j * 3 + q]
-      queue[tail++] = j
-    }
+    return { d: best, cl }
+  }
+  const background = new Uint8Array(n)
+  const ref = new Float32Array(n * 3)
+  const queue = new Int32Array(n)
+  let head = 0
+  let tail = 0
+  const seed = (j: number) => {
+    if (background[j]) return
+    const nn = nearestOf(blur, j * 3, Math.floor(j / w))
+    if (!nn.cl || nn.d >= nn.cl.seedTol) return
+    background[j] = 1
+    ref[j * 3] = blur[j * 3]; ref[j * 3 + 1] = blur[j * 3 + 1]; ref[j * 3 + 2] = blur[j * 3 + 2]
+    queue[tail++] = j
+  }
+  for (let x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x) }
+  for (let y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1) }
+  const grow = (i: number, j: number) => {
+    if (background[j]) return
+    if (grad[j] > gradTol) return
+    if (colorDist(blur, j * 3, ref, i * 3) >= localTol) return
+    if (nearestOf(blur, j * 3, Math.floor(j / w)).d >= driftTol) return
+    background[j] = 1
+    for (let q = 0; q < 3; q++) ref[j * 3 + q] = 0.8 * ref[i * 3 + q] + 0.2 * blur[j * 3 + q]
+    queue[tail++] = j
+  }
+  const drain = (step: (i: number, j: number) => void) => {
     while (head < tail) {
       const j = queue[head++]
       const x = j % w
       const y = (j - x) / w
-      if (x > 0) grow(j, j - 1)
-      if (x < w - 1) grow(j, j + 1)
-      if (y > 0) grow(j, j - w)
-      if (y < h - 1) grow(j, j + w)
+      if (x > 0) step(j, j - 1)
+      if (x < w - 1) step(j, j + 1)
+      if (y > 0) step(j, j - w)
+      if (y < h - 1) step(j, j + w)
     }
-    // Le flou épaissit le contour d'environ son rayon : on l'affine sur l'image nette,
-    // pixel de bord par pixel de bord, avec la référence du décor voisin.
-    const sharpDist = (j: number, i: number) =>
-      yccDist(data[j * 4] - ref[i * 3], data[j * 4 + 1] - ref[i * 3 + 1], data[j * 4 + 2] - ref[i * 3 + 2])
-    for (let pass = 0; pass <= radius; pass++) {
-      const flips: number[] = []
-      for (let j = 0; j < n; j++) {
-        if (background[j]) continue
-        const x = j % w
-        const y = (j - x) / w
-        const nb = [x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, y > 0 ? j - w : -1, y < h - 1 ? j + w : -1]
-        for (const i of nb) {
-          if (i >= 0 && background[i] && sharpDist(j, i) < localTol) { flips.push(j, i); break }
-        }
-      }
-      if (!flips.length) break
-      for (let f = 0; f < flips.length; f += 2) {
-        const j = flips[f]
-        const i = flips[f + 1]
-        background[j] = 1
-        for (let q = 0; q < 3; q++) ref[j * 3 + q] = ref[i * 3 + q]
-      }
-    }
-    for (let i = 0; i < n; i++) out[i] = background[i] ? 0 : 1
   }
+  drain(grow)
+  // La croissance s'arrête avant la rampe du contour : on l'affine sur l'image nette, pixel de
+  // bord par pixel de bord, en rattachant au fond les pixels plus proches du décor voisin que
+  // du sujet (frange d'anticrénelage), sans jamais dépasser deux fois la tolérance locale.
+  const sharpDist = (j: number, i: number) =>
+    yccDist(data[j * 4] - ref[i * 3], data[j * 4 + 1] - ref[i * 3 + 1], data[j * 4 + 2] - ref[i * 3 + 2])
+  const pixDist = (a: number, b: number) =>
+    yccDist(data[a * 4] - data[b * 4], data[a * 4 + 1] - data[b * 4 + 1], data[a * 4 + 2] - data[b * 4 + 2])
+  for (let pass = 0; pass <= radius + 1; pass++) {
+    const flips: number[] = []
+    for (let j = 0; j < n; j++) {
+      if (background[j]) continue
+      const x = j % w
+      const y = (j - x) / w
+      const nb = [x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, y > 0 ? j - w : -1, y < h - 1 ? j + w : -1]
+      for (let k = 0; k < 4; k++) {
+        const i = nb[k]
+        if (i < 0 || !background[i]) continue
+        const toBack = sharpDist(j, i)
+        const opposite = nb[k ^ 1]
+        const toSubject = opposite >= 0 && !background[opposite] ? pixDist(j, opposite) : Infinity
+        if (toBack < localTol || (toBack < 2 * localTol && toBack < toSubject)) { flips.push(j, i); break }
+      }
+    }
+    if (!flips.length) break
+    for (let f = 0; f < flips.length; f += 2) {
+      background[flips[f]] = 1
+      for (let q = 0; q < 3; q++) ref[flips[f] * 3 + q] = ref[flips[f + 1] * 3 + q]
+    }
+  }
+  // Interstices étroits du décor (sous les bras, entre les jambes) : trop fins pour l'image floutée,
+  // ils sont rendus au fond sur l'image nette s'ils ont presque exactement une couleur de décor.
+  head = 0
+  tail = 0
+  for (let j = 0; j < n; j++) if (background[j]) queue[tail++] = j
+  drain((_i, j) => {
+    if (background[j]) return
+    const nn = nearestOf(data, j * 4, Math.floor(j / w))
+    if (!nn.cl || nn.d >= nn.cl.gapTol) return
+    background[j] = 1
+    queue[tail++] = j
+  })
+  for (let i = 0; i < n; i++) out[i] = background[i] ? 0 : 1
   const mask: Mask = { width: w, height: h, data: out }
-  const fg = cleanMask(mask)
-  const coverage = fg / n
-  if (coverage < 0.01 || coverage > 0.8) return null
-  // un « sujet » qui touche les quatre côtés, ou l'essentiel du pourtour, remplit le cadre :
-  // pas de silhouette exploitable (gros plan, motif, image sans fond)
+  const coverage = cleanMask(mask) / n
+  if (coverage < 0.01) return { result: null, refusal: 'empty' }
+  // un « sujet » qui couvre presque tout le cadre, l'essentiel du pourtour ou les quatre côtés
+  // remplit le cadre (gros plan, motif, image sans fond) : pas de silhouette exploitable
   let ring = 0
   let ringFg = 0
   const touch = [0, 0, 0, 0]
   for (let x = 0; x < w; x++) { ring += 2; ringFg += out[x] + out[(h - 1) * w + x]; touch[0] += out[x]; touch[1] += out[(h - 1) * w + x] }
   for (let y = 1; y < h - 1; y++) { ring += 2; ringFg += out[y * w] + out[y * w + w - 1]; touch[2] += out[y * w]; touch[3] += out[y * w + w - 1] }
   const sideLen = [w, w, h - 2, h - 2]
-  if (ringFg / ring > 0.35 || touch.every((t, k) => t >= 0.03 * sideLen[k])) return null
-  return { mask, method, coverage }
+  if (coverage > 0.97 || ringFg / ring > 0.6 || touch.every((t, k) => t >= 0.03 * sideLen[k])) return { result: null, refusal: 'fills-frame' }
+  return { result: { mask, method: 'background', coverage }, refusal: null }
+}
+
+/** Masque du sujet, ou null si l'image ne permet pas d'isoler un sujet (voir analyzeForeground). */
+export function foregroundMask(img: RGBAImage): MaskResult | null {
+  return analyzeForeground(img).result
 }
 
 export type Bounds = { x0: number; y0: number; x1: number; y1: number }
@@ -535,7 +626,17 @@ export function silhouetteSimilarity(a: Mask, b: Mask): { aspectRatio: number; i
   return { aspectRatio: (wb / hb) / (wa / ha), iou, symmetryA: mirrorSymmetry(a), symmetryB: mirrorSymmetry(b), widthCorrelation: rowWidthCorrelation(a, b) }
 }
 
-/** Une vue de profil qui a la silhouette et les proportions de la face n'apporte pas de profondeur. */
+/**
+ * Sujets dont le producteur FLUX.2 audite le profil (`audit_multiview_consistency`) : un
+ * personnage ou une créature vu de profil est nettement plus étroit que de face, donc un
+ * « profil » presque aussi large que la face est un trois-quarts ou une autre vue de face.
+ * Pour un objet (vase, casque, chaise, théière…), un profil aussi large que la face est normal.
+ */
+export function isCharacterKind(kind: string | null | undefined): boolean {
+  return /character|humanoid|creature|quadruped|person|personnage|animal|body_part/i.test(kind ?? '')
+}
+
+/** Un « profil » de personnage qui a la silhouette et les proportions de la face n'apporte pas de profondeur. */
 export function profileLooksLikeFront(front: Mask, side: Mask): boolean {
   const sim = silhouetteSimilarity(front, side)
   return Boolean(sim && sim.aspectRatio >= 0.85 && sim.aspectRatio <= 1.18 && sim.iou >= 0.6)
@@ -589,7 +690,7 @@ export function profileOrientation(
  */
 export function buildSilhouetteCloud(
   front: ViewInput,
-  opts: { side?: ViewInput | null; back?: ViewInput | null; sideRole?: 'droite' | 'gauche'; maxPoints?: number; seed?: number } = {},
+  opts: { side?: ViewInput | null; back?: ViewInput | null; sideRole?: 'droite' | 'gauche'; maxPoints?: number; seed?: number; subjectKind?: string | null } = {},
 ): CloudBuild | null {
   const fb = maskBounds(front.mask)
   if (!fb) return null
@@ -626,7 +727,9 @@ export function buildSilhouetteCloud(
   let profileSign: 1 | -1 | undefined
   let profileVote: number | undefined
   let profileAmbiguous = false
-  const sideRejected = Boolean(opts.side && profileLooksLikeFront(front.mask, opts.side.mask))
+  // règles de vue mal étiquetée réservées aux personnages et créatures (voir isCharacterKind)
+  const character = isCharacterKind(opts.subjectKind)
+  const sideRejected = Boolean(character && opts.side && profileLooksLikeFront(front.mask, opts.side.mask))
   const sb = opts.side && !sideRejected ? maskBounds(opts.side.mask) : null
   if (opts.side && sb) {
     const ext = rowExtents(opts.side.mask)
@@ -635,11 +738,12 @@ export function buildSilhouetteCloud(
     const sideCenter = (sb.x0 + sb.x1) / 2
     const backView = opts.back && maskBounds(opts.back.mask) ? opts.back : null
     const orient = profileOrientation(front, opts.side, backView, opts.sideRole ?? 'droite')
-    // Un générateur qui suit mal la consigne de vue produit souvent une vue de face ou de
-    // trois quarts étiquetée « profil » : presque aussi large que la face. Dans cette zone
-    // ambiguë, la vue peut seulement amincir le relief, jamais l'épaissir ni le décaler.
+    // Personnage : un générateur qui suit mal la consigne de vue produit souvent un trois-quarts
+    // étiqueté « profil ». Même règle que l'audit du producteur FLUX.2 (profil plus large que
+    // 0,82 × la face, proportions rapportées à la hauteur) : la vue peut alors seulement amincir
+    // le relief, jamais l'épaissir ni l'incliner. Un objet garde son vrai profil.
     const sim = silhouetteSimilarity(front.mask, opts.side.mask)
-    profileAmbiguous = Boolean(sim && sim.aspectRatio >= 0.6 && sim.aspectRatio <= 1.4)
+    profileAmbiguous = Boolean(character && sim && sim.aspectRatio > 0.82)
     const raw = new Float32Array(front.mask.height).fill(Number.NaN)
     const rawOff = new Float32Array(front.mask.height).fill(Number.NaN)
     let used = 0

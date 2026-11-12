@@ -5,6 +5,21 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 BLENDER_SCRIPT = r'''
 import bpy, math, sys, os
 from mathutils import Vector
@@ -49,7 +64,7 @@ print("SONDE_OK")
 
 def probe_frames(glb, outdir, frames=(1, 9, 17), timeout_s=900):
     import shutil
-    blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
+    blender = _aurora_blender_exe()
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
         fp.write(BLENDER_SCRIPT)
         script = fp.name

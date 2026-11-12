@@ -90,18 +90,21 @@ def _standard_installs() -> list[Path]:
     home = Path.home()
     found: list[Path] = []
     if os.name == "nt":
-        bases = {os.environ.get(k) for k in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")}
-        bases |= {r"C:\Program Files", r"C:\Program Files (x86)"}
+        # liste ordonnée et dédoublonnée (pas d'ensemble : son ordre varie d'un lancement à l'autre)
+        bases: list[str] = []
         local = os.environ.get("LOCALAPPDATA")
-        if local:
-            bases.add(str(Path(local) / "Programs"))
-        for base in filter(None, bases):
-            root = Path(base)
+        for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"), os.environ.get("ProgramFiles(x86)"),
+                     r"C:\Program Files", r"C:\Program Files (x86)", str(Path(local) / "Programs") if local else None):
+            if base and os.path.normcase(base) not in {os.path.normcase(b) for b in bases}:
+                bases.append(base)
+        versioned: list[Path] = []
+        for base in bases:
             try:
-                found += sorted(root.glob("Blender Foundation/Blender */blender.exe"), key=_version_key, reverse=True)
+                versioned += list(Path(base).glob("Blender Foundation/Blender */blender.exe"))
             except OSError:
                 pass
-            found.append(root / "Steam" / "steamapps" / "common" / "Blender" / "blender.exe")
+        found += sorted(versioned, key=lambda q: (_version_key(q), str(q)), reverse=True)
+        found += [Path(base) / "Steam" / "steamapps" / "common" / "Blender" / "blender.exe" for base in bases]
         found.append(home / "scoop" / "apps" / "blender" / "current" / "blender.exe")
     else:
         found.append(home / ".local" / "bin" / "blender")
@@ -142,6 +145,14 @@ def desktop_dirs() -> list[Path]:
     return out
 
 
+_BLENDER_FILE = re.compile(r"^blender(?:\.exe)?$|^blender[-_. ].*\.appimage$", re.I)
+
+
+def _looks_like_blender(path: Path) -> bool:
+    """Nom d'exécutable de Blender : blender, blender.exe ou une AppImage Blender (pas un script quelconque)."""
+    return bool(_BLENDER_FILE.match(path.name))
+
+
 def _exec_from_desktop_entry(entry: Path) -> Path | None:
     try:
         text = entry.read_text(encoding="utf-8", errors="replace")
@@ -159,9 +170,9 @@ def _exec_from_desktop_entry(entry: Path) -> Path | None:
     first = tokens[0]
     if os.sep in first or "/" in first:
         path = Path(os.path.expanduser(first))
-        return _normalize(path) if _is_exe(path) else None
+        return _normalize(path) if _is_exe(path) and _looks_like_blender(path) else None
     which = shutil.which(first)
-    return Path(which) if which and "blender" in first.lower() else None
+    return Path(which) if which and _looks_like_blender(Path(first)) else None
 
 
 def lnk_targets(data: bytes) -> list[str]:
@@ -209,7 +220,7 @@ def _from_desktop(folder: Path) -> Path | None:
                     exe = _from_value(target)
                     if exe:
                         return exe
-            elif _is_exe(entry):  # AppImage, exécutable posé sur le bureau
+            elif _is_exe(entry) and _looks_like_blender(entry):  # AppImage ou exécutable Blender posé sur le bureau
                 return _normalize(entry)
         except OSError:
             continue
@@ -251,10 +262,13 @@ def find_blender(refresh: bool = False) -> str | None:
 
 
 def ensure_env() -> str | None:
-    """Exporte le Blender trouvé dans AURORA_BLENDER (fichier exécutable) pour les sous-processus."""
-    current = os.environ.get("AURORA_BLENDER")
+    """Exporte le Blender trouvé dans AURORA_BLENDER (fichier exécutable) pour les sous-processus.
+
+    Une valeur déjà valide est gardée, mais normalisée comme le reste de la recherche
+    (dossier → exécutable, blender-launcher.exe → blender.exe).
+    """
     exe = find_blender()
-    if exe and (not current or not _is_exe(Path(current))):
+    if exe:
         os.environ["AURORA_BLENDER"] = exe
     return exe
 

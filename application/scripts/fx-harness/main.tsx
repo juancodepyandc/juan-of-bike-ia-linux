@@ -388,7 +388,7 @@ async function imageFromUrl(url: string, maxDim = 168) {
 }
 
 /** Accord de l'hologramme avec les vues réellement générées (IoU face et profil). */
-async function holoCheck(frontUrl: string, sideUrl: string, backUrl?: string) {
+async function holoCheck(frontUrl: string, sideUrl: string, backUrl?: string, subjectKind?: string | null) {
   const { buildSilhouetteCloud, foregroundMask, maskBounds, silhouetteSimilarity } = await import('../../src/components/generationFx/hologramSources.ts')
   const load = async (u: string) => {
     const img = await imageFromUrl(u)
@@ -463,8 +463,8 @@ async function holoCheck(frontUrl: string, sideUrl: string, backUrl?: string) {
       : null
     return { method: cloud.method, points: cloud.count, iouFront, iouSide, profileSign: cloud.profileSign ?? null, profileAmbiguous: cloud.profileAmbiguous ?? false, depth: Math.round(cloud.depth * 1000) / 1000 }
   }
-  const relief = buildSilhouetteCloud(front, { maxPoints: 32000 })
-  const hull = side ? buildSilhouetteCloud(front, { side, back, maxPoints: 32000 }) : null
+  const relief = buildSilhouetteCloud(front, { maxPoints: 32000, subjectKind })
+  const hull = side ? buildSilhouetteCloud(front, { side, back, maxPoints: 32000, subjectKind }) : null
   return {
     relief: relief ? evaluate(relief) : null,
     hull: hull ? evaluate(hull) : null,

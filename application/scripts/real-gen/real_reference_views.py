@@ -11,11 +11,16 @@ d'attente sur de vraies générations.
 
 Deux producteurs :
 
-  --backend comfy-flux2   (défaut) LE producteur d'Aurora : flux_reference_synth.synth_multiview
-                          (FLUX.2-dev via ComfyUI, mêmes poids, même graphe, mêmes
-                          contrats de vue, même audit de turnaround et mêmes essais
-                          que le module 3D). Les pas de diffusion sont lus sur le
-                          websocket de ComfyUI. À lancer sur le PC où ComfyUI tourne.
+  --backend comfy-flux2   (défaut) le producteur de références FLUX.2 du pipeline 3D serveur :
+                          flux_reference_synth.synth_multiview (FLUX.2-dev via ComfyUI, mêmes
+                          poids et même graphe que createFlux2Workflow du module 3D
+                          frontend, contrats de vue, audit de turnaround et essais du
+                          producteur). aurora_3d_pipeline.py lui passe un prompt reformulé ;
+                          le banc lui passe la demande brute et le type de sujet de la
+                          demande (« subject_kind », qui active l'audit et les essais des
+                          personnages). Les pas de diffusion sont lus sur le websocket de
+                          ComfyUI (reconnexion automatique, interruptions rapportées).
+                          À lancer sur le PC où ComfyUI tourne.
   --backend sd-turbo      Remplaçant pour une machine sans GPU ni poids FLUX.2
                           (conteneur de développement) : SD-Turbo sur CPU, 4 pas.
                           Il ne remplace pas FLUX.2 dans Aurora ; il sert seulement à
@@ -127,9 +132,26 @@ class ComfyProgressListener(threading.Thread):
         self.on_progress = on_progress
         self.stop_flag = threading.Event()
         self.connected = False
+        self.ever_connected = False
+        self.reconnects = 0
         self.error: str | None = None
 
     def run(self) -> None:
+        # reconnexion avec attente croissante : un redémarrage de ComfyUI ne coupe pas la mesure
+        delay = 1.0
+        while not self.stop_flag.is_set():
+            self._session()
+            if self.stop_flag.is_set():
+                break
+            if self.ever_connected:
+                self.reconnects += 1
+            self.stop_flag.wait(delay)
+            delay = min(10.0, delay * 2)
+
+    def report(self) -> dict:
+        return {"connected": self.connected, "reconnects": self.reconnects, "last_error": self.error}
+
+    def _session(self) -> None:
         sock = None
         u = urllib.parse.urlparse(self.base)
         port = u.port or (443 if u.scheme == "https" else 80)
@@ -154,6 +176,7 @@ class ComfyProgressListener(threading.Thread):
             if b" 101" not in status.split(b"\r\n", 1)[0]:
                 raise OSError(status.split(b"\r\n", 1)[0].decode("latin-1"))
             self.connected = True
+            self.ever_connected = True
             sock.settimeout(0.5)
 
             def need(n: int) -> bytes:
@@ -184,6 +207,7 @@ class ComfyProgressListener(threading.Thread):
                 if mask:
                     payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
                 if opcode == 8:
+                    self.error = "websocket fermé par ComfyUI"
                     break
                 if opcode == 9:  # ping -> pong (trame client masquée)
                     m = os.urandom(4)
@@ -203,6 +227,7 @@ class ComfyProgressListener(threading.Thread):
         except Exception as exc:  # pragma: no cover - dépend du serveur
             self.error = f"{type(exc).__name__}: {exc}"
         finally:
+            self.connected = False
             if sock is not None:
                 try:
                     sock.close()
@@ -289,7 +314,7 @@ def run_comfy_flux2(args) -> int:
         ]
         emit("done", id=jid, ok=bool(result.get("ok")), seconds=round(time.time() - started, 3), views=views,
              attempts=len(result.get("attempts") or []), audit_failures=(audit.get("failures") or [])[:6],
-             error=result.get("error"), websocket_error=listener.error)
+             error=result.get("error"), websocket=listener.report())
         current["jid"] = None
     listener.stop_flag.set()
     return 0

@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  THREE_D_CONTROL_STAGES,
   animationProgress,
   codePhaseIndex,
   mascotStateFor,
@@ -51,12 +52,18 @@ test('pipeline stage names map to the 3D screen phases', () => {
 test('every stage name actually printed by the 3D pipelines and the Blender bridge is mapped', async () => {
   const fs = await import('node:fs')
   const dir = new URL('../python-services/', import.meta.url)
-  const files = ['aurora_3d_pipeline.py', 'blender_bridge.py', 'scene_process.py', 'neural_process.py', 'texture_fidelity.py', 'rig_skin_binding.py', 'semantic_animation.py']
-  const service = new Set(['memoire', 'vram', 'error', 'confirm_req'])
+  // producers the 3D path runs: the pipeline and the scripts it spawns, plus those ModelView launches itself
+  const files = [
+    'aurora_3d_pipeline.py', 'blender_bridge.py', 'scene_process.py', 'neural_process.py', 'texture_fidelity.py', 'rig_skin_binding.py', 'semantic_animation.py',
+    'meshroom_run.py', 'mesh_postprocess.py', 'mesh_acceptance_gate.py', 'livraison_organisee.py', 'dreamgaussian_run.py', 'motion_trend_resolver.py',
+    'perfection_gate.py', 'auto_rescue_mesh.py', 'scene_orchestrator.py', 'flux_reference_synth.py',
+  ]
+  // service lines and control lines printed at several moments of a run do not move the screen
+  const service = new Set(['memoire', 'vram', 'error', 'confirm_req', ...THREE_D_CONTROL_STAGES])
   const unmapped = new Set()
   for (const f of files) {
     let text = ''
-    try { text = fs.readFileSync(new URL(f, dir), 'utf8') } catch { continue }
+    try { text = fs.readFileSync(new URL(f, dir), 'utf8') } catch { assert.fail(`producer ${f} is missing: update this list`) }
     for (const m of text.matchAll(/PROGRESS:([a-z_]+):/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
     for (const m of text.matchAll(/emit\(\s*["']([a-z_]+)["']/g)) if (!service.has(m[1]) && threeDPhaseForStage(m[1]) == null) unmapped.add(m[1])
   }
@@ -64,6 +71,8 @@ test('every stage name actually printed by the 3D pipelines and the Blender brid
   assert.equal(threeDPhaseForStage('matieres'), 3)
   assert.equal(threeDPhaseForStage('procedural'), 2)
   assert.equal(threeDPhaseForStage('livraison'), 5)
+  // a mid-run quality check or verification render must not jump to Finalisation or back to Sculpture
+  for (const s of THREE_D_CONTROL_STAGES) assert.equal(threeDPhaseForStage(s), null, s)
 })
 
 test('character state follows the real loading state', () => {

@@ -21,9 +21,10 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { bridgeFetch } from '../../utils/bridgeAuth.ts'
 import {
+  analyzeForeground,
   buildSilhouetteCloud,
-  foregroundMask,
   pickViews,
+  type MaskRefusal,
   type RGBAImage,
   type ViewInput,
 } from './hologramSources.ts'
@@ -46,6 +47,8 @@ export type HologramStageProps = {
   /** instant (Date.now) du dernier événement réel du pipeline */
   readPulseAt: () => number
   refs?: HologramRef[] | null
+  /** type de sujet (character, creature, product…) : les règles de vue mal étiquetée ne visent que les personnages */
+  subjectKind?: string | null
   meshUrl?: string | null
   parts?: LivePartGeometryPreview[] | null
   joints?: LiveJointPreview[] | null
@@ -240,7 +243,7 @@ async function fetchBlob(url: string): Promise<Blob> {
   return r.blob()
 }
 
-async function loadView(url: string, maxDim: number): Promise<ViewInput | null> {
+async function loadView(url: string, maxDim: number): Promise<ViewLoad> {
   try {
     const blob = await fetchBlob(url)
     const bmp = await createImageBitmap(blob)
@@ -251,16 +254,25 @@ async function loadView(url: string, maxDim: number): Promise<ViewInput | null> 
     canvas.width = w
     canvas.height = h
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    if (!ctx) return null
+    if (!ctx) return { view: null, refusal: 'unreadable' }
     ctx.drawImage(bmp, 0, 0, w, h)
     bmp.close?.()
     const id = ctx.getImageData(0, 0, w, h)
     const img: RGBAImage = { width: w, height: h, data: id.data }
-    const res = foregroundMask(img)
-    return res ? { img, mask: res.mask } : null
+    const { result, refusal } = analyzeForeground(img)
+    return result ? { view: { img, mask: result.mask }, refusal: null } : { view: null, refusal }
   } catch {
-    return null
+    return { view: null, refusal: 'unreadable' }
   }
+}
+
+type ViewLoad = { view: ViewInput | null; refusal: MaskRefusal | 'unreadable' | null }
+
+/** Raison lisible d'une vue écartée. */
+function refusalText(refusal: ViewLoad['refusal']): string {
+  if (refusal === 'fills-frame') return 'sujet cadré trop serré (il remplit le cadre)'
+  if (refusal === 'unreadable') return 'image illisible'
+  return 'sujet non séparable du fond'
 }
 
 function isCompleteGlb(buf: ArrayBuffer): boolean {
@@ -526,8 +538,8 @@ class HoloEngine {
     try { this.getProps().onStatus?.({ source, points, views, note }) } catch { /* affichage seul */ }
   }
 
-  async setReferences(refs: HologramRef[]) {
-    const key = refs.map((r) => `${r.role}:${r.url}`).join('|')
+  async setReferences(refs: HologramRef[], subjectKind?: string | null) {
+    const key = refs.map((r) => `${r.role}:${r.url}`).join('|') + `#${subjectKind ?? ''}`
     if (key === this.refsKey) return
     this.refsKey = key
     const token = ++this.refsToken
@@ -539,16 +551,20 @@ class HoloEngine {
     }
     const low = this.getProps().quality === 'low'
     const maxDim = low ? 120 : 168
-    const [f, s, b] = await Promise.all([front, side, back].map((r) => (r ? loadView(r.url, maxDim) : Promise.resolve(null))))
+    const [fl, sl, bl] = await Promise.all([front, side, back].map((r) => (r ? loadView(r.url, maxDim) : Promise.resolve<ViewLoad>({ view: null, refusal: null }))))
     if (token !== this.refsToken || this.disposed || this.meshRoot) return
+    const f = fl.view
+    const s = sl.view
+    const b = bl.view
     if (!f) {
-      this.status('emitter', 0, 0, 'Vue de référence reçue mais sujet non séparable du fond')
+      this.status('emitter', 0, 0, `Vue de référence reçue mais ${refusalText(fl.refusal)}`)
       return
     }
     const cloud = buildSilhouetteCloud(f, {
       side: s,
       back: b,
       sideRole: side?.role === 'gauche' ? 'gauche' : 'droite',
+      subjectKind,
       maxPoints: low ? 14000 : 32000,
       seed: key.length * 7919,
     })
@@ -556,8 +572,8 @@ class HoloEngine {
     this.setSubjectCloud(cloud.positions, cloud.colors, cloud.kinds, 'refs')
     const views = [f, s, b].filter(Boolean).length
     // une vue reçue mais sans sujet séparable (gros plan, motif, fond chargé) est écartée, et on le dit
-    const dropped = [side && !s ? 'profil' : null, back && !b ? 'dos' : null].filter(Boolean)
-    const droppedNote = dropped.length ? ` — vue ${dropped.join(' et ')} écartée : sujet non séparable du fond` : ''
+    const dropped = [side && !s ? `vue profil écartée : ${refusalText(sl.refusal)}` : null, back && !b ? `vue dos écartée : ${refusalText(bl.refusal)}` : null].filter(Boolean)
+    const droppedNote = dropped.length ? ` — ${dropped.join(' ; ')}` : ''
     this.status(
       cloud.method,
       cloud.count,
@@ -850,9 +866,9 @@ export default function HologramStage(props: HologramStageProps) {
     }
   }, [])
 
-  const refsKey = (props.refs ?? []).map((r) => `${r.role}:${r.url}`).join('|')
+  const refsKey = (props.refs ?? []).map((r) => `${r.role}:${r.url}`).join('|') + `#${props.subjectKind ?? ''}`
   useEffect(() => {
-    void engineRef.current?.setReferences(props.refs ?? [])
+    void engineRef.current?.setReferences(props.refs ?? [], props.subjectKind)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refsKey])
   useEffect(() => {

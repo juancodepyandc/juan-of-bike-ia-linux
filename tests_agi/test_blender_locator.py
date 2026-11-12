@@ -91,6 +91,15 @@ class BlenderLocatorTests(unittest.TestCase):
         self.assertIsNone(blender_locator.ensure_env())
         self.assertNotIn("AURORA_BLENDER", os.environ)
 
+    def test_a_random_script_named_blender_is_not_taken_for_blender(self) -> None:
+        desk = self._xdg_desktop("Bureau")
+        _fake_exe(desk / "blender-notes.sh")
+        (desk / "Blender Cloud.desktop").write_text(f"[Desktop Entry]\nExec={_fake_exe(self.home / 'bin' / 'cloud-sync')}\n", encoding="utf-8")
+        self.assertEqual(blender_locator.locate(), (None, "introuvable"))
+        real = _fake_exe(desk / "blender-4.5.3-linux-x64" / "blender")
+        blender_locator._cached.cache_clear()
+        self.assertEqual(blender_locator.locate()[0], str(real))
+
     def test_windows_shortcut_target_is_read(self) -> None:
         raw = "C:\\Program Files\\Blender Foundation\\Blender 4.5\\blender-launcher.exe".encode("utf-16-le")
         data = b"L\x00\x00\x00" + b"\x00" * 60 + raw + b"\x00\x00"

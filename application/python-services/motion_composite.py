@@ -19,6 +19,21 @@ from __future__ import annotations
 import argparse, json, os, shutil, subprocess, sys
 from pathlib import Path
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "motion_composite_blender.py"
 
@@ -30,7 +45,7 @@ def _blender() -> str:
     local = os.path.expanduser("~/.local/bin/blender")
     if os.path.isfile(local):
         return local
-    return shutil.which("blender") or "blender"
+    return _aurora_blender_exe()
 
 
 def compose(character_glb: str, effect: str, output_dir: str = "",  # noqa

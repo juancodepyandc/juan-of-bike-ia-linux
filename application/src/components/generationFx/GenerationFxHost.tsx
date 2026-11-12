@@ -53,6 +53,7 @@ type FxEntry = {
   startedAt: number
   reveal?: { url: string; kind: 'image' | 'video' | 'mesh'; at: number }
   refs?: FxRef[]
+  subjectKind?: string
   logLines?: string[]
   counters?: FxCounters
   meshUrl?: string
@@ -379,6 +380,7 @@ function CenterStage({ entry, accent, tl, done, narrow }: { entry: FxEntry; acce
             readProgress={() => (done ? 1 : tl.phaseIdx / tl.phaseCount)}
             readPulseAt={() => tl.lastEventAt}
             refs={entry.refs}
+            subjectKind={entry.subjectKind}
             meshUrl={meshUrl}
             done={done}
             quality={quality}
@@ -1085,6 +1087,7 @@ export default function GenerationFxHost() {
         phase: patch.phase ?? base?.phase,
         progress: patch.progress ?? base?.progress,
         refs: patch.refs ?? base?.refs,
+        subjectKind: patch.subjectKind ?? base?.subjectKind,
         logLines,
         counters: patch.logLine ? updateCounters(base?.counters, patch.logLine) : base?.counters,
         meshUrl: patch.meshUrl ?? base?.meshUrl,

@@ -58,6 +58,8 @@ export type FxPatch = {
   /** 'mesh' : maillage 3D final, verrouillé dans l'hologramme avant de passer au viewer */
   resultKind?: 'image' | 'video' | 'mesh'
   refs?: FxRef[]
+  /** type de sujet demandé (character, creature, product…) : règles de profil propres aux personnages */
+  subjectKind?: string
   logLine?: string
   meshUrl?: string
   meshInfo?: string

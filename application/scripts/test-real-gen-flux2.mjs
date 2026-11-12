@@ -60,8 +60,9 @@ function frame(opcode, payload) {
   return Buffer.concat([head, payload])
 }
 
-function mockComfy() {
+function mockComfy({ dropAfterPrompts = 0 } = {}) {
   const sockets = new Set()
+  let dropped = false
   const history = new Map()
   const graphs = []
   const pongs = []
@@ -87,6 +88,11 @@ function mockComfy() {
       req.on('end', () => {
         const { prompt } = JSON.parse(body)
         graphs.push(prompt)
+        // simule un redémarrage de ComfyUI : toutes les connexions websocket tombent une fois
+        if (dropAfterPrompts && graphs.length === dropAfterPrompts + 1 && !dropped) {
+          dropped = true
+          for (const sock of sockets) sock.destroy()
+        }
         const id = crypto.randomUUID()
         history.set(id, null)
         const prefix = prompt['9']?.inputs?.filename_prefix || 'aurora'
@@ -116,7 +122,7 @@ function mockComfy() {
     socket.on('close', () => sockets.delete(socket))
     socket.on('error', () => sockets.delete(socket))
   })
-  return { server, graphs, pongs, close: () => { for (const s of sockets) s.destroy(); server.close() } }
+  return { server, graphs, pongs, sockets, close: () => { for (const s of sockets) s.destroy(); server.close() } }
 }
 
 test('the FLUX.2 bench submits Aurora’s real FLUX.2 graph and relays real ComfyUI steps', { timeout: 120000 }, async () => {
@@ -174,6 +180,46 @@ test('the FLUX.2 bench submits Aurora’s real FLUX.2 graph and relays real Comf
     assert.equal(last.views.length, 4)
     assert.equal(last.ok, true, `turnaround audit: ${JSON.stringify(last.audit_failures)}`)
     assert.ok(mock.pongs.length >= 1, 'ping answered')
+  } finally {
+    py.stdin.end()
+    py.kill()
+    mock.close()
+    fs.rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('a dropped ComfyUI websocket is reconnected, steps keep flowing and the interruption is reported', { timeout: 180000 }, async () => {
+  const mock = mockComfy({ dropAfterPrompts: 1 })
+  await new Promise((r) => mock.server.listen(0, '127.0.0.1', r))
+  const port = mock.server.address().port
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'aurora-flux2-bench-'))
+  const py = spawn(process.env.AURORA_TEST_PYTHON || 'python3', [
+    path.join(here, 'real-gen', 'real_reference_views.py'),
+    '--backend', 'comfy-flux2', '--comfy-base', `http://127.0.0.1:${port}`, '--output-dir', out, '--steps', String(STEPS), '--size', '512',
+  ], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, OLLAMA_URL: 'http://127.0.0.1:9' } })
+  let stderr = ''
+  py.stderr.on('data', (c) => { stderr += c })
+  const events = []
+  const done = new Promise((resolve, reject) => {
+    readline.createInterface({ input: py.stdout }).on('line', (line) => {
+      try {
+        const ev = JSON.parse(line)
+        events.push(ev)
+        if (ev.ev === 'done' || ev.ev === 'error') resolve(ev)
+      } catch { /* ligne non JSON */ }
+    })
+    py.on('exit', (code) => reject(new Error(`exit ${code}\n${stderr}`)))
+  })
+  try {
+    py.stdin.write(JSON.stringify({ id: 'benchB', request: 'un astronaute en combinaison blanche', seed: 3, subject_kind: 'character' }) + '\n')
+    const last = await done
+    assert.equal(last.ev, 'done', JSON.stringify(last))
+    assert.ok(last.websocket && last.websocket.reconnects >= 1, `interruption reported: ${JSON.stringify(last.websocket)}`)
+    const lastView = events.filter((e) => e.ev === 'view_start').map((e) => e.view).pop()
+    assert.ok(events.some((e) => e.ev === 'step' && e.view === lastView), 'steps relayed again after the reconnection')
+    // the subject kind reaches the producer: character views go through the character cleanup and audit
+    assert.equal(mock.graphs.length % 4, 0)
+    assert.ok(Array.isArray(last.audit_failures))
   } finally {
     py.stdin.end()
     py.kill()

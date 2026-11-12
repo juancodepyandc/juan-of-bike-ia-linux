@@ -37,17 +37,23 @@ const backend = process.env.AURORA_REAL_GEN_BACKEND === 'sd-turbo' ? 'sd-turbo' 
 const comfyBase = process.env.AURORA_COMFY_BASE || 'http://127.0.0.1:8188'
 const out = path.resolve(process.env.AURORA_REAL_GEN_OUT || path.join(root, 'output', 'real-gen'))
 fs.mkdirSync(out, { recursive: true })
-const requests = (process.env.AURORA_REAL_GEN_REQUESTS || '').split('|').map((s) => s.trim()).filter(Boolean)
+// « demande::type » : le type de sujet (character, creature, product…) est transmis au producteur
+// FLUX.2 (audit et essais propres aux personnages) et à l'hologramme (règles de profil des personnages)
+const parseRequest = (raw) => {
+  const [text, kind] = raw.split('::').map((x) => x.trim())
+  return { text, kind: kind || null }
+}
+const requests = (process.env.AURORA_REAL_GEN_REQUESTS || '').split('|').map((s) => s.trim()).filter(Boolean).map(parseRequest)
 if (!requests.length) {
-  requests.push(
-    'un robot jouet jaune et bleu',
-    'une chaise en bois de style scandinave',
-    'un dragon vert stylisé',
-    'une lampe de bureau articulée rouge',
-    'un astronaute en combinaison blanche',
-    'une théière en céramique bleue',
-    'un casque de moto noir et orange',
-  )
+  requests.push(...[
+    'un robot jouet jaune et bleu::character',
+    'une chaise en bois de style scandinave::product',
+    'un dragon vert stylisé::creature',
+    'une lampe de bureau articulée rouge::product',
+    'un astronaute en combinaison blanche::character',
+    'une théière en céramique bleue::product',
+    'un casque de moto noir et orange::product',
+  ].map(parseRequest))
 }
 
 /** Durée lue dans le libellé affiché (formatWait), en secondes. */
@@ -56,6 +62,8 @@ function parseWait(text) {
   if (/quelques secondes/.test(text)) return 5
   let m = text.match(/(\d+) h (\d+)/)
   if (m) return Number(m[1]) * 3600 + Number(m[2]) * 60
+  m = text.match(/(\d+) h\b/)
+  if (m) return Number(m[1]) * 3600
   m = text.match(/(\d+) min (\d+) s/)
   if (m) return Number(m[1]) * 60 + Number(m[2])
   m = text.match(/(\d+) min/)
@@ -84,13 +92,14 @@ const quantile = (values, q) => {
   return s.length ? s[Math.min(s.length - 1, Math.floor(q * (s.length - 1)))] : null
 }
 
-// Serveur de banc sans websocket HMR ni surveillance de fichiers : le client Vite recharge la
-// page quand sa connexion tombe (observé ici sous forte charge CPU), ce qui effaçait la session
-// FX et l'historique en cours de mesure.
+// Serveur de banc sans websocket HMR : le client Vite recharge la page quand sa connexion tombe
+// (observé ici sous forte charge CPU), ce qui effaçait la session FX et l'historique en cours de
+// mesure. La surveillance des fichiers est neutralisée par `ignored` (Vite ignore `watch: null`
+// à la fusion avec vite.config.ts).
 const server = await createServer({
   root,
   configFile: path.join(root, 'vite.config.ts'),
-  server: { host: '127.0.0.1', port: 0, ws: false, watch: null, warmup: { clientFiles: [] } },
+  server: { host: '127.0.0.1', port: 0, ws: false, watch: { ignored: ['**/*'] } },
   logLevel: 'warn',
 })
 await server.listen()
@@ -121,13 +130,13 @@ async function evaluateHolograms(list) {
   for (const r of list) {
     const pick = (role) => r.refs.find((x) => x.role === role)?.url
     const urls = [pick('face'), pick('droite') ?? pick('gauche'), pick('dos')]
-    holo.push({ id: r.id, ...(await page.evaluate(([f, s, b]) => window.__holoCheck(f, s, b), urls)) })
+    holo.push({ id: r.id, kind: r.kind ?? null, ...(await page.evaluate(([f, s, b, k]) => window.__holoCheck(f, s, b, k), [...urls, r.kind ?? null])) })
   }
   // capture de l'hologramme de chaque demande (AURORA_REAL_GEN_SHOTS=all) ou de la dernière
   const shots = process.env.AURORA_REAL_GEN_SHOTS === 'all' ? list : list.slice(-1)
   let holoNote = null
   for (const r of shots) {
-    await fx({ active: true, phaseIndex: 2, phase: `Sculpture 3D — hologramme reconstruit depuis les vues générées (${r.id})`, refs: r.refs.map(({ url, role }) => ({ url, role })) })
+    await fx({ active: true, phaseIndex: 2, phase: `Sculpture 3D — hologramme reconstruit depuis les vues générées (${r.id})`, refs: r.refs.map(({ url, role }) => ({ url, role })), subjectKind: r.kind ?? undefined })
     // capture déterministe : attendre la note de reconstruction (ou de refus), puis la fin de la convergence du nuage
     const noteLocator = page.locator('text=/Reconstruit depuis|Relief reconstruit|sujet non séparable/').first()
     await noteLocator.waitFor({ timeout: 20000 }).catch(() => {})
@@ -148,7 +157,10 @@ if (process.env.AURORA_REAL_GEN_REUSE === '1') {
   const evidence = JSON.parse(fs.readFileSync(file, 'utf8'))
   const list = evidence.runs.map((r) => ({
     id: r.id,
-    refs: r.refs.map((name) => ({ role: name.replace(/^.*_(face|droite|gauche|dos)\.png$/, '$1'), url: dataUrl(path.join(out, name)) })),
+    kind: r.kind ?? null,
+    refs: r.refs.map((ref) => typeof ref === 'string'
+      ? { role: ref.replace(/^.*_(face|droite|gauche|dos)\.png$/, '$1'), url: dataUrl(path.join(out, ref)) }
+      : { role: ref.role, url: dataUrl(path.join(out, ref.file)) }),
   }))
   const { holo, holoNote } = await evaluateHolograms(list)
   evidence.hologram = holo
@@ -187,7 +199,8 @@ const failed = []
 try {
   for (let i = 0; i < requests.length; i++) {
     const id = `run${i + 1}`
-    gen.stdin.write(JSON.stringify({ id, request: requests[i], seed: 11 + i }) + '\n')
+    const { text: request, kind } = requests[i]
+    gen.stdin.write(JSON.stringify({ id, request, seed: 11 + i, subject_kind: kind }) + '\n')
     const samples = []
     const latencies = []
     const refs = []
@@ -209,7 +222,7 @@ try {
         continue
       }
       if (ev.ev === 'start') {
-        await fx({ active: true, phaseIndex: 0, phase: `Analyse de la demande « ${requests[i]} »`, logLine: `demande reçue : ${requests[i]}` })
+        await fx({ active: true, phaseIndex: 0, phase: `Analyse de la demande « ${request} »`, logLine: `demande reçue : ${request}` })
         sampler = setInterval(() => { void sample() }, 1000)
       } else if (ev.ev === 'model_load_start') {
         await fx({ active: true, logLine: `chargement du modèle ${ev.model}` })
@@ -231,7 +244,7 @@ try {
         const at = refs.findIndex((x) => x.role === ev.view)
         if (at >= 0) refs[at] = ref
         else refs.push(ref)
-        await fx({ active: true, phaseIndex: 1, refs: refs.map(({ url, role }) => ({ url, role })), logLine: `vue ${ev.view} prête en ${ev.seconds} s` })
+        await fx({ active: true, phaseIndex: 1, refs: refs.map(({ url, role }) => ({ url, role })), subjectKind: kind ?? undefined, logLine: `vue ${ev.view} prête en ${ev.seconds} s` })
         await page.waitForFunction((n) => document.querySelectorAll('img[alt="face"], img[alt="droite"], img[alt="gauche"], img[alt="dos"]').length >= n, refs.length, { timeout: 10000 }).catch(() => {})
         latencies.push(Date.now() - ev.t * 1000)
         if (i === requests.length - 1 && ev.view === 'droite') await page.screenshot({ path: path.join(out, 'live-during-run.png') })
@@ -242,14 +255,19 @@ try {
         await fx({ active: false, outcome: ev.ok === false ? 'error' : 'success' })
         if (ev.ok === false) {
           // refus d'audit ou vue manquante : run réel mais sans livraison, exclu de la justesse
-          failed.push({ id, request: requests[i], seconds: ev.seconds, attempts: ev.attempts, error: ev.error, audit: ev.audit_failures })
-          console.log(`${id} « ${requests[i]} » : refusé après ${ev.seconds} s (${ev.error})`)
+          failed.push({ id, request: request, seconds: ev.seconds, attempts: ev.attempts, error: ev.error, audit: ev.audit_failures })
+          console.log(`${id} « ${request} » : refusé après ${ev.seconds} s (${ev.error})`)
           break
+        }
+        if (ev.websocket && (ev.websocket.reconnects > 0 || ev.websocket.last_error)) {
+          console.error(`[banc] ${id} : websocket ComfyUI interrompu ${ev.websocket.reconnects} fois (${ev.websocket.last_error ?? 'sans message'}) — pas de diffusion partiellement absents`)
         }
         runs.push({
           id,
-          request: requests[i],
+          request,
+          kind,
           seconds: ev.seconds,
+          websocket: ev.websocket ?? null,
           views: ev.views.map((v) => ({ role: v.role, seconds: v.seconds })),
           attempts: ev.attempts ?? 1,
           auditFailures: ev.audit_failures ?? [],
@@ -257,7 +275,7 @@ try {
           latencies,
           refs,
         })
-        console.log(`${id} « ${requests[i]} » : ${ev.seconds} s réelles (vues ${ev.views.map((v) => `${v.role} ${v.seconds} s`).join(', ')})`)
+        console.log(`${id} « ${request} » : ${ev.seconds} s réelles (vues ${ev.views.map((v) => `${v.role} ${v.seconds} s`).join(', ')})`)
         break
       }
     }
@@ -285,14 +303,14 @@ try {
     date: new Date().toISOString(),
     runs: runs.map(({ refs, samples, ...r }) => ({
       ...r,
-      refs: refs.map((x) => path.basename(x.path)),
+      refs: refs.map((x) => ({ role: x.role, file: path.basename(x.path) })),
       etaSamples: samples.map((s) => ({ t: s.t, phase: s.phase, shown: s.head, predicted: s.seconds, kind: s.kind, low: s.low, high: s.high, actualRemaining: Math.round(s.actualRemaining * 10) / 10 })),
     })),
     syncLatencyMs: { p50: quantile(runs.flatMap((r) => r.latencies), 0.5), p90: quantile(runs.flatMap((r) => r.latencies), 0.9) },
     hologram: holo,
     hologramNote: holoNote,
     etaOnScreen: {
-      runsWithHistory: runs.length - 3,
+      runsWithHistory: Math.max(0, runs.length - 3),
       predictions: measured.length,
       medianRelativeError: quantile(errors, 0.5),
       p90RelativeError: quantile(errors, 0.9),

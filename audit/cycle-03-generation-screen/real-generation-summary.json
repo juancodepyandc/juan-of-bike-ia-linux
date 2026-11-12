@@ -30,10 +30,20 @@
         146.161376953125
       ],
       "refs": [
-        "run1_face.png",
-        "run1_droite.png",
-        "run1_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run1_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run1_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run1_dos.png"
+        }
+      ],
+      "kind": "character"
     },
     {
       "id": "run2",
@@ -61,10 +71,20 @@
         107.746826171875
       ],
       "refs": [
-        "run2_face.png",
-        "run2_droite.png",
-        "run2_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run2_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run2_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run2_dos.png"
+        }
+      ],
+      "kind": "product"
     },
     {
       "id": "run3",
@@ -92,10 +112,20 @@
         128.977783203125
       ],
       "refs": [
-        "run3_face.png",
-        "run3_droite.png",
-        "run3_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run3_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run3_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run3_dos.png"
+        }
+      ],
+      "kind": "creature"
     },
     {
       "id": "run4",
@@ -123,10 +153,20 @@
         104.37451171875
       ],
       "refs": [
-        "run4_face.png",
-        "run4_droite.png",
-        "run4_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run4_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run4_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run4_dos.png"
+        }
+      ],
+      "kind": "product"
     },
     {
       "id": "run5",
@@ -154,10 +194,20 @@
         141.589111328125
       ],
       "refs": [
-        "run5_face.png",
-        "run5_droite.png",
-        "run5_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run5_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run5_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run5_dos.png"
+        }
+      ],
+      "kind": "character"
     },
     {
       "id": "run6",
@@ -185,10 +235,20 @@
         106.13916015625
       ],
       "refs": [
-        "run6_face.png",
-        "run6_droite.png",
-        "run6_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run6_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run6_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run6_dos.png"
+        }
+      ],
+      "kind": "product"
     },
     {
       "id": "run7",
@@ -216,10 +276,20 @@
         118.732177734375
       ],
       "refs": [
-        "run7_face.png",
-        "run7_droite.png",
-        "run7_dos.png"
-      ]
+        {
+          "role": "face",
+          "file": "run7_face.png"
+        },
+        {
+          "role": "droite",
+          "file": "run7_droite.png"
+        },
+        {
+          "role": "dos",
+          "file": "run7_dos.png"
+        }
+      ],
+      "kind": "product"
     }
   ],
   "syncLatencyMs": {
@@ -229,197 +299,216 @@
   "hologram": [
     {
       "id": "run1",
+      "kind": "character",
       "relief": {
         "method": "relief",
-        "points": 22212,
-        "iouFront": 0.935,
-        "iouSide": 0.364,
+        "points": 21131,
+        "iouFront": 0.939,
+        "iouSide": 0.348,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 0.649
+        "depth": 0.589
       },
       "hull": {
         "method": "hull",
-        "points": 22222,
-        "iouFront": 0.935,
-        "iouSide": 0.362,
-        "profileSign": -1,
-        "profileAmbiguous": true,
-        "depth": 0.649
+        "points": 36893,
+        "iouFront": 0.938,
+        "iouSide": 0.74,
+        "profileSign": 1,
+        "profileAmbiguous": false,
+        "depth": 0.952
       },
       "sideSeparable": true,
-      "backSeparable": true,
+      "backSeparable": false,
       "sideVsFront": {
-        "aspectRatio": 0.7383250311332503,
-        "iou": 0.43535075653370015,
-        "symmetryA": 0.7604355716878403,
-        "symmetryB": 0.3875776397515528,
-        "widthCorrelation": 0.24198929815132753
+        "aspectRatio": 0.7385579937304074,
+        "iou": 0.40406162464985995,
+        "symmetryA": 0.7486033519553073,
+        "symmetryB": 0.36666666666666664,
+        "widthCorrelation": 0.1563282346804291
       },
-      "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur"
+      "screenNote": "Reconstruit depuis 2 vue(s) réelle(s) : silhouette de face, épaisseur du profil — vue dos écartée : sujet cadré trop serré (il remplit le cadre)"
     },
     {
       "id": "run2",
+      "kind": "product",
       "relief": {
         "method": "relief",
-        "points": 17034,
-        "iouFront": 0.958,
-        "iouSide": 0.151,
+        "points": 9591,
+        "iouFront": 0.97,
+        "iouSide": 0.38,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 0.972
+        "depth": 0.985
       },
       "hull": {
         "method": "hull",
-        "points": 16816,
-        "iouFront": 0.958,
-        "iouSide": 0.136,
+        "points": 17821,
+        "iouFront": 0.971,
+        "iouSide": 0.774,
         "profileSign": 1,
-        "profileAmbiguous": true,
-        "depth": 0.7
+        "profileAmbiguous": false,
+        "depth": 2.097
       },
       "sideSeparable": true,
       "backSeparable": true,
       "sideVsFront": {
-        "aspectRatio": 1.2268875192604005,
-        "iou": 0.48527048741296197,
-        "symmetryA": 0.6610169491525424,
-        "symmetryB": 0.48568398727465534,
-        "widthCorrelation": -0.3730787804736423
+        "aspectRatio": 1.045801526717557,
+        "iou": 0.8254172015404364,
+        "symmetryA": 0.9378172588832487,
+        "symmetryB": 0.6734434561626429,
+        "widthCorrelation": 0.9113874247933048
       },
-      "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur"
+      "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : silhouette de face, épaisseur du profil"
     },
     {
       "id": "run3",
+      "kind": "creature",
       "relief": {
         "method": "relief",
-        "points": 9663,
-        "iouFront": 0.933,
-        "iouSide": 0.349,
+        "points": 9438,
+        "iouFront": 0.934,
+        "iouSide": 0.335,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 0.803
+        "depth": 0.789
       },
       "hull": {
         "method": "hull",
-        "points": 9684,
+        "points": 9436,
         "iouFront": 0.934,
-        "iouSide": 0.348,
+        "iouSide": 0.333,
         "profileSign": 1,
         "profileAmbiguous": true,
-        "depth": 0.803
+        "depth": 0.789
       },
       "sideSeparable": true,
       "backSeparable": true,
       "sideVsFront": {
-        "aspectRatio": 0.9287932564330079,
-        "iou": 0.4986979166666667,
-        "symmetryA": 0.8008415147265077,
-        "symmetryB": 0.4277699859747546,
-        "widthCorrelation": 0.37130614180840593
+        "aspectRatio": 0.9171103223898256,
+        "iou": 0.47979139504563234,
+        "symmetryA": 0.7951977401129944,
+        "symmetryB": 0.4011220196353436,
+        "widthCorrelation": 0.2925000676113912
       },
       "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur"
     },
     {
       "id": "run4",
+      "kind": "product",
       "relief": {
         "method": "relief",
-        "points": 16444,
+        "points": 7480,
         "iouFront": 0.956,
-        "iouSide": 0.16,
+        "iouSide": null,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 0.807
+        "depth": 0.679
       },
-      "hull": {
-        "method": "hull",
-        "points": 16390,
-        "iouFront": 0.955,
-        "iouSide": 0.179,
-        "profileSign": 1,
-        "profileAmbiguous": true,
-        "depth": 0.588
-      },
-      "sideSeparable": true,
+      "hull": null,
+      "sideSeparable": false,
       "backSeparable": true,
-      "sideVsFront": {
-        "aspectRatio": 1.3009638116021096,
-        "iou": 0.22146341463414634,
-        "symmetryA": 0.10139416983523447,
-        "symmetryB": 0.2120253164556962,
-        "widthCorrelation": 0.4386852965653627
-      },
-      "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur"
+      "sideVsFront": null,
+      "screenNote": "Relief reconstruit depuis la silhouette de la vue de face (dos pour la face arrière) — vue profil écartée : sujet cadré trop serré (il remplit le cadre)"
     },
     {
       "id": "run5",
+      "kind": "character",
       "relief": {
         "method": "relief",
-        "points": 22449,
+        "points": 22924,
         "iouFront": 0.953,
-        "iouSide": 0.526,
+        "iouSide": 0.586,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 0.712
+        "depth": 0.903
       },
       "hull": {
         "method": "hull",
-        "points": 23215,
-        "iouFront": 0.95,
-        "iouSide": 0.578,
-        "profileSign": 1,
+        "points": 22276,
+        "iouFront": 0.954,
+        "iouSide": 0.602,
+        "profileSign": -1,
         "profileAmbiguous": true,
-        "depth": 0.71
+        "depth": 0.74
       },
       "sideSeparable": true,
       "backSeparable": true,
       "sideVsFront": {
-        "aspectRatio": 0.8518677544010306,
-        "iou": 0.5135135135135135,
-        "symmetryA": 0.7989821882951654,
-        "symmetryB": 0.5351882160392799,
-        "widthCorrelation": 0.30792989160741663
+        "aspectRatio": 0.8284033613445377,
+        "iou": 0.6383647798742138,
+        "symmetryA": 0.8329113924050633,
+        "symmetryB": 0.5784447476125512,
+        "widthCorrelation": 0.42801064560198376
       },
       "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : profil presque aussi large que la face, utilisé seulement pour affiner l’épaisseur"
     },
     {
       "id": "run6",
+      "kind": "product",
       "relief": {
         "method": "relief",
-        "points": 11213,
-        "iouFront": 0.974,
-        "iouSide": 0.545,
+        "points": 10849,
+        "iouFront": 0.969,
+        "iouSide": 0.547,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 1.278
+        "depth": 1.249
       },
       "hull": {
+        "method": "hull",
+        "points": 14699,
+        "iouFront": 0.975,
+        "iouSide": 0.91,
+        "profileSign": 1,
+        "profileAmbiguous": false,
+        "depth": 1.686
+      },
+      "sideSeparable": true,
+      "backSeparable": true,
+      "sideVsFront": {
+        "aspectRatio": 0.8378121805170147,
+        "iou": 0.7527891955372872,
+        "symmetryA": 0.8355995055624228,
+        "symmetryB": 0.6233766233766234,
+        "widthCorrelation": 0.8880131889581447
+      },
+      "screenNote": "Reconstruit depuis 3 vue(s) réelle(s) : silhouette de face, épaisseur du profil"
+    },
+    {
+      "id": "run7",
+      "kind": "product",
+      "relief": {
         "method": "relief",
-        "points": 11213,
-        "iouFront": 0.974,
-        "iouSide": 0.545,
+        "points": 15018,
+        "iouFront": 0.979,
+        "iouSide": 0.513,
         "profileSign": null,
         "profileAmbiguous": false,
-        "depth": 1.278
+        "depth": 1.796
+      },
+      "hull": {
+        "method": "hull",
+        "points": 22702,
+        "iouFront": 0.983,
+        "iouSide": 0.91,
+        "profileSign": 1,
+        "profileAmbiguous": false,
+        "depth": 2.13
       },
       "sideSeparable": true,
       "backSeparable": false,
       "sideVsFront": {
-        "aspectRatio": 0.8543887834087922,
-        "iou": 0.777196044211751,
-        "symmetryA": 0.875,
-        "symmetryB": 0.6219119226638024,
-        "widthCorrelation": 0.8798460717088253
+        "aspectRatio": 1.064102564102564,
+        "iou": 0.8816942551119766,
+        "symmetryA": 0.9535113748763601,
+        "symmetryB": 0.8349514563106796,
+        "widthCorrelation": 0.8331766727511465
       },
-      "screenNote": "Relief reconstruit depuis la vue de face — vue « profil » écartée : même silhouette que la face — vue dos écartée : sujet non séparable du fond"
-    },
-    {
-      "id": "run7",
-      "error": "vue de face sans sujet séparable",
-      "screenNote": "Vue de référence reçue mais sujet non séparable du fond"
+      "screenNote": "Reconstruit depuis 2 vue(s) réelle(s) : silhouette de face, épaisseur du profil — vue dos écartée : sujet cadré trop serré (il remplit le cadre)"
     }
   ],
-  "hologramNote": "Vue de référence reçue mais sujet non séparable du fond",
+  "hologramNote": "Reconstruit depuis 2 vue(s) réelle(s) : silhouette de face, épaisseur du profil — vue dos écartée : sujet cadré trop serré (il remplit le cadre)",
   "etaOnScreen": {
     "runsWithHistory": 4,
     "predictions": 969,
@@ -436,7 +525,7 @@
   },
   "pageErrors": [],
   "navigations": [],
-  "hologramEvaluatedAt": "2026-11-12T16:17:53.110Z",
+  "hologramEvaluatedAt": "2026-11-12T19:06:53.000Z",
   "hologramBeforeSegmentationChange": [
     {
       "id": "run1",
@@ -656,7 +745,9 @@
     "hologram : accord entre la projection du nuage et la silhouette extraite des vues générées par le même code ; ce n’est pas une vérité terrain. Les vues « profil » de SD-Turbo sont des trois-quarts (profileAmbiguous), d’où des IoU de profil faibles et non significatives.",
     "hologramBeforeSegmentationChange : mêmes vues mesurées par la page du banc chargée avant la nouvelle segmentation.",
     "run7 : SD-Turbo a dessiné une roue de moto en gros plan au lieu d’un casque ; la vue de face remplit le cadre et est refusée (pas d’hologramme inventé).",
-    "real-generation-screen-during-run.jpg : capture de l’écran pendant le 7ᵉ run réel ; la page avait été chargée avant la nouvelle segmentation, l’hologramme visible est donc celui de l’ancienne (la nouvelle refuse cette vue de face qui remplit le cadre). real-generation-holograms.jpg : captures refaites avec le code actuel (runs 1 à 6, puis la 7ᵉ refusée)."
+    "hologram : réévalué avec le code final (segmentation corrigée après revue, règles de profil réservées aux personnages et créatures) et le type de sujet de chaque demande (robot et astronaute : character, dragon : creature, les autres : product). Les 7 demandes donnent un hologramme ; les vues refusées le sont avec leur raison (« sujet cadré trop serré »).",
+    "hologramBeforeSegmentationChange : mêmes vues mesurées par la page du banc chargée avant toute modification de la segmentation (ancien code).",
+    "real-generation-screen-during-run.jpg : capture de l’écran pendant le 7ᵉ run réel, prise avec le code de l’époque ; real-generation-holograms.jpg : captures refaites avec le code final."
   ],
   "etaSamplesFile": "real-generation-eta-samples.json.gz",
   "etaSamplesPerRun": {

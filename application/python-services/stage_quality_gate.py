@@ -9,12 +9,27 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 REPO = Path(__file__).resolve().parent
 
 
 def _render_views(glb: Path, outdir: Path) -> list[Path]:
     outdir.mkdir(parents=True, exist_ok=True)
-    blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
+    blender = _aurora_blender_exe()
     script = REPO / "render_views.py"
     try:
         subprocess.run([blender, "--background", "--python", str(script),
