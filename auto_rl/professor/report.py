@@ -19,7 +19,11 @@ def _percent(value):
 
 def diagnosis_lines(report):
     overall = report["summary"]["overall"]
-    lines = [f"Diagnostic de {report['student']['tag']} ({report['student']['hf']}) — modules : {', '.join(report['modules'])}",
+    basis = report.get("basis") or {}
+    subject = "du candidat entraîné" if basis.get("model") == "candidate" else "du modèle de base"
+    lines = [f"Diagnostic {subject} de {report['student']['tag']} ({report['student']['hf']}) — modules : {', '.join(report['modules'])}",
+             *([f"Tiré de l'examen {basis['exam']} ; adaptateur {str(basis.get('adapter_sha256'))[:16]}… : c'est le point de départ du cycle suivant."]
+               if basis else []),
              f"Examen {'complet' if report['complete'] else 'INCOMPLET'} : {overall['items']} items notés, "
              f"{overall['skipped']} ignorés (prompt trop long), précision macro {_percent(overall['macro_accuracy']).strip()}",
              "", "Points faibles, du plus faible au plus fort (intervalle de Wilson à 95 %) :"]
@@ -33,6 +37,18 @@ def diagnosis_lines(report):
     return lines
 
 
+def _reuse_lines(verdict):
+    """Exam items that an earlier cycle already used: said plainly, because they are not unseen any more."""
+    notes = (verdict.get("exam") or {}).get("notes") or {}
+    counted = notes.get("reused_items") or {}
+    if counted:
+        detail = ", ".join(f"{skill} {count}" for skill, count in sorted(counted.items()))
+        return [f"  dont {sum(counted.values())} items déjà utilisés par l'examen d'un cycle précédent (réserve épuisée) : {detail}"]
+    if notes.get("reused"):
+        return ["  dont des items déjà utilisés par un cycle précédent pour : " + ", ".join(sorted(notes["reused"]))]
+    return []
+
+
 def verdict_lines(verdict):
     overall = verdict["overall"]
     low, high = overall["macro_gain_ci"]
@@ -41,6 +57,7 @@ def verdict_lines(verdict):
              + ("" if verdict["verdict"] != "promote" else (" — installable" if verdict["promotable"] else " — non installable (élève de répétition ou examen incomplet)")),
              *[f"  motif : {reason}" for reason in verdict["reasons"]],
              f"Examen apparié : {overall['items']} items notés pour les deux modèles ({'complet' if verdict['exam_complete'] else 'INCOMPLET'})",
+             *_reuse_lines(verdict),
              f"Précision macro : {_percent(overall['macro_base']).strip()} → {_percent(overall['macro_candidate']).strip()} "
              f"(gain {100 * overall['macro_gain']:+.1f} points, intervalle à 95 % [{100 * low:+.1f} ; {100 * high:+.1f}])",
              f"Items corrigés par le candidat : {overall['fixed']} ; items cassés : {overall['broken']} ; McNemar exact p = {overall['mcnemar_p']:.4f}",
@@ -49,9 +66,22 @@ def verdict_lines(verdict):
         flag = "  RÉGRESSION" if skill in verdict["regressions"] else ""
         lines.append(f"  {_percent(table['base_accuracy'])} → {_percent(table['candidate_accuracy'])}  {100 * table['gain']:+6.1f}  "
                      f"p={table['mcnemar_p']:.3f}  n={table['items']:4d}  {skill}{flag}")
+    versus = verdict.get("versus_previous")
+    if versus:
+        against = versus["overall"]
+        low, high = against["macro_gain_ci"]
+        outcome = {"promote": "MEILLEUR que l'adaptateur précédent", "reject": "MOINS BON que l'adaptateur précédent",
+                   "inconclusive": "différence NON ÉTABLIE avec l'adaptateur précédent"}[versus["verdict"]]
+        lines += ["", f"Contre l'adaptateur que ce cycle prolonge, sur les mêmes items : {outcome}"
+                      + ("" if versus.get("complete", True) else " (examen INCOMPLET)"),
+                  f"  précision macro {_percent(against['macro_base']).strip()} → {_percent(against['macro_candidate']).strip()} "
+                  f"(gain {100 * against['macro_gain']:+.1f} points, intervalle à 95 % [{100 * low:+.1f} ; {100 * high:+.1f}]) ; "
+                  f"corrigés {against['fixed']}, cassés {against['broken']}, McNemar exact p = {against['mcnemar_p']:.4f}",
+                  *[f"  motif : {reason}" for reason in versus["reasons"]]]
     training = verdict.get("training") or {}
     if training.get("steps") is not None:
-        lines += ["", f"Entraînement : {training['steps']} pas, arrêt « {training['stopped']} », perte de développement "
+        origin = " (suite d'un adaptateur existant)" if training.get("continued_from") else ""
+        lines += ["", f"Entraînement{origin} : {training['steps']} pas, arrêt « {training['stopped']} », perte de développement "
                       f"{training['initial_dev_loss']:.4f} → {training['selected_dev_loss']:.4f} "
                       "(une perte plus basse n'est pas une preuve de meilleures réponses)."]
     return lines

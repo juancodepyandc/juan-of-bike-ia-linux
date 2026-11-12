@@ -25,18 +25,24 @@ from ..source_bundle import build_bundle, extract_bundle
 from .records import atomic_json, file_hash
 
 ROOT = Path(__file__).resolve().parents[2]
-BUNDLE_MODULES = ["auto_rl.professor.run", "auto_rl.professor.train", "auto_rl.source_bundle"]
+# The launcher travels too: the Colab trainer imports it from the extracted sources to publish its adapter
+# and start the examiner, and the bundle it rebuilds there must be the one it was extracted from.
+BUNDLE_MODULES = ["auto_rl.professor.run", "auto_rl.professor.train", "auto_rl.professor.kaggle_runner", "auto_rl.source_bundle"]
 KERNELS = {"diagnose": ("aurora-professeur-examinateur", "Aurora Professeur Examinateur"),
            "verify": ("aurora-professeur-examinateur", "Aurora Professeur Examinateur"),
            "train": ("aurora-professeur-entraineur", "Aurora Professeur Entraineur")}
 
 
-def kernel_name(role, student):
+def kernel_name(role, student, cycle=0):
     """``(slug, title)`` of one student's kernel: each student has its own examiner and trainer,
-    so two students can be examined or trained at the same time without sharing a machine."""
+    so two students can be examined or trained at the same time without sharing a machine.
+
+    A later cycle has its own pair (suffix ``-cN``): the verdict and the files of an earlier cycle
+    stay downloadable after the next one has run, so a promoted delivery is never overwritten.
+    """
     slug, title = KERNELS[role]
     words = [re.sub(r"[^a-z0-9]", "", part) for part in re.split(r"[:/\s]+", student.lower())]
-    words = [word for word in words if word]
+    words = [word for word in words if word] + ([f"c{int(cycle)}"] if cycle else [])
     return slug + "-" + "-".join(words), title + " " + " ".join(word.capitalize() for word in words)
 
 #: Minimum library versions; a newer preinstalled version is kept as is.
@@ -93,24 +99,44 @@ if OPTIONS.get("skills"):
 for key, value in (OPTIONS.get("overrides") or {{}}).items():
     argv += ["--" + key.replace("_", "-"), str(value)]
 inputs = Path({inputs!r})
+# An adapter kept under ``init_adapter`` is the one a continued training started from, never the candidate.
+adapters = sorted(inputs.rglob("adapter_config.json")) if inputs.is_dir() else []
+candidates = [path for path in adapters if path.parent.name != "init_adapter"]
+earlier = [path for path in adapters if path.parent.name == "init_adapter"]
 if OPTIONS["role"] == "train":
-    found = sorted(inputs.rglob("diagnosis.json")) if inputs.is_dir() else []
+    wanted = "diagnosis_next_*.json" if OPTIONS.get("continue") else "diagnosis.json"
+    found = sorted(inputs.rglob(wanted)) if inputs.is_dir() else []
     if len(found) != 1:
-        raise SystemExit("Expected exactly one diagnosis.json from the examiner, found %d" % len(found))
+        raise SystemExit("Expected exactly one %s from the examiner, found %d" % (wanted, len(found)))
     argv += ["--diagnosis", str(found[0])]
+    if OPTIONS.get("continue"):
+        if len(candidates) != 1:
+            raise SystemExit("Expected exactly one adapter to continue, found %d" % len(candidates))
+        argv += ["--init-adapter", str(candidates[0].parent)]
 if OPTIONS["role"] == "verify":
-    found = sorted(inputs.rglob("adapter_config.json")) if inputs.is_dir() else []
-    if len(found) != 1:
-        raise SystemExit("Expected exactly one adapter from the trainer, found %d" % len(found))
+    if len(candidates) != 1:
+        raise SystemExit("Expected exactly one adapter from the trainer, found %d" % len(candidates))
     adapter = WORK / "training" / "adapter"
     if adapter.exists():
         shutil.rmtree(adapter)
-    shutil.copytree(found[0].parent, adapter)
-    for receipt in (found[0].parent.parent / "train_receipt.json", found[0].parent / "train_receipt.json"):
+    shutil.copytree(candidates[0].parent, adapter)
+    for receipt in (candidates[0].parent.parent / "train_receipt.json", candidates[0].parent / "train_receipt.json"):
         if receipt.is_file():                # kernel output layout, then flat dataset layout
             shutil.copy2(receipt, adapter.parent / "train_receipt.json")
             break
     argv += ["--adapter", str(adapter)]
+    flat = sorted(inputs.rglob("init_adapter_config.json")) if inputs.is_dir() else []
+    before = WORK / "training" / "init_adapter"
+    if before.exists():
+        shutil.rmtree(before)
+    if len(earlier) == 1:                    # same unseen items for the adapter this candidate continues
+        shutil.copytree(earlier[0].parent, before)
+    elif len(flat) == 1:                     # flat dataset layout: files prefixed with ``init_``
+        before.mkdir(parents=True)
+        for path in sorted(flat[0].parent.glob("init_adapter_*")):
+            shutil.copy2(path, before / path.name[len("init_"):])
+    if before.is_dir():
+        argv += ["--previous-adapter", str(before)]
 
 started = time.time()
 # Lines are relayed one by one so a notebook cell shows progress, not only a script log.
@@ -167,19 +193,28 @@ def script(options=None, *, base="/kaggle/working", inputs="/kaggle/input", hf_h
 
 
 def write_kernel(folder, owner, role, *, student, profile="standard", modules=None, cycle=0, budget_minutes=240,
-                 overrides=None, gpu=True, dataset_sources=(), skills=None):
-    """Create the kernel folder (script + metadata). Nothing is uploaded by this function."""
-    slug, title = kernel_name(role, student)
+                 overrides=None, gpu=True, dataset_sources=(), skills=None, continue_adapter=False):
+    """Create the kernel folder (script + metadata). Nothing is uploaded by this function.
+
+    ``continue_adapter`` (trainer only) continues the adapter of the previous cycle with the examiner's
+    ``diagnosis_next_N.json``; both are read from the examiner's last output, or from ``dataset_sources``.
+    """
+    slug, title = kernel_name(role, student, cycle)
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     options = {"role": role, "student": student, "profile": profile, "modules": modules, "skills": skills, "cycle": cycle,
                "budget_minutes": budget_minutes, "overrides": overrides or {}}
+    if role == "train" and continue_adapter:
+        if not cycle:
+            raise ValueError("A first cycle has no adapter to continue")
+        options["continue"] = True
     (folder / "kernel.py").write_text(script(options), encoding="utf-8")
     sources = []
-    if role == "train":
-        sources = [f"{owner}/{kernel_name('diagnose', student)[0]}"]
+    if role == "train" and not dataset_sources:
+        # A continued cycle reads the previous examiner (its verdict's diagnosis and the adapter it examined).
+        sources = [f"{owner}/{kernel_name('diagnose', student, cycle - 1 if continue_adapter else cycle)[0]}"]
     elif role == "verify" and not dataset_sources:
-        sources = [f"{owner}/{kernel_name('train', student)[0]}"]
+        sources = [f"{owner}/{kernel_name('train', student, cycle)[0]}"]
     metadata = {"id": f"{owner}/{slug}", "title": title, "code_file": "kernel.py", "language": "python",
                 "kernel_type": "script", "is_private": True, "enable_gpu": bool(gpu), "enable_internet": True,
                 "machine_shape": "NvidiaTeslaT4" if gpu else "", "dataset_sources": list(dataset_sources),
@@ -248,13 +283,19 @@ def quota():
             "used_seconds": gpu.time_used.total_seconds()}
 
 
-def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateurs", note="adapter"):
-    """Upload a trained adapter as a PRIVATE Kaggle dataset the examiner can mount (Colab path).
+def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateurs", note="adapter", student=None, extra=()):
+    """Upload a trained adapter as a PRIVATE Kaggle dataset a kernel can mount (Colab path, continued cycles).
 
-    Files are stored flat: an adapter is a configuration and one weight file.
+    Files are stored flat: an adapter is a configuration and one weight file. ``student`` gives each
+    student its own dataset, so two students never read each other's latest version; ``extra`` adds
+    files such as the examiner's ``diagnosis_next_N.json``.
     """
     import tempfile
     training_folder = Path(training_folder)
+    title = "Aurora Professeur Adaptateurs"
+    if student:
+        words = kernel_name("train", student)[0].removeprefix(KERNELS["train"][0])
+        slug, title = slug + words, title + words.replace("-", " ")
     with tempfile.TemporaryDirectory(prefix="aurora_adapter_") as temporary:
         staging = Path(temporary)
         names = []
@@ -262,12 +303,17 @@ def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateu
             if path.is_file() and path.suffix in {".json", ".safetensors"}:
                 (staging / path.name).write_bytes(path.read_bytes())
                 names.append(path.name)
-        for extra in ("train_receipt.json",):
-            if (training_folder / extra).is_file():
-                (staging / extra).write_bytes((training_folder / extra).read_bytes())
+        for added in ("train_receipt.json",):
+            if (training_folder / added).is_file():
+                (staging / added).write_bytes((training_folder / added).read_bytes())
+        for path in sorted((training_folder / "init_adapter").glob("adapter_*")):
+            if path.is_file() and path.suffix in {".json", ".safetensors"}:      # the adapter this one continues
+                (staging / ("init_" + path.name)).write_bytes(path.read_bytes())
+        for added in extra:
+            (staging / Path(added).name).write_bytes(Path(added).read_bytes())
         if "adapter_config.json" not in names:
             raise ValueError("No adapter to publish in " + str(training_folder))
-        atomic_json(staging / "dataset-metadata.json", {"title": "Aurora Professeur Adaptateurs", "id": f"{owner}/{slug}",
+        atomic_json(staging / "dataset-metadata.json", {"title": title, "id": f"{owner}/{slug}",
                                                         "licenses": [{"name": "other"}]})
         api = _api()
         try:
@@ -311,7 +357,7 @@ def fetch(reference, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "logs", "quota"))
+    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "logs", "quota", "publish"))
     parser.add_argument("--owner")
     parser.add_argument("--role", choices=sorted(KERNELS))
     parser.add_argument("--student", default="qwen2.5:7b")
@@ -325,20 +371,31 @@ def main(argv=None):
     parser.add_argument("--cpu", action="store_true", help="Rehearsal without GPU quota")
     parser.add_argument("--dataset-source", action="append", default=[], help="owner/slug holding an adapter (Colab path)")
     parser.add_argument("--override", action="append", default=[], help="name=value passed to the role, e.g. curriculum=4000")
+    parser.add_argument("--continue-adapter", action="store_true",
+                        help="train: continue the previous cycle's adapter with the examiner's diagnosis_next file")
+    parser.add_argument("--training", type=Path, help="publish: folder holding adapter/ (a fetched training folder)")
+    parser.add_argument("--extra", action="append", default=[], type=Path, help="publish: extra file, e.g. diagnosis_next_0.json")
     args = parser.parse_args(argv)
     if args.command == "quota":
         print(json.dumps(quota()))
         return 0
+    if args.command == "publish":
+        if not args.owner or not args.training:
+            parser.error("publish requires --owner and --training")
+        print(json.dumps({"dataset": publish_adapter(args.owner, args.training, student=args.student, extra=args.extra,
+                                                     note=f"cycle {args.cycle} {args.student}")}))
+        return 0
     if not args.owner or not args.role:
         parser.error("--owner and --role are required")
-    slug = kernel_name(args.role, args.student)[0]
+    slug = kernel_name(args.role, args.student, args.cycle)[0]
     reference = f"{args.owner}/{slug}"
     folder = args.folder or ROOT / "Outputs" / "auto_rl" / "professor" / "kernels" / slug / args.role
     if args.command in ("build", "launch"):
         overrides = dict(pair.split("=", 1) for pair in args.override)
         metadata = write_kernel(folder, args.owner, args.role, student=args.student, profile=args.profile, modules=args.modules,
                                 cycle=args.cycle, budget_minutes=args.budget_minutes, overrides=overrides, gpu=not args.cpu,
-                                dataset_sources=args.dataset_source, skills=args.skills)
+                                dataset_sources=args.dataset_source, skills=args.skills,
+                                continue_adapter=args.continue_adapter)
         result = {"folder": str(folder), "kernel": metadata["id"], "gpu": metadata["enable_gpu"]}
         if args.command == "launch":
             result.update(launch(folder, timeout_seconds=args.budget_minutes * 60 + 1500))

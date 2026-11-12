@@ -95,6 +95,8 @@ Déroulement : *Exécution → Tout exécuter*. Choisir un runtime **GPU**. La c
 
 Secrets Colab facultatifs (icône clé) : `HF_TOKEN` pour un modèle à accès restreint ; `KAGGLE_API_TOKEN` (jeton récent `KGAT_…`) ou bien `KAGGLE_USERNAME` et `KAGGLE_KEY` (kaggle.json) pour déposer l'adaptateur dans un jeu de données privé et lancer l'examen Kaggle automatiquement. Sans eux, l'adaptateur est seulement enregistré dans Google Drive (`Aurora_Professeur/`) et l'examen reste à lancer.
 
+Cycle suivant : avec `CONTINUE_FROM = "compte/jeu-de-données"`, la machine télécharge l'adaptateur du cycle précédent et le diagnostic de ce candidat publiés par l'examinateur, puis **prolonge** cet adaptateur sur des exercices inédits au lieu de repartir du modèle de base. L'examinateur compare alors le nouvel adaptateur à la base et à l'adaptateur précédent sur les mêmes questions.
+
 Élèves connus :
 {CATALOGUE}
 """
@@ -104,6 +106,7 @@ MODULES = None               # None = ceux du diagnostic ; sinon un sous-ensembl
 CYCLE = 0
 BUDGET_MINUTES = 300         # budget total ; l'adaptateur est sauvegardé avant la fin
 OVERRIDES = {}               # par exemple {"curriculum": 8000, "epochs": 2}
+CONTINUE_FROM = None         # jeu de données Kaggle privé "compte/nom" : reprendre l'adaptateur du cycle précédent
 '''
 
 TRAINER_DIAGNOSIS = '''import base64, json, os
@@ -114,20 +117,13 @@ inputs.mkdir(parents=True, exist_ok=True)
 target = inputs / "diagnosis.json"
 if DIAGNOSIS_B64:
     target.write_bytes(base64.b64decode(DIAGNOSIS_B64))
-elif not target.is_file():
+elif not target.is_file() and not CONTINUE_FROM:
     from google.colab import files
     print("Déposer le fichier diagnosis.json produit par l'examinateur Kaggle.")
     uploaded = files.upload()
     if len(uploaded) != 1:
         raise SystemExit("Un seul fichier diagnosis.json est attendu")
     target.write_bytes(next(iter(uploaded.values())))
-diagnosis = json.loads(target.read_text())
-if diagnosis.get("kind") != "aurora_professor_diagnosis" or not diagnosis.get("complete"):
-    raise SystemExit("Diagnostic absent ou incomplet : relancer l'examinateur avant d'entraîner")
-STUDENT = diagnosis["student"]["tag"]
-print("Élève diagnostiqué :", STUDENT, "→", diagnosis["student"]["hf"])
-for row in diagnosis["weak_points"][:12]:
-    print(f"  {row['accuracy']:.3f}  n={row['items']:4d}  {row['skill']}")
 try:
     from google.colab import userdata
     for name in ("HF_TOKEN", "KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"):
@@ -137,7 +133,32 @@ try:
             pass
 except ImportError:
     pass
-AURORA_OPTIONS = {"role": "train", "student": STUDENT, "profile": PROFILE, "cycle": CYCLE,
+if CONTINUE_FROM:
+    # Cycle suivant : l'examinateur a publié l'adaptateur précédent et le diagnostic de ce candidat.
+    if not (os.environ.get("KAGGLE_API_TOKEN") or (os.environ.get("KAGGLE_USERNAME") and os.environ.get("KAGGLE_KEY"))):
+        raise SystemExit("CONTINUE_FROM demande les secrets Kaggle pour télécharger l'adaptateur précédent ; sinon mettre CONTINUE_FROM = None")
+    import subprocess, sys
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "kaggle", "six"], check=True)
+    from kaggle.api.kaggle_api_extended import KaggleApi
+    api = KaggleApi()
+    api.authenticate()
+    continued = inputs / "continued"
+    api.dataset_download_files(CONTINUE_FROM, path=str(continued), unzip=True, quiet=True)
+    found = sorted(continued.glob("diagnosis_next_*.json"))
+    if len(found) != 1 or not (continued / "adapter_config.json").is_file():
+        raise SystemExit("Le jeu de données ne contient pas un adaptateur et son diagnostic diagnosis_next_N.json")
+    for stale in continued.glob("init_adapter_*"):          # l'adaptateur d'avant ne sert pas à l'entraîneur
+        stale.unlink()
+    target = found[0]
+diagnosis = json.loads(target.read_text())
+if diagnosis.get("kind") != "aurora_professor_diagnosis" or not diagnosis.get("complete"):
+    raise SystemExit("Diagnostic absent ou incomplet : relancer l'examinateur avant d'entraîner")
+STUDENT = diagnosis["student"]["tag"]
+print("Élève diagnostiqué :", STUDENT, "→", diagnosis["student"]["hf"],
+      "| candidat déjà entraîné, reprise de son adaptateur" if CONTINUE_FROM else "| modèle de base")
+for row in diagnosis["weak_points"][:12]:
+    print(f"  {row['accuracy']:.3f}  n={row['items']:4d}  {row['skill']}")
+AURORA_OPTIONS = {"role": "train", "student": STUDENT, "profile": PROFILE, "cycle": CYCLE, "continue": bool(CONTINUE_FROM),
                   "modules": MODULES or ",".join(diagnosis["modules"]), "budget_minutes": BUDGET_MINUTES, "overrides": OVERRIDES}
 '''
 
@@ -169,7 +190,7 @@ if os.environ.get("KAGGLE_API_TOKEN") or (os.environ.get("KAGGLE_USERNAME") and 
     sys.path.insert(0, str(REPO))
     from auto_rl.professor import kaggle_runner
     owner = kaggle_runner.whoami()
-    dataset = kaggle_runner.publish_adapter(owner, work / "training", note=f"cycle {CYCLE} {STUDENT}")
+    dataset = kaggle_runner.publish_adapter(owner, work / "training", student=STUDENT, note=f"cycle {CYCLE} {STUDENT}")
     print("Adaptateur déposé dans le jeu de données privé", dataset)
     folder = Path("/content/aurora_examinateur")
     kaggle_runner.write_kernel(folder, owner, "verify", student=STUDENT, profile=PROFILE, modules=AURORA_OPTIONS["modules"],
@@ -189,9 +210,10 @@ else:
 '''
 
 
-def build(diagnosis=None, output=None, cycle=0):
+def build(diagnosis=None, output=None, cycle=0, continue_from=None):
     """Write both notebooks. ``output`` (default ``notebooks/``) lets a run-specific copy with an
-    embedded diagnosis live outside the repository; ``cycle`` presets the trainer's cycle number."""
+    embedded diagnosis live outside the repository; ``cycle`` presets the trainer's cycle number and
+    ``continue_from`` the private dataset holding the adapter to continue."""
     out = Path(output) if output else ROOT / "notebooks"
     out.mkdir(parents=True, exist_ok=True)
     kaggle_cells = [cell("markdown", EXAMINER_INTRO), cell("code", EXAMINER_PARAMETERS, "parameters"),
@@ -199,7 +221,10 @@ def build(diagnosis=None, output=None, cycle=0):
     (out / "Aurora_Professeur_Examinateur_Kaggle.ipynb").write_text(
         json.dumps(notebook(kaggle_cells), ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     embedded = repr(base64.b64encode(Path(diagnosis).read_bytes()).decode()) if diagnosis else "None"
-    colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", TRAINER_PARAMETERS.replace("CYCLE = 0", f"CYCLE = {int(cycle)}"), "parameters"),
+    parameters = TRAINER_PARAMETERS.replace("CYCLE = 0", f"CYCLE = {int(cycle)}")
+    if continue_from:
+        parameters = parameters.replace("CONTINUE_FROM = None", f"CONTINUE_FROM = {str(continue_from)!r}")
+    colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", parameters, "parameters"),
                    cell("code", TRAINER_DIAGNOSIS.replace("__DIAGNOSIS__", embedded), "diagnosis"),
                    cell("code", TRAINER_ADMISSION, "admission"),
                    cell("code", kaggle_runner.script(base="/content", inputs="/content/aurora_inputs", hf_home="/content/hf_cache",
@@ -215,5 +240,6 @@ if __name__ == "__main__":
     parser.add_argument("--diagnosis", type=Path, help="diagnosis.json to embed in the Colab trainer notebook")
     parser.add_argument("--output", type=Path, help="folder for the notebooks (default: notebooks/ of the repository)")
     parser.add_argument("--cycle", type=int, default=0, help="cycle number preset in the Colab trainer notebook")
+    parser.add_argument("--continue-from", help="private Kaggle dataset (owner/slug) holding the adapter to continue")
     arguments = parser.parse_args()
-    print(json.dumps(build(arguments.diagnosis, arguments.output, arguments.cycle)))
+    print(json.dumps(build(arguments.diagnosis, arguments.output, arguments.cycle, arguments.continue_from)))

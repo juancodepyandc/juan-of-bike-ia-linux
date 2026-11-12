@@ -71,9 +71,12 @@ def check_delivery(delivery):
         problems.append("verdict non installable (examen incomplet ou élève de répétition)")
     if not student["production"]:
         problems.append("cet élève n'est appelé par aucun module de l'application")
-    adapters = sorted(delivery.rglob("adapter_model.safetensors"))
+    # ``init_adapter`` is the adapter a continued cycle started from: it travels for the comparison, never for delivery.
+    adapters = [path for path in sorted(delivery.rglob("adapter_model.safetensors")) if path.parent.name != "init_adapter"]
     if len(adapters) != 1 or file_hash(adapters[0]) != verdict.get("adapter_sha256"):
         problems.append("l'adaptateur livré ne correspond pas à celui que l'examinateur a évalué")
+    if (verdict.get("versus_previous") or {}).get("verdict") == "reject":
+        problems.append("ce candidat est moins bon que l'adaptateur qu'il prolonge : livrer le cycle précédent")
     export = next(iter(sorted(delivery.rglob("export_receipt.json"))), None)
     receipt = json.loads(export.read_text(encoding="utf-8")) if export else {"files": {}}
     files = {}
@@ -192,14 +195,15 @@ def rollback(tag, *, url="http://127.0.0.1:11434"):
     return {"tag": tag, "restored_from": backup}
 
 
-def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, context=8192, activate_after=False):
+def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, context=8192, activate_after=False, cycle=0):
     """Fetch the examiner's verified output from Kaggle, install it, and optionally activate it.
 
     One command for the PC: every gate still applies, and activation happens only
-    if the model wins the paired exam again as served by Ollama.
+    if the model wins the paired exam again as served by Ollama. ``cycle`` selects
+    which cycle's examiner to fetch (each cycle keeps its own output).
     """
     from . import kaggle_runner
-    slug = kaggle_runner.kernel_name("verify", student)[0]
+    slug = kaggle_runner.kernel_name("verify", student, cycle)[0]
     folder = STATE / "deliveries" / slug
     kaggle_runner.fetch(f"{owner}/{slug}", folder)
     record = install(folder, url=url, per_skill=per_skill, context=context)
@@ -215,6 +219,7 @@ def main(argv=None):
     parser.add_argument("--owner", help="Kaggle account that ran the examiner (deliver)")
     parser.add_argument("--student", help="Ollama tag of the examined model (deliver)")
     parser.add_argument("--activate", action="store_true", help="deliver: activate when the deployment exam is won")
+    parser.add_argument("--cycle", type=int, default=0, help="deliver: which cycle's examiner output to fetch")
     parser.add_argument("--tag")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--exam-per-skill", type=int, default=60)
@@ -231,7 +236,7 @@ def main(argv=None):
         if not args.owner or not args.student:
             parser.error("deliver requires --owner and --student")
         result = deliver(args.owner, args.student, url=args.ollama_url, per_skill=args.exam_per_skill, context=args.context,
-                         activate_after=args.activate)
+                         activate_after=args.activate, cycle=args.cycle)
     elif args.command == "activate":
         result = activate(args.tag, url=args.ollama_url)
     else:

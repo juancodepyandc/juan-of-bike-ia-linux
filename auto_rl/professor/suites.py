@@ -63,32 +63,29 @@ def skills(modules=None, only=None):
 
 
 def stratified(items, count, seed, cycle=0):
-    """Round-robin over sub-skills in a seeded order; ``cycle`` selects a fresh slice.
+    """Round-robin over sub-skills in a seeded order; ``cycle`` selects the next slice of that order.
 
-    Slices of successive cycles are disjoint until a sub-skill runs out of items,
-    in which case its items are reused and the caller is told through ``reused``.
+    The whole family is laid out once (one item of each sub-skill in turn, until every sub-skill is
+    exhausted) and cycle ``c`` takes positions ``[c * count, (c + 1) * count)``: the slices of
+    successive cycles are disjoint by construction, whatever the sizes of the sub-skills. When the
+    family runs out, the slice is completed with items an earlier cycle used; the second value is
+    how many of them there are (0 while every item is new).
     """
     groups = defaultdict(list)
     for item in items:
         groups[item.get("subskill")].append(item)
     if not groups or count <= 0:
-        return [], False
-    per_group = -(-count // len(groups))
-    reused, lanes = False, []
-    for name in sorted(groups, key=str):
-        ordered = sorted(groups[name], key=lambda item: rank(item["id"], seed))
-        start = cycle * per_group
-        if start + per_group > len(ordered) and cycle > 0:
-            reused = True
-            start %= max(1, len(ordered))
-        lanes.append(ordered[start:] + ordered[:start])
-    chosen, depth = [], 0
-    while len(chosen) < count and any(depth < len(lane) for lane in lanes):
-        for lane in lanes:
-            if depth < len(lane) and len(chosen) < count:
-                chosen.append(lane[depth])
-        depth += 1
-    return chosen, reused
+        return [], 0
+    lanes = [sorted(groups[name], key=lambda item: rank(item["id"], seed)) for name in sorted(groups, key=str)]
+    sequence = [lane[depth] for depth in range(max(map(len, lanes))) for lane in lanes if depth < len(lane)]
+    start = cycle * count
+    if cycle > 0 and start >= len(sequence):              # nothing new is left: the whole slice was seen before
+        offset = start % len(sequence)
+        chosen = (sequence[offset:] + sequence[:offset])[:count]
+        return chosen, len(chosen)
+    chosen = sequence[start:start + count]
+    refill = sequence[:min(start, count - len(chosen))] if cycle > 0 else []
+    return chosen + refill, len(refill)
 
 
 class Library:
@@ -135,7 +132,7 @@ def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="au
         raise ValueError("An exam role is diagnostic or gate")
     library = library or Library()
     catalogue = skills(modules, only)
-    items, notes = [], {"reused": [], "empty": [], "skills": {}}
+    items, notes = [], {"reused": [], "reused_items": {}, "empty": [], "skills": {}}
     for skill, entry in catalogue.items():
         chosen = []
         if entry["generator"]:
@@ -143,8 +140,9 @@ def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="au
         elif entry["exam_sources"]:
             family = [item for item in library.exam_family(skill, catalogue) if item["exam_role"] == role]
             chosen, reused = stratified(family, per_skill, f"{seed}:{role}", cycle if role == "gate" else 0)
-            if reused:
+            if reused:                                     # counted, so a verdict can say how much of its exam is not new
                 notes["reused"].append(skill)
+                notes["reused_items"][skill] = reused
         if not chosen:
             if entry["generator"] or entry["exam_sources"]:
                 notes["empty"].append(skill)
@@ -168,19 +166,25 @@ def exam_blocklist(*, modules=None, library=None, only=None):
     return sorted(hashes)
 
 
+#: Index offset between the generated training items of successive cycles (far above any pool size).
+POOL_STRIDE = 1_000_000
+
+
 def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aurora-pool", subskill_weights=None, only=None,
-               sizes=None):
+               sizes=None, cycle=0):
     """Training pool per skill, after removing every blocklisted question.
 
     ``subskill_weights`` (skill -> {subskill: weight}) shifts the generator
     budget toward the sub-skills the diagnosis found weak. ``sizes`` (skill ->
     count) enlarges the pool of a skill whose curriculum share exceeds
     ``per_skill``, so the weakest skills are not capped by the default pool.
+    ``cycle`` draws exercises the earlier cycles did not use: new generated items,
+    and the next slice of each public source (a source that runs out is named in ``reused``).
     """
     library = library or Library()
     catalogue = skills(modules, only)
     blocked = set(blocklist)
-    pool, removed = {}, 0
+    pool, removed, reused = {}, 0, []
     for skill, entry in catalogue.items():
         items = []
         wanted = max(per_skill, (sizes or {}).get(skill, 0))
@@ -190,12 +194,14 @@ def build_pool(per_skill, *, modules=None, blocklist=(), library=None, seed="aur
             total = sum(weights.get(s, 1.0) for s in family["subskills"])
             for subskill in family["subskills"]:
                 share = max(4, round(wanted * weights.get(subskill, 1.0) / total))
-                items += [generators.generate(skill, "train", index, subskill) for index in range(share)]
+                items += [generators.generate(skill, "train", cycle * POOL_STRIDE + index, subskill) for index in range(share)]
         elif entry["train_sources"]:
             family = library.train_family(skill, catalogue)
-            items, _ = stratified(family, wanted, seed)
+            items, again = stratified(family, wanted, seed, cycle)
+            if again:
+                reused.append(skill)
         kept = [item for item in items if item["question_hash"][:20] not in blocked]
         removed += len(items) - len(kept)
         if kept:
             pool[skill] = [validate_item(item, training=True) for item in kept]
-    return pool, {"removed_by_blocklist": removed, "source_errors": dict(library.errors)}
+    return pool, {"removed_by_blocklist": removed, "source_errors": dict(library.errors), "cycle": cycle, "reused": reused}

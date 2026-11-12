@@ -207,7 +207,14 @@ class Curriculum(unittest.TestCase):
         self.assertFalse({i["id"] for i in first} & {i["id"] for i in second})
         self.assertFalse(reused_first or reused_second)
         _, exhausted = stratified(items[:40], 40, "seed", 3)
-        self.assertTrue(exhausted)
+        self.assertEqual(exhausted, 40)
+        # Sub-skills of very different sizes: slices stay disjoint, and reuse is counted once the family runs out.
+        uneven = [{"id": f"u{n}", "subskill": "small" if n < 10 else f"big{n % 2}"} for n in range(410)]
+        slices = [stratified(uneven, 150, "seed", cycle) for cycle in range(3)]
+        self.assertFalse({i["id"] for i in slices[0][0]} & {i["id"] for i in slices[1][0]})
+        self.assertEqual([reused for _, reused in slices], [0, 0, 40])
+        self.assertEqual(len({i["id"] for i in slices[2][0]}), 150)
+        self.assertEqual(len({i["id"] for i in slices[2][0]} - {i["id"] for chosen, _ in slices[:2] for i in chosen}), 110)
 
     def test_generator_exams_and_pools_never_overlap(self):
         modules = ["missions", "engineering", "media"]
@@ -266,6 +273,46 @@ class Curriculum(unittest.TestCase):
             self.assertEqual(probed, wanted, name)
             self.assertGreater(len(wanted), 1, name)
             self.assertLess(len({i["subskill"] for i in items[:40]}), len(wanted), name)   # the head alone misses sub-skills
+
+    def test_a_later_cycle_trains_on_new_exercises(self):
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            first, notes_first = build_pool(60, modules=["missions", "media"])
+            later, notes_later = build_pool(60, modules=["missions", "media"], cycle=1)
+            gate, _ = build_exam("gate", 12, modules=["missions", "media"], cycle=1)
+        self.assertEqual((notes_first["cycle"], notes_later["cycle"]), (0, 1))
+        for name in first:
+            self.assertFalse({i["id"] for i in first[name]} & {i["id"] for i in later[name]}, name)
+            repeated = {i["question_hash"] for i in first[name]} & {i["question_hash"] for i in later[name]}
+            self.assertLess(len(repeated), 0.2 * len(later[name]), name)       # small generators may repeat a few questions
+        self.assertFalse({i["question_hash"] for i in gate} & {i["question_hash"] for group in later.values() for i in group})
+        sources = [{"id": f"hf:s:{n}", "subskill": "a", "skill": "k"} for n in range(30)]
+        self.assertFalse({i["id"] for i in stratified(sources, 10, "aurora-pool", 0)[0]}
+                         & {i["id"] for i in stratified(sources, 10, "aurora-pool", 1)[0]})
+
+    def test_the_next_cycle_starts_from_the_candidate_scores_and_its_own_adapter(self):
+        from auto_rl.professor.run import next_diagnosis, train_role
+        rows = lambda marks, skill, sub: [{"id": f"{skill}{sub}{n}", "module": "missions", "skill": skill, "subskill": sub,
+                                           "status": "graded", "correct": bool(m), "output": "x"} for n, m in enumerate(marks)]
+        base = rows([0] * 40, "mission.pointer", "escape") + rows([1] * 40, "mission.action", "browser_open")
+        candidate = rows([1] * 10 + [0] * 30, "mission.pointer", "escape") + rows([1] * 40, "mission.action", "browser_open")
+        result = compare(base, candidate, gate={"min_items": 60})
+        verdict = {"schema": 1, "student": {"tag": "qwen2.5-coder:7b", "hf": "Qwen/Qwen2.5-Coder-7B-Instruct"},
+                   "profile": "standard", "modules": ["missions"], "skills": None, "cycle": 0, "hardware": {}, "versions": {},
+                   "python": "3", "host": "h", "created_at": 0, **result, "exam_complete": True, "adapter_sha256": "a" * 64,
+                   "exam": {"items": 80, "graded_both": 80, "notes": {}, "suite_sha256": "s", "candidate_receipt": "r"}}
+        following = next_diagnosis(verdict, ["h2", "h1"])
+        self.assertEqual(following["kind"], "aurora_professor_diagnosis")
+        self.assertEqual(following["basis"], {"model": "candidate", "exam": "gate:0", "adapter_sha256": "a" * 64, "verdict": result["verdict"]})
+        self.assertEqual(following["weak_points"][0]["skill"], "mission.pointer")       # the candidate's score, not the base's
+        self.assertAlmostEqual(following["weak_points"][0]["accuracy"], 0.25)
+        self.assertEqual(following["summary"]["overall"]["macro_accuracy"], result["overall"]["macro_candidate"])
+        self.assertEqual(following["blocklist"], ["h1", "h2"])
+        self.assertEqual(following["skills"], ["mission.action", "mission.pointer"])
+        config = {"student": {"hf": "Qwen/Qwen2.5-Coder-7B-Instruct"}, "row_limit": None}
+        with self.assertRaises(ValueError):       # the candidate's diagnosis without the candidate's adapter
+            train_role(config, "unused", following, student=object(), library=object())
+        with self.assertRaises(ValueError):       # an adapter the diagnosis does not describe
+            train_role(config, "unused", {**following, "basis": None}, student=object(), library=object(), init_adapter="absent")
 
     def test_modules_cover_the_application_families(self):
         self.assertEqual(set(MODULES), {"missions", "code", "conversation", "academy", "cyber", "business", "cowork", "media", "engineering"})

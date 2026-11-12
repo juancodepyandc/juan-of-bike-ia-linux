@@ -5,9 +5,15 @@
     python -m auto_rl.professor.run verify   --student qwen2.5:7b --work RUN --adapter RUN/training/adapter   # examiner
     python -m auto_rl.professor.run cycle    --student qwen3:0.6b --profile smoke --work RUN                  # rehearsal
 
-The trainer only ever reads ``diagnosis.json``: aggregate scores and question
-hashes. Exam items stay on the examiner. No role promotes a model: ``verify``
-writes a verdict, and installation is a separate, explicit step.
+A later cycle continues the adapter instead of starting again. ``verify`` also writes
+``diagnosis_next_N.json``, the scores of the trained candidate on the gate it just sat:
+
+    python -m auto_rl.professor.run train  --cycle 1 --work RUN1 --diagnosis RUN/diagnosis_next_0.json --init-adapter RUN/training/adapter
+    python -m auto_rl.professor.run verify --cycle 1 --work RUN1 --adapter RUN1/training/adapter --previous-adapter RUN1/training/init_adapter
+
+The trainer only ever reads a diagnosis: aggregate scores and question hashes.
+Exam items stay on the examiner. No role promotes a model: ``verify`` writes a
+verdict, and installation is a separate, explicit step.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import time
 from pathlib import Path
 
@@ -124,14 +131,30 @@ def mining_probes(pool, per_skill, allow_execution=False):
     return probes
 
 
-def train_role(config, work, diagnosis, student=None, library=None):
-    """Trainer: build a curriculum aimed at the measured weak points and fit an adapter."""
+def adapter_hash(adapter):
+    """Hash of an adapter's weight file, the identity used by verdicts, diagnoses and receipts."""
+    weights = next((p for p in sorted(Path(adapter).glob("adapter_model.*")) if p.is_file()), None)
+    return file_hash(weights) if weights else None
+
+
+def train_role(config, work, diagnosis, student=None, library=None, init_adapter=None):
+    """Trainer: build a curriculum aimed at the measured weak points and fit an adapter.
+
+    With ``init_adapter`` the cycle continues that adapter. The diagnosis must then describe the
+    same adapter (it comes from the examiner's last gate), the probes question the model as it is
+    now, and the starting adapter is kept beside the new one so the examiner can compare the two.
+    """
     from .train import train
     work = Path(work)
     library = library or Library(row_limit=config["row_limit"])
     student = student or open_student(config)
     if diagnosis["student"]["hf"] != config["student"]["hf"]:
         raise ValueError("This diagnosis describes another student")
+    described = (diagnosis.get("basis") or {}).get("adapter_sha256")
+    given = adapter_hash(init_adapter) if init_adapter else None
+    if (init_adapter and not given) or described != given:
+        raise ValueError("The diagnosis and the starting adapter do not match: a diagnosis of the base model trains a new "
+                         "adapter, and a diagnosis of a trained candidate continues exactly that adapter (--init-adapter)")
     weak = diagnosis["weak_points"]
     # Size each pool for its expected share of the curriculum, so a very weak skill is not capped by the default pool.
     catalogue = skills(config["modules"], config["skills"])
@@ -139,67 +162,135 @@ def train_role(config, work, diagnosis, student=None, library=None):
     expected = skill_weights(weak, trainable)
     sizes = {name: int(1.2 * config["curriculum"] * share) + 8 for name, share in expected.items()}
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=diagnosis["blocklist"],
-                                  library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes)
-    # Probe the base model on training items it can be graded on: what it fails goes first.
+                                  library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
+                                  cycle=config["cycle"])
+    # Probe the model as it is now on training items it can be graded on: what it fails goes first.
     probes = mining_probes(pool, config["mine_per_skill"], config["allow_execution"])
     mined = {}
     if probes:
+        if init_adapter:
+            student.attach(init_adapter)
         status({"phase": "mine", "items": len(probes)})
         evaluate(student, probes, work / "mine", batch_size=config["eval_batch"], label="mine", progress=status,
                  budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.15)
         mined = {row["id"]: bool(row["correct"]) for row in read_results(work / "mine") if row["status"] == "graded"}
+        student.detach()
     weights = skill_weights(weak, [name for name in pool if name not in REPLAY])
     chosen, plan = build_curriculum(pool, weights, config["curriculum"], mined=mined, replay_skills=REPLAY)
     atomic_json(work / "curriculum.json", {"kind": "aurora_professor_curriculum", "plan": plan, "weights": weights,
                                            "pool": pool_notes, "mined": {"probed": len(mined), "failed": sum(not v for v in mined.values())},
-                                           "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")})})
+                                           "diagnosis_sha256": digest({k: diagnosis[k] for k in ("summary", "exam")}),
+                                           "cycle": config["cycle"], "continued_from": given})
     status({"phase": "train", "examples": len(chosen)})
     knobs = {k: config[k] for k in ("max_tokens", "batch_size", "accumulate", "epochs", "eval_every", "learning_rate", "rank") if k in config}
     if config["student"].get("attention_only"):
         knobs["attention_only"] = True
-    receipt = train(student, chosen, work / "training", config=knobs, progress=status,
+    receipt = train(student, chosen, work / "training", config=knobs, progress=status, init_adapter=init_adapter,
                     budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.6)
+    if init_adapter:
+        # The examiner compares the new adapter with the one it continues, on the same unseen items.
+        kept = work / "training" / "init_adapter"
+        if kept.exists():
+            shutil.rmtree(kept)
+        kept.mkdir(parents=True)
+        for path in sorted(Path(init_adapter).glob("adapter_*")):      # configuration and weights, nothing else of that folder
+            if path.is_file() and path.suffix in {".json", ".safetensors", ".bin"}:
+                shutil.copy2(path, kept / path.name)
     return receipt
 
 
-def verify(config, work, adapter, student=None, library=None, base_done=False):
-    """Examiner: paired exam of base and candidate on this cycle's unseen gate."""
+def next_diagnosis(verdict, blocklist):
+    """Diagnosis of the trained candidate, read from the gate it just sat: where the next cycle starts.
+
+    Only aggregate scores leave the examiner, as for a first diagnosis. The gate of the next cycle is
+    a different slice, so steering the next curriculum with these scores does not touch its exam.
+    """
+    examined = sorted(verdict["skills"])          # in a verdict, ``skills`` holds the per-skill tables
+    catalogue = skills(verdict["modules"], examined)
+
+    def entry(table, module):
+        return {"items": table["items"], "correct": table["candidate_correct"], "accuracy": table["candidate_accuracy"],
+                "ci95": table["candidate_ci95"], "module": module}
+    summary = {"skills": {name: entry(table, catalogue[name]["module"]) for name, table in verdict["skills"].items()},
+               "subskills": {key: entry(table, catalogue[key.split(" / ")[0]]["module"]) for key, table in verdict["subskills"].items()}}
+    overall = verdict["overall"]
+    summary["overall"] = {**entry(overall, None), "macro_accuracy": overall["macro_candidate"],
+                          "skipped": verdict["exam"]["items"] - verdict["exam"]["graded_both"]}
+    carried = ("schema", "student", "profile", "modules", "cycle", "hardware", "versions", "python", "host", "created_at")
+    return {**{key: verdict[key] for key in carried}, "skills": examined,
+            "kind": "aurora_professor_diagnosis", "complete": verdict["exam_complete"],
+            "basis": {"model": "candidate", "exam": f"gate:{verdict['cycle']}", "adapter_sha256": verdict["adapter_sha256"],
+                      "verdict": verdict["verdict"]},
+            "summary": summary, "weak_points": profile(summary, catalogue),
+            "exam": {"suite_sha256": verdict["exam"]["suite_sha256"], "results_sha256": verdict["exam"]["candidate_receipt"],
+                     "notes": verdict["exam"]["notes"]},
+            "blocklist": sorted(blocklist)}
+
+
+def verify(config, work, adapter, student=None, library=None, base_done=False, previous=None):
+    """Examiner: paired exam of base and candidate on this cycle's unseen gate.
+
+    ``previous`` is the adapter the candidate continues: it sits the same items, and the verdict says
+    whether the continuation is measurably better than what it started from (``versus_previous``).
+    """
     work = Path(work)
     library = library or Library(row_limit=config["row_limit"])
     items, notes = _exam(config, "gate", library)
     gate = work / f"gate_{config['cycle']}"
+    previous = None if base_done else previous
+    share = config["budget_seconds"] and config["budget_seconds"] * 0.9 / (3 if previous else 2)
     if not base_done:
         student = student or open_student(config)
         status({"phase": "gate_base", "items": len(items)})
         evaluate(student, items, gate / "base", batch_size=config["eval_batch"], label="gate_base", progress=status,
-                 budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.45)
+                 budget_seconds=share)
+        if previous:
+            student.attach(previous)
+            status({"phase": "gate_previous", "items": len(items)})
+            evaluate(student, items, gate / "previous", batch_size=config["eval_batch"], label="gate_previous", progress=status,
+                     budget_seconds=share)
+            student.detach()
         student.attach(adapter)
     status({"phase": "gate_candidate", "items": len(items)})
     evaluate(student, items, gate / "candidate", batch_size=config["eval_batch"], label="gate_candidate", progress=status,
-             budget_seconds=config["budget_seconds"] and config["budget_seconds"] * 0.45)
+             budget_seconds=share)
     base_rows, candidate_rows = read_results(gate / "base"), read_results(gate / "candidate")
     common = {r["id"] for r in base_rows if r["status"] == "graded"} & {r["id"] for r in candidate_rows if r["status"] == "graded"}
     # Complete means both models met every item; a prompt over the context budget is skipped for both alike.
-    complete = {r["id"] for r in base_rows} == {r["id"] for r in candidate_rows} == {item["id"] for item in items}
+    wanted = {item["id"] for item in items}
+    complete = {r["id"] for r in base_rows} == {r["id"] for r in candidate_rows} == wanted
     result = compare([r for r in base_rows if r["id"] in common], [r for r in candidate_rows if r["id"] in common],
                      gate={"min_items": config["min_items"]})
     if not complete and result["verdict"] == "promote":
         result["verdict"] = "inconclusive"
         result["reasons"].insert(0, "the gate exam was not finished for both models")
+    versus = None
+    if previous:
+        previous_rows = read_results(gate / "previous")
+        shared = common & {r["id"] for r in previous_rows if r["status"] == "graded"}
+        against = compare([r for r in previous_rows if r["id"] in shared], [r for r in candidate_rows if r["id"] in shared],
+                          gate={"min_items": config["min_items"]})
+        versus = {"adapter_sha256": adapter_hash(previous), "complete": complete and {r["id"] for r in previous_rows} == wanted,
+                  **{key: against[key] for key in ("verdict", "reasons", "overall", "skills", "regressions")}}
     adapter = Path(adapter)
-    weights = next((p for p in sorted(adapter.glob("adapter_model.*")) if p.is_file()), None)
     training = read_json(adapter.parent / "train_receipt.json", {})
     verdict = {**_context(config), "kind": "aurora_professor_verdict", **result, "exam_complete": complete,
                "exam": {"items": len(items), "graded_both": len(common), "notes": notes,
                         "base_receipt": read_json(gate / "base" / "exam_receipt.json", {}).get("results_sha256"),
                         "candidate_receipt": read_json(gate / "candidate" / "exam_receipt.json", {}).get("results_sha256"),
                         "suite_sha256": read_json(gate / "base" / "exam_receipt.json", {}).get("suite_sha256")},
-               "adapter_sha256": file_hash(weights) if weights else None,
+               "adapter_sha256": adapter_hash(adapter),
+               # Present only when the candidate continues an earlier adapter: the same items, previous against candidate.
+               "versus_previous": versus,
                "training": {k: training.get(k) for k in ("steps", "stopped", "selected_step", "initial_dev_loss",
-                                                         "selected_dev_loss", "examples", "data_sha256", "trainable_parameters")},
+                                                         "selected_dev_loss", "examples", "data_sha256", "trainable_parameters",
+                                                         "continued_from")},
                # A rehearsal student is not called by any module: its verdict can never authorise an installation.
                "promotable": result["verdict"] == "promote" and complete and bool(config["student"]["production"])}
     atomic_json(work / f"verdict_{config['cycle']}.json", verdict)
+    # Where the candidate is still weak: the starting point of the next cycle, as aggregate scores only.
+    atomic_json(work / f"diagnosis_next_{config['cycle']}.json",
+                next_diagnosis(verdict, exam_blocklist(modules=config["modules"], library=library, only=config["skills"])))
     wanted = config.get("export", "promote")
     if wanted == "always" or (wanted == "promote" and verdict["promotable"]):
         # Files Ollama can load. A failed conversion is recorded in the receipt and never changes the verdict.
@@ -236,7 +327,7 @@ def cycle(config, work):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("role", choices=("probe", "diagnose", "train", "verify", "cycle"))
+    parser.add_argument("role", choices=("probe", "diagnose", "train", "verify", "cycle", "rediagnose"))
     parser.add_argument("--student", default="qwen3:0.6b", help="Ollama tag or Hugging Face id listed in students.py")
     parser.add_argument("--profile", choices=sorted(PROFILES), default="standard")
     parser.add_argument("--modules", help="Comma-separated subset of: " + ", ".join(sorted(MODULES)))
@@ -245,6 +336,8 @@ def main(argv=None):
     parser.add_argument("--cycle", type=int, default=0, help="Selects a fresh, disjoint gate exam")
     parser.add_argument("--diagnosis", type=Path)
     parser.add_argument("--adapter", type=Path)
+    parser.add_argument("--init-adapter", type=Path, help="train: continue this adapter (needs the examiner's diagnosis_next file)")
+    parser.add_argument("--previous-adapter", type=Path, help="verify: the adapter the candidate continues, examined on the same items")
     parser.add_argument("--budget-minutes", type=float)
     parser.add_argument("--four-bit", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--export", choices=("promote", "always", "never"), default="promote",
@@ -261,19 +354,32 @@ def main(argv=None):
         parser.error("--work is required")
     config = settings(args)
     args.work.mkdir(parents=True, exist_ok=True)
-    if args.role == "diagnose":
+    if args.role == "rediagnose":
+        # Rebuild the candidate's diagnosis from a verdict already written (no model is loaded).
+        verdict = read_json(args.work / f"verdict_{config['cycle']}.json", None)
+        if not verdict or verdict.get("kind") != "aurora_professor_verdict":
+            parser.error(f"no verdict_{config['cycle']}.json in --work")
+        if args.diagnosis:
+            blocklist = json.loads(args.diagnosis.read_text(encoding="utf-8"))["blocklist"]
+        else:
+            blocklist = exam_blocklist(modules=verdict["modules"], library=Library(row_limit=config["row_limit"]), only=verdict["skills"])
+        result = next_diagnosis(verdict, blocklist)
+        atomic_json(args.work / f"diagnosis_next_{config['cycle']}.json", result)
+        summary = {"basis": result["basis"], "weakest": [(w["skill"], round(w["accuracy"], 3)) for w in result["weak_points"][:8]]}
+    elif args.role == "diagnose":
         result = diagnose(config, args.work)
         summary = {"complete": result["complete"], "macro_accuracy": result["summary"]["overall"]["macro_accuracy"],
                    "weakest": [(w["skill"], round(w["accuracy"], 3)) for w in result["weak_points"][:8]]}
     elif args.role == "train":
         if args.diagnosis is None:
             parser.error("train requires --diagnosis from the examiner")
-        receipt = train_role(config, args.work, json.loads(args.diagnosis.read_text(encoding="utf-8")))
+        receipt = train_role(config, args.work, json.loads(args.diagnosis.read_text(encoding="utf-8")),
+                             init_adapter=args.init_adapter)
         summary = {k: receipt[k] for k in ("steps", "stopped", "initial_dev_loss", "selected_dev_loss", "elapsed_seconds")}
     elif args.role == "verify":
         if args.adapter is None:
             parser.error("verify requires --adapter")
-        result = verify(config, args.work, args.adapter)
+        result = verify(config, args.work, args.adapter, previous=args.previous_adapter)
         summary = {"verdict": result["verdict"], "reasons": result["reasons"], "overall": result["overall"], "promotable": result["promotable"]}
     else:
         result = cycle(config, args.work)

@@ -33,7 +33,8 @@ class Launcher(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             diagnose = kaggle_runner.write_kernel(Path(folder) / "d", "owner", "diagnose", student="qwen2.5:7b")
             train = kaggle_runner.write_kernel(Path(folder) / "t", "owner", "train", student="qwen2.5:7b")
-            verify = kaggle_runner.write_kernel(Path(folder) / "v", "owner", "verify", student="qwen2.5:7b", cycle=2)
+            verify = kaggle_runner.write_kernel(Path(folder) / "v0", "owner", "verify", student="qwen2.5:7b")
+            kaggle_runner.write_kernel(Path(folder) / "v", "owner", "verify", student="qwen2.5:7b", cycle=2)
             colab = kaggle_runner.write_kernel(Path(folder) / "c", "owner", "verify", student="qwen2.5:7b",
                                                dataset_sources=["owner/aurora-professeur-adaptateurs"])
             other = kaggle_runner.write_kernel(Path(folder) / "o", "owner", "diagnose", student="qwen2.5-coder:7b")
@@ -41,7 +42,7 @@ class Launcher(unittest.TestCase):
         for metadata in (diagnose, train, verify, colab, other):
             self.assertIs(metadata["is_private"], True)
             self.assertIs(metadata["enable_gpu"], True)
-        self.assertEqual(diagnose["id"], verify["id"])                       # one examiner machine per student
+        self.assertEqual(diagnose["id"], verify["id"])                       # one examiner machine per student and cycle
         self.assertNotEqual(diagnose["id"], train["id"])                     # never the trainer's machine
         self.assertNotEqual(diagnose["id"], other["id"])
         self.assertEqual(diagnose["kernel_sources"], [])
@@ -51,6 +52,120 @@ class Launcher(unittest.TestCase):
         self.assertEqual(colab["dataset_sources"], ["owner/aurora-professeur-adaptateurs"])
         self.assertEqual(launch["options"]["cycle"], 2)
         self.assertEqual(launch["sources_sha256"], kaggle_runner.bundle()[1])
+
+    def test_the_extracted_sources_can_publish_and_relaunch_with_the_same_bundle(self):
+        """The Colab trainer imports the launcher from the extracted bundle; found missing on 2026-11-12."""
+        import subprocess
+        import sys
+        from auto_rl.source_bundle import extract_bundle
+        blob, digest, manifest = kaggle_runner.bundle()
+        self.assertIn("auto_rl/professor/kaggle_runner.py", manifest)
+        with tempfile.TemporaryDirectory() as folder:
+            repo = extract_bundle(blob, Path(folder) / "sources", digest)
+            code = ("import sys; sys.path.insert(0, sys.argv[1]); from auto_rl.professor import kaggle_runner as k; "
+                    "import tempfile, pathlib; d = pathlib.Path(tempfile.mkdtemp()); "
+                    "k.write_kernel(d, 'owner', 'verify', student='qwen2.5:7b', dataset_sources=['owner/x']); "
+                    "assert k.ROOT == pathlib.Path(sys.argv[1]).resolve(), k.ROOT; print(k.bundle()[1])")
+            done = subprocess.run([sys.executable, "-I", "-c", code, str(repo)], capture_output=True, text=True, cwd=folder)
+        self.assertEqual(done.returncode, 0, done.stderr[-800:])
+        self.assertEqual(done.stdout.strip(), digest)
+
+    def run_bootstrap(self, folder, options, files):
+        """Execute the generated kernel with the role process replaced by a recorder; returns its argv."""
+        folder = Path(folder)
+        for name in files:
+            target = folder / "input" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}")
+        text = kaggle_runner.script(options, base=str(folder / "working"), inputs=str(folder / "input"),
+                                    hf_home=str(folder / "hf"), sources=str(folder / "sources"))
+        calls = []
+
+        class Process:
+            stdout = ()
+
+            def __init__(self, argv, **_):
+                calls.append(argv)
+
+            def wait(self):
+                return 0
+        with patch("subprocess.Popen", Process), patch("subprocess.run"), patch("builtins.print"):
+            exec(compile(text, "kernel.py", "exec"), {"__name__": "__kernel__"})
+        return calls[0]
+
+    def test_a_continued_cycle_passes_the_candidate_diagnosis_and_both_adapters(self):
+        base = {"student": "qwen2.5:7b", "profile": "standard", "modules": "business", "budget_minutes": 30, "overrides": {}}
+        with tempfile.TemporaryDirectory() as folder:
+            # Trainer of cycle 1 mounted on the examiner's last output: candidate adapter plus its diagnosis.
+            argv = self.run_bootstrap(Path(folder) / "t", {**base, "role": "train", "cycle": 1, "continue": True},
+                                      ["examiner/aurora_professor/diagnosis_next_0.json",
+                                       "examiner/aurora_professor/training/adapter/adapter_config.json",
+                                       "examiner/aurora_professor/training/init_adapter/adapter_config.json"])
+            self.assertTrue(argv[argv.index("--diagnosis") + 1].endswith("diagnosis_next_0.json"))
+            self.assertTrue(argv[argv.index("--init-adapter") + 1].endswith("training/adapter"))
+            # Examiner of cycle 1: the new adapter is the candidate, the one it continues sits the same exam.
+            argv = self.run_bootstrap(Path(folder) / "v", {**base, "role": "verify", "cycle": 1},
+                                      ["trainer/aurora_professor/training/adapter/adapter_config.json",
+                                       "trainer/aurora_professor/training/init_adapter/adapter_config.json"])
+            self.assertTrue(argv[argv.index("--adapter") + 1].endswith("working/aurora_professor/training/adapter"))
+            self.assertTrue(argv[argv.index("--previous-adapter") + 1].endswith("working/aurora_professor/training/init_adapter"))
+            # Colab path: a flat private dataset carries the continued adapter under an ``init_`` prefix.
+            argv = self.run_bootstrap(Path(folder) / "c", {**base, "role": "verify", "cycle": 1},
+                                      ["dataset/adapter_config.json", "dataset/adapter_model.safetensors",
+                                       "dataset/init_adapter_config.json", "dataset/init_adapter_model.safetensors"])
+            before = Path(argv[argv.index("--previous-adapter") + 1])
+            self.assertEqual(sorted(p.name for p in before.iterdir()), ["adapter_config.json", "adapter_model.safetensors"])
+            # A first cycle is unchanged: one diagnosis, no starting adapter, no previous adapter.
+            argv = self.run_bootstrap(Path(folder) / "f", {**base, "role": "train", "cycle": 0}, ["examiner/diagnosis.json"])
+            self.assertNotIn("--init-adapter", argv)
+            argv = self.run_bootstrap(Path(folder) / "g", {**base, "role": "verify", "cycle": 0}, ["trainer/training/adapter/adapter_config.json"])
+            self.assertNotIn("--previous-adapter", argv)
+            with self.assertRaises(SystemExit):          # a continuation without the candidate's diagnosis is refused
+                self.run_bootstrap(Path(folder) / "x", {**base, "role": "train", "cycle": 1, "continue": True},
+                                   ["examiner/diagnosis.json", "examiner/training/adapter/adapter_config.json"])
+            continued = kaggle_runner.write_kernel(Path(folder) / "k", "owner", "train", student="qwen2.5:7b", cycle=1,
+                                                   continue_adapter=True, dataset_sources=["owner/aurora-professeur-adaptateurs-qwen25-7b"])
+            self.assertEqual(continued["kernel_sources"], [])      # one source of truth for the starting adapter
+            self.assertIs(json.loads((Path(folder) / "k" / "launch.json").read_text())["options"]["continue"], True)
+            # Each cycle has its own pair of kernels, so an earlier verdict and its files stay downloadable.
+            first = kaggle_runner.write_kernel(Path(folder) / "v0", "owner", "verify", student="qwen2.5:7b")
+            later_train = kaggle_runner.write_kernel(Path(folder) / "t1", "owner", "train", student="qwen2.5:7b", cycle=1, continue_adapter=True)
+            later_verify = kaggle_runner.write_kernel(Path(folder) / "v1", "owner", "verify", student="qwen2.5:7b", cycle=1)
+            self.assertEqual(later_train["kernel_sources"], [first["id"]])            # previous examiner: verdict's diagnosis + adapter
+            self.assertEqual(later_verify["kernel_sources"], [later_train["id"]])
+            self.assertEqual(len({first["id"], later_train["id"], later_verify["id"]}), 3)
+            self.assertTrue(later_verify["id"].endswith("-c1"))
+            with self.assertRaises(ValueError):
+                kaggle_runner.write_kernel(Path(folder) / "z", "owner", "train", student="qwen2.5:7b", continue_adapter=True)
+
+    def test_each_student_publishes_to_its_own_private_dataset(self):
+        seen = []
+
+        class Api:
+            def dataset_status(self, reference):
+                raise RuntimeError("absent")
+
+            def dataset_create_new(self, folder, public, quiet):
+                seen.append((json.loads((Path(folder) / "dataset-metadata.json").read_text())["id"], public,
+                             sorted(p.name for p in Path(folder).iterdir())))
+        with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
+            adapter = Path(folder) / "training" / "adapter"
+            adapter.mkdir(parents=True)
+            (adapter / "adapter_config.json").write_text("{}")
+            (adapter / "adapter_model.safetensors").write_bytes(b"w")
+            (Path(folder) / "diagnosis_next_0.json").write_text("{}")
+            before = Path(folder) / "training" / "init_adapter"
+            before.mkdir()
+            (before / "adapter_config.json").write_text("{}")
+            (before / "adapter_model.safetensors").write_bytes(b"v")
+            first = kaggle_runner.publish_adapter("owner", Path(folder) / "training", student="qwen2.5:7b",
+                                                  extra=[Path(folder) / "diagnosis_next_0.json"])
+            second = kaggle_runner.publish_adapter("owner", Path(folder) / "training", student="qwen2.5-coder:7b")
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, "owner/aurora-professeur-adaptateurs-qwen25-7b")
+        self.assertTrue(all(public is False for _, public, _ in seen))
+        self.assertIn("diagnosis_next_0.json", seen[0][2])
+        self.assertIn("init_adapter_model.safetensors", seen[0][2])
 
     def test_fetch_refuses_output_that_differs_from_the_remote_manifest(self):
         class Api:
@@ -87,6 +202,20 @@ class Installation(unittest.TestCase):
         if tamper == "gguf":
             (export / "adapter.gguf").write_bytes(b"altered")
         return folder
+
+    def test_a_continued_delivery_ships_the_new_adapter_unless_it_is_worse_than_the_one_it_continues(self):
+        with tempfile.TemporaryDirectory() as folder:
+            delivery = self.delivery(folder)
+            before = delivery / "aurora_professor" / "training" / "init_adapter"
+            before.mkdir()
+            (before / "adapter_model.safetensors").write_bytes(b"previous-weights")
+            self.assertEqual(install.check_delivery(delivery)["problems"], [])       # the starting adapter is not the delivery
+            path = delivery / "aurora_professor" / "verdict_0.json"
+            verdict = json.loads(path.read_text())
+            atomic_json(path, {**verdict, "versus_previous": {"verdict": "inconclusive"}})
+            self.assertEqual(install.check_delivery(delivery)["problems"], [])
+            atomic_json(path, {**verdict, "versus_previous": {"verdict": "reject"}})
+            self.assertTrue(any("cycle précédent" in problem for problem in install.check_delivery(delivery)["problems"]))
 
     def test_only_a_matching_promoted_production_delivery_is_accepted(self):
         with tempfile.TemporaryDirectory() as folder:

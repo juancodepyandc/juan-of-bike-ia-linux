@@ -101,8 +101,13 @@ def _dev_loss(model, groups, pad_id, torch, device, autocast):
     return total / max(1, count)
 
 
-def train(student, items, folder, *, config=None, budget_seconds=None, progress=None):
-    """Fine-tune ``student`` in place and save the selected adapter under ``folder/adapter``."""
+def train(student, items, folder, *, config=None, budget_seconds=None, progress=None, init_adapter=None):
+    """Fine-tune ``student`` in place and save the selected adapter under ``folder/adapter``.
+
+    ``init_adapter`` continues an earlier adapter of the same base instead of starting a new one: its
+    own rank and target modules apply, and it stays the selected checkpoint unless a later one has a
+    lower development loss.
+    """
     import torch
     from peft import LoraConfig, get_peft_model
     settings = {**DEFAULTS, **(config or {})}
@@ -129,13 +134,26 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
     elif cuda:
         model.gradient_checkpointing_enable()
     model.config.use_cache = False
-    targets = lora_targets(model, settings["attention_only"])
-    lora = {"r": settings["rank"], "lora_alpha": settings["alpha"], "lora_dropout": settings["dropout"],
-            "target_modules": targets, "task_type": "CAUSAL_LM", "bias": "none"}
-    try:
-        model = get_peft_model(model, LoraConfig(**lora, exclude_modules=r".*(visual|vision|audio).*"))
-    except TypeError:                                    # older peft without exclude_modules
-        model = get_peft_model(model, LoraConfig(**lora))
+    continued = None
+    if init_adapter is not None:
+        from peft import PeftModel
+        init_adapter = Path(init_adapter)
+        weights = next((p for p in sorted(init_adapter.glob("adapter_model.*")) if p.is_file()), None)
+        if weights is None:
+            raise ValueError(f"No adapter weights to continue in {init_adapter}")
+        model = PeftModel.from_pretrained(model, str(init_adapter), is_trainable=True)
+        shape = next(iter(model.peft_config.values()))
+        targets = sorted(shape.target_modules) if not isinstance(shape.target_modules, str) else [shape.target_modules]
+        settings.update(rank=shape.r, alpha=shape.lora_alpha, dropout=shape.lora_dropout)
+        continued = {"adapter_sha256": file_hash(weights)}
+    else:
+        targets = lora_targets(model, settings["attention_only"])
+        lora = {"r": settings["rank"], "lora_alpha": settings["alpha"], "lora_dropout": settings["dropout"],
+                "target_modules": targets, "task_type": "CAUSAL_LM", "bias": "none"}
+        try:
+            model = get_peft_model(model, LoraConfig(**lora, exclude_modules=r".*(visual|vision|audio).*"))
+        except TypeError:                                # older peft without exclude_modules
+            model = get_peft_model(model, LoraConfig(**lora))
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total_parameters = sum(p.numel() for p in model.parameters())
     device = model.get_input_embeddings().weight.device
@@ -167,6 +185,11 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
     log_path = folder / "training_log.jsonl"
     best = {"loss": None, "step": 0}
     initial_dev = _dev_loss(model, dev_groups, pad_id, torch, device, autocast)
+    if continued:
+        # The adapter being continued is itself a candidate: a continuation that never does better on the
+        # development split must hand back what it received, not its first checkpoint.
+        best = {"loss": initial_dev, "step": 0}
+        model.save_pretrained(str(folder / "adapter"))
     history = [{"step": 0, "dev_loss": initial_dev, "elapsed_seconds": round(time.monotonic() - started, 1)}]
     step, micro, running, stale, stopped = 0, 0, None, 0, "completed"
     seen_batches = skipped_batches = 0
@@ -263,6 +286,7 @@ def train(student, items, folder, *, config=None, budget_seconds=None, progress=
                "steps": step, "planned_steps": planned, "stopped": stopped, "selected_step": best["step"],
                "batches": {"seen": seen_batches, "skipped_out_of_memory": skipped_batches},
                "initial_dev_loss": initial_dev, "selected_dev_loss": best["loss"], "history": history,
+               "continued_from": continued,
                "elapsed_seconds": round(time.monotonic() - started, 1), "adapter_files": adapter_files,
                "note": "A lower development loss is not evidence of better answers; only the paired exam decides."}
     atomic_json(folder / "train_receipt.json", receipt)
