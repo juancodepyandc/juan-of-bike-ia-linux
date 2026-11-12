@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import math
+import re
 
 from .generators import _exam, _json, family
 
@@ -380,9 +381,25 @@ def _prompt_translate(rng, role, subskill):
         opposite = {"left of": "right of", "right of": "left of", "under": "on top of", "behind": "in front of", "in front of": "behind"}
         if relation[1] in opposite:
             forbidden.append(opposite[relation[1]])
+    def alternatives(words):
+        return "(?:" + "|".join(sorted((re.escape(w).replace("\\ ", " ") for w in words), key=len, reverse=True)) + ")"
+
+    def phrase(entry):
+        plural = entry["count"] > 1
+        nouns = [entry["noun"][1]] + [w + "s" for w in _SYNONYMS.get(entry["noun"][0], ()) if w != entry["noun"][0]] if plural \
+            else list(_SYNONYMS.get(entry["noun"][0], (entry["noun"][0],)))
+        count = alternatives([_NUMBERS_EN[entry["count"] - 1], str(entry["count"])]) + " " if plural else "(?:(?:a|an|one|1|single) )?"
+        color = alternatives(_COLOR_SYNONYMS.get(entry["color"], (entry["color"],))) + " (?:[a-z]+ ){0,1}" if entry["color"] else ""
+        return " " + count + "(?:[a-z]+ ){0,2}" + color + alternatives(nouns) + " "
+    phrases_needed = [phrase(english[0]), phrase(english[1])]
+    ordered = False
+    if subskill == "relations":
+        phrases_needed.insert(1, " " + alternatives(synonyms[relation[1]]) + " ")
+        ordered = relation[1] != "next to"                # "A on B" is not "B on A"; "next to" is symmetric
     return {"messages": [{"role": "user", "content": rng.choice(_TRANSLATE_PROMPTS[side]).format(request=request)}],
             "target": target, "max_new_tokens": 72,
-            "grader": {"type": "contains", "required": required, "forbidden": forbidden, "max_chars": 220}}
+            "grader": {"type": "contains", "required": required, "forbidden": forbidden, "max_chars": 220,
+                       "phrases": phrases_needed, "ordered": ordered}}
 
 
 # --- cowork.extract_fields -------------------------------------------------
@@ -551,7 +568,8 @@ def _format(rng, role, subskill):
         chosen = [t for t in tips if banned not in t.lower()][:count]
         ending = rng.choice(["Bonne route !", "À toi de jouer.", "Fin de la liste."])
         target = "\n".join(f"- {t}" for t in chosen) + "\n" + ending
-        rules = [{"kind": "bullets", "count": len(chosen)}, {"kind": "exclude", "words": [banned]}, {"kind": "ends_with", "text": ending}]
+        rules = [{"kind": "bullets", "count": len(chosen)}, {"kind": "exclude", "words": [banned]}, {"kind": "ends_with", "text": ending},
+                 {"kind": "content", "unit": "bullets", "min_words": 4}]
         text = f"exactement {len(chosen)} puces commençant par « - » ; le mot « {banned} » est interdit ; la réponse se termine exactement par « {ending} »."
     elif subskill == "lines_bounds":
         count = rng.randint(2, 4)
@@ -559,18 +577,19 @@ def _format(rng, role, subskill):
         opening = rng.choice(["Voici l'essentiel :", "En bref :", "À retenir :"])
         target = opening + "\n" + "\n".join(chosen)
         limit = len(" ".join([opening] + chosen).split()) + rng.randint(3, 12)
-        rules = [{"kind": "lines", "count": count + 1}, {"kind": "starts_with", "text": opening}, {"kind": "max_words", "count": limit}]
+        rules = [{"kind": "lines", "count": count + 1}, {"kind": "starts_with", "text": opening}, {"kind": "max_words", "count": limit},
+                 {"kind": "content", "unit": "lines", "skip": 1, "min_words": 4}]
         text = f"exactement {count + 1} lignes non vides ; la première ligne est exactement « {opening} » ; au plus {limit} mots au total."
     elif subskill == "json_keys":
         keys = rng.choice([["conseil_1", "conseil_2", "conseil_3"], ["premier", "deuxieme", "troisieme"], ["etape_a", "etape_b", "etape_c"]]
                           if side == "train" else [["point_1", "point_2", "point_3"], ["un", "deux", "trois"], ["idee_x", "idee_y", "idee_z"]])
         target = json.dumps({k: t for k, t in zip(keys, tips)}, ensure_ascii=False)
-        rules = [{"kind": "json_keys", "keys": keys}]
+        rules = [{"kind": "json_keys", "keys": keys}, {"kind": "content", "unit": "values", "min_words": 4}]
         text = f"un unique objet JSON dont les clés sont exactement {_json(keys)}, chaque valeur étant un conseil d'une phrase ; aucun texte hors du JSON."
     else:
         count = rng.randint(1, 3)
         target = "\n".join(t.upper() for t in tips[:count])
-        rules = [{"kind": "uppercase"}, {"kind": "lines", "count": count}]
+        rules = [{"kind": "uppercase"}, {"kind": "lines", "count": count}, {"kind": "content", "unit": "lines", "min_words": 3}]
         text = f"tout le texte en MAJUSCULES ; exactement {count} ligne{'s' if count > 1 else ''} non vide{'s' if count > 1 else ''}."
     return {"messages": [{"role": "user", "content": rng.choice(_FORMAT_PROMPTS[side]).format(topic=topic, rules=text)}],
             "target": target, "grader": {"type": "constraints", "rules": rules}, "max_new_tokens": 320}

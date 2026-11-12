@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import time
 from pathlib import Path
@@ -42,7 +43,7 @@ PROFILES = {
     "standard": {"diagnostic_per_skill": 60, "gate_per_skill": 100, "pool_per_skill": 1200, "curriculum": 6000,
                  "mine_per_skill": 40, "self_worked_per_skill": 250, "max_tokens": 1536, "max_prompt_tokens": 3072, "batch_size": 4, "accumulate": 4,
                  "epochs": 2.0, "eval_batch": 8, "eval_every": 50, "row_limit": None, "min_items": 200},
-    "full": {"diagnostic_per_skill": 150, "gate_per_skill": 250, "pool_per_skill": 4000, "curriculum": 20000,
+    "full": {"diagnostic_per_skill": 150, "gate_per_skill": 150, "pool_per_skill": 4000, "curriculum": 20000,
              "mine_per_skill": 80, "self_worked_per_skill": 500, "max_tokens": 2048, "max_prompt_tokens": 4096, "batch_size": 4, "accumulate": 4,
              "epochs": 2.0, "eval_batch": 8, "eval_every": 100, "row_limit": None, "min_items": 400},
 }
@@ -129,7 +130,7 @@ def diagnose(config, work, student=None, library=None):
     receipt = evaluate(student, items, work / "diagnosis", batch_size=config["eval_batch"], label="diagnostic",
                        progress=status, budget_seconds=config["budget_seconds"])
     catalogue = skills(config["modules"], config["skills"])
-    report = {**_context(config), "kind": "aurora_professor_diagnosis", "complete": receipt["complete"],
+    report = {**_context(config), "kind": "aurora_professor_diagnosis", "complete": receipt["complete"] and not notes["source_errors"],
               "summary": receipt["summary"], "weak_points": profile(receipt["summary"], catalogue),
               "exam": {"suite_sha256": receipt["suite_sha256"], "results_sha256": receipt["results_sha256"], "notes": notes},
               "blocklist": exam_blocklist(modules=config["modules"], library=library, only=config["skills"])}
@@ -192,6 +193,11 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
         raise ValueError("This diagnosis describes another student")
     described = (diagnosis.get("basis") or {}).get("adapter_sha256")
     given = adapter_hash(init_adapter) if init_adapter else None
+    basis_gate = re.fullmatch(r"gate:(\d+)", str((diagnosis.get("basis") or {}).get("exam", "")))
+    if basis_gate and config["cycle"] <= int(basis_gate.group(1)):
+        # Its curriculum was steered by scores on that gate: examining it there again would not be an unseen exam.
+        raise ValueError(f"This diagnosis was measured on gate {basis_gate.group(1)}: the next cycle must use cycle "
+                         f">= {int(basis_gate.group(1)) + 1}, not {config['cycle']}")
     if (init_adapter and not given) or described != given:
         raise ValueError("The diagnosis and the starting adapter do not match: a diagnosis of the base model trains a new "
                          "adapter, and a diagnosis of a trained candidate continues exactly that adapter (--init-adapter)")
@@ -206,6 +212,12 @@ def train_role(config, work, diagnosis, student=None, library=None, init_adapter
     # The examiner's blocklist, plus the exam families this trainer can rebuild itself from the same pinned public
     # sources: an examiner and a trainer of different code versions must not let an exam question through.
     blocklist = set(diagnosis["blocklist"]) | set(exam_blocklist(modules=config["modules"], library=library))
+    exam_sources = {name for entry in skills(config["modules"]).values() for name in entry["exam_sources"]}
+    missing = sorted(exam_sources & set(library.errors))
+    if missing:
+        # A source that failed to load contributes no hash: its exam questions could then reach the corpus.
+        raise ValueError("Exam sources could not be loaded, so the trainer cannot exclude their questions: "
+                         + "; ".join(f"{name}: {library.errors[name]}" for name in missing))
     pool, pool_notes = build_pool(config["pool_per_skill"], modules=config["modules"], blocklist=blocklist,
                                   library=library, subskill_weights=subskill_weights(weak), only=config["skills"], sizes=sizes,
                                   cycle=config["cycle"])
@@ -350,12 +362,15 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
     common = {r["id"] for r in base_rows if r["status"] == "graded"} & {r["id"] for r in candidate_rows if r["status"] == "graded"}
     # Complete means both models met every item; a prompt over the context budget is skipped for both alike.
     wanted = {item["id"] for item in items}
-    complete = {r["id"] for r in base_rows} == {r["id"] for r in candidate_rows} == wanted
+    finished = {r["id"] for r in base_rows} == {r["id"] for r in candidate_rows} == wanted
+    # A source that failed to load changes the gate's composition and the positions of later slices.
+    complete = finished and not notes["source_errors"]
     result = compare([r for r in base_rows if r["id"] in common], [r for r in candidate_rows if r["id"] in common],
                      gate={"min_items": config["min_items"]})
     if not complete and result["verdict"] == "promote":
         result["verdict"] = "inconclusive"
-        result["reasons"].insert(0, "the gate exam was not finished for both models")
+        result["reasons"].insert(0, "the gate exam was not finished for both models" if not finished else
+                                 "exam sources failed to load: " + ", ".join(sorted(notes["source_errors"])))
     versus = None
     if previous:
         previous_rows = read_results(gate / "previous")

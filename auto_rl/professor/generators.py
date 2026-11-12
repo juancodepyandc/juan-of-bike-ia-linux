@@ -393,11 +393,19 @@ def _report(rng, role, subskill):
     keys = list(report)
     rng.shuffle(keys)
     report = {k: report[k] for k in keys}
+    # A CSV can be read with read_file and an inspect_csv receipt shows a file path: a path observed through the
+    # other receipt kind is an observed value too, so both readings are accepted (review, 2026-11-12).
+    readings = [report]
+    observed = {"file_path": ("csv", lambda r: r["result"]["path"]),
+                "csv_path": ("file", lambda r: r["result"]["path"] if str(r["result"]["path"]).endswith(".csv") else None)}
+    for field, (kind, read) in observed.items():
+        if field in report and report[field] is None and kind in receipts and read(receipts[kind]) is not None:
+            readings += [{**reading, field: read(receipts[kind])} for reading in readings]
     templates = _REPORT_PROMPTS["exam" if _exam(role) else "train"]
     fr = rng.random() < 0.7
     shown = list(receipts.values())
     rng.shuffle(shown)
     return {"messages": [{"role": "user", "content": (templates[0] if fr else templates[1]).format(
                 receipts="\n".join(_json(r) for r in shown), keys=_json(keys))}],
-            "target": _json(report), "grader": {"type": "json", "accept": [report]},
+            "target": _json(report), "grader": {"type": "json", "accept": readings},
             "lang": "fr" if fr else "en", "max_new_tokens": 260}

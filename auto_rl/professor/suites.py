@@ -62,15 +62,23 @@ def skills(modules=None, only=None):
     return dict(sorted(chosen.items()))
 
 
-def stratified(items, count, seed, cycle=0):
+#: Positions reserved for each cycle in the layout of a gate family. A cycle may ask for any number of
+#: items up to this slot: slices of different cycles are then disjoint whatever each one asked for. With
+#: positions ``cycle * count`` a cycle asking 100 items after cycles of 150 reused 100 items uncounted.
+GATE_SLOT = 150
+
+
+def stratified(items, count, seed, cycle=0, slot=None):
     """Round-robin over sub-skills in a seeded order; ``cycle`` selects the next slice of that order.
 
     The whole family is laid out once (one item of each sub-skill in turn, until every sub-skill is
-    exhausted) and cycle ``c`` takes positions ``[c * count, (c + 1) * count)``: the slices of
-    successive cycles are disjoint by construction, whatever the sizes of the sub-skills. When the
-    family runs out, the slice is completed with items an earlier cycle used; the second value is
-    how many of them there are (0 while every item is new).
+    exhausted) and cycle ``c`` takes positions ``[c * step, c * step + count)`` with ``step = slot or count``:
+    the slices of successive cycles are disjoint by construction, whatever the sizes of the sub-skills.
+    When the family runs out, the slice is completed with items an earlier cycle used; the second value
+    is how many of them there are (0 while every item is new).
     """
+    if slot is not None and count > slot:
+        raise ValueError(f"A cycle may take at most {slot} items per skill from a gate family; {count} were asked")
     groups = defaultdict(list)
     for item in items:
         groups[item.get("subskill")].append(item)
@@ -78,7 +86,7 @@ def stratified(items, count, seed, cycle=0):
         return [], 0
     lanes = [sorted(groups[name], key=lambda item: rank(item["id"], seed)) for name in sorted(groups, key=str)]
     sequence = [lane[depth] for depth in range(max(map(len, lanes))) for lane in lanes if depth < len(lane)]
-    start = cycle * count
+    start = cycle * (slot or count)
     if cycle > 0 and start >= len(sequence):              # nothing new is left: the whole slice was seen before
         offset = start % len(sequence)
         chosen = (sequence[offset:] + sequence[:offset])[:count]
@@ -118,12 +126,64 @@ class Library:
         return items
 
 
-def _generated(skill, role, count):
+#: How many indices are tried per needed item before a generated sub-skill is declared exhausted.
+SEARCH_FACTOR = 12
+#: Earlier gates looked at when counting reuse (the deployment exam uses cycle numbers above 1000).
+EARLIER_GATES = 32
+
+
+def _distinct(skill, role, count, avoid=frozenset()):
+    """Up to ``count`` generated items with distinct prompts, those absent from ``avoid`` first.
+
+    Some families have small parameter spaces (about 18 distinct prompts for one format sub-skill):
+    counting a repeated prompt twice inflates the number of items and the confidence of a verdict.
+    Returns ``(items, reused)`` where ``reused`` counts the items whose prompt is in ``avoid``.
+    """
     family = generators.FAMILIES[skill]
     per = -(-count // len(family["subskills"]))
-    built = [generators.generate(skill, role, index, subskill)
-             for subskill in family["subskills"] for index in range(per)]
-    return sorted(built, key=lambda item: rank(item["id"], role))[:count] if count < len(built) else built
+    fresh, again = [], []
+    for subskill in family["subskills"]:
+        seen, lane, spare = set(), [], []
+        for index in range(per * SEARCH_FACTOR):
+            item = generators.generate(skill, role, index, subskill)
+            if item["question_hash"] in seen:
+                continue
+            seen.add(item["question_hash"])
+            (spare if item["question_hash"] in avoid else lane).append(item)
+            if len(lane) >= per:
+                break
+        fresh += lane
+        again += spare[:max(0, per - len(lane))]
+    order = lambda item: rank(item["id"], role)
+    chosen = sorted(fresh, key=order)[:count]
+    chosen += sorted(again, key=order)[:count - len(chosen)]
+    return chosen, sum(item["question_hash"] in avoid for item in chosen)
+
+
+def _earlier_prompts(skill, cycle):
+    """Prompts the diagnostic exam and the gates before ``cycle`` may have used.
+
+    Each earlier exam is recomputed with the current rule, plus the indices the first version of this
+    module took (``[0, ceil(slot / sub-skills))`` of each sub-skill), so the gates of the November runs
+    are covered as well.
+    """
+    family = generators.FAMILIES[skill]
+    per = -(-GATE_SLOT // len(family["subskills"]))
+
+    def first_version(role):
+        return {generators.generate(skill, role, index, subskill)["question_hash"]
+                for subskill in family["subskills"] for index in range(per)}
+    used = first_version("diagnostic") | {item["question_hash"] for item in _distinct(skill, "diagnostic", GATE_SLOT)[0]}
+    for earlier in range(min(cycle, EARLIER_GATES)):
+        role = f"gate:{earlier}"
+        used |= first_version(role) | {item["question_hash"] for item in _distinct(skill, role, GATE_SLOT, used)[0]}
+    return used
+
+
+def _generated(skill, role, count, cycle=0):
+    if role == "diagnostic":
+        return _distinct(skill, "diagnostic", count)
+    return _distinct(skill, f"gate:{cycle}", count, _earlier_prompts(skill, cycle))
 
 
 def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="aurora-exam", only=None):
@@ -132,17 +192,26 @@ def build_exam(role, per_skill, *, modules=None, cycle=0, library=None, seed="au
         raise ValueError("An exam role is diagnostic or gate")
     library = library or Library()
     catalogue = skills(modules, only)
-    items, notes = [], {"reused": [], "reused_items": {}, "empty": [], "skills": {}}
+    items, notes = [], {"reused": [], "reused_items": {}, "unusable": {}, "empty": [], "skills": {}}
     for skill, entry in catalogue.items():
         chosen = []
+        reused = 0
         if entry["generator"]:
-            chosen = _generated(skill, "diagnostic" if role == "diagnostic" else f"gate:{cycle}", per_skill)
+            if role == "gate" and per_skill > GATE_SLOT:
+                raise ValueError(f"A cycle may take at most {GATE_SLOT} items per skill from a gate family; {per_skill} were asked")
+            chosen, reused = _generated(skill, role, per_skill, cycle)
         elif entry["exam_sources"]:
             family = [item for item in library.exam_family(skill, catalogue) if item["exam_role"] == role]
-            chosen, reused = stratified(family, per_skill, f"{seed}:{role}", cycle if role == "gate" else 0)
-            if reused:                                     # counted, so a verdict can say how much of its exam is not new
-                notes["reused"].append(skill)
-                notes["reused_items"][skill] = reused
+            chosen, reused = stratified(family, per_skill, f"{seed}:{role}", cycle if role == "gate" else 0,
+                                        slot=GATE_SLOT if role == "gate" else None)
+        if reused:                                         # counted, so a verdict can say how much of its exam is not new
+            notes["reused"].append(skill)
+            notes["reused_items"][skill] = reused
+        # Items whose reference no correct answer can match stay in the layout but never in an exam.
+        unusable = [item for item in chosen if item.get("unusable")]
+        if unusable:
+            notes["unusable"][skill] = len(unusable)
+            chosen = [item for item in chosen if not item.get("unusable")]
         if not chosen:
             if entry["generator"] or entry["exam_sources"]:
                 notes["empty"].append(skill)

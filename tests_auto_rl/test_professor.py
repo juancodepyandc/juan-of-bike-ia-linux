@@ -217,6 +217,36 @@ class Curriculum(unittest.TestCase):
         self.assertEqual(len({i["id"] for i in slices[2][0]}), 150)
         self.assertEqual(len({i["id"] for i in slices[2][0]} - {i["id"] for chosen, _ in slices[:2] for i in chosen}), 110)
 
+    def test_gate_slices_stay_disjoint_when_cycles_ask_for_different_counts(self):
+        from auto_rl.professor.suites import GATE_SLOT
+        family = [{"id": f"hf:s:{n}", "subskill": f"s{n % 3}"} for n in range(1000)]
+        taken = [{i["id"] for i in stratified(family, 150, "seed", c, slot=GATE_SLOT)[0]} for c in range(3)]
+        later = {i["id"] for i in stratified(family, 120, "seed", 3, slot=GATE_SLOT)[0]}     # what the November runs ask next
+        self.assertFalse(later & set().union(*taken))
+        self.assertEqual(len(later), 120)
+        small = {i["id"] for i in stratified(family, 100, "seed", 1, slot=GATE_SLOT)[0]}
+        self.assertFalse(small & taken[0])                                                  # 100 after 150: no overlap
+        self.assertTrue({i["id"] for i in stratified(family, 100, "seed", 1)[0]} & taken[0])  # the former positions overlapped
+        with self.assertRaises(ValueError):
+            stratified(family, GATE_SLOT + 1, "seed", 1, slot=GATE_SLOT)
+        _, reused = stratified(family[:400], 150, "seed", 2, slot=GATE_SLOT)
+        self.assertEqual(reused, 50)                                                        # positions 300-449 of 400 items
+
+    def test_generated_gates_count_each_prompt_once_and_prefer_unused_prompts(self):
+        """conversation.format_fr has about 18 distinct exam prompts for some sub-skills (2026-11-12 review)."""
+        from auto_rl.professor.suites import _earlier_prompts
+        with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
+            for cycle in (1, 2):
+                gate, notes = build_exam("gate", 150, modules=["conversation"], cycle=cycle, only=["conversation.format_fr"])
+                hashes = [i["question_hash"] for i in gate]
+                self.assertEqual(len(hashes), len(set(hashes)))                         # no prompt counted twice
+                earlier = _earlier_prompts("conversation.format_fr", cycle)
+                self.assertEqual(sum(h in earlier for h in hashes), notes["reused_items"].get("conversation.format_fr", 0))
+                self.assertLess(len(gate), 150)                                         # the family is smaller than 150 prompts
+            first, _ = build_exam("gate", 150, modules=["missions"], cycle=1, only=["mission.pointer"])
+            zero, _ = build_exam("gate", 150, modules=["missions"], cycle=0, only=["mission.pointer"])
+            self.assertFalse({i["question_hash"] for i in first} & {i["question_hash"] for i in zero})
+
     def test_generator_exams_and_pools_never_overlap(self):
         modules = ["missions", "engineering", "media"]
         with patch("auto_rl.professor.suites.Library.load", return_value=([], [])):
@@ -309,11 +339,13 @@ class Curriculum(unittest.TestCase):
         self.assertEqual(following["summary"]["overall"]["macro_accuracy"], result["overall"]["macro_candidate"])
         self.assertEqual(following["blocklist"], ["h1", "h2"])
         self.assertEqual(following["skills"], ["mission.action", "mission.pointer"])
-        config = {"student": {"hf": "Qwen/Qwen2.5-Coder-7B-Instruct"}, "row_limit": None}
+        config = {"student": {"hf": "Qwen/Qwen2.5-Coder-7B-Instruct"}, "row_limit": None, "cycle": 1}
         with self.assertRaises(ValueError):       # the candidate's diagnosis without the candidate's adapter
             train_role(config, "unused", following, student=object(), library=object())
         with self.assertRaises(ValueError):       # an adapter the diagnosis does not describe
             train_role(config, "unused", {**following, "basis": None}, student=object(), library=object(), init_adapter="absent")
+        with self.assertRaisesRegex(ValueError, "cycle >= 1"):     # examined again on the gate that steered its curriculum
+            train_role({**config, "cycle": 0}, "unused", following, student=object(), library=object(), init_adapter="absent")
 
     def test_numeric_skills_train_only_on_the_students_own_verified_work(self):
         from auto_rl.professor.run import SELF_WORKED, keep_verified_answers
@@ -395,6 +427,34 @@ class Curriculum(unittest.TestCase):
         self.assertEqual(run_module._names("", run_module.REPLAY, "--replay"), ())
         self.assertEqual(run_module._names("code.sql, code.python", run_module.SELF_WORKED, "--self-worked"), ("code.python", "code.sql"))
 
+    def test_sql_tasks_and_damaged_rows(self):
+        from auto_rl.professor import sources
+        from auto_rl.professor.records import question_hash
+        context = "CREATE TABLE t (a INT); INSERT INTO t VALUES (1), (2);"
+        first = sources._sql({"sql_context": context, "sql": "SELECT a FROM t WHERE a > 1", "sql_prompt": "Values above one on a given date?",
+                              "sql_complexity": "basic SQL"}, "sql_test:0", "exam")
+        second = sources._sql({"sql_context": context, "sql": "SELECT  a FROM t WHERE a > 1;", "sql_prompt": "Values above one on a particular date?",
+                               "sql_complexity": "basic SQL"}, "sql_train:0", "train")
+        self.assertEqual(question_hash(first["question"]), question_hash(second["question"]))   # reworded, same task
+        self.assertIsNone(sources._trendyol({"user": None, "assistant": "x" * 100}, "t:0", "train"))
+
+    def test_the_trainer_stops_when_an_exam_source_cannot_be_loaded(self):
+        import tempfile
+        from auto_rl.professor import run as run_module
+        from auto_rl.professor.students import resolve
+        diagnosis = {"student": {"hf": "Qwen/Qwen3-0.6B"}, "weak_points": [], "blocklist": [], "basis": None,
+                     "summary": {"skills": {}}, "exam": {}}
+        config = {**run_module.PROFILES["smoke"], "profile": "smoke", "student": resolve("qwen3:0.6b"), "modules": ["business"],
+                  "skills": None, "cycle": 0, "budget_seconds": None, "allow_execution": False}
+
+        def load(self, name):
+            if name == "finqa_test":
+                self.errors[name] = "ConnectionError: simulated"
+            return [], []
+        with tempfile.TemporaryDirectory() as work, patch.object(run_module.Library, "load", load), \
+                self.assertRaisesRegex(ValueError, "finqa_test"):
+            run_module.train_role(config, work, diagnosis, student=object(), library=run_module.Library())
+
     def test_mbpp_problems_are_blocked_by_task_identity_and_carry_their_tests(self):
         """MBPP+ rewords MBPP problems: 66 of the 108 shared tasks escaped a blocklist keyed on wording (2026-11-12)."""
         from auto_rl.professor import sources
@@ -450,3 +510,142 @@ class Curriculum(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewedGraders(unittest.TestCase):
+    """Defects found by the adversarial review of 2026-11-12, each reproduced before being fixed."""
+
+    def test_python_answers_must_let_the_tests_run_to_their_end(self):
+        tests = {"type": "python_tests", "tests": "assert add(2, 3) == 5\nassert add(-1, 1) == 0", "timeout": 20}
+        wrong = "```python\ndef add(a, b):\n    return a - b\n```"
+        right = "```python\ndef add(a, b):\n    return a + b\n```"
+        own_tests = ("```python\nimport unittest\n\ndef add(a, b):\n    return a + b\n\nclass T(unittest.TestCase):\n"
+                     "    def test(self):\n        self.assertEqual(add(1, 1), 2)\n\nif __name__ == '__main__':\n    unittest.main()\n```")
+        with patch.dict(os.environ, {"AURORA_PROFESSOR_ALLOW_CODE_EXECUTION": "1"}):
+            self.assertTrue(grade({"grader": tests}, right)["correct"])
+            for escape in ("import sys\nsys.exit(0)", "raise SystemExit", "import os\nos._exit(0)",
+                           "import unittest\nunittest.main(exit=True, argv=['x'])"):
+                answer = wrong.replace("\n```", "\n" + escape + "\n```")
+                self.assertFalse(grade({"grader": tests}, answer)["correct"], escape)
+            self.assertTrue(grade({"grader": tests}, own_tests)["correct"])            # its own __main__ block does not run
+            self.assertFalse(grade({"grader": tests}, own_tests.replace("a + b", "a * b"))["correct"])
+
+    def test_percentages_and_amounts(self):
+        ratio = {"type": "numeric", "answer": "0.25", "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": True}
+        self.assertFalse(grade({"grader": ratio}, "Final answer: 0")["correct"])          # passed before the review
+        self.assertFalse(grade({"grader": ratio}, "Final answer: 0.003")["correct"])
+        self.assertTrue(grade({"grader": ratio}, "Final answer: 25%")["correct"])
+        self.assertTrue(grade({"grader": ratio}, "Final answer: 0.25")["correct"])
+        amount = {"type": "numeric", "answer": "41932", "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": False}
+        self.assertFalse(grade({"grader": amount}, "Final answer: 419.32")["correct"])
+        self.assertTrue(grade({"grader": amount}, "Final answer: 41,932")["correct"])
+        from auto_rl.professor import sources
+        row = {"answer": "41932", "pre_text": ["text"], "table": [["a", "b"]], "post_text": ["more"], "question": "what was the total in 2018?",
+               "id": "x-1", "gold_evidence": []}
+        self.assertFalse(sources._finqa(row, "finqa_test:0", "exam")["grader"]["percent_ok"])
+        self.assertTrue(sources._finqa({**row, "answer": "3.1%", "question": "what portion was paid in cash?"}, "k", "exam")["grader"]["percent_ok"])
+
+    def test_hedged_and_negated_choices_are_not_answers(self):
+        mcq = {"type": "mcq", "answer": "A", "options": 4}
+        for hedge in ("A, B", "A) ou B)", "A, C ou D", "the answer is a guess: B"):
+            self.assertFalse(grade({"grader": mcq}, hedge)["correct"], hedge)
+        self.assertTrue(grade({"grader": mcq}, "A")["correct"])
+        self.assertTrue(grade({"grader": {**mcq, "answer": "B"}}, "La réponse est B.")["correct"])
+        label = {"type": "label", "answer": "positive", "labels": ["negative", "neutral", "positive"]}
+        self.assertFalse(grade({"grader": label}, "Not positive")["correct"])
+        self.assertTrue(grade({"grader": label}, "Positive")["correct"])
+
+    def test_bbh_answers_keep_their_symbols_and_references_match_the_offered_options(self):
+        from auto_rl.professor import sources
+        adapt = lambda config, row: sources._bbh(config)(row, f"bbh:{config}:0", "exam")
+        dyck = adapt("dyck_languages", {"input": "Complète la séquence : ( [ <", "target": "] ] >"})
+        self.assertTrue(grade(dyck, "] ] >")["correct"])
+        self.assertTrue(grade(dyck, "]]>")["correct"])
+        for wrong in ("", ")", "] ] ] ]", "> ] ]"):
+            self.assertFalse(grade(dyck, wrong)["correct"], wrong)
+        arithmetic = adapt("multistep_arithmetic_two", {"input": "((-3 * 5) - 35) =", "target": "-50"})
+        self.assertFalse(grade(arithmetic, "50")["correct"])
+        self.assertTrue(grade(arithmetic, "-50")["correct"])
+        fallacy = adapt("sophismes_formels", {"input": "Argument...\nOptions :\n- valide\n- invalide", "target": "invalidee"})
+        self.assertTrue(grade(fallacy, "invalide")["correct"])
+        self.assertNotIn("unusable", fallacy)
+        boolean = adapt("expressions_booléennes", {"input": "not ( True ) and ( True ) est", "target": "Incorrect"})
+        self.assertTrue(grade(boolean, "Faux")["correct"])
+        self.assertFalse(grade(boolean, "Vrai")["correct"])
+        sorting = adapt("tri_de_mots", {"input": "Trie ces mots par ordre alphabétique : Liste : sioux fortescue dérober percevoir timonier",
+                                        "target": "fortescue timonier percept voler sioux"})
+        self.assertEqual(sorting["unusable"], "reference_is_not_the_sorted_list")
+        letter = adapt("noms_de_ruines", {"input": "Quelle est la parodie ? Options : (A) a (B) b (C) c (D) d", "target": "(A)"})
+        self.assertEqual(letter["grader"]["type"], "mcq")
+        self.assertFalse(grade(letter, "")["correct"])                                   # an empty answer passed (A) targets
+        with patch("auto_rl.professor.suites.Library.exam_family", lambda self, skill, catalogue:
+                   [{**sorting, "id": "hf:bbh:1", "skill": "conversation.reasoning_fr", "module": "conversation", "exam_role": "gate",
+                     "question_hash": "1" * 40},
+                    {**dyck, "id": "hf:bbh:2", "skill": "conversation.reasoning_fr", "module": "conversation", "exam_role": "gate",
+                     "question_hash": "2" * 40}] if skill == "conversation.reasoning_fr" else []):
+            exam, notes = build_exam("gate", 10, modules=["conversation"], only=["conversation.reasoning_fr"])
+        self.assertEqual([i["id"] for i in exam], ["hf:bbh:2"])
+        self.assertEqual(notes["unusable"], {"conversation.reasoning_fr": 1})
+
+    def test_format_instructions_need_real_french_content(self):
+        for sub in ("bullets", "lines_bounds", "json_keys", "uppercase"):
+            exam = generators.generate("conversation.format_fr", "gate:2", 3, sub)
+            self.assertTrue(grade(exam, exam["target"])["correct"], sub)
+        bullets = generators.generate("conversation.format_fr", "gate:2", 3, "bullets")
+        lines = bullets["target"].splitlines()
+        placeholder = "\n".join("- x" for _ in lines[:-1]) + "\n" + lines[-1]
+        self.assertFalse(grade(bullets, placeholder)["correct"])
+        keys = generators.generate("conversation.format_fr", "gate:2", 3, "json_keys")
+        empty = json.dumps({k: "" for k in json.loads(keys["target"])})
+        self.assertFalse(grade(keys, empty)["correct"])
+
+    def test_objects_keep_their_counts_and_relations_their_direction(self):
+        for index in range(40):
+            counts = generators.generate("media.prompt_translate", "gate:1", index, "counts_colors")
+            self.assertTrue(grade(counts, counts["target"])["correct"])
+            first, second = counts["target"].split(" and ")
+            words_a, words_b = first.split(" "), second.split(" ")
+            if words_a[0] != words_b[0] and words_a[0] != "a" and words_b[0] != "a":
+                swapped = " ".join([words_b[0]] + words_a[1:]) + " and " + " ".join([words_a[0]] + words_b[1:])
+                self.assertFalse(grade(counts, swapped)["correct"], swapped)
+            relation = generators.generate("media.prompt_translate", "gate:1", index, "relations")
+            self.assertTrue(grade(relation, relation["target"])["correct"])
+        on = next(i for i in (generators.generate("media.prompt_translate", "gate:1", n, "relations") for n in range(200))
+                  if " on " in i["target"] and " on top of " not in i["target"])
+        subject, obj = on["target"].split(" on ")
+        self.assertFalse(grade(on, f"{obj} on {subject}")["correct"])
+
+    def test_a_path_seen_through_the_other_receipt_kind_is_observed(self):
+        found = None
+        for index in range(400):
+            report = generators.generate("mission.grounded_report", "gate:0", index, "mostly_missing")
+            if len(report["grader"]["accept"]) > 1:
+                found = report
+                break
+        self.assertIsNotNone(found)
+        for reading in found["grader"]["accept"]:
+            self.assertTrue(grade(found, json.dumps(reading))["correct"])
+
+    def test_results_are_never_resumed_under_another_identity(self):
+        import tempfile
+        from auto_rl.professor.evaluate import evaluate, read_results
+
+        class Student:
+            def __init__(self, name, answer):
+                self.name, self.answer = name, answer
+
+            def generate(self, conversations, tokens, batch_size=1):
+                return [self.answer] * len(conversations)
+
+            def describe(self):
+                return {"backend": "fake", "adapter_sha256": self.name}
+        items = [{"id": f"q{n}", "module": "m", "skill": "s", "subskill": "x", "messages": [{"role": "user", "content": f"{n}?"}],
+                  "grader": {"type": "numeric", "answer": "1"}, "max_new_tokens": 8} for n in range(5)]
+        with tempfile.TemporaryDirectory() as folder:
+            evaluate(Student("A", "1"), items, folder)
+            receipt = evaluate(Student("B", "2"), items, folder)            # same folder, another adapter
+            self.assertEqual(receipt["summary"]["overall"]["correct"], 0)    # B's own answers, not A's
+            self.assertTrue(all(row["output"] == "2" for row in read_results(folder)))
+            self.assertEqual(len(list(Path(folder).glob("results.stale-*.jsonl"))), 1)
+            again = evaluate(Student("B", "2"), items, folder)             # same identity: resumed, nothing regenerated
+            self.assertEqual(again["graded_rows"], 5)

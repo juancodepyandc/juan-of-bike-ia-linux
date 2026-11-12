@@ -15,7 +15,7 @@ import json
 import random
 import re
 
-from .graders import LETTERS, run_sql
+from .graders import LETTERS, run_sql, parse_numbers
 from .records import bucket, exam_role, question_hash
 
 SOURCES = {}
@@ -194,21 +194,57 @@ _BBH = ["compréhension_de_la_date", "compréhension_des_sports", "comptage_d_ob
         "suivi_objets_mélangés_trois_objets", "séquences_temporelles", "toile_de_mensonges", "tri_de_mots"]
 
 
+#: Equivalent answers of the yes/no and true/false tasks (the French translation mixes "Vrai" and "Incorrect").
+_BBH_SYNONYMS = [{"oui", "yes"}, {"non", "no"}, {"vrai", "true", "correct"}, {"faux", "false", "incorrect"}]
+_BBH_NUMERIC = {"comptage_d_objets", "multistep_arithmetic_two"}
+
+
+def _edit_distance(a, b):
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        previous, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            previous, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, previous + (x != y))
+    return row[-1]
+
+
 def _bbh(config):
+    """BBH in French. Items whose reference no correct answer can match are kept in the layout (so the
+    slices of other cycles do not move) but marked ``unusable`` and left out of every exam."""
     def adapt(row, key, role):
         target = str(row["target"]).strip()
         if not target:
             return None
-        options = re.findall(r"^\(([A-Z])\)", row["input"], flags=re.M)
+        text = row["input"]
+        letters = sorted(set(re.findall(r"\(([A-Z])\)", text)))
         choice = re.fullmatch(r"\(([A-Z])\)", target)
-        if choice and options and choice.group(1) in options:
-            grader = {"type": "mcq", "answer": choice.group(1), "options": len(options)}
+        unusable = None
+        if choice and choice.group(1) in letters:
+            # Options are not always at the start of a line: a letter target is a multiple-choice answer.
+            grader = {"type": "mcq", "answer": choice.group(1), "options": len(LETTERS[:LETTERS.index(letters[-1]) + 1])}
             ask = "Réponds uniquement par la lettre de l'option correcte."
+        elif config in _BBH_NUMERIC and parse_numbers(target):
+            grader = {"type": "numeric", "answer": target}
+            ask = "Réponds uniquement par le nombre final, sans explication."
         else:
-            grader = {"type": "text", "answers": [target], "f1_threshold": 1.0}
+            offered = [line.strip()[2:].strip() for line in text.splitlines() if re.match(r"^\s*-\s+\S", line)]
+            if offered and target not in offered:
+                close = [option for option in offered if _edit_distance(option.casefold(), target.casefold()) <= 2]
+                if len(set(close)) == 1:
+                    target = close[0]                      # "invalidee" for the offered option "invalide"
+                else:
+                    unusable = "reference_not_offered"
+            answers = sorted(next((group for group in _BBH_SYNONYMS if target.casefold() in group), {target}))
+            if config == "tri_de_mots":
+                listed = text.rsplit(":", 1)[-1].split()
+                if sorted(listed) != target.split():
+                    unusable = "reference_is_not_the_sorted_list"
+            grader = {"type": "text", "answers": answers, "literal": True}
             ask = "Réponds uniquement par la réponse finale, sans explication."
-        item = _plain(_user(f"{row['input'].strip()}\n\n{ask}"), target, grader, 24, row["input"])
+        item = _plain(_user(f"{text.strip()}\n\n{ask}"), target, grader, 24 if config != "tri_de_mots" else 96, text)
         item["subskill"] = config
+        if unusable:
+            item["unusable"] = unusable
         return item
     return adapt
 
@@ -426,8 +462,11 @@ def _sql(row, key, role):
         ask = f"Schema and data (SQLite):\n{context}\n\nQuestion: {row['sql_prompt'].strip()}\n\nAnswer with one SQL query only."
     else:
         ask = f"Given this SQLite database:\n{context}\n\nWrite a single SQL query that answers: {row['sql_prompt'].strip()}\nOutput the query alone."
+    # Identified by schema, data and reference query: a reworded question over the same task is the same exam item
+    # (11 test items had a training twin differing only in wording, 2026-11-12).
     item = _plain(_user(ask), gold, {"type": "sql", "context": context, "rows": [list(r) for r in rows],
-                                     "ordered": bool(re.search(r"\border\s+by\b", gold, flags=re.I))}, 160, row["sql_prompt"] + " " + context)
+                                     "ordered": bool(re.search(r"\border\s+by\b", gold, flags=re.I))}, 160,
+                  "sql-task:" + context + "\n" + " ".join(gold.split()))
     item["subskill"] = row["sql_complexity"]
     return item
 
@@ -505,6 +544,8 @@ source("cwe_exam", dataset="AI4Sec/cti-bench", config="cti-rcm", split="test", r
 @source("trendyol_cyber", dataset="Trendyol/Trendyol-Cybersecurity-Instruction-Tuning-Dataset", split="train", role="train",
         skill="cyber.defense", module="cyber", license="apache-2.0", cap=5000)
 def _trendyol(row, key, role):
+    if not row.get("assistant") or not row.get("user"):             # two rows of the pinned revision are empty
+        return None
     if not 80 <= len(row["assistant"]) <= 2600 or len(row["user"]) > 1200:
         return None
     item = _plain(_user(row["user"].strip()), row["assistant"].strip(), None, 0, row["user"])
@@ -516,6 +557,9 @@ def _trendyol(row, key, role):
 
 def _table(table):
     return "\n".join(" | ".join(str(cell) for cell in line) for line in table)
+
+
+_PERCENT_WORDS = re.compile(r"percent|percentage|%|ratio|proportion|portion|share|rate|margin|yield|return", re.I)
 
 
 def _finqa(row, key, role):
@@ -534,7 +578,9 @@ def _finqa(row, key, role):
     evidence = "\n".join(row.get("gold_evidence") or [])
     value = number.group(1).replace(",", "")
     item = _plain(_user(ask), (evidence + "\n" if evidence else "") + f"Final answer: {value}{number.group(2)}",
-                  {"type": "numeric", "answer": value, "rel_tol": 0.01, "abs_tol": 0.005, "percent_ok": True}, 640, question + " " + row["id"])
+                  {"type": "numeric", "answer": value, "rel_tol": 0.01, "abs_tol": 0.005,
+                   # A percentage may be written as a ratio and the reverse; an amount may not be 100 times off.
+                   "percent_ok": bool(number.group(2)) or bool(_PERCENT_WORDS.search(question))}, 640, question + " " + row["id"])
     item["subskill"] = "percent" if number.group(2) else "amount"
     return item
 
@@ -556,8 +602,10 @@ def _convfinqa(row, key, role):
     if len(text) > 5200:
         return None
     ask = f"{text}\n\nAnswer the last question. Show the computation briefly and finish with a line \"Final answer: <number>\"."
+    last = next((line for line in reversed(text.splitlines()) if "?" in line), text[-300:])
     item = _plain(_user(ask), f"Final answer: {value}", {"type": "numeric", "answer": repr(value), "rel_tol": 0.01,
-                                                         "abs_tol": 0.005, "percent_ok": True}, 640, text[-600:])
+                                                         "abs_tol": 0.005, "percent_ok": bool(_PERCENT_WORDS.search(last))},
+                  640, text[-600:])
     item["subskill"] = "turns_" + str(min(4, text.count("?")))
     return item
 

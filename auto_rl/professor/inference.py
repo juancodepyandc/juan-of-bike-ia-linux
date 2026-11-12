@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.request
+from pathlib import Path
 
 #: Attention and MLP projections of the Qwen/Llama families.
 LORA_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj")
@@ -93,7 +94,7 @@ class TransformersStudent:
             self.dtype = torch.float32
         self.model = _from_pretrained(AutoModelForCausalLM, model_id, self.dtype, **kwargs)
         self.model.eval()
-        self.adapter = None
+        self.adapter = self.adapter_sha256 = None
         if adapter:
             self.attach(adapter)
 
@@ -126,12 +127,16 @@ class TransformersStudent:
         self.model = PeftModel.from_pretrained(self.model, str(adapter))
         self.model.eval()
         self.adapter = str(adapter)
+        from .records import file_hash
+        weights = next((p for p in sorted(Path(adapter).glob("adapter_model.*")) if p.is_file()), None)
+        self.adapter_sha256 = file_hash(weights) if weights else None     # the identity of what answers, not its path
 
     def detach(self):
         if self.adapter is not None:
             self.model = self.model.unload()
             self.model.eval()
             self.adapter = None
+            self.adapter_sha256 = None
 
     # -- generation ---------------------------------------------------------
     def generate(self, conversations, max_new_tokens, batch_size=8):
@@ -167,8 +172,8 @@ class TransformersStudent:
 
     def describe(self):
         return {"backend": self.backend, "model": self.model_id, "revision": self.revision, "four_bit": self.four_bit,
-                "dtype": str(self.dtype).replace("torch.", ""), "adapter": self.adapter, "thinking": self.thinking,
-                "max_prompt_tokens": self.max_prompt_tokens}
+                "dtype": str(self.dtype).replace("torch.", ""), "adapter": self.adapter, "adapter_sha256": self.adapter_sha256,
+                "thinking": self.thinking, "max_prompt_tokens": self.max_prompt_tokens}
 
 
 class LlamaCppStudent:

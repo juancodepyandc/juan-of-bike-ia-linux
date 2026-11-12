@@ -11,9 +11,19 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from . import graders
 from .compare import wilson
 from .graders import grade
-from .records import atomic_json, suite_digest
+from .records import atomic_json, digest, file_hash, read_json, suite_digest
+
+
+def run_identity(student, items):
+    """What a results file answers for: the model as described (adapter weights included), the exam, the graders.
+
+    Resuming is only safe under the same identity: rows written by another adapter in the same folder were
+    reused and certified as the new one's answers (review, 2026-11-12).
+    """
+    return {"student": student.describe(), "suite_sha256": suite_digest(items), "graders_sha256": file_hash(graders.__file__)}
 
 
 def _read(path):
@@ -58,6 +68,13 @@ def evaluate(student, items, folder, *, batch_size=8, label="exam", progress=Non
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     results_path = folder / "results.jsonl"
+    identity = run_identity(student, items)
+    recorded = read_json(folder / "run_identity.json", None)
+    if results_path.is_file() and (recorded is None or digest(recorded) != digest(identity)):
+        # Another model, adapter, exam or grader wrote these rows: keep them aside, never resume from them.
+        stale = folder / f"results.stale-{digest(recorded or {})[:12]}.jsonl"
+        results_path.replace(stale)
+    atomic_json(folder / "run_identity.json", identity)
     done = {row["id"] for row in _read(results_path)}
     pending = [item for item in items if item["id"] not in done]
     started = time.monotonic()

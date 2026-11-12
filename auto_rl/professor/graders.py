@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import secrets
 import sqlite3
 import subprocess
 import sys
@@ -48,9 +49,11 @@ def grade_mcq(output, grader):
     if strict:
         choice = strict.group(1).upper()
         return _result(choice == grader["answer"], "single_letter", choice)
-    marked = re.findall(rf"(?:r[ée]ponse|answer|option|choix|correcte?)\s*(?:finale|final|correcte?|is|est|:|=|\s)*\s*:?\s*\(?([{valid}])\)?(?![A-Za-z0-9])",
-                        text, flags=re.I)
-    marked = [m.upper() for m in marked]
+    if re.search(rf"(?<![A-Za-z])\(?([{valid}])\)?\s*(?:,|/|\bou\b|\bor\b|\bet\b|\band\b)\s*\(?([{valid}])\)?(?![A-Za-z])", text):
+        return _result(False, "several_letters")            # "A, B", "A) ou B)": a hedge, not an answer
+    # Marker words in any case, the letter itself in upper case: "the answer is a guess: B" names B, not "a".
+    marked = re.findall(rf"(?i:r[ée]ponse|answer|option|choix|correcte?)\s*(?i:finale|final|correcte?|is|est|:|=|\s)*\s*:?\s*\(?([{valid}])\)?(?![A-Za-z0-9])",
+                        text)
     if marked:
         if len(set(marked)) > 1:
             return _result(False, "conflicting_marked_letters", sorted(set(marked)))
@@ -113,12 +116,17 @@ def extract_final_number(text):
 
 
 def numbers_match(candidates, expected, rel_tol, abs_tol, percent_ok=False):
+    """Equal within the item's tolerances; with ``percent_ok`` a ratio and its percentage are the same answer.
+
+    The rescaled readings use the relative tolerance only: with an absolute one, target / 100 of any ratio
+    below 0.5 was within 0.005 of 0, and "Final answer: 0" passed 272 ConvFinQA items (review, 2026-11-12).
+    """
     for value in candidates:
         for target in expected:
-            options = [target]
-            if percent_ok:
-                options += [target * 100, target / 100]
-            if any(math.isclose(value, option, rel_tol=rel_tol, abs_tol=abs_tol) for option in options):
+            if math.isclose(value, target, rel_tol=rel_tol, abs_tol=abs_tol):
+                return True
+            if percent_ok and target and any(math.isclose(value, option, rel_tol=rel_tol, abs_tol=0.0)
+                                             for option in (target * 100, target / 100)):
                 return True
     return False
 
@@ -158,9 +166,25 @@ def token_f1(prediction, reference):
     return 2 * precision * recall / (precision + recall)
 
 
+def _literal(text):
+    """Case and spacing folded, every symbol, sign and word order kept."""
+    text = unicodedata.normalize("NFKC", str(text)).casefold().strip()
+    return re.sub(r"\s+", "", text.rstrip(".").strip())
+
+
 def grade_text(output, grader):
-    """Exact match after normalization, or a short answer that is almost the reference."""
+    """Exact match after normalization, or a short answer that is almost the reference.
+
+    With ``literal`` the answer must equal one reference with only case and spacing folded: brackets,
+    signs and word order are the answer (BBH dyck words, arithmetic, word sorting), so a bag-of-words
+    comparison that drops them graded an empty answer correct (review, 2026-11-12).
+    """
     text = strip_reasoning(output)
+    if grader.get("literal"):
+        first = next((line for line in text.splitlines() if line.strip()), "")
+        wanted = {_literal(reference) for reference in grader["answers"]}
+        ok = bool(first.strip()) and (_literal(first) in wanted or _literal(text) in wanted)
+        return _result(ok, "literal", first.strip()[:80])
     first = next((line for line in text.splitlines() if line.strip()), "")
     best, parsed = 0.0, first.strip()
     for candidate in {text, first}:
@@ -189,6 +213,8 @@ def grade_label(output, grader):
     # by the word boundary above, so two matches really are two claimed labels.
     if len(named) != 1:
         return _result(False, "no_label" if not named else "several_labels", named)
+    if re.search(rf"\b(?:not|no|never|non|pas|isn t|n est pas|ne pas)\s+(?:\w+\s+)?{re.escape(normalize_answer(named[0]))}\b", text):
+        return _result(False, "negated_label", named)       # "not positive" claims nothing
     return _result(named[0] == grader["answer"], "label", named[0])
 
 
@@ -441,6 +467,11 @@ def _words(text):
     return re.findall(r"[0-9A-Za-zÀ-ÖØ-öø-ÿ]+(?:['’-][0-9A-Za-zÀ-ÖØ-öø-ÿ]+)*", text)
 
 
+#: Function words of French: a unit without any of them is not a French sentence.
+_FRENCH = re.compile(r"(?i)(?<![0-9A-Za-zÀ-ÿ])(?:le|la|les|l['’]|un|une|des|du|de|d['’]|et|à|au|aux|en|pour|par|sur|avec|dans|ton|ta|tes|"
+                     r"ce|cet|cette|ces|qui|que|qu['’]|ne|n['’]|pas|plus|chaque|avant|après|sans|sous|entre|si|s['’]|se|tout|toute)(?![0-9A-Za-zÀ-ÿ])")
+
+
 def grade_constraints(output, grader):
     """Programmatic checks of explicit formatting instructions, all of which must hold."""
     text = strip_reasoning(output).strip()
@@ -477,6 +508,20 @@ def grade_constraints(output, grader):
                 ok = False
         elif kind == "lines":
             ok = len([l for l in text.splitlines() if l.strip()]) == rule["count"]
+        elif kind == "content":
+            # Each unit (bullet, line, JSON value) must be a real French sentence of a few words, not a placeholder.
+            if rule["unit"] == "values":
+                try:
+                    value = parse_single_json(text)
+                    units = [v for v in value.values()] if isinstance(value, dict) else []
+                except (ValueError, RecursionError):
+                    units = []
+                units = [u if isinstance(u, str) else "" for u in units]
+            elif rule["unit"] == "bullets":
+                units = [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s+", "", l) for l in text.splitlines() if re.match(r"\s*(?:[-*•]|\d+[.)])\s+\S", l)]
+            else:
+                units = [l for l in text.splitlines() if l.strip()][rule.get("skip", 0):]
+            ok = bool(units) and all(len(_words(u)) >= rule.get("min_words", 4) and _FRENCH.search(u) for u in units)
         elif kind == "language_fr":
             ok = len(re.findall(r"\b(?:le|la|les|des|est|et|une|un|dans|pour|que|qui|avec|sur|pas|du)\b", text, flags=re.I)) >= rule.get("minimum", 3)
         else:
@@ -496,8 +541,22 @@ def grade_contains(output, grader):
     total = max(1, len(grader["required"]))
     if len(strip_reasoning(output)) > grader.get("max_chars", 600):
         return _result(False, "overlong")
-    return _result(not missing and not forbidden, "terms", {"missing": missing, "forbidden": forbidden},
-                   (total - len(missing)) / total if not forbidden else 0.0)
+    unattached = []
+    if grader.get("phrases"):
+        # Each object as one phrase (its count and colour next to its noun), and in the given order when it matters:
+        # with terms alone, swapped counts passed 104/104 items and an inverted relation 150/150 (review, 2026-11-12).
+        plain = " " + re.sub(r"[^0-9a-zà-ÿ]+", " ", unicodedata.normalize("NFKC", strip_reasoning(output)).casefold()) + " "
+        positions = []
+        for pattern in grader["phrases"]:
+            found = re.search(pattern, plain)
+            if not found:
+                unattached.append(pattern)
+            positions.append(found.start() if found else -1)
+        if not unattached and grader.get("ordered") and positions != sorted(positions):
+            unattached.append("order")
+    ok = not missing and not forbidden and not unattached
+    return _result(ok, "terms", {"missing": missing, "forbidden": forbidden, "unattached": bool(unattached)},
+                   (total - len(missing)) / total if not forbidden and not unattached else 0.0)
 
 
 # --- executable answers ----------------------------------------------------
@@ -554,7 +613,21 @@ def run_python(program, timeout=20):
         return done.returncode == 0, done.stderr.decode("utf-8", "replace")[-300:], done.stdout.decode("utf-8", "replace")
 
 
+def _as_module(code):
+    """Run the answer as an imported module: its ``if __name__ == "__main__":`` block (its own unittest.main(),
+    a CLI ``sys.exit(main())``) must not end the process before the exam's tests."""
+    return ("import sys as __aurora_sys, types as __aurora_types\n"
+            "__aurora_module = __aurora_types.ModuleType('aurora_candidate')\n"
+            "__aurora_module.__dict__.update({k: v for k, v in globals().items() if not k.startswith('__aurora')})\n"
+            "__aurora_module.__name__ = 'aurora_candidate'\n"
+            "__aurora_sys.modules['aurora_candidate'] = __aurora_module\n"
+            f"exec(compile({code!r}, 'candidate.py', 'exec'), __aurora_module.__dict__)\n"
+            "globals().update({k: v for k, v in __aurora_module.__dict__.items() if not k.startswith('__')})\n")
+
+
 def grade_python_tests(output, grader):
+    """Correct only if the tests ran to their last line: exit status 0 alone was satisfied by an answer that
+    called sys.exit(0), raise SystemExit, os._exit(0) or unittest.main() before them (review, 2026-11-12)."""
     code = extract_code(output)
     if not code.strip():
         return _result(False, "no_code")
@@ -567,11 +640,15 @@ def grade_python_tests(output, grader):
     if not candidates:
         candidates.append(code)
     last = "not_run"
+    marker = "AURORA_TESTS_COMPLETED_" + secrets.token_hex(8)
     for candidate in candidates:
-        ok, error, _ = run_python(grader.get("setup", "") + "\n" + candidate + "\n\n" + grader["tests"] + "\n",
-                                  timeout=grader.get("timeout", 20))
-        if ok:
+        ok, error, stdout = run_python(grader.get("setup", "") + "\n" + _as_module(candidate) + "\n\n" + grader["tests"]
+                                       + f"\n\nprint({marker!r}, flush=True)\n", timeout=grader.get("timeout", 20))
+        if ok and stdout.rstrip().endswith(marker):
             return _result(True, "tests_passed")
+        if ok:
+            last = "exited_before_the_tests_ended"
+            continue
         last = error.strip().splitlines()[-1][:120] if error.strip() else "failed"
     return _result(False, "tests_failed:" + last)
 
