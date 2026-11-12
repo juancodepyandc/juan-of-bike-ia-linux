@@ -104,9 +104,10 @@ Cycle suivant : avec `CONTINUE_FROM = "compte/jeu-de-données"`, la machine tél
 
 TRAINER_PARAMETERS = '''PROFILE = "standard"         # "standard" ou "full" ("smoke" = répétition technique seulement)
 MODULES = None               # None = ceux du diagnostic ; sinon un sous-ensemble, par exemple "business,media"
+SKILLS = None                # None = toutes les compétences des modules ; sinon une liste, par exemple "code.python,code.sql"
 CYCLE = 0
 BUDGET_MINUTES = 300         # budget total ; l'adaptateur est sauvegardé avant la fin
-OVERRIDES = {}               # par exemple {"curriculum": 8000, "epochs": 2}
+OVERRIDES = {}               # par exemple {"curriculum": 8000, "epochs": 2, "replay": "", "self_worked": "code.python,code.sql"}
 CONTINUE_FROM = None         # jeu de données Kaggle privé "compte/nom" : reprendre l'adaptateur du cycle précédent
 '''
 
@@ -168,7 +169,8 @@ print("Élève diagnostiqué :", STUDENT, "→", diagnosis["student"]["hf"],
 for row in diagnosis["weak_points"][:12]:
     print(f"  {row['accuracy']:.3f}  n={row['items']:4d}  {row['skill']}")
 AURORA_OPTIONS = {"role": "train", "student": STUDENT, "profile": PROFILE, "cycle": CYCLE, "continue": bool(CONTINUE_FROM),
-                  "modules": MODULES or ",".join(diagnosis["modules"]), "budget_minutes": BUDGET_MINUTES, "overrides": OVERRIDES}
+                  "modules": MODULES or ",".join(diagnosis["modules"]), "skills": SKILLS, "budget_minutes": BUDGET_MINUTES,
+                  "overrides": OVERRIDES}
 '''
 
 TRAINER_ADMISSION = '''import subprocess
@@ -223,10 +225,11 @@ else:
 '''
 
 
-def build(diagnosis=None, output=None, cycle=0, continue_from=None):
+def build(diagnosis=None, output=None, cycle=0, continue_from=None, skills=None, overrides=None):
     """Write both notebooks. ``output`` (default ``notebooks/``) lets a run-specific copy with an
-    embedded diagnosis live outside the repository; ``cycle`` presets the trainer's cycle number and
-    ``continue_from`` the private dataset holding the adapter to continue."""
+    embedded diagnosis live outside the repository; ``cycle`` presets the trainer's cycle number,
+    ``continue_from`` the private dataset holding the adapter to continue, ``skills`` and ``overrides``
+    the trainer's targeted skills and options."""
     out = Path(output) if output else ROOT / "notebooks"
     out.mkdir(parents=True, exist_ok=True)
     kaggle_cells = [cell("markdown", EXAMINER_INTRO), cell("code", EXAMINER_PARAMETERS, "parameters"),
@@ -237,6 +240,10 @@ def build(diagnosis=None, output=None, cycle=0, continue_from=None):
     parameters = TRAINER_PARAMETERS.replace("CYCLE = 0", f"CYCLE = {int(cycle)}")
     if continue_from:
         parameters = parameters.replace("CONTINUE_FROM = None", f"CONTINUE_FROM = {str(continue_from)!r}")
+    if skills:
+        parameters = parameters.replace("SKILLS = None ", f"SKILLS = {str(skills)!r} ")
+    if overrides:
+        parameters = parameters.replace("OVERRIDES = {}  ", f"OVERRIDES = {dict(overrides)!r}  ")
     colab_cells = [cell("markdown", TRAINER_INTRO), cell("code", parameters, "parameters"),
                    cell("code", TRAINER_DIAGNOSIS.replace("__DIAGNOSIS__", embedded), "diagnosis"),
                    cell("code", TRAINER_ADMISSION, "admission"),
@@ -254,5 +261,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, help="folder for the notebooks (default: notebooks/ of the repository)")
     parser.add_argument("--cycle", type=int, default=0, help="cycle number preset in the Colab trainer notebook")
     parser.add_argument("--continue-from", help="private Kaggle dataset (owner/slug) holding the adapter to continue")
+    parser.add_argument("--skills", help="skills the trainer targets (comma-separated)")
+    parser.add_argument("--override", action="append", default=[], help="name=value trainer option, e.g. self_worked=code.python,code.sql")
     arguments = parser.parse_args()
-    print(json.dumps(build(arguments.diagnosis, arguments.output, arguments.cycle, arguments.continue_from)))
+    print(json.dumps(build(arguments.diagnosis, arguments.output, arguments.cycle, arguments.continue_from, arguments.skills,
+                           dict(pair.split("=", 1) for pair in arguments.override))))
