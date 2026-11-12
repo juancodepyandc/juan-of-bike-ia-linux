@@ -91,11 +91,19 @@ def _run(argv, log, timeout):
         raise RuntimeError(f"{Path(str(argv[1])).name} failed ({done.returncode}):\n{tail}")
 
 
-def adapter_to_gguf(adapter, base, output, tools, *, timeout=3600):
-    """PEFT LoRA adapter -> GGUF LoRA. ``base`` is a local snapshot folder or a Hub id (configuration only)."""
+def adapter_to_gguf(adapter, base, output, tools, *, hub_id=None, timeout=3600):
+    """PEFT LoRA adapter -> GGUF LoRA.
+
+    ``base`` is a local snapshot WITH its weight files, or a Hub id. The converter indexes the base
+    tensors: a folder holding only the configuration made it fail on the first promoted 7B adapter
+    (2026-11-12), so such a folder is replaced by ``hub_id``, which is read remotely without
+    downloading the weights.
+    """
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    source = ["--base", str(base)] if Path(str(base)).is_dir() else ["--base-model-id", str(base)]
+    folder = Path(str(base))
+    complete = folder.is_dir() and any(folder.glob("*.safetensors"))
+    source = ["--base", str(folder)] if complete else ["--base-model-id", str(hub_id or base)]
     _run([sys.executable, tools["lora"], *source, "--outfile", output, "--outtype", "f16", adapter],
          output.with_suffix(".log"), timeout)
     return output
@@ -151,7 +159,7 @@ def export(student, adapter, folder, *, base_snapshot=None, merged=False, quanti
                "tools_package": tools["package"],
                "files": {}, "errors": {}}
     try:
-        lora = adapter_to_gguf(adapter, base_snapshot or student["hf"], folder / "adapter.gguf", tools)
+        lora = adapter_to_gguf(adapter, base_snapshot or student["hf"], folder / "adapter.gguf", tools, hub_id=student["hf"])
         receipt["files"]["adapter.gguf"] = {"sha256": file_hash(lora), "bytes": lora.stat().st_size}
     except Exception as exc:                       # reported, never hidden: the installer needs to know
         receipt["errors"]["adapter.gguf"] = f"{type(exc).__name__}: {str(exc)[:600]}"

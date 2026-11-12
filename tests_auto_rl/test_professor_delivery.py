@@ -149,6 +149,31 @@ class Launcher(unittest.TestCase):
             with self.assertRaises(ValueError):
                 kaggle_runner.write_kernel(Path(folder) / "z", "owner", "train", student="qwen2.5:7b", continue_adapter=True)
 
+    def test_a_delivery_is_published_privately_with_its_verdict_and_gguf(self):
+        seen = []
+
+        class Api:
+            def dataset_status(self, reference):
+                raise RuntimeError("absent")
+
+            def dataset_create_new(self, folder, public, quiet):
+                seen.append((json.loads((Path(folder) / "dataset-metadata.json").read_text()), public, sorted(p.name for p in Path(folder).iterdir())))
+        with tempfile.TemporaryDirectory() as folder, patch.object(kaggle_runner, "_api", return_value=Api()):
+            for name in ("verdict_0.json", "adapter_config.json", "export_receipt.json"):
+                (Path(folder) / name).write_text("{}")
+            (Path(folder) / "adapter_model.safetensors").write_bytes(b"w")
+            (Path(folder) / "adapter.log").write_text("not shipped")
+            with self.assertRaises(ValueError):          # no converted adapter yet: nothing to deliver
+                kaggle_runner.publish_delivery("owner", folder, student="qwen2.5-coder:7b")
+            (Path(folder) / "adapter.gguf").write_bytes(b"g")
+            reference = kaggle_runner.publish_delivery("owner", folder, student="qwen2.5-coder:7b")
+        self.assertEqual(reference, "owner/aurora-professeur-livraison-qwen25coder-7b")
+        metadata, public, names = seen[0]
+        self.assertIs(public, False)
+        self.assertLessEqual(len(metadata["title"]), 50)
+        self.assertNotIn("adapter.log", names)
+        self.assertIn("adapter.gguf", names)
+
     def test_each_student_publishes_to_its_own_private_dataset(self):
         seen = []
 
@@ -191,6 +216,28 @@ class Launcher(unittest.TestCase):
                 kaggle_runner.fetch("owner/kernel", folder)
 
 
+class Export(unittest.TestCase):
+    def test_a_base_folder_without_weights_is_read_from_the_hub_instead(self):
+        """The converter indexes the base tensors; a configuration-only folder made it fail on 2026-11-12."""
+        from auto_rl.professor import export
+        calls = []
+        with tempfile.TemporaryDirectory() as folder, patch.object(export, "_run", lambda argv, log, timeout: calls.append([str(a) for a in argv])):
+            tools = {"lora": Path(folder) / "convert_lora_to_gguf.py"}
+            bare = Path(folder) / "config_only"
+            bare.mkdir()
+            (bare / "config.json").write_text("{}")
+            (bare / "model.safetensors.index.json").write_text("{}")
+            export.adapter_to_gguf(Path(folder) / "adapter", bare, Path(folder) / "a.gguf", tools, hub_id="Qwen/Qwen2.5-Coder-7B-Instruct")
+            full = Path(folder) / "with_weights"
+            full.mkdir()
+            (full / "model-00001-of-00004.safetensors").write_bytes(b"w")
+            export.adapter_to_gguf(Path(folder) / "adapter", full, Path(folder) / "b.gguf", tools, hub_id="Qwen/Qwen2.5-Coder-7B-Instruct")
+            export.adapter_to_gguf(Path(folder) / "adapter", "Qwen/Qwen2.5-Coder-7B-Instruct", Path(folder) / "c.gguf", tools)
+        self.assertEqual(calls[0][2:4], ["--base-model-id", "Qwen/Qwen2.5-Coder-7B-Instruct"])
+        self.assertEqual(calls[1][2:4], ["--base", str(full)])
+        self.assertEqual(calls[2][2:4], ["--base-model-id", "Qwen/Qwen2.5-Coder-7B-Instruct"])
+
+
 class Installation(unittest.TestCase):
     def delivery(self, folder, *, verdict="promote", student="qwen2.5:7b", promotable=True, tamper=None):
         folder = Path(folder)
@@ -227,6 +274,46 @@ class Installation(unittest.TestCase):
             self.assertEqual(install.check_delivery(delivery)["problems"], [])
             atomic_json(path, {**verdict, "versus_previous": {"verdict": "reject"}})
             self.assertTrue(any("cycle précédent" in problem for problem in install.check_delivery(delivery)["problems"]))
+
+    def test_a_delivery_without_gguf_is_converted_here_or_refused_with_the_reason(self):
+        """The first promoted adapter came back without GGUF: the examiner's export had timed out (2026-11-12)."""
+        from auto_rl.professor import export as export_module
+        with tempfile.TemporaryDirectory() as folder:
+            delivery = self.delivery(folder)
+            work = delivery / "aurora_professor"
+            (work / "export" / "adapter.gguf").unlink()
+            atomic_json(work / "export" / "export_receipt.json", {"files": {}, "errors": {"export": "TimeoutExpired"}})
+            self.assertEqual(install.check_delivery(delivery)["problems"], [install.NO_GGUF])
+
+            def failing(student, adapter, target, **_):
+                return {"files": {}, "errors": {"adapter.gguf": "ModuleNotFoundError: torch"}}
+            with patch.object(export_module, "export", failing):
+                problems = install.convert_locally(delivery)["problems"]
+            self.assertTrue(any("conversion locale impossible" in p and "torch" in p for p in problems))
+
+            def converting(student, adapter, target, **_):
+                target = Path(target)
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "adapter.gguf").write_bytes(b"converted-here")
+                receipt = {"adapter_sha256": file_hash(Path(adapter) / "adapter_model.safetensors"), "errors": {},
+                           "files": {"adapter.gguf": {"sha256": file_hash(target / "adapter.gguf"), "bytes": 14}}}
+                atomic_json(target / "export_receipt.json", receipt)
+                return receipt
+            with patch.object(export_module, "export", converting):
+                checked = install.convert_locally(delivery)
+            self.assertEqual(checked["problems"], [])
+            self.assertEqual(checked["files"]["adapter.gguf"].parent.name, "export_local")       # the receipt that lists files wins
+
+    def test_a_published_delivery_is_read_from_its_private_dataset(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as folder, patch.object(install, "STATE", Path(folder) / "state"), \
+                patch.object(kaggle_runner, "fetch_dataset", lambda reference, output: calls.append(("dataset", reference))), \
+                patch.object(kaggle_runner, "fetch", lambda reference, output: calls.append(("kernel", reference))), \
+                patch.object(install, "install", lambda delivery, **_: {"base_tag": "qwen2.5-coder:7b", "deployment": {"verdict": "reject"}}):
+            install.deliver(None, "qwen2.5-coder:7b", dataset="owner/aurora-professeur-livraison-qwen25coder-7b", activate_after=True)
+            install.deliver("owner", "qwen2.5-coder:7b", cycle=1)
+        self.assertEqual(calls, [("dataset", "owner/aurora-professeur-livraison-qwen25coder-7b"),
+                                 ("kernel", "owner/aurora-professeur-examinateur-qwen25coder-7b-c1")])
 
     def test_only_a_matching_promoted_production_delivery_is_accepted(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -77,8 +77,9 @@ def check_delivery(delivery):
         problems.append("l'adaptateur livré ne correspond pas à celui que l'examinateur a évalué")
     if (verdict.get("versus_previous") or {}).get("verdict") == "reject":
         problems.append("ce candidat est moins bon que l'adaptateur qu'il prolonge : livrer le cycle précédent")
-    export = next(iter(sorted(delivery.rglob("export_receipt.json"))), None)
-    receipt = json.loads(export.read_text(encoding="utf-8")) if export else {"files": {}}
+    # A delivery may hold a failed export beside a later successful one: the receipt that lists files is the one to check.
+    receipts = [(path, json.loads(path.read_text(encoding="utf-8"))) for path in sorted(delivery.rglob("export_receipt.json"))]
+    export, receipt = next(((path, found) for path, found in receipts if found.get("files")), receipts[0] if receipts else (None, {"files": {}}))
     files = {}
     for name, entry in receipt.get("files", {}).items():
         path = export.parent / name
@@ -89,7 +90,7 @@ def check_delivery(delivery):
     if receipt.get("adapter_sha256") not in (None, verdict.get("adapter_sha256")):
         problems.append("l'export a été produit à partir d'un autre adaptateur")
     if not files:
-        problems.append("aucun fichier GGUF vérifié dans la livraison (adapter.gguf ou modèle fusionné)")
+        problems.append("aucun fichier GGUF vérifié dans la livraison (adapter.gguf ou modèle fusionné)")      # == NO_GGUF
     return {"verdict": verdict, "verdict_sha256": file_hash(verdicts[0]), "student": student, "files": files, "problems": problems}
 
 
@@ -127,8 +128,30 @@ def deployment_exam(base_tag, candidate_tag, folder, *, modules, per_skill, cycl
     return result
 
 
-def install(delivery, *, url="http://127.0.0.1:11434", per_skill=40, context=8192, exam=True):
+NO_GGUF = "aucun fichier GGUF vérifié dans la livraison (adapter.gguf ou modèle fusionné)"
+
+
+def convert_locally(delivery):
+    """Convert the delivered adapter on this machine when the examiner's own export produced nothing.
+
+    Only for a delivery whose single problem is the missing GGUF: the verdict and the adapter hash are
+    already verified. The conversion scripts come from the package index; errors are returned, not hidden.
+    """
+    from .export import export
+    delivery = Path(delivery)
     checked = check_delivery(delivery)
+    if checked["problems"] != [NO_GGUF]:
+        return checked
+    adapter = next(path.parent for path in sorted(delivery.rglob("adapter_model.safetensors")) if path.parent.name != "init_adapter")
+    receipt = export(checked["student"], adapter, adapter.parent.parent / "export_local")
+    checked = check_delivery(delivery)
+    if receipt["errors"]:
+        checked["problems"].append("conversion locale impossible : " + " ; ".join(f"{k} — {v[:200]}" for k, v in receipt["errors"].items()))
+    return checked
+
+
+def install(delivery, *, url="http://127.0.0.1:11434", per_skill=40, context=8192, exam=True):
+    checked = convert_locally(delivery)
     if checked["problems"]:
         raise ValueError("Livraison refusée : " + " ; ".join(checked["problems"]))
     verdict, student = checked["verdict"], checked["student"]
@@ -195,17 +218,22 @@ def rollback(tag, *, url="http://127.0.0.1:11434"):
     return {"tag": tag, "restored_from": backup}
 
 
-def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, context=8192, activate_after=False, cycle=0):
+def deliver(owner, student, *, url="http://127.0.0.1:11434", per_skill=60, context=8192, activate_after=False, cycle=0,
+            dataset=None):
     """Fetch the examiner's verified output from Kaggle, install it, and optionally activate it.
 
     One command for the PC: every gate still applies, and activation happens only
     if the model wins the paired exam again as served by Ollama. ``cycle`` selects
-    which cycle's examiner to fetch (each cycle keeps its own output).
+    which cycle's examiner to fetch (each cycle keeps its own output); ``dataset``
+    reads a published delivery (private dataset) instead of the examiner's output.
     """
     from . import kaggle_runner
     slug = kaggle_runner.kernel_name("verify", student, cycle)[0]
     folder = STATE / "deliveries" / slug
-    kaggle_runner.fetch(f"{owner}/{slug}", folder)
+    if dataset:
+        kaggle_runner.fetch_dataset(dataset, folder)
+    else:
+        kaggle_runner.fetch(f"{owner}/{slug}", folder)
     record = install(folder, url=url, per_skill=per_skill, context=context)
     if activate_after and (record.get("deployment") or {}).get("verdict") == "promote":
         record = activate(record["base_tag"], url=url)
@@ -220,6 +248,7 @@ def main(argv=None):
     parser.add_argument("--student", help="Ollama tag of the examined model (deliver)")
     parser.add_argument("--activate", action="store_true", help="deliver: activate when the deployment exam is won")
     parser.add_argument("--cycle", type=int, default=0, help="deliver: which cycle's examiner output to fetch")
+    parser.add_argument("--dataset", help="deliver: private dataset owner/slug holding a published delivery")
     parser.add_argument("--tag")
     parser.add_argument("--ollama-url", default="http://127.0.0.1:11434")
     parser.add_argument("--exam-per-skill", type=int, default=60)
@@ -233,10 +262,10 @@ def main(argv=None):
     elif args.command == "install":
         result = install(args.delivery, url=args.ollama_url, per_skill=args.exam_per_skill, context=args.context)
     elif args.command == "deliver":
-        if not args.owner or not args.student:
-            parser.error("deliver requires --owner and --student")
+        if not args.student or not (args.owner or args.dataset):
+            parser.error("deliver requires --student and --owner (or --dataset)")
         result = deliver(args.owner, args.student, url=args.ollama_url, per_skill=args.exam_per_skill, context=args.context,
-                         activate_after=args.activate, cycle=args.cycle)
+                         activate_after=args.activate, cycle=args.cycle, dataset=args.dataset)
     elif args.command == "activate":
         result = activate(args.tag, url=args.ollama_url)
     else:

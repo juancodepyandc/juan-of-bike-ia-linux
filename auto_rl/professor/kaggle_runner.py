@@ -342,6 +342,42 @@ def publish_adapter(owner, training_folder, *, slug="aurora-professeur-adaptateu
     return f"{owner}/{slug}"
 
 
+def publish_delivery(owner, folder, *, student, cycle=0):
+    """Upload a checked delivery (verdict, adapter, GGUF, receipts) as a PRIVATE dataset the PC installs from.
+
+    Used when the files Ollama needs were produced after the examiner's run (its own export failed):
+    the installer still checks every hash and replays the exam as served before any activation.
+    """
+    import tempfile
+    words = kernel_name("verify", student, cycle)[0].removeprefix(KERNELS["verify"][0])
+    slug, title = "aurora-professeur-livraison" + words, "Aurora Professeur Livraison" + words.replace("-", " ")
+    with tempfile.TemporaryDirectory(prefix="aurora_delivery_") as temporary:
+        staging = Path(temporary)
+        names = []
+        for path in sorted(Path(folder).iterdir()):
+            if path.is_file() and path.suffix in {".json", ".safetensors", ".gguf"}:
+                (staging / path.name).write_bytes(path.read_bytes())
+                names.append(path.name)
+        if not any(name.startswith("verdict_") for name in names) or "adapter.gguf" not in names:
+            raise ValueError("A delivery holds a verdict and the converted adapter; found " + ", ".join(names))
+        atomic_json(staging / "dataset-metadata.json", {"title": title, "id": f"{owner}/{slug}", "licenses": [{"name": "other"}]})
+        api = _api()
+        try:
+            api.dataset_status(f"{owner}/{slug}")
+            api.dataset_create_version(str(staging), version_notes=f"cycle {cycle} {student}", quiet=True)
+        except Exception:
+            api.dataset_create_new(str(staging), public=False, quiet=True)
+    return f"{owner}/{slug}"
+
+
+def fetch_dataset(reference, output):
+    """Download a private dataset (a published delivery) into ``output``."""
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    _api().dataset_download_files(reference, path=str(output), unzip=True, quiet=True)
+    return output
+
+
 def wait(reference, *, poll_seconds=60, timeout_seconds=12 * 3600, report=print):
     """Poll until the kernel leaves the queue/run states; returns the final state."""
     deadline, last = time.monotonic() + timeout_seconds, None
@@ -375,7 +411,7 @@ def fetch(reference, output):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "logs", "quota", "publish"))
+    parser.add_argument("command", choices=("build", "launch", "wait", "fetch", "status", "logs", "quota", "publish", "publish-delivery"))
     parser.add_argument("--owner")
     parser.add_argument("--role", choices=sorted(KERNELS))
     parser.add_argument("--student", default="qwen2.5:7b")
@@ -397,6 +433,11 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command == "quota":
         print(json.dumps(quota()))
+        return 0
+    if args.command == "publish-delivery":
+        if not args.owner or not args.folder:
+            parser.error("publish-delivery requires --owner and --folder")
+        print(json.dumps({"dataset": publish_delivery(args.owner, args.folder, student=args.student, cycle=args.cycle)}))
         return 0
     if args.command == "publish":
         if not args.owner or not args.training:

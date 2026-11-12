@@ -331,8 +331,9 @@ def verify(config, work, adapter, student=None, library=None, base_done=False, p
         status({"phase": "export"})
         try:
             from huggingface_hub import snapshot_download
+            # The examiner has just loaded these weights: the full snapshot is in its cache, at the pinned revision.
             snapshot = snapshot_download(config["student"]["hf"], revision=config["student"].get("revision"),
-                                         allow_patterns=["*.json"], token=os.environ.get("HF_TOKEN") or None)
+                                         token=os.environ.get("HF_TOKEN") or None)
             receipt = export(config["student"], adapter, work / "export", base_snapshot=snapshot)
             status({"phase": "export", "files": sorted(receipt["files"]), "errors": receipt["errors"]})
         except Exception as exc:
