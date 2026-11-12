@@ -46,6 +46,10 @@ STUDENTS = {
         "params_b": 79.67, "four_bit_gb": 48.0, "modules": ["code", "missions"], "attention_only": True,
         "called_by": ["agi_core/llm_gateway.py:118 (défaut du gateway)", "application/src/config/models.ts:47"],
     },
+    # Qwen3_5ForConditionalGeneration with the parameter count of Qwen/Qwen3.5-27B (read on the Hub on 12 November):
+    # AutoModelForCausalLM loads its text model, as proven on the qwen3.5:0.8b rehearsal. Access is granted on request
+    # (gated "auto") but needs the owner's token. Estimated, not measured: QLoRA preparation upcasts the two
+    # 248320 x 5120 embedding matrices to fp32 (about 10 GB) on top of about 13 GB of 4-bit weights, beyond two T4s.
     "orcarouter/Qwen3.8-27B-Uncensored": {
         "hf": "orcarouter/Qwen3.8-27B-Uncensored", "revision": "0f639a9bde23fe229a7b064b40a5153c5bec0b48",
         "params_b": 27.78, "four_bit_gb": 18.0, "gated": True, "vision": True,
@@ -76,6 +80,9 @@ REHEARSAL = {
     "qwen3:0.6b": {"hf": "Qwen/Qwen3-0.6B", "revision": "c1899de289a04d12100db370d81485cdf75e47ca", "params_b": 0.6, "four_bit_gb": 1.0},
     "qwen2.5:0.5b": {"hf": "Qwen/Qwen2.5-0.5B-Instruct", "revision": "7ae557604adf67be50417f59c2c2f167def9a775", "params_b": 0.49, "four_bit_gb": 1.0},
     "qwen2.5:1.5b": {"hf": "Qwen/Qwen2.5-1.5B-Instruct", "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306", "params_b": 1.54, "four_bit_gb": 1.8},
+    # Same architecture as the main model (Qwen3_5ForConditionalGeneration, hybrid linear/full attention): it proves
+    # loading, LoRA training and GGUF conversion for that family without the owner's token.
+    "qwen3.5:0.8b": {"hf": "Qwen/Qwen3.5-0.8B", "revision": "2fc06364715b967f1860aea9cf38778875588b17", "params_b": 0.87, "four_bit_gb": 1.0},
 }
 
 
