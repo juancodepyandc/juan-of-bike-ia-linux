@@ -1495,6 +1495,20 @@ if __name__ == "__main__":
     print(f"  WORKSPACE       = {WORKSPACE}", flush=True)
     print(f"  ComfyUI cherche = {_expected}", flush=True)
     print(f"  COMFYUI_PATH    = {COMFYUI_PATH or 'NON DETECTE'}", flush=True)
+    # Blender : une seule localisation (AURORA_BLENDER, embarque, PATH, installations,
+    # bureau ~/Bureau ou ~/Desktop) exportee dans AURORA_BLENDER pour tous les scripts lances.
+    try:
+        import sys as _sys
+        _services = os.path.join(WORKSPACE, "python-services")
+        if _services not in _sys.path:
+            _sys.path.insert(0, _services)
+        from blender_locator import ensure_env as _ensure_blender, locate as _locate_blender
+        # origine lue AVANT l'export : sinon elle vaudrait toujours « AURORA_BLENDER »
+        _bl_path, _bl_origin = _locate_blender()
+        _ensure_blender()
+        print(f"  BLENDER         = {_bl_path or 'NON DETECTE'} ({_bl_origin})", flush=True)
+    except Exception as _bl_exc:  # noqa: BLE001
+        print(f"  BLENDER         = recherche indisponible ({_bl_exc!r})", flush=True)
     # Dev auto-reload: set AURORA_BRIDGE_DEV=1 to get Flask to reload this file
     # when it changes. Off by default so the production start.bat isn't noisy.
     dev_reload = os.environ.get("AURORA_BRIDGE_DEV", "").strip() in ("1", "true", "yes")

@@ -38,15 +38,37 @@ export type FxAsk = {
 export type FxPatch = {
   active: boolean
   phase?: string
+  /** index d'étape réellement atteint (prioritaire sur l'analyse du texte de phase) */
+  phaseIndex?: number
+  /** nouvelle tentative explicite : l'étape 3D peut revenir en arrière (sinon elle ne recule pas) */
+  phaseReset?: boolean
+  /** progression globale 0..1 fournie par le producteur */
   progress?: number
+  /**
+   * 'fine' : mesure continue réelle (pas k/N, pourcentage calculé par le pipeline) ;
+   * 'stage' (défaut) : jalon d'étape. Seule une mesure fine nourrit la vitesse
+   * utilisée par l'estimation du temps restant.
+   */
+  progressKind?: 'fine' | 'stage'
+  /** avancement mesuré à l'intérieur de l'étape en cours (0..1), ex. pas de diffusion */
+  phaseFraction?: number
+  /** le module affiche déjà son contenu (flux de texte) : l'écran plein se réduit en pastille */
+  revealContent?: boolean
+  /** issue explicite pour un module sans job géré : seul 'success' alimente l'historique */
+  outcome?: 'success' | 'error' | 'cancelled'
   resultUrl?: string
-  resultKind?: 'image' | 'video'
+  /** 'mesh' : maillage 3D final, verrouillé dans l'hologramme avant de passer au viewer */
+  resultKind?: 'image' | 'video' | 'mesh'
   refs?: FxRef[]
+  /** type de sujet demandé (character, creature, product…) : règles de profil propres aux personnages */
+  subjectKind?: string
   logLine?: string
   meshUrl?: string
   meshInfo?: string
   ask?: FxAsk | null
 }
+
+export type FxEmitterOptions = Pick<FxPatch, 'phaseIndex' | 'progressKind' | 'revealContent' | 'outcome'>
 
 // Registre des reponses en attente + presence du host. Si le host n'est pas
 // monte (FX desactive), fxAsk rend null et l'appelant retombe sur sa modale
@@ -103,18 +125,31 @@ export function useGenerationFxResult(module: FxModule, active: boolean, url: st
   }, [module, active, url, kind])
 }
 
-export function useGenerationFxEmitter(module: FxModule, active: boolean, phase?: string, progress?: number): void {
+export function useGenerationFxEmitter(
+  module: FxModule,
+  active: boolean,
+  phase?: string,
+  progress?: number,
+  options?: FxEmitterOptions,
+): void {
   const was = useRef(false)
+  const phaseIndex = options?.phaseIndex
+  const progressKind = options?.progressKind
+  const revealContent = options?.revealContent
+  const outcome = options?.outcome
+  // l'issue est lue au moment de la fin, sans relancer d'émission à chaque rendu
+  const outcomeRef = useRef(outcome)
+  outcomeRef.current = outcome
   useEffect(() => {
     if (active) {
       was.current = true
-      emitGenerationFx(module, { active: true, phase, progress })
+      emitGenerationFx(module, { active: true, phase, progress, phaseIndex, progressKind, revealContent })
     } else if (was.current) {
       was.current = false
-      emitGenerationFx(module, { active: false })
+      emitGenerationFx(module, { active: false, outcome: outcomeRef.current })
     }
-  }, [module, active, phase, progress])
+  }, [module, active, phase, progress, phaseIndex, progressKind, revealContent])
   useEffect(() => () => {
-    if (was.current) emitGenerationFx(module, { active: false })
+    if (was.current) emitGenerationFx(module, { active: false, outcome: 'cancelled' })
   }, [module])
 }

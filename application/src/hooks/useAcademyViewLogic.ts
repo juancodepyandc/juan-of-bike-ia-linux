@@ -1033,8 +1033,9 @@ export function useAcademyViewLogic(): UseAcademyViewLogic {
   const [flashcardsConfidence, setFlashcardsConfidence] = useState(0)
 
   const [streaming, setStreaming] = useState(false)
-  useGenerationFxEmitter('learning', streaming)
   const [output, setOutput] = useState('')
+  // la leçon s'affiche au fil de l'eau : l'écran se réduit dès les premiers mots
+  useGenerationFxEmitter('learning', streaming, undefined, undefined, { revealContent: streaming && output.length > 0 })
   const [error, setError] = useState<string | null>(null)
   const [thinkingChars, setThinkingChars] = useState(0)
   const abortRef = useRef<AbortController | null>(null)

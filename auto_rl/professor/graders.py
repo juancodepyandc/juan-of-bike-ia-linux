@@ -626,6 +626,10 @@ def run_python(program, timeout=20):
             stream.write(program)
         env = {"PATH": os.environ.get("PATH", ""), "HOME": folder, "TMPDIR": folder,
                "PYTHONDONTWRITEBYTECODE": "1", "PYTHONIOENCODING": "utf-8"}
+        if os.name == "nt" and os.environ.get("SYSTEMROOT"):
+            # Windows Python before 3.11 seeds its hash randomisation through CryptGenRandom, which needs
+            # SYSTEMROOT: without it the child dies at start-up and every answer would be graded wrong.
+            env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
         try:
             done = subprocess.run([sys.executable, "-I", path], cwd=folder, env=env, stdin=subprocess.DEVNULL,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,

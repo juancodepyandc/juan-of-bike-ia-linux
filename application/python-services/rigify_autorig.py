@@ -137,6 +137,13 @@ def redresser_pca(glb_in: str, glb_out: str) -> dict:
 
 
 def find_blender() -> str | None:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     env_b = os.environ.get("AURORA_BLENDER") or os.environ.get("BLENDER_BIN")
     if env_b and os.path.isfile(env_b):
         return env_b

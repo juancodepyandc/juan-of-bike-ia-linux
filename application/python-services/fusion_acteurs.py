@@ -16,6 +16,21 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 _SCRIPT = r"""
 import bpy, sys, json
 args = json.loads(sys.argv[-1])
@@ -54,7 +69,7 @@ def fusionner(principal: str, acteurs: list, sortie: str,
     if not acteurs:
         return {"ok": False, "error": "aucun acteur anime a fusionner"}
     import shutil
-    blender = shutil.which("blender") or "blender"
+    blender = _aurora_blender_exe()
     with tempfile.TemporaryDirectory() as td:
         s = os.path.join(td, "f.py")
         Path(s).write_text(_SCRIPT, encoding="utf-8")
