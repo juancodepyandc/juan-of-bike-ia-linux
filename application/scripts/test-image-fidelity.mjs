@@ -37,6 +37,10 @@ test('explicit edits of the displayed image stay edits', () => {
   assert.equal(parseImageIntent('change la couleur du vase en bleu', PREVIOUS_ONLY).isEditIntent, true)
   assert.equal(parseImageIntent('écris "Bonjour" sur la pancarte', PREVIOUS_ONLY).editMode, 'text_edit')
   assert.equal(parseImageIntent('fais moi ce personnage en anime', { hasReference: true }).isEditIntent, true)
+  // un article qui introduit un attribut du rendu affiché (style, décor…) reste une retouche
+  assert.equal(parseImageIntent('une version anime', PREVIOUS_ONLY).editMode, 'restyle')
+  assert.equal(parseImageIntent('un style aquarelle', PREVIOUS_ONLY).editMode, 'restyle')
+  assert.equal(parseImageIntent('un fond bleu', PREVIOUS_ONLY).editMode, 'background_change')
 })
 
 test('a name to engrave is text, not a person to research on the web', () => {

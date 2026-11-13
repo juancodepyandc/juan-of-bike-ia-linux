@@ -99,7 +99,8 @@ class SubjectFidelityTests(unittest.TestCase):
         module_url = (APP / "src" / "services" / "imageSubjectFidelity.ts").as_uri()
         proc = subprocess.run(
             [node, "--input-type=module", "-e", script, module_url, json.dumps(PARITY_REQUESTS)],
-            cwd=APP, capture_output=True, text=True, timeout=120,
+            # Node écrit en UTF-8 ; sans encodage explicite, Windows décoderait en cp1252
+            cwd=APP, capture_output=True, text=True, encoding="utf-8", timeout=120,
         )
         if proc.returncode != 0 and "Unknown file extension" in proc.stderr:
             self.skipTest("Node sans lecture native du TypeScript (Node ≥ 22.18 requis)")

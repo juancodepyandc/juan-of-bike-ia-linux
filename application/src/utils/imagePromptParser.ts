@@ -55,11 +55,15 @@ const FRESH_CREATION_RE = /^\s*(?:(?:s'?il\s+te\s+plait\s*,?\s*)?(?:(?:fais|fait
 // la demande désigne explicitement le rendu ou l'image existante
 const REFERS_TO_EXISTING_RE = /\b(?:cette|cet|celle[- ]ci|celui[- ]ci|ceci|l'?image|la\s+photo|le\s+dessin|le\s+rendu|le\s+resultat|l'?ancien(?:ne)?|precedent(?:e)?|derniere?|la\s+meme|le\s+meme|les\s+memes|garde|garder|conserve|conserver|modifie|modifier|retouche|retoucher|change|changer|remplace|remplacer|enleve|enlever|retire|retirer|supprime|supprimer|efface|effacer|ajoute|ajouter|rajoute|rajouter|mets|mettre|place|placer|refais|refaire|encore|aussi|ecris|ecrire|sur\s+(?:la|le|les|l')\s*(?:pancarte|panneau|affiche|mur|table|tee[- ]?shirt|t[- ]?shirt|image|photo)|comme\s+(?:ca|celle|celui|avant|tout\s+a\s+l'?heure))\b/i
 
+// « une version anime », « un fond bleu », « un peu plus sombre » : l'article introduit un attribut
+// du rendu affiché (style, décor, lumière, cadrage…), pas un nouveau sujet — c'est une retouche
+const ATTRIBUTE_HEAD_RE = /^\s*(?:(?:s'?il\s+te\s+plait\s*,?\s*)?(?:(?:fais|fait|faire|cree|creer|crees|genere|generer|dessine|dessiner|imagine|imaginer|produis|realise|realiser|montre|invente|concois)(?:[- ]?(?:moi|nous))?|je\s+(?:veux|voudrais|souhaite|souhaiterais)|j'?aimerais|peux[- ]tu\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer)|tu\s+peux\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer))\s+)?(?:un|une|des|deux|trois|quatre|cinq|quelques|plusieurs|a|an|some)\s+(?:peu|version|versions|variante|variantes|variation|variations|declinaison|style|fond|arriere[- ]plan|decor|ciel|ambiance|atmosphere|eclairage|lumiere|couleur|couleurs|teinte|teintes|palette|filtre|effet|grain|contraste|cadrage|recadrage|angle|zoom|plan|pose|posture|expression|tenue|coiffure|autre|autres|nouvelle|nouveau|nouveaux|nouvelles|meilleure?|meilleurs|plus|moins|rendu|retouche|touche|finition|resolution|definition|qualite|format|vue|perspective|saison|heure|meteo|nuit|journee)\b/i
+
 /** Une nouvelle création de sujet qui ne doit pas retoucher le rendu précédent. */
 export function isFreshCreationRequest(prompt: string, options: ParseImageIntentOptions = {}): boolean {
   if (options.hasReference && !options.referenceIsPreviousOutput) return false
   const normalized = normalizeForIntent(prompt)
-  return FRESH_CREATION_RE.test(normalized) && !REFERS_TO_EXISTING_RE.test(normalized)
+  return FRESH_CREATION_RE.test(normalized) && !ATTRIBUTE_HEAD_RE.test(normalized) && !REFERS_TO_EXISTING_RE.test(normalized)
 }
 
 const REMOVAL_PATTERNS: Array<{ re: RegExp; label: string }> = [
