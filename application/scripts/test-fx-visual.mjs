@@ -76,6 +76,21 @@ try {
     await hud(page).waitFor({ state: 'detached', timeout: 6000 })
   })
 
+  await scenario('image studio follows the real ComfyUI run and reveals the result', '?mode=image-studio&module=image&stepMs=200', async (page) => {
+    // sujet verrouillé lu dans la demande, montré avant la diffusion
+    await page.getByText('vase en forme de cœur').waitFor({ timeout: 15000 })
+    await page.getByText('« rayen »').first().waitFor()
+    await page.getByText('aucune personne · aucun animal').waitFor()
+    // chaque sous-étape vient d'un nœud réellement exécuté ; l'autre rendu du serveur est ignoré
+    await page.getByText(/CHAMBRE DE DIFFUSION FLUX\.2 — DIFFUSION FLUX\.2 — PAS \d+\/12/).waitFor({ timeout: 20000 })
+    await page.getByText(/s\/pas mesuré/).waitFor()
+    await page.getByText(/aperçu latent réel · \d+ trame/).waitFor({ timeout: 15000 })
+    assert.equal(await page.getByText(/pas 7\/9/).count(), 0, 'progress of another prompt must not show')
+    await page.getByText('✓ IMAGE PRÊTE').waitFor({ timeout: 30000 })
+    await page.getByText('non exécutée').waitFor()
+    assert.equal(await page.locator('canvas').count() >= 2, true, 'ambient canvas + WebGL diffusion chamber')
+  })
+
   await scenario('queued runs show the PC position and computed wait', '?mode=queued&module=image', async (page) => {
     await page.getByText('En file · position 2 · attente ≈ 40 s').waitFor({ timeout: 8000 })
     await page.locator('svg[aria-label$="attend son tour"]').first().waitFor()

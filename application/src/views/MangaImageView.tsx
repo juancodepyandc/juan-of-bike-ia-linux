@@ -15,6 +15,8 @@ import {
 import { useModuleHistoryStore } from '../stores/moduleHistoryStore.ts'
 import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
 import { saveBlob, loadBlobUrl, pruneOldBlobs, deleteBlob } from '../utils/blobStore.ts'
+import { buildFaithfulCreationPrompt } from '../services/imagePromptBuilder.ts'
+import { detectSubjectToResearch } from '../services/selfInformedReference.ts'
 
 type Character = 'natsu' | 'lucy'
 
@@ -284,9 +286,11 @@ export default function MangaImageView() {
       const up = await ensureComfyUIRunning()
       if (!up.ok) throw new Error(up.error || 'ComfyUI indisponible')
 
-      const intent = parseImageIntent(text, { hasReference: Boolean(refFilename || current) })
+      const intent = parseImageIntent(text, { hasReference: Boolean(refFilename || current), referenceIsPreviousOutput: !refFilename && Boolean(current) })
       const cleanedText = intent.cleanedPrompt
-      const mergedNegative = buildNegativePrompt(negPrompt, intent.removals)
+      // création : sujet verrouillé (catégorie, forme, texte exact, aucune personne non demandée)
+      const faithful = intent.isEditIntent ? null : buildFaithfulCreationPrompt({ request: cleanedText })
+      const mergedNegative = [buildNegativePrompt(negPrompt, intent.removals), ...(faithful?.negativeTerms ?? [])].filter(Boolean).join(', ')
       const editDenoise = resolveReferenceDenoise(intent, refDenoise, style)
 
       let groundedReference: { filename: string; denoise?: number } | null = refFilename
@@ -310,7 +314,9 @@ export default function MangaImageView() {
         }
       }
 
-      if (!groundedReference && !intent.isEditIntent) {
+      // une référence web ne sert que pour un sujet nommé (personnage, lieu) : pour un objet
+      // décrit, la première image trouvée remplaçait la demande (vase → flacon de parfum)
+      if (!groundedReference && !intent.isEditIntent && detectSubjectToResearch(text, intent)) {
         try {
           setProgress('Recherche de reference visuelle (Aurora Connect)...')
           const { searchReferenceImages } = await import('../services/auroraExtensionBridge')
@@ -343,7 +349,7 @@ export default function MangaImageView() {
         setProgress(batch > 1 ? `Construction ${k + 1}/${batch}…` : 'Construction du workflow FLUX…')
         const dim = DIMENSIONS[dimensions]
         const workflow = createFluxWorkflow({
-          prompt: cleanedText,
+          prompt: faithful?.positive || cleanedText,
           negativePrompt: mergedNegative,
           style,
           width: dim.w,

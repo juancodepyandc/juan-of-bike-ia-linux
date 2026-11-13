@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { emitGenerationFx, useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { registerComfyRun } from '../components/generationFx/comfyProgress.ts'
 import { waitForComfyImages, type ComfyImageOutput } from '../services/comfyJobMonitor.ts'
 import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
 import { parseImageIntent, buildNegativePrompt, resolveReferenceDenoise, type ParsedImageIntent } from '../utils/imagePromptParser.ts'
@@ -44,7 +45,7 @@ import { useModuleDraftsStore } from '../stores/moduleDraftsStore.ts'
 import { saveBlob, loadBlobUrl, pruneOldBlobs } from '../utils/blobStore.ts'
 import { RANDOM_IMAGE_PROMPTS, pickRandom as pickRandomCreative } from '../utils/randomCreativePrompts.ts'
 import { readHistory, pushHistory, removeHistoryEntry, type PromptHistoryEntry } from '../utils/promptHistory.ts'
-import { buildPromptContractBlock, expandHumanImagePromptWithAI, parseBrief } from '../services/imagePromptBuilder.ts'
+import { buildFaithfulCreationPrompt, buildPositiveConstraintBlock, expandHumanImagePromptWithAI, parseBrief } from '../services/imagePromptBuilder.ts'
 import {
   buildImageAutocorrectionContract,
   buildImageConversationContext,
@@ -473,6 +474,8 @@ export function useImageViewLogic() {
   const activeJobIdRef = useRef<string | null>(null)
   const activeProjectFinishRef = useRef<((status: 'completed' | 'failed' | 'stopped') => Promise<void>) | null>(null)
 
+  // demande et format réels montrés par la chambre de diffusion de l'écran de génération
+  const fxMetaRef = useRef<{ prompt?: string; aspect?: number; refs?: { url: string; role: string }[] }>({})
   const reportImageStep = useCallback((step: 1 | 2 | 3 | 4 | 5, pct: number, label: string, logLine?: string) => {
     const clampedPct = Math.max(2, Math.min(100, Math.round(pct)))
     const stepPrefix = /^Étape\s+\d\/5/i.test(label) ? label : `Étape ${step}/5 · ${label}`
@@ -482,8 +485,12 @@ export function useImageViewLogic() {
     emitGenerationFx('image', {
       active: true,
       phase: stepPrefix,
+      phaseIndex: step - 1,
       progress: clampedPct / 100,
       logLine: logLine ?? stepPrefix,
+      prompt: fxMetaRef.current.prompt,
+      aspect: fxMetaRef.current.aspect,
+      refs: fxMetaRef.current.refs,
     })
     const jobId = activeJobIdRef.current
     const mappedPhase = step <= 2 ? 'prepare' : step <= 4 ? 'generate' : 'cleanup'
@@ -628,6 +635,10 @@ export function useImageViewLogic() {
 
     const jobId = `image_${Date.now().toString(36)}`
     activeJobIdRef.current = jobId
+    {
+      const d = DIMENSIONS[dimensions] || DIMENSIONS.square
+      fxMetaRef.current = { prompt: text, aspect: d.w / Math.max(1, d.h), refs: refPreview ? [{ url: refPreview, role: 'reference' }] : undefined }
+    }
     const activeFlux2ModelLabel = `${IMAGE_PRIMARY_ENGINE} (${IMAGE_UNET_MODEL})`
     useAppStore.getState().addGenerationJob({
       id: jobId,
@@ -690,7 +701,9 @@ export function useImageViewLogic() {
       if (!up.ok) throw new Error(up.error || 'ComfyUI indisponible')
 
       const hasReferenceCandidate = Boolean(refFilename || current)
-      const intent = parseImageIntent(text, { hasReference: hasReferenceCandidate })
+      // l'image affichée du rendu précédent n'est pas une référence jointe : une nouvelle
+      // demande d'objet ne la retouche que si elle la désigne (« cette image », « modifie »…)
+      const intent = parseImageIntent(text, { hasReference: hasReferenceCandidate, referenceIsPreviousOutput: !refFilename && Boolean(current) })
       const cleanedText = intent.cleanedPrompt
       const activeSessionAtStart = useModuleHistoryStore.getState().getActiveSession('image')
       const previousMessages = useModuleHistoryStore.getState().getRecentMessages('image', 6)
@@ -758,18 +771,34 @@ export function useImageViewLogic() {
       })
       setLastExpandedNote(humanExpansion.sceneCompletionNote)
 
-      const promptContract = buildPromptContractBlock(parseBrief(text))
-      const workflowPrompt = [
-        humanExpansion.expandedPrompt,
-        promptContract,
-        sessionContract,
-      ].filter(Boolean).join('\n\n')
+      // Création : sujet verrouillé + description contrôlée + demande d'origine ; aucune liste
+      // « à éviter » ni consigne de retouche humaine dans le prompt positif (l'encodeur de
+      // FLUX.2 les lit comme du contenu : c'est ainsi qu'une personne apparaissait sur un vase).
+      const faithful = buildFaithfulCreationPrompt({ request: cleanedText, expanded: humanExpansion.expandedPrompt })
+      const workflowPrompt = intent.isEditIntent
+        ? [
+            humanExpansion.expandedPrompt,
+            buildPositiveConstraintBlock(parseBrief(text)),
+            sessionContract,
+          ].filter(Boolean).join('\n\n')
+        : faithful.positive
+      if (!intent.isEditIntent) {
+        const f = faithful.fidelity
+        const lockSummary = [
+          f.nounEn ? `objet « ${f.nounEn}${f.shapeEn ? ` en forme de ${f.shapeEn}` : ''} »` : 'sujet libre',
+          f.inscriptions.length ? `texte exact ${f.inscriptions.map((t) => `« ${t} »`).join(', ')}` : '',
+          f.objectOnly ? 'aucune personne ni animal' : '',
+        ].filter(Boolean).join(' · ')
+        reportImageStep(1, 18, `Sujet verrouillé : ${lockSummary}`, `Sujet verrouillé avant diffusion : ${lockSummary}${humanExpansion.wasExpandedByAI ? '' : ` — ${humanExpansion.sceneCompletionNote}`}`)
+      }
 
       if (styleResolution.overrideReason) {
         reportImageStep(1, 19, styleResolution.overrideReason, styleResolution.overrideReason)
       }
 
-      const mergedNegative = buildNegativePrompt(negPrompt, intent.removals)
+      const mergedNegative = intent.isEditIntent
+        ? buildNegativePrompt(negPrompt, intent.removals)
+        : [buildNegativePrompt(negPrompt, intent.removals), ...faithful.negativeTerms].filter(Boolean).join(', ')
       const editDenoise = resolveReferenceDenoise(intent, refDenoise, effectiveStyle)
       const targetToResearch = detectSubjectToResearch(text, intent)
 
@@ -788,7 +817,11 @@ export function useImageViewLogic() {
             const blob = await response.blob()
             const file = new File([blob], `aurora_current_${Date.now()}.png`, { type: blob.type || 'image/png' })
             const uploaded = await comfyuiUploadImage(file)
-            if (uploaded?.name) groundedReference = { filename: uploaded.name, denoise: editDenoise }
+            if (uploaded?.name) {
+              groundedReference = { filename: uploaded.name, denoise: editDenoise }
+              // l'image réellement conditionnée est montrée glissant dans la plaque
+              fxMetaRef.current = { ...fxMetaRef.current, refs: [{ url: current.url, role: 'reference' }] }
+            }
           }
         } catch {
         }
@@ -1014,6 +1047,8 @@ export function useImageViewLogic() {
             const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
             const promptId = parsed?.prompt_id as string | undefined
             if (!promptId) throw new Error('ComfyUI n\'a pas retourné de prompt_id')
+            // l'écran suit ce graphe précis : nœuds réels, pas k/N, étape « Édition Kontext »
+            registerComfyRun({ promptId, module: 'image', workflow: stageWorkflow, phaseIndex: 3, batchLabel: batch > 1 ? `${k + 1}/${batch}` : undefined })
 
             try {
               localStorage.setItem('aurora.pendingComfyPrompt.v1', JSON.stringify({
@@ -1092,16 +1127,18 @@ export function useImageViewLogic() {
 
         reportImageStep(
           useKontext ? 4 : 3,
-          useKontext ? 82 : 38,
+          useKontext ? 81 : 36,
           useKontext
-            ? (batch > 1 ? `Édition Kontext ${k + 1}/${batch} — envoi à ComfyUI…` : 'Édition Kontext (modification réelle sans hallucination)…')
-            : (batch > 1 ? `Diffusion FLUX.2-dev ${k + 1}/${batch} — envoi à ComfyUI…` : 'Diffusion FLUX.2-dev — envoi du workflow à ComfyUI…'),
+            ? (batch > 1 ? `Édition Kontext ${k + 1}/${batch} — envoi à ComfyUI…` : 'Édition Kontext — envoi du graphe à ComfyUI…')
+            : (batch > 1 ? `Diffusion FLUX.2-dev ${k + 1}/${batch} — envoi à ComfyUI…` : 'Diffusion FLUX.2-dev — envoi du graphe à ComfyUI…'),
         )
         const queueResponse = await comfyuiQueuePrompt(workflow)
         const parsed = typeof queueResponse === 'string' ? JSON.parse(queueResponse) : queueResponse
         const promptId = parsed?.prompt_id as string | undefined
         if (!promptId) throw new Error('ComfyUI n\'a pas retourné de prompt_id')
         pendingPromptId = promptId
+        // l'écran suit ce graphe précis : file, chargement du modèle, encodage, pas k/N, décodage
+        registerComfyRun({ promptId, module: 'image', workflow, phaseIndex: useKontext ? 3 : 2, batchLabel: batch > 1 ? `${k + 1}/${batch}` : undefined })
 
         try {
           localStorage.setItem('aurora.pendingComfyPrompt.v1', JSON.stringify({
@@ -1110,11 +1147,12 @@ export function useImageViewLogic() {
         } catch {
         }
 
+        // graphe accepté : la suite (chargement, encodage, pas, décodage) vient des événements ComfyUI
         reportImageStep(
           useKontext ? 4 : 3,
-          useKontext ? 85 : 42,
-          batch > 1 ? `Diffusion FLUX.2-dev (${k + 1}/${batch}) — calcul en cours…` : 'Diffusion FLUX.2-dev en cours (Mistral-3 Small + VAE FLUX.2)…',
-          `Exécution ComfyUI FLUX.2-dev #${promptId.slice(0, 8)} en cours`,
+          useKontext ? 81 : 36,
+          batch > 1 ? `Graphe ${k + 1}/${batch} accepté par ComfyUI — en attente d’exécution…` : 'Graphe accepté par ComfyUI — en attente d’exécution…',
+          `Graphe ComfyUI #${promptId.slice(0, 8)} accepté`,
         )
         const filenames = await waitForComfyOutput(promptId, ac.signal)
 

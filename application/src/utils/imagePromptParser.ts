@@ -42,6 +42,24 @@ export interface ParsedImageIntent {
 
 export interface ParseImageIntentOptions {
   hasReference?: boolean
+  /**
+   * La seule « référence » est l'image affichée du rendu précédent (aucune image
+   * jointe par l'utilisateur). Une nouvelle demande d'objet n'est alors pas une
+   * retouche de ce rendu, sauf si elle le désigne (« cette image », « modifie »…).
+   */
+  referenceIsPreviousOutput?: boolean
+}
+
+// « fais-moi un vase… », « crée une tasse… », « un vase en forme de cœur… » : nouveau sujet
+const FRESH_CREATION_RE = /^\s*(?:(?:s'?il\s+te\s+plait\s*,?\s*)?(?:(?:fais|fait|faire|cree|creer|crees|genere|generer|dessine|dessiner|imagine|imaginer|produis|realise|realiser|montre|invente|concois)(?:[- ]?(?:moi|nous))?|je\s+(?:veux|voudrais|souhaite|souhaiterais)|j'?aimerais|peux[- ]tu\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer)|tu\s+peux\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer))\s+)?(?:un|une|des|deux|trois|quatre|cinq|quelques|plusieurs|a|an|some)\s+/i
+// la demande désigne explicitement le rendu ou l'image existante
+const REFERS_TO_EXISTING_RE = /\b(?:cette|cet|celle[- ]ci|celui[- ]ci|ceci|l'?image|la\s+photo|le\s+dessin|le\s+rendu|le\s+resultat|l'?ancien(?:ne)?|precedent(?:e)?|derniere?|la\s+meme|le\s+meme|les\s+memes|garde|garder|conserve|conserver|modifie|modifier|retouche|retoucher|change|changer|remplace|remplacer|enleve|enlever|retire|retirer|supprime|supprimer|efface|effacer|ajoute|ajouter|rajoute|rajouter|mets|mettre|place|placer|refais|refaire|encore|aussi|ecris|ecrire|sur\s+(?:la|le|les|l')\s*(?:pancarte|panneau|affiche|mur|table|tee[- ]?shirt|t[- ]?shirt|image|photo)|comme\s+(?:ca|celle|celui|avant|tout\s+a\s+l'?heure))\b/i
+
+/** Une nouvelle création de sujet qui ne doit pas retoucher le rendu précédent. */
+export function isFreshCreationRequest(prompt: string, options: ParseImageIntentOptions = {}): boolean {
+  if (options.hasReference && !options.referenceIsPreviousOutput) return false
+  const normalized = normalizeForIntent(prompt)
+  return FRESH_CREATION_RE.test(normalized) && !REFERS_TO_EXISTING_RE.test(normalized)
 }
 
 const REMOVAL_PATTERNS: Array<{ re: RegExp; label: string }> = [
@@ -206,17 +224,26 @@ function detectMode(prompt: string, removals: string[], additions: string[], rep
   const hasReplicationCue = REPLICATION_PATTERN.test(normalized)
   const hasAddCommand = ADD_COMMAND_PATTERN.test(normalized)
 
+  // « fais-moi un vase avec l'inscription X » : création neuve, le texte fait partie du sujet
+  if (isFreshCreationRequest(prompt, options)) return 'create'
   if (removals.length > 0) return 'remove_element'
   if (isBackgroundEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'background_change'
   if (replacements.length > 0) return 'replace_element'
-  if (TEXT_EDIT_PATTERN.test(normalized) && !NEGATED_TEXT_PATTERN.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))) return 'text_edit'
+  if (
+    TEXT_EDIT_PATTERN.test(normalized)
+    && !NEGATED_TEXT_PATTERN.test(normalized)
+    && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))
+    // sans image jointe, un objet décrit « avec écrit X » est une création, pas une retouche du rendu affiché
+    && (!options.hasReference || !options.referenceIsPreviousOutput || REFERS_TO_EXISTING_RE.test(normalized))
+    && (options.hasReference || REFERS_TO_EXISTING_RE.test(normalized) || hasAddCommand)
+  ) return 'text_edit'
   if (SCENE_PATTERN.test(normalized)) return 'scene_transform'
   if (hasReplicationCue && (options.hasReference || removals.length === 0)) {
     if (isRestyleEdit && EXPLICIT_RESTYLE_GENRE.test(normalized) && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
     if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
     return 'replicate'
   }
-  if (additions.length > 0 && (hasAddCommand || options.hasReference)) return 'add_element'
+  if (additions.length > 0 && (hasAddCommand || (options.hasReference && (!options.referenceIsPreviousOutput || REFERS_TO_EXISTING_RE.test(normalized))))) return 'add_element'
   if (isRestyleEdit && (options.hasReference || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
   if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
   if (REPAIR_PATTERN.test(normalized)) return 'repair_cleanup'

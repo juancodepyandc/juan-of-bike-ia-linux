@@ -62,6 +62,10 @@ export type FxPatch = {
   refs?: FxRef[]
   /** type de sujet demandé (character, creature, product…) : règles de profil propres aux personnages */
   subjectKind?: string
+  /** demande réelle de l'utilisateur (module Image : mots montrés puis absorbés à l'encodage) */
+  prompt?: string
+  /** rapport largeur/hauteur de l'image demandée */
+  aspect?: number
   logLine?: string
   meshUrl?: string
   meshInfo?: string

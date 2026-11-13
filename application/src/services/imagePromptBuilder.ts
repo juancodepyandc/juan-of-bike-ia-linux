@@ -1,4 +1,15 @@
 import { analyzePromptOntologySync, translateFrenchSubjectToEnglish } from './cognitivePromptDirector.ts'
+import { extractInscriptionTexts } from '../utils/inscriptionText.ts'
+import {
+  analyzeSubjectFidelity,
+  buildInscriptionLine,
+  buildSubjectLockLine,
+  buildVerbatimRequestLine,
+  checkExpansionFidelity,
+  fidelityNegativeTerms,
+  stripUnrequestedHumans,
+  type SubjectFidelity,
+} from './imageSubjectFidelity.ts'
 
 export type ImageBrief = {
   subject: string
@@ -378,7 +389,7 @@ function buildNegative(style?: ImageStyle, brief: ImageBrief = { subject: '' }):
   const allowsText = Boolean(
     (brief.exactText && brief.exactText.length > 0)
     || style === 'technical-schema'
-    || /\b(label|legend|legende|texte exact|typography|poster|affiche)\b/i.test(stripAccents(brief.subject)),
+    || /\b(label|legend|legende|texte exact|typography|poster|affiche|inscriptions?|engraved|lettering)\b/i.test(stripAccents(brief.subject)),
   )
   const genericText = allowsText
     ? ['random extra text', 'misspelled text', 'illegible typography', 'unrequested logo']
@@ -629,7 +640,7 @@ export function parseBrief(raw: string): ImageBrief {
   const subject = stripNegativeClauses(trimmed)
   const normalised = stripAccents(subject)
   const negativeHints = extractNegativeHints(trimmed)
-  const exactText = extractExactText(trimmed)
+  const exactText = dedupe([...extractExactText(trimmed), ...extractInscriptionTexts(trimmed)])
   const countHints = extractCountHints(trimmed)
   const layoutHints = extractLayoutHints(trimmed)
   const backgroundHints = extractBackgroundHints(trimmed)
@@ -780,7 +791,53 @@ export function buildContextualSceneCompletion(
   if (style && /anime|manga/i.test(style)) {
     return 'complete illustrated background environment with architectural or natural depth layers, expressive atmospheric lighting, and cohesive color harmony across the entire frame'
   }
+  // objet seul : un décor simple qui le sert, jamais une scène peuplée inventée
+  if (analyzeSubjectFidelity(rawPrompt).objectOnly) {
+    return 'simple coherent setting that serves the object: it rests on a clean surface in front of a softly blurred neutral background, natural soft key light, gentle contact shadow, the object fills the frame and stays the only subject'
+  }
   return 'complete, richly composed surrounding environment with coherent foreground, midground, and background depth, natural directional lighting, and authentic surface textures across the entire frame'
+}
+
+/**
+ * Lignes positives seulement (texte exact, nombres, mise en page, fond) : un
+ * prompt positif FLUX.2 ne doit pas contenir de liste « à éviter », car
+ * l'encodeur lit ces mots comme du contenu (« extra fingers », « wax face »…).
+ * Les traits à éviter vont dans le vrai prompt négatif (CFGGuider).
+ */
+export function buildPositiveConstraintBlock(brief: ImageBrief): string {
+  const parts = buildConstraintPositiveParts(brief)
+  return parts.length ? `Constraints: ${parts.join('; ')}.` : ''
+}
+
+export type FaithfulCreationPrompt = {
+  positive: string
+  /** termes à ajouter au vrai prompt négatif */
+  negativeTerms: string[]
+  fidelity: SubjectFidelity
+}
+
+/**
+ * Prompt positif d'une création, dans l'ordre que l'encodeur pondère le plus :
+ * 1. le sujet verrouillé (catégorie, forme, matière, texte exact) ;
+ * 2. la description développée (contrôlée, sans personne inventée) ;
+ * 3. les contraintes positives ;
+ * 4. la demande d'origine telle qu'écrite (Mistral-3 lit le français).
+ * Partagé par le module Image (natif, web/tunnel), la vue Manga et le CLI.
+ */
+export function buildFaithfulCreationPrompt(input: { request: string; expanded?: string; extra?: string[] }): FaithfulCreationPrompt {
+  const fidelity = analyzeSubjectFidelity(input.request)
+  const lock = buildSubjectLockLine(fidelity)
+  const expanded = stripUnrequestedHumans((input.expanded || '').trim(), fidelity)
+  const constraints = buildPositiveConstraintBlock(parseBrief(input.request))
+  const positive = [
+    lock,
+    expanded,
+    ...(input.extra ?? []),
+    lock ? '' : buildInscriptionLine(fidelity),
+    constraints,
+    buildVerbatimRequestLine(input.request),
+  ].filter((part) => Boolean(part && part.trim())).join('\n\n')
+  return { positive, negativeTerms: fidelityNegativeTerms(fidelity), fidelity }
 }
 
 /**
@@ -828,6 +885,7 @@ export async function expandHumanImagePromptWithAI(
         ? 'edit'
         : options.mode
 
+  const fidelity = analyzeSubjectFidelity(trimmed)
   const fallbackCompletion = buildContextualSceneCompletion(
     trimmed,
     ontology.effectiveRenderMode === 'native_anime_stylized' ? 'anime-clean' : options.requestedStyle,
@@ -854,11 +912,14 @@ export async function expandHumanImagePromptWithAI(
             ? 'HYBRID ANIME + REAL HUMAN SKIN TEXTURES (preserve iconic anime silhouette/hair/costume, apply realistic human skin pores and physical fabrics)'
             : options.requestedStyle && options.requestedStyle !== 'none'
               ? options.requestedStyle
-              : 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic skin/surface micro-texture)'
+              : fidelity.wantsHuman
+              ? 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic skin/surface micro-texture)'
+              : 'NATIVE PHOTOREALISTIC (authentic physical materials, natural optics, realistic surface micro-texture)'
       const refBlock = options.referenceVisionSummary
         ? `\nREFERENCE IMAGE VISUAL ANALYSIS:\n${options.referenceVisionSummary.trim()}\n`
         : ''
-      const convBlock = options.conversationContext
+      // une création neuve ne reprend pas les sujets des demandes précédentes (source de dérive)
+      const convBlock = options.conversationContext && effectiveMode !== 'create'
         ? `\nRECENT SESSION CONTEXT:\n${options.conversationContext.trim()}\n`
         : ''
 
@@ -872,10 +933,20 @@ export async function expandHumanImagePromptWithAI(
           `CONSERVATIVE MODIFICATION MODE (ZERO HALLUCINATION): The user wants to modify or adapt ("${trimmed}" -> "${ontology.modificationDeltaEn || ontology.englishSubject}") while strictly locking the existing subject identity, pose, and unmentioned scene elements. ` +
           `Apply ONLY the requested change in ${styleLabel} without inventing unrelated objects.`
       } else {
+        const lockLine = buildSubjectLockLine(fidelity)
         modeDirective =
-          `COGNITIVE CREATION MODE: The user requested ("${trimmed}" -> "${ontology.englishSubject}"). ` +
+          `FAITHFUL CREATION MODE: The user requested ("${trimmed}" -> "${ontology.englishSubject}"). ` +
+          (lockLine ? `SUBJECT LOCK (must be respected word for word): ${lockLine} ` : '') +
           `ONTOLOGY DIRECTIVE: ${ontology.styleDirectiveEn} ` +
-          `Expand this short human request into a rich, fluent English visual brief (3 to 5 dense sentences): specify lighting, composition, and a COMPLETE, coherent foreground-to-background environment.`
+          `Translate and expand this request into a fluent English visual brief (3 to 5 sentences) that describes ONLY what was requested: ` +
+          `the exact object category, shape, material, colors and exact lettering, then lighting, camera framing and ` +
+          (fidelity.objectOnly
+            ? 'a simple, coherent setting that serves the object (surface and softly blurred background). '
+            : 'a coherent environment consistent with the request. ') +
+          `Never change the object into a neighbouring category (a vase stays a vase, never a bottle or flask). ` +
+          (!fidelity.wantsHuman ? 'Do not add any person, face, hands, body or figure. ' : '') +
+          (!fidelity.wantsAnimal ? 'Do not add any animal. ' : '') +
+          'Do not add objects that were not requested.'
       }
 
       const llmPrompt = [
@@ -886,7 +957,12 @@ export async function expandHumanImagePromptWithAI(
         'ABSOLUTE RULES:',
         '1. Write ONLY in fluent, natural English (3 to 5 dense descriptive sentences). Never output French words or robotic tag spam ("8k, masterpiece, trending...").',
         '2. Strictly obey the ONTOLOGY DIRECTIVE: if the subject is an anime character without an explicit real-human-texture override, keep it 100% authentic anime/manga (no photorealistic skin pores). Only apply real human skin textures to an anime character if hybrid_anime_with_real_textures is active.',
-        '3. Ensure the background and surrounding environment are fully realized and coherent with the subject.',
+        fidelity.objectOnly
+          ? '3. Keep the setting simple and coherent: the requested object stays the only subject.'
+          : '3. Ensure the background and surrounding environment are fully realized and coherent with the subject.',
+        fidelity.inscriptions.length
+          ? `3b. The exact text ${fidelity.inscriptions.map((t) => `"${t}"`).join(', ')} must appear verbatim, in quotes, spelled exactly.`
+          : '',
         '4. Reply ONLY with the final English visual prompt, without quotes or preamble.',
         `USER REQUEST (FR/EN): ${trimmed}`,
         `TRANSLATED CORE & CANONICAL LORE (EN): ${ontology.englishSubject}`,
@@ -903,6 +979,16 @@ export async function expandHumanImagePromptWithAI(
         .replace(/^(?:prompt|visual prompt|description)\s*:\s*/i, '')
         .trim()
 
+      // l'expansion est refusée si elle invente une personne, perd l'objet ou le change de catégorie
+      const check = effectiveMode === 'create' ? checkExpansionFidelity(cleaned, fidelity) : { ok: true, reasons: [] as string[] }
+      if (cleaned.length >= 28 && !check.ok) {
+        return {
+          expandedPrompt: `${ontology.englishExpandedPrompt} ${fallbackCompletion}.`.replace(/\s+/g, ' ').trim(),
+          intentMode: effectiveMode,
+          wasExpandedByAI: false,
+          sceneCompletionNote: `Expansion IA écartée (${check.reasons.join(', ')}) : description fidèle déterministe utilisée.`,
+        }
+      }
       if (cleaned.length >= 28) {
         return {
           expandedPrompt: `${cleaned} ${ontology.styleDirectiveEn}`.trim(),

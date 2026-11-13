@@ -15,6 +15,58 @@ const q = new URLSearchParams(location.search)
 const mode = q.get('mode') || 'gallery'
 const seedHistory = q.get('history') !== '0'
 
+// ── Module Image : faux serveur ComfyUI qui rejoue la séquence réelle de messages
+// d'une exécution (file, nœuds, pas k/N, aperçus binaires, fin) sur le vrai graphe
+// FLUX.2 produit par createFluxWorkflow. Installé avant que l'écran ne se connecte.
+type FakeSocket = { onopen?: () => void; onmessage?: (e: { data: unknown }) => void; onclose?: () => void; onerror?: () => void; binaryType: string; close: () => void }
+const fakeSockets: FakeSocket[] = []
+if (mode === 'image-studio') {
+  class FakeWS implements FakeSocket {
+    binaryType = 'blob'
+    onopen?: () => void
+    onmessage?: (e: { data: unknown }) => void
+    onclose?: () => void
+    onerror?: () => void
+    constructor() { fakeSockets.push(this); setTimeout(() => this.onopen?.(), 10) }
+    close() { /* fin */ }
+  }
+  ;(window as unknown as { WebSocket: unknown }).WebSocket = FakeWS
+}
+function wsSend(msg: unknown) {
+  for (const s of fakeSockets) s.onmessage?.({ data: msg instanceof ArrayBuffer ? msg : JSON.stringify(msg) })
+}
+function heartVase(blur = 0): string {
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 512
+  const g = c.getContext('2d')!
+  const bg = g.createLinearGradient(0, 0, 0, 512)
+  bg.addColorStop(0, '#d9d2c7'); bg.addColorStop(1, '#a89c8c')
+  g.fillStyle = bg; g.fillRect(0, 0, 512, 512)
+  g.fillStyle = '#6d5a48'; g.fillRect(0, 400, 512, 112)
+  if (blur) g.filter = `blur(${blur}px)`
+  g.fillStyle = '#c0392b'
+  g.beginPath()
+  g.moveTo(256, 410)
+  g.bezierCurveTo(90, 300, 120, 140, 200, 140)
+  g.bezierCurveTo(240, 140, 256, 170, 256, 190)
+  g.bezierCurveTo(256, 170, 272, 140, 312, 140)
+  g.bezierCurveTo(392, 140, 422, 300, 256, 410)
+  g.fill()
+  g.fillStyle = '#8e2a20'; g.fillRect(226, 118, 60, 30)
+  g.fillStyle = '#f5c451'; g.font = '600 38px Georgia'; g.textAlign = 'center'; g.fillText('rayen', 256, 290)
+  return c.toDataURL('image/jpeg', 0.8)
+}
+async function previewFrame(blur: number): Promise<ArrayBuffer> {
+  const jpeg = await (await fetch(heartVase(blur))).arrayBuffer()
+  const out = new Uint8Array(8 + jpeg.byteLength)
+  const v = new DataView(out.buffer)
+  v.setUint32(0, 1) // aperçu
+  v.setUint32(4, 1) // JPEG
+  out.set(new Uint8Array(jpeg), 8)
+  return out.buffer
+}
+
 function figure(view: 'face' | 'droite' | 'dos'): string {
   const c = document.createElement('canvas')
   c.width = 360
@@ -130,6 +182,48 @@ function Scenario() {
             emitGenerationFx('3d', { active: false, resultUrl: glb, resultKind: 'mesh', outcome: 'success' })
           }
         }
+      } else if (mode === 'image-studio') {
+        const { createFluxWorkflow } = await import('../../src/utils/fluxWorkflow.ts')
+        const { registerComfyRun } = await import('../../src/components/generationFx/comfyProgress.ts')
+        const prompt = 'un vase en forme de coeur avec inscriptions rayen'
+        const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+        const emit = (step: number, pct: number, label: string, logLine?: string) =>
+          emitGenerationFx('image', { active: true, phase: `Étape ${step}/5 · ${label}`, phaseIndex: step - 1, progress: pct / 100, logLine: logLine ?? label, prompt, aspect: 1 })
+        emit(1, 8, 'Analyse du prompt & vérification de ComfyUI (FLUX.2-dev)…')
+        await wait(900)
+        emit(1, 18, 'Sujet verrouillé : objet « vase en forme de heart » · texte exact « rayen » · aucune personne ni animal')
+        await wait(700)
+        emit(3, 36, 'Diffusion FLUX.2-dev — envoi du graphe à ComfyUI…')
+        const steps = Number(q.get('steps') || 12)
+        const wf = createFluxWorkflow({ prompt, width: 1024, height: 1024, steps, filenamePrefix: 'harness', style: 'none' }) as Record<string, { class_type: string }>
+        const idOf = (re: RegExp) => Object.entries(wf).find(([, n]) => re.test(n.class_type))?.[0] ?? '0'
+        const pid = 'harness-prompt-0001'
+        registerComfyRun({ promptId: pid, module: 'image', workflow: wf, phaseIndex: 2 })
+        emit(3, 36, 'Graphe accepté par ComfyUI — en attente d’exécution…')
+        // un autre rendu en cours sur le serveur : ses messages ne doivent pas piloter l'écran
+        wsSend({ type: 'progress', data: { value: 7, max: 9, node: '99', prompt_id: 'autre-rendu' } })
+        wsSend({ type: 'status', data: { status: { exec_info: { queue_remaining: 2 } } } })
+        await wait(Number(q.get('queueMs') || 600))
+        wsSend({ type: 'execution_start', data: { prompt_id: pid } })
+        wsSend({ type: 'executing', data: { node: idOf(/^UnetLoaderGGUF|^UNETLoader/), prompt_id: pid } })
+        await wait(Number(q.get('loadMs') || 1400))
+        wsSend({ type: 'executing', data: { node: idOf(/^CLIPTextEncode/), prompt_id: pid } })
+        await wait(Number(q.get('encodeMs') || 900))
+        const sampler = idOf(/Sampler/)
+        wsSend({ type: 'executing', data: { node: sampler, prompt_id: pid } })
+        for (let k = 1; k <= steps; k++) {
+          await wait(Number(q.get('stepMs') || 260))
+          wsSend({ type: 'progress', data: { value: k, max: steps, node: sampler, prompt_id: pid } })
+          if (k % 3 === 0 && q.get('previews') !== '0') wsSend(await previewFrame(Math.max(0, 24 - k * 2)))
+        }
+        if (q.get('hold') === 'sampling') return
+        wsSend({ type: 'executing', data: { node: idOf(/VAEDecode/), prompt_id: pid } })
+        await wait(700)
+        wsSend({ type: 'executed', data: { node: idOf(/^SaveImage/), prompt_id: pid, output: {} } })
+        wsSend({ type: 'executing', data: { node: null, prompt_id: pid } })
+        emit(5, 93, 'Décodage VAE FLUX.2 & contrôle qualité anti-écran-noir…')
+        await wait(500)
+        emitGenerationFx('image', { active: false, resultUrl: heartVase(0), resultKind: 'image', outcome: 'success' })
       } else if (mode === 'image') {
         emitGenerationFx('image', { active: true, phase: 'Étape 3/5 · Diffusion FLUX — pas 12/28 (43%)', progress: 0.57, logLine: 'Diffusion neuronale FLUX : pas 12/28 (43%)' })
       } else if (mode === 'queued') {

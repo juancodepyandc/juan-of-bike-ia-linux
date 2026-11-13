@@ -27,6 +27,8 @@
  *      English descriptions. Translates and expands short human ideas into complete English production briefs.
  */
 
+import { extractInscriptionTexts } from '../utils/inscriptionText.ts'
+
 export type SubjectOntology =
   | 'anime_manga_character'
   | 'game_character_or_asset'
@@ -298,6 +300,64 @@ const FR_TO_EN_PHRASES: Array<[RegExp, string]> = [
   [/\bgarde\s+le\s+meme\b/gi, 'preserve the exact same'],
 ]
 
+// Formes, matières et textes à écrire : traduits avant le nettoyage mot à mot,
+// sinon « un vase en forme de coeur » devenait « a vase into forme de coeur ».
+const FR_SHAPE_WORDS: Record<string, string> = {
+  coeur: 'heart', etoile: 'star', lune: 'crescent moon', cercle: 'circle', rond: 'round', boule: 'sphere',
+  carre: 'square', cube: 'cube', goutte: 'teardrop', fleur: 'flower', rose: 'rose', papillon: 'butterfly',
+  diamant: 'diamond', spirale: 'spiral', triangle: 'triangle', ovale: 'oval', oeuf: 'egg', chat: 'cat',
+  hibou: 'owl', chouette: 'owl', coquillage: 'seashell', feuille: 'leaf', nuage: 'cloud', arbre: 'tree',
+  pomme: 'apple', hexagone: 'hexagon', vague: 'wave', crane: 'skull', main: 'hand', visage: 'face',
+}
+const FR_MATERIAL_PHRASES: Array<[RegExp, string]> = [
+  [/\ben\s+verre\s+souffle\b/gi, 'made of hand-blown glass'],
+  [/\ben\s+verre\b/gi, 'made of glass'],
+  [/\ben\s+cristal\b/gi, 'made of crystal'],
+  [/\ben\s+ceramique\b/gi, 'made of ceramic'],
+  [/\ben\s+porcelaine\b/gi, 'made of porcelain'],
+  [/\ben\s+terre\s+cuite\b/gi, 'made of terracotta'],
+  [/\ben\s+bois\b/gi, 'made of wood'],
+  [/\ben\s+marbre\b/gi, 'made of marble'],
+  [/\ben\s+pierre\b/gi, 'made of stone'],
+  [/\ben\s+metal\b/gi, 'made of metal'],
+  [/\ben\s+or\b/gi, 'made of gold'],
+  [/\ben\s+argent\b/gi, 'made of silver'],
+  [/\ben\s+cuivre\b/gi, 'made of copper'],
+  [/\ben\s+bronze\b/gi, 'made of bronze'],
+  [/\ben\s+cuir\b/gi, 'made of leather'],
+  [/\bvase(s)?\b/gi, 'vase$1'],
+  [/\bflacon(s)?\b/gi, 'small stoppered bottle$1'],
+  [/\bbouteille(s)?\b/gi, 'bottle$1'],
+  [/\btasse(s)?\b/gi, 'cup$1'],
+  [/\bbol(s)?\b/gi, 'bowl$1'],
+  [/\bbougie(s)?\b/gi, 'candle$1'],
+  [/\bbague(s)?\b/gi, 'ring$1'],
+  [/\bcollier(s)?\b/gi, 'necklace$1'],
+  [/\bgateau(x)?\b/gi, 'cake'],
+  [/\bplaque(s)?\b/gi, 'plaque$1'],
+  [/\blampe(s)?\b/gi, 'lamp$1'],
+  [/\bboite(s)?\b/gi, 'box'],
+  [/\bassiette(s)?\b/gi, 'plate$1'],
+  [/\btheiere(s)?\b/gi, 'teapot$1'],
+  [/\bdessus\b/gi, 'on it'],
+  [/\bgrave(?:e|s|es)?\b/gi, 'engraved'],
+  [/\bdore(?:e|s|es)?\b/gi, 'golden'],
+]
+
+function translateShapesAndInscriptions(text: string): string {
+  let out = text.replace(/\ben\s+forme\s+(?:de\s+|d['’ ]\s*)([a-z]+?)(s|x)?\b/gi, (whole, word: string) => {
+    const en = FR_SHAPE_WORDS[word.toLowerCase()]
+    return en ? `${en}-shaped` : `shaped like a "${word}"`
+  })
+  // le texte à écrire est conservé tel quel, entre guillemets
+  for (const t of extractInscriptionTexts(text)) {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    out = out.replace(new RegExp(`(?:avec\\s+)?(?:l['’]\\s*|les?\\s+|la\\s+)?(?:inscriptions?|ecrit(?:e|es|s)?|grav(?:e|ee|es|ees|ure)|texte|nom|prenom|mot|initiales?)\\s*(?::\\s*)?(?:(?:le|la|les|l['’])\\s*)?(?:(?:nom|prenom|mot|texte)\\s+)?["“«]?${escaped}["”»]?`, 'i'), `with the inscription "${t}"`)
+  }
+  for (const [pattern, repl] of FR_MATERIAL_PHRASES) out = out.replace(pattern, repl)
+  return out
+}
+
 const FR_STOPWORD_CLEANUP: Array<[RegExp, string]> = [
   [/\bde\s+sa\b|\bde\s+son\b/gi, 'of their'],
   [/\bsa\b|\bson\b/gi, 'their'],
@@ -314,7 +374,7 @@ const FR_STOPWORD_CLEANUP: Array<[RegExp, string]> = [
   [/\bmais\b/gi, 'but'],
   [/\bet\b/gi, 'and'],
   [/\bou\b/gi, 'or'],
-  [/\ben\b/gi, 'into'],
+  [/\ben\b/gi, 'in'],
   [/\btres\b/gi, 'very'],
   [/\bplus\b/gi, 'more'],
   [/\bmoins\b/gi, 'less'],
@@ -383,7 +443,7 @@ export function translateFrenchSubjectToEnglish(rawText: string): string {
     }
   }
 
-  let working = stripAccents(trimmed)
+  let working = translateShapesAndInscriptions(stripAccents(trimmed).replace(/œ/g, 'oe'))
   for (const [pattern, repl] of FR_TO_EN_PHRASES) {
     working = working.replace(pattern, repl)
   }
@@ -517,8 +577,10 @@ export function analyzePromptOntologySync(
     } else {
       effectiveRenderMode = 'native_photorealistic'
       badgeLabelFr = 'Photoréalisme Physique Natif'
-      styleDirectiveEn =
-        'NATIVE PHYSICAL PHOTOREALISM: render directly with authentic real-world optical lighting, genuine human skin micro-texture and natural pores (if human), and physically accurate surface materials.'
+      // la peau n'est mentionnée que pour un sujet humain : pour un objet, ces mots font apparaître une personne
+      styleDirectiveEn = isCharacter
+        ? 'NATIVE PHYSICAL PHOTOREALISM: render directly with authentic real-world optical lighting, genuine human skin micro-texture and natural pores, and physically accurate surface materials.'
+        : 'NATIVE PHYSICAL PHOTOREALISM: render directly with authentic real-world optical lighting and physically accurate surface materials.'
     }
   }
 
@@ -647,14 +709,17 @@ export function analyzePromptOntologySync(
           `artificial plastic smoothing.`
       } else {
         englishExpandedPrompt =
-          `High-precision documentary-grade photograph of ${englishSubject}. Physically accurate lighting with natural ` +
-          `specular highlights, tactile real-world surface micro-textures, grounded contact shadows, and rich environmental ` +
-          `depth from foreground to horizon, captured with sharp optical clarity and organic tonal balance.`
+          `High-precision photograph of ${englishSubject}. Physically accurate lighting with natural ` +
+          `specular highlights, tactile real-world surface micro-textures and grounded contact shadows, ` +
+          `captured with sharp optical clarity and organic tonal balance.`
       }
-      negativePrompt =
-        'anime, cartoon, cel-shading, 3d render, CGI doll, plastic airbrushed skin, wax face, oversaturated HDR, deformed anatomy, extra fingers, blurry, watermark'
-      reasoningFr =
-        'Sujet réel détecté : développement en anglais en photoréalisme physique natif (vraie texture de peau et lumière optique).'
+      // négatifs humains seulement pour un sujet humain : sur un objet ils n'ont rien à corriger
+      negativePrompt = isCharacter
+        ? 'anime, cartoon, cel-shading, 3d render, CGI doll, plastic airbrushed skin, wax face, oversaturated HDR, deformed anatomy, extra fingers, blurry, watermark'
+        : 'anime, cartoon, cel-shading, 3d render, oversaturated HDR, warped shape, blurry, watermark'
+      reasoningFr = isCharacter
+        ? 'Sujet réel détecté : développement en anglais en photoréalisme physique natif (vraie texture de peau et lumière optique).'
+        : 'Objet ou scène réel détecté : développement en anglais en photoréalisme physique natif (matières et lumière optiques).'
     }
   }
 

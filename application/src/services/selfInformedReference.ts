@@ -24,6 +24,7 @@
  * côtés. Aucun import runtime de services Tauri ici (les `import type` sont
  * effacés par --experimental-strip-types, donc la CLI Node peut l'importer).
  */
+import { stripInscriptionSpans } from '../utils/inscriptionText.ts'
 import { detectNamedAddTarget } from '../utils/namedEntityEnrichment.ts'
 import type { ParsedImageIntent } from '../utils/imagePromptParser.ts'
 
@@ -364,7 +365,8 @@ export function detectSubjectToResearch(
   prompt: string,
   intent: ParsedImageIntent | null | undefined,
 ): SubjectToResearch | null {
-  const text = clean(prompt)
+  // un prénom ou un mot à écrire (« avec l'inscription Rayen ») n'est pas un sujet à rechercher
+  const text = clean(stripInscriptionSpans(prompt))
   if (!text) return null
 
   const primary = detectPrimaryCreationSubject(text, intent)

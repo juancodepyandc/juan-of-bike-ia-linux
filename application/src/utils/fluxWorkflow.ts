@@ -551,6 +551,10 @@ function buildStyledPrompt(prompt: string, style: FluxStyle, hasReferenceImage =
     } else if (promptTraits.wantsMechanicalSubject && !promptTraits.wantsHumanSubject) {
       promptPrefix = 'photorealistic medium-format RAW photograph, shot on Hasselblad X2D 100C, 50mm f/5.6 prime lens, natural studio or location lighting, unretouched,'
       promptSuffix = ', razor-sharp focus across the subject and environment, authentic physical materials (anodized metal, brushed steel, carbon fiber, glass caustics, rubber, wood grain), realistic reflections and contact shadows, zero plastic smoothing'
+    } else if (!promptTraits.wantsHumanSubject) {
+      // objet : le suffixe portrait (« real human skin texture… preserve exact facial features ») faisait apparaître une personne
+      promptPrefix = 'photorealistic RAW photograph, shot on a full-frame camera with a 90mm macro lens, soft natural light, unretouched,'
+      promptSuffix = ', razor sharp natural focus on the object, true-to-life materials exactly as described, accurate reflections and soft contact shadows, subtle film grain, natural color grading, no AI smoothing, no oversharpening'
     }
   }
 

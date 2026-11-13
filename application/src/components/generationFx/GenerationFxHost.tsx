@@ -5,9 +5,11 @@ import { useCodeStreamStore } from '../../stores/codeStreamStore.ts'
 import type { GenerationJobState, ModuleId } from '../../types/app.ts'
 import { FX_EVENT, FX_PREF_EVENT, generationFxEnabled, type FxAsk, type FxCounters, type FxModule, type FxPatch, type FxRef, fxAnswer, markFxHostMounted } from './fxBus.ts'
 import { watchComfyProgress } from './comfyProgress.ts'
+import { imagePatchForEvent } from './comfyStages.ts'
+import ImageStudioPanel from './ImageStudioPanel.tsx'
 import AuroraMascot, { FX_AGENTS, MASCOT_STATE_LABEL, type MascotState } from './mascots.tsx'
 import { FX_SCENES, type SceneDraw, type SceneSync } from './scenes.ts'
-import { animationProgress, codePhaseIndex, mascotStateFor, monotonicPhase, resolvePhaseIndex, stageForJob, type FxStage } from './fxPhases.ts'
+import { MODULE_PHASE_RANGES, animationProgress, codePhaseIndex, mascotStateFor, monotonicPhase, resolvePhaseIndex, stageForJob, type FxStage } from './fxPhases.ts'
 import type { HologramStatus } from './HologramStage.tsx'
 import {
   EtaCountdown,
@@ -54,6 +56,8 @@ type FxEntry = {
   reveal?: { url: string; kind: 'image' | 'video' | 'mesh'; at: number }
   refs?: FxRef[]
   subjectKind?: string
+  prompt?: string
+  aspect?: number
   logLines?: string[]
   counters?: FxCounters
   meshUrl?: string
@@ -563,8 +567,24 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
           background: '#171228', color: '#e9ddff', cursor: 'pointer' }}>
         {narrow ? 'File' : 'Projets et file d’attente'}
       </button>
-      <FxCanvas module={module} read={read} ambientOnly={module === '3d' && page === 'construction'} />
-      {!done && entry.refs && entry.refs.length > 0 && <RefsPanel refs={entry.refs} accent={agent.accent} narrow={narrow} />}
+      <FxCanvas module={module} read={read} ambientOnly={(module === '3d' && page === 'construction') || module === 'image'} />
+      {!done && module !== 'image' && entry.refs && entry.refs.length > 0 && <RefsPanel refs={entry.refs} accent={agent.accent} narrow={narrow} />}
+      {module === 'image' && (
+        <ImageStudioPanel
+          accent={agent.accent}
+          prompt={entry.prompt}
+          aspect={entry.aspect}
+          refs={entry.refs}
+          resultUrl={entry.reveal?.kind === 'image' ? entry.reveal.url : null}
+          phaseIdx={idx}
+          phaseCount={scene.phases.length}
+          startedAt={tl.startedAt}
+          readPulseAt={() => tl.lastEventAt}
+          done={done}
+          narrow={narrow}
+          logLines={entry.logLines}
+        />
+      )}
       {module === '3d' && page === 'construction' && (
         <CenterStage entry={entry} accent={agent.accent} tl={tl} done={done} narrow={narrow} />
       )}
@@ -584,7 +604,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
         >{page === 'scene' ? '❯' : '❮'}</button>
       )}
       {!done && entry.ask && <FxAskPanel module={module} ask={entry.ask} accent={agent.accent} />}
-      {done && entry.reveal && entry.reveal.kind !== 'mesh' && (
+      {done && entry.reveal && entry.reveal.kind !== 'mesh' && module !== 'image' && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
           background: 'rgba(4,6,11,.55)', backdropFilter: 'blur(6px)', animation: 'aurora-fx-reveal-bg .4s ease',
@@ -705,7 +725,7 @@ function FullOverlay({ module, entry, session, job, onMinimize, onStopOverlay }:
             })}
           </div>
         )}
-        {!narrow && Boolean(entry.logLines?.length) && !(module === '3d' && page === 'construction') && (
+        {!narrow && Boolean(entry.logLines?.length) && !(module === '3d' && page === 'construction') && module !== 'image' && (
           <div role="log" aria-label={`Actions réelles de la génération ${module}`} style={{
             fontSize: 11, lineHeight: 1.5, marginTop: 6, marginBottom: 8, padding: '7px 11px', borderRadius: 9,
             background: 'rgba(4, 7, 15, 0.76)', border: '1px solid rgba(255,255,255,.08)', overflowWrap: 'anywhere', color: '#B7C0D4',
@@ -1088,6 +1108,8 @@ export default function GenerationFxHost() {
         progress: patch.progress ?? base?.progress,
         refs: patch.refs ?? base?.refs,
         subjectKind: patch.subjectKind ?? base?.subjectKind,
+        prompt: patch.prompt ?? base?.prompt,
+        aspect: patch.aspect ?? base?.aspect,
         logLines,
         counters: patch.logLine ? updateCounters(base?.counters, patch.logLine) : base?.counters,
         meshUrl: patch.meshUrl ?? base?.meshUrl,
@@ -1155,18 +1177,40 @@ export default function GenerationFxHost() {
   const comfyActive = Boolean(entries.image && !entries.image.reveal) || Boolean(entries.drawing && !entries.drawing.reveal)
   useEffect(() => {
     if (!comfyActive) return
-    return watchComfyProgress((frac, label, logLine, measure) => {
+    return watchComfyProgress((ev, run, measure) => {
       for (const m of ['image', 'drawing'] as FxModule[]) {
         const s = sessions.current.get(m)
         if (!s || s.endedAt != null) continue
-        const finished = Boolean(measure?.executedNode)
+        // un graphe enregistré appartient à un module : ses événements ne pilotent pas l'autre écran
+        if (run && run.module !== m) continue
+        if (m === 'image') {
+          const p = imagePatchForEvent(ev, run, MODULE_PHASE_RANGES.image ?? [])
+          if (!p) {
+            if (ev.log) apply(m, { active: true, logLine: ev.log })
+            continue
+          }
+          apply(m, {
+            active: true,
+            phase: `Étape ${p.phaseIndex + 1}/${FX_SCENES.image.phases.length} · ${ev.label}`,
+            phaseIndex: p.phaseIndex,
+            progress: p.progress,
+            progressKind: p.progressKind,
+            phaseFraction: p.phaseFraction,
+            logLine: ev.log,
+          })
+          continue
+        }
+        const finished = ev.stage === 'save' || ev.stage === 'done'
+        if (ev.stage !== 'sampling' && !finished) {
+          if (ev.log) apply(m, { active: true, logLine: ev.log })
+          continue
+        }
         apply(m, {
           active: true,
-          phase: m === 'image' ? label : finished ? 'Révélation' : 'Rendu FLUX',
-          phaseIndex: finished ? 4 : m === 'image' ? 2 : 3,
-          progress: m === 'image' ? frac : undefined,
-          phaseFraction: finished ? undefined : measure?.phaseFraction,
-          logLine,
+          phase: finished ? 'Révélation' : 'Rendu FLUX',
+          phaseIndex: finished ? 4 : 3,
+          phaseFraction: finished ? undefined : measure.phaseFraction,
+          logLine: ev.log,
         })
       }
     })

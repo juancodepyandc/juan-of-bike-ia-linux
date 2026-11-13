@@ -881,6 +881,50 @@ Propositions, non implémentées :
 
 **Non établi.** Ce conteneur n’a ni GPU, ni ComfyUI, ni poids FLUX/TRELLIS/Hunyuan, et aucun dossier du PC n’y était exposé : aucun essai sur un vrai pipeline 3D/FLUX, WebView Tauri, téléphone physique ou trajet tunnel. Les chiffres du banc valent pour SD-Turbo sur CPU, dont les durées sont régulières ; avec FLUX.2 sur le PC (chargement des poids, encodeur texte sur CPU, pression VRAM, essais de l’audit de turnaround), la justesse doit être remesurée avec `npm run real-gen:live` (producteur `comfy-flux2` par défaut), et la calibration intégrée la mesure de toute façon à chaque génération réussie. Une segmentation par couleur ne sépare pas un sujet d’un sol de même teinte : la chaise en chêne garde son parquet en socle, la lampe argentée sa table blanche, et un objet blanc éclairé aussi clair que le fond perd sa zone de reflet. L’interface impose un fond noir uni aux références de personnages (`shouldForceBlackBackdrop`) et le producteur multivue Python un fond blanc : sur scène synthétique, un personnage très sombre (cheveux à 15, armure à 20 sur un fond à 4) reste séparé à 0,93 d’IoU (0,30 avec la segmentation d’origine), mais aucune vraie vue FLUX.2 n’a été segmentée ici ; pour des photos quelconques, un détourage appris (rembg, déjà utilisé côté serveur) serait nécessaire. La chaîne CPU réelle `auto_rescue_mesh.py` a tourné sur le VRM décimé (1,25 à 1,6 s, durée dominée par le démarrage de Python ; la densité complète dépasse la mémoire du conteneur) : trop court pour juger une estimation, donc non utilisé comme preuve. La précision de l’estimation sur les vraies missions 3D/FLUX.2 du PC sera mesurée et affichée par la calibration dès les premières générations réussies ; seuls les chiffres du banc ci-dessus existent à ce jour. La qualité perçue des personnages n’est pas mesurée. La segmentation suppose un fond séparable ; sinon l’hologramme reste à l’émetteur et le dit. Le catalogue `architecture_catalog.json` n’est pas régénéré ici : il inclut les dépôts voisins absents de ce clone et présentait déjà une dérive antérieure ; `--check-code` signale donc aussi les nouveaux fichiers de cette évolution (`generationTiming.ts`, `fxPhases.ts`, `hologramSources.ts`, `HologramStage.tsx`, tests et banc).
 
+### 1.38 Module Image : dérive FLUX.2 corrigée, synchronisation sur les nœuds ComfyUI réels, chambre de diffusion — 13 novembre 2026
+
+**Problème signalé.** « un vase en forme de coeur avec inscriptions rayen » a produit un flacon transparent en forme de cœur avec une personne. Ce n'était ni un vase ni l'inscription demandée.
+
+**Causes prouvées dans le code (reproduites avec les vraies sources, avant correction).**
+1. Avec une image précédente affichée et aucune image jointe, `parseImageIntent` classait la demande en `add_element` (en `text_edit` pour « fais-moi un vase… avec l'inscription… », car `GENERIC_EDIT_PATTERN` contient « fais »). Le hook partait alors du rendu précédent comme référence, au lieu de créer un nouveau vase.
+2. `detectSubjectToResearch` prenait « Rayen » pour un **personnage principal**. Le module cherchait alors une image web de la demande et repartait de la première trouvée (`denoise` 0,40, d'où le flacon de parfum). Il cherchait aussi l'apparence de « Rayen » : c'est ainsi que la description d'une personne entrait dans le prompt. La vue Manga lançait cette recherche web pour **toute** création.
+3. Le prompt positif FLUX.2 contenait `buildPromptContractBlock` (« Avoid / negative traits: … plastic airbrushed skin, wax face, deformed anatomy, extra fingers ») et `buildImageAutocorrectionContract` (« HUMAN PHOTO PRESERVATION: preserve the original person identity, face structure, shoulders… », actif dès qu'une image était affichée). L'encodeur Mistral‑3 lit ces mots comme du contenu à dessiner. Le préréglage « realistic », la consigne photoréaliste et l'expansion d'objet parlaient de peau humaine même pour un objet.
+4. La traduction lexicale donnait « a vase into forme de coeur with inscriptions rayen » (`en` → `into`, forme non traduite). Le négatif interdisait « text, logo » alors qu'une inscription était demandée, et l'expansion LLM reprenait les sujets des messages précédents.
+
+**Correction (même code pour le natif et le web/tunnel, appliquée aussi à la vue Manga et au CLI `image_cli.mjs`).**
+- `utils/inscriptionText.ts` : le texte à écrire (inscription, écrit, gravé, prénom, au nom de, guillemets) est extrait. Il est retiré avant la recherche de sujet : un prénom gravé n'est plus recherché comme personnage. Il devient un texte exact du prompt et n'est plus interdit par le négatif.
+- `parseImageIntent(…, { referenceIsPreviousOutput })` : une demande qui crée un nouveau sujet (« fais-moi un… », « un vase… ») reste une création. Elle ne retouche le rendu affiché que si elle le désigne (« cette image », « modifie », « ajoute », « écris … sur la pancarte »…). Une image jointe garde le comportement d'édition.
+- `services/imageSubjectFidelity.ts` détermine, sans LLM : l'objet et sa catégorie exacte (le vase est décrit comme « open-topped vessel », avec les catégories voisines bottle/flask/flacon en négatif), la forme (« heart-shaped »), la matière, la couleur, le texte exact, et si une personne ou un animal est demandé.
+- Pour une création, `buildFaithfulCreationPrompt` assemble le prompt positif dans cet ordre : sujet verrouillé, description développée et contrôlée, contraintes positives, puis demande d'origine en français, que Mistral‑3 lit. Il ne contient plus de liste « à éviter » ni de contrat de retouche humaine. Le vrai prompt négatif (`CFGGuider`) reçoit personne, mains et animal (pour un objet seul) et les catégories voisines.
+- L'expansion LLM est refusée si elle invente une personne ou un animal, perd l'objet, le change de catégorie ou omet le texte. La description déterministe la remplace. Le contexte de conversation n'est plus donné à une création neuve.
+- La traduction gère formes, matières et inscriptions. Les consignes photoréalistes et le préréglage « realistic » ne parlent de peau que pour un sujet humain.
+- Compromis : aucun coût mémoire ou GPU ; un lexique d'objets fini (≈ 50 noms). Un objet hors lexique garde le prompt contrôlé et la demande d'origine, mais pas de garde de catégorie. Une scène (paysage, rue) ne reçoit pas d'interdiction de figurants.
+
+**Synchronisation chargement ↔ étapes réelles.** Avant, seul le message `progress` était lu, pour toute exécution ComfyUI. Pendant le chargement du modèle de 20 Go et l'encodage du prompt sur CPU, l'écran restait sur « Diffusion en cours ». Les tuiles d'une super-résolution étaient comptées comme des pas de diffusion, et une édition Kontext était ramenée à l'étape 3.
+- `generationFx/comfyStages.ts` (règles pures) classe chaque nœud **réellement exécuté** (`executing`) d'après son `class_type` dans le graphe soumis : file, chargement des poids, encodage du prompt, diffusion (pas k/N du seul nœud échantillonneur), décodage VAE, super-résolution (tuiles), enregistrement. Un message tardif ne fait pas reculer l'écran.
+- `useImageViewLogic` enregistre chaque graphe soumis (`registerComfyRun`, avec l'étape Diffusion ou Kontext). Les messages d'un autre `prompt_id` sont ignorés.
+- Seuls les pas et les tuiles nourrissent la vitesse de l'estimation : les jalons ne sont pas une vitesse.
+- `comfyProgress.ts` se reconnecte, essaie aussi le WebSocket de l'origine de la page (web/tunnel ; relais `/ws` non vérifié) et conserve les aperçus latents binaires quand le serveur en envoie.
+
+**Chambre de diffusion (nouvelle scène image).** `ImageStudioPanel.tsx` et `DiffusionStage.tsx` sont rendus en WebGL three.js, dans un chunk chargé seulement pour l'image (21 kB), à 60 i/s au plus, sur le GPU basse consommation, avec une densité réduite sur mobile. La scène montre uniquement des données de la génération en cours :
+- les mots de la demande, dont le sujet et le « texte exact », absorbés au moment réel de l'encodage ;
+- le flux des poids pendant le vrai chargement ;
+- une plaque latente dont le grain suit la courbe du planificateur au pas réel (approximation affichée comme telle), avec la grille des patchs et une onde à chaque pas reçu ;
+- l'aperçu latent réel de ComfyUI s'il est transmis, sinon rien d'inventé et l'écran le dit ;
+- un cadran avec un cran par pas réel ;
+- l'image finale révélée patch par patch.
+
+Le pipeline affiche la durée observée de chaque sous-étape, « s/pas mesuré » et la diffusion restante calculée sur ces seules mesures. Une sous-étape absente du graphe reste « non exécutée ».
+
+**Preuves dans ce conteneur.**
+- `npm run test:image-fidelity` : 8 tests sur la demande réelle, l'édition explicite conservée, le prénom non recherché, la traduction, le prompt positif sans indice humain et le négatif, le refus d'une expansion qui dérive, une personne demandée laissée libre, et la parité hook/Manga/CLI.
+- `npm run test:fx` : 53 tests, dont 5 nouveaux pour `test-comfy-stages.mjs` sur le vrai graphe `createFluxWorkflow`.
+- `npm run test:real-gen` : 2 tests.
+- `npm run test:fx:visual` : 13 scénarios, dont « image studio », qui rejoue une vraie séquence de messages ComfyUI sur le graphe de production avec aperçus binaires et le message d'un autre rendu ignoré.
+- `tsc --noEmit` et `vite build` réussissent.
+
+**Non établi.** Aucune génération FLUX.2 réelle n'a été faite ici (ni GPU, ni ComfyUI, ni poids). L'effet sur l'image produite doit être vérifié sur le PC avec la demande du vase. La présence d'aperçus latents dépend de l'option `--preview-method` du serveur ComfyUI. Le relais WebSocket `/ws` par le tunnel n'a pas été essayé. La qualité perçue de la nouvelle scène n'est pas mesurée.
+
 <a id="ensemble"></a>
 ## 2. Vue d’ensemble
 
@@ -1327,6 +1371,8 @@ Le pipeline possède des garde-fous pour préserver le dernier état des fichier
 UI : `hooks/useImageViewLogic.ts`, workflows `FLUX.2-dev` (`utils/fluxWorkflow.ts`) et `Kontext` (`utils/fluxKontextWorkflow.ts`), directeur artistique IA (`services/imagePromptBuilder.ts`), recherche de références (`qwen3-vl:30b`), galerie, verrou de génération, suivi 5 étapes, dossier de sortie unifié `output/image/creations/`, historique de seed et reprise de blobs. `services/comfyJobMonitor.ts` suit les travaux et distingue erreurs, attente et sortie.
 
 Moteur Python : `python-services/image_module_engine.py`. Il construit un workflow, soumet à ComfyUI, attend une image et produit un manifeste. Sa version présente contient une attente de 1 800 secondes et des erreurs explicites : l’ancien audit qui décrivait encore 360 secondes ne doit pas être repris comme état actuel. Les contrôles de netteté/contraste ne prouvent pas le respect du sujet.
+
+Fidélité du sujet (texte exact, objet verrouillé, aucune personne non demandée) et synchronisation sur les nœuds ComfyUI réels : § 1.38.
 
 Le modèle configuré et exécuté dans le frontend et le backend est **FLUX.2-dev** avec UNet GGUF `flux2-dev-Q4_K_M.gguf` (20 Go), encodeur `mistral_3_small_flux2_fp8.safetensors` (18 Go), VAE `flux2-vae.safetensors`, conditionnement `ReferenceLatent` et super-résolution `RealESRGAN_x4plus.pth`. Vérifier les fichiers effectivement résolus par ComfyUI, les nodes installés et le workflow exécuté avant d’attribuer une sortie à un modèle.
 
