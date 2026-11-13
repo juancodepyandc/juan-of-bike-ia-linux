@@ -15,6 +15,27 @@ import re
 from typing import Dict, Any, List, Optional
 import unicodedata
 
+try:  # même verrou de sujet que le module Image (TS) ; module voisin de ce fichier
+    from image_subject_fidelity import (
+        analyze_subject_fidelity,
+        build_inscription_line,
+        build_subject_lock_line,
+        fidelity_negative_terms,
+    )
+except ImportError:  # chargé hors de python-services (spec_from_file_location) : chemin explicite
+    import importlib.util as _ilu
+    import sys as _sys
+    from pathlib import Path as _Path
+    _spec = _ilu.spec_from_file_location("image_subject_fidelity", _Path(__file__).with_name("image_subject_fidelity.py"))
+    _mod = _ilu.module_from_spec(_spec)
+    # inscrit avant exécution : les dataclasses lisent leur module dans sys.modules
+    _sys.modules["image_subject_fidelity"] = _mod
+    _spec.loader.exec_module(_mod)
+    analyze_subject_fidelity = _mod.analyze_subject_fidelity
+    build_inscription_line = _mod.build_inscription_line
+    build_subject_lock_line = _mod.build_subject_lock_line
+    fidelity_negative_terms = _mod.fidelity_negative_terms
+
 def strip_accents(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
@@ -440,4 +461,32 @@ def direct_prompt(raw_input: str, force_category: Optional[str] = None) -> Dict[
     if ratio:
         spec["width"], spec["height"] = dimensions[ratio]
         spec["aspect_ratio"] = ratio
+    _apply_subject_lock(spec, raw_input)
     return spec
+
+
+def _apply_subject_lock(spec: Dict[str, Any], raw_input: str) -> None:
+    """Verrou de sujet (objet, catégorie, forme, texte exact) en tête du prompt, termes propres au négatif.
+
+    La demande d'origine reste verbatim dans le prompt ; rien n'est retiré. Une demande
+    « un vase en forme de coeur avec inscriptions rayen » ne doit donner ni flacon ni personne.
+    """
+    fidelity = analyze_subject_fidelity(raw_input)
+    lock = build_subject_lock_line(fidelity)
+    if lock:
+        spec["human_prompt"] = f"{lock} {spec['human_prompt']}"
+    elif fidelity.inscriptions:
+        spec["human_prompt"] = f"{spec['human_prompt']} {build_inscription_line(fidelity)}"
+    terms = fidelity_negative_terms(fidelity)
+    negative = [t.strip() for t in str(spec.get("negative_prompt", "")).split(",") if t.strip()]
+    if fidelity.inscriptions:
+        # le texte demandé ne peut pas être interdit par le négatif
+        negative = [t for t in negative if t.lower() not in ("text", "numbers", "signature")]
+    seen = {t.lower() for t in negative}
+    for t in terms:
+        if t.lower() not in seen:
+            negative.append(t)
+            seen.add(t.lower())
+    spec["negative_prompt"] = ", ".join(negative)
+    if lock or fidelity.inscriptions:
+        spec["subject_lock"] = fidelity.summary()
