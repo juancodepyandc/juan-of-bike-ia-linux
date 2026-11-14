@@ -71,6 +71,7 @@ def generer_liaisons(graphe: dict[str, Any], pieces: dict[str, Piece], decisions
     """Chaque liaison, en évitant les zones déjà occupées par les fixations et perçages précédents."""
     resultats, erreurs = [], []
     occupes: list[tuple[Any, np.ndarray]] = []
+    structure = {k: v for k, v in pieces.items() if not v.est_quincaillerie}
     for liaison in graphe["liaisons"]:
         exclusions: list[Any] = []
         accepte = None
@@ -87,10 +88,17 @@ def generer_liaisons(graphe: dict[str, Any], pieces: dict[str, Piece], decisions
             conflits = []
             for r in rs:
                 nouveaux = [q.solide for q in r.quincaillerie] + [c for cs in r.retraits.values() for c in cs]
+                # une tête, un écrou ou une rondelle ne se pose pas dans une AUTRE pièce (un bloc posé sur la face)
+                autres = [(p.solide, _aabb(p.solide)) for p in structure.values() if p.id not in r.entre]
                 for s in nouveaux:
                     bs = _aabb(s)
                     for (o, bo) in occupes:
                         if _chevauche(bs, bo) and volume(s ^ o) > 0.01:
+                            conflits.append(o)
+                for q in r.quincaillerie:
+                    bq = _aabb(q.solide)
+                    for (o, bo) in autres:
+                        if _chevauche(bq, bo) and volume(q.solide ^ o) > 0.01:
                             conflits.append(o)
             accepte_precedent = rs
             if not conflits:
@@ -294,6 +302,53 @@ def ecrire_dossier(dossier: Path, rapport: dict[str, Any]) -> None:
     (dossier / "DOSSIER.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
+NOMBRES_ECRITS = {"deux": 2, "trois": 3, "quatre": 4, "cinq": 5, "six": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10,
+                  "douze": 12, "seize": 16, "vingt": 20, "paire": 2, "double": 2}
+UNITES = ("mm", "cm", "m", "km", "kg", "g", "n", "v", "a", "w", "h", "s", "°", "%", "l", "ml", "x", "×")
+
+
+def nombres_d_exemplaires(demande: str) -> set[int]:
+    """Quantités écrites dans la demande (« quatre supports », « 4 pieds »), hors cotes suivies d'une unité."""
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", demande.lower()).encode("ascii", "ignore").decode()
+    trouves: set[int] = set()
+    for m in re.finditer(r"\b(\d{1,2}|[a-z]+)\b(?=(\s*[a-z°%×]*))", t):
+        mot, suite = m.group(1), m.group(2).strip()
+        if mot.isdigit():
+            if suite and suite.split()[0] in UNITES:
+                continue
+            n = int(mot)
+        else:
+            n = NOMBRES_ECRITS.get(mot, 0)
+        if 2 <= n <= 64:
+            trouves.add(n)
+    return trouves
+
+
+def quantites_lues(exigences: dict[str, Any]) -> set[int]:
+    q: set[int] = set()
+    for p in exigences.get("pieces") or []:
+        if not isinstance(p, dict):
+            continue
+        m = p.get("motif") if isinstance(p.get("motif"), dict) else {}
+        for v in (m.get("nombre"), p.get("quantite")):
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 2:
+                q.add(v)
+    return q
+
+
+def verifier_fidele(demande: str):
+    """Vérificateur de lecture : constructible ET fidèle aux quantités écrites dans la demande."""
+    def verifier(exigences: dict[str, Any]) -> str | None:
+        manquants = sorted(nombres_d_exemplaires(demande) - quantites_lues(exigences))
+        if manquants:
+            return (f"la demande mentionne {', '.join(map(str, manquants))} exemplaire(s) identique(s) mais aucune pièce n'a "
+                    "cette quantité : donne quantite (et un motif) à la pièce concernée")
+        return verifier_constructible(exigences)
+    return verifier
+
+
 def verifier_constructible(exigences: dict[str, Any]) -> str | None:
     """Refus d'une lecture valide au contrat mais impossible à assembler : message pour le modèle."""
     try:
@@ -318,12 +373,34 @@ def verifier_constructible(exigences: dict[str, Any]) -> str | None:
                               "touchent pas : corrige leurs positions (cote, centre_sur, décalage)")
     del bases
     if not ecarts:
-        # essai à blanc des liaisons : une liaison impossible est expliquée au modèle pour qu'il la change
+        # essai à blanc des liaisons : une liaison impossible est expliquée au modèle, avec ce qu'il faut changer
         g2 = fermetures_sans_outil(g, [])
         _, erreurs = generer_liaisons(g2, dict(pieces), [])
         for e in erreurs[:4]:
-            ecarts.append(f"liaison {e['type']} entre {', '.join(e['entre'])} impossible : {e['raison'][:300]}")
+            conseil = _conseil_geometrique(e["entre"], pieces)
+            ecarts.append(f"liaison {e['type']} entre {', '.join(e['entre'])} impossible : {e['raison'][:260]}" + conseil)
     return " ; ".join(ecarts) or None
+
+
+def _conseil_geometrique(entre: list[str], pieces: dict[str, Piece]) -> str:
+    """Ce que mesure le moteur entre deux pièces, traduit en correction de position pour le modèle."""
+    membres = [[e] if e in pieces else [p.id for p in pieces.values() if p.base_id == e] for e in entre[:2]]
+    if len(membres) < 2 or not membres[0] or not membres[1]:
+        return ""
+    itf = interface_principale(pieces[membres[0][0]], pieces[membres[1][0]])
+    if itf is None:
+        return " — elles ne se touchent pas : rapproche-les (cote, centre_sur)"
+    rect = itf.polygone.minimum_rotated_rectangle
+    if rect.geom_type != "Polygon":
+        return ""
+    c = np.array(rect.exterior.coords[:4])
+    cotes = sorted([float(np.linalg.norm(c[1] - c[0])), float(np.linalg.norm(c[2] - c[1]))])
+    if cotes[0] < 8.0:
+        return (f" — elles ne se touchent que sur {cotes[0]:.0f} × {cotes[1]:.0f} mm (chant contre chant) : pose l'une SUR "
+                "l'autre (cote dessus ou dessous, avec recouvrement) pour une vraie surface d'appui où fixer")
+    if itf.ecart > 1e-3:
+        return f" — elles sont écartées de {itf.ecart:.1f} mm"
+    return ""
 
 
 def dossier_de_sortie(titre: str) -> Path:
@@ -335,7 +412,7 @@ def depuis_demande(demande: str, *, dossier: Path | None = None, modele: str | N
                    rendre_f3d: bool = True) -> dict[str, Any]:
     from application.engineering_requirements import lire_exigences
     journal: list[dict[str, Any]] = []
-    lecture = lire_exigences(demande, modele=modele, verifier=verifier_constructible, journal=journal)
+    lecture = lire_exigences(demande, modele=modele, verifier=verifier_fidele(demande), journal=journal, reparations=3)
     if not lecture.get("ok"):
         # l'échec est un résultat : son journal (réponses du modèle et écarts) reste consultable
         dossier = Path(dossier) if dossier else dossier_de_sortie("lecture_refusee_" + demande[:30])

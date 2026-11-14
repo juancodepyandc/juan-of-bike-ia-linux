@@ -43,6 +43,7 @@ SCHEMA_JSON: dict[str, Any] = {
             "type": "object",
             "properties": {
                 "id": {"type": "string"}, "nom": {"type": "string"}, "fonction": {"type": "string"},
+                "quantite": {"type": "integer"},
                 "forme": {"type": "string", "enum": ["plaque", "bloc", "barre", "cylindre", "tube", "bac", "equerre"]},
                 "dimensions_mm": {"type": "array", "items": {"type": "number"}},
                 "paroi_mm": {"type": "number"},
@@ -76,7 +77,7 @@ SCHEMA_JSON: dict[str, Any] = {
                     "diametre_cercle_mm": {"type": "number"}, "nombre": {"type": "integer"},
                     "profondeur_mm": {"type": "number"}, "degagement_central_mm": {"type": "number"}}},
             },
-            "required": ["id", "nom", "fonction", "forme", "dimensions_mm", "origine"]}},
+            "required": ["id", "nom", "fonction", "quantite", "forme", "dimensions_mm", "origine"]}},
         "liaisons": {"type": "array", "items": {
             "type": "object",
             "properties": {
@@ -116,8 +117,9 @@ CONSIGNE = (
     "hauteur_mm au-dessus du fond) ; centre_sur pour se centrer sur une autre pièce que celle du contact ; alignement "
     "pour affleurer un bord (min ou max selon x, y, z) ; decalage_mm ; radial (rayon_extremite_mm ou "
     "recouvrement_mm) pour une barre qui rayonne autour du centre.\n"
-    "- Des pièces identiques répétées : décris-en UNE avec motif (polaire avec nombre et angle_depart_deg, ou "
-    "lineaire avec nombre, pas_mm, direction). Une pièce posée sur une pièce à motif est répétée avec elle.\n"
+    "- quantite : nombre d'exemplaires identiques de la pièce (4 bras = UNE pièce avec quantite 4). Respecte les "
+    "nombres de la demande. Pour une quantité > 1, ajoute un motif (polaire avec nombre et angle_depart_deg, ou "
+    "lineaire avec nombre, pas_mm, direction). Une pièce posée sur une pièce répétée est répétée avec elle.\n"
     "- liaisons : une par paire de pièces assemblées. Types : vis ; boulon_ecrou (peut traverser plusieurs pièces "
     "empilées, liste-les de haut en bas) ; emmanchement (goupilles ou tourillons) ; clip (encliquetage élastique) ; "
     "charniere (pièce qui pivote) ; colle ; soudure ; queue_aronde ; aimant (fermeture magnétique). Choisis selon la "
@@ -191,9 +193,10 @@ def _interroger(modele: str, messages: list[dict[str, str]], timeout_s: float = 
     # Mesuré le 14/11/2026 (Ollama 0.31.1) : avec « think: false », le modèle 27B ignore entièrement le
     # schéma imposé et répond en prose ; sans ce paramètre il réfléchit puis respecte le schéma. On
     # laisse donc la réflexion (budget de jetons en conséquence).
-    # AURORA_ASSEMBLAGE_REFLEXION=0 : lecture rapide (sans réflexion, JSON demandé par la consigne puis validé et
-    # réparé), au prix d'un raisonnement d'ingénieur moins riche.
-    if os.environ.get("AURORA_ASSEMBLAGE_REFLEXION", "1") == "0":
+    # Par défaut : lecture rapide (sans réflexion, JSON demandé par la consigne puis validé et réparé). Mesuré le
+    # 14/11 : ~1,5 min par tour, contre 6 à plus de 30 min avec réflexion (modèle partagé GPU/CPU, budget de jetons
+    # parfois épuisé avant le JSON). AURORA_ASSEMBLAGE_REFLEXION=1 rend la réflexion et le schéma imposé.
+    if os.environ.get("AURORA_ASSEMBLAGE_REFLEXION", "0") != "1":
         corps = {"model": modele, "stream": False, "format": "json", "think": False,
                  "options": {"temperature": 0.1, "num_predict": 6000, "num_ctx": 16384}, "messages": messages}
     else:

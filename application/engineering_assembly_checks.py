@@ -130,12 +130,19 @@ def controle_ligaments(pieces: dict[str, Piece], resultats) -> dict[str, Any]:
     for r in resultats:
         for t in r.trous:
             p = pieces.get(t["piece"])
-            if p is None or p.est_quincaillerie or t.get("noeud") or t.get("bossage"):
+            if p is None or p.est_quincaillerie or t.get("noeud"):
                 continue
             axe = np.asarray(t["axe"], dtype=float)
             c = np.asarray(t["centre"], dtype=float)
             de, a = float(t.get("de", 0.0)), float(t.get("a", 0.0))
-            if t.get("traversant") or a - de < 0.6:
+            if not t.get("traversant") and not t.get("noeud") and not t.get("debouchant"):
+                # fond d'un trou borgne : il doit rester de la matière au-delà (un logement ne perce pas la pièce)
+                fond = c + axe * (a + 0.2)
+                essais += 1
+                if not bool(vers_trimesh(p.final).contains([fond])[0]):
+                    defauts.append({"piece": p.id, "liaison": t["liaison"], "defaut": "trou borgne débouchant",
+                                    "profondeur_mm": round(a, 2)})
+            if t.get("traversant") or a - de < 0.6 or t.get("bossage"):
                 continue
             rayon = float(t["rayon"])
             e = 0.5 * ligament_min(p, 2 * rayon)

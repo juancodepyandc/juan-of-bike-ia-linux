@@ -306,8 +306,8 @@ def normaliser(exigences: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(exigences, dict):
         raise ErreurConception("exigences : objet requis")
     ecarts: list[str] = []
-    procede_general = exigences.get("procede") if exigences.get("procede") in normes.PROCEDES else None
-    matiere_generale = exigences.get("matiere") if exigences.get("matiere") in normes.MATIERES else None
+    procede_general = normes.resoudre_procede(exigences.get("procede"))
+    matiere_generale = normes.resoudre_matiere(exigences.get("matiere"))
     pieces_brutes = exigences.get("pieces")
     if not isinstance(pieces_brutes, list) or not pieces_brutes:
         raise ErreurConception("aucune pièce décrite")
@@ -344,11 +344,11 @@ def normaliser(exigences: dict[str, Any]) -> dict[str, Any]:
             continue
         origine = brut.get("origine", "fabrique")
         origine = "achete" if _slug(str(origine)) in ("achete", "achat", "commerce", "purchased", "acheter") else "fabrique"
-        mat = brut.get("matiere") if brut.get("matiere") in normes.MATIERES else None
+        mat = normes.resoudre_matiere(brut.get("matiere"))
         if origine == "achete" and mat is None:
             mat = "composant"
         mat = mat or matiere_generale or "pla"
-        proc = brut.get("procede") if brut.get("procede") in normes.PROCEDES else None
+        proc = normes.resoudre_procede(brut.get("procede"))
         if origine == "achete":
             proc = "achat"
         proc = proc or (procede_general if procede_general and procede_general != "achat" else None) \
@@ -384,8 +384,18 @@ def normaliser(exigences: dict[str, Any]) -> dict[str, Any]:
         if isinstance(brut.get("position"), dict):
             piece["position"] = dict(brut["position"])
         motif = brut.get("motif")
+        quantite = brut.get("quantite", brut.get("nombre"))
         if isinstance(motif, dict) and isinstance(motif.get("nombre"), (int, float)) and motif["nombre"] >= 2:
             piece["motif"] = dict(motif)
+        elif isinstance(quantite, int) and not isinstance(quantite, bool) and 2 <= quantite <= 64:
+            # quantité sans disposition : en couronne autour de la référence (bras, pieds, plots), alignée sinon
+            pos = brut.get("position") if isinstance(brut.get("position"), dict) else {}
+            cote = normaliser_cote(pos.get("cote")) if pos else None
+            piece["motif"] = ({"type": "polaire", "nombre": quantite, "angle_depart_deg": 0.0}
+                              if cote in ("dessus", "dessous", None) else
+                              {"type": "lineaire", "nombre": quantite, "pas_mm": float(dims[0]) * 1.5, "direction": "x"})
+            hypotheses_moteur.append(f"{pid} : {quantite} exemplaires sans disposition précisée, "
+                                     + ("en couronne" if piece["motif"]["type"] == "polaire" else "alignés"))
         trous = brut.get("trous_existants")
         if origine == "achete" and isinstance(trous, dict) and (
                 (isinstance(trous.get("entraxe_mm"), list) and len(trous["entraxe_mm"]) == 2 and all(
@@ -527,6 +537,12 @@ def developper_motifs(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -
                 decisions.append({"sujet": pid, "decision": f"pièce unique posée sur les {len(instances[ref])} {ref}",
                                   "raison": f"son empreinte dépasse celle d'un {ref} : elle les couvre tous, centrée sur {centre_motif}"})
         n = nombre_motif(p)
+        if n and ref in instances and n == len(instances[ref]) and pos.get("centre_sur") in (None, ref):
+            # posée sur une pièce répétée avec un motif du même nombre : une par instance, pas une ronde autour de la première
+            decisions.append({"sujet": pid, "decision": f"suit les {n} {ref} (une par instance)",
+                              "raison": "motif de même nombre que la pièce répétée qui la porte"})
+            p.pop("motif", None)
+            n = 0
         if n:
             m = p["motif"]
             type_m = _slug(m.get("type") or "polaire")
@@ -545,6 +561,7 @@ def developper_motifs(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -
                 else:
                     depart = float(m.get("angle_depart_deg") or 0.0)
                     c["_motif_angle"] = depart + k * 360.0 / n
+                    c["_motif_nombre"] = n
                     if isinstance(m.get("rayon_mm"), (int, float)) and m["rayon_mm"] > 0:
                         c["_motif_rayon"] = float(m["rayon_mm"])
                 copies.append(c)
@@ -563,6 +580,8 @@ def developper_motifs(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -
                 c["base_id"] = pid
                 c["instance"] = k + 1
                 c["position"]["par_rapport_a"] = ref_k
+                if c["position"].get("centre_sur") == ref:
+                    c["position"]["centre_sur"] = ref_k          # centré sur SA propre instance
                 copies.append(c)
             instances[pid] = [c["id"] for c in copies]
             nouvelles.extend(copies)
@@ -742,7 +761,7 @@ def placer(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str,
         raise ErreurConception(f"référence de position inconnue : {ref}")
 
     def poser(p: Piece, pos: dict[str, Any] | None, angle_motif: float | None, decal_motif: dict | None,
-              rayon_motif: float | None = None) -> None:
+              rayon_motif: float | None = None, nombre_motif: int | None = None) -> None:
         """Contact selon la normale du côté choisi, alignements et décalages dans le repère local de la
         pièce de centrage (un bras tourné à 45° s'aligne sur sa propre longueur, pas sur les axes du monde)."""
         if not pos:
@@ -761,6 +780,10 @@ def placer(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str,
         alignement = pos.get("alignement") or {}
         if isinstance(alignement, str):
             alignement = {"_": alignement}
+        if isinstance(alignement, dict) and "axe" in alignement:
+            # variantes d'écriture d'une lecture libre : {"axe": "x", "valeur"|"bord"|"type"|"sens": "max"}
+            valeur = next((alignement[k] for k in ("valeur", "bord", "type", "sens", "cote") if k in alignement), None)
+            alignement = {str(alignement["axe"]).lower(): valeur} if valeur is not None else {}
         # 1. normale de contact (monde) et position le long de cette normale
         if cote == "dedans":
             if ref.forme != "bac":
@@ -809,8 +832,23 @@ def placer(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str,
             direction = rotation_z(p.orientation_deg)[:3, :3] @ np.array([1.0, 0.0, 0.0])
             longueur = float(p.taille_locale()[0])
             sortie = _sortie_empreinte(centre_ref, direction)
+            # rayon intérieur minimal : deux pièces voisines de cette largeur ne se chevauchent pas au centre
+            r_min = 0.0
+            if nombre_motif and nombre_motif >= 2 and p.forme in ("bloc", "equerre"):
+                r_min = (float(p.taille_locale()[1]) / 2.0) / math.tan(math.pi / nombre_motif) + 0.5
             if isinstance(radial.get("rayon_extremite_mm"), (int, float)) and radial["rayon_extremite_mm"] > 0:
-                r_centre = float(radial["rayon_extremite_mm"]) - longueur / 2.0
+                R = float(radial["rayon_extremite_mm"])
+                if R - longueur < r_min:
+                    nouvelle = R - r_min
+                    if nouvelle < 0.3 * longueur:
+                        raise ErreurConception(f"{p.id} : extrémité à {R:g} mm du centre impossible pour {nombre_motif} pièces de "
+                                               f"{p.taille_locale()[1]:g} mm de large (rayon intérieur minimal {r_min:.1f} mm)")
+                    decisions.append({"sujet": p.id, "decision": f"longueur ramenée de {longueur:g} à {nouvelle:.1f} mm",
+                                      "raison": f"l'extrémité reste à {R:g} mm du centre (entraxe demandé) ; plus longues, les "
+                                                f"{nombre_motif} pièces se chevaucheraient au centre (rayon intérieur ≥ {r_min:.1f} mm)"})
+                    p.dims[0] = round(nouvelle, 2)
+                    longueur = nouvelle
+                r_centre = R - longueur / 2.0
             elif rayon_motif:
                 r_centre = float(rayon_motif)
             elif p.forme in ("bloc", "equerre") and longueur >= 2.0 * float(p.taille_locale()[1]):
@@ -819,7 +857,7 @@ def placer(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str,
                     recouvrement = min(longueur * 0.3, sortie * 0.6)
                     decisions.append({"sujet": p.id, "decision": f"recouvrement de {recouvrement:.1f} mm sur {centre_ref.id}",
                                       "raison": "pièce rayonnante : environ un tiers de sa longueur pris sur la pièce centrale"})
-                r_centre = sortie - float(recouvrement) + longueur / 2.0
+                r_centre = max(sortie - float(recouvrement), r_min) + longueur / 2.0
             else:
                 # pièce compacte répétée en cercle (pieds, plots) : à l'intérieur de l'empreinte, près du bord
                 r_centre = max(0.0, sortie - float(max(p.taille_locale()[:2])) / 2.0 - 0.05 * sortie)
@@ -866,7 +904,8 @@ def placer(graphe: dict[str, Any], decisions: list[dict[str, Any]]) -> dict[str,
             faits.add(pid)
             continue
         p = _vers_piece(d)
-        poser(p, d.get("position"), d.get("_motif_angle"), d.get("_motif_decalage"), d.get("_motif_rayon"))
+        poser(p, d.get("position"), d.get("_motif_angle"), d.get("_motif_decalage"), d.get("_motif_rayon"),
+              d.get("_motif_nombre"))
         pieces[pid] = p
         faits.add(pid)
     for p in pieces.values():
@@ -1022,7 +1061,8 @@ def interface_principale(a: Piece, b: Piece, bord: str | None = None, solide_a=N
     contacts = [c for c in cands if c.ecart <= 1e-3]
     if contacts:
         return max(contacts, key=lambda c: c.aire)
-    return min(cands, key=lambda c: (round(c.ecart, 3), -c.aire))
+    # face à face : la grande face d'une carte au-dessus d'un fond, pas son chant près d'une paroi
+    return max(cands, key=lambda c: c.aire / (1.0 + c.ecart / 5.0))
 
 
 def profondeur(solide, point, direction, maximum: float = 2000.0) -> float:

@@ -323,6 +323,26 @@ VUES = {
 }
 
 
+def environnement_studio(chemin: Path) -> Path:
+    """Environnement équirectangulaire neutre (studio : haut lumineux, deux boîtes à lumière douces).
+
+    Sans environnement, f3d rend un métal parfait (aluminium, acier) presque noir : il ne reflète rien.
+    """
+    if chemin.is_file():
+        return chemin
+    from PIL import Image
+    h, w = 256, 512
+    v = np.linspace(0.0, 1.0, h)[:, None]
+    img = np.repeat(np.clip(1.0 - 0.55 * v, 0.0, 1.0), w, axis=1)
+    yy, xx = np.mgrid[0:h, 0:w]
+    for cx, cy, r in ((0.2, 0.25, 0.08), (0.7, 0.2, 0.1)):
+        d = np.sqrt(((xx / w - cx) * 2.0) ** 2 + (yy / h - cy) ** 2)
+        img = np.maximum(img, np.clip(1.6 - d / r, 0.0, 1.0))
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray((np.stack([img * 0.98, img * 0.99, img], axis=-1) * 255).astype(np.uint8)).save(chemin)
+    return chemin
+
+
 def rendre(dossier_apercus: Path, assemble: Path, eclate: Path, coupe: Path | None, chrono: dict[str, Any],
            resolution: int = 1100, normale_coupe=None) -> dict[str, str]:
     dossier_apercus.mkdir(parents=True, exist_ok=True)
@@ -330,9 +350,11 @@ def rendre(dossier_apercus: Path, assemble: Path, eclate: Path, coupe: Path | No
     if not f3d:
         return {}
     sorties: dict[str, str] = {}
+    studio = environnement_studio(dossier_apercus.parent / "travail" / "studio.png")
     commun = [f"--resolution={resolution},{int(resolution * 0.78)}", "--up=+Y", "--ambient-occlusion=true",
               "--anti-aliasing=true", "--tone-mapping=true", "--grid=false", "--axis=false", "--filename=false",
-              "--bg-color=0.86,0.88,0.91", "--animation-progress=false", "--progress=false"]
+              "--bg-color=0.86,0.88,0.91", "--animation-progress=false", "--progress=false",
+              f"--hdri-file={studio}", "--hdri-ambient=true"]
 
     def f(nom: str, fichier: Path, direction: str, temps: float | None = None, index: int | None = None):
         sortie = dossier_apercus / nom

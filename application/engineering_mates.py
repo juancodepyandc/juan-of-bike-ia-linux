@@ -248,7 +248,7 @@ def liaison_vis(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, pie
     r = Resultat(liaison["id"], "vis", [a.id, b.id])
     n = itf.normale
     F, source_F = effort(liaison, a, b)
-    existants = b.trous_existants if b.origine == "achete" else None
+    existants = b.trous_existants if b.origine == "achete" else None     # côté B : filets du composant
     fam_b = famille(b)
     if existants:
         mode = "filetage_existant"
@@ -270,6 +270,10 @@ def liaison_vis(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, pie
     elif mode == "filetage_existant":
         d_impose = _diametre_vis(existants.get("vis"))
         serie = [d_impose] if d_impose else [3.0]
+        cible = serie[0]
+    elif a.origine == "achete" and a.trous_existants and _diametre_vis(a.trous_existants.get("vis")):
+        # trous de passage déclarés par le composant (carte, platine) : leur taille de vis s'impose
+        serie = [_diametre_vis(a.trous_existants.get("vis"))]
         cible = serie[0]
     else:
         serie = [d for d in normes.DIAMETRES if d >= 2.0]
@@ -313,7 +317,7 @@ def liaison_vis(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, pie
         # perçage simple : de l'interface jusqu'au lamage (le lamage est du côté de la tête, au dos de A)
         r.trous.append({"piece": a.id, "centre": P.tolist(), "axe": (-n).tolist(), "rayon": g["r_passage"],
                         "de": 0.0, "a": ep_a - g["noyage"] - (g["k"] if g["tete"] in ("ISO 10642", "DIN 7997") else 0.0),
-                        "liaison": liaison["id"]})
+                        "liaison": liaison["id"], "debouchant": True})
         if g["tete"] in ("ISO 4762",) and g["noyage"] > 0:
             r.retirer(a.id, cyl_entre(dos - n * 1.0, dos + n * g["noyage"], g["r_lamage"]))
         if g["tete"] in ("ISO 10642", "DIN 7997"):
@@ -348,11 +352,11 @@ def liaison_vis(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, pie
                                              g["matiere_vis"], art, a.id, -n, liaison["id"],
                                              groupe=f"{liaison['id']}#{k + 1}", rang=1))
         if mode == "insert":
-            Li, OD, logement = normes.INSERTS_CHAUD[d]
+            Li, OD, logement = g["insert"]
             debut = P + n * 0.0
             insert = cyl_entre(debut, debut + n * Li, logement / 2.0 - 0.02) - cyl_entre(
                 debut - n * 1, debut + n * (Li + 1), g["r_fut"] + 0.03)
-            art_i = article(f"insert fileté M{normes.format_mm(d)} (à chaud)", "insert à chaud", d, Li, od=OD)
+            art_i = article(f"insert fileté M{normes.format_mm(d)} × {normes.format_mm(Li)} (à chaud)", "insert à chaud", d, Li, od=OD)
             r.quincaillerie.append(quincaillerie(f"{liaison['id']}_insert_{k + 1}", f"insert M{d:g}", insert, "laiton",
                                                  art_i, b.id, -n, liaison["id"], groupe=f"{liaison['id']}#{k + 1}", rang=0))
     r.etapes.append(choix["etape"])
@@ -393,6 +397,7 @@ def _essayer_vis(liaison, a: Piece, b: Piece, itf: Interface, d: float, mode: st
             if d not in normes.INSERTS_CHAUD:
                 return {"ok": False, "raison": "pas d'insert à chaud de ce diamètre"}
             r_trou_b = normes.INSERTS_CHAUD[d][2] / 2.0
+    insert_choisi = None
     # 2. tête, choisie sur l'épaisseur de A au centre de l'interface
     centre = itf.monde(*_centre(itf))
     ep_centre = profondeur(a.solide, centre, -n)
@@ -483,10 +488,20 @@ def _essayer_vis(liaison, a: Piece, b: Piece, itf: Interface, d: float, mode: st
         e_min, e_cible = 3.0 * d, 5.0 * d
         e_max = disponible_b - max(2.0, pb["paroi_min"] * 0.5)
     elif mode == "insert":
-        Li = normes.INSERTS_CHAUD[d][0]
-        if disponible_b < Li + pb["paroi_min"]:
-            return {"ok": False, "raison": f"{b.nom} trop mince pour un insert de {Li} mm"}
-        e_min, e_cible, e_max = 0.8 * Li, Li, Li + 0.8
+        Li = None
+        prise_i = ep_a - 0.2 if tete in ("ISO 10642", "DIN 7997") else ep_a - noyage
+        for L_ins, OD_ins, log_ins in normes.INSERTS_VARIANTES[d]:
+            if disponible_b < L_ins + pb["paroi_min"]:
+                continue
+            em, ec, ex = 0.8 * L_ins, L_ins, min(L_ins + 0.8, disponible_b - pb["paroi_min"])
+            plage_i = normes.PLAGE_LONGUEURS[norme].get(d)
+            if normes.longueur_normalisee(normes.SERIE_LONGUEURS, prise_i + em, prise_i + ex, plage_i):
+                Li, insert_choisi = L_ins, (L_ins, OD_ins, log_ins)
+                e_min, e_cible, e_max = em, ec, ex
+                break
+        if Li is None:
+            return {"ok": False, "raison": f"{b.nom} : aucun insert M{d:g} du catalogue ni vis normalisée ne tient dans "
+                                           f"{disponible_b:.1f} mm"}
     elif mode == "autotaraudeuse":
         e_min, e_cible = 2.0 * d, 2.5 * d
         e_max = disponible_b - pb["paroi_min"]
@@ -515,7 +530,7 @@ def _essayer_vis(liaison, a: Piece, b: Piece, itf: Interface, d: float, mode: st
     if mode == "bois":
         cap, methode = normes.arrachement_bois(d, engagement, mat(b)["densite"]) / 2.0, "EN 1995 éq. 8.40a (Rk / 2)"
     elif mode == "insert":
-        OD, Li = normes.INSERTS_CHAUD[d][1], normes.INSERTS_CHAUD[d][0]
+        Li, OD = insert_choisi[0], insert_choisi[1]
         tau = normes.resistance_effective(b.matiere, b.procede, "cisaillement")
         cap, methode = normes.arrachement_plastique(OD, Li, tau) / 2.5, "cisaillement du plastique autour de l'insert (/ 2,5)"
     elif mode == "autotaraudeuse":
@@ -546,9 +561,9 @@ def _essayer_vis(liaison, a: Piece, b: Piece, itf: Interface, d: float, mode: st
         r_fut = min(normes.diametre_noyau(d), r_trou_b * 2.0 - 0.04) / 2.0
     marge_fond = 2.0 if mode == "bois" else 1.0
     if mode == "filetage_existant":
-        prof_trou = itf.ecart + e_max
+        prof_trou = e_max
     else:
-        prof_trou = itf.ecart + min(e_max, engagement + marge_fond)
+        prof_trou = min(e_max, engagement + marge_fond)
     justification = {
         "bois": f"{b.nom} est en {mat(b)['nom']} : vis à bois avec avant-trou Ø{2 * r_trou_b:.1f} mm, tête fraisée affleurante",
         "insert": f"{b.nom} est imprimé et la liaison est démontable : insert laiton posé à chaud, la vis ne s'use pas dans le plastique",
@@ -564,6 +579,7 @@ def _essayer_vis(liaison, a: Piece, b: Piece, itf: Interface, d: float, mode: st
     if renfort is not None:
         resume += f" ; platine de renfort Ø{2 * renfort[1]:.0f} mm sur {a.nom}"
     return {"ok": True, "points": points, "renfort": renfort, "ep_renfort": ep_a if renfort is not None else None,
+            "insert": insert_choisi if mode == "insert" else None,
             "degagement": (existants or {}).get("degagement_central_mm"), "r_passage": r_passage, "r_trou_b": r_trou_b, "r_lamage": r_tete,
             "r_bossage": r_bossage, "noyage": noyage, "tete": tete, "norme": norme, "dk": dk, "k": k, "L": L,
             "r_fut": r_fut, "prof_trou": prof_trou, "designation": designation, "nom_vis": nom_vis, "classe": classe,
@@ -1236,7 +1252,7 @@ def liaison_clip(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, pi
         h_min = max(pc["paroi_min"], 1.5 * pc["detail_min"])
         h = None
         while y >= 0.5:
-            h_eps = eps * l * l / (1.5 * y)
+            h_eps = 0.8 * eps * l * l / (1.5 * y)
             h = min(h_eps, 0.35 * l, 4.0)
             if h >= h_min:
                 break
@@ -1518,11 +1534,18 @@ def _roles(type_: str, x: Piece, y: Piece, pieces: dict[str, Piece]) -> tuple[Pi
     dx, dy = profondeur_arbre(x.id, pieces), profondeur_arbre(y.id, pieces)
     parent, enfant = (x, y) if dx <= dy else (y, x)
     if type_ == "vis":
-        if y.trous_existants and y.origine == "achete":
-            return x, y
-        if x.trous_existants and x.origine == "achete":
-            return y, x
         itf = interface_principale(x, y)
+        for achat, autre in ((y, x), (x, y)):
+            if not (achat.trous_existants and achat.origine == "achete") or itf is None:
+                continue
+            # trous déclarés aussi profonds que la pièce (ou pièce mince : carte, platine) = trous de PASSAGE :
+            # la tête est de son côté ; trous borgnes = filets du composant : la vis vient de l'autre pièce
+            sens = itf.normale if achat is y else -itf.normale
+            c = itf.monde(*_centre(itf)) + (itf.normale * itf.ecart if achat is y else np.zeros(3))
+            epaisseur = profondeur(achat.solide, c, sens)
+            declare = achat.trous_existants.get("profondeur_mm")
+            passage = epaisseur <= 3.0 or (isinstance(declare, (int, float)) and declare >= 0.9 * epaisseur)
+            return (achat, autre) if passage else (autre, achat)
         if itf is None:
             return parent, enfant
         c = itf.monde(*_centre(itf))

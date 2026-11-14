@@ -458,3 +458,68 @@ def test_route_du_pont_concoit_dans_un_processus_et_rend_les_fichiers(tmp_path):
     assert etat["fichiers_url"]["assemblage"].endswith("/modele/assemblage.glb")
     assert any("ISO" in q["designation"] or "insert" in q["designation"] for q in etat["nomenclature"]["quincaillerie"])
     assert (tmp_path / "output" / "3d" / etat["fichiers_url"]["assemblage"].split("/api/3d/file/")[1]).is_file()
+
+
+def test_lecture_libre_motif_redondant_et_entraxe_conserve(tmp_path):
+    """Lecture réelle du 14/11 (mode rapide) : vocabulaire libre, motif répété sur les suiveurs, bras trop longs."""
+    ex = {"titre": "Châssis", "procede": "Usinage CNC", "matiere": "Aluminium 7075-T6",
+          "pieces": [{"id": "plateau_central", "nom": "Plateau", "forme": "plaque", "dimensions_mm": [120, 120, 4],
+                      "matiere": "Aluminium 7075-T6", "procede": "Usinage CNC"},
+                     {"id": "bras", "nom": "Bras", "forme": "barre", "dimensions_mm": [150, 20, 4],
+                      "position": {"par_rapport_a": "plateau_central", "cote": "dessus", "centre_sur": "plateau_central",
+                                   "radial": {"rayon_extremite_mm": 150}},
+                      "motif": {"type": "polaire", "nombre": 4, "angle_depart_deg": 45}},
+                     {"id": "support", "nom": "Support moteur", "forme": "bloc", "dimensions_mm": [30, 30, 25],
+                      "position": {"par_rapport_a": "bras", "cote": "dessus", "centre_sur": "bras",
+                                   "alignement": {"axe": "x", "valeur": "max"}},
+                      "motif": {"type": "polaire", "nombre": 4, "angle_depart_deg": 45}}],
+          "liaisons": [{"entre": ["plateau_central", "bras"], "type": "vis"}, {"entre": ["bras", "support"], "type": "vis"}]}
+    rapport = concevoir(ex, tmp_path, rendre_f3d=False)
+    assert rapport["verdict"] == "conforme", {k: v["ok"] for k, v in rapport["controles"].items()}
+    assert all(p["matiere"] == "aluminium" and p["procede"] == "usinage" for p in rapport["pieces"] if p["origine"] == "fabrique")
+    assert any("une par instance" in d["decision"] for d in rapport["decisions"])
+    raccourci = [d for d in rapport["decisions"] if d["decision"].startswith("longueur ramenée")]
+    assert raccourci and "150" in raccourci[0]["raison"]
+    supports = [p for p in rapport["pieces"] if p["id"].startswith("support_")]
+    assert len(supports) == 4
+
+
+def test_carte_a_trous_de_passage_vissee_sur_bossages_du_boitier(tmp_path):
+    """Lecture réelle du 14/11 : carte achetée, motif M3 80×60 de la profondeur de la carte, 5 mm au-dessus du fond."""
+    ex = {"titre": "Boîtier", "procede": "impression_fdm", "matiere": "pla",
+          "pieces": [{"id": "base", "nom": "Base du boîtier", "forme": "bac", "dimensions_mm": [100, 80, 30], "paroi_mm": 2.5,
+                      "ouverture": "dessus"},
+                     {"id": "couvercle", "nom": "Couvercle", "forme": "plaque", "dimensions_mm": [105, 85, 3],
+                      "position": {"par_rapport_a": "base", "cote": "dessus"}},
+                     {"id": "carte", "nom": "Carte électronique", "forme": "plaque", "dimensions_mm": [90, 70, 1.6],
+                      "origine": "achete", "matiere": "FR4", "position": {"par_rapport_a": "base", "cote": "dedans", "hauteur_mm": 5},
+                      "trous_existants": {"vis": "M3", "entraxe_mm": [80, 60], "nombre": 4, "profondeur_mm": 1.6}}],
+          "liaisons": [{"entre": ["base", "couvercle"], "type": "clip", "demontable": True},
+                       {"entre": ["base", "carte"], "type": "vis", "demontable": True}]}
+    rapport = concevoir(ex, tmp_path, rendre_f3d=False)
+    assert rapport["verdict"] == "conforme", {k: v["ok"] for k, v in rapport["controles"].items()}
+    [vis] = _liaisons(rapport, "vis")
+    assert vis["entre"] == ["carte", "base"], "la tête est côté carte (trous de passage)"
+    assert vis["calculs"]["diametre_mm"] == 3.0 and vis["calculs"]["bossage"] and vis["calculs"]["nombre"] == 4
+    assert vis["interface"]["ecart_mm"] == pytest.approx(5.0, abs=1e-3)       # la face de la carte, pas son chant
+    carte = next(p for p in rapport["pieces"] if p["id"] == "carte")
+    assert carte["matiere"] == "electronique"
+
+
+def test_les_quantites_de_la_demande_sont_exigees_de_la_lecture():
+    """Lecture réelle du 14/11 : « quatre supports moteur » lu avec un seul bras — l'écart revient au modèle."""
+    from application.engineering_assembly_pipeline import nombres_d_exemplaires, verifier_fidele
+    assert nombres_d_exemplaires("un châssis de drone avec quatre supports moteur") == {4}
+    assert nombres_d_exemplaires("une table de 120 cm avec 4 pieds") == {4}
+    assert nombres_d_exemplaires("un boîtier imprimé en 3D, couvercle de 2 mm") == set()
+    assert nombres_d_exemplaires("une étagère avec trois tablettes") == {3}
+    un_bras = {"titre": "x", "pieces": [{"id": "plaque", "nom": "Plaque", "forme": "plaque", "dimensions_mm": [100, 100, 3]},
+                                        {"id": "bras", "nom": "Bras", "forme": "barre", "dimensions_mm": [120, 18, 4], "quantite": 1,
+                                         "position": {"par_rapport_a": "plaque", "cote": "dessus"}}],
+               "liaisons": [{"entre": ["plaque", "bras"], "type": "boulon_ecrou"}]}
+    message = verifier_fidele("un châssis avec quatre bras")(un_bras)
+    assert message and "4" in message
+    quatre = json.loads(json.dumps(un_bras))
+    quatre["pieces"][1]["quantite"] = 4
+    g = developper_motifs(normaliser(quatre), [])
+    assert sum(1 for p in g["pieces"] if p.get("base_id") == "bras") == 4

@@ -40,6 +40,8 @@ MATIERES: dict[str, dict[str, Any]] = {
            "cisaillement": 20.0, "clip": 0.050, "soudage": None, "couleur": (236, 236, 236), "rugosite": 0.55, "metal": 0.0},
     "resine": {"nom": "résine photopolymère", "famille": "polymere", "densite": 1.15, "module": 2500, "resistance": 50,
                "cisaillement": 30.0, "clip": 0.010, "soudage": None, "couleur": (196, 200, 206), "rugosite": 0.35, "metal": 0.0},
+    "polycarbonate": {"nom": "polycarbonate PC", "famille": "polymere", "densite": 1.20, "module": 2300, "resistance": 60,
+                      "cisaillement": 40.0, "clip": 0.040, "soudage": None, "couleur": (214, 224, 232), "rugosite": 0.2, "metal": 0.0},
     "acrylique": {"nom": "acrylique PMMA", "famille": "polymere", "densite": 1.18, "module": 3200, "resistance": 70,
                   "cisaillement": 40.0, "clip": None, "soudage": None, "couleur": (222, 236, 242), "rugosite": 0.12, "metal": 0.0},
     "carbone": {"nom": "composite carbone", "famille": "composite", "densite": 1.55, "module": 60000, "resistance": 500,
@@ -176,6 +178,10 @@ MU0 = 4e-7 * math.pi
 # sur la fiche du produit acheté : d -> (longueur, diamètre extérieur, diamètre du logement).
 INSERTS_CHAUD = {2.0: (3.0, 3.6, 3.2), 2.5: (4.0, 4.0, 3.6), 3.0: (5.7, 4.6, 4.0), 4.0: (8.1, 6.3, 5.6),
                  5.0: (9.5, 7.1, 6.4)}
+# Variantes de longueur proposées au catalogue (la plus longue d'abord) : un insert court quand la matière manque.
+INSERTS_VARIANTES = {2.0: [(3.0, 3.6, 3.2)], 2.5: [(4.0, 4.0, 3.6), (3.0, 4.0, 3.6)],
+                     3.0: [(5.7, 4.6, 4.0), (4.0, 4.6, 4.0), (3.0, 4.6, 4.0)], 4.0: [(8.1, 6.3, 5.6), (4.0, 6.3, 5.6)],
+                     5.0: [(9.5, 7.1, 6.4), (5.8, 7.1, 6.4)]}
 
 
 # Épaisseurs commerciales : panneaux de bois, tôles, plaques usinables.
@@ -205,6 +211,59 @@ def paroi_par_defaut(dims: list[float], cle_procede: str, cle_matiere: str) -> t
     cible = max(2 * PROCEDES[cle_procede]["paroi_min"], petit / 40.0)
     valeur = round(cible / 0.4) * 0.4 if PROCEDES[cle_procede]["imprime"] else round(cible, 1)
     return float(round(valeur, 2)), f"deux fois la paroi minimale du procédé ({PROCEDES[cle_procede]['paroi_min']:g} mm), au moins 1/40 de {petit:g} mm"
+
+
+# Vocabulaire libre → clés connues (une lecture sans schéma imposé écrit « Aluminium 7075-T6 », « Usinage CNC »).
+MOTS_MATIERE = {"pin": "pin", "sapin": "pin", "epicea": "pin", "resineux": "pin", "chene": "chene", "hetre": "hetre",
+                "contreplaque": "contreplaque", "multiplis": "contreplaque", "mdf": "mdf", "medium": "mdf",
+                "pla": "pla", "petg": "petg", "abs": "abs", "nylon": "nylon_pa12", "polyamide": "nylon_pa12", "pa12": "nylon_pa12",
+                "polypropylene": "pp", "pp": "pp", "resine": "resine", "photopolymere": "resine", "acrylique": "acrylique",
+                "pmma": "acrylique", "plexiglas": "acrylique", "polycarbonate": "polycarbonate", "pc": "polycarbonate",
+                "lexan": "polycarbonate", "carbone": "carbone", "aluminium": "aluminium", "alu": "aluminium",
+                "inox": "inox", "inoxydable": "inox", "acier": "acier", "laiton": "laiton", "pcb": "electronique",
+                "fr4": "electronique", "electronique": "electronique"}
+MOTS_PROCEDE = {"fdm": "impression_fdm", "fff": "impression_fdm", "impression": "impression_fdm", "imprime": "impression_fdm",
+                "sla": "impression_resine", "dlp": "impression_resine", "sls": "impression_sls", "mjf": "impression_sls",
+                "cnc": "usinage", "usinage": "usinage", "fraisage": "usinage", "tournage": "usinage",
+                "laser": "decoupe_plaque", "decoupe": "decoupe_plaque", "jet": "decoupe_plaque",
+                "menuiserie": "bois", "ebenisterie": "bois", "bois": "bois", "tolerie": "tolerie", "pliage": "tolerie",
+                "soudage": "tolerie", "moulage": "moulage", "injection": "moulage", "achat": "achat", "achete": "achat",
+                "commerce": "achat"}
+
+
+def _mots(texte) -> list[str]:
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", str(texte or "")).encode("ascii", "ignore").decode().lower()
+    return [m for m in re.split(r"[^a-z0-9]+", t) if m]
+
+
+def resoudre_matiere(texte) -> str | None:
+    """Clé de matière pour un texte libre ; None si aucun mot n'est reconnu (pas de devinette)."""
+    if texte in MATIERES:
+        return texte
+    mots = _mots(texte)
+    if "resine" in mots and ("impression" in mots or "sla" in mots):
+        return "resine"
+    for m in mots:
+        if m in ("inoxydable", "inox"):
+            return "inox"
+    for m in mots:
+        if m in MOTS_MATIERE:
+            return MOTS_MATIERE[m]
+    return None
+
+
+def resoudre_procede(texte) -> str | None:
+    if texte in PROCEDES:
+        return texte
+    mots = _mots(texte)
+    if "resine" in mots and "impression" in mots:
+        return "impression_resine"
+    for m in mots:
+        if m in MOTS_PROCEDE:
+            return MOTS_PROCEDE[m]
+    return None
 
 
 # --------------------------------------------------------------------------- utilitaires
