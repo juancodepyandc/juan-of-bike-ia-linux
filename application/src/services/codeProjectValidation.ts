@@ -1,7 +1,7 @@
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
 import type { CodeSandboxResult } from './codeSandbox.ts'
-import { isLLMRefusal } from './codeLLMRefusal.ts'
+import { findRefusalFile } from './codeLLMRefusal.ts'
 import {
   describeMissingTypeImportFixes,
   repairMissingTypeImports,
@@ -270,7 +270,7 @@ export function attemptLocalFileRepair(files: CodeFile[], sandboxResult: CodeSan
 export function validateOutputMatchesIntent(files: CodeFile[], intent: CodeIntent): string | null {
   if (files.length === 0) return 'Aucun fichier genere.'
 
-  const refusalFile = files.find((file) => isLLMRefusal(file.content))
+  const refusalFile = findRefusalFile(files)
   if (refusalFile) {
     return `Le fichier "${refusalFile.name}" contient un refus du modele au lieu de code source. Le modele doit GENERER du code, pas s excuser.`
   }

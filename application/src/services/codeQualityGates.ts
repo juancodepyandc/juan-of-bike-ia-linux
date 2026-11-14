@@ -1,6 +1,6 @@
 import type { CodeIntent } from './codeIntent.ts'
 import type { CodeFile } from './codeOrchestrator.ts'
-import { isLLMRefusal } from './codeLLMRefusal.ts'
+import { findRefusalFile } from './codeLLMRefusal.ts'
 import { computeDesignPolishScore } from './codeDesignPolishGate.ts'
 
 export {
@@ -299,7 +299,7 @@ export function computeContentQualityScore(files: CodeFile[], intent: CodeIntent
   if (files.length === 0) return 0
 
   // Check for refusal in any file
-  const refusalFile = files.find((f) => isLLMRefusal(f.content))
+  const refusalFile = findRefusalFile(files)
   if (refusalFile) return 0
 
   // Check for generic fallback files (reponse.txt)

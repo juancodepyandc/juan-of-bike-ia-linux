@@ -161,8 +161,12 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
         setRecoveryStatus('Reprise automatique apres redemarrage...')
       } else {
         setNotes('')
-        setFiles([])
-        setActiveFile(0)
+        // Une nouvelle demande part du projet en place : il reste affiché pendant le travail et
+        // sert de base. L'effacer ici faisait perdre le projet dès qu'une génération n'aboutissait pas.
+        if (files.length === 0) {
+          setFiles([])
+          setActiveFile(0)
+        }
         setValidationResult(null)
         setCorrectionLog([])
         setIntent(null)
@@ -251,6 +255,20 @@ export async function runCodeViewGeneration(deps: CodeViewGenerationDeps, option
             })
 
             abortRef.current = null
+
+            // Une demande de suite qui ne livre aucun fichier n'est pas un nouveau projet vide :
+            // le projet en place reste le projet, intact, et la conversation peut continuer.
+            // Avant, `setFiles([])` l'effaçait et la note retombait à 0 — « je ne peux pas continuer ».
+            if (result.files.length === 0 && files.length > 0) {
+              const reason = result.notes.trim() || 'Aucun fichier exploitable n a ete livre pour cette demande.'
+              setFiles(files)
+              setIntent(result.intent)
+              setNotes(`Cette demande n'a rien modifie : le projet en place est conserve tel quel.\n\n${reason}`)
+              setError(reason)
+              setProgress('Demande non appliquee. Le projet precedent est intact : reformulez ou poursuivez.')
+              setRecoveryStatus(null)
+              return
+            }
 
             // Update final state
             setFiles(result.files)
