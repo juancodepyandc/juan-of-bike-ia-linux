@@ -49,6 +49,8 @@ ENGINE_MODULES = (
     "application/python-services/photo_rectifier.py",
     "application/python-services/reference_visual_search.py",
     "application/python-services/lecture_demande.py",
+    "application/python-services/articulated_motion.py",
+    "application/python-services/motion_intent_baker.py",
 )
 
 

@@ -276,8 +276,53 @@ def _generate_oled_png_sequence(intent: Dict[str, Any], out_dir: str,
     }
 
 
+# A part that moves relative to the rest of the object (lid, door, flap, lever) is a mechanism,
+# not a motion of the whole mesh: the Blender bakers below rotate the largest mesh as one block.
+PART_MOTION_CATEGORIES = {"mechanical_simple", "articulated_rig"}
+
+
+def _bake_part_motion(request: str, input_glb: str, output_glb: str, category: str) -> Optional[Dict[str, Any]]:
+    """Route a part motion to the articulated engine. None when the request moves the whole object."""
+    try:
+        import articulated_motion
+    except Exception as exc:  # noqa: BLE001
+        if category in PART_MOTION_CATEGORIES:
+            return {"ok": False, "engine": "articulated_motion", "error": f"moteur articulé indisponible : {exc}"}
+        return None
+    plan = articulated_motion.planifier(request)
+    if not plan.get("ok"):
+        if category in PART_MOTION_CATEGORIES:
+            # Without a plan the old path would rock the whole mesh and report success.
+            return {"ok": False, "engine": "articulated_motion", "plan": plan,
+                    "error": f"plan cinématique indisponible : {plan.get('raison')}"}
+        return None
+    if not plan.get("mouvement_de_piece"):
+        return None
+    report_path = os.path.splitext(output_glb)[0] + "_articulation.json"
+    try:
+        result = articulated_motion.animer(input_glb, request, output_glb, plan=plan, rapport=report_path)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "raison": f"{type(exc).__name__}: {exc}"}
+    out = {"ok": bool(result.get("ok")), "engine": "articulated_motion", "report": report_path,
+           "plan": plan, "liaison": result.get("liaison"), "verification": result.get("verification")}
+    if not out["ok"]:
+        out["error"] = f"animation articulée refusée : {result.get('raison')}"
+    return out
+
+
 def bake_intent(intent_path: str, input_glb: str, output_glb: str,
-                fps: int = 24, blender_path: Optional[str] = None) -> Dict[str, Any]:
+                fps: int = 24, blender_path: Optional[str] = None,
+                request: Optional[str] = None) -> Dict[str, Any]:
+    category = ""
+    try:
+        with open(intent_path, "r", encoding="utf-8") as f:
+            category = str((json.load(f) or {}).get("category") or "")
+    except Exception:  # noqa: BLE001
+        category = ""
+    if request and request.strip():
+        part = _bake_part_motion(request, input_glb, output_glb, category)
+        if part is not None:
+            return part
     bpath = blender_path or _find_blender()
     if not bpath:
         # Pure-Python no-op fallback for CI boxes without Blender.
@@ -351,6 +396,8 @@ def main() -> int:
     ap.add_argument("--output", required=True)
     ap.add_argument("--fps", type=int, default=24)
     ap.add_argument("--blender", default=None)
+    ap.add_argument("--request", default=None,
+                    help="demande de mouvement en langage naturel ; une piece qui bouge passe par le moteur articule")
     args = ap.parse_args()
 
     with open(args.intent, "r", encoding="utf-8") as f:
@@ -358,7 +405,7 @@ def main() -> int:
     _validate_intent(intent)
 
     result = bake_intent(args.intent, args.input, args.output,
-                         args.fps, args.blender)
+                         args.fps, args.blender, request=args.request)
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 2
 

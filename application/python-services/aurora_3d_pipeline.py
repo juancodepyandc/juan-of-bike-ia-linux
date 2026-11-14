@@ -1717,7 +1717,8 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                 bp = subprocess.run([sys.executable, str(baker),
                                      "--intent", str(intent_path),
                                      "--input", str(gas_input),
-                                     "--output", str(rigged_path)],
+                                     "--output", str(rigged_path),
+                                     "--request", str(motion_prompt or "")],
                                     capture_output=True, text=True, timeout=1800, check=False)
                 bres = json.loads(bp.stdout) if (bp.stdout or "").strip().startswith("{") else {}
             except Exception as exc:  # noqa: BLE001
@@ -1731,6 +1732,12 @@ def run_motion_bake(rescued_mesh: Path, motion_prompt: str, run_id: str,
                         "motion_spec": _spec_out,
                         **(_sim_fluide(rigged_path) if water_info else {}),
                         "size_bytes": rigged_path.stat().st_size}
+            if bres.get("engine") == "articulated_motion":
+                # Le moteur articulé a refusé en disant pourquoi : pas de piste d'animation
+                # de secours qui balancerait l'objet entier en se déclarant réussie.
+                print("PROGRESS:animation:animation articulee refusee — %s" % str(bres.get("error"))[:160], flush=True)
+                return {"ok": False, "error": str(bres.get("error") or "animation articulée refusée"),
+                        "motion_intent": category, "motion_prompt": motion_prompt, "articulation": bres}
             if water_info:
                 _sh.move(str(gas_input), str(rigged_path))
                 _guarantee_gltf_anim_track(rigged_path, rescued_mesh)

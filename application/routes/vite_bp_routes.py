@@ -2868,8 +2868,9 @@ def three_d_auto_motion_bake():
                 [sys.executable, baker,
                  "--intent", intent_tmp,
                  "--input", input_glb,
-                 "--output", output_glb],
-                capture_output=True, text=True, timeout=600, check=False,
+                 "--output", output_glb,
+                 "--request", prompt],
+                capture_output=True, text=True, timeout=900, check=False,
             )
             try:
                 bake_result = json.loads(bproc.stdout)
