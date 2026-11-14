@@ -3445,7 +3445,19 @@ def _emission_demandee(*textes: str) -> tuple[bool, str]:
 _LECTURES_DEMANDE: dict[str, dict] = {}
 
 
-def run_pipeline(prompt: str, run_id: str, *,
+def run_pipeline(prompt: str, run_id: str, **options) -> dict:
+    """Pipeline 3D complet. Le résultat garde la demande de l'utilisateur comme `prompt` ;
+    le sujet au repos montré par la référence, quand il en diffère, est rendu à part."""
+    result = _run_pipeline_core(prompt, run_id, **options)
+    lecture = _LECTURES_DEMANDE.get(run_id) or {}
+    demande = lecture.get("demande")
+    if isinstance(result, dict) and lecture.get("source") == "llm" and demande and result.get("prompt") != demande:
+        result["sujet_reference"] = result.get("prompt")
+        result["prompt"] = demande
+    return result
+
+
+def _run_pipeline_core(prompt: str, run_id: str, *,
                  output_dir: Path = DEFAULT_OUTPUT_DIR,
                  multi_view: bool | None = None,
                  motion_prompt: str | None = None,
@@ -3498,7 +3510,7 @@ def run_pipeline(prompt: str, run_id: str, *,
         _LECTURES_DEMANDE[run_id] = _lecture
     if _lecture is not None:
         audit.append({"stage": "lecture_demande", **{k: _lecture.get(k) for k in
-                      ("source", "sujet", "sujet_en", "mouvement", "exemplaires", "raison") if k in _lecture}})
+                      ("source", "demande", "sujet", "sujet_en", "mouvement", "exemplaires", "raison") if k in _lecture}})
         if _lecture.get("source") == "llm" and _lecture.get("mouvement") and _lecture.get("sujet") != prompt:
             print("PROGRESS:comprehension:la reference montrera « %s » ; le mouvement « %s » est reserve a l'animation"
                   % (str(_lecture["sujet"])[:80], str(_lecture["mouvement"])[:80]), flush=True)

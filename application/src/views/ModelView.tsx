@@ -1,3 +1,4 @@
+import ThreeDLibraryPanel from '../components/ThreeDLibraryPanel.tsx'
 import { planThreeDEdit, readThreeDSourceContext, sourceRig, type SourceContext } from '../utils/threeDEditPlan.ts'
 import { resolveThreeDRelation, type ThreeDRelation } from '../utils/threeDRelation.ts'
 import { retainThreeDRequirements, composeThreeDRequirements } from '../utils/threeDConversationContext.ts'
@@ -3007,7 +3008,15 @@ function InteractiveModel({
 
   useEffect(() => {
     if (manualTime == null || !mixerRef.current) return
-    mixerRef.current.setTime(manualTime)
+    // En pause, les actions sont figées et le mélangeur a une échelle de temps nulle : setTime()
+    // ne posait rien, le curseur bougeait sans que le modèle suive. On fixe le temps de chaque
+    // action puis on applique la pose sans avancer (update(0) évalue les pistes à action.time).
+    for (const action of actionsRef.current) {
+      if (!action) continue
+      action.enabled = true
+      action.time = Math.max(0, Math.min(manualTime, action.getClip().duration))
+    }
+    mixerRef.current.update(0)
   }, [manualTime])
 
   useFrame((state, delta) => {
@@ -3413,39 +3422,45 @@ function InteractiveModel({
 }
 
 /** Camera controller that resets on double-click and auto-fits the model */
-function CameraController({ viewer, modelLoaded }: { viewer: ViewerConfig; modelLoaded: boolean }) {
+function CameraController({ viewer, modelLoaded, modelRoot }: { viewer: ViewerConfig; modelLoaded: boolean; modelRoot: Object3D | null }) {
   const { camera, scene, gl } = useThree()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const controlsRef = useRef<any>(null)
   const defaultCameraPos = useMemo(() => new Vector3(...viewer.cameraPosition), [viewer.cameraPosition])
   const defaultTarget = useMemo(() => new Vector3(0, 0, 0), [])
 
-  // Auto-fit camera to model bounds when loaded — ensures model is always centered and visible
+  // Cadrage automatique sur le MODÈLE, au moment où il est réellement chargé. Avant : la boîte de
+  // toute la scène (grille du sol, ombres, décor) sur un minuteur de 0,8 s — un GLB de 100 Mo
+  // n'était pas encore là, la caméra cadrait la grille et le modèle restait minuscule.
   useEffect(() => {
-    if (!modelLoaded) return
-    // Small delay to ensure the model is fully loaded and the scene graph is updated
+    const target = modelRoot ?? (modelLoaded ? scene : null)
+    if (!target) return
     const fitTimer = setTimeout(() => {
-      const box = new Box3().setFromObject(scene)
+      target.updateMatrixWorld(true)
+      const box = new Box3().setFromObject(target)
       if (box.isEmpty()) return
       const boxCenter = box.getCenter(new Vector3())
       const boxSize = box.getSize(new Vector3())
-      const maxDim = Math.max(boxSize.x, boxSize.y, boxSize.z)
-      // Position camera at a comfortable distance, slightly above and to the side for 3/4 view
-      const fitDistance = Math.max(maxDim * 2.5, 1.5)
-      camera.position.set(
-        boxCenter.x + fitDistance * 0.3,
-        boxCenter.y + fitDistance * 0.25,
-        boxCenter.z + fitDistance * 0.85,
-      )
+      const radius = Math.max(1e-3, 0.5 * boxSize.length())
+      // distance pour que la sphère englobante tienne dans le champ vertical ET horizontal
+      const perspective = camera as typeof camera & { fov?: number; aspect?: number }
+      const vFov = ((perspective.fov ?? 46) * Math.PI) / 180
+      const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (perspective.aspect ?? 1.4))
+      const fitDistance = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 1.08
+      // vue 3/4 légèrement plongeante, comme les rendus de contrôle du pipeline
+      const direction = new Vector3(0.45, 0.32, 0.83).normalize()
+      camera.position.copy(boxCenter).addScaledVector(direction, fitDistance)
+      camera.near = Math.max(1e-3, fitDistance / 200)
+      camera.far = Math.max(100, fitDistance * 20)
       camera.lookAt(boxCenter)
       camera.updateProjectionMatrix()
       if (controlsRef.current) {
         controlsRef.current.target.copy(boxCenter)
         controlsRef.current.update()
       }
-    }, 300)
+    }, 120)
     return () => clearTimeout(fitTimer)
-  }, [camera, modelLoaded, scene])
+  }, [camera, modelLoaded, modelRoot, scene])
 
   // Double-click to reset view
   useEffect(() => {
@@ -3850,7 +3865,7 @@ function Scene3D({
           onSelectAnchorId={onSelectAnchorId}
         />
       </Suspense>
-      <CameraController viewer={viewer} modelLoaded={modelLoaded} />
+      <CameraController viewer={viewer} modelLoaded={modelLoaded} modelRoot={internalRoot} />
     </Canvas>
   )
 }
@@ -7066,7 +7081,17 @@ export default function ModelView() {
 
   return (
     <><nav aria-label="Espace 3D" className="flex flex-wrap items-center justify-between gap-2 px-3 py-3"><div className="flex flex-wrap gap-2"><button type="button" aria-pressed={workspace === 'model'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'model' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('model')}>Modèle original / génération</button><button type="button" aria-pressed={workspace === 'assembly'} className={`min-h-11 rounded-xl border px-4 text-sm transition-colors ${workspace === 'assembly' ? 'border-aurora-accent bg-aurora-accent/15 font-semibold text-aurora-accent' : 'border-aurora-border text-aurora-text-muted hover:text-aurora-text'}`} onClick={() => setWorkspace('assembly')}>Assemblage / impression</button></div><ReinforcedModelBar activeModule="3d" /></nav>
-    {workspace === 'model' && <label className="mx-3 mb-3 block text-xs text-aurora-text-muted">Ouvrir un modèle dans le viewer original
+    {workspace === 'model' && <ThreeDLibraryPanel
+      activeUrl={modelUrl}
+      refreshToken={modelUrl}
+      onOpen={(url) => {
+        setModelUrl(url)
+        setError(null)
+        // le viewer est plus bas dans la page : on l'amène sous les yeux
+        window.setTimeout(() => viewerContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+      }}
+    />}
+    {workspace === 'model' && <label className="mx-3 mb-3 block text-xs text-aurora-text-muted">Ou ouvrir un fichier GLB de l’ordinateur
       <input type="file" accept=".glb" className="block mt-2 w-full min-h-11" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 120 * 1024 * 1024) { setError('GLB limité à 120 Mo.'); return } if (importedOriginalUrl.current) URL.revokeObjectURL(importedOriginalUrl.current); importedOriginalUrl.current = URL.createObjectURL(file); setModelUrl(importedOriginalUrl.current); setError(null) }} />
     </label>}
     <div hidden={workspace !== 'assembly'} className="p-3 sm:p-6"><EngineeringExportPanel modelUrl={modelUrl} objectiveHint={prompt} assemblyOnly active={workspace === 'assembly'} /></div>
@@ -7275,7 +7300,9 @@ export default function ModelView() {
           )}
           <div className="border-b border-aurora-border/30 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[11px] uppercase tracking-[0.22em] text-aurora-text-dim">Viewer</p><h2 className="mt-1 text-lg font-semibold text-aurora-text">Mesh viewer</h2></div><div className="inline-flex items-center gap-2 rounded-full border border-aurora-border/35 bg-aurora-surface-2 px-3 py-1.5 text-[11px] text-aurora-text-dim">{viewerConfig.lockView ? <Lock size={12} /> : <Orbit size={12} />}<span>{viewerConfig.modeLabel} · {viewerConfig.modeDetail}</span></div></div></div>
           <div className="grid gap-3 p-3 sm:gap-5 sm:p-5 xl:grid-cols-[minmax(0,1fr)_18rem]">
-            <div className="min-h-[50vw] sm:min-h-[36rem]">
+            {/* Hauteur propre au viewer : étiré à la hauteur de la barre latérale (~3 000 px), le canevas
+                plaçait le modèle loin sous l'écran et l'on ne voyait qu'un fond noir. */}
+            <div className="self-start xl:sticky xl:top-3 h-[78vw] min-h-[20rem] max-h-[82vh] sm:h-[min(78vh,56rem)]">
               {modelUrl ? (
                 <div ref={viewerContainerRef} className="relative h-full overflow-hidden rounded-[1.8rem] border border-aurora-border/35 bg-[#091116]">
                   <Scene3D

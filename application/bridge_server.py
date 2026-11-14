@@ -1375,6 +1375,16 @@ def three_d_list():
     return resp
 
 
+@app.route("/api/3d/projects", methods=["GET"])
+def three_d_projects():
+    """Bibliothèque 3D par génération : titre, vignette, livrable par défaut et variantes."""
+    from three_d_library import projets_3d
+    projets = projets_3d(_racines_3d())
+    resp = jsonify({"ok": True, "total": len(projets), "projets": projets})
+    resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+    return resp
+
+
 @app.route("/api/3d/file/<path:fname>", methods=["GET"])
 def three_d_file(fname):
     # Les REFERENCES sont des PNG. Sans elles ici, l'interface n'avait aucune
