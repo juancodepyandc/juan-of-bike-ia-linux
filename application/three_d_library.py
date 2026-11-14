@@ -46,6 +46,8 @@ def _role(dossier_role: str, nom: str, anime: bool = False) -> tuple[str, int]:
     """Libellé lisible et rang de préférence (plus petit = livrable plus probable)."""
     n = nom.lower()
     geometrie = "geometrie" in n or "geometry" in n
+    if dossier_role == "modele" and ("eclate" in n or "exploded" in n):
+        return ("Vue éclatée", 2)
     if anime and dossier_role != "travail":
         return ("Animé — géométrie", 3) if geometrie else ("Animé — couleurs", 0)
     if dossier_role == "mouvement":

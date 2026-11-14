@@ -3445,6 +3445,52 @@ def _emission_demandee(*textes: str) -> tuple[bool, str]:
 _LECTURES_DEMANDE: dict[str, dict] = {}
 
 
+def _conception_assemblage(demande: str, run_id: str, output_dir: Path, audit: list, started_at: float) -> dict | None:
+    """Conçoit l'objet comme un assemblage (moteur `application/engineering_assembly_pipeline.py`).
+
+    Rend None seulement si le moteur juge que la demande n'est pas un objet en pièces assemblées :
+    le pipeline visuel reprend alors. Un échec de conception est rendu tel quel, jamais maquillé.
+    """
+    racine_run = output_dir.parent if output_dir.name in {"models", "work"} else output_dir
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    try:
+        from application.engineering_assembly_pipeline import depuis_demande
+    except Exception as exc:  # noqa: BLE001
+        audit.append({"stage": "assemblage", "ok": False, "error": f"moteur d'assemblage indisponible : {exc!r}"[:240]})
+        return {"ok": False, "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": demande, "kind": "assemblage",
+                "pipeline": "assemblage_ingenierie", "error": "moteur d'assemblage indisponible", "audit_trail": audit}
+    print("PROGRESS:assemblage:conception par pieces, liaisons et fixations", flush=True)
+    res = depuis_demande(demande, dossier=racine_run)
+    if res.get("hors_portee"):
+        audit.append({"stage": "assemblage", "ok": False, "hors_portee": True, "raison": res.get("raison")})
+        return None
+    rapport = res.get("rapport") or {}
+    fichiers = rapport.get("fichiers") or {}
+    controles = {k: v.get("ok") for k, v in (rapport.get("controles") or {}).items()}
+    audit.append({"stage": "assemblage", "ok": bool(res.get("ok")), "verdict": rapport.get("verdict"),
+                  "controles": controles, "dossier": res.get("dossier"), "raison": res.get("raison")})
+    if not rapport:
+        return {"ok": False, "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": demande, "kind": "assemblage",
+                "pipeline": "assemblage_ingenierie", "error": f"conception impossible : {res.get('raison')}",
+                "audit_trail": audit}
+    glb = fichiers.get("assemblage")
+    anime = bool((rapport.get("chronologie_animation") or {}).get("duree_s"))
+    echecs = [k for k, v in controles.items() if not v]
+    return {
+        "ok": bool(res.get("ok")), "schema": "aurora.pipeline.v1", "run_id": run_id, "prompt": demande,
+        "kind": "assemblage", "pipeline": "assemblage_ingenierie", "final_mesh": glb,
+        "rigged_mesh": glb if anime else None, "textured": False,
+        "livraison": {"modele_couleurs": glb, "vue_eclatee": fichiers.get("eclate"), "coupe": fichiers.get("coupe"),
+                      "dossier": str(Path(res.get("dossier") or racine_run) / "DOSSIER.md")},
+        "assemblage": {"verdict": rapport.get("verdict"), "controles": controles,
+                       "nomenclature": rapport.get("nomenclature"), "apercus": fichiers.get("apercus")},
+        "elapsed_s": round(time.time() - started_at, 1),
+        "error": None if res.get("ok") else "contrôles non conformes : " + ", ".join(echecs),
+        "audit_trail": audit,
+    }
+
+
 def run_pipeline(prompt: str, run_id: str, **options) -> dict:
     """Pipeline 3D complet. Le résultat garde la demande de l'utilisateur comme `prompt` ;
     le sujet au repos montré par la référence, quand il en diffère, est rendu à part."""
@@ -3516,6 +3562,14 @@ def _run_pipeline_core(prompt: str, run_id: str, *,
                   % (str(_lecture["sujet"])[:80], str(_lecture["mouvement"])[:80]), flush=True)
             prompt = str(_lecture["sujet"])
     _exemplaires_attendus = (_lecture or {}).get("exemplaires")
+    # CONCEPTION D'INGÉNIERIE (14/11/2026). Une demande qui porte sur des pièces à fabriquer et à
+    # assembler (« une boîte en bois avec un couvercle à charnière et un loquet ») n'est pas une image
+    # à reconstruire : le moteur d'assemblage la conçoit pièce par pièce, liaisons usinées sur les
+    # deux pièces, quincaillerie normalisée et contrôles mesurés. AURORA_3D_ASSEMBLAGE=0 désactive.
+    if (_lecture or {}).get("conception") is True and not images and os.environ.get("AURORA_3D_ASSEMBLAGE", "1") != "0":
+        _res_asm = _conception_assemblage(str(_lecture.get("demande") or prompt), run_id, output_dir, audit, started_at)
+        if _res_asm is not None:
+            return _res_asm
     output_dir.mkdir(parents=True, exist_ok=True)
     required_space = 2 * 1024 ** 3
     available_space = shutil.disk_usage(output_dir).free

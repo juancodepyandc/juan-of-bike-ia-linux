@@ -30,7 +30,7 @@ MAX_EXEMPLAIRES = 64
 _CONSIGNE = (
     "Tu lis une demande de création 3D et tu la sépares en trois informations. "
     "Réponds UNIQUEMENT par un objet JSON de cette forme exacte :\n"
-    '{"sujet": "...", "sujet_en": "...", "mouvement": "...", "exemplaires": 1}\n'
+    '{"sujet": "...", "sujet_en": "...", "mouvement": "...", "exemplaires": 1, "conception": false}\n'
     "- sujet : ce qu'une photo de référence doit montrer — l'objet, l'être ou la scène, avec ses "
     "matières, couleurs et détails demandés, dans l'état où il se trouve AVANT que le mouvement "
     "commence. Aucun mot de mouvement, d'animation, d'action, de durée ou de caméra. Même langue "
@@ -41,6 +41,10 @@ _CONSIGNE = (
     "- exemplaires : combien d'objets physiques distincts du sujet la demande veut voir en même "
     "temps (un objet = 1 ; « une paire de… » = 2 ; « trois… » = 3). Les étapes successives d'un "
     "mouvement ne sont PAS des exemplaires : un objet qui s'anime reste 1.\n"
+    "- conception : true si la demande porte sur la CONCEPTION d'un objet à fabriquer et assembler — elle parle "
+    "de pièces, de fixations ou d'assemblage (vis, charnière, loquet, clips, collage, soudure), de fabrication, de "
+    "cotes ou de fonctionnement mécanique ; false pour un personnage, un animal, une créature, une sculpture, une "
+    "scène, ou un objet demandé seulement pour son apparence ou son animation.\n"
     "N'ajoute rien que la demande ne dit pas. Pas de texte hors du JSON."
 )
 
@@ -53,7 +57,7 @@ def _interroger_ollama(demande: str, modele: str, timeout_s: float = 90.0) -> st
         "stream": False,
         "format": "json",
         "think": False,
-        "options": {"temperature": 0.0, "num_predict": 400},
+        "options": {"temperature": 0.0, "num_predict": 450},
         "messages": [
             {"role": "system", "content": _CONSIGNE},
             {"role": "user", "content": demande},
@@ -104,13 +108,15 @@ def _valider(brut: dict[str, Any] | None, demande: str) -> dict[str, Any] | None
         "sujet_en": " ".join(sujet_en.split()),
         "mouvement": " ".join(mouvement.split()),
         "exemplaires": exemplaires,
+        # champ ajouté le 14/11/2026 : absent ou non booléen = pas une demande de conception
+        "conception": brut.get("conception") is True,
     }
 
 
 def lecture_indisponible(demande: str, raison: str) -> dict[str, Any]:
     """La demande telle quelle, marquée comme non lue : l'appelant ne doit rien en déduire."""
     return {"schema": SCHEMA, "source": "indisponible", "raison": raison[:200], "demande": demande,
-            "sujet": demande, "sujet_en": "", "mouvement": "", "exemplaires": None}
+            "sujet": demande, "sujet_en": "", "mouvement": "", "exemplaires": None, "conception": None}
 
 
 def lire_demande(demande: str, *, interroger: Callable[[str], str] | None = None,

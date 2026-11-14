@@ -2490,6 +2490,32 @@ function _collectFlowBindings(root: Object3D): FlowBinding[] {
   return bindings
 }
 
+type AssemblyStep = { numero: number; texte: string; t: number }
+type AssemblyMeta = { titre: string; verdict: string; etapes: AssemblyStep[]; assembleA: number | null }
+
+// Étapes de montage écrites par application/engineering_assembly_export.py dans les extras du document :
+// `aurora_assemblage.etapes` (texte, pièces) et `aurora_montage_chronologie.debut_par_piece_s` (instant de
+// chaque pièce dans l'animation « montage_puis_mouvement »).
+function _readAssemblyMeta(userData: unknown): AssemblyMeta | null {
+  if (!userData || typeof userData !== 'object') return null
+  const ud = userData as Record<string, unknown>
+  const asm = ud.aurora_assemblage as Record<string, unknown> | undefined
+  const chrono = (ud.aurora_montage_chronologie ?? {}) as Record<string, unknown>
+  if (!asm || asm.schema !== 'aurora.assemblage.v1' || !Array.isArray(asm.etapes)) return null
+  const debuts = (chrono.debut_par_piece_s ?? {}) as Record<string, unknown>
+  const etapes: AssemblyStep[] = []
+  for (const raw of asm.etapes as unknown[]) {
+    if (!raw || typeof raw !== 'object') continue
+    const e = raw as Record<string, unknown>
+    const pieces = Array.isArray(e.pieces) ? (e.pieces as unknown[]).map(String) : []
+    const t = pieces.length ? Number(debuts[pieces[0]]) : NaN
+    etapes.push({ numero: Number(e.numero) || etapes.length + 1, texte: String(e.texte ?? ''), t: Number.isFinite(t) ? t : 0 })
+  }
+  const assembleA = Number(chrono.assemble_a_s)
+  return { titre: String(asm.titre ?? ''), verdict: String(asm.verdict ?? ''), etapes,
+           assembleA: Number.isFinite(assembleA) ? assembleA : null }
+}
+
 function InteractiveModel({
   url,
   localMeshPath = null,
@@ -2498,6 +2524,7 @@ function InteractiveModel({
   onPartInfo,
   selectAllToken,
   onAnimationsLoaded,
+  onAssemblyLoaded,
   onModelLoaded,
   playAnimations = true,
   animationSpeed = 1,
@@ -2531,6 +2558,7 @@ function InteractiveModel({
   onPartInfo?: (info: PartInfo | null) => void
   selectAllToken?: number
   onAnimationsLoaded?: (clips: AnimationClip[]) => void
+  onAssemblyLoaded?: (meta: AssemblyMeta | null) => void
   onModelLoaded?: (model: Object3D) => void
   playAnimations?: boolean
   animationSpeed?: number
@@ -2858,8 +2886,9 @@ function InteractiveModel({
         } catch {
           // MeshoptDecoder optional if unavailable
         }
-        const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[] }) => {
+        const applyLoadedModel = (loadedModel: { scene: Object3D; animations?: AnimationClip[]; userData?: unknown }) => {
           if (cancelled) return
+          onAssemblyLoaded?.(_readAssemblyMeta(loadedModel.userData))
           loadedObject = loadedModel.scene
           const initMap = new Map<Object3D, { pos: Vector3; rot: [number, number, number]; scale: Vector3 }>()
           loadedModel.scene.traverse((obj) => {
@@ -2888,6 +2917,7 @@ function InteractiveModel({
         }
         const clearLoadedModel = () => {
           if (cancelled) return
+          onAssemblyLoaded?.(null)
           setModel(null)
           setClips([])
           onAnimationsLoaded?.([])
@@ -3717,6 +3747,7 @@ function Scene3D({
   onPartInfo,
   selectAllToken,
   onAnimationsLoaded,
+  onAssemblyLoaded,
   onModelLoaded,
   playAnimations = true,
   animationSpeed = 1,
@@ -3757,6 +3788,7 @@ function Scene3D({
   onPartInfo?: (info: PartInfo | null) => void
   selectAllToken?: number
   onAnimationsLoaded?: (clips: AnimationClip[]) => void
+  onAssemblyLoaded?: (meta: AssemblyMeta | null) => void
   onModelLoaded?: (model: Object3D) => void
   playAnimations?: boolean
   animationSpeed?: number
@@ -3838,6 +3870,7 @@ function Scene3D({
           onPartInfo={onPartInfo}
           selectAllToken={selectAllToken}
           onAnimationsLoaded={onAnimationsLoaded}
+          onAssemblyLoaded={onAssemblyLoaded}
           onModelLoaded={(model) => { setInternalRoot(model); onModelLoaded?.(model) }}
           playAnimations={playAnimations}
           animationSpeed={animationSpeed}
@@ -3984,6 +4017,7 @@ export default function ModelView() {
   const [animationDuration, setAnimationDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [scrubTime, setScrubTime] = useState<number | null>(null)
+  const [assemblyMeta, setAssemblyMeta] = useState<AssemblyMeta | null>(null)
   const [wireframe, setWireframe] = useState(false)
   const [viewerMaterialMode, setViewerMaterialMode] = useState<ViewerMaterialMode>('authored')
   const [isLoadingColors, setIsLoadingColors] = useState(false)
@@ -7314,6 +7348,7 @@ export default function ModelView() {
                     onPartInfo={setSelectedPartInfo}
                     selectAllToken={selectAllToken}
                     onAnimationsLoaded={handleAnimationsLoaded}
+                    onAssemblyLoaded={setAssemblyMeta}
                     onModelLoaded={handleModelLoaded}
                     playAnimations={playAnimations}
                     animationSpeed={animationSpeed}
@@ -7638,6 +7673,29 @@ export default function ModelView() {
                           </select>
                         </div>
                       )}
+                    </div>
+                  )}
+                  {assemblyMeta && assemblyMeta.etapes.length > 0 && (
+                    <div className="absolute right-3 top-14 z-10 max-h-[45%] w-64 overflow-y-auto rounded-xl border border-aurora-border/60 bg-aurora-surface/85 p-2 text-[10px] text-aurora-text-dim backdrop-blur">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <span className="font-semibold uppercase tracking-[0.16em] text-aurora-text">Montage</span>
+                        <span className={assemblyMeta.verdict === 'conforme' ? 'text-emerald-400' : 'text-amber-400'}>
+                          {assemblyMeta.verdict === 'conforme' ? 'contrôles conformes' : 'contrôles non conformes'}
+                        </span>
+                      </div>
+                      <ol className="space-y-0.5">
+                        {assemblyMeta.etapes.map((etape) => (
+                          <li key={`etape-${etape.numero}`}>
+                            <button
+                              onClick={() => { setScrubTime(etape.t + 0.55); setPlayAnimations(false) }}
+                              className="w-full rounded px-1.5 py-0.5 text-left hover:bg-aurora-accent/10 hover:text-aurora-text"
+                              title={`${etape.t.toFixed(2)} s`}
+                            >
+                              <span className="font-mono text-aurora-accent">{etape.numero}.</span> {etape.texte}
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
                     </div>
                   )}
                   {animationDuration > 0 && (
