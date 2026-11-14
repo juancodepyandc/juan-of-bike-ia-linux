@@ -15,11 +15,11 @@
    "working_tree_drafts_included": false
   }
  },
- "source_files": 2470,
- "source_lines": 892104,
+ "source_files": 2480,
+ "source_lines": 894949,
  "static_route_declarations": 716,
  "by_repository": {
-  "AuroraIA": 2149,
+  "AuroraIA": 2159,
   "aurora-remote-cli": 317,
   "aurora-live": 4
  },
@@ -45,8 +45,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/agent_forge.py",
-   "sha256": "9004a6e72e6844c87fe478a94f0d1e9548d3df44322eb9dba7c0c6ce74816084",
-   "lines": 864,
+   "sha256": "f68de759911b3613b679b25b12852b83cbc6b84fa733a0be6b00a99417c4e06f",
+   "lines": 868,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -213,8 +213,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/mission_agent.py",
-   "sha256": "d34e26e0bc4844ef320c481695eb59b9c9064dbd92d09c9ce11925f7dc04994e",
-   "lines": 2093,
+   "sha256": "c821852fef59d61e85ab0b09064bd3ae5b823b5fb24197672980500e15c66377",
+   "lines": 2096,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -261,8 +261,8 @@
   {
    "repo": "AuroraIA",
    "path": "agi_core/mission_tools.py",
-   "sha256": "4d9ccf446f3dbe99b0172dd2a271fd9717251a0709c076f1ad80d198866d301a",
-   "lines": 855,
+   "sha256": "209dad5c478085aebe60897b2623edade42129cdafee8c47caaa52bf55ab54b3",
+   "lines": 856,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1506,8 +1506,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/package.json",
-   "sha256": "6d940a15c8f49155f20c816fb0cbc2e9f47c58dbe2b0c44a8532e8f586f54d41",
-   "lines": 86
+   "sha256": "dd448e2582348bd7417c9d74b498a527c53ac69de1306f6cc40258dab9a05c99",
+   "lines": 89
   },
   {
    "repo": "AuroraIA",
@@ -2145,6 +2145,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/python-services/articulated_motion.py",
+   "sha256": "99ca8ea83709d7a47dfc52a3b28a47126daa91821e6577c6f74946e215b2e6c6",
+   "lines": 919,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/python-services/atlas_dilate.py",
    "sha256": "f6f3ae2a8baf29a00fb0a550224eee25ce426a710368b3f5346553bff5cd2c90",
    "lines": 240,
@@ -2170,8 +2178,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/aurora_3d_pipeline.py",
-   "sha256": "4e70f34d2488281b5705266401a25385ad97ccd0935530d81bf7fada77330bfb",
-   "lines": 7154,
+   "sha256": "5d1235c047cf805201e9c9c63e02e30ecd4b9df8e241a87512a8828715c4b0c1",
+   "lines": 7208,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -3034,7 +3042,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/character_research.py",
-   "sha256": "c7c174b770ea8307b93a5a16a678b75bdef39a4713c526cd1df42dc06c872ffb",
+   "sha256": "76146562f71a0862ff1e3a4f593d4edd33443cfd60e58fa3506e88f1866ac90d",
    "lines": 358,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -3711,6 +3719,14 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/python-services/lecture_demande.py",
+   "sha256": "3e6ab91204096f9b87b642f68b6cc8ea66155e1726c5cd6c404a21e3b56ec0a5",
+   "lines": 165,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/python-services/liquide_interieur.py",
    "sha256": "bfb0913cd25d5bfc9ae47845756b70e610c050659ed971826a80a406f7d2db8e",
    "lines": 219,
@@ -3920,7 +3936,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/mia_mocap_retarget.py",
-   "sha256": "9d8c12d71cb2551860bf564bd0c215af36ee2c204f5144b143ef457c0a5d36c2",
+   "sha256": "71de8b9115ab6212114c499f000069903a070d941390d422dfd1e98ab8f1c350",
    "lines": 1042,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -4032,15 +4048,15 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/motion_intent_baker.py",
-   "sha256": "41f6d88ac81e86306ab6b4e8625ec206a8ff84bfdc8395472f7a9e29596c7c50",
-   "lines": 367,
+   "sha256": "31cb27649fab4403c9952d3e460a192b5e3a5e0b0fceb135a5b48305d7784164",
+   "lines": 414,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
   {
    "repo": "AuroraIA",
    "path": "application/python-services/motion_intent_bpy_runner.py",
-   "sha256": "0b3e380aeb98d721af7a2be9e409994b358c3aed5d7bcd90179287c6227fefdd",
+   "sha256": "3c6c6deb4c87233432607ec36cc931b347279983624c580d5104182bf768a621",
    "lines": 3845,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
@@ -4240,8 +4256,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/photo_rectifier.py",
-   "sha256": "d6a25b54b3dfe4da65e66318624bc784b5c7f638ae2ff4a4496eb7a9feedfb87",
-   "lines": 449,
+   "sha256": "88b51df371fbc24f672570cb700fae1d07642cd5d0c3062aca5e57f9aee7cbcf",
+   "lines": 537,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7326,8 +7342,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/universal_anatomical_rig_engine.py",
-   "sha256": "5356a9b17c853ea43eb1f0bf52a4d16413dcb2b79b09bbce8234e0042434af9a",
-   "lines": 3527,
+   "sha256": "79b91220b70d0baef54a8117c80cd583608bdfb30cdcdfb331935cf83a3fe187",
+   "lines": 3528,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7374,8 +7390,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/python-services/voice_service.py",
-   "sha256": "d5c5d6787ecab032fc0162c2050577d695337d26a8775d064f25affce8430dee",
-   "lines": 1114,
+   "sha256": "cfc013d84419f088a48dac5c97acddeb34a17df44e8b0687692790b982c88de9",
+   "lines": 1117,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -7463,8 +7479,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/cinema_bp_routes.py",
-   "sha256": "822f2756201c09d16b6b99143adab2936717200ba4ae2df45cecd53215253033",
-   "lines": 2422,
+   "sha256": "9ce728334c92dab8009d0b98a7304a10eb741b404ade6208bebc1651f9b0034a",
+   "lines": 2430,
    "http_routes": [
     {
      "path": "/api/cinema/storyboard",
@@ -7472,7 +7488,7 @@
       "POST"
      ],
      "handler": "cinema_storyboard",
-     "line": 277
+     "line": 285
     },
     {
      "path": "/api/academy/parcours/latest",
@@ -7480,7 +7496,7 @@
       "GET"
      ],
      "handler": "academy_parcours_latest",
-     "line": 366
+     "line": 374
     },
     {
      "path": "/api/cinema/sample-render",
@@ -7488,7 +7504,7 @@
       "POST"
      ],
      "handler": "cinema_sample_render",
-     "line": 381
+     "line": 389
     },
     {
      "path": "/api/cinema/regenerate-shot",
@@ -7496,7 +7512,7 @@
       "POST"
      ],
      "handler": "cinema_regenerate_shot",
-     "line": 434
+     "line": 442
     },
     {
      "path": "/api/cinema/selftest",
@@ -7504,7 +7520,7 @@
       "POST"
      ],
      "handler": "cinema_selftest",
-     "line": 527
+     "line": 535
     },
     {
      "path": "/api/cinema/benchmark",
@@ -7512,7 +7528,7 @@
       "POST"
      ],
      "handler": "cinema_video_benchmark",
-     "line": 610
+     "line": 618
     },
     {
      "path": "/api/cinema/preview-keyframes",
@@ -7520,7 +7536,7 @@
       "POST"
      ],
      "handler": "cinema_preview_keyframes",
-     "line": 669
+     "line": 677
     },
     {
      "path": "/api/cinema/generate",
@@ -7528,7 +7544,7 @@
       "POST"
      ],
      "handler": "cinema_generate",
-     "line": 722
+     "line": 730
     },
     {
      "path": "/api/video/render",
@@ -7536,7 +7552,7 @@
       "POST"
      ],
      "handler": "video_render",
-     "line": 788
+     "line": 796
     },
     {
      "path": "/api/cinema/films",
@@ -7544,7 +7560,7 @@
       "GET"
      ],
      "handler": "cinema_films",
-     "line": 1004
+     "line": 1012
     },
     {
      "path": "/api/cinema/films/<film_id>/video",
@@ -7552,7 +7568,7 @@
       "GET"
      ],
      "handler": "cinema_film_video",
-     "line": 1050
+     "line": 1058
     },
     {
      "path": "/api/cinema/films/<film_id>/rapport",
@@ -7560,7 +7576,7 @@
       "GET"
      ],
      "handler": "cinema_film_rapport",
-     "line": 1064
+     "line": 1072
     },
     {
      "path": "/api/cinema/job/<job_id>",
@@ -7568,7 +7584,7 @@
       "GET"
      ],
      "handler": "cinema_job_status",
-     "line": 1079
+     "line": 1087
     },
     {
      "path": "/api/cinema/cancel/<job_id>",
@@ -7576,7 +7592,7 @@
       "POST"
      ],
      "handler": "cinema_job_cancel",
-     "line": 1129
+     "line": 1137
     },
     {
      "path": "/api/video/queue",
@@ -7584,7 +7600,7 @@
       "GET"
      ],
      "handler": "video_gpu_queue_status",
-     "line": 1135
+     "line": 1143
     },
     {
      "path": "/api/storage/status",
@@ -7592,7 +7608,7 @@
       "GET"
      ],
      "handler": "storage_status",
-     "line": 1184
+     "line": 1192
     },
     {
      "path": "/api/storage/tier",
@@ -7600,7 +7616,7 @@
       "POST"
      ],
      "handler": "storage_tier",
-     "line": 1215
+     "line": 1223
     },
     {
      "path": "/api/storage/stage",
@@ -7608,7 +7624,7 @@
       "POST"
      ],
      "handler": "storage_stage",
-     "line": 1225
+     "line": 1233
     },
     {
      "path": "/api/storage/unstage",
@@ -7616,7 +7632,7 @@
       "POST"
      ],
      "handler": "storage_unstage",
-     "line": 1233
+     "line": 1241
     },
     {
      "path": "/api/storage/gc",
@@ -7624,7 +7640,7 @@
       "POST"
      ],
      "handler": "storage_gc",
-     "line": 1241
+     "line": 1249
     },
     {
      "path": "/api/storage/purge",
@@ -7632,7 +7648,7 @@
       "POST"
      ],
      "handler": "storage_purge",
-     "line": 1252
+     "line": 1260
     },
     {
      "path": "/api/video/gallery",
@@ -7640,7 +7656,7 @@
       "GET"
      ],
      "handler": "video_gallery",
-     "line": 1264
+     "line": 1272
     },
     {
      "path": "/api/voice/library",
@@ -7648,7 +7664,7 @@
       "GET"
      ],
      "handler": "voice_library_list",
-     "line": 1327
+     "line": 1335
     },
     {
      "path": "/api/voice/library/<slug>",
@@ -7656,7 +7672,7 @@
       "DELETE"
      ],
      "handler": "voice_library_delete",
-     "line": 1334
+     "line": 1342
     },
     {
      "path": "/api/voice/library/clear",
@@ -7664,7 +7680,7 @@
       "POST"
      ],
      "handler": "voice_library_clear",
-     "line": 1351
+     "line": 1359
     },
     {
      "path": "/api/voice/register",
@@ -7672,7 +7688,7 @@
       "POST"
      ],
      "handler": "voice_register",
-     "line": 1368
+     "line": 1376
     },
     {
      "path": "/api/voice/extract",
@@ -7680,7 +7696,7 @@
       "POST"
      ],
      "handler": "voice_extract_async",
-     "line": 1441
+     "line": 1449
     },
     {
      "path": "/api/voice/synthesize",
@@ -7688,7 +7704,7 @@
       "POST"
      ],
      "handler": "voice_synthesize",
-     "line": 1503
+     "line": 1511
     },
     {
      "path": "/api/voice/check",
@@ -7696,7 +7712,7 @@
       "GET"
      ],
      "handler": "voice_clone_check",
-     "line": 1558
+     "line": 1566
     },
     {
      "path": "/api/voice/studio/sample",
@@ -7704,7 +7720,7 @@
       "POST"
      ],
      "handler": "voice_studio_upload_sample",
-     "line": 1594
+     "line": 1602
     },
     {
      "path": "/api/voice/studio/sample/<sample_id>/audio",
@@ -7712,7 +7728,7 @@
       "GET"
      ],
      "handler": "voice_studio_stream_sample",
-     "line": 1693
+     "line": 1701
     },
     {
      "path": "/api/voice/studio/replicate",
@@ -7720,7 +7736,7 @@
       "POST"
      ],
      "handler": "voice_studio_replicate",
-     "line": 1712
+     "line": 1720
     },
     {
      "path": "/api/voice/studio/sing",
@@ -7728,7 +7744,7 @@
       "POST"
      ],
      "handler": "voice_studio_sing",
-     "line": 1779
+     "line": 1787
     },
     {
      "path": "/api/voice/studio/music/search",
@@ -7736,7 +7752,7 @@
       "GET"
      ],
      "handler": "voice_studio_music_search",
-     "line": 1851
+     "line": 1859
     },
     {
      "path": "/api/voice/studio/music/track/<track_name>/audio",
@@ -7744,7 +7760,7 @@
       "GET"
      ],
      "handler": "voice_studio_stream_music",
-     "line": 1865
+     "line": 1873
     },
     {
      "path": "/api/voice/studio/emotion/detect",
@@ -7752,7 +7768,7 @@
       "POST"
      ],
      "handler": "voice_studio_detect_emotion",
-     "line": 1880
+     "line": 1888
     },
     {
      "path": "/api/voice/studio/calibrate",
@@ -7760,7 +7776,7 @@
       "POST"
      ],
      "handler": "voice_studio_calibrate",
-     "line": 1894
+     "line": 1902
     },
     {
      "path": "/api/voice/studio/generation/<gen_name>/audio",
@@ -7768,7 +7784,7 @@
       "GET"
      ],
      "handler": "voice_studio_stream_generation",
-     "line": 1911
+     "line": 1919
     },
     {
      "path": "/api/voice/studio/tree",
@@ -7776,7 +7792,7 @@
       "GET"
      ],
      "handler": "voice_studio_tree",
-     "line": 1932
+     "line": 1940
     },
     {
      "path": "/api/voice/studio/profiles",
@@ -7784,7 +7800,7 @@
       "GET"
      ],
      "handler": "voice_studio_profiles",
-     "line": 1944
+     "line": 1952
     },
     {
      "path": "/api/voice/studio/profile/<slug>",
@@ -7792,7 +7808,7 @@
       "DELETE"
      ],
      "handler": "voice_studio_delete_profile",
-     "line": 1959
+     "line": 1967
     },
     {
      "path": "/api/voice/studio/clean-legacy",
@@ -7800,7 +7816,7 @@
       "POST"
      ],
      "handler": "voice_studio_clean_legacy",
-     "line": 1975
+     "line": 1983
     },
     {
      "path": "/api/music/status",
@@ -7808,7 +7824,7 @@
       "GET"
      ],
      "handler": "music_status",
-     "line": 2212
+     "line": 2220
     },
     {
      "path": "/api/music/voices",
@@ -7816,7 +7832,7 @@
       "GET"
      ],
      "handler": "music_voice_list",
-     "line": 2217
+     "line": 2225
     },
     {
      "path": "/api/music/voices",
@@ -7824,7 +7840,7 @@
       "POST"
      ],
      "handler": "music_voice_import",
-     "line": 2235
+     "line": 2243
     },
     {
      "path": "/api/music/jobs",
@@ -7832,7 +7848,7 @@
       "POST"
      ],
      "handler": "music_create",
-     "line": 2299
+     "line": 2307
     },
     {
      "path": "/api/music/jobs/<job_id>",
@@ -7840,7 +7856,7 @@
       "GET"
      ],
      "handler": "music_job",
-     "line": 2383
+     "line": 2391
     },
     {
      "path": "/api/music/exports",
@@ -7848,7 +7864,7 @@
       "GET"
      ],
      "handler": "music_exports",
-     "line": 2391
+     "line": 2399
     },
     {
      "path": "/api/music/exports/<path:filename>",
@@ -7856,7 +7872,7 @@
       "GET"
      ],
      "handler": "music_export_file",
-     "line": 2413
+     "line": 2421
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -8302,8 +8318,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/connect_bp_routes.py",
-   "sha256": "b23769ba32cf0a6fcbb5cd7af2f27abb05b6f412d2905954c8db67d17efe9398",
-   "lines": 317,
+   "sha256": "b0f654ab77eecd7728bda378eb33cb77418c9827b5357f90102008a4d626af56",
+   "lines": 318,
    "http_routes": [
     {
      "path": "/api/connect/targets/list",
@@ -8311,7 +8327,7 @@
       "GET"
      ],
      "handler": "connect_targets_list",
-     "line": 42
+     "line": 43
     },
     {
      "path": "/api/connect/targets/save",
@@ -8319,7 +8335,7 @@
       "POST"
      ],
      "handler": "connect_targets_save",
-     "line": 52
+     "line": 53
     },
     {
      "path": "/api/connect/targets/delete",
@@ -8327,7 +8343,7 @@
       "POST"
      ],
      "handler": "connect_targets_delete",
-     "line": 77
+     "line": 78
     },
     {
      "path": "/api/connect/ssh/probe",
@@ -8335,7 +8351,7 @@
       "POST"
      ],
      "handler": "connect_ssh_probe",
-     "line": 110
+     "line": 111
     },
     {
      "path": "/api/connect/ssh/run",
@@ -8343,7 +8359,7 @@
       "POST"
      ],
      "handler": "connect_ssh_run",
-     "line": 155
+     "line": 156
     },
     {
      "path": "/api/connect/ssh/upload",
@@ -8351,7 +8367,7 @@
       "POST"
      ],
      "handler": "connect_ssh_upload",
-     "line": 200
+     "line": 201
     },
     {
      "path": "/api/connect/ssh/keygen",
@@ -8359,7 +8375,7 @@
       "POST"
      ],
      "handler": "connect_ssh_keygen",
-     "line": 269
+     "line": 270
     },
     {
      "path": "/api/connect/tcp/probe",
@@ -8367,7 +8383,7 @@
       "POST"
      ],
      "handler": "connect_tcp_probe",
-     "line": 295
+     "line": 296
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -8375,8 +8391,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/cowork_ext_bp_routes.py",
-   "sha256": "e20a501f3f2a9369c4af109298125bcc3e6338fe803980fb14ca355567e7cd9b",
-   "lines": 5052,
+   "sha256": "bc3e36e365e55c56490bbd3d3f0bb1b2b27ed3c3ce97ca33d20ba7cdb568aa06",
+   "lines": 5070,
    "http_routes": [
     {
      "path": "/api/cowork/extension/poll",
@@ -8480,7 +8496,7 @@
       "GET"
      ],
      "handler": "warmup_status",
-     "line": 481
+     "line": 498
     },
     {
      "path": "/api/warmup/restart",
@@ -8488,7 +8504,7 @@
       "POST"
      ],
      "handler": "warmup_restart",
-     "line": 540
+     "line": 557
     },
     {
      "path": "/api/cowork/extension/install-md",
@@ -8496,7 +8512,7 @@
       "GET"
      ],
      "handler": "cowork_ext_install_md",
-     "line": 729
+     "line": 746
     },
     {
      "path": "/api/picker/explain",
@@ -8504,7 +8520,7 @@
       "GET"
      ],
      "handler": "picker_explain",
-     "line": 1379
+     "line": 1396
     },
     {
      "path": "/api/warmup/health",
@@ -8512,7 +8528,7 @@
       "GET"
      ],
      "handler": "warmup_health",
-     "line": 1448
+     "line": 1465
     },
     {
      "path": "/api/picker/history",
@@ -8520,7 +8536,7 @@
       "GET"
      ],
      "handler": "picker_history",
-     "line": 1536
+     "line": 1553
     },
     {
      "path": "/api/picker/history/clear",
@@ -8528,7 +8544,7 @@
       "POST"
      ],
      "handler": "picker_history_clear",
-     "line": 1553
+     "line": 1570
     },
     {
      "path": "/api/picker/history/stats",
@@ -8536,7 +8552,7 @@
       "GET"
      ],
      "handler": "picker_history_stats",
-     "line": 1603
+     "line": 1620
     },
     {
      "path": "/api/picker/history/kinds",
@@ -8544,7 +8560,7 @@
       "GET"
      ],
      "handler": "picker_history_kinds",
-     "line": 1765
+     "line": 1782
     },
     {
      "path": "/api/picker/history/distinct-models",
@@ -8552,7 +8568,7 @@
       "GET"
      ],
      "handler": "picker_history_distinct_models",
-     "line": 1802
+     "line": 1819
     },
     {
      "path": "/api/picker/history/by-model",
@@ -8560,7 +8576,7 @@
       "GET"
      ],
      "handler": "picker_history_by_model",
-     "line": 1879
+     "line": 1896
     },
     {
      "path": "/api/picker/history/by-reason",
@@ -8568,7 +8584,7 @@
       "GET"
      ],
      "handler": "picker_history_by_reason",
-     "line": 1963
+     "line": 1980
     },
     {
      "path": "/api/picker/history/timeline",
@@ -8576,7 +8592,7 @@
       "GET"
      ],
      "handler": "picker_history_timeline",
-     "line": 2065
+     "line": 2082
     },
     {
      "path": "/api/picker/history/timeline/summary",
@@ -8584,7 +8600,7 @@
       "GET"
      ],
      "handler": "picker_history_timeline_summary",
-     "line": 2772
+     "line": 2789
     },
     {
      "path": "/api/picker/history/by-model-and-reason",
@@ -8592,7 +8608,7 @@
       "GET"
      ],
      "handler": "picker_history_by_model_and_reason",
-     "line": 2842
+     "line": 2859
     },
     {
      "path": "/api/picker/history/intersections",
@@ -8600,7 +8616,7 @@
       "GET"
      ],
      "handler": "picker_history_intersections",
-     "line": 2964
+     "line": 2981
     },
     {
      "path": "/api/picker/history/cells/empty",
@@ -8608,7 +8624,7 @@
       "GET"
      ],
      "handler": "picker_history_cells_empty",
-     "line": 3073
+     "line": 3090
     },
     {
      "path": "/api/picker/history/coverage",
@@ -8616,7 +8632,7 @@
       "GET"
      ],
      "handler": "picker_history_coverage",
-     "line": 3191
+     "line": 3208
     },
     {
      "path": "/api/picker/history/coverage/global",
@@ -8624,7 +8640,7 @@
       "GET"
      ],
      "handler": "picker_history_coverage_global",
-     "line": 3311
+     "line": 3328
     },
     {
      "path": "/api/picker/history/coverage/timeline",
@@ -8632,7 +8648,7 @@
       "GET"
      ],
      "handler": "picker_history_coverage_timeline",
-     "line": 3477
+     "line": 3494
     },
     {
      "path": "/api/picker/history/coverage/heatmap",
@@ -8640,7 +8656,7 @@
       "GET"
      ],
      "handler": "picker_history_coverage_heatmap",
-     "line": 3622
+     "line": 3639
     },
     {
      "path": "/api/picker/history/replay",
@@ -8648,7 +8664,7 @@
       "POST"
      ],
      "handler": "picker_history_replay",
-     "line": 3777
+     "line": 3794
     },
     {
      "path": "/api/cowork/extract-structured",
@@ -8656,7 +8672,7 @@
       "POST"
      ],
      "handler": "cowork_extract_structured",
-     "line": 3873
+     "line": 3890
     },
     {
      "path": "/api/cowork/extraction-stats",
@@ -8664,7 +8680,7 @@
       "GET"
      ],
      "handler": "cowork_extraction_stats",
-     "line": 4285
+     "line": 4303
     },
     {
      "path": "/api/cowork/dual-signal-event",
@@ -8672,7 +8688,7 @@
       "POST"
      ],
      "handler": "cowork_dual_signal_event",
-     "line": 4482
+     "line": 4500
     },
     {
      "path": "/api/cowork/dual-signal-stats",
@@ -8680,7 +8696,7 @@
       "GET"
      ],
      "handler": "cowork_dual_signal_stats",
-     "line": 4517
+     "line": 4535
     },
     {
      "path": "/api/cowork/dual-signal-effective",
@@ -8688,7 +8704,7 @@
       "GET"
      ],
      "handler": "cowork_dual_signal_effective",
-     "line": 4595
+     "line": 4613
     },
     {
      "path": "/api/cowork/dual-signal-reset",
@@ -8696,7 +8712,7 @@
       "POST"
      ],
      "handler": "cowork_dual_signal_reset",
-     "line": 4668
+     "line": 4686
     },
     {
      "path": "/api/cowork/trend-signal-reset",
@@ -8704,7 +8720,7 @@
       "POST"
      ],
      "handler": "cowork_trend_signal_reset",
-     "line": 4730
+     "line": 4748
     },
     {
      "path": "/api/cowork/trend-signal-event",
@@ -8712,7 +8728,7 @@
       "POST"
      ],
      "handler": "cowork_trend_signal_event",
-     "line": 4794
+     "line": 4812
     },
     {
      "path": "/api/cowork/trend-signal-stats",
@@ -8720,7 +8736,7 @@
       "GET"
      ],
      "handler": "cowork_trend_signal_stats",
-     "line": 4827
+     "line": 4845
     },
     {
      "path": "/api/cowork/browsers/detect",
@@ -8728,7 +8744,7 @@
       "GET"
      ],
      "handler": "cowork_browsers_detect",
-     "line": 4891
+     "line": 4909
     },
     {
      "path": "/api/cowork/mobile/inbound",
@@ -8736,7 +8752,7 @@
       "POST"
      ],
      "handler": "cowork_mobile_inbound",
-     "line": 4985
+     "line": 5003
     },
     {
      "path": "/api/cowork/mobile/events",
@@ -8744,7 +8760,7 @@
       "GET"
      ],
      "handler": "cowork_mobile_events",
-     "line": 4997
+     "line": 5015
     },
     {
      "path": "/api/cowork/mobile/dispatch",
@@ -8752,7 +8768,7 @@
       "POST"
      ],
      "handler": "cowork_mobile_dispatch",
-     "line": 5004
+     "line": 5022
     },
     {
      "path": "/api/cowork/mobile/poll",
@@ -8760,7 +8776,7 @@
       "GET"
      ],
      "handler": "cowork_mobile_poll",
-     "line": 5018
+     "line": 5036
     },
     {
      "path": "/api/cowork/mobile/result",
@@ -8768,7 +8784,7 @@
       "POST"
      ],
      "handler": "cowork_mobile_result",
-     "line": 5032
+     "line": 5050
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -8995,8 +9011,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/iot_bp_routes.py",
-   "sha256": "1ef287ce67c5eff970fb75753cdfd533f787b30fbc2be88acb9a4bdcd4be39a7",
-   "lines": 161,
+   "sha256": "ec8a61a41685bde8790aaae223e86d23b15da7b16e757b6b49b56df445d61792",
+   "lines": 162,
    "http_routes": [
     {
      "path": "/api/cowork/iot/mqtt",
@@ -9004,7 +9020,7 @@
       "POST"
      ],
      "handler": "cowork_iot_mqtt",
-     "line": 13
+     "line": 14
     },
     {
      "path": "/api/cowork/iot/tuya",
@@ -9012,7 +9028,7 @@
       "POST"
      ],
      "handler": "cowork_iot_tuya",
-     "line": 88
+     "line": 89
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -9079,8 +9095,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/python_bp_routes.py",
-   "sha256": "e3ddca1b1916a4da4f6041d2aa05ed43cb1635536d2460fc2d92c5091860b972",
-   "lines": 1383,
+   "sha256": "d3d6ff6e6bd08565d3c0a1638f91fc1bbb8682a104d139f3df98e1064476a725",
+   "lines": 1385,
    "http_routes": [
     {
      "path": "/api/python/run-async",
@@ -9088,7 +9104,7 @@
       "POST"
      ],
      "handler": "python_run_async",
-     "line": 869
+     "line": 871
     },
     {
      "path": "/api/ping",
@@ -9097,7 +9113,7 @@
       "HEAD"
      ],
      "handler": "python_bridge_ping",
-     "line": 906
+     "line": 908
     },
     {
      "path": "/api/health",
@@ -9105,7 +9121,7 @@
       "GET"
      ],
      "handler": "python_bridge_health",
-     "line": 915
+     "line": 917
     },
     {
      "path": "/api/conformance",
@@ -9114,7 +9130,7 @@
       "POST"
      ],
      "handler": "aurora_conformance",
-     "line": 948
+     "line": 950
     },
     {
      "path": "/api/architecture",
@@ -9123,7 +9139,7 @@
       "POST"
      ],
      "handler": "aurora_architecture",
-     "line": 1052
+     "line": 1054
     },
     {
      "path": "/api/expertise",
@@ -9132,7 +9148,7 @@
       "POST"
      ],
      "handler": "aurora_expertise",
-     "line": 1076
+     "line": 1078
     },
     {
      "path": "/api/tunnel/url",
@@ -9140,7 +9156,7 @@
       "GET"
      ],
      "handler": "tunnel_url",
-     "line": 1171
+     "line": 1173
     },
     {
      "path": "/api/python/job/<job_id>",
@@ -9148,7 +9164,7 @@
       "GET"
      ],
      "handler": "python_job_status",
-     "line": 1256
+     "line": 1258
     },
     {
      "path": "/api/python/cancel/<job_id>",
@@ -9156,7 +9172,7 @@
       "POST"
      ],
      "handler": "python_job_cancel",
-     "line": 1274
+     "line": 1276
     },
     {
      "path": "/api/python/cleanup-run",
@@ -9164,7 +9180,7 @@
       "POST"
      ],
      "handler": "cleanup_cancelled_generation",
-     "line": 1280
+     "line": 1282
     },
     {
      "path": "/api/python/conversation-state",
@@ -9172,7 +9188,7 @@
       "POST"
      ],
      "handler": "generation_conversation_state",
-     "line": 1296
+     "line": 1298
     },
     {
      "path": "/api/python/run",
@@ -9180,7 +9196,7 @@
       "POST"
      ],
      "handler": "python_run",
-     "line": 1306
+     "line": 1308
     },
     {
      "path": "/api/command/run",
@@ -9188,7 +9204,7 @@
       "POST"
      ],
      "handler": "command_run",
-     "line": 1332
+     "line": 1334
     },
     {
      "path": "/api/command/spawn",
@@ -9196,7 +9212,7 @@
       "POST"
      ],
      "handler": "command_spawn",
-     "line": 1355
+     "line": 1357
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -9365,8 +9381,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/vite_bp_routes.py",
-   "sha256": "30df5fd4442b257eebeb825451312cbe3ae7856b152ec478fd46e57fd1a098f8",
-   "lines": 3360,
+   "sha256": "a4bc9e2e250d44e1af8e8f36a11e62a01fb696e359e8c7bc005b83adec7560be",
+   "lines": 3365,
    "http_routes": [
     {
      "path": "/api/admin/status",
@@ -9374,7 +9390,7 @@
       "GET"
      ],
      "handler": "admin_status",
-     "line": 149
+     "line": 153
     },
     {
      "path": "/api/admin/restart-bridge",
@@ -9383,7 +9399,7 @@
       "GET"
      ],
      "handler": "admin_restart_bridge",
-     "line": 262
+     "line": 266
     },
     {
      "path": "/api/3d/motion-compile",
@@ -9391,7 +9407,7 @@
       "POST"
      ],
      "handler": "three_d_motion_compile",
-     "line": 286
+     "line": 290
     },
     {
      "path": "/api/3d/motion-resolve-prompt",
@@ -9399,7 +9415,7 @@
       "POST"
      ],
      "handler": "three_d_motion_resolve_prompt",
-     "line": 317
+     "line": 321
     },
     {
      "path": "/api/3d/motion-parser-self-test",
@@ -9407,7 +9423,7 @@
       "GET"
      ],
      "handler": "three_d_motion_parser_self_test",
-     "line": 348
+     "line": 352
     },
     {
      "path": "/api/3d/motion-self-test",
@@ -9415,7 +9431,7 @@
       "GET"
      ],
      "handler": "three_d_motion_self_test",
-     "line": 368
+     "line": 372
     },
     {
      "path": "/api/3d/regression-suite",
@@ -9423,7 +9439,7 @@
       "POST"
      ],
      "handler": "three_d_regression_suite",
-     "line": 397
+     "line": 401
     },
     {
      "path": "/api/3d/mesh-sharpen",
@@ -9431,7 +9447,7 @@
       "POST"
      ],
      "handler": "three_d_mesh_sharpen",
-     "line": 507
+     "line": 511
     },
     {
      "path": "/api/3d/run-pipeline",
@@ -9439,7 +9455,7 @@
       "POST"
      ],
      "handler": "three_d_run_pipeline",
-     "line": 577
+     "line": 581
     },
     {
      "path": "/api/3d/modify-delta",
@@ -9447,7 +9463,7 @@
       "POST"
      ],
      "handler": "three_d_modify_delta",
-     "line": 697
+     "line": 701
     },
     {
      "path": "/api/3d/compose-scene",
@@ -9455,7 +9471,7 @@
       "POST"
      ],
      "handler": "three_d_compose_scene",
-     "line": 747
+     "line": 751
     },
     {
      "path": "/api/code/visual-audit",
@@ -9463,7 +9479,7 @@
       "POST"
      ],
      "handler": "code_visual_audit",
-     "line": 1191
+     "line": 1195
     },
     {
      "path": "/api/code/tooling-eval",
@@ -9471,7 +9487,7 @@
       "POST"
      ],
      "handler": "code_tooling_eval",
-     "line": 1247
+     "line": 1251
     },
     {
      "path": "/api/code/assets/generate",
@@ -9479,7 +9495,7 @@
       "POST"
      ],
      "handler": "code_assets_generate",
-     "line": 1293
+     "line": 1297
     },
     {
      "path": "/api/code/assets/file/<path:asset_path>",
@@ -9487,7 +9503,7 @@
       "GET"
      ],
      "handler": "code_assets_file",
-     "line": 1367
+     "line": 1371
     },
     {
      "path": "/api/code/generate/stream",
@@ -9495,7 +9511,7 @@
       "POST"
      ],
      "handler": "code_generate_stream",
-     "line": 1385
+     "line": 1389
     },
     {
      "path": "/api/aurora/<module>/<action>",
@@ -9503,7 +9519,7 @@
       "POST"
      ],
      "handler": "aurora_module_dispatch",
-     "line": 1510
+     "line": 1514
     },
     {
      "path": "/api/3d/run-index",
@@ -9511,7 +9527,7 @@
       "GET"
      ],
      "handler": "three_d_run_index",
-     "line": 1543
+     "line": 1547
     },
     {
      "path": "/api/3d/score-history",
@@ -9519,7 +9535,7 @@
       "GET"
      ],
      "handler": "three_d_score_history",
-     "line": 1579
+     "line": 1583
     },
     {
      "path": "/api/3d/mesh-compare",
@@ -9527,7 +9543,7 @@
       "POST"
      ],
      "handler": "three_d_mesh_compare",
-     "line": 1635
+     "line": 1639
     },
     {
      "path": "/api/3d/viewer-html",
@@ -9535,7 +9551,7 @@
       "POST"
      ],
      "handler": "three_d_viewer_html",
-     "line": 1692
+     "line": 1696
     },
     {
      "path": "/draco/<path:relpath>",
@@ -9543,7 +9559,7 @@
       "GET"
      ],
      "handler": "serve_draco_static",
-     "line": 1754
+     "line": 1758
     },
     {
      "path": "/api/agents/list",
@@ -9551,7 +9567,7 @@
       "GET"
      ],
      "handler": "agents_list",
-     "line": 1801
+     "line": 1805
     },
     {
      "path": "/api/agents/hierarchy",
@@ -9559,7 +9575,7 @@
       "GET"
      ],
      "handler": "agents_hierarchy",
-     "line": 1851
+     "line": 1855
     },
     {
      "path": "/api/agents/resolve",
@@ -9568,7 +9584,7 @@
       "POST"
      ],
      "handler": "agents_resolve",
-     "line": 1859
+     "line": 1863
     },
     {
      "path": "/api/agents/brain-plan",
@@ -9577,7 +9593,7 @@
       "POST"
      ],
      "handler": "agents_brain_plan",
-     "line": 1876
+     "line": 1880
     },
     {
      "path": "/api/agents/loops/plan",
@@ -9586,7 +9602,7 @@
       "POST"
      ],
      "handler": "agents_loops_plan",
-     "line": 1906
+     "line": 1910
     },
     {
      "path": "/api/agents/loops/diagnose",
@@ -9594,7 +9610,7 @@
       "POST"
      ],
      "handler": "agents_loops_diagnose",
-     "line": 1912
+     "line": 1916
     },
     {
      "path": "/api/agents/loops/firewall-check",
@@ -9602,7 +9618,7 @@
       "POST"
      ],
      "handler": "agents_loops_firewall_check",
-     "line": 1926
+     "line": 1930
     },
     {
      "path": "/api/agents/loops/github-status",
@@ -9610,7 +9626,7 @@
       "GET"
      ],
      "handler": "agents_loops_github_status",
-     "line": 1941
+     "line": 1945
     },
     {
      "path": "/api/agents/loops/state",
@@ -9619,7 +9635,7 @@
       "POST"
      ],
      "handler": "agents_loops_state",
-     "line": 1949
+     "line": 1953
     },
     {
      "path": "/api/agents/loops/watchdog",
@@ -9627,7 +9643,7 @@
       "POST"
      ],
      "handler": "agents_loops_watchdog",
-     "line": 1969
+     "line": 1973
     },
     {
      "path": "/api/agents/loops/counterfactual",
@@ -9635,7 +9651,7 @@
       "POST"
      ],
      "handler": "agents_loops_counterfactual",
-     "line": 1981
+     "line": 1985
     },
     {
      "path": "/api/agents/sync-disk",
@@ -9643,7 +9659,7 @@
       "POST"
      ],
      "handler": "agents_sync_disk",
-     "line": 2000
+     "line": 2004
     },
     {
      "path": "/api/agents/<name>",
@@ -9651,7 +9667,7 @@
       "GET"
      ],
      "handler": "agents_get",
-     "line": 2009
+     "line": 2013
     },
     {
      "path": "/api/3d/auto-rescue",
@@ -9659,7 +9675,7 @@
       "POST"
      ],
      "handler": "three_d_auto_rescue",
-     "line": 2046
+     "line": 2050
     },
     {
      "path": "/api/3d/bake-colors",
@@ -9667,7 +9683,7 @@
       "POST"
      ],
      "handler": "three_d_bake_colors",
-     "line": 2117
+     "line": 2121
     },
     {
      "path": "/api/3d/color-diagnostic",
@@ -9675,7 +9691,7 @@
       "POST"
      ],
      "handler": "three_d_color_diagnostic",
-     "line": 2183
+     "line": 2187
     },
     {
      "path": "/api/3d/auto-validate",
@@ -9683,7 +9699,7 @@
       "POST"
      ],
      "handler": "three_d_auto_validate",
-     "line": 2243
+     "line": 2247
     },
     {
      "path": "/api/3d/mesh-score",
@@ -9691,7 +9707,7 @@
       "POST"
      ],
      "handler": "three_d_mesh_score",
-     "line": 2302
+     "line": 2306
     },
     {
      "path": "/api/agents/watchdog",
@@ -9699,7 +9715,7 @@
       "GET"
      ],
      "handler": "agents_watchdog",
-     "line": 2352
+     "line": 2356
     },
     {
      "path": "/api/agents/health",
@@ -9707,7 +9723,7 @@
       "GET"
      ],
      "handler": "agents_health",
-     "line": 2403
+     "line": 2407
     },
     {
      "path": "/api/agents/dispatches",
@@ -9715,7 +9731,7 @@
       "GET"
      ],
      "handler": "agents_dispatches",
-     "line": 2437
+     "line": 2441
     },
     {
      "path": "/api/agents/coverage",
@@ -9723,7 +9739,7 @@
       "GET"
      ],
      "handler": "agents_coverage",
-     "line": 2482
+     "line": 2486
     },
     {
      "path": "/api/agents/metrics",
@@ -9731,7 +9747,7 @@
       "GET"
      ],
      "handler": "agents_metrics",
-     "line": 2510
+     "line": 2514
     },
     {
      "path": "/api/3d/motion-intent",
@@ -9739,7 +9755,7 @@
       "POST"
      ],
      "handler": "three_d_motion_intent",
-     "line": 2539
+     "line": 2543
     },
     {
      "path": "/api/3d/custom-motion",
@@ -9747,7 +9763,7 @@
       "POST"
      ],
      "handler": "three_d_custom_motion",
-     "line": 2599
+     "line": 2603
     },
     {
      "path": "/api/3d/auto-motion-bake",
@@ -9755,7 +9771,7 @@
       "POST"
      ],
      "handler": "three_d_auto_motion_bake",
-     "line": 2715
+     "line": 2719
     },
     {
      "path": "/api/admin/git-pull",
@@ -9764,7 +9780,7 @@
       "GET"
      ],
      "handler": "admin_git_pull",
-     "line": 2905
+     "line": 2910
     },
     {
      "path": "/api/admin/restart-vite",
@@ -9773,7 +9789,7 @@
       "GET"
      ],
      "handler": "admin_restart_vite",
-     "line": 3043
+     "line": 3048
     },
     {
      "path": "/",
@@ -9787,7 +9803,7 @@
       "OPTIONS"
      ],
      "handler": "vite_root",
-     "line": 3235
+     "line": 3240
     },
     {
      "path": "/<path:path>",
@@ -9801,7 +9817,7 @@
       "OPTIONS"
      ],
      "handler": "vite_catchall",
-     "line": 3351
+     "line": 3356
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10134,8 +10150,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/routes/web_search_bp_routes.py",
-   "sha256": "a3fcf68719ac543d0fa2e50092d76ef4e3df2c2c055dcdc5484cb3bcaa9b6b5d",
-   "lines": 773,
+   "sha256": "a4395b00ac76ef885270cd8f7091629c6cb8863f0ee9516d29123e14e46c4cfa",
+   "lines": 774,
    "http_routes": [
     {
      "path": "/api/web/search",
@@ -10143,7 +10159,7 @@
       "POST"
      ],
      "handler": "web_search",
-     "line": 13
+     "line": 14
     },
     {
      "path": "/api/web/download",
@@ -10151,7 +10167,7 @@
       "POST"
      ],
      "handler": "web_download",
-     "line": 63
+     "line": 64
     },
     {
      "path": "/api/web/extract",
@@ -10159,7 +10175,7 @@
       "POST"
      ],
      "handler": "web_extract",
-     "line": 135
+     "line": 136
     },
     {
      "path": "/api/web/images",
@@ -10167,7 +10183,7 @@
       "POST"
      ],
      "handler": "web_images",
-     "line": 157
+     "line": 158
     },
     {
      "path": "/api/brand/enrich",
@@ -10175,7 +10191,7 @@
       "POST"
      ],
      "handler": "brand_enrich",
-     "line": 592
+     "line": 593
     },
     {
      "path": "/api/web/image",
@@ -10183,7 +10199,7 @@
       "POST"
      ],
      "handler": "web_image_single",
-     "line": 683
+     "line": 684
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -10550,9 +10566,21 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/scripts/test-code-continuity.mjs",
+   "sha256": "e991138231155689bf85019dd934d75dc06b33a7d16c5e3796a3a351cd8c404a",
+   "lines": 58
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/scripts/test-comfy-stages.mjs",
    "sha256": "875d2d110ce946a7abbc4a6b0e1ad7334f518dd7660dbc4720517eb1458001a2",
    "lines": 87
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/scripts/test-conversation-context.mjs",
+   "sha256": "0015d2690fe985ae0ade10ff2471edb8a8e426d7adbda42e912a71f5d709d67d",
+   "lines": 83
   },
   {
    "repo": "AuroraIA",
@@ -10587,8 +10615,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/scripts/test-fx-sync.mjs",
-   "sha256": "fd947c407ef7adad6d84ccc6d971408cd75b801abfe78f101837ec337bf0d47d",
-   "lines": 121
+   "sha256": "ba593be8f01eb3d774aa1684c30fe3baeabe78b54668cc190d33ef9e7e95e3f4",
+   "lines": 133
   },
   {
    "repo": "AuroraIA",
@@ -10697,6 +10725,12 @@
    "path": "application/scripts/test-real-gen-flux2.mjs",
    "sha256": "5b98f1672e2c387e0f8dbe162a6e65c2c17e8f7b6bb76a51df6ed490e3ce0336",
    "lines": 229
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "application/scripts/test-reference-instances.mjs",
+   "sha256": "2512c77e0908f79a7d3829c12c7ca19a55fa9a9ff32b0127f80acf89ff512db4",
+   "lines": 64
   },
   {
    "repo": "AuroraIA",
@@ -11379,8 +11413,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/components/generationFx/fxPhases.ts",
-   "sha256": "7ad3f1b48774090b30c8ac6eb400ae144b91761284d60b7dfc8a7f2a68c323c8",
-   "lines": 176
+   "sha256": "d446c0e6d8ed85976adf8605aae01210b8c3b07eb498728206098f12ece8f897",
+   "lines": 190
   },
   {
    "repo": "AuroraIA",
@@ -11517,8 +11551,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/hooks/useChatViewLogic.ts",
-   "sha256": "a90f02cbc2ac4819941f4383b4e5fc0c21acfc419457d9c524516691a6562c09",
-   "lines": 444
+   "sha256": "11a5a0271aa3ccc712a47bc6fca0f9d2ca51f6b57cabe49c1d1ce34f3106e4f6",
+   "lines": 460
   },
   {
    "repo": "AuroraIA",
@@ -11619,8 +11653,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/hooks/useTauri.ts",
-   "sha256": "dc64299449d50d67fc3c641a677285beafb8288e59e47822185cf118f09bf328",
-   "lines": 1992
+   "sha256": "ffb9a3baeae6cbe812749ef405a0dda03e904e6ca256a92675d2442d73a7cee8",
+   "lines": 1999
   },
   {
    "repo": "AuroraIA",
@@ -12321,8 +12355,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeLLMRefusal.ts",
-   "sha256": "73e9487d34985cf525ad0e012476105fbfccf1c7f12ffdc6c4b70a805908af55",
-   "lines": 67
+   "sha256": "d593e2e2e17b3ba18ac78311fedacce2040a18b66fe05849635f06692ae666c2",
+   "lines": 110
   },
   {
    "repo": "AuroraIA",
@@ -12573,7 +12607,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeProjectValidation.ts",
-   "sha256": "8453589a130b85268794f3b754c608e123a56b1ac9a139d881847268de5d7d02",
+   "sha256": "2d1f9f9b5f8718a060bd82123e891510d0d14c919d95456dc3355445ebb04cd0",
    "lines": 399
   },
   {
@@ -12603,7 +12637,7 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/codeQualityGates.ts",
-   "sha256": "ae5a76b821e3571ec46523a6626bfd1ed52c68e213c4c16e825d338037cb674d",
+   "sha256": "2d17da6da2a3d4ba65a84a5e05ac312c611ce272132e9af1a38d92b1e2952b7a",
    "lines": 358
   },
   {
@@ -13070,6 +13104,12 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "application/src/services/conversationContextBudget.ts",
+   "sha256": "2fb70ce46be185359b629aa53fa03ab1ef0440d888ef4ef4292f22fb3649b03b",
+   "lines": 256
+  },
+  {
+   "repo": "AuroraIA",
    "path": "application/src/services/conversationMemory.ts",
    "sha256": "a480b36afe6ee8f16a354fd53c376815ce6f38eaf2a85c274d99c7f01527e0f3",
    "lines": 278
@@ -13077,8 +13117,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/conversationOrchestrator.ts",
-   "sha256": "1ff94a9b148aa69cfdd5f705fcfa27a0fc95aab93ca98ee346af081db3cf2f44",
-   "lines": 848
+   "sha256": "0ebfd1622f9874a60d6aa824727bc8a9d90cd747175273ebf6e5b2ab9ffa29e1",
+   "lines": 889
   },
   {
    "repo": "AuroraIA",
@@ -13911,8 +13951,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/ollamaStream.ts",
-   "sha256": "e7b0ae8f48f01848a04f358ba375a0b954d99be0d6c4d624d3c93e9f2eea689e",
-   "lines": 46
+   "sha256": "1c708905ead8fdc724137f69b088692606dbf5525c2f3ee1b7eea049f69fcb6c",
+   "lines": 50
   },
   {
    "repo": "AuroraIA",
@@ -13953,8 +13993,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/referenceVisualResearch.ts",
-   "sha256": "24797dd90e0cb9b07189f93f6d37f24178f2c36eb415ad55169118f7d63451c6",
-   "lines": 668
+   "sha256": "e8fab0b0b558da53c203c216d679b56af4589d2264ba2917aa67680244aeeda0",
+   "lines": 695
   },
   {
    "repo": "AuroraIA",
@@ -14151,8 +14191,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/services/threeDReferenceSupport.ts",
-   "sha256": "f172e05dab623266dcb725be6624b97525bbf4a1e8729b502dc845a796716e93",
-   "lines": 458
+   "sha256": "3a7b146c8da96242d8e61bae50a5b6d4a94f92f6979667d3256f10b30b7f7f77",
+   "lines": 477
   },
   {
    "repo": "AuroraIA",
@@ -15015,8 +15055,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/AuroraV4ChatView.tsx",
-   "sha256": "50be7fed4a48a257de298e208f42f7313f2f45db504b0f06add7d4e40ddda23e",
-   "lines": 1548
+   "sha256": "abccd5e250fda447b7ce20b3709d72c0963f5c04ecfeabc5b055efc7a4bf1eae",
+   "lines": 1588
   },
   {
    "repo": "AuroraIA",
@@ -15051,8 +15091,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/CodeView.tsx",
-   "sha256": "e4cca55fdd02c7d3d7b7dca4446ee31569af3fa7c1cac2cb916d11fd09acce0a",
-   "lines": 705
+   "sha256": "20e17842782b2edbb0c14feea3d717551e7d47c32ff10192e00ed68ca38cce87",
+   "lines": 717
   },
   {
    "repo": "AuroraIA",
@@ -15237,8 +15277,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/src/views/codeViewGeneration.ts",
-   "sha256": "be964beb9f52abdaf3080ce910f725c3bd304c49b1d852924d774f86c7793034",
-   "lines": 392
+   "sha256": "e9059dd75e627d25b55fab006a0747fa755757e84916df05d9fc1cfc1a8408d1",
+   "lines": 410
   },
   {
    "repo": "AuroraIA",
@@ -18123,8 +18163,8 @@
   {
    "repo": "AuroraIA",
    "path": "auto_rl/integration.py",
-   "sha256": "bb27d8c209978ad85f680ffe994c982dc4b87f57aa376bf7ab82e7fca64c1239",
-   "lines": 537,
+   "sha256": "d19049a5faa3e52c86048fe2cb90b90e67e9cada941369f01f92b5061a6508f9",
+   "lines": 542,
    "http_routes": [
     {
      "path": "/api/training/status",
@@ -18132,7 +18172,7 @@
       "GET"
      ],
      "handler": "training_status",
-     "line": 33
+     "line": 38
     },
     {
      "path": "/api/training/ui",
@@ -18140,7 +18180,7 @@
       "GET"
      ],
      "handler": "training_ui",
-     "line": 53
+     "line": 58
     },
     {
      "path": "/api/training/dashboard-extras.js",
@@ -18148,7 +18188,7 @@
       "GET"
      ],
      "handler": "training_dashboard_extras",
-     "line": 58
+     "line": 63
     },
     {
      "path": "/api/training/control/<action>",
@@ -18156,7 +18196,7 @@
       "POST"
      ],
      "handler": "training_control",
-     "line": 62
+     "line": 67
     },
     {
      "path": "/api/training/selection",
@@ -18164,7 +18204,7 @@
       "POST"
      ],
      "handler": "training_selection",
-     "line": 75
+     "line": 80
     },
     {
      "path": "/api/training/samples/<run_id>",
@@ -18172,7 +18212,7 @@
       "GET"
      ],
      "handler": "training_samples",
-     "line": 83
+     "line": 88
     },
     {
      "path": "/api/training/samples/<run_id>/asset",
@@ -18180,7 +18220,7 @@
       "GET"
      ],
      "handler": "training_sample",
-     "line": 89
+     "line": 94
     },
     {
      "path": "/api/training/viewer-lib/<path:name>",
@@ -18188,7 +18228,7 @@
       "GET"
      ],
      "handler": "training_viewer_lib",
-     "line": 104
+     "line": 109
     },
     {
      "path": "/api/training/diagnostic/<run_id>",
@@ -18196,7 +18236,7 @@
       "GET"
      ],
      "handler": "training_diagnostic",
-     "line": 113
+     "line": 118
     },
     {
      "path": "/api/training/runs/<run_id>/<artifact>",
@@ -18204,7 +18244,7 @@
       "GET"
      ],
      "handler": "training_run_artifact",
-     "line": 148
+     "line": 153
     },
     {
      "path": "/api/training/media",
@@ -18212,7 +18252,7 @@
       "POST"
      ],
      "handler": "training_media",
-     "line": 158
+     "line": 163
     },
     {
      "path": "/api/training/parents/<module>",
@@ -18220,7 +18260,7 @@
       "GET"
      ],
      "handler": "training_parents",
-     "line": 161
+     "line": 166
     },
     {
      "path": "/api/training/reference",
@@ -18228,7 +18268,7 @@
       "POST"
      ],
      "handler": "training_reference",
-     "line": 172
+     "line": 177
     },
     {
      "path": "/api/training/review/<run_id>",
@@ -18236,7 +18276,7 @@
       "GET"
      ],
      "handler": "training_review",
-     "line": 200
+     "line": 205
     },
     {
      "path": "/api/training/review/<run_id>/asset",
@@ -18244,7 +18284,7 @@
       "GET"
      ],
      "handler": "training_review_asset",
-     "line": 213
+     "line": 218
     },
     {
      "path": "/api/training/artifact/<path:name>",
@@ -18252,7 +18292,7 @@
       "GET"
      ],
      "handler": "training_artifact",
-     "line": 231
+     "line": 236
     },
     {
      "path": "/api/training/models",
@@ -18260,7 +18300,7 @@
       "GET"
      ],
      "handler": "training_models",
-     "line": 241
+     "line": 246
     },
     {
      "path": "/api/models/reinforced-status",
@@ -18268,7 +18308,7 @@
       "GET"
      ],
      "handler": "models_reinforced_status",
-     "line": 244
+     "line": 249
     },
     {
      "path": "/api/models/reinforced-select",
@@ -18276,7 +18316,7 @@
       "POST"
      ],
      "handler": "models_reinforced_select",
-     "line": 278
+     "line": 283
     },
     {
      "path": "/api/models/training-stop",
@@ -18284,7 +18324,7 @@
       "POST"
      ],
      "handler": "models_training_stop",
-     "line": 298
+     "line": 303
     },
     {
      "path": "/api/models/training-start",
@@ -18292,7 +18332,7 @@
       "POST"
      ],
      "handler": "models_training_start",
-     "line": 311
+     "line": 316
     },
     {
      "path": "/api/agi/prompt-director",
@@ -18301,7 +18341,7 @@
       "POST"
      ],
      "handler": "agi_prompt_director",
-     "line": 323
+     "line": 328
     },
     {
      "path": "/api/training/image-workflow",
@@ -18309,7 +18349,7 @@
       "POST"
      ],
      "handler": "image_workflow",
-     "line": 359
+     "line": 364
     },
     {
      "path": "/proxy/trained/<path:path>",
@@ -18318,7 +18358,7 @@
       "POST"
      ],
      "handler": "trained_proxy",
-     "line": 370
+     "line": 375
     },
     {
      "path": "/api/agi/council/roster",
@@ -18326,7 +18366,7 @@
       "GET"
      ],
      "handler": "agi_council_roster",
-     "line": 390
+     "line": 395
     },
     {
      "path": "/api/agi/council",
@@ -18334,7 +18374,7 @@
       "POST"
      ],
      "handler": "agi_council_deliberate",
-     "line": 414
+     "line": 419
     },
     {
      "path": "/api/agi/jules",
@@ -18343,7 +18383,7 @@
       "POST"
      ],
      "handler": "agi_jules_endpoint",
-     "line": 443
+     "line": 448
     },
     {
      "path": "/api/3d/anchors/auto-detect",
@@ -18351,7 +18391,7 @@
       "POST"
      ],
      "handler": "anchors_3d_auto_detect",
-     "line": 473
+     "line": 478
     },
     {
      "path": "/api/3d/anchors/apply-rig",
@@ -18359,7 +18399,7 @@
       "POST"
      ],
      "handler": "anchors_3d_apply_rig",
-     "line": 488
+     "line": 493
     },
     {
      "path": "/api/billing/credits",
@@ -18368,7 +18408,7 @@
       "POST"
      ],
      "handler": "billing_credits_endpoint",
-     "line": 508
+     "line": 513
     }
    ],
    "route_analysis": "static_decorators_only"
@@ -19700,8 +19740,8 @@
   {
    "repo": "AuroraIA",
    "path": "scripts/ops/restart_bridge.sh",
-   "sha256": "3826860d0830a87c8647870e4617485ca112ce16e178209de5233e213ed1a24e",
-   "lines": 7
+   "sha256": "7994f99af2d9374102eadc13e8b3adfd06e4504da4f6f592bd872a2ed4374ffb",
+   "lines": 60
   },
   {
    "repo": "AuroraIA",
@@ -20132,8 +20172,8 @@
   {
    "repo": "AuroraIA",
    "path": "start-aurora.sh",
-   "sha256": "76dd79908a08d3f82f3d020f81070c09af85cc173f51705b230bee1cc0bced38",
-   "lines": 364
+   "sha256": "886cd3f3dfc6afadcc7c72ecc15bd89560af7587572038c436fceed923b0eb44",
+   "lines": 372
   },
   {
    "repo": "AuroraIA",
@@ -20189,6 +20229,14 @@
    "path": "tests_agi/test_architecture_catalog.py",
    "sha256": "34a0687ac9d67f78664b8d96ce1503c80f9465329279eea4afb683980e2aa96c",
    "lines": 31,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_articulated_motion.py",
+   "sha256": "75d39e9744e8d7e898baed5addcd979c75c078603dc37cb5cd4b5ed5d013cabb",
+   "lines": 271,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20461,8 +20509,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_image_prompt_contract.py",
-   "sha256": "851b35d06bfb65f24888ea19baadbb7e1df2ad64c9d0123c55577e4745871824",
-   "lines": 134,
+   "sha256": "1311333f8ba69a38609de41f1b79100db3e11a833b6a14f0998e25bda3cef010",
+   "lines": 171,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20676,9 +20724,17 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_no_undefined_names.py",
+   "sha256": "cfcd71d9e85df05064e9d24aae6b392d7e546a3a1d1633073498c54c6437fb89",
+   "lines": 142,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_offline_runtime.py",
-   "sha256": "4d507ed3f551dd61eb704db2589ef8b88952f7b04f049b849343a0af669fe026",
-   "lines": 155,
+   "sha256": "1a7eb32c6133b7eff58468be494608c882e87200763ed870ef8f9d258595a7a0",
+   "lines": 169,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20740,9 +20796,25 @@
   },
   {
    "repo": "AuroraIA",
+   "path": "tests_agi/test_python_310_syntax.py",
+   "sha256": "71b5517bbe8f8aa636fa47d58730dcffbb8901cb48be3eb3bb8c5aab496ba741",
+   "lines": 122,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
    "path": "tests_agi/test_reasoning_context_purity.py",
    "sha256": "d99241c5cf9981c3bd377c2dc5b33d47587eac081f620ef0f385411d7516c25d",
    "lines": 30,
+   "http_routes": [],
+   "route_analysis": "static_decorators_only"
+  },
+  {
+   "repo": "AuroraIA",
+   "path": "tests_agi/test_reference_request_reading.py",
+   "sha256": "6dd8424863d6eaf8c4630c40f0ec34228a073f8d3fc3543ac6ab2ad443b8328b",
+   "lines": 148,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -20805,8 +20877,8 @@
   {
    "repo": "AuroraIA",
    "path": "tests_agi/test_unbounded_styles_and_3d_agi_orchestrator.py",
-   "sha256": "17da08e23ee4a257208cd2050c75af6a0c3e4cbd068444445ec255c669862e07",
-   "lines": 291,
+   "sha256": "fce4c6359cb71935a39ce8d6b24da8678d7b41837661fbae9bce6c92584a90ed",
+   "lines": 298,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
