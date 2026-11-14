@@ -20,7 +20,16 @@ if ! "$PY" -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').rea
   exit 2
 fi
 
-pid="$(pgrep -f "bridge_server.py" | head -n 1)"
+# Le pont est le programme qui ÉCOUTE le port 3001. `pgrep -f bridge_server.py` attrapait aussi
+# tout shell ou éditeur dont la ligne de commande contient ce nom, et pouvait le tuer à sa place.
+pont_pid() {
+  ss -ltnpH 'sport = :3001' 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n 1
+}
+pid="$(pont_pid)"
+if [ -n "$pid" ] && ! tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'bridge_server\.py'; then
+  echo "REFUS: le port 3001 est tenu par un autre programme (pid $pid) ; rien n'est arrêté." >&2
+  exit 3
+fi
 log="${TMPDIR:-/tmp}/auroraia/bridge.log"
 envs=()
 if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ]; then
@@ -50,7 +59,7 @@ fi
 
 for _ in $(seq 1 90); do
   if curl -fsS -m 2 -o /dev/null "$URL" 2>/dev/null; then
-    echo "Pont relancé (pid $(pgrep -f "bridge_server.py" | head -n 1)), journal: $log"
+    echo "Pont relancé (pid $(pont_pid)), journal: $log"
     exit 0
   fi
   sleep 1
