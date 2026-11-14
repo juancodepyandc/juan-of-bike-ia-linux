@@ -325,6 +325,7 @@ def dev_reload_endpoint():
         # respawn détaché + exit planifié, pattern déjà validé de
         # /api/admin/restart-bridge.
         if os.name == "nt":
+            from routes.vite_bp_routes import _respawn_bridge_async
             _respawn_bridge_async("dev reload endpoint")
             return
         try:
@@ -335,6 +336,16 @@ def dev_reload_endpoint():
 
     threading.Thread(target=do_exec, daemon=True).start()
     return jsonify({"ok": True, "message": "Bridge en cours de redemarrage..."})
+
+
+def _bridge_running_jobs() -> int:
+    """Nombre de travaux Python en cours sur ce pont ; 0 si le système de travaux n'est pas chargé."""
+    try:
+        from routes.python_bp_routes import _python_jobs, _python_jobs_lock
+    except Exception:  # noqa: BLE001
+        return 0
+    with _python_jobs_lock:
+        return sum(1 for job in _python_jobs.values() if job.get("status") == "running")
 
 
 def _bridge_self_watch_loop():
@@ -353,7 +364,9 @@ def _bridge_self_watch_loop():
 
     if os.environ.get("AURORA_BRIDGE_NO_WATCH", "").strip() in ("1", "true", "yes"):
         return
-    src = pathlib.Path(__file__)
+    # Le fichier surveillé est le serveur du pont, pas ce module de routes : depuis le découpage en
+    # blueprints, `__file__` désigne cowork_ext_bp_routes.py.
+    src = pathlib.Path(WORKSPACE).resolve() / "bridge_server.py"
     try:
         last_mtime = src.stat().st_mtime
     except Exception:
@@ -365,10 +378,14 @@ def _bridge_self_watch_loop():
         except Exception:
             continue
         if cur_mtime > last_mtime + 0.5:
+            # Une relance coupe les travaux du pont : elle attend qu'aucun ne tourne.
+            if _bridge_running_jobs() > 0:
+                continue
             print(f"[bridge self-watch] {src.name} mtime change detectee, re-exec...", flush=True)
             # v90.2 : Windows — os.execv laisse l'ancien process lié au port
             # 3001 (double LISTEN). Respawn détaché + exit planifié à la place.
             if os.name == "nt":
+                from routes.vite_bp_routes import _respawn_bridge_async
                 if _respawn_bridge_async("self-watch mtime change"):
                     return  # exit du process planifié par _respawn_bridge_async
                 last_mtime = cur_mtime
@@ -3871,6 +3888,7 @@ def picker_history_replay():
 
 @cowork_ext_bp.route("/api/cowork/extract-structured", methods=["POST"])
 def cowork_extract_structured():
+    from routes.python_bp_routes import _AURORA_3D_EN_COURS  # défini avec le système de travaux
     if _AURORA_3D_EN_COURS.is_set():
         # Une generation 3D occupe la VRAM: recharger un LLM ollama ici a deja
         # provoque un cudaMalloc OOM en pleine etape GPU (gel du 24/07).

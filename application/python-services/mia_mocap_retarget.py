@@ -1033,7 +1033,7 @@ try:
     glb_io.save(OUT_GLB, _doc, _blob)
     try:
         from pbr_cartography import transfer_pbr_from_source_glb
-        transfer_pbr_from_source_glb(RIG_GLB, OUT_GLB)
+        transfer_pbr_from_source_glb(IN_GLB, OUT_GLB)
     except Exception:
         pass
 except Exception as _ge:

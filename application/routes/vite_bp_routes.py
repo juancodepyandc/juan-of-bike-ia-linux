@@ -5,6 +5,10 @@ import threading as _threading
 import time as _time
 import urllib.request as _urllib_req
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL, _admin_ok
+from bridge_server import resolve_node_exe
+import base64
+import urllib.request
+from urllib.parse import urlparse
 
 vite_bp = Blueprint('vite_bp', __name__)
 

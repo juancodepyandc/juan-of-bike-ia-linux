@@ -2493,7 +2493,8 @@ def run_procedural_dispatch(template: str, prompt: str, run_id: str,
                     "size_bytes": glb_path.stat().st_size,
                 }
         except Exception as _cad_exc:
-            log(f"Universal Mechatronic CAD Architect fallback to blender_bridge: {_cad_exc}")
+            print(f"[cad] Universal Mechatronic CAD Architect indisponible, repli blender_bridge: "
+                  f"{type(_cad_exc).__name__}: {_cad_exc}", file=sys.stderr, flush=True)
 
     bridge = REPO_ROOT / "application" / "python-services" / "blender_bridge.py"
     if not bridge.is_file():

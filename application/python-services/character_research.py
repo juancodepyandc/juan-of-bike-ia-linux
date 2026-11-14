@@ -284,7 +284,7 @@ def main():
     parser.add_argument("--lang", default="fr", help="Langue Wikipedia a consulter en priorite")
     args = parser.parse_args()
 
-    prompt_text = args.prompt or (os.path.basename(args.image-path) if args.image_path else "unknown subject")
+    prompt_text = args.prompt or (os.path.basename(args.image_path) if args.image_path else "unknown subject")
     emit(0, f"Recherche sur: {prompt_text}")
 
     image_url = None

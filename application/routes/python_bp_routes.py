@@ -131,7 +131,9 @@ except ImportError:
         def cancel(self, job_id):                     return None
         def wait_until_idle(self, timeout=None):      return True
         def is_cancelled(self, job_id):               return False
-        def snapshot(self, job_id=None):              return {}
+        def snapshot(self, job_id=None):
+            # Même forme que la vraie file : les routes lisent ces clés sans condition.
+            return {"active_job_id": None, "pending_job_ids": [], "position": None}
         def acquire(self, *a, **k):                   return True
         def release(self, job_id):                    return None
 

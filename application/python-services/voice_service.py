@@ -18,6 +18,9 @@ import sys
 
 from cache_paths import configure_ml_cache_environment
 
+# Dossier `application/` : les sorties temporaires du service y vivent sous temp/.
+WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Voxtral-Small-24B-2507 : modele complet non-mini (remplace Mini-4B-Realtime)
 # Plus grand (24B), plus precis, meme API HuggingFace
 VOXTRAL_MODEL = "mistralai/Voxtral-Small-24B-2507"

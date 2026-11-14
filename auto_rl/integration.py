@@ -1,7 +1,12 @@
 """Training control and version selection through Aurora's existing bridge."""
+import json
+from pathlib import Path
+
 from .config import STATE, LABELS
 from .runtime import catalog,validated_record
 from .storage import read_json
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def register_routes(app, proxy):

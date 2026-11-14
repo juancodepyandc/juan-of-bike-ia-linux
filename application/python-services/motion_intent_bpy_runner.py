@@ -988,8 +988,8 @@ def _rigify_creature_skeleton(mesh, topology, base_loop, bpm, fps):
         # phase-offset sine on rotation Y).
         snake_bones = [n for n in available_bones if n.startswith("snake_")]
         n_seg = len(snake_bones)
-        seg_len = float(rigify_info.get("serpent_segment_length", 0.0)) if isinstance(rigify_info, dict) else 0.0
-        # rigify_info isn't yet built at this scope; recompute from edit-bones.
+        # The segment length is measured from the rig's own bones.
+        seg_len = 0.0
         try:
             arm_data = rig.data
             xs = [bn.head_local.x for bn in arm_data.bones if bn.name.startswith("snake_")]

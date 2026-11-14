@@ -6,6 +6,7 @@ import codecs
 from copy import deepcopy
 import csv
 import hashlib
+import sys
 from html.parser import HTMLParser
 import json
 import io

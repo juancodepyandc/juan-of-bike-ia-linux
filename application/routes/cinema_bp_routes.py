@@ -2,6 +2,14 @@ from flask import Blueprint, request, jsonify, Response, send_file, current_app,
 import os, subprocess, threading, time, datetime, json, sys, platform, pathlib, shutil, requests, uuid, re, psutil
 import urllib.request as _urllib_req
 from bridge_server import WORKSPACE, sortie_module, _proxy, _clean_headers, COMFYUI_PORT, OLLAMA_URL, COMFYUI_URL
+import base64
+import uuid as _uuid
+from urllib.parse import parse_qs, quote, urlparse
+from routes.python_bp_routes import (
+    _build_python_env, _cancel_video_job_response, _clean_stderr, _gc_old_jobs,
+    _is_3d_generation_active, _python_jobs, _python_jobs_lock, _queue_video_job,
+    _run_python_job, _video_gpu_queue,
+)
 
 cinema_bp = Blueprint('cinema_bp', __name__)
 
