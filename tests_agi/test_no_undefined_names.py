@@ -48,6 +48,7 @@ ENGINE_MODULES = (
     "application/python-services/mesh_taubin.py",
     "application/python-services/photo_rectifier.py",
     "application/python-services/reference_visual_search.py",
+    "application/python-services/lecture_demande.py",
 )
 
 

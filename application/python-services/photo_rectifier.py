@@ -225,6 +225,88 @@ def eteindre_reflets_lunettes(bgr: np.ndarray, landmarks, bbox=None, log=print
                  "bmr_peau": round(bmr_peau, 1), "luma_zone": round(ref, 1)}
 
 
+# Part minimale de la surface détourée pour qu'une composante compte comme un objet à part
+# entière (les chiffres, légendes et éclats de détourage sont bien en dessous).
+PART_COMPOSANTE_MAJEURE = 0.04
+# Recouvrement (IoU) de deux silhouettes ramenées à la même grille à partir duquel elles sont
+# deux exemplaires de la même forme. Deux poses voisines d'un même objet dépassent ce seuil ;
+# deux objets différents d'un même sujet (un anneau et son socle) restent en dessous.
+IOU_MEME_FORME = 0.60
+_GRILLE_FORME = 48
+
+
+def _forme_normalisee(masque: np.ndarray) -> np.ndarray:
+    """Silhouette recadrée, centrée dans un carré et ramenée à une grille fixe (proportions gardées)."""
+    ys, xs = np.nonzero(masque)
+    decoupe = masque[ys.min():ys.max() + 1, xs.min():xs.max() + 1].astype(np.uint8)
+    h, w = decoupe.shape
+    cote = max(h, w)
+    carre = np.zeros((cote, cote), dtype=np.uint8)
+    y0, x0 = (cote - h) // 2, (cote - w) // 2
+    carre[y0:y0 + h, x0:x0 + w] = decoupe
+    return cv2.resize(carre, (_GRILLE_FORME, _GRILLE_FORME), interpolation=cv2.INTER_AREA) > 0
+
+
+def mesurer_instances(alpha: np.ndarray) -> dict[str, Any]:
+    """Combien d'exemplaires de la même forme le détourage contient-il ?
+
+    Loi générale, sans connaissance du sujet : une planche d'animation, une grille de produits
+    ou une feuille de poses répète une silhouette ; un objet unique, même fait de plusieurs
+    morceaux détachés, ne se répète pas. On compte donc les composantes majeures du masque et
+    on regroupe celles dont les silhouettes normalisées se recouvrent (aussi en miroir, pour une
+    paire gauche/droite). `exemplaires` est la taille du plus grand groupe.
+    """
+    masque = np.asarray(alpha) > 127
+    surface = int(masque.sum())
+    if surface == 0:
+        return {"composantes_majeures": 0, "exemplaires": 0, "part_repetee": 0.0, "iou_max": 0.0}
+    nombre, etiquettes, stats, _ = cv2.connectedComponentsWithStats(masque.astype(np.uint8), connectivity=8)
+    majeures = [i for i in range(1, nombre)
+                if stats[i, cv2.CC_STAT_AREA] >= PART_COMPOSANTE_MAJEURE * surface]
+    if len(majeures) < 2:
+        return {"composantes_majeures": len(majeures), "exemplaires": min(len(majeures), 1) or 1,
+                "part_repetee": 0.0, "iou_max": 0.0}
+    formes = [_forme_normalisee(etiquettes == i) for i in majeures]
+    n = len(majeures)
+    parent = list(range(n))
+
+    def racine(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    iou_max = 0.0
+    for a in range(n):
+        for b in range(a + 1, n):
+            meilleure = 0.0
+            for candidate in (formes[b], formes[b][:, ::-1]):
+                union = np.logical_or(formes[a], candidate).sum()
+                if union:
+                    meilleure = max(meilleure, float(np.logical_and(formes[a], candidate).sum()) / float(union))
+            iou_max = max(iou_max, meilleure)
+            if meilleure >= IOU_MEME_FORME:
+                parent[racine(a)] = racine(b)
+    groupes: dict[int, list[int]] = {}
+    for i in range(n):
+        groupes.setdefault(racine(i), []).append(i)
+    plus_grand = max(groupes.values(), key=len)
+    part = float(sum(stats[majeures[i], cv2.CC_STAT_AREA] for i in plus_grand)) / float(surface) if len(plus_grand) > 1 else 0.0
+    return {"composantes_majeures": n, "exemplaires": len(plus_grand),
+            "part_repetee": round(part, 4), "iou_max": round(iou_max, 4)}
+
+
+def reference_trop_d_exemplaires(instances: dict[str, Any], exemplaires_attendus: int | None) -> bool:
+    """La référence montre-t-elle plus d'exemplaires du sujet que la demande n'en attend ?
+
+    Quand la demande n'a pas pu être lue (`None`), on retient un seul exemplaire : une image qui
+    répète une forme est refusée par prudence, la synthèse d'une référence propre vaut mieux
+    qu'une planche reconstruite telle quelle.
+    """
+    attendus = exemplaires_attendus if isinstance(exemplaires_attendus, int) and exemplaires_attendus >= 1 else 1
+    return int(instances.get("exemplaires", 0)) > attendus
+
+
 def rectify_photo_for_3d(
     input_path: str,
     output_rgba_path: str,
@@ -289,6 +371,12 @@ def rectify_photo_for_3d(
     alpha_raw = arr[..., 3].astype(np.float32)
     alpha_clean = np.clip((alpha_raw - 38.0) * (255.0 / (205.0 - 38.0)), 0.0, 255.0).astype(np.uint8)
     arr[..., 3] = alpha_clean
+
+    # Exemplaires du sujet : mesurés sur le détourage, avant toute retouche.
+    rapport["instances"] = mesurer_instances(arr[..., 3]) if rapport["detourage"].get("ok") else None
+    if rapport["instances"] and rapport["instances"]["exemplaires"] > 1:
+        log("[photo_rectifier] %d exemplaires de la même forme dans l'image (recouvrement %.2f)"
+            % (rapport["instances"]["exemplaires"], rapport["instances"]["iou_max"]))
 
     # 2. MESURE PHOTOMÉTRIQUE SUR LE SUJET DÉTOURÉ UNIQUEMENT (`alpha > 180`).
     avant = mesurer(bgr, mask=arr[..., 3])

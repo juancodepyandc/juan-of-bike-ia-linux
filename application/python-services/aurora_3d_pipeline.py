@@ -2972,6 +2972,11 @@ def _reference_photo_ok(png_path: str, prompt: str, visual_desc: str = "") -> tu
                           "(3) des GOUTTES d'eau/condensation/reflets brillants parasites (ils se "
                           "reconstruisent en relief/grumeaux); "
                           "(4) fond non neutre, eclairage colore artistique, ou plusieurs objets; "
+                          "(10) l'image montre PLUSIEURS exemplaires du sujet: planche d'animation, "
+                          "etapes numerotees d'un mouvement, grille de variantes, feuille de poses ou "
+                          "vues multiples cote a cote — la reconstruction recopierait la planche "
+                          "entiere (verifie le 13/11: six coffres pour un). Il faut UN seul exemplaire "
+                          "par objet demande; "
                           "(5) ce n'est pas EXACTEMENT le sujet demande (variante/fan-art/autre modele); "
                           "(6) rendu ARTISTIQUE ou stylise: aquarelle, peinture, coups de pinceau, "
                           "ECLABOUSSURES/taches, croquis, esquisse, mosaique, sticker decoratif, "
@@ -3428,6 +3433,11 @@ def _emission_demandee(*textes: str) -> tuple[bool, str]:
     return True, ",".join(trouvees)
 
 
+# Lecture de la demande par run : les relances internes de run_pipeline reçoivent déjà le sujet
+# séparé, elles doivent retrouver le mouvement lu dans la demande d'origine.
+_LECTURES_DEMANDE: dict[str, dict] = {}
+
+
 def run_pipeline(prompt: str, run_id: str, *,
                  output_dir: Path = DEFAULT_OUTPUT_DIR,
                  multi_view: bool | None = None,
@@ -3464,6 +3474,29 @@ def run_pipeline(prompt: str, run_id: str, *,
     started_at = time.time()
     started_at_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started_at))
     audit: list[dict] = []
+
+    # CE QU'IL FAUT MONTRER n'est pas CE QUI DOIT BOUGER. La référence (recherche web, juge,
+    # synthèse) décrit le sujet dans l'état où le mouvement commence ; tant que la phrase entière
+    # la décrivait, « coffre avec une animation d'ouverture » trouvait une planche de six coffres
+    # à six stades d'ouverture, que la reconstruction recopiait (run du 13/11/2026). L'appelant
+    # qui passe déjà `motion_prompt` a fait la séparation lui-même.
+    _lecture = _LECTURES_DEMANDE.get(run_id)
+    if _lecture is None and not motion_prompt:
+        try:
+            from lecture_demande import lire_demande as _lire_demande
+            _lecture = _lire_demande(prompt)
+        except Exception as _exc_lecture:  # noqa: BLE001
+            _lecture = {"source": "indisponible", "raison": repr(_exc_lecture)[:160], "demande": prompt,
+                        "sujet": prompt, "mouvement": "", "exemplaires": None}
+        _LECTURES_DEMANDE[run_id] = _lecture
+    if _lecture is not None:
+        audit.append({"stage": "lecture_demande", **{k: _lecture.get(k) for k in
+                      ("source", "sujet", "sujet_en", "mouvement", "exemplaires", "raison") if k in _lecture}})
+        if _lecture.get("source") == "llm" and _lecture.get("mouvement") and _lecture.get("sujet") != prompt:
+            print("PROGRESS:comprehension:la reference montrera « %s » ; le mouvement « %s » est reserve a l'animation"
+                  % (str(_lecture["sujet"])[:80], str(_lecture["mouvement"])[:80]), flush=True)
+            prompt = str(_lecture["sujet"])
+    _exemplaires_attendus = (_lecture or {}).get("exemplaires")
     output_dir.mkdir(parents=True, exist_ok=True)
     required_space = 2 * 1024 ** 3
     available_space = shutil.disk_usage(output_dir).free
@@ -4029,6 +4062,17 @@ def run_pipeline(prompt: str, run_id: str, *,
                 from photo_rectifier import rectify_photo_for_3d as _rect
                 _dst = output_dir / ("%s_photo%d_rectifiee.png" % (run_id, _i))
                 _r = _rect(_src, str(_dst), log=lambda m: print(m, flush=True))
+                _inst = _r.get("instances") if isinstance(_r, dict) else None
+                if _r.get("ok") and _inst:
+                    from photo_rectifier import reference_trop_d_exemplaires as _trop
+                    if _trop(_inst, _exemplaires_attendus):
+                        audit.append({"stage": "reference_exemplaires", "ok": False, "image": _i,
+                                      "attendus": _exemplaires_attendus, **_inst})
+                        print("PROGRESS:reference:image refusee — elle montre %d exemplaires de la meme forme "
+                              "(planche, grille ou etapes d'un mouvement) alors que la demande en attend %s ; "
+                              "une reference propre du sujet seul est preparee a la place"
+                              % (_inst["exemplaires"], _exemplaires_attendus or 1), flush=True)
+                        continue
                 if _r.get("ok") and _dst.is_file():
                     _av = _r.get("mesures_avant", {})
                     _ap = _r.get("mesures_apres", {})
@@ -6094,10 +6138,12 @@ def run_pipeline(prompt: str, run_id: str, *,
     if _motion_locale and not motion_prompt and prompt and prompt.strip():
         try:
             from mesh_acceptance_gate import motion_requested
-            if motion_requested(prompt):
-                motion_prompt = prompt
+            _lecture_run = _LECTURES_DEMANDE.get(run_id) or {}
+            _demande_origine = str(_lecture_run.get("demande") or prompt)
+            if (_lecture_run.get("source") == "llm" and _lecture_run.get("mouvement")) or motion_requested(_demande_origine):
+                motion_prompt = _demande_origine
                 _motion_derive = True
-                print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{prompt[:80]}'", flush=True)
+                print(f"PROGRESS:animation:mouvement derive du prompt naturel: '{_demande_origine[:80]}'", flush=True)
         except Exception:  # noqa: BLE001
             pass
     rigged_mesh = None

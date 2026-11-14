@@ -234,6 +234,8 @@ function fallbackSearchProfile(prompt: string, intent: ThreeDIntent, referenceMo
       : 72
 
   return {
+    // Sans lecture par le modèle, le sujet extrait de la demande tient lieu de sujet au repos.
+    restStateSubject: effectiveSubjectLabel,
     subjectLabel: effectiveSubjectLabel,
     requiredElements: uniqueStrings([
       ...intent.movingPartsFocus.slice(0, 3),
@@ -287,8 +289,12 @@ async function buildSearchProfile({
           '/no_think',
           'You prepare a strict visual-reference search profile for a 3D reference-image pipeline.',
           'Return only valid JSON with this exact shape:',
-          '{"subjectLabel":"...","requiredElements":["..."],"forbiddenElements":["..."],"preferIsolatedSubject":true,"allowAdditionalSubjects":false,"strictIdentity":true}',
+          '{"subjectLabel":"...","restStateSubject":"...","appearanceQueries":["..."],"motionClause":"...","expectedInstances":1,"requiredElements":["..."],"forbiddenElements":["..."],"preferIsolatedSubject":true,"allowAdditionalSubjects":false,"strictIdentity":true}',
           'subjectLabel must be the exact main subject to match, not the whole instruction.',
+          'restStateSubject describes what a reference photo must show: the subject with its requested materials, colours and details, in the state it is in BEFORE the requested movement starts. It contains no word about movement, animation, action, duration or camera.',
+          'appearanceQueries are 2 to 4 image-search queries (in English) for ONE instance of that subject at rest, isolated. They never mention movement, animation, sequence or frames.',
+          'motionClause repeats what must move and how, taken from the request; empty string when the request describes no movement.',
+          'expectedInstances is how many separate physical objects of the subject the request wants to see together (one object = 1, a pair = 2). The successive stages of a movement are NOT instances: an object that animates stays 1.',
           'requiredElements should be short visual requirements that must appear on the reference image.',
           'forbiddenElements should name parasite elements that would make a candidate unusable.',
           'If the user wants a known character, product or exact real subject, strictIdentity should be true.',
@@ -310,7 +316,17 @@ async function buildSearchProfile({
       return fallback
     }
 
+    const restStateSubject = typeof parsed.restStateSubject === 'string' ? short(parsed.restStateSubject.trim(), 120) : ''
+    const motionClause = typeof parsed.motionClause === 'string' ? short(parsed.motionClause.trim(), 160) : ''
+    const expectedInstances = Number.isInteger(parsed.expectedInstances) && (parsed.expectedInstances as number) >= 1 && (parsed.expectedInstances as number) <= 64
+      ? parsed.expectedInstances as number
+      : fallback.expectedInstances
     return {
+      restStateSubject: restStateSubject || fallback.restStateSubject,
+      appearanceQueries: uniqueStrings((Array.isArray(parsed.appearanceQueries) ? parsed.appearanceQueries : [])
+        .filter((item): item is string => typeof item === 'string').map((item) => short(item, 120))).slice(0, 4),
+      motionClause,
+      expectedInstances,
       subjectLabel: short(parsed.subjectLabel, 90),
       requiredElements: uniqueStrings([...(parsed.requiredElements || []), ...fallback.requiredElements]).slice(0, 6),
       forbiddenElements: uniqueStrings([...(parsed.forbiddenElements || []), ...fallback.forbiddenElements]).slice(0, 8),
@@ -343,18 +359,21 @@ function extractDimensionNotes(researchContext: string) {
   ).slice(0, 4)
 }
 
-function buildReferenceQueries(
+export function buildReferenceQueries(
   prompt: string,
   intent: ThreeDIntent,
   webSearchTerms: string[],
   requestedChanges: string[],
   profile: ReferenceSearchProfile,
 ) {
+  // Une image de référence montre le sujet au repos. Les requêtes tirées de la demande entière
+  // portent aussi son mouvement : chercher « … animation d'ouverture » rend des planches d'étapes
+  // (run du 13/11/2026 : six coffres pour un). Elles ne servent donc que sans mouvement demandé.
+  const describesMotion = Boolean(profile.motionClause?.trim())
   const queries = [
-    profile.subjectLabel || prompt,
-    ...intent.researchQueries,
-    ...webSearchTerms,
-    ...requestedChanges,
+    profile.restStateSubject || profile.subjectLabel || prompt,
+    ...(profile.appearanceQueries || []),
+    ...(describesMotion ? [] : [profile.subjectLabel || prompt, ...intent.researchQueries, ...webSearchTerms, ...requestedChanges]),
   ]
 
   if (intent.purpose === 'character' || intent.subjectKind === 'character' || intent.subjectKind === 'creature') {

@@ -32,6 +32,14 @@ export type ReferenceSearchProfile = {
   verificationChecks?: string[]
   lightingRequirements?: string[]
   allowMirroredEquivalent?: boolean
+  /** Le sujet tel qu'une référence doit le montrer : dans l'état où le mouvement demandé commence. */
+  restStateSubject?: string
+  /** Recherches d'image décrivant ce sujet au repos ; jamais le mouvement. */
+  appearanceQueries?: string[]
+  /** Mouvement demandé. Il concerne l'animation, pas la référence. */
+  motionClause?: string
+  /** Nombre d'objets physiques du sujet que la demande veut voir ensemble. */
+  expectedInstances?: number
 }
 
 export type ReferenceVisualAssessment = {
@@ -44,11 +52,24 @@ export type ReferenceVisualAssessment = {
   unrequestedText?: boolean
   obscured?: boolean
   requestMismatch?: boolean
+  /** Exemplaires distincts du sujet visibles dans l'image. */
+  instanceCount?: number
+  /** Planche d'animation, étapes d'un mouvement, feuille de poses ou grille : une reconstruction la recopierait entière. */
+  isSheetOrSequence?: boolean
   notes: string
 }
 
-export function canUseVisualReference(assessment: ReferenceVisualAssessment | null, minimumScore: number, metadataFallback = false) {
+export function canUseVisualReference(
+  assessment: ReferenceVisualAssessment | null,
+  minimumScore: number,
+  metadataFallback = false,
+  expectedInstances?: number,
+) {
   if (!assessment) return metadataFallback
+  // Une planche ou une suite d'étapes n'est jamais une référence : la reconstruction copierait la planche.
+  if (assessment.isSheetOrSequence === true) return false
+  if (expectedInstances !== undefined && Number.isFinite(assessment.instanceCount)
+    && (assessment.instanceCount as number) > Math.max(1, expectedInstances)) return false
   return assessment.usable === true && assessment.exactEnough === true
     && !assessment.pixelated && !assessment.cluttered && !assessment.wrongSubject
     && !assessment.unrequestedText && !assessment.obscured && !assessment.requestMismatch
@@ -367,7 +388,10 @@ async function assessCandidate(
           '/no_think',
           'You evaluate whether an image is a strong visual reference for a generation request.',
           'Return only valid JSON with this exact shape:',
-          '{"usable":true,"score":0,"pixelated":false,"cluttered":false,"exactEnough":true,"wrongSubject":false,"unrequestedText":false,"obscured":false,"requestMismatch":false,"notes":"..."}',
+          '{"usable":true,"score":0,"pixelated":false,"cluttered":false,"exactEnough":true,"wrongSubject":false,"unrequestedText":false,"obscured":false,"requestMismatch":false,"instanceCount":1,"isSheetOrSequence":false,"notes":"..."}',
+          'Count the separate instances of the main subject and report it as instanceCount.',
+          'Set isSheetOrSequence=true for a sprite sheet, animation frames, numbered steps of a movement, a pose or turnaround sheet, a product grid, or any side-by-side repetition of the subject. A 3D reconstruction copies everything it sees, so such an image is never usable: usable=false.',
+          'The reference must show the subject at rest. A requested movement is produced later by the animation stage and must NOT be depicted in the reference; an image that depicts the movement as several states is a sequence.',
           'MOST CRITICAL CHECK: Is this image showing the CORRECT subject? If the user asks for a cable and the image shows a PC case, wrongSubject=true and score=0.',
           'If the user asks for a Strimer cable and the image shows a tower/case/motherboard, wrongSubject=true and score=0.',
           'If the user asks for a character and the image shows a completely different character, wrongSubject=true and score=0.',
@@ -392,6 +416,9 @@ async function assessCandidate(
         role: 'user',
         content: [
           `User request: ${prompt}`,
+          profile?.restStateSubject ? `What the reference must show (the subject at rest, movement excluded): ${profile.restStateSubject}` : '',
+          profile?.motionClause ? `Requested movement, NOT to be shown in the reference: ${profile.motionClause}` : '',
+          `Expected number of instances of the subject: ${Math.max(1, profile?.expectedInstances ?? 1)}`,
           profile?.subjectLabel ? `Exact subject to match: ${profile.subjectLabel}` : '',
           profile?.requiredElements.length ? `Required visible elements: ${profile.requiredElements.join(', ')}` : '',
           profile?.forbiddenElements.length ? `Forbidden or parasite elements: ${profile.forbiddenElements.join(', ')}` : '',
@@ -581,7 +608,7 @@ export async function findBestReferenceVisual({
         if (!blob) continue
         const assessment = await assessCandidate(prompt, model, candidate, blob, profile)
         const strongTextReference = candidateLooksStrongTextReference(candidate, profile)
-        if (!canUseVisualReference(assessment, minimumScore, strongTextReference)) {
+        if (!canUseVisualReference(assessment, minimumScore, strongTextReference, profile?.expectedInstances)) {
           continue
         }
 
@@ -648,7 +675,7 @@ export async function findMultipleReferenceVisuals({
         if (!blob) continue
         const assessment = await assessCandidate(prompt, model, candidate, blob, profile)
         const strongTextReference = candidateLooksStrongTextReference(candidate, profile)
-        if (!canUseVisualReference(assessment, minimumScore, strongTextReference)) {
+        if (!canUseVisualReference(assessment, minimumScore, strongTextReference, profile?.expectedInstances)) {
           continue
         }
 
