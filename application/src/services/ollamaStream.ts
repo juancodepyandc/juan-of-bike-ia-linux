@@ -3,6 +3,10 @@ export interface OllamaStreamFrame {
   message?: { content?: string; thinking?: string }
   done?: boolean
   error?: string
+  /** jetons réellement lus dans le prompt (dernière trame) */
+  prompt_eval_count?: number
+  /** jetons générés (dernière trame) */
+  eval_count?: number
 }
 
 /** Read complete NDJSON frames, including the final line without a newline. */

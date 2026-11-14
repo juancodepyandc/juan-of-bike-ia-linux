@@ -1,3 +1,4 @@
+import { calibrate, charsPerToken, fetchModelContextProfile, kvBudgetBytes, planContext } from './conversationContextBudget.ts'
 import { analyzePromptReality } from './realityAnalyzer.ts'
 import { generateJsonFromModel } from './modelJson.ts'
 import { ollamaChatStream, ollamaGenerate } from '../hooks/useTauri.ts'
@@ -46,6 +47,18 @@ type ConversationEvent =
   // ainsi le site AU MOMENT ou il est ouvert, pas dans un bilan final.
   | { type: 'source'; source: WebSource }
   | { type: 'queries'; queries: string[] }
+  // Contexte réellement envoyé : estimation avant l'envoi, compte mesuré par Ollama après.
+  | {
+      type: 'context'
+      window: number
+      ceiling: number
+      trainedContext: number | null
+      estimatedPromptTokens: number
+      compactedMessages: number
+      kvGiBAtWindow: number | null
+      measuredPromptTokens?: number
+      measuredAnswerTokens?: number
+    }
 
 interface ConversationRunOptions {
   model: string
@@ -268,6 +281,8 @@ async function collectDraft(
   model: string,
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string; images?: string[] }>,
   signal?: AbortSignal,
+  numCtx = 32768,
+  onStats?: (stats: { promptTokens: number; evalTokens: number }) => void,
 ) {
   // v82n1 : token accumulator switched from `s += token` to chunks[] + join.
   // Per CLAUDE.md hard rule "memory truncation guard" — string concat is O(n^2)
@@ -282,8 +297,8 @@ async function collectDraft(
       chunks.push(token)
     },
     () => undefined,
-    // Preset haute précision : contexte 32K et génération 16K pour éviter toute troncature.
-    { signal, temperature: 0.5, top_p: 0.85, top_k: 20, num_ctx: 32768, num_predict: 16384 },
+    // Fenêtre planifiée par conversationContextBudget : l'historique y tient sans troncature muette.
+    { signal, temperature: 0.5, top_p: 0.85, top_k: 20, num_ctx: numCtx, num_predict: 16384, onStats },
   )
 
   return stripThinkTags(chunks.join(''))
@@ -511,7 +526,12 @@ REGLES ABSOLUES:
 
   emitStage(onEvent, 'understand', 'Analyse', 'Lecture de la demande et du contexte utile.', 12)
 
-  const historyWindow = buildConversationWindow(messages)
+  // L'analyse lit les échanges récents, bornés : l'historique entier y débordait la fenêtre du modèle.
+  const fullHistoryWindow = buildConversationWindow(messages)
+  const HISTORY_WINDOW_CHARS = 12000
+  const historyWindow = fullHistoryWindow.length > HISTORY_WINDOW_CHARS
+    ? `[échanges plus anciens omis]\n${fullHistoryWindow.slice(-HISTORY_WINDOW_CHARS)}`
+    : fullHistoryWindow
   const reality = await analyzePromptReality(userInput, 'conversation', model)
   const fallbackAnalysis = buildAnalysisFallback(reality.nature)
 
@@ -602,10 +622,13 @@ ${userInput}`
   let researchContext = ''
   let citationBlock = ''
 
+  // Profondeur proportionnée à la question : une question simple garde une recherche courte, une
+  // question complexe ou une recherche demandée explicitement ouvre et lit davantage de sources.
+  const deepResearch = effectiveWebMode === 'on' || complexity === 'complex'
   const webResearch = await researchWeb(userInput, model, effectiveWebMode, collectedSources, onEvent, signal, {
-    maxQueries: 2,
-    perQuery: 5,
-    maxPagesRead: 3,
+    maxQueries: deepResearch ? 4 : 3,
+    perQuery: deepResearch ? 8 : 6,
+    maxPagesRead: deepResearch ? 6 : 4,
     wantMedia: true,
   })
   collectedQueries = webResearch.queries
@@ -705,19 +728,37 @@ ${researchContext ? `\nRappel de tes connaissances internes (memoire du modele, 
   const lastUserIndex = historyMessages.length - 1
   const lastUserImages = historyMessages[lastUserIndex]?.images
 
-  const draft = await collectDraft(
-    model,
-    [
-      { role: 'system', content: systemPrompt },
-      ...historyMessages.slice(0, lastUserIndex).map((message) => ({
-        role: message.role,
+  const profile = await fetchModelContextProfile(model)
+  const ratio = charsPerToken(model)
+  const plan = planContext({
+    system: { role: 'system', content: systemPrompt },
+    history: historyMessages.slice(0, lastUserIndex)
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => ({
+        role: message.role as 'user' | 'assistant',
         content: stripThinkTags(message.content),
         images: message.images,
       })),
-      { role: 'user', content: userInput, images: lastUserImages },
-    ],
-    signal,
-  )
+    user: { role: 'user', content: userInput, images: lastUserImages },
+    profile,
+    ratio,
+    budgetBytes: kvBudgetBytes(),
+  })
+  const contextSummary = {
+    type: 'context' as const,
+    window: plan.window,
+    ceiling: plan.ceiling,
+    trainedContext: plan.trainedContext,
+    estimatedPromptTokens: plan.estimatedPromptTokens,
+    compactedMessages: plan.compactedMessages,
+    kvGiBAtWindow: plan.kvGiBAtWindow,
+  }
+  onEvent?.(contextSummary)
+  const promptChars = plan.messages.reduce((sum, message) => sum + message.content.length, 0)
+  const draft = await collectDraft(model, plan.messages, signal, plan.window, (stats) => {
+    calibrate(model, promptChars, stats.promptTokens)
+    onEvent?.({ ...contextSummary, measuredPromptTokens: stats.promptTokens, measuredAnswerTokens: stats.evalTokens })
+  })
 
   // Mode vocal : on livre le draft directement sans verify/refine.
   // L'analyse a deja garanti que la reponse est ciblee et contrainte.

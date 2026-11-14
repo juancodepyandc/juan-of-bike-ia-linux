@@ -29,6 +29,17 @@ import type { ChatMessage } from '../types/app.ts'
 import { getErrorMessage } from '../utils/errors.ts'
 import { speakify } from '../utils/speakify.ts'
 
+export type ConversationContextInfo = {
+  window: number
+  ceiling: number
+  trainedContext: number | null
+  estimatedPromptTokens: number
+  compactedMessages: number
+  kvGiBAtWindow: number | null
+  measuredPromptTokens?: number
+  measuredAnswerTokens?: number
+}
+
 export type Attachment = {
   id: string
   name: string
@@ -128,6 +139,9 @@ export function useChatViewLogic() {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const abortRef = useRef<AbortController | null>(null)
 
+  // Contexte réellement envoyé au modèle au dernier tour (fenêtre, plafond machine, jetons mesurés).
+  const [contextInfo, setContextInfo] = useState<ConversationContextInfo | null>(null)
+
   const onSend = async (voiceMode: boolean = false, overrideText?: string) => {
     const rawText = (overrideText ?? draft).trim()
     if ((!rawText && attachments.length === 0) || isStreaming) return
@@ -183,6 +197,7 @@ export function useChatViewLogic() {
           else if (ev.type === 'verification') setRunVerification(ev.verification)
           else if (ev.type === 'source') upsertRunSource(ev.source)
           else if (ev.type === 'queries') setRunQueries(ev.queries)
+          else if (ev.type === 'context') setContextInfo(ev)
         },
         onToken: (tok) => appendStreamContent(tok),
       })
@@ -429,6 +444,7 @@ export function useChatViewLogic() {
     draft, setDraft,
     webMode, setWebMode,
     runSources, runQueries,
+    contextInfo,
     attachments, addFiles, removeAttachment,
     narrationOn, setNarrationOn,
     narrating, narrate, stopNarration,

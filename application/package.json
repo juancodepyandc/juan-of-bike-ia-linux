@@ -29,6 +29,7 @@
     "test:image-fidelity": "node --test scripts/test-image-fidelity.mjs",
     "test:reference": "node --test scripts/test-reference-instances.mjs",
     "test:code-continuity": "node --test scripts/test-code-continuity.mjs",
+    "test:conversation-context": "node --test scripts/test-conversation-context.mjs",
     "test:fx:visual": "node scripts/test-fx-visual.mjs",
     "test:real-gen": "node --test scripts/test-real-gen-flux2.mjs",
     "test:cowork": "node --test scripts/test-cowork-notion-links.mjs",

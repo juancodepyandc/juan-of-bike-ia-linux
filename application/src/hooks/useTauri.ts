@@ -645,6 +645,8 @@ export async function ollamaChatStream(
     // réfléchit..." au lieu d'une zone vide pendant que le content est encore
     // vide. Le content réel passe toujours par onToken.
     onThinking?: (token: string) => void
+    /** comptes réels renvoyés par Ollama à la fin du flux (jetons du prompt et de la réponse) */
+    onStats?: (stats: { promptTokens: number; evalTokens: number }) => void
   }
 ) {
   if (isTauriRuntime() && !options?.baseUrl && !model.startsWith('aurora-rl-')) {
@@ -803,6 +805,11 @@ export async function ollamaChatStream(
         if (options?.onThinking) {
           try { options.onThinking(json.message.thinking) } catch { /* callback error — never crash stream */ }
         }
+      }
+      if (json.done === true && typeof json.prompt_eval_count === 'number' && options?.onStats) {
+        try {
+          options.onStats({ promptTokens: json.prompt_eval_count, evalTokens: typeof json.eval_count === 'number' ? json.eval_count : 0 })
+        } catch { /* callback error — never crash stream */ }
       }
     })
     // If a thinking model (`deepseek-r1:32b`, `Qwen3.8-27B-Uncensored`, `qwen3-vl:30b`)

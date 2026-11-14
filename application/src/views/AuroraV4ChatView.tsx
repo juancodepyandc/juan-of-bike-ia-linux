@@ -1493,6 +1493,7 @@ export default function AuroraV4ConversationView() {
                   boxShadow: 'inset 0 -1px 0 rgba(255,255,255,.06)',
                 }}>entrée</span>
               </span>
+              {L.contextInfo && <ContextGauge info={L.contextInfo} />}
               {L.narrating && (
                 <GhostBtn danger title="Couper la lecture vocale" onClick={L.stopNarration}>
                   <Ic name="volx" /> Couper la voix
@@ -1546,3 +1547,42 @@ export default function AuroraV4ConversationView() {
     </div>
   )
 }
+
+
+/**
+ * Jauge du contexte réellement envoyé au modèle au dernier tour : jetons mesurés par Ollama
+ * (ou estimés avant sa réponse), fenêtre demandée, plafond soutenable sur cette machine et contexte
+ * maximal du modèle. Elle dit aussi quand d'anciens messages ont été résumés pour tenir.
+ */
+function ContextGauge({ info }: { info: import('../hooks/useChatViewLogic.ts').ConversationContextInfo }) {
+  const used = info.measuredPromptTokens ?? info.estimatedPromptTokens
+  const ratio = Math.min(1, used / Math.max(1, info.window))
+  const fmt = (n: number) => n.toLocaleString('fr-FR')
+  const measured = info.measuredPromptTokens !== undefined
+  const title = [
+    `${measured ? 'Mesuré par Ollama' : 'Estimé avant envoi'} : ${fmt(used)} jetons de prompt`
+      + (info.measuredAnswerTokens ? ` + ${fmt(info.measuredAnswerTokens)} générés` : ''),
+    `Fenêtre demandée : ${fmt(info.window)} jetons${info.kvGiBAtWindow !== null ? ` (cache ≈ ${info.kvGiBAtWindow} Go)` : ''}`,
+    `Plafond soutenable sur cette machine : ${fmt(info.ceiling)} jetons`,
+    info.trainedContext ? `Contexte maximal du modèle : ${fmt(info.trainedContext)} jetons` : 'Contexte maximal du modèle : inconnu',
+    info.compactedMessages > 0
+      ? `${info.compactedMessages} message(s) ancien(s) résumé(s) pour tenir dans la fenêtre`
+      : 'Toute la conversation tient dans la fenêtre',
+  ].join('\n')
+  const color = ratio > 0.85 ? '#F87171' : ratio > 0.6 ? '#FBBF24' : '#34D399'
+  return (
+    <span title={title} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'rgba(255,255,255,.72)',
+      fontFamily: "'Cascadia Code',Consolas,monospace", padding: '2px 8px', borderRadius: 6,
+      border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.03)',
+    }}>
+      <span style={{ width: 46, height: 5, borderRadius: 3, background: 'rgba(255,255,255,.12)', overflow: 'hidden' }}>
+        <span style={{ display: 'block', height: '100%', width: `${Math.round(ratio * 100)}%`, background: color }} />
+      </span>
+      {fmt(used)} / {fmt(info.window)} jetons
+      {info.compactedMessages > 0 && <span style={{ color: '#FBBF24' }}>· {info.compactedMessages} résumé(s)</span>}
+      <span style={{ opacity: .55 }}>· max {fmt(info.ceiling)}</span>
+    </span>
+  )
+}
+
