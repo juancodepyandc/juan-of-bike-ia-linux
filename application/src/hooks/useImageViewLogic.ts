@@ -1,5 +1,6 @@
+import { deciderIntentImage } from '../services/imageRequestUnderstanding.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { emitGenerationFx, useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
+import { emitGenerationFx, fxAsk, useGenerationFxEmitter, useGenerationFxResult } from '../components/generationFx/fxBus.ts'
 import { registerComfyRun } from '../components/generationFx/comfyProgress.ts'
 import { waitForComfyImages, type ComfyImageOutput } from '../services/comfyJobMonitor.ts'
 import { createFluxWorkflow, getAvailableStyles, type FluxStyle } from '../utils/fluxWorkflow.ts'
@@ -704,11 +705,46 @@ export function useImageViewLogic() {
       const hasReferenceCandidate = Boolean(refFilename || current)
       // l'image affichée du rendu précédent n'est pas une référence jointe : une nouvelle
       // demande d'objet ne la retouche que si elle la désigne (« cette image », « modifie »…)
-      const intent = parseImageIntent(text, {
+      const intentExpressions = parseImageIntent(text, {
         hasReference: hasReferenceCandidate,
         hasExplicitReference: hasExplicitUserReference,
         referenceIsPreviousOutput: !refFilename && Boolean(current),
       })
+      // La décision création / retouche vient d'une compréhension de la phrase contre ce qui est
+      // affiché et les demandes précédentes ; si c'est réellement ambigu, l'écran de génération
+      // pose la question. Les expressions ne restent la règle que si le modèle n'a pas pu lire.
+      const intentDecision = await deciderIntentImage({
+        texte: text,
+        intentExpressions,
+        contexte: {
+          hasDisplayedImage: Boolean(current),
+          hasAttachedImage: hasExplicitUserReference,
+          previousRequests: useModuleHistoryStore.getState().getRecentMessages('image', 8)
+            .filter((m) => m.role === 'user')
+            .map((m) => String(m.content).replace(/\[image:[^\]]*\]/g, '').trim().slice(0, 300))
+            .filter(Boolean),
+        },
+        generer: mainModel
+          ? async (prompt) => String((await ollamaGenerate(mainModel, prompt, { signal: ac.signal }))?.response ?? '')
+          : null,
+        demander: async (question, [optionRetouche, optionCreation]) => {
+          const pending = fxAsk<string | null>('image', {
+            id: `image-intention-${Date.now()}`,
+            kind: 'question',
+            question,
+            options: [optionRetouche, optionCreation],
+          })
+          if (!pending) return null
+          const answer = await pending
+          return answer === optionCreation ? 'creation' : answer === optionRetouche ? 'retouche' : null
+        },
+      })
+      const intent = intentDecision.intent
+      if (intentDecision.decidePar !== 'expressions' && intentDecision.intent.isEditIntent !== intentExpressions.isEditIntent) {
+        reportImageStep(1, 9, intentDecision.intent.isEditIntent
+          ? 'Compris comme une retouche de l’image affichée'
+          : 'Compris comme une nouvelle image', `décision : ${intentDecision.decidePar}`)
+      }
       const effectiveHasReference = Boolean(
         hasExplicitUserReference || (current && (intent.isEditIntent || intent.editMode === 'replicate')),
       )

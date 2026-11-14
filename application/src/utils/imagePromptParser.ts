@@ -533,6 +533,20 @@ export function parseImageIntent(rawPrompt: string, options: ParseImageIntentOpt
   }
 }
 
+/**
+ * Le même intent avec un autre mode : utilisé quand la compréhension de la demande contredit la
+ * lecture par expressions. Le contrat de retouche est reconstruit pour ce mode.
+ */
+export function withEditMode(intent: ParsedImageIntent, mode: ImageEditMode): ParsedImageIntent {
+  if (intent.editMode === mode) return intent
+  return {
+    ...intent,
+    editMode: mode,
+    isEditIntent: mode !== 'create',
+    editContract: buildEditContract(mode, intent.removals, intent.additions, intent.replacements),
+  }
+}
+
 export function buildNegativePrompt(
   userNegative: string,
   parsedRemovals: string[],
