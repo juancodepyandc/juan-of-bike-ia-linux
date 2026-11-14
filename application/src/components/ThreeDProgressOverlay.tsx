@@ -40,7 +40,9 @@ export type ThreeDProgressProps = {
 
 export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePercent, sceneStep }: ThreeDProgressProps) {
   const [elapsedTotal, setElapsedTotal] = useState(0)
-  const [remainingEta, setRemainingEta] = useState('~04m 00s')
+  // temps restant mesuré (historique / serveur) ; jamais une valeur par défaut inventée
+  const [remainingEta, setRemainingEta] = useState('')
+  const [etaBasis, setEtaBasis] = useState('')
   const [elapsedSinceUpdate, setElapsedSinceUpdate] = useState(0)
   const startedAtRef = useRef<number | null>(null)
   const lastUpdateRef = useRef<number>(Date.now())
@@ -51,8 +53,9 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
   activeRef.current = active
 
   const persisted = readPersistedThreeDMission()
+  // pourcentage transmis par le producteur uniquement (0 = pas encore mesuré)
   const effectivePercent = Math.max(
-    active ? 5 : 0,
+    0,
     Math.min(
       100,
       Math.round(
@@ -60,9 +63,7 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
           ? phasePercent
           : persisted?.active && persisted.phasePercent > 0
             ? persisted.phasePercent
-            : active
-              ? 8
-              : 0,
+            : 0,
       ),
     ),
   )
@@ -83,7 +84,7 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
       emitGenerationFx('3d', {
         active: true,
         phase: phaseLabel || progress || persisted?.phaseLabel || 'Reconstruction 3D en cours…',
-        progress: Math.max(0.05, Math.min(0.99, effectivePercent / 100)),
+        progress: effectivePercent > 0 ? Math.min(0.99, effectivePercent / 100) : undefined,
         logLine: isNewLine ? progress : undefined,
       })
     } else {
@@ -127,7 +128,8 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
       setElapsedTotal(Math.max(0, Math.floor((now - anchor) / 1000)))
       setElapsedSinceUpdate(Math.max(0, Math.floor((now - lastUpdateRef.current) / 1000)))
       const liveTiming = computeLiveMissionTiming(currentMission, now)
-      setRemainingEta(liveTiming.formattedRemaining)
+      setRemainingEta(liveTiming.etaLabel)
+      setEtaBasis(liveTiming.basis)
     }
     tick()
     const interval = setInterval(tick, 500)
@@ -190,7 +192,7 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
               : 'Génération 3D en cours'}
         </span>
         <span style={{ color: '#38bdf8', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
-          {formattedElapsed} · ETA {remainingEta}
+          {formattedElapsed}
         </span>
       </div>
 
@@ -222,9 +224,14 @@ export function ThreeDProgressOverlay({ active, progress, phaseLabel, phasePerce
           {phaseLabel || persisted?.phaseLabel || 'Initialisation des sous-agents...'}
         </span>
         <span style={{ color: '#34d399', fontVariantNumeric: 'tabular-nums', fontSize: 13, fontWeight: 700 }}>
-          {percent}%
+          {percent > 0 ? `${percent}%` : 'non mesuré'}
         </span>
       </div>
+      {remainingEta && (
+        <div title={etaBasis} style={{ color: '#fde68a', fontSize: 11, marginBottom: 8 }}>
+          Restant : {remainingEta}
+        </div>
+      )}
 
       {/* Last event detail */}
       {progress && (

@@ -39,7 +39,7 @@ class ColabCandidateQuarantine(unittest.TestCase):
                 self.assertFalse(result["ok"])
 
     def test_bootstrap_has_no_filler_allocations_and_reports_measured_ram(self):
-        script = bridge.generate_colab_bootstrap_script("https://example.invalid")
+        script = bridge.generate_colab_bootstrap_script("https://example.invalid", allow_surrogate=True)
         compile(script, "colab-bootstrap", "exec")
         self.assertNotIn("torch.empty((1024, 1024, 1024)", script)
         self.assertNotIn("target_bank_gb = 54.0", script)

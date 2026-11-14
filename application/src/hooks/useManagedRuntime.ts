@@ -141,7 +141,7 @@ export function useManagedRuntime() {
       history: [],
     })
 
-    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>{setGenerationJob(jobId,{detail});onWaiting?.(detail)},signal);
+    const admission=acquireProject({request_id:jobId,module,title:title.slice(0,500),model:ollamaModel},detail=>{setGenerationJob(jobId,{detail});onWaiting?.(detail)},signal,scheduling=>setGenerationJob(jobId,{scheduling}));
     void admission.catch(()=>{})
     const runQueuedJob = async () => {
       const release=await admission;
@@ -171,14 +171,17 @@ export function useManagedRuntime() {
         error: null,
       })
 
+      // Sans phase explicite, une mise à jour faite par le job pendant la génération reste en
+      // « generate » : elle ne doit pas renvoyer le job (et l'écran de génération) en préparation.
       const setPhase = (
         detail: string,
         progress: number,
-        phase: ManagedRuntimePhase = 'prepare',
+        phase?: ManagedRuntimePhase,
       ) => {
+        const effective: ManagedRuntimePhase = phase ?? (generationStarted ? 'generate' : 'prepare')
         onWaiting?.(detail, progress)
-        setRuntimeTask({ phase, detail, progress })
-        setGenerationJob(jobId, { phase, detail, progress })
+        setRuntimeTask({ phase: effective, detail, progress })
+        setGenerationJob(jobId, { phase: effective, detail, progress })
       }
 
       const ensureService = async (service: RuntimeServiceId) => {

@@ -39,9 +39,11 @@ def main(job_id, payload_hash, *, work=None, root=None, search_roots=None):
                 raise RuntimeError("Kaggle n'a pas alloué de GPU")
             return
         if spec.get("multi_module_testbench"):
-            from .kaggle_multi_module_testbench import run_remote_kaggle_testbench_and_trainer
-            run_remote_kaggle_testbench_and_trainer(spec, root, out, job_id)
-            return
+            # `kaggle_multi_module_testbench` was never shipped with this repository.
+            # Fail with the real reason instead of an import error; the receipt below
+            # records it, so no result can be mistaken for a completed training.
+            raise RuntimeError("Le banc « multi_module_testbench » n'a jamais été livré avec Aurora : "
+                               "aucun entraînement n'a été exécuté pour ce lot.")
         c = spec["config"]
         # Parent weights are already pinned in initial.safetensors. Never resolve
         # a local development registry from the fresh Kaggle filesystem.

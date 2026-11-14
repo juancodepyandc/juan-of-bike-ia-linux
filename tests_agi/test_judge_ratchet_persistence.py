@@ -31,8 +31,7 @@ class RatchetPersistence(unittest.TestCase):
                     judge_ratchet(advance=True, path=path)
                 self.assertEqual(path.read_text(), invalid)
 
-    def test_growing_evidence_floor_cannot_be_satisfied_by_repeating_a_case(self):
-        from agi_core.anti_hallucination_guard import judge_independent_holdout_evidence
+    def _assert_growing_evidence_floor(self, judge_independent_holdout_evidence):
         ratchet = {"ratchet_level": 76, "required_holdout_cases": 2}
         first = {"case_sha256": "a" * 64, "receipt_sha256": "b" * 64,
                  "independent_holdout": True, "executed": True, "passed": True}
@@ -42,6 +41,15 @@ class RatchetPersistence(unittest.TestCase):
         self.assertTrue(judge_independent_holdout_evidence([first, second], ratchet=ratchet)["passed"])
         harder = {"ratchet_level": 77, "required_holdout_cases": 3}
         self.assertFalse(judge_independent_holdout_evidence([first, second], ratchet=harder)["passed"])
+
+    def test_growing_evidence_floor_cannot_be_satisfied_by_repeating_a_case(self):
+        from agi_core.judge_ratchet import judge_independent_holdout_evidence
+        self._assert_growing_evidence_floor(judge_independent_holdout_evidence)
+
+    def test_guard_import_path_enforces_the_same_growing_evidence_floor(self):
+        # The local judges (representative_judge_oracle) reach the gate through the guard module.
+        from agi_core.anti_hallucination_guard import judge_independent_holdout_evidence
+        self._assert_growing_evidence_floor(judge_independent_holdout_evidence)
 
     def test_default_state_reconciles_against_sibling_report_high_water_mark(self):
         from unittest.mock import patch

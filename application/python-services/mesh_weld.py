@@ -32,6 +32,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_blender() -> str | None:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     env = os.environ.get("AURORA_BLENDER")
     if env and os.path.exists(env):
         return env

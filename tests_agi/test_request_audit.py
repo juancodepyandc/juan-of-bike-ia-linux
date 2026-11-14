@@ -45,6 +45,84 @@ class RequestAudit(unittest.IsolatedAsyncioTestCase):
         with patch.object(self.agent,'_chat_chunks',stream),patch.object(self.agent.gateway,'generate',generate):
             return await self.agent.run()
 
+    async def test_checker_receives_actual_external_paths_without_output_values_or_invented_ids(self):
+        from agi_core.mission_tools import strict_json
+        self.agent.request_text='Save the observed title in result.json and ground it in the original browser receipt.'
+        self.agent.state.update(criteria=['Observed title'],plan=['Observe then save'])
+        target=self.root/'result.json';target.write_text(json.dumps({'title':'Observed title'}))
+        self.agent.state['evidence']=[
+            {'id':'browser','tool':'browser_action','ok':True,'result':{'title':'Observed title'}},
+            {'id':'written','tool':'write_file','ok':True,'result':{'path':str(target)}},
+            {'id':'reread','tool':'read_file','ok':True,'result':{'path':str(target),'content':'CANDIDATE_ONLY_VALUE'}},
+        ]
+        async def generate(system,payload,model,**kwargs):
+            context=json.loads(payload)
+            self.assertNotIn('CANDIDATE_ONLY_VALUE',payload)
+            self.assertEqual([o['evidence_id'] for o in context['observations']],['browser'])
+            field=next(f for f in context['observations'][0]['fields'] if f['source_pointer']=='/result/title')
+            self.assertEqual(field['value'],'Observed title')
+            self.assertIn('no inspection tools are available',system)
+            checks=kwargs['response_format']['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+            check=next(c for c in checks if c['properties']['kind']['const']=='json_evidence')
+            variants=check['properties']['bindings']['items']['oneOf']
+            properties=variants[0]['properties']
+            self.assertEqual(properties['evidence_id']['enum'],['browser'])
+            self.assertEqual(set(properties['path']['enum']),{'','/title'})
+            self.assertEqual(variants[0]['properties']['relation'],{'const':'equals'})
+            self.assertEqual(variants[1]['properties']['path']['enum'],['/title'])
+            return json.dumps(call('verify',checks=[{'kind':'json_evidence','path':str(target),'criterion':'Observed title',
+                'bindings':[{'path':'/title','evidence_id':'browser','source_pointer':field['source_pointer']}]}]))
+        with patch.object(self.agent.gateway,'generate',generate):
+            proposed=await self.agent._propose_completion_audit()
+        result=await self.agent.tools.execute(proposed['tool'],proposed['args'])
+        self.assertTrue(result['passed'],result)
+        self.assertEqual(strict_json(target.read_text()),{'title':'Observed title'})
+
+    def test_audit_observation_budget_reports_omissions_without_replacing_original_sources(self):
+        self.agent.policy=replace(self.agent.policy,output_chars=2048)
+        self.agent.state['evidence']=[{'id':str(i),'tool':'browser_action','ok':True,
+                                     'result':{'text':'x'*10000}} for i in range(8)]
+        observed,omitted=self.agent._audit_observations()
+        self.assertGreater(omitted,0)
+        self.assertLessEqual(sum(len(json.dumps(o,ensure_ascii=False)) for o in observed),2048)
+        self.assertTrue(all(o['evidence_id'] in {str(i) for i in range(8)} for o in observed))
+
+    def test_audit_relation_schema_cannot_apply_text_matching_to_a_numeric_field(self):
+        from agi_core.json_evidence import json_pointer_paths
+        from agi_core.mission_protocol import audit_response_schema
+        info={'path':'result.json','json_pointers':json_pointer_paths({'number':0,'labels':['actual text']})}
+        schema=audit_response_schema(['Observed'],['verify'],[info],max_chars=60000,
+                                     evidence=[{'id':'source','tool':'browser_action','ok':True}])
+        checks=schema['oneOf'][0]['properties']['args']['properties']['checks']['items']['anyOf']
+        check=next(c for c in checks if c['properties']['kind']['const']=='json_evidence')
+        exact,text=check['properties']['bindings']['items']['oneOf']
+        self.assertIn('/number',exact['properties']['path']['enum'])
+        self.assertNotIn('/number',text['properties']['path']['enum'])
+        self.assertIn('/labels',text['properties']['path']['enum'])
+        self.assertEqual(text['properties']['relation'],{'const':'text_in'})
+
+    async def test_failed_bindings_remain_actionable_when_the_full_receipt_is_compacted(self):
+        target=self.root/'result.json'
+        target.write_text(json.dumps({'title':'Observed title','label':'Incorrect label'}))
+        self.agent.state.update(criteria=['Observed fields'],evidence=[
+            {'id':'source','tool':'browser_action','ok':True,
+             'result':{'title':'Observed title','label':'Actual label'}}])
+        result=await self.agent.tools.execute('verify',{'checks':[
+            {'kind':'json_evidence','path':str(target),'criterion':'Observed fields','bindings':[
+                {'path':'/title','evidence_id':'source','source_pointer':'/result/title'},
+                {'path':'/label','evidence_id':'source','source_pointer':'/result/label'}]}]})
+        self.assertFalse(result['passed'])
+        self.agent._record_verification(result,1)
+        detail=json.loads(self.agent.state['verification_failures'][0]['detail'])
+        failed=detail['failed_bindings']
+        self.assertEqual(len(failed),1)
+        self.assertEqual(failed[0]['path'],'/label')
+        self.assertEqual(failed[0]['source_pointer'],'/result/label')
+        self.assertEqual(failed[0]['evidence_id'],'source')
+        self.assertNotIn('Incorrect label',json.dumps(detail))
+        self.assertNotIn('Actual label',json.dumps(detail))
+        self.assertNotIn('Observed fields',self.agent.state['verified'])
+
     def initial(self,data,check):
         return [self.plan,call('read_file',path='input.csv'),call('write_file',path='summary.json',content=json.dumps(data)),
                 call('verify',checks=[check]),call('finish',message='Premature proposal')]

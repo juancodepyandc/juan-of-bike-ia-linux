@@ -388,36 +388,9 @@ def build_module_anti_hallucination_invariants(module_name: str) -> dict[str, An
     ), "progressive_evidence_requirements": judge_ratchet()}
 
 
-def judge_independent_holdout_evidence(records, *, ratchet=None):
-    """Conservative audit gate; asserted model scores cannot replace observed cases.
-
-    This checks the audit contract, not the truth of arbitrary third-party claims.
-    The caller must supply independent, previously unseen executed test cases.
-    """
-    from agi_core.judge_ratchet import judge_ratchet
-    ratchet = judge_ratchet() if ratchet is None else ratchet
-    required = ratchet["required_holdout_cases"]
-    valid = []
-    seen = set()
-    invalid = 0
-    for record in records:
-        if (not isinstance(record, dict) or record.get("independent_holdout") is not True
-                or record.get("executed") is not True or type(record.get("passed")) is not bool
-                or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("case_sha256", "")))
-                or not re.fullmatch(r"[a-f0-9]{64}", str(record.get("receipt_sha256", "")))):
-            invalid += 1
-            continue
-        identity = record["case_sha256"]
-        if identity in seen:
-            invalid += 1
-            continue
-        seen.add(identity)
-        valid.append(record)
-    failures = sum(not r["passed"] for r in valid)
-    return {"passed": len(valid) >= required and failures == 0 and invalid == 0,
-            "ratchet_level": ratchet["ratchet_level"], "required_holdout_cases": required,
-            "observed_cases": len(valid), "failed_cases": failures, "unverified_or_duplicate_cases": invalid,
-            "scope": "Independent holdout receipt contract; does not certify general intelligence or unseen inputs"}
+# One definition only: the gate lives in agi_core.judge_ratchet. This module re-exports it so the
+# local judges keep their import path without carrying a second copy that could drift.
+from agi_core.judge_ratchet import judge_independent_holdout_evidence  # noqa: E402,F401
 
 
 _MASCULINE_ENTAILMENT_RE = re.compile(

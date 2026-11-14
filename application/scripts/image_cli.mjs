@@ -15,7 +15,7 @@ import {
   shouldUseStagedKontextEditPlan,
 } from '../src/utils/fluxKontextWorkflow.ts'
 import { looksFrench, applyEditLexicon, translateEditInstructionToEnglish } from '../src/utils/kontextInstructionTranslator.ts'
-import { buildPrompt, parseBrief } from '../src/services/imagePromptBuilder.ts'
+import { buildFaithfulCreationPrompt, buildPrompt, parseBrief } from '../src/services/imagePromptBuilder.ts'
 import {
   detectSubjectToResearch,
   resolveSubjectReference,
@@ -809,9 +809,12 @@ async function main() {
       }
     }
 
+    // même verrou de sujet que le module Image (natif, web/tunnel) : catégorie, forme, texte exact,
+    // aucune personne non demandée ; les termes à éviter vont dans le vrai prompt négatif
+    const faithful = buildFaithfulCreationPrompt({ request: intent.cleanedPrompt, expanded: directedPrompt || builtPrompt.positive })
     workflow = createFluxWorkflow({
-      prompt: [directedPrompt || builtPrompt.positive, entityClause].filter(Boolean).join('\n\n'),
-      negativePrompt: [builtPrompt.negative, cognitiveResult?.negative_prompt_en].filter(Boolean).join(', '),
+      prompt: [faithful.positive, entityClause].filter(Boolean).join('\n\n'),
+      negativePrompt: [builtPrompt.negative, cognitiveResult?.negative_prompt_en, ...faithful.negativeTerms].filter(Boolean).join(', '),
       style,
       width,
       height,

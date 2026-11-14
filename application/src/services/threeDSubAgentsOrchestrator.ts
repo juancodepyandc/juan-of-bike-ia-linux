@@ -6,6 +6,7 @@
  * proviennent des fichiers STL réels générés dans le workspace, des pièces/articulations
  * mesurées et de l'état d'avancement effectif du pipeline.
  */
+import { comparableRuns, estimateRemaining, etaHeadline, formatWait } from './generationTiming.ts';
 
 export type ThreeDSubAgentId =
   | 'kinematics'
@@ -681,10 +682,11 @@ export function startOrUpdateThreeDMission(params: {
   const startedAtMs = params.startedAtMs || (isSameMission ? existing.startedAtMs : now);
   const prevPct = isSameMission ? existing.progressPercent : 0;
   const rawPct = params.progressPercent ?? params.phasePercent ?? prevPct;
+  // aucun plancher inventé : sans mesure, la progression reste celle déjà reçue
   const progressPercent =
     params.status === 'completed'
       ? 100
-      : Math.max(prevPct, Math.min(99, Number.isFinite(rawPct) && rawPct > 0 ? rawPct : Math.max(prevPct, 6)));
+      : Math.max(prevPct, Math.min(99, Number.isFinite(rawPct) && rawPct > 0 ? rawPct : prevPct));
 
   const phaseDetail =
     params.phaseDetail?.trim() ||
@@ -692,8 +694,8 @@ export function startOrUpdateThreeDMission(params: {
     existing?.phaseDetail ||
     'Initialisation des sous-agents et de la géométrie 3D…';
 
-  const defaultEta = mode === 'engineering_cad' ? 210 : 165;
-  const estimatedTotalSeconds = params.estimatedTotalSeconds || existing?.estimatedTotalSeconds || defaultEta;
+  // 0 = durée inconnue : l'estimation vient des mesures (computeLiveMissionTiming), jamais d'un défaut fixe
+  const estimatedTotalSeconds = params.estimatedTotalSeconds || existing?.estimatedTotalSeconds || 0;
 
   const mergedTelemetry: LiveEngineeringTelemetryInput | undefined = params.liveTelemetry || params.telemetry || {
     stlCount: params.stlCount ?? existing?.stlCount,
@@ -782,32 +784,41 @@ export function formatDurationShort(totalSeconds: number): string {
 }
 
 /**
- * Calcule le temps écoulé exact (sans jamais se figer) et le temps restant estimé dynamique (ETA).
- * Accepte soit `(startedAtMs, progressPercent, estimatedTotalSeconds, serverElapsed, serverRemaining)`
+ * Temps écoulé exact et temps restant **mesuré** d'une mission 3D / CAO.
+ * Accepte soit `(startedAtMs, progressPercent, _ancienTotal, serverElapsed, serverRemaining)`
  * soit `(mission, nowMs)`.
+ *
+ * Le pourcentage reste celui transmis par le producteur : il ne progresse jamais
+ * du seul fait que le temps passe. Le temps restant vient du serveur (médiane de
+ * runs comparables) ou de l'historique local mesuré du module (≥ 3 runs) ; sinon
+ * `remainingSeconds` vaut null et le libellé indique « estimation en préparation ».
+ * L'ancien paramètre de durée totale par défaut (165 / 210 s inventés) est ignoré.
  */
 export function computeLiveMissionTiming(
   startedAtOrMission: number | PersistedThreeDMission | null,
   progressOrNow = 0,
-  estimatedTotalSeconds = 180,
+  _legacyEstimatedTotalSeconds?: number,
   serverElapsedSeconds?: number | null,
   serverRemainingSeconds?: number | null,
 ): {
   elapsedSeconds: number;
-  remainingSeconds: number;
+  remainingSeconds: number | null;
   effectivePercent: number;
   formattedElapsed: string;
   formattedRemaining: string;
+  remainingKnown: boolean;
+  etaLabel: string;
+  basis: string;
 } {
   let startedAtMs = Date.now();
   let progressPercent = progressOrNow;
-  let estTotal = estimatedTotalSeconds;
   let nowMs = Date.now();
+  let module = '3d';
 
   if (typeof startedAtOrMission === 'object' && startedAtOrMission !== null) {
     startedAtMs = startedAtOrMission.startedAtMs || Date.now();
-    progressPercent = startedAtOrMission.progressPercent ?? startedAtOrMission.phasePercent ?? 6;
-    estTotal = startedAtOrMission.estimatedTotalSeconds || 180;
+    progressPercent = startedAtOrMission.progressPercent ?? startedAtOrMission.phasePercent ?? 0;
+    if (startedAtOrMission.mode === 'engineering_cad') module = 'engineering';
     if (progressOrNow > 1_000_000_000_000) {
       nowMs = progressOrNow;
     }
@@ -820,27 +831,25 @@ export function computeLiveMissionTiming(
     typeof serverElapsedSeconds === 'number' && Number.isFinite(serverElapsedSeconds)
       ? Math.max(localElapsed, Math.floor(serverElapsedSeconds))
       : localElapsed;
+  const effectivePercent = Math.max(0, Math.min(100, Math.round(Number.isFinite(progressPercent) ? progressPercent : 0)));
 
-  const asymptoticFloor = Math.min(
-    92,
-    Math.round((1 - Math.exp(-elapsedSeconds / Math.max(60, estTotal * 0.85))) * 88) + 4,
-  );
-  const effectivePercent =
-    progressPercent >= 100
-      ? 100
-      : Math.max(progressPercent > 0 ? progressPercent : 5, Math.min(95, asymptoticFloor));
-
-  let remainingSeconds: number;
-  if (typeof serverRemainingSeconds === 'number' && Number.isFinite(serverRemainingSeconds) && serverRemainingSeconds > 0) {
-    remainingSeconds = Math.max(3, Math.round(serverRemainingSeconds));
-  } else if (effectivePercent >= 100) {
+  let remainingSeconds: number | null = null;
+  let etaLabel: string;
+  let basis: string;
+  if (effectivePercent >= 100) {
     remainingSeconds = 0;
-  } else if (effectivePercent >= 12 && elapsedSeconds >= 8) {
-    const projectedTotal = (elapsedSeconds / effectivePercent) * 100;
-    const blendedTotal = projectedTotal * 0.65 + Math.max(estTotal, elapsedSeconds + 20) * 0.35;
-    remainingSeconds = Math.max(5, Math.round(blendedTotal - elapsedSeconds));
+    etaLabel = 'Terminé';
+    basis = 'Terminé';
+  } else if (typeof serverRemainingSeconds === 'number' && Number.isFinite(serverRemainingSeconds) && serverRemainingSeconds > 0) {
+    remainingSeconds = Math.round(serverRemainingSeconds);
+    etaLabel = `≈ ${formatWait(remainingSeconds * 1000)}`;
+    basis = 'médiane des runs comparables mesurés par le PC';
   } else {
-    remainingSeconds = Math.max(10, Math.round(estTotal - elapsedSeconds));
+    const { runs, basis: historyBasis } = comparableRuns(module);
+    const est = estimateRemaining({ now: nowMs, runStartedAt: nowMs - elapsedSeconds * 1000, runs, historyBasis });
+    remainingSeconds = est.remainingMs != null ? Math.round(est.remainingMs / 1000) : null;
+    etaLabel = etaHeadline(est);
+    basis = est.basis;
   }
 
   return {
@@ -848,6 +857,9 @@ export function computeLiveMissionTiming(
     remainingSeconds,
     effectivePercent,
     formattedElapsed: formatDurationShort(elapsedSeconds),
-    formattedRemaining: formatDurationShort(remainingSeconds),
+    formattedRemaining: remainingSeconds != null ? formatDurationShort(remainingSeconds) : 'estimation en préparation',
+    remainingKnown: remainingSeconds != null,
+    etaLabel,
+    basis,
   };
 }

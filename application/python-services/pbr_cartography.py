@@ -30,6 +30,7 @@ branchement ad-hoc lié à un personnage ou à un test particulier :
 from __future__ import annotations
 
 import json
+import re
 import struct
 from pathlib import Path
 from typing import Any

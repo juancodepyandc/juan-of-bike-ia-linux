@@ -142,16 +142,20 @@ def run_meshroom(images: list[str], output_dir: str, run_id: str, fmt: str = "gl
         vertex_count = int(mesh.vertices.shape[0])
         face_count = int(mesh.faces.shape[0])
     except ImportError:
-        # Fallback: copy raw output
+        # Fallback: copie brute, sous sa VRAIE extension (un OBJ/PLY nommé .glb trompait le viewer et l'hologramme)
+        fmt = os.path.splitext(source_mesh)[1].lstrip(".").lower() or fmt
+        output_path = os.path.join(output_dir, f"{run_id}_photogrammetry.{fmt}")
         shutil.copy2(source_mesh, output_path)
         vertex_count = 0
         face_count = 0
-        emit("export", "Trimesh not available, copied raw mesh.")
+        emit("export", f"Trimesh not available, copied raw mesh ({fmt}).")
     except Exception as e:
+        fmt = os.path.splitext(source_mesh)[1].lstrip(".").lower() or fmt
+        output_path = os.path.join(output_dir, f"{run_id}_photogrammetry.{fmt}")
         shutil.copy2(source_mesh, output_path)
         vertex_count = 0
         face_count = 0
-        emit("export", f"Conversion failed ({e}), copied raw mesh.")
+        emit("export", f"Conversion failed ({e}), copied raw mesh ({fmt}).")
 
     # Look for textures
     texture_files = []

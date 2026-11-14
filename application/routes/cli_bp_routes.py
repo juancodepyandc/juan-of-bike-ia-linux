@@ -256,7 +256,8 @@ def cli_status():
     })
 
 
-_DOCTOR_HW_CACHE = {"ts": 0.0, "gpu_ok": False, "vram_bytes": 0, "mcp": [], "skills": []}
+# `ts` is None until the first measurement: a monotonic clock may legitimately read below the window.
+_DOCTOR_HW_CACHE = {"ts": None, "gpu_ok": False, "vram_bytes": 0, "mcp": [], "skills": []}
 
 
 @cli_bp.route("/api/cli/doctor", methods=["GET"])
@@ -284,7 +285,7 @@ def cli_doctor():
     checks.append({"name": "ComfyUI", "ok": _comfyui_is_ready(), "detail": f"{COMFYUI_URL}"})
     # GPU + MCP + Skills (cached 20s to avoid spawning nvidia-smi & MCP stdio subprocesses on every ping)
     now_mono = _time.monotonic()
-    if now_mono - _DOCTOR_HW_CACHE["ts"] > 20.0:
+    if _DOCTOR_HW_CACHE["ts"] is None or now_mono - _DOCTOR_HW_CACHE["ts"] > 20.0:
         gpu_ok = False
         vram_bytes = 0
         try:
@@ -869,46 +870,6 @@ def cli_mcp_call():
     return jsonify({"ok": not bool(result.get("isError")), "result": result})
 
 
-def _cli_mcp_read_operation(operation, data):
-    if g.cli_key_rec.get("permissions") == "SAFE":
-        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
-    from agi_core.context import list_mcp_catalog, read_mcp_resource, get_mcp_prompt, close_mcp_session
-    workspace, server = data.get("workspace") or WORKSPACE, data.get("server", "")
-    try:
-        if operation == "catalog":
-            result = list_mcp_catalog(workspace, server, data.get("kind", "tools"), data.get("cursor"))
-        elif operation == "resource":
-            result = read_mcp_resource(workspace, server, data.get("uri"))
-        elif operation == "prompt":
-            result = get_mcp_prompt(workspace, server, data.get("name"), data.get("arguments"))
-        else:
-            result = close_mcp_session(workspace, server)
-        return jsonify(ok=True, result=result)
-    except ValueError as exc:
-        return jsonify(ok=False, error=str(exc)), 400
-    except TimeoutError as exc:
-        return jsonify(ok=False, error=str(exc)), 409
-    except RuntimeError as exc:
-        return jsonify(ok=False, error=str(exc)), 502
-
-
-@cli_bp.route("/api/cli/mcp/catalog", methods=["GET"])
-@_cli_auth_required
-def cli_mcp_catalog():
-    return _cli_mcp_read_operation("catalog", request.args)
-
-
-@cli_bp.route("/api/cli/mcp/resource", methods=["POST"])
-@cli_bp.route("/api/cli/mcp/prompt", methods=["POST"])
-@cli_bp.route("/api/cli/mcp/close", methods=["POST"])
-@_cli_auth_required
-def cli_mcp_context_operation():
-    data = request.get_json(silent=True)
-    if not isinstance(data, dict):
-        return jsonify(ok=False, error="JSON object required"), 400
-    return _cli_mcp_read_operation(request.path.rsplit("/", 1)[-1], data)
-
-
 @cli_bp.route("/api/cli/mcp/create", methods=["POST"])
 @_cli_auth_required
 def cli_mcp_create():
@@ -1352,3 +1313,43 @@ _MISSION_STORE = register_mission_routes(
     cli_bp,_cli_auth_required,workspace=WORKSPACE,model_default=_ext_default_model,
     publish=_cli_publish_ipc,history_loader=_mission_history,on_accepted=_mission_accepted,
     on_completed=_mission_completed)
+
+
+def _cli_mcp_read_operation(operation, data):
+    if g.cli_key_rec.get("permissions") == "SAFE":
+        return jsonify(ok=False, error="MCP execution requires STANDARD permissions"), 403
+    from agi_core.context import list_mcp_catalog, read_mcp_resource, get_mcp_prompt, close_mcp_session
+    workspace, server = data.get("workspace") or WORKSPACE, data.get("server", "")
+    try:
+        if operation == "catalog":
+            result = list_mcp_catalog(workspace, server, data.get("kind", "tools"), data.get("cursor"))
+        elif operation == "resource":
+            result = read_mcp_resource(workspace, server, data.get("uri"))
+        elif operation == "prompt":
+            result = get_mcp_prompt(workspace, server, data.get("name"), data.get("arguments"))
+        else:
+            result = close_mcp_session(workspace, server)
+        return jsonify(ok=True, result=result)
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    except TimeoutError as exc:
+        return jsonify(ok=False, error=str(exc)), 409
+    except RuntimeError as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+
+
+@cli_bp.route("/api/cli/mcp/catalog", methods=["GET"])
+@_cli_auth_required
+def cli_mcp_catalog():
+    return _cli_mcp_read_operation("catalog", request.args)
+
+
+@cli_bp.route("/api/cli/mcp/resource", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/prompt", methods=["POST"])
+@cli_bp.route("/api/cli/mcp/close", methods=["POST"])
+@_cli_auth_required
+def cli_mcp_context_operation():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(ok=False, error="JSON object required"), 400
+    return _cli_mcp_read_operation(request.path.rsplit("/", 1)[-1], data)

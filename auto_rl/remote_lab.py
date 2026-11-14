@@ -134,7 +134,7 @@ def run_payload(*, job_id, payload_hash, inputs, output, requirements, session_s
     result = json.loads((run / "aurora_export/result.json").read_text())
     if result.get("error"):
         raise RuntimeError("Native cloud worker failed; inspect its run-scoped error.log")
-    from agi_core.anti_hallucination_guard import judge_independent_holdout_evidence
+    from agi_core.judge_ratchet import judge_independent_holdout_evidence
     # Training loss and a transport receipt alone cannot pass an independent audit.
     gate = judge_independent_holdout_evidence([])
     atomic_json(run / "promotion_gate.json", gate)

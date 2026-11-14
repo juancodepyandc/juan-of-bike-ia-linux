@@ -92,11 +92,11 @@ def apply(c):
              # slower but keeps the T4×2 job recoverable instead of failing on
              # a transient peak while preserving the full model and objective.
              offload_saved_tensors=True,
-             # Priorité absolue à la qualité et à la profondeur sur la vitesse :
-             # aucune étape locale profonde (rollouts multi-graines, rendus 8K/16K,
-             # preuves formelles Z3/SymPy) ne doit être interrompue prématurément.
-             local_step_timeout_seconds=7200,
-             local_preparation_seconds=28800,
+             # Seuil du chien de garde : il doit couvrir une étape unitaire saine sans laisser un
+             # travail bloqué occuper la machine pendant des heures. Le module 3D, dont un rendu de
+             # référence dure bien plus longtemps, porte ses propres valeurs plus bas.
+             local_step_timeout_seconds=1200,
+             local_preparation_seconds=3600,
              all_regime_styles=True,
              optimization_recipe=RECIPES.get(c['module'], RECIPES['3d']))
     if c['module'] in TEXT_MODULES:

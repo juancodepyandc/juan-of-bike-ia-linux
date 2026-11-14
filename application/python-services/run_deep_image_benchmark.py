@@ -155,7 +155,7 @@ def main():
     mode.add_argument("--real", action="store_true", help="Run real ComfyUI inference (default)")
     parser.add_argument("--limit", type=int, default=len(BENCHMARK_PROMPTS))
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", type=Path, default=Path("audit/benchmarks/image") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+    parser.add_argument("--output-dir", type=Path, default=Path("scripts/audit/benchmarks/image") / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
     args = parser.parse_args()
     if not 1 <= args.limit <= len(BENCHMARK_PROMPTS):
         parser.error(f"--limit must be between 1 and {len(BENCHMARK_PROMPTS)}")

@@ -785,7 +785,7 @@ def inspect_code_agents_and_toolchains(workspace: str | pathlib.Path = ".") -> d
     except Exception:
         pass
 
-    kaggle_sync_dir = pathlib.Path(__file__).resolve().parents[1] / "kaggle_sync"
+    kaggle_sync_dir = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "kaggle_sync"
     kaggle_ready = bool(shutil.which("kaggle") is not None or kaggle_sync_dir.is_dir())
 
     return {

@@ -172,7 +172,13 @@ class TestModuleAgentsAndTextures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(plan["loop_phases"]), LOOP_PHASES)
         self.assertEqual(len(plan["phases_trace"]), 7)
         self.assertGreaterEqual(len(plan["dag_nodes"]), 2)
-        self.assertEqual(len(plan["operational_loops"]), 10)
+        # The plan declares its loops by name; a count alone would not notice a renamed or dropped loop.
+        self.assertGreaterEqual(set(plan["operational_loops"]), {
+            "cognitive_executive_loop", "scope_firewall_loop", "self_healing_diagnostic_loop",
+            "continuous_github_verification_loop", "episodic_skill_evolution_loop",
+            "multi_hypothesis_counterfactual_loop", "cross_module_synergy_orchestrator_loop",
+            "autonomous_goal_watchdog_loop", "first_principles_constraint_solver_loop",
+            "reinforced_model_arbitration_loop", "zero_hardcoding_native_excellence_loop"})
         self.assertTrue(all(plan["operational_loops"].values()))
         self.assertIn("counterfactual_evaluation", plan)
         self.assertIn("formal_constraints", plan)

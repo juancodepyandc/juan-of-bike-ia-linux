@@ -16,6 +16,22 @@ class Site(BaseHTTPRequestHandler):
         <label>Project name<input id="name"></label><input type="password" value="private-input">
         <button onclick="document.querySelector('output').textContent='Saved: '+document.querySelector('#name').value; localStorage.saved=document.querySelector('#name').value">Save</button>
         <output></output><a href="/next">Next page</a>'''
+        if self.path == '/visibility':
+            page = '''<!doctype html><title>Visibility contract</title>
+            <h1>Rendered heading</h1>
+            <p hidden>hidden-attribute-private</p>
+            <p style="display:none">display-none-private</p>
+            <p style="visibility:hidden">visibility-hidden-private</p>
+            <section style="opacity:0"><span>transparent-private</span></section>
+            <textarea>textarea-private</textarea>
+            <div contenteditable="true">editable-private</div>
+            <button aria-label="Accessible name">Rendered button</button>
+            <button aria-label="Only accessible"></button>
+            <p style="position:absolute;top:3000px">Offscreen rendered text</p>'''
+        elif self.path == '/visibility-chars':
+            page = '<!doctype html><p>'+'x'*17000+'</p>'
+        elif self.path == '/visibility-nodes':
+            page = '<!doctype html>'+('<span> </span>'*10002)+'<p>After traversal bound</p>'
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -85,6 +101,33 @@ class BrowserContracts(unittest.TestCase):
         self.assertFalse(stale["ok"])
         self.assertIn("Stale", stale["error"])
         self.assertNotEqual(fresh["observation_id"], stale["observation_id"])
+
+    def test_rendered_text_excludes_hidden_and_editable_values_and_distinguishes_accessible_names(self):
+        observed = self.runtime.call({'action':'open','url':self.url+'/visibility'})
+        self.assertTrue(observed['ok'],observed)
+        for private in ('hidden-attribute-private','display-none-private','visibility-hidden-private',
+                        'transparent-private','textarea-private','editable-private'):
+            self.assertNotIn(private,json.dumps(observed))
+        self.assertIn('Rendered heading',observed['text'])
+        self.assertIn('Rendered button',observed['text'])
+        self.assertNotIn('Only accessible',observed['text'])
+        button=next(e for e in observed['elements'] if e['name']=='Accessible name')
+        self.assertEqual(button['visible_text'],'Rendered button')
+        accessible=next(e for e in observed['elements'] if e['name']=='Only accessible')
+        self.assertEqual(accessible['visible_text'],'')
+        self.assertIn('Offscreen rendered text',observed['text'])
+        self.assertIn('not viewport',observed['text_scope'])
+        self.assertFalse(observed['text_truncated'])
+
+    def test_rendered_text_reports_character_and_traversal_bounds(self):
+        for path in ('/visibility-chars','/visibility-nodes'):
+            with self.subTest(path=path):
+                observed=self.runtime.call({'action':'open','url':self.url+path})
+                self.assertTrue(observed['ok'],observed)
+                self.assertTrue(observed['text_truncated'])
+                self.assertLessEqual(len(observed['text']),16000)
+                self.assertNotIn('After traversal bound',observed['text'])
+                self.act(observed,'close')
 
     def test_callers_and_contexts_are_isolated(self):
         observed = self.opened()

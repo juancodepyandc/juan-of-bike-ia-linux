@@ -26,6 +26,13 @@ sys.path.insert(0, str(_HERE))
 
 
 def _find_blender() -> str | None:
+    try:  # recherche commune : AURORA_BLENDER, Blender embarqué, PATH, installations, bureau
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
     for sub in (_HERE.parent / "_blender").glob("blender-*"):
         for nom in ("blender", "blender.exe"):
             exe = sub / nom

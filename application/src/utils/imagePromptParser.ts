@@ -44,12 +44,34 @@ export interface ParsedImageIntent {
 export interface ParseImageIntentOptions {
   hasReference?: boolean
   hasExplicitReference?: boolean
+  /**
+   * La seule « référence » est l'image affichée du rendu précédent (aucune image
+   * jointe par l'utilisateur). Une nouvelle demande d'objet n'est alors pas une
+   * retouche de ce rendu, sauf si elle le désigne (« cette image », « modifie »…).
+   */
+  referenceIsPreviousOutput?: boolean
 }
 
 const MAX_QUALITY_REQUEST_PATTERN = /\b(qualit[eé]r?\s*(?:max(?:imale|imum)?|ultime|parfaite|extr[eê]me|sup[eé]rieure|au\s*max)|max(?:imum|imale)?\s*(?:de\s*)?qualit[eé]r?|pr[eé]cision\s*(?:max(?:imale|imum)?|au\s*max|nanom[eé]trique|extr[eê]me|ultime)|max(?:imum)?\s*(?:de\s*)?pr[eé]cision|pixel[\s-]?perfect|ultra[\s-]?(?:hd|pr[eé]cis|net|d[eé]taill[eé]|r[eé]aliste)|8k|16k|4k\s*uhd|masterpiece|chef[\s-]?d['’]?(?:oeuvre|œuvre)|meilleure?\s*qualit[eé]r?)(?![\p{L}\p{N}])/iu
 
 export function detectMaxQualityRequest(prompt: string): boolean {
   return MAX_QUALITY_REQUEST_PATTERN.test(prompt) || MAX_QUALITY_REQUEST_PATTERN.test(normalizeForIntent(prompt))
+}
+
+// « fais-moi un vase… », « crée une tasse… », « un vase en forme de cœur… » : nouveau sujet
+const FRESH_CREATION_RE = /^\s*(?:(?:s'?il\s+te\s+plait\s*,?\s*)?(?:(?:fais|fait|faire|cree|creer|crees|genere|generer|dessine|dessiner|imagine|imaginer|produis|realise|realiser|montre|invente|concois)(?:[- ]?(?:moi|nous))?|je\s+(?:veux|voudrais|souhaite|souhaiterais)|j'?aimerais|peux[- ]tu\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer)|tu\s+peux\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer))\s+)?(?:un|une|des|deux|trois|quatre|cinq|quelques|plusieurs|a|an|some)\s+/i
+// la demande désigne explicitement le rendu ou l'image existante
+const REFERS_TO_EXISTING_RE = /\b(?:cette|cet|celle[- ]ci|celui[- ]ci|ceci|l'?image|la\s+photo|le\s+dessin|le\s+rendu|le\s+resultat|l'?ancien(?:ne)?|precedent(?:e)?|derniere?|la\s+meme|le\s+meme|les\s+memes|garde|garder|conserve|conserver|modifie|modifier|retouche|retoucher|change|changer|remplace|remplacer|enleve|enlever|retire|retirer|supprime|supprimer|efface|effacer|ajoute|ajouter|rajoute|rajouter|mets|mettre|place|placer|refais|refaire|encore|aussi|ecris|ecrire|sur\s+(?:la|le|les|l')\s*(?:pancarte|panneau|affiche|mur|table|tee[- ]?shirt|t[- ]?shirt|image|photo)|comme\s+(?:ca|celle|celui|avant|tout\s+a\s+l'?heure))\b/i
+
+// « une version anime », « un fond bleu », « un peu plus sombre » : l'article introduit un attribut
+// du rendu affiché (style, décor, lumière, cadrage…), pas un nouveau sujet — c'est une retouche
+const ATTRIBUTE_HEAD_RE = /^\s*(?:(?:s'?il\s+te\s+plait\s*,?\s*)?(?:(?:fais|fait|faire|cree|creer|crees|genere|generer|dessine|dessiner|imagine|imaginer|produis|realise|realiser|montre|invente|concois)(?:[- ]?(?:moi|nous))?|je\s+(?:veux|voudrais|souhaite|souhaiterais)|j'?aimerais|peux[- ]tu\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer)|tu\s+peux\s+(?:me\s+)?(?:faire|creer|generer|dessiner|imaginer))\s+)?(?:un|une|des|deux|trois|quatre|cinq|quelques|plusieurs|a|an|some)\s+(?:peu|version|versions|variante|variantes|variation|variations|declinaison|style|fond|arriere[- ]plan|decor|ciel|ambiance|atmosphere|eclairage|lumiere|couleur|couleurs|teinte|teintes|palette|filtre|effet|grain|contraste|cadrage|recadrage|angle|zoom|plan|pose|posture|expression|tenue|coiffure|autre|autres|nouvelle|nouveau|nouveaux|nouvelles|meilleure?|meilleurs|plus|moins|rendu|retouche|touche|finition|resolution|definition|qualite|format|vue|perspective|saison|heure|meteo|nuit|journee)\b/i
+
+/** Une nouvelle création de sujet qui ne doit pas retoucher le rendu précédent. */
+export function isFreshCreationRequest(prompt: string, options: ParseImageIntentOptions = {}): boolean {
+  if (options.hasReference && !options.referenceIsPreviousOutput) return false
+  const normalized = normalizeForIntent(prompt)
+  return FRESH_CREATION_RE.test(normalized) && !ATTRIBUTE_HEAD_RE.test(normalized) && !REFERS_TO_EXISTING_RE.test(normalized)
 }
 
 const REMOVAL_PATTERNS: Array<{ re: RegExp; label: string }> = [
@@ -210,7 +232,9 @@ const EXPLICIT_REMOVE_COMMAND_PATTERN = /\b(?:enl[eè]ve|enl[eè]ver|retire|reti
 
 function detectMode(prompt: string, removals: string[], additions: string[], replacements: ImageReplacement[], options: ParseImageIntentOptions): ImageEditMode {
   const normalized = normalizeForIntent(prompt)
-  const hasExplicitRef = Boolean(options.hasExplicitReference)
+  // Une image jointe par l'utilisateur est une référence explicite. Un appelant qui ne précise pas
+  // `hasExplicitReference` la désigne par `hasReference` sans `referenceIsPreviousOutput`.
+  const hasExplicitRef = options.hasExplicitReference ?? Boolean(options.hasReference && !options.referenceIsPreviousOutput)
   const hasAnyRef = Boolean(options.hasReference || options.hasExplicitReference)
   const targetsExistingImage = hasExplicitRef || EXPLICIT_EXISTING_IMAGE_TARGET_PATTERN.test(normalized) || GENERIC_EDIT_PATTERN.test(normalized)
   const startsAsPureCreation = PURE_CREATION_OPENING_PATTERN.test(prompt) && !EXPLICIT_EXISTING_IMAGE_TARGET_PATTERN.test(normalized) && !GENERIC_EDIT_PATTERN.test(normalized) && !REPLICATION_PATTERN.test(normalized)
@@ -219,23 +243,34 @@ function detectMode(prompt: string, removals: string[], additions: string[], rep
     return 'create'
   }
 
-  const isBackgroundEdit = (BACKGROUND_PATTERN.test(normalized) && (GENERIC_EDIT_PATTERN.test(normalized) || hasExplicitRef || (hasAnyRef && /\b(change|changer|modifie|modifier|remplace|remplacer|mets|mettre|passe)\b/i.test(normalized)))) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
-  const isRestyleEdit = ((EXPLICIT_RESTYLE_GENRE.test(normalized) && (hasExplicitRef || GENERIC_EDIT_PATTERN.test(normalized) || /\b(passe\s+en|transforme\s+en|convertis\s+en|en\s+version)\b/i.test(normalized))) || (/\b(?:style|facon|version|rendu)\b/i.test(normalized) && /\b(?:change|changer|nouveau|autre|en\s+style|passe\s+en|transforme\s+en|convertis\s+en)\b/i.test(normalized)) || /\b(?:transforme|transformer|convertis|convertir|adapte|adapter)\b[\s\S]{0,60}\ben\s+\w+/i.test(normalized)) && !STYLE_PRESERVE_PATTERN.test(normalized)
+  // « une version anime », « un fond bleu » alors qu'un rendu est affiché : l'article introduit un attribut de ce rendu
+  const attributeOfShownRender = hasAnyRef && ATTRIBUTE_HEAD_RE.test(normalized)
+  const isBackgroundEdit = (BACKGROUND_PATTERN.test(normalized) && (GENERIC_EDIT_PATTERN.test(normalized) || hasExplicitRef || (hasAnyRef && (/\b(change|changer|modifie|modifier|remplace|remplacer|mets|mettre|passe)\b/i.test(normalized) || attributeOfShownRender)))) && !BACKGROUND_PRESERVE_PATTERN.test(normalized)
+  const isRestyleEdit = ((EXPLICIT_RESTYLE_GENRE.test(normalized) && (hasExplicitRef || attributeOfShownRender || GENERIC_EDIT_PATTERN.test(normalized) || /\b(passe\s+en|transforme\s+en|convertis\s+en|en\s+version)\b/i.test(normalized))) || (/\b(?:style|facon|version|rendu)\b/i.test(normalized) && (attributeOfShownRender || /\b(?:change|changer|nouveau|autre|en\s+style|passe\s+en|transforme\s+en|convertis\s+en)\b/i.test(normalized))) || /\b(?:transforme|transformer|convertis|convertir|adapte|adapter)\b[\s\S]{0,60}\ben\s+\w+/i.test(normalized)) && !STYLE_PRESERVE_PATTERN.test(normalized)
   const hasPreservationCue = PRESERVATION_PATTERNS.some((pattern) => pattern.test(prompt))
   const hasReplicationCue = REPLICATION_PATTERN.test(normalized)
   const hasAddCommand = ADD_COMMAND_PATTERN.test(normalized)
 
+  // « fais-moi un vase avec l'inscription X » : création neuve, le texte fait partie du sujet
+  if (isFreshCreationRequest(prompt, options)) return 'create'
   if (removals.length > 0 && (hasAnyRef || EXPLICIT_REMOVE_COMMAND_PATTERN.test(normalized))) return 'remove_element'
   if (isBackgroundEdit && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'background_change'
   if (replacements.length > 0) return 'replace_element'
-  if (TEXT_EDIT_PATTERN.test(normalized) && !NEGATED_TEXT_PATTERN.test(normalized) && (hasExplicitRef || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))) return 'text_edit'
+  if (
+    TEXT_EDIT_PATTERN.test(normalized)
+    && !NEGATED_TEXT_PATTERN.test(normalized)
+    && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized) || hasAddCommand || EXPLICIT_TEXT_COMMAND_PATTERN.test(normalized))
+    // sans image jointe, un objet décrit « avec écrit X » est une création, pas une retouche du rendu affiché
+    && (!hasAnyRef || !options.referenceIsPreviousOutput || REFERS_TO_EXISTING_RE.test(normalized))
+    && (hasAnyRef || REFERS_TO_EXISTING_RE.test(normalized) || hasAddCommand)
+  ) return 'text_edit'
   if (SCENE_PATTERN.test(normalized) && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'scene_transform'
   if (hasReplicationCue && (hasAnyRef || removals.length === 0)) {
     if (isRestyleEdit && EXPLICIT_RESTYLE_GENRE.test(normalized) && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
     if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
     return 'replicate'
   }
-  if (additions.length > 0 && (hasAddCommand || hasExplicitRef)) return 'add_element'
+  if (additions.length > 0 && (hasAddCommand || hasExplicitRef || (hasAnyRef && (!options.referenceIsPreviousOutput || REFERS_TO_EXISTING_RE.test(normalized))))) return 'add_element'
   if (isRestyleEdit && (hasAnyRef || GENERIC_EDIT_PATTERN.test(normalized))) return 'restyle'
   if (COLOR_LIGHT_PATTERN.test(normalized) && GENERIC_EDIT_PATTERN.test(normalized)) return 'color_lighting'
   if (REPAIR_PATTERN.test(normalized) && (hasAnyRef || targetsExistingImage)) return 'repair_cleanup'

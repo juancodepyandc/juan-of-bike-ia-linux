@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -20,6 +21,8 @@ def doctor_function(name='cli_doctor'):
                     if isinstance(node, ast.FunctionDef) and node.name == name)
     function.decorator_list = []
     namespace = {'os': os, 'WORKSPACE': '/fixture/unused/workspace',
+        # the doctor caches GPU/MCP/skills probes for a short window; each fixture starts cold
+        '_time': time, '_DOCTOR_HW_CACHE': {'ts': None, 'gpu_ok': False, 'vram_bytes': 0, 'mcp': [], 'skills': []},
         'g': SimpleNamespace(cli_key_rec={'label': 'fixture'}),
         'requests': SimpleNamespace(RequestException=ConnectionError, get=Mock(return_value=SimpleNamespace(ok=True,
             json=lambda: {'models': [{'name': 'observed:small', 'size': 5 * 1024 ** 3}]}))),

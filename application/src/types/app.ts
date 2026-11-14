@@ -125,6 +125,18 @@ export interface RuntimeTaskState {
   }>
 }
 
+/** Réponse `scheduling` de la file durable du PC (routes d'admission des projets). */
+export interface AdmissionScheduling {
+  queue_position: number
+  ahead_count: number
+  elapsed_seconds: number
+  wait_seconds: number | null
+  /** médiane d'au moins 3 runs comparables terminés, sinon null */
+  estimated_duration_seconds: number | null
+  remaining_seconds: number | null
+  estimate_sample_count: number
+}
+
 export interface GenerationJobState {
   id: string
   module: ModuleId
@@ -139,6 +151,8 @@ export interface GenerationJobState {
   startedAt: number | null
   finishedAt: number | null
   error: string | null
+  /** dernière estimation mesurée par la file du PC pour ce job */
+  scheduling?: AdmissionScheduling | null
   history: Array<{
     id: string
     phase: 'idle' | 'prepare' | 'generate' | 'cleanup' | 'done' | 'error'

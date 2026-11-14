@@ -19,6 +19,10 @@ import sys
 from pathlib import Path
 
 
+# Share of vertices the fold repair may pin back to their source position before the smoothing
+# is declared failed. Above it the result would mostly be the unsmoothed source reported as smoothed.
+MAX_CLAMPED_VERTEX_FRACTION = 0.05
+
 def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
                   iterations: int = 8, lamb: float = 0.5, nu: float = 0.53) -> dict:
     """Apply UV-preserving Taubin smoothing. Returns {ok, ...}. Reverts on any
@@ -99,10 +103,14 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
     before_cross = np.cross(before_tri[:, 1] - before_tri[:, 0], before_tri[:, 2] - before_tri[:, 0])
     valid = np.linalg.norm(before_cross, axis=1) > max(ext0 ** 2 * 1e-14, 1e-20)
     clamped_groups = 0
+    reverted = np.zeros(len(v0), dtype=bool)
+    folded_before_clamp = 0
     for _pass in range(10):
         after_tri = v1[faces]
         after_cross = np.cross(after_tri[:, 1] - after_tri[:, 0], after_tri[:, 2] - after_tri[:, 0])
         flip_mask = valid & (np.einsum('ij,ij->i', before_cross, after_cross) <= 0)
+        if _pass == 0:
+            folded_before_clamp = int(np.count_nonzero(flip_mask))
         if not np.any(flip_mask):
             break
         bad_verts = np.unique(faces[flip_mask].ravel())
@@ -111,8 +119,17 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
             revert_mask = np.isin(inverse, bad_groups)
             clamped_groups += int(len(bad_groups))
         else:
-            revert_mask = bad_verts
+            revert_mask = np.zeros(len(v0), dtype=bool)
+            revert_mask[bad_verts] = True
+        reverted |= revert_mask
         v1[revert_mask] = v0[revert_mask]
+        # Clamping is a local repair. Once it has to undo a large share of the surface the smoothing
+        # itself is wrong (global flip, collapse): refuse instead of exporting a silent no-op as a success.
+        if float(reverted.mean()) > MAX_CLAMPED_VERTEX_FRACTION:
+            return {"ok": False,
+                    "error": "Smoothing folds or collapses original triangles; source retained",
+                    "folded_triangles": folded_before_clamp,
+                    "clamped_vertex_fraction": round(float(reverted.mean()), 6)}
     mesh.vertices = v1
     after_tri = v1[faces]
     after_cross = np.cross(after_tri[:, 1] - after_tri[:, 0], after_tri[:, 2] - after_tri[:, 0])
@@ -178,6 +195,9 @@ def taubin_smooth(in_path: str | Path, out_path: str | Path, *,
         "iterations": int(iterations),
         "vertices": int(len(v1)),
         "mean_vertex_move": round(moved, 6),
+        "folded_triangles": 0,
+        "folded_triangles_before_clamp": folded_before_clamp,
+        "clamped_vertex_fraction": round(float(reverted.mean()), 6),
         "bbox_extent": round(ext1, 4),
         "textured": visual is not None and type(visual).__name__ == "TextureVisuals",
     }

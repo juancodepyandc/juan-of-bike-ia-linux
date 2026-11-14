@@ -1,7 +1,7 @@
 @echo off
 title Aurora IA
 color 0A
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 
 echo.
 echo   ========================================
@@ -25,9 +25,9 @@ echo          OK  http://127.0.0.1:11434
 
 :: 2. ComfyUI
 echo   [2/5] ComfyUI (FLUX + generation 3D)...
-cd /d "%~dp0modele\comfyui\comfyui"
+cd /d "%~dp0..\..\modele\comfyui\comfyui"
 start "ComfyUI" /MIN cmd /c "venv\Scripts\python.exe main.py --listen 0.0.0.0 --port 8188"
-cd /d "%~dp0application"
+cd /d "%~dp0..\..\application"
 timeout /t 5 /nobreak >nul
 echo          OK  http://127.0.0.1:8188
 
@@ -58,12 +58,12 @@ echo.
 ::   vers un log temporaire, puis on appelle le .ps1 qui poll ce log.
 set "CF_LOG=%TEMP%\aurora-cloudflared.log"
 del /f /q "%CF_LOG%" 2>nul
-start "Tunnel" /MIN cmd /c ""%~dp0tools\cloudflared.exe" tunnel --url http://localhost:3001 > "%CF_LOG%" 2>&1"
+start "Tunnel" /MIN cmd /c ""%~dp0..\..\tools\cloudflared.exe" tunnel --url http://localhost:3001 > "%CF_LOG%" 2>&1"
 
 echo   ----------------------------------------
 echo    Detection de l'URL en cours (max 45s)...
 echo   ----------------------------------------
-for /f "delims=" %%U in ('powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0tools\wait-for-tunnel.ps1" -LogFile "%CF_LOG%" -TimeoutSeconds 45') do set "TUNNEL_URL=%%U"
+for /f "delims=" %%U in ('powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0..\..\tools\wait-for-tunnel.ps1" -LogFile "%CF_LOG%" -TimeoutSeconds 45') do set "TUNNEL_URL=%%U"
 
 echo.
 if defined TUNNEL_URL (
@@ -74,7 +74,7 @@ if defined TUNNEL_URL (
     echo.
     REM Sauvegarde aussi dans tunnel_url.txt pour que SessionStart hook
     REM Claude la voit dans son banner d'ouverture.
-    > "%~dp0tunnel_url.txt" echo %TUNNEL_URL%
+    > "%~dp0..\..\tunnel_url.txt" echo %TUNNEL_URL%
 ) else (
     echo   [!] URL pas detectee en 45s. Ouvre le log :
     echo       %CF_LOG%

@@ -2046,7 +2046,7 @@ AGENTS: dict[str, dict] = {
             "auto_rl/cloud.py",
             "auto_rl/cloud_worker.py",
             "auto_rl/kaggle_bridge.py",
-            "kaggle_sync/",
+            "scripts/kaggle_sync/",
         ],
         "routes_owned": [],
         "never_touch": ["judges.py", "reinforced_registry.py"],

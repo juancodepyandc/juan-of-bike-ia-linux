@@ -11,7 +11,7 @@ REM Le tunnel reste pilote uniquement par start-aurora.bat. Pas de double
 REM cloudflared, pas d'URL qui change a chaque update.
 title Aurora - update code (tunnel intact)
 color 0E
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 
 echo.
 echo ===================================================
@@ -33,9 +33,9 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":1420.*LISTENING"') do (
     taskkill /F /PID %%P 2>nul
 )
 timeout /t 1 /nobreak >nul
-cd /d "%~dp0application"
+cd /d "%~dp0..\..\application"
 start "Vite" /MIN cmd /c "npm run dev"
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 echo   Vite redemarre en arriere-plan ("Vite" dans la taskbar).
 echo.
 

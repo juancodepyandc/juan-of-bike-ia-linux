@@ -301,8 +301,9 @@ export function useCyberViewLogic() {
   ])
   const [lab, setLab] = useState<Lab | null>(null)
   const [labLoading, setLabLoading] = useState(false)
-  useGenerationFxEmitter('cyber', labLoading)
   const [labError, setLabError] = useState<string | null>(null)
+  // issue réelle du chargement du labo : seule une réussite alimente l'historique des durées
+  useGenerationFxEmitter('cyber', labLoading, undefined, undefined, { outcome: labError ? 'error' : lab ? 'success' : undefined })
   const [doneObjectives, setDoneObjectives] = useState<Set<string>>(new Set())
   const [sandboxKey, setSandboxKey] = useState(0)
   const [evolveHint, setEvolveHint] = useState('')

@@ -79,6 +79,8 @@ def judge_ratchet(*, advance=False, path=None):
         }
 
 
+# Canonical definition of the gate. Any other import path (agi_core.anti_hallucination_guard,
+# used by the local judges) must re-export this function instead of carrying its own copy.
 def judge_independent_holdout_evidence(records, *, ratchet=None):
     """Conservative audit gate; asserted model scores cannot replace observed cases.
 

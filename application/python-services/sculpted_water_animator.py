@@ -5,6 +5,21 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def _aurora_blender_exe() -> str:
+    """Blender commun (blender_locator : AURORA_BLENDER, embarqué, PATH, installations, bureau)."""
+    import os as _os
+    import shutil as _shutil
+    try:
+        from blender_locator import find_blender as _aurora_locate
+        _found = _aurora_locate()
+        if _found:
+            return _found
+    except ImportError:
+        pass
+    return _os.environ.get("AURORA_BLENDER") or _shutil.which("blender") or "blender"
+
+
 BLENDER_SCRIPT = r'''
 import bpy, sys, os, math, colorsys
 import numpy as np
@@ -232,7 +247,7 @@ print("EAU_OK: %s (K=%d, frames=%d, flux=%.2f)" % (dst, K, frame_count, _vit_flu
 def animate_sculpted_water(src, dst, fps=24, loop_s=3.0, timeout_s=1800, amp_scale=1.0,
                            couleur_cible="bleu", vitesse=1.0):
     import shutil
-    blender = os.environ.get("AURORA_BLENDER") or shutil.which("blender") or "blender"
+    blender = _aurora_blender_exe()
     with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as fp:
         fp.write(BLENDER_SCRIPT)
         script = fp.name

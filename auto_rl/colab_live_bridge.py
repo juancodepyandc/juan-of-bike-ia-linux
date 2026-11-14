@@ -20,6 +20,10 @@ from .storage import atomic_json, read_json
 from .compute_governor import worker_capacity, _number
 
 COLAB_BRIDGE_STATE_FILE = STATE / "colab_live_bridge_state.json"
+# Every job this bridge dispatches or receives belongs to the legacy bootstrap:
+# randomly initialised transformer blocks fitted to SHA-512 features of text.
+# No Aurora model is loaded or trained, so every stored status and receipt says so.
+SURROGATE_LABEL: dict[str, Any] = {"kind": "surrogate_on_hashed_text", "trains_aurora_model": False}
 PRIORITY_COLAB_QUEUE: tuple[str, ...] = (
     "3d",
     "conversation",
@@ -94,6 +98,7 @@ def get_colab_bridge_status() -> dict[str, Any]:
 
     return {
         "active": bool(connected),
+        **SURROGATE_LABEL,
         "recommended_gpu": "Use measured per-device capacity; accelerator type is not guaranteed",
         "dataset_policy": "Experimental surrogate; native model compatibility and independent holdout audit required",
         "tunnel_url": tunnel_url,
@@ -176,6 +181,8 @@ def update_colab_live_progress(payload: dict[str, Any]) -> dict[str, Any]:
             state["workers"][worker_id]["allocated_ram_gb"] = payload["ram_used_gb"]
     state["live_progress"] = {
         **payload,
+        # Applied after the worker payload so a worker cannot relabel its own job.
+        **SURROGATE_LABEL,
         "updated_at": time.time(),
     }
     atomic_json(COLAB_BRIDGE_STATE_FILE, state)
@@ -225,7 +232,10 @@ def claim_next_colab_job(worker_payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "ok": True,
+        # `kind` stays the protocol discriminator read by the bootstrap loop.
         "kind": "training_job",
+        "training_kind": SURROGATE_LABEL["kind"],
+        "trains_aurora_model": SURROGATE_LABEL["trains_aurora_model"],
         "job_id": job_id,
         "module": module,
         "priority_rank": PRIORITY_COLAB_QUEUE.index(module) + 1,
@@ -309,9 +319,12 @@ def receive_colab_trained_weights(payload: dict[str, Any]) -> dict[str, Any]:
     report = {
         "job_id": job_id,
         "module": module,
+        **SURROGATE_LABEL,
         "gpu_name": payload.get("gpu_name"),
         "promotion_status": "quarantined_pending_compatibility_and_independent_audit",
         "promoted": False,
+        # Reported by the remote worker on its own training batches; not re-measured here.
+        "metrics_scope": "worker_reported_on_training_batches_unverified",
         "metrics": metrics,
         "candidate_sha256": sha256_hex,
         "saved_weights_path": saved_weights_path,
@@ -325,6 +338,7 @@ def receive_colab_trained_weights(payload: dict[str, Any]) -> dict[str, Any]:
     state["completed_jobs"] = completed[-100:]
     state["live_progress"] = {
         "status": "candidate_received_unverified",
+        **SURROGATE_LABEL,
         "module": module,
         "job_id": job_id,
         "metrics": metrics,
@@ -335,11 +349,23 @@ def receive_colab_trained_weights(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "job_id": job_id, "module": module, "sha256": sha256_hex, "saved_to": saved_weights_path, "promoted": False}
 
 
-def generate_colab_bootstrap_script(tunnel_url: str | None = None) -> str:
-    """Legacy experimental surrogate, without filler allocations; results stay quarantined."""
+def generate_colab_bootstrap_script(tunnel_url: str | None = None, *, allow_surrogate: bool = False) -> str:
+    """Legacy experimental surrogate, without filler allocations; results stay quarantined.
+
+    Refused unless ``allow_surrogate=True`` is passed: the rendered script trains
+    no Aurora model, so it must never be produced by default.
+    """
+    if allow_surrogate is not True:
+        raise RuntimeError(
+            "Bootstrap Colab refusé : ce script historique n'entraîne aucun modèle Aurora "
+            "(blocs Transformer initialisés au hasard, ajustés sur des empreintes SHA-512 de texte). "
+            "Pour un entraînement réel et mesuré, utiliser les notebooks du professeur "
+            "(scripts/notebooks/build_professor_notebooks.py ou python -m auto_rl.professor.kaggle_runner). "
+            "Pour produire malgré tout ce substitut expérimental, passer allow_surrogate=True."
+        )
     url = (tunnel_url or detect_active_tunnel_url()).rstrip("/")
     return f'''#!/usr/bin/env python3
-"""Démon Ultra-Capacité (78-84 Go VRAM / 48 Go RAM · Population K=8 Transformers SDPA) Google Colab Blackwell 96 Go <-> AuroraIA."""
+"""Substitut expérimental AuroraIA <-> Colab : n'entraîne aucun modèle Aurora (blocs Transformer aléatoires sur empreintes SHA-512 de texte)."""
 import base64
 import hashlib
 import io
@@ -430,7 +456,8 @@ dtype = torch.bfloat16 if bf16_ok else torch.float32
 print("================================================================================")
 print(f"[AURORA-BLACKWELL-96GB-ULTRA] Connecté à AuroraIA ({{BRIDGE_URL}})")
 print(f"[AURORA-BLACKWELL-96GB-ULTRA] GPU : {{gpu_name}} ({{vram_total_gb}} Go VRAM | bf16={{bf16_ok}})")
-print("[AURORA-BLACKWELL-96GB-ULTRA] Allocation de la Banque Tensorielle Globale (540 616 assets + 646 styles) & Population K=8 Transformers SDPA...")
+print("[AURORA-BLACKWELL-96GB-ULTRA] SUBSTITUT EXPÉRIMENTAL : aucun modèle Aurora n'est chargé ni entraîné.")
+print("[AURORA-BLACKWELL-96GB-ULTRA] Blocs Transformer aléatoires ajustés sur des empreintes SHA-512 de texte ; métriques mesurées sur les lots d'entraînement uniquement.")
 print("================================================================================", flush=True)
 
 # 1. Nettoyage préalable puis allocation de la Banque Tensorielle Résidente en RAM Système (~56 Go) et en VRAM GPU (~78-84 Go avec la population K=6)
@@ -459,7 +486,8 @@ POPULATION_LRS = [1.5e-4, 2.0e-4, 2.5e-4, 3.0e-4, 1.8e-4, 2.2e-4][:POPULATION_SI
 vram_used_gb = round(torch.cuda.memory_allocated(0) / (1024**3), 2) if device == "cuda" else 0.0
 vram_reserved_gb = round(torch.cuda.memory_reserved(0) / (1024**3), 2) if device == "cuda" else 0.0
 ram_used_gb = round(psutil.Process().memory_info().rss / (1024**3), 2)
-print(f"[AURORA-BLACKWELL-96GB-ULTRA] Saturation matérielle active : VRAM GPU = {{vram_used_gb}} Go alloués ({{vram_reserved_gb}} Go réservés / {{vram_total_gb}} Go) | RAM Système = ~{{ram_used_gb}} Go / 176.9 Go", flush=True)
+ram_total_gb = round(psutil.virtual_memory().total / (1024**3), 2)
+print(f"[AURORA-BLACKWELL-96GB-ULTRA] Mémoire mesurée : VRAM GPU = {{vram_used_gb}} Go alloués ({{vram_reserved_gb}} Go réservés / {{vram_total_gb}} Go) | RAM du processus = {{ram_used_gb}} Go / {{ram_total_gb}} Go", flush=True)
 
 worker_id = f"colab-BLACKWELL-96GB-ULTRA-{{int(time.time())}}"
 post_json("/api/training/colab-bridge/register", {{
@@ -532,7 +560,7 @@ while True:
 
         vram_curr = round(max(torch.cuda.memory_allocated(0), torch.cuda.memory_reserved(0)) / (1024**3), 2) if device == "cuda" else 0.0
         print(f"\\n[AURORA-BLACKWELL-96GB-ULTRA] === Cycle #{{cycle_idx + 1}} · Module #{{job['priority_rank']}}/13 : {{mod.upper()}} ===", flush=True)
-        print(f"[AURORA-BLACKWELL-96GB-ULTRA] 100 % Dataset ({{n_total}} entrées) | Population K={{POPULATION_SIZE}} Transformers SDPA (d=4096, ffn=16384) | VRAM active={{vram_curr}} Go / {{vram_total_gb}} Go | RAM={{ram_used_gb}} Go", flush=True)
+        print(f"[AURORA-BLACKWELL-96GB-ULTRA] Entrées hachées : {{n_total}} | Population K={{POPULATION_SIZE}} Transformers SDPA (d=4096, ffn=16384) | VRAM active={{vram_curr}} Go / {{vram_total_gb}} Go | RAM={{ram_used_gb}} Go", flush=True)
 
         initial_loss = None
         best_loss = 999.0
@@ -583,7 +611,7 @@ while True:
 
             if epoch == 1 or epoch % 20 == 0 or epoch == epochs:
                 vram_curr = round(max(torch.cuda.memory_allocated(0), torch.cuda.memory_reserved(0)) / (1024**3), 2) if device == "cuda" else 0.0
-                print(f"  [{{mod.upper()}}] Époque {{epoch}}/{{epochs}} | Champion Trial #{{best_k+1}}/{{POPULATION_SIZE}} (beta={{POPULATION_BETAS[best_k]}}) | loss={{best_loss:.6f}} | win={{best_win_rate}}% | VRAM={{vram_curr}} Go | RAM={{ram_used_gb}} Go", flush=True)
+                print(f"  [{{mod.upper()}}] Époque {{epoch}}/{{epochs}} | Essai #{{best_k+1}}/{{POPULATION_SIZE}} (beta={{POPULATION_BETAS[best_k]}}) | loss={{best_loss:.6f}} | win sur lots d'entraînement={{best_win_rate}}% | VRAM={{vram_curr}} Go | RAM={{ram_used_gb}} Go", flush=True)
                 try:
                     post_json("/api/training/colab-bridge/progress", {{
                         "worker_id": worker_id,
@@ -595,7 +623,7 @@ while True:
                         "population_trials": POPULATION_SIZE,
                         "winning_trial": best_k + 1,
                         "loss": round(best_loss, 6),
-                        "win_rate_pct": best_win_rate,
+                        "train_batch_win_rate_pct": best_win_rate,
                         "vram_used_gb": vram_curr,
                         "ram_used_gb": ram_used_gb,
                     }})
@@ -618,9 +646,11 @@ while True:
             "module": mod,
             "gpu_name": gpu_name,
             "metrics": {{
-                "initial_loss": round(initial_loss or 0.0, 6),
+                "kind": "surrogate_on_hashed_text",
+                "trains_aurora_model": False,
+                "initial_loss": None if initial_loss is None else round(initial_loss, 6),
                 "final_loss": round(best_loss, 6),
-                "win_rate_pct": best_win_rate,
+                "train_batch_win_rate_pct": best_win_rate,
                 "epochs": epochs,
                 "population_trials": POPULATION_SIZE,
                 "winning_trial": best_k + 1,
@@ -629,12 +659,11 @@ while True:
                 "vram_used_gb": vram_curr,
                 "ram_used_gb": ram_used_gb,
                 "dataset_records_trained": n_total,
-                "dataset_coverage_pct": 100.0,
                 "elapsed_seconds": elapsed,
             }},
             "weights_b64": base64.b64encode(raw_weights).decode("ascii"),
         }})
-        print(f"[AURORA-BLACKWELL-96GB-ULTRA] ✓ Module {{mod.upper()}} synchronisé (Trial #{{best_k+1}}/{{POPULATION_SIZE}}, VRAM={{vram_curr}} Go) : loss {{initial_loss:.4f}} -> {{best_loss:.6f}} | sha256={{str(res.get('sha256'))[:16]}}", flush=True)
+        print(f"[AURORA-BLACKWELL-96GB-ULTRA] Substitut {{mod.upper()}} transmis en quarantaine, aucun modèle Aurora entraîné (essai #{{best_k+1}}/{{POPULATION_SIZE}}, VRAM={{vram_curr}} Go) : loss du substitut {{initial_loss:.4f}} -> {{best_loss:.6f}} | sha256={{str(res.get('sha256'))[:16]}}", flush=True)
         cycle_idx += 1
     except KeyboardInterrupt:
         print("[AURORA-BLACKWELL-96GB-ULTRA] Arrêt demandé.", flush=True)

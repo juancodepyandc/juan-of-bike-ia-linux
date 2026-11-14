@@ -13,7 +13,7 @@ REM URL stays the same. Just Ctrl+F5 in the browser to pick up the new
 REM bundle hashes.
 title Aurora - update PROD (tunnel intact)
 color 0A
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 
 echo.
 echo ===================================================
@@ -48,10 +48,10 @@ echo.
 
 REM 2. vite build (regenerates application/dist/)
 echo [2/7] npm run build
-cd /d "%~dp0application"
+cd /d "%~dp0..\..\application"
 call npm run build
 set BUILD_RC=%ERRORLEVEL%
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 if not "%BUILD_RC%"=="0" (
     echo.
     echo  *** BUILD FAILED *** keeping current preview running, no swap.
@@ -67,9 +67,9 @@ for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":1420.*LISTENING"') do (
     taskkill /F /PID %%P 2>nul
 )
 timeout /t 1 /nobreak >nul
-cd /d "%~dp0application"
+cd /d "%~dp0..\..\application"
 start "Vite preview" /MIN cmd /c "npm run preview:tunnel"
-cd /d "%~dp0"
+cd /d "%~dp0..\..\"
 echo   vite preview redemarre en arriere-plan ("Vite preview" dans la taskbar).
 echo.
 

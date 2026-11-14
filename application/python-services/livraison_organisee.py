@@ -48,7 +48,7 @@ def _glb_sans_materiaux(src: str | Path, dst: str | Path) -> dict:
                 "name": "AuroraClayGeometry",
                 "doubleSided": True,
                 "pbrMetallicRoughness": {
-                    "baseColorFactor": [0.87, 0.84, 0.82, 1.0],
+                    "baseColorFactor": [0.84, 0.84, 0.84, 1.0],
                     "metallicFactor": 0.08,
                     "roughnessFactor": 0.34,
                 },

@@ -77,12 +77,27 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
             async def run_worker(child, *, worker=False):
                 observed.append(child.permissions)
                 child.state['status'] = 'completed'
+                # A worker is only accepted as completed when it really ran a concrete tool.
+                child.state['executed_tools'] = ['read_file']
                 return "Checked"
             with patch.object(AutonomousMissionAgent, "run", run_worker):
                 result = await parent._spawn_task("Inspect", "reviewer")
                 self.assertEqual(result['report'], "Checked")
                 self.assertEqual(result['status'], "completed")
             self.assertEqual(observed, ["AUTONOMOUS"])
+
+    async def test_worker_that_ran_no_concrete_tool_is_not_accepted_as_completed(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict("os.environ", {"XDG_DATA_HOME": root}):
+            create_agent("reviewer", "Check files", "model:local", "AUTONOMOUS", "mis_test")
+            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", "AUTONOMOUS")
+            async def declare_only(child, *, worker=False):
+                child.state['status'] = 'completed'      # claims success, executed nothing
+                return "Everything is fine"
+            with patch.object(AutonomousMissionAgent, "run", declare_only):
+                result = await parent._spawn_task("Inspect", "reviewer")
+            self.assertEqual(result['status'], "failed_rigor_audit")
+            self.assertFalse(result['rigor_audit']['anti_fake_work_passed'])
+            self.assertTrue(any('NO_CONCRETE_TOOL_EXECUTION' in v for v in result['rigor_audit']['violations']))
 
     async def test_mission_runs_two_workers_concurrently_without_inference(self):
         with tempfile.TemporaryDirectory() as root:

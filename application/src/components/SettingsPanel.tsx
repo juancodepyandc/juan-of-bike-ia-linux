@@ -35,6 +35,7 @@ import {
   JB_COIN_PACKS_CATALOG,
   type BillingMode,
 } from '../stores/creditBillingStore.ts'
+import ProfessorAutopilotPanel from './ProfessorAutopilotPanel.tsx'
 
 const SHORTCUTS = [
   { combo: 'Ctrl / ⌘ + K', action: 'Recherche globale' },
@@ -732,6 +733,7 @@ export default function SettingsPanel() {
           {expanded === 'credits' && <CreditAndArchitectureSection />}
           {expanded === 'models' && (
             <>
+              <ProfessorAutopilotPanel />
               <div className="sp-sec">
                 <label className="sp-label">Sélecteur de Modèle (Modèle Renforcé actif par défaut)</label>
                 <div style={{ marginTop: 6, marginBottom: 6 }}>

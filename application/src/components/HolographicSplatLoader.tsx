@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Box,
@@ -20,6 +20,9 @@ import {
   LiveEngineeringTelemetryInput,
   readPersistedThreeDMission,
 } from '../services/threeDSubAgentsOrchestrator';
+
+// Hologramme WebGL réel (vues de référence, pièces STL mesurées) pour la vue « Nuage ».
+const HologramStage = lazy(() => import('./generationFx/HologramStage.tsx'));
 
 export interface HolographicSplatLoaderProps {
   active?: boolean;
@@ -43,6 +46,7 @@ export interface HolographicSplatLoaderProps {
 }
 
 export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
+  active = true,
   prompt,
   progressPercent,
   phasePercent = 0,
@@ -57,6 +61,7 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
   mode = 'visual_3d',
   compact = false,
   liveTelemetry,
+  referenceImageUrl,
   onMinimize,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -72,7 +77,9 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
   const effectivePrompt = (prompt || persisted?.rawPrompt || 'Projet 3D & Assemblage').trim();
   const effectiveStartedAt = startedAtMs || persisted?.startedAtMs || Date.now();
   const resolvedInputPct = progressPercent ?? phasePercent ?? 0;
-  const rawPct = resolvedInputPct > 0 ? resolvedInputPct : persisted?.progressPercent || 6;
+  // pourcentage du producteur uniquement : aucun plancher inventé
+  const rawPct = !active ? 0 : resolvedInputPct > 0 ? resolvedInputPct : persisted?.active ? persisted.progressPercent || 0 : 0;
+  const lastEventAtRef = useRef<number>(Date.now());
   const resolvedPhaseText = phaseDetail || phaseLabel || persisted?.phaseDetail || '';
   const mergedTelemetry = useMemo<LiveEngineeringTelemetryInput | undefined>(
     () =>
@@ -95,9 +102,9 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
   const timing = useMemo(
     () =>
       computeLiveMissionTiming(
-        effectiveStartedAt,
+        active ? effectiveStartedAt : Date.now(),
         rawPct,
-        mode === 'engineering_cad' ? 210 : 165,
+        undefined,
         serverElapsedSeconds,
         serverRemainingSeconds,
       ),
@@ -143,6 +150,13 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
   );
 
   const hasRealStlGeometry = Boolean(liveTelemetry?.parts && liveTelemetry.parts.length > 0);
+  useEffect(() => {
+    lastEventAtRef.current = Date.now();
+  }, [resolvedPhaseText, rawPct, liveTelemetry?.parts?.length]);
+  const holoRefs = useMemo(
+    () => (referenceImageUrl ? [{ url: referenceImageUrl, role: 'face' }] : []),
+    [referenceImageUrl],
+  );
 
   // Boucle de rendu 60 FPS du nuage de Splats Gaussiens 3D & Squelette Cinématique
   useEffect(() => {
@@ -468,25 +482,37 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
 
         {/* Chronomètre temps réel (jamais figé) + Temps restant estimé + % */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-xs">
-            <Clock className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-slate-400">Écoulé :</span>
-            <span className="font-mono font-bold text-white tabular-nums">
-              {formatDurationShort(timing.elapsedSeconds)}
-            </span>
-          </div>
+          {active ? (
+            <>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-xs">
+                <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-slate-400">Écoulé :</span>
+                <span className="font-mono font-bold text-white tabular-nums">
+                  {formatDurationShort(timing.elapsedSeconds)}
+                </span>
+              </div>
 
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-cyan-500/25 text-xs">
-            <Activity className="w-3.5 h-3.5 text-amber-300" />
-            <span className="text-slate-400">Restant estimé :</span>
-            <span className="font-mono font-bold text-amber-200 tabular-nums">
-              ~{formatDurationShort(timing.remainingSeconds)}
-            </span>
-          </div>
+              <div
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-900/90 border border-cyan-500/25 text-xs"
+                title={timing.basis}
+              >
+                <Activity className="w-3.5 h-3.5 text-amber-300" />
+                <span className="text-slate-400">Restant :</span>
+                <span className="font-mono font-bold text-amber-200 tabular-nums">{timing.etaLabel}</span>
+              </div>
 
-          <div className="px-3 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 font-mono text-xs font-bold text-cyan-200 tabular-nums">
-            {timing.effectivePercent}%
-          </div>
+              <div
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/20 border border-cyan-400/40 font-mono text-xs font-bold text-cyan-200 tabular-nums"
+                title={timing.effectivePercent > 0 ? 'Progression transmise par le pipeline' : 'Aucune progression chiffrée transmise'}
+              >
+                {timing.effectivePercent > 0 ? `${timing.effectivePercent}%` : 'non mesuré'}
+              </div>
+            </>
+          ) : (
+            <div className="px-3 py-1.5 rounded-lg bg-slate-900/90 border border-white/10 text-xs text-slate-400">
+              Aucune génération en cours
+            </div>
+          )}
 
           {onMinimize && (
             <button
@@ -505,7 +531,7 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
       <div className="h-1.5 w-full bg-slate-900 overflow-hidden">
         <div
           className="h-full bg-gradient-to-r from-cyan-400 via-indigo-400 to-emerald-400 transition-all duration-500"
-          style={{ width: `${timing.effectivePercent}%` }}
+          style={{ width: `${active ? timing.effectivePercent : 0}%` }}
         />
       </div>
 
@@ -514,14 +540,33 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
         {/* Colonne Gauche : Viewport 3D Gaussian Splatting interactif */}
         <div className={`${compact ? '' : 'lg:col-span-7'} flex flex-col gap-2.5`}>
           <div className="relative rounded-xl overflow-hidden border border-cyan-500/25 bg-[#050811] select-none">
-            <canvas
-              ref={canvasRef}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-              className={`w-full ${compact ? 'h-56' : 'h-80'} cursor-grab active:cursor-grabbing block`}
-            />
+            {viewMode === 'splats' ? (
+              <div className={`relative w-full ${compact ? 'h-56' : 'h-80'}`}>
+                <Suspense fallback={<div className="absolute inset-0 grid place-items-center text-[11px] text-slate-500">Initialisation de l’émetteur…</div>}>
+                  <HologramStage
+                    accent="#38BDF8"
+                    phaseIdx={!active ? 0 : hasRealStlGeometry || referenceImageUrl ? 2 : 0}
+                    phaseCount={6}
+                    readProgress={() => (active && timing.effectivePercent > 0 ? timing.effectivePercent / 100 : -1)}
+                    readPulseAt={() => lastEventAtRef.current}
+                    refs={holoRefs}
+                    parts={liveTelemetry?.parts ?? null}
+                    joints={liveTelemetry?.joints ?? null}
+                    quality={compact ? 'low' : 'high'}
+                    interactive
+                  />
+                </Suspense>
+              </div>
+            ) : (
+              <canvas
+                ref={canvasRef}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                className={`w-full ${compact ? 'h-56' : 'h-80'} cursor-grab active:cursor-grabbing block`}
+              />
+            )}
 
             {/* Sélecteur de mode d'inspection holographique */}
             <div className="absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 pointer-events-auto">
@@ -575,7 +620,7 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
           </div>
 
           {/* Bandeau d'assurance de persistance : quitter et reprendre */}
-          <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] text-emerald-200">
+          {active && <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[11px] text-emerald-200">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>
@@ -583,7 +628,7 @@ export const HolographicSplatLoader: React.FC<HolographicSplatLoaderProps> = ({
                 poursuit sur le serveur et reprendra automatiquement ici ou affichera le modèle final dès ton retour.
               </span>
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* Colonne Droite : Division du travail des 5 Sous-Agents Spécialisés */}

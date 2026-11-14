@@ -1,11 +1,10 @@
 /**
- * AuroraAgentMascot — avatars Bitmoji-like via DiceBear avataaars (V3 only).
+ * AuroraAgentMascot — personnage propre à chaque module (V3).
  *
- * v82lkc : pivot vers DiceBear avataaars (Pablo Stanley, même esthétique
- * que Bitmoji originel). Avant on rendait du SVG fait-main qui ressemblait
- * à du stick-figure. Maintenant chaque agent a un avatar haute qualité
- * paramétrique (coiffure, lunettes, vêtements, peau, expression) chargé
- * depuis https://api.dicebear.com/9.x/avataaars/svg?seed=...
+ * L'avatar est le personnage local du module (generationFx/mascots.tsx) :
+ * aucun service d'avatars externe, rendu identique hors ligne et via le
+ * tunnel, et l'expression suit l'état réel de l'agent. Les anciens avatars
+ * DiceBear chargés depuis Internet disparaissaient sans réseau.
  *
  * Le wrapper garde tous les overlays cartoon par état :
  *   idle       bobbing 4s + blink 6s sur l'avatar
@@ -17,9 +16,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ModuleId } from '../types/app.ts'
+import AuroraMascot, { FX_AGENTS, type FxModule, type MascotState } from './generationFx/mascots.tsx'
 import {
   getAgent,
-  getAvatarUrl,
   type AgentRuntimeState,
   type AgentState,
   type AuroraAgent,
@@ -171,8 +170,16 @@ function formatElapsed(s: number): string {
 }
 
 /* ---------- Avatar : DiceBear avataaars ---------- */
-function AgentAvatar({ agent, size, state: _state }: { agent: AuroraAgent; size: number; state: AgentState }) {
-  const url = getAvatarUrl(agent.id, agent.name)
+const AVATAR_STATE: Record<AgentState, MascotState> = {
+  idle: 'idle',
+  thinking: 'thinking',
+  working: 'working',
+  done: 'success',
+  error: 'error',
+}
+
+function AgentAvatar({ agent, size, state }: { agent: AuroraAgent; size: number; state: AgentState }) {
+  const fxModule: FxModule = (agent.id in FX_AGENTS ? agent.id : 'conversation') as FxModule
   return (
     <div className="aurora-mascot-body" style={{
       width: size,
@@ -183,23 +190,9 @@ function AgentAvatar({ agent, size, state: _state }: { agent: AuroraAgent; size:
       alignItems: 'flex-end',
       justifyContent: 'center',
     }}>
-      <img
-        src={url}
-        alt={`Avatar ${agent.name}`}
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'contain',
-          display: 'block',
-          filter: 'drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18))',
-          borderRadius: '50%',
-        }}
-        onError={(e) => {
-          // Fallback : cache l'image cassée pour ne pas afficher
-          // l'icône broken-image. Le wrapper reste avec son aria.
-          e.currentTarget.style.visibility = 'hidden'
-        }}
-      />
+      <span style={{ display: 'block', lineHeight: 0, filter: 'drop-shadow(0 6px 10px rgba(0, 0, 0, 0.18))' }}>
+        <AuroraMascot module={fxModule} size={size} state={AVATAR_STATE[state]} title={`${agent.name}, ${agent.role}`} />
+      </span>
     </div>
   )
 }

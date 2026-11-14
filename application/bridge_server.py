@@ -767,7 +767,6 @@ def _ext_default_model(models=None, *, resources=None, task="general"):
         if not isinstance(resources, dict):
             raise ValueError("Observed model resources must be an object.")
         ram, vram = resources.get("ram_total_bytes"), resources.get("nvidia_vram_bytes", 0)
-        swap = resources.get("swap_total_bytes", 0) or 0
         if (ram is not None and (type(ram) is not int or ram <= 0)) or type(vram) is not int or vram < 0:
             raise ValueError("Observed RAM/VRAM bytes must be valid nonnegative measurements.")
     else:
@@ -787,14 +786,9 @@ def _ext_default_model(models=None, *, resources=None, task="general"):
                 vram = sum(totals) * 1024 ** 2
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-        swap = 0
-        try:
-            swap_measured = psutil.swap_memory().total
-            if type(swap_measured) is int and swap_measured > 0:
-                swap = swap_measured
-        except (OSError, ValueError, RuntimeError):
-            pass
-    capacity = (ram + vram + swap) if ram is not None else None
+    # Swap is deliberately not counted: weights that only fit in swap make every token wait on disk
+    # and hammer the system drive. A model must fit in measured RAM + VRAM to be selected.
+    capacity = ram + vram if ram is not None else None
     candidates, excluded = [], []
     for model in installed:
         name, size = model["name"], model.get("size")
@@ -1461,6 +1455,12 @@ if _root_dir_path not in _training_sys.path:
     _training_sys.path.insert(0, _root_dir_path)
 from auto_rl.integration import register_routes as _register_training_routes
 _register_training_routes(app, _proxy)
+try:
+    # Professor autopilot (verified weekly training on Kaggle): every route, reading included, needs this device.
+    from auto_rl.professor.bridge_routes import register_routes as _register_professor_routes
+    _register_professor_routes(app, allowed=lambda: _request_is_local_loopback() or _admin_ok() or _ext_auth()[0])
+except Exception as _professor_error:
+    print(f'Registration failed for the professor autopilot routes: {_professor_error}')
 
 from business_intelligence import register_business_routes as _register_business_routes
 _register_business_routes(app, workspace=WORKSPACE)
@@ -1503,6 +1503,20 @@ if __name__ == "__main__":
     print(f"  WORKSPACE       = {WORKSPACE}", flush=True)
     print(f"  ComfyUI cherche = {_expected}", flush=True)
     print(f"  COMFYUI_PATH    = {COMFYUI_PATH or 'NON DETECTE'}", flush=True)
+    # Blender : une seule localisation (AURORA_BLENDER, embarque, PATH, installations,
+    # bureau ~/Bureau ou ~/Desktop) exportee dans AURORA_BLENDER pour tous les scripts lances.
+    try:
+        import sys as _sys
+        _services = os.path.join(WORKSPACE, "python-services")
+        if _services not in _sys.path:
+            _sys.path.insert(0, _services)
+        from blender_locator import ensure_env as _ensure_blender, locate as _locate_blender
+        # origine lue AVANT l'export : sinon elle vaudrait toujours « AURORA_BLENDER »
+        _bl_path, _bl_origin = _locate_blender()
+        _ensure_blender()
+        print(f"  BLENDER         = {_bl_path or 'NON DETECTE'} ({_bl_origin})", flush=True)
+    except Exception as _bl_exc:  # noqa: BLE001
+        print(f"  BLENDER         = recherche indisponible ({_bl_exc!r})", flush=True)
     # Dev auto-reload: set AURORA_BRIDGE_DEV=1 to get Flask to reload this file
     # when it changes. Off by default so the production start.bat isn't noisy.
     dev_reload = os.environ.get("AURORA_BRIDGE_DEV", "").strip() in ("1", "true", "yes")

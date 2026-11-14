@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { chromium } from 'playwright'
 import { explanationSvg } from '../src/services/drawingExplanation.ts'
 
-const directory = resolve(process.argv[2] ?? '../audit/cycle-02-media')
+const directory = resolve(process.argv[2] ?? '../scripts/audit/cycle-02-media')
 await mkdir(directory, { recursive: true })
 // This authored fixture checks rendering. It does not certify model reasoning.
 const graph = {

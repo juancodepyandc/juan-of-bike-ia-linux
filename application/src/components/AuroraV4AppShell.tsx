@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import '../styles/aurora-v4.css'
 import { useAppStore } from '../stores/appStore.ts'
 import type { ModuleId } from '../types/app.ts'
-import AuroraMascot, { FX_AGENTS, type FxModule } from './generationFx/mascots.tsx'
+import AuroraMascot, { FX_AGENTS, MASCOT_STATE_LABEL, type FxModule, type MascotState } from './generationFx/mascots.tsx'
 import AgiCognitiveStudioBar from './AgiCognitiveStudioBar.tsx'
 import HelpFab from './HelpFab.tsx'
 import ModuleEngineeringInspector from './ModuleEngineeringInspector.tsx'
@@ -325,6 +325,9 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
   const [greet, setGreet] = useState<FxModule | null>(null)
   const greetTimer = useRef<number | null>(null)
   const activeFx: FxModule = DOCK.find((d) => d.id === activeModule)?.fx ?? 'conversation'
+  // le personnage de l'en-tête suit les vrais jobs de son module (file, préparation, travail)
+  const activeJob = useAppStore((s) => s.generationJobs.find((j) => (j.module as string) === activeFx && (j.status === 'queued' || j.status === 'running')))
+  const activeMascotState: MascotState = !activeJob ? 'idle' : activeJob.status === 'queued' ? 'waiting' : activeJob.phase === 'prepare' ? 'thinking' : 'working'
 
   useEffect(() => {
     setGreet(activeFx)
@@ -636,8 +639,12 @@ export default function AuroraV4AppShell({ activeModule, onActivateModule, child
             <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: ICONS.settings }} />
           </button>
 
-          <span className="aurora-v4-mascot" style={{ width: 30, height: 30, display: 'flex', filter: `drop-shadow(0 0 8px ${activeAccent}55)` }}>
-            <AuroraMascot module={activeFx} size={30} />
+          <span
+            className="aurora-v4-mascot"
+            title={`${FX_AGENTS[activeFx].name} ${MASCOT_STATE_LABEL[activeMascotState]}`}
+            style={{ width: 30, height: 30, display: 'flex', filter: `drop-shadow(0 0 8px ${activeAccent}55)` }}
+          >
+            <AuroraMascot module={activeFx} size={30} state={activeMascotState} />
           </span>
         </div>
       </header>

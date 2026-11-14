@@ -49,12 +49,17 @@ class PortableStorageTests(unittest.TestCase):
         font = before_after_report._load_font(14, bold=True)
         self.assertIsNotNone(font)
 
-    def test_all_12_modules_have_active_reinforced_safetensors(self):
-        from auto_rl.reinforced_registry import get_reinforced_overview
+    def test_a_module_is_served_reinforced_only_after_official_promotion(self):
+        """All 12 modules are listed; none may be reported or served as reinforced without a promotion."""
+        from auto_rl.reinforced_registry import PROMOTED_STATUS, get_reinforced_overview
         status = get_reinforced_overview()
         modules = status.get("modules", {})
         self.assertGreaterEqual(len(modules), 12)
         for mod_id, info in modules.items():
-            self.assertTrue(info.get("reinforced_available"), f"Module {mod_id} missing reinforced_available")
-            self.assertEqual(info.get("effective_variant"), "renforce", f"Module {mod_id} not active as renforce")
+            promoted = info.get("promoted_officially") is True and info.get("status") == PROMOTED_STATUS
+            self.assertEqual(bool(info.get("reinforced_available")), promoted,
+                             f"Module {mod_id}: reinforced_available must mean officially promoted")
+            self.assertEqual(info.get("effective_variant"), "renforce" if promoted else "base",
+                             f"Module {mod_id}: an unpromoted candidate must leave the base model in service")
+            self.assertIn(info.get("selected_variant"), ("base", "renforce"))
 

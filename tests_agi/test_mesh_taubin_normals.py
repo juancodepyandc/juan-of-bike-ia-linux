@@ -84,3 +84,36 @@ def test_folded_smoothing_is_not_exported_and_source_stays_intact(tmp_path,monke
     result=module.taubin_smooth(source,output)
     assert not result['ok'] and result['folded_triangles']>0
     assert not output.exists() and source.read_bytes()==payload
+
+
+def test_local_fold_is_repaired_in_place_and_reported(tmp_path, monkeypatch):
+    """A fold confined to a few vertices is pinned back: the export has no folded triangle and says what it did."""
+    import trimesh.smoothing
+    source, output = tmp_path / 'source.glb', tmp_path / 'candidate.glb'
+    sphere = trimesh.creation.icosphere(subdivisions=4)
+    sphere.export(source)
+    payload = source.read_bytes()
+    reference = trimesh.load(source, force='mesh')
+    target = int(np.argmax(reference.vertices[:, 2]))
+
+    def fold_one_vertex(mesh, **kwargs):
+        vertices = mesh.vertices.copy()
+        vertices *= 0.995                      # a genuine, harmless smoothing-like contraction
+        vertices[target] *= -0.6               # one vertex pushed through the surface: local fold
+        mesh.vertices = vertices
+        return mesh
+
+    monkeypatch.setattr(trimesh.smoothing, 'filter_taubin', fold_one_vertex)
+    result = module.taubin_smooth(source, output)
+    assert result['ok'], result
+    assert result['folded_triangles'] == 0 and result['folded_triangles_before_clamp'] > 0
+    assert 0 < result['clamped_vertex_fraction'] <= module.MAX_CLAMPED_VERTEX_FRACTION
+    assert result['mean_vertex_move'] > 0      # the rest of the surface really moved
+    assert source.read_bytes() == payload
+    exported = trimesh.load(output, force='mesh')
+    before = reference.vertices[reference.faces]
+    after = exported.vertices[exported.faces]
+    assert before.shape == after.shape
+    n0 = np.cross(before[:, 1] - before[:, 0], before[:, 2] - before[:, 0])
+    n1 = np.cross(after[:, 1] - after[:, 0], after[:, 2] - after[:, 0])
+    assert np.all(np.einsum('ij,ij->i', n0, n1) > 0)
