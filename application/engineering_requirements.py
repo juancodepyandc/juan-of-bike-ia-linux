@@ -191,8 +191,14 @@ def _interroger(modele: str, messages: list[dict[str, str]], timeout_s: float = 
     # Mesuré le 14/11/2026 (Ollama 0.31.1) : avec « think: false », le modèle 27B ignore entièrement le
     # schéma imposé et répond en prose ; sans ce paramètre il réfléchit puis respecte le schéma. On
     # laisse donc la réflexion (budget de jetons en conséquence).
-    corps = {"model": modele, "stream": False, "format": SCHEMA_JSON,
-             "options": {"temperature": 0.1, "num_predict": 14000, "num_ctx": 20480}, "messages": messages}
+    # AURORA_ASSEMBLAGE_REFLEXION=0 : lecture rapide (sans réflexion, JSON demandé par la consigne puis validé et
+    # réparé), au prix d'un raisonnement d'ingénieur moins riche.
+    if os.environ.get("AURORA_ASSEMBLAGE_REFLEXION", "1") == "0":
+        corps = {"model": modele, "stream": False, "format": "json", "think": False,
+                 "options": {"temperature": 0.1, "num_predict": 6000, "num_ctx": 16384}, "messages": messages}
+    else:
+        corps = {"model": modele, "stream": False, "format": SCHEMA_JSON,
+                 "options": {"temperature": 0.1, "num_predict": 14000, "num_ctx": 20480}, "messages": messages}
     for essai in range(2):
         requete = urllib.request.Request(f"{OLLAMA_URL}/api/chat", data=json.dumps(corps).encode("utf-8"),
                                          headers={"Content-Type": "application/json"})

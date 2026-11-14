@@ -16,7 +16,7 @@
   }
  },
  "source_files": 2496,
- "source_lines": 901763,
+ "source_lines": 901839,
  "static_route_declarations": 719,
  "by_repository": {
   "AuroraIA": 2175,
@@ -1157,8 +1157,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_assembly_checks.py",
-   "sha256": "87839309df2287d6cf5c2d4d2447ca0a4e473eaa5c98b8dcc491b1005523bbf0",
-   "lines": 645,
+   "sha256": "74f5c148939f46640893720ef49155d2bbdecc6f377efb20c4832cfe4ff05aa8",
+   "lines": 660,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1173,8 +1173,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_assembly_pipeline.py",
-   "sha256": "ad1631de9d392541273a257116e28917a4ddddf943fcc37bdb8f59d4b8e7d57f",
-   "lines": 382,
+   "sha256": "85adbf37cb6dd47a0430f4349e74c792a799ecc10b9a33ce312c8c89cd039056",
+   "lines": 394,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1302,8 +1302,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_mates.py",
-   "sha256": "1ff609bd3a6a1bee7a72f40ceb7af0094b24b2694f04ff0141e5c710c179ff8b",
-   "lines": 1597,
+   "sha256": "45bc780ad21f41597c0accfe822d261859b35dc7dc2f49c4be2a67247afc0934",
+   "lines": 1640,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },
@@ -1334,8 +1334,8 @@
   {
    "repo": "AuroraIA",
    "path": "application/engineering_requirements.py",
-   "sha256": "44fc90f10ed775ba514af2eda831b393b1463ab78fe599a8e0548a6227bc0bff",
-   "lines": 270,
+   "sha256": "316ad162983275194ad8b39ddbf4afd8ccb20b1a4c2e6702792acc8b9d97eb8f",
+   "lines": 276,
    "http_routes": [],
    "route_analysis": "static_decorators_only"
   },

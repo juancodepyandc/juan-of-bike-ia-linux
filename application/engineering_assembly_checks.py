@@ -298,7 +298,7 @@ def _trajet_libre(groupe, obstacles, autorise: dict[str, float], u: np.ndarray, 
     return True, {"distance_mm": round(D, 2), "pas_mm": round(pas, 3), "echantillons": n}
 
 
-NORMES_PREMONTEES = ("aimant N42", "insert à chaud")
+NORMES_PREMONTEES = ("aimant N42", "insert à chaud", "pièce rapportée")
 NORMES_VIS = ("ISO 4762", "ISO 10642", "ISO 7380", "ISO 4017", "DIN 7997")
 
 
@@ -589,7 +589,22 @@ def vecteurs_eclates(pieces: dict[str, Piece], gamme: dict[str, Any]) -> dict[st
     def recouvre(b: np.ndarray, autre: np.ndarray) -> bool:
         return bool(np.all(b[0] < autre[1] + marge) and np.all(autre[0] < b[1] + marge))
 
-    for pid in gamme["ordre"]:
+    # le support d'abord : un article prémonté apparaît avant son hôte dans la gamme mais s'écarte AVEC lui
+    ordre, places = [], set()
+    restants = list(gamme["ordre"])
+    while restants:
+        avance = False
+        for pid in list(restants):
+            sup = gamme["support"].get(pid)
+            if sup is None or sup in places or sup not in restants:
+                ordre.append(pid)
+                places.add(pid)
+                restants.remove(pid)
+                avance = True
+        if not avance:
+            ordre.extend(restants)
+            break
+    for pid in ordre:
         p = pieces[pid]
         propre = (gamme.get("approches_propres") or {}).get(pid)
         u = np.asarray(propre if propre is not None else (gamme["approches"].get(pid) or [0, 0, 0]), dtype=float)

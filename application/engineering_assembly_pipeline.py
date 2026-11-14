@@ -119,8 +119,16 @@ def generer_liaisons(graphe: dict[str, Any], pieces: dict[str, Piece], decisions
 
 
 def nomenclature(pieces: dict[str, Piece], masses: dict[str, float]) -> dict[str, Any]:
-    fabriquees, achetees, quinc = [], [], {}
+    fabriquees, achetees, quinc, rapportees = [], [], {}, {}
     for p in pieces.values():
+        if p.origine == "procede" and (p.article or {}).get("norme") == "pièce rapportée":
+            cle = p.nom.rstrip("0123456789 ").strip() + f" ({normes.MATIERES[p.matiere]['nom']}), collé sur " + \
+                (pieces[p.hote].nom if p.hote in pieces else "?")
+            dims = [round(float(x), 1) for x in (boite_englobante(p.final)[1] - boite_englobante(p.final)[0])]
+            item = rapportees.setdefault(cle, {"designation": cle, "quantite": 0, "dimensions_hors_tout_mm": dims, "pieces": []})
+            item["quantite"] += 1
+            item["pieces"].append(p.id)
+            continue
         if p.est_quincaillerie:
             cle = p.article["designation"] if p.article else p.nom
             item = quinc.setdefault(cle, {"designation": cle, "quantite": 0, "norme": (p.article or {}).get("norme"),
@@ -133,7 +141,7 @@ def nomenclature(pieces: dict[str, Piece], masses: dict[str, float]) -> dict[str
                  "procede": normes.PROCEDES[p.procede]["nom"], "dimensions_hors_tout_mm": dims,
                  "masse_g": masses.get(p.id), "reference": p.reference or None}
         (achetees if p.origine == "achete" else fabriquees).append(ligne)
-    return {"fabriquees": fabriquees, "achetees": achetees,
+    return {"fabriquees": fabriquees, "achetees": achetees, "rapportees": sorted(rapportees.values(), key=lambda x: x["designation"]),
             "quincaillerie": sorted(quinc.values(), key=lambda x: x["designation"])}
 
 
@@ -262,6 +270,10 @@ def ecrire_dossier(dossier: Path, rapport: dict[str, Any]) -> None:
         L += ["", "## Composants achetés"] + [f"- {p['nom']} ({p['reference'] or 'référence à choisir'}) : "
                                               f"{' × '.join(f'{x:g}' for x in p['dimensions_hors_tout_mm'])} mm"
                                               for p in rapport["nomenclature"]["achetees"]]
+    if rapport["nomenclature"].get("rapportees"):
+        L += ["", "## Pièces rapportées (taillées à part et collées)", "| Qté | Pièce | Hors-tout (mm) |", "|---:|---|---|"]
+        L += [f"| {q['quantite']} | {q['designation']} | {' × '.join(f'{x:g}' for x in q['dimensions_hors_tout_mm'])} |"
+              for q in rapport["nomenclature"]["rapportees"]]
     L += ["", "## Quincaillerie (normalisée)", "| Qté | Désignation |", "|---:|---|"]
     L += [f"| {q['quantite']} | {q['designation']} |" for q in rapport["nomenclature"]["quincaillerie"]]
     L += ["", "## Liaisons et dimensionnement"]

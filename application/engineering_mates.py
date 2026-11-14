@@ -78,6 +78,21 @@ def ligament_min(p: Piece, d: float) -> float:
     return max(proc(p)["paroi_min"], k * d)
 
 
+def dans_la_masse(p: Piece) -> bool:
+    """Le procédé de p sait-il produire un élément saillant (nœud, bossage, taquet) d'un seul tenant ?
+    Impression, moulage, usinage : oui. Bois, plaque découpée, tôle : on le taille à part et on le colle."""
+    return bool(proc(p)["imprime"]) or p.procede in ("usinage", "moulage")
+
+
+def piece_rapportee(id_: str, nom: str, solide, hote: Piece, approche, liaison: str, groupe: str | None = None) -> Piece:
+    """Petite pièce taillée à part et collée sur son hôte (même matière), prémontée avant l'assemblage."""
+    q = quincaillerie(id_, nom, solide, hote.matiere,
+                      article(f"{nom} en {normes.MATIERES[hote.matiere]['nom']}, collé sur {hote.nom}", "pièce rapportée", 0.0),
+                      hote.id, approche, liaison, origine="procede", groupe=groupe)
+    q.procede = hote.procede
+    return q
+
+
 def masse_piece(p: Piece) -> float:
     return volume(p.solide) * mat(p)["densite"] * 1e-3
 
@@ -1038,7 +1053,8 @@ def _taquet_aimants(liaison, a: Piece, b: Piece, itf: Interface, F: float, jeu_p
             for q in lignes:
                 q = np.array(q)
                 axe_long = float((q - centre2) @ t)
-                pts.append(tuple(centre2 + t * axe_long + dedans * (largeur / 2.0 + d / 2.0 + jeu_poche - paroi * 0.25)))
+                # poche entièrement dans le taquet : à une paroi de la face intérieure du panneau
+                pts.append(tuple(centre2 + t * axe_long + dedans * (largeur / 2.0 + paroi + d / 2.0)))
             # l'aimant de l'autre pièce doit tenir dans son épaisseur
             autre = a if porteur is b else b
             ep_autre = min(profondeur(autre.solide, itf.monde(*q, 0.0 if autre is a else itf.ecart), -itf.normale if autre is a else itf.normale)
@@ -1050,7 +1066,7 @@ def _taquet_aimants(liaison, a: Piece, b: Piece, itf: Interface, F: float, jeu_p
             for q in pts:
                 q = np.array(q)
                 cote_pad = d + 2 * paroi
-                debut = largeur / 2.0 - 0.3
+                debut = largeur / 2.0 - (0.0 if not dans_la_masse(porteur) else 0.3)
                 fin = largeur / 2.0 + d + 2 * paroi
                 centre_pad = centre2 + t * float((q - centre2) @ t) + dedans * ((debut + fin) / 2.0)
                 M = np.eye(4)
@@ -1113,27 +1129,41 @@ def liaison_aimant(liaison: dict[str, Any], a: Piece, b: Piece, itf: Interface, 
         if taquet:
             d, h, f_paire, pts = taquet["choix"]
             meilleurs = (d, h, f_paire, pts)
-            for solide in taquet["solides"]:
-                r.ajouter(taquet["piece"].id, solide)
+            porteur_t = taquet["piece"]
+            for k_t, solide in enumerate(taquet["solides"]):
+                if dans_la_masse(porteur_t):
+                    r.ajouter(porteur_t.id, solide)
+                else:
+                    # bois, plaque : taquet taillé à part, collé contre le panneau ; la poche est dans le taquet
+                    taquet.setdefault("rapportes", []).append(
+                        piece_rapportee(f"{liaison['id']}_taquet_{k_t + 1}", f"taquet d'aimant {k_t + 1}", solide, porteur_t,
+                                        itf.normale * (1.0 if porteur_t is a else -1.0), liaison["id"]))
             r.decisions.append({"sujet": liaison["id"], "decision": f"{len(taquet['solides'])} taquet(s) collé(s) contre {taquet['piece'].nom}",
                                 "raison": f"la tranche ({taquet['largeur']:.1f} mm) est trop étroite pour loger un aimant : "
                                           "un taquet intérieur élargit localement l'appui"})
     if not meilleurs:
         raise ErreurConception(f"{liaison['id']} : aucun aimant de catalogue ne tient dans l'interface")
     d, h, f_paire, pts = meilleurs
+    rapportes = (taquet or {}).get("rapportes") or []
     for k, (u, v) in enumerate(pts):
         P = itf.monde(u, v)
         for p, sens, decal in ((a, -n, 0.0), (b, n, itf.ecart)):
             base = P + n * decal
-            if taquet and p is taquet["piece"]:
-                base = P + n * decal
-            r.retirer(p.id, cyl_entre(base - sens * 0.5, base + sens * (h + retrait), (d + jeu_poche) / 2.0))
-            r.trous.append({"piece": p.id, "centre": base.tolist(), "axe": sens.tolist(), "rayon": (d + jeu_poche) / 2.0,
+            poche = cyl_entre(base - sens * 0.5, base + sens * (h + retrait), (d + jeu_poche) / 2.0)
+            porteur_poche = p.id
+            if rapportes and p is taquet["piece"]:
+                bloc = rapportes[k]
+                bloc.solide = bloc.solide - poche
+                porteur_poche = bloc.id            # la poche est dans le taquet, pas dans le panneau
+            else:
+                r.retirer(p.id, poche)
+            r.trous.append({"piece": porteur_poche, "centre": base.tolist(), "axe": sens.tolist(), "rayon": (d + jeu_poche) / 2.0,
                             "de": 0.0, "a": h + retrait, "liaison": liaison["id"]})
             aimant = cyl_entre(base + sens * retrait, base + sens * (retrait + h), d / 2.0)
             art = article(f"aimant néodyme N42 disque Ø{d}×{h} mm, nickelé", "aimant N42", float(d), float(h), h=h)
             r.quincaillerie.append(quincaillerie(f"{liaison['id']}_aimant_{p.id}_{k + 1}", f"aimant {d}×{h}", aimant, "neodyme",
                                                  art, p.id, -sens, liaison["id"]))
+    r.quincaillerie.extend(rapportes)
     r.calculs.update({"aimant": f"Ø{d}×{h} N42", "paires": len(pts), "force_par_paire_N": round(f_paire, 2),
                       "force_totale_N": round(f_paire * len(pts), 2), "ecart_entre_aimants_mm": round(2 * retrait + itf.ecart, 2),
                       "effort_N": round(F, 1), "source_effort": source_F,
@@ -1357,15 +1387,27 @@ def liaison_charniere(liaison: dict[str, Any], fixe: Piece, mobile: Piece, itf: 
             pour_fixe = k % 2 == 0                           # nœuds extrêmes sur la pièce fixe
             # âme : de la face extérieure de la pièce jusqu'à l'axe, du côté de la pièce concernée
             cote = -n if pour_fixe else n
-            ame = _ame(P0, P1, sortie, cote, rayon, face_fixe if pour_fixe else face_mobile, pivot_plan)
             cible = fixe if pour_fixe else mobile
-            r.ajouter(cible.id, union([noeud, ame]))
+            rapporte = not dans_la_masse(cible)
+            ame = _ame(P0, P1, sortie, cote, rayon, face_fixe if pour_fixe else face_mobile, pivot_plan,
+                       recouvrement=0.0 if rapporte else 0.4)
             alesage = (d_broche - serrage) / 2.0 if pour_fixe else (d_broche + jeu_rot) / 2.0
-            r.retirer(cible.id, cyl_entre(P0 - axe * 0.2, P1 + axe * 0.2, alesage))
+            perce = cyl_entre(P0 - axe * 0.2, P1 + axe * 0.2, alesage)
+            porteur = cible.id
+            if rapporte:
+                # bois, plaque, tôle : le nœud est taillé à part, collé sur la face, percé avec les autres
+                bloc = union([noeud, ame]) - perce
+                q = piece_rapportee(f"{liaison['id']}_noeud_{i_c + 1}_{k + 1}", f"nœud de charnière {k + 1}", bloc, cible,
+                                    sortie, liaison["id"])
+                r.quincaillerie.append(q)
+                porteur = q.id
+            else:
+                r.ajouter(cible.id, union([noeud, ame]))
+                r.retirer(cible.id, perce)
             r.trous.append({"piece": cible.id, "centre": ((P0 + P1) / 2).tolist(), "axe": axe.tolist(), "rayon": alesage,
                             "de": -l_noeud / 2, "a": l_noeud / 2, "liaison": liaison["id"], "noeud": True})
             if pour_fixe and serrage > 0:
-                r.interferences.append({"pieces": [f"{liaison['id']}_broche_{i_c + 1}", fixe.id], "nature": "serrage",
+                r.interferences.append({"pieces": [f"{liaison['id']}_broche_{i_c + 1}", porteur], "nature": "serrage",
                                         "volume_attendu_mm3": math.pi * d_broche * (serrage / 2.0) * l_noeud,
                                         "liaison": liaison["id"], "cumul": True})
         debut = A0 + axe * ((longueur - L_broche) / 2.0)
@@ -1412,11 +1454,12 @@ def _epaisseur_bord(p: Piece, itf: Interface, sortie: np.ndarray, n: np.ndarray)
     return profondeur(p.solide, surface, -sortie)
 
 
-def _ame(P0, P1, sortie, cote, rayon, limite, pivot_plan):
-    """Âme qui relie un nœud à sa pièce : de la face extérieure (`limite`) à l'axe, d'un seul côté du plan."""
+def _ame(P0, P1, sortie, cote, rayon, limite, pivot_plan, recouvrement: float = 0.4):
+    """Âme qui relie un nœud à sa pièce : de la face extérieure (`limite`) à l'axe, d'un seul côté du plan.
+    `recouvrement` : pénétration dans la pièce pour une fusion ; 0 pour un nœud rapporté (posé sur la face)."""
     P0, P1 = np.asarray(P0), np.asarray(P1)
     axe = (P1 - P0) / np.linalg.norm(P1 - P0)
-    largeur = pivot_plan - limite + 0.4
+    largeur = pivot_plan - limite + recouvrement
     centre = (P0 + P1) / 2.0 - sortie * (largeur / 2.0) + np.asarray(cote) * (rayon / 2.0)
     M = np.eye(4)
     M[:3, 0], M[:3, 1], M[:3, 2] = sortie, np.asarray(cote), axe
