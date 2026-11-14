@@ -430,6 +430,10 @@ def build_rich_agent_markdown(
         f"- {feat}" for feat in cognitive_profile.get("autonomous_implicit_features", [])
     )
     files_owned = cognitive_profile.get("files_owned") or ["périmètre assigné par la mission"]
+    # Computed outside the f-strings: a backslash inside a replacement field is a syntax error
+    # before Python 3.12, and the project supports 3.10.
+    tools_block = tools_yaml if tools_yaml else '  - "read_file"'
+    triggers_block = triggers_yaml if triggers_yaml else f"  - {json.dumps(name)}"
 
     frontmatter = (
         "---\n"
@@ -440,9 +444,9 @@ def build_rich_agent_markdown(
         f"feature: {json.dumps(feature, ensure_ascii=False)}\n"
         f"parent_agent: {json.dumps(parent_agent, ensure_ascii=False)}\n"
         "tools:\n"
-        f"{tools_yaml if tools_yaml else '  - \"read_file\"'}\n"
+        f"{tools_block}\n"
         "triggers:\n"
-        f"{triggers_yaml if triggers_yaml else f'  - {json.dumps(name)}'}\n"
+        f"{triggers_block}\n"
         "---\n\n"
     )
 

@@ -86,6 +86,20 @@ class AsyncContracts(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['status'], "completed")
             self.assertEqual(observed, ["AUTONOMOUS"])
 
+    async def test_a_worker_is_not_accepted_when_its_audit_cannot_run(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict("os.environ", {"XDG_DATA_HOME": root}):
+            create_agent("reviewer", "Check files", "model:local", "AUTONOMOUS", "mis_test")
+            parent = AutonomousMissionAgent("mis_test", "Inspect", root, "model:local", "AUTONOMOUS")
+            async def worked(child, *, worker=False):
+                child.state['status'] = 'completed'
+                child.state['executed_tools'] = ['read_file']
+                return "Checked"
+            with patch.object(AutonomousMissionAgent, "run", worked), \
+                    patch("agi_core.agent_forge.verify_subagent_deliverable_rigor", side_effect=RuntimeError("auditor down")):
+                result = await parent._spawn_task("Inspect", "reviewer")
+            self.assertEqual(result['status'], "failed_rigor_audit")
+            self.assertTrue(any(v.startswith('RIGOR_AUDIT_UNAVAILABLE') for v in result['rigor_audit']['violations']))
+
     async def test_worker_that_ran_no_concrete_tool_is_not_accepted_as_completed(self):
         with tempfile.TemporaryDirectory() as root, patch.dict("os.environ", {"XDG_DATA_HOME": root}):
             create_agent("reviewer", "Check files", "model:local", "AUTONOMOUS", "mis_test")

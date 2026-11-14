@@ -179,14 +179,6 @@ else
   ' >"$LOG_DIR/bridge.log" 2>&1 </dev/null &
 fi
 
-if curl -fsS -m 2 -o /dev/null http://127.0.0.1:11435/health 2>/dev/null; then
-  echo "      Serveur Modèles Renforcés MoA (:11435) existant réutilisé."
-else
-  setsid bash -c '
-    cd "'"$ROOT_DIR"'"
-    exec "'"$APP_PY"'" -m auto_rl.serve
-  ' >"$LOG_DIR/rl_serve.log" 2>&1 </dev/null &
-fi
 
 echo "[3.5/5] Cerveau AGI (J.O.B.I.A. Core)"
 if systemctl --user is-active --quiet aurora-daemon.service 2>/dev/null; then
@@ -273,6 +265,22 @@ if ! wait_for_http "Interface" "http://127.0.0.1:1420/" 30; then
   bash "$ROOT_DIR/scripts/publish-live-link.sh" closed || true
   echo "Aurora reste locale, mais le tunnel n'est pas publie car Vite est indisponible."
   exit 1
+fi
+
+echo "[4.5/5] Modèles renforcés"
+# Le serveur des modèles renforcés (:11435) ne sert que des adaptateurs franchissant la porte de
+# promotion. Sans aucun adaptateur promu, le lancer ne servirait rien et tiendrait un processus
+# Python de plus sur une machine déjà à la limite de sa mémoire.
+if curl -fsS -m 2 -o /dev/null http://127.0.0.1:11435/health 2>/dev/null; then
+  echo "      Serveur des modèles renforcés (:11435) existant réutilisé."
+elif (cd "$ROOT_DIR" && "$APP_PY" -c "import sys; from auto_rl.runtime import catalog; sys.exit(0 if catalog() else 1)") >/dev/null 2>&1; then
+  setsid bash -c '
+    cd "'"$ROOT_DIR"'"
+    exec "'"$APP_PY"'" -m auto_rl.serve
+  ' >"$LOG_DIR/rl_serve.log" 2>&1 </dev/null &
+  echo "      Serveur des modèles renforcés (:11435) démarré."
+else
+  echo "      Aucun adaptateur promu : serveur des modèles renforcés non démarré."
 fi
 
 echo "[5/5] Cloudflared"

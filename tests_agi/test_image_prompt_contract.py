@@ -114,8 +114,45 @@ class PromptContractTests(unittest.TestCase):
         self.assertIn("straw hat", result["negative_prompt"])
 
     def test_open_world_entity_grounding_resolves_unhardcoded_characters(self):
+        """The medium is inferred from the encyclopedic text, not from a list of names.
+
+        The lookup is answered by recorded MediaWiki payloads: the test checks the inference, it does
+        not depend on reaching Wikipedia (the CI cannot) nor on a cache left on one machine.
+        """
+        import io
+        import json
+        import tempfile
+        import urllib.parse
+        from unittest import mock
+
+        import agi_core.prompt_intelligence as intelligence
         from agi_core.prompt_intelligence import analyze_and_direct_prompt
 
+        recorded = {
+            "spike": ("Spike Spiegel", "personnage de Cowboy Bebop",
+                      "Spike Spiegel est un personnage de fiction et le protagoniste de la série "
+                      "télévisée d'animation japonaise Cowboy Bebop, créée par Sunrise."),
+            "rudeus": ("Rudeus Greyrat", "personnage de Mushoku Tensei",
+                       "Rudeus Greyrat est le personnage principal du light novel et de l'anime "
+                       "Mushoku Tensei, une série de fantasy japonaise."),
+        }
+
+        def answer(request, timeout=None):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query).get("gsrsearch", [""])[0].lower()
+            pages = {}
+            for key, (title, description, extract) in recorded.items():
+                if key in query:
+                    pages = {"1": {"index": 1, "title": title, "description": description, "extract": extract}}
+            return io.BytesIO(json.dumps({"query": {"pages": pages}}).encode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(intelligence, "_OPEN_WORLD_CACHE_FILE", Path(directory) / "entities.json"), \
+                mock.patch.dict(intelligence._MEMORY_ENTITY_CACHE, clear=True), \
+                mock.patch.dict("os.environ", {"AURORA_DISABLE_OPEN_WORLD_LOOKUP": "0"}), \
+                mock.patch.object(intelligence.urllib.request, "urlopen", side_effect=answer):
+            self._assert_open_world_grounding(analyze_and_direct_prompt)
+
+    def _assert_open_world_grounding(self, analyze_and_direct_prompt):
         spike = analyze_and_direct_prompt("fais-moi Spike Spiegel", target_module="image", open_world_grounding=True)
         self.assertEqual(spike["subject_ontology"], "anime_manga_character")
         self.assertEqual(spike["effective_render_mode"], "native_anime_stylized")

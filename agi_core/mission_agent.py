@@ -585,7 +585,10 @@ class AutonomousMissionAgent:
                 allow_read_only=True,
             )
         except Exception as exc:
-            rigor_audit = {'ok': True, 'rigorous': True, 'anti_fake_work_passed': True, 'note': str(exc)}
+            # An audit that cannot run has not passed. Accepting the worker here let any import or
+            # runtime failure of the auditor turn into an unverified "completed" (seen on Python 3.10).
+            rigor_audit = {'ok': False, 'rigorous': False, 'anti_fake_work_passed': False,
+                           'violations': [f'RIGOR_AUDIT_UNAVAILABLE: {type(exc).__name__}: {exc}'[:300]]}
         worker_status = child.state['status']
         if worker_status == 'completed' and not rigor_audit.get('anti_fake_work_passed', True):
             worker_status = 'failed_rigor_audit'
