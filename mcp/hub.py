@@ -176,6 +176,23 @@ TOOLS_CATALOG: list[dict[str, Any]] = [
             "required": ["query"],
         },
     },
+    {
+        "name": "desktop_capture", "domain": "cowork",
+        "description": "Capture the whole desktop screen (X11) to a PNG under application/output/cowork/bureau; returns path, size and SHA-256.",
+        "inputSchema": {"type": "object", "additionalProperties": False, "properties": {}},
+    },
+    {
+        "name": "desktop_locate", "domain": "cowork",
+        "description": "Find the screen point of a UI element described in natural language, read by the local vision model on a fresh screenshot. Returns pixel x/y or ok=false with the reason. Allow up to 120 seconds.",
+        "inputSchema": {"type": "object", "additionalProperties": False,
+            "properties": {"description": {"type": "string"}}, "required": ["description"]},
+    },
+    {
+        "name": "desktop_act", "domain": "cowork",
+        "description": "Act on the desktop with XTest: deplacer/cliquer/double_cliquer/clic_droit (x,y[,bouton]), glisser (x,y,x2,y2), taper (texte), touche (touches like 'ctrl+s'), defiler (sens, quantite). Refused unless AURORA_DESKTOP_CONTROL=1 on this PC; system combinations are refused; every action is journaled with screen hashes before and after.",
+        "inputSchema": {"type": "object", "additionalProperties": False,
+            "properties": {"action": {"type": "object"}}, "required": ["action"]},
+    },
 ]
 
 
@@ -295,6 +312,22 @@ def _execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         n = int(arguments.get("n_results", 5))
         res = asyncio.run(mem.recall_relevant(q, n_results=n))
         return {"ok": True, "query": q, "results": res}
+
+    if name in {"desktop_capture", "desktop_locate", "desktop_act"}:
+        services = REPO_ROOT / "application" / "python-services"
+        if str(services) not in sys.path:
+            sys.path.insert(0, str(services))
+        import desktop_control
+        try:
+            if name == "desktop_capture":
+                return {"ok": True, **desktop_control.capturer()}
+            if name == "desktop_locate":
+                result = desktop_control.localiser(str(arguments.get("description", "")))
+                result.pop("capture", None)
+                return result
+            return desktop_control.agir(arguments.get("action"))
+        except desktop_control.BureauIndisponible as exc:
+            return {"ok": False, "error": str(exc)}
 
     return {"ok": False, "error": f"Unknown tool: {name}"}
 

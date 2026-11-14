@@ -52,6 +52,7 @@ ENGINE_MODULES = (
     "application/python-services/articulated_motion.py",
     "application/python-services/motion_intent_baker.py",
     "application/three_d_library.py",
+    "application/python-services/desktop_control.py",
 )
 
 
