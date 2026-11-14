@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ClarificationDialog from '../components/ClarificationDialog.tsx'
+import { useGenerationFxEmitter } from '../components/generationFx/fxBus.ts'
 import type { ClarificationRequest } from '../components/ClarificationDialog.tsx'
 import PromptLibraryPanel from '../components/PromptLibraryPanel.tsx'
 import SaveDialog from '../components/SaveDialog.tsx'
@@ -89,6 +90,17 @@ export default function CodeView() {
   const [files, setFiles] = useState<CodeFile[]>([])
   const [activeFile, setActiveFile] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  // Écran de génération synchronisé : il suit le job réel que le runtime géré tient pour ce module
+  // (étape et pourcentage émis par le pipeline Code), pas un minuteur. Sans cela, l'interface par
+  // défaut n'affichait aucun écran de chargement pour le Code.
+  const codeJob = useAppStore((s) => s.generationJobs.find((job) => job.module === 'code' && (job.status === 'queued' || job.status === 'running')) ?? null)
+  useGenerationFxEmitter(
+    'code',
+    isGenerating,
+    codeJob?.detail || progress || undefined,
+    codeJob && codeJob.progress > 0 ? Math.min(1, codeJob.progress / 100) : undefined,
+    { outcome: error ? 'error' : files.length > 0 ? 'success' : undefined },
+  )
   const [validationResult, setValidationResult] = useState<CodeSandboxResult | null>(null)
   const [copied, setCopied] = useState(false)
   const [saveDialogData, setSaveDialogData] = useState<SaveDialogData | null>(null)

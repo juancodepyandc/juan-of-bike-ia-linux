@@ -26,6 +26,18 @@ export const MODULE_PHASE_RANGES: Partial<Record<FxModule, [number, number][]>> 
     [0.8, 0.92],
     [0.92, 1.0],
   ],
+  // Pourcentages réellement émis par le pipeline Code (codeOrchestrator & co) : intention 3–12,
+  // architecture 15–18, génération jusqu'à ~72, sandbox, passes de correction jusqu'à 89, livraison 92–98.
+  // L'étape « Recherche » est reconnue par son nom, elle partage la plage de l'architecture.
+  code: [
+    [0.0, 0.14],
+    [0.14, 0.19],
+    [0.19, 0.19],
+    [0.19, 0.72],
+    [0.72, 0.8],
+    [0.8, 0.9],
+    [0.9, 1.0],
+  ],
 }
 
 const CODE_PHASE_INDEX: Record<string, number> = {
@@ -104,6 +116,8 @@ export const THREE_D_CONTROL_STAGES = [
 export function threeDPhaseForStage(stage: string): number | null {
   const s = (stage || '').toLowerCase()
   if (!s || THREE_D_CONTROL_STAGES.includes(s)) return null
+  // analyse : lecture de la demande (sujet au repos, mouvement réservé à l'animation)
+  if (['comprehension'].includes(s)) return 0
   // référence : vues ou photos d'entrée (y compris l'analyse des photos de photogrammétrie)
   if (['reference', 'confirm_req', 'ref', 'web', 'source', 'scan'].includes(s)) return 1
   // sculpture : moteurs neuronaux, scène multi-entités, Blender procédural, photogrammétrie, géométrie

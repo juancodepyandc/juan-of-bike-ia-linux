@@ -119,3 +119,15 @@ test('the 3D phase never moves back on late follow-up lines, except on an explic
   assert.equal(monotonicPhase('3d', 5, 2, true), 2, 'perfection refusal then regeneration')
   assert.equal(monotonicPhase('conversation', 4, 3), 3, 'a chat refine loop may really go back to verification')
 })
+
+test('the code screen follows the real labels and percentages of the code pipeline', () => {
+  const CODE = ['Intention', 'Architecture', 'Recherche', 'Génération', 'Sandbox', 'Correction', 'Livraison']
+  // labels emitted by codeOrchestrator, with the percentage it sends alongside
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Classification du projet...', progress: 0.05, prev: 0 }), 0)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Architecte en reflexion (qwen3-coder)...', progress: 0.15, prev: 0 }), 1)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Recherche de references UX/UI par archetype design...', progress: 0.15, prev: 1 }), 2)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Generation en cours.', progress: 0.42, prev: 2 }), 3)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Passe 2 — correction invalide (import manquant)', progress: 0.84, prev: 3 }), 5)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Livraison terminee.', progress: 0.98, prev: 5 }), 6)
+  assert.equal(resolvePhaseIndex('code', CODE, { text: 'Demarrage du dev server...', progress: 0.95, prev: 5 }), 6)
+})
