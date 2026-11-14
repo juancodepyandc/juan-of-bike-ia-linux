@@ -130,8 +130,8 @@ def controle_ligaments(pieces: dict[str, Piece], resultats) -> dict[str, Any]:
     for r in resultats:
         for t in r.trous:
             p = pieces.get(t["piece"])
-            if p is None or p.est_quincaillerie or t.get("noeud"):
-                continue
+            if p is None or p.est_quincaillerie or t.get("noeud") or p.origine == "achete":
+                continue                          # les trous d'un composant acheté sont ceux de son fabricant
             axe = np.asarray(t["axe"], dtype=float)
             c = np.asarray(t["centre"], dtype=float)
             de, a = float(t.get("de", 0.0)), float(t.get("a", 0.0))

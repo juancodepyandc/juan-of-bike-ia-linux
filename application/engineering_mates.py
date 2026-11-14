@@ -1626,9 +1626,23 @@ def _generer_avec_replis(liaison: dict[str, Any], pieces: dict[str, Piece]) -> R
     raise ErreurConception(f"{liaison['id']} : aucune réalisation possible — " + " | ".join(echecs))
 
 
+def liaison_fournisseur(liaison: dict[str, Any], membres: list[Piece]) -> Resultat:
+    """Deux composants achetés s'assemblent comme le prévoit leur fabricant (écrou d'arbre, clip d'origine…) :
+    rien n'est usiné, l'étape est consignée et la liaison compte comme rigide."""
+    r = Resultat(liaison["id"], "fournisseur", [p.id for p in membres])
+    noms = " et ".join(p.nom for p in membres)
+    r.decisions.append({"sujet": liaison["id"], "decision": f"liaison du fabricant entre {noms} ({liaison['type']} demandé)",
+                        "raison": "deux composants achetés : on suit leur notice, aucun usinage"})
+    r.calculs.update({"type_demande": liaison["type"], "mode": "selon la notice du fabricant"})
+    r.etapes.append(f"Assembler {noms} selon la notice du fabricant.")
+    return r
+
+
 def _generer_type(liaison: dict[str, Any], pieces: dict[str, Piece]) -> Resultat:
     type_ = liaison["type"]
     membres = [pieces[e] for e in liaison["entre"]]
+    if all(p.origine == "achete" for p in membres) and not any(p.trous_existants for p in membres[1:]):
+        return liaison_fournisseur(liaison, membres)
     if type_ == "boulon_ecrou":
         pile = list(membres)
         if len(pile) == 2:

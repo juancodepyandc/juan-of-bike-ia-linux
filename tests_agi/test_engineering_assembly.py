@@ -523,3 +523,19 @@ def test_les_quantites_de_la_demande_sont_exigees_de_la_lecture():
     quatre["pieces"][1]["quantite"] = 4
     g = developper_motifs(normaliser(quatre), [])
     assert sum(1 for p in g["pieces"] if p.get("base_id") == "bras") == 4
+
+
+def test_deux_composants_achetes_s_assemblent_selon_leur_fabricant(tmp_path):
+    """Lecture réelle du 14/11 : hélice « vissée » sur un moteur — deux achats, rien ne s'usine."""
+    ex = {"titre": "Motorisation", "procede": "usinage", "matiere": "aluminium",
+          "pieces": [{"id": "support", "nom": "Support", "forme": "bloc", "dimensions_mm": [40, 40, 10]},
+                     {"id": "moteur", "nom": "Moteur", "forme": "cylindre", "dimensions_mm": [28, 20], "origine": "achete",
+                      "position": {"par_rapport_a": "support", "cote": "dessus"},
+                      "trous_existants": {"vis": "M3", "entraxe_mm": [16, 16], "profondeur_mm": 4}},
+                     {"id": "helice", "nom": "Hélice", "forme": "cylindre", "dimensions_mm": [20, 6], "origine": "achete",
+                      "position": {"par_rapport_a": "moteur", "cote": "dessus"}}],
+          "liaisons": [{"entre": ["support", "moteur"], "type": "vis"}, {"entre": ["moteur", "helice"], "type": "vis"}]}
+    rapport = concevoir(ex, tmp_path, rendre_f3d=False)
+    assert rapport["verdict"] == "conforme", {k: v["ok"] for k, v in rapport["controles"].items()}
+    [f] = _liaisons(rapport, "fournisseur")
+    assert f["entre"] == ["moteur", "helice"] and "notice" in f["etapes"][0]
